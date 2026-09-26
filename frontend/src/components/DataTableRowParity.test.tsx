@@ -144,6 +144,26 @@ describe("DataTable DataGrid-parity row behaviours", () => {
     expect(screen.getByRole("columnheader", { name: /^Extra 19/ })).toBeTruthy();
   });
 
+  it("a clickable row works from the keyboard: Enter clicks, Shift+Enter double-clicks", () => {
+    const onClick = vi.fn();
+    const onDouble = vi.fn();
+    render(
+      <DataTable tableId="parity-keys" columns={columns} rows={rows} getRowKey={(r) => r.id}
+        onRowClick={onClick} onRowDoubleClick={onDouble} />,
+    );
+    const rowA = screen.getByText("A").closest("tr")!;
+    expect(rowA.tabIndex).toBe(0);
+    fireEvent.keyDown(rowA, { key: "Enter" });
+    expect(onClick).toHaveBeenCalledWith(rows[1]);
+    fireEvent.keyDown(rowA, { key: "Enter", shiftKey: true });
+    expect(onDouble).toHaveBeenCalledWith(rows[1]);
+  });
+
+  it("a row with no click handler is not a tab stop", () => {
+    render(<DataTable tableId="parity-nokeys" columns={columns} rows={rows} getRowKey={(r) => r.id} />);
+    expect(screen.getByText("A").closest("tr")!.hasAttribute("tabindex")).toBe(false);
+  });
+
   it("an embedded grid renders no toolbar", () => {
     render(
       <DataTable tableId="parity-embed" columns={columns} rows={rows} getRowKey={(r) => r.id}

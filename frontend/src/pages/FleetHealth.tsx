@@ -2,6 +2,7 @@ import { useMemo, useState, useRef, useEffect } from "react";
 import { useSearchParams, Link, useNavigate } from "react-router-dom";
 import { Truck, RefreshCw, X, AlertTriangle, ChevronRight, FileUp } from "lucide-react";
 import { PageHeader } from "../components/Layout";
+import { DataTable, type Column } from "../components/DataTable";
 import { Button } from "../components/Button";
 import { StatCard } from "../components/StatCard";
 import { ResizableDetailDrawer } from "../components/ResizableDetailDrawer";
@@ -450,6 +451,58 @@ export function FleetHealth() {
     peekTimer.current = window.setTimeout(() => { peekTimer.current = null; setOpenId(id); }, 250);
   };
   const openRecord = (id: string) => { cancelPeek(); navigate(`/fleet-health/${id}`); };
+  const expiryValue = (d: VehicleRow["compliance"]["ROAD_TAX"]) => d?.expiryDate ?? null;
+  const boardColumns: Column<VehicleRow>[] = [
+    {
+      key: "lorry", label: "Lorry", getValue: (v) => v.plate,
+      render: (v) => (
+        <>
+          {/* A REAL anchor, so the browser's own affordances work: Cmd/Ctrl-click
+              and middle-click open the record in a new tab (owner 2026-08-03:
+              "我在第二个页面打开进去是不能的吗?"). stopPropagation so the plate
+              does not ALSO fire the row's peek. */}
+          <Link
+            to={`/fleet-health/${v.id}`}
+            onClick={(e) => { e.stopPropagation(); cancelPeek(); }}
+            className="font-semibold text-ink hover:text-primary hover:underline"
+          >
+            {v.plate}
+          </Link>
+          <div className="text-[11px] text-ink-muted">{[v.driverName, v.region].filter(Boolean).join(" · ") || "—"}</div>
+        </>
+      ),
+    },
+    { key: "status", label: "Status", getValue: (v) => v.statusLabel, render: (v) => <Pill tone={STATUS_TONE[v.status]}>{v.statusLabel}</Pill> },
+    {
+      key: "mileage", label: "Mileage", align: "right", getValue: (v) => v.mileageKm, exportFormat: "number",
+      render: (v) => (
+        <span className="tabular-nums text-ink">
+          {v.mileageKm != null ? v.mileageKm.toLocaleString() : "—"}
+          <span className="ml-1 text-[10.5px] text-ink-muted">km</span>
+          {v.mileageFlagged && <span className="ml-1.5 text-[10px] text-warning-text" title="Abnormal jump — review">flagged</span>}
+        </span>
+      ),
+    },
+    { key: "nextService", label: "Next service", render: (v) => <NextServiceCell v={v} /> },
+    { key: "puspakom", label: "PUSPAKOM", getValue: (v) => expiryValue(v.compliance.PUSPAKOM), exportFormat: "date", render: (v) => <ExpiryCell doc={v.compliance.PUSPAKOM} /> },
+    { key: "insurance", label: "Insurance", getValue: (v) => expiryValue(v.compliance.INSURANCE), exportFormat: "date", render: (v) => <ExpiryCell doc={v.compliance.INSURANCE} /> },
+    { key: "roadTax", label: "Road tax", getValue: (v) => expiryValue(v.compliance.ROAD_TAX), exportFormat: "date", render: (v) => <ExpiryCell doc={v.compliance.ROAD_TAX} /> },
+    {
+      key: "problem", label: "Open problem", getValue: (v) => openProblem(v) ?? "",
+      render: (v) => (
+        <span className="text-[12px] text-ink-secondary">
+          {openProblem(v) ?? <span className="text-ink-muted">—</span>}
+          {(v.openWorkOrders ?? 0) > 0 && <span className="ml-1.5 text-[10px] text-ink-muted">{v.openWorkOrders} WO</span>}
+        </span>
+      ),
+    },
+    {
+      key: "downtime", label: "Downtime", align: "right", getValue: (v) => v.downtimeHours,
+      render: (v) => (v.downtimeHours != null
+        ? <span className="tabular-nums text-err">{fmtDowntime(v.downtimeHours)}</span>
+        : <span className="text-ink-muted">—</span>),
+    },
+  ];
 
   const dash = useQuery<DashboardPayload>("/api/fleet-maintenance/dashboard", () => api.get("/api/fleet-maintenance/dashboard"));
 
@@ -605,114 +658,18 @@ export function FleetHealth() {
         <p className="border-b border-border bg-surface-2/40 px-3.5 py-1.5 text-[10.5px] text-ink-muted">
           Click a row for the quick look. Double-click, or click the plate, to open the full record — the plate is a link, so it opens in a new tab too.
         </p>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[920px] border-collapse text-[13px]">
-            <thead>
-              <tr className="bg-surface-2 text-left text-[10px] uppercase tracking-brand text-ink-muted">
-                <th className="px-3.5 py-2.5 font-semibold">Lorry</th>
-                <th className="px-3.5 py-2.5 font-semibold">Status</th>
-                <th className="px-3.5 py-2.5 font-semibold">Mileage</th>
-                <th className="px-3.5 py-2.5 font-semibold">Next service</th>
-                <th className="px-3.5 py-2.5 font-semibold">PUSPAKOM</th>
-                <th className="px-3.5 py-2.5 font-semibold">Insurance</th>
-                <th className="px-3.5 py-2.5 font-semibold">Road tax</th>
-                <th className="px-3.5 py-2.5 font-semibold">Open problem</th>
-                <th className="px-3.5 py-2.5 font-semibold">Downtime</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dash.loading ? (
-                <tr>
-                  <td colSpan={9} className="p-4">
-                    <ListSkeleton />
-                  </td>
-                </tr>
-              ) : visible.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="px-3.5 py-8 text-center text-[13px] text-ink-muted">
-                    No lorries in this view. Add a vehicle or run the seed script to load the fleet.
-                  </td>
-                </tr>
-              ) : (
-                visible.map((v) => {
-                  const problem = openProblem(v);
-                  return (
-                    <tr
-                      key={v.id}
-                      tabIndex={0}
-                      onClick={() => peek(v.id)}
-                      onDoubleClick={() => openRecord(v.id)}
-                      onKeyDown={(e) => {
-                        // Keyboard cannot double-click: Enter peeks, Shift+Enter
-                        // is the "go in" that the second click is with a mouse.
-                        if (e.key !== "Enter") return;
-                        e.preventDefault();
-                        if (e.shiftKey) openRecord(v.id); else setOpenId(v.id);
-                      }}
-                      className="cursor-pointer border-t border-border transition-colors hover:bg-surface-2 focus:bg-surface-2 focus:outline-none"
-                    >
-                      <td className="px-3.5 py-3">
-                        {/* A REAL anchor, so the browser's own affordances work:
-                            Cmd/Ctrl-click and middle-click open the record in a
-                            new tab, and right-click offers "Open link in new
-                            tab". Owner, 2026-08-03: "我在第二个页面打开进去是不能
-                            的吗?" — it was not, because the row was a <tr> with
-                            an onClick and there was nothing to open.
-
-                            stopPropagation so the plate does not ALSO fire the
-                            row's peek: a link means "go there", and one click
-                            should not both navigate and open a drawer. */}
-                        <Link
-                          to={`/fleet-health/${v.id}`}
-                          onClick={(e) => { e.stopPropagation(); cancelPeek(); }}
-                          className="font-semibold text-ink hover:text-primary hover:underline"
-                        >
-                          {v.plate}
-                        </Link>
-                        <div className="text-[11px] text-ink-muted">
-                          {[v.driverName, v.region].filter(Boolean).join(" · ") || "—"}
-                        </div>
-                      </td>
-                      <td className="px-3.5 py-3">
-                        <Pill tone={STATUS_TONE[v.status]}>{v.statusLabel}</Pill>
-                      </td>
-                      <td className="px-3.5 py-3 tabular-nums text-ink">
-                        {v.mileageKm != null ? v.mileageKm.toLocaleString() : "—"}
-                        <span className="ml-1 text-[10.5px] text-ink-muted">km</span>
-                        {v.mileageFlagged && <span className="ml-1.5 text-[10px] text-warning-text" title="Abnormal jump — review">flagged</span>}
-                      </td>
-                      <td className="px-3.5 py-3">
-                        <NextServiceCell v={v} />
-                      </td>
-                      <td className="px-3.5 py-3">
-                        <ExpiryCell doc={v.compliance.PUSPAKOM} />
-                      </td>
-                      <td className="px-3.5 py-3">
-                        <ExpiryCell doc={v.compliance.INSURANCE} />
-                      </td>
-                      <td className="px-3.5 py-3">
-                        <ExpiryCell doc={v.compliance.ROAD_TAX} />
-                      </td>
-                      <td className="px-3.5 py-3 text-[12px] text-ink-secondary">
-                        {problem ?? <span className="text-ink-muted">—</span>}
-                        {(v.openWorkOrders ?? 0) > 0 && (
-                          <span className="ml-1.5 text-[10px] text-ink-muted">{v.openWorkOrders} WO</span>
-                        )}
-                      </td>
-                      <td className="px-3.5 py-3 text-[12px]">
-                        {v.downtimeHours != null ? (
-                          <span className="tabular-nums text-err">{fmtDowntime(v.downtimeHours)}</span>
-                        ) : (
-                          <span className="text-ink-muted">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+        <DataTable<VehicleRow>
+          tableId="fleet-health-board"
+          exportName="fleet-health"
+          exportXlsx
+          columns={boardColumns}
+          rows={dash.loading ? null : visible}
+          loading={dash.loading}
+          emptyLabel="No lorries in this view. Add a vehicle or run the seed script to load the fleet."
+          getRowKey={(v) => v.id}
+          onRowClick={(v) => peek(v.id)}
+          onRowDoubleClick={(v) => openRecord(v.id)}
+        />
       </div>
 
       {dash.error && (

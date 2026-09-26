@@ -2517,6 +2517,22 @@ function DataTableInner<T, L>({
                             : undefined
                         }
                         onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row) : undefined}
+                        /* A clickable row is reachable from the keyboard: Enter is the
+                           click, Shift+Enter the double-click (a keyboard has no
+                           second click). Only on the row itself, never on a control
+                           inside it. */
+                        tabIndex={onRowClick || onRowDoubleClick ? 0 : undefined}
+                        onKeyDown={
+                          onRowClick || onRowDoubleClick
+                            ? (e) => {
+                                if (e.key !== "Enter" || e.target !== e.currentTarget) return;
+                                e.preventDefault();
+                                if (e.shiftKey && onRowDoubleClick) onRowDoubleClick(row);
+                                else if (onRowClick) onRowClick(row);
+                                else onRowDoubleClick?.(row);
+                              }
+                            : undefined
+                        }
                         onContextMenu={
                           contextMenu
                             ? (e) => {
@@ -2537,6 +2553,7 @@ function DataTableInner<T, L>({
                             : customClass && /(^|\s)!?bg-/.test(customClass) ? null
                             : rowIdx % 2 === 0 ? "bg-surface" : "bg-surface-dim/35",
                           (onRowClick || onRowDoubleClick || rowClickTicks) && "cursor-pointer",
+                          (onRowClick || onRowDoubleClick) && "focus:outline-none focus-visible:bg-primary/10",
                           customClass
                         )}
                       >

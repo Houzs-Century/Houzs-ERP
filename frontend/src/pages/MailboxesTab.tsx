@@ -32,6 +32,7 @@ import {
 import { Button } from "../components/Button";
 import { Panel, PanelSection } from "../components/Panel";
 import { Badge } from "../components/Badge";
+import { DataTable } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
 import { ListSkeleton } from "../components/Skeleton";
 import { useQuery } from "../hooks/useQuery";
@@ -128,74 +129,61 @@ export function MailboxesTab() {
             message="No mailboxes yet. Create one to assign an address to a person or a department."
           />
         ) : (
-          <div className="overflow-hidden rounded-md border border-border bg-surface shadow-stone">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b-2 border-border bg-surface-dim text-[10px] font-bold uppercase tracking-brand text-ink">
-                  <th className="px-4 py-2.5">Address</th>
-                  <th className="px-4 py-2.5">Label</th>
-                  <th className="px-4 py-2.5">Assigned to</th>
-                  <th className="px-4 py-2.5">Position</th>
-                  <th className="px-4 py-2.5">Status</th>
-                  <th className="px-4 py-2.5 text-right" />
-                </tr>
-              </thead>
-              <tbody>
-                {addresses.map((a) => (
-                  <tr
-                    key={a.id}
-                    className="border-b border-border-subtle last:border-b-0"
+          <DataTable<MailAddress>
+            tableId="mailboxes"
+            exportName="mailboxes"
+            exportXlsx
+            columns={[
+              {
+                key: "address", label: "Address", getValue: (a) => a.address,
+                render: (a) => (
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-ink">
+                    <Mail size={13} className="shrink-0 text-ink-muted" />
+                    {a.address}
+                  </span>
+                ),
+              },
+              { key: "label", label: "Label", getValue: (a) => a.label, render: (a) => a.label || "—" },
+              {
+                key: "assigned", label: "Assigned to",
+                getValue: (a) => (a.assignedUserId != null ? a.assignedUserName || `User #${a.assignedUserId}` : a.assignedDept || "Unassigned"),
+                render: (a) => (a.assignedUserId != null ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <UsersIcon size={12} className="text-ink-muted" />
+                    {a.assignedUserName || `User #${a.assignedUserId}`}
+                  </span>
+                ) : a.assignedDept ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Building2 size={12} className="text-ink-muted" />
+                    {a.assignedDept}
+                    <Badge tone="neutral" size="xs">Shared</Badge>
+                  </span>
+                ) : (
+                  <span className="text-ink-muted">Unassigned</span>
+                )),
+              },
+              { key: "position", label: "Position", getValue: (a) => a.assignedPosition ?? "", render: (a) => a.assignedPosition || "—" },
+              {
+                key: "status", label: "Status", getValue: (a) => (a.active ? "Active" : "Inactive"),
+                render: (a) => <Badge tone={a.active ? "success" : "neutral"} size="xs">{a.active ? "Active" : "Inactive"}</Badge>,
+              },
+              {
+                key: "actions", label: "", exportLabel: "Actions", align: "right",
+                render: (a) => (
+                  <button
+                    type="button"
+                    onClick={() => setEditing(a)}
+                    title="Edit mailbox"
+                    className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-semibold text-ink-secondary transition-colors hover:border-accent/40 hover:bg-accent-soft/50 hover:text-accent"
                   >
-                    <td className="px-4 py-3 text-[12.5px] font-semibold text-ink">
-                      <span className="inline-flex items-center gap-1.5">
-                        <Mail size={13} className="shrink-0 text-ink-muted" />
-                        {a.address}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-[12px] text-ink-secondary">
-                      {a.label || "—"}
-                    </td>
-                    <td className="px-4 py-3 text-[12px] text-ink-secondary">
-                      {a.assignedUserId != null ? (
-                        <span className="inline-flex items-center gap-1.5">
-                          <UsersIcon size={12} className="text-ink-muted" />
-                          {a.assignedUserName || `User #${a.assignedUserId}`}
-                        </span>
-                      ) : a.assignedDept ? (
-                        <span className="inline-flex items-center gap-1.5">
-                          <Building2 size={12} className="text-ink-muted" />
-                          {a.assignedDept}
-                          <Badge tone="neutral" size="xs">
-                            Shared
-                          </Badge>
-                        </span>
-                      ) : (
-                        <span className="text-ink-muted">Unassigned</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-[12px] text-ink-secondary">
-                      {a.assignedPosition || "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge tone={a.active ? "success" : "neutral"} size="xs">
-                        {a.active ? "Active" : "Inactive"}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => setEditing(a)}
-                        title="Edit mailbox"
-                        className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-semibold text-ink-secondary transition-colors hover:border-accent/40 hover:bg-accent-soft/50 hover:text-accent"
-                      >
-                        <Pencil size={12} /> Edit
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    <Pencil size={12} /> Edit
+                  </button>
+                ),
+              },
+            ]}
+            rows={addresses}
+            getRowKey={(a) => a.id}
+          />
         )}
       </section>
 

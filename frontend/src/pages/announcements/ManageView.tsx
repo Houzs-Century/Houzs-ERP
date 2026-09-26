@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Search } from "lucide-react";
 import { cn, relativeTime } from "../../lib/utils";
 import { fmtDateTime } from "../../vendor/shared/format";
+import { DataTable, type Column } from "../../components/DataTable";
 import {
   CATEGORY_META,
   INBOX_FILTERS,
@@ -85,7 +86,6 @@ export type ManageViewProps = {
 };
 
 const EYEBROW = "font-mono text-[10px] font-bold uppercase tracking-wider";
-const TH = "px-2.5 py-2 text-left text-[10px] font-bold uppercase tracking-[.08em] text-ink-secondary";
 const SECONDARY_BTN =
   "rounded-md border border-border bg-surface text-ink-secondary hover:bg-surface-dim hover:text-ink disabled:opacity-50";
 
@@ -108,6 +108,73 @@ export function ManageView(p: ManageViewProps) {
   );
   const pendingCount = stats.awaitingYou;
   const selected = p.selectedId ? p.items.find((a) => a.id === p.selectedId) ?? null : null;
+  const pctOf = (a: Announcement): number | null => {
+    const summary = p.summary?.[a.id] ?? null;
+    return summary && summary.total > 0 ? ackPercent(summary.acked, summary.total) : null;
+  };
+  const statusOf = (a: Announcement) =>
+    MANAGE_STATUS_META[manageStatus(a, { pendingForMe: isPendingForMe(a, p.addressedIds, p.ackedIds), pct: pctOf(a) })];
+  const manageColumns: Column<Announcement>[] = [
+    {
+      key: "category", label: "Category", getValue: (a) => CATEGORY_META[categoryOf(a)].label,
+      render: (a) => {
+        const meta = CATEGORY_META[categoryOf(a)];
+        return (
+          <>
+            <span className={cn("inline-flex rounded-full px-2 py-[2px] text-[10px] font-bold uppercase", meta.pillCls)}>{meta.label}</span>
+            {docTypeTag(a) && (
+              <span className="ml-1 inline-flex rounded-full border border-border px-1.5 py-[1px] font-mono text-[9.5px] font-bold text-ink-muted">
+                {docTypeTag(a)}
+              </span>
+            )}
+          </>
+        );
+      },
+    },
+    {
+      key: "title", label: "Title", getValue: (a) => a.title,
+      render: (a) => {
+        const author = a.createdByName?.trim();
+        return (
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[13px] font-[650] text-ink">{a.title}</span>
+            <span className="font-mono text-[10px] text-ink-muted">
+              {docNo(a)}
+              {author && ` · ${author}`}
+            </span>
+          </div>
+        );
+      },
+    },
+    { key: "audience", label: "Audience", getValue: (a) => audienceLabel(a, p.lookups), render: (a) => audienceLabel(a, p.lookups) },
+    {
+      key: "posted", label: "Posted", getValue: (a) => a.createdAt,
+      render: (a) => <span className="font-mono text-[11px] text-ink-secondary">{fmtDateTime(a.createdAt)}</span>,
+    },
+    {
+      key: "ack", label: "Ack rate", align: "right", getValue: (a) => pctOf(a),
+      render: (a) => {
+        const pct = pctOf(a);
+        return (
+          <div className="flex items-center justify-end gap-2">
+            <div className="h-[5px] w-14 overflow-hidden rounded-full bg-surface-dim">
+              {pct != null && <div className={cn("h-full", ackRateBarCls(pct))} style={{ width: `${pct}%` }} />}
+            </div>
+            <span className="font-money text-[12px] font-[650] text-ink">
+              {pct != null ? `${pct}%` : p.summary != null ? "—" : "…"}
+            </span>
+          </div>
+        );
+      },
+    },
+    {
+      key: "status", label: "Status", getValue: (a) => statusOf(a).label,
+      render: (a) => {
+        const status = statusOf(a);
+        return <span className={cn("inline-flex rounded-full px-2 py-[2px] text-[10px] font-bold", status.cls)}>{status.label}</span>;
+      },
+    },
+  ];
 
   return (
     <div className={cn("flex min-h-0 flex-col", p.className)}>
@@ -171,46 +238,18 @@ export function ManageView(p: ManageViewProps) {
           </div>
 
           <div className="min-h-0 flex-1 overflow-auto">
-            <table className="w-full border-collapse">
-              <thead className="sticky top-0 bg-surface-2">
-                <tr>
-                  <th className={cn(TH, "pl-3.5")}>Category</th>
-                  <th className={TH}>Title</th>
-                  <th className={TH}>Audience</th>
-                  <th className={TH}>Posted</th>
-                  <th className={cn(TH, "text-right")}>Ack rate</th>
-                  <th className={cn(TH, "pr-3.5")}>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {p.loading && rows.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-3.5 py-8 text-center text-[12px] text-ink-muted">
-                      Loading…
-                    </td>
-                  </tr>
-                ) : rows.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-3.5 py-8 text-center text-[12px] text-ink-muted">
-                      No notices match.
-                    </td>
-                  </tr>
-                ) : (
-                  rows.map((a) => (
-                    <ManageRow
-                      key={a.id}
-                      a={a}
-                      summary={p.summary?.[a.id] ?? null}
-                      summaryLoaded={p.summary != null}
-                      pendingForMe={isPendingForMe(a, p.addressedIds, p.ackedIds)}
-                      selected={a.id === p.selectedId}
-                      lookups={p.lookups}
-                      onSelect={() => p.onSelect(a.id)}
-                    />
-                  ))
-                )}
-              </tbody>
-            </table>
+            <DataTable<Announcement>
+              tableId="announcements-manage"
+              exportName="announcements"
+              exportXlsx
+              columns={manageColumns}
+              rows={p.loading && rows.length === 0 ? null : rows}
+              loading={p.loading && rows.length === 0}
+              emptyLabel="No notices match."
+              getRowKey={(a) => a.id}
+              onRowClick={(a) => p.onSelect(a.id)}
+              getRowClassName={(a) => (a.id === p.selectedId ? "bg-primary-soft" : undefined)}
+            />
           </div>
 
           <div className="flex shrink-0 items-center justify-between border-t border-border bg-surface-2 px-3.5 py-[9px] text-[11.5px] text-ink-muted">
@@ -262,85 +301,6 @@ function Stat({ label, value, valueCls }: { label: string; value: string; valueC
         {value}
       </span>
     </div>
-  );
-}
-
-function ManageRow({
-  a,
-  summary,
-  summaryLoaded,
-  pendingForMe,
-  selected,
-  lookups,
-  onSelect,
-}: {
-  a: Announcement;
-  summary: { total: number; acked: number } | null;
-  summaryLoaded: boolean;
-  pendingForMe: boolean;
-  selected: boolean;
-  lookups: NameLookups;
-  onSelect: () => void;
-}) {
-  const meta = CATEGORY_META[categoryOf(a)];
-  const pct = summary && summary.total > 0 ? ackPercent(summary.acked, summary.total) : null;
-  const status = MANAGE_STATUS_META[manageStatus(a, { pendingForMe, pct })];
-  const author = a.createdByName?.trim();
-  return (
-    <tr
-      onClick={onSelect}
-      aria-selected={selected}
-      className={cn(
-        "cursor-pointer border-b border-border-subtle",
-        selected ? "bg-primary-soft" : "bg-surface hover:bg-surface-dim",
-      )}
-    >
-      <td className="py-[11px] pl-3.5 pr-2.5">
-        <span
-          className={cn(
-            "inline-flex rounded-full px-2 py-[2px] text-[10px] font-bold uppercase",
-            meta.pillCls,
-          )}
-        >
-          {meta.label}
-        </span>
-        {docTypeTag(a) && (
-          <span className="ml-1 inline-flex rounded-full border border-border px-1.5 py-[1px] font-mono text-[9.5px] font-bold text-ink-muted">
-            {docTypeTag(a)}
-          </span>
-        )}
-      </td>
-      <td className="px-2.5 py-[11px]">
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[13px] font-[650] text-ink">{a.title}</span>
-          <span className="font-mono text-[10px] text-ink-muted">
-            {docNo(a)}
-            {author && ` · ${author}`}
-          </span>
-        </div>
-      </td>
-      <td className="px-2.5 py-[11px] text-[12px] text-ink-secondary">{audienceLabel(a, lookups)}</td>
-      <td className="px-2.5 py-[11px] font-mono text-[11px] text-ink-secondary">
-        {fmtDateTime(a.createdAt)}
-      </td>
-      <td className="px-2.5 py-[11px] text-right">
-        <div className="flex items-center justify-end gap-2">
-          <div className="h-[5px] w-14 overflow-hidden rounded-full bg-surface-dim">
-            {pct != null && (
-              <div className={cn("h-full", ackRateBarCls(pct))} style={{ width: `${pct}%` }} />
-            )}
-          </div>
-          <span className="font-money text-[12px] font-[650] text-ink">
-            {pct != null ? `${pct}%` : summaryLoaded ? "—" : "…"}
-          </span>
-        </div>
-      </td>
-      <td className="py-[11px] pl-2.5 pr-3.5">
-        <span className={cn("inline-flex rounded-full px-2 py-[2px] text-[10px] font-bold", status.cls)}>
-          {status.label}
-        </span>
-      </td>
-    </tr>
   );
 }
 
