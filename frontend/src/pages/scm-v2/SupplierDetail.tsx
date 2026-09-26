@@ -81,7 +81,7 @@ import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import { composeSupplierSku, looksAmbiguous } from '../../vendor/scm/lib/supplier-sku-helpers';
 import { parseSupplierCategories, displaySupplierCategories } from '../../vendor/scm/lib/supplier-categories';
 import { SupplyCategoryPicker, useSupplierCategoryPool } from '../../vendor/scm/components/SupplyCategoryPicker';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -1021,7 +1021,7 @@ const bindingRowKey = (b: BindingRow) => b.id;
 function bindingHeadColumns(
   supplierId: string,
   update: ReturnType<typeof useUpdateBinding>,
-): DataGridColumn<BindingRow>[] {
+): GridColumn<BindingRow>[] {
   return [
     {
       key: 'code',
@@ -1062,7 +1062,7 @@ function bindingTailColumns(
   remove: ReturnType<typeof useDeleteBinding>,
   onEdit: (b: BindingRow) => void,
   setAnchor: ReturnType<typeof useSetCostAnchor>,
-): DataGridColumn<BindingRow>[] {
+): GridColumn<BindingRow>[] {
   return [
     {
       key: 'lead',
@@ -1152,7 +1152,7 @@ const DefaultSkuMappingsTable = ({
   const remove = useDeleteBinding();
   const setAnchor = useSetCostAnchor();
 
-  const columns = useMemo<DataGridColumn<BindingRow>[]>(() => [
+  const columns = useMemo<GridColumn<BindingRow>[]>(() => [
     ...bindingHeadColumns(supplierId, update),
     {
       key: 'price',
@@ -1172,7 +1172,7 @@ const DefaultSkuMappingsTable = ({
   ], [supplierId, update, remove, onEdit, setAnchor]);
 
   return (
-    <DataGrid
+    <DataGridCompat
       rows={bindings}
       columns={columns}
       storageKey={storageKey}
@@ -1234,9 +1234,9 @@ const SofaSkuMappingsTable = ({
     [config.data],
   );
 
-  const columns = useMemo<DataGridColumn<BindingRow>[]>(() => [
+  const columns = useMemo<GridColumn<BindingRow>[]>(() => [
     ...bindingHeadColumns(supplierId, update),
-    ...heights.map<DataGridColumn<BindingRow>>((h) => ({
+    ...heights.map<GridColumn<BindingRow>>((h) => ({
       key: `h-${h}`,
       label: `${h}"`,
       width: 110,
@@ -1308,7 +1308,7 @@ const SofaSkuMappingsTable = ({
         </span>
       </div>
 
-      <DataGrid
+      <DataGridCompat
         rows={bindings}
         columns={columns}
         storageKey={storageKey}
@@ -1345,9 +1345,9 @@ const BedframeSkuMappingsTable = ({
   const remove = useDeleteBinding();
   const setAnchor = useSetCostAnchor();
 
-  const columns = useMemo<DataGridColumn<BindingRow>[]>(() => [
+  const columns = useMemo<GridColumn<BindingRow>[]>(() => [
     ...bindingHeadColumns(supplierId, update),
-    ...(['P1', 'P2'] as const).map<DataGridColumn<BindingRow>>((tier) => ({
+    ...(['P1', 'P2'] as const).map<GridColumn<BindingRow>>((tier) => ({
       key: `price-${tier}`,
       label: tier === 'P1' ? 'Price 1' : 'Price 2',
       width: 120,
@@ -1375,7 +1375,7 @@ const BedframeSkuMappingsTable = ({
   ], [supplierId, update, remove, onEdit, setAnchor]);
 
   return (
-    <DataGrid
+    <DataGridCompat
       rows={bindings}
       columns={columns}
       storageKey={storageKey}

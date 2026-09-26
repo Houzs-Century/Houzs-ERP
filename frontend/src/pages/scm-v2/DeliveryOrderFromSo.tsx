@@ -32,7 +32,7 @@ import { ArrowRight, X, CheckSquare, Square } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
 import { useDeliverableSoLines, type DeliverableSoLine } from '../../vendor/scm/lib/delivery-order-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import styles from './SalesOrderDetail.module.css';
@@ -252,7 +252,7 @@ export const DeliveryOrderFromSo = () => {
     [picks],
   );
 
-  const columns = useMemo<DataGridColumn<DeliverableSoLine>[]>(() => [
+  const columns = useMemo<GridColumn<DeliverableSoLine>[]>(() => [
     /* The per-row tick lives in the grid's first-class `selectable` column, so
        the header carries a real select-all checkbox scoped to the filtered
        rows. Don't re-add a hand-rolled `pick` column here — that header can
@@ -462,7 +462,7 @@ export const DeliveryOrderFromSo = () => {
         </p>
       )}
 
-      <DataGrid<DeliverableSoLine>
+      <DataGridCompat<DeliverableSoLine>
         rows={rows}
         columns={columns}
         storageKey={STORAGE_KEY}

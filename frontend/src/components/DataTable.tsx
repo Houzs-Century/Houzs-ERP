@@ -174,7 +174,14 @@ function DataTableInner<T, L>({
   const search: Props<T, L>["search"] =
     searchProp ??
     (clientSearch
-      ? { value: clientQuery, onChange: setClientQuery, placeholder: clientSearch.placeholder, debounceMs: 150 }
+      ? {
+          value: clientQuery,
+          onChange: setClientQuery,
+          placeholder: clientSearch.placeholder,
+          debounceMs: 150,
+          scope: "loaded",
+          loadedLimit: clientSearch.loadedLimit,
+        }
       : undefined);
   const searchInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {

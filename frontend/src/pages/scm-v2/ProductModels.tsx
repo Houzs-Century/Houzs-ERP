@@ -11,7 +11,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ProductModelDetail } from './ProductModelDetail';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { Search, Plus, Trash2, Truck, X, ImageOff, Upload, Edit3 } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
@@ -133,7 +133,7 @@ export const ProductModels = () => {
     });
   };
 
-  const gridColumns = useMemo<DataGridColumn<ProductModelRow>[]>(() => {
+  const gridColumns = useMemo<GridColumn<ProductModelRow>[]>(() => {
     const stop = {
       onClick: (e: React.MouseEvent) => e.stopPropagation(),
       onDoubleClick: (e: React.MouseEvent) => e.stopPropagation(),
@@ -400,7 +400,7 @@ export const ProductModels = () => {
           chip — opens the detail drawer (PR #137 double-click semantics
           preserved). The photo cell keeps its click-to-upload /
           right-click-to-remove behaviour. */}
-      <DataGrid
+      <DataGridCompat
         rows={filtered}
         columns={gridColumns}
         storageKey={PM_GRID_KEY}

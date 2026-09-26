@@ -55,7 +55,7 @@ import {
   type FleetFilter,
 } from '../../vendor/scm/lib/lorries-queries';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { DATA_GRID_LAYOUT_KEYS } from '../../vendor/scm/components/dataGridLayoutKeys';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { LorryDetail } from './LorryDetail';
@@ -136,7 +136,7 @@ const DriversSection = () => {
      reorder / pin / persisted layout. The Active toggle stays an inline
      checkbox; stopPropagation so it never reads as a row click. IC Number ships
      default-hidden (low-value) — re-enable via the Columns popover. */
-  const columns = useMemo<DataGridColumn<DriverRow>[]>(() => [
+  const columns = useMemo<GridColumn<DriverRow>[]>(() => [
     {
       key: 'code',
       label: 'Code',
@@ -244,7 +244,7 @@ const DriversSection = () => {
         <p className={styles.eyebrow}>{drivers.data?.length ?? 0} drivers</p>
       </div>
 
-      <DataGrid
+      <DataGridCompat
         rows={drivers.data ?? []}
         columns={columns}
         storageKey={DATA_GRID_LAYOUT_KEYS.fleetDrivers}
@@ -325,7 +325,7 @@ const HelpersSection = () => {
   const update = useUpdateHelper();
   const updateMutate = update.mutate;
 
-  const columns = useMemo<DataGridColumn<HelperRow>[]>(() => [
+  const columns = useMemo<GridColumn<HelperRow>[]>(() => [
     {
       key: 'code',
       label: 'Code',
@@ -411,7 +411,7 @@ const HelpersSection = () => {
         <p className={styles.eyebrow}>{helpers.data?.length ?? 0} helpers</p>
       </div>
 
-      <DataGrid
+      <DataGridCompat
         rows={helpers.data ?? []}
         columns={columns}
         storageKey="dg-helpers"
@@ -511,7 +511,7 @@ const LorriesSection = () => {
     [openId, lorries.data],
   );
 
-  const columns = useMemo<DataGridColumn<LorryRow>[]>(() => [
+  const columns = useMemo<GridColumn<LorryRow>[]>(() => [
     {
       key: 'plate',
       label: 'Plate',
@@ -620,7 +620,7 @@ const LorriesSection = () => {
         <p className={styles.eyebrow}>{lorries.data?.length ?? 0} lorries</p>
       </div>
 
-      <DataGrid
+      <DataGridCompat
         rows={lorries.data ?? []}
         columns={columns}
         storageKey="dg-lorries"

@@ -24,7 +24,7 @@ import {
   useUpdateCurrency,
   type CurrencyRow,
 } from '../../vendor/scm/lib/currencies-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
@@ -41,7 +41,7 @@ export const Currencies = () => {
   const [editing, setEditing] = useState<CurrencyRow | null>(null);
   const currencies = useCurrencies();
 
-  const columns = useMemo<DataGridColumn<CurrencyRow>[]>(() => [
+  const columns = useMemo<GridColumn<CurrencyRow>[]>(() => [
     {
       key: 'code',
       label: 'Code',
@@ -123,7 +123,7 @@ export const Currencies = () => {
         GRN, Purchase Invoice and Payment Voucher auto-fill their exchange rate from here.
       </p>
 
-      <DataGrid
+      <DataGridCompat
         rows={currencies.data ?? []}
         columns={columns}
         storageKey="dg-currencies"

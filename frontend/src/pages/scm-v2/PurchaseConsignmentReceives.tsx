@@ -25,7 +25,7 @@ import {
   useCancelPurchaseConsignmentReceive,
   usePurchaseConsignmentReceiveDetail,
 } from '../../vendor/scm/lib/purchase-consignment-receive-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
@@ -58,7 +58,7 @@ type GrnRow = Record<string, unknown> & {
   has_children?: boolean;
 };
 
-const buildColumns = (): DataGridColumn<GrnRow>[] => [
+const buildColumns = (): GridColumn<GrnRow>[] => [
   {
     key: 'receive_number', label: 'Receive No.', width: 150, sortable: true,
     accessor: (g) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{g.receive_number}</span>,
@@ -146,7 +146,7 @@ type GrnItem = Record<string, unknown> & {
   received_at?: string | null;
 };
 
-const buildDrilldownColumns = (currency: string): DataGridColumn<GrnItem>[] => [
+const buildDrilldownColumns = (currency: string): GridColumn<GrnItem>[] => [
   {
     key: 'item_code', label: 'Item Code', width: 130,
     accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.item_code ?? '—'}</span>,
@@ -228,7 +228,7 @@ const ExpandedLines = ({ grn }: { grn: GrnRow }) => {
 
   return (
     <div style={{ padding: 'var(--space-2) var(--space-3) var(--space-3) 40px', background: 'var(--c-cream)' }}>
-      <DataGrid<GrnItem>
+      <DataGridCompat<GrnItem>
         rows={items}
         columns={columns}
         storageKey="pc-receive-drilldown-grid.v1"
@@ -318,7 +318,7 @@ export const PurchaseConsignmentReceives = () => {
         onChange={(v) => setStatusChip(v)}
       />
 
-      <DataGrid<GrnRow>
+      <DataGridCompat<GrnRow>
         rows={rows}
         columns={columns}
         storageKey={PCR_LIST_STORAGE_KEY}

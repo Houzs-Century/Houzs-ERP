@@ -15,7 +15,7 @@ import {
   type Warehouse,
   type WarehouseType,
 } from '../../vendor/scm/lib/inventory-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { WarehouseFormDrawer } from '../../vendor/scm/components/WarehouseFormDrawer';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
@@ -43,7 +43,7 @@ export const Warehouses = () => {
   /* Shared DataGrid conversion (2026-06-12) — sort / per-column filter /
      column show-hide / reorder / pin / persisted layout. The Edit button
      stopPropagations so it never reads as a row click. */
-  const columns = useMemo<DataGridColumn<Warehouse>[]>(() => [
+  const columns = useMemo<GridColumn<Warehouse>[]>(() => [
     {
       key: 'code',
       label: 'Code',
@@ -167,7 +167,7 @@ export const Warehouses = () => {
         </label>
       </div>
 
-      <DataGrid
+      <DataGridCompat
         rows={warehouses.data ?? []}
         columns={columns}
         storageKey="dg-warehouses"

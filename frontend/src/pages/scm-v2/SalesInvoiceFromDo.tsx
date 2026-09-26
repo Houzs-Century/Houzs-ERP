@@ -37,7 +37,7 @@ import { ArrowRight, X, CheckSquare, Square } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
 import { useInvoiceableDoLines, type DoRemainingLine } from '../../vendor/scm/lib/sales-invoice-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import styles from './SalesOrderDetail.module.css';
@@ -223,7 +223,7 @@ export const SalesInvoiceFromDo = () => {
     [picks],
   );
 
-  const columns = useMemo<DataGridColumn<DoRemainingLine>[]>(() => [
+  const columns = useMemo<GridColumn<DoRemainingLine>[]>(() => [
     /* The per-row tick lives in the grid's first-class `selectable` column, so the
        header carries a real select-all checkbox scoped to the filtered rows. Don't
        re-add a hand-rolled `pick` column — that header can only hold a string. */
@@ -432,7 +432,7 @@ export const SalesInvoiceFromDo = () => {
         </p>
       )}
 
-      <DataGrid<DoRemainingLine>
+      <DataGridCompat<DoRemainingLine>
         rows={rows}
         columns={columns}
         storageKey={STORAGE_KEY}

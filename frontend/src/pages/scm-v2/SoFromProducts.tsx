@@ -31,7 +31,7 @@ import { Button } from '@2990s/design-system';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import { useMfgProducts, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
 import { useCreateMfgSalesOrder } from '../../vendor/scm/lib/sales-order-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
@@ -268,7 +268,7 @@ export const SoFromProducts = () => {
      CONTROLLED off `picks`, so windowed rendering on long catalogs can't
      drop in-progress state; both cells stop propagation so a click never
      double-fires through the row. */
-  const pickColumns = useMemo<DataGridColumn<MfgProductRow>[]>(() => {
+  const pickColumns = useMemo<GridColumn<MfgProductRow>[]>(() => {
     const stop = {
       onClick: (e: React.MouseEvent) => e.stopPropagation(),
       onDoubleClick: (e: React.MouseEvent) => e.stopPropagation(),
@@ -532,7 +532,7 @@ export const SoFromProducts = () => {
               per-category sticky headers live on as a default group-by
               Category (remove the chip for a flat list). */}
           <div style={{ marginTop: 'var(--space-3)' }}>
-            <DataGrid
+            <DataGridCompat
               rows={products}
               columns={pickColumns}
               storageKey={PICK_GRID_KEY}

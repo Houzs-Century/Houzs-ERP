@@ -36,7 +36,7 @@ import {
   type OutstandingPoItem,
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useGrnDetail, useAddGrnItem } from '../../vendor/scm/lib/grn-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -308,7 +308,7 @@ export const GrnFromPo = () => {
   //    Item Code / Description+variants / Ordered / Received / Pick Qty /
   //    Expected / Line Value). Memoized on `picks` so the controlled inputs
   //    re-render when pick state changes (DataGrid is React.memo'd). ────────
-  const columns = useMemo<DataGridColumn<OutstandingPoItem>[]>(() => [
+  const columns = useMemo<GridColumn<OutstandingPoItem>[]>(() => [
     {
       key: 'pick', label: '', width: 40, sortable: false, groupable: false,
       accessor: (r) => {
@@ -644,7 +644,7 @@ export const GrnFromPo = () => {
         </p>
       )}
 
-      <DataGrid<OutstandingPoItem>
+      <DataGridCompat<OutstandingPoItem>
         rows={rows}
         columns={columns}
         storageKey={STORAGE_KEY}

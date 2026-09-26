@@ -14,7 +14,7 @@
 //     the headline numbers (matches the Houzs interactive feel)
 //   - Horizontal filter row (Filter icon · search · All Brands ▼ ·
 //     All Agents ▼ · All Venues ▼ · date from – to)
-//   - <DataGrid groupBanner={false}> hides the "drag column header here to
+//   - <DataGridCompat groupBanner={false}> hides the "drag column header here to
 //     group by that column" banner
 //
 // 2026-05-27 HOUZS port (so-list-houzs-port): re-ordered columns to match
@@ -34,7 +34,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, X, Search } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { ListingPickerDialog, type ListingChoice } from '../../vendor/scm/components/ListingPickerDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -445,7 +445,7 @@ const stockLabelOf = (it: SoItem): string => {
    RM 0.00. The backend also omits the keys from the payload
    (canViewScmFinance), so rendering them for a non-finance user could only ever
    print zeros. */
-const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGridColumn<SoItem>[] => [
+const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): GridColumn<SoItem>[] => [
   {
     key: 'group', label: 'Group', width: 90, groupable: true,
     accessor: (it) => <CategoryPill group={it.item_group} />,
@@ -562,7 +562,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
           searchValue: (it) => String(lineMarginOf(it)),
           sortFn: (a, b) => lineMarginOf(a) - lineMarginOf(b),
         },
-      ] as DataGridColumn<SoItem>[])
+      ] as GridColumn<SoItem>[])
     : []),
   {
     key: 'stock', label: 'Stock', width: 100, groupable: true,
@@ -681,7 +681,7 @@ const ExpandedSoLines = ({ docNo, canFinance }: { docNo: string; canFinance: boo
           `embedded` mode (no search box / footer chrome). Layout persists under
           one shared key so the operator's column choices follow them into every
           SO they expand. */}
-      <DataGrid<SoItem>
+      <DataGridCompat<SoItem>
         rows={items}
         columns={columns}
         storageKey="so-drilldown-grid.v1"
@@ -1036,7 +1036,7 @@ export const ConsignmentOrders = () => {
         initial={outstandingOnly ? 'outstanding-listing' : 'listing'}
       />
 
-      <DataGrid<SoRow>
+      <DataGridCompat<SoRow>
         rows={searchTransition.resultsAreStale ? [] : baseRows}
         columns={COLUMNS}
         storageKey={STORAGE_KEY}
@@ -1187,7 +1187,7 @@ const CO_FINANCE_COL_KEYS = new Set<string>([
 
 const buildAllColumns = (
   staffById: Map<string, string>,
-): DataGridColumn<SoRow>[] => [
+): GridColumn<SoRow>[] => [
   /* ── HOUZS default-visible 18 ─────────────────────────────────────── */
   {
     key: 'doc_no', label: 'Doc. No.', width: 160, sortable: true, groupable: false,
@@ -1636,5 +1636,5 @@ const buildAllColumns = (
 const buildColumns = (
   staffById: Map<string, string>,
   canFinance: boolean,
-): DataGridColumn<SoRow>[] =>
+): GridColumn<SoRow>[] =>
   buildAllColumns(staffById).filter((col) => canFinance || !CO_FINANCE_COL_KEYS.has(col.key));

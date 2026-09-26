@@ -32,7 +32,7 @@ import {
 } from '../../vendor/scm/lib/suppliers-queries';
 import { poStatusLabel } from '../../vendor/scm/lib/po-status';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
@@ -68,7 +68,7 @@ const summarizeItems = (items: PoHeaderRow['items']): string | null => {
 
 const PC_ORDER_LIST_STORAGE_KEY = 'pc-order-list.layout.v1';
 
-const buildColumns = (): DataGridColumn<PoHeaderRow>[] => [
+const buildColumns = (): GridColumn<PoHeaderRow>[] => [
   {
     key: 'pc_number', label: 'P/CO No.', width: 150, sortable: true,
     // Backend (purchase-consignment-orders list) returns pc_number, not the
@@ -231,7 +231,7 @@ export const PurchaseConsignmentOrders = () => {
         </div>
       )}
 
-      <DataGrid<PoHeaderRow>
+      <DataGridCompat<PoHeaderRow>
         rows={rows}
         columns={columns}
         storageKey={PC_ORDER_LIST_STORAGE_KEY}
@@ -273,7 +273,7 @@ export const PurchaseConsignmentOrders = () => {
 const buildDrilldownColumns = (
   currency: Currency,
   headerExpectedAt: string | null,
-): DataGridColumn<PoItemRow>[] => [
+): GridColumn<PoItemRow>[] => [
   {
     key: 'group', label: 'Group', width: 90, groupable: true,
     accessor: (it) => <ItemGroupPill group={it.item_group ?? null} />,
@@ -382,7 +382,7 @@ const ExpandedLines = ({ po }: { po: PoHeaderRow }) => {
 
   return (
     <div style={{ padding: 'var(--space-2) var(--space-3) var(--space-3) 40px', background: 'var(--c-cream)' }}>
-      <DataGrid<PoItemRow>
+      <DataGridCompat<PoItemRow>
         rows={items}
         columns={columns}
         storageKey="pc-order-drilldown-grid.v1"

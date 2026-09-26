@@ -7,7 +7,7 @@ import { useCallback } from 'react';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import { DetailListingShell } from '../../components/scm-v2/DetailListingShell';
 import { useSalesInvoiceDetailListing, type DetailListingRow } from '../../vendor/scm/lib/reports-queries';
-import type { DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import type { GridColumn } from '../../components/DataGridCompat';
 import styles from './SalesOrderDetailListing.module.css';
 import { transferFromColumnLabel } from "../../lib/convertScope";
 import { soRefOfStamp } from "../../lib/so-ref-search";
@@ -35,7 +35,7 @@ const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
 };
 
 export const SalesInvoiceDetailListing = () => {
-  const buildColumns = useCallback((opts: { checked: Record<string, boolean>; onToggle: (id: string) => void }): DataGridColumn<SiRow>[] => [
+  const buildColumns = useCallback((opts: { checked: Record<string, boolean>; onToggle: (id: string) => void }): GridColumn<SiRow>[] => [
     {
       key: 'check', label: 'Check', width: 50, align: 'left', sortable: false, groupable: false,
       accessor: (r) => (

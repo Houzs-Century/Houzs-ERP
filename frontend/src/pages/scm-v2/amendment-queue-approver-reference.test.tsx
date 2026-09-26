@@ -86,7 +86,7 @@ describe('desktop Sales Order Amendment queue', () => {
       row('c', 12, { so_ref: null, so_customer_so_no: null }),
     ];
     const { container } = render(<MemoryRouter><Amendments /></MemoryRouter>);
-    expect(screen.getByRole('button', { name: 'Ref No.' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: /^Ref No./ })).toBeTruthy();
     const rows = [...container.querySelectorAll('tr[data-vrow]')].map((tr) => tr.textContent);
     expect(rows[0]).toContain('MR TAN / SUNWAY');
     expect(rows[0]).not.toContain('IGNORED WHEN REF IS SET');

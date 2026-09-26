@@ -20,7 +20,7 @@ import { Button } from '@2990s/design-system';
 import { usePaymentVouchers, useCancelPaymentVoucher, useSubmitPaymentVoucher, useCheckPaymentVoucher, useApprovePaymentVoucher, fetchPvPrintDetail, fetchPvPrintBundle, type PaymentVoucherRow } from '../../vendor/scm/lib/payment-voucher-queries';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { deliverPdfBlob, type PdfAction } from '../../vendor/scm/lib/pdf-common';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -64,7 +64,7 @@ const fmtMoney = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi,
 
 const PV_LIST_STORAGE_KEY = 'pv-list.layout.v1';
 
-const buildPvColumns = (): DataGridColumn<PaymentVoucherRow>[] => [
+const buildPvColumns = (): GridColumn<PaymentVoucherRow>[] => [
   {
     key: 'pv_number', label: 'Voucher No.', width: 150, sortable: true,
     accessor: (r) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.pv_number}</span>,
@@ -428,7 +428,7 @@ export const PaymentVouchers = () => {
         </div>
       )}
 
-      <DataGrid<PaymentVoucherRow>
+      <DataGridCompat<PaymentVoucherRow>
         rows={rows}
         columns={columns}
         storageKey={PV_LIST_STORAGE_KEY}
