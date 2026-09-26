@@ -24,7 +24,7 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, Download, Landmark, Undo2 } from 'lucide-react';
 import {
   useSettlementBatches, useSettlementBatch, useMarkBatchReceived, useUndoReceipt, useInTransit,
-  type AgeBucket, type SettlementBatch,
+  type AgeBucket, type InTransitLine, type SettlementBatch,
 } from './settlement-queries';
 import {
   ICON, fmt, btn, cell, num, table, headRow, rowLine, softText, danger, good, panel,
@@ -37,6 +37,7 @@ import grid from './MerchantRecon.module.css';
 import { downloadCSV, toCSV } from '../../lib/csv';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DataTable, type Column } from '../../components/DataTable';
 
 /* Three views of the same money, and the FILE comes first now (layer 4).
    Owner, 2026-08-19: 我不是应该upload bank statement 或 daily transaction report
@@ -82,6 +83,7 @@ const WaitingForMoney = () => {
   const batches = useSettlementBatches();
   const [batchId, setBatchId] = useState<number | null>(null);
   const [showSettled, setShowSettled] = useState(false);
+  const [openStatements, setOpenStatements] = useState<Set<string>>(new Set());
 
   const all = batches.data?.batches ?? [];
   const outstandingOf = (b: SettlementBatch) => b.outstanding_sen ?? payableOf(b) - (b.received_sen ?? 0);
@@ -98,6 +100,56 @@ const WaitingForMoney = () => {
 
   /* ONE THING AT A TIME: working a statement replaces the list. */
   if (batchId != null) return <BatchReceipts batchId={batchId} onBack={() => setBatchId(null)} />;
+
+  const toggleStatement = (id: number) =>
+    setOpenStatements((prev) => {
+      const next = new Set(prev);
+      const k = String(id);
+      if (next.has(k)) next.delete(k); else next.add(k);
+      return next;
+    });
+  const statementColumns: Column<SettlementBatch>[] = [
+    { key: 'acquirer', label: 'Acquirer', render: (b) => <span className={styles.codeChip}>{b.acquirer_code}</span>, getValue: (b) => b.acquirer_code },
+    {
+      key: 'statement', label: 'Statement',
+      render: (b) => (
+        <>
+          <b style={{ wordBreak: 'break-all' }}>{b.file_name}</b>
+          <div>
+            <button type="button" style={{ ...btn(), padding: '2px 8px', marginTop: 4 }}
+              aria-label={`Transactions in ${b.file_name}`} onClick={(e) => { e.stopPropagation(); toggleStatement(b.id); }}>
+              {openStatements.has(String(b.id)) ? 'Hide' : 'Show'} its {b.row_count} transaction{b.row_count === 1 ? '' : 's'}
+            </button>
+          </div>
+        </>
+      ),
+      getValue: (b) => b.file_name,
+    },
+    { key: 'period', label: 'Period', render: (b) => `${b.period_from} → ${b.period_to}`, getValue: (b) => b.period_from, exportFormat: 'date' },
+    {
+      key: 'net', label: 'Net it should pay', align: 'right', render: (b) => fmt(payableOf(b)),
+      getValue: (b) => payableOf(b), exportValue: (b) => payableOf(b) / 100, exportFormat: 'money',
+    },
+    {
+      key: 'received', label: 'Received', align: 'right', render: (b) => ((b.received_sen ?? 0) === 0 ? '—' : fmt(b.received_sen ?? 0)),
+      getValue: (b) => b.received_sen ?? 0, exportValue: (b) => (b.received_sen ?? 0) / 100, exportFormat: 'money',
+    },
+    {
+      key: 'owed', label: 'Still owed', align: 'right',
+      render: (b) => {
+        const owed = outstandingOf(b);
+        return <span style={{ fontWeight: owed === 0 ? undefined : 700, color: owed === 0 ? good : undefined }}>{owed === 0 ? 'all in' : fmt(owed)}</span>;
+      },
+      getValue: (b) => outstandingOf(b), exportValue: (b) => outstandingOf(b) / 100, exportFormat: 'money',
+    },
+    {
+      key: 'action', label: '', exportLabel: 'Action',
+      render: (b) => {
+        const owed = outstandingOf(b);
+        return <button type="button" style={btn(owed !== 0)} onClick={() => setBatchId(b.id)}>{owed === 0 ? 'Open' : 'Record the money'}</button>;
+      },
+    },
+  ];
 
   return (
     <div className="space-y-3">
@@ -154,22 +206,20 @@ const WaitingForMoney = () => {
           rather than spread across the screen, and their query does not even
           run until he asks. */}
       {shown.length > 0 && (
-        <table className={grid.grid}>
-          <thead>
-            <tr>
-              <th>Acquirer</th>
-              <th>Statement</th>
-              <th>Period</th>
-              <th className={grid.num}>Net it should pay</th>
-              <th className={grid.num}>Received</th>
-              <th className={grid.num}>Still owed</th>
-              <th />
-            </tr>
-          </thead>
-          {shown.map((b) => (
-            <StatementRow key={b.id} batch={b} owed={outstandingOf(b)} onOpen={() => setBatchId(b.id)} />
-          ))}
-        </table>
+        <DataTable<SettlementBatch>
+          tableId="bank-recon-statements"
+          exportName="bank-recon-statements"
+          exportXlsx
+          columns={statementColumns}
+          rows={shown}
+          getRowKey={(b) => b.id}
+          expandable={{
+            render: (b) => <StatementTransactions batchId={b.id} />,
+            rowKey: (b) => String(b.id),
+            expandedIds: openStatements,
+            onExpandedChange: setOpenStatements,
+          }}
+        />
       )}
     </div>
   );
@@ -188,48 +238,12 @@ const WaitingForMoney = () => {
    folded away, and `useSettlementBatch(null)` means the query for them does
    not run at all until he opens one. */
 
-const StatementRow = ({ batch, owed, onOpen }: {
-  batch: SettlementBatch; owed: number; onOpen: () => void;
-}) => {
-  const [open, setOpen] = useState(false);
-  const q = useSettlementBatch(open ? batch.id : null);
+/* The statement's transactions, read only once it is opened. */
+const StatementTransactions = ({ batchId }: { batchId: number }) => {
+  const q = useSettlementBatch(batchId);
   const rows = q.data?.rows ?? [];
-  const received = batch.received_sen ?? 0;
-
   return (
-    <tbody>
-      <tr>
-        <td><span className={styles.codeChip}>{batch.acquirer_code}</span></td>
-        <td>
-          <b style={{ wordBreak: 'break-all' }}>{batch.file_name}</b>
-          <div>
-            <button type="button" style={{ ...btn(), padding: '2px 8px', marginTop: 4 }}
-              aria-label={`Transactions in ${batch.file_name}`} onClick={() => setOpen(!open)}>
-              {open ? 'Hide' : 'Show'} its {batch.row_count} transaction{batch.row_count === 1 ? '' : 's'}
-            </button>
-          </div>
-        </td>
-        <td>{batch.period_from} → {batch.period_to}</td>
-        <td className={grid.num}>{fmt(payableOf(batch))}</td>
-        <td className={grid.num}>{received === 0 ? '—' : fmt(received)}</td>
-        <td className={grid.num}
-          style={{ fontWeight: owed === 0 ? undefined : 700, color: owed === 0 ? good : undefined }}>
-          {owed === 0 ? 'all in' : fmt(owed)}
-        </td>
-        <td>
-          <button type="button" style={btn(owed !== 0)} onClick={onOpen}>
-            {owed === 0 ? 'Open' : 'Record the money'}
-          </button>
-        </td>
-      </tr>
-
-      {open && (
-        <tr>
-          {/* Indented under its own statement rather than given the top-level
-              columns, because these are a different kind of row — the parts of
-              the number above, not another number to compare against it. */}
-          <td />
-          <td colSpan={6} style={{ background: 'var(--c-paper)' }}>
+    <div style={{ background: 'var(--c-paper)' }}>
             {q.isLoading && <span style={softText}>Reading its transactions…</span>}
             {!q.isLoading && rows.length === 0 && <span style={softText}>This statement has no lines.</span>}
             {rows.length > 0 && (
@@ -263,10 +277,7 @@ const StatementRow = ({ batch, owed, onOpen }: {
                 </tbody>
               </table>
             )}
-          </td>
-        </tr>
-      )}
-    </tbody>
+    </div>
   );
 };
 
@@ -408,6 +419,25 @@ const IN_TRANSIT_STATE: Record<string, string> = {
 
 const AGE_BUCKETS: AgeBucket[] = ['0-7', '8-14', '15-30', 'over-30'];
 
+const TRANSIT_COLUMNS: Column<InTransitLine>[] = [
+  /* null = keyed in without a bank; listed once (docs/bugs/0688). */
+  { key: 'acquirer', label: 'Acquirer', render: (l) => <span className={styles.codeChip}>{l.acquirerCode ?? '未标'}</span>, getValue: (l) => l.acquirerCode ?? '未标' },
+  { key: 'document', label: 'Document', render: (l) => l.docNo, getValue: (l) => l.docNo },
+  { key: 'paidOn', label: 'Customer paid on', render: (l) => l.paidOn, getValue: (l) => l.paidOn, exportFormat: 'date' },
+  {
+    key: 'days', label: 'Days', align: 'right',
+    render: (l) => <span style={{ color: l.ageDays > 14 ? danger : undefined, fontWeight: l.ageDays > 14 ? 700 : undefined }}>{l.ageDays}</span>,
+    getValue: (l) => l.ageDays, exportFormat: 'number',
+  },
+  {
+    key: 'amount', label: 'Amount', align: 'right', render: (l) => fmt(l.amountSen),
+    getValue: (l) => l.amountSen, exportValue: (l) => l.amountSen / 100, exportFormat: 'money',
+  },
+  { key: 'approval', label: 'Approval', render: (l) => l.approvalCode ?? '—', getValue: (l) => l.approvalCode ?? '' },
+  { key: 'recordedBy', label: 'Recorded by', render: (l) => l.recordedBy ?? '—', getValue: (l) => l.recordedBy ?? '' },
+  { key: 'where', label: 'Where it is', render: (l) => IN_TRANSIT_STATE[l.state] ?? l.state, getValue: (l) => IN_TRANSIT_STATE[l.state] ?? l.state },
+];
+
 const InTransitTab = () => {
   const q = useInTransit();
   const data = q.data;
@@ -483,40 +513,17 @@ const InTransitTab = () => {
         </table>
       )}
 
-      {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
-      {!q.isLoading && lines.length === 0 && (
-        <div style={{ fontSize: 'var(--fs-13)', color: good }}>
-          Nothing outstanding — every card payment recorded has reached the bank.
-        </div>
-      )}
-
-      {lines.length > 0 && (
-        <table style={table}>
-          <thead>
-            <tr style={headRow}>
-              <th style={cell}>Acquirer</th><th style={cell}>Document</th>
-              <th style={cell}>Customer paid on</th><th style={num}>Days</th>
-              <th style={num}>Amount</th><th style={cell}>Approval</th>
-              <th style={cell}>Recorded by</th><th style={cell}>Where it is</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map((l) => (
-              <tr key={`${l.source}:${l.paymentId}`} style={rowLine}>
-                {/* null = keyed in without a bank; listed once (docs/bugs/0688). */}
-                <td style={cell}><span className={styles.codeChip}>{l.acquirerCode ?? '未标'}</span></td>
-                <td style={cell}>{l.docNo}</td>
-                <td style={cell}>{l.paidOn}</td>
-                <td style={{ ...num, color: l.ageDays > 14 ? danger : undefined, fontWeight: l.ageDays > 14 ? 700 : undefined }}>{l.ageDays}</td>
-                <td style={num}>{fmt(l.amountSen)}</td>
-                <td style={cell}>{l.approvalCode ?? '—'}</td>
-                <td style={cell}>{l.recordedBy ?? '—'}</td>
-                <td style={cell}>{IN_TRANSIT_STATE[l.state] ?? l.state}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <DataTable<InTransitLine>
+        tableId="bank-recon-in-transit"
+        exportName="card-money-in-transit"
+        exportXlsx
+        columns={TRANSIT_COLUMNS}
+        rows={q.data ? lines : null}
+        loading={q.isLoading}
+        error={q.isError ? 'The card money in transit did not load.' : null}
+        emptyLabel="Nothing outstanding — every card payment recorded has reached the bank."
+        getRowKey={(l) => `${l.source}:${l.paymentId}`}
+      />
     </div>
   );
 };

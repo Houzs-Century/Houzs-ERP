@@ -25,7 +25,8 @@ import { Download, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useAuth } from '../../auth/AuthContext';
 import { useAccounts } from '../../vendor/scm/lib/accounting-queries';
-import { rpReportPath, useRpReport, type RpReport } from '../../vendor/scm/lib/rp-report-queries';
+import { rpReportPath, useRpReport, type RpEntry, type RpReport } from '../../vendor/scm/lib/rp-report-queries';
+import { DataTable, type Column } from '../../components/DataTable';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { rpLines, type MonthColumn } from '../../vendor/scm/lib/report-monthly';
 import { ByMonthButton, MonthlyReport } from './MonthlyReport';
@@ -93,6 +94,7 @@ export const ReceiptsPaymentsTab = () => {
     if (!r || !drill) return [];
     return r.entries.filter((e) => drill.sides.includes(e.side) && drill.rowKeys.includes(e.rowKey) && (drill.column == null || e.column === drill.column));
   }, [r, drill]);
+  const drillRows = useMemo<DrillEntry[]>(() => entries.map((e, idx) => ({ ...e, idx })), [entries]);
   const pick = (node: LaidNode, column: string | null) =>
     setDrill({ sides: sidesOf(node), id: node.id, label: node.label, rowKeys: leafKeys(node), column });
   /* The levels count inside a side: L1 is the first layer under RECEIPTS / PAYMENTS. */
@@ -179,28 +181,35 @@ export const ReceiptsPaymentsTab = () => {
             </b>
             <Button variant="ghost" size="sm" onClick={() => setDrill(null)}>Close</Button>
           </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)', marginTop: 'var(--space-2)' }}>
-            <thead>
-              <tr><th style={{ ...th, textAlign: 'left' }}>Date</th><th style={{ ...th, textAlign: 'left' }}>Journal</th><th style={{ ...th, textAlign: 'left' }}>Document</th><th style={{ ...th, textAlign: 'left' }}>Party</th><th style={{ ...th, textAlign: 'left' }}>Account</th><th style={{ ...th, textAlign: 'right' }}>Amount</th></tr>
-            </thead>
-            <tbody>
-              {entries.map((e, i) => (
-                <tr key={`${e.jeNo}-${e.column}-${i}`} style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)' }}>
-                  <td style={{ padding: '4px 10px', whiteSpace: 'nowrap' }}>{fmtDateOrDash(e.entryDate)}</td>
-                  <td style={{ padding: '4px 10px', fontFamily: 'var(--font-mono)' }}>{e.jeNo}</td>
-                  <td style={{ padding: '4px 10px' }}>{SOURCE_WORD[String(e.sourceType ?? '').replace(/_REVERSAL$/, '')] ?? e.sourceType ?? '—'}{e.sourceDocNo ? ` ${e.sourceDocNo}` : ''}</td>
-                  <td style={{ padding: '4px 10px' }}>{e.party ?? '—'}</td>
-                  <td style={{ padding: '4px 10px', fontFamily: 'var(--font-mono)' }}>{e.column}</td>
-                  <td style={{ padding: '4px 10px', ...num }}>{fmtRp(e.sen)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <DataTable<DrillEntry>
+            tableId="rp-drill-entries"
+            exportName="receipts-payments-entries"
+            exportXlsx
+            columns={DRILL_COLUMNS}
+            rows={drillRows}
+            emptyLabel="No entry behind this figure."
+            getRowKey={(e) => e.idx}
+          />
         </div>
       )}
     </div>
   );
 };
+
+type DrillEntry = RpEntry & { idx: number };
+const docText = (e: RpEntry): string =>
+  `${SOURCE_WORD[String(e.sourceType ?? '').replace(/_REVERSAL$/, '')] ?? e.sourceType ?? '—'}${e.sourceDocNo ? ` ${e.sourceDocNo}` : ''}`;
+const DRILL_COLUMNS: Column<DrillEntry>[] = [
+  { key: 'date', label: 'Date', render: (e) => fmtDateOrDash(e.entryDate), getValue: (e) => e.entryDate, exportFormat: 'date' },
+  { key: 'journal', label: 'Journal', render: (e) => <span style={{ fontFamily: 'var(--font-mono)' }}>{e.jeNo}</span>, getValue: (e) => e.jeNo },
+  { key: 'document', label: 'Document', render: docText, getValue: docText },
+  { key: 'party', label: 'Party', render: (e) => e.party ?? '—', getValue: (e) => e.party ?? '' },
+  { key: 'account', label: 'Account', render: (e) => <span style={{ fontFamily: 'var(--font-mono)' }}>{e.column}</span>, getValue: (e) => e.column },
+  {
+    key: 'amount', label: 'Amount', align: 'right', render: (e) => fmtRp(e.sen),
+    getValue: (e) => e.sen, exportValue: (e) => e.sen / 100, exportFormat: 'money',
+  },
+];
 
 const SectionLine = ({ label, span, muted }: { label: string; span: number; muted?: boolean }) => (
   <tr><td colSpan={span} style={{ padding: '10px 10px 4px', fontWeight: 700, ...(muted ? { fontStyle: 'italic', ...soft } : {}) }}>{label}</td></tr>

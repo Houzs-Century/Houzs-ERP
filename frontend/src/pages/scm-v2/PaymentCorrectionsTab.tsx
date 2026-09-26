@@ -22,6 +22,7 @@ import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { usePaymentCorrections, type PaymentCorrectionRow } from './accounting-phase1-queries';
+import { DataTable, type Column } from '../../components/DataTable';
 import { emptyText, ledgerText, monthText, whatChanged } from '../../vendor/scm/lib/payment-corrections-pdf';
 
 const cardStyle = {
@@ -125,24 +126,16 @@ export const PaymentCorrectionsTab = () => {
         </div>
       )}
 
-      {shown.length > 0 && (
-        <div style={{ ...cardStyle, padding: 0, overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.18))' }}>
-                <th style={{ padding: '8px 12px' }}>Done</th>
-                <th style={{ padding: '8px 12px' }}>Sales order</th>
-                <th style={{ padding: '8px 12px' }}>What</th>
-                <th style={{ padding: '8px 12px' }}>First recorded by</th>
-                <th style={{ padding: '8px 12px' }}>Reason</th>
-                <th style={{ padding: '8px 12px' }}>Ledger</th>
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((r) => <CorrectionLine key={r.id} r={r} />)}
-            </tbody>
-          </table>
-        </div>
+      {rows.length > 0 && (
+        <DataTable<PaymentCorrectionRow>
+          tableId="payment-corrections"
+          exportName={`payment-corrections-${month}`}
+          exportXlsx
+          columns={CORRECTION_COLUMNS}
+          rows={shown}
+          emptyLabel="Nobody else did anything here this month."
+          getRowKey={(r) => r.id}
+        />
       )}
 
       {q.data && print.open && (
@@ -172,46 +165,56 @@ const PILL: Record<PaymentCorrectionRow['kind'], { text: string; bg: string; col
   proof: { text: 'Proof', bg: 'rgba(34, 31, 32, 0.08)', color: 'var(--c-ink-soft, #777)' },
 };
 
-const CorrectionLine = ({ r }: { r: PaymentCorrectionRow }) => {
-  const soft = 'var(--c-ink-soft, #777)';
-  const pill = PILL[r.kind];
-  return (
-    <tr style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.10))', verticalAlign: 'top' }}>
-      <td style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}>
-        {fmtDateOrDash(r.at.slice(0, 10))}
-        <div style={{ color: soft, fontSize: 'var(--fs-12)' }}>{r.by}</div>
-      </td>
-      <td style={{ padding: '8px 12px' }}>
-        <Link to={`/scm/sales-orders/${encodeURIComponent(r.docNo)}`}>{r.docNo}</Link>
-        {r.customer && <div style={{ color: soft, fontSize: 'var(--fs-12)' }}>{r.customer}</div>}
-      </td>
-      <td style={{ padding: '8px 12px' }}>
-        <span style={{
-          padding: '1px 8px', borderRadius: 999, fontSize: 'var(--fs-12)', fontWeight: 600,
-          background: pill.bg, color: pill.color,
-        }}>
-          {pill.text}
-        </span>
-        <div style={{ marginTop: 4 }}>{whatChanged(r)}</div>
-      </td>
-      <td style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}>
-        {r.recordedBy || r.recordedOn ? (
-          <>
-            {r.recordedBy ?? '—'}
-            {r.recordedOn && <div style={{ color: soft, fontSize: 'var(--fs-12)' }}>{fmtDateOrDash(r.recordedOn.slice(0, 10))}</div>}
-          </>
-        ) : '—'}
-      </td>
-      <td style={{ padding: '8px 12px' }}>
-        {r.reason
-          ? r.reason
-          : r.beforeRule
-            ? <i style={{ color: soft }} title="Made before every payment action on the right asked for a reason (2026-09-14)">Before the rule</i>
-            : '—'}
-      </td>
-      <td style={{ padding: '8px 12px', fontFamily: 'var(--font-mono, monospace)', fontSize: 'var(--fs-12)', whiteSpace: 'nowrap' }}>
-        {ledgerText(r)}
-      </td>
-    </tr>
-  );
-};
+const soft = 'var(--c-ink-soft, #777)';
+const sub = (text: React.ReactNode) => <div style={{ color: soft, fontSize: 'var(--fs-12)' }}>{text}</div>;
+
+const CORRECTION_COLUMNS: Column<PaymentCorrectionRow>[] = [
+  {
+    key: 'done', label: 'Done',
+    render: (r) => <>{fmtDateOrDash(r.at.slice(0, 10))}{sub(r.by)}</>,
+    getValue: (r) => r.at, exportValue: (r) => r.at.slice(0, 10), exportFormat: 'date',
+  },
+  { key: 'doneBy', label: 'Done By', defaultHidden: true, render: (r) => r.by, getValue: (r) => r.by },
+  {
+    key: 'order', label: 'Sales order',
+    render: (r) => <><Link to={`/scm/sales-orders/${encodeURIComponent(r.docNo)}`}>{r.docNo}</Link>{r.customer && sub(r.customer)}</>,
+    getValue: (r) => r.docNo,
+  },
+  {
+    key: 'what', label: 'What',
+    render: (r) => {
+      const pill = PILL[r.kind];
+      return (
+        <>
+          <span style={{ padding: '1px 8px', borderRadius: 999, fontSize: 'var(--fs-12)', fontWeight: 600, background: pill.bg, color: pill.color }}>
+            {pill.text}
+          </span>
+          <div style={{ marginTop: 4 }}>{whatChanged(r)}</div>
+        </>
+      );
+    },
+    getValue: (r) => PILL[r.kind].text,
+    exportValue: (r) => `${PILL[r.kind].text}: ${whatChanged(r)}`,
+  },
+  {
+    key: 'recorded', label: 'First recorded by',
+    render: (r) => (r.recordedBy || r.recordedOn
+      ? <>{r.recordedBy ?? '—'}{r.recordedOn && sub(fmtDateOrDash(r.recordedOn.slice(0, 10)))}</>
+      : '—'),
+    getValue: (r) => r.recordedBy ?? '',
+  },
+  {
+    key: 'reason', label: 'Reason',
+    render: (r) => (r.reason
+      ? r.reason
+      : r.beforeRule
+        ? <i style={{ color: soft }} title="Made before every payment action on the right asked for a reason (2026-09-14)">Before the rule</i>
+        : '—'),
+    getValue: (r) => r.reason || (r.beforeRule ? 'Before the rule' : ''),
+  },
+  {
+    key: 'ledger', label: 'Ledger',
+    render: (r) => <span style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: 'var(--fs-12)' }}>{ledgerText(r)}</span>,
+    getValue: (r) => ledgerText(r),
+  },
+];
