@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { headerLabel } from "../lib/columnHeaderLabel";
+import { rowsToTsv } from "./dataTableClipboard";
 import { ResetFiltersButton } from "./ResetFiltersButton";
 import { TableSkeleton } from "./Skeleton";
 import {
@@ -118,6 +119,11 @@ type Props<T, L = never> = DataTableProps<T, L>;
  * epoch bumps at most once per session, and only when hydration actually moved
  * something, so this is a no-op on every warm load.
  */
+/* One mark for "nothing here" in every table (owner 2026-09-25): a cell that
+   renders nothing reads as a dash, not as a blank a user might think failed. */
+const showDash = (node: React.ReactNode): React.ReactNode =>
+  node == null || node === "" || node === false ? <span className="text-ink-muted">—</span> : node;
+
 export function DataTable<T, L = never>(props: Props<T, L>) {
   const { epoch } = useSyncExternalStore(
     subscribeTableLayouts,
@@ -1519,6 +1525,40 @@ function DataTableInner<T, L>({
     setDropCol(null);
   }
 
+  /* Ctrl+C (owner 2026-09-25): the ticked rows, or the row in focus, as cells
+     Excel pastes. A text selection is the browser's own copy and is left alone,
+     as is any key pressed inside a field. */
+  const [copiedNote, setCopiedNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!copiedNote) return;
+    const t = setTimeout(() => setCopiedNote(null), 2500);
+    return () => clearTimeout(t);
+  }, [copiedNote]);
+  function handleCopyKey(e: React.KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "c") return;
+    const target = e.target as HTMLElement;
+    if (target.closest("textarea, select, [contenteditable='true']")) return;
+    if (target instanceof HTMLInputElement && target.type !== "checkbox") return;
+    if ((window.getSelection()?.toString() ?? "") !== "") return;
+    if (!sortedRows?.length) return;
+    let picked: T[] = [];
+    if (selection && selection.selectedIds.size > 0) {
+      picked = sortedRows.filter((r) => selection.selectedIds.has(String(getRowKey(r))));
+    }
+    if (picked.length === 0) {
+      const key = target.closest<HTMLElement>("tr[data-rowkey]")?.dataset.rowkey;
+      const row = key == null ? undefined : sortedRows.find((r) => String(getRowKey(r)) === key);
+      if (row) picked = [row];
+    }
+    if (picked.length === 0 || !navigator.clipboard) return;
+    e.preventDefault();
+    const n = picked.length;
+    navigator.clipboard.writeText(rowsToTsv(picked, visibleColumns)).then(
+      () => setCopiedNote(`Copied ${n} row${n === 1 ? "" : "s"}`),
+      () => setCopiedNote("The browser blocked the copy"),
+    );
+  }
+
   const [exporting, setExporting] = useState(false);
   async function handleLineExport(spec: DataTableLineExport<T, L>) {
     if (exporting) return;
@@ -2088,6 +2128,7 @@ function DataTableInner<T, L>({
                 <span className="mx-2 text-ink-muted">·</span>
                 <span className="font-mono text-ink">{visibleColumns.length}</span>
                 <span className="ml-1 text-ink-muted">of {allColumns.length} cols</span>
+                {copiedNote && <span role="status" className="ml-2 text-primary">{copiedNote}</span>}
               </span>
             ) : (
               <span className="text-ink-muted">Loading…</span>
@@ -2223,6 +2264,7 @@ function DataTableInner<T, L>({
         >
           <div
             ref={scrollWrapRef}
+            onKeyDown={handleCopyKey}
             className="thin-scroll overflow-x-auto overflow-y-auto"
             style={freezeScrollStyle}
           >
@@ -2403,7 +2445,7 @@ function DataTableInner<T, L>({
                         isFirstStickyRight && "border-l border-border"
                       )}
                     >
-                      <span className="inline-flex items-center gap-1">
+                      <span className="inline-flex items-center gap-1" title={c.description}>
                         {c.renderHeader ? (
                           c.renderHeader()
                         ) : (
@@ -2415,7 +2457,11 @@ function DataTableInner<T, L>({
                                 aria-label="Pinned"
                               />
                             )}
-                            {headerLabel(c.label)}
+                            {c.description ? (
+                              <span className="underline decoration-ink-muted decoration-dotted underline-offset-2">{headerLabel(c.label)}</span>
+                            ) : (
+                              headerLabel(c.label)
+                            )}
                             {sortable && (
                               <span
                                 className={cn(
@@ -2611,7 +2657,7 @@ function DataTableInner<T, L>({
                            click, Shift+Enter the double-click (a keyboard has no
                            second click). Only on the row itself, never on a control
                            inside it. */
-                        tabIndex={onRowClick || onRowDoubleClick ? 0 : undefined}
+                        tabIndex={onRowClick || onRowDoubleClick ? 0 : -1}
                         onKeyDown={
                           onRowClick || onRowDoubleClick
                             ? (e) => {
@@ -2788,7 +2834,7 @@ function DataTableInner<T, L>({
                                 c.className
                               )}
                             >
-                              {c.render(row)}
+                              {showDash(c.render(row))}
                             </td>
                             </Fragment>
                           );
