@@ -1497,7 +1497,7 @@ describe("Sort is persisted, and Reset must clear it", () => {
     onSortChange.mockClear();
 
     fireEvent.click(screen.getByTitle(/^Columns —/));
-    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset to default" }));
 
     // The parent must be told, or the next query keeps the old ORDER BY even
     // though the table no longer shows a sorted column.

@@ -1254,6 +1254,7 @@ function DataTableInner<T, L>({
        with [] deps. */
     setSort(null);
     reportServerSort(null);
+    setWrapText(false);
   }
 
   /** True when the columns on screen match no offered layout — the "· edited"
