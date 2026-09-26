@@ -17,7 +17,7 @@ import type { JSX } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Search } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { formatPhone } from '@2990s/shared/phone';
@@ -159,7 +159,7 @@ const crnLineMarginOf = (it: CrnItem): number =>
    placeholder, no RM 0.00. The backend also omits the keys from the payload
    (canViewScmFinance), so rendering them for a non-finance user could only ever
    print zeros. */
-const buildCrnDrilldownColumns = (canFinance: boolean): DataGridColumn<CrnItem>[] => [
+const buildCrnDrilldownColumns = (canFinance: boolean): GridColumn<CrnItem>[] => [
   {
     key: 'group', label: 'Group', width: 90, groupable: true,
     accessor: (it) => <CategoryPill group={it.item_group} />,
@@ -250,7 +250,7 @@ const buildCrnDrilldownColumns = (canFinance: boolean): DataGridColumn<CrnItem>[
           searchValue: (it) => String(crnLineMarginOf(it)),
           sortFn: (a, b) => crnLineMarginOf(a) - crnLineMarginOf(b),
         },
-      ] as DataGridColumn<CrnItem>[])
+      ] as GridColumn<CrnItem>[])
     : []),
 ];
 
@@ -283,7 +283,7 @@ const ExpandedCrnLines = ({ id, canFinance }: { id: string; canFinance: boolean 
 
   return (
     <div style={{ padding: 'var(--space-2) var(--space-3) var(--space-2) 40px', background: 'var(--c-cream)' }}>
-      <DataGrid<CrnItem>
+      <DataGridCompat<CrnItem>
         rows={items}
         columns={columns}
         storageKey="crn-drilldown-grid.v1"
@@ -485,7 +485,7 @@ export const ConsignmentReturns = () => {
         </div>
       </div>
 
-      <DataGrid<CrnRow>
+      <DataGridCompat<CrnRow>
         rows={searchTransition.resultsAreStale ? [] : rows}
         columns={COLUMNS}
         storageKey={STORAGE_KEY}
@@ -550,7 +550,7 @@ export const ConsignmentReturns = () => {
 };
 
 /* ── Columns — mirrors the DR list set, minus the DO transfer-from column. ── */
-const buildColumns = (staffById: Map<string, string>, canFinance: boolean): DataGridColumn<CrnRow>[] => [
+const buildColumns = (staffById: Map<string, string>, canFinance: boolean): GridColumn<CrnRow>[] => [
   {
     key: 'return_number', label: 'Return No.', width: 150, sortable: true,
     accessor: (r) => (
@@ -715,6 +715,6 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
     exportFormat: 'money',
     sortFn: (a, b) => (a.total_margin_sen ?? 0) - (b.total_margin_sen ?? 0),
   },
-      ] as DataGridColumn<CrnRow>[])
+      ] as GridColumn<CrnRow>[])
     : []),
 ];

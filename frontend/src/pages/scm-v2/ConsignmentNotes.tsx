@@ -17,7 +17,7 @@ import type { JSX } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Search } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { formatPhone } from '@2990s/shared/phone';
@@ -163,7 +163,7 @@ const cnLineMarginOf = (it: CnItem): number =>
    placeholder, no RM 0.00. The backend also omits the keys from the payload
    (canViewScmFinance), so rendering them for a non-finance user could only ever
    print zeros. */
-const buildCnDrilldownColumns = (canFinance: boolean): DataGridColumn<CnItem>[] => [
+const buildCnDrilldownColumns = (canFinance: boolean): GridColumn<CnItem>[] => [
   {
     key: 'group', label: 'Group', width: 90, groupable: true,
     accessor: (it) => <CategoryPill group={it.item_group} />,
@@ -252,7 +252,7 @@ const buildCnDrilldownColumns = (canFinance: boolean): DataGridColumn<CnItem>[] 
           searchValue: (it) => String(cnLineMarginOf(it)),
           sortFn: (a, b) => cnLineMarginOf(a) - cnLineMarginOf(b),
         },
-      ] as DataGridColumn<CnItem>[])
+      ] as GridColumn<CnItem>[])
     : []),
 ];
 
@@ -285,7 +285,7 @@ const ExpandedCnLines = ({ id, canFinance }: { id: string; canFinance: boolean }
 
   return (
     <div style={{ padding: 'var(--space-2) var(--space-3) var(--space-2) 40px', background: 'var(--c-cream)' }}>
-      <DataGrid<CnItem>
+      <DataGridCompat<CnItem>
         rows={items}
         columns={columns}
         storageKey="cn-drilldown-grid.v1"
@@ -489,7 +489,7 @@ export const ConsignmentNotes = () => {
         </div>
       </div>
 
-      <DataGrid<CnRow>
+      <DataGridCompat<CnRow>
         rows={searchTransition.resultsAreStale ? [] : rows}
         columns={COLUMNS}
         storageKey={STORAGE_KEY}
@@ -554,7 +554,7 @@ export const ConsignmentNotes = () => {
 };
 
 /* ── Columns — mirrors the DO list set, adapted to CN fields. ───────────── */
-const buildColumns = (staffById: Map<string, string>, canFinance: boolean): DataGridColumn<CnRow>[] => [
+const buildColumns = (staffById: Map<string, string>, canFinance: boolean): GridColumn<CnRow>[] => [
   {
     key: 'do_number', label: 'Note No.', width: 150, sortable: true,
     accessor: (r) => (
@@ -737,6 +737,6 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
           exportFormat: 'money',
           sortFn: (a, b) => (a.total_margin_sen ?? 0) - (b.total_margin_sen ?? 0),
         },
-      ] as DataGridColumn<CnRow>[])
+      ] as GridColumn<CnRow>[])
     : []),
 ];

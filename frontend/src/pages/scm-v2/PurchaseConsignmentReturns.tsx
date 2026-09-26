@@ -24,7 +24,7 @@ import {
   useCancelPurchaseConsignmentReturn,
   usePurchaseConsignmentReturnDetail,
 } from '../../vendor/scm/lib/purchase-consignment-return-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { fmtDateOrDash, buildVariantSummary } from '@2990s/shared';
@@ -63,7 +63,7 @@ type PrRow = Record<string, unknown> & {
   pc_receive?: { id: string; receive_number: string } | null;
 };
 
-const buildColumns = (): DataGridColumn<PrRow>[] => [
+const buildColumns = (): GridColumn<PrRow>[] => [
   {
     key: 'return_number', label: 'Return No.', width: 150, sortable: true,
     accessor: (r) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.return_number}</span>,
@@ -147,7 +147,7 @@ type PrItem = Record<string, unknown> & {
   line_refund_sen?: number | null;
 };
 
-const buildDrilldownColumns = (): DataGridColumn<PrItem>[] => [
+const buildDrilldownColumns = (): GridColumn<PrItem>[] => [
   {
     key: 'item_code', label: 'Item Code', width: 130,
     accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.item_code ?? '—'}</span>,
@@ -215,7 +215,7 @@ const ExpandedLines = ({ pr }: { pr: PrRow }) => {
 
   return (
     <div style={{ padding: 'var(--space-2) var(--space-3) var(--space-3) 40px', background: 'var(--c-cream)' }}>
-      <DataGrid<PrItem>
+      <DataGridCompat<PrItem>
         rows={items}
         columns={columns}
         storageKey="pc-return-drilldown-grid.v1"
@@ -305,7 +305,7 @@ export const PurchaseConsignmentReturns = () => {
         onChange={(v) => setStatusChip(v)}
       />
 
-      <DataGrid<PrRow>
+      <DataGridCompat<PrRow>
         rows={rows}
         columns={columns}
         storageKey={PCT_LIST_STORAGE_KEY}
