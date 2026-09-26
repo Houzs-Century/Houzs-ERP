@@ -23,8 +23,6 @@ import {
   BarChart3,
   Download,
   Pencil,
-  Send,
-  CheckSquare,
   ChevronDown,
   ChevronUp,
   Paperclip,
@@ -71,10 +69,7 @@ import { EmptyState } from "../components/EmptyState";
 import { useUdf } from "../hooks/useUdf";
 import {
   EntryPanel,
-  STATUS_BADGE as SALES_STATUS_BADGE,
-  PAYMENT_TYPE_LABEL,
   type SalesEntry,
-  type EntryStatus as SalesEntryStatus,
 } from "./Sales";
 import {
   booleanPreference,
@@ -83,6 +78,7 @@ import {
   useIdentityPreference,
 } from "../hooks/useIdentityPreference";
 import { useServerSort } from "../hooks/useServerSort";
+import { ExhibitionSalesTable } from "./projects/ExhibitionSalesTable";
 import { useFocusFromUrl } from "../hooks/useFocusFromUrl";
 import { useStickyFilters } from "../hooks/useStickyFilters";
 import { useAuth } from "../auth/AuthContext";
@@ -8348,160 +8344,10 @@ function ProjectSalesEntriesSection({
         />
       )}
       {rows.length > 0 && (
-        <div className="overflow-x-auto rounded-md border border-border bg-surface">
-          <table className="w-full min-w-[760px]">
-            <thead className="bg-bg/60">
-              <tr className="text-left font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
-                <th className="px-2 py-1.5">Date</th>
-                <th className="px-2 py-1.5">Ref No.</th>
-                <th className="px-2 py-1.5">Customer</th>
-                <th className="px-2 py-1.5 text-right">Amount</th>
-                <th className="px-2 py-1.5 text-right">Deposit</th>
-                <th className="px-2 py-1.5 text-right">Balance</th>
-                <th className="px-2 py-1.5">Sales Person</th>
-                <th className="px-2 py-1.5">Status</th>
-                <th className="w-px px-1 py-1.5" />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((e) => {
-                const badge = SALES_STATUS_BADGE[e.status as SalesEntryStatus];
-                const isMine = e.created_by === meId;
-                const canEdit = canManage || (isMine && e.status === "draft");
-                const canSubmit = canEdit && e.status === "draft";
-                const deposit = e.deposit_amount ?? e.amount;
-                const balance = Math.max(0, e.amount - deposit);
-                const salesPerson =
-                  e.sales_person_name ||
-                  e.sales_person_email ||
-                  e.created_by_name ||
-                  e.created_by_email ||
-                  "—";
-                return (
-                  <tr
-                    key={e.id}
-                    className="border-t border-border-subtle text-[11.5px] hover:bg-bg/40"
-                  >
-                    <td className="px-2 py-1.5 font-mono text-ink-secondary">
-                      {formatDate(e.occurred_at)}
-                    </td>
-                    <td className="px-2 py-1.5 font-mono text-[10.5px] text-ink-secondary">
-                      {e.ref_no || "—"}
-                    </td>
-                    <td className="px-2 py-1.5">
-                      {e.customer_name === "(quick log)" ? (
-                        <div className="flex items-center gap-1.5">
-                          <span className="rounded-full border border-amber-500/40 bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-800">
-                            Quick log
-                          </span>
-                          {canLogSale && (
-                            <button
-                              onClick={() => setEditing(e)}
-                              className="text-[10px] font-semibold text-accent hover:underline"
-                            >
-                              Complete
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        <>
-                          <div className="font-semibold text-ink">{e.customer_name}</div>
-                          {e.customer_phone && (
-                            <div className="font-mono text-[9.5px] text-ink-muted">
-                              {formatPhone(e.customer_phone)}
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </td>
-                    <td className="px-2 py-1.5 text-right font-mono font-semibold">
-                      {formatCurrency(e.amount)}
-                    </td>
-                    <td className="px-2 py-1.5 text-right font-mono">
-                      <div>{formatCurrency(deposit)}</div>
-                      {e.deposit_payment_type && (
-                        <div className="mt-0.5 text-[9px] text-ink-muted">
-                          {PAYMENT_TYPE_LABEL[e.deposit_payment_type]}
-                        </div>
-                      )}
-                    </td>
-                    <td
-                      className={cn(
-                        "px-2 py-1.5 text-right font-mono",
-                        balance > 0 ? "font-semibold text-amber-700" : "text-ink-muted"
-                      )}
-                      title={balance > 0 ? "Balance to chase post-event" : "Settled in full"}
-                    >
-                      {formatCurrency(balance)}
-                    </td>
-                    <td className="px-2 py-1.5 text-[10.5px] text-ink-muted">
-                      {salesPerson}
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <span
-                        className={cn(
-                          "inline-flex rounded-full px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider",
-                          badge.cls
-                        )}
-                      >
-                        {badge.label}
-                      </span>
-                    </td>
-                    <td className="px-1 py-1">
-                      <div className="flex items-center gap-0.5">
-                        {canSubmit && (
-                          <button
-                            onClick={() => submitEntry(e)}
-                            className="rounded p-1 text-ink-muted hover:bg-accent-soft hover:text-accent"
-                            title="Submit"
-                          >
-                            <CheckSquare size={12} />
-                          </button>
-                        )}
-                        {canEdit && (
-                          <button
-                            onClick={() => setEditing(e)}
-                            className="rounded p-1 text-ink-muted hover:bg-surface-dim hover:text-ink"
-                            title="Edit"
-                          >
-                            <Pencil size={12} />
-                          </button>
-                        )}
-                        {canManage && e.status === "submitted" && (
-                          <button
-                            disabled
-                            className="rounded p-1 text-ink-muted opacity-50"
-                            title="Push to AutoCount (disabled until integration is enabled)"
-                          >
-                            <Send size={12} />
-                          </button>
-                        )}
-                        {canManage && e.status !== "void" && (
-                          <button
-                            onClick={() => voidEntry(e)}
-                            className="rounded p-1 text-ink-muted hover:bg-err/10 hover:text-err"
-                            title="Void"
-                          >
-                            <X size={12} />
-                          </button>
-                        )}
-                        {canEdit && e.status === "draft" && (
-                          <button
-                            onClick={() => deleteEntry(e)}
-                            className="rounded p-1 text-ink-muted hover:bg-err/10 hover:text-err"
-                            title="Delete"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <ExhibitionSalesTable
+          rows={rows} meId={meId} canManage={canManage} canLogSale={canLogSale}
+          onEdit={setEditing} onSubmit={submitEntry} onVoid={voidEntry} onDelete={deleteEntry}
+        />
       )}
 
       {creating && (
