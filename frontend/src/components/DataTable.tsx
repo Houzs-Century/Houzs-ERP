@@ -1745,6 +1745,15 @@ function DataTableInner<T, L>({
     [sortedRows, rowLimit],
   );
   const hiddenByLimit = (sortedRows?.length ?? 0) - (limitedRows?.length ?? 0);
+  const footerTotals = useMemo(() => {
+    if (!sortedRows?.length || !displayColumns.some((c) => c.total)) return null;
+    if (selection && selection.selectedIds.size > 0) {
+      const picked = sortedRows.filter((r) => selection.selectedIds.has(String(getRowKey(r))));
+      if (picked.length > 0) return { rows: picked, picked: true };
+    }
+    return { rows: sortedRows, picked: false };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getRowKey is an inline prop; keys are stable per row
+  }, [sortedRows, displayColumns, selection?.selectedIds]);
   const loadMore = () => setRowLimit((n) => (n ?? 0) + (initialRowLimit ?? 200));
 
   /* Report what the operator can actually see (owner 2026-08-12) — see the
@@ -2827,6 +2836,53 @@ function DataTableInner<T, L>({
                 </tr>
               )}
             </tbody>
+            {footerTotals && (
+              <tfoot className="sticky bottom-0 z-10">
+                <tr title={footerTotals.picked ? "Total of the ticked rows" : "Total of the rows shown"}>
+                  {selectColCount + expandColCount > 0 && (
+                    <td colSpan={selectColCount + expandColCount} className="border-t-2 border-border bg-surface-dim" />
+                  )}
+                  {displayColumns.map((c, i) => {
+                    const cellStyle: React.CSSProperties = { width: resolveWidth(c) };
+                    if (i < stickyCount) {
+                      cellStyle.position = "sticky";
+                      cellStyle.left = stickyLeft[i];
+                      cellStyle.zIndex = 20;
+                    } else if (stickyRight[i] !== undefined) {
+                      cellStyle.position = "sticky";
+                      cellStyle.right = stickyRight[i];
+                      cellStyle.zIndex = 20;
+                    }
+                    const label =
+                      i === 0 && !c.total
+                        ? `${footerTotals.picked ? "Selected" : "Total"} · ${footerTotals.rows.length} row${footerTotals.rows.length === 1 ? "" : "s"}`
+                        : null;
+                    return (
+                      <Fragment key={c.key}>
+                        {i === fillerAt && fillerCount > 0 && <td aria-hidden className="border-t-2 border-border bg-surface-dim p-0" />}
+                        <td
+                          data-total-key={c.key}
+                          style={cellStyle}
+                          className={cn(
+                            "overflow-hidden text-ellipsis whitespace-nowrap border-t-2 border-border bg-surface-dim text-[13px] font-semibold tabular-nums text-ink",
+                            cellPad,
+                            c.align === "right" && "text-right",
+                            c.align === "center" && "text-center",
+                            i === 0 && !expandable && !selection && "pl-5",
+                            i === displayColumns.length - 1 && "pr-5",
+                          )}
+                        >
+                          {c.total ? c.total(footerTotals.rows) : label}
+                        </td>
+                      </Fragment>
+                    );
+                  })}
+                  {fillerAt === displayColumns.length && fillerCount > 0 && (
+                    <td aria-hidden className="border-t-2 border-border bg-surface-dim p-0" />
+                  )}
+                </tr>
+              </tfoot>
+            )}
           </table>
           </div>
         </div>
