@@ -99,6 +99,9 @@ export interface Column<T, L = never> {
    * the formatted figure. A table with no `total` column has no footer.
    */
   total?: (rows: T[]) => ReactNode;
+  /** What the column means, shown when the header is hovered (a dotted
+   *  underline marks a header that has one). */
+  description?: string;
 }
 
 /**
