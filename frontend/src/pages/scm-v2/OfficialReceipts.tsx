@@ -15,11 +15,12 @@
 // payment with no receipt, a receipt whose amount is not its payment's, a
 // receipt whose payment is gone). "Any month" is the newest 100, as before.
 // ----------------------------------------------------------------------------
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
+import { DataTable, type Column } from '../../components/DataTable';
 import { generateReceiptPdf, type ReceiptPdfData } from '../../vendor/scm/lib/receipt-pdf';
 
 type ReceiptRow = ReceiptPdfData & {
@@ -58,8 +59,6 @@ const btn = (primary?: boolean, disabled?: boolean): React.CSSProperties => ({
   cursor: disabled ? 'not-allowed' : 'pointer',
   opacity: disabled ? 0.5 : 1,
 });
-const td: React.CSSProperties = { padding: '6px 10px' };
-const num: React.CSSProperties = { ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
 
 export const OfficialReceipts = () => {
   const qc = useQueryClient();
@@ -85,8 +84,40 @@ export const OfficialReceipts = () => {
       void qc.invalidateQueries({ queryKey: ['official-receipts-check'] });
     },
   });
-  const rows = q.data?.receipts ?? [];
-  const totalSen = rows.reduce((s, r) => s + Number(r.amount_sen), 0);
+  const rows = useMemo(() => q.data?.receipts ?? [], [q.data]);
+  /* The rows on screen after the table's own funnels: the total adds up THOSE. */
+  const [shown, setShown] = useState<ReceiptRow[]>([]);
+  const totalSen = shown.reduce((s, r) => s + Number(r.amount_sen), 0);
+  const columns = useMemo<Column<ReceiptRow>[]>(() => [
+    { key: 'or', label: 'OR No', render: (r) => <b>{r.or_number}</b>, getValue: (r) => r.or_number },
+    {
+      key: 'status', label: 'Status',
+      render: (r) => <span style={{ color: r.status === 'FORMAL' ? 'var(--c-good, #2f5d4f)' : undefined }}>{r.status === 'FORMAL' ? 'Formal' : 'Draft'}</span>,
+      getValue: (r) => (r.status === 'FORMAL' ? 'Formal' : 'Draft'),
+    },
+    { key: 'paid', label: 'Paid', render: (r) => fmtDateOrDash(r.paid_at), getValue: (r) => r.paid_at, exportFormat: 'date' },
+    { key: 'document', label: 'Document', render: (r) => r.doc_no ?? '—', getValue: (r) => r.doc_no ?? '' },
+    { key: 'customer', label: 'Customer', render: (r) => r.customer_name ?? '—', getValue: (r) => r.customer_name ?? '' },
+    { key: 'method', label: 'Method', render: (r) => r.method ?? '—', getValue: (r) => r.method ?? '' },
+    {
+      key: 'amount', label: 'Amount', align: 'right', render: (r) => fmtSen(r.amount_sen),
+      getValue: (r) => Number(r.amount_sen), exportValue: (r) => Number(r.amount_sen) / 100, exportFormat: 'money',
+    },
+    {
+      key: 'actions', label: '', exportLabel: 'Actions', disableFilter: true,
+      render: (r) => (
+        <span style={{ whiteSpace: 'nowrap' }}>
+          <button type="button" style={btn()} onClick={() => { void generateReceiptPdf(r, { action: 'print' }); }}>Print</button>{' '}
+          {r.status !== 'FORMAL' && (
+            <button type="button" style={btn(true, formalise.isPending)} disabled={formalise.isPending}
+              onClick={() => formalise.mutate(r.id)}>
+              Confirm money
+            </button>
+          )}
+        </span>
+      ),
+    },
+  ], [formalise]);
   const c = check.data;
   const clean = c != null && c.diffSen === 0 && c.missing.length === 0 && c.mismatched.length === 0 && c.orphans.length === 0;
 
@@ -154,59 +185,25 @@ export const OfficialReceipts = () => {
           {String((formalise.error as { message?: string } | null)?.message ?? 'The receipt was not confirmed.')}
         </div>
       )}
-      <div style={{ overflowX: 'auto', border: '1px solid var(--c-line, rgba(34,31,32,0.12))', borderRadius: 'var(--radius-md)' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-          <thead>
-            <tr>
-              <th style={{ textAlign: 'left', padding: '8px 10px' }}>OR No</th>
-              <th style={{ textAlign: 'left', padding: '8px 10px' }}>Status</th>
-              <th style={{ textAlign: 'left', padding: '8px 10px' }}>Paid</th>
-              <th style={{ textAlign: 'left', padding: '8px 10px' }}>Document</th>
-              <th style={{ textAlign: 'left', padding: '8px 10px' }}>Customer</th>
-              <th style={{ textAlign: 'left', padding: '8px 10px' }}>Method</th>
-              <th style={{ textAlign: 'right', padding: '8px 10px' }}>Amount</th>
-              <th style={{ padding: '8px 10px' }} />
-            </tr>
-          </thead>
-          <tbody>
-            {q.isLoading && <tr><td colSpan={8} style={{ padding: 10, ...soft }}>Loading…</td></tr>}
-            {!q.isLoading && rows.length === 0 && (
-              <tr><td colSpan={8} style={{ padding: 10, ...soft }}>{month ? `No receipts for ${monthWord(month)}.` : 'No receipts yet — one is born with every customer payment recorded from now on.'}</td></tr>
-            )}
-            {rows.map((r) => (
-              <tr key={r.id} style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
-                <td style={{ ...td, whiteSpace: 'nowrap' }}><b>{r.or_number}</b></td>
-                <td style={{ ...td, color: r.status === 'FORMAL' ? 'var(--c-good, #2f5d4f)' : undefined }}>
-                  {r.status === 'FORMAL' ? 'Formal' : 'Draft'}
-                </td>
-                <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmtDateOrDash(r.paid_at)}</td>
-                <td style={td}>{r.doc_no ?? '—'}</td>
-                <td style={td}>{r.customer_name ?? '—'}</td>
-                <td style={td}>{r.method ?? '—'}</td>
-                <td style={num}>{fmtSen(r.amount_sen)}</td>
-                <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                  <button type="button" style={btn()} onClick={() => { void generateReceiptPdf(r, { action: 'print' }); }}>Print</button>{' '}
-                  {r.status !== 'FORMAL' && (
-                    <button type="button" style={btn(true, formalise.isPending)} disabled={formalise.isPending}
-                      onClick={() => formalise.mutate(r.id)}>
-                      Confirm money
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-          {rows.length > 0 && (
-            <tfoot>
-              <tr style={{ borderTop: '2px solid var(--c-ink, #221f20)', fontWeight: 700 }} data-testid="receipts-total">
-                <td colSpan={6} style={td}>{rows.length} receipt{rows.length === 1 ? '' : 's'}{month ? ` in ${monthWord(month)}` : ''}{status ? ` (${status === 'FORMAL' ? 'formal' : 'draft'})` : ''}</td>
-                <td style={num}>{fmtSen(totalSen)}</td>
-                <td />
-              </tr>
-            </tfoot>
-          )}
-        </table>
-      </div>
+      <DataTable<ReceiptRow>
+        tableId="official-receipts"
+        exportName="official-receipts"
+        exportXlsx
+        columns={columns}
+        rows={q.data ? rows : null}
+        loading={q.isLoading}
+        error={q.isError ? 'The receipts did not load.' : null}
+        emptyLabel={month ? `No receipts for ${monthWord(month)}.` : 'No receipts yet — one is born with every customer payment recorded from now on.'}
+        getRowKey={(r) => r.id}
+        onFilteredRowsChange={setShown}
+      />
+      {shown.length > 0 && (
+        <div data-testid="receipts-total"
+          style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', borderTop: '2px solid var(--c-ink, #221f20)', fontWeight: 700, fontSize: 'var(--fs-13)' }}>
+          <span>{shown.length} receipt{shown.length === 1 ? '' : 's'}{month ? ` in ${monthWord(month)}` : ''}{status ? ` (${status === 'FORMAL' ? 'formal' : 'draft'})` : ''}</span>
+          <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtSen(totalSen)}</span>
+        </div>
+      )}
     </div>
   );
 };

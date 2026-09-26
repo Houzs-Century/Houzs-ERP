@@ -17,8 +17,9 @@ import { DateField } from '../../vendor/scm/components/DateField';
 import {
   useDepositInvoices, useDepositInvoiceDetail, useDepositInvoiceSettings, useSaveDepositInvoiceSettings,
   useIssueMissingDepositInvoices, useInvoiceDeliveredOrders, useCancelDepositInvoice, usePostDepositInvoice,
-  type DepositInvoiceStatus,
+  type DepositInvoice, type DepositInvoiceStatus,
 } from '../../vendor/scm/lib/deposit-invoice-queries';
+import { DataTable, type Column } from '../../components/DataTable';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
 
@@ -26,8 +27,6 @@ const errText = (e: unknown): string => (e instanceof Error && e.message ? e.mes
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const card: React.CSSProperties = { background: 'var(--c-paper, #fff)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 0, overflowX: 'auto' };
-const th: React.CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap', textAlign: 'left' };
-const td: React.CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-13)', borderBottom: '1px solid var(--border-weak, #f0eee8)' };
 const num: React.CSSProperties = { textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
 const danger = 'var(--c-festive-b, #B8331F)';
 const good = 'var(--c-secondary-a, #2F5D4F)';
@@ -39,6 +38,31 @@ const StatusPill = ({ status }: { status: DepositInvoiceStatus }) => (
   </span>
 );
 
+const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)' };
+const DEPOSIT_COLUMNS: Column<DepositInvoice>[] = [
+  { key: 'number', label: 'Number', render: (d) => <span style={mono}>{d.di_number}</span>, getValue: (d) => d.di_number },
+  { key: 'date', label: 'Date', render: (d) => fmtDateOrDash(d.invoice_date), getValue: (d) => d.invoice_date, exportFormat: 'date' },
+  { key: 'customer', label: 'Customer', render: (d) => d.party_name ?? d.party_code ?? '—', getValue: (d) => d.party_name ?? d.party_code ?? '' },
+  { key: 'order', label: 'Order', render: (d) => <span style={mono}>{d.so_doc_no}</span>, getValue: (d) => d.so_doc_no },
+  { key: 'method', label: 'Method', render: (d) => d.method ?? '—', getValue: (d) => d.method ?? '' },
+  {
+    key: 'amount', label: 'Amount', align: 'right', render: (d) => fmtSen(d.amount_sen),
+    getValue: (d) => d.amount_sen, exportValue: (d) => d.amount_sen / 100, exportFormat: 'money',
+  },
+  { key: 'status', label: 'Status', render: (d) => <StatusPill status={d.status} />, getValue: (d) => d.status },
+  { key: 'journal', label: 'Journal', render: (d) => <span style={mono}>{d.je_no ?? '—'}</span>, getValue: (d) => d.je_no ?? '' },
+  {
+    key: 'closedBy', label: 'Closed by',
+    render: (d) => (
+      <span style={mono}>
+        {d.credit_note_number ?? (d.credit_note_id ? 'CN' : '—')}
+        {(d.refunded_sen ?? 0) > 0 && <div style={soft}>refunded {fmtSen(d.refunded_sen ?? 0)}</div>}
+      </span>
+    ),
+    getValue: (d) => d.credit_note_number ?? (d.credit_note_id ? 'CN' : ''),
+  },
+];
+
 export const DepositInvoices = () => {
   const [status, setStatus] = useState<DepositInvoiceStatus | 'ALL'>('ALL');
   const [so, setSo] = useState('');
@@ -49,7 +73,6 @@ export const DepositInvoices = () => {
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
   const toggle = (id: string) => setTicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  const allTicked = rows.length > 0 && rows.every((d) => ticked.has(d.id));
 
   /* The ticked invoices as ONE document in LIST order, a page each (owner
      2026-09-12: 要批量打印; docs/bugs/0834). The row carries all the sheet needs. */
@@ -79,9 +102,6 @@ export const DepositInvoices = () => {
         <input value={so} onChange={(e) => setSo(e.target.value)} placeholder="sales order, e.g. 2990-SO-2609-001" aria-label="Sales order" style={input} />
       </div>
 
-      {listQ.isLoading && <div style={soft}>Loading…</div>}
-      {listQ.isError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>The list did not load — {errText(listQ.error)}</div>}
-      {listQ.data && rows.length === 0 && <div style={soft}>No deposit invoice matches this filter.</div>}
       {ticked.size > 0 && (
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--fs-13)' }} aria-label="Ticked invoices">
           <span>{ticked.size} ticked</span>
@@ -91,38 +111,24 @@ export const DepositInvoices = () => {
           {printError && <span style={{ color: danger }}>{printError}</span>}
         </div>
       )}
-      {rows.length > 0 && (
-        <div style={card}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <th style={th}><input type="checkbox" checked={allTicked} onChange={() => setTicked(allTicked ? new Set() : new Set(rows.map((d) => d.id)))} aria-label="Tick all" /></th>
-                <th style={th}>Number</th><th style={th}>Date</th><th style={th}>Customer</th><th style={th}>Order</th><th style={th}>Method</th>
-                <th style={{ ...th, textAlign: 'right' }}>Amount</th><th style={th}>Status</th><th style={th}>Journal</th><th style={th}>Closed by</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((d) => (
-                <tr key={d.id} onClick={() => setOpenId(d.id)} style={{ cursor: 'pointer' }} data-invoice={d.di_number}>
-                  <td style={td} onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={ticked.has(d.id)} onChange={() => toggle(d.id)} aria-label={`Tick ${d.di_number}`} /></td>
-                  <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{d.di_number}</td>
-                  <td style={td}>{fmtDateOrDash(d.invoice_date)}</td>
-                  <td style={td}>{d.party_name ?? d.party_code ?? '—'}</td>
-                  <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{d.so_doc_no}</td>
-                  <td style={td}>{d.method ?? '—'}</td>
-                  <td style={{ ...td, ...num }}>{fmtSen(d.amount_sen)}</td>
-                  <td style={td}><StatusPill status={d.status} /></td>
-                  <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{d.je_no ?? '—'}</td>
-                  <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>
-                    {d.credit_note_number ?? (d.credit_note_id ? 'CN' : '—')}
-                    {(d.refunded_sen ?? 0) > 0 && <div style={soft}>refunded {fmtSen(d.refunded_sen ?? 0)}</div>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable<DepositInvoice>
+        tableId="deposit-invoices"
+        exportName="deposit-invoices"
+        exportXlsx
+        columns={DEPOSIT_COLUMNS}
+        rows={listQ.data ? rows : null}
+        loading={listQ.isLoading}
+        error={listQ.isError ? `The list did not load — ${errText(listQ.error)}` : null}
+        emptyLabel="No deposit invoice matches this filter."
+        getRowKey={(d) => d.id}
+        onRowClick={(d) => setOpenId(d.id)}
+        selection={{
+          selectedIds: ticked,
+          onToggle: toggle,
+          onToggleAll: (keys, all) => setTicked(all ? new Set() : new Set(keys)),
+          rowLabel: (d) => `Tick ${d.di_number}`,
+        }}
+      />
 
       {openId && <InvoiceDetail id={openId} onClose={() => setOpenId(null)} />}
     </div>

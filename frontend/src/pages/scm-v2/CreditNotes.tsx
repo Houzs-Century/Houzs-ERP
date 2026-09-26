@@ -14,6 +14,7 @@ import { Plus, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { PageHeader } from '../../components/Layout';
+import { DataTable, type Column } from '../../components/DataTable';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { DateField } from '../../vendor/scm/components/DateField';
@@ -44,7 +45,6 @@ const accountNamer = async (): Promise<(code: string) => string | null> => {
 };
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
-const card: React.CSSProperties = { background: 'var(--c-paper, #fff)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 0, overflowX: 'auto' };
 const th: React.CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap', textAlign: 'left' };
 const td: React.CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-13)', borderBottom: '1px solid var(--border-weak, #f0eee8)' };
 const num: React.CSSProperties = { textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
@@ -91,7 +91,6 @@ export const CreditNotes = () => {
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
   const toggle = (id: string) => setTicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  const allTicked = rows.length > 0 && rows.every((n) => ticked.has(n.id));
 
   /* The ticked notes as ONE document in LIST order, a page each (owner
      2026-09-12: 要批量打印; docs/bugs/0834) — each note's lines and the
@@ -133,9 +132,6 @@ export const CreditNotes = () => {
         <span style={soft}>CN: the customer owes less. DN: the customer owes more. SCN: we owe the supplier less.</span>
       </div>
 
-      {listQ.isLoading && <div style={soft}>Loading…</div>}
-      {listQ.isError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>The list did not load — {errText(listQ.error)}</div>}
-      {listQ.data && rows.length === 0 && <div style={soft}>No note yet. New note raises one.</div>}
       {ticked.size > 0 && (
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--fs-13)' }} aria-label="Ticked notes">
           <span>{ticked.size} ticked</span>
@@ -145,34 +141,24 @@ export const CreditNotes = () => {
           {printError && <span style={{ color: danger }}>{printError}</span>}
         </div>
       )}
-      {rows.length > 0 && (
-        <div style={card}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <th style={th}><input type="checkbox" checked={allTicked} onChange={() => setTicked(allTicked ? new Set() : new Set(rows.map((n) => n.id)))} aria-label="Tick all" /></th>
-                <th style={th}>Number</th><th style={th}>Kind</th><th style={th}>Date</th><th style={th}>Party</th><th style={th}>Reference</th>
-                <th style={{ ...th, textAlign: 'right' }}>Total</th><th style={th}>Status</th><th style={th}>Journal</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((n) => (
-                <tr key={n.id} onClick={() => setOpenId(n.id)} style={{ cursor: 'pointer' }} data-note={n.note_number}>
-                  <td style={td} onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={ticked.has(n.id)} onChange={() => toggle(n.id)} aria-label={`Tick ${n.note_number}`} /></td>
-                  <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{n.note_number}</td>
-                  <td style={td}>{n.kind}</td>
-                  <td style={td}>{fmtDateOrDash(n.note_date)}</td>
-                  <td style={td}>{n.party_name ?? n.party_code ?? '—'}</td>
-                  <td style={td}>{[n.so_doc_no, n.source_doc_no].filter(Boolean).join(' · ') || '—'}</td>
-                  <td style={{ ...td, ...num }}>{fmtSen(n.total_sen)}</td>
-                  <td style={td}><StatusPill status={n.status} /></td>
-                  <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{n.je_no ?? '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable<CreditNote>
+        tableId="credit-notes"
+        exportName="credit-notes"
+        exportXlsx
+        columns={NOTE_COLUMNS}
+        rows={listQ.data ? rows : null}
+        loading={listQ.isLoading}
+        error={listQ.isError ? `The list did not load — ${errText(listQ.error)}` : null}
+        emptyLabel="No note yet. New note raises one."
+        getRowKey={(n) => n.id}
+        onRowClick={(n) => setOpenId(n.id)}
+        selection={{
+          selectedIds: ticked,
+          onToggle: toggle,
+          onToggleAll: (keys, all) => setTicked(all ? new Set() : new Set(keys)),
+          rowLabel: (n) => `Tick ${n.note_number}`,
+        }}
+      />
 
       {openId && (
         <NoteDetail id={openId} onClose={() => setOpenId(null)}
@@ -192,6 +178,24 @@ export const CreditNotes = () => {
     </div>
   );
 };
+
+const NOTE_COLUMNS: Column<CreditNote>[] = [
+  { key: 'number', label: 'Number', render: (n) => <span style={{ fontFamily: 'var(--font-mono)' }}>{n.note_number}</span>, getValue: (n) => n.note_number },
+  { key: 'kind', label: 'Kind', render: (n) => n.kind, getValue: (n) => n.kind },
+  { key: 'date', label: 'Date', render: (n) => fmtDateOrDash(n.note_date), getValue: (n) => n.note_date, exportFormat: 'date' },
+  { key: 'party', label: 'Party', render: (n) => n.party_name ?? n.party_code ?? '—', getValue: (n) => n.party_name ?? n.party_code ?? '' },
+  {
+    key: 'reference', label: 'Reference',
+    render: (n) => [n.so_doc_no, n.source_doc_no].filter(Boolean).join(' · ') || '—',
+    getValue: (n) => [n.so_doc_no, n.source_doc_no].filter(Boolean).join(' · '),
+  },
+  {
+    key: 'total', label: 'Total', align: 'right', render: (n) => fmtSen(n.total_sen),
+    getValue: (n) => n.total_sen, exportValue: (n) => n.total_sen / 100, exportFormat: 'money',
+  },
+  { key: 'status', label: 'Status', render: (n) => <StatusPill status={n.status} />, getValue: (n) => n.status },
+  { key: 'journal', label: 'Journal', render: (n) => <span style={{ fontFamily: 'var(--font-mono)' }}>{n.je_no ?? '—'}</span>, getValue: (n) => n.je_no ?? '' },
+];
 
 const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
   <label style={{ display: 'grid', gap: 4, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>

@@ -405,6 +405,9 @@ export interface DataTableProps<T, L = never> {
     isDisabled?: (id: string) => boolean;
     /** Clicking anywhere on the row ticks it (pickers). Default: only the box. */
     toggleOnRowClick?: boolean;
+    /** The row's checkbox name, so a screen reader (and a test) can tell the
+     *  rows apart: "Tick CN-2609-001". Default "Select row". */
+    rowLabel?: (row: T) => string;
   };
   /**
    * Opt-in row right-click menu (2990 DataGrid parity). Receives the row
