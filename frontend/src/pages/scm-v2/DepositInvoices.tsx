@@ -22,6 +22,8 @@ import {
 import { DataTable, type Column } from '../../components/DataTable';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
+import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from '../../vendor/scm/lib/payment-methods';
+import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'That was not accepted.');
 
@@ -39,12 +41,16 @@ const StatusPill = ({ status }: { status: DepositInvoiceStatus }) => (
 );
 
 const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)' };
+const methodLabel = (m: string | null): string => {
+  const code = PAYMENT_METHOD_CODES.find((c) => c === m);
+  return code ? PAYMENT_METHOD_DEFAULT_LABELS[code] : m ? humaniseStatusKey(m) : '—';
+};
 const DEPOSIT_COLUMNS: Column<DepositInvoice>[] = [
   { key: 'number', label: 'Number', render: (d) => <span style={mono}>{d.di_number}</span>, getValue: (d) => d.di_number },
   { key: 'date', label: 'Date', render: (d) => fmtDateOrDash(d.invoice_date), getValue: (d) => d.invoice_date, exportFormat: 'date' },
   { key: 'customer', label: 'Customer', render: (d) => d.party_name ?? d.party_code ?? '—', getValue: (d) => d.party_name ?? d.party_code ?? '' },
   { key: 'order', label: 'Order', render: (d) => <span style={mono}>{d.so_doc_no}</span>, getValue: (d) => d.so_doc_no },
-  { key: 'method', label: 'Method', render: (d) => d.method ?? '—', getValue: (d) => d.method ?? '' },
+  { key: 'method', label: 'Method', render: (d) => methodLabel(d.method), getValue: (d) => d.method ?? '' },
   {
     key: 'amount', label: 'Amount', align: 'right', render: (d) => fmtSen(d.amount_sen),
     getValue: (d) => d.amount_sen, exportValue: (d) => d.amount_sen / 100, exportFormat: 'money',

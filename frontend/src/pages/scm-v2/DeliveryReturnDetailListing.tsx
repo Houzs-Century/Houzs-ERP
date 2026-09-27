@@ -6,7 +6,8 @@
 // ----------------------------------------------------------------------------
 
 import { useCallback } from 'react';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtQty, fmtSen } from '../../vendor/shared/format';
+import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import { DetailListingShell } from '../../components/scm-v2/DetailListingShell';
 import { useDeliveryReturnDetailListing, type DetailListingRow } from '../../vendor/scm/lib/reports-queries';
 import type { GridColumn } from '../../components/DataGridCompat';
@@ -26,11 +27,6 @@ type DrRow = DetailListingRow & {
   condition?: string | null;
   line_refund_sen?: number;
   refund_sen_header?: number;
-};
-
-const fmtRm = (centi: number | null | undefined): string => {
-  const c = Number(centi ?? 0);
-  return `MYR ${(c / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
 export const DeliveryReturnDetailListing = () => {
@@ -92,24 +88,25 @@ export const DeliveryReturnDetailListing = () => {
     },
     {
       key: 'qty_returned', label: 'Qty Returned', width: 100, align: 'right', sortable: true,
-      accessor: (r) => String(r.qty_returned ?? 0),
+      accessor: (r) => fmtQty(r.qty_returned ?? 0),
+      exportValue: (r) => Number(r.qty_returned ?? 0),
       searchValue: (r) => String(r.qty_returned ?? 0),
       sortFn: (a, b) => Number(a.qty_returned ?? 0) - Number(b.qty_returned ?? 0),
     },
     {
       key: 'unit_price', label: 'Unit Price', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.unit_price_sen),
+      accessor: (r) => fmtSen(r.unit_price_sen),
       exportValue: (r) => Number(r.unit_price_sen ?? 0) / 100,
       exportFormat: 'rate',
-      searchValue: (r) => fmtRm(r.unit_price_sen),
+      searchValue: (r) => fmtSen(r.unit_price_sen),
       sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
     },
     {
       key: 'line_refund', label: 'Line Refund', width: 120, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.line_refund_sen ?? r.total_sen),
+      accessor: (r) => fmtSen(r.line_refund_sen ?? r.total_sen),
       exportValue: (r) => Number(r.line_refund_sen ?? r.total_sen) / 100,
       exportFormat: 'money',
-      searchValue: (r) => fmtRm(r.line_refund_sen ?? r.total_sen),
+      searchValue: (r) => fmtSen(r.line_refund_sen ?? r.total_sen),
       sortFn: (a, b) => Number(a.line_refund_sen ?? a.total_sen ?? 0) - Number(b.line_refund_sen ?? b.total_sen ?? 0),
     },
     {
@@ -126,15 +123,15 @@ export const DeliveryReturnDetailListing = () => {
     },
     {
       key: 'balance', label: 'Pending Refund', width: 130, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.balance_sen),
+      accessor: (r) => fmtSen(r.balance_sen),
       exportValue: (r) => Number(r.balance_sen ?? 0) / 100,
       exportFormat: 'money',
-      searchValue: (r) => fmtRm(r.balance_sen),
+      searchValue: (r) => fmtSen(r.balance_sen),
       sortFn: (a, b) => Number(a.balance_sen ?? 0) - Number(b.balance_sen ?? 0),
     },
     {
       key: 'status', label: 'Status', width: 130, sortable: true, groupable: true,
-      accessor: (r) => (r.status ? String(r.status).replace(/_/g, ' ') : '—'),
+      accessor: (r) => (r.status ? statusLabel('dr', String(r.status)) : '—'),
       searchValue: (r) => r.status ?? '',
     },
   ], []);

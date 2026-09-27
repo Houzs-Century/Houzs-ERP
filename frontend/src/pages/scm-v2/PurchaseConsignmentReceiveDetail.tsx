@@ -28,7 +28,7 @@ import {
   ArrowLeft, FileText, Pencil, Printer, Trash2, Save, Ban, ChevronDown,
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { buildVariantSummary, fmtDateOrDash } from '@2990s/shared';
+import { buildVariantSummary, fmtDateOrDash, fmtMoneySen } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
 import {
   usePurchaseConsignmentReceiveDetail,
@@ -64,9 +64,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   const v = centi ?? 0;
-  return `${currency} ${(v / 100).toLocaleString('en-MY', {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  })}`;
+  return fmtMoneySen(v, currency);
 };
 
 type HeaderDraft = {

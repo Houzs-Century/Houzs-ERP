@@ -45,13 +45,12 @@ import styles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 import { DateField } from "./DateField";
 import { showsVariantEditor } from '../lib/variant-editor-groups';
 
+import { fmtMoneySen } from '../../../vendor/shared/format';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   const v = centi ?? 0;
-  return `${currency} ${(v / 100).toLocaleString('en-MY', {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  })}`;
+  return fmtMoneySen(v, currency);
 };
 
 /** Per-line consignment draft. Mirrors PurchaseConsignmentOrderNew's DraftLine

@@ -38,7 +38,7 @@ import {
   type ModelGroup, type MrpFilters, rowKey, computeTabModels, lineInWindow, groupEarliestDate,
 } from './mrp-model-pipeline';
 import { exportMrpWorkbook } from './mrp-export-workbook';
-import { fmtDate, fmtDateTime } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtQty } from '../../vendor/shared/format';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { Button } from '../../components/Button';
@@ -784,8 +784,8 @@ export const Mrp = () => {
         );
       },
     },
-    { key: 'qtyNeeded', label: 'Qty Needed', width: '120px', align: 'right', className: styles.num, getValue: (g) => g.qtyNeeded, render: (g) => g.qtyNeeded },
-    { key: 'stock', label: 'Stock', width: '110px', align: 'right', className: styles.num, getValue: (g) => g.stock, render: (g) => g.stock },
+    { key: 'qtyNeeded', label: 'Qty Needed', width: '120px', align: 'right', className: styles.num, getValue: (g) => g.qtyNeeded, render: (g) => fmtQty(g.qtyNeeded) },
+    { key: 'stock', label: 'Stock', width: '110px', align: 'right', className: styles.num, getValue: (g) => g.stock, render: (g) => fmtQty(g.stock) },
     { key: 'poOutstanding', label: 'PO Outstanding', width: '150px', align: 'right', className: styles.num, getValue: (g) => g.poOutstanding, render: (g) => g.poOutstanding || '—' },
     {
       key: 'shortage', label: 'Shortage', width: '120px', align: 'right', className: styles.num,

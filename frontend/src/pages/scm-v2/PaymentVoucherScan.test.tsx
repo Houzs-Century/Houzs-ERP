@@ -142,7 +142,7 @@ describe('the bill pile', () => {
     fireEvent.click(screen.getByText('Read 2 bill(s)'));
 
     await waitFor(() => expect(screen.getByText('Foshan Chairs')).toBeTruthy());
-    expect(screen.getByText(/2 bill\(s\) · MYR 1,500\.00 · matched supplier · account remembered \(900-F002\)/)).toBeTruthy();
+    expect(screen.getByText(/2 bill\(s\) · RM 1,500\.00 · matched supplier · account remembered \(900-F002\)/)).toBeTruthy();
 
     fireEvent.click(screen.getByText('Open as ONE voucher (2 lines)'));
     await waitFor(() => expect(screen.getByText('NEW PAGE')).toBeTruthy());
@@ -178,7 +178,7 @@ describe('the bill pile', () => {
     await waitFor(() => expect(screen.getByText('INV-9')).toBeTruthy());
     expect(screen.getByText('Design retainer — August')).toBeTruthy();
     expect(screen.getByText('Extra artwork')).toBeTruthy();
-    expect(screen.getByText('MYR 100.00')).toBeTruthy();
+    expect(screen.getByText('RM 100.00')).toBeTruthy();
   });
 
   test('case 4: DIFFERENT receipts tick across groups and open as ONE voucher — one line each, no payee, every page attached', async () => {

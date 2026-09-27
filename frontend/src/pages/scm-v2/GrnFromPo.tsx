@@ -42,7 +42,7 @@ import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtMoneySen } from '@2990s/shared';
+import { fmtDate, fmtMoneySen } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 
@@ -363,7 +363,7 @@ export const GrnFromPo = () => {
       /* PO Date — available in the Columns toggle; hidden by default to keep the
          picker dense. (Deliverable 4c.) */
       key: 'poDate', label: 'PO Date', width: 120, sortable: true, defaultHidden: true,
-      accessor: (r) => r.poDate ?? '',
+      accessor: (r) => fmtDate(r.poDate),
       searchValue: (r) => r.poDate ?? '',
       sortFn: (a, b) => String(a.poDate ?? '').localeCompare(String(b.poDate ?? '')),
     },
@@ -439,7 +439,7 @@ export const GrnFromPo = () => {
     },
     {
       key: 'expectedAt', label: 'Expected', width: 120, sortable: true,
-      accessor: (r) => r.expectedAt ?? '',
+      accessor: (r) => fmtDate(r.expectedAt),
       searchValue: (r) => r.expectedAt ?? '',
       sortFn: (a, b) => String(a.expectedAt ?? '').localeCompare(String(b.expectedAt ?? '')),
     },

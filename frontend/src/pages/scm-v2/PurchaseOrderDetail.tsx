@@ -42,7 +42,7 @@ import {
   ChevronDown, RotateCcw, History, Check, Download, Send,
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { buildVariantSummary, fmtDate, fmtDateTime } from '@2990s/shared'; // Commander 2026-05-28 — Description 2
+import { buildVariantSummary, fmtDate, fmtDateTime, fmtMoneySen } from '@2990s/shared'; // Commander 2026-05-28 — Description 2
 import { poDisplayNumber } from '../../vendor/scm/lib/po-status';
 import { convertToLink } from '../../lib/convertScope';
 
@@ -108,9 +108,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   const v = centi ?? 0;
-  return `${currency} ${(v / 100).toLocaleString('en-MY', {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  })}`;
+  return fmtMoneySen(v, currency);
 };
 
 /* Draft state shapes (#194). HeaderDraft mirrors the editable header fields.

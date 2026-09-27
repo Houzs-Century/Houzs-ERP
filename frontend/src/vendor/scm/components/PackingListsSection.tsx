@@ -28,6 +28,7 @@ import { DataTable, type Column } from '../../../components/DataTable';
 import { usePackingLists, type PackingListRow } from '../lib/packing-list-queries';
 import { rollupDeliveryStatus, rollupLabel, fmtM3 } from '../lib/packing-list-model';
 import { generatePackingListPdf, packingRunUrl } from '../lib/packing-list-pdf';
+import { fmtDate } from '../../shared/format';
 
 const TONE_FOR: Record<string, 'neutral' | 'warning' | 'success'> = {
   Draft: 'neutral',
@@ -48,7 +49,7 @@ export function PackingListsSection(props: { date: string; warehouseId: string |
     setQrOpen((prev) => (prev.has(tripId) ? new Set() : new Set([tripId])));
   const columns: Column<PackingListRow>[] = [
     { key: 'trip', label: 'Packing / Trip no', render: (l) => <span className="font-mono text-ink">{l.trip_no ?? '—'}</span>, getValue: (l) => l.trip_no ?? '' },
-    { key: 'date', label: 'Date', render: (l) => l.trip_date ?? date, getValue: (l) => l.trip_date ?? date, exportFormat: 'date' },
+    { key: 'date', label: 'Date', render: (l) => fmtDate(l.trip_date ?? date), getValue: (l) => l.trip_date ?? date, exportFormat: 'date' },
     { key: 'lorry', label: 'Lorry', render: (l) => <span className="font-mono font-semibold text-ink">{l.lorry_plate ?? '—'}</span>, getValue: (l) => l.lorry_plate ?? '' },
     { key: 'driver', label: 'Driver', render: (l) => l.driver_name ?? '—', getValue: (l) => l.driver_name ?? '' },
     { key: 'dos', label: 'DOs', align: 'right', render: (l) => l.do_count, getValue: (l) => l.do_count, exportFormat: 'number' },

@@ -1488,7 +1488,7 @@ const ProductBreakdownDrawer = ({
           getRowKey={(r) => r.id ?? `${r._source}|${r.warehouse_id}|${r.variant_key}|${r.batch_no ?? ''}`}
           groupBy={{ key: 'source', label: (v) => (v === 'owned' ? 'Owned' : 'Consignment — held, not owned (excluded from value)') }}
           columns={[
-            { key: 'source', label: 'Bucket', defaultHidden: true, getValue: (r) => r._source, render: (r) => r._source },
+            { key: 'source', label: 'Bucket', defaultHidden: true, getValue: (r) => r._source, render: (r) => (r._source === 'owned' ? 'Owned' : 'Consignment') },
             {
               key: 'warehouse', label: 'Warehouse', width: '140px',
               getValue: (r) => r.warehouse_code ?? r.warehouse_name ?? '',

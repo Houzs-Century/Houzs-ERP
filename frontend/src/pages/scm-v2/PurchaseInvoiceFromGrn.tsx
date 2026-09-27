@@ -40,12 +40,11 @@ import { PageHeader } from '../../components/Layout';
 import { SearchInput } from '../../components/Button';
 import { SearchScopeHint } from '../../components/SearchScopeHint';
 
+import { fmtMoneySen } from '../../vendor/shared/format';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number, currency = 'MYR'): string =>
-  `${currency} ${(centi / 100).toLocaleString('en-MY', {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  })}`;
+  fmtMoneySen(centi, currency);
 
 export const PurchaseInvoiceFromGrn = () => {
   const navigate = useNavigate();

@@ -21,7 +21,7 @@ export const fmtSen = (centi: number | null | undefined): string => {
   })}`;
 };
 
-/** Sen money with the document's OWN currency → "MYR 2,990.00" (2dp).
+/** Sen money with the document's OWN currency → "RM 2,990.00" / "USD 2,990.00" (2dp).
  *  The currency-carrying counterpart to {@link fmtSen}, and the ONE home for
  *  the `${currency} ${centi/100}` shape that was hand-copied into 16 page-local
  *  `fmtMoney` helpers (SO/DO/DR/SI detail + the purchase-side pages).
@@ -38,7 +38,10 @@ export const fmtMoneySen = (
 ): string => {
   const n = Number(centi);
   if (centi == null || !Number.isFinite(n)) return '—';
-  return `${currency} ${(n / 100).toLocaleString('en-MY', {
+  // Ringgit reads "RM", on screen and on paper (owner 2026-09-27); a foreign
+  // currency keeps its own code.
+  const code = !currency || currency.toUpperCase() === 'MYR' ? 'RM' : currency;
+  return `${code} ${(n / 100).toLocaleString('en-MY', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;

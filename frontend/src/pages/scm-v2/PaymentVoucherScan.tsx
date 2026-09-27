@@ -40,12 +40,12 @@ import { fmtDate } from '../../vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
 import styles from './SalesOrderDetail.module.css';
 
+import { fmtSen } from '../../vendor/shared/format';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const ACCEPT_MIMES = 'image/jpeg,image/png,image/webp,application/pdf';
 
-const fmtRm = (sen: number | null | undefined): string =>
-  sen == null ? '—' : `MYR ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
 type PickedFile = { rid: string; file: File; merged: boolean };
 

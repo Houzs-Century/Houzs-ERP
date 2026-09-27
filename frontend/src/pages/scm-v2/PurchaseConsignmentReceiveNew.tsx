@@ -27,7 +27,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRightLeft, ListChecks, Save, Trash2, X, ChevronDown } from 'lucide-react';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
-import { buildVariantSummary, fmtDateOrDash } from '@2990s/shared';
+import { buildVariantSummary, fmtDateOrDash, fmtMoneySen } from '@2990s/shared';
 import {
   useCreatePurchaseConsignmentReceive,
   usePostPurchaseConsignmentReceive,
@@ -57,7 +57,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   const v = centi ?? 0;
-  return `${currency} ${(v / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return fmtMoneySen(v, currency);
 };
 
 const VariantSelect = ({

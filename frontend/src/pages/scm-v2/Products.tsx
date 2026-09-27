@@ -50,6 +50,7 @@ import {
 } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
+import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { fmtSen, fmtDate, fmtDateTime, maintActiveValues, maintEntryActive, maintEntryValue, maintEntryWithActive, maintEntryWithValue, maintValues, normalizeSofaTier, resolveSofaQuickPresets, SOFA_MODULES, type MaintPoolEntry, type SofaQuickPreset } from '@2990s/shared';
@@ -793,7 +794,7 @@ const SkuMasterTab = () => {
         label: 'Status',
         width: '90px',
         getValue: (r) => r.status,
-        render: (r) => r.status,
+        render: (r) => humaniseStatusKey(r.status),
       },
     );
     return cols;

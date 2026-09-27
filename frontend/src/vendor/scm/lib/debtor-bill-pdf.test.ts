@@ -78,20 +78,20 @@ describe('the Other Debtor bill sheet', () => {
     expect(has(draws, 'ahmad@example.com')).toBe(true);
     expect(has(draws, 'IG12345678090')).toBe(true);
     expect(has(draws, 'Sublet of showroom corner')).toBe(true);
-    expect(has(draws, 'MYR 450.00')).toBe(true);
+    expect(has(draws, 'RM 450.00')).toBe(true);
     /* A blank description prints the account's name — never the code. */
     expect(has(draws, 'WATER & ELECTRICITY INCOME - OFFICE')).toBe(true);
-    /* The text line prints its words and nothing else: no MYR 0.00, no third number. */
+    /* The text line prints its words and nothing else: no RM 0.00, no third number. */
     expect(has(draws, 'Ground floor, unit 3A')).toBe(true);
-    expect(has(draws, 'MYR 0.00')).toBe(false);
+    expect(has(draws, 'RM 0.00')).toBe(false);
     expect(draws.some((d) => d.text === '3')).toBe(false);
     expect(has(draws, '599-0006')).toBe(false);
     expect(has(draws, '570-0020')).toBe(false);
     expect(has(draws, 'TOTAL')).toBe(true);
-    expect(has(draws, 'MYR 500.00')).toBe(true);
-    expect(has(draws, 'MYR 200.00')).toBe(true);
+    expect(has(draws, 'RM 500.00')).toBe(true);
+    expect(has(draws, 'RM 200.00')).toBe(true);
     expect(has(draws, 'BALANCE DUE')).toBe(true);
-    expect(has(draws, 'MYR 300.00')).toBe(true);
+    expect(has(draws, 'RM 300.00')).toBe(true);
     expect(has(draws, 'FIVE HUNDRED')).toBe(true);
     expect(has(draws, 'Sublet, September')).toBe(true);
     expect(has(draws, 'Partly paid')).toBe(true);

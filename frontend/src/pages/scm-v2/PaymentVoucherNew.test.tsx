@@ -106,8 +106,8 @@ describe('the AP Payment (?type=ap)', () => {
     /* Tick the first invoice — the amount becomes its full outstanding, and
        the footer spells out the entry it will book. */
     fireEvent.click(screen.getByLabelText('Pay 2990-PI-2609-001 in full'));
-    expect(screen.getByText(/Applying MYR 2,550\.00/)).toBeTruthy();
-    expect(screen.getByText(/Books: Dr 400-0000 Account Payable MYR 2,550\.00/)).toBeTruthy();
+    expect(screen.getByText(/Applying RM 2,550\.00/)).toBeTruthy();
+    expect(screen.getByText(/Books: Dr 400-0000 Account Payable RM 2,550\.00/)).toBeTruthy();
 
     fireEvent.click(screen.getByText('Create AP Payment'));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
@@ -146,9 +146,9 @@ describe('the AP Payment (?type=ap)', () => {
     const tick = screen.getByLabelText('Pay 2990-PI-2609-002 in full');
     fireEvent.click(tick);
     /* Partial outstanding: 1,000.00 − 400.00 already paid = 600.00 */
-    expect(screen.getByText(/Applying MYR 600\.00/)).toBeTruthy();
+    expect(screen.getByText(/Applying RM 600\.00/)).toBeTruthy();
     fireEvent.click(tick);
-    expect(screen.getByText(/Applying MYR 0\.00/)).toBeTruthy();
+    expect(screen.getByText(/Applying RM 0\.00/)).toBeTruthy();
     /* Nothing applied -> the save is not even offered. */
     expect((screen.getByText('Create AP Payment').closest('button') as HTMLButtonElement).disabled).toBe(true);
     expect(mutateAsync).not.toHaveBeenCalled();
@@ -163,7 +163,7 @@ describe('an AP invoice beside the purchase invoices (owner 2026-09-06)', () => 
     fireEvent.mouseDown(screen.getByText('S001 · Foshan Chairs'));
     expect(screen.getByText('2990-API-2609-001')).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Pay 2990-API-2609-001 in full'));
-    expect(screen.getByText(/Applying MYR 420\.00/)).toBeTruthy();
+    expect(screen.getByText(/Applying RM 420\.00/)).toBeTruthy();
     fireEvent.click(screen.getByText('Create AP Payment'));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     const payload = mutateAsync.mock.calls[0]![0];
@@ -180,7 +180,7 @@ describe('opened from a purchase invoice', () => {
     draw('/scm/payment-vouchers/new?type=ap&supplier=sup-1&pi=pi-1');
     expect((screen.getByLabelText('Pay 2990-PI-2609-001 in full') as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('Pay 2990-PI-2609-002 in full') as HTMLInputElement).checked).toBe(false);
-    expect(screen.getByText(/Applying MYR 2,550\.00/)).toBeTruthy();
+    expect(screen.getByText(/Applying RM 2,550\.00/)).toBeTruthy();
     fireEvent.click(screen.getByText('Create AP Payment'));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     const payload = mutateAsync.mock.calls[0]![0];
@@ -193,12 +193,12 @@ describe('opened from a purchase invoice', () => {
     const tick = screen.getByLabelText('Pay 2990-PI-2609-001 in full') as HTMLInputElement;
     fireEvent.click(tick);
     expect(tick.checked).toBe(false);
-    expect(screen.getByText(/Applying MYR 0\.00/)).toBeTruthy();
+    expect(screen.getByText(/Applying RM 0\.00/)).toBeTruthy();
   });
 
   test('an invoice the supplier\'s list does not carry is not ticked', () => {
     draw('/scm/payment-vouchers/new?type=ap&supplier=sup-1&pi=pi-9');
-    expect(screen.getByText(/Applying MYR 0\.00/)).toBeTruthy();
+    expect(screen.getByText(/Applying RM 0\.00/)).toBeTruthy();
   });
 
   test('a plain Payment Voucher ignores both', () => {
@@ -216,7 +216,7 @@ describe('paying ahead (预付) on the AP Payment', () => {
     fireEvent.mouseDown(screen.getByText('S001 · Foshan Chairs'));
 
     /* The banner names the supplier's UNSPENT advance and its holding voucher. */
-    expect(screen.getByText(/already holds MYR 500\.00 of unspent advance/)).toBeTruthy();
+    expect(screen.getByText(/already holds RM 500\.00 of unspent advance/)).toBeTruthy();
     expect(screen.getByText('PV-2608-777')).toBeTruthy();
 
     /* Tick one invoice + type a prepay — the composed AP line carries BOTH. */
@@ -225,7 +225,7 @@ describe('paying ahead (预付) on the AP Payment', () => {
     fireEvent.focus(prepay);
     fireEvent.change(prepay, { target: { value: '1000.00' } });
     fireEvent.blur(prepay);
-    expect(screen.getByText(/incl\. prepay MYR 1,000\.00/)).toBeTruthy();
+    expect(screen.getByText(/incl\. prepay RM 1,000\.00/)).toBeTruthy();
 
     fireEvent.click(screen.getByText('Create AP Payment'));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
@@ -474,7 +474,7 @@ describe('invoices another unapproved voucher already applies stay off the picke
       /* pi-1: 2,550.00 − 550.00 reserved → 2,000.00 is all that can be applied. */
       expect(screen.getByText('2990-PI-2609-001')).toBeTruthy();
       fireEvent.click(screen.getByLabelText('Pay 2990-PI-2609-001 in full'));
-      expect(screen.getByText(/Applying MYR 2,000\.00/)).toBeTruthy();
+      expect(screen.getByText(/Applying RM 2,000\.00/)).toBeTruthy();
     } finally {
       reservations = { byPi: {}, byApInvoice: {}, holders: {} };
     }
@@ -510,7 +510,7 @@ describe('the Customer Refund (?type=refund, §14)', () => {
     /* Payments with their ledger flag; the AutoCount-era row says so. */
     expect(screen.getByText('✓ booked')).toBeTruthy();
     expect(screen.getByText('AutoCount era')).toBeTruthy();
-    expect(screen.getByText('MYR 300.00 refundable')).toBeTruthy();
+    expect(screen.getByText('RM 300.00 refundable')).toBeTruthy();
     expect(screen.getByText('2990-MRF-2607-001').closest('a')!.getAttribute('href')).toBe('/scm/payment-vouchers/pv-old');
     /* The amount opened at the headroom; type a partial. */
     const amount = screen.getByLabelText('Refund amount') as HTMLInputElement;
@@ -518,7 +518,7 @@ describe('the Customer Refund (?type=refund, §14)', () => {
     fireEvent.focus(amount);
     fireEvent.change(amount, { target: { value: '120' } });
     fireEvent.blur(amount);
-    expect(screen.getByText(/Books: Dr 300-0000 Trade Debtors \(Ah Meng\) MYR 120\.00 · Cr 310-0010 MYR 120\.00/)).toBeTruthy();
+    expect(screen.getByText(/Books: Dr 300-0000 Trade Debtors \(Ah Meng\) RM 120\.00 · Cr 310-0010 RM 120\.00/)).toBeTruthy();
     fireEvent.click(screen.getByText('Create Refund'));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     const payload = mutateAsync.mock.calls[0]![0];

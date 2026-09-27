@@ -69,7 +69,7 @@ describe('the deposit invoice sheet', () => {
     expect(has(draws, 'Customer code: cust-larding')).toBe(true);
     expect(has(draws, 'Sales order: 2990-SO-2609-001')).toBe(true);
     expect(has(draws, 'Paid by: Cash')).toBe(true);
-    expect(has(draws, 'Amount: MYR 1,000.00')).toBe(true);
+    expect(has(draws, 'Amount: RM 1,000.00')).toBe(true);
     expect(has(draws, 'ONE THOUSAND')).toBe(true);
     expect(has(draws, 'Issued by')).toBe(true);
     expect(has(draws, 'CANCELLED')).toBe(false);

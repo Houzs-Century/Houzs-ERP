@@ -30,7 +30,7 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DataTable, type Column } from '../../components/DataTable';
-import { fmtDate } from '@2990s/shared';
+import { fmtDate, fmtSen } from '@2990s/shared';
 import {
   RULE_LABEL, RULE_CATEGORY, CATEGORY_LABEL, CATEGORY_HINT,
   RATE_RULE_CATEGORIES, rulesByCategory, type RateRuleCategory, type RateRuleTypeT,
@@ -615,18 +615,18 @@ const RECON_COLUMNS: Column<ReconcileRow>[] = [
   { key: 'drops', label: 'Drops', align: 'right', render: (r) => r.dropCount, getValue: (r) => r.dropCount },
   { key: 'zone', label: 'Zone', render: (r) => r.derivedZone ?? '—', getValue: (r) => r.derivedZone ?? '' },
   {
-    key: 'expected', label: 'Expected', align: 'right', render: (r) => (r.expectedSen == null ? '—' : `RM ${centiToRM(r.expectedSen)}`),
+    key: 'expected', label: 'Expected', align: 'right', render: (r) => fmtSen(r.expectedSen),
     getValue: (r) => r.expectedSen, exportValue: (r) => (r.expectedSen == null ? null : r.expectedSen / 100), exportFormat: 'money',
   },
   {
-    key: 'billed', label: 'Billed', align: 'right', render: (r) => `RM ${centiToRM(r.billedSen)}`,
+    key: 'billed', label: 'Billed', align: 'right', render: (r) => fmtSen(r.billedSen),
     getValue: (r) => r.billedSen, exportValue: (r) => r.billedSen / 100, exportFormat: 'money',
   },
   {
     key: 'delta', label: 'Delta', align: 'right',
     render: (r) => (
       <span style={{ color: r.flagged ? 'var(--c-danger, #dc2626)' : 'var(--fg-muted)' }}>
-        {r.deltaSen == null ? '—' : `${r.deltaSen > 0 ? '+' : r.deltaSen < 0 ? '−' : ''}RM ${centiToRM(Math.abs(r.deltaSen))}`}
+        {r.deltaSen == null ? '—' : `${r.deltaSen > 0 ? '+' : r.deltaSen < 0 ? '−' : ''}${fmtSen(Math.abs(r.deltaSen))}`}
       </span>
     ),
     getValue: (r) => r.deltaSen, exportValue: (r) => (r.deltaSen == null ? null : r.deltaSen / 100), exportFormat: 'money',

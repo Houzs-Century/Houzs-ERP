@@ -19,7 +19,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { buildVariantSummary, fmtDateOrDash, fmtMoneySen } from '@2990s/shared';
+import { buildVariantSummary, fmtDateOrDash, fmtMoneySen, fmtQty, fmtSen } from '@2990s/shared';
 import {
   usePurchaseConsignmentOrders,
   usePurchaseConsignmentOrderDetail,
@@ -48,7 +48,8 @@ const STATUS_CHIPS: { value: StatusFilter; label: string }[] = [
   { value: 'all', label: 'All' },
 ];
 
-const fmtMoney = (centi: number, currency: Currency): string => fmtMoneySen(centi, currency);
+const fmtMoney = (centi: number, currency: Currency): string =>
+  currency === 'MYR' ? fmtSen(centi) : fmtMoneySen(centi, currency);
 
 // The backend PC-orders list returns pc_number (the consignment doc number),
 // but the shared PoHeaderRow type carries po_number. Read pc_number first with
@@ -312,7 +313,8 @@ const buildDrilldownColumns = (
   },
   {
     key: 'ordered', label: 'Ordered', width: 70, align: 'right',
-    accessor: (it) => it.qty ?? 0,
+    accessor: (it) => fmtQty(it.qty ?? 0),
+    exportValue: (it) => it.qty,
     searchValue: (it) => String(it.qty ?? 0),
     sortFn: (a, b) => Number(a.qty ?? 0) - Number(b.qty ?? 0),
   },

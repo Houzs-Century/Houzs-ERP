@@ -75,6 +75,7 @@ import detailStyles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 import paymentsStyles from '../../../pages/scm-v2/Payments.module.css';
 import { useUnsavedWork } from '../../../lib/unsavedWork';
 
+import { fmtMoneySen } from '../../../vendor/shared/format';
 /* Bare amount, no currency. The Amount COLUMN carries the currency once in its
    header: `currency` is a single per-document prop (callers pass
    `header.currency`) and SoPayment has no currency field of its own, so every
@@ -86,8 +87,7 @@ const fmtAmt = (centi: number): string =>
 
 /* Currency-prefixed — for the summary totals and the delete confirm, which read
    outside the Amount column and so cannot lean on its header. */
-const fmtRm = (centi: number, currency = 'MYR'): string =>
-  `${currency} ${fmtAmt(centi)}`;
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 /* installment_plan "One Shot" option VALUE (spec 1 + 6) — the default plan for
    a Merchant card with no written tenure. Parsed to null months on persist. */

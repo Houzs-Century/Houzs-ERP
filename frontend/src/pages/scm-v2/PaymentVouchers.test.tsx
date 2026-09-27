@@ -127,7 +127,7 @@ describe('批量 tick yes', () => {
 describe('an advance not yet knocked off (owner 2026-09-06)', () => {
   test('the row wears the open amount beside its pill, and the Advance open chip keeps only such rows', () => {
     render(<MemoryRouter><PaymentVouchers /></MemoryRouter>);
-    expect(screen.getByText(/预付未冲 MYR 2,143\.74/)).toBeTruthy();
+    expect(screen.getByText(/预付未冲 RM 2,143\.74/)).toBeTruthy();
     fireEvent.click(screen.getByText('Advance open'));
     expect(screen.getByText('PV-2609-005')).toBeTruthy();
     expect(screen.queryByText('PV-2609-004')).toBeNull();

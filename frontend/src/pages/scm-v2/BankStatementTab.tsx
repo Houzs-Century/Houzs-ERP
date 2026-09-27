@@ -216,7 +216,7 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
             exportXlsx
             columns={[
               { key: 'file', label: 'File', getValue: (s) => s.file_name, render: (s) => <span style={{ wordBreak: 'break-all' }}>{s.file_name}</span> },
-              { key: 'period', label: 'Period', getValue: (s) => s.period_from, render: (s) => `${s.period_from} → ${s.period_to}` },
+              { key: 'period', label: 'Period', getValue: (s) => s.period_from, render: (s) => `${fmtDateOrDash(s.period_from)} → ${fmtDateOrDash(s.period_to)}` },
               { key: 'in', label: 'In', align: 'right', getValue: (s) => s.in_sen, exportValue: (s) => s.in_sen / 100, exportFormat: 'money', render: (s) => fmt(s.in_sen) },
               { key: 'out', label: 'Out', align: 'right', getValue: (s) => s.out_sen, exportValue: (s) => s.out_sen / 100, exportFormat: 'money', render: (s) => fmt(s.out_sen) },
               {

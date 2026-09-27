@@ -39,7 +39,7 @@ import { ListingPickerDialog, type ListingChoice } from '../../vendor/scm/compon
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { formatPhone } from '@2990s/shared/phone';
-import { buildVariantSummary, fmtDateOrDash, fmtQty } from '@2990s/shared';
+import { buildVariantSummary, fmtDateOrDash, fmtQty, fmtSen } from '@2990s/shared';
 import {
   useConsignmentOrdersPaged, useUpdateConsignmentOrderStatus,
   useConsignmentOrderDetail,
@@ -236,19 +236,6 @@ type SoRow = {
      reached (DO / SI / DR), falling back to this SO's own number when nothing
      downstream exists yet. Same "latest event wins" order as the status badge. */
   current_doc_no?: string | null;
-};
-
-const fmtRm = (centi: number): string =>
-  (centi / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-/* Compact date — "2026/04/21". Falls back to the raw ISO string when the
-   source isn't a parseable date so legacy data still shows. */
-const compactDate = (iso: string | null | undefined): string => {
-  if (!iso) return '';
-  // Accept either YYYY-MM-DD or a full ISO timestamp.
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  if (!m) return iso;
-  return `${m[1]}/${m[2]}/${m[3]}`;
 };
 
 /* Follow-up #83 — Balance column source-of-truth chain:
@@ -487,7 +474,8 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): GridCo
   },
   {
     key: 'qty', label: 'Qty', width: 60, align: 'right',
-    accessor: (it) => it.qty ?? 0,
+    accessor: (it) => fmtQty(it.qty ?? 0),
+    exportValue: (it) => Number(it.qty ?? 0),
     searchValue: (it) => String(it.qty ?? 0),
     sortFn: (a, b) => Number(a.qty ?? 0) - Number(b.qty ?? 0),
   },
@@ -500,7 +488,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): GridCo
         <div>
           {it.deliveries!.map((d, di) => (
             <div key={di} style={{ fontWeight: 600, color: '#16695f', whiteSpace: 'nowrap' }}>
-              {d.doNumber} <span style={{ color: 'var(--fg-muted)', fontWeight: 400 }}>×{d.qty}</span>
+              {d.doNumber} <span style={{ color: 'var(--fg-muted)', fontWeight: 400 }}>×{fmtQty(d.qty)}</span>
             </div>
           ))}
           {typeof it.remaining_qty === 'number' && (
@@ -508,7 +496,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): GridCo
               fontSize: 'var(--fs-10)', marginTop: 1,
               color: it.remaining_qty > 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-secondary-a, #2F5D4F)',
             }}>
-              {it.remaining_qty > 0 ? `Balance ${it.remaining_qty}` : 'Fully delivered'}
+              {it.remaining_qty > 0 ? `Balance ${fmtQty(it.remaining_qty)}` : 'Fully delivered'}
             </div>
           )}
         </div>
@@ -518,7 +506,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): GridCo
   },
   {
     key: 'unit_price', label: 'Unit Price', width: 100, align: 'right',
-    accessor: (it) => fmtRm(Number(it.unit_price_sen ?? 0)),
+    accessor: (it) => fmtSen(Number(it.unit_price_sen ?? 0)),
     exportValue: (it) => Number(it.unit_price_sen ?? 0) / 100,
     exportFormat: 'rate',
     searchValue: (it) => String(it.unit_price_sen ?? 0),
@@ -526,7 +514,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): GridCo
   },
   {
     key: 'total', label: 'Total', width: 100, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtRm(Number(it.total_sen ?? 0))}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtSen(Number(it.total_sen ?? 0))}</span>,
     exportValue: (it) => Number(it.total_sen ?? 0) / 100,
     exportFormat: 'money',
     searchValue: (it) => String(it.total_sen ?? 0),
@@ -536,7 +524,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): GridCo
     ? ([
         {
           key: 'unit_cost', label: 'Unit Cost', width: 100, align: 'right',
-          accessor: (it) => fmtRm(Number(it.unit_cost_sen ?? 0)),
+          accessor: (it) => fmtSen(Number(it.unit_cost_sen ?? 0)),
           exportValue: (it) => Number(it.unit_cost_sen ?? 0) / 100,
           exportFormat: 'rate',
           searchValue: (it) => String(it.unit_cost_sen ?? 0),
@@ -544,7 +532,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): GridCo
         },
         {
           key: 'line_cost', label: 'Line Cost', width: 100, align: 'right',
-          accessor: (it) => fmtRm(lineCostOf(it)),
+          accessor: (it) => fmtSen(lineCostOf(it)),
           exportValue: (it) => lineCostOf(it) / 100,
           exportFormat: 'money',
           searchValue: (it) => String(lineCostOf(it)),
@@ -555,7 +543,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): GridCo
           accessor: (it) => {
             const m = lineMarginOf(it);
             const c = m > 0 ? 'var(--c-secondary-a, #2F5D4F)' : m < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
-            return <span style={{ color: c, fontWeight: 600 }}>{fmtRm(m)}</span>;
+            return <span style={{ color: c, fontWeight: 600 }}>{fmtSen(m)}</span>;
           },
           exportValue: (it) => lineMarginOf(it) / 100,
           exportFormat: 'money',
@@ -702,9 +690,9 @@ const ExpandedSoLines = ({ docNo, canFinance }: { docNo: string; canFinance: boo
           fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)',
           letterSpacing: '0.06em', textTransform: 'uppercase',
         }}>Subtotal</span>
-        <span>Total <strong style={{ color: '#16695f' }}>{fmtRm(totalSen)}</strong></span>
-        {canFinance && <span>Line Cost <strong style={{ color: 'var(--c-ink)' }}>{fmtRm(costSen)}</strong></span>}
-        {canFinance && <span>Margin <strong style={{ color: marginColor }}>{fmtRm(marginSen)}</strong></span>}
+        <span>Total <strong style={{ color: '#16695f' }}>{fmtSen(totalSen)}</strong></span>
+        {canFinance && <span>Line Cost <strong style={{ color: 'var(--c-ink)' }}>{fmtSen(costSen)}</strong></span>}
+        {canFinance && <span>Margin <strong style={{ color: marginColor }}>{fmtSen(marginSen)}</strong></span>}
       </div>
     </div>
   );
@@ -987,14 +975,14 @@ export const ConsignmentOrders = () => {
         <StatCard
           pending={isLoading}
           label="Revenue"
-          value={`RM ${fmtRm(kpis.revenue)}`}
+          value={fmtSen(kpis.revenue)}
           subtitle="All matching orders"
           rail="bg-accent"
         />
         <StatCard
           pending={isLoading}
           label="Outstanding"
-          value={`RM ${fmtRm(kpis.outstanding)}`}
+          value={fmtSen(kpis.outstanding)}
           subtitle="Balance due"
           tone={kpis.outstanding > 0 ? 'error' : 'default'}
           rail={kpis.outstanding > 0 ? 'bg-err' : 'bg-border-strong'}
@@ -1002,7 +990,7 @@ export const ConsignmentOrders = () => {
         <StatCard
           pending={isLoading}
           label="Paid"
-          value={`RM ${fmtRm(kpis.paid)}`}
+          value={fmtSen(kpis.paid)}
           subtitle="Receipts to date"
           tone={kpis.paid > 0 ? 'success' : 'default'}
           rail="bg-synced"
@@ -1219,9 +1207,9 @@ const buildAllColumns = (
   },
   {
     key: 'so_date', label: 'Date', width: 110, sortable: true,
-    accessor: (r) => compactDate(r.so_date),
-    searchValue: (r) => `${r.so_date ?? ''} ${compactDate(r.so_date)}`,
-    filterValue: (r) => compactDate(r.so_date),
+    accessor: (r) => fmtDateOrDash(r.so_date),
+    searchValue: (r) => `${r.so_date ?? ''} ${fmtDateOrDash(r.so_date)}`,
+    filterValue: (r) => fmtDateOrDash(r.so_date),
     sortFn: (a, b) => (a.so_date ?? '').localeCompare(b.so_date ?? ''),
     filterType: 'date', dateValue: (r) => r.so_date,
   },
@@ -1295,9 +1283,9 @@ const buildAllColumns = (
       <span style={{
         fontWeight: 700, color: 'var(--c-ink)',
         fontVariantNumeric: 'tabular-nums',
-      }}>{fmtRm(r.local_total_sen)}</span>
+      }}>{fmtSen(r.local_total_sen)}</span>
     ),
-    searchValue: (r) => fmtRm(r.local_total_sen),
+    searchValue: (r) => fmtSen(r.local_total_sen),
     /* Export the NUMBER in ringgit (not "1,234.00") so Excel can SUM it. */
     exportValue: (r) => (r.local_total_sen ?? 0) / 100,
     exportFormat: 'money',
@@ -1337,9 +1325,9 @@ const buildAllColumns = (
       return <span style={{
         fontWeight: 600, color: badgeFor('sofa').fg,
         fontVariantNumeric: 'tabular-nums',
-      }}>{fmtRm(v)}</span>;
+      }}>{fmtSen(v)}</span>;
     },
-    searchValue: (r) => fmtRm(r.mattress_sofa_sen ?? 0),
+    searchValue: (r) => fmtSen(r.mattress_sofa_sen ?? 0),
     exportValue: (r) => (r.mattress_sofa_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.mattress_sofa_sen ?? 0) - (b.mattress_sofa_sen ?? 0),
@@ -1352,9 +1340,9 @@ const buildAllColumns = (
       return <span style={{
         fontWeight: 600, color: badgeFor('bedframe').fg,
         fontVariantNumeric: 'tabular-nums',
-      }}>{fmtRm(v)}</span>;
+      }}>{fmtSen(v)}</span>;
     },
-    searchValue: (r) => fmtRm(r.bedframe_sen ?? 0),
+    searchValue: (r) => fmtSen(r.bedframe_sen ?? 0),
     exportValue: (r) => (r.bedframe_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.bedframe_sen ?? 0) - (b.bedframe_sen ?? 0),
@@ -1367,33 +1355,33 @@ const buildAllColumns = (
       return <span style={{
         fontWeight: 600, color: badgeFor('accessory').fg,
         fontVariantNumeric: 'tabular-nums',
-      }}>{fmtRm(v)}</span>;
+      }}>{fmtSen(v)}</span>;
     },
-    searchValue: (r) => fmtRm(r.accessories_sen ?? 0),
+    searchValue: (r) => fmtSen(r.accessories_sen ?? 0),
     exportValue: (r) => (r.accessories_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.accessories_sen ?? 0) - (b.accessories_sen ?? 0),
   },
   {
     key: 'mattress_sofa_cost_sen', label: 'Mattress/Sofa Cost', width: 140, sortable: true, align: 'right', groupable: false,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.mattress_sofa_cost_sen ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.mattress_sofa_cost_sen ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtSen(r.mattress_sofa_cost_sen ?? 0)}</span>,
+    searchValue: (r) => fmtSen(r.mattress_sofa_cost_sen ?? 0),
     exportValue: (r) => (r.mattress_sofa_cost_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.mattress_sofa_cost_sen ?? 0) - (b.mattress_sofa_cost_sen ?? 0),
   },
   {
     key: 'bedframe_cost_sen', label: 'Bedframe Cost', width: 130, sortable: true, align: 'right', groupable: false,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.bedframe_cost_sen ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.bedframe_cost_sen ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtSen(r.bedframe_cost_sen ?? 0)}</span>,
+    searchValue: (r) => fmtSen(r.bedframe_cost_sen ?? 0),
     exportValue: (r) => (r.bedframe_cost_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.bedframe_cost_sen ?? 0) - (b.bedframe_cost_sen ?? 0),
   },
   {
     key: 'accessories_cost_sen', label: 'Accessories Cost', width: 140, sortable: true, align: 'right', groupable: false,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.accessories_cost_sen ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.accessories_cost_sen ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtSen(r.accessories_cost_sen ?? 0)}</span>,
+    searchValue: (r) => fmtSen(r.accessories_cost_sen ?? 0),
     exportValue: (r) => (r.accessories_cost_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.accessories_cost_sen ?? 0) - (b.accessories_cost_sen ?? 0),
@@ -1488,15 +1476,15 @@ const buildAllColumns = (
        column removed, commander 2026-05-28. */
     key: 'processing_date', label: 'Processing Date', width: 130, sortable: true,
     defaultHidden: true,
-    accessor: (r) => compactDate(r.processing_date),
-    searchValue: (r) => `${r.processing_date ?? ''} ${compactDate(r.processing_date)}`,
+    accessor: (r) => fmtDateOrDash(r.processing_date),
+    searchValue: (r) => `${r.processing_date ?? ''} ${fmtDateOrDash(r.processing_date)}`,
     filterType: 'date', dateValue: (r) => r.processing_date,
   },
   {
     key: 'customer_delivery_date', label: 'Delivery Date', width: 130, sortable: true,
     defaultHidden: true,
-    accessor: (r) => compactDate(r.customer_delivery_date),
-    searchValue: (r) => `${r.customer_delivery_date ?? ''} ${compactDate(r.customer_delivery_date)}`,
+    accessor: (r) => fmtDateOrDash(r.customer_delivery_date),
+    searchValue: (r) => `${r.customer_delivery_date ?? ''} ${fmtDateOrDash(r.customer_delivery_date)}`,
     filterType: 'date', dateValue: (r) => r.customer_delivery_date,
   },
   {
@@ -1529,8 +1517,8 @@ const buildAllColumns = (
   {
     key: 'others_sen', label: 'Others', width: 110, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.others_sen ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.others_sen ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtSen(r.others_sen ?? 0)}</span>,
+    searchValue: (r) => fmtSen(r.others_sen ?? 0),
     exportValue: (r) => (r.others_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.others_sen ?? 0) - (b.others_sen ?? 0),
@@ -1538,8 +1526,8 @@ const buildAllColumns = (
   {
     key: 'others_cost_sen', label: 'Others Cost', width: 120, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.others_cost_sen ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.others_cost_sen ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtSen(r.others_cost_sen ?? 0)}</span>,
+    searchValue: (r) => fmtSen(r.others_cost_sen ?? 0),
     exportValue: (r) => (r.others_cost_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.others_cost_sen ?? 0) - (b.others_cost_sen ?? 0),
@@ -1548,8 +1536,8 @@ const buildAllColumns = (
   {
     key: 'total_cost_sen', label: 'Cost Total', width: 120, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.total_cost_sen ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.total_cost_sen ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtSen(r.total_cost_sen ?? 0)}</span>,
+    searchValue: (r) => fmtSen(r.total_cost_sen ?? 0),
     exportValue: (r) => (r.total_cost_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.total_cost_sen ?? 0) - (b.total_cost_sen ?? 0),
@@ -1561,9 +1549,9 @@ const buildAllColumns = (
       const m = r.total_margin_sen ?? 0;
       if ((r.local_total_sen ?? 0) <= 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
       const color = m > 0 ? 'var(--c-secondary-a, #2F5D4F)' : m < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
-      return <span className={styles.money} style={{ color, fontWeight: 600 }}>{fmtRm(m)}</span>;
+      return <span className={styles.money} style={{ color, fontWeight: 600 }}>{fmtSen(m)}</span>;
     },
-    searchValue: (r) => fmtRm(r.total_margin_sen ?? 0),
+    searchValue: (r) => fmtSen(r.total_margin_sen ?? 0),
     exportValue: (r) => (r.total_margin_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.total_margin_sen ?? 0) - (b.total_margin_sen ?? 0),
@@ -1590,8 +1578,8 @@ const buildAllColumns = (
   {
     key: 'deposit_sen', label: 'Deposit', width: 110, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.deposit_sen ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.deposit_sen ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtSen(r.deposit_sen ?? 0)}</span>,
+    searchValue: (r) => fmtSen(r.deposit_sen ?? 0),
     exportValue: (r) => (r.deposit_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.deposit_sen ?? 0) - (b.deposit_sen ?? 0),
@@ -1599,8 +1587,8 @@ const buildAllColumns = (
   {
     key: 'paid_total_sen', label: 'Paid', width: 110, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.paid_total_sen ?? r.paid_sen ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.paid_total_sen ?? r.paid_sen ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtSen(r.paid_total_sen ?? r.paid_sen ?? 0)}</span>,
+    searchValue: (r) => fmtSen(r.paid_total_sen ?? r.paid_sen ?? 0),
     exportValue: (r) => (r.paid_total_sen ?? r.paid_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.paid_total_sen ?? a.paid_sen ?? 0) - (b.paid_total_sen ?? b.paid_sen ?? 0),
@@ -1609,8 +1597,8 @@ const buildAllColumns = (
     /* Follow-up #83 — prefer the view's live balance. */
     key: 'balance_sen', label: 'Balance', width: 110, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(liveBalance(r))}</span>,
-    searchValue: (r) => fmtRm(liveBalance(r)),
+    accessor: (r) => <span className={styles.money}>{fmtSen(liveBalance(r))}</span>,
+    searchValue: (r) => fmtSen(liveBalance(r)),
     exportValue: (r) => liveBalance(r) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => liveBalance(a) - liveBalance(b),
