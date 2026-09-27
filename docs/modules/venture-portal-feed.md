@@ -17,6 +17,7 @@ Ships **off** behind three gates, all of which must be set from the
 | switch + company scope | `scm.app_config` key `scm.venture_portal_feed` | `'off'` |
 | receiver URL | `scm.sync_config` key `vp.url` | absent |
 | shared secret | `scm.sync_config` key `vp.secret` | absent |
+| brands the portal pays on | `scm.sync_config` key `vp.brands` | `AKEMI,DUNLOPILLO,ERGOTEX,ZANOTTI` (seeded) |
 
 `vp.since` is a fourth, optional date floor. **Capture is unconditional** —
 a same-transaction `AFTER` trigger on `mfg_sales_orders` / `_items` /
@@ -24,8 +25,9 @@ a same-transaction `AFTER` trigger on `mfg_sales_orders` / `_items` /
 config gate only the **drain**, so turning the feed off leaves the queue
 intact and turning it on later delivers what accumulated. Re-picking the
 event (`project_id`, `fair_match`, `fair_date`) or editing `venue` /
-`venue_id` is a change; so is a project whose venue, organizer, dates or
-status change — `trg_vp_outbox_project` queues every order pointing at it.
+`venue_id` is a change, and so is answering which brand a bill is for
+(`vp_brand`); so is a project whose venue, organizer, dates or status change
+— `trg_vp_outbox_project` queues every order pointing at it.
 
 Outbox row: `pending → sent | failed | skipped`; parked `failed` at 6
 attempts. Three drain paths: (1) the saving request itself schedules a drain
@@ -91,6 +93,17 @@ non-2xx"):
   `project_id` — with named keys only. The portal keeps it as the bill's fair
   and takes its organizer and days over anything typed there, so a wrong
   project on an order is fixed HERE.
+- Each delivery carries `vpBrand`: the brand a person said the bill is for
+  (`mfg_sales_orders.vp_brand`), `null` when never asked or skipped. The
+  order form asks after a save that makes a live order when NOTHING on it names
+  a brand — not its `branding`, not one of its lines (BEDFRAME, SERVICE, NONE,
+  blank: a bed frame or accessory bill written at a brand's fair) — offering
+  the brands the portal has a margin ladder for (`vp.brands`, cut to this
+  company's `project_brands`), the linked booth's brand first; the save's
+  response carries the question (`scm/lib/vp-brand-ask.ts`) and
+  `PUT /mfg-sales-orders/:docNo/vp-brand` takes the answer. Nothing here reads
+  the column — `branding` stays as the products say. The portal follows
+  `vpBrand` for a bill whose `branding` names no brand.
 - `vp_build_payloads` takes an array and answers the whole batch in **one**
   round trip — never recompose per-document in a Worker loop (subrequest
   budget).
@@ -195,6 +208,13 @@ company's row.
 - `backend/src/db/migrations-pg/*_scm_vp_order_fair.sql` — the `fair` key,
   the capture trigger's event columns and `trg_vp_outbox_project`; executed
   by `backend/tests-pg/vpOrderFair.pg.test.ts`.
+- `backend/src/db/migrations-pg/*_scm_so_vp_brand.sql` — `vp_brand`, the
+  `vpBrand` key and the capture column; executed by
+  `backend/tests-pg/vpOrderBrand.pg.test.ts`. The question:
+  `backend/src/scm/lib/vp-brand.ts` (rule), `vp-brand-ask.ts` (reads),
+  `routes/mfg-so-vp-brand.ts` (the answer), and on the client
+  `frontend/src/vendor/scm/lib/vp-brand-prompt.ts` with
+  `components/VpBrandPromptBridge.tsx` mounted in both shells.
 - `backend/src/scm/lib/venture-portal-catalogue.ts` — the catalogue sender
   (URL, digest decision, section split, response verdict); its SQL is
   executed by `backend/tests-pg/vpCatalogueFeed.pg.test.ts`.

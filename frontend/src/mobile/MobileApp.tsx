@@ -11,6 +11,7 @@ import { NotifyProvider, useNotify } from "../vendor/scm/components/NotifyDialog
 import { ConfirmProvider, useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { PromptProvider } from "../vendor/scm/components/PromptDialog";
 import { ChoiceProvider } from "../vendor/scm/components/ChoiceDialog";
+import { VpBrandPromptBridge } from "../vendor/scm/components/VpBrandPromptBridge";
 import { registerDialogService } from "../vendor/scm/lib/dialog-service";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { useApplyHtmlLang } from "./mobileI18n";
@@ -557,6 +558,7 @@ export function MobileApp() {
         <PromptProvider>
           <ChoiceProvider>
             <MobileDialogBridge />
+            <VpBrandPromptBridge />
             {/* Manual install coaches. Previously mounted only in the desktop
                 App shell, so phone users whose browser never fires
                 beforeinstallprompt (iOS Safari, Samsung Internet, in-app

@@ -61,6 +61,7 @@ import { mfgSalesOrders } from "./routes/mfg-sales-orders";
 import { mfgSalesOrdersListEnrichment } from "./routes/mfg-sales-orders-list-enrichment";
 import { salesOrderExports } from "./routes/sales-order-exports";
 import { mfgSoFairs } from "./routes/mfg-so-fairs";
+import { mfgSoVpBrand } from "./routes/mfg-so-vp-brand";
 import { soAmendmentLanePreview } from "./routes/so-amendment-lane-preview";
 import { soAmendments } from "./routes/so-amendments";
 import { soHandover } from "./routes/so-handover";
@@ -422,6 +423,10 @@ scm.route("/mfg-sales-orders", soCancelRequests);
 // paths must resolve ahead of `/:docNo`. In its own file because
 // mfg-sales-orders.ts is already over its file-size ceiling.
 scm.route("/mfg-sales-orders", mfgSoFairs);
+// Which brand a bill is for, for the Venture Portal (owner 2026-09-27): the
+// answer to the question the form asks after a save whose products name no
+// brand. Own file for the same ceiling reason. routes/mfg-so-vp-brand.ts.
+scm.route("/mfg-sales-orders", mfgSoVpBrand);
 // Lane preview (owner 2026-09-15, option B): which desk an amendment WILL go to,
 // read from the same resolver the submit route stores from. Own file for the
 // same ceiling reason; ahead of the main router so `/:docNo/amendments/lane-preview`

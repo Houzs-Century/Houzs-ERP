@@ -39,6 +39,7 @@ import {
 import { companyHeader } from '../../../lib/activeCompany';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
+import { askVpBrand, type VpBrandAsk } from './vp-brand-prompt';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import { prepareImageForUpload } from '../../../lib/imagePipeline';
 import { resolveLoadedSoVersion, runSoVersionedMutation } from './so-versioned-mutation';
@@ -420,10 +421,14 @@ export const useCreateMfgSalesOrder = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ idempotencyKey, ...body }: { idempotencyKey?: string } & Record<string, unknown>) =>
-      authedFetch<{ docNo: string }>(`/mfg-sales-orders`,
+      authedFetch<{ docNo: string; vpBrand?: VpBrandAsk }>(`/mfg-sales-orders`,
         idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) })),
-    onSuccess: () => {
+    onSuccess: (res) => {
       invalidateSoLists(qc);
+      /* A live order whose products name no brand: ask which brand it is for,
+         for the Venture Portal (owner 2026-09-27). Not awaited -- the save is
+         done, and the question is optional. lib/vp-brand-prompt.ts. */
+      void askVpBrand(res.docNo, res.vpBrand ?? null);
     },
   });
 };
@@ -454,10 +459,15 @@ export const useUpdateMfgSalesOrderStatus = () => {
   return useMutation({
     mutationFn: async ({ docNo, status, expectedStatus }: { docNo: string; status: string; expectedStatus: string | null }) => {
       const version = await resolveLoadedSoVersion(qc, docNo);
-      return authedFetch<{ salesOrder: unknown; version: number }>(`/mfg-sales-orders/${docNo}/status`, {
+      return authedFetch<{ salesOrder: unknown; version: number; vpBrand?: VpBrandAsk }>(`/mfg-sales-orders/${docNo}/status`, {
         method: 'PATCH',
         body: JSON.stringify({ status, version, expectedStatus: expectedStatus ?? undefined }),
       });
+    },
+    /* A draft just confirmed is asked which brand it is for, as a create is
+       (owner 2026-09-27); the server only asks on that transition. */
+    onSuccess: (res, vars) => {
+      void askVpBrand(vars.docNo, res.vpBrand ?? null);
     },
     onMutate: async ({ docNo, status }) => {
       const detailKey = ['mfg-sales-order-detail', docNo];
