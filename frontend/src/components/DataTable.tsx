@@ -34,6 +34,7 @@ import {
 import { cn } from "../lib/utils";
 import { headerLabel } from "../lib/columnHeaderLabel";
 import { rowsToTsv } from "./dataTableClipboard";
+import { parseUrlColFilters, serializeUrlColFilters } from "./dataTableUrlFilters";
 import { ResetFiltersButton } from "./ResetFiltersButton";
 import { TableSkeleton } from "./Skeleton";
 import {
@@ -405,6 +406,32 @@ function DataTableInner<T, L>({
   const visitColFilters = useInVisitColFilters(idKey);
   const sessionColFilters = useState<Record<string, string[]>>({});
   const [colFilters, setColFilters] = persistFilters ? visitColFilters : sessionColFilters;
+  /* Column filters ride in the address (owner 2026-09-25), so a filtered list
+     can be sent as a link: one `cf.<tableId>` parameter holding the funnels.
+     Read once on mount, where a link beats the in-visit memory; rewritten with
+     replaceState on every change so Back is not filled with filter steps. Not
+     for per-mount tables (persistFilters false), whose funnels never persist. */
+  const urlFilterParam = tableId && persistFilters ? `cf.${tableId}` : null;
+  const urlSeedRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!urlFilterParam || urlSeedRef.current !== undefined) return;
+    const seeded = parseUrlColFilters(new URLSearchParams(window.location.search).get(urlFilterParam));
+    urlSeedRef.current = seeded ? JSON.stringify(seeded) : null;
+    if (seeded) setColFilters(seeded);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per table; setColFilters is stable per mode
+  }, [urlFilterParam]);
+  useEffect(() => {
+    if (!urlFilterParam || urlSeedRef.current === undefined) return;
+    const next = serializeUrlColFilters(colFilters);
+    // The seed has not landed yet: writing now would drop the link's filters.
+    if (urlSeedRef.current !== null && next !== urlSeedRef.current) return;
+    urlSeedRef.current = null;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get(urlFilterParam) === next) return;
+    if (next) url.searchParams.set(urlFilterParam, next);
+    else url.searchParams.delete(urlFilterParam);
+    window.history.replaceState(window.history.state, "", url);
+  }, [colFilters, urlFilterParam]);
   /* Erase the pre-2026-09-16 localStorage funnel key (both modes now — funnels
      no longer persist to disk at all). Re-runs when idKey gains its `c<company>:`
      prefix after the company resolves, so both the scoped and legacy keys go. */

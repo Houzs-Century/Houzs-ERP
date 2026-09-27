@@ -28,4 +28,16 @@ import { cleanup } from "@testing-library/react";
 
 afterEach(() => {
   cleanup();
+  /* A DataTable writes its column filters into the address (`cf.<tableId>`).
+     jsdom keeps one address for a whole file, so a funnel one test sets would
+     open the next test's table already filtered. In the app every page has
+     its own address; here each test gets a clean one. (Node-environment
+     files have no window at all.) */
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  const stale = [...url.searchParams.keys()].filter((k) => k.startsWith("cf."));
+  if (stale.length > 0) {
+    for (const k of stale) url.searchParams.delete(k);
+    window.history.replaceState(window.history.state, "", url);
+  }
 });
