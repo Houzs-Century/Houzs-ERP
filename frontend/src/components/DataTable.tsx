@@ -92,6 +92,7 @@ import { DataTableGroupBanner } from "./DataTableGroupBanner";
 import { gridLayoutToTableLayout, readLegacyGridLayout } from "./dataTableLegacyGridLayout";
 import { buildSearchBlob, conditionToken, isConditionToken, parseCondition } from "./dataTableConditionFilters";
 import { MobileVirtualList } from "../mobile/MobileVirtualList";
+import { reorderKeys } from "../lib/reorder";
 
 import type { Column, DataTableProps, SortDir, SortState } from "./dataTableTypes";
 import {
@@ -153,6 +154,7 @@ function DataTableInner<T, L>({
   onRowDoubleClick,
   getRowStyle,
   initialRowLimit,
+  onRowReorder,
   defaultSort,
   embedded = false,
   groupBanner = false,
@@ -1837,6 +1839,21 @@ function DataTableInner<T, L>({
   }, [sortedRows, displayColumns, selection?.selectedIds]);
   const loadMore = () => setRowLimit((n) => (n ?? 0) + (initialRowLimit ?? 200));
 
+  /* Drag-to-reorder (owner 2026-09-26): rows are draggable ONLY while no column
+     sort is active — a column sort owns the order then. A drop reports the new
+     order of the whole filtered set (`sortedRows`), which the caller persists and
+     feeds back through `defaultSort`. */
+  const rowReorderable = !!onRowReorder && sort == null;
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  const [dropKey, setDropKey] = useState<string | null>(null);
+  const onRowDrop = (toKey: string) => {
+    if (dragKey && dragKey !== toKey && sortedRows) {
+      onRowReorder?.(reorderKeys(sortedRows.map((r) => String(getRowKey(r))), dragKey, toKey));
+    }
+    setDragKey(null);
+    setDropKey(null);
+  };
+
   /* Report what the operator can actually see (owner 2026-08-12) — see the
      onFilteredRowsChange prop doc. In an effect, not during render, so a parent
      that stores these in state cannot re-enter this render pass. `rows` is
@@ -2682,7 +2699,16 @@ function DataTableInner<T, L>({
                       <tr
                         data-vrow=""
                         data-rowkey={String(getRowKey(row))}
-                        style={getRowStyle?.(row)}
+                        draggable={rowReorderable}
+                        onDragStart={rowReorderable ? (e) => { setDragKey(String(getRowKey(row))); e.dataTransfer.effectAllowed = "move"; } : undefined}
+                        onDragOver={rowReorderable && dragKey ? (e) => { e.preventDefault(); const k = String(getRowKey(row)); if (k !== dragKey) setDropKey(k); } : undefined}
+                        onDrop={rowReorderable && dragKey ? (e) => { e.preventDefault(); onRowDrop(String(getRowKey(row))); } : undefined}
+                        onDragEnd={rowReorderable ? () => { setDragKey(null); setDropKey(null); } : undefined}
+                        style={{
+                          ...getRowStyle?.(row),
+                          ...(rowReorderable ? { cursor: "grab" } : {}),
+                          ...(dropKey === String(getRowKey(row)) ? { boxShadow: "inset 0 2px 0 0 var(--primary, #2f5d4f)" } : {}),
+                        }}
                         onClick={
                           onRowClick || rowClickTicks
                             ? () => {
