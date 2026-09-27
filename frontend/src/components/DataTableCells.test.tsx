@@ -40,4 +40,10 @@ describe("DataTable cells", () => {
     render(<DataTable tableId="cells-desc" columns={columns} rows={rows} getRowKey={(r) => r.id} />);
     expect(screen.getByTitle("The customer's own PO number").textContent).toContain("Customer Ref");
   });
+
+  it("takes a column's description from the shared list when the page gives none", () => {
+    const cols: Column<Row>[] = [{ key: "balance", label: "Balance", render: (r) => r.party, getValue: (r) => r.party }];
+    render(<DataTable tableId="sales-orders-v2" columns={cols} rows={rows} getRowKey={(r) => r.id} />);
+    expect(screen.getByTitle(/^Order total minus payments received/).textContent).toContain("Balance");
+  });
 });
