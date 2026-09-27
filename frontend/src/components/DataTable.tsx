@@ -35,8 +35,10 @@ import { cn } from "../lib/utils";
 import { headerLabel } from "../lib/columnHeaderLabel";
 import { columnDescription } from "../lib/columnDescriptions";
 import { rowsToTsv } from "./dataTableClipboard";
+import { tickedOrAll } from "./dataTableTicked";
 import { DataTableFreezeItems, keysThrough } from "./DataTableFreezeItems";
-import { parseUrlColFilters, serializeUrlColFilters } from "./dataTableUrlFilters";
+import { parseUrlColFilters, serializeUrlColFilters, UrlFilterResync } from "./dataTableUrlFilters";
+import { useInRouterContext } from "react-router-dom";
 import { ResetFiltersButton } from "./ResetFiltersButton";
 import { TableSkeleton } from "./Skeleton";
 import {
@@ -416,7 +418,7 @@ function DataTableInner<T, L>({
      Read once on mount, where a link beats the in-visit memory; rewritten with
      replaceState on every change so Back is not filled with filter steps. Not
      for per-mount tables (persistFilters false), whose funnels never persist. */
-  const urlFilterParam = tableId && persistFilters ? `cf.${tableId}` : null;
+  const urlFilterParam = tableId && persistFilters ? `cf.${tableId}` : null, inRouter = useInRouterContext();
   const urlSeedRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     if (!urlFilterParam || urlSeedRef.current !== undefined) return;
@@ -1577,10 +1579,7 @@ function DataTableInner<T, L>({
     if (target instanceof HTMLInputElement && target.type !== "checkbox") return;
     if ((window.getSelection()?.toString() ?? "") !== "") return;
     if (!sortedRows?.length) return;
-    let picked: T[] = [];
-    if (selection && selection.selectedIds.size > 0) {
-      picked = sortedRows.filter((r) => selection.selectedIds.has(String(getRowKey(r))));
-    }
+    let picked: T[] = actionRows?.picked ? actionRows.rows : [];
     if (picked.length === 0) {
       const key = target.closest<HTMLElement>("tr[data-rowkey]")?.dataset.rowkey;
       const row = key == null ? undefined : sortedRows.find((r) => String(getRowKey(r)) === key);
@@ -1603,7 +1602,7 @@ function DataTableInner<T, L>({
       const cols = exportableColumns(visibleColumns as Column<T, L>[]);
       const filterKeys = Object.entries(colFilters).filter(([, v]) => v.length > 0).map(([k]) => k);
       const fetched = await spec.fetchRows({ exportKeys: cols.map((c) => c.key), filterKeys });
-      const kept = sortTableRows(applyColumnFilters(fetched, colFilters, allColumns), sort, allColumns, Boolean(serverSort), defaultSort ?? null);
+      const kept = tickedOrAll(sortTableRows(applyColumnFilters(fetched, colFilters, allColumns), sort, allColumns, Boolean(serverSort), defaultSort ?? null), selection?.selectedIds, getRowKey).rows;
       const matrix = buildLineExportMatrix(kept, spec.linesOf, cols);
       const date = new Date().toISOString().slice(0, 10);
       await writeLineExportFile(matrix, spec.sheetName, `${exportName || tableId || "export"}-${date}.xlsx`);
@@ -1627,15 +1626,15 @@ function DataTableInner<T, L>({
         getValue: (r: T) => (c.exportValue ? c.exportValue(r) : isoForExport(c.getValue!(r) as string | number | null)),
       }));
     if (onExport) { onExport(csvCols); return; }
-    if (!sortedRows || sortedRows.length === 0 || csvCols.length === 0) return;
-    const date = new Date().toISOString().slice(0, 10);
+    if (!actionRows || actionRows.rows.length === 0 || csvCols.length === 0) return;
+    const date = new Date().toISOString().slice(0, 10), outRows = actionRows.rows;
     if (exportXlsx) {
       // No lines: one sheet row per list row, keeping each column's exportFormat.
-      const matrix = buildLineExportMatrix(sortedRows, () => [], exportableColumns(visibleColumns as Column<T, L>[]));
+      const matrix = buildLineExportMatrix(outRows, () => [], exportableColumns(visibleColumns as Column<T, L>[]));
       void writeLineExportFile(matrix, "Sheet1", `${exportName || tableId || "export"}-${date}.xlsx`);
       return;
     }
-    downloadCSV(`${exportName || tableId || "export"}-${date}.csv`, toCSV(sortedRows, csvCols));
+    downloadCSV(`${exportName || tableId || "export"}-${date}.csv`, toCSV(outRows, csvCols));
   }
 
   function handleImportClick() {
@@ -1821,15 +1820,11 @@ function DataTableInner<T, L>({
     [sortedRows, rowLimit],
   );
   const hiddenByLimit = (sortedRows?.length ?? 0) - (limitedRows?.length ?? 0);
-  const footerTotals = useMemo(() => {
-    if (!sortedRows?.length || !displayColumns.some((c) => c.total)) return null;
-    if (selection && selection.selectedIds.size > 0) {
-      const picked = sortedRows.filter((r) => selection.selectedIds.has(String(getRowKey(r))));
-      if (picked.length > 0) return { rows: picked, picked: true };
-    }
-    return { rows: sortedRows, picked: false };
+  // Ticked rows while any are, else all shown: the footer, Export and Ctrl+C share it.
+  const actionRows = useMemo(() => (sortedRows ? tickedOrAll(sortedRows, selection?.selectedIds, getRowKey) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- getRowKey is an inline prop; keys are stable per row
-  }, [sortedRows, displayColumns, selection?.selectedIds]);
+    [sortedRows, selection?.selectedIds]);
+  const footerTotals = actionRows?.rows.length && displayColumns.some((c) => c.total) ? actionRows : null;
   const loadMore = () => setRowLimit((n) => (n ?? 0) + (initialRowLimit ?? 200));
 
   /* Drag-to-reorder + edge auto-scroll (owner 2026-09): rows drag only while no column sort; a drop reports the whole new order, persisted by the caller via `defaultSort`. */
@@ -2112,6 +2107,7 @@ function DataTableInner<T, L>({
 
   return (
     <div ref={freezeRootRef}>
+      {urlFilterParam && inRouter && <UrlFilterResync param={urlFilterParam} value={serializeUrlColFilters(colFilters)} />}
       {/* ── Toolbar (always rendered; an embedded grid has none) ── */}
       <div className={cn("mb-2.5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between", embedded && "hidden")}>
         <div className="flex flex-1 flex-wrap items-center gap-2 sm:gap-3">
@@ -2207,7 +2203,7 @@ function DataTableInner<T, L>({
             className={toolbarBtn}
           >
             <Download size={13} />
-            {exporting ? "Exporting…" : exportLabel}
+            {exporting ? "Exporting…" : actionRows?.picked && !onExport ? `${exportLabel} (${actionRows.rows.length})` : exportLabel}
           </button>
           {toolbarExtra}
           {/* Density toggle removed 2026-06 — layout is permanently comfy. */}

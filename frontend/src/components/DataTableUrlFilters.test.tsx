@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { BrowserRouter, useNavigate } from "react-router-dom";
 import { DataTable, type Column } from "./DataTable";
 import { parseUrlColFilters, serializeUrlColFilters } from "./dataTableUrlFilters";
 
@@ -69,5 +70,23 @@ describe("URL column filters: the table", () => {
   it("leaves the address alone for a table with no filters", () => {
     render(<DataTable tableId="url-c" columns={columns} rows={rows} getRowKey={(r) => r.id} />);
     expect(window.location.search).toBe("");
+  });
+
+  it("puts the funnels back when the page moves its own address (a tab click)", async () => {
+    let go: (to: string) => void = () => undefined;
+    const Tabs = () => { const nav = useNavigate(); go = nav; return null; };
+    window.history.replaceState(null, "", `/list?cf.url-d=${encodeURIComponent('{"status":["Open"]}')}`);
+    render(
+      <BrowserRouter>
+        <Tabs />
+        <DataTable tableId="url-d" columns={columns} rows={rows} getRowKey={(r) => r.id} />
+      </BrowserRouter>,
+    );
+    await waitFor(() => expect(drawn()).toEqual(["a", "c"]));
+    // The router builds the new address from its own copy: the cf. param is gone...
+    act(() => go("/list?tab=paid"));
+    // ...and the table writes it back.
+    await waitFor(() => expect(param("url-d")).toBe('{"status":["Open"]}'));
+    expect(new URLSearchParams(window.location.search).get("tab")).toBe("paid");
   });
 });
