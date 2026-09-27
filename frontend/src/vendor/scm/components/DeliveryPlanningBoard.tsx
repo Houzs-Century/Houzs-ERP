@@ -688,6 +688,10 @@ export type DeliveryPlanningBoardProps = {
      with a "Load more" for the rest; passed only by the main Delivery Planning
      page. Omitted on the sub-pages (they render their whole, narrower queue). */
   initialRowLimit?: number;
+  /* Drag-to-reorder the board rows (owner 2026-09-26): called with the new order
+     of the displayed rows. Passed only by the main Delivery Planning page, whose
+     `defaultSort` reads the same persisted order back. */
+  onRowReorder?: (orderedKeys: string[]) => void;
 
   /* Default ordering while NO column sort is active — forwarded to the
      DataGrid. The two arrangement queues pass arrangementQueueCompare
@@ -735,6 +739,7 @@ export function DeliveryPlanningBoard({
   defaultSort,
   layoutPresets,
   initialRowLimit,
+  onRowReorder,
 }: DeliveryPlanningBoardProps) {
   const askConfirm = useConfirm();
   const notify = useNotify();
@@ -1665,6 +1670,7 @@ export function DeliveryPlanningBoard({
         storageKey={storageKey}
         layoutPresets={layoutPresets}
         initialRowLimit={initialRowLimit}
+        onRowReorder={onRowReorder}
         exportName={exportName}
         rowKey={rowIdOf}
         searchPlaceholder={searchPlaceholder}

@@ -53,6 +53,7 @@ import {
 import { DELIVERY_PLANNING_LAYOUT_PRESETS } from '../../vendor/scm/lib/deliveryPlanningLayouts';
 import { RowColorModal } from './RowColorModal';
 import { useDeliveryRowMarks, type RowMarkColour } from '../../vendor/scm/lib/delivery-row-mark';
+import { useDeliveryRowOrder, useSetRowOrder, orderComparator } from '../../vendor/scm/lib/delivery-row-order';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { transferToLabel } from '../../lib/convertScope';
@@ -94,6 +95,14 @@ export const DeliveryPlanning = () => {
      palette; the board tints the row from the same shared query. */
   const [coloringRow, setColoringRow] = useState<PlanningOrder | null>(null);
   const rowMarks = useDeliveryRowMarks().data;
+  /* Manual drag order (owner 2026-09-26): the board sorts by it while no column
+     sort is active; a drag persists the new order of the displayed rows. */
+  const rowOrder = useDeliveryRowOrder().data;
+  const setRowOrder = useSetRowOrder();
+  const orderSort = useMemo(() => {
+    const cmp = orderComparator(rowOrder ?? []);
+    return (a: PlanningOrder, b: PlanningOrder) => cmp(rowIdOf(a), rowIdOf(b));
+  }, [rowOrder]);
   const [showNewDp, setShowNewDp] = useState(false);
   /* The DP job being scheduled (Schedule drawer open when non-null). */
   const [schedulingDp, setSchedulingDp] = useState<PlanningOrder | null>(null);
@@ -350,6 +359,8 @@ export const DeliveryPlanning = () => {
         orders={allOrders}
         layoutPresets={DELIVERY_PLANNING_LAYOUT_PRESETS}
         initialRowLimit={200}
+        defaultSort={orderSort}
+        onRowReorder={(keys) => setRowOrder.mutate(keys)}
         counts={counts}
         regionTabs={regionTabs}
         activeRegion={activeRegion}

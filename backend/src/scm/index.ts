@@ -114,6 +114,7 @@ import { slips } from "./routes/slips";
 import { deliveryPlanning } from "./routes/delivery-planning";
 import { deliveryPlanningRegions } from "./routes/delivery-planning-regions";
 import { deliveryPlanningRowMarks } from "./routes/delivery-planning-row-marks";
+import { deliveryPlanningRowOrder } from "./routes/delivery-planning-row-order";
 import { deliveryResidenceRules } from "./routes/delivery-residence-rules";
 import { threeplCompanies } from "./routes/threepl-companies";
 import { deliveryZones } from "./routes/delivery-zones";
@@ -779,6 +780,8 @@ scm.use("/delivery-planning-regions/*", scmAreaGuard("scm.transportation.drivers
 scm.route("/delivery-planning-regions", deliveryPlanningRegions);
 scm.use("/delivery-planning-row-marks/*", scmAreaGuard("scm.transportation.drivers", { openRead: true }));
 scm.route("/delivery-planning-row-marks", deliveryPlanningRowMarks);
+scm.use("/delivery-planning-row-order/*", scmAreaGuard("scm.transportation.drivers", { openRead: true }));
+scm.route("/delivery-planning-row-order", deliveryPlanningRowOrder);
 // Residence delivery rules (mig 0195) — per-building-type service duration +
 // access windows the Phase 3 scheduler will read. Same Transportation area gate
 // as the rest of TMS: read the rules = view, edit them = edit. Not openRead —
