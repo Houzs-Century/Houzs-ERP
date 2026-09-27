@@ -4703,17 +4703,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   const acNotSent = (body as { asDraft?: unknown }).asDraft === true ? []
     : (await enqueueSoCreate(sb, { companyId, docNo, createdBy: c.get('houzsUser')?.id ?? null })).problems;
 
-  /* WHICH BRAND IS THIS BILL FOR (owner 2026-09-27) -- asked by the form when
-     the products name none (a bed frame or accessory bill written at a brand's
-     fair), for the Venture Portal only; branding above is untouched. Never for
-     a draft: that is asked when it is confirmed. lib/vp-brand-ask.ts. */
-  const vpBrand = (body as { asDraft?: unknown }).asDraft === true ? null
-    : await loadVpBrandAsk({
-        sb, db: c.env.DB as unknown as VpBrandDb, companyId: activeCompanyId(c) ?? null,
-        companySql: activeCompanySql(c), docNo,
-      });
-
-  return c.json({ docNo, ...(acNotSent.length ? { acNotSent } : {}), ...(vpBrand ? { vpBrand } : {}) }, 201);
+  return c.json({ docNo, ...(acNotSent.length ? { acNotSent } : {}) }, 201);
 }
 
 /* HTTP route — auth (router-level supabaseAuth) + the real Hono context wired
@@ -4729,6 +4719,19 @@ mfgSalesOrders.post('/', async (c) => {
     env: c.env,
     json: (b, status) => ({ status: status ?? 200, body: b as Record<string, unknown> }),
   });
+  /* WHICH BRAND IS THIS BILL FOR (owner 2026-09-27) -- asked by the form when
+     nothing on the bill names a brand (a bed frame or accessory bill written at
+     a brand's fair), for the Venture Portal only; branding is untouched. Added
+     here, after the core has answered, so the create itself is exactly as it
+     was. A draft is never asked (the loader says so): that is asked when it is
+     confirmed. lib/vp-brand-ask.ts. */
+  if (out.status === 201 && typeof out.body.docNo === 'string') {
+    const vpBrand = await loadVpBrandAsk({
+      sb: c.get('supabase'), db: c.env.DB as unknown as VpBrandDb, companyId: activeCompanyId(c) ?? null,
+      companySql: activeCompanySql(c), docNo: out.body.docNo,
+    });
+    if (vpBrand) return c.json({ ...out.body, vpBrand }, 201);
+  }
   return c.json(out.body, out.status as 201);
 });
 
