@@ -1696,3 +1696,31 @@ describe("DataTable initialRowLimit — first page + Load more (owner 2026-09-26
     expect(screen.getByText("Order 10")).toBeTruthy();
   });
 });
+
+describe("DataTable onRowReorder — drag to reorder (owner 2026-09-26)", () => {
+  const fewRows: Row[] = Array.from({ length: 3 }, (_, i) => ({ id: i + 1, name: `Order ${i + 1}`, status: "Open" }));
+
+  it("a drop reports the new order of the whole set, while no column sort is active", () => {
+    setViewport(1280);
+    const seen: string[][] = [];
+    const { container } = render(
+      <DataTable tableId="dt-reorder" rows={fewRows} columns={columns} getRowKey={(row) => row.id} onRowReorder={(keys) => seen.push(keys)} />,
+    );
+    const rows = container.querySelectorAll<HTMLElement>("tr[data-rowkey]");
+    const dataTransfer = { effectAllowed: "", setData: () => {}, getData: () => "" };
+    // Drag row 1 and drop it on row 3 → 1 moves to just before 3.
+    fireEvent.dragStart(rows[0], { dataTransfer });
+    fireEvent.dragOver(rows[2], { dataTransfer, clientY: 100 });
+    fireEvent.drop(rows[2], { dataTransfer });
+    expect(seen.at(-1)).toEqual(["2", "1", "3"]);
+  });
+
+  it("without onRowReorder the rows are not draggable", () => {
+    setViewport(1280);
+    const { container } = render(
+      <DataTable tableId="dt-noreorder" rows={fewRows} columns={columns} getRowKey={(row) => row.id} />,
+    );
+    const first = container.querySelector<HTMLElement>("tr[data-rowkey]");
+    expect(first?.getAttribute("draggable")).not.toBe("true");
+  });
+});

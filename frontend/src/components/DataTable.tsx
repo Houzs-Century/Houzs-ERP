@@ -92,6 +92,7 @@ import { gridLayoutToTableLayout, readLegacyGridLayout } from "./dataTableLegacy
 import { buildSearchBlob, conditionToken, isConditionToken, parseCondition } from "./dataTableConditionFilters";
 import { MobileVirtualList } from "../mobile/MobileVirtualList";
 import { reorderKeys } from "../lib/reorder";
+import { useDragAutoScroll } from "./useDragAutoScroll";
 
 import type { Column, DataTableProps, SortDir, SortState } from "./dataTableTypes";
 import {
@@ -1833,7 +1834,10 @@ function DataTableInner<T, L>({
   const rowReorderable = !!onRowReorder && sort == null;
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dropKey, setDropKey] = useState<string | null>(null);
+  /* Edge auto-scroll while dragging a row past the visible window (owner 2026-09-27). */
+  const dragScroll = useDragAutoScroll(() => scrollWrapRef.current);
   const onRowDrop = (toKey: string) => {
+    dragScroll.stop();
     if (dragKey && dragKey !== toKey && sortedRows) {
       onRowReorder?.(reorderKeys(sortedRows.map((r) => String(getRowKey(r))), dragKey, toKey));
     }
@@ -2688,9 +2692,9 @@ function DataTableInner<T, L>({
                         data-rowkey={String(getRowKey(row))}
                         draggable={rowReorderable}
                         onDragStart={rowReorderable ? (e) => { setDragKey(String(getRowKey(row))); e.dataTransfer.effectAllowed = "move"; } : undefined}
-                        onDragOver={rowReorderable && dragKey ? (e) => { e.preventDefault(); const k = String(getRowKey(row)); if (k !== dragKey) setDropKey(k); } : undefined}
+                        onDragOver={rowReorderable && dragKey ? (e) => { e.preventDefault(); dragScroll.at(e.clientY); const k = String(getRowKey(row)); if (k !== dragKey) setDropKey(k); } : undefined}
                         onDrop={rowReorderable && dragKey ? (e) => { e.preventDefault(); onRowDrop(String(getRowKey(row))); } : undefined}
-                        onDragEnd={rowReorderable ? () => { setDragKey(null); setDropKey(null); } : undefined}
+                        onDragEnd={rowReorderable ? () => { dragScroll.stop(); setDragKey(null); setDropKey(null); } : undefined}
                         style={{
                           ...getRowStyle?.(row),
                           ...(rowReorderable ? { cursor: "grab" } : {}),
