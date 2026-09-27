@@ -16,16 +16,22 @@
 --
 -- WHAT CHANGES.
 --   1. scm.mfg_sales_orders.vp_brand (text, NULL) -- the brand a person said the
---      bill is for. The order form asks after a save whose products name no
---      brand, offering the company's project_brands minus the kinds of goods,
---      pre-set to the linked booth's brand; skipping is allowed (some bills need
---      none). Written only by PUT /mfg-sales-orders/:docNo/vp-brand. NOTHING in
---      this system reads it: `branding`, booth matching, AutoCount and the
+--      bill is for. The order form asks after a save when NOTHING on the bill
+--      names a brand -- not its branding, not one of its lines (owner) --
+--      offering the brands the portal has a margin ladder for, pre-set to the
+--      linked booth's brand. Skipping is allowed (some bills need none).
+--      Written only by PUT /mfg-sales-orders/:docNo/vp-brand. NOTHING in this
+--      system reads it: `branding`, booth matching, AutoCount and the
 --      letterhead are exactly as before (owner: leave the ERP's own setting).
---   2. vp_build_payloads: 20260927T0100's definition with ONE key added to each
+--   2. scm.sync_config 'vp.brands' -- which brands the question offers: the
+--      portal's margin ladders (owner: "just follow VP"), seeded AKEMI,
+--      DUNLOPILLO, ERGOTEX, ZANOTTI when missing. It sits beside the feed's
+--      vp.url / vp.secret / vp.since, so following a new ladder on the portal
+--      is a one-row UPDATE, not a deploy. Cut to this company's project_brands.
+--   3. vp_build_payloads: 20260927T0100's definition with ONE key added to each
 --      delivery, 'vpBrand' -- the column's value, from the BASE table like
 --      'fair' (the header view's column list is frozen and stays untouched).
---   3. trg_vp_outbox_so: 20260927T0100's UPDATE OF list plus vp_brand, so an
+--   4. trg_vp_outbox_so: 20260927T0100's UPDATE OF list plus vp_brand, so an
 --      answer given after the save reaches the portal.
 --
 -- WHAT THE PORTAL DOES WITH IT. Its receiver (Venture Portal migration
@@ -37,20 +43,24 @@
 -- REVERSAL: re-run the CREATE OR REPLACE FUNCTION scm.vp_build_payloads block
 --   of 20260927T0100 verbatim (drops the 'vpBrand' key; CREATE OR REPLACE keeps
 --   the function's grants); re-create trg_vp_outbox_so with 20260927T0100's
---   UPDATE OF list (this one minus vp_brand); then, only if the answers are no
---   longer wanted, ALTER TABLE scm.mfg_sales_orders DROP COLUMN IF EXISTS
---   vp_brand (the CHECK goes with it). No view is dropped or recreated, so no
---   grant is lost anywhere.
+--   UPDATE OF list (this one minus vp_brand); DELETE FROM scm.sync_config
+--   WHERE k = 'vp.brands' (nothing is asked without it); then, only if the
+--   answers are no longer wanted, ALTER TABLE scm.mfg_sales_orders DROP COLUMN
+--   IF EXISTS vp_brand (the CHECK goes with it). No view is dropped or
+--   recreated, so no grant is lost anywhere.
 -- Verified against: production (anogrigyjbduyzclzjgn), read-only via the
 --   Supabase MCP on 2026-09-27. vp_build_payloads' source matches
 --   20260927T0100 exactly (md5 of prosrc 25219f68f833c8c133e0a8d40f6643f1 with
 --   LF line ends); trg_vp_outbox_so read with pg_get_triggerdef is
---   20260927T0100's list; mfg_sales_orders has no vp_brand column. Houzs
+--   20260927T0100's list; mfg_sales_orders has no vp_brand column and
+--   scm.sync_config no vp.brands key (it holds vp.url, vp.secret, vp.since),
+--   mfg_sales_order_items has branding and cancelled. Houzs
 --   Century orders since 2026-08-01 by branding: AKEMI 456, ZANOTTI 137,
 --   BEDFRAME 22, ERGOTEX 15, DUNLOPILLO 11, blank 3, SERVICE 3, NONE 2,
 --   MYLATEX 1.
--- RE-RUN: ADD COLUMN IF NOT EXISTS, a CHECK added only when missing, CREATE OR
---   REPLACE and DROP TRIGGER IF EXISTS throughout.
+-- RE-RUN: ADD COLUMN IF NOT EXISTS, a CHECK added only when missing, the seed
+--   ON CONFLICT DO NOTHING (an edited vp.brands is kept), CREATE OR REPLACE and
+--   DROP TRIGGER IF EXISTS throughout.
 -- ----------------------------------------------------------------------------
 
 SET search_path = scm, public;
@@ -73,9 +83,16 @@ END
 $$;
 
 COMMENT ON COLUMN scm.mfg_sales_orders.vp_brand IS
-  'The brand this bill is FOR, for the Venture Portal only (owner 2026-09-27): asked by the order form after a save whose products name no brand -- a bed frame or accessory bill written at a brand''s fair -- and skippable. A project_brands name; NULL when never asked or skipped. Written by PUT /mfg-sales-orders/:docNo/vp-brand, sent to the portal as vpBrand, read by nothing in this system: branding is untouched by it.';
+  'The brand this bill is FOR, for the Venture Portal only (owner 2026-09-27): asked by the order form after a save when nothing on the bill -- its branding or any line -- names a brand (a bed frame or accessory bill written at a brand''s fair), and skippable. One of the sync_config vp.brands names; NULL when never asked or skipped. Written by PUT /mfg-sales-orders/:docNo/vp-brand, sent to the portal as vpBrand, read by nothing in this system: branding is untouched by it.';
 
--- -- 2. The order feed: each delivery carries the answer ----------------------
+-- -- 2. Which brands the question offers ------------------------------------
+-- The portal's margin ladders, beside the feed's other settings. Seeded only
+-- when missing, so an edited list survives a re-run.
+INSERT INTO scm.sync_config (k, v)
+VALUES ('vp.brands', 'AKEMI,DUNLOPILLO,ERGOTEX,ZANOTTI')
+ON CONFLICT (k) DO NOTHING;
+
+-- -- 3. The order feed: each delivery carries the answer ----------------------
 -- 20260927T0100's definition with ONE key added: 'vpBrand'.
 CREATE OR REPLACE FUNCTION scm.vp_build_payloads(p_doc_nos text[])
 RETURNS jsonb
@@ -211,7 +228,7 @@ $fn$;
 COMMENT ON FUNCTION scm.vp_build_payloads(text[]) IS
   'Builds the Venture Portal delivery for each doc_no: header from scm.mfg_sales_orders_with_payment_totals minus customer PII, payments verbatim, items verbatim except variants (cut to fabricCode / seatHeight / legHeight / divanHeight / gap / totalHeight / size / specials, omitted when none), the salesperson behind salesperson_id, the fair the order was written at (fair: the picked project''s id, code, name, venue, organizer, brand, start/end date, status, event type, plus the order''s fair_match and fair_date; null when the order has no project), and vpBrand: the brand a person said the bill is for when its products name none (mfg_sales_orders.vp_brand; null when never asked or skipped). A doc_no with no header row returns {deleted:true}. Called once per drain sweep by scm/lib/venture-portal-outbox.ts.';
 
--- -- 3. An answer given after the save is a change the portal must hear -------
+-- -- 4. An answer given after the save is a change the portal must hear -------
 -- 20260927T0100's trigger, its UPDATE OF list plus vp_brand.
 DROP TRIGGER IF EXISTS trg_vp_outbox_so ON scm.mfg_sales_orders;
 CREATE TRIGGER trg_vp_outbox_so

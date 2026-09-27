@@ -76,9 +76,13 @@ mfgSoVpBrand.put('/:docNo/vp-brand', async (c) => {
     if (outOfScope) return c.json({ error: 'not_found' }, 404);
   }
 
+  /* The same choices the question offered: this company's brands the portal
+     pays a margin ladder on (vp-brand-ask.ts). Anything else is refused. */
   let brand: string | null = null;
   if (typeof body.brand === 'string' && body.brand.trim() !== '') {
-    const options = await loadVpBrandOptions(c.env.DB as unknown as VpBrandDb, activeCompanySql(c));
+    const options = await loadVpBrandOptions({
+      sb, db: c.env.DB as unknown as VpBrandDb, companySql: activeCompanySql(c),
+    });
     brand = matchVpBrand(body.brand, options);
     if (brand == null) return c.json({ error: 'not_a_brand', options }, 400);
   }

@@ -10,33 +10,60 @@
 // written at a brand's fair, and it follows that fair's brand (owner: "the
 // fair is Akemi, it follows the Akemi margin ladder").
 //
-// So when the products name no brand, the order form asks which brand the bill
-// is for, pre-set to the brand of the booth the fair picker linked. The answer
-// is optional -- some bills need none -- and lives in its own column,
-// mfg_sales_orders.vp_brand, which nothing in this system reads: `branding`
-// and everything that hangs off it (AutoCount, booth matching, the letterhead)
-// are exactly as before. The feed sends it as `vpBrand`.
+// So when NOTHING on the bill names a brand -- not its header, not one of its
+// lines (owner: only when none of the products has branding) -- the order form
+// asks which brand the bill is for, pre-set to the brand of the booth the fair
+// picker linked. The choices are the brands the portal has a margin ladder for
+// (sync_config `vp.brands`, owner: "just follow VP"), in this company's list
+// order. The answer is optional -- some bills need none -- and lives in its own
+// column, mfg_sales_orders.vp_brand, which nothing in this system reads:
+// `branding` and everything that hangs off it (AutoCount, booth matching, the
+// letterhead) are exactly as before. The feed sends it as `vpBrand`.
 //
 // Pure: the reads are in vp-brand-ask.ts.
 // ----------------------------------------------------------------------------
 
+import { isPlaceholderBrandText } from '../shared/so-branding-label';
+
 /** Brand-list entries that say what KIND of goods a bill carries, not whose
- *  brand. They stay valid `branding` values; they are never an answer here. */
+ *  brand. They stay valid `branding` values; they never count as a brand here. */
 export const NOT_A_BRAND: ReadonlySet<string> = new Set([
-  'BEDFRAME', 'SERVICE', 'OTHERS', 'OTHER', 'NONE', 'ACCESSORY', 'ACCESSORIES', 'MATTRESS', 'SOFA',
+  'BEDFRAME', 'SERVICE', 'OTHERS', 'OTHER', 'ACCESSORY', 'ACCESSORIES', 'MATTRESS', 'SOFA',
 ]);
 
 const key = (s: string): string => s.trim().toUpperCase();
 
-/** The brands a bill can belong to: the company's active brand list in its own
- *  order and spelling, without the kinds of goods and without repeats. */
-export function vpBrandOptions(brands: readonly string[]): string[] {
+/** Whether a branding value names a brand: not blank, not a placeholder the
+ *  floor types for "no brand" (NONE, N/A ...), not a kind of goods. */
+export function namesABrand(value: string | null): boolean {
+  if (value == null || isPlaceholderBrandText(value)) return false;
+  return !NOT_A_BRAND.has(key(value));
+}
+
+/** The `vp.brands` setting -- the brands the portal pays a margin ladder on --
+ *  as a list: comma-separated, spaces and repeats ignored. */
+export function parseVpBrands(value: string | null): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of (value ?? '').split(',')) {
+    const name = part.trim();
+    if (!name || seen.has(key(name))) continue;
+    seen.add(key(name));
+    out.push(name);
+  }
+  return out;
+}
+
+/** The brands a bill can belong to: this company's active brand list, in its
+ *  own order and spelling, keeping only the ones the portal pays on. */
+export function vpBrandOptions(brands: readonly string[], portalBrands: readonly string[]): string[] {
+  const paid = new Set(portalBrands.map(key));
   const seen = new Set<string>();
   const out: string[] = [];
   for (const raw of brands) {
     const name = raw.trim();
     const k = key(name);
-    if (!name || NOT_A_BRAND.has(k) || seen.has(k)) continue;
+    if (!namesABrand(name) || !paid.has(k) || seen.has(k)) continue;
     seen.add(k);
     out.push(name);
   }
@@ -56,19 +83,22 @@ export function matchVpBrand(value: string | null, options: readonly string[]): 
 export type VpBrandAsk = { suggested: string | null; options: string[] };
 
 /**
- * Whether to ask which brand a bill is for -- only when its own `branding`
- * names no brand and nobody has answered yet. `boothBrand` is the brand of the
- * booth the fair picker linked (projects.brand), offered as the suggestion when
- * it is one of the choices.
+ * Whether to ask which brand a bill is for -- only when neither its `branding`
+ * nor ANY of its lines' names a brand, and nobody has answered yet. A line
+ * with a brand of its own (a Dunlopillo pillow beside a bed frame) settles it:
+ * no question. `boothBrand` is the brand of the booth the fair picker linked
+ * (projects.brand), offered as the suggestion when it is one of the choices.
  */
 export function vpBrandAsk(input: {
   branding: string | null;
+  lineBrandings: readonly (string | null)[];
   current: string | null;
   boothBrand: string | null;
   options: readonly string[];
 }): VpBrandAsk | null {
   if (input.options.length === 0) return null;
   if (input.current != null && input.current.trim() !== '') return null;
-  if (matchVpBrand(input.branding, input.options) != null) return null;
+  if (namesABrand(input.branding)) return null;
+  if (input.lineBrandings.some(namesABrand)) return null;
   return { suggested: matchVpBrand(input.boothBrand, input.options), options: [...input.options] };
 }

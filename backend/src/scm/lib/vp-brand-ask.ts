@@ -12,7 +12,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { isFeedEnabled } from './venture-portal-feed-flag';
 import { scopeToCompanyIdOrOpen } from './companyScope';
-import { vpBrandAsk, vpBrandOptions, type VpBrandAsk } from './vp-brand';
+import { parseVpBrands, vpBrandAsk, vpBrandOptions, type VpBrandAsk } from './vp-brand';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped throughout this tree
 type ScmClient = SupabaseClient<any, any, any>;
@@ -24,21 +24,32 @@ export type VpBrandDb = {
   };
 };
 
-/** The company's brands a bill can belong to (vp-brand.ts decides which). */
-export async function loadVpBrandOptions(db: VpBrandDb, companySql: string): Promise<string[]> {
-  const rows = await db
-    .prepare(`SELECT name FROM project_brands WHERE active = 1${companySql} ORDER BY sort_order, name`)
-    .bind()
-    .all<{ name: string | null }>();
-  return vpBrandOptions((rows.results ?? []).map((r) => String(r.name ?? '')));
+/** The scm.sync_config key naming the brands the portal pays a margin ladder
+ *  on -- comma-separated, beside the feed's vp.url / vp.secret / vp.since.
+ *  Seeded by migration 20260927T2100; unset means nothing is asked. */
+export const VP_BRANDS_KEY = 'vp.brands';
+
+/** The brands a bill can belong to: this company's list, cut to the portal's. */
+export async function loadVpBrandOptions(deps: { sb: ScmClient; db: VpBrandDb; companySql: string }): Promise<string[]> {
+  const [{ data: setting }, rows] = await Promise.all([
+    deps.sb.from('sync_config').select('v').eq('k', VP_BRANDS_KEY).maybeSingle(),
+    deps.db
+      .prepare(`SELECT name FROM project_brands WHERE active = 1${deps.companySql} ORDER BY sort_order, name`)
+      .bind()
+      .all<{ name: string | null }>(),
+  ]);
+  return vpBrandOptions(
+    (rows.results ?? []).map((r) => String(r.name ?? '')),
+    parseVpBrands((setting as { v?: string | null } | null)?.v ?? null),
+  );
 }
 
 /**
  * Whether the order form should ask which brand `docNo` is for, and with what
  * choices. Null -- do not ask -- for a draft (it is asked when confirmed), a
  * company whose Venture Portal feed is off (nobody downstream reads the
- * answer), a bill whose products already name a brand, one already answered,
- * and on any failure.
+ * answer), a bill whose header OR any line names a brand, one already
+ * answered, and on any failure.
  */
 export async function loadVpBrandAsk(deps: {
   sb: ScmClient;
@@ -66,7 +77,16 @@ export async function loadVpBrandAsk(deps: {
     if (String(so.status ?? '').toUpperCase() === 'DRAFT') return null;
     if (!(await isFeedEnabled(deps.sb, so.company_id ?? null))) return null;
 
-    const options = await loadVpBrandOptions(deps.db, deps.companySql);
+    const { data: lineRows, error: lineError } = await deps.sb
+      .from('mfg_sales_order_items')
+      .select('branding, cancelled')
+      .eq('doc_no', deps.docNo);
+    if (lineError) return null;
+    const lineBrandings = ((lineRows ?? []) as { branding: string | null; cancelled: boolean | null }[])
+      .filter((l) => l.cancelled !== true)
+      .map((l) => l.branding);
+
+    const options = await loadVpBrandOptions(deps);
     let boothBrand: string | null = null;
     if (so.project_id != null) {
       const booth = await deps.db
@@ -75,7 +95,7 @@ export async function loadVpBrandAsk(deps: {
         .all<{ brand: string | null }>();
       boothBrand = booth.results?.[0]?.brand ?? null;
     }
-    return vpBrandAsk({ branding: so.branding, current: so.vp_brand, boothBrand, options });
+    return vpBrandAsk({ branding: so.branding, lineBrandings, current: so.vp_brand, boothBrand, options });
   } catch {
     return null;
   }

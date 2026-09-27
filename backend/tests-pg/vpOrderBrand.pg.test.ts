@@ -8,8 +8,9 @@ import { assertDisposableTestDatabase } from './lib/doc-no-fixture';
 
 /* EXECUTES the order feed's brand SQL (migration *_scm_so_vp_brand.sql) against
  * real Postgres, on top of the fair migration it extends: the vp_brand column
- * and its not-blank CHECK, the `vpBrand` key every delivery carries, and the
- * capture trigger hearing an answer given after the save.
+ * and its not-blank CHECK, the vp.brands setting it seeds, the `vpBrand` key
+ * every delivery carries, and the capture trigger hearing an answer given
+ * after the save.
  *
  * The portal follows vpBrand for a bill whose products name no brand (a bed
  * frame or accessory bill written at a brand's fair), so what matters is that
@@ -44,7 +45,7 @@ const DROP_FIXTURE = `
   DROP TABLE IF EXISTS public.projects, public.project_event_types CASCADE;
   DROP VIEW IF EXISTS scm.mfg_sales_orders_with_payment_totals CASCADE;
   DROP TABLE IF EXISTS scm.mfg_sales_orders, scm.staff, scm.mfg_sales_order_items,
-    scm.mfg_sales_order_payments, scm.venture_portal_outbox CASCADE;
+    scm.mfg_sales_order_payments, scm.venture_portal_outbox, scm.sync_config CASCADE;
   DROP FUNCTION IF EXISTS scm.enqueue_vp_outbox() CASCADE;
   DROP FUNCTION IF EXISTS scm.enqueue_vp_outbox_project() CASCADE;
   DROP FUNCTION IF EXISTS scm.vp_build_payloads(text[]) CASCADE;
@@ -84,6 +85,12 @@ describePg('the order feed carries the brand a bill is for', () => {
       CREATE TABLE scm.mfg_sales_order_payments (
         id uuid PRIMARY KEY, so_doc_no text NOT NULL, paid_at date, amount_sen integer,
         created_at timestamptz DEFAULT now());
+
+      /* The feed's settings exactly as 0123 made them, with the three keys
+         production holds. */
+      CREATE TABLE scm.sync_config (k text PRIMARY KEY, v text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
+      INSERT INTO scm.sync_config (k, v) VALUES
+        ('vp.url', 'https://portal.example/api/erp/v1/sales-orders'), ('vp.secret', 'x'), ('vp.since', '2026-08-01');
 
       /* The queue and its enqueue function exactly as 20260912T1800 made them. */
       CREATE TABLE scm.venture_portal_outbox (
@@ -169,9 +176,17 @@ describePg('the order feed carries the brand a bill is for', () => {
       .rejects.toThrow(/mfg_sales_orders_vp_brand_not_blank/);
   });
 
-  test('running the migration again changes nothing', async () => {
+  test('the brands the question offers are seeded as the portal’s four ladders', async () => {
+    const [row] = await sql`SELECT v FROM scm.sync_config WHERE k = 'vp.brands'`;
+    expect(row).toEqual({ v: 'AKEMI,DUNLOPILLO,ERGOTEX,ZANOTTI' });
+  });
+
+  test('running the migration again changes nothing, and keeps an edited vp.brands', async () => {
+    await sql`UPDATE scm.sync_config SET v = 'AKEMI,DUNLOPILLO,ERGOTEX,ZANOTTI,MYLATEX' WHERE k = 'vp.brands'`;
     await applyMigration(sql, '_scm_so_vp_brand.sql');
     const [doc] = await payloads(['HC-SO-BOOTH']);
     expect(doc).toMatchObject({ vpBrand: 'AKEMI' });
+    const [row] = await sql`SELECT v FROM scm.sync_config WHERE k = 'vp.brands'`;
+    expect(row).toEqual({ v: 'AKEMI,DUNLOPILLO,ERGOTEX,ZANOTTI,MYLATEX' });
   });
 });

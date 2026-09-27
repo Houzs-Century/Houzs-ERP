@@ -17,6 +17,7 @@ Ships **off** behind three gates, all of which must be set from the
 | switch + company scope | `scm.app_config` key `scm.venture_portal_feed` | `'off'` |
 | receiver URL | `scm.sync_config` key `vp.url` | absent |
 | shared secret | `scm.sync_config` key `vp.secret` | absent |
+| brands the portal pays on | `scm.sync_config` key `vp.brands` | `AKEMI,DUNLOPILLO,ERGOTEX,ZANOTTI` (seeded) |
 
 `vp.since` is a fourth, optional date floor. **Capture is unconditional** —
 a same-transaction `AFTER` trigger on `mfg_sales_orders` / `_items` /
@@ -94,11 +95,12 @@ non-2xx"):
   project on an order is fixed HERE.
 - Each delivery carries `vpBrand`: the brand a person said the bill is for
   (`mfg_sales_orders.vp_brand`), `null` when never asked or skipped. The
-  order form asks after a save that makes a live order whose `branding` names
-  no brand (BEDFRAME, SERVICE, NONE, blank — a bed frame or accessory bill
-  written at a brand's fair), offering the company's `project_brands` minus
-  those kinds of goods, pre-set to the linked booth's brand; the save's response
-  carries the question (`scm/lib/vp-brand-ask.ts`) and
+  order form asks after a save that makes a live order when NOTHING on it names
+  a brand — not its `branding`, not one of its lines (BEDFRAME, SERVICE, NONE,
+  blank: a bed frame or accessory bill written at a brand's fair) — offering
+  the brands the portal has a margin ladder for (`vp.brands`, cut to this
+  company's `project_brands`), the linked booth's brand first; the save's
+  response carries the question (`scm/lib/vp-brand-ask.ts`) and
   `PUT /mfg-sales-orders/:docNo/vp-brand` takes the answer. Nothing here reads
   the column — `branding` stays as the products say. The portal follows
   `vpBrand` for a bill whose `branding` names no brand.
