@@ -30,6 +30,7 @@ import {
   type PoOutstandingSetRow,
 } from '../../vendor/scm/lib/po-outstanding-rollup';
 import { DataTable, type Column } from '../../components/DataTable';
+import { OVERDUE_CLASS, isPastDue } from '../../lib/tableHighlight';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -227,13 +228,16 @@ type ColSpec = {
   key: string;
   label: string;
   kind?: 'date' | 'money' | 'qty';
+  /** The date reads red once passed while this says the row is still open
+   *  (the Completed / All filters show closed rows too). */
+  overdue?: (r: OutRow) => boolean;
 };
 
 const MODULE_COLUMNS: Record<OutstandingModule, ColSpec[]> = {
   po: [
     { key: 'po_number', label: 'PO No' },
     { key: 'po_date',   label: 'Date', kind: 'date' },
-    { key: 'expected_at', label: 'Expected', kind: 'date' },
+    { key: 'expected_at', label: 'Expected', kind: 'date', overdue: (r) => Number(r.qty_outstanding) > 0 },
     { key: 'status',    label: 'Status' },
     { key: 'qty_outstanding', label: 'Qty Outstanding', kind: 'qty' },
     { key: 'total_sen', label: 'Total', kind: 'money' },
@@ -246,7 +250,7 @@ const MODULE_COLUMNS: Record<OutstandingModule, ColSpec[]> = {
   pi: [
     { key: 'invoice_number', label: 'Invoice No' },
     { key: 'invoice_date',   label: 'Date', kind: 'date' },
-    { key: 'due_date',       label: 'Due', kind: 'date' },
+    { key: 'due_date',       label: 'Due', kind: 'date', overdue: (r) => Number(r.outstanding_sen) > 0 },
     { key: 'total_sen',    label: 'Total', kind: 'money' },
     { key: 'paid_sen',     label: 'Paid', kind: 'money' },
     { key: 'outstanding_sen', label: 'Outstanding', kind: 'money' },
@@ -275,7 +279,7 @@ const MODULE_COLUMNS: Record<OutstandingModule, ColSpec[]> = {
   si: [
     { key: 'invoice_number', label: 'Invoice No' },
     { key: 'invoice_date',   label: 'Date', kind: 'date' },
-    { key: 'due_date',       label: 'Due', kind: 'date' },
+    { key: 'due_date',       label: 'Due', kind: 'date', overdue: (r) => Number(r.outstanding_sen) > 0 },
     { key: 'debtor_name',    label: 'Customer' },
     { key: 'total_sen',    label: 'Total', kind: 'money' },
     { key: 'paid_sen',     label: 'Paid', kind: 'money' },
@@ -318,7 +322,10 @@ const ModuleTable = ({
         spec.kind === 'money' || spec.kind === 'qty'
           ? Number(r[spec.key]) || 0
           : String(r[spec.key] ?? ''),
-      render: (r: KeyedRow) => cellText(spec, r),
+      render: (r: KeyedRow) =>
+        spec.overdue && isPastDue(String(r[spec.key] ?? ''), spec.overdue(r))
+          ? <span className={OVERDUE_CLASS} title="Past due">{cellText(spec, r)}</span>
+          : cellText(spec, r),
     }));
     cols.push({
       key: '__open__',
@@ -391,6 +398,7 @@ type ChaseSpec = {
   width?: string;
   align?: 'right';
   kind?: 'date' | 'qty';
+  overdue?: (r: PoOutstandingLineRow) => boolean;
   get: (r: PoOutstandingLineRow) => string | number;
 };
 
@@ -444,7 +452,7 @@ const PoChasingView = ({ rows, isLoading }: { rows: PoOutstandingLineRow[]; isLo
     { key: 'item_group', label: 'Item Group',         get: (r) => String(r.item_group ?? '') },
     { key: 'po_date',    label: 'Doc Date', kind: 'date', get: (r) => String(r.po_date ?? '') },
     { key: 'remaining_qty', label: 'Remaining Qty', align: 'right', kind: 'qty', get: (r) => Number(r.remaining_qty ?? 0) },
-    { key: 'delivery_date', label: 'Delivery Date', kind: 'date', get: (r) => String(r.delivery_date ?? '') },
+    { key: 'delivery_date', label: 'Delivery Date', kind: 'date', overdue: (r) => Number(r.remaining_qty ?? 0) > 0, get: (r) => String(r.delivery_date ?? '') },
     // AutoCount's three supplier dates (UDF_EDate/2/3), in the positions the
     // owner kept on 2026-09-12. The server resolves each one (line, else PO
     // header) through the same rule as the PO line export; the names come from
@@ -471,7 +479,10 @@ const PoChasingView = ({ rows, isLoading }: { rows: PoOutstandingLineRow[]; isLo
       width: spec.width ?? (spec.kind === 'qty' ? '110px' : spec.kind === 'date' ? '150px' : '130px'),
       align: spec.align,
       getValue: (r: KeyedRow) => (spec.kind === 'qty' ? Number(spec.get(r)) || 0 : String(spec.get(r))),
-      render: (r: KeyedRow) => chaseText(spec, r),
+      render: (r: KeyedRow) =>
+        spec.overdue && isPastDue(String(spec.get(r)), spec.overdue(r))
+          ? <span className={OVERDUE_CLASS} title="Delivery date passed, still outstanding">{chaseText(spec, r)}</span>
+          : chaseText(spec, r),
     })),
     [specs],
   );

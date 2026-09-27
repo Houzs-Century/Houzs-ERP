@@ -77,6 +77,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel, transferFromLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
+import { OVERDUE_CLASS, isPastDue } from "../../lib/tableHighlight";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useHoldAction } from "./use-hold-action";
 import { usePoCancelAction } from "./use-po-cancel-action";
@@ -1267,9 +1268,16 @@ export function PurchaseOrdersListV2() {
       /* Owner 2026-09-15: in the file, each line's own delivery date. */
       lineValue: (_r, l) => l.delivery_date,
       exportFormat: "date",
-      render: (r) => (
-        <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.expected_at)}</span>
-      ),
+      render: (r) => {
+        // Sent to the supplier and not fully received: a draft or a held PO is not late.
+        const bucket = statusFor(r.status).bucket;
+        const late = isPastDue(r.expected_at, bucket === "open" || bucket === "partial");
+        return (
+          <span className={cn("text-[12.5px]", late ? OVERDUE_CLASS : "text-ink-secondary")} title={late ? "Expected date passed, goods not all received" : undefined}>
+            {fmtDate(r.expected_at)}
+          </span>
+        );
+      },
     },
     {
       /* Owner 2026-08-05 — ship-to warehouse (list embed purchase_location). */
