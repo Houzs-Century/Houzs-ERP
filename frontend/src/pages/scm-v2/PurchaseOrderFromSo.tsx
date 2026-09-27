@@ -25,7 +25,7 @@ import { useMemo, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, X, CheckSquare, Square, Filter } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtDateOrDash, fmtMoneySen } from '@2990s/shared';
+import { fmtDateOrDash, fmtMoneySen, fmtQty } from '@2990s/shared';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
 import {
   useOutstandingSoItems,
@@ -372,7 +372,7 @@ export const PurchaseOrderFromSo = () => {
     },
     {
       key: 'qty', label: 'SO Qty', width: 70, align: 'right', sortable: true,
-      accessor: (r) => String(r.qty),
+      accessor: (r) => fmtQty(r.qty),
       sortFn: (a, b) => a.qty - b.qty,
     },
     {

@@ -26,7 +26,7 @@ import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
-import { buildVariantSummary } from '@2990s/shared';
+import { buildVariantSummary, fmtQty } from '@2990s/shared';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 
@@ -191,7 +191,7 @@ export const PurchaseConsignmentReturnFromReceive = () => {
     },
     {
       key: 'remaining', label: 'Remaining', width: 90, align: 'right', sortable: true,
-      accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{r.remaining}</span>,
+      accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{fmtQty(r.remaining)}</span>,
       sortFn: (a, b) => a.remaining - b.remaining,
     },
     {

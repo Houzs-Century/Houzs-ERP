@@ -4,7 +4,7 @@
 // Credit expected (synced/green because it's money coming back).
 
 import { useMemo, type ReactNode } from "react";
-import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
@@ -374,7 +374,7 @@ export function PurchaseReturnDetailV2() {
       getValue: (l) => l.qty_returned ?? l.qty ?? 0,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {l.qty_returned ?? l.qty ?? 0} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
+          {fmtQty(l.qty_returned ?? l.qty ?? 0)} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
         </span>
       ),
     },

@@ -30,6 +30,7 @@ import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 
+import { fmtQty } from '../../vendor/shared/format';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const CONDITIONS = ['NEW', 'OPENED', 'DAMAGED', 'DEFECTIVE'] as const;
@@ -192,7 +193,7 @@ export const ConsignmentReturnFromNote = () => {
     },
     {
       key: 'remaining', label: 'Remaining', width: 80, align: 'right', sortable: true,
-      accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{r.remaining}</span>,
+      accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{fmtQty(r.remaining)}</span>,
       sortFn: (a, b) => a.remaining - b.remaining,
     },
     {

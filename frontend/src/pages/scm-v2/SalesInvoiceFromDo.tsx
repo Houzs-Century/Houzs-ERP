@@ -43,7 +43,7 @@ import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { soRefOfCamelStamp } from '../../lib/so-ref-search';
-import { fmtMoneySen } from '@2990s/shared';
+import { fmtMoneySen, fmtQty } from '@2990s/shared';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -281,7 +281,7 @@ export const SalesInvoiceFromDo = () => {
     },
     {
       key: 'remaining', label: 'Remaining', width: 80, align: 'right', sortable: true,
-      accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{r.remaining}</span>,
+      accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{fmtQty(r.remaining)}</span>,
       sortFn: (a, b) => a.remaining - b.remaining,
     },
     {

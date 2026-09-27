@@ -3,7 +3,7 @@
 // Received value + qty landed, tinted green once posted.
 
 import { lazy, useCallback, useMemo, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { LazySlot } from "../../components/LazySlot";
@@ -500,7 +500,7 @@ function GoodsReceivedDetailV2ReadOnly() {
       getValue: (l) => l.ordered_qty ?? "",
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {l.ordered_qty ?? "—"} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
+          {fmtQty(l.ordered_qty)} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
         </span>
       ),
     },

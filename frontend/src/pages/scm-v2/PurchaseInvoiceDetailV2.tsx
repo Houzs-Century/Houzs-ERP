@@ -3,7 +3,7 @@
 // Outstanding-as-hero, but flipped — this is what WE owe to the supplier.
 
 import { lazy, useMemo, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
@@ -572,7 +572,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       getValue: (l) => l.qty ?? 0,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {l.qty ?? 0} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
+          {fmtQty(l.qty ?? 0)} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
         </span>
       ),
     },
