@@ -158,6 +158,7 @@ import {
 } from '../lib/venue-binding';
 import { bindVenueOnCreate, fairLinkForEdit, loadLinkedFair, resolveFairForSave, type FairDb } from '../lib/fair-binding';
 import { fairDayMissing, fairDayOnSave, fairPickedPeriod } from '../lib/fair-options';
+import { loadVpBrandAsk, type VpBrandDb } from '../lib/vp-brand-ask';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
 /* What changed on a LINE, for the audit trail — derived from the update about to
    be persisted rather than a hand-kept field list (owner 2026-08-12; see the
@@ -4702,7 +4703,17 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   const acNotSent = (body as { asDraft?: unknown }).asDraft === true ? []
     : (await enqueueSoCreate(sb, { companyId, docNo, createdBy: c.get('houzsUser')?.id ?? null })).problems;
 
-  return c.json({ docNo, ...(acNotSent.length ? { acNotSent } : {}) }, 201);
+  /* WHICH BRAND IS THIS BILL FOR (owner 2026-09-27) -- asked by the form when
+     the products name none (a bed frame or accessory bill written at a brand's
+     fair), for the Venture Portal only; branding above is untouched. Never for
+     a draft: that is asked when it is confirmed. lib/vp-brand-ask.ts. */
+  const vpBrand = (body as { asDraft?: unknown }).asDraft === true ? null
+    : await loadVpBrandAsk({
+        sb, db: c.env.DB as unknown as VpBrandDb, companyId: activeCompanyId(c) ?? null,
+        companySql: activeCompanySql(c), docNo,
+      });
+
+  return c.json({ docNo, ...(acNotSent.length ? { acNotSent } : {}), ...(vpBrand ? { vpBrand } : {}) }, 201);
 }
 
 /* HTTP route — auth (router-level supabaseAuth) + the real Hono context wired
@@ -5174,9 +5185,19 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
       note: body.notes ?? undefined,
     });
 
+    /* A draft that just became a live order is asked which brand it is for,
+       exactly as a create is (owner 2026-09-27; lib/vp-brand-ask.ts). */
+    const vpBrand = fromNorm === 'DRAFT' && toStatus !== 'CANCELLED'
+      ? await loadVpBrandAsk({
+          sb, db: c.env.DB as unknown as VpBrandDb, companyId: co.companyId,
+          companySql: activeCompanySql(c), docNo,
+        })
+      : null;
+
     return c.json({
       salesOrder: data,
       version: currentVersion + 1,
+      ...(vpBrand ? { vpBrand } : {}),
       ...(voucherPlan ? {
         pwpVouchers: {
           voided: voucherPlan.toVoid.map((r) => r.code),
