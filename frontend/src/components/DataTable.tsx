@@ -34,7 +34,7 @@ import {
 import { cn } from "../lib/utils";
 import { headerLabel } from "../lib/columnHeaderLabel";
 import { rowsToTsv } from "./dataTableClipboard";
-import { DataTableFreezeItems } from "./DataTableFreezeItems";
+import { DataTableFreezeItems, keysThrough } from "./DataTableFreezeItems";
 import { parseUrlColFilters, serializeUrlColFilters } from "./dataTableUrlFilters";
 import { ResetFiltersButton } from "./ResetFiltersButton";
 import { TableSkeleton } from "./Skeleton";
@@ -1503,17 +1503,8 @@ function DataTableInner<T, L>({
     }
   }
 
-  /* Freeze every column from the first through this one in one step (owner
-     2026-09-27: "需要可以冻结前5-6列"), instead of pinning them one by one.
-     In screen order, so what is left of the column is what stays put. */
-  function freezeUpTo(key: string) {
-    const at = displayColumns.findIndex((c) => c.key === key);
-    if (at < 0) return;
-    const keys = displayColumns.slice(0, at + 1).filter((c) => !c.alwaysVisible).map((c) => c.key);
-    setPinned(keys);
-    setPinnedRight((prev) => prev.filter((k) => !keys.includes(k)));
-  }
-  const unfreezeAll = () => setPinned([]);
+  // Owner 2026-09-27: freeze the first N columns in one step (see DataTableFreezeItems).
+  const freezeUpTo = (key: string) => { const keys = keysThrough(displayColumns, key); setPinned(keys); setPinnedRight((p) => p.filter((k) => !keys.includes(k))); };
 
   // ── Column reorder ─────────────────────────────────────────
   // Shared by the Columns drawer and by dragging a header directly. Moves
@@ -3272,12 +3263,7 @@ function DataTableInner<T, L>({
                         : "Freeze to the left"}
                   </button>
                 )}
-                <DataTableFreezeItems
-                  className={sortBtn}
-                  anyFrozen={pinnedSet.size > 0}
-                  onFreezeUpTo={() => { freezeUpTo(col.key); setFilterMenu(null); }}
-                  onUnfreezeAll={() => { unfreezeAll(); setFilterMenu(null); }}
-                />
+                <DataTableFreezeItems className={sortBtn} anyFrozen={pinnedSet.size > 0} onFreezeUpTo={() => { freezeUpTo(col.key); setFilterMenu(null); }} onUnfreezeAll={() => { setPinned([]); setFilterMenu(null); }} />
               </div>
 
               {col.filterType && (
@@ -3421,12 +3407,7 @@ function DataTableInner<T, L>({
                 )}
                 {isPinned ? "Unpin left" : "Pin left"}
               </button>
-                <DataTableFreezeItems
-                  className={itemCls}
-                  anyFrozen={pinnedSet.size > 0}
-                  onFreezeUpTo={() => { freezeUpTo(col.key); setHeaderMenu(null); }}
-                  onUnfreezeAll={() => { unfreezeAll(); setHeaderMenu(null); }}
-                />
+                <DataTableFreezeItems className={itemCls} anyFrozen={pinnedSet.size > 0} onFreezeUpTo={() => { freezeUpTo(col.key); setHeaderMenu(null); }} onUnfreezeAll={() => { setPinned([]); setHeaderMenu(null); }} />
               <button
                 type="button"
                 className={itemCls}
