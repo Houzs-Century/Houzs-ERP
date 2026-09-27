@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { headerLabel } from "../lib/columnHeaderLabel";
+import { columnDescription } from "../lib/columnDescriptions";
 import { rowsToTsv } from "./dataTableClipboard";
 import { DataTableFreezeItems, keysThrough } from "./DataTableFreezeItems";
 import { parseUrlColFilters, serializeUrlColFilters } from "./dataTableUrlFilters";
@@ -2494,7 +2495,7 @@ function DataTableInner<T, L>({
                         isFirstStickyRight && "border-l border-border"
                       )}
                     >
-                      <span className="inline-flex items-center gap-1" title={c.description}>
+                      <span className="inline-flex items-center gap-1" title={c.description ?? columnDescription(tableId, c.key)}>
                         {c.renderHeader ? (
                           c.renderHeader()
                         ) : (
@@ -2506,7 +2507,7 @@ function DataTableInner<T, L>({
                                 aria-label="Pinned"
                               />
                             )}
-                            {c.description ? (
+                            {c.description ?? columnDescription(tableId, c.key) ? (
                               <span className="underline decoration-ink-muted decoration-dotted underline-offset-2">{headerLabel(c.label)}</span>
                             ) : (
                               headerLabel(c.label)
