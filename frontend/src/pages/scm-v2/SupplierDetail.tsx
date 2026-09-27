@@ -95,6 +95,7 @@ import styles from './SupplierDetail.module.css';
 import { exportBindingsCsv, ImportBindingsDialog } from './SupplierBindingsCsv';
 import { EffectiveDatedHistory } from '../../vendor/scm/components/EffectiveDatedHistory';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import { DateField } from '../../vendor/scm/components/DateField';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -1863,7 +1864,7 @@ type LastPo = {
 const deltaClass = (tone: string) => (tone === 'ok' ? styles.deltaOk : tone === 'late' ? styles.deltaLate : styles.deltaNeutral);
 const LAST_PO_COLUMNS: Column<LastPo>[] = [
   { key: 'po', label: 'PO No.', render: (po) => <Link to={`/scm/purchase-orders?focus=${po.id}`} style={{ color: 'inherit' }}>{po.poNo}</Link>, getValue: (po) => po.poNo },
-  { key: 'status', label: 'Status', render: (po) => po.status, getValue: (po) => po.status },
+  { key: 'status', label: 'Status', render: (po) => statusLabel('po', po.status), getValue: (po) => po.status },
   { key: 'ordered', label: 'Ordered', align: 'right', render: (po) => fmtQty(po.orderedQty), getValue: (po) => po.orderedQty, exportFormat: 'number' },
   { key: 'received', label: 'Received', align: 'right', render: (po) => fmtQty(po.receivedQty), getValue: (po) => po.receivedQty, exportFormat: 'number' },
   { key: 'total', label: 'Total', align: 'right', render: (po) => fmtSen(po.totalSen), getValue: (po) => po.totalSen, exportValue: (po) => po.totalSen / 100, exportFormat: 'money' },

@@ -71,7 +71,7 @@ describe('the unified money-in list', () => {
     expect(screen.getByText('Other Debtor')).toBeTruthy();
     expect(screen.getByText('Customer')).toBeTruthy();
     /* 888.00 + 200.00 + 3,500.00 */
-    expect(screen.getByText('MYR 4,588.00')).toBeTruthy();
+    expect(screen.getByText('RM 4,588.00')).toBeTruthy();
     expect(screen.getByText('HC-SO-2609-004').closest('a')!.getAttribute('href')).toBe('/scm/sales-orders/HC-SO-2609-004');
     expect(screen.getByText('HC-ODR-2609-001').closest('a')!.getAttribute('href')).toBe('/scm/other-debtors');
   });
@@ -104,13 +104,13 @@ describe('the unified money-in list', () => {
     expect(screen.getByText('Pick the debtor to list what they still owe.')).toBeTruthy();
     /* The registry: active debtors only, what each still owes beside the name. */
     const debtor = screen.getByLabelText('Debtor') as HTMLSelectElement;
-    expect([...debtor.options].map((o) => o.textContent)).toEqual(['— pick the debtor —', 'AHMAD BIN ALI — owes MYR 300.00']);
+    expect([...debtor.options].map((o) => o.textContent)).toEqual(['— pick the debtor —', 'AHMAD BIN ALI — owes RM 300.00']);
     fireEvent.change(debtor, { target: { value: 'd1' } });
     /* Only the bill with money outstanding is offered; the paid one is not. */
     expect(screen.getByText('HC-ODB-2609-001')).toBeTruthy();
     expect(screen.queryByText('HC-ODB-2608-009')).toBeNull();
     fireEvent.click(screen.getByLabelText('Collect HC-ODB-2609-001 in full'));
-    expect(screen.getByText('Total MYR 300.00')).toBeTruthy();
+    expect(screen.getByText('Total RM 300.00')).toBeTruthy();
     fireEvent.focus(screen.getByLabelText(/Received into/));
     fireEvent.mouseDown(screen.getByText('310-0010 · MAYBANK'));
     fireEvent.click(screen.getByText('Post receipt'));

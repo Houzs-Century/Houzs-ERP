@@ -40,6 +40,7 @@ import { fmtSen } from "../../vendor/shared/format";
 import { formatPhone } from "../../vendor/shared/phone";
 import { retryUnlessClientError } from '../../lib/retryPolicy';
 import { fmtDate } from "../../vendor/shared/format";
+import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { matchesSearch, soRefOfStamp, type SoRefStamp } from "../../lib/so-ref-search";
 
 // ─── Types — mirrors the endpoint's Row / buckets / totals ──────────────────
@@ -379,7 +380,7 @@ export function UnbilledDeliveriesV2() {
       width: "120px",
       defaultHidden: true,
       getValue: (r) => r.status,
-      render: (r) => <Badge tone="neutral" size="xs">{r.status}</Badge>,
+      render: (r) => <Badge tone="neutral" size="xs">{statusLabel("do", r.status)}</Badge>,
     },
   ];
 

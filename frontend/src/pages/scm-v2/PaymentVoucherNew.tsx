@@ -47,12 +47,13 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
 
+import { fmtMoneySen } from '../../vendor/shared/format';
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   const v = centi ?? 0;
-  return `${currency} ${(v / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return fmtMoneySen(v, currency);
 };
 
 /* Migration 0202 — what this voucher is FOR. SUPPLIER_PAYMENT settles a

@@ -33,7 +33,7 @@ import { Save, Trash2, X, ArrowRightLeft, ChevronDown } from 'lucide-react';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
-import { activeOptions, buildVariantSummary, fmtDateOrDash, isServiceLine, maintPickerValues } from '@2990s/shared';
+import { activeOptions, buildVariantSummary, fmtDateOrDash, isServiceLine, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import { useCreateGrn, usePostGrn } from '../../vendor/scm/lib/grn-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { readScmHandoff, removeScmHandoff, writeScmHandoff } from '../../lib/scmHandoffStorage';
@@ -65,7 +65,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtAmt = (centi: number | null | undefined): string =>
   ((centi ?? 0) / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => `${currency} ${fmtAmt(centi)}`;
+const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => fmtMoneySen(centi ?? 0, currency);
 
 /* Commander 2026-05-29 — "PO 那边根据 Category 会叫我填写我的 Variant，这个
    (GRN) 怎么没有？" Manual GRN lines whose product is a bedframe/sofa now get

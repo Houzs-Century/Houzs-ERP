@@ -37,6 +37,7 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { fmtSen } from '../../vendor/shared/format';
 import { DebtorBillForm, emptyBillForm, type BillFormMode, type BillFormSubmit, type BillFormValues } from './DebtorBillForm';
 import { generateDebtorBillPdf } from '../../vendor/scm/lib/debtor-bill-pdf';
 import { DebtorPartyForm } from './DebtorPartyForm';
@@ -56,7 +57,7 @@ const DEBTOR_COLUMNS: Column<OtherDebtor>[] = [
     key: 'status', label: 'Status',
     render: (d) => (
       <span style={{ fontSize: 'var(--fs-11)', color: d.is_active ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--fg-muted)' }}>
-        {d.is_active ? 'ACTIVE' : 'INACTIVE'}
+        {d.is_active ? 'Active' : 'Inactive'}
       </span>
     ),
     getValue: (d) => (d.is_active ? 'ACTIVE' : 'INACTIVE'),
@@ -64,10 +65,7 @@ const DEBTOR_COLUMNS: Column<OtherDebtor>[] = [
 ];
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 
-const fmtRm = (sen: number | null | undefined): string => {
-  const v = Number(sen ?? 0);
-  return `MYR ${(v / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-};
+const fmtRm = (sen: number | null | undefined): string => fmtSen(sen ?? 0);
 
 /* The receipt's place in the four layers, chip-style (the PV vocabulary:
    POSTED shows as Approved — document-status-vocabulary.md's exception). */

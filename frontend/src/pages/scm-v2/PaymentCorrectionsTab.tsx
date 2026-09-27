@@ -171,7 +171,7 @@ const sub = (text: React.ReactNode) => <div style={{ color: soft, fontSize: 'var
 const CORRECTION_COLUMNS: Column<PaymentCorrectionRow>[] = [
   {
     key: 'done', label: 'Done',
-    render: (r) => <>{fmtDateOrDash(r.at.slice(0, 10))}{sub(r.by)}</>,
+    render: (r) => <>{fmtDateOrDash(r.at)}{sub(r.by)}</>,
     getValue: (r) => r.at, exportValue: (r) => r.at.slice(0, 10), exportFormat: 'date',
   },
   { key: 'doneBy', label: 'Done By', defaultHidden: true, render: (r) => r.by, getValue: (r) => r.by },
@@ -199,7 +199,7 @@ const CORRECTION_COLUMNS: Column<PaymentCorrectionRow>[] = [
   {
     key: 'recorded', label: 'First recorded by',
     render: (r) => (r.recordedBy || r.recordedOn
-      ? <>{r.recordedBy ?? '—'}{r.recordedOn && sub(fmtDateOrDash(r.recordedOn.slice(0, 10)))}</>
+      ? <>{r.recordedBy ?? '—'}{r.recordedOn && sub(fmtDateOrDash(r.recordedOn))}</>
       : '—'),
     getValue: (r) => r.recordedBy ?? '',
   },

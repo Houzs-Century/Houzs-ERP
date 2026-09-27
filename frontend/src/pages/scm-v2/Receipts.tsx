@@ -48,13 +48,12 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { fmtDate, fmtSen } from '../../vendor/shared/format';
+import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-const fmtRm = (sen: number | null | undefined): string => {
-  const v = Number(sen ?? 0);
-  return `MYR ${(v / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-};
+const fmtRm = (sen: number | null | undefined): string => fmtSen(sen ?? 0);
 
 const KIND_LABEL: Record<ReceiptRow['kind'], string> = {
   GENERAL: 'Receipt', DEBTOR: 'Other Debtor', CUSTOMER: 'Customer',
@@ -104,7 +103,7 @@ const buildReceiptColumns = (h: {
   },
   {
     key: 'date', label: 'Date', width: 120, sortable: true,
-    accessor: (r) => r.date,
+    accessor: (r) => fmtDate(r.date),
     searchValue: (r) => r.date,
     filterType: 'date', dateValue: (r) => r.date,
     sortFn: (a, b) => a.date.localeCompare(b.date),
@@ -134,7 +133,7 @@ const buildReceiptColumns = (h: {
   },
   {
     key: 'status', label: 'Status', width: 120, sortable: true, groupable: true,
-    accessor: (r) => <span style={{ fontSize: 'var(--fs-11)' }}>{r.status}</span>,
+    accessor: (r) => <span style={{ fontSize: 'var(--fs-11)' }}>{humaniseStatusKey(r.status)}</span>,
     searchValue: (r) => r.status,
     filterValue: (r) => r.status,
     groupValue: (r) => r.status,

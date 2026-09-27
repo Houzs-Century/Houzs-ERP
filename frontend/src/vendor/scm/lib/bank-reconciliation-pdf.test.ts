@@ -96,7 +96,7 @@ describe('a month that reconciles', () => {
       },
     }));
     const said = r.provenance.join(' ');
-    expect(said).toContain('Closing MYR 10,900.00 as typed for the end of 2026-09 by Chew on 2026/09/13');
+    expect(said).toContain('Closing RM 10,900.00 as typed for the end of 2026-09 by Chew on 2026/09/13');
     expect(said).toContain('per the September e-statement');
     expect(said).toContain('no file uploaded prints it');
     expect(said).not.toContain('per null');
@@ -248,7 +248,7 @@ describe('the sections behind the figures', () => {
     expect(books.body[0]).toContain('JE-2609-0011');
     expect(books.body[0]?.[2]).toBe('PV · HPV-2609-006');
     /* Money OUT of the account reads as a bracket, like every other statement. */
-    expect(books.body[0]?.[4]).toBe('(MYR 450.00)');
+    expect(books.body[0]?.[4]).toBe('(RM 450.00)');
   });
 
   /* Owner, 2026-09-11: pay to who, and the earlier months' entries carried. */

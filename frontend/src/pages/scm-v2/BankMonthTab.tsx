@@ -43,6 +43,7 @@ import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/Prin
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import grid from './MerchantRecon.module.css';
 import { DataTable, type Column } from '../../components/DataTable';
+import { fmtDate } from '../../vendor/shared/format';
 
 /** 2026-09 → 09/2026 — a month in the house's own numeric, unambiguous shape,
     one field shorter than fmtDate's 16/08/2026.
@@ -146,7 +147,7 @@ const monthColumns = (onOpen: (p: Picked) => void): Column<BankMonth>[] => [
       </>
     ),
   },
-  { key: 'days', label: 'Days covered', getValue: (m) => m.periodFrom, render: (m) => (m.periodFrom === m.periodTo ? m.periodFrom : `${m.periodFrom} → ${m.periodTo}`) },
+  { key: 'days', label: 'Days covered', getValue: (m) => m.periodFrom, render: (m) => (m.periodFrom === m.periodTo ? fmtDate(m.periodFrom) : `${fmtDate(m.periodFrom)} → ${fmtDate(m.periodTo)}`) },
   { key: 'in', label: 'In', align: 'right', getValue: (m) => m.inSen, exportValue: (m) => m.inSen / 100, exportFormat: 'money', render: (m) => fmt(m.inSen) },
   { key: 'out', label: 'Out', align: 'right', getValue: (m) => m.outSen, exportValue: (m) => m.outSen / 100, exportFormat: 'money', render: (m) => fmt(m.outSen) },
   {
@@ -167,7 +168,7 @@ const monthColumns = (onOpen: (p: Picked) => void): Column<BankMonth>[] => [
        replaces the verdict: a closed month's answer is fixed. */
     render: (m) => (m.locked
       ? <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <Lock {...ICON} /> closed by {m.locked.lockedBy ?? 'somebody'} on {m.locked.lockedAt.slice(0, 10)}
+          <Lock {...ICON} /> closed by {m.locked.lockedBy ?? 'somebody'} on {fmtDate(m.locked.lockedAt)}
         </span>
       : m.complete
         ? <span className={grid.good}>covered end to end</span>

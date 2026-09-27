@@ -30,7 +30,7 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { statusLabel } from '../../vendor/scm/lib/status-pill';
-import { fmtDateOrDash, buildVariantSummary, fmtMoneySen } from '@2990s/shared';
+import { fmtDateOrDash, buildVariantSummary, fmtMoneySen, fmtQty, fmtSen } from '@2990s/shared';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
@@ -41,7 +41,8 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 // Colours + labels come from the canonical lib/status-pill map via <StatusPill>.
 const STATUS_CHIPS = ['all', 'POSTED', 'CLOSED', 'CANCELLED'] as const;
 
-const fmtMoney = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
+const fmtMoney = (centi: number, currency = 'MYR'): string =>
+  !currency || currency === 'MYR' ? fmtSen(centi) : fmtMoneySen(centi, currency);
 
 const PCR_LIST_STORAGE_KEY = 'pc-receive-list.layout.v1';
 
@@ -174,7 +175,8 @@ const buildDrilldownColumns = (currency: string): GridColumn<GrnItem>[] => [
   },
   {
     key: 'qty_received', label: 'Qty Received', width: 100, align: 'right',
-    accessor: (it) => it.qty_received ?? it.qty ?? 0,
+    accessor: (it) => fmtQty(it.qty_received ?? it.qty ?? 0),
+    exportValue: (it) => Number(it.qty_received ?? it.qty ?? 0),
     searchValue: (it) => String(it.qty_received ?? it.qty ?? 0),
     sortFn: (a, b) => Number(a.qty_received ?? a.qty ?? 0) - Number(b.qty_received ?? b.qty ?? 0),
   },
@@ -196,7 +198,7 @@ const buildDrilldownColumns = (currency: string): GridColumn<GrnItem>[] => [
   },
   {
     key: 'received_at', label: 'Receive Date', width: 120,
-    accessor: (it) => fmtDateOrDash((it.received_at ?? '').slice(0, 10) || null),
+    accessor: (it) => fmtDateOrDash(it.received_at),
     searchValue: (it) => it.received_at ?? '',
     sortFn: (a, b) => String(a.received_at ?? '').localeCompare(String(b.received_at ?? '')),
     filterType: 'date', dateValue: (it) => it.received_at,

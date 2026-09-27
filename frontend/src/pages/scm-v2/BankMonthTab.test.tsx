@@ -474,7 +474,7 @@ describe('closing a month', () => {
   test('the list says a month is closed instead of how clean it looks', () => {
     setUp({ months: [{ ...MONTH, locked: { lockedBy: 'Chew', lockedAt: '2026-10-02T03:14:00Z' } }] });
     show();
-    expect(screen.getByText(/closed by Chew on 2026-10-02/)).toBeTruthy();
+    expect(screen.getByText(/closed by Chew on 2026\/10\/02/)).toBeTruthy();
     expect(screen.queryByText('covered end to end')).toBeNull();
   });
 });

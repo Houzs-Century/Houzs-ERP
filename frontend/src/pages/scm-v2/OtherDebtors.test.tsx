@@ -76,7 +76,7 @@ describe('the registry', () => {
   test('rows show the outstanding; picking one opens the detail', () => {
     detail = baseDetail();
     draw();
-    expect(screen.getByText('MYR 500.00')).toBeTruthy();
+    expect(screen.getByText('RM 500.00')).toBeTruthy();
     fireEvent.click(screen.getByText('AHMAD BIN ALI'));
     expect(screen.getByText('Bills')).toBeTruthy();
     expect(screen.getByText('HC-ODB-2609-001')).toBeTruthy();
@@ -268,11 +268,11 @@ describe('the Receipt — tick pays in full, type for partial, four layers gate'
     fireEvent.click(screen.getByText('New receipt'));
     /* Tick = the full RM 300 outstanding (500 − 200 received), dressed 300.00. */
     fireEvent.click(screen.getByLabelText('Collect HC-ODB-2609-001 in full'));
-    expect(screen.getByText(/Receiving MYR 300\.00/)).toBeTruthy();
+    expect(screen.getByText(/Receiving RM 300\.00/)).toBeTruthy();
     await waitFor(() => expect((screen.getByLabelText('amount for HC-ODB-2609-001') as HTMLInputElement).value).toBe('300.00'));
     /* Type = partial. */
     setAmount(document.body, 'amount for HC-ODB-2609-001', '100');
-    expect(screen.getByText(/Receiving MYR 100\.00/)).toBeTruthy();
+    expect(screen.getByText(/Receiving RM 100\.00/)).toBeTruthy();
     fireEvent.focus(screen.getByRole('combobox'));
     fireEvent.mouseDown(screen.getByText('310-0010 · MAYBANK'));
     fireEvent.click(screen.getByText('Raise receipt'));

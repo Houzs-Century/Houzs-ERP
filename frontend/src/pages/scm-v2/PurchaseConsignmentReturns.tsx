@@ -27,7 +27,8 @@ import {
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
-import { fmtDateOrDash, buildVariantSummary } from '@2990s/shared';
+import { fmtDateOrDash, buildVariantSummary, fmtQty, fmtSen } from '@2990s/shared';
+import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
@@ -46,9 +47,6 @@ const STATUS_LABEL: Record<string, string> = {
   CANCELLED: 'Cancelled',
 };
 const STATUS_CHIPS = ['all', 'POSTED', 'COMPLETED', 'CANCELLED'] as const;
-
-const fmtMoney = (centi: number, currency = 'MYR'): string =>
-  `${currency} ${(centi / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const PCT_LIST_STORAGE_KEY = 'pc-return-list.layout.v1';
 
@@ -110,10 +108,10 @@ const buildColumns = (): GridColumn<PrRow>[] => [
     key: 'refund_sen', label: 'Refund', width: 130, sortable: true, align: 'right', groupable: false,
     accessor: (r) => (
       <span style={{ fontFamily: 'var(--font-mark)', color: '#16695f', fontWeight: 800 }}>
-        {fmtMoney(Number(r.refund_sen ?? 0))}
+        {fmtSen(Number(r.refund_sen ?? 0))}
       </span>
     ),
-    searchValue: (r) => fmtMoney(Number(r.refund_sen ?? 0)),
+    searchValue: (r) => fmtSen(Number(r.refund_sen ?? 0)),
     /* Accessor is JSX → export the NUMBER in ringgit so Excel can SUM it. */
     exportValue: (r) => Number(r.refund_sen ?? 0) / 100,
     exportFormat: 'money',
@@ -123,10 +121,10 @@ const buildColumns = (): GridColumn<PrRow>[] => [
     key: 'status', label: 'Status', width: 130, sortable: true, groupable: true,
     accessor: (r) => (
       <span className={styles.statusPill} style={{ background: STATUS_COLOR[r.status] }}>
-        {STATUS_LABEL[r.status] ?? r.status.replace('_', ' ')}
+        {statusLabel('pr', r.status)}
       </span>
     ),
-    searchValue: (r) => STATUS_LABEL[r.status] ?? r.status.replace('_', ' '),
+    searchValue: (r) => statusLabel('pr', r.status),
     /* Accessor is JSX → export the human status label, not blank. */
     exportValue: (r) => STATUS_LABEL[r.status] ?? r.status.replace(/_/g, ' '),
     groupValue: (r) => STATUS_LABEL[r.status] ?? r.status,
@@ -169,13 +167,14 @@ const buildDrilldownColumns = (): GridColumn<PrItem>[] => [
   },
   {
     key: 'qty_returned', label: 'Qty Returned', width: 100, align: 'right',
-    accessor: (it) => it.qty_returned ?? 0,
+    accessor: (it) => fmtQty(it.qty_returned ?? 0),
+    exportValue: (it) => Number(it.qty_returned ?? 0),
     searchValue: (it) => String(it.qty_returned ?? 0),
     sortFn: (a, b) => Number(a.qty_returned ?? 0) - Number(b.qty_returned ?? 0),
   },
   {
     key: 'unit_price', label: 'Unit Price', width: 110, align: 'right',
-    accessor: (it) => fmtMoney(Number(it.unit_price_sen ?? 0)),
+    accessor: (it) => fmtSen(Number(it.unit_price_sen ?? 0)),
     exportValue: (it) => Number(it.unit_price_sen ?? 0) / 100,
     exportFormat: 'rate',
     searchValue: (it) => String(it.unit_price_sen ?? 0),
@@ -183,7 +182,7 @@ const buildDrilldownColumns = (): GridColumn<PrItem>[] => [
   },
   {
     key: 'line_total', label: 'Line Total', width: 120, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtMoney(Number(it.line_refund_sen ?? 0))}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtSen(Number(it.line_refund_sen ?? 0))}</span>,
     exportValue: (it) => Number(it.line_refund_sen ?? 0) / 100,
     exportFormat: 'money',
     searchValue: (it) => String(it.line_refund_sen ?? 0),
@@ -232,7 +231,7 @@ const ExpandedLines = ({ pr }: { pr: PrRow }) => {
           fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)',
           letterSpacing: '0.06em', textTransform: 'uppercase',
         }}>Subtotal</span>
-        <span>Total <strong style={{ color: '#16695f' }}>{fmtMoney(subtotal)}</strong></span>
+        <span>Total <strong style={{ color: '#16695f' }}>{fmtSen(subtotal)}</strong></span>
       </div>
     </div>
   );

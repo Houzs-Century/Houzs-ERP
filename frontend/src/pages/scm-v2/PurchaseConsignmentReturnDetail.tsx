@@ -25,7 +25,7 @@ import {
   ArrowLeft, Pencil, Printer, Trash2, Save, Ban, ChevronDown,
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { buildVariantSummary, fmtDateOrDash } from '@2990s/shared';
+import { buildVariantSummary, fmtDateOrDash, fmtSen } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
 import {
   usePurchaseConsignmentReturnDetail,
@@ -55,12 +55,7 @@ import { DateField } from "../../vendor/scm/components/DateField";
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
-const fmtRm = (centi: number | null | undefined): string => {
-  const v = centi ?? 0;
-  return `MYR ${(v / 100).toLocaleString('en-MY', {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  })}`;
-};
+const fmtRm = (centi: number | null | undefined): string => fmtSen(centi ?? 0);
 
 type HeaderDraft = {
   supplierId: string;

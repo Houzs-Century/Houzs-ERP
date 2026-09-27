@@ -363,7 +363,7 @@ function ExpiryCell({ doc }: { doc: DocView | undefined }) {
   const toneText = doc.tone === "crit" ? "text-err" : doc.tone === "warn" ? "text-warning-text" : "text-ink-muted";
   return (
     <div className="text-[12px]">
-      <div className="text-ink">{doc.expiryDate ?? "—"}</div>
+      <div className="text-ink">{fmtDate(doc.expiryDate)}</div>
       <div className={cn("text-[10.5px]", toneText)}>
         {doc.result === "FAIL" ? "FAILED · " : ""}
         {fmtDays(doc.daysRemaining)}
@@ -397,7 +397,7 @@ function NextServiceCell({ v }: { v: VehicleRow }) {
     );
   }
   if (v.nextServiceKm != null) return <span className="text-[12px] text-ink-secondary">{v.nextServiceKm.toLocaleString()} km</span>;
-  if (v.nextServiceDate) return <span className="text-[12px] text-ink-secondary">{v.nextServiceDate}</span>;
+  if (v.nextServiceDate) return <span className="text-[12px] text-ink-secondary">{fmtDate(v.nextServiceDate)}</span>;
   return <span className="text-[12px] text-ink-muted">No plan</span>;
 }
 

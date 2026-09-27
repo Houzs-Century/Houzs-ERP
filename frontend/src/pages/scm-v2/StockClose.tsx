@@ -7,7 +7,7 @@
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtDateTime, fmtSen } from '../../vendor/shared/format';
 import { useStockClose, useRunStockClose, type StockCloseRun } from './accounting-phase1-queries';
 import { DataTable, type Column } from '../../components/DataTable';
 
@@ -40,7 +40,7 @@ const RUN_COLUMNS: Column<StockCloseRun>[] = [
   { key: 'month', label: 'Month', render: (r) => <b>{r.month}</b>, getValue: (r) => r.month },
   {
     key: 'checkedAt', label: 'Checked At',
-    render: (r) => String(r.ran_at).replace('T', ' ').slice(0, 16),
+    render: (r) => fmtDateTime(r.ran_at),
     getValue: (r) => String(r.ran_at),
   },
   { key: 'by', label: 'By', render: (r) => r.trigger, getValue: (r) => r.trigger },

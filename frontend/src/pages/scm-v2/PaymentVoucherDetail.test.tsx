@@ -106,15 +106,15 @@ describe('Edit on a DRAFT AP Payment is the AP form, not the plain voucher\'s', 
     expect(screen.queryByText(/no outstanding purchase invoices/)).toBeNull();
     expect((screen.getByLabelText('Pay 2990-API-2609-004 in full') as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('Apply to 2990-API-2609-004') as HTMLInputElement).value).toBe('10,077.42');
-    expect(screen.getByText('Applying MYR 10,077.42 = MYR 10,077.42')).toBeTruthy();
+    expect(screen.getByText('Applying RM 10,077.42 = RM 10,077.42')).toBeTruthy();
 
     /* A prepay rides the same voucher; the total follows ticks + prepay. */
     const prepay = screen.getByLabelText('Prepay amount') as HTMLInputElement;
     fireEvent.focus(prepay);
     fireEvent.change(prepay, { target: { value: '100' } });
     fireEvent.blur(prepay);
-    expect(screen.getByText('Applying MYR 10,077.42 + prepay MYR 100.00 = MYR 10,177.42')).toBeTruthy();
-    expect(screen.getByText(/Books: Dr 405-0000 Account Payable MYR 10,177\.42 \(incl\. prepay MYR 100\.00\)/)).toBeTruthy();
+    expect(screen.getByText('Applying RM 10,077.42 + prepay RM 100.00 = RM 10,177.42')).toBeTruthy();
+    expect(screen.getByText(/Books: Dr 405-0000 Account Payable RM 10,177\.42 \(incl\. prepay RM 100\.00\)/)).toBeTruthy();
 
     fireEvent.click(screen.getByText('Save'));
     await waitFor(() => expect(updateAsync).toHaveBeenCalledTimes(1));
@@ -130,7 +130,7 @@ describe('Edit on a DRAFT AP Payment is the AP form, not the plain voucher\'s', 
     draw();
     await waitFor(() => expect(screen.getByLabelText('Pay 2990-API-2609-004 in full')).toBeTruthy());
     fireEvent.click(screen.getByLabelText('Pay 2990-API-2609-004 in full'));
-    expect(screen.getByText('Applying MYR 0.00 = MYR 0.00')).toBeTruthy();
+    expect(screen.getByText('Applying RM 0.00 = RM 0.00')).toBeTruthy();
     const prepay = screen.getByLabelText('Prepay amount') as HTMLInputElement;
     fireEvent.focus(prepay);
     fireEvent.change(prepay, { target: { value: '2500' } });

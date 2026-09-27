@@ -48,7 +48,7 @@ import { MerchantChargesTab } from './MerchantChargesReport';
 import { PerformanceTab } from './PerformancePnl';
 import { cardStyle, fieldStyle, btnStyle } from './JournalEntryCards';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
 import { GeneralLedger } from './GeneralLedger';
@@ -56,7 +56,7 @@ import { JournalTab } from './JournalEntries';
 import { CancelledWithMoneyCard } from './CancelledWithMoneyCard';
 import { ReceiptBackfillCard } from './ReceiptBackfillCard';
 import { PageHeader } from '../../components/Layout';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 
@@ -151,7 +151,7 @@ const CoaTab = () => {
         getRowKey={(r) => r.account_code}
         groupBy={{ key: 'type' }}
         columns={[
-          { key: 'type', label: 'Type', width: '110px', defaultHidden: true, getValue: (r) => r.account_type, render: (r) => r.account_type },
+          { key: 'type', label: 'Type', width: '110px', defaultHidden: true, getValue: (r) => r.account_type, render: (r) => humaniseStatusKey(r.account_type) },
           {
             key: 'code', label: 'Code', width: '130px', getValue: (r) => r.account_code,
             render: (r) => (
@@ -203,7 +203,7 @@ const CoaTab = () => {
             getValue: (r) => (r.is_active ? 'ACTIVE' : 'INACTIVE'),
             render: (r) => (
               <span className={`${styles.statusPill} ${r.is_active ? styles.statusActive : styles.statusInactive}`}>
-                {r.is_active ? 'ACTIVE' : 'INACTIVE'}
+                {r.is_active ? 'Active' : 'Inactive'}
               </span>
             ),
           },
@@ -303,7 +303,7 @@ export const TrialBalanceTab = () => {
         getRowKey={(r) => r.account_code}
         groupBy={{ key: 'type' }}
         columns={[
-          { key: 'type', label: 'Type', width: '110px', defaultHidden: true, getValue: (r) => r.account_type, render: (r) => r.account_type },
+          { key: 'type', label: 'Type', width: '110px', defaultHidden: true, getValue: (r) => r.account_type, render: (r) => humaniseStatusKey(r.account_type) },
           { key: 'account', label: 'Account', getValue: (r) => `${r.account_code} — ${r.account_name}`, render: (r) => `${r.account_code} — ${r.account_name}` },
           { key: 'debit', label: 'Σ Debit', align: 'right', width: '140px', getValue: (r) => r.total_debit_sen / 100, render: (r) => fmt(r.total_debit_sen) },
           { key: 'credit', label: 'Σ Credit', align: 'right', width: '140px', getValue: (r) => r.total_credit_sen / 100, render: (r) => fmt(r.total_credit_sen) },
@@ -436,7 +436,7 @@ export const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
           embedded
           columns={[
             { key: 'document', label: 'Document', getValue: (r) => r.docNo, render: (r) => r.docNo },
-            { key: 'paidOn', label: 'Paid on', getValue: (r) => r.paidOn, render: (r) => r.paidOn },
+            { key: 'paidOn', label: 'Paid on', getValue: (r) => r.paidOn, render: (r) => fmtDateOrDash(r.paidOn) },
             { key: 'how', label: 'How', getValue: (r) => r.method, render: (r) => r.method },
             { key: 'amount', label: 'Amount', align: 'right', getValue: (r) => r.amountSen, exportValue: (r) => r.amountSen / 100, exportFormat: 'money', render: (r) => fmt(r.amountSen) },
           ]}
@@ -556,7 +556,7 @@ const DryRunResult = ({ r }: { r: PaymentDryRun }) => {
           embedded
           columns={[
             { key: 'document', label: 'Document', getValue: (row) => row.docNo, render: (row) => row.docNo },
-            { key: 'paidOn', label: 'Paid on', getValue: (row) => row.paidOn, render: (row) => row.paidOn },
+            { key: 'paidOn', label: 'Paid on', getValue: (row) => row.paidOn, render: (row) => fmtDateOrDash(row.paidOn) },
             { key: 'how', label: 'How', getValue: (row) => row.method, render: (row) => row.method },
             { key: 'amount', label: 'Amount', align: 'right', getValue: (row) => row.amountSen, render: (row) => fmt(row.amountSen) },
             {
@@ -647,7 +647,7 @@ const ArAgingTab = () => {
           { key: 'invoice', label: 'Invoice', width: '140px', getValue: (r) => r.invoice_number, render: (r) => <span className={styles.codeChip}>{r.invoice_number}</span> },
           { key: 'customer', label: 'Customer', getValue: (r) => `${r.debtor_name}${r.debtor_code ? ` (${r.debtor_code})` : ''}`, render: (r) => `${r.debtor_name}${r.debtor_code ? ` (${r.debtor_code})` : ''}` },
           { key: 'invoice_date', label: 'Date', width: '110px', getValue: (r) => r.invoice_date, render: (r) => fmtDateOrDash(r.invoice_date) },
-          { key: 'due', label: 'Due', width: '110px', getValue: (r) => r.due_date ?? '', render: (r) => r.due_date ?? '—' },
+          { key: 'due', label: 'Due', width: '110px', getValue: (r) => r.due_date ?? '', render: (r) => fmtDateOrDash(r.due_date) },
           {
             key: 'outstanding', label: 'Outstanding', align: 'right', width: '140px',
             getValue: (r) => r.outstanding_sen / 100,
@@ -692,7 +692,7 @@ const ApAgingTab = () => {
             render: (r) => (r.supplier_code ? <span className={styles.codeChip}>{r.supplier_code}</span> : '—'),
           },
           { key: 'invoice_date', label: 'Date', width: '110px', getValue: (r) => r.invoice_date, render: (r) => fmtDateOrDash(r.invoice_date) },
-          { key: 'due', label: 'Due', width: '110px', getValue: (r) => r.due_date ?? '', render: (r) => r.due_date ?? '—' },
+          { key: 'due', label: 'Due', width: '110px', getValue: (r) => r.due_date ?? '', render: (r) => fmtDateOrDash(r.due_date) },
           {
             key: 'outstanding', label: 'Outstanding', align: 'right', width: '140px',
             getValue: (r) => r.outstanding_sen / 100,

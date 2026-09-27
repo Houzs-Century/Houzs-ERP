@@ -20,6 +20,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
+import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from '../../vendor/scm/lib/payment-methods';
+import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { DataTable, type Column } from '../../components/DataTable';
 import { generateReceiptPdf, type ReceiptPdfData } from '../../vendor/scm/lib/receipt-pdf';
 
@@ -46,6 +48,10 @@ export const mytMonth = (): string => new Date(Date.now() + 8 * 3600_000).toISOS
 /** "2026-06" → "06/2026". */
 export const monthWord = (m: string): string => (/^\d{4}-\d{2}$/.test(m) ? `${m.slice(5)}/${m.slice(0, 4)}` : m);
 
+const methodLabel = (m: string | null): string => {
+  const code = PAYMENT_METHOD_CODES.find((c) => c === m);
+  return code ? PAYMENT_METHOD_DEFAULT_LABELS[code] : m ? humaniseStatusKey(m) : '—';
+};
 const soft: React.CSSProperties = { fontSize: 'var(--fs-13)', color: 'var(--text-soft, #8a8578)' };
 const good = 'var(--c-secondary-a, #2F5D4F)';
 const bad = 'var(--c-festive-b, #B8331F)';
@@ -98,7 +104,7 @@ export const OfficialReceipts = () => {
     { key: 'paid', label: 'Paid', render: (r) => fmtDateOrDash(r.paid_at), getValue: (r) => r.paid_at, exportFormat: 'date' },
     { key: 'document', label: 'Document', render: (r) => r.doc_no ?? '—', getValue: (r) => r.doc_no ?? '' },
     { key: 'customer', label: 'Customer', render: (r) => r.customer_name ?? '—', getValue: (r) => r.customer_name ?? '' },
-    { key: 'method', label: 'Method', render: (r) => r.method ?? '—', getValue: (r) => r.method ?? '' },
+    { key: 'method', label: 'Method', render: (r) => methodLabel(r.method), getValue: (r) => r.method ?? '' },
     {
       key: 'amount', label: 'Amount', align: 'right', render: (r) => fmtSen(r.amount_sen),
       getValue: (r) => Number(r.amount_sen), exportValue: (r) => Number(r.amount_sen) / 100, exportFormat: 'money',

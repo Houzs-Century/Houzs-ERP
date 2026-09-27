@@ -4,7 +4,8 @@
 // ----------------------------------------------------------------------------
 
 import { useCallback } from 'react';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtMoneySen, fmtQty, fmtSen } from '../../vendor/shared/format';
+import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import { DetailListingShell } from '../../components/scm-v2/DetailListingShell';
 import { useSalesInvoiceDetailListing, type DetailListingRow } from '../../vendor/scm/lib/reports-queries';
 import type { GridColumn } from '../../components/DataGridCompat';
@@ -29,10 +30,8 @@ type SiRow = DetailListingRow & {
   header_paid_sen?: number;
 };
 
-const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
-  const c = Number(centi ?? 0);
-  return `${currency} ${(c / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-};
+const rowMoney = (centi: number | null | undefined, currency: string | null | undefined): string =>
+  !currency || currency === 'MYR' ? fmtSen(centi) : fmtMoneySen(centi, currency);
 
 export const SalesInvoiceDetailListing = () => {
   const buildColumns = useCallback((opts: { checked: Record<string, boolean>; onToggle: (id: string) => void }): GridColumn<SiRow>[] => [
@@ -104,61 +103,62 @@ export const SalesInvoiceDetailListing = () => {
     },
     {
       key: 'qty', label: 'Qty', width: 70, align: 'right', sortable: true,
-      accessor: (r) => String(r.qty ?? 0),
+      accessor: (r) => fmtQty(r.qty ?? 0),
+      exportValue: (r) => Number(r.qty ?? 0),
       searchValue: (r) => String(r.qty ?? 0),
       sortFn: (a, b) => Number(a.qty ?? 0) - Number(b.qty ?? 0),
     },
     {
       key: 'unit_price', label: 'Unit Price', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.unit_price_sen, r.currency),
+      accessor: (r) => rowMoney(r.unit_price_sen, r.currency),
       exportValue: (r) => Number(r.unit_price_sen ?? 0) / 100,
       exportFormat: 'rate',
-      searchValue: (r) => fmtRm(r.unit_price_sen, r.currency),
+      searchValue: (r) => rowMoney(r.unit_price_sen, r.currency),
       sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
     },
     {
       key: 'discount', label: 'Discount', width: 100, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.discount_sen, r.currency),
+      accessor: (r) => rowMoney(r.discount_sen, r.currency),
       exportValue: (r) => Number(r.discount_sen ?? 0) / 100,
       exportFormat: 'money',
-      searchValue: (r) => fmtRm(r.discount_sen, r.currency),
+      searchValue: (r) => rowMoney(r.discount_sen, r.currency),
       sortFn: (a, b) => Number(a.discount_sen ?? 0) - Number(b.discount_sen ?? 0),
     },
     {
       key: 'line_total', label: 'Line Total', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.total_sen, r.currency),
+      accessor: (r) => rowMoney(r.total_sen, r.currency),
       exportValue: (r) => Number(r.total_sen ?? 0) / 100,
       exportFormat: 'money',
-      searchValue: (r) => fmtRm(r.total_sen, r.currency),
+      searchValue: (r) => rowMoney(r.total_sen, r.currency),
       sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
     },
     {
       key: 'header_total', label: 'Invoice Total', width: 130, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.header_total_sen, r.currency),
+      accessor: (r) => rowMoney(r.header_total_sen, r.currency),
       exportValue: (r) => Number(r.header_total_sen ?? 0) / 100,
       exportFormat: 'money',
-      searchValue: (r) => fmtRm(r.header_total_sen, r.currency),
+      searchValue: (r) => rowMoney(r.header_total_sen, r.currency),
       sortFn: (a, b) => Number(a.header_total_sen ?? 0) - Number(b.header_total_sen ?? 0),
     },
     {
       key: 'header_paid', label: 'Paid', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.header_paid_sen, r.currency),
+      accessor: (r) => rowMoney(r.header_paid_sen, r.currency),
       exportValue: (r) => Number(r.header_paid_sen ?? 0) / 100,
       exportFormat: 'money',
-      searchValue: (r) => fmtRm(r.header_paid_sen, r.currency),
+      searchValue: (r) => rowMoney(r.header_paid_sen, r.currency),
       sortFn: (a, b) => Number(a.header_paid_sen ?? 0) - Number(b.header_paid_sen ?? 0),
     },
     {
       key: 'balance', label: 'Balance', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.balance_sen, r.currency),
+      accessor: (r) => rowMoney(r.balance_sen, r.currency),
       exportValue: (r) => Number(r.balance_sen ?? 0) / 100,
       exportFormat: 'money',
-      searchValue: (r) => fmtRm(r.balance_sen, r.currency),
+      searchValue: (r) => rowMoney(r.balance_sen, r.currency),
       sortFn: (a, b) => Number(a.balance_sen ?? 0) - Number(b.balance_sen ?? 0),
     },
     {
       key: 'status', label: 'Status', width: 120, sortable: true, groupable: true,
-      accessor: (r) => (r.status ? String(r.status).replace(/_/g, ' ') : '—'),
+      accessor: (r) => (r.status ? statusLabel('si', String(r.status)) : '—'),
       searchValue: (r) => r.status ?? '',
     },
   ], []);

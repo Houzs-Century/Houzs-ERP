@@ -17,6 +17,7 @@ import { useNavigate } from 'react-router';
 import { Search, Plus, X } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
+import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { FilterPills } from '../../components/FilterPills';
 import { cn } from '../../lib/utils';
 import { formatPhone } from '@2990s/shared/phone';
@@ -223,7 +224,7 @@ export const Suppliers = () => {
       width: 110,
       accessor: (r) => (
         <span className={`${styles.statusPill} ${STATUS_CLASS[r.status]}`}>
-          {r.status}
+          {humaniseStatusKey(r.status)}
         </span>
       ),
       searchValue: (r) => r.status,

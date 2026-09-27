@@ -38,6 +38,7 @@ import { downloadCSV, toCSV } from '../../lib/csv';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DataTable, type Column } from '../../components/DataTable';
+import { fmtDate } from '../../vendor/shared/format';
 
 /* Three views of the same money, and the FILE comes first now (layer 4).
    Owner, 2026-08-19: 我不是应该upload bank statement 或 daily transaction report
@@ -125,7 +126,7 @@ const WaitingForMoney = () => {
       ),
       getValue: (b) => b.file_name,
     },
-    { key: 'period', label: 'Period', render: (b) => `${b.period_from} → ${b.period_to}`, getValue: (b) => b.period_from, exportFormat: 'date' },
+    { key: 'period', label: 'Period', render: (b) => `${fmtDate(b.period_from)} → ${fmtDate(b.period_to)}`, getValue: (b) => b.period_from, exportFormat: 'date' },
     {
       key: 'net', label: 'Net it should pay', align: 'right', render: (b) => fmt(payableOf(b)),
       getValue: (b) => payableOf(b), exportValue: (b) => payableOf(b) / 100, exportFormat: 'money',
@@ -423,7 +424,7 @@ const TRANSIT_COLUMNS: Column<InTransitLine>[] = [
   /* null = keyed in without a bank; listed once (docs/bugs/0688). */
   { key: 'acquirer', label: 'Acquirer', render: (l) => <span className={styles.codeChip}>{l.acquirerCode ?? '未标'}</span>, getValue: (l) => l.acquirerCode ?? '未标' },
   { key: 'document', label: 'Document', render: (l) => l.docNo, getValue: (l) => l.docNo },
-  { key: 'paidOn', label: 'Customer paid on', render: (l) => l.paidOn, getValue: (l) => l.paidOn, exportFormat: 'date' },
+  { key: 'paidOn', label: 'Customer paid on', render: (l) => fmtDate(l.paidOn), getValue: (l) => l.paidOn, exportFormat: 'date' },
   {
     key: 'days', label: 'Days', align: 'right',
     render: (l) => <span style={{ color: l.ageDays > 14 ? danger : undefined, fontWeight: l.ageDays > 14 ? 700 : undefined }}>{l.ageDays}</span>,

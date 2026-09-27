@@ -45,6 +45,7 @@ import { downloadCSV, toCSV } from '../../lib/csv';
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
 import { PageHeader } from '../../components/Layout';
+import { fmtDate } from '../../vendor/shared/format';
 
 /* The server sends the four piles as a plain tally; a bucket with nothing in it
    is simply absent, so read it as a lookup rather than a guaranteed key. */
@@ -383,7 +384,7 @@ const WAITING_COLUMNS: Column<WaitingCard>[] = [
   { key: 'merchant', label: 'Merchant', render: (p) => <span className={styles.codeChip}>{p.acquirerCode ?? '未标'}</span>, getValue: (p) => p.acquirerCode ?? '未标' },
   { key: 'document', label: 'Document', render: (p) => p.docNo, getValue: (p) => p.docNo },
   { key: 'salesperson', label: 'Salesperson', render: (p) => p.salespersonName ?? '—', getValue: (p) => p.salespersonName ?? '' },
-  { key: 'paidOn', label: 'Customer paid on', render: (p) => p.paidOn, getValue: (p) => p.paidOn, exportFormat: 'date' },
+  { key: 'paidOn', label: 'Customer paid on', render: (p) => fmtDate(p.paidOn), getValue: (p) => p.paidOn, exportFormat: 'date' },
   {
     key: 'days', label: 'Days', align: 'right',
     render: (p) => <span style={{ color: p.ageDays > 14 ? danger : undefined, fontWeight: p.ageDays > 14 ? 700 : undefined }}>{p.ageDays}</span>,

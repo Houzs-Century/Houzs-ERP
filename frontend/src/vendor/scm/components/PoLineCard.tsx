@@ -39,7 +39,7 @@ import { useModelAllowedOptionsByCode, mfgCategoryLabel } from '../lib/mfg-produ
 import { SpecialOrders } from './SpecialOrders';
 import { specialOrderSurface } from '../lib/special-order-surface';
 import type { BindingRow, MaterialKind } from '../lib/suppliers-queries';
-import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from '@2990s/shared';
+import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool, fmtMoneySen } from '@2990s/shared';
 import { fabricOptionLabel, type FabricTrackingRow } from '../lib/fabric-queries';
 import { sortByText, sortByNumeric, byText } from '../lib/sort-options';
 import type { Warehouse } from '../lib/inventory-queries';
@@ -55,9 +55,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   const v = centi ?? 0;
-  return `${currency} ${(v / 100).toLocaleString('en-MY', {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  })}`;
+  return fmtMoneySen(v, currency);
 };
 
 /** Per-line PO draft. Mirrors PurchaseOrderNew's DraftLine shape so the same

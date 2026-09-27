@@ -29,7 +29,7 @@ import { PageHeader } from '../../components/Layout';
 import { StatCard } from '../../components/StatCard';
 import { DataTable, type Column } from '../../components/DataTable';
 import { formatDate } from '../../lib/utils';
-import { buildVariantSummary, orderLineIdentity } from '@2990s/shared';
+import { buildVariantSummary, fmtQty, fmtSen, orderLineIdentity } from '@2990s/shared';
 import { useAuth } from '../../auth/AuthContext';
 import { fairAllowedStages } from '../../auth/salesAccess';
 import {
@@ -52,16 +52,15 @@ import {
 import { DateField } from "../../vendor/scm/components/DateField";
 
 // ── money / number formatting ────────────────────────────────────────────────
-/** Table-cell money — no currency prefix, 2 decimals, zero/null → em dash so a
- *  wide grid reads cleanly (matches the approved mockup's "—" empties). */
+/** Table-cell money — zero/null → em dash so a wide grid reads cleanly
+ *  (matches the approved mockup's "—" empties). */
 const cell = (centi: number | null | undefined): string => {
   const v = Number(centi ?? 0);
   if (!v) return '—';
-  return (v / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return fmtSen(v);
 };
-/** KPI / drawer money — with the MYR prefix and always-shown 0.00. */
-const rm = (centi: number | null | undefined): string =>
-  `MYR ${(Number(centi ?? 0) / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+/** KPI / drawer money — always-shown 0.00. */
+const rm = (centi: number | null | undefined): string => fmtSen(centi ?? 0);
 const pct = (p: number | null | undefined): string => (p == null ? '—' : `${p.toFixed(1)}%`);
 /** Signed points for a margin drift (DO vs SO). */
 const pts = (a: number | null | undefined, b: number | null | undefined): string => {
@@ -590,7 +589,7 @@ function StageTable({ data, stage, hidden, loading, onOpen }: {
         ),
       },
       docCol('so', 'Linked SO', (r) => r.so_no, 'text-ink-secondary'),
-      { key: 'qty', label: 'Qty', align: 'right', getValue: (r) => r.qty, render: (r) => r.qty, total: (rs) => sumOf(rs, (r) => r.qty) },
+      { key: 'qty', label: 'Qty', align: 'right', getValue: (r) => r.qty, render: (r) => fmtQty(r.qty), total: (rs) => fmtQty(sumOf(rs, (r) => r.qty)) },
       moneyCol('soAmount', 'SO Amount', (r) => r.so_amount_sen),
       moneyCol('soCost', 'Total SO Cost', (r) => r.total_so_cost_sen),
       moneyCol('doCost', 'Total DO Cost', (r) => r.total_do_cost_sen, { className: 'font-semibold' }),
