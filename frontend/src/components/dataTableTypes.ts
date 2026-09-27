@@ -202,6 +202,11 @@ export interface DataTableProps<T, L = never> {
   initialRowLimit?: number;
   /** The order rows open in while no header sort is active (client-side). */
   defaultSort?: (a: T, b: T) => number;
+  /** Enable drag-to-reorder of rows. Called with the new full order of the
+   *  currently displayed (filtered/sorted) rows after a drag; the caller
+   *  persists it and feeds it back through `defaultSort`. Rows are draggable
+   *  ONLY while no column sort is active — a column sort owns the order then. */
+  onRowReorder?: (orderedKeys: string[]) => void;
   /** Show the "drag a column header here to group" banner (SCM DataGrid
    *  parity): the user groups by any number of columns, outermost first, and
    *  the grouping is saved with the layout. Overrides `groupBy` while set. */

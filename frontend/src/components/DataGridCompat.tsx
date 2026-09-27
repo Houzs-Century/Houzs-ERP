@@ -67,6 +67,9 @@ export type DataGridCompatProps<T> = {
   /** Show the first N rows with a "Load more" affordance instead of the whole
    *  set (search / filters / sort still run over everything). */
   initialRowLimit?: number;
+  /** Enable drag-to-reorder; called with the new order of the displayed rows
+   *  (only while no column sort is active). See DataTable.onRowReorder. */
+  onRowReorder?: (orderedKeys: string[]) => void;
   onFilteredRowsChange?: (rows: T[]) => void;
   toolbar?: ReactNode;
   focusSearchNonce?: number;
@@ -188,6 +191,7 @@ export function DataGridCompat<T>({
   onUserAdjustColumns,
   scrollToRow,
   initialRowLimit,
+  onRowReorder,
 }: DataGridCompatProps<T>) {
   const tableColumns = useMemo(() => columns.map(gridColumnToTableColumn), [columns]);
   const layoutSeeds = useMemo(
@@ -207,6 +211,7 @@ export function DataGridCompat<T>({
       onRowDoubleClick={onRowDoubleClick}
       getRowStyle={rowStyle}
       initialRowLimit={initialRowLimit}
+      onRowReorder={onRowReorder}
       onFilteredRowsChange={onFilteredRowsChange}
       toolbarExtra={toolbar}
       clientSearch={
