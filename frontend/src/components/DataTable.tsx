@@ -1831,14 +1831,10 @@ function DataTableInner<T, L>({
   }, [sortedRows, displayColumns, selection?.selectedIds]);
   const loadMore = () => setRowLimit((n) => (n ?? 0) + (initialRowLimit ?? 200));
 
-  /* Drag-to-reorder (owner 2026-09-26): rows are draggable ONLY while no column
-     sort is active — a column sort owns the order then. A drop reports the new
-     order of the whole filtered set (`sortedRows`), which the caller persists and
-     feeds back through `defaultSort`. */
+  /* Drag-to-reorder + edge auto-scroll (owner 2026-09): rows drag only while no column sort; a drop reports the whole new order, persisted by the caller via `defaultSort`. */
   const rowReorderable = !!onRowReorder && sort == null;
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dropKey, setDropKey] = useState<string | null>(null);
-  /* Edge auto-scroll while dragging a row past the visible window (owner 2026-09-27). */
   const dragScroll = useDragAutoScroll(() => scrollWrapRef.current);
   const onRowDrop = (toKey: string) => {
     dragScroll.stop();
