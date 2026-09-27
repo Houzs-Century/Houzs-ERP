@@ -30,7 +30,7 @@ Used by dispatchers/logistics on desktop and by drivers, helpers and storekeeper
 
 ## Permissions
 
-- Area `scm.transportation.drivers` gates all TMS mounts: `/drivers`, `/helpers`, `/lorries`, `/lorry-service-records`, `/lorry-capacity`, `/delivery-planning`, `/delivery-planning-regions` (openRead), `/delivery-residence-rules`, `/delivery-zones`, `/delivery-rate-cards`, `/threepl-companies`, `/driver-leave`, `/trips`, `/dp-orders`, `/delivery-messages`, `/scan-lorry-invoice`. GET = `view`, POST/PATCH/PUT/DELETE = `edit` (proposals are POSTs, so they need `edit`).
+- Area `scm.transportation.drivers` gates all TMS mounts: `/drivers`, `/helpers`, `/lorries`, `/lorry-service-records`, `/lorry-capacity`, `/delivery-planning`, `/delivery-planning-regions` (openRead), `/delivery-planning-row-marks` (openRead), `/delivery-planning-row-order` (openRead), `/delivery-residence-rules`, `/delivery-zones`, `/delivery-rate-cards`, `/threepl-companies`, `/driver-leave`, `/trips`, `/dp-orders`, `/delivery-messages`, `/scan-lorry-invoice`. GET = `view`, POST/PATCH/PUT/DELETE = `edit` (proposals are POSTs, so they need `edit`).
 - Enforced per level only for `scm_l2_configured` users; others pass on `scm.access`; `*` bypasses. No per-endpoint `requirePermission` in this module.
 - Frontend: TMS routes wrapped in `<ScmGuard area="scm.transportation.drivers">`; sidebar entries `hideForSalesRep`; phone Fleet/Drivers/Helpers/Regions rows `gateVia: "/scm/delivery-maintenance"` (must point at a live nav entry, pinned by `mobileMenuGates.test.ts`).
 - Row scope `resolveDeliveryScope` (`lib/deliveryScope.ts`): a restricted-cohort user (Driver, Helper, Storekeeper, Storekeeper Supervisor per `positionPolicy.ts`) with a linked `scm.drivers`/`scm.helpers.user_id` sees only jobs assigned to them.
@@ -107,8 +107,11 @@ Desktop / mobile parity
 
 Board UI
 - Option B map (`DeliveryMapPanel.tsx`, model `delivery-map-model.ts`): open/closed per page; compact columns are a render-time overlay (`visibleColumnsOverride` -> `overlayHidden`), never written to `layout.hidden`; any explicit column choice turns compact off. Geo read (`useDeliveryGeo` -> `GET /delivery-planning/geo`) is disabled while the panel is closed.
-- Arrangement queues default-sort with `arrangementQueueCompare` only while no column sort is active; the main board keeps server order.
+- Default sort while no column sort is active: the arrangement queues use `arrangementQueueCompare`; the MAIN board uses the manual drag order (`orderComparator` over `scm.delivery_planning_row_order`), rows not in it kept in server order. A column-header sort overrides either.
 - Grid funnels are in-visit only (module memory in `components/dataTableColFilterMemory.ts`): kept across route changes, clean on a fresh page load / F5, never localStorage. Board state/region via `useStickyFilters` (URL wins).
+- The main board opens on 200 rows with a "Load more" (`DataTable.initialRowLimit`, owner 2026-09-26); search / filter / sort / count still span the whole set, only the render is capped.
+- Manual colour marks (owner 2026-09-26): right-click a row -> "Mark colour…", or select rows + the bulk-bar palette -> paint them one of red / orange / yellow / green / cyan / blue / purple / grey (the HC Delivery sheet's category colours). `scm.delivery_planning_row_marks` (keyed by `rowIdOf`, cosmetic, shared, colour from a fixed allow-list `scm/lib/row-mark-colours.ts`); tinted onto the row via `getRowStyle`. Endpoints `/delivery-planning-row-marks` (GET list / PUT paint / DELETE clear).
+- Drag rows to reorder (owner 2026-09-26): draggable ONLY while no column sort is active; a drop persists the new order of the displayed rows to `scm.delivery_planning_row_order` (one jsonb array of `rowIdOf` ids), which drives the main board's `defaultSort`. `DataTable.onRowReorder` (opt-in) + generic `lib/reorder.ts`. Endpoints `/delivery-planning-row-order` (GET/PUT). Both new tables carry service_role grants + `NOTIFY pgrst`.
 
 ## Gotchas
 
