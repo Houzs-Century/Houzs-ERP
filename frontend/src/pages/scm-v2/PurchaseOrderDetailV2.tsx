@@ -13,7 +13,7 @@ import { lazy, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
-import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
   ArrowLeft,
@@ -873,7 +873,7 @@ function PurchaseOrderDetailV2ReadOnly() {
       getValue: (l) => l.qty,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {l.qty} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
+          {fmtQty(l.qty)} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
         </span>
       ),
     },

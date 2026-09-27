@@ -76,7 +76,7 @@ import {
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
-import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { transferFromColumnLabel } from "../../lib/convertScope";
 import { customerRefOf } from '../../lib/customer-ref';
@@ -689,7 +689,7 @@ export function DeliveryReturnDetailV2() {
       getValue: (l) => l.qty_returned,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {l.qty_returned}{" "}
+          {fmtQty(l.qty_returned)}{" "}
           <span className="text-[10.5px] text-ink-muted">{l.uom}</span>
         </span>
       ),

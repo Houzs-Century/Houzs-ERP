@@ -88,7 +88,7 @@ import {
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel } from "../../lib/convertScope";
-import { buildVariantSummary, fmtDate, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../../auth/AuthContext";
 import { canOperateDeliveryOrders, canRevertDelivery } from "../../auth/salesAccess";
@@ -945,7 +945,7 @@ export function DeliveryOrderDetailV2() {
       getValue: (l) => l.qty,
       render: (l) => (
         <span className="font-money text-[14px] font-semibold text-ink">
-          {l.qty}
+          {fmtQty(l.qty)}
           <span className="ml-1 text-[10.5px] font-normal text-ink-muted">
             {l.uom || ""}
           </span>

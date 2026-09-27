@@ -27,7 +27,7 @@ import { writeScmHandoff } from '../../lib/scmHandoffStorage';
 import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
 import { ArrowRight, Search, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtQty } from '../../vendor/shared/format';
 import {
   useOutstandingGrnItems,
   type OutstandingGrnItem,
@@ -425,7 +425,7 @@ export const PurchaseInvoiceFromGrn = () => {
                           description={l.description}
                         />
                       </div>
-                      <span style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)' }}>{l.remaining}</span>
+                      <span style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)' }}>{fmtQty(l.remaining)}</span>
                       <input
                         type="number"
                         min={0}

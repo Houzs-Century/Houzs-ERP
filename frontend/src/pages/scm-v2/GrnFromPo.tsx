@@ -42,7 +42,7 @@ import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtDate, fmtMoneySen } from '@2990s/shared';
+import { fmtDate, fmtMoneySen, fmtQty } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 
@@ -393,7 +393,7 @@ export const GrnFromPo = () => {
     },
     {
       key: 'qty', label: 'Ordered', width: 80, align: 'right', sortable: true,
-      accessor: (r) => String(r.qty),
+      accessor: (r) => fmtQty(r.qty),
       sortFn: (a, b) => a.qty - b.qty,
     },
     {

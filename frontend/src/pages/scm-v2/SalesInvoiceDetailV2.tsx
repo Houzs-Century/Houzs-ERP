@@ -100,7 +100,7 @@ import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
-import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { clearPaymentRetryHandoff, completePaymentRetryDraft, consumePaymentRetryNavigationState, planPaymentDraftFlush, readPaymentRetryHandoff, readPaymentRetryNavigationState } from "../../lib/paymentRetryHandoff";
 import { transferFromColumnLabel } from "../../lib/convertScope";
@@ -1054,7 +1054,7 @@ export function SalesInvoiceDetailV2() {
       getValue: (l) => l.qty,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {l.qty} <span className="text-[10.5px] text-ink-muted">{l.uom}</span>
+          {fmtQty(l.qty)} <span className="text-[10.5px] text-ink-muted">{l.uom}</span>
         </span>
       ),
     },

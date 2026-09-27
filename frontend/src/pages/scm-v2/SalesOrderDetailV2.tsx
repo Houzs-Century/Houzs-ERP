@@ -85,7 +85,7 @@ import {
 } from "../../lib/paymentRetryHandoff";
 import { cn, formatDate } from "../../lib/utils";
 import { SoLinePhotoStrip } from "../../components/scm-v2/SoLinePhotoStrip";
-import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
   isLocked as isSoLocked,
@@ -900,7 +900,7 @@ function SalesOrderDetailV2ReadOnly() {
       getValue: (l) => l.qty,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {l.qty} <span className="text-[10.5px] text-ink-muted">{l.uom}</span>
+          {fmtQty(l.qty)} <span className="text-[10.5px] text-ink-muted">{l.uom}</span>
         </span>
       ),
     },
