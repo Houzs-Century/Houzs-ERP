@@ -23,12 +23,17 @@
 // Pure: the reads are in vp-brand-ask.ts.
 // ----------------------------------------------------------------------------
 
-import { isPlaceholderBrandText } from '../shared/so-branding-label';
+import { CATEGORY_SOURCES, isPlaceholderBrandText } from '../shared/so-branding-label';
 
 /** Brand-list entries that say what KIND of goods a bill carries, not whose
- *  brand. They stay valid `branding` values; they never count as a brand here. */
-export const NOT_A_BRAND: ReadonlySet<string> = new Set([
-  'BEDFRAME', 'SERVICE', 'OTHERS', 'OTHER', 'ACCESSORY', 'ACCESSORIES', 'MATTRESS', 'SOFA',
+ *  brand (BEDFRAME, SERVICE, OTHERS ...). They stay valid `branding` values;
+ *  they never count as a brand here. Built from the one list of categories
+ *  the system can produce (CATEGORY_SOURCES), not a second copy of it — plus
+ *  the plural 2990's brand list spells. */
+export const NOT_A_BRAND: ReadonlySet<string> = new Set<string>([
+  ...CATEGORY_SOURCES.productEnum,
+  ...CATEGORY_SOURCES.normBuckets,
+  'ACCESSORIES',
 ]);
 
 const key = (s: string): string => s.trim().toUpperCase();
