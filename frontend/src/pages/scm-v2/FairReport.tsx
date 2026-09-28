@@ -258,7 +258,7 @@ export const FairReport = () => {
     setSp(next);
   };
 
-  const activeCount = stage === 'gaps' ? (gapQ.data?.rows?.length ?? 0) : (data?.rows?.length ?? 0);
+  const activeCount = stage === 'gaps' ? (gapQ.data?.rows.length ?? 0) : (data?.rows?.length ?? 0);
   const panelLoading = stage === 'gaps' ? gapQ.isLoading : q.isLoading;
 
   const handleExport = () => {
