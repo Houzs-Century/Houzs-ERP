@@ -1193,29 +1193,27 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       photos.push(`<div class="add">＋ Add</div>`);
       const firstItem = (items as any[])[0];
       return `
-    <!-- meta grid -->
-    <div class="mgrid cols-8 rule-top">
+    <!-- meta grid — ASSR No + Reference live in the header ref line above, not repeated here (owner 2026-09-28) -->
+    <div class="mgrid cols-4 rule-top">
       <div class="lc">Request Date</div><div class="vc mono">${fmtDate(cs.complained_date)}</div>
-      <div class="lc">ASSR No</div><div class="vc mono" style="white-space: nowrap;">${esc(cs.assr_no)}</div>
-      <div class="lc">Reference</div><div class="vc mono">${esc(cs.ref_no || "—")}</div>
       <div class="lc">Category</div><div class="vc">${cs.service_category || cs.issue_category ? `<span class="pill-cat">${esc(cs.service_category || cs.issue_category)}</span>` : `<span class="dim">—</span>`}</div>
     </div>
 
     ${(() => {
-      // Return trip + its three key dates — on BOTH the per-trip Return Note
-      // (?round=) and the Supplier Service Order (uses the current trip). Owner
-      // 2026-09-28: the supplier's paper must carry pickup-from-customer,
-      // sent-to-supplier and back-from-supplier dates.
+      // Return trip + its key dates — on BOTH the per-trip Return Note (?round=)
+      // and the Supplier Service Order (uses the current trip). Owner 2026-09-28:
+      // the supplier's paper carries sent-to-supplier and back-from-supplier
+      // dates. Return ref (SVC-RTN) already appears in the header ref line, and
+      // Cust. Pickup is the same date as Sent to Supplier in practice — both dropped.
       const t: any = trip || currentReturn;
       if (!t) return "";
       return `
     <!-- this trip -->
     <div class="mgrid cols-4">
-      <div class="lc">Return</div><div class="vc mono">#${esc(t.round_no)}${t.ref_no ? ` · ${esc(t.ref_no)}` : ""}</div>
+      <div class="lc">Return</div><div class="vc mono">#${esc(t.round_no)}</div>
       <div class="lc">Reason</div><div class="vc">${esc(t.reason || "—")}</div>
     </div>
-    <div class="mgrid cols-6">
-      <div class="lc">Cust. Pickup</div><div class="vc mono">${fmtDate((cs as any).customer_pickup_at)}</div>
+    <div class="mgrid cols-4">
       <div class="lc">Sent to Supplier</div><div class="vc mono">${fmtDate(t.pickup_at)}</div>
       <div class="lc">Back from Supplier</div><div class="vc mono">${fmtDate(t.returned_at)}</div>
     </div>`;
