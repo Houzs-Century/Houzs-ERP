@@ -846,6 +846,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .mgrid { display: grid; border-left: 0.4pt solid #d5d5d5; }
     .mgrid.cols-6 { grid-template-columns: 27mm 1fr 27mm 1fr 27mm 1fr; }
     .mgrid.cols-4 { grid-template-columns: 27mm 1fr 27mm 1fr; }
+    .mgrid.cols-2 { grid-template-columns: 27mm 1fr; }
     .mgrid.cols-8 { grid-template-columns: 22mm 1fr 18mm 1fr 20mm 1fr 17mm 1fr; }
     .mgrid.rule-top { border-top: 1pt solid #141414; }
     .mgrid .lc {
@@ -1208,9 +1209,8 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       const t: any = trip || currentReturn;
       if (!t) return "";
       return `
-    <!-- this trip -->
-    <div class="mgrid cols-4">
-      <div class="lc">Return</div><div class="vc mono">#${esc(t.round_no)}</div>
+    <!-- this trip — Return # dropped (round is implied by the SVC-RTN in the header); owner 2026-09-28 -->
+    <div class="mgrid cols-2">
       <div class="lc">Reason</div><div class="vc">${esc(t.reason || "—")}</div>
     </div>
     <div class="mgrid cols-4">
