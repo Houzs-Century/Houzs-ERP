@@ -79,6 +79,7 @@ import {
 import { SgPostcodeField } from '../../vendor/scm/components/SgPostcodeField';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import { composeSupplierSku, looksAmbiguous } from '../../vendor/scm/lib/supplier-sku-helpers';
+import { countModelessMatches, modelMatchesSearch } from '../../vendor/scm/lib/model-picker-search';
 import { parseSupplierCategories, displaySupplierCategories } from '../../vendor/scm/lib/supplier-categories';
 import { SupplyCategoryPicker, useSupplierCategoryPool } from '../../vendor/scm/components/SupplyCategoryPicker';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
@@ -2663,24 +2664,23 @@ const ModelSkuPickerDialog = ({
 
   /* Filtered Model rows with their pre-computed counts + binding status. */
   const modelRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const list = (modelsQ.data ?? []).filter((m) => {
-      // Show inactive Models too (purchaser 2026-06: "price info did not show
-      // item active or no"). They render dimmed + "Inactive" and are not
-      // pickable (you don't map prices on a deactivated item) — but visible.
-      if (!q) return true;
-      return (
-        m.model_code.toLowerCase().includes(q) ||
-        m.name.toLowerCase().includes(q) ||
-        (m.branding ?? '').toLowerCase().includes(q)
-      );
-    });
-    return list.map((m) => {
+    // Show inactive Models too (purchaser 2026-06: "price info did not show
+    // item active or no"). They render dimmed + "Inactive" and are not
+    // pickable (you don't map prices on a deactivated item) — but visible.
+    const out: { model: ProductModelRow; skus: MfgProductRow[]; boundCount: number }[] = [];
+    for (const m of modelsQ.data ?? []) {
       const skus = skusByModel.get(m.id) ?? [];
+      if (!modelMatchesSearch(m, skus, search)) continue;
       const bound = skus.filter((s) => boundCodes.has(`mfg_product|${s.code}`));
-      return { model: m, skus, boundCount: bound.length };
-    });
+      out.push({ model: m, skus, boundCount: bound.length });
+    }
+    return out;
   }, [modelsQ.data, skusByModel, search, boundCodes]);
+
+  const modelessMatches = useMemo(
+    () => countModelessMatches(productsQ.data ?? [], search),
+    [productsQ.data, search],
+  );
 
   const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
   const [drafts, setDrafts] = useState<Record<string, ModelDraft>>({});
@@ -2810,6 +2810,7 @@ const ModelSkuPickerDialog = ({
       <MultiSkuPickerDialog
         supplierId={supplierId}
         existingBindings={existingBindings}
+        initialSearch={search}
         onClose={onClose}
       />
     );
@@ -2877,7 +2878,7 @@ const ModelSkuPickerDialog = ({
                   <Search {...ICON} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#767b6e', pointerEvents: 'none' }} />
                   <input
                     type="search"
-                    placeholder="Search Model code / name / branding…"
+                    placeholder="Search Model or SKU code / name…"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     style={{
@@ -2977,6 +2978,18 @@ const ModelSkuPickerDialog = ({
                   </tbody>
                 </table>
               </div>
+              {!loading && modelessMatches > 0 && (
+                <p className={styles.infoLabel} style={{ marginTop: 'var(--space-2)' }}>
+                  {modelessMatches} matching SKU{modelessMatches === 1 ? ' has' : 's have'} no Model.{' '}
+                  <button
+                    type="button"
+                    onClick={() => setAdvanced(true)}
+                    style={{ background: 'none', border: 'none', padding: 0, color: 'inherit', textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}
+                  >
+                    Map with Advanced (per-SKU)
+                  </button>
+                </p>
+              )}
             </div>
             <footer className={styles.modalFooter}>
               <Button variant="ghost" onClick={onClose}>Cancel</Button>
@@ -3199,17 +3212,19 @@ const MULTI_PICKER_RENDER_CAP = 60;
 const MultiSkuPickerDialog = ({
   supplierId,
   existingBindings,
+  initialSearch,
   onClose,
 }: {
   supplierId: string;
   existingBindings: BindingRow[];
+  initialSearch: string;
   onClose: () => void;
 }) => {
   const batch = useCreateBindingsBatch();
   const notify = useNotify();
   const [step, setStep] = useState<1 | 2>(1);
   const [category, setCategory] = useState<'all' | MfgCategory>('all');
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(initialSearch);
   /* Perf (parity with MobileSkuPicker / #342) — DEBOUNCE the search before it
      drives the server query, so a fast typist doesn't fire one
      /mfg-products?search=… request + full re-render per keystroke. */
