@@ -40,6 +40,8 @@ import { useIdempotencyKey } from '../../lib/idempotency';
 import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
 import { useGrnDetail } from '../../vendor/scm/lib/grn-queries';
 import { usePurchaseOrderDetail, useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
+import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
+import { PURCHASE_RETURN_REASONS, REPAIR_REASON_CODE } from '../../vendor/shared/purchase-return-reasons';
 import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
@@ -175,6 +177,23 @@ export const PurchaseReturnNew = () => {
   const [returnDate, setReturnDate]   = useState<string>(() => todayMyt());
   const [reason, setReason]           = useState<string>('');
   const [notes, setNotes]             = useState<string>('');
+  /* Where the goods sit while the supplier repairs them. Only a repair return
+     has one; `warehouses.type === 'service'` is what marks those locations
+     (KL / PG "RETURNED TO SUPPLIER FOR SERVICE"), so the destination is read
+     from the master data rather than matched on its name. */
+  const [repairWarehouseId, setRepairWarehouseId] = useState<string>('');
+  const warehousesQ = useWarehouses();
+  const serviceWarehouses = useMemo(
+    () => (warehousesQ.data ?? []).filter((w) => (w as { type?: string | null }).type === 'service'),
+    [warehousesQ.data],
+  );
+  const isRepair = reason === REPAIR_REASON_CODE;
+  /* One service location is the common case — pick it so the operator does not
+     have to. More than one (KL and PG) leaves the choice to them. */
+  useEffect(() => {
+    if (!isRepair) { setRepairWarehouseId(''); return; }
+    if (!repairWarehouseId && serviceWarehouses.length === 1) setRepairWarehouseId(serviceWarehouses[0]!.id);
+  }, [isRepair, serviceWarehouses, repairWarehouseId]);
   const [lines, setLines]             = useState<DraftLine[]>([]);
 
   // Free-form mode — seed ONE blank starter line so a LINE 1 card shows
@@ -288,10 +307,18 @@ export const PurchaseReturnNew = () => {
   }, [grn, po, suppliersQ.data, supplierId]);
 
   const validLines = lines.filter((l) => l.itemCode.trim() && l.qtyReturned > 0);
-  const canSave = !!supplierId && validLines.length > 0;
+  const canSave = !!supplierId && validLines.length > 0 && !!reason && (!isRepair || !!repairWarehouseId);
 
   const onSave = async () => {
-    if (!canSave) { notify({ title: 'Need supplier + at least one line with an item code and qty > 0.', tone: 'error' }); return; }
+    if (!canSave) {
+      notify({
+        title: !reason ? 'Pick a reason for the return.'
+          : isRepair && !repairWarehouseId ? 'Say which warehouse holds the goods while they are repaired.'
+          : 'Need supplier + at least one line with an item code and qty > 0.',
+        tone: 'error',
+      });
+      return;
+    }
     try {
       const createRes = await create.mutateAsync({
         idempotencyKey: idemKey,
@@ -299,7 +326,9 @@ export const PurchaseReturnNew = () => {
         purchaseOrderId: poId ?? (grn?.purchase_order_id ?? null),
         grnId,
         returnDate,
-        reason: reason || undefined,
+        reason,
+        kind: isRepair ? 'REPAIR' : 'CREDIT',
+        repairWarehouseId: isRepair ? repairWarehouseId : undefined,
         notes: notes || undefined,
         items: validLines.map((l) => ({
           grnItemId:      l.grnItemId,
@@ -406,13 +435,34 @@ export const PurchaseReturnNew = () => {
               <input type="text" readOnly value={po?.po_number ?? (grn?.purchase_order?.po_number ?? '—')} className={styles.fieldInput} style={{ background: 'var(--c-cream)', color: 'var(--fg-muted)' }} />
             </label>
 
+            {/* The reason is REQUIRED and picked from the shared catalogue (owner
+                2026-09-28), so returns can be counted by reason later. Picking
+                "Send for repair" is also what makes this a REPAIR return: the
+                goods are expected back, no credit note is chased, and the stock
+                moves to the repair warehouse instead of leaving the books. */}
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Reason</span>
-              <input type="text" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. defective, wrong colour, over-supply" className={styles.fieldInput} />
+              <span className={styles.fieldLabel}>Reason *</span>
+              <select value={reason} onChange={(e) => setReason(e.target.value)} className={styles.fieldInput}>
+                <option value="">Pick a reason…</option>
+                {PURCHASE_RETURN_REASONS.map((r) => (
+                  <option key={r.code} value={r.code}>{r.label}</option>
+                ))}
+              </select>
             </label>
+            {isRepair && (
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Repair warehouse *</span>
+                <select value={repairWarehouseId} onChange={(e) => setRepairWarehouseId(e.target.value)} className={styles.fieldInput}>
+                  <option value="">Where do the goods sit meanwhile…</option>
+                  {serviceWarehouses.map((w) => (
+                    <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Notes</span>
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Internal notes" className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
+              <span className={styles.fieldLabel}>Remark</span>
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything the reason does not say — shown on the return" className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
             </label>
           </div>
         </div>

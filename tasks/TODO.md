@@ -40,6 +40,15 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - MRP: one global PO-grouping toggle (per-SO or combine); PO date = customer date − supplier×category lead time; sofa/bedframe/accessory/(SP) mattress lines are covered only by a linked PO line; an SO without a processing date is not allocated; no MRP convert on the phone.
 - Six documents (SO/PO/GR/PI/SI/DO): effective status SUBMITTED (DO keeps DRAFT/LOADED/DISPATCHED); cancel approval on SO only; every document gets line delivery date, line remark, FOC, per-line warehouse and a change log; discount typed as amount or %.
 
+## Purchase return, phase 2 — the receive-back leg (owner 2026-09-28)
+
+Phase 1 shipped the two kinds (`CREDIT` / `REPAIR`), the mandatory reason code and the OUT→repair-warehouse stock pair. What a repair return still cannot do is come BACK:
+
+- a **Received back** action on the same document: the date, the QC result (fixed / not fixed / scrapped), and the stock moving out of the repair warehouse into the warehouse it came from;
+- **repeat rounds** when it comes back unfixed — `round_no 1..N`, the shape `public.assr_supplier_returns` already uses for the service side (pickup_at / returned_at / qc_result / ref_no);
+- a list filter for **what is still at the supplier**, so nobody has to remember to chase it;
+- decide then whether to back-fill documents for the 18 hand-made stock transfers into KL SERVICE (2026-09-18 → 09-24). They are real stock in the right place with no paperwork; the owner deferred this until the leg exists.
+
 ## Recurring
 - Monthly: read every `docs/modules/*.md` against the code it describes and correct what drifted; the guides are orientation, the code is the authority (last done 2026-09-16) — dev
 

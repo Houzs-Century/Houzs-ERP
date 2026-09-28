@@ -27,7 +27,7 @@ import { readReturnBookContext, returnLineBookFacts } from './return-line-book-f
 export const PR_HEADER_COLS =
   'id, return_number, purchase_order_id, grn_id, supplier_id, return_date, ' +
   'reason, status, posted_at, completed_at, credit_note_ref, refund_sen, ' +
-  'notes, created_at, created_by, updated_at';
+  'notes, created_at, created_by, updated_at, kind, repair_warehouse_id';
 
 /* The GRN embed carries the receipt's currency and warehouse: a return has
    neither of its own, and AutoCount's Curr. Code / Location read them. */
