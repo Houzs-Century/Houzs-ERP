@@ -22,6 +22,7 @@
 // ----------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { expandSofaPieceItems } from "../../vendor/scm/lib/sofa-piece-lines";
 import { useNavigate } from "react-router-dom";
 import { lineIdentity } from "@2990s/shared";
 import {
@@ -254,9 +255,10 @@ export function SalesOrderNewGuided() {
 
   const onSubmit = async () => {
     setPostError(null);
-    // Build the items payload. One line per chosen module, qty as picked. The
-    // backend's sofa-build / combo-pricing engine takes over from here.
-    const items = moduleEntries.map(([code, qty]) => {
+    // Build the items payload: one line per module PIECE (sofa-piece-lines.ts),
+    // so a module picked x2 goes out as two lines. The backend's sofa-build /
+    // combo-pricing engine takes over from here.
+    const items = expandSofaPieceItems(moduleEntries.map(([code, qty]) => {
       const sku = skusQ.data?.find((s) => s.code === code);
       const unitPriceSen = sku?.sell_price_sen ?? sku?.base_price_sen ?? 0;
       return {
@@ -273,7 +275,7 @@ export function SalesOrderNewGuided() {
         },
         remark: "",
       };
-    });
+    }));
 
     /* Backend authors the blocker list (owner 2026-09-16); this wizard drafts
        unconditionally, so validate returns only the identity / sofa-mix reasons

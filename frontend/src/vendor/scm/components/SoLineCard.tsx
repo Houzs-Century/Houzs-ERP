@@ -70,6 +70,7 @@ import styles from './SoLineCard.module.css';
 import { DateField } from "./DateField";
 import { DiscountInput } from './DiscountInput';
 import { NumberInput } from './NumberInput';
+import { dropOneMultiPick, isSofaGroup, multiPickCount, tapMultiPick } from '../lib/sofa-piece-lines';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
@@ -493,12 +494,9 @@ const SoLineCardInner = ({
   };
 
   /* Multi-add helpers (only meaningful when onAddProducts is wired). */
+  /* A sofa piece can be ticked again — two CNRs are two lines (sofa-piece-lines.ts). */
   const toggleMultiPick = (p: MfgProductRow) =>
-    setMultiPicked((prev) =>
-      prev.some((x) => x.id === p.id)
-        ? prev.filter((x) => x.id !== p.id)
-        : [...prev, p],
-    );
+    setMultiPicked((prev) => tapMultiPick(prev, p, (x) => x.id, isSofaGroup(p.category)));
   const commitMulti = () => {
     if (multiPicked.length === 0) return;
     const [first, ...rest] = multiPicked;
@@ -879,7 +877,9 @@ const SoLineCardInner = ({
                 /* Commander 2026-05-27: picker rows show description only — one
                    scannable line per SKU. The code still binds on click. */
                 candidates.slice(0, 50).map((p) => {
-                  const ticked = multiMode && multiPicked.some((x) => x.id === p.id);
+                  const tickCount = multiMode ? multiPickCount(multiPicked, p.id, (x) => x.id) : 0;
+                  const ticked = tickCount > 0;
+                  const repeatable = isSofaGroup(p.category);
                   return (
                     <li
                       key={p.id}
@@ -896,6 +896,19 @@ const SoLineCardInner = ({
                       <div className={styles.suggestItemMeta}>
                         {p.name}
                       </div>
+                      {multiMode && repeatable && tickCount > 0 && (
+                        <>
+                          <span style={{ marginLeft: 'auto', fontWeight: 700 }}>{'×'}{tickCount}</span>
+                          <button
+                            type="button"
+                            aria-label={`Remove one ${p.name}`}
+                            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setMultiPicked((prev) => dropOneMultiPick(prev, p.id, (x) => x.id)); }}
+                            style={{ padding: '0 8px', fontWeight: 700, cursor: 'pointer' }}
+                          >
+                            {'−'}
+                          </button>
+                        </>
+                      )}
                     </li>
                   );
                 })
