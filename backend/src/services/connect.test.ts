@@ -3,6 +3,7 @@ import {
   buildDeliveryFollowUp,
   isConnectConfigured,
   postConnectContact,
+  chunkOrders,
   CONNECT_DELIVERY_AUTOMATION,
 } from './connect';
 
@@ -12,6 +13,16 @@ describe('isConnectConfigured', () => {
     expect(isConnectConfigured({ CONNECT_WEBHOOK_URL: 'x' })).toBe(false);
     expect(isConnectConfigured({ CONNECT_WEBHOOK_KEY: 'y' })).toBe(false);
     expect(isConnectConfigured({})).toBe(false);
+  });
+});
+
+describe('chunkOrders', () => {
+  it('splits into chunks of at most 3 (the Connect 3-order ceiling)', () => {
+    expect(chunkOrders([1, 2, 3, 4, 5, 6, 7])).toEqual([[1, 2, 3], [4, 5, 6], [7]]);
+  });
+  it('leaves a small list as one chunk, and an empty list as none', () => {
+    expect(chunkOrders([1, 2])).toEqual([[1, 2]]);
+    expect(chunkOrders([])).toEqual([]);
   });
 });
 

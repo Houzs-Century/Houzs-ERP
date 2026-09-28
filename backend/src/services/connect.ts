@@ -73,6 +73,21 @@ export function buildDeliveryFollowUp(
   return { phone, name, automation: CONNECT_DELIVERY_AUTOMATION, attributes };
 }
 
+/** The Connect contact schema only carries ref_1..3 / delivery_date_1..3 /
+ *  brand_1..3, and the flow only has an N-order template for N in 1..3, so a
+ *  customer with more ready orders gets one message per chunk of this many
+ *  (owner 2026-09-28, "cap at 3"). */
+export const CONNECT_MAX_ORDERS_PER_MESSAGE = 3;
+
+/** Split a phone's orders into chunks of at most CONNECT_MAX_ORDERS_PER_MESSAGE,
+ *  so every Connect send stays within the 3-order template ceiling and no order
+ *  is ever dropped from the bundle. */
+export function chunkOrders<T>(orders: T[], size = CONNECT_MAX_ORDERS_PER_MESSAGE): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < orders.length; i += size) chunks.push(orders.slice(i, i + size));
+  return chunks;
+}
+
 /** POST one contact event to Connect. Never throws — a network / non-2xx
  *  failure comes back as { ok:false } so the caller logs it per doc the same way
  *  the Seampify path logged a failed send. Caller must check isConnectConfigured
