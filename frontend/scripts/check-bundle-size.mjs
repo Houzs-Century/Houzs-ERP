@@ -228,6 +228,9 @@ const CEILINGS = {
   // gained one name for the shared useServerColumnFunnels chunk the SCM list
   // pages import. Same shared-lazy-chunk mechanism as the note above; the bell
   // popover body is still the diet that buys real room.
+  // 2026-09-28: that diet is done — the bell popover body is its own lazy
+  // chunk (components/NotificationBellPopover.tsx), 170.0 -> 168.5 KB on the
+  // entry. The ceiling stays at 170: the room is for the next shell change.
   INITIAL_JS_GZIP: 170 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
