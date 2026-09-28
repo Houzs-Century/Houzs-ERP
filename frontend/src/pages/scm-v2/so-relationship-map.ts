@@ -29,7 +29,7 @@ import { openDocInNewTab } from '../../lib/openDocInNewTab';
 import { useAuth } from '../../auth/AuthContext';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useDocumentFlow, useCandidatePos, type FlowNode } from '../../vendor/scm/lib/flow-queries';
-import type { ChainNode, AmendmentChip, PairingKind } from '../../components/scm-v2/DocumentRelationshipMapModal';
+import type { ChainNode, AmendmentChip, DocChoice, PairingKind } from '../../components/scm-v2/DocumentRelationshipMapModal';
 import { useDocChoice, type DocChoiceApi } from './doc-choice';
 
 /** The header columns the chain reads. Loose on purpose — the two SO detail
@@ -96,7 +96,7 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
      clicks through (2026-08-03). It used to raise a notice that only NAMED the
      doc numbers — and pointed at lists that cannot search by this SO's doc no,
      so the operator was copying numbers by hand. */
-  const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
+  const { choice, openChoice, closeChoice } = useDocChoice();
   const showCustomerPo = useCustomerPoNotice();
   const { can, pageAccess } = useAuth();
 
@@ -408,5 +408,7 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
     [poNodes],
   );
 
-  return { nodes, onNodeClick, amendments, onAmendmentClick, pairing, choice, openChoice, closeChoice, pickChoice };
+  // A slot standing for several documents: the picked one opens in a new tab too.
+  const pickInNewTab = useCallback((d: DocChoice) => { closeChoice(); openDocInNewTab(d.to); }, [closeChoice]);
+  return { nodes, onNodeClick, amendments, onAmendmentClick, pairing, choice, openChoice, closeChoice, pickChoice: pickInNewTab };
 }
