@@ -45,6 +45,8 @@ import {
 } from '../lib/check-stock-availability';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { recordEntityAudit } from '../lib/entity-audit';
+import { buildReturnablePool, type GrnLineRow } from '../lib/returnable-grn-lines';
+import { chunkIn } from '../lib/paginate-all';
 import {
   PR_HEADER_COLS,
   PR_LIST_SELECT,
@@ -205,43 +207,79 @@ purchaseReturns.get('/', purchaseReturnListHandler);
    return of received goods draws from RECEIPTS, so this read answers the
    POSTED GRN lines received against the PO with remaining (accepted − returned)
    above zero — the same pool /from-grn offers, keyed by PO.
+
+   KEYED ON THE LINE LINK since 2026-09-28 (owner, HC-PO-010114: 「系统找不到 GRN
+   - 但是现实已经received stock」). Matching `grns.purchase_order_id` alone hid
+   every unit received on a receipt HEADED at another purchase order — the same
+   header-FK-only blind spot #4199 fixed for the PO list and the relationship
+   map. One receipt carrying several suppliers' orders is deliberate here (one
+   group, one lorry), so the line link is the truth and the supplier answered is
+   the PO's own. Rules + the legacy header case: lib/returnable-grn-lines.ts.
    Registered BEFORE '/:id' or that route swallows the literal path. */
 purchaseReturns.get('/returnable-grn-lines', async (c) => {
   const sb = c.get('supabase');
   const poId = c.req.query('poId');
   if (!poId) return c.json({ error: 'po_id_required' }, 400);
-  const { data: grnRows, error: gErr } = await scopeToCompany(sb.from('grns')
-    .select('id, grn_number, supplier_id, status')
+
+  /* The purchase order itself — scoped, so another company's PO answers no row
+     and this read can say nothing about it. Its supplier is the one the return
+     is raised against: the goods were bought on THIS order, whoever's receipt
+     they happened to arrive on (owner 2026-09-28 — one lorry, one receipt, two
+     suppliers, deliberately). The old read answered the RECEIPT's supplier,
+     which on a shared receipt is the wrong counterparty to send goods back to. */
+  const { data: poRow, error: poErr } = await scopeToCompany(sb.from('purchase_orders')
+    .select('id, supplier_id')
+    .eq('id', poId), c).maybeSingle();
+  if (poErr) return c.json({ error: 'load_failed', reason: poErr.message }, 500);
+  if (!poRow) return c.json({ error: 'po_not_found' }, 404);
+  const supplierId = (poRow as { supplier_id: string | null }).supplier_id ?? null;
+
+  /* This order's line ids — the LINE link is what says a receipt line was
+     received against this order (lib/returnable-grn-lines.ts explains why the
+     header FK alone hid HC-PO-010114's two units). */
+  const { data: poItems, error: piErr } = await sb.from('purchase_order_items')
+    .select('id').eq('purchase_order_id', poId);
+  if (piErr) return c.json({ error: 'load_failed', reason: piErr.message }, 500);
+  const poItemIds = new Set(((poItems ?? []) as Array<{ id: string }>).map((r) => r.id));
+
+  /* The receipts headed at this order — still read, for the ONE case the line
+     link cannot cover: a line on this order's own receipt that carries no link. */
+  const { data: headerGrns, error: hgErr } = await scopeToCompany(sb.from('grns')
+    .select('id, grn_number, status')
     .eq('purchase_order_id', poId)
     .eq('status', 'POSTED'), c);
+  if (hgErr) return c.json({ error: 'load_failed', reason: hgErr.message }, 500);
+  const headerGrnIds = new Set(((headerGrns ?? []) as Array<{ id: string }>).map((g) => g.id));
+
+  /* Both halves of the pool, read by the two links. */
+  const rows: GrnLineRow[] = [];
+  if (poItemIds.size > 0) {
+    const { data, error } = await chunkIn([...poItemIds], (batch, from, to) =>
+      sb.from('grn_items').select('id, grn_id, purchase_order_item_id, material_kind, item_code, material_name, item_group, variants, qty_accepted, returned_qty, unit_price_sen, rejection_reason').in('purchase_order_item_id', batch).range(from, to));
+    if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+    rows.push(...((data ?? []) as GrnLineRow[]));
+  }
+  if (headerGrnIds.size > 0) {
+    const { data, error } = await chunkIn([...headerGrnIds], (batch, from, to) =>
+      sb.from('grn_items').select('id, grn_id, purchase_order_item_id, material_kind, item_code, material_name, item_group, variants, qty_accepted, returned_qty, unit_price_sen, rejection_reason').in('grn_id', batch).is('purchase_order_item_id', null).range(from, to));
+    if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+    rows.push(...((data ?? []) as GrnLineRow[]));
+  }
+  if (rows.length === 0) return c.json({ lines: [], supplierId });
+
+  /* Only POSTED receipts qualify, and the pool needs each one's number for the
+     'received on' label — read the receipts the lines actually sit on. */
+  const grnIds = [...new Set(rows.map((r) => r.grn_id))];
+  const { data: grnRows, error: gErr } = await chunkIn(grnIds, (batch, from, to) =>
+    scopeToCompany(sb.from('grns').select('id, grn_number, status').in('id', batch), c).range(from, to));
   if (gErr) return c.json({ error: 'load_failed', reason: gErr.message }, 500);
-  const grnList = (grnRows ?? []) as Array<{ id: string; grn_number: string; supplier_id: string | null }>;
-  if (grnList.length === 0) return c.json({ lines: [], supplierId: null });
-  const byGrn = new Map(grnList.map((g) => [g.id, g.grn_number]));
-  const { data: itRows, error: iErr } = await sb.from('grn_items')
-    .select('id, grn_id, material_kind, item_code, material_name, item_group, variants, qty_accepted, returned_qty, unit_price_sen, rejection_reason')
-    .in('grn_id', grnList.map((g) => g.id))
-    .gt('qty_accepted', 0);
-  if (iErr) return c.json({ error: 'load_failed', reason: iErr.message }, 500);
-  const lines = ((itRows ?? []) as Array<{
-    id: string; grn_id: string; material_kind: string | null; item_code: string;
-    material_name: string | null; item_group: string | null; variants: Record<string, unknown> | null;
-    qty_accepted: number; returned_qty: number; unit_price_sen: number; rejection_reason: string | null;
-  }>)
-    .map((r) => ({
-      grnItemId: r.id,
-      grnNumber: byGrn.get(r.grn_id) ?? null,
-      materialKind: r.material_kind,
-      itemCode: r.item_code,
-      materialName: r.material_name,
-      itemGroup: r.item_group,
-      variants: r.variants,
-      unitPriceSen: r.unit_price_sen ?? 0,
-      rejectionReason: r.rejection_reason,
-      remaining: Math.max(0, (r.qty_accepted ?? 0) - (r.returned_qty ?? 0)),
-    }))
-    .filter((l) => l.remaining > 0);
-  return c.json({ lines, supplierId: grnList[0]?.supplier_id ?? null });
+  const postedGrnNumberById = new Map<string, string>();
+  for (const g of ((grnRows ?? []) as Array<{ id: string; grn_number: string; status: string }>)) {
+    if (g.status === 'POSTED') postedGrnNumberById.set(g.id, g.grn_number);
+  }
+
+  const lines = buildReturnablePool(rows, postedGrnNumberById, poItemIds, headerGrnIds);
+  return c.json({ lines, supplierId });
 });
 
 purchaseReturns.get('/:id', async (c) => {
