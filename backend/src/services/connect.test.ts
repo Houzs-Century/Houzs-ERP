@@ -64,10 +64,10 @@ describe('postConnectContact', () => {
     const r = await postConnectContact(env, contact);
 
     expect(r).toEqual({ ok: true, httpCode: 200, error: null });
-    const call = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(call[0]).toBe('https://chat.houzscentury.com/api/webhooks/erp');
-    expect(call[1].method).toBe('POST');
-    expect((call[1].headers as Record<string, string>)['x-connect-key']).toBe('secret48');
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://chat.houzscentury.com/api/webhooks/erp');
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>)['x-connect-key']).toBe('secret48');
   });
 
   it('a non-2xx response is a failure carrying the body text', async () => {
