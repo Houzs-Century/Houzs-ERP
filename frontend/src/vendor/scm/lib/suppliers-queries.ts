@@ -578,13 +578,18 @@ export function useScheduleBindingPrice() {
   return useMutation({
     mutationFn: ({ supplierId, bindingId, ...body }:
       { supplierId: string; bindingId: string; effectiveFrom: string; unitPriceSen: number; notes?: string }) =>
-      authedFetch<{ ok: boolean; baselined: boolean }>(
+      authedFetch<{ ok: boolean; baselined: boolean; applied: boolean }>(
         `/suppliers/${supplierId}/bindings/${bindingId}/price-changes`,
         { method: 'POST', body: JSON.stringify(body) },
       ),
-    onSuccess: (_, vars) => {
+    onSuccess: (r, vars) => {
       void qc.invalidateQueries({ queryKey: ['binding-price-history', vars.supplierId, vars.bindingId] });
       void qc.invalidateQueries({ queryKey: ['supplier-detail', vars.supplierId] });
+      if (r.applied) {
+        // Applied now: the flat cost and the derived product cost both moved.
+        void qc.invalidateQueries({ queryKey: ['suppliers-for-material'] });
+        void qc.invalidateQueries({ queryKey: ['mfg-products'] });
+      }
     },
     onError: writeFailed,
   });

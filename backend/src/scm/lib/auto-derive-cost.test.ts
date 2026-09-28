@@ -175,12 +175,14 @@ describe('recomputeDerivedProductCost — as-of history timeline (stage 3b)', ()
 // ── recordSupplierPriceHistorySafe — the supplier source timeline (stage 3b-supplier) ──
 function histSb(latest: unknown) {
   const inserts: Record<string, unknown>[] = [];
+  const lte: Array<[string, unknown]> = [];
   const chain: Record<string, unknown> = {
     select: () => chain, eq: () => chain, order: () => chain, limit: () => chain,
+    lte: (c: string, v: unknown) => { lte.push([c, v]); return chain; },
     maybeSingle: async () => ({ data: latest, error: null }),
     insert: async (row: Record<string, unknown>) => { inserts.push(row); return { error: null }; },
   };
-  return { sb: { from: () => chain }, inserts };
+  return { sb: { from: () => chain }, inserts, lte };
 }
 const args = (unitPriceSen: number) => ({
   companyId: 1, supplierId: 'sup-1', itemCode: 'X',
@@ -206,6 +208,15 @@ describe('recordSupplierPriceHistorySafe — dedup', () => {
     await recordSupplierPriceHistorySafe(sb, args(9500));
     expect(inserts).toHaveLength(1);
     expect(inserts[0]).toMatchObject({ unit_price_sen: 9500 });
+  });
+
+  // BUG-32: dedup against the row live on the snapshot's date, not a price
+  // scheduled for later, and a snapshot is already on the flat binding.
+  it('compares against the as-of row and records the snapshot as applied', async () => {
+    const { sb, inserts, lte } = histSb(null);
+    await recordSupplierPriceHistorySafe(sb, args(9000));
+    expect(lte).toEqual([['effective_from', '2026-05-01']]);
+    expect(inserts[0].applied_at).toBeTruthy();
   });
 });
 

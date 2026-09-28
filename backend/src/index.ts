@@ -137,6 +137,8 @@ import { distillAllSalespersonRules, warmCatalogCacheForCron, processScanQueueMe
 import { runAgentHeartbeat } from "./services/agent-scheduler";
 import { getSupabaseService } from "./db/supabase";
 import { sweepStockClose } from "./acc/stock-close";
+import { applyDueSupplierPrices } from "./scm/lib/supplier-price-apply";
+import { todayMyt } from "./scm/lib/my-time";
 import { reapOnce } from "./scm/lib/reaper";
 import { getBranding } from "./services/branding";
 // AutoCount inbound SO pull — restored 2026-07-14. Reads SO from the AutoCount
@@ -1051,6 +1053,13 @@ export default {
             (changed.length ? ` — ${changed.map((o) => `${o.companyId}/${o.month}:${o.action}`).join(", ")}` : ""),
           );
         })().catch((e) => console.error("[cron stock-close]", e)),
+      );
+      // Scheduled supplier prices whose effective date is today (BUG-32): onto
+      // the flat binding POs read, then the derived product cost SOs read.
+      ctx.waitUntil(
+        applyDueSupplierPrices(getSupabaseService(env), { today: todayMyt() })
+          .then((r) => console.log(`[cron supplier-price-apply] ${r.bindings} binding(s), ${r.applied} applied, ${r.failed} failed`))
+          .catch((e) => console.error("[cron supplier-price-apply]", e)),
       );
     }
   },

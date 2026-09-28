@@ -64,6 +64,7 @@ Money
 - `line_total_sen = max(0, qty * unit_price_sen - discount_sen)`; header `subtotal_sen = total_sen = SUM(line_total_sen)`. Any repair writes discount, line total and header together.
 - Currency `MYR | RMB | CNY | USD | SGD`; the PO has no exchange rate — FX to MYR happens at the GRN.
 - Line PATCH stores prices as sent; spec-edit re-pricing (`computeMfgPoUnitCost`) runs in the browser (`PurchaseOrderDetail.tsx`).
+- A PO prices from the flat `supplier_material_bindings` cost. A scheduled supplier price (`supplier_binding_price_history`, `applied_at IS NULL`) is copied onto it on its date by `applyDueSupplierPrices` (00:05 MYT cron, or at once when dated today or earlier), which then re-derives the product cost when auto-derive is on.
 - Supplier cost never leaks to sales: `loadSupplierSofaCombos` excludes `supplier_id IS NULL` rows; `/sofa-combos` is not openRead.
 
 Company scope

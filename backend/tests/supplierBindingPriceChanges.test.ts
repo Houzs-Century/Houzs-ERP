@@ -28,11 +28,12 @@ class FakeQuery {
   private preds: Array<(r: Row) => boolean> = [];
   private op: 'select' | 'update' | 'delete' | 'insert' = 'select';
   private inserted: Row[] = [];
+  private patch: Row | null = null;
   constructor(private rows: Row[], private seq: { n: number }) {}
   select() { return this; }
   order() { return this; }
   limit() { return this; }
-  update() { this.op = 'update'; return this; }
+  update(p: Row) { this.op = 'update'; this.patch = p; return this; }
   delete() { this.op = 'delete'; return this; }
   insert(p: Row | Row[]) {
     this.op = 'insert';
@@ -47,18 +48,20 @@ class FakeQuery {
   eq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) === String(val)); return this; }
   neq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) !== String(val)); return this; }
   in(col: string, vals: unknown[]) { const s = new Set((vals ?? []).map(String)); this.preds.push((r) => s.has(String(r[col]))); return this; }
-  lte() { return this; }
+  lte(col: string, val: string) { this.preds.push((r) => r[col] <= val); return this; }
   gte() { return this; }
   gt() { return this; }
   lt() { return this; }
   not() { return this; }
   like() { return this; }
   ilike() { return this; }
-  is() { return this; }
+  is(col: string, val: unknown) { this.preds.push((r) => (r[col] ?? null) === val); return this; }
   or() { return this; }
   private run(): Row[] {
     if (this.op === 'insert') { this.rows.push(...this.inserted); return this.inserted; }
-    return this.rows.filter((r) => this.preds.every((p) => p(r)));
+    const hit = this.rows.filter((r) => this.preds.every((p) => p(r)));
+    if (this.op === 'update' && this.patch) for (const r of hit) Object.assign(r, this.patch);
+    return hit;
   }
   maybeSingle() { const h = this.run(); return Promise.resolve({ data: h[0] ?? null, error: null }); }
   single() { const h = this.run(); return Promise.resolve({ data: h[0] ?? null, error: h.length ? null : { message: 'no rows' } }); }
@@ -125,6 +128,24 @@ describe('B1 supplier binding price-changes — write', () => {
     const res = await post(harness(t, CO_A).app, { effectiveFrom: TODAY, unitPriceSen: 6000 });
     expect((await res.json() as Row).baselined).toBe(false);
     expect(t.supplier_binding_price_history.length).toBe(1);
+  });
+
+  // BUG-32: a scheduled price must reach the flat binding POs read.
+  test('a today-dated price becomes the binding cost at once', async () => {
+    const t = seed();
+    const res = await post(harness(t, CO_A).app, { effectiveFrom: TODAY, unitPriceSen: 6000 });
+    expect((await res.json() as Row).applied).toBe(true);
+    expect(t.supplier_material_bindings[0].unit_price_sen).toBe(6000);
+    expect(t.supplier_binding_price_history[0].applied_at).toBeTruthy();
+  });
+
+  test('a future price leaves the binding cost alone until its date', async () => {
+    const t = seed();
+    const res = await post(harness(t, CO_A).app, { effectiveFrom: FUTURE, unitPriceSen: 7000 });
+    expect((await res.json() as Row).applied).toBe(false);
+    expect(t.supplier_material_bindings[0].unit_price_sen).toBe(5000);
+    expect(t.supplier_binding_price_history.find((r) => r.effective_from === FUTURE)!.applied_at).toBeUndefined();
+    expect(t.supplier_binding_price_history.find((r) => r.effective_from === TODAY)!.applied_at).toBeTruthy();
   });
 
   test('bad date and negative price refuse', async () => {

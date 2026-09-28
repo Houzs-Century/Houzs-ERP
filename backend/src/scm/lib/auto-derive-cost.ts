@@ -367,13 +367,17 @@ export async function recordSupplierPriceHistorySafe(
 ): Promise<void> {
   const code = args.itemCode.trim();
   if (!code || !args.supplierId) return;
+  const effectiveFrom = (args.effectiveFrom ?? '').trim() || todayMyt();
   try {
+    // Compared against the row live on effectiveFrom, not the newest-dated one:
+    // a price scheduled for a later date is not what the binding holds now.
     let q = sb
       .from('supplier_binding_price_history')
       .select('unit_price_sen, price_matrix')
       .eq('material_kind', 'mfg_product')
       .eq('item_code', code)
-      .eq('supplier_id', args.supplierId);
+      .eq('supplier_id', args.supplierId)
+      .lte('effective_from', effectiveFrom);
     if (args.companyId != null) q = q.eq('company_id', args.companyId);
     const { data: latest, error: readErr } = await q
       .order('effective_from', { ascending: false })
@@ -397,7 +401,9 @@ export async function recordSupplierPriceHistorySafe(
       unit_price_sen: args.unitPriceSen ?? null,
       price_matrix: args.priceMatrix ?? null,
       is_main_supplier: Boolean(args.isMainSupplier),
-      effective_from: (args.effectiveFrom ?? '').trim() || todayMyt(),
+      effective_from: effectiveFrom,
+      // A snapshot of what the flat binding already holds — nothing to apply.
+      applied_at: new Date().toISOString(),
       notes: 'supplier price snapshot',
     });
     if (insErr) throw new Error(insErr.message);
