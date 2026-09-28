@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { useSoRelationshipMap } from "./so-relationship-map";
 import { useDoRelationshipMap } from "./sales-doc-relationship-map";
 import { DocumentFlowModal } from "../../vendor/scm/components/DocumentFlowModal";
-import { markWorkspaceDocumentIntent } from "../../lib/workspaceTabs";
+import { markWorkspaceOpenIntent } from "../../lib/workspaceTabs";
 
 /* Owner 2026-09-27 (screenshot of the in-app tab strip): a document clicked on
    a relationship map opens in its own tab of THAT strip — not a browser tab. */
@@ -17,7 +17,7 @@ vi.mock("react-router-dom", async (importOriginal) => ({
 }));
 vi.mock("../../lib/workspaceTabs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/workspaceTabs")>()),
-  markWorkspaceDocumentIntent: vi.fn(),
+  markWorkspaceOpenIntent: vi.fn(),
 }));
 
 const flow = {
@@ -43,7 +43,7 @@ vi.mock("../../auth/AuthContext", () => ({
 vi.mock("../../vendor/scm/components/NotifyDialog", () => ({ useNotify: () => vi.fn() }));
 
 const wrapper = ({ children }: { children: ReactNode }) => <MemoryRouter>{children}</MemoryRouter>;
-const marked = vi.mocked(markWorkspaceDocumentIntent);
+const marked = vi.mocked(markWorkspaceOpenIntent);
 const open = vi.fn();
 beforeEach(() => {
   navigate.mockClear();
@@ -55,6 +55,7 @@ beforeEach(() => {
 /** Marked as a document open, then navigated to `path` in this window. */
 const openedInStripTab = (path: string) => {
   expect(marked).toHaveBeenCalledTimes(1);
+  expect(marked).toHaveBeenCalledWith(true);
   expect(navigate).toHaveBeenCalledWith(path);
   expect(marked.mock.invocationCallOrder[0]!).toBeLessThan(navigate.mock.invocationCallOrder[0]!);
   expect(open).not.toHaveBeenCalled();

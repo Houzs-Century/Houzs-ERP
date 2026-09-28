@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { markWorkspaceDocumentIntent } from "./workspaceTabs";
+import { markWorkspaceOpenIntent } from "./workspaceTabs";
 
 /* A linked document opened from a relationship map lands in its OWN tab of the
    in-app tab strip (owner 2026-09-27, with a screenshot of the strip: "在这里打开
@@ -10,7 +10,7 @@ export function useOpenDocInTab(): (path: string) => void {
   const navigate = useNavigate();
   return useCallback(
     (path: string) => {
-      markWorkspaceDocumentIntent();
+      markWorkspaceOpenIntent(true);
       navigate(path);
     },
     [navigate],

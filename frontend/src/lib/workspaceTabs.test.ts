@@ -4,7 +4,6 @@ import {
   activateWorkspaceTab,
   closeWorkspaceTab,
   getWorkspaceTabsSnapshot,
-  markWorkspaceDocumentIntent,
   markWorkspaceOpenIntent,
   moveWorkspaceTab,
   recordWorkspaceVisit,
@@ -296,7 +295,7 @@ describe("closeWorkspaceTab", () => {
    same section, and the page it came from keeps its tab. */
 describe("document intent (relationship map)", () => {
   const openDoc = (pathname: string) => {
-    markWorkspaceDocumentIntent();
+    markWorkspaceOpenIntent(true);
     recordWorkspaceVisit(pathname, "");
   };
 

@@ -78,29 +78,24 @@ function refreshSnapshot(): void {
 // later hub click into a tab spawn.
 
 const OPEN_INTENT_TTL_MS = 1500;
-/* "section": a sidebar open, which reuses the tab already in that section.
-   "document": a linked document opened from a relationship map (owner
+/* `doc` false: a sidebar open, which reuses the tab already in that section.
+   `doc` true: a linked document opened from a relationship map (owner
    2026-09-27), which gets a tab of its own so it never overwrites another
    tab's page; only a tab already on that exact document is reused. */
-type OpenIntentKind = "section" | "document";
-let openIntent: { at: number; kind: OpenIntentKind } | null = null;
+let openIntent: { at: number; doc: boolean } | null = null;
 
-/** Call from a plain left-click on a sidebar destination, BEFORE the route
- *  changes. Modified clicks (Ctrl/Cmd/Shift/middle) must NOT mark — they open
- *  a real browser window and this tab never navigates. */
-export function markWorkspaceOpenIntent(): void {
-  openIntent = { at: Date.now(), kind: "section" };
+/** Call from a plain left-click on a sidebar destination (or, with `doc`,
+ *  before opening a document in its own tab), BEFORE the route changes.
+ *  Modified clicks (Ctrl/Cmd/Shift/middle) must NOT mark — they open a real
+ *  browser window and this tab never navigates. */
+export function markWorkspaceOpenIntent(doc = false): void {
+  openIntent = { at: Date.now(), doc };
 }
 
-/** Call BEFORE navigating to a document that should open in its own tab. */
-export function markWorkspaceDocumentIntent(): void {
-  openIntent = { at: Date.now(), kind: "document" };
-}
-
-function consumeOpenIntent(): OpenIntentKind | null {
+function consumeOpenIntent(): { doc: boolean } | null {
   const pending = openIntent;
   openIntent = null;
-  return pending !== null && Date.now() - pending.at <= OPEN_INTENT_TTL_MS ? pending.kind : null;
+  return pending !== null && Date.now() - pending.at <= OPEN_INTENT_TTL_MS ? pending : null;
 }
 
 // ── Section derivation ──────────────────────────────────────────────────────
@@ -275,7 +270,7 @@ export function recordWorkspaceVisit(pathname: string, search: string): void {
     state = { ...s, tabs: [{ id, href }], activeId: id, nextId: s.nextId + 1 };
   } else if (intent) {
     const section = sectionKeyFor(pathname);
-    const existing = intent === "document"
+    const existing = intent.doc
       ? s.tabs.find((t) => t.href === href)
       : s.tabs.find((t) => sectionKeyFor(t.href) === section);
     if (existing) {
