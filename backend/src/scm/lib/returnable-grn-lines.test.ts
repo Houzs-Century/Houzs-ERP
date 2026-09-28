@@ -58,7 +58,7 @@ describe('buildReturnablePool', () => {
     expect(pool([line({ id: 'gi-draft', grn_id: 'grn-draft' })])).toEqual([]);
   });
 
-  it('drops a line already fully returned, and keeps a partially returned one', () => {
+  it('drops a line whose whole quantity came back, and keeps one with a remainder', () => {
     expect(pool([line({ id: 'gi-done', qty_accepted: 2, returned_qty: 2 })])).toEqual([]);
     const [partial] = pool([line({ id: 'gi-part', qty_accepted: 3, returned_qty: 1 })]);
     expect(partial).toMatchObject({ grnItemId: 'gi-part', remaining: 2 });
