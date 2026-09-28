@@ -28,7 +28,7 @@
 
 import { customerRefOf, type CustomerRefHeader } from '../../lib/customer-ref';
 import { useCallback, useMemo } from 'react';
-import { openDocInNewTab } from '../../lib/openDocInNewTab';
+import { useOpenDocInTab } from '../../lib/openDocInTab';
 import { useAuth } from '../../auth/AuthContext';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useDocumentFlow, type FlowNode } from '../../vendor/scm/lib/flow-queries';
@@ -193,6 +193,7 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
   /* Several documents in one slot open a chooser whose every row clicks through
      (2026-08-03) — naming them and pointing at a list that cannot be searched by
      this doc no left the operator copying numbers by hand. */
+  const openDoc = useOpenDocInTab();
   const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const showCustomerPo = useCustomerPoNotice();
   const gates = useProcurementGates();
@@ -214,15 +215,15 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
       if (n.type === 'Sales Order') {
         const soDoc = soNodes[0]?.id ?? header?.so_doc_no;
         if (soDoc) {
-          openDocInNewTab(`/scm/sales-orders/${encodeURIComponent(soDoc)}`);
-          return false;
+          openDoc(`/scm/sales-orders/${encodeURIComponent(soDoc)}`);
+          return true;
         }
         return false;
       }
       if (n.type === 'Sales Invoice' && siNodes.length > 0) {
         if (siNodes.length === 1) {
-          openDocInNewTab(`/scm/sales-invoices/${siNodes[0]!.id}`);
-          return false;
+          openDoc(`/scm/sales-invoices/${siNodes[0]!.id}`);
+          return true;
         }
         openChoice({
           title: 'Billed on more than one invoice',
@@ -242,8 +243,8 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
           return false;
         }
         if (grnNodes.length === 1) {
-          openDocInNewTab(`/scm/grns/${grnNodes[0]!.id}`);
-          return false;
+          openDoc(`/scm/grns/${grnNodes[0]!.id}`);
+          return true;
         }
         openChoice({
           title: 'Received on more than one GRN',
@@ -263,8 +264,8 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
           return false;
         }
         if (poNodes.length === 1) {
-          openDocInNewTab(`/scm/purchase-orders/${poNodes[0]!.id}`);
-          return false;
+          openDoc(`/scm/purchase-orders/${poNodes[0]!.id}`);
+          return true;
         }
         openChoice({
           title: 'Bought on more than one purchase order',
@@ -284,8 +285,8 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
           return false;
         }
         if (piNodes.length === 1) {
-          openDocInNewTab(`/scm/purchase-invoices/${piNodes[0]!.id}`);
-          return false;
+          openDoc(`/scm/purchase-invoices/${piNodes[0]!.id}`);
+          return true;
         }
         openChoice({
           title: 'Billed on more than one supplier invoice',
@@ -299,7 +300,7 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
       }
       return false;
     },
-    [notify, openChoice, showCustomerPo, header?.so_doc_no, header?.do_number, soNodes, siNodes, poNodes, grnNodes, piNodes, gates],
+    [openDoc, notify, openChoice, showCustomerPo, header?.so_doc_no, header?.do_number, soNodes, siNodes, poNodes, grnNodes, piNodes, gates],
   );
 
   const pairing = useMemo<{ kind: PairingKind } | null>(
@@ -388,6 +389,7 @@ export function useSiRelationshipMap(header: SiRelationshipHeader | null): {
   onNodeClick: (n: ChainNode) => boolean;
 } & DocChoiceApi {
   const notify = useNotify();
+  const openDoc = useOpenDocInTab();
   const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const showCustomerPo = useCustomerPoNotice();
 
@@ -406,15 +408,15 @@ export function useSiRelationshipMap(header: SiRelationshipHeader | null): {
       if (n.type === 'Sales Order') {
         const soDoc = soNodes[0]?.id ?? header?.so_doc_no;
         if (soDoc) {
-          openDocInNewTab(`/scm/sales-orders/${encodeURIComponent(soDoc)}`);
-          return false;
+          openDoc(`/scm/sales-orders/${encodeURIComponent(soDoc)}`);
+          return true;
         }
         return false;
       }
       if (n.type === 'Delivery Order' && doNodes.length > 0) {
         if (doNodes.length === 1) {
-          openDocInNewTab(`/scm/delivery-orders/${doNodes[0]!.id}`);
-          return false;
+          openDoc(`/scm/delivery-orders/${doNodes[0]!.id}`);
+          return true;
         }
         openChoice({
           title: 'Shipped on more than one DO',
@@ -438,7 +440,7 @@ export function useSiRelationshipMap(header: SiRelationshipHeader | null): {
       }
       return false;
     },
-    [notify, openChoice, showCustomerPo, header?.so_doc_no, header?.invoice_number, soNodes, doNodes, paymentNodes],
+    [openDoc, notify, openChoice, showCustomerPo, header?.so_doc_no, header?.invoice_number, soNodes, doNodes, paymentNodes],
   );
 
   return { nodes, onNodeClick, choice, openChoice, closeChoice, pickChoice };
@@ -518,6 +520,7 @@ export function useDrRelationshipMap(header: DrRelationshipHeader | null): {
   onNodeClick: (n: ChainNode) => boolean;
 } & DocChoiceApi {
   const notify = useNotify();
+  const openDoc = useOpenDocInTab();
   const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const showCustomerPo = useCustomerPoNotice();
 
@@ -535,8 +538,8 @@ export function useDrRelationshipMap(header: DrRelationshipHeader | null): {
     (n: ChainNode): boolean => {
       if (n.type === 'Sales Order' && soNodes.length > 0) {
         if (soNodes.length === 1) {
-          openDocInNewTab(`/scm/sales-orders/${encodeURIComponent(soNodes[0]!.id)}`);
-          return false;
+          openDoc(`/scm/sales-orders/${encodeURIComponent(soNodes[0]!.id)}`);
+          return true;
         }
         openChoice({
           title: 'Returns against more than one sales order',
@@ -550,8 +553,8 @@ export function useDrRelationshipMap(header: DrRelationshipHeader | null): {
       }
       if (n.type === 'Delivery Order' && doNodes.length > 0) {
         if (doNodes.length === 1) {
-          openDocInNewTab(`/scm/delivery-orders/${doNodes[0]!.id}`);
-          return false;
+          openDoc(`/scm/delivery-orders/${doNodes[0]!.id}`);
+          return true;
         }
         openChoice({
           title: 'Returned against more than one DO',
@@ -562,8 +565,8 @@ export function useDrRelationshipMap(header: DrRelationshipHeader | null): {
       }
       if (n.type === 'Sales Invoice' && siNodes.length > 0) {
         if (siNodes.length === 1) {
-          openDocInNewTab(`/scm/sales-invoices/${siNodes[0]!.id}`);
-          return false;
+          openDoc(`/scm/sales-invoices/${siNodes[0]!.id}`);
+          return true;
         }
         openChoice({
           title: 'Billed on more than one invoice',
@@ -577,7 +580,7 @@ export function useDrRelationshipMap(header: DrRelationshipHeader | null): {
       }
       return false;
     },
-    [notify, openChoice, showCustomerPo, header?.return_number, soNodes, doNodes, siNodes],
+    [openDoc, notify, openChoice, showCustomerPo, header?.return_number, soNodes, doNodes, siNodes],
   );
 
   return { nodes, onNodeClick, choice, openChoice, closeChoice, pickChoice };
