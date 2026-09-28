@@ -13,7 +13,7 @@
 // ----------------------------------------------------------------------------
 
 import { useCallback, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { openDocInNewTab } from '../../lib/openDocInNewTab';
 import type { DocChoice, DocChoicePrompt } from '../../components/scm-v2/DocumentRelationshipMapModal';
 
 export type DocChoiceApi = {
@@ -26,16 +26,16 @@ export type DocChoiceApi = {
 };
 
 export function useDocChoice(): DocChoiceApi {
-  const navigate = useNavigate();
   const [choice, setChoice] = useState<DocChoicePrompt | null>(null);
   const openChoice = useCallback((prompt: DocChoicePrompt) => setChoice(prompt), []);
   const closeChoice = useCallback(() => setChoice(null), []);
   const pickChoice = useCallback(
     (doc: DocChoice) => {
       setChoice(null);
-      navigate(doc.to);
+      // In a new tab, like every relationship-map click (owner 2026-09-27).
+      openDocInNewTab(doc.to);
     },
-    [navigate],
+    [],
   );
   return { choice, openChoice, closeChoice, pickChoice };
 }

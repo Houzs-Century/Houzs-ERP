@@ -23,7 +23,7 @@
 // record, not a guess (same ruling as document-flow's note-linked PO nodes).
 
 import { useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { openDocInNewTab } from '../../lib/openDocInNewTab';
 import { useAuth } from '../../auth/AuthContext';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useDocumentFlow, usePoSoCoverage, floatingSoDocNos, type FlowNode, type FlowEdge } from '../../vendor/scm/lib/flow-queries';
@@ -151,7 +151,6 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
      The modal restyles the SO↔PO connector from it. */
   pairing: { kind: PairingKind } | null;
 } & DocChoiceApi {
-  const navigate = useNavigate();
   const notify = useNotify();
   /* Several documents in one slot open a chooser whose every row clicks through
      (2026-08-03) — naming them and pointing at a list the doc no cannot be
@@ -247,10 +246,10 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
     (a: AmendmentChip): boolean => {
       const [kind, ...rest] = a.id.split(":");
       const realId = rest.join(":");
-      navigate(kind === "so" ? `/scm/amendments/${realId}` : `/scm/po-amendments/${realId}`);
-      return true;
+      openDocInNewTab(kind === "so" ? `/scm/amendments/${realId}` : `/scm/po-amendments/${realId}`);
+      return false;
     },
-    [navigate],
+    [],
   );
 
   /* Route-gate mirrors (same OR-shape as ScmGuard): the SO detail route mounts
@@ -299,8 +298,8 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
         }));
         const rows = [...storedRows, ...floatRows];
         if (rows.length === 1) {
-          navigate(`/scm/sales-orders/${encodeURIComponent(rows[0]!.id)}`);
-          return true;
+          openDocInNewTab(`/scm/sales-orders/${encodeURIComponent(rows[0]!.id)}`);
+          return false;
         }
         /* Several SOs, one slot. The SO list searches its own refs, not a PO
            number, so "go find them" landed nowhere — each SO is a row that opens
@@ -328,8 +327,8 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
           return false;
         }
         if (grnNodes.length === 1) {
-          navigate(`/scm/grns/${grnNodes[0]!.id}`);
-          return true;
+          openDocInNewTab(`/scm/grns/${grnNodes[0]!.id}`);
+          return false;
         }
         openChoice({
           title: 'Received on more than one GRN',
@@ -349,8 +348,8 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
           return false;
         }
         if (piNodes.length === 1) {
-          navigate(`/scm/purchase-invoices/${piNodes[0]!.id}`);
-          return true;
+          openDocInNewTab(`/scm/purchase-invoices/${piNodes[0]!.id}`);
+          return false;
         }
         openChoice({
           title: 'Billed on more than one invoice',
@@ -370,8 +369,8 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
           return false;
         }
         if (prNodes.length === 1) {
-          navigate(`/scm/purchase-returns/${prNodes[0]!.id}`);
-          return true;
+          openDocInNewTab(`/scm/purchase-returns/${prNodes[0]!.id}`);
+          return false;
         }
         openChoice({
           title: 'Returned on more than one document',
@@ -382,7 +381,7 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
       }
       return false;
     },
-    [navigate, notify, openChoice, soLabels, floatOnlySos, soNodes, noteSos, grnNodes, piNodes, prNodes, canOpenSo, canOpenGrn, canOpenPi, canOpenPr],
+    [notify, openChoice, soLabels, floatOnlySos, soNodes, noteSos, grnNodes, piNodes, prNodes, canOpenSo, canOpenGrn, canOpenPi, canOpenPr],
   );
 
   return { nodes, onNodeClick, amendments, onAmendmentClick, pairing, choice, openChoice, closeChoice, pickChoice };

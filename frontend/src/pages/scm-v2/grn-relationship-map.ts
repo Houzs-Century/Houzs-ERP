@@ -20,7 +20,7 @@
 // amendments, so this hook carries no amendments row (unlike the PO map).
 
 import { useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { openDocInNewTab } from '../../lib/openDocInNewTab';
 import { useAuth } from '../../auth/AuthContext';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useDocumentFlow, type FlowNode, type FlowEdge } from '../../vendor/scm/lib/flow-queries';
@@ -115,7 +115,6 @@ export function useGrnRelationshipMap(header: GrnRelationshipHeader | null): {
      by a receipt, not a purchase doc, so there is no live MRP pairing to show. */
   pairing: { kind: PairingKind } | null;
 } & DocChoiceApi {
-  const navigate = useNavigate();
   const notify = useNotify();
   /* Several documents in one slot open a chooser whose every row clicks through
      (2026-08-03) — naming them and pointing at a list the doc no cannot be
@@ -183,8 +182,8 @@ export function useGrnRelationshipMap(header: GrnRelationshipHeader | null): {
           return false;
         }
         if (soNodes.length === 1) {
-          navigate(`/scm/sales-orders/${encodeURIComponent(soNodes[0]!.id)}`);
-          return true;
+          openDocInNewTab(`/scm/sales-orders/${encodeURIComponent(soNodes[0]!.id)}`);
+          return false;
         }
         openChoice({
           title: 'Bought for more than one sales order',
@@ -207,8 +206,8 @@ export function useGrnRelationshipMap(header: GrnRelationshipHeader | null): {
           return false;
         }
         if (poNodes.length === 1) {
-          navigate(`/scm/purchase-orders/${poNodes[0]!.id}`);
-          return true;
+          openDocInNewTab(`/scm/purchase-orders/${poNodes[0]!.id}`);
+          return false;
         }
         openChoice({
           title: 'Received against more than one purchase order',
@@ -228,8 +227,8 @@ export function useGrnRelationshipMap(header: GrnRelationshipHeader | null): {
           return false;
         }
         if (piNodes.length === 1) {
-          navigate(`/scm/purchase-invoices/${piNodes[0]!.id}`);
-          return true;
+          openDocInNewTab(`/scm/purchase-invoices/${piNodes[0]!.id}`);
+          return false;
         }
         openChoice({
           title: 'Billed on more than one invoice',
@@ -249,8 +248,8 @@ export function useGrnRelationshipMap(header: GrnRelationshipHeader | null): {
           return false;
         }
         if (prNodes.length === 1) {
-          navigate(`/scm/purchase-returns/${prNodes[0]!.id}`);
-          return true;
+          openDocInNewTab(`/scm/purchase-returns/${prNodes[0]!.id}`);
+          return false;
         }
         openChoice({
           title: 'Returned on more than one document',
@@ -261,7 +260,7 @@ export function useGrnRelationshipMap(header: GrnRelationshipHeader | null): {
       }
       return false;
     },
-    [navigate, notify, openChoice, soNodes, poNodes, piNodes, prNodes, canOpenSo, canOpenPo, canOpenPi, canOpenPr],
+    [notify, openChoice, soNodes, poNodes, piNodes, prNodes, canOpenSo, canOpenPo, canOpenPi, canOpenPr],
   );
 
   const pairing = useMemo<{ kind: PairingKind } | null>(
