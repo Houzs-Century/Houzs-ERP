@@ -21,7 +21,7 @@ export interface OrderDelivery {
 
 export function orderDeliveryOf(c: Record<string, unknown> | null | undefined): OrderDelivery {
   const raw = c?.order_dos ?? c?.orderDos;
-  const dos = Array.isArray(raw) ? (raw as AssrOrderDo[]).filter((d) => d && d.do_number) : [];
+  const dos = Array.isArray(raw) ? (raw as Array<Partial<AssrOrderDo> | null>).filter((d): d is AssrOrderDo => !!d?.do_number) : [];
   const fallback = String(c?.delivery_order || c?.deliveryOrder || c?.do_numbers || c?.doNumbers || "").trim();
   const doNo = dos.length ? dos.map((d) => d.do_number).join(" · ") : fallback || null;
   const dates = dos.map((d) => d.delivery_date).filter((d): d is string => !!d).sort();
