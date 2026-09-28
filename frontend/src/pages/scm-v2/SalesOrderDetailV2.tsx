@@ -68,7 +68,7 @@ import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useStaff } from "../../vendor/scm/lib/admin-queries";
-import { collaboratorLabel } from "../../vendor/scm/lib/so-collaborators";
+import { SoSharedWith } from "../../vendor/scm/components/SoSharedWith";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { CancelRequestPanel } from "../../vendor/scm/components/CancelRequestPanel";
@@ -609,10 +609,6 @@ function SalesOrderDetailV2ReadOnly() {
   ]);
 
   const salesOrder = (detail.data as { salesOrder?: SoHeader } | undefined)?.salesOrder ?? null;
-  /* Who else may see and edit this order. Null when it is shared with nobody,
-     which is most orders — the field is then not rendered at all. Granting and
-     withdrawing live on SO Maintenance (docs/modules/so-handover.md §8). */
-  const sharedWith = collaboratorLabel(salesOrder, staffRoster.data);
   // Coverage keyed by line id; empty until the async coverage query returns (or
   // when the endpoint 404s on an older backend). Overlaid onto the lines below.
   /* The overlay is SHARED with the list drill-down (vendor/scm/lib/
@@ -1327,12 +1323,15 @@ function SalesOrderDetailV2ReadOnly() {
                     !salesOrder.agent && !salesOrder.salesperson_id
                   }
                 />
-                {/* Rendered ONLY when the order is actually shared. A field
-                    that is blank on almost every order teaches people to stop
-                    reading it, and this one has to be read. */}
-                {sharedWith && (
-                  <Field label="Shared with" value={sharedWith} />
-                )}
+                {/* Who else may see and edit this order. Hidden from viewers
+                    when it is shared with nobody; editable in place for
+                    scm.so.attribute_other. */}
+                <SoSharedWith
+                  docNo={salesOrder.doc_no}
+                  header={salesOrder}
+                  staff={staffRoster.data}
+                  frame={(v) => <Field label="Shared with" span={2} value={v} />}
+                />
               </div>
             </Section>
 

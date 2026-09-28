@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { collaboratorNames, collaboratorLabel } from "./so-collaborators";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { collaboratorEntries, collaboratorNames, collaboratorLabel } from "./so-collaborators";
 
 /* These names appear on the SO detail screen, which is where somebody checks
    who can touch their customer's order. The three things pinned here are the
@@ -58,4 +60,26 @@ describe("collaboratorLabel", () => {
     expect(collaboratorLabel({ collaborator_staff_ids: [] }, staff)).toBeNull();
     expect(collaboratorLabel(undefined, staff)).toBeNull();
   });
+});
+
+/* The share editor withdraws a person by id, so each chip must carry the id of
+   the name it shows — a sort that reordered names but not ids would remove the
+   wrong colleague. */
+describe("collaboratorEntries", () => {
+  it("keeps each id paired with its own name after sorting", () => {
+    expect(collaboratorEntries({ collaborator_staff_ids: ["s-1", "s-2", "s-1"] }, staff))
+      .toEqual([{ id: "s-2", name: "alicia" }, { id: "s-1", name: "Stanley" }]);
+  });
+});
+
+/* Owner rule: desktop and mobile SO detail are one product. Both must render
+   the shared editor, so granting access on one surface is not a feature the
+   other silently lacks. */
+describe("SO detail surfaces share one Shared-with editor", () => {
+  const root = resolve(__dirname, "../../..");
+  for (const file of ["pages/scm-v2/SalesOrderDetailV2.tsx", "mobile/MobileSODetail.tsx"]) {
+    it(file, () => {
+      expect(readFileSync(resolve(root, file), "utf8")).toMatch(/<SoSharedWith\b/);
+    });
+  }
 });
