@@ -362,6 +362,17 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     : null;
   if (Number.isFinite(roundId) && !trip) return c.text("Not found", 404);
 
+  /* The Supplier Service Order (supplier copy, no explicit ?round=) still shows
+     the case's CURRENT supplier-return number before the ASSR No (owner
+     2026-09-28), so the paper the supplier receives is traceable to its return
+     document. Per-trip Return Notes (?round=) keep their own number. */
+  const currentReturn = trip || !isSupplier
+    ? null
+    : ((detail as any).supplier_returns ?? [])
+        .filter((r: any) => !r.archived_at)
+        .reduce((a: any, b: any) => (!a || Number(b.round_no) > Number(a.round_no) ? b : a), null);
+  const headerReturnRef: string | null = trip?.ref_no ?? currentReturn?.ref_no ?? null;
+
   const docTitle =
     trip ? "Supplier Return Note"
     : isSupplier ? "Supplier Service Order" : "After-Sales Service Request";
@@ -989,8 +1000,8 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
           <div class="row lead"><span class="cap mono">Service</span><span class="val">${esc(servicePillLabel)}</span></div>` : ""}
         </div>
       </div>
-      <div class="ref mono">${trip?.ref_no ? `
-        <span class="cap">Return No.</span><b>${esc(trip.ref_no)}</b><span class="sep">·</span>` : ""}
+      <div class="ref mono">${headerReturnRef ? `
+        <span class="cap">Return No.</span><b>${esc(headerReturnRef)}</b><span class="sep">·</span>` : ""}
         <span class="cap">ASSR No.</span><b>${esc(cs.assr_no)}</b>${cs.ref_no ? `
         <span class="sep">·</span><span class="cap">Ref No.</span><b>${esc(cs.ref_no)}</b>` : ""}
       </div>
