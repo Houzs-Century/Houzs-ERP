@@ -80,7 +80,17 @@ export type RpReport = {
   /** Empty when the company has no money account to report on. */
   totals: RpTotals | Record<string, never>;
   entries: RpEntry[];
+  /** The card money the bank has not received (owner 2026-09-28). */
+  card: RpCard;
 };
+/** A swipe books Dr card-machine clearing / Cr the customer, and this report — a
+    bank-and-cash report — cannot count it until the acquirer pays it out (Dr bank /
+    Cr clearing). Two memo figures so a month is never blank (owner 2026-09-28: 9 月
+    刷卡的钱应该还有出现，只是还没 recon): what was swiped in the period — every
+    movement on the clearing accounts except the settlement module's own (fees,
+    payouts, moves between the clearing accounts) — and what those accounts still
+    hold at the period's end. `codes` names the accounts read. */
+export type RpCard = { takingsSen: number; transitSen: number; codes: string[] };
 export type RpQuery = { from: string; to: string; byParty: boolean; wanted: string[] };
 
 const ADVANCE_KEY = 'ADV';
@@ -95,7 +105,7 @@ const failed = (e: unknown): string => String((e as { message?: string }).messag
 
 /** Every posted line the company has on the MONEY accounts up to `to` (the
     opening is the ones before `from`), and every line inside [from, to]. */
-async function loadLines(sb: any, companyId: number, moneyCodes: string[], from: string, to: string): Promise<{ ok: true; money: GlLine[]; period: GlLine[] } | Fail> {
+async function loadLines(sb: any, companyId: number, moneyCodes: string[], clearingCodes: string[], from: string, to: string): Promise<{ ok: true; money: GlLine[]; period: GlLine[]; clearing: GlLine[] } | Fail> {
   const money = await paginateAll<GlLine>((f, t) =>
     sb.from('v_gl_entries')
       .select('je_no, entry_date, source_type, source_doc_no, account_code, account_name, debit_sen, credit_sen, party_type, party_code, party_name, notes, posted, reversed, reversed_by_je')
@@ -108,7 +118,26 @@ async function loadLines(sb: any, companyId: number, moneyCodes: string[], from:
       .eq('company_id', companyId).gte('entry_date', from).lte('entry_date', to)
       .order('line_id').range(f, t));
   if (period.error) return { ok: false, reason: String((period.error as { message?: string }).message ?? period.error) };
-  return { ok: true, money: (money.data ?? []).filter(live), period: (period.data ?? []).filter(live) };
+  /* Every line on the card-machine clearing accounts up to `to` — the memo's whole history. */
+  const clearing = clearingCodes.length === 0 ? { data: [] as GlLine[], error: null } : await paginateAll<GlLine>((f, t) =>
+    sb.from('v_gl_entries')
+      .select('je_no, entry_date, source_type, source_doc_no, account_code, account_name, debit_sen, credit_sen, party_type, party_code, party_name, notes, posted, reversed, reversed_by_je')
+      .eq('company_id', companyId).in('account_code', clearingCodes).lte('entry_date', to)
+      .order('line_id').range(f, t));
+  if (clearing.error) return { ok: false, reason: failed(clearing.error) };
+  return { ok: true, money: (money.data ?? []).filter(live), period: (period.data ?? []).filter(live), clearing: (clearing.data ?? []).filter(live) };
+}
+
+/** The acquirers' own transit accounts (scm.acc_acquirers), active or retired — a retired acquirer's account can still hold money. */
+async function loadAcquirerTransits(sb: Sb, companyId: number): Promise<{ ok: true; codes: string[] } | Fail> {
+  const { data, error } = await sb.from('acc_acquirers').select('transit_account_code').eq('company_id', companyId);
+  if (error) return { ok: false, reason: failed(error) };
+  const codes = new Set<string>();
+  for (const row of (data ?? []) as Array<{ transit_account_code: string | null }>) {
+    const code = String(row.transit_account_code ?? '').trim();
+    if (code) codes.add(code);
+  }
+  return { ok: true, codes: [...codes].sort() };
 }
 
 export type RpSplit = { code: string; name: string; sen: number };
@@ -136,7 +165,9 @@ export function supplierVouchersOf(period: GlLine[], colSet: Set<string>, apCont
     (2026-09-22, the owner's "loading 很慢": the money accounts, the roles
     and the vouchers' purpose were read again for every period). */
 export type RpSources = {
-  lines: (moneyCodes: string[], from: string, to: string) => Promise<{ ok: true; money: GlLine[]; period: GlLine[] } | Fail>;
+  lines: (moneyCodes: string[], clearingCodes: string[], from: string, to: string) => Promise<{ ok: true; money: GlLine[]; period: GlLine[]; clearing: GlLine[] } | Fail>;
+  /** The acquirers' transit accounts — with the chart's EDC transit role, the card-machine clearing accounts the memo reads. */
+  acquirerTransits: () => Promise<{ ok: true; codes: string[] } | Fail>;
   layout: () => Promise<({ ok: true } & ResolvedLayout) | Fail>;
   /** The company's active money accounts, by code. */
   moneyAccounts: () => Promise<{ ok: true; accounts: Array<{ code: string; name: string }> } | Fail>;
@@ -146,7 +177,8 @@ export type RpSources = {
 };
 /** The database, as the route reads it. */
 export const rpDbSources = (sb: Sb, companyId: number, layoutIds: number[]): RpSources => ({
-  lines: (codes, from, to) => loadLines(sb, companyId, codes, from, to),
+  lines: (codes, clearing, from, to) => loadLines(sb, companyId, codes, clearing, from, to),
+  acquirerTransits: () => loadAcquirerTransits(sb, companyId),
   layout: () => resolveLayout(sb, layoutIds, 'rp'),
   moneyAccounts: async () => {
     const { data, error } = await sb.from('accounts')
@@ -269,13 +301,16 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   const columns = wanted.length > 0 ? allMoney.filter((a) => wanted.includes(a.code)) : allMoney;
   const moneySet = new Set(allMoney.map((a) => a.code));
   const colSet = new Set(columns.map((a) => a.code));
-  if (columns.length === 0) return { ok: true, report: { from, to, byParty, columns: [], opening: {}, receipts: [], payments: [], totals: {}, entries: [] } };
+  if (columns.length === 0) return { ok: true, report: { from, to, byParty, columns: [], opening: {}, receipts: [], payments: [], totals: {}, entries: [], card: { takingsSen: 0, transitSen: 0, codes: [] } } };
 
   const roles = await src.roles();
   const controlCodes = new Set([roles.AR, roles.AP, roles.AP_OTHER, roles.AR_OTHER].filter(Boolean) as string[]);
   const apControls = new Set([roles.AP, roles.AP_OTHER].filter(Boolean) as string[]);
 
-  const loaded = await src.lines(columns.map((a) => a.code), from, to);
+  const acquirers = await src.acquirerTransits();
+  if (!acquirers.ok) return { ok: false, reason: acquirers.reason };
+  const clearingCodes = [...new Set([String(roles.TRANSIT_EDC).trim(), ...acquirers.codes].filter(Boolean))].sort();
+  const loaded = await src.lines(columns.map((a) => a.code), clearingCodes, from, to);
   if (!loaded.ok) return { ok: false, reason: loaded.reason };
 
   const opening: Record<string, number> = {};
@@ -389,12 +424,23 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   }
   entries.sort((a, b) => a.entryDate.localeCompare(b.entryDate) || a.jeNo.localeCompare(b.jeNo));
 
+  /* The card money the bank has not received (RpCard): the period's swipes are the
+     clearing accounts' movements that are not the settlement module's own — a
+     SETTLE fee, a SETTLEBANK payout, a SETTLEMOVE between the clearing accounts
+     — less their reversals; the transit is the accounts' balance at `to`. */
+  const settlementOwn = (l: GlLine): boolean => String(l.source_type ?? '').replace(/_REVERSAL$/, '').startsWith('SETTLE');
+  const card: RpCard = {
+    takingsSen: loaded.clearing.filter((l) => l.entry_date >= from && !settlementOwn(l)).reduce((s, l) => s + sen(l), 0),
+    transitSen: loaded.clearing.reduce((s, l) => s + sen(l), 0),
+    codes: clearingCodes,
+  };
+
   const laid = await src.layout();
   if (!laid.ok) return { ok: false, reason: laid.reason };
   const tree = laid.layout.blocks.accounts ?? [];
   const cf = layOutCashFlow(tree, cashFlowLines(receiptRows), cashFlowLines(paymentRows), companyId);
   const layout = { stored: laid.stored, tree: cf.nodes, inSen: cf.inSen, outSen: cf.outSen };
-  return { ok: true, report: { from, to, byParty, columns, opening, receipts: receiptRows, payments: paymentRows, layout, totals, entries } };
+  return { ok: true, report: { from, to, byParty, columns, opening, receipts: receiptRows, payments: paymentRows, layout, totals, entries, card } };
 }
 
 /* ── GET /accounting/reports/receipts-payments?from&to&accounts=a,b&party=1 ── */

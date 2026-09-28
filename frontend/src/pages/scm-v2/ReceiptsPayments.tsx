@@ -167,6 +167,11 @@ export const ReceiptsPaymentsTab = () => {
               <BalanceLine label="Cash Surplus / (Deficit)" columns={columns} per={surplusPer} total={r.totals.receiptsTotalSen - r.totals.paymentsTotalSen} strong />
               <BalanceLine label="Balance b/f" columns={columns} per={r.opening} total={r.totals.openingTotalSen} />
               <BalanceLine label="Balance c/f" columns={columns} per={r.totals.closing} total={r.totals.closingTotalSen} strong />
+              {/* The card money the bank has not received (owner 2026-09-28): the columns cannot carry it, the memo can. */}
+              <MemoLine label="Card takings this period (swiped, not yet in the bank)" columns={columns} total={r.card.takingsSen}
+                title={`Every movement on the card-machine clearing accounts (${r.card.codes.join(', ')}) in the period, the settlement module's own aside — counted in the columns only once the acquirer pays it out.`} />
+              <MemoLine label="Card money in transit at period end" columns={columns} total={r.card.transitSen}
+                title={`What the card-machine clearing accounts hold on ${to}: swiped, not yet received in the bank.`} />
             </tbody>
           </table>
         </div>
@@ -223,5 +228,16 @@ const BalanceLine = ({ label, columns, per, total, strong, pct }: { label: strin
     {columns.map((c) => <td key={c.code} style={{ padding: '6px 10px', fontWeight: 600, ...num }}>{fmtRp(per[c.code] ?? 0)}</td>)}
     <td style={{ padding: '6px 10px', fontWeight: 700, ...num }}>{fmtRp(total)}</td>
     <td style={{ padding: '6px 10px', ...num, ...soft }}>{pct ?? ''}</td>
+  </tr>
+);
+
+/* A memo under the foot: a figure the columns cannot carry — the card money still
+   on its way to the bank (owner 2026-09-28). Italic, soft, in the Total column only. */
+const MemoLine = ({ label, columns, total, title }: { label: string; columns: RpReport['columns']; total: number; title: string }) => (
+  <tr title={title} data-memo="card">
+    <td style={{ padding: '6px 10px', fontStyle: 'italic', ...soft }}>{label}</td>
+    {columns.map((c) => <td key={c.code} />)}
+    <td style={{ padding: '6px 10px', fontStyle: 'italic', ...num, ...soft }}>{fmtRp(total)}</td>
+    <td />
   </tr>
 );

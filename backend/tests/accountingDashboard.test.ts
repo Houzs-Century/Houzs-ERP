@@ -138,7 +138,7 @@ function world(over: Record<string, Row[]> = {}) {
       { company_id: CO, code: 'SOFA-1', category: 'SOFA' },
       { company_id: CO, code: 'MAT-1', category: 'MATTRESS' },
     ],
-    payment_vouchers: [], pv_allocations: [],
+    payment_vouchers: [], pv_allocations: [], acc_acquirers: [],
     ...over,
   });
 }

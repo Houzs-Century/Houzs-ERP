@@ -30,6 +30,7 @@ const report: RpReport = {
     receipts: { '310-0010': 50000, '320-0000': 20000 }, payments: { '310-0010': 70000, '320-0000': 6000 },
     closing: { '310-0010': -30000, '320-0000': 14000 }, openingTotalSen: -10000, receiptsTotalSen: 70000, paymentsTotalSen: 76000, closingTotalSen: -16000,
   },
+  card: { takingsSen: 12345, transitSen: 67890, codes: ['326-0000', '326-0010'] },
   entries: [
     { jeNo: 'JE-1', entryDate: '2026-07-05', sourceType: 'SOPAY', sourceDocNo: 'pay-1', narration: null, party: 'Ah Meng', side: 'R', rowKey: '300-0000', column: '310-0010', sen: 50000 },
     { jeNo: 'JE-3', entryDate: '2026-07-15', sourceType: 'PV', sourceDocNo: 'PV-3', narration: null, party: 'FOSHAN CHAIRS', side: 'P', rowKey: '601-0003', column: '310-0010', sen: 40000 },
@@ -112,6 +113,9 @@ describe('the Cash Flow tab', () => {
     expect(screen.getByText('Balance c/f').closest('tr')!.textContent).toContain('(160.00)');
     expect(screen.queryByText('Opening balance')).toBeNull();
     expect(screen.queryByText('Closing balance')).toBeNull();
+    /* The card money the bank has not received (owner 2026-09-28): two memo lines under the foot, Total column only. */
+    expect(screen.getByText('Card takings this period (swiped, not yet in the bank)').closest('tr')!.textContent).toContain('123.45');
+    expect(screen.getByText('Card money in transit at period end').closest('tr')!.textContent).toContain('678.90');
     expect(screen.getByText('601-0003 · PURCHASE OF SOFA')).toBeTruthy();
     expect(screen.getByText('Supplier advances (预付)')).toBeTruthy();
     /* The tree (docs/bugs/0912): the category with its per-column subtotal
