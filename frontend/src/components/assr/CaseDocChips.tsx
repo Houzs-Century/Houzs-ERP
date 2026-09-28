@@ -20,7 +20,8 @@ function Chip({ label, value, accent }: { label: string; value: string | null | 
 
 const text = (v: unknown) => (v == null || v === "" ? null : String(v));
 
-export function CaseDocChips({ c }: { c: Record<string, unknown> }) {
+export function CaseDocChips({ c: row }: { c: object }) {
+  const c = row as Record<string, unknown>;
   const { doNo, deliveryDate } = orderDeliveryOf(c);
   return (
     <div className="grid grid-cols-2 gap-2">
