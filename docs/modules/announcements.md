@@ -151,7 +151,7 @@ pop-up, bell and inbox on desktop and mobile.
   `announcementModel.ts`); shared components
   `frontend/src/components/AnnouncementBanner.tsx`,
   `useAnnouncementBanner.ts`, `announcementCategory.ts`,
-  `NotificationBell.tsx`, `AnnouncementDashboard.tsx`,
+  `NotificationBell.tsx` (+ its lazy `NotificationBellPopover.tsx`), `AnnouncementDashboard.tsx`,
   `AnnouncementRichEditor.tsx`, `AnnouncementRichBody.tsx`;
   `frontend/src/lib/announcementStatus.ts`.
 - Mobile: `frontend/src/mobile/MobileAnnouncements.tsx`,
