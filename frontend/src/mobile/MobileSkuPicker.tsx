@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMfgProducts, matchesProductQuery, type MfgCategory, type MfgProductRow } from "../vendor/scm/lib/mfg-products-queries";
+import { dropOneMultiPick, isSofaGroup, multiPickCount, tapMultiPick } from "../vendor/scm/lib/sofa-piece-lines";
 import "./mobile.css";
 
 /* Perf cap (parity with SalesOrderNewFromProducts, PR #342) — never render more
@@ -168,19 +169,19 @@ export function MobileSkuPicker({
                 unitPriceSen: p.sell_price_sen ?? 0,
                 category: p.category,
               });
-              const isOn = multi && picked.some((x) => x.id === p.id);
+              /* A sofa piece can be tapped again (two CNRs of a U are two
+                 lines, never one line x2) — sofa-piece-lines.ts. */
+              const repeatable = isSofaGroup(p.category);
+              const count = multi ? multiPickCount(picked, p.id, (x) => x.id) : 0;
+              const isOn = count > 0;
               return (
                 <button
                   key={p.id}
                   type="button"
                   onClick={() => {
                     if (multi) {
-                      // Toggle this row in/out of the running selection.
-                      setPicked((prev) =>
-                        prev.some((x) => x.id === p.id)
-                          ? prev.filter((x) => x.id !== p.id)
-                          : [...prev, { id: p.id, sku: skuOf() }],
-                      );
+                      // Toggle this row in/out of the running selection; a sofa piece adds another copy.
+                      setPicked((prev) => tapMultiPick(prev, { id: p.id, sku: skuOf() }, (x) => x.id, repeatable));
                       return;
                     }
                     onPick(skuOf());
@@ -219,6 +220,23 @@ export function MobileSkuPicker({
                       stays available as the chip filter above. skuOf() still
                       binds p.code / p.category on tap — display-only change. */}
                   <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: "#11140f", overflowWrap: "anywhere" }}>{p.name}</span>
+                  {repeatable && count > 0 && (
+                    <>
+                      <span style={{ flex: "none", fontSize: 12, fontWeight: 800, color: "#0c3f39" }}>{"×"}{count}</span>
+                      <span
+                        role="button"
+                        aria-label={`Remove one ${p.name}`}
+                        onClick={(e) => { e.stopPropagation(); setPicked((prev) => dropOneMultiPick(prev, p.id, (x) => x.id)); }}
+                        style={{
+                          flex: "none", width: 26, height: 26, borderRadius: 7, border: "1px solid rgba(34,31,32,.2)",
+                          background: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: 16, fontWeight: 800, color: "#11140f",
+                        }}
+                      >
+                        {"−"}
+                      </span>
+                    </>
+                  )}
                 </button>
               );
             })}

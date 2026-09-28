@@ -24,6 +24,7 @@
 // ----------------------------------------------------------------------------
 
 import {
+  cellEdges,
   findModule,
   moduleFootprint,
   cellsBbox,
@@ -99,7 +100,11 @@ export function drawSofaLayout(
     const quarter = ((Math.round(corner.rot / 90) % 4) + 4) % 4;
     const swap = quarter === 1 || quarter === 3;
     drawCornerSofa(doc, corner.geo, ox, oy, swap ? sofaH : sofaW, swap ? sofaW : sofaH);
-  } else
+  } else {
+  /* The artwork is drawn unrotated, so a sofa with any turned piece (an L or U
+     leg, a right-hand corner) is drawn as the schematic throughout rather than
+     as sideways art or a mix of the two. */
+  const artOk = cells.every((c) => ((Number(c.rot) || 0) % 360) === 0);
   // ── Cells: each module = a cream SEAT with a tan BACKREST strip on its back
   //    edge (the side away from the TV — the whole sofa faces the TV at the
   //    bottom/+y). Faithful positions → the L-shape notch + LHF/RHF come out
@@ -138,7 +143,7 @@ export function drawSofaLayout(
        not tile those either; it draws them through renderSeamlessSofa, which is
        not ported yet. A drawn cell is visibly a drawing; a blank one would look
        like a missing module. */
-    const art = photos?.[c.moduleId];
+    const art = artOk ? photos?.[c.moduleId] : undefined;
     if (art) {
       try {
         doc.addImage(art, px, py, w, h);
@@ -159,9 +164,21 @@ export function drawSofaLayout(
     const t = Math.max(0.8, Math.min(h * 0.26, 2.4)); // strip thickness (mm)
     const eps = 0.5; // cm tolerance
     doc.setFillColor(196, 162, 110); // tan
+    if ((Number(c.rot) || 0) % 360 !== 0) {
+      /* A turned piece (L / U leg, right-hand corner): strip every edge the
+         module's own edge map calls back or arm, rotated with it. */
+      const [ew, en, ee, es] = cellEdges(c);
+      const solid = (e: string | undefined) => e === 'back' || e === 'arm';
+      if (solid(ew)) doc.rect(px, py, t, h, 'F');
+      if (solid(en)) doc.rect(px, py, w, t, 'F');
+      if (solid(ee)) doc.rect(px + w - t, py, t, h, 'F');
+      if (solid(es)) doc.rect(px, py + h - t, w, t, 'F');
+      continue;
+    }
     doc.rect(px, py, w, t, 'F'); // backrest (top / back)
     if (Math.abs(c.x - bbox.x) < eps) doc.rect(px, py, t, h, 'F'); // left arm
     if (Math.abs((c.x + fp.w) - (bbox.x + bbox.w)) < eps) doc.rect(px + w - t, py, t, h, 'F'); // right arm
+  }
   }
 
   // ── TV marker BELOW the sofa (greater y = front / viewing direction) ─

@@ -151,7 +151,7 @@ import { useSoVariantCascade, useSoLineDeliveryDateCascade } from './use-so-vari
 import {
   dropStagedAdd, firstBlankStagedAdd, namedStagedAdds,
   patchStagedAdd, runSoLineWrites, stagedAddDrafts, stagedAddLabel, visibleLineCounts,
-  type StagedAddLine,
+  type StagedAddLine, splitSofaPiecesOnEdit, SOFA_PIECES_SPLIT_DIALOG,
 } from './so-add-lines';
 import {
   readVersionConflict, SoVersionConflictBanner, type SoVersionConflict,
@@ -859,6 +859,8 @@ export const SalesOrderDetail = () => {
     if (savingOrder) return;
     clearSaveFeedback();
 
+    const pieces = splitSofaPiecesOnEdit({ editing: editingDrafts, originals: originalDraftsRef.current, adding: addingDrafts, mintKey: newIdempotencyKey });
+    if (pieces) { setEditingDrafts(pieces.editing); setAddingDrafts(pieces.adding); await notify(SOFA_PIECES_SPLIT_DIALOG); return; }
     /* Backend authors the business-rule blockers; merge the client-only extras
        (blank line, blank staged add, CustomerCard date fault). PATCH below gates. */
     const blankAddPos = firstBlankStagedAdd(addingDrafts);
