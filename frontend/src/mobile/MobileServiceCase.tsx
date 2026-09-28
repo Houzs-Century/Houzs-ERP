@@ -1,3 +1,4 @@
+import { MobileCaseDocChips } from "./MobileCaseDocChips";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -1520,16 +1521,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                           </div>
                         </div>
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 11 }}>
-                        <div style={{ background: FIELD_BG, border: `1px solid ${DIM}`, borderRadius: 9, padding: "7px 10px" }}>
-                          <div className="money" style={{ fontSize: 8.5, letterSpacing: ".1em", textTransform: "uppercase", color: GREY, fontWeight: 600 }}>SO No</div>
-                          <div className="money" style={{ fontSize: 12.5, fontWeight: 600, color: TEAL_DK, marginTop: 3, ...cellEllipsis }}>{String(get(c, "docNo", "doc_no") ?? "—")}</div>
-                        </div>
-                        <div style={{ background: FIELD_BG, border: `1px solid ${DIM}`, borderRadius: 9, padding: "7px 10px" }}>
-                          <div className="money" style={{ fontSize: 8.5, letterSpacing: ".1em", textTransform: "uppercase", color: GREY, fontWeight: 600 }}>Ref No.</div>
-                          <div className="money" style={{ fontSize: 12.5, fontWeight: 600, color: INK, marginTop: 3, ...cellEllipsis }}>{String(get(c, "refNo", "ref_no") ?? "—")}</div>
-                        </div>
-                      </div>
+                      <MobileCaseDocChips c={c as Record<string, unknown>} />
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 0 9px", borderBottom: "1px solid #f1f0ea", marginTop: 4 }}>
                         <div style={{ minWidth: 0 }}>
                           <div className="money" style={{ fontSize: 8.5, letterSpacing: ".1em", textTransform: "uppercase", color: GREY, fontWeight: 600 }}>Phone</div>
