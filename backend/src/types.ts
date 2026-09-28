@@ -50,11 +50,14 @@ export type Env = {
    *  to deploy time + 30 minutes at cutover, then delete the variable.
    *  See docs/IDEMPOTENCY-PHASE2-RUNBOOK.md. */
   SO_CAS_GRACE_UNTIL?: string;
-  /** Seampify WhatsApp gateway (Delivery Planning "Send Message", owner
-   *  2026-07-22). BOTH are wrangler secrets; while either is unset the send
-   *  endpoint answers 503 not_configured — the UI ships before the creds. */
-  SEAMPIFY_SEND_URL?: string;
-  SEAMPIFY_API_KEY?: string;
+  /** Houzs Connect (chat.houzscentury.com) — the Delivery Planning "Send Now"
+   *  POSTs to CONNECT_WEBHOOK_URL/api/webhooks/erp with CONNECT_WEBHOOK_KEY in
+   *  the X-Connect-Key header (paired with Connect's own check). BOTH are
+   *  wrangler secrets; while either is unset the send endpoint answers 503
+   *  not_configured, so the send is OFF until it is deliberately configured.
+   *  (Replaced the retired Seampify gateway, owner 2026-09-28.) */
+  CONNECT_WEBHOOK_URL?: string;
+  CONNECT_WEBHOOK_KEY?: string;
   POD_BUCKET: R2Bucket;
   // R2 buckets used by the ported SCM routes (SO item photos, public assets).
   // Typed required so the ported code compiles; bind in wrangler.toml before the
