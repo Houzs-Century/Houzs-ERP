@@ -261,6 +261,34 @@ export const useFairReport = (stage: FairStage, filters: FairFilters, enabled = 
   });
 };
 
+// ── stage=gaps ───────────────────────────────────────────────────────────────
+// The costing-gap listing (owner 2026-09-26): SO lines with NO cost whose PRODUCT
+// also has no cost — the products to fill in Product Maintenance. Its own endpoint
+// (/reports/costing-gap-listing), not the fair-report stage machinery, so it has a
+// dedicated hook and is not filtered by the fair filter bar (it is a global "what
+// is incomplete" list). Finance-gated on the server.
+export type FairCostingGapRow = {
+  doc_no: string;
+  so_date: string | null;
+  item_code: string;
+  description: string | null;
+  item_group: string | null;
+  qty: number | null;
+  debtor_name: string | null;
+  venue: string | null;
+  branding: string | null;
+  status: string | null;
+};
+
+export const useCostingGapListing = (enabled = true) =>
+  useQuery({
+    queryKey: ['reports', 'costing-gap-listing'],
+    queryFn: () => authedFetch<{ rows: FairCostingGapRow[] }>('/reports/costing-gap-listing'),
+    enabled,
+    placeholderData: (prev) => prev,
+    staleTime: 30_000,
+  });
+
 /**
  * Interpret a useFairReport / useFairReportDetail failure for display. A 403 is a
  * PERMISSION denial — the caller is not in the report's cohort (management + Sales

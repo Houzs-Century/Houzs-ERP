@@ -31,12 +31,14 @@ import { DataTable, type Column } from '../../components/DataTable';
 import { formatDate } from '../../lib/utils';
 import { buildVariantSummary, fmtQty, fmtSen, orderLineIdentity } from '@2990s/shared';
 import { useAuth } from '../../auth/AuthContext';
-import { fairAllowedStages } from '../../auth/salesAccess';
+import { fairAllowedStages, isFairManagementUser } from '../../auth/salesAccess';
 import {
   useFairReport,
   useFairReportDetail,
+  useCostingGapListing,
   fairReportErrorInfo,
   type FairStage,
+  type FairCostingGapRow,
   type FairFilters,
   type FairDims,
   type FairSoRow,
@@ -86,10 +88,14 @@ const inputCls =
 const btnCls =
   'inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] font-medium text-ink-secondary transition-colors hover:border-primary/40';
 
-const STAGE_LABELS: Record<FairStage, string> = { so: 'Sales Orders', do: 'Delivery Orders', invoice: 'Invoices', pnl: 'P&L' };
+// 'gaps' is a FRONTEND-ONLY tab (its own /reports/costing-gap-listing endpoint),
+// NOT a fair-report stage — so it is kept out of FairStage (which mirrors the
+// backend FAIR_STAGES) and lives only as a tab key here.
+type TabKey = FairStage | 'gaps';
+const STAGE_LABELS: Record<TabKey, string> = { so: 'Sales Orders', do: 'Delivery Orders', invoice: 'Invoices', pnl: 'P&L', gaps: 'Costing Gaps' };
 
 // Optional column groups per stage — the "Columns" control toggles these off.
-const OPTIONAL_GROUPS: Record<FairStage, { key: string; label: string }[]> = {
+const OPTIONAL_GROUPS: Record<TabKey, { key: string; label: string }[]> = {
   so: [
     { key: 'catcost', label: 'Cost by category' },
     { key: 'tender', label: 'Deposit by tender' },
@@ -97,6 +103,7 @@ const OPTIONAL_GROUPS: Record<FairStage, { key: string; label: string }[]> = {
   do: [{ key: 'drift', label: 'Margin drift' }],
   invoice: [{ key: 'progression', label: 'Cost progression (SO / DO)' }],
   pnl: [{ key: 'threeway', label: 'Three-way cost (SO / DO / SI)' }],
+  gaps: [],
 };
 
 type OptionMaps = {
@@ -171,8 +178,14 @@ export const FairReport = () => {
   const [sp, setSp] = useSearchParams();
 
   // ── stage (clamped to what this user may see) ──────────────────────────────
-  const rawStage = (sp.get('stage') as FairStage) || 'so';
-  const stage: FairStage = allowed.includes(rawStage) ? rawStage : (allowed[0] ?? 'so');
+  // The backend fair-report stages, PLUS a frontend-only "Costing Gaps" tab
+  // (its own endpoint) for management.
+  const showGaps = isFairManagementUser(user);
+  const tabKeys: TabKey[] = showGaps ? [...allowed, 'gaps'] : allowed;
+  const rawStage = (sp.get('stage') as TabKey) || 'so';
+  const stage: TabKey = tabKeys.includes(rawStage) ? rawStage : (tabKeys[0] ?? 'so');
+  // The real fair-report stage to query (gaps has no fair-report stage).
+  const reportStage: FairStage = stage === 'gaps' ? 'so' : stage;
 
   // ── filters from the URL ───────────────────────────────────────────────────
   const filters: FairFilters = useMemo(() => {
@@ -203,11 +216,15 @@ export const FairReport = () => {
     setSp(next);
   };
 
-  const q = useFairReport(stage, filters, allowed.includes(stage));
+  const q = useFairReport(reportStage, filters, stage !== 'gaps' && allowed.includes(reportStage));
   const data = q.data;
+  // The costing-gap tab has its own endpoint (not the fair-report stage machinery).
+  const gapQ = useCostingGapListing(stage === 'gaps' && showGaps);
   // A 403 (not in the report's cohort) must not read as a transient "please
   // retry" — distinguish the permission denial from a load failure.
-  const errorInfo = q.isError ? fairReportErrorInfo(q.error) : null;
+  const errorInfo = (stage === 'gaps' ? gapQ.isError : q.isError)
+    ? fairReportErrorInfo(stage === 'gaps' ? gapQ.error : q.error)
+    : null;
 
   // ── accumulate filter options from whatever rows we've loaded ───────────────
   const [opts, setOpts] = useState<OptionMaps>(EMPTY_OPTS);
@@ -241,7 +258,8 @@ export const FairReport = () => {
     setSp(next);
   };
 
-  const activeCount = data?.rows?.length ?? 0;
+  const activeCount = stage === 'gaps' ? (gapQ.data?.rows.length ?? 0) : (data?.rows?.length ?? 0);
+  const panelLoading = stage === 'gaps' ? gapQ.isLoading : q.isLoading;
 
   const handleExport = () => {
     if (!data) return;
@@ -284,7 +302,7 @@ export const FairReport = () => {
 
       {/* ── Stage tabs ──────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap gap-1 rounded-lg border border-border bg-surface-2 p-1" role="tablist">
-        {allowed.map((s) => {
+        {tabKeys.map((s) => {
           const on = s === stage;
           return (
             <button
@@ -370,12 +388,14 @@ export const FairReport = () => {
       {/* ── The stage panel ─────────────────────────────────────────────────── */}
       <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
         <div className="flex items-center justify-between border-b border-border px-3 py-2 text-[13px] font-semibold text-ink">
-          <span>{STAGE_LABELS[stage]} — {q.isLoading ? 'loading…' : `${activeCount} row${activeCount === 1 ? '' : 's'}`}</span>
+          <span>{STAGE_LABELS[stage]} — {panelLoading ? 'loading…' : `${activeCount} row${activeCount === 1 ? '' : 's'}`}</span>
         </div>
-        {view === 'table' ? (
-          <StageTable data={data} stage={stage} hidden={hidden} loading={q.isLoading} onOpen={(so) => setParam('so', so)} />
+        {stage === 'gaps' ? (
+          <CostingGapTable rows={gapQ.data?.rows ?? []} loading={gapQ.isLoading} />
+        ) : view === 'table' ? (
+          <StageTable data={data} stage={reportStage} hidden={hidden} loading={q.isLoading} onOpen={(so) => setParam('so', so)} />
         ) : (
-          <StageCards data={data} stage={stage} loading={q.isLoading} onOpen={(so) => setParam('so', so)} />
+          <StageCards data={data} stage={reportStage} loading={q.isLoading} onOpen={(so) => setParam('so', so)} />
         )}
       </div>
 
@@ -395,6 +415,52 @@ export const FairReport = () => {
     </div>
   );
 };
+
+// ── costing-gap table ─────────────────────────────────────────────────────────
+// Owner 2026-09-26: which SO lines have no cost because the PRODUCT has no cost —
+// the actionable list of products to fill in Product Maintenance. Its own endpoint
+// (useCostingGapListing), so it renders standalone rather than through StageTable.
+function CostingGapTable({ rows, loading }: { rows: FairCostingGapRow[]; loading: boolean }) {
+  if (loading) return <div className="px-3 py-6 text-[13px] text-ink-muted">Loading…</div>;
+  if (rows.length === 0) {
+    return <div className="px-3 py-6 text-[13px] text-ink-muted">No costing gaps — every ordered product carries a cost.</div>;
+  }
+  const th = 'px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-brand text-ink-muted whitespace-nowrap';
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse">
+        <thead className="border-b border-border bg-surface-2">
+          <tr>
+            <th className={th}>SO No</th>
+            <th className={th}>Date</th>
+            <th className={th}>Item code</th>
+            <th className={th}>Description</th>
+            <th className={th}>Group</th>
+            <th className={`${th} text-right`}>Qty</th>
+            <th className={th}>Customer</th>
+            <th className={th}>Venue</th>
+            <th className={th}>Brand</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={`${r.doc_no}-${r.item_code}-${i}`} className="border-b border-border/60">
+              <td className={td}>{r.doc_no}</td>
+              <td className={td}>{formatDate(r.so_date)}</td>
+              <td className={`${td} font-medium`}>{r.item_code}</td>
+              <td className={td}>{r.description ?? '—'}</td>
+              <td className={td}>{r.item_group ?? '—'}</td>
+              <td className={tdR}>{r.qty ?? '—'}</td>
+              <td className={td}>{r.debtor_name ?? '—'}</td>
+              <td className={td}>{r.venue ?? '—'}</td>
+              <td className={td}>{r.branding ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 // ── select filter ────────────────────────────────────────────────────────────
 function SelectFilter({ label, value, onChange, options, allLabel }: {
