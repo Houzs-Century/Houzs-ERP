@@ -1606,8 +1606,8 @@ function PurchaseOrderDetailV2ReadOnly() {
         pairing={chainPairing}
       />
       {/* A chain slot standing for several documents opens this chooser instead
-          of a notice that only named them. The picked one opens in a new tab, so
-          the map stays open behind it. */}
+          of a notice that only named them. The picked one opens in its own tab of the
+          in-app strip. */}
       <DocumentChoiceDialog
         prompt={chainChoice}
         onClose={closeChainChoice}

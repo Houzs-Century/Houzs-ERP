@@ -78,19 +78,29 @@ function refreshSnapshot(): void {
 // later hub click into a tab spawn.
 
 const OPEN_INTENT_TTL_MS = 1500;
-let openIntentAt: number | null = null;
+/* "section": a sidebar open, which reuses the tab already in that section.
+   "document": a linked document opened from a relationship map (owner
+   2026-09-27), which gets a tab of its own so it never overwrites another
+   tab's page; only a tab already on that exact document is reused. */
+type OpenIntentKind = "section" | "document";
+let openIntent: { at: number; kind: OpenIntentKind } | null = null;
 
 /** Call from a plain left-click on a sidebar destination, BEFORE the route
  *  changes. Modified clicks (Ctrl/Cmd/Shift/middle) must NOT mark — they open
  *  a real browser window and this tab never navigates. */
 export function markWorkspaceOpenIntent(): void {
-  openIntentAt = Date.now();
+  openIntent = { at: Date.now(), kind: "section" };
 }
 
-function consumeOpenIntent(): boolean {
-  const at = openIntentAt;
-  openIntentAt = null;
-  return at !== null && Date.now() - at <= OPEN_INTENT_TTL_MS;
+/** Call BEFORE navigating to a document that should open in its own tab. */
+export function markWorkspaceDocumentIntent(): void {
+  openIntent = { at: Date.now(), kind: "document" };
+}
+
+function consumeOpenIntent(): OpenIntentKind | null {
+  const pending = openIntent;
+  openIntent = null;
+  return pending !== null && Date.now() - pending.at <= OPEN_INTENT_TTL_MS ? pending.kind : null;
 }
 
 // ── Section derivation ──────────────────────────────────────────────────────
@@ -251,6 +261,8 @@ export function subscribeWorkspaceTabs(fn: Listener): () => void {
  *  · First location of the session → create the first tab.
  *  · Open-intent pending (sidebar click) → activate the tab already sitting in
  *    the destination's section, else spawn a new tab there.
+ *  · Document intent pending (a relationship-map click) → activate the tab
+ *    already on that exact document, else spawn a new tab for it.
  *  · Otherwise → the active tab follows: its href re-points to the location.
  */
 export function recordWorkspaceVisit(pathname: string, search: string): void {
@@ -263,7 +275,9 @@ export function recordWorkspaceVisit(pathname: string, search: string): void {
     state = { ...s, tabs: [{ id, href }], activeId: id, nextId: s.nextId + 1 };
   } else if (intent) {
     const section = sectionKeyFor(pathname);
-    const existing = s.tabs.find((t) => sectionKeyFor(t.href) === section);
+    const existing = intent === "document"
+      ? s.tabs.find((t) => t.href === href)
+      : s.tabs.find((t) => sectionKeyFor(t.href) === section);
     if (existing) {
       if (existing.href === href && s.activeId === existing.id) return;
       state = {
@@ -363,6 +377,6 @@ export function closeWorkspaceTab(id: string): { navigateTo: string | null } {
 /** Test seam — forget the in-memory state so the next read re-hydrates. */
 export function resetWorkspaceTabsForTests(): void {
   state = null;
-  openIntentAt = null;
+  openIntent = null;
   snapshot = { tabs: [], activeId: null };
 }

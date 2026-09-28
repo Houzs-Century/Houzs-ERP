@@ -4,6 +4,7 @@ import {
   activateWorkspaceTab,
   closeWorkspaceTab,
   getWorkspaceTabsSnapshot,
+  markWorkspaceDocumentIntent,
   markWorkspaceOpenIntent,
   moveWorkspaceTab,
   recordWorkspaceVisit,
@@ -287,5 +288,40 @@ describe("closeWorkspaceTab", () => {
     const { navigateTo } = closeWorkspaceTab(ids[2]);
     expect(navigateTo).toBe("/");
     expect(hrefs()).toEqual([]);
+  });
+});
+
+/* Owner 2026-09-27: a document opened from a relationship map gets its OWN tab
+   in the strip — it must not overwrite another tab that happens to sit in the
+   same section, and the page it came from keeps its tab. */
+describe("document intent (relationship map)", () => {
+  const openDoc = (pathname: string) => {
+    markWorkspaceDocumentIntent();
+    recordWorkspaceVisit(pathname, "");
+  };
+
+  it("opens the document in a new tab and leaves the SO tab where it was", () => {
+    recordWorkspaceVisit("/scm/sales-orders/HC-SO-001", "");
+    openDoc("/scm/delivery-orders/do-1");
+    expect(hrefs()).toEqual(["/scm/sales-orders/HC-SO-001", "/scm/delivery-orders/do-1"]);
+    expect(activeHref()).toBe("/scm/delivery-orders/do-1");
+  });
+
+  it("does not take over a tab already sitting in that section", () => {
+    recordWorkspaceVisit("/scm/delivery-orders", "");
+    openVia("/scm/sales-orders/HC-SO-001");
+    openDoc("/scm/delivery-orders/do-1");
+    expect(hrefs()).toEqual(["/scm/delivery-orders", "/scm/sales-orders/HC-SO-001", "/scm/delivery-orders/do-1"]);
+  });
+
+  it("the same document again activates its tab instead of opening a second one", () => {
+    recordWorkspaceVisit("/scm/sales-orders/HC-SO-001", "");
+    openDoc("/scm/delivery-orders/do-1");
+    const soTab = getWorkspaceTabsSnapshot().tabs[0]!.id;
+    const back = activateWorkspaceTab(soTab);
+    recordWorkspaceVisit(back!, "");
+    openDoc("/scm/delivery-orders/do-1");
+    expect(hrefs()).toEqual(["/scm/sales-orders/HC-SO-001", "/scm/delivery-orders/do-1"]);
+    expect(activeHref()).toBe("/scm/delivery-orders/do-1");
   });
 });
