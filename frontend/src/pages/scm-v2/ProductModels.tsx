@@ -226,6 +226,8 @@ export const ProductModels = () => {
         label: 'SKUs',
         width: 96,
         accessor: (m) => {
+          // null = the count could not be read; never show it as an orphan.
+          if (m.sku_count === null) return <span style={{ color: '#767b6e' }}>—</span>;
           const n = m.sku_count ?? 0;
           if (n === 0) {
             return (
@@ -246,7 +248,7 @@ export const ProductModels = () => {
           return <span style={{ color: '#767b6e' }}>{n}</span>;
         },
         searchValue: (m) => String(m.sku_count ?? 0),
-        filterValue: (m) => ((m.sku_count ?? 0) === 0 ? '0 SKUs' : String(m.sku_count ?? 0)),
+        filterValue: (m) => (m.sku_count === null ? '—' : (m.sku_count ?? 0) === 0 ? '0 SKUs' : String(m.sku_count ?? 0)),
         sortFn: (a, b) => (a.sku_count ?? 0) - (b.sku_count ?? 0),
       },
       {

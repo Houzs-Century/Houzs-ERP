@@ -34,6 +34,7 @@ import { todayMyt } from '../lib/my-time';
 import { baseKeyOf, deleteThumbFor, putOptionalThumb } from '../../services/photoThumbs';
 import type { Env, Variables } from '../env';
 import { pgrestIn } from '../lib/pgrest-in-list';
+import { chunkIn } from '../lib/paginate-all';
 import { categorySwapAllowed } from '../shared/category-swap';
 import { moveModelCategory } from '../lib/model-category-move';
 import { MFG_PRODUCT_CATEGORIES } from './mfg-products';
@@ -196,23 +197,22 @@ export const listProductModelsHandler = async (c: Context<{ Bindings: Env; Varia
 
   // SKU count per Model — surfaces "0 SKUs" orphan/empty models in Modular
   // (Wei Siang 2026-06-19: a deleted-from-SKU-Master model still showed with
-  // no hint it had nothing under it). ONE grouped count over mfg_products, then
-  // map onto the rows — NOT N+1. PostgREST has no GROUP BY in the REST API, so
-  // we select just the model_id column for the visible models and tally
-  // client-side; mfg_products is small enough (~hundreds of rows) that pulling
-  // a single id column is cheaper than a per-model count roundtrip.
+  // no hint it had nothing under it). PostgREST has no GROUP BY, so we read the
+  // model_id column for the visible models and tally here. Batched through
+  // chunkIn: one IN-list of every model uuid overran the
+  // URL, the read failed unchecked, and EVERY model showed as a "0 SKUs" orphan.
+  // A failed read is null (unknown), never 0 — 0 tells the operator to delete it.
   const counts = new Map<string, number>();
+  let countsOk = true;
   if (rows.length > 0) {
-    let cq = supabase.from('mfg_products').select('model_id').not('model_id', 'is', null);
-    // Scope to the models we're returning so a category filter doesn't pull
-    // the whole table (and so the count query stays bounded).
-    cq = cq.in('model_id', rows.map((m) => m.id));
-    const { data: skuRows } = await cq;
-    for (const r of (skuRows ?? []) as Array<{ model_id: string | null }>) {
+    const { data: skuRows, error: countErr } = await chunkIn(rows.map((m) => m.id), (batch, from, to) =>
+      scopeToCompany(supabase.from('mfg_products').select('model_id'), c).in('model_id', batch).range(from, to));
+    if (countErr) countsOk = false;
+    for (const r of skuRows as Array<{ model_id: string | null }>) {
       if (r.model_id) counts.set(r.model_id, (counts.get(r.model_id) ?? 0) + 1);
     }
   }
-  const models = rows.map((m) => ({ ...m, sku_count: counts.get(m.id) ?? 0 }));
+  const models = rows.map((m) => ({ ...m, sku_count: countsOk ? (counts.get(m.id) ?? 0) : null }));
   /* Perf (go-live) — Models back the catalog picker's variant-filter pools and
      the Modular list; they change rarely (config edits, not per-order). A short
      PRIVATE max-age lets the browser reuse the list across a burst of picker
