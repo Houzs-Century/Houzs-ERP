@@ -1921,15 +1921,12 @@ export function SalesInvoiceDetailV2() {
         }}
       />
       {/* A chain slot standing for several documents opens this chooser instead
-          of a notice that only named them. Picking a row navigates, so the map
-          closes with it. */}
+          of a notice that only named them. The picked one opens in a new tab, so
+          the map stays open behind it. */}
       <DocumentChoiceDialog
         prompt={chainChoice}
         onClose={closeChainChoice}
-        onPick={(d) => {
-          setRelMapOpen(false);
-          pickChainChoice(d);
-        }}
+        onPick={pickChainChoice}
       />
       {historyOpen && <DocumentHistoryDrawer doc="SALES_INVOICE" id={String(salesInvoice.id)}
         label={salesInvoice.invoice_number} onClose={() => setHistoryOpen(false)} />}

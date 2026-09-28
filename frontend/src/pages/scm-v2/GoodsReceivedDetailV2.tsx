@@ -795,15 +795,12 @@ function GoodsReceivedDetailV2ReadOnly() {
         pairing={chainPairing}
       />
       {/* A chain slot standing for several documents opens this chooser instead
-          of a notice that only named them. Picking a row navigates, so the map
-          closes with it. */}
+          of a notice that only named them. The picked one opens in a new tab, so
+          the map stays open behind it. */}
       <DocumentChoiceDialog
         prompt={chainChoice}
         onClose={closeChainChoice}
-        onPick={(d) => {
-          setRelMapOpen(false);
-          pickChainChoice(d);
-        }}
+        onPick={pickChainChoice}
       />
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 pb-6 pt-2.5 shadow-slab backdrop-blur-sm md:hidden">
