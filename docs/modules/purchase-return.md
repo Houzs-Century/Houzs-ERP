@@ -32,9 +32,32 @@ The header link survives for ONE case: a line on this PO's own receipt that carr
 
 **The supplier answered is the PO's**, not the receipt's. On a shared receipt the receipt's supplier is a different counterparty from the one the goods were bought from — sending the return to them would be the wrong company. `POST /from-grn` still takes the RECEIPT's supplier, which is right for a single-supplier receipt and is the known gap on a shared one.
 
+## Money back, or goods back
+
+A return is one of two things (owner 2026-09-28: 「purchase return - 是可以退货维修，然后supplier再送回来」), held in `scm.purchase_returns.kind`:
+
+| kind | what it means | credit note | stock |
+|---|---|---|---|
+| `CREDIT` (default, every pre-2026-09-28 row) | goods go back for good | owed; `Complete` records its ref | OUT of the line's source warehouse |
+| `REPAIR` | goods go to the supplier to be fixed and are expected BACK | none — the detail says *with the supplier, awaiting return* | OUT of the source warehouse **and IN to `repair_warehouse_id`** |
+
+`repair_warehouse_id` is NOT NULL exactly when `kind = 'REPAIR'` (DB CHECK). In practice it is one of the `* SERVICE` warehouses ("RETURNED TO SUPPLIER FOR SERVICE"), which the form finds by `warehouses.type === 'service'` — the destination is master data, never a name match. Pairing the OUT with an IN is what keeps repair stock countable: before this the warehouse moved it by hand with a stock transfer (18 movements into KL SERVICE, 2026-09-18 → 09-24) which recorded the move and nothing else — not the supplier, the reason, the date, nor whether it ever came back.
+
+**The receive-back leg is phase 2** (`tasks/TODO.md`): a *Received back* action on the same document, the QC result, and repeat rounds. Until it ships, a repair that comes back is received the way it always was; the return stays POSTED.
+
+## The reason is mandatory, and it is a code
+
+Owner 2026-09-28: 「when raise purchase return need input reason and put in remark」. `POST /` refuses `reason_required` / `reason_invalid` before any write (through `refuse`, so the idempotency claim is released and a corrected resubmit is not `idempotency_key_reused`). The catalogue is `backend/src/scm/shared/purchase-return-reasons.ts`, byte-mirrored to `frontend/src/vendor/shared/`: DAMAGED, WRONG_COLOUR, WRONG_ITEM, OVER_SUPPLY, QUALITY, REPAIR, OTHER. The operator's own words go in `notes` (the Remark box) and show on the detail; the per-line `reason` stays free text for the one line that differs.
+
+The code is stored in the EXISTING `reason` column — no migration, no rewrite. Rows raised before this hold free text and `purchaseReturnReasonLabel` prints them verbatim rather than hiding them.
+
+`REPAIR` is the one code that changes what the document does, so `kindMatchesReason` refuses the two ways the pair can lie (a CREDIT return reasoned REPAIR, a REPAIR return reasoned anything else) — 409-free, a plain 400 at submit.
+
 ## Rules that must not break
 
 - The PO-sourced pool must never fall back to matching receipts by `grns.purchase_order_id` alone — that is the read that hid a fully received PO's units. Only an UNLINKED line may be claimed by the header.
+- A REPAIR return must never chase a credit note, and its stock must land somewhere: the OUT/IN pair is written together in `writePurchaseReturnMovements`, and a failed IN is REPORTED (goods left the warehouse and landed nowhere is the one outcome a repair must not hide).
+- The reason must stay a code from the shared catalogue, validated on the server. A second list — in the route, in the form, in a test fixture — is the drift this pattern exists to prevent (same shape as the stock-adjustment reasons).
 - `PATCH /:id/post` must stay idempotent — re-running it on an already-POSTED/COMPLETED row must never re-write movements (double-debits inventory).
 - `writeMovements` never throws; every inventory-touching write must read its result and surface `movementErrors` rather than assume success from a clean HTTP status.
 - The create path only accepts a **POSTED** source: the header's GRN and the parent GRN of any caller-supplied line id must both be POSTED (409 `grn_not_posted`) — otherwise a return could write a second OUT for goods whose reversing OUT already ran.
@@ -60,5 +83,7 @@ The header link survives for ONE case: a line on this PO's own receipt that carr
 - `backend/src/scm/lib/line-link-item-identity.ts` — same-product link guard.
 - `backend/src/scm/lib/purchase-return-list-read.ts` — list read shape.
 - `backend/src/scm/lib/returnable-grn-lines.ts` — the PO-sourced returnable pool (line link + the legacy header case).
+- `backend/src/scm/shared/purchase-return-reasons.ts` (+ the `frontend/src/vendor/shared/` mirror) — the reason catalogue, the two kinds, and the pairing rule.
+- `backend/src/db/migrations-pg/20260928T0800_scm_purchase_return_repair_kind.sql` — `kind` + `repair_warehouse_id`.
 - `frontend/src/pages/scm-v2/PurchaseReturnsListV2.tsx`, `PurchaseReturnDetailV2.tsx`, `PurchaseReturnNew.tsx` — desktop surfaces.
 - `frontend/src/pages/scm-v2/PurchaseOrderDetailV2.tsx` — the **Raise Return** button (RECEIVED / PARTIALLY_RECEIVED, gated on `scm.procurement.pr` page access). It lived only on the legacy PO detail, which no route renders, so a received PO had no way into a return at all until 2026-09-28.

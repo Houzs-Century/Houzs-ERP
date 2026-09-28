@@ -46,6 +46,10 @@ import {
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { recordEntityAudit } from '../lib/entity-audit';
 import { buildReturnablePool, type GrnLineRow } from '../lib/returnable-grn-lines';
+import {
+  isPurchaseReturnReasonCode, isPurchaseReturnKind, kindMatchesReason,
+  PURCHASE_RETURN_REASON_CODES,
+} from '../shared/purchase-return-reasons';
 import { chunkIn } from '../lib/paginate-all';
 import {
   PR_HEADER_COLS,
@@ -437,8 +441,16 @@ async function warehouseCodeMap(
 async function writePurchaseReturnMovements(sb: any, prId: string, returnNumber: string, grnId: string | null, userId: string): Promise<string[]> {
   // Multi-company: the PR's movements inherit the PR header's company.
   const { data: prHeader } = await sb.from('purchase_returns')
-    .select('company_id').eq('id', prId).maybeSingle();
-  const prCompanyId = (prHeader as { company_id?: number | null } | null)?.company_id ?? null;
+    .select('company_id, kind, repair_warehouse_id').eq('id', prId).maybeSingle();
+  const prHead = prHeader as { company_id?: number | null; kind?: string | null; repair_warehouse_id?: string | null } | null;
+  const prCompanyId = prHead?.company_id ?? null;
+  /* A REPAIR return does not take the goods off the books: they go to the
+     supplier and are expected back, so each line's OUT is paired with an IN to
+     the repair warehouse. Until then the warehouse did this by hand with a
+     stock transfer, which recorded the move and nothing else (owner
+     2026-09-28). NULL for a CREDIT return, and the DB CHECK guarantees a REPAIR
+     one has it. */
+  const repairWarehouseId = prHead?.kind === 'REPAIR' ? (prHead.repair_warehouse_id ?? null) : null;
   const { data: items } = await sb.from('purchase_return_items')
     .select('id, grn_item_id, item_code, material_name, qty_returned, item_group, variants')
     .eq('purchase_return_id', prId);
@@ -517,6 +529,11 @@ async function writePurchaseReturnMovements(sb: any, prId: string, returnNumber:
       };
     })
     .filter((m): m is NonNullable<typeof m> => m !== null);
+  /* The repair leg. Same line, same quantity, same batch — one movement pair,
+     so the stock is never in two places and never in none. */
+  const repairIns = repairWarehouseId
+    ? movements.map((m) => ({ ...m, movement_type: 'IN' as const, warehouse_id: repairWarehouseId }))
+    : [];
   const movementErrors: string[] = [];
   if (movements.length > 0) {
     /* Capture the best-effort write result so the caller can surface a failed
@@ -524,6 +541,13 @@ async function writePurchaseReturnMovements(sb: any, prId: string, returnNumber:
        the supplier and the caller never told). No rollback; just make it loud. */
     const res = await writeMovements(sb, movements, prCompanyId);
     if (!res.ok) movementErrors.push(`OUT ${returnNumber}: ${res.reason ?? 'unknown'}`);
+    if (repairIns.length > 0) {
+      /* Reported, never assumed: an IN that failed after a clean OUT means the
+         goods left the warehouse and landed nowhere, which is the one outcome
+         a repair return must not hide. */
+      const inRes = await writeMovements(sb, repairIns, prCompanyId);
+      if (!inRes.ok) movementErrors.push(`IN ${returnNumber}: ${inRes.reason ?? 'unknown'}`);
+    }
     /* PR post = stock OUT to supplier → other READY SOs that needed it may
        regress. Re-walk SO allocation. Best-effort. */
     try {
@@ -751,6 +775,47 @@ purchaseReturns.post('/', async (c) => {
   const items = body.items as Array<Record<string, unknown>> | undefined;
   if (!Array.isArray(items) || !items.length) return refuse(400, { error: 'items_required' });
 
+  /* WHY a return happens is now part of raising one (owner 2026-09-28: 「when
+     raise purchase return need input reason and put in remark」). A CODE from
+     the shared catalogue, so the answers can be counted later; the operator's
+     own words ride in `notes` beside it, and the per-line `reason` stays free
+     text for the one line that differs. Refused HERE, before any write: a
+     return that cannot say why is the document nobody can read six months on. */
+  const reasonCode = typeof body.reason === 'string' ? body.reason.trim() : '';
+  if (!reasonCode) return refuse(400, { error: 'reason_required', message: 'Pick a reason for the return.' });
+  if (!isPurchaseReturnReasonCode(reasonCode)) {
+    return refuse(400, {
+      error: 'reason_invalid',
+      message: `Not a return reason. One of: ${PURCHASE_RETURN_REASON_CODES.join(', ')}.`,
+    });
+  }
+
+  /* CREDIT (goods gone, credit note owed) or REPAIR (goods coming back). The
+     pair is one decision — a REPAIR return that said DAMAGED would chase a
+     credit note for goods the supplier is fixing. */
+  const kind = typeof body.kind === 'string' && body.kind ? body.kind : 'CREDIT';
+  if (!isPurchaseReturnKind(kind)) return refuse(400, { error: 'kind_invalid', message: 'A return is CREDIT or REPAIR.' });
+  if (!kindMatchesReason(kind, reasonCode)) {
+    return refuse(400, {
+      error: 'kind_reason_mismatch',
+      message: kind === 'REPAIR'
+        ? 'The reason for a repair return is Send for repair.'
+        : 'Send for repair is the reason for a repair return — switch the type.',
+    });
+  }
+
+  /* A repair must say WHERE the goods sit while the supplier has them. Without
+     it the stock leaves the books exactly as the hand-made stock transfers did,
+     and "what is at the supplier" has no answer. The DB CHECK backstops this. */
+  const repairWarehouseId = typeof body.repairWarehouseId === 'string' && body.repairWarehouseId
+    ? body.repairWarehouseId : null;
+  if (kind === 'REPAIR' && !repairWarehouseId) {
+    return refuse(400, { error: 'repair_warehouse_required', message: 'Say which warehouse holds the goods while they are being repaired.' });
+  }
+  if (kind !== 'REPAIR' && repairWarehouseId) {
+    return refuse(400, { error: 'repair_warehouse_not_applicable', message: 'Only a repair return names a repair warehouse.' });
+  }
+
   const sb = c.get('supabase'); const user = c.get('user');
 
   /* CROSS-COMPANY SOURCE (lib/companyScope) — the bare-create path takes the
@@ -954,7 +1019,9 @@ purchaseReturns.post('/', async (c) => {
     grn_id: grnId,
     supplier_id: body.supplierId,
     return_date: dateOrNull(body.returnDate) ?? todayMyt(),
-    reason: (body.reason as string | undefined) ?? null,
+    reason: reasonCode,
+    kind,
+    repair_warehouse_id: repairWarehouseId,
     refund_sen: totalRefund,
     notes: (body.notes as string | undefined) ?? null,
     status: 'POSTED',
