@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ----------------------------------------------------------------------------
-// BACKFILL MISSING PRODUCT MODELS — every flat-category SKU gets a Model.
+// BACKFILL MISSING PRODUCT MODELS — every catalogue SKU gets a Model.
 //
 // WHY. The MODULAR / Product Models page reads scm.product_models; a SKU shows
 // there only when its model_id points at a row. The New-SKU/Model dialog always
@@ -10,25 +10,27 @@
 // flat categories (base_model NULL, so each SKU is its own model):
 //   ACCESSORY 108 · BEDLINES 85 · DINING 58 · DIFFUSER 39 · FABRIC_ACCESSORY 11
 //   · SERVICE 5 · CARPET 2  = 308.
-// SOFA / BEDFRAME / MATTRESS already carry models (modelled by a different
-// process; the import merely linked), so they are NOT in scope here.
+// SOFA / BEDFRAME / MATTRESS were left out on the belief the align seed had
+// modelled them all; it had not (CROWN (SS+S) BEDFRAME, BUG-31), so every
+// category is in scope now. One-shot mints stay out (scripts/lib/
+// product-model-backfill.mjs holds the rule).
 //
 // The code path is fixed in the same PR (src/scm/lib/ensure-model-for-sku.ts,
 // used by both create paths). This is the one-time backfill of the SKUs that
 // were created before the fix. It uses the SAME find-or-create rule as the
 // helper: modelCode = base_model when set, else the SKU's own code.
 //
-// WHAT IT DOES. For each company-1 SKU with model_id IS NULL in the flat
-// categories: find-or-create its product_models row (ensureModelForSku, so the
+// WHAT IT DOES. For each company SKU with model_id IS NULL (not one-shot):
+// find-or-create its product_models row (ensureModelForSku, so the
 // script and the routes key identically) and set the SKU's model_id. Never
 // touches a SKU that already has a model_id (the UPDATE carries `model_id IS
 // NULL`), so it cannot re-home a linked SKU.
 //
-// MODE=plan (default) prints the per-category count it WOULD backfill and writes
-// NOTHING. MODE=apply needs CONFIRM="I HAVE REVIEWED THE DRY-RUN", writes one
-// SKU at a time, then verifies on a FRESH connection that every targeted SKU now
-// carries a model_id whose product_models row matches (company, model_code,
-// category).
+// MODE=plan (default) prints the per-category count and each SKU with the model
+// it WOULD link to or create, and writes NOTHING. MODE=apply needs
+// CONFIRM="I HAVE REVIEWED THE DRY-RUN", writes one SKU at a time, then verifies
+// on a FRESH connection that every targeted SKU now carries a model_id whose
+// product_models row matches (company, model_code, category).
 //
 // RE-RUN: safe and idempotent. Keyed on `model_id IS NULL`, which a successful
 // backfill clears — a second run finds nothing to do, and where a SKU is
@@ -42,11 +44,7 @@ import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
 import { pgrestShim } from './lib/pgrest-shim.mjs';
 import { ensureModelForSku, modelCodeForSku } from '../src/scm/lib/ensure-model-for-sku.ts';
-
-// The flat categories: base_model is NULL on these, so each SKU is its own
-// 1:1 model. SOFA / BEDFRAME / MATTRESS are variant categories with models
-// already and are deliberately excluded.
-const FLAT_CATEGORIES = ['ACCESSORY', 'BEDLINES', 'DINING', 'DIFFUSER', 'CARPET', 'FABRIC_ACCESSORY', 'SERVICE'];
+import { isModelBackfillTarget, planModelBackfill } from './lib/product-model-backfill.mjs';
 
 const APPLY = (process.env.MODE || 'plan').toLowerCase() === 'apply';
 const CONFIRM_PHRASE = 'I HAVE REVIEWED THE DRY-RUN';
@@ -73,20 +71,26 @@ const sql = postgres(DATABASE_URL, { ssl: 'require', prepare: false, max: 1 });
 async function main() {
   note(`mode=${APPLY ? 'APPLY' : 'PLAN (writes nothing)'} company=${CO}`);
 
-  // The targets: company-scoped, flat categories, no model yet.
-  const targets = await sql`
-    SELECT id::text AS id, code, name, category::text AS category, base_model
+  // The targets: company-scoped, no model yet, not a one-shot mint.
+  const modelLess = await sql`
+    SELECT id::text AS id, code, name, category::text AS category, base_model,
+           model_id::text AS model_id, one_shot
       FROM scm.mfg_products
      WHERE company_id = ${CO}
        AND model_id IS NULL
-       AND category::text = ANY(${FLAT_CATEGORIES})
      ORDER BY category, code`;
+  const targets = modelLess.filter(isModelBackfillTarget);
+  const models = await sql`
+    SELECT model_code, category::text AS category FROM scm.product_models WHERE company_id = ${CO}`;
+  const plan = planModelBackfill(targets, models);
 
   note(`\n=== SKUs that WOULD get a Model, per category ===`);
   const perCat = new Map();
-  for (const r of targets) perCat.set(r.category, (perCat.get(r.category) ?? 0) + 1);
-  for (const cat of FLAT_CATEGORIES) note(`  ${cat.padEnd(18)} ${perCat.get(cat) ?? 0}`);
-  note(`  ${'total'.padEnd(18)} ${targets.length}`);
+  for (const r of plan) perCat.set(r.category, (perCat.get(r.category) ?? 0) + 1);
+  for (const [cat, n] of [...perCat].sort()) note(`  ${cat.padEnd(18)} ${n}`);
+  note(`  ${'total'.padEnd(18)} ${plan.length}   (one-shot mints skipped: ${modelLess.length - targets.length})`);
+  note(`\n=== Per SKU ===`);
+  for (const r of plan) note(`  ${r.category.padEnd(16)} ${r.code} -> ${r.modelCode} (${r.action === 'link' ? 'existing model' : 'new model'})`);
 
   if (!APPLY) {
     note(`\nPLAN ONLY: nothing written. Re-run with MODE=apply CONFIRM="${CONFIRM_PHRASE}".`);
@@ -133,8 +137,8 @@ async function main() {
     note(`\n=== VERIFIED ON A FRESH CONNECTION ===`);
     const [{ n: stillNull }] = await verify`
       SELECT COUNT(*)::int AS n FROM scm.mfg_products
-       WHERE company_id = ${CO} AND model_id IS NULL AND category::text = ANY(${FLAT_CATEGORIES})`;
-    note(`  flat-category SKUs still without a Model: ${stillNull} (${failures.length} of those are the failures above)`);
+       WHERE company_id = ${CO} AND model_id IS NULL AND one_shot IS NOT TRUE`;
+    note(`  SKUs still without a Model: ${stillNull} (${failures.length} of those are the failures above)`);
 
     // Read the linked rows joined to their model and prove each one's shape:
     // model_id resolves, category matches, and model_code is the expected key.
@@ -142,7 +146,7 @@ async function main() {
     let checked = 0;
     for (const d of done) {
       const [row] = await verify`
-        SELECT p.code, p.base_model, p.model_id::text AS model_id,
+        SELECT p.code, p.base_model, p.category::text AS category, p.model_id::text AS model_id,
                m.id::text AS model_row, m.model_code, m.category AS model_category
           FROM scm.mfg_products p
           LEFT JOIN scm.product_models m ON m.id = p.model_id AND m.company_id = ${CO}
@@ -151,7 +155,7 @@ async function main() {
       const expectedCode = modelCodeForSku(row?.base_model ?? null, row?.code);
       const okShape = row && row.model_id && row.model_row
         && row.model_code === expectedCode
-        && FLAT_CATEGORIES.includes(String(row.model_category));
+        && String(row.model_category) === row.category;
       if (!okShape) {
         mismatches += 1;
         bad(`  SHAPE MISMATCH ${row?.code}: model_id=${row?.model_id} model_row=${row?.model_row} model_code=${row?.model_code} expected=${expectedCode} model_category=${row?.model_category}`);
