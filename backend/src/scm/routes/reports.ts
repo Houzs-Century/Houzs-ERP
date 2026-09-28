@@ -330,6 +330,64 @@ reports.get('/sales-order-detail-listing', async (c) => {
 });
 
 // ----------------------------------------------------------------------------
+// Costing-gap listing (owner 2026-09-26). Which SO lines carry NO cost because
+// the PRODUCT itself has no cost — the actionable list of products to fill in
+// Product Maintenance (a line whose product HAS a cost is filled by the nightly
+// restamp, so it is NOT a real gap and is excluded). Sits beside P&L in the
+// Sales Report so the owner sees exactly what is incomplete. Read-only;
+// finance-gated (it exposes the cost dimension).
+// ----------------------------------------------------------------------------
+/** A product's cost is present when the flat cost lane is set, or (SOFA) the seat
+ *  grid carries a PRICE_2 cost row. Mirrors the restamp's unitCostSen fallbacks. */
+function productHasCost(p: { category?: unknown; base_price_sen?: unknown; cost_price_sen?: unknown; seat_height_prices?: unknown }): boolean {
+  if (Number(p.base_price_sen) > 0 || Number(p.cost_price_sen) > 0) return true;
+  const grid = Array.isArray(p.seat_height_prices) ? p.seat_height_prices : [];
+  return grid.some((r) => (r?.tier ?? 'PRICE_2') === 'PRICE_2' && Number(r?.priceSen) > 0);
+}
+
+reports.get('/costing-gap-listing', async (c) => {
+  const sb = c.get('supabase');
+  const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
+
+  // Products with NO cost, by code — the set a zero-cost line must belong to to
+  // count as a real (owner-fixable) gap.
+  const { data: prodData, error: prodErr } = await paginateAll((pFrom, pTo) => {
+    let q = sb.from('mfg_products').select('code, category, base_price_sen, cost_price_sen, seat_height_prices');
+    q = scopeToCompany(q, c);
+    return q.range(pFrom, pTo);
+  });
+  if (prodErr) return c.json({ error: 'load_failed', reason: prodErr.message }, 500);
+  const noCostCodes = new Set<string>();
+  for (const p of (prodData ?? []) as AnyRow[]) if (!productHasCost(p)) noCostCodes.add(String(p.code));
+
+  const { data, error } = await paginateAll((pFrom, pTo) => {
+    let q = sb
+      .from('mfg_sales_order_items')
+      .select(`
+        id, doc_no, line_date, item_code, description, item_group, qty, unit_cost_sen, cancelled, variants,
+        mfg_sales_orders!inner ( doc_no, so_date, debtor_name, branding, venue, status )
+      `)
+      .or('unit_cost_sen.is.null,unit_cost_sen.eq.0');
+    if (scopeIds) q = q.in('mfg_sales_orders.salesperson_id', scopeIds);
+    q = scopeToCompany(q, c);
+    return q.range(pFrom, pTo);
+  });
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+
+  const rows = ((data ?? []) as unknown as AnyRow[])
+    .map((r) => flattenJoin(r, 'mfg_sales_orders'))
+    .filter((r) => !r.cancelled && noCostCodes.has(String(r.item_code)))
+    .map((r) => ({
+      doc_no: r.doc_no, so_date: r.so_date ?? r.line_date, item_code: r.item_code,
+      description: r.description, item_group: r.item_group, qty: r.qty,
+      debtor_name: r.debtor_name, venue: r.venue, branding: r.branding, status: r.status,
+    }));
+
+  gateReportFinance(c, rows);
+  return c.json({ rows });
+});
+
+// ----------------------------------------------------------------------------
 // L2 line-level Detail Listings for Delivery Order / Sales Invoice / Delivery
 // Return. Same shape as /sales-order-detail-listing: flatten the header onto
 // every line, apply filter params, return { rows: [...] }.
