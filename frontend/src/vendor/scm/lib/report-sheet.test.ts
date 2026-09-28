@@ -50,6 +50,7 @@ const rp: RpReport = {
   opening: { '310-0010': -10000, '320-0000': 0 },
   receipts: [], payments: [],
   totals: { receipts: { '310-0010': 50000 }, payments: { '310-0010': 30000 }, closing: { '310-0010': 10000, '320-0000': 0 }, openingTotalSen: -10000, receiptsTotalSen: 50000, paymentsTotalSen: 30000, closingTotalSen: 10000 },
+  card: { takingsSen: 0, transitSen: 0, codes: [] },
   entries: [],
   layout: {
     stored: true, inSen: 50000, outSen: 30000,
