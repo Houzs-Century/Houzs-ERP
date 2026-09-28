@@ -24,8 +24,17 @@ The right-click menu offers Confirm only on a DRAFT and Cancel on any row the se
 - One guard, `scm.procurement.pr`, over the whole router — covers read and write alike.
 - No sales-scope row filter here — unlike Delivery Return, procurement documents are not scoped own+downline.
 
+## Where a PO-sourced return draws its lines from
+
+`GET /returnable-grn-lines?poId=` answers the POSTED receipt lines received against that purchase order, with `qty_accepted - returned_qty > 0`, plus the PO's own supplier. **It is keyed on the LINE link** (`grn_items.purchase_order_item_id`), not on `grns.purchase_order_id` — a receipt may be HEADED at one purchase order and carry lines from several others, which is deliberate here (one group, one lorry; owner 2026-09-28). Matching the header alone hid every unit received that way: HC-PO-010114 read RECEIVED with nothing returnable, because both its units sat on receipts headed at Hookka POs. Same header-FK-only blind spot #4199 fixed for the PO list and the relationship map.
+
+The header link survives for ONE case: a line on this PO's own receipt that carries no line link (pre-link imports, a receipt raised without picking PO lines). The rules and that carve-out live in `backend/src/scm/lib/returnable-grn-lines.ts`.
+
+**The supplier answered is the PO's**, not the receipt's. On a shared receipt the receipt's supplier is a different counterparty from the one the goods were bought from — sending the return to them would be the wrong company. `POST /from-grn` still takes the RECEIPT's supplier, which is right for a single-supplier receipt and is the known gap on a shared one.
+
 ## Rules that must not break
 
+- The PO-sourced pool must never fall back to matching receipts by `grns.purchase_order_id` alone — that is the read that hid a fully received PO's units. Only an UNLINKED line may be claimed by the header.
 - `PATCH /:id/post` must stay idempotent — re-running it on an already-POSTED/COMPLETED row must never re-write movements (double-debits inventory).
 - `writeMovements` never throws; every inventory-touching write must read its result and surface `movementErrors` rather than assume success from a clean HTTP status.
 - The create path only accepts a **POSTED** source: the header's GRN and the parent GRN of any caller-supplied line id must both be POSTED (409 `grn_not_posted`) — otherwise a return could write a second OUT for goods whose reversing OUT already ran.
@@ -50,4 +59,6 @@ The right-click menu offers Confirm only on a DRAFT and Cancel on any row the se
 - `backend/src/scm/lib/return-unlinked-lines.ts` — unlinked-line detection.
 - `backend/src/scm/lib/line-link-item-identity.ts` — same-product link guard.
 - `backend/src/scm/lib/purchase-return-list-read.ts` — list read shape.
+- `backend/src/scm/lib/returnable-grn-lines.ts` — the PO-sourced returnable pool (line link + the legacy header case).
 - `frontend/src/pages/scm-v2/PurchaseReturnsListV2.tsx`, `PurchaseReturnDetailV2.tsx`, `PurchaseReturnNew.tsx` — desktop surfaces.
+- `frontend/src/pages/scm-v2/PurchaseOrderDetailV2.tsx` — the **Raise Return** button (RECEIVED / PARTIALLY_RECEIVED, gated on `scm.procurement.pr` page access). It lived only on the legacy PO detail, which no route renders, so a received PO had no way into a return at all until 2026-09-28.
