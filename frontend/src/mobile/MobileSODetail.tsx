@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { formatDate } from "../lib/utils";
 import { NonSellingWarehouseNoteMobile, SourcePosRowMobile, soStockPillMobile } from "./source-chips";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
@@ -12,7 +12,7 @@ import { usePrompt } from "../vendor/scm/components/PromptDialog"; import { Canc
 import { fetchScanSlipImageBlobUrl } from "../vendor/scm/lib/slip"; import { fairLabel } from "../vendor/scm/lib/fair-options-queries"; import { linkedEvent, type LinkedFair } from "../components/fairPick";
 import { MobileLinePhotos } from "./MobileLinePhotos";
 import { useStaff, usePickableStaff } from "../vendor/scm/lib/admin-queries";
-import { collaboratorLabel } from "../vendor/scm/lib/so-collaborators";
+import { SoSharedWith } from "../vendor/scm/components/SoSharedWith";
 import { HIST_FIELD_LABEL, HIST_MONEY_FIELDS } from "./so-history-labels";
 import { statusLabel } from "../vendor/scm/lib/status-pill";
 import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover, SO_AMENDMENT_LANE_APPROVE_PERM } from "../vendor/scm/lib/amendment-approver";
@@ -387,7 +387,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
   /* Who else may see and edit it. Null on an unshared order, which is most of
      them; granting and withdrawing live on SO Maintenance, desktop-only
      (docs/modules/so-handover.md §8). */
-  const sharedWith = collaboratorLabel(h, staffQ.data);
 
   /* Status change routes through the SHARED useUpdateMfgSalesOrderStatus so
      mobile gets the same optimistic update + audit-log / status-changes
@@ -1021,7 +1020,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
               <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Customer type" value={val(h.customer_type)} /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Salesperson" value={val(salespersonName)} /></div></div>
               {/* Only when actually shared — a field blank on almost every
                   order teaches people to stop reading it. */}
-              {sharedWith && <RoField label="Shared with" value={sharedWith} />}
+              <SoSharedWith docNo={h.doc_no} header={h} staff={staffQ.data} frame={(v) => <RoField label="Shared with" value={v} />} />
               <RoField label="Ref No." value={val(h.customer_so_no ?? h.ref)} mono />
               {/* Emergency contact — whole row HIDDEN when no phone on file
                   (Build Spec §6 + null-field rule: "hide the row"). Value =
@@ -1393,7 +1392,7 @@ function Kpi({ label, centi, color, unknown }: { label: string; centi: number | 
 /* Locked read-only field — the design's `.fld` + `.fld-l` + `.fld-ro` trio, the
    detail screen's whole "form rendered locked" idiom. `mono` opts the value into
    tabular-nums (phone / doc refs / dates) via the shared `.money` class. */
-function RoField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function RoField({ label, value, mono }: { label: string; value: ReactNode; mono?: boolean }) {
   return (
     <div className="fld">
       <span className="fld-l">{label}</span>
