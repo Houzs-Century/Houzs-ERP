@@ -1150,14 +1150,25 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       <div class="lc">Category</div><div class="vc">${cs.service_category || cs.issue_category ? `<span class="pill-cat">${esc(cs.service_category || cs.issue_category)}</span>` : `<span class="dim">—</span>`}</div>
     </div>
 
-    ${trip ? `
+    ${(() => {
+      // Return trip + its three key dates — on BOTH the per-trip Return Note
+      // (?round=) and the Supplier Service Order (uses the current trip). Owner
+      // 2026-09-28: the supplier's paper must carry pickup-from-customer,
+      // sent-to-supplier and back-from-supplier dates.
+      const t: any = trip || currentReturn;
+      if (!t) return "";
+      return `
     <!-- this trip -->
-    <div class="mgrid cols-8">
-      <div class="lc">Return</div><div class="vc mono">#${esc(trip.round_no)}</div>
-      <div class="lc">Sent Out</div><div class="vc mono">${fmtDate(trip.pickup_at)}</div>
-      <div class="lc">Back</div><div class="vc mono">${fmtDate(trip.returned_at)}</div>
-      <div class="lc">Reason</div><div class="vc">${esc(trip.reason || "—")}</div>
-    </div>` : ""}
+    <div class="mgrid cols-4">
+      <div class="lc">Return</div><div class="vc mono">#${esc(t.round_no)}${t.ref_no ? ` · ${esc(t.ref_no)}` : ""}</div>
+      <div class="lc">Reason</div><div class="vc">${esc(t.reason || "—")}</div>
+    </div>
+    <div class="mgrid cols-6">
+      <div class="lc">Cust. Pickup</div><div class="vc mono">${fmtDate((cs as any).customer_pickup_at)}</div>
+      <div class="lc">Sent to Supplier</div><div class="vc mono">${fmtDate(t.pickup_at)}</div>
+      <div class="lc">Back from Supplier</div><div class="vc mono">${fmtDate(t.returned_at)}</div>
+    </div>`;
+    })()}
 
     <!-- creditor box -->
     <div class="credit-box">
