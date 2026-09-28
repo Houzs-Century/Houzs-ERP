@@ -17,7 +17,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 
-export type FairStage = 'so' | 'do' | 'invoice' | 'pnl' | 'gaps';
+export type FairStage = 'so' | 'do' | 'invoice' | 'pnl';
 
 /** The four Fair Report tender labels (mfg_sales_order_payments.method mapped:
  *  cash→Cash, merchant→Merchant, installment→Installment, transfer→Online). */

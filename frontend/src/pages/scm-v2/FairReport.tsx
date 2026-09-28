@@ -31,7 +31,7 @@ import { DataTable, type Column } from '../../components/DataTable';
 import { formatDate } from '../../lib/utils';
 import { buildVariantSummary, fmtQty, fmtSen, orderLineIdentity } from '@2990s/shared';
 import { useAuth } from '../../auth/AuthContext';
-import { fairAllowedStages } from '../../auth/salesAccess';
+import { fairAllowedStages, isFairManagementUser } from '../../auth/salesAccess';
 import {
   useFairReport,
   useFairReportDetail,
@@ -88,10 +88,14 @@ const inputCls =
 const btnCls =
   'inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] font-medium text-ink-secondary transition-colors hover:border-primary/40';
 
-const STAGE_LABELS: Record<FairStage, string> = { so: 'Sales Orders', do: 'Delivery Orders', invoice: 'Invoices', pnl: 'P&L', gaps: 'Costing Gaps' };
+// 'gaps' is a FRONTEND-ONLY tab (its own /reports/costing-gap-listing endpoint),
+// NOT a fair-report stage — so it is kept out of FairStage (which mirrors the
+// backend FAIR_STAGES) and lives only as a tab key here.
+type TabKey = FairStage | 'gaps';
+const STAGE_LABELS: Record<TabKey, string> = { so: 'Sales Orders', do: 'Delivery Orders', invoice: 'Invoices', pnl: 'P&L', gaps: 'Costing Gaps' };
 
 // Optional column groups per stage — the "Columns" control toggles these off.
-const OPTIONAL_GROUPS: Record<FairStage, { key: string; label: string }[]> = {
+const OPTIONAL_GROUPS: Record<TabKey, { key: string; label: string }[]> = {
   so: [
     { key: 'catcost', label: 'Cost by category' },
     { key: 'tender', label: 'Deposit by tender' },
@@ -174,8 +178,14 @@ export const FairReport = () => {
   const [sp, setSp] = useSearchParams();
 
   // ── stage (clamped to what this user may see) ──────────────────────────────
-  const rawStage = (sp.get('stage') as FairStage) || 'so';
-  const stage: FairStage = allowed.includes(rawStage) ? rawStage : (allowed[0] ?? 'so');
+  // The backend fair-report stages, PLUS a frontend-only "Costing Gaps" tab
+  // (its own endpoint) for management.
+  const showGaps = isFairManagementUser(user);
+  const tabKeys: TabKey[] = showGaps ? [...allowed, 'gaps'] : allowed;
+  const rawStage = (sp.get('stage') as TabKey) || 'so';
+  const stage: TabKey = tabKeys.includes(rawStage) ? rawStage : (tabKeys[0] ?? 'so');
+  // The real fair-report stage to query (gaps has no fair-report stage).
+  const reportStage: FairStage = stage === 'gaps' ? 'so' : stage;
 
   // ── filters from the URL ───────────────────────────────────────────────────
   const filters: FairFilters = useMemo(() => {
@@ -206,10 +216,10 @@ export const FairReport = () => {
     setSp(next);
   };
 
-  const q = useFairReport(stage, filters, stage !== 'gaps' && allowed.includes(stage));
+  const q = useFairReport(reportStage, filters, stage !== 'gaps' && allowed.includes(reportStage));
   const data = q.data;
   // The costing-gap tab has its own endpoint (not the fair-report stage machinery).
-  const gapQ = useCostingGapListing(stage === 'gaps' && allowed.includes('gaps'));
+  const gapQ = useCostingGapListing(stage === 'gaps' && showGaps);
   // A 403 (not in the report's cohort) must not read as a transient "please
   // retry" — distinguish the permission denial from a load failure.
   const errorInfo = (stage === 'gaps' ? gapQ.isError : q.isError)
@@ -292,7 +302,7 @@ export const FairReport = () => {
 
       {/* ── Stage tabs ──────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap gap-1 rounded-lg border border-border bg-surface-2 p-1" role="tablist">
-        {allowed.map((s) => {
+        {tabKeys.map((s) => {
           const on = s === stage;
           return (
             <button
@@ -383,9 +393,9 @@ export const FairReport = () => {
         {stage === 'gaps' ? (
           <CostingGapTable rows={gapQ.data?.rows ?? []} loading={gapQ.isLoading} />
         ) : view === 'table' ? (
-          <StageTable data={data} stage={stage} hidden={hidden} loading={q.isLoading} onOpen={(so) => setParam('so', so)} />
+          <StageTable data={data} stage={reportStage} hidden={hidden} loading={q.isLoading} onOpen={(so) => setParam('so', so)} />
         ) : (
-          <StageCards data={data} stage={stage} loading={q.isLoading} onOpen={(so) => setParam('so', so)} />
+          <StageCards data={data} stage={reportStage} loading={q.isLoading} onOpen={(so) => setParam('so', so)} />
         )}
       </div>
 

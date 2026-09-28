@@ -392,7 +392,7 @@ export function canViewScmCosting(user: AuthUser | null | undefined): boolean {
 
 // 'pnl' is the exhibition P&L view — management-only, like do / invoice (a Sales
 // Director never gets it), mirroring backend lib/fair-report.fairReportAccess.
-export type FairStage = "so" | "do" | "invoice" | "pnl" | "gaps";
+export type FairStage = "so" | "do" | "invoice" | "pnl";
 
 /** MANAGEMENT tier for the Fair Report — all stages incl. P&L. */
 export function isFairManagementUser(user: AuthUser | null | undefined): boolean {
@@ -402,7 +402,7 @@ export function isFairManagementUser(user: AuthUser | null | undefined): boolean
 /** The Fair Report stages this user may open, in canonical order. Empty = no
  *  access. Drives both nav visibility and per-tab visibility on the page. */
 export function fairAllowedStages(user: AuthUser | null | undefined): FairStage[] {
-  if (isFairManagementUser(user)) return ["so", "do", "invoice", "pnl", "gaps"];
+  if (isFairManagementUser(user)) return ["so", "do", "invoice", "pnl"];
   if (isSalesDirectorUser(user)) return ["so"];
   return [];
 }
