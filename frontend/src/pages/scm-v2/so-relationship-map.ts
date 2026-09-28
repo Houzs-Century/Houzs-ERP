@@ -25,11 +25,11 @@
 
 import { customerRefOf } from '../../lib/customer-ref';
 import { useCallback, useMemo } from 'react';
-import { openDocInNewTab } from '../../lib/openDocInNewTab';
+import { useOpenDocInTab } from '../../lib/openDocInTab';
 import { useAuth } from '../../auth/AuthContext';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useDocumentFlow, useCandidatePos, type FlowNode } from '../../vendor/scm/lib/flow-queries';
-import type { ChainNode, AmendmentChip, DocChoice, PairingKind } from '../../components/scm-v2/DocumentRelationshipMapModal';
+import type { ChainNode, AmendmentChip, PairingKind } from '../../components/scm-v2/DocumentRelationshipMapModal';
 import { useDocChoice, type DocChoiceApi } from './doc-choice';
 
 /** The header columns the chain reads. Loose on purpose — the two SO detail
@@ -74,10 +74,10 @@ const flowNodesOf = (data: { nodes: FlowNode[] } | undefined, type: FlowNode['ty
   (data?.nodes ?? []).filter((n) => n.type === type);
 
 /** Builds the SO chain and returns the click handler both SO detail pages pass
- *  straight to <DocumentRelationshipMapModal>. A linked document opens in a NEW
- *  TAB on this tab's company (owner 2026-09-27), so the SO and its map stay
- *  where they were: every handler returns FALSE and the map stays open. The
- *  boolean is kept because the callers close the map on TRUE. */
+ *  straight to <DocumentRelationshipMapModal>. A linked document opens in its
+ *  own tab of the in-app tab strip (owner 2026-09-27); the SO keeps its tab.
+ *  `onNodeClick` returns TRUE when it opened something, so the caller closes
+ *  the map — an in-app notice must render OVER the map instead. */
 export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
   nodes: ChainNode[];
   onNodeClick: (n: ChainNode) => boolean;
@@ -96,7 +96,8 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
      clicks through (2026-08-03). It used to raise a notice that only NAMED the
      doc numbers — and pointed at lists that cannot search by this SO's doc no,
      so the operator was copying numbers by hand. */
-  const { choice, openChoice, closeChoice } = useDocChoice();
+  const openDoc = useOpenDocInTab();
+  const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const showCustomerPo = useCustomerPoNotice();
   const { can, pageAccess } = useAuth();
 
@@ -129,10 +130,10 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
   );
   const onAmendmentClick = useCallback(
     (a: AmendmentChip): boolean => {
-      openDocInNewTab(`/scm/amendments/${a.id}`);
-      return false;
+      openDoc(`/scm/amendments/${a.id}`);
+      return true;
     },
-    [],
+    [openDoc],
   );
 
   /* Pre-MRP SOs (2026-07-09) have no linked PO leg. When the flow has loaded
@@ -285,8 +286,8 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
       // delivery/invoice lands on the filtered list).
       if (n.type === 'Delivery Order' && doNodes.length > 0) {
         if (doNodes.length === 1) {
-          openDocInNewTab(`/scm/delivery-orders/${doNodes[0]!.id}`);
-          return false;
+          openDoc(`/scm/delivery-orders/${doNodes[0]!.id}`);
+          return true;
         }
         openChoice({
           title: 'Delivered on more than one DO',
@@ -297,8 +298,8 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
       }
       if (n.type === 'Sales Invoice' && siNodes.length > 0) {
         if (siNodes.length === 1) {
-          openDocInNewTab(`/scm/sales-invoices/${siNodes[0]!.id}`);
-          return false;
+          openDoc(`/scm/sales-invoices/${siNodes[0]!.id}`);
+          return true;
         }
         openChoice({
           title: 'Billed on more than one invoice',
@@ -318,8 +319,8 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
           return false;
         }
         if (poNodes.length === 1) {
-          openDocInNewTab(`/scm/purchase-orders/${poNodes[0]!.id}`);
-          return false;
+          openDoc(`/scm/purchase-orders/${poNodes[0]!.id}`);
+          return true;
         }
         /* Several POs, one slot. Naming them was never enough — the PO list
            searches its OWN refs (supplier / PO no) and knows nothing about an SO
@@ -360,8 +361,8 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
           return false;
         }
         if (piNodes.length === 1) {
-          openDocInNewTab(`/scm/purchase-invoices/${piNodes[0]!.id}`);
-          return false;
+          openDoc(`/scm/purchase-invoices/${piNodes[0]!.id}`);
+          return true;
         }
         openChoice({
           title: 'Billed on more than one supplier invoice',
@@ -381,8 +382,8 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
           return false;
         }
         if (grnNodes.length === 1) {
-          openDocInNewTab(`/scm/grns/${grnNodes[0]!.id}`);
-          return false;
+          openDoc(`/scm/grns/${grnNodes[0]!.id}`);
+          return true;
         }
         /* Several GRNs and one slot to show them in. The GRN list searches its
            OWN refs (supplier / PO / GRN no) and knows nothing about an SO doc no,
@@ -400,7 +401,7 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
       }
       return false;
     },
-    [notify, openChoice, showCustomerPo, salesOrder?.doc_no, doNodes, siNodes, grnNodes, poNodes, piNodes, candidatePos, canOpenGrn, canOpenPo, canOpenPi],
+    [openDoc, notify, openChoice, showCustomerPo, salesOrder?.doc_no, doNodes, siNodes, grnNodes, poNodes, piNodes, candidatePos, canOpenGrn, canOpenPo, canOpenPi],
   );
 
   const pairing = useMemo<{ kind: PairingKind } | null>(
@@ -408,7 +409,5 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
     [poNodes],
   );
 
-  // A slot standing for several documents: the picked one opens in a new tab too.
-  const pickInNewTab = useCallback((d: DocChoice) => { closeChoice(); openDocInNewTab(d.to); }, [closeChoice]);
-  return { nodes, onNodeClick, amendments, onAmendmentClick, pairing, choice, openChoice, closeChoice, pickChoice: pickInNewTab };
+  return { nodes, onNodeClick, amendments, onAmendmentClick, pairing, choice, openChoice, closeChoice, pickChoice };
 }
