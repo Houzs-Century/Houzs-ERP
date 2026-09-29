@@ -25,7 +25,9 @@ function DefectThumb({ r2Key, contentType }: { r2Key?: string | null; contentTyp
     api
       .fetchBlobUrl(`/api/projects/attachments/${r2Key}`)
       .then((u) => { if (live) { made = u; setUrl(u); } else URL.revokeObjectURL(u); })
-      .catch(() => {});
+      // Preview only — a failed fetch leaves the hatched placeholder; the
+      // full-size viewer surfaces the real error when the photo is opened.
+      .catch(() => { if (live) setUrl(null); });
     return () => { live = false; if (made) URL.revokeObjectURL(made); };
   }, [r2Key, isImage]);
   if (!r2Key || !isImage) return null;
