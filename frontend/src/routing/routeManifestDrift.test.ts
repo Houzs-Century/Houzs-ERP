@@ -82,7 +82,9 @@ describe("executable route contract", () => {
     // account on the P&L's own tree, the Dashboard's forecast side.
     // 162 since 2026-09-21: /scm/finance-dashboard — the statements' actuals
     // beside the forecast, per month or quarter.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(162);
+    // 163 since 2026-09-29: /scm/ar-invoices — the AP list's twin: sales
+    // invoices mirrored beside the other-debtor bills raised there.
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(163);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -122,7 +124,8 @@ describe("executable route contract", () => {
     // 169 since 2026-09-13 — /scm/fair-pending; see the staff-route count above.
     // 170 since 2026-09-21 — /scm/forecast; see the staff-route count above.
     // 171 since 2026-09-21 — /scm/finance-dashboard; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(171);
+    // 172 since 2026-09-29 — /scm/ar-invoices; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(172);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

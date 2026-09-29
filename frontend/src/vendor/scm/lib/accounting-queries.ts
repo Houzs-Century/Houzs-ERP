@@ -403,7 +403,10 @@ export const useChartDelete = () => {
 /* ── Other Debtors (owner 2026-09-03) ───────────────────────────────────────
    Counterparty registry + Debtor Bills (post directly) + Receipts (the PV's
    four layers, AP-Payment-style knock-off, partial included). The GL keeps
-   one control (305-0000); per-party truth lives in these tables. */
+   one control (305-0000); per-party truth lives in these tables.
+   2026-09-29: the Other Debtors page is the registry alone; the bill is
+   raised on the AR Invoices page (ar-invoice-queries.ts lists it beside the
+   sales invoices), the money is received and voided on the Receipts page. */
 /** A debtor: the registry row, plus the party's data as the supplier master carries it (2026-09-21, `debtor-party.ts`). */
 export type OtherDebtor = {
   id: string; name: string; phone: string | null; notes: string | null;
@@ -435,9 +438,14 @@ export const useDebtorDetail = (id: string | null) => useQuery({
   enabled: !!id,
 });
 
+/* A bill or a receipt changes what the AR Invoices page shows (2026-09-29 —
+   the bill is raised there, the receipt on the Receipts page), so the debtor
+   side's mutations refresh that list and its bill pop-out too. */
 const invalidateDebtors = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['other-debtors'] });
   void qc.invalidateQueries({ queryKey: ['other-debtor-detail'] });
+  void qc.invalidateQueries({ queryKey: ['ar-invoices'] });
+  void qc.invalidateQueries({ queryKey: ['ar-bill'] });
 };
 
 export const useCreateDebtor = () => {
@@ -514,6 +522,16 @@ export const useDebtorReceiptAction = () => {
       method: 'POST', body: JSON.stringify(note ? { note } : {}),
     }),
     onSuccess: () => invalidateDebtors(qc),
+  });
+};
+/** Void a POSTED debtor receipt from the Receipts page (owner 2026-09-29): the
+    ODR contra, the ticked bills take their money back, the receipt turns
+    CANCELLED. The receipts list and the debtor side both refresh. */
+export const useVoidDebtorReceipt = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (receiptId: string) => authedFetch<{ ok: boolean }>(`/other-debtors/receipts/${receiptId}/void`, { method: 'POST', body: '{}' }),
+    onSuccess: () => { invalidateDebtors(qc); void qc.invalidateQueries({ queryKey: ['receipts'] }); },
   });
 };
 
