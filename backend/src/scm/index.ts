@@ -49,6 +49,7 @@ import { purchaseInvoiceExports } from "./routes/purchase-invoice-exports";
 import { paymentVouchers } from "./routes/payment-vouchers";
 import { otherDebtors } from "./routes/other-debtors";
 import { apInvoices } from "./routes/ap-invoices";
+import { arInvoices } from "./routes/ar-invoices";
 import { creditNotes } from "./routes/credit-notes";
 import { depositInvoices } from "./routes/deposit-invoices";
 import { receipts } from "./routes/receipts";
@@ -610,6 +611,11 @@ scm.route("/receipts", receipts);
 // purchase invoices it is paid alongside; same area, same PV key family.
 scm.use("/ap-invoices/*", scmAreaGuard("scm.finance.accounting"));
 scm.route("/ap-invoices", apInvoices);
+// AR Invoices (owner 2026-09-29) — the AP list's twin for the money owed TO
+// the company: sales invoices mirrored beside the other-debtor bills. Reads
+// only; the bill's writes stay on /other-debtors. Same area guard.
+scm.use("/ar-invoices/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/ar-invoices", arInvoices);
 // Credit and debit notes (owner 2026-09-12; docs/bugs/0827) — the customer's
 // CN / DN and the supplier's SCN, raised by Finance; same area, same PV key
 // family as the AP invoice beside it.

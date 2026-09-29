@@ -206,6 +206,38 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
 
   const { case: cs, items, attachments, activity, logistics } = detail;
 
+  // Related Cases (owner 2026-09-28): this customer's service-case history up to
+  // and including the current case, oldest -> newest, shown on the supplier doc.
+  // company-scope: filtered by company_id = this case's company in the WHERE below.
+  const relatedCases = (((await c.env.DB.prepare(
+    `SELECT assr_no, complained_date, complaint_issue, issue_category, stage
+       FROM assr_cases
+      WHERE company_id = ?
+        AND archived_at IS NULL
+        AND trim(coalesce(customer_name,'')) <> ''
+        AND lower(trim(coalesce(customer_name,''))) = lower(trim(coalesce(?,'')))
+        AND id <= ?
+      ORDER BY complained_date ASC, id ASC`
+  )
+    .bind((cs as any).company_id ?? 1, cs.customer_name ?? "", id)
+    .all()).results ?? []) as Array<{
+      assr_no: string;
+      complained_date: string | null;
+      complaint_issue: string | null;
+      issue_category: string | null;
+      stage: string;
+    }>);
+  // Fallback so the section always renders at least this case (no/blank name).
+  if (!relatedCases.some((r) => r.assr_no === cs.assr_no)) {
+    relatedCases.push({
+      assr_no: cs.assr_no,
+      complained_date: cs.complained_date,
+      complaint_issue: cs.complaint_issue,
+      issue_category: (cs as any).issue_category ?? null,
+      stage: cs.stage,
+    });
+  }
+
   // ── Company identity (per-company branding) ─────────────────
   // Letterhead / footer / inline labels come from the DOCUMENT's company —
   // the case row's company_id (a 2990 case must print 2990's identity no
@@ -792,9 +824,29 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       padding: 1.8mm 3.6mm; margin-top: 5mm;
     }
     .bar .note { font-family: "IBM Plex Sans", sans-serif; font-size: 9.4pt; font-weight: 400; color: #b8bdb5; letter-spacing: 0; }
+    /* Related Cases timeline (owner 2026-09-28) */
+    .rc-bar { display: flex; justify-content: space-between; align-items: baseline; }
+    .rc-count { font-family: "IBM Plex Sans", sans-serif; font-size: 9.4pt; font-weight: 400; color: #cfd3cc; letter-spacing: 0; }
+    .rc-list { border: 0.4pt solid #d5d5d5; border-top: none; padding: 3.4mm 4mm 1.6mm; }
+    .rc-row { position: relative; padding-left: 8mm; }
+    .rc-dot { position: absolute; left: 1.4mm; top: 0.8mm; width: 3mm; height: 3mm; border-radius: 50%; background: #9aa0a6; box-shadow: 0 0 0 1pt #fff; z-index: 1; }
+    .rc-dot.done { background: #1f9d55; }
+    .rc-dot.cur { background: #c98a1a; box-shadow: 0 0 0 1.4mm rgba(201,138,26,0.18), 0 0 0 1pt #fff; }
+    .rc-dot.void { background: #b23a3a; }
+    .rc-line { position: absolute; left: 2.75mm; top: 3mm; height: 100%; width: 0.6pt; background: #d5d5d5; }
+    .rc-body { padding-bottom: 3mm; }
+    .rc-l1 { font-size: 10.6pt; font-weight: 700; color: #111; }
+    .rc-l1 .no { font-family: "IBM Plex Mono", monospace; }
+    .rc-l2 { font-size: 9pt; color: #6a6a6a; margin-top: 0.3mm; }
+    .rc-badge { display: inline-block; font-size: 7.6pt; font-weight: 700; letter-spacing: 0.4pt; padding: 0.2mm 1.8mm; border-radius: 2mm; margin-left: 2mm; vertical-align: middle; }
+    .rc-badge.done { background: #e3f4ea; color: #1f7a43; }
+    .rc-badge.cur { background: #f9ecd2; color: #9a6a12; }
+    .rc-badge.void { background: #f6e0e0; color: #a12b2b; }
+    .rc-badge.open { background: #eceef0; color: #5a6066; }
     .mgrid { display: grid; border-left: 0.4pt solid #d5d5d5; }
     .mgrid.cols-6 { grid-template-columns: 27mm 1fr 27mm 1fr 27mm 1fr; }
     .mgrid.cols-4 { grid-template-columns: 27mm 1fr 27mm 1fr; }
+    .mgrid.cols-2 { grid-template-columns: 27mm 1fr; }
     .mgrid.cols-8 { grid-template-columns: 22mm 1fr 18mm 1fr 20mm 1fr 17mm 1fr; }
     .mgrid.rule-top { border-top: 1pt solid #141414; }
     .mgrid .lc {
@@ -1142,29 +1194,26 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       photos.push(`<div class="add">＋ Add</div>`);
       const firstItem = (items as any[])[0];
       return `
-    <!-- meta grid -->
-    <div class="mgrid cols-8 rule-top">
+    <!-- meta grid — ASSR No + Reference live in the header ref line above, not repeated here (owner 2026-09-28) -->
+    <div class="mgrid cols-4 rule-top">
       <div class="lc">Request Date</div><div class="vc mono">${fmtDate(cs.complained_date)}</div>
-      <div class="lc">ASSR No</div><div class="vc mono" style="white-space: nowrap;">${esc(cs.assr_no)}</div>
-      <div class="lc">Reference</div><div class="vc mono">${esc(cs.ref_no || "—")}</div>
       <div class="lc">Category</div><div class="vc">${cs.service_category || cs.issue_category ? `<span class="pill-cat">${esc(cs.service_category || cs.issue_category)}</span>` : `<span class="dim">—</span>`}</div>
     </div>
 
     ${(() => {
-      // Return trip + its three key dates — on BOTH the per-trip Return Note
-      // (?round=) and the Supplier Service Order (uses the current trip). Owner
-      // 2026-09-28: the supplier's paper must carry pickup-from-customer,
-      // sent-to-supplier and back-from-supplier dates.
+      // Return trip + its key dates — on BOTH the per-trip Return Note (?round=)
+      // and the Supplier Service Order (uses the current trip). Owner 2026-09-28:
+      // the supplier's paper carries sent-to-supplier and back-from-supplier
+      // dates. Return ref (SVC-RTN) already appears in the header ref line, and
+      // Cust. Pickup is the same date as Sent to Supplier in practice — both dropped.
       const t: any = trip || currentReturn;
       if (!t) return "";
       return `
-    <!-- this trip -->
-    <div class="mgrid cols-4">
-      <div class="lc">Return</div><div class="vc mono">#${esc(t.round_no)}${t.ref_no ? ` · ${esc(t.ref_no)}` : ""}</div>
+    <!-- this trip — Return # dropped (round is implied by the SVC-RTN in the header); owner 2026-09-28 -->
+    <div class="mgrid cols-2">
       <div class="lc">Reason</div><div class="vc">${esc(t.reason || "—")}</div>
     </div>
-    <div class="mgrid cols-6">
-      <div class="lc">Cust. Pickup</div><div class="vc mono">${fmtDate((cs as any).customer_pickup_at)}</div>
+    <div class="mgrid cols-4">
       <div class="lc">Sent to Supplier</div><div class="vc mono">${fmtDate(t.pickup_at)}</div>
       <div class="lc">Back from Supplier</div><div class="vc mono">${fmtDate(t.returned_at)}</div>
     </div>`;
@@ -1191,6 +1240,23 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       <div class="lc"></div><div class="vc"></div>
       <div class="lc">Note</div><div class="vc span3" style="font-weight: 400; color: #6a6a6a; font-size: 10.2pt;">Customer's direct phone &amp; full address are shared after dispatch is confirmed.</div>
     </div>
+
+    <!-- related cases -->
+    <div class="bar rc-bar">Related Cases <span class="rc-count">${relatedCases.length} case${relatedCases.length === 1 ? "" : "s"} for this customer</span></div>
+    <div class="rc-list">${relatedCases.map((rc, i) => {
+      const isCurrent = rc.assr_no === cs.assr_no;
+      const kind = isCurrent ? "cur" : rc.stage === "completed" ? "done" : rc.stage === "voided" ? "void" : "open";
+      const label = isCurrent ? "CURRENT" : rc.stage === "completed" ? "DONE" : rc.stage === "voided" ? "VOIDED" : "OPEN";
+      const desc = String(rc.complaint_issue || rc.issue_category || "").replace(/\s+/g, " ").trim();
+      const shortDesc = desc.length > 72 ? desc.slice(0, 69) + "…" : desc;
+      const last = i === relatedCases.length - 1;
+      return `<div class="rc-row">${last ? "" : `<span class="rc-line"></span>`}<span class="rc-dot ${kind}"></span>
+        <div class="rc-body">
+          <div class="rc-l1"><span class="no">${esc(rc.assr_no)}</span><span class="rc-badge ${kind}">${label}</span></div>
+          <div class="rc-l2">${fmtDate(rc.complained_date)}${shortDesc ? ` · ${esc(shortDesc)}` : ""}</div>
+        </div>
+      </div>`;
+    }).join("")}</div>
 
     <!-- reported issue -->
     <div class="bar">Reported Issue</div>

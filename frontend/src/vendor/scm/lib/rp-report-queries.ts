@@ -33,6 +33,11 @@ export type RpReport = {
       column on every row and category, % of the side's total. inSen − outSen
       is always receipts − payments. */
   layout: { stored: boolean; tree: LaidNode[]; inSen: number; outSen: number };
+  /** The card money the bank has not received (owner 2026-09-28): what was swiped on
+      the card-machine clearing accounts in the period (the settlement module's own
+      movements aside) and what those accounts still hold at the period's end. A
+      swipe reaches the columns only once the acquirer pays it out. */
+  card: { takingsSen: number; transitSen: number; codes: string[] };
 };
 
 export const rpReportPath = (from: string, to: string, accounts: readonly string[], byParty: boolean): string =>

@@ -151,7 +151,7 @@ import { useSoVariantCascade, useSoLineDeliveryDateCascade } from './use-so-vari
 import {
   dropStagedAdd, firstBlankStagedAdd, namedStagedAdds,
   patchStagedAdd, runSoLineWrites, stagedAddDrafts, stagedAddLabel, visibleLineCounts,
-  type StagedAddLine,
+  type StagedAddLine, splitSofaPiecesOnEdit, SOFA_PIECES_SPLIT_DIALOG,
 } from './so-add-lines';
 import {
   readVersionConflict, SoVersionConflictBanner, type SoVersionConflict,
@@ -859,6 +859,8 @@ export const SalesOrderDetail = () => {
     if (savingOrder) return;
     clearSaveFeedback();
 
+    const pieces = splitSofaPiecesOnEdit({ editing: editingDrafts, originals: originalDraftsRef.current, adding: addingDrafts, mintKey: newIdempotencyKey });
+    if (pieces) { setEditingDrafts(pieces.editing); setAddingDrafts(pieces.adding); await notify(SOFA_PIECES_SPLIT_DIALOG); return; }
     /* Backend authors the business-rule blockers; merge the client-only extras
        (blank line, blank staged add, CustomerCard date fault). PATCH below gates. */
     const blankAddPos = firstBlankStagedAdd(addingDrafts);
@@ -2686,8 +2688,8 @@ export const SalesOrderDetail = () => {
         pairing={chainPairing}
       />
       {/* A chain slot standing for several documents opens this chooser instead
-          of a notice that only named them. The picked one opens in a new tab, so
-          the map stays open behind it. */}
+          of a notice that only named them. The picked one opens in its own tab of the
+          in-app strip. */}
       <DocumentChoiceDialog
         prompt={chainChoice}
         onClose={closeChainChoice}

@@ -78,6 +78,7 @@ import type { ExtractedSlip } from "../vendor/scm/components/ScanOrderModal";
 import type { MobileScanPrefill } from "./MobileScan";
 import { ADD_LINE_LABEL } from "../vendor/scm/lib/add-line-handoff";
 import { MobileSkuPicker, type PickedSku } from "./MobileSkuPicker";
+import { SOFA_PIECES_SPLIT_DIALOG } from "../vendor/scm/lib/sofa-piece-lines"; import { splitMobileSofaPieces } from "./mobile-sofa-pieces";
 import {
   useMaintenanceConfig,
   useSpecialAddons,
@@ -1890,6 +1891,8 @@ export function MobileNewSO({
   // ---- Mutations ------------------------------------------------------------
   async function save(asDraft = false) {
     setTouched(true);
+    const pieces = splitMobileSofaPieces(lines, origItems); // one sofa piece = one line
+    if (pieces) { setLines(pieces); await notify(SOFA_PIECES_SPLIT_DIALOG); return; }
     const procOut = asDraft ? "" : procDate;
     const delivOut = asDraft ? "" : delivDate;
     /* The one value bag the EDIT patch and the CREATE body are both built from

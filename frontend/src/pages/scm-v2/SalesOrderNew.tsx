@@ -127,6 +127,7 @@ import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
 import { fmtMoneySen } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { isSofaGroup, pieceShareSen, SOFA_PIECES_SPLIT_NOTICE, splitSofaPieceLines } from '../../vendor/scm/lib/sofa-piece-lines';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -1490,6 +1491,23 @@ export const SalesOrderNew = () => {
       navigate(`/scm/sales-orders/${createdDocNo}?payments=1&retryPayments=1`, {
         state: paymentRetryNavigationState('so', createdDocNo, intents),
       });
+      return;
+    }
+    /* One sofa piece = one line (sofa-piece-lines.ts): the operator sees the
+       split lines before anything is sent. */
+    const pieces = splitSofaPieceLines(lines, {
+      shouldSplit: (l) => isSofaGroup(l.itemGroup),
+      qtyOf: (l) => l.qty,
+      asPiece: (l, i, n) => ({
+        ...l,
+        qty: 1,
+        discountSen: pieceShareSen(l.discountSen, i, n),
+        ...(i === 0 ? {} : { rid: newLine().rid, photoUrls: [], pendingPhotoFiles: [] }),
+      }),
+    });
+    if (pieces) {
+      setLines(pieces);
+      await notify({ title: 'Sofa pieces split', body: SOFA_PIECES_SPLIT_NOTICE });
       return;
     }
     const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);

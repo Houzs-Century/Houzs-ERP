@@ -45,6 +45,12 @@ import {
 } from '../lib/check-stock-availability';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { recordEntityAudit } from '../lib/entity-audit';
+import { buildReturnablePool, type GrnLineRow } from '../lib/returnable-grn-lines';
+import {
+  isPurchaseReturnReasonCode, isPurchaseReturnKind, kindMatchesReason,
+  PURCHASE_RETURN_REASON_CODES,
+} from '../shared/purchase-return-reasons';
+import { chunkIn } from '../lib/paginate-all';
 import {
   PR_HEADER_COLS,
   PR_LIST_SELECT,
@@ -205,43 +211,79 @@ purchaseReturns.get('/', purchaseReturnListHandler);
    return of received goods draws from RECEIPTS, so this read answers the
    POSTED GRN lines received against the PO with remaining (accepted − returned)
    above zero — the same pool /from-grn offers, keyed by PO.
+
+   KEYED ON THE LINE LINK since 2026-09-28 (owner, HC-PO-010114: 「系统找不到 GRN
+   - 但是现实已经received stock」). Matching `grns.purchase_order_id` alone hid
+   every unit received on a receipt HEADED at another purchase order — the same
+   header-FK-only blind spot #4199 fixed for the PO list and the relationship
+   map. One receipt carrying several suppliers' orders is deliberate here (one
+   group, one lorry), so the line link is the truth and the supplier answered is
+   the PO's own. Rules + the legacy header case: lib/returnable-grn-lines.ts.
    Registered BEFORE '/:id' or that route swallows the literal path. */
 purchaseReturns.get('/returnable-grn-lines', async (c) => {
   const sb = c.get('supabase');
   const poId = c.req.query('poId');
   if (!poId) return c.json({ error: 'po_id_required' }, 400);
-  const { data: grnRows, error: gErr } = await scopeToCompany(sb.from('grns')
-    .select('id, grn_number, supplier_id, status')
+
+  /* The purchase order itself — scoped, so another company's PO answers no row
+     and this read can say nothing about it. Its supplier is the one the return
+     is raised against: the goods were bought on THIS order, whoever's receipt
+     they happened to arrive on (owner 2026-09-28 — one lorry, one receipt, two
+     suppliers, deliberately). The old read answered the RECEIPT's supplier,
+     which on a shared receipt is the wrong counterparty to send goods back to. */
+  const { data: poRow, error: poErr } = await scopeToCompany(sb.from('purchase_orders')
+    .select('id, supplier_id')
+    .eq('id', poId), c).maybeSingle();
+  if (poErr) return c.json({ error: 'load_failed', reason: poErr.message }, 500);
+  if (!poRow) return c.json({ error: 'po_not_found' }, 404);
+  const supplierId = (poRow as { supplier_id: string | null }).supplier_id ?? null;
+
+  /* This order's line ids — the LINE link is what says a receipt line was
+     received against this order (lib/returnable-grn-lines.ts explains why the
+     header FK alone hid HC-PO-010114's two units). */
+  const { data: poItems, error: piErr } = await sb.from('purchase_order_items')
+    .select('id').eq('purchase_order_id', poId);
+  if (piErr) return c.json({ error: 'load_failed', reason: piErr.message }, 500);
+  const poItemIds = new Set(((poItems ?? []) as Array<{ id: string }>).map((r) => r.id));
+
+  /* The receipts headed at this order — still read, for the ONE case the line
+     link cannot cover: a line on this order's own receipt that carries no link. */
+  const { data: headerGrns, error: hgErr } = await scopeToCompany(sb.from('grns')
+    .select('id, grn_number, status')
     .eq('purchase_order_id', poId)
     .eq('status', 'POSTED'), c);
+  if (hgErr) return c.json({ error: 'load_failed', reason: hgErr.message }, 500);
+  const headerGrnIds = new Set(((headerGrns ?? []) as Array<{ id: string }>).map((g) => g.id));
+
+  /* Both halves of the pool, read by the two links. */
+  const rows: GrnLineRow[] = [];
+  if (poItemIds.size > 0) {
+    const { data, error } = await chunkIn([...poItemIds], (batch, from, to) =>
+      sb.from('grn_items').select('id, grn_id, purchase_order_item_id, material_kind, item_code, material_name, item_group, variants, qty_accepted, returned_qty, unit_price_sen, rejection_reason').in('purchase_order_item_id', batch).range(from, to));
+    if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+    rows.push(...((data ?? []) as GrnLineRow[]));
+  }
+  if (headerGrnIds.size > 0) {
+    const { data, error } = await chunkIn([...headerGrnIds], (batch, from, to) =>
+      sb.from('grn_items').select('id, grn_id, purchase_order_item_id, material_kind, item_code, material_name, item_group, variants, qty_accepted, returned_qty, unit_price_sen, rejection_reason').in('grn_id', batch).is('purchase_order_item_id', null).range(from, to));
+    if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+    rows.push(...((data ?? []) as GrnLineRow[]));
+  }
+  if (rows.length === 0) return c.json({ lines: [], supplierId });
+
+  /* Only POSTED receipts qualify, and the pool needs each one's number for the
+     'received on' label — read the receipts the lines actually sit on. */
+  const grnIds = [...new Set(rows.map((r) => r.grn_id))];
+  const { data: grnRows, error: gErr } = await chunkIn(grnIds, (batch, from, to) =>
+    scopeToCompany(sb.from('grns').select('id, grn_number, status').in('id', batch), c).range(from, to));
   if (gErr) return c.json({ error: 'load_failed', reason: gErr.message }, 500);
-  const grnList = (grnRows ?? []) as Array<{ id: string; grn_number: string; supplier_id: string | null }>;
-  if (grnList.length === 0) return c.json({ lines: [], supplierId: null });
-  const byGrn = new Map(grnList.map((g) => [g.id, g.grn_number]));
-  const { data: itRows, error: iErr } = await sb.from('grn_items')
-    .select('id, grn_id, material_kind, item_code, material_name, item_group, variants, qty_accepted, returned_qty, unit_price_sen, rejection_reason')
-    .in('grn_id', grnList.map((g) => g.id))
-    .gt('qty_accepted', 0);
-  if (iErr) return c.json({ error: 'load_failed', reason: iErr.message }, 500);
-  const lines = ((itRows ?? []) as Array<{
-    id: string; grn_id: string; material_kind: string | null; item_code: string;
-    material_name: string | null; item_group: string | null; variants: Record<string, unknown> | null;
-    qty_accepted: number; returned_qty: number; unit_price_sen: number; rejection_reason: string | null;
-  }>)
-    .map((r) => ({
-      grnItemId: r.id,
-      grnNumber: byGrn.get(r.grn_id) ?? null,
-      materialKind: r.material_kind,
-      itemCode: r.item_code,
-      materialName: r.material_name,
-      itemGroup: r.item_group,
-      variants: r.variants,
-      unitPriceSen: r.unit_price_sen ?? 0,
-      rejectionReason: r.rejection_reason,
-      remaining: Math.max(0, (r.qty_accepted ?? 0) - (r.returned_qty ?? 0)),
-    }))
-    .filter((l) => l.remaining > 0);
-  return c.json({ lines, supplierId: grnList[0]?.supplier_id ?? null });
+  const postedGrnNumberById = new Map<string, string>();
+  for (const g of ((grnRows ?? []) as Array<{ id: string; grn_number: string; status: string }>)) {
+    if (g.status === 'POSTED') postedGrnNumberById.set(g.id, g.grn_number);
+  }
+
+  const lines = buildReturnablePool(rows, postedGrnNumberById, poItemIds, headerGrnIds);
+  return c.json({ lines, supplierId });
 });
 
 purchaseReturns.get('/:id', async (c) => {
@@ -399,8 +441,16 @@ async function warehouseCodeMap(
 async function writePurchaseReturnMovements(sb: any, prId: string, returnNumber: string, grnId: string | null, userId: string): Promise<string[]> {
   // Multi-company: the PR's movements inherit the PR header's company.
   const { data: prHeader } = await sb.from('purchase_returns')
-    .select('company_id').eq('id', prId).maybeSingle();
-  const prCompanyId = (prHeader as { company_id?: number | null } | null)?.company_id ?? null;
+    .select('company_id, kind, repair_warehouse_id').eq('id', prId).maybeSingle();
+  const prHead = prHeader as { company_id?: number | null; kind?: string | null; repair_warehouse_id?: string | null } | null;
+  const prCompanyId = prHead?.company_id ?? null;
+  /* A REPAIR return does not take the goods off the books: they go to the
+     supplier and are expected back, so each line's OUT is paired with an IN to
+     the repair warehouse. Until then the warehouse did this by hand with a
+     stock transfer, which recorded the move and nothing else (owner
+     2026-09-28). NULL for a CREDIT return, and the DB CHECK guarantees a REPAIR
+     one has it. */
+  const repairWarehouseId = prHead?.kind === 'REPAIR' ? (prHead.repair_warehouse_id ?? null) : null;
   const { data: items } = await sb.from('purchase_return_items')
     .select('id, grn_item_id, item_code, material_name, qty_returned, item_group, variants')
     .eq('purchase_return_id', prId);
@@ -479,6 +529,11 @@ async function writePurchaseReturnMovements(sb: any, prId: string, returnNumber:
       };
     })
     .filter((m): m is NonNullable<typeof m> => m !== null);
+  /* The repair leg. Same line, same quantity, same batch — one movement pair,
+     so the stock is never in two places and never in none. */
+  const repairIns = repairWarehouseId
+    ? movements.map((m) => ({ ...m, movement_type: 'IN' as const, warehouse_id: repairWarehouseId }))
+    : [];
   const movementErrors: string[] = [];
   if (movements.length > 0) {
     /* Capture the best-effort write result so the caller can surface a failed
@@ -486,6 +541,13 @@ async function writePurchaseReturnMovements(sb: any, prId: string, returnNumber:
        the supplier and the caller never told). No rollback; just make it loud. */
     const res = await writeMovements(sb, movements, prCompanyId);
     if (!res.ok) movementErrors.push(`OUT ${returnNumber}: ${res.reason ?? 'unknown'}`);
+    if (repairIns.length > 0) {
+      /* Reported, never assumed: an IN that failed after a clean OUT means the
+         goods left the warehouse and landed nowhere, which is the one outcome
+         a repair return must not hide. */
+      const inRes = await writeMovements(sb, repairIns, prCompanyId);
+      if (!inRes.ok) movementErrors.push(`IN ${returnNumber}: ${inRes.reason ?? 'unknown'}`);
+    }
     /* PR post = stock OUT to supplier → other READY SOs that needed it may
        regress. Re-walk SO allocation. Best-effort. */
     try {
@@ -713,6 +775,47 @@ purchaseReturns.post('/', async (c) => {
   const items = body.items as Array<Record<string, unknown>> | undefined;
   if (!Array.isArray(items) || !items.length) return refuse(400, { error: 'items_required' });
 
+  /* WHY a return happens is now part of raising one (owner 2026-09-28: 「when
+     raise purchase return need input reason and put in remark」). A CODE from
+     the shared catalogue, so the answers can be counted later; the operator's
+     own words ride in `notes` beside it, and the per-line `reason` stays free
+     text for the one line that differs. Refused HERE, before any write: a
+     return that cannot say why is the document nobody can read six months on. */
+  const reasonCode = typeof body.reason === 'string' ? body.reason.trim() : '';
+  if (!reasonCode) return refuse(400, { error: 'reason_required', message: 'Pick a reason for the return.' });
+  if (!isPurchaseReturnReasonCode(reasonCode)) {
+    return refuse(400, {
+      error: 'reason_invalid',
+      message: `Not a return reason. One of: ${PURCHASE_RETURN_REASON_CODES.join(', ')}.`,
+    });
+  }
+
+  /* CREDIT (goods gone, credit note owed) or REPAIR (goods coming back). The
+     pair is one decision — a REPAIR return that said DAMAGED would chase a
+     credit note for goods the supplier is fixing. */
+  const kind = typeof body.kind === 'string' && body.kind ? body.kind : 'CREDIT';
+  if (!isPurchaseReturnKind(kind)) return refuse(400, { error: 'kind_invalid', message: 'A return is CREDIT or REPAIR.' });
+  if (!kindMatchesReason(kind, reasonCode)) {
+    return refuse(400, {
+      error: 'kind_reason_mismatch',
+      message: kind === 'REPAIR'
+        ? 'The reason for a repair return is Send for repair.'
+        : 'Send for repair is the reason for a repair return — switch the type.',
+    });
+  }
+
+  /* A repair must say WHERE the goods sit while the supplier has them. Without
+     it the stock leaves the books exactly as the hand-made stock transfers did,
+     and "what is at the supplier" has no answer. The DB CHECK backstops this. */
+  const repairWarehouseId = typeof body.repairWarehouseId === 'string' && body.repairWarehouseId
+    ? body.repairWarehouseId : null;
+  if (kind === 'REPAIR' && !repairWarehouseId) {
+    return refuse(400, { error: 'repair_warehouse_required', message: 'Say which warehouse holds the goods while they are being repaired.' });
+  }
+  if (kind !== 'REPAIR' && repairWarehouseId) {
+    return refuse(400, { error: 'repair_warehouse_not_applicable', message: 'Only a repair return names a repair warehouse.' });
+  }
+
   const sb = c.get('supabase'); const user = c.get('user');
 
   /* CROSS-COMPANY SOURCE (lib/companyScope) — the bare-create path takes the
@@ -916,7 +1019,9 @@ purchaseReturns.post('/', async (c) => {
     grn_id: grnId,
     supplier_id: body.supplierId,
     return_date: dateOrNull(body.returnDate) ?? todayMyt(),
-    reason: (body.reason as string | undefined) ?? null,
+    reason: reasonCode,
+    kind,
+    repair_warehouse_id: repairWarehouseId,
     refund_sen: totalRefund,
     notes: (body.notes as string | undefined) ?? null,
     status: 'POSTED',

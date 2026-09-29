@@ -117,7 +117,7 @@ import { formatPhone } from '../../vendor/shared/phone';
 import { ProductModels, NewModelDialog } from './ProductModels';
 import { VariantsTab } from './products/VariantsTab';
 import { Categories } from './Categories';
-import { useBrandingPool } from '../../vendor/scm/lib/product-models-queries';
+import { useBrandingPool, useProductModel } from '../../vendor/scm/lib/product-models-queries';
 import { useQueryClient } from '@tanstack/react-query';
 import { parseMoneyToSen } from '../../lib/money';
 import styles from './Products.module.css';
@@ -3736,6 +3736,8 @@ const ProductSuppliersDrawer = ({
   row, onClose,
 }: { row: MfgProductRow; onClose: () => void }) => {
   const q = useMfgProductSuppliers(row.id);
+  // base_model is blank on a 1:1 model (BUG-31), so name the model from its own row.
+  const modelQ = useProductModel(row.model_id ?? undefined);
   const suppliers = q.data?.suppliers ?? [];
   const anchor = q.data?.anchor ?? null;
   // Cost is fixed on the SUPPLIER side (owner ruling); the anchor card's CTA and
@@ -3792,7 +3794,7 @@ const ProductSuppliersDrawer = ({
                 <div style={{ marginTop: 4 }}>
                   <CategorySwapSelect kind="model" id={row.model_id} category={row.category} />
                   <p style={{ marginTop: 2, fontSize: 'var(--fs-11)', color: '#767b6e' }}>
-                    Belongs to model {row.base_model ?? ''} — changing the category moves the whole model and all its SKUs.
+                    Belongs to model {modelQ.data?.model.model_code ?? row.base_model ?? ''} — changing the category moves the whole model and all its SKUs.
                   </p>
                 </div>
               )}

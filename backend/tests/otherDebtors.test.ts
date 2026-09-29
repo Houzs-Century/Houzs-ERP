@@ -473,6 +473,70 @@ describe('the Receipt — four layers, partial knock-off, Dr bank / Cr control',
   });
 });
 
+/* Void (owner 2026-09-29, the Other Debtors page now the registry alone and
+   the Receipts page the one door for the money): a POSTED receipt's one undo
+   — the ODR contra, the bills' money given back, the receipt CANCELLED; a
+   draft and a void one refuse; the cancel key gates it. */
+describe('voiding a posted receipt — the ODR contra, the money back on the bills', () => {
+  const raisePosted = async (app: Hono, billId: string, amountSen: number) => {
+    const res = await post(app, '/d1/receipts', { receiptDate: '2026-09-08', bankAccountCode: '310-0010', postNow: true, allocations: [{ billId, amountSen }] });
+    expect(res.status, await res.clone().text()).toBe(201);
+    return (await res.json() as { receipt: { id: string; receiptNumber: string } }).receipt;
+  };
+
+  test('void reverses the ODR, gives the bill its money back (PAID → POSTED) and turns the receipt CANCELLED; twice refuses', async () => {
+    const tables = baseTables();
+    const app = harness(tables);
+    const bill = await makeBill(app, tables);
+    const billRow = tables.acc_debtor_bills.find((b) => b.bill_number === bill.billNumber)!;
+    const receipt = await raisePosted(app, billRow.id, 50000);
+    expect(billRow.status).toBe('PAID');
+
+    const voided = await post(app, `/receipts/${receipt.id}/void`);
+    expect(voided.status, await voided.clone().text()).toBe(200);
+    expect(tables.acc_debtor_receipts.find((x) => x.id === receipt.id)!.status).toBe('CANCELLED');
+    expect(billRow.received_sen).toBe(0);
+    expect(billRow.status).toBe('POSTED');
+    /* The ledger keeps both sides: the original marked reversed, the contra the mirror of it. */
+    const orig = tables.journal_entries.find((j) => j.source_type === 'ODR' && j.source_doc_no === receipt.receiptNumber)!;
+    expect(orig.reversed).toBe(true);
+    const contra = tables.journal_entries.find((j) => j.id !== orig.id && String(j.source_type).startsWith('ODR'))!;
+    expect(contra).toBeTruthy();
+    const cl = tables.journal_entry_lines.filter((l) => l.journal_entry_id === contra.id);
+    expect(cl.find((l) => l.account_code === '310-0010')).toMatchObject({ credit_sen: 50000 });
+    expect(cl.find((l) => l.account_code === '305-0000')).toMatchObject({ debit_sen: 50000 });
+
+    const again = await post(app, `/receipts/${receipt.id}/void`);
+    expect(again.status).toBe(409);
+    expect((await again.json() as { error: string }).error).toBe('void_twice');
+    expect(billRow.received_sen).toBe(0);
+  });
+
+  test('a partial receipt gives back only its own slice; a draft is not voidable; the cancel key is required', async () => {
+    const tables = baseTables();
+    const app = harness(tables);
+    const bill = await makeBill(app, tables);
+    const billRow = tables.acc_debtor_bills.find((b) => b.bill_number === bill.billNumber)!;
+    const first = await raisePosted(app, billRow.id, 20000);
+    const second = await raisePosted(app, billRow.id, 30000);
+    expect(billRow.received_sen).toBe(50000);
+
+    expect((await post(app, `/receipts/${first.id}/void`)).status).toBe(200);
+    expect(billRow.received_sen).toBe(30000);
+    expect(billRow.status).toBe('POSTED');
+    expect(tables.acc_debtor_receipts.find((x) => x.id === second.id)!.status).toBe('POSTED');
+
+    const draftRes = await post(app, '/d1/receipts', { bankAccountCode: '310-0010', allocations: [{ billId: billRow.id, amountSen: 10000 }] });
+    const draft = (await draftRes.json() as { receipt: { id: string } }).receipt;
+    const notPosted = await post(app, `/receipts/${draft.id}/void`);
+    expect(notPosted.status).toBe(409);
+    expect((await notPosted.json() as { error: string }).error).toBe('not_posted');
+
+    const noKey = harness(tables, ['scm.payment_voucher.create']);
+    expect((await post(noKey, `/receipts/${second.id}/void`)).status).toBe(403);
+  });
+});
+
 describe('numbers follow the document date (owner 2026-09-07: 要根据文件日期)', () => {
   test('a March bill mints ODB-2603 and its March receipt ODR-2603 whatever today is; a later date edit keeps the number', async () => {
     const tables = baseTables();
