@@ -121,7 +121,34 @@ async function readWorld(sql, cols) {
      WHERE schemaname = 'scm' AND indexdef ILIKE 'CREATE UNIQUE%'
        AND tablename = ANY(${[...new Set(refs.map((r) => r.table))]})`;
 
-  return { products, refs, ids, missing, stock, uniques };
+  const masters = await sql`
+    SELECT code, to_jsonb(p) AS j FROM scm.mfg_products p WHERE company_id = ${CO} AND code = ANY(${codes})`;
+  const mainSuppliers = await sql`
+    SELECT b.item_code, s.code AS supplier
+      FROM scm.supplier_material_bindings b LEFT JOIN scm.suppliers s ON s.id = b.supplier_id
+     WHERE b.company_id = ${CO} AND b.item_code = ANY(${codes})
+       AND b.material_kind::text = 'mfg_product' AND b.is_main_supplier = true`;
+
+  return { products, refs, ids, missing, stock, uniques, masters, mainSuppliers };
+}
+
+/* The kept row is what every moved line prices and costs against from now on, so
+   a difference is the thing to settle in SKU Master before the apply. Same /
+   differs only: amounts stay out of this public log. */
+const PRICE_FIELDS = ["base_price_sen", "sell_price_sen", "pwp_price_sen", "cost_price_sen", "price_matrix"];
+function masterComparison(world, p) {
+  const j = (code) => world.masters.find((m) => m.code === code)?.j ?? null;
+  const drop = j(p.drop);
+  const keep = j(p.keep);
+  if (!drop || !keep) return [];
+  const out = PRICE_FIELDS.filter((f) => f in keep || f in drop).map((f) => {
+    const same = JSON.stringify(drop[f] ?? null) === JSON.stringify(keep[f] ?? null);
+    const blank = keep[f] == null || keep[f] === 0;
+    return `${f} ${same ? "same" : "DIFFERS"}${blank && !same ? " (kept code has none)" : ""}`;
+  });
+  const sup = (code) => world.mainSuppliers.filter((b) => b.item_code === code).map((b) => b.supplier ?? "?").sort().join("/") || "none";
+  out.push(`main supplier: dropped ${sup(p.drop)}, kept ${sup(p.keep)}`);
+  return out;
 }
 
 async function main() {
@@ -142,6 +169,7 @@ async function main() {
     const dropStock = world.stock.filter((s) => s.code === p.drop).map((s) => `${s.warehouseCode} ${s.ledgerQty}`);
     log(`  "${p.drop}" -> "${p.keep}"`);
     log(`     dropped row: ${p.dropRowStatus ?? "not in the catalogue"}; stock on it ${dropStock.join(", ") || "none"}; on the kept code ${keepStock.join(", ") || "none"}`);
+    log(`     SKU master: ${masterComparison(world, p).join("; ")}`);
     for (const r of p.rekey) log(`     re-key ${r.rows} row(s) in scm.${r.table}.${r.col}`);
     for (const r of p.stay) log(`     stays  ${r.rows} row(s) in scm.${r.table}.${r.col} (catalogue-side, inert once the row is INACTIVE)`);
     if (p.retire) log("     then switch the dropped row off (INACTIVE)");
