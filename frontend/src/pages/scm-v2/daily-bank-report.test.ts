@@ -1,8 +1,9 @@
 /* The Daily Bank table model (owner 2026-09-29) — ONE model read by the page,
    the image and the PDF. Pinned: a section per money account in the board's
    order with its Bank Balance; the rows in the sample's order, a group row
-   only when it has lines; the figures in their columns (received, paid, the
-   last column for pending, B/F, available and transit); the last section for
+   only when it has lines; the figures in their columns, one kind each (owner
+   2026-09-29: RECEIVED · PAYMENT — paid today and pending · BALANCE — B/F,
+   available, transit); the last section for
    what names no bank, only when there is some; the day's label. */
 import { describe, expect, test } from 'vitest';
 import type { DailyBankBoard } from './accounting-phase1-queries';
@@ -30,14 +31,14 @@ describe('dailyBankSections', () => {
       transitSen: 50, availableWithTransitSen: 1_250,
     })] }));
     expect(s).toMatchObject({ key: '310-0020', title: 'CASH AT BANK - HLBB', code: '310-0020', bankBalanceSen: 1_300 });
-    expect(s!.rows.map((r) => [r.kind, r.who, r.doc, r.receivedSen, r.paidSen, r.lastSen])).toEqual([
+    expect(s!.rows.map((r) => [r.kind, r.who, r.doc, r.receivedSen, r.paymentSen, r.balanceSen])).toEqual([
       ['bf', 'Balance B/F', '', null, null, 1_000],
       ['receivedHead', 'Received today', '', 500, null, null],
       ['received', 'Hookka', 'OR-1', 500, null, null],
       ['paidHead', 'Paid today', '', null, 200, null],
       ['paid', '', 'PV-1', null, 200, null],                       // nobody named: the line stays, the name blank
-      ['pendingHead', 'Pending payment (checked, awaiting approval)', '', null, null, 100],
-      ['pending', 'UNICOM', 'HPV-1', null, null, 100],
+      ['pendingHead', 'Pending payment (checked, awaiting approval)', '', null, 100, null],   // pending sits in PAYMENT with what was paid
+      ['pending', 'UNICOM', 'HPV-1', null, 100, null],
       ['available', 'Available (after pending)', '', null, null, 1_200],
       ['transitHead', 'In transit (swiped, not yet in this bank)', '', null, null, 50],
       ['transit', 'PBB', '326-0010', null, null, 50],
@@ -60,11 +61,11 @@ describe('dailyBankSections', () => {
     }));
     const last = sections.at(-1)!;
     expect(last).toMatchObject({ key: 'unassigned', title: 'Not tied to a bank', code: null, bankBalanceSen: null });
-    expect(last.rows.map((r) => [r.kind, r.who, r.description, r.lastSen])).toEqual([
-      ['pendingHead', 'Pending payment (checked, awaiting approval)', '', 70],
-      ['pending', 'PETTY', '320-0000 · Float', 70],
-      ['transitHead', 'In transit (no bank named for it)', '', 30],
-      ['transit', '未标银行', 'EDC', 30],
+    expect(last.rows.map((r) => [r.kind, r.who, r.description, r.paymentSen, r.balanceSen])).toEqual([
+      ['pendingHead', 'Pending payment (checked, awaiting approval)', '', 70, null],
+      ['pending', 'PETTY', '320-0000 · Float', 70, null],
+      ['transitHead', 'In transit (no bank named for it)', '', null, 30],
+      ['transit', '未标银行', 'EDC', null, 30],
     ]);
   });
 });

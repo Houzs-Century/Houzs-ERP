@@ -12,7 +12,7 @@ import autoTable from 'jspdf-autotable';
 import { DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, ensurePdfCjkFont, fmtDocStamp, type PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { fmtSenPlain } from '../../vendor/shared/format';
 import type { DailyBankBoard } from './accounting-phase1-queries';
-import { DAILY_BANK_HEAD, DB_COLORS, boardDayLabel, boardTotalsLine, cellMoney, dailyBankSections, isDetailRow, rowColor } from './daily-bank-report';
+import { DAILY_BANK_HEAD, DB_COLORS, balanceColor, boardDayLabel, boardTotalsLine, cellMoney, dailyBankSections, isDetailRow, rowColor } from './daily-bank-report';
 
 const rgb = (hex: string): [number, number, number] => {
   const h = hex.replace('#', '');
@@ -52,8 +52,8 @@ export async function generateDailyBankPdf(board: DailyBankBoard, opts?: { actio
       ],
       /* A group's own words span the party, number and description columns; a line keeps its three. */
       body: sec.rows.map((r) => (isDetailRow(r.kind)
-        ? [`· ${r.who}`, r.doc, r.description, cellMoney(r.receivedSen), cellMoney(r.paidSen), cellMoney(r.lastSen)]
-        : [{ content: r.who, colSpan: 3 }, cellMoney(r.receivedSen), cellMoney(r.paidSen), cellMoney(r.lastSen)])),
+        ? [`· ${r.who}`, r.doc, r.description, cellMoney(r.receivedSen), cellMoney(r.paymentSen), cellMoney(r.balanceSen)]
+        : [{ content: r.who, colSpan: 3 }, cellMoney(r.receivedSen), cellMoney(r.paymentSen), cellMoney(r.balanceSen)])),
       theme: 'plain',
       rowPageBreak: 'avoid',
       styles: { ...DOC_TABLE_STYLES, fontSize: 8 },
@@ -74,8 +74,8 @@ export async function generateDailyBankPdf(board: DailyBankBoard, opts?: { actio
         if (strong) data.cell.styles.fontStyle = 'bold';
         if (r.kind === 'available') data.cell.styles.fillColor = rgb(DB_COLORS.band);
         if (data.column.index === 3 && r.receivedSen != null) data.cell.styles.textColor = rgb(DB_COLORS.green);
-        if (data.column.index === 4 && r.paidSen != null) data.cell.styles.textColor = rgb(DB_COLORS.red);
-        if (data.column.index === 5 && (r.kind === 'available' || r.kind === 'withTransit') && (r.lastSen ?? 0) < 0) data.cell.styles.textColor = rgb(DB_COLORS.red);
+        /* PAYMENT: paid red, pending orange — the row's own colour. BALANCE: red when a balance is negative. */
+        if (data.column.index === 5 && r.balanceSen != null) data.cell.styles.textColor = rgb(balanceColor(r));
       },
     });
     y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 5;

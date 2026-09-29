@@ -1593,7 +1593,7 @@ Total: 1345 route registrations across 190 files.
 - L40  PATCH  /:key
 
 ## backend/src/routes/assr_print.ts  (1)
-- L145  GET    /:id
+- L146  GET    /:id
 
 ## backend/src/routes/audit.ts  (1)
 - L19  GET    /

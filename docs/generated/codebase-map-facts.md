@@ -28,7 +28,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/assrAccess.ts` | 0 | 101 |
 | `backend/src/routes/assrFormIntake.ts` | 6 | 952 |
 | `backend/src/routes/assrPortal.ts` | 14 | 540 |
-| `backend/src/routes/assr_print.ts` | 1 | 1344 |
+| `backend/src/routes/assr_print.ts` | 1 | 1355 |
 | `backend/src/routes/audit.ts` | 1 | 74 |
 | `backend/src/routes/auth.ts` | 13 | 867 |
 | `backend/src/routes/brandShare.ts` | 2 | 53 |
@@ -264,7 +264,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2996 files, 862316 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2996 files, 862372 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
