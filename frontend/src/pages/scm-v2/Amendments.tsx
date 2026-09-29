@@ -174,6 +174,13 @@ const buildAmendmentColumns = (
       sortFn: (a, b) => a.reason.localeCompare(b.reason),
     },
     {
+      key: 'approval_remarks', label: 'Approval Remarks', width: 220, minWidth: 140, sortable: true,
+      accessor: (r) => r.approvalRemarks || <span style={{ color: 'var(--fg-muted)' }}>—</span>,
+      searchValue: (r) => r.approvalRemarks,
+      exportValue: (r) => r.approvalRemarks || '—',
+      sortFn: (a, b) => a.approvalRemarks.localeCompare(b.approvalRemarks),
+    },
+    {
       key: 'status', label: 'Status', width: 210, sortable: true, groupable: true,
       /* An amendment collapses to Requested / Approved / Rejected; a
          cancellation says which signature it is on ("waiting for level-2

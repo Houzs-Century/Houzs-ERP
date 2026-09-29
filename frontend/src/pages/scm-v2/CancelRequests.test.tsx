@@ -16,7 +16,7 @@ type Row = import('../../vendor/scm/lib/document-cancel-queries').CancelRequestR
 const base = (over: Partial<Row>): Row => ({
   id: 'r', company_id: 1, doc_type: 'SO', doc_key: 'SO-1', doc_number: 'SO-1', doc_status_at_request: 'CONFIRMED',
   status: 'REQUESTED', reason: 'Customer cancelled', requested_by: 11, requested_by_name: 'Amy', requested_at: '2026-09-08T01:00:00Z',
-  l1_by: null, l1_by_name: null, l1_at: null, l2_by: null, l2_by_name: null, l2_at: null,
+  l1_by: null, l1_by_name: null, l1_at: null, l1_remark: null, l2_by: null, l2_by_name: null, l2_at: null, l2_remark: null,
   rejected_by: null, rejected_by_name: null, rejected_at: null, reject_reason: null, executed_by: null, executed_at: null,
   ...over,
 });
@@ -47,7 +47,7 @@ vi.mock('../../vendor/scm/lib/suppliers-queries', () => ({ useCancelPurchaseOrde
 vi.mock('../../auth/AuthContext', () => ({
   useAuth: () => ({ user: { id: viewer.id }, can: (p: string) => viewer.perms.includes('*') || viewer.perms.includes(p) }),
 }));
-vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirm }));
+vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirm, usePrompt: () => async () => '' }));
 vi.mock('../../vendor/scm/components/PromptDialog', () => ({ usePrompt: () => vi.fn(async () => null) }));
 vi.mock('../../vendor/scm/lib/dialog-service', () => ({ serviceNotify: (o: unknown) => notify(o) }));
 

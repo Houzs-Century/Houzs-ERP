@@ -19,12 +19,13 @@
    stays APPROVED and "Cancel now" retries it.
    ---------------------------------------------------------------------------- */
 
-import { useConfirm } from '../components/ConfirmDialog';
+import { useConfirm, usePrompt as useConfirmWithText } from '../components/ConfirmDialog';
 import { usePrompt } from '../components/PromptDialog';
 import { serviceNotify } from './dialog-service';
 import { useUpdateMfgSalesOrderStatus } from './sales-order-queries';
 import { useCancelPurchaseOrder } from './suppliers-queries';
 import {
+  APPROVE_REMARK_INPUT,
   approveLabel,
   docTypeOfRow,
   isFinalLevel,
@@ -65,6 +66,7 @@ export function useCancelRequestActions(
 ): CancelRequestActions {
   const askPrompt = usePrompt();
   const askConfirm = useConfirm();
+  const askApprove = useConfirmWithText();
   const approveSo = useApproveCancelRequest('so');
   const approvePo = useApproveCancelRequest('po');
   const rejectSo = useRejectCancelRequest('so');
@@ -98,16 +100,18 @@ export function useCancelRequestActions(
 
   const approve = async (row: CancelRequestRow) => {
     const final = approveIsFinal(row);
-    if (!(await askConfirm({
+    const remark = await askApprove({
       title: final ? `Approve and cancel ${row.doc_number}?` : `Give level-1 approval to cancel ${row.doc_number}?`,
       body: final
         ? 'This is the final approval. The document is cancelled on your signature.'
         : 'Level 2 still has to approve after you. Nothing is cancelled yet.',
       confirmLabel: final ? 'Approve & cancel' : 'Approve (level 1)',
       danger: final,
-    }))) return;
+      input: APPROVE_REMARK_INPUT,
+    });
+    if (remark == null) return;
     try {
-      const res = await (docTypeOfRow(row) === 'so' ? approveSo : approvePo).mutateAsync({ key: row.doc_key });
+      const res = await (docTypeOfRow(row) === 'so' ? approveSo : approvePo).mutateAsync({ key: row.doc_key, remark: remark || null });
       changed();
       if (res.execute) await executeNow(row);
       else void serviceNotify({ title: 'Level-1 approval recorded', body: `${row.doc_number} now waits for the level-2 approver.` });

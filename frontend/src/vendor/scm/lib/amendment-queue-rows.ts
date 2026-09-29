@@ -22,6 +22,7 @@
 
 import type { AmendmentRow } from './so-amendment-queries';
 import {
+  approvalRemarksOf,
   cancelRequestLine,
   docTypeOfRow,
   pendingLevel,
@@ -57,6 +58,9 @@ export type AmendmentQueueRow = {
   requestedByStaffId: string | null;
   requestedByName: string | null;
   reason: string;
+  /** What the cancellation's approvers wrote when signing (DEV-17); '' for an
+   *  amendment, whose approver works on its job card. */
+  approvalRemarks: string;
   /** Requested / Approved / Rejected — the queue's three chips. */
   bucket: AmendmentBucket;
   /** The precise state, for the status cell: an amendment's simplified pill
@@ -116,6 +120,7 @@ export const amendmentQueueRowOf = (a: AmendmentRow, reference: string): Amendme
   requestedByStaffId: a.requested_by ?? null,
   requestedByName: null,
   reason: (a.reason ?? '').trim(),
+  approvalRemarks: '',
   bucket: amendmentBucketOf(a.status),
   statusLabel: simplifiedAmendmentPill(a.status).label,
   createdAt: a.created_at ?? null,
@@ -141,6 +146,7 @@ export const cancelQueueRowOf = (r: CancelRequestRow): AmendmentQueueRow => ({
   requestedByStaffId: null,
   requestedByName: r.requested_by_name ?? null,
   reason: r.reason.trim(),
+  approvalRemarks: approvalRemarksOf(r),
   bucket: cancelBucketOf(r.status),
   statusLabel: cancelRequestLine(r),
   createdAt: r.requested_at,

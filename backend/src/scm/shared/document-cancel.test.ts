@@ -20,6 +20,7 @@ import {
   levelsFor,
   pendingLevel,
   readReason,
+  readRemark,
   rejectRefusal,
   signaturesGiven,
   statusAfterApproval,
@@ -49,6 +50,19 @@ describe('the reason', () => {
   it('is flattened and bounded', () => {
     expect(readReason('  customer   changed\n\nmind  ')).toEqual({ ok: true, reason: 'customer changed mind' });
     expect(readReason('x'.repeat(1001))).toMatchObject({ ok: false, refusal: { error: 'reason_too_long' } });
+  });
+});
+
+describe("an approver's remark", () => {
+  it('is optional — blank or absent is null', () => {
+    expect(readRemark(undefined)).toEqual({ ok: true, remark: null });
+    expect(readRemark(null)).toEqual({ ok: true, remark: null });
+    expect(readRemark('   ')).toEqual({ ok: true, remark: null });
+  });
+  it('is flattened and bounded like the reason, but has no minimum', () => {
+    expect(readRemark(' ok\n\nfine ')).toEqual({ ok: true, remark: 'ok fine' });
+    expect(readRemark('x'.repeat(1001))).toMatchObject({ ok: false, refusal: { error: 'remark_too_long' } });
+    expect(readRemark(7)).toMatchObject({ ok: false, refusal: { error: 'remark_invalid' } });
   });
 });
 

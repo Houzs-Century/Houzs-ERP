@@ -21,7 +21,7 @@ type Row = import('./document-cancel-queries').CancelRequestRow;
 const row = (over: Partial<Row> = {}): Row => ({
   id: 'r1', company_id: 1, doc_type: 'SO', doc_key: 'SO-1', doc_number: 'SO-1', doc_status_at_request: 'CONFIRMED',
   status: 'REQUESTED', reason: 'Customer cancelled', requested_by: 11, requested_by_name: 'Amy', requested_at: '2026-09-08T01:00:00Z',
-  l1_by: null, l1_by_name: null, l1_at: null, l2_by: null, l2_by_name: null, l2_at: null,
+  l1_by: null, l1_by_name: null, l1_at: null, l1_remark: null, l2_by: null, l2_by_name: null, l2_at: null, l2_remark: null,
   rejected_by: null, rejected_by_name: null, rejected_at: null, reject_reason: null, executed_by: null, executed_at: null,
   ...over,
 });
@@ -112,8 +112,8 @@ describe('the hooks', () => {
     expect(spy).toHaveBeenCalledWith({ queryKey: ['document-cancel-request', 'po', 'po-1'] });
     expect(spy).toHaveBeenCalledWith({ queryKey: ['document-cancel-requests'] });
 
-    await renderHook(() => useApproveCancelRequest('po'), { wrapper }).result.current.mutateAsync({ key: 'po-1' });
-    expect(fetchMock).toHaveBeenLastCalledWith('/mfg-purchase-orders/po-1/cancel-request/approve', { method: 'POST' });
+    await renderHook(() => useApproveCancelRequest('po'), { wrapper }).result.current.mutateAsync({ key: 'po-1', remark: 'Checked with supplier' });
+    expect(fetchMock).toHaveBeenLastCalledWith('/mfg-purchase-orders/po-1/cancel-request/approve', { method: 'POST', body: JSON.stringify({ remark: 'Checked with supplier' }) });
     await renderHook(() => useRejectCancelRequest('po'), { wrapper }).result.current.mutateAsync({ key: 'po-1', reason: 'Already received' });
     expect(fetchMock).toHaveBeenLastCalledWith('/mfg-purchase-orders/po-1/cancel-request/reject', { method: 'POST', body: JSON.stringify({ reason: 'Already received' }) });
     await renderHook(() => useWithdrawCancelRequest('po'), { wrapper }).result.current.mutateAsync({ key: 'po-1' });
@@ -121,7 +121,7 @@ describe('the hooks', () => {
   });
 
   it('never sends a status — nothing in this module cancels a document', async () => {
-    await renderHook(() => useApproveCancelRequest('so'), { wrapper }).result.current.mutateAsync({ key: 'SO-1' });
+    await renderHook(() => useApproveCancelRequest('so'), { wrapper }).result.current.mutateAsync({ key: 'SO-1', remark: null });
     for (const [path, init] of fetchMock.mock.calls) {
       expect(path).not.toMatch(/\/status$|\/cancel$/);
       expect(String(init?.body ?? '')).not.toMatch(/CANCELLED/i);
