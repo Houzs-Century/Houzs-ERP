@@ -1,0 +1,11 @@
+{
+  "BUG-38": {
+    "ruling": "Sim 2026-09-29: keep HAPPI SLEEP; the AKEMI codes carry SO and PO lines. AutoCount's AK-SOLITUDE MATT (Q/S/SK/SP) already maps to HAPPI SLEEP. K and SS exist only as AKEMI and are not duplicates.",
+    "pairs": [
+      { "drop": "AKEMI SOLITUDE MATT (Q)",  "keep": "HAPPI SLEEP SOLITUDE MATT (Q)" },
+      { "drop": "AKEMI SOLITUDE MATT (S)",  "keep": "HAPPI SLEEP SOLITUDE MATT (S)" },
+      { "drop": "AKEMI SOLITUDE MATT (SK)", "keep": "HAPPI SLEEP SOLITUDE MATT (SK)" },
+      { "drop": "AKEMI SOLITUDE MATT (SP)", "keep": "HAPPI SLEEP SOLITUDE MATT (SP)" }
+    ]
+  }
+}
