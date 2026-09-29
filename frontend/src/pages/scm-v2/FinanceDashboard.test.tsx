@@ -7,7 +7,8 @@
    reach the query; the cost structure's measures and Show pills (a pill off takes
    a group from the chart, never from the table; Show all / Clear); the cash flow's tabs and
    detail; the Performance card's three readings per group, its group and
-   metric tabs; the ratios. The server half is backend/tests/accountingDashboard.test.ts. */
+   metric tabs — its table side by side, the readings under each period, a row
+   a group (owner 2026-09-29: 左右左右，不要上下); the ratios. The server half is backend/tests/accountingDashboard.test.ts. */
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -96,6 +97,9 @@ const rowText = (id: string): string => String((document.querySelector(`[data-ro
 /** The chart nodes inside one card, by the card's title. */
 const inCard = (title: string, selector: string): number => screen.getByLabelText(title).querySelectorAll(selector).length;
 const cells = (id: string): string[] => [...(document.querySelector(`[data-row="${id}"]`) as HTMLElement).querySelectorAll('td')].slice(1).map((c) => String(c.textContent));
+/** A side-by-side row's cells, per period and reading: the figure, then its grey % when it has one. */
+const side = (id: string): string[] => [...(document.querySelector(`[data-row="${id}"]`) as HTMLElement).querySelectorAll('td[data-cell]')]
+  .map((c) => [c.querySelector('[data-v]')?.textContent, c.querySelector('[data-pct]')?.textContent].filter((t): t is string => !!t).join(' '));
 
 beforeEach(() => { lastParams.value = null; });
 
@@ -148,40 +152,69 @@ describe('the Financial Dashboard page', () => {
     expect(lastParams.value).toMatchObject({ from: null, to: null });
   });
 
-  test('the Performance card: actual and performance bars side by side, the forecast a line; a group narrows all three; gross profit and GP % compare the orders with the forecast', () => {
+  /* The table side by side (owner 2026-09-29: comparison 可以是左右左右吗？像我给你的
+     sample，不要上下): under each period its readings, a row per group with the
+     total under them, the grey % beside a figure; the gaps below, one figure a period. */
+  test('the Performance card: actual and performance bars side by side, the forecast a line; the table puts the readings side by side under each period, a row a group; a group narrows everything; gross profit and GP % compare the orders with the forecast', () => {
     render(<MemoryRouter><FinanceDashboard /></MemoryRouter>);
-    /* All groups, Sales: the three readings and the gaps. */
-    expect(cells('actual-sales')).toEqual(['100,000.00', '50,000.00', '—']);
-    expect(cells('performance-sales')).toEqual(['400,000.00', '200,000.00', '—']);
-    expect(cells('forecast-sales')).toEqual(['—', '120,000.00', '150,000.00']);
+    const table = screen.getByLabelText('Performance figures');
+    /* Each period splits into the three readings, left to right. */
+    expect([...table.querySelectorAll('th[data-source]')].map((h) => h.textContent)).toEqual([
+      'Actual (P&L)', 'Performance (SO)', 'Forecast', 'Actual (P&L)', 'Performance (SO)', 'Forecast', 'Actual (P&L)', 'Performance (SO)', 'Forecast',
+    ]);
+    /* A row a group — its share of the column's sales in grey — then the total. */
+    expect(side('perf:sofa')).toEqual([
+      '80,000.00 80.0%', '300,000.00 75.0%', '—',
+      '50,000.00 100.0%', '200,000.00 100.0%', '100,000.00 83.3%',
+      '—', '—', '150,000.00 100.0%',
+    ]);
+    expect(side('perf:bedding')).toEqual([
+      '20,000.00 20.0%', '100,000.00 25.0%', '—',
+      '0.00 0.0%', '0.00 0.0%', '0.00 0.0%',
+      '—', '—', '—',
+    ]);
+    expect(side('perf:dining')).toEqual(['—', '—', '—', '0.00 0.0%', '0.00 0.0%', '20,000.00 16.7%', '—', '—', '—']);
+    expect(side('perf:total')).toEqual(['100,000.00', '400,000.00', '—', '50,000.00', '200,000.00', '120,000.00', '—', '—', '150,000.00']);
+    expect([...table.querySelectorAll('tbody tr[data-row^="perf:"]')].map((r) => r.getAttribute('data-row'))).toEqual(['perf:sofa', 'perf:bedding', 'perf:dining', 'perf:total']);
+    /* The gaps: one figure per period. */
     expect(cells('actual-vs-forecast')).toEqual(['—', '(70,000.00)', '—']);
     expect(cells('actual-vs-forecast-pct')).toEqual(['—', '-58.3%', '—']);
     expect(cells('performance-vs-forecast')).toEqual(['—', '+80,000.00', '—']);
     expect(cells('actual-vs-performance')).toEqual(['(300,000.00)', '(150,000.00)', '—']);
-    expect(cells('sofa-performance')).toEqual(['300,000.00', '200,000.00', '—']);
+    /* The old stacked rows are gone. */
+    expect(document.querySelector('[data-row="actual-sales"]')).toBeNull();
+    expect(document.querySelector('[data-row="sofa-performance"]')).toBeNull();
     /* The actual bar beside the performance stack; the forecast line only where a period has one. */
     const PERF = 'Performance vs forecast by product group';
     expect(inCard(PERF, '[data-group="actual"]')).toBe(2);
     expect(inCard(PERF, '[data-group="sofa"]')).toBe(2);
     expect(inCard(PERF, '[data-group="bedding"]')).toBe(1);
     expect(inCard(PERF, '[data-point="forecast-sales"]')).toBe(2);
-    /* One group: every side is that group's. */
+    /* One group: its row alone, with its share; the gaps are that group's. */
     fireEvent.click(screen.getByRole('tab', { name: 'Bedding' }));
-    expect(cells('actual-sales')).toEqual(['20,000.00', '0.00', '—']);
-    expect(cells('performance-sales')).toEqual(['100,000.00', '0.00', '—']);
-    expect(cells('forecast-sales')).toEqual(['—', '0.00', '—']);
+    expect(side('perf:bedding')).toEqual([
+      '20,000.00 20.0%', '100,000.00 25.0%', '—',
+      '0.00 0.0%', '0.00 0.0%', '0.00 0.0%',
+      '—', '—', '—',
+    ]);
+    expect(document.querySelector('[data-row="perf:sofa"]')).toBeNull();
+    expect(document.querySelector('[data-row="perf:total"]')).toBeNull();
+    expect(cells('actual-vs-forecast')).toEqual(['—', '0.00', '—']);
     expect(inCard(PERF, '[data-group="performance"]')).toBe(1);
-    expect(document.querySelector('[data-row="sofa-performance"]')).toBeNull();
-    /* Gross profit and GP %: the orders against the forecast. */
+    /* Gross profit: the orders against the forecast, the margin in grey; the cost under the total. */
     fireEvent.click(screen.getByRole('tab', { name: 'All' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Gross profit' }));
-    expect(cells('performance-gp')).toEqual(['160,000.00', '80,000.00', '—']);
-    expect(cells('forecast-gp')).toEqual(['—', '48,000.00', '60,000.00']);
+    expect([...screen.getByLabelText('Performance figures').querySelectorAll('th[data-source]')].map((h) => h.textContent)).toEqual([
+      'Performance (SO)', 'Forecast', 'Performance (SO)', 'Forecast', 'Performance (SO)', 'Forecast',
+    ]);
+    expect(side('perf:sofa')).toEqual(['120,000.00 40.0%', '—', '80,000.00 40.0%', '40,000.00 40.0%', '—', '60,000.00 40.0%']);
+    expect(side('perf:total')).toEqual(['160,000.00 40.0%', '—', '80,000.00 40.0%', '48,000.00 40.0%', '—', '60,000.00 40.0%']);
+    expect(side('perf:cost')).toEqual(['240,000.00', '—', '120,000.00', '72,000.00', '—', '90,000.00']);
     expect(cells('gp-vs-forecast')).toEqual(['—', '+32,000.00', '—']);
+    expect(cells('gp-vs-forecast-pct')).toEqual(['—', '+66.7%', '—']);
     expect(inCard(PERF, '[data-point="forecast-gp"]')).toBe(2);
     fireEvent.click(screen.getByRole('tab', { name: 'GP %' }));
-    expect(cells('performance-gp-pct')).toEqual(['40.0%', '40.0%', '—']);
-    expect(cells('forecast-gp-pct')).toEqual(['—', '40.0%', '40.0%']);
+    expect(side('perf:total')).toEqual(['40.0%', '—', '40.0%', '40.0%', '—', '40.0%']);
     expect(cells('gp-pct-vs-forecast')).toEqual(['—', '0.0 pp', '—']);
   });
 
