@@ -10,7 +10,7 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, test } from "vitest";
 import { nextAssrNumber } from "../src/services/assr";
-import { archiveSupplierReturn, listSupplierReturns } from "../src/services/assrSupplierReturns";
+import { archiveSupplierReturn, ensureFirstSupplierReturn, listSupplierReturns } from "../src/services/assrSupplierReturns";
 import { findRef, yymmFor } from "../src/services/documentRefs";
 
 const SEP = Date.parse("2026-09-15T10:00:00Z");
@@ -71,5 +71,24 @@ describe("service-case document numbers", () => {
       [1, `${series}-0001`],
       [3, `${series}-0003`],
     ]);
+  });
+
+  test("a case with no trip gets trip #1 + its number when seeded; never twice, never revived", async () => {
+    const kase = await env.DB.prepare(
+      `INSERT INTO assr_cases (assr_no, doc_no, supplier_pickup_at) VALUES ('ASSR/2609-901', 'SO-T3', '2026-09-20') RETURNING id`,
+    ).first<{ id: number }>();
+    const caseId = Number(kase!.id);
+
+    await ensureFirstSupplierReturn(env, caseId, 1);
+    await ensureFirstSupplierReturn(env, caseId, 1);
+    const rows = (await listSupplierReturns(env, caseId)) as Array<{ id: number; round_no: number; ref_no: string; pickup_at: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ round_no: 1, pickup_at: "2026-09-20" });
+    expect(rows[0].ref_no).toMatch(/^SVC-RTN-\d{4}-\d{4}$/);
+
+    // Ops removed the only trip on purpose — seeding must not bring it back.
+    await archiveSupplierReturn(env, caseId, rows[0].id, 1);
+    await ensureFirstSupplierReturn(env, caseId, 1);
+    expect(await listSupplierReturns(env, caseId)).toHaveLength(0);
   });
 });

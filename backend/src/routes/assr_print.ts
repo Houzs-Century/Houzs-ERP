@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import { requirePermission } from "../middleware/auth";
 import { getAssrDetail } from "../services/assr";
+import { ensureFirstSupplierReturn, listSupplierReturns } from "../services/assrSupplierReturns";
 import { assrCaseRowInScope, assrCallerIsScoped, stripCreditorFields } from "../services/assrVisibility";
 import { allowedCompanyIds } from "../scm/lib/companyScope";
 import {
@@ -192,6 +193,16 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
      cannot drift between the two surfaces again. */
   if (!(await assrCaseRowInScope(c as any, detail.case as any))) {
     return c.text("Not found", 404);
+  }
+
+  /* The Supplier Service Order is the paper that goes to the supplier, so it
+     must carry a Return No. A case moved onto the supplier leg by the stage
+     dropdown never had a trip opened, so it had no SVC-RTN and printed without
+     one. Seed trip #1 (and its number) here, after the scope checks. */
+  if (isSupplier && !((detail as any).supplier_returns ?? []).length) {
+    const userId = Number((c as any).get?.("userId") ?? 0) || null;
+    await ensureFirstSupplierReturn(c.env, id, userId);
+    (detail as any).supplier_returns = await listSupplierReturns(c.env, id);
   }
 
   /* Supplier identity is office + supplier-portal only (Nick 2026-07-15:

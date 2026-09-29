@@ -214,6 +214,37 @@ export async function patchSupplierReturn(
   return r.meta.changes > 0;
 }
 
+// A case that reached the supplier leg through the stage dropdown (or was
+// printed for the supplier) before anyone pressed "Add supplier return" had NO
+// trip, so no SVC-RTN number, and the Supplier Service Order printed without a
+// Return No. Seed trip #1 from the case's own supplier columns — only when the
+// case has never had a trip (a removed trip means ops meant it; don't revive).
+// Single guarded INSERT, so two concurrent prints can't both seed round 1. No
+// stage move and no activity row: this records the trip the case is already on.
+// Never throws — a print or stage change must not fail because of it.
+export async function ensureFirstSupplierReturn(env: Env, assrId: number, userId: number | null): Promise<void> {
+  try {
+    const r = await env.DB.prepare(
+      `INSERT INTO assr_supplier_returns (assr_id, round_no, pickup_at, returned_at, creditor_code, created_by)
+       SELECT c.id, 1, c.supplier_pickup_at, c.items_ready_at, c.creditor_code, ?
+         FROM assr_cases c
+        WHERE c.id = ?
+          AND NOT EXISTS (SELECT 1 FROM assr_supplier_returns sr WHERE sr.assr_id = c.id)`
+    )
+      .bind(userId || null, assrId)
+      .run();
+    if (!r.meta.changes) return;
+    const round = await env.DB.prepare(
+      `SELECT id FROM assr_supplier_returns WHERE assr_id = ? AND round_no = 1 AND archived_at IS NULL`
+    )
+      .bind(assrId)
+      .first<{ id: number }>();
+    if (round) await assignSupplierReturnRef(env, Number(round.id), userId || null);
+  } catch (e) {
+    console.warn(`[assr.supplier-return] could not seed trip 1 for case ${assrId}:`, e instanceof Error ? e.message : e);
+  }
+}
+
 // Remove a mistakenly-recorded trip, then re-mirror onto the new current trip.
 export async function archiveSupplierReturn(
   env: Env,
