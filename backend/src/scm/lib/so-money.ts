@@ -267,6 +267,34 @@ export async function convertGuard(
   };
 }
 
+/**
+ * May this payment come off a CANCELLED order (owner 2026-09-29, 1a: the same
+ * swipe keyed on two orders — the copy on the cancelled one goes)? Only Finance,
+ * the correction right, and only while the money it brought is still on the
+ * order: a refund voucher or a conversion has already drawn on the booked
+ * money, and taking a payment out from under them would leave more refunded or
+ * moved than was ever paid. A payment that never booked is not in the pool.
+ */
+export async function cancelledRemovalGuard(
+  sb: Db, companyId: number, p: { docNo: string; paymentId: string; mayAmend: boolean },
+): Promise<{ ok: true } | { ok: false; status: 403 | Refusal; error: string; message: string }> {
+  if (!p.mayAmend) {
+    return { ok: false, status: 403, error: 'cancelled_payment_finance_only', message: 'Only Finance (the payment-correction right) can remove a payment from a cancelled order.' };
+  }
+  const m = await orderMoney(sb, companyId, p.docNo);
+  if (!m.ok) return m;
+  const pay = m.money.payments.find((x) => x.id === p.paymentId);
+  if (!pay || !pay.booked) return { ok: true };
+  const takenSen = m.money.refundedSen + m.money.convertedSen;
+  if (m.money.bookedSen - pay.amountSen < takenSen) {
+    return {
+      ok: false, status: 409, error: 'cancelled_money_taken',
+      message: `${fmtSen(takenSen)} of ${p.docNo}'s money is refunded or moved to another order. Undo that first, then remove this payment.`,
+    };
+  }
+  return { ok: true };
+}
+
 export type ConvertSource = {
   docNo: string; customer: string | null; status: string | null;
   /** The day it was cancelled; null while it stands. */

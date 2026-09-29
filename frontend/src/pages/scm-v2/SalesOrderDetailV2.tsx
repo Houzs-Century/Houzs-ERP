@@ -1495,6 +1495,7 @@ function SalesOrderDetailV2ReadOnly() {
                     grandTotalSen={salesOrder.local_total_sen ?? 0}
                     currency={salesOrder.currency}
                     locked={!canEditPayments}
+                    cancelledRemoval={soStatus === "cancelled" && !migratedLocked}
                     draftUnlocked={soStatus === "draft"}
                     slip={{ slipKey: salesOrder.slip_key ?? null, fetcher: fetchSoSlipUrl }}
                     initialDrafts={paymentRetryDrafts}

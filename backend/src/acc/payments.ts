@@ -219,21 +219,26 @@ async function postConvertedPayment(sb: any, p: SoPaymentRow, opts: { dryRun?: b
 
 /** Void the ledger entry for a DELETED payment row — the payment's own
     (SOPAY), or the transfer a converted row booked (SOCONV; docs/bugs/0927).
-    Idempotent; nothing to reverse (an imported/never-posted row) is a success. */
+    Idempotent; nothing to reverse (an imported/never-posted row) is a success.
+    The contra is dated today unless `onOriginalDate` — a payment that should
+    never have been recorded (see ReverseJournalInput.onOriginalDate). */
 export async function reverseSoPayment(
   sb: any,
   paymentId: string,
   soDocNo: string,
+  opts: { onOriginalDate?: boolean } = {},
 ): Promise<ReverseJournalResult> {
   const own = await reverseJournal(sb, {
     sourceType: 'SOPAY',
     sourceDocNo: paymentId,
+    onOriginalDate: opts.onOriginalDate,
     narration: (orig) => `Reversal of ${orig.je_no} — payment on ${soDocNo} deleted`,
   });
   if (!own.ok || own.status !== 'nothing_to_reverse') return own;
   return reverseJournal(sb, {
     sourceType: CONVERT_SOURCE,
     sourceDocNo: paymentId,
+    onOriginalDate: opts.onOriginalDate,
     narration: (orig) => `Reversal of ${orig.je_no} — money moved to ${soDocNo} moved back`,
   });
 }

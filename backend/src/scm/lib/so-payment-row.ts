@@ -19,7 +19,7 @@ import { CONVERTED_METHOD, postSoPayment, reverseSoPayment, type SoPaymentRow } 
 import { afterConvertedRowBooked, afterConvertedRowRemoved } from './so-money';
 import { mytDateOf, todayMyt } from './my-time';
 import { ledgerFactsOf, repostSoPaymentEdit } from '../../acc/payment-repost';
-import { createReceiptForPayment } from '../../acc/receipts';
+import { createReceiptForPayment, removeDraftReceiptForPayment } from '../../acc/receipts';
 import { cancelDepositInvoiceForPaymentBestEffort, issueDepositInvoiceBestEffort, reissueDepositInvoiceBestEffort } from '../../acc/deposit-invoices';
 import { companyCodeById } from './doc-no';
 import { recomputeSiPaidForOrder } from './si-order-deposit';
@@ -403,14 +403,20 @@ export async function recordSoPaymentRow(
  * deleted and nothing else. Both halves are best-effort — the operator's delete
  * has already committed and neither a ledger nor a status roll may turn it into
  * a 500 they would retry.
+ *
+ * `neverHappened` — Finance removing a payment from a CANCELLED order (owner
+ * 2026-09-29, 1a 2a): the row should never have been recorded (the same swipe
+ * keyed on two orders), so its contra is dated on the original entry's own
+ * day, like a correction (acc/payment-repost.ts), and its DRAFT receipt goes
+ * with it. Every other delete is an event of today, as before.
  */
 export async function afterSoPaymentRemoved(
   sb: any,
-  p: { paymentId: string; docNo: string; companyId: number | null },
-): Promise<LedgerTouch> {
+  p: { paymentId: string; docNo: string; companyId: number | null; neverHappened: boolean },
+): Promise<LedgerTouch & { draftReceipt: string | null }> {
   /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): void the
      deleted payment's ledger entry. A row that never booked no-ops. */
-  const unbooked = await reverseSoPayment(sb, p.paymentId, p.docNo);
+  const unbooked = await reverseSoPayment(sb, p.paymentId, p.docNo, { onOriginalDate: p.neverHappened });
   if (!unbooked.ok) {
     /* eslint-disable-next-line no-console */
     console.error('[acc] SO payment reversal failed:', p.paymentId, unbooked.status, unbooked.reason);
@@ -427,7 +433,14 @@ export async function afterSoPaymentRemoved(
      This is the direction that matters: an invoice left reading PAID after the
      payment behind it was reversed tells the office to collect nothing. */
   await recomputeSiPaidForOrder(sb, p.docNo, p.companyId);
-  return { originalJeNo: voided?.originalJeNo ?? null, contraJeNo: voided?.jeNo ?? null, jeNo: null };
+  let draftReceipt: string | null = null;
+  if (p.neverHappened) {
+    const gone = await removeDraftReceiptForPayment(sb, { source: 'SOPAY', paymentId: p.paymentId, companyId: p.companyId });
+    if (gone.ok) draftReceipt = gone.orNumber;
+    /* eslint-disable-next-line no-console */
+    else console.error('[acc] draft receipt not removed with its payment:', p.paymentId, gone.reason);
+  }
+  return { originalJeNo: voided?.originalJeNo ?? null, contraJeNo: voided?.jeNo ?? null, jeNo: null, draftReceipt };
 }
 
 /* ── Mirror rows — the money that LEFT an order (owner 2026-09-16) ──────────
