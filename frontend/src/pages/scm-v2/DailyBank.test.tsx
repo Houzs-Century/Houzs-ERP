@@ -80,7 +80,7 @@ const rowsOf = (key: string, kind: string): HTMLElement[] => {
   }
   return out;
 };
-const col = (tr: HTMLElement, c: 'received' | 'paid' | 'last'): string => String(tr.querySelector(`[data-col="${c}"]`)?.textContent);
+const col = (tr: HTMLElement, c: 'received' | 'payment' | 'balance'): string => String(tr.querySelector(`[data-col="${c}"]`)?.textContent);
 
 describe('DailyBank board, by bank', () => {
   test('the three totals stay on top; the dark bar names the day', () => {
@@ -99,7 +99,7 @@ describe('DailyBank board, by bank', () => {
     expect(section('310-0020').textContent).toContain('CASH AT BANK - HLBB');
     expect((document.querySelector('[data-bank-balance="310-0020"]') as HTMLElement).textContent).toBe('64,134.35');
     expect(kindsOf('310-0020')).toEqual(['bf', 'receivedHead', 'received', 'paidHead', 'paid', 'pendingHead', 'pending', 'available', 'transitHead', 'transit', 'withTransit']);
-    expect(col(rowsOf('310-0020', 'bf')[0]!, 'last')).toBe('61,726.99');
+    expect(col(rowsOf('310-0020', 'bf')[0]!, 'balance')).toBe('61,726.99');
     const received = rowsOf('310-0020', 'received')[0]!;
     expect(received.textContent).toContain('· Hookka');
     expect(received.textContent).toContain('2990-MOR-2609-009');
@@ -107,16 +107,20 @@ describe('DailyBank board, by bank', () => {
     expect(col(received, 'received')).toBe('2,850.00');
     const paid = rowsOf('310-0020', 'paid')[0]!;
     expect(paid.textContent).toContain('· Tan Yong Hong');
-    expect(col(paid, 'paid')).toBe('442.64');
+    expect(col(paid, 'payment')).toBe('442.64');
     const pending = rowsOf('310-0020', 'pending')[0]!;
     expect(pending.textContent).toContain('· UNICOM MARKETING SDN BHD');
     expect(pending.textContent).toContain('2990-HPV-2609-023');
-    expect(col(pending, 'last')).toBe('10,836.00');
-    expect(col(rowsOf('310-0020', 'available')[0]!, 'last')).toBe('53,298.35');
+    /* Paid and pending sit in the ONE payment column (owner 2026-09-29: 你看 paid amount 不在同一个 column); the balance column carries none of them. */
+    expect(col(pending, 'payment')).toBe('10,836.00');
+    expect(col(pending, 'balance')).toBe('');
+    expect(col(paid, 'balance')).toBe('');
+    expect(col(rowsOf('310-0020', 'available')[0]!, 'balance')).toBe('53,298.35');
     const transit = rowsOf('310-0020', 'transit')[0]!;
     expect(transit.textContent).toContain('· PBB');
-    expect(col(transit, 'last')).toBe('37,503.52');
-    expect(col(rowsOf('310-0020', 'withTransit')[0]!, 'last')).toBe('90,801.87');
+    expect(col(transit, 'balance')).toBe('37,503.52');
+    expect(col(rowsOf('310-0020', 'withTransit')[0]!, 'balance')).toBe('90,801.87');
+    expect([...document.querySelectorAll('th[scope="col"]')].slice(0, 6).map((h) => h.textContent)).toEqual(['PAY TO / FROM', 'DOC NO.', 'DESCRIPTION', 'RECEIVED (RM)', 'PAYMENT (RM)', 'BALANCE (RM)']);
   });
 
   test('a bank with nothing on the day shows its B/F and its available alone; what names no bank waits in the last section', () => {
@@ -125,7 +129,7 @@ describe('DailyBank board, by bank', () => {
     expect(section('unassigned').textContent).toContain('Not tied to a bank');
     expect(kindsOf('unassigned')).toEqual(['transitHead', 'transit']);
     expect(rowsOf('unassigned', 'transit')[0]!.textContent).toContain('未标银行');
-    expect(col(rowsOf('unassigned', 'transit')[0]!, 'last')).toBe('3,365.00');
+    expect(col(rowsOf('unassigned', 'transit')[0]!, 'balance')).toBe('3,365.00');
   });
 
   test('Get image, PNG and PDF: the PDF prints the board the page shows', async () => {

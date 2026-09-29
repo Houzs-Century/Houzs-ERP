@@ -11,7 +11,8 @@
 // 的银行, and 要 the line with it added): the three totals stay on top; under a
 // dark bar, one table per money account with its Bank Balance in the header —
 // Balance B/F, Received today, Paid today, Pending payment, Available (after
-// pending), In transit per acquirer, Available + in transit. The table model
+// pending), In transit per acquirer, Available + in transit — in three number
+// columns, one kind each: RECEIVED, PAYMENT (paid today and pending), BALANCE. The table model
 // is ONE (daily-bank-report.ts), read by this page, the image and the PDF.
 // Get image copies a PNG to the clipboard for WhatsApp (download fallback);
 // PNG saves it; PDF saves the same table on the letterhead.
@@ -24,7 +25,7 @@ import { fmtSen, fmtSenPlain } from '../../vendor/shared/format';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DateField } from "../../vendor/scm/components/DateField";
-import { DAILY_BANK_HEAD, DB_COLORS, boardDayLabel, cellMoney, dailyBankSections, drawDailyBankCanvas, isDetailRow, rowColor, type DailyBankRow } from './daily-bank-report';
+import { DAILY_BANK_HEAD, DB_COLORS, balanceColor, boardDayLabel, cellMoney, dailyBankSections, drawDailyBankCanvas, isDetailRow, rowColor, type DailyBankRow } from './daily-bank-report';
 import { generateDailyBankPdf } from './daily-bank-pdf';
 
 const fmt = (sen: number | null | undefined) => fmtSen(sen);
@@ -70,15 +71,15 @@ const BoardRow = ({ r }: { r: DailyBankRow }) => {
   const detail = isDetailRow(r.kind);
   const strong = r.kind === 'available' || r.kind === 'withTransit' || r.kind === 'bf' || r.kind.endsWith('Head');
   const band = r.kind === 'available' ? { background: DB_COLORS.band } : undefined;
-  const lastColor = (r.kind === 'available' || r.kind === 'withTransit') && (r.lastSen ?? 0) < 0 ? DB_COLORS.red : color;
   return (
     <tr data-row={r.kind} style={band}>
       <td style={{ ...tdCell, color, fontWeight: strong ? 600 : undefined, paddingLeft: detail ? 22 : 10 }}>{detail ? `· ${r.who}` : r.who}</td>
       <td style={{ ...tdCell, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-11)', color: DB_COLORS.soft, whiteSpace: 'nowrap' }}>{r.doc}</td>
       <td style={{ ...tdCell, color: detail ? DB_COLORS.soft : color }}>{r.description}</td>
       <td data-col="received" style={{ ...moneyCell, color: DB_COLORS.green, fontWeight: r.kind === 'receivedHead' ? 600 : undefined }}>{cellMoney(r.receivedSen)}</td>
-      <td data-col="paid" style={{ ...moneyCell, color: DB_COLORS.red, fontWeight: r.kind === 'paidHead' ? 600 : undefined }}>{cellMoney(r.paidSen)}</td>
-      <td data-col="last" style={{ ...moneyCell, color: lastColor, fontWeight: strong ? 700 : undefined }}>{cellMoney(r.lastSen)}</td>
+      {/* PAYMENT holds what was paid today (red) and what is pending (orange); BALANCE the running figures (owner 2026-09-29: 一栏一种数字). */}
+      <td data-col="payment" style={{ ...moneyCell, color, fontWeight: r.kind === 'paidHead' || r.kind === 'pendingHead' ? 600 : undefined }}>{cellMoney(r.paymentSen)}</td>
+      <td data-col="balance" style={{ ...moneyCell, color: balanceColor(r), fontWeight: strong ? 700 : undefined }}>{cellMoney(r.balanceSen)}</td>
     </tr>
   );
 };
