@@ -2602,7 +2602,7 @@ function bindingStatus(skuCount: number, boundCount: number): {
   label: string;
 } {
   if (boundCount === 0) return { tone: 'none', label: 'not mapped' };
-  if (boundCount >= skuCount) return { tone: 'all', label: `all ${skuCount} mapped` };
+  if (boundCount >= skuCount) return { tone: 'all', label: `all ${skuCount} mapped · edit price in the table below` };
   return { tone: 'mixed', label: `mixed ${boundCount}/${skuCount}` };
 }
 
@@ -2932,7 +2932,7 @@ const ModelSkuPickerDialog = ({
                               : noSkus
                                 ? 'No active SKUs under this Model'
                                 : fullyBound
-                                  ? 'All SKUs under this Model already mapped'
+                                  ? 'Already mapped to this supplier. Close this and edit its price in the SKU Mappings table.'
                                   : ''
                           }
                         >
