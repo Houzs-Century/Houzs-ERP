@@ -1206,16 +1206,17 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       // the supplier's paper carries sent-to-supplier and back-from-supplier
       // dates. Return ref (SVC-RTN) already appears in the header ref line, and
       // Cust. Pickup is the same date as Sent to Supplier in practice — both dropped.
+      // Owner 2026-09-29: ALWAYS print these rows on the supplier order (blank "—"
+      // when no return trip exists yet) so the paper form is complete — never omit them.
       const t: any = trip || currentReturn;
-      if (!t) return "";
       return `
     <!-- this trip — Return # dropped (round is implied by the SVC-RTN in the header); owner 2026-09-28 -->
     <div class="mgrid cols-2">
-      <div class="lc">Reason</div><div class="vc">${esc(t.reason || "—")}</div>
+      <div class="lc">Reason</div><div class="vc">${esc(t?.reason || "—")}</div>
     </div>
     <div class="mgrid cols-4">
-      <div class="lc">Sent to Supplier</div><div class="vc mono">${fmtDate(t.pickup_at)}</div>
-      <div class="lc">Back from Supplier</div><div class="vc mono">${fmtDate(t.returned_at)}</div>
+      <div class="lc">Sent to Supplier</div><div class="vc mono">${fmtDate(t?.pickup_at)}</div>
+      <div class="lc">Back from Supplier</div><div class="vc mono">${fmtDate(t?.returned_at)}</div>
     </div>`;
     })()}
 
