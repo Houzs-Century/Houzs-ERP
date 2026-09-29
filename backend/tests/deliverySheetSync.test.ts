@@ -151,6 +151,18 @@ describe("toSheetRecord — the AutoCount-named record the sheet writes", () => 
   test("East Malaysia branches route EAST", () => {
     expect(toSheetRecord({ ...HEAD, sales_location: "SRW WAREHOUSE" }, []).Region).toBe("EAST");
   });
+
+  test("DEV-25: Penang has one spelling on the sheet whether the order is native or AutoCount-era", () => {
+    // Native ERP order: address4 blank, customer_state canonical "Pulau Pinang".
+    expect(toSheetRecord({ ...HEAD, customer_state: "Pulau Pinang" }, []).InvAddr4).toBe("Penang");
+    // AutoCount-era order: address4 typed by hand.
+    expect(toSheetRecord({ ...HEAD, address4: "Penang" }, []).InvAddr4).toBe("Penang");
+    expect(toSheetRecord({ ...HEAD, address4: "P.PINANG" }, []).InvAddr4).toBe("Penang");
+    expect(toSheetRecord({ ...HEAD, address4: "KL" }, []).InvAddr4).toBe("Kuala Lumpur");
+    // Not a state (a street line in address4) is left as typed.
+    expect(toSheetRecord({ ...HEAD, address4: "Lorong Lembah 3" }, []).InvAddr4).toBe("Lorong Lembah 3");
+    expect(toAssrLegRecords({ ...ASSR, addr4: "Pulau Pinang" })[0]!.InvAddr4).toBe("Penang");
+  });
 });
 
 describe("parsers", () => {

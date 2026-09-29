@@ -16,6 +16,7 @@ import { LOCATION_MAP } from "../services/autocount-master-maps";
 import { bookSpellingOrOwn, resolveAcAgent } from "../services/autocount-writeback";
 import { summariseReadiness } from "../scm/lib/so-readiness";
 import { SO_DELIVERED_OR_BEYOND } from "../scm/shared/so-deliverable-states";
+import { canonicalizeMyState } from "../scm/lib/canonical-state";
 
 /** One head row, as the feed SQL below returns it. Every date is `::text`
  *  because postgres.js leaves `date` columns as strings but turns
@@ -348,6 +349,18 @@ export function sheetRegion(salesLocation: string | null, addr3: string | null):
   return null;
 }
 
+/** The state column (InvAddr4) in the SHEET's vocabulary. AutoCount-era rows
+ *  carry the typed "Penang" while the ERP stores "Pulau Pinang" (mig 0175), and
+ *  the dispatch team filters on "Penang" — so a native order dropped out of
+ *  their Penang filter (DEV-25). Every spelling of a state lands on one word;
+ *  an unrecognised value (a street line in address4) passes through. */
+export function sheetStateSpelling(raw: string | null): string | null {
+  const s = blankToNull(raw);
+  if (!s) return null;
+  const canonical = canonicalizeMyState(s);
+  return canonical === "Pulau Pinang" ? "Penang" : canonical;
+}
+
 /** The derived readiness label in the SHEET's vocabulary. The SO list says
  *  "PARTIAL" (every main item in, an accessory short); the dispatch team's word
  *  for that, and the one 70 migrated orders already carry, is "READY (PARTIAL)". */
@@ -380,7 +393,7 @@ export function resolveSheetRemark2(remark2Header: string | null, lines: Readonl
 export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow>): DeliverySheetRecord {
   const salesLocation = bookSpellingOrOwn(row.sales_location, LOCATION_MAP);
   const addr3 = blankToNull(row.address3) ?? blankToNull([row.postcode, row.city].filter(Boolean).join(" "));
-  const addr4 = blankToNull(row.address4) ?? blankToNull(row.customer_state);
+  const addr4 = sheetStateSpelling(blankToNull(row.address4) ?? blankToNull(row.customer_state));
   const remark2 = resolveSheetRemark2(row.remark2, lines);
   return {
     DocNo: row.linked_ac_docno ?? row.doc_no,

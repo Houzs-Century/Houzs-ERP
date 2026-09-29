@@ -34,7 +34,7 @@
  */
 import { LOCATION_MAP } from "../services/autocount-master-maps";
 import { bookSpellingOrOwn } from "../services/autocount-writeback";
-import { sheetRegion, type DeliverySheetRecord } from "./delivery-sheet-feed";
+import { sheetRegion, sheetStateSpelling, type DeliverySheetRecord } from "./delivery-sheet-feed";
 
 export type AssrLegKind = "INSPECT" | "PICKUP" | "DELIVERY";
 
@@ -152,7 +152,7 @@ function legBase(row: AssrFeedRow): Omit<AssrLegRecord, "Kind" | "DocNo" | "Tran
     InvAddr1: blankToNull(row.addr1),
     InvAddr2: blankToNull(row.addr2),
     InvAddr3: addr3,
-    InvAddr4: blankToNull(row.addr4),
+    InvAddr4: sheetStateSpelling(row.addr4),
     Attention: null,
     SOUDF_VENUE: null,
     Status: "PENDING",
