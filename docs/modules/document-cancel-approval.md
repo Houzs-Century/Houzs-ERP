@@ -15,6 +15,7 @@ Shape: one row per request in `scm.document_cancel_requests` — the document's 
 - `doc_type`/`doc_key`: `SO`+doc_no, `PO`+id, or `DO`+id (a DB CHECK constraint allows exactly these three).
 - `status`: on an SO, `REQUESTED -> L1_APPROVED -> APPROVED -> EXECUTED`, or `REJECTED` / `WITHDRAWN`. On a PO or DO the row is written `EXECUTED` directly, after the cancel already succeeded — it is a record, never a queue item.
 - `reason` is `NOT NULL`, 5–1000 characters after whitespace collapse.
+- `l1_remark` / `l2_remark`: the approver's OPTIONAL remark on that signature (approve body `{ remark }`, blank = NULL, max 1000). A body-less approve still signs. Shown as "Approval Remarks" on the card, the inbox and the SO Amendment queue, and appended to the approve notices.
 - One open request per document, enforced by a partial unique index (409 `cancel_request_open` on a second one).
 
 Routes (`backend/src/scm/routes/document-cancel-routes.ts`): full request/approve/reject/withdraw set for the SO. The same five exist for the PO but since its approval step was removed, only GET does anything — POST raise is refused `409 no_approval_needed` and approve/reject/withdraw find nothing signable; GET is what a screen reads to show why a PO was cancelled. The Delivery Order has **no** request routes at all — nothing to raise or sign; its guard writes the reason straight onto the document's history at cancel time. `GET /cancel-requests?scope=open|all` is the shared inbox for all three documents.

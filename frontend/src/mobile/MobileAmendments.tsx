@@ -150,6 +150,7 @@ export function MobileAmendments({
           </div>
         )}
         {r.kind === "CANCEL" && <div className="amdno">{r.statusLabel}</div>}
+        {r.approvalRemarks && <div className="amdno">Approval remarks: "{r.approvalRemarks}"</div>}
         {a && (a.lane_flag_note ?? "").trim() && (
           <div className="amdno" style={{ color: "var(--amber, #a66a00)" }}>
             Passed here by the other approver: "{a.lane_flag_note}"

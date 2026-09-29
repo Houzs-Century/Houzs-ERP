@@ -62,6 +62,8 @@ export type CancelNotifyOpts = {
   docType: CancelNotifyDocType;
   docNumber: string;
   reason?: string | null;
+  /** The approver's own remark on THIS signature (level1 / approved only). */
+  remark?: string | null;
   companyId?: number | string | null;
   /** users.id of the person who raised the request. */
   requesterUserId?: number | null;
@@ -77,6 +79,8 @@ export async function notifyCancelRequest(env: Env, event: CancelNotifyEvent, op
     const actor = Number(opts.actorUserId) || 0;
     const reason = shortReason(opts.reason);
     const tail = reason ? ` Reason: ${reason}` : "";
+    const remark = shortReason(opts.remark);
+    const remarkTail = remark ? ` Remark: ${remark}` : "";
     const by = (opts.actorName ?? "").trim();
     const byText = by ? ` by ${by}` : "";
 
@@ -97,7 +101,7 @@ export async function notifyCancelRequest(env: Env, event: CancelNotifyEvent, op
         body:
           level === 1
             ? `A request to cancel ${noun} ${opts.docNumber} was raised${raisedBy ? ` by ${raisedBy}` : ""} and is waiting for your ${levelWord}approval.${tail}`
-            : `Level 1 has approved cancelling ${noun} ${opts.docNumber}${byText}. It is now waiting for your level-2 approval.${tail}`,
+            : `Level 1 has approved cancelling ${noun} ${opts.docNumber}${byText}. It is now waiting for your level-2 approval.${tail}${remarkTail}`,
         source: SOURCE,
       });
       return;
@@ -114,7 +118,7 @@ export async function notifyCancelRequest(env: Env, event: CancelNotifyEvent, op
           : `${noun} ${opts.docNumber} — cancellation rejected`,
       body:
         event === "approved"
-          ? `${CANCEL_APPROVE_PERM[opts.docType][2] != null ? "Both approvals are" : "The approval is"} on your request to cancel ${noun} ${opts.docNumber}${byText}. The document is being cancelled.`
+          ? `${CANCEL_APPROVE_PERM[opts.docType][2] != null ? "Both approvals are" : "The approval is"} on your request to cancel ${noun} ${opts.docNumber}${byText}. The document is being cancelled.${remarkTail}`
           : `Your request to cancel ${noun} ${opts.docNumber} was rejected${byText}.${tail}`,
       source: SOURCE,
     });

@@ -107,6 +107,7 @@ import {
   isReasonOnly,
   levelsFor,
   readReason,
+  readRemark,
   rejectRefusal,
   statusAfterApproval,
   withdrawRefusal,
@@ -361,6 +362,15 @@ export function requestCancelHandler(docType: CancelDocType) {
 
 export function approveCancelHandler(docType: CancelDocType) {
   return async (c: AnyCtx) => {
+    /* The body is optional: a tab loaded before DEV-17 still posts none. */
+    let body: { remark?: unknown } = {};
+    const raw = await c.req.text();
+    if (raw.trim()) {
+      try { body = JSON.parse(raw) ?? {}; } catch { return c.json({ error: 'invalid_json' }, 400); }
+    }
+    const remark = readRemark(body.remark);
+    if (!remark.ok) return c.json(remark.refusal, 400);
+
     const loaded = await loadDoc(c, docType, c.req.param(DOCS[docType].param));
     if (!loaded.ok) return loaded.res;
     const { doc, companyId } = loaded;
@@ -382,6 +392,7 @@ export function approveCancelHandler(docType: CancelDocType) {
     patch[`l${level}_by`] = actor.id;
     patch[`l${level}_by_name`] = actor.name;
     patch[`l${level}_at`] = at;
+    patch[`l${level}_remark`] = remark.remark;
 
     /* CAS on the status the decision was made against — two approvers pressing
        the same button land one signature, not two on one level. */
@@ -395,9 +406,10 @@ export function approveCancelHandler(docType: CancelDocType) {
     if (error) return c.json({ error: 'approve_failed', reason: error.message }, 500);
     if (!updated) return c.json({ error: 'stale', message: 'This request changed while you were looking at it — reload and try again.' }, 409);
 
-    await audit(c, docType, doc, 'APPROVE', `level ${level} of ${levelsFor(docType)} approved`, null);
+    const signed = `level ${level} of ${levelsFor(docType)} approved`;
+    await audit(c, docType, doc, 'APPROVE', remark.remark ? `${signed} — ${remark.remark}` : signed, null);
     await notifyCancelRequest(c.env, final ? 'approved' : 'level1', {
-      docType, docNumber: doc.number, reason: String(open.reason ?? ''), companyId,
+      docType, docNumber: doc.number, reason: String(open.reason ?? ''), remark: remark.remark, companyId,
       requesterUserId: Number(open.requested_by) || null, requesterName: (open.requested_by_name as string | null) ?? null,
       actorUserId: actor.id, actorName: actor.name,
     });

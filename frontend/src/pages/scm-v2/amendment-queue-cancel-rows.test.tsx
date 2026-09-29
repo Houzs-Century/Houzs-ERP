@@ -20,7 +20,7 @@ const cancelRow = (over: Partial<Row> = {}): Row => ({
   id: 'c1', company_id: 1, doc_type: 'SO', doc_key: 'HC-SO-000002', doc_number: 'HC-SO-000002',
   doc_status_at_request: 'CONFIRMED', status: 'REQUESTED', reason: 'Customer no longer wants it',
   requested_by: 11, requested_by_name: 'Amy', requested_at: '2026-09-24T01:00:00Z',
-  l1_by: null, l1_by_name: null, l1_at: null, l2_by: null, l2_by_name: null, l2_at: null,
+  l1_by: null, l1_by_name: null, l1_at: null, l1_remark: null, l2_by: null, l2_by_name: null, l2_at: null, l2_remark: null,
   rejected_by: null, rejected_by_name: null, rejected_at: null, reject_reason: null,
   executed_by: null, executed_at: null,
   ...over,
@@ -41,6 +41,8 @@ const rejectSo = vi.fn(async (_v: unknown) => ({ request: {} }));
 const withdrawSo = vi.fn(async (_v: unknown) => ({ request: {} }));
 const cancelSo = vi.fn(async (_v: unknown) => ({}));
 const confirm = vi.fn(async (_o: unknown) => true);
+/* The approve dialog: the approver's optional remark, '' when left blank. */
+const approveDialog = vi.fn(async (_o: unknown): Promise<string | null> => '');
 const refreshBadges = vi.fn();
 
 vi.mock('../../vendor/scm/lib/so-amendment-queries', async (orig) => ({
@@ -56,7 +58,7 @@ vi.mock('../../vendor/scm/lib/document-cancel-queries', async (orig) => ({
 }));
 vi.mock('../../vendor/scm/lib/sales-order-queries', () => ({ useUpdateMfgSalesOrderStatus: () => ({ mutateAsync: cancelSo }) }));
 vi.mock('../../vendor/scm/lib/suppliers-queries', () => ({ useCancelPurchaseOrder: () => ({ mutateAsync: vi.fn() }) }));
-vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirm }));
+vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirm, usePrompt: () => approveDialog }));
 vi.mock('../../vendor/scm/components/PromptDialog', () => ({ usePrompt: () => vi.fn(async () => 'Not a real cancellation') }));
 vi.mock('../../vendor/scm/lib/dialog-service', () => ({ serviceNotify: vi.fn(async () => undefined) }));
 vi.mock('../../hooks/useStaffLookup', () => ({ useStaffLookup: () => ({ actorNameOf: () => 'Staffer' }) }));
@@ -123,7 +125,7 @@ describe('desktop SO Amendment queue', () => {
   it('a level-1 approval signs the request and cancels nothing yet', async () => {
     const { container } = desktop();
     fireEvent.click(within(rowFor(container, 'HC-SO-000002')).getByText('Approve (level 1)'));
-    await waitFor(() => expect(approveSo).toHaveBeenCalledWith({ key: 'HC-SO-000002' }));
+    await waitFor(() => expect(approveSo).toHaveBeenCalledWith({ key: 'HC-SO-000002', remark: null }));
     expect(cancelSo).not.toHaveBeenCalled();
     expect(refreshBadges).toHaveBeenCalled();
   });
@@ -137,6 +139,28 @@ describe('desktop SO Amendment queue', () => {
     await waitFor(() => expect(cancelSo).toHaveBeenCalledWith({
       docNo: 'HC-SO-000002', status: 'CANCELLED', expectedStatus: 'CONFIRMED',
     }));
+  });
+
+  it("the approver's remark is sent with the signature, and shown on the row (DEV-17)", async () => {
+    approveDialog.mockResolvedValueOnce('Checked with the customer');
+    const { container } = desktop();
+    fireEvent.click(within(rowFor(container, 'HC-SO-000002')).getByText('Approve (level 1)'));
+    await waitFor(() => expect(approveSo).toHaveBeenCalledWith({ key: 'HC-SO-000002', remark: 'Checked with the customer' }));
+    expect(approveDialog).toHaveBeenCalledWith(expect.objectContaining({ input: expect.objectContaining({ label: 'Remarks (optional)' }) }));
+  });
+
+  it('closing the approve dialog signs nothing', async () => {
+    approveDialog.mockResolvedValueOnce(null);
+    const { container } = desktop();
+    fireEvent.click(within(rowFor(container, 'HC-SO-000002')).getByText('Approve (level 1)'));
+    await waitFor(() => expect(approveDialog).toHaveBeenCalled());
+    expect(approveSo).not.toHaveBeenCalled();
+  });
+
+  it("shows each approver's remark in the Approval Remarks column", () => {
+    CANCELS = [cancelRow({ status: 'L1_APPROVED', l1_by: 12, l1_by_name: 'Dee', l1_at: '2026-09-24T02:00:00Z', l1_remark: 'Customer confirmed by phone' })];
+    const { container } = desktop();
+    expect(rowFor(container, 'HC-SO-000002').textContent).toContain('L1: Customer confirmed by phone');
   });
 
   it('an approved request offers to run the cancel that has not run yet', async () => {
@@ -170,7 +194,7 @@ describe('phone SO Amendment queue', () => {
     expect(card.textContent).toContain('Sales Director');
     expect(card.textContent).toContain('Cancellation requested');
     fireEvent.click(within(card).getByText('Approve (level 1)'));
-    await waitFor(() => expect(approveSo).toHaveBeenCalledWith({ key: 'HC-SO-000002' }));
+    await waitFor(() => expect(approveSo).toHaveBeenCalledWith({ key: 'HC-SO-000002', remark: null }));
   });
 
   it('gives a phone approver nothing to press when they cannot sign', () => {

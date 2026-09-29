@@ -184,6 +184,24 @@ describe('the two signatures', () => {
     expect(await l2.json()).toMatchObject({ execute: true, request: { status: 'APPROVED', l2_by: 31, l2_by_name: 'MD Cara' } });
     expect(notify).toHaveBeenLastCalledWith(expect.anything(), 'approved', expect.objectContaining({ requesterUserId: 11, actorUserId: 31 }));
     expect(soAudit).toHaveBeenCalledTimes(3);
+    /* No body at all — a tab loaded before DEV-17 — still signs, with no remark. */
+    expect(rows()[0]).toMatchObject({ l1_remark: null, l2_remark: null });
+  });
+
+  it('each signature may carry an optional remark (DEV-17)', async () => {
+    const l1 = await post(L1, '/mfg-sales-orders/SO-1/cancel-request/approve', { remark: '  Checked with\n the customer ' });
+    expect(await body(l1)).toMatchObject({ request: { status: 'L1_APPROVED', l1_remark: 'Checked with the customer' } });
+    expect(notify).toHaveBeenLastCalledWith(expect.anything(), 'level1', expect.objectContaining({ remark: 'Checked with the customer' }));
+
+    const l2 = await post(L2, '/mfg-sales-orders/SO-1/cancel-request/approve', { remark: '   ' });
+    expect(await body(l2)).toMatchObject({ execute: true, request: { status: 'APPROVED', l1_remark: 'Checked with the customer', l2_remark: null } });
+  });
+
+  it('refuses a remark that is not text or is too long, and signs nothing', async () => {
+    expect(await body(await post(L1, '/mfg-sales-orders/SO-1/cancel-request/approve', { remark: 42 }))).toMatchObject({ error: 'remark_invalid' });
+    expect(await body(await post(L1, '/mfg-sales-orders/SO-1/cancel-request/approve', { remark: 'x'.repeat(1001) }))).toMatchObject({ error: 'remark_too_long' });
+    expect(rows()[0]!.status).toBe('REQUESTED');
+    expect(rows()[0]!.l1_by ?? null).toBeNull();
   });
 
   it('the requester cannot sign, and a wildcard holder cannot sign twice', async () => {

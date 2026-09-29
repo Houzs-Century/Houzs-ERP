@@ -24,6 +24,7 @@ import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat
 import { STATUS_TONES } from '../../vendor/scm/lib/status-pill';
 import { cancelRequestReferenceOf } from '../../vendor/scm/lib/amendment-queue-rows';
 import {
+  approvalRemarksOf,
   cancelRequestLine,
   docTypeOfRow,
   levelsFor,
@@ -154,6 +155,13 @@ export const CancelRequests = () => {
       accessor: (r) => (levelsFor(docTypeOfRow(r)) > 1 ? who(r.l2_by_name, r.l2_at) : <span style={{ color: 'var(--fg-muted)' }}>n/a</span>),
       searchValue: (r) => r.l2_by_name ?? '',
       sortFn: (a, b) => String(a.l2_at ?? '').localeCompare(String(b.l2_at ?? '')),
+    },
+    {
+      key: 'approval_remarks', label: 'Approval Remarks', width: 220, minWidth: 140, sortable: true,
+      accessor: (r) => approvalRemarksOf(r) || <span style={{ color: 'var(--fg-muted)' }}>—</span>,
+      searchValue: (r) => approvalRemarksOf(r),
+      exportValue: (r) => approvalRemarksOf(r) || '—',
+      sortFn: (a, b) => approvalRemarksOf(a).localeCompare(approvalRemarksOf(b)),
     },
     {
       key: 'requested_at', label: 'Requested', width: 160, sortable: true,
