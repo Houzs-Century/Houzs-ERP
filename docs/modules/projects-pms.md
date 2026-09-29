@@ -20,6 +20,10 @@ via public no-login share links — outside contractors and brand partners.
   reviewer (region-split: Ops Exec for Pulau Pinang/Kelantan/Terengganu/Perak,
   else the Storekeeper Supervisor by position name) sets `replace` to
   escalate; Stage 2 (Purchaser) closes with `done`.
+- A defect photo's remark is packed as `Model:` + `Reason:` in its attachment
+  `caption` (`pages/projects/defectRemark.ts`); it renders under the photo for
+  EVERY mobile viewer (`MobilePmsDefectActions.tsx`, not the hidden tasklist),
+  with an inline thumbnail. A legacy free-text caption reads out as the reason.
 - Stock transfers (`project_stock_transfers`) mirror into one checklist row
   per transfer (`notes = auto:stock_transfer=<id>`); confirm/unconfirm/delete
   re-sync or drop that row. A missing `transferred_at` defaults to today

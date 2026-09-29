@@ -4,9 +4,36 @@
  * a test on its own; that file is one of the largest in the repo and importing
  * it into a test drags in the whole PMS surface.
  */
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
+import type { CSSProperties } from "react";
 import { api } from "../api/client";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
+import { parseDefectCaption } from "../pages/projects/defectRemark";
+
+// A small image preview so people can tell what a defect photo is WITHOUT
+// opening it (owner 2026-09-28: "make it can see a bit picture inside without
+// click in"). Blob-URL'd through the same auth'd fetch the full-size viewer
+// uses; revoked on unmount. Non-images render nothing. Kept local (not the
+// MobilePMS R2Thumb, which is unexported and in a file at its size ceiling).
+function DefectThumb({ r2Key, contentType }: { r2Key?: string | null; contentType?: string | null }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const isImage = /^image\//i.test(contentType ?? "");
+  useEffect(() => {
+    if (!r2Key || !isImage) return;
+    let live = true;
+    let made: string | null = null;
+    api
+      .fetchBlobUrl(`/api/projects/attachments/${r2Key}`)
+      .then((u) => { if (live) { made = u; setUrl(u); } else URL.revokeObjectURL(u); })
+      .catch(() => {});
+    return () => { live = false; if (made) URL.revokeObjectURL(made); };
+  }, [r2Key, isImage]);
+  if (!r2Key || !isImage) return null;
+  const box: CSSProperties = { width: 72, height: 58, borderRadius: 7, border: "1px solid #e3e6e0", overflow: "hidden", flex: "none" };
+  return url
+    ? <img src={url} alt="" style={{ ...box, objectFit: "cover", display: "block" }} />
+    : <div className="ph" style={box} />;
+}
 
 // ── Defect-file ACTION TIMELINE (owner 2026-07-29) ──────────────
 // Append-only Ongoing / Done log the purchaser (Sim) + BD stamp on each
@@ -28,13 +55,23 @@ export const DefectActionsCtx = createContext<{
   reload: () => void;
 } | null>(null);
 
-export function DefectFileActions({ att }: { att: { id: number } }) {
+export function DefectFileActions({
+  att,
+}: {
+  att: { id: number; r2_key?: string; content_type?: string | null; caption?: string | null };
+}) {
   const ctx = useContext(DefectActionsCtx);
   const [draft, setDraft] = useState<null | "done" | "replace">(null);
   const [remark, setRemark] = useState("");
   const [saving, setSaving] = useState(false);
   const notify = useNotify();
   if (!ctx) return null;
+  // The photo's own Model + Reason, shown to EVERY viewer (owner 2026-09-28:
+  // "make it these remark appear on mobilepms for all user can see this defect"
+  // — previously the caption rendered only in the hidden tasklist, so nobody on
+  // the card view, Shukor included, could read it). Above the action timeline
+  // and never gated on review/purchase rights.
+  const { model, reason } = parseDefectCaption(att.caption);
   const list = ctx.actions.filter((x) => x.attachment_id === att.id);
   // Latest timeline entry drives the state machine: fresh (no action / legacy
   // 'ongoing') awaits the reviewer; 'replace' awaits the purchaser; 'done' is
@@ -70,6 +107,17 @@ export function DefectFileActions({ att }: { att: { id: number } }) {
   const ts = (v: string) => String(v || "").slice(0, 16).replace("T", " ");
   return (
     <div style={{ paddingLeft: 2 }}>
+      {(att.r2_key || model || reason) && (
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginTop: 4 }}>
+          <DefectThumb r2Key={att.r2_key} contentType={att.content_type} />
+          {(model || reason) && (
+            <div style={{ fontSize: 11.5, color: "#6b6f63", minWidth: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+              {model && <div><b style={{ color: "#8c968a" }}>Model:</b> {model}</div>}
+              {reason && <div><b style={{ color: "#8c968a" }}>Reason:</b> {reason}</div>}
+            </div>
+          )}
+        </div>
+      )}
       {isFresh && ctx.canReview && (
         <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
           <button className="tinybtn" disabled={saving} style={{ background: draft === "done" ? "#e2f0e9" : "#fff", borderColor: "#bcdcd7", color: "#2f8a5b", fontWeight: draft === "done" ? 800 : 700 }} onClick={() => setDraft("done")}>Done</button>
