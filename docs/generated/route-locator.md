@@ -111,10 +111,10 @@ Total: 1345 route registrations across 190 files.
 - L1339  GET    /control-check
 - L1348  GET    /acquirers
 - L1364  POST   /backfill/customer-payments
-- L1460  GET    /daily-bank
-- L1469  GET    /daily-close
-- L1504  PUT    /daily-close
-- L1552  POST   /daily-close/confirm
+- L1522  GET    /daily-bank
+- L1531  GET    /daily-close
+- L1566  PUT    /daily-close
+- L1614  POST   /daily-close/confirm
 
 ## backend/src/routes/projects.ts  (100)
 - L124  GET    /event-types

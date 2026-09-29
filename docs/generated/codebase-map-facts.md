@@ -99,7 +99,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-rp.ts` | 0 | 474 |
 | `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1585 |
 | `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 53 |
-| `backend/src/scm/routes/accounting.ts` | 106 | 1598 |
+| `backend/src/scm/routes/accounting.ts` | 106 | 1660 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ap-invoice-files.ts` | 0 | 50 |
@@ -264,7 +264,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2991 files, 861284 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2996 files, 862315 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -526,7 +526,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileOrderMoney.tsx` | 84 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4488 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
-| `frontend/src/mobile/MobilePmsDefectActions.tsx` | 109 |
+| `frontend/src/mobile/MobilePmsDefectActions.tsx` | 159 |
 | `frontend/src/mobile/MobilePmsPlanFileChips.tsx` | 96 |
 | `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 466 |
 | `frontend/src/mobile/MobilePoAmendments.tsx` | 182 |
