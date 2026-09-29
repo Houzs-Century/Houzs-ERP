@@ -4,17 +4,28 @@
 //
 // Reads one live endpoint (/accounting/daily-bank) computed from the ledger —
 // no cache, so this board, the Trial Balance and the GL can never disagree.
-// Get Image draws the board onto a canvas (no DOM capture dependency) and
-// copies a PNG to the clipboard for WhatsApp, with a download fallback.
+//
+// By bank since 2026-09-29 (owner, his "BANK BALANCE AVAILABLE" sample: 1 By
+// bank · 2 pending = checked, not yet approved — approved 了就会扣钱 · 3 show
+// what was paid · 4 keep the three totals; then settlement in transit 放在相对应
+// 的银行, and 要 the line with it added): the three totals stay on top; under a
+// dark bar, one table per money account with its Bank Balance in the header —
+// Balance B/F, Received today, Paid today, Pending payment, Available (after
+// pending), In transit per acquirer, Available + in transit. The table model
+// is ONE (daily-bank-report.ts), read by this page, the image and the PDF.
+// Get image copies a PNG to the clipboard for WhatsApp (download fallback);
+// PNG saves it; PDF saves the same table on the letterhead.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react';
-import { Calendar, Camera, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Calendar, Camera, ChevronLeft, ChevronRight, FileDown, ImageDown } from 'lucide-react';
 import { useDailyBank, useDailyClose, useSaveDailyClose, useConfirmDailyClose, type DailyBankBoard } from './accounting-phase1-queries';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen, fmtSenPlain } from '../../vendor/shared/format';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { DAILY_BANK_HEAD, DB_COLORS, boardDayLabel, cellMoney, dailyBankSections, drawDailyBankCanvas, isDetailRow, rowColor, type DailyBankRow } from './daily-bank-report';
+import { generateDailyBankPdf } from './daily-bank-pdf';
 
 const fmt = (sen: number | null | undefined) => fmtSen(sen);
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -46,16 +57,91 @@ const btnStyle = (primary?: boolean): React.CSSProperties => ({
   cursor: 'pointer',
 });
 
+/* The table's dress — the sample's: a dark bar, a beige band per bank, small
+   grey column heads, monospace figures, received green, paid red, pending
+   orange, the available row on a green band, transit grey. */
+const thCell: React.CSSProperties = { padding: '8px 10px', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.05em', color: DB_COLORS.soft, textAlign: 'left', borderBottom: `1px solid ${DB_COLORS.rule}`, whiteSpace: 'nowrap' };
+const tdCell: React.CSSProperties = { padding: '7px 10px', fontSize: 'var(--fs-13)', borderBottom: `1px solid ${DB_COLORS.rule}`, verticalAlign: 'top' };
+const moneyCell: React.CSSProperties = { ...tdCell, textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
+
+/** One row of a bank's table, coloured by what it is. */
+const BoardRow = ({ r }: { r: DailyBankRow }) => {
+  const color = rowColor(r.kind);
+  const detail = isDetailRow(r.kind);
+  const strong = r.kind === 'available' || r.kind === 'withTransit' || r.kind === 'bf' || r.kind.endsWith('Head');
+  const band = r.kind === 'available' ? { background: DB_COLORS.band } : undefined;
+  const lastColor = (r.kind === 'available' || r.kind === 'withTransit') && (r.lastSen ?? 0) < 0 ? DB_COLORS.red : color;
+  return (
+    <tr data-row={r.kind} style={band}>
+      <td style={{ ...tdCell, color, fontWeight: strong ? 600 : undefined, paddingLeft: detail ? 22 : 10 }}>{detail ? `· ${r.who}` : r.who}</td>
+      <td style={{ ...tdCell, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-11)', color: DB_COLORS.soft, whiteSpace: 'nowrap' }}>{r.doc}</td>
+      <td style={{ ...tdCell, color: detail ? DB_COLORS.soft : color }}>{r.description}</td>
+      <td data-col="received" style={{ ...moneyCell, color: DB_COLORS.green, fontWeight: r.kind === 'receivedHead' ? 600 : undefined }}>{cellMoney(r.receivedSen)}</td>
+      <td data-col="paid" style={{ ...moneyCell, color: DB_COLORS.red, fontWeight: r.kind === 'paidHead' ? 600 : undefined }}>{cellMoney(r.paidSen)}</td>
+      <td data-col="last" style={{ ...moneyCell, color: lastColor, fontWeight: strong ? 700 : undefined }}>{cellMoney(r.lastSen)}</td>
+    </tr>
+  );
+};
+
+/** The board as the sample lays it out: the dark bar, then a table per bank. */
+const BoardTable = ({ board }: { board: DailyBankBoard }) => {
+  const sections = useMemo(() => dailyBankSections(board), [board]);
+  return (
+    <section aria-label="Bank balance available" style={{ border: `1px solid ${DB_COLORS.rule}`, borderRadius: 'var(--radius-md)', overflow: 'hidden', background: 'var(--c-paper, #fff)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', padding: '12px 18px', background: DB_COLORS.bar, color: DB_COLORS.barText }}>
+        <b style={{ letterSpacing: '0.12em', fontSize: 'var(--fs-14)' }}>BANK BALANCE AVAILABLE</b>
+        <span style={{ flex: 1 }} />
+        <b style={{ fontSize: 'var(--fs-13)' }}>{boardDayLabel(board.date)}</b>
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 860 }}>
+          <tbody>
+            {sections.map((sec) => (
+              <Fragment key={sec.key}>
+                <tr data-section={sec.key} style={{ background: DB_COLORS.sectionBg }}>
+                  <td colSpan={4} style={{ ...tdCell, fontWeight: 700 }}>
+                    {sec.title}
+                    {sec.code && <span className={styles.codeChip} style={{ marginLeft: 8 }}>{sec.code}</span>}
+                  </td>
+                  <td colSpan={2} style={{ ...moneyCell, fontWeight: 700 }}>
+                    {sec.bankBalanceSen != null && (
+                      <>
+                        <span style={{ fontFamily: 'inherit', fontWeight: 500, color: DB_COLORS.soft, marginRight: 10 }}>Bank Balance</span>
+                        <span data-bank-balance={sec.key} style={{ color: sec.bankBalanceSen < 0 ? DB_COLORS.red : DB_COLORS.ink }}>{fmtSenPlain(sec.bankBalanceSen)}</span>
+                      </>
+                    )}
+                  </td>
+                </tr>
+                <tr>
+                  {DAILY_BANK_HEAD.map((h, i) => <th key={h} scope="col" style={{ ...thCell, textAlign: i >= 3 ? 'right' : 'left' }}>{h}</th>)}
+                </tr>
+                {sec.rows.map((r, i) => <BoardRow key={`${sec.key}:${String(i)}`} r={r} />)}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+};
+
 export const DailyBank = () => {
   const [date, setDate] = useState(todayLocal());
   const q = useDailyBank(date);
   const board = q.data ?? null;
-  const [shot, setShot] = useState<'idle' | 'copied' | 'downloaded' | 'failed'>('idle');
+  const [shot, setShot] = useState<'idle' | 'copied' | 'downloaded' | 'pdf' | 'failed'>('idle');
   const [view, setView] = useState<'board' | 'close'>('board');
 
+  const savePng = (canvas: HTMLCanvasElement, day: string) => {
+    const a = document.createElement('a');
+    a.href = canvas.toDataURL('image/png');
+    a.download = `daily-bank-${day}.png`;
+    a.click();
+  };
+  /* Get image: the PNG onto the clipboard for WhatsApp, saved when the clipboard refuses. */
   const getImage = async () => {
     if (!board) return;
-    const canvas = drawBoard(board);
+    const canvas = drawDailyBankCanvas(board);
     setShot('idle');
     try {
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
@@ -69,15 +155,21 @@ export const DailyBank = () => {
       throw new Error('clipboard unavailable');
     } catch {
       try {
-        const a = document.createElement('a');
-        a.href = canvas.toDataURL('image/png');
-        a.download = `daily-bank-${board.date}.png`;
-        a.click();
+        savePng(canvas, board.date);
         setShot('downloaded');
       } catch {
         setShot('failed');
       }
     }
+  };
+  const getPng = () => {
+    if (!board) return;
+    try { savePng(drawDailyBankCanvas(board), board.date); setShot('downloaded'); } catch { setShot('failed'); }
+  };
+  const getPdf = () => {
+    if (!board) return;
+    setShot('idle');
+    void generateDailyBankPdf(board).then(() => setShot('pdf')).catch(() => setShot('failed'));
   };
 
   const totals = useMemo(() => board ?? null, [board]);
@@ -92,26 +184,34 @@ export const DailyBank = () => {
       </div>
 
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button type="button" style={btnStyle()} onClick={() => setDate((d) => shiftDate(d, -1))}><ChevronLeft {...ICON} /></button>
+        <button type="button" style={btnStyle()} onClick={() => setDate((d) => shiftDate(d, -1))} aria-label="Previous day"><ChevronLeft {...ICON} /></button>
         <DateField
           value={date}
           onChange={(iso) => iso && setDate(iso)}
           style={{ padding: '6px 10px', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 6, fontSize: 'var(--fs-13)' }}
         />
-        <button type="button" style={btnStyle()} onClick={() => setDate((d) => shiftDate(d, 1))}><ChevronRight {...ICON} /></button>
+        <button type="button" style={btnStyle()} onClick={() => setDate((d) => shiftDate(d, 1))} aria-label="Next day"><ChevronRight {...ICON} /></button>
         <button type="button" style={btnStyle()} onClick={() => setDate(todayLocal())}><Calendar {...ICON} /> Today</button>
         <span style={{ flex: 1 }} />
         <button type="button" style={btnStyle(true)} onClick={() => { void getImage(); }} disabled={!board}>
           <Camera {...ICON} /> Get image
         </button>
+        <button type="button" style={btnStyle()} onClick={getPng} disabled={!board}>
+          <ImageDown {...ICON} /> PNG
+        </button>
+        <button type="button" style={btnStyle()} onClick={getPdf} disabled={!board}>
+          <FileDown {...ICON} /> PDF
+        </button>
         {shot === 'copied' && <span style={{ fontSize: 'var(--fs-13)', color: 'var(--c-secondary-a, #2F5D4F)' }}>Copied — paste into WhatsApp</span>}
         {shot === 'downloaded' && <span style={{ fontSize: 'var(--fs-13)' }}>Saved as PNG</span>}
+        {shot === 'pdf' && <span style={{ fontSize: 'var(--fs-13)' }}>Saved as PDF</span>}
         {shot === 'failed' && <span style={{ fontSize: 'var(--fs-13)', color: 'var(--c-festive-b, #B8331F)' }}>Could not export</span>}
       </div>
 
       {view === 'close' && <DailyCloseView date={date} />}
 
       {view === 'board' && q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading the board…</div>}
+      {view === 'board' && q.isError && <div role="alert" style={{ fontSize: 'var(--fs-13)', color: 'var(--c-festive-b, #B8331F)' }}>The board could not be loaded — {q.error instanceof Error ? q.error.message : 'something went wrong.'}</div>}
 
       {view === 'board' && totals && (
         <section style={{
@@ -138,126 +238,13 @@ export const DailyBank = () => {
         </section>
       )}
 
-      {view === 'board' && board?.blocks.map((b) => (
-        <section key={b.accountCode} style={{
-          padding: 'var(--space-4)',
-          background: 'var(--c-cream)',
-          border: '1px solid var(--c-line, rgba(34,31,32,0.12))',
-          borderRadius: 'var(--radius-md)',
-        }} className="space-y-2">
-          <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'baseline', flexWrap: 'wrap' }}>
-            <b>{b.accountName}</b>
-            <span className={styles.codeChip}>{b.accountCode}</span>
-            <span style={{ flex: 1 }} />
-            <span style={{ fontSize: 'var(--fs-13)' }}>Opening {fmt(b.openingSen)}</span>
-            <span style={{ fontSize: 'var(--fs-13)', color: 'var(--c-secondary-a, #2F5D4F)' }}>+ {fmt(b.inSen)}</span>
-            <span style={{ fontSize: 'var(--fs-13)', color: 'var(--c-orange)' }}>− {fmt(b.outSen)}</span>
-            <span style={{ fontWeight: 900 }}>= {fmt(b.closingSen)}</span>
-          </div>
-          {b.receipts.map((m) => (
-            <div key={`${m.jeNo}-r`} style={{ fontSize: 'var(--fs-13)', color: 'var(--c-secondary-a, #2F5D4F)' }}>
-              + {fmt(m.amountSen)} · {m.sourceType}{m.sourceDocNo ? ` ${m.sourceDocNo}` : ''} <span className={styles.codeChip}>{m.jeNo}</span> {m.note}
-            </div>
-          ))}
-          {b.payouts.map((m) => (
-            <div key={`${m.jeNo}-p`} style={{ fontSize: 'var(--fs-13)', color: 'var(--c-orange)' }}>
-              − {fmt(m.amountSen)} · {m.sourceType}{m.sourceDocNo ? ` ${m.sourceDocNo}` : ''} <span className={styles.codeChip}>{m.jeNo}</span> {m.note}
-            </div>
-          ))}
-          {b.receipts.length === 0 && b.payouts.length === 0 && (
-            <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-ink-soft, #777)' }}>No movement this day.</div>
-          )}
-        </section>
-      ))}
-
-      {view === 'board' && board && board.transit.length > 0 && (
-        <section style={{
-          padding: 'var(--space-4)',
-          background: 'var(--c-cream)',
-          border: '1px dashed var(--c-line, rgba(34,31,32,0.3))',
-          borderRadius: 'var(--radius-md)',
-        }} className="space-y-1">
-          <b>Settlement in transit (by acquirer)</b>
-          {board.transit.map((t) => (
-            <div key={t.accountCode} style={{ fontSize: 'var(--fs-13)', display: 'flex', gap: 'var(--space-3)' }}>
-              <span className={styles.codeChip}>{t.acquirerCode}</span>
-              <span>{t.accountName}</span>
-              <span style={{ flex: 1 }} />
-              <span style={{ fontWeight: 700 }}>{fmt(t.balanceSen)}</span>
-            </div>
-          ))}
-        </section>
-      )}
+      {view === 'board' && board && <BoardTable board={board} />}
 
       {view === 'board' && board && (
         <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' }}>{board.note}</div>
       )}
     </div>
   );
-};
-
-/* ── The PNG the owner sends to WhatsApp — drawn, not captured ─────────────── */
-
-const drawBoard = (b: DailyBankBoard): HTMLCanvasElement => {
-  const W = 720;
-  const P = 28;
-  const lineH = 26;
-  const rows =
-    6 + b.blocks.reduce((s, bl) => s + 2 + bl.receipts.length + bl.payouts.length, 0) + b.transit.length + 3;
-  const H = P * 2 + rows * lineH;
-  const canvas = document.createElement('canvas');
-  const scale = 2; // crisp on phone screens
-  canvas.width = W * scale;
-  canvas.height = H * scale;
-  const ctx = canvas.getContext('2d')!;
-  ctx.scale(scale, scale);
-
-  ctx.fillStyle = '#FFFDF7';
-  ctx.fillRect(0, 0, W, H);
-  let y = P + 6;
-  const text = (t: string, x: number, opts: { bold?: boolean; size?: number; color?: string; right?: boolean } = {}) => {
-    ctx.font = `${opts.bold ? '700' : '400'} ${opts.size ?? 14}px system-ui, sans-serif`;
-    ctx.fillStyle = opts.color ?? '#221F20';
-    ctx.textAlign = opts.right ? 'right' : 'left';
-    ctx.fillText(t, x, y);
-  };
-  const nl = (n = 1) => { y += lineH * n; };
-
-  text(`DAILY BANK — ${b.date}`, P, { bold: true, size: 20 });
-  nl(1.5);
-  text(`Can actually move: ${fmtSen(b.availableSen)}`, P, { bold: true, size: 17, color: '#2F5D4F' });
-  nl();
-  text(`In transit (not yet remitted): ${fmtSen(b.totalTransitSen)}   ·   Checked, awaiting approval: ${fmtSen(b.pendingApprovalSen)}`, P, { size: 13, color: '#555' });
-  nl(1.5);
-
-  for (const bl of b.blocks) {
-    text(`${bl.accountName}  (${bl.accountCode})`, P, { bold: true, size: 15 });
-    text(`${fmtSen(bl.openingSen)}  +${fmtSen(bl.inSen)}  −${fmtSen(bl.outSen)}  =  ${fmtSen(bl.closingSen)}`, W - P, { bold: true, size: 14, right: true });
-    nl();
-    for (const m of bl.receipts) {
-      text(`+ ${fmtSen(m.amountSen)}   ${m.sourceType}${m.sourceDocNo ? ` ${m.sourceDocNo}` : ''}   ${m.note}`.slice(0, 88), P + 14, { size: 12.5, color: '#2F5D4F' });
-      nl();
-    }
-    for (const m of bl.payouts) {
-      text(`− ${fmtSen(m.amountSen)}   ${m.sourceType}${m.sourceDocNo ? ` ${m.sourceDocNo}` : ''}   ${m.note}`.slice(0, 88), P + 14, { size: 12.5, color: '#B8331F' });
-      nl();
-    }
-    nl(0.5);
-  }
-
-  if (b.transit.length > 0) {
-    text('Settlement in transit (by acquirer):', P, { bold: true, size: 14 });
-    nl();
-    for (const t of b.transit) {
-      text(`${t.acquirerCode}  ${t.accountName}`, P + 14, { size: 13 });
-      text(fmtSen(t.balanceSen), W - P, { size: 13, right: true, bold: true });
-      nl();
-    }
-  }
-  nl(0.5);
-  text('Live from the ledger - posted entries only. Transit money is visible, not spendable.', P, { size: 11, color: '#888' });
-
-  return canvas;
 };
 
 /* ── The daily close (cashup) — count the drawer against the system ────────── */

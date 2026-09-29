@@ -29,7 +29,7 @@ import { todayMyt } from '../lib/my-time';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { backfillSoPayments, paymentEntryDisagreements, unbookedPayments } from '../../acc/payments';
-import { computeDailyBank } from '../../acc/daily-bank';
+import { computeDailyBank, type PendingVoucherRow } from '../../acc/daily-bank';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 import { splitByItemGroup } from '../../acc/item-group-split';
@@ -1393,15 +1393,23 @@ export const dailyBankHandler = async (c: any) => {
   const money = (moneyRaw ?? []) as Array<{ account_code: string; account_name: string }>;
 
   const { data: acqRaw, error: aErr } = await sb.from('acc_acquirers')
-    .select('code, transit_account_code')
+    .select('code, transit_account_code, bank_account_code')
     .eq('company_id', co.companyId).eq('is_active', true).order('code');
   if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
   /* One transit account may serve several acquirers until 决定4 assigns each
      its own - collapse duplicates so the board does not count a balance twice. */
   const transitByAccount = new Map<string, string>();
-  for (const a of (acqRaw ?? []) as Array<{ code: string; transit_account_code: string }>) {
+  /* The bank each transit account's money lands in — Settlement Setup's, per
+     acquirer (owner 2026-09-29: settlement in transit 放在相对应的银行). Two
+     acquirers sharing one transit account but naming different banks leave it
+     unassigned rather than guess. */
+  const bankByTransit = new Map<string, string | null>();
+  for (const a of (acqRaw ?? []) as Array<{ code: string; transit_account_code: string; bank_account_code: string | null }>) {
     const existing = transitByAccount.get(a.transit_account_code);
     transitByAccount.set(a.transit_account_code, existing ? `${existing}/${a.code}` : a.code);
+    const bank = a.bank_account_code ? String(a.bank_account_code) : null;
+    const seen = bankByTransit.has(a.transit_account_code);
+    bankByTransit.set(a.transit_account_code, seen && bankByTransit.get(a.transit_account_code) !== bank ? null : bank);
   }
   /* The GENERIC clearing account (role TRANSIT_EDC, 326-0000) stays on the
      board once the acquirers have their own accounts (owner 2026-09-07: 我想要
@@ -1421,6 +1429,7 @@ export const dailyBankHandler = async (c: any) => {
     acquirerCode: transitByAccount.get(code) ?? code,
     account_code: code,
     account_name: nameOf.get(code) ?? code,
+    bankAccountCode: bankByTransit.get(code) ?? null,
   }));
 
   /* Phase 3: DRAFT vouchers sitting in the approval cycle — money already
@@ -1429,7 +1438,9 @@ export const dailyBankHandler = async (c: any) => {
      clear the marks). The error is bound: a failed read must not dress up as
      "nothing pending" on the one board that answers how much can move. */
   const { data: pendingRaw, error: pErr } = await sb.from('payment_vouchers')
-    .select('total_sen, exchange_rate')
+    /* Each voucher's payee, number, note and Paid From ride along: the board
+       lists them under the bank they will pay out of (owner 2026-09-29). */
+    .select('id, pv_number, payee_name, notes, purpose, credit_account_code, voucher_date, total_sen, exchange_rate')
     /* daily bank 的pending 就是第一层的checked (the owner, 2026-09-02): a
        voucher reserves the board's money once the FIRST yes is on it — a
        merely prepared one is still the preparer's business. */
@@ -1437,7 +1448,7 @@ export const dailyBankHandler = async (c: any) => {
     .not('checked_at', 'is', null)
     .lte('checked_at', `${date}T23:59:59.999`);
   if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
-  const pending = (pendingRaw ?? []) as Array<{ total_sen: number; exchange_rate: string | number | null }>;
+  const pending = (pendingRaw ?? []) as PendingVoucherRow[];
 
   const allCodes = [...money.map((m) => m.account_code), ...transitCodes];
   if (allCodes.length === 0) {
@@ -1455,7 +1466,58 @@ export const dailyBankHandler = async (c: any) => {
   /* The board reads the ledger the reconciliation reads: neither side of a
      reversal pair is money that moved (docs/bugs/0923). */
   const counted = (lines ?? []).filter((l) => !isReversalPair(l as { reversed?: boolean | null; reversed_by_je?: string | null }));
-  return c.json(computeDailyBank(date, money, transitAccounts, counted as never, pending));
+
+  /* Who paid or was paid, and the number the board prints, for the day's
+     money lines (owner 2026-09-29 — the sample's PAY TO and number columns):
+     the entry's party off its own lines, and for a customer payment its
+     official receipt (the order when none was issued) in place of the
+     payment's internal id. Both reads are bound: a failed one answers 500,
+     never a board of nameless lines. */
+  const moneyCodes = new Set(money.map((m) => m.account_code));
+  type BoardLine = { entry_date: string; je_no: string; source_type: string; source_doc_no: string | null; account_code: string };
+  const isTodayMoney = (l: BoardLine): boolean => l.entry_date === date && moneyCodes.has(String(l.account_code));
+  const todays = (counted as unknown as BoardLine[]).filter(isTodayMoney);
+  const partyOf = new Map<string, string>();
+  const receiptOf = new Map<string, string>();
+  const jeNos = [...new Set(todays.map((l) => String(l.je_no)))];
+  if (jeNos.length > 0) {
+    const { data: partyRows, error: prErr } = await sb.from('v_gl_entries').select('je_no, party_name')
+      .eq('company_id', co.companyId).in('je_no', jeNos).not('party_name', 'is', null);
+    if (prErr) return c.json({ error: 'load_failed', reason: prErr.message }, 500);
+    for (const r of (partyRows ?? []) as Array<{ je_no: string; party_name: string | null }>) {
+      if (r.party_name && !partyOf.has(r.je_no)) partyOf.set(r.je_no, r.party_name);
+    }
+    const payIds = [...new Set(todays.filter((l) => (l.source_type === 'SOPAY' || l.source_type === 'SIPAY') && l.source_doc_no).map((l) => String(l.source_doc_no)))];
+    if (payIds.length > 0) {
+      const { data: orRows, error: orErr } = await sb.from('acc_official_receipts').select('payment_id, or_number, doc_no')
+        .eq('company_id', co.companyId).in('payment_id', payIds);
+      if (orErr) return c.json({ error: 'load_failed', reason: orErr.message }, 500);
+      for (const r of (orRows ?? []) as Array<{ payment_id: string; or_number: string | null; doc_no: string | null }>) {
+        const shown = r.or_number ?? r.doc_no;
+        if (shown) receiptOf.set(String(r.payment_id), shown);
+      }
+      /* A payment with no receipt row yet prints its order's number. */
+      const orderless = payIds.filter((id) => !receiptOf.has(id));
+      if (orderless.length > 0) {
+        const { data: payRows, error: payErr } = await sb.from('mfg_sales_order_payments').select('id, so_doc_no')
+          .eq('company_id', co.companyId).in('id', orderless);
+        if (payErr) return c.json({ error: 'load_failed', reason: payErr.message }, 500);
+        for (const r of (payRows ?? []) as Array<{ id: string; so_doc_no: string | null }>) {
+          if (r.so_doc_no) receiptOf.set(String(r.id), r.so_doc_no);
+        }
+      }
+    }
+  }
+  /* A customer payment's id is internal — never printed: its receipt, its
+     order, else the journal's own number. */
+  const docOf = (l: BoardLine): string | null => {
+    if (l.source_type === 'SOPAY' || l.source_type === 'SIPAY') return receiptOf.get(String(l.source_doc_no ?? '')) ?? l.je_no;
+    return null;
+  };
+  const stamped = (counted as unknown as BoardLine[]).map((l) => (isTodayMoney(l)
+    ? { ...l, party: partyOf.get(String(l.je_no)) ?? null, doc_no: docOf(l) }
+    : l));
+  return c.json(computeDailyBank(date, money, transitAccounts, stamped as never, pending));
 };
 accounting.get('/daily-bank', dailyBankHandler);
 
