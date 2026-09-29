@@ -667,7 +667,10 @@ async function renderPurchaseOrderInto(
       fg = { modules: [], depth, model, soNo };
       fallbackGroups.set(fk, fg);
     }
-    fg.modules.push({ moduleId: mod.moduleId });
+    /* One module per PIECE: an old "CNR x2" line is two corners, not one
+       (HC-SO-2609-221 drew a U as a five-piece straight row). */
+    const pieces = Math.max(1, Math.min(20, Math.round(Number(it.qty) || 1)));
+    for (let i = 0; i < pieces; i++) fg.modules.push({ moduleId: mod.moduleId });
   }
 
   const distinctSofas: DistinctSofa[] = [];

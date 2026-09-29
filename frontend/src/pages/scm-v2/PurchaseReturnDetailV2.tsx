@@ -36,6 +36,7 @@ import {
   useCancelPurchaseReturn,
 } from "../../vendor/scm/lib/purchase-return-queries";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
+import { purchaseReturnReasonLabel } from "../../vendor/shared/purchase-return-reasons";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../../vendor/scm/components/PromptDialog";
@@ -53,6 +54,10 @@ type PrHeader = {
   status: PrStatus;
   return_date: string | null;
   reason: string | null;
+  /* CREDIT (goods gone, credit note owed) or REPAIR (goods at the supplier,
+     coming back). Absent from a pre-2026-09-28 response, so read defensively. */
+  kind?: string | null;
+  repair_warehouse_id?: string | null;
   credit_note_ref?: string | null;
   refund_sen?: number;
   notes?: string | null;
@@ -248,6 +253,9 @@ export function PurchaseReturnDetailV2() {
   const askPrompt = usePrompt();
 
   const purchaseReturn = (detail.data as { purchaseReturn?: PrHeader } | undefined)?.purchaseReturn ?? null;
+  /* A repair return waits for GOODS, not money: the credit-note chase would
+     send the operator looking for a document that is never coming. */
+  const isRepairReturn = (purchaseReturn?.kind ?? 'CREDIT') === 'REPAIR';
   const items: PrItem[] = useMemo(
     () => ((detail.data as { items?: PrItem[] } | undefined)?.items ?? []),
     [detail.data]
@@ -504,7 +512,14 @@ export function PurchaseReturnDetailV2() {
             {fmtMoney(refund, purchaseReturn.currency)}
           </div>
           <div className="mt-1.5 text-[12px] text-ink-muted">
-            {items.length} line{items.length === 1 ? "" : "s"} · {EFFECTIVE_TONE[effectiveOf(purchaseReturn)].blurb}
+            {/* A repair return is waiting for the GOODS. Saying "awaiting credit
+                note" would send the operator hunting a document that is never
+                coming (owner 2026-09-28). */}
+            {items.length} line{items.length === 1 ? "" : "s"} · {
+              isRepairReturn && effectiveOf(purchaseReturn) === "posted"
+                ? "Confirmed · with the supplier, awaiting return"
+                : EFFECTIVE_TONE[effectiveOf(purchaseReturn)].blurb
+            }
           </div>
         </div>
 
@@ -513,7 +528,14 @@ export function PurchaseReturnDetailV2() {
             {purchaseReturn.reason && (
               <div className="mb-4 rounded-lg border-l-4 border-primary bg-primary-soft px-4 py-3">
                 <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">Return reason</div>
-                <div className="mt-1 text-[14px] font-semibold italic text-ink">“{purchaseReturn.reason}”</div>
+                {/* Stored as a CODE since 2026-09-28; the helper prints an older
+                    row’s free text verbatim rather than hiding it. */}
+                <div className="mt-1 text-[14px] font-semibold italic text-ink">“{purchaseReturnReasonLabel(purchaseReturn.reason)}”</div>
+                {isRepairReturn && (
+                  <div className="mt-1.5 text-[12px] text-ink-muted">
+                    With the supplier to be fixed and expected back — no credit note is owed.
+                  </div>
+                )}
               </div>
             )}
 

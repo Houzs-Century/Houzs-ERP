@@ -102,6 +102,7 @@ Line import (`/line-import/preview`, `/line-import/apply`)
 Export and print
 - One toolbar Export via `GET /export/rows`: every PO the list filters match, one row per line, visible columns only, money in ringgit (never sen); stops at 20,000 orders with `truncated: true`, which the page refuses to write.
 - `purchase-order-pdf.ts` is the only PO print generator; it fetches sofa compartment art itself. Print all goes through `PrintPreviewBatchModal`.
+- Sofa layout for a geometry-less (backend / mobile) sofa: `buildDefaultSofaCells` (`vendor/shared/sofa-build.ts`) counts each line's qty as pieces and TURNS the run at a CNR (2026-09-28): one CNR = an L (longer run along the back), two = a U with side legs coming forward toward the TV. Line order is the walking order, left leg front → back row → right leg front; two adjacent CNRs (an old "CNR x2") fall back to end piece = leg. A sofa with any turned piece draws the schematic throughout (`sofa-layout-pdf.ts`), because the compartment art is unrotated.
 - Right-click Print chain: no entry for an `assigned_sos` item with `source: 'mrp'` or a bare-string GRN chip.
 
 ## Gotchas

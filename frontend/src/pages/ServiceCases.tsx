@@ -137,6 +137,7 @@ import type {
   PurchaseOrder,
 } from "../types";
 import { fmtDate } from "../vendor/shared/format";
+import { CaseDocChips } from "../components/assr/CaseDocChips";
 import { DateField } from "../vendor/scm/components/DateField";
 import {
   ASSR_PRODUCT_CATEGORIES_ENDPOINT,
@@ -4658,16 +4659,7 @@ function DetailContent({
                   </div>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="rounded-md border border-border-subtle bg-bg/60 px-2.5 py-2">
-                  <div className="font-mono text-[9px] font-semibold uppercase tracking-wider text-ink-muted">SO No</div>
-                  <div className="mt-1 truncate font-mono text-[13px] font-semibold text-primary-ink">{c.doc_no || "—"}</div>
-                </div>
-                <div className="rounded-md border border-border-subtle bg-bg/60 px-2.5 py-2">
-                  <div className="font-mono text-[9px] font-semibold uppercase tracking-wider text-ink-muted">Ref No.</div>
-                  <div className="mt-1 truncate font-mono text-[13px] font-semibold text-ink">{c.ref_no || "—"}</div>
-                </div>
-              </div>
+              <CaseDocChips c={c} />
               <div className="flex items-center justify-between gap-2 border-t border-border-subtle pt-2.5">
                 <div className="min-w-0">
                   <div className="font-mono text-[9px] font-semibold uppercase tracking-wider text-ink-muted">Phone</div>

@@ -29,17 +29,17 @@ export type CollaboratorStaff = {
 };
 
 /**
- * Display names for the people an order is shared with, A→Z.
+ * The people an order is shared with, as id + display name, A→Z by name.
  *
  * Returns [] when nothing is shared, which is the common case — both call
  * sites render nothing at all rather than an empty "Shared with —" field,
  * because a field that is blank on almost every order teaches people to stop
- * reading it.
+ * reading it. The id is kept so the share editor can withdraw one person.
  */
-export function collaboratorNames(
+export function collaboratorEntries(
   header: CollaboratorHeader | null | undefined,
   staff: readonly CollaboratorStaff[] | null | undefined,
-): string[] {
+): Array<{ id: string; name: string }> {
   const ids = (header?.collaborator_staff_ids ?? []).filter(
     (id): id is string => typeof id === "string" && id.trim() !== "",
   );
@@ -53,16 +53,24 @@ export function collaboratorNames(
   /* Deduped because the array is a set on the server but nothing forces that
      on the wire, and a name printed twice reads as two different people. */
   const seen = new Set<string>();
-  const names: string[] = [];
+  const entries: Array<{ id: string; name: string }> = [];
   for (const id of ids) {
     if (seen.has(id)) continue;
     seen.add(id);
     const looked = byId.get(id);
-    names.push(looked && looked !== "" ? looked : "Unknown user");
+    entries.push({ id, name: looked && looked !== "" ? looked : "Unknown user" });
   }
-  return names.sort((a, b) =>
-    a.localeCompare(b, undefined, { sensitivity: "base" }),
+  return entries.sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
   );
+}
+
+/** Display names only, same order as collaboratorEntries. */
+export function collaboratorNames(
+  header: CollaboratorHeader | null | undefined,
+  staff: readonly CollaboratorStaff[] | null | undefined,
+): string[] {
+  return collaboratorEntries(header, staff).map((e) => e.name);
 }
 
 /**

@@ -1,19 +1,19 @@
 // ---------------------------------------------------------------------------
-// delivery-messages.ts — WhatsApp (Seampify) sends from the Delivery Planning
-// board.
+// delivery-messages.ts — WhatsApp sends from the Delivery Planning board, via
+// Houzs Connect (chat.houzscentury.com).
 //
-// Owner 2026-07-22: the board takes over the sheet-era "BulkSend" Apps Script.
-// One WhatsApp per CUSTOMER PHONE bundling all their selected orders — the
-// exact payload shape the sheet's "Delivery Logs" tab recorded:
-//   { phone: '+60...', total_item: N,
-//     ref_1, branding_1, debtor_name_1, delivery_date_1, address4_1,
-//     ref_2, ... }
-// The Seampify endpoint + key come from env (SEAMPIFY_SEND_URL /
-// SEAMPIFY_API_KEY, wrangler secrets). Until BOTH are set, /send answers 503
-// not_configured and writes nothing — the UI ships before the credentials.
+// "Send Now" bundles a customer's selected orders into ONE message per CUSTOMER
+// PHONE and POSTs to Connect's /api/webhooks/erp (see services/connect.ts),
+// which fires the "New Delivery Follow-up" automation — Connect sends the
+// Meta-approved template with Confirm / Amend buttons, and the customer's tap
+// comes back to /api/chat-callback. Gated on CONNECT_WEBHOOK_URL +
+// CONNECT_WEBHOOK_KEY; until both are set /send answers 503 not_configured and
+// writes nothing — the UI ships before the credentials.
+//
 // Every real attempt (success or fail) is logged to scm.wa_message_log
 // (mig 0185), one row per doc with a shared batch_id per phone, so the board
-// shows a per-row "Message" status.
+// shows a per-row "Message" status. (Replaced the retired Seampify gateway,
+// owner 2026-09-28.)
 //
 // Mounted at /api/scm/delivery-messages under scm.transportation.drivers —
 // the same area as the board itself.
@@ -25,6 +25,13 @@ import type { Env, Variables } from '../env';
 import { activeCompanyId, scopeToAllowedCompanies } from '../lib/companyScope';
 import { supabaseAuth } from '../middleware/auth';
 import { effectiveSoDelivery, type SoDeliveryDateRow } from '../shared';
+import {
+  isConnectConfigured,
+  buildDeliveryFollowUp,
+  postConnectContact,
+  chunkOrders,
+  type ConnectOrder,
+} from '../../services/connect';
 
 export const deliveryMessages = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -41,7 +48,7 @@ function normalizePhone(raw: unknown): string | null {
   return digits.length >= 8 ? `+${digits}` : null;
 }
 
-/** ISO YYYY-MM-DD → the sheet payload's YYYY/MM/DD. */
+/** ISO YYYY-MM-DD → the template payload's YYYY/MM/DD. */
 function payloadDate(iso: string | null | undefined): string {
   return String(iso ?? '').slice(0, 10).replace(/-/g, '/');
 }
@@ -50,14 +57,12 @@ const sendSchema = z.object({
   docNos: z.array(z.string().min(1)).min(1).max(200),
 });
 
-/* ── POST /send — one Seampify call per customer phone ─────────────────────── */
+/* ── POST /send — one Houzs Connect call per customer phone ────────────────── */
 deliveryMessages.post('/send', async (c) => {
-  const url = c.env.SEAMPIFY_SEND_URL;
-  const key = c.env.SEAMPIFY_API_KEY;
-  if (!url || !key) {
+  if (!isConnectConfigured(c.env)) {
     return c.json({
       error: 'not_configured',
-      reason: 'Seampify is not configured yet — set the SEAMPIFY_SEND_URL and SEAMPIFY_API_KEY secrets to enable sending.',
+      reason: 'Houzs Connect is not configured yet — set the CONNECT_WEBHOOK_URL and CONNECT_WEBHOOK_KEY secrets to enable sending.',
     }, 503);
   }
 
@@ -73,7 +78,7 @@ deliveryMessages.post('/send', async (c) => {
   // The message fields, straight off the SO header (the board's own source).
   const { data: rowsRaw, error: readErr } = await scopeToAllowedCompanies(
     sb.from('mfg_sales_orders')
-      .select('doc_no, debtor_name, phone, branding, address4, customer_delivery_date, amended_delivery_date')
+      .select('doc_no, linked_ac_docno, debtor_name, phone, branding, customer_delivery_date, amended_delivery_date')
       .in('doc_no', docNos),
     c,
   );
@@ -98,60 +103,46 @@ deliveryMessages.post('/send', async (c) => {
   const failed: Array<{ phone: string; docNos: string[]; error: string }> = [];
 
   for (const [phone, group] of byPhone) {
-    // The sheet-era BulkSend payload, byte-compatible: numbered per-item vars.
-    const payload: Record<string, unknown> = { phone, total_item: group.length };
-    group.forEach((r, i) => {
-      const n = i + 1;
-      payload[`ref_${n}`] = String(r.doc_no ?? '');
-      payload[`branding_${n}`] = String(r.branding ?? '');
-      payload[`debtor_name_${n}`] = String(r.debtor_name ?? '');
-      // Effective date rule (amended ?? original), same as the board.
-      payload[`delivery_date_${n}`] = payloadDate(
-        effectiveSoDelivery(r as SoDeliveryDateRow),
-      );
-      payload[`address4_${n}`] = String(r.address4 ?? '');
-    });
-    const groupDocs = group.map((r) => String(r.doc_no));
+    const name = String(group[0]?.debtor_name ?? '');
+    // The Connect schema tops out at 3 orders per message (ref_1..3 etc.), so a
+    // customer with more gets one send per chunk of 3 — never a dropped order.
+    for (const chunk of chunkOrders(group)) {
+      const chunkDocs = chunk.map((r) => String(r.doc_no));
+      // ref = the number the customer knows (the AutoCount doc if linked, else
+      // ours); effective (amended ?? original) date as yyyy/mm/dd, as the board.
+      const orders: ConnectOrder[] = chunk.map((r) => ({
+        ref: String(r.linked_ac_docno ?? r.doc_no ?? ''),
+        branding: String(r.branding ?? ''),
+        deliveryDate: payloadDate(effectiveSoDelivery(r as SoDeliveryDateRow)),
+      }));
+      const contact = buildDeliveryFollowUp(phone, name, orders);
 
-    let httpCode: number | null = null;
-    let ok = false;
-    let errText: string | null = null;
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-        body: JSON.stringify(payload),
-      });
-      httpCode = res.status;
-      ok = res.ok;
-      if (!res.ok) errText = (await res.text().catch(() => '')).slice(0, 300) || `HTTP ${res.status}`;
-    } catch (e) {
-      errText = String((e as Error)?.message ?? e).slice(0, 300);
+      const result = await postConnectContact(c.env, contact);
+
+      // Log one row per doc, tied by batch_id. Best-effort: a log failure must
+      // not turn a delivered WhatsApp into a reported error — but it is COUNTED
+      // (console.warn), never silently dropped.
+      const batchId = crypto.randomUUID();
+      try {
+        await sb.from('wa_message_log').insert(chunkDocs.map((docNo) => ({
+          batch_id: batchId,
+          company_id: activeCompanyId(c) ?? null,
+          doc_no: docNo,
+          phone,
+          payload: JSON.stringify(contact),
+          http_code: result.httpCode,
+          success: result.ok,
+          error: result.error,
+          source: 'delivery-planning',
+          created_by: user?.id ?? null,
+        })));
+      } catch (e) {
+        console.warn(`[delivery-messages] log insert failed: ${String((e as Error).message).slice(0, 120)}`);
+      }
+
+      if (result.ok) sent.push({ phone, docNos: chunkDocs, httpCode: result.httpCode ?? 0 });
+      else failed.push({ phone, docNos: chunkDocs, error: result.error ?? 'send failed' });
     }
-
-    // Log one row per doc, tied by batch_id. Best-effort: a log failure must
-    // not turn a delivered WhatsApp into a reported error — but it is COUNTED
-    // (console.warn), never silently dropped.
-    const batchId = crypto.randomUUID();
-    try {
-      await sb.from('wa_message_log').insert(groupDocs.map((docNo) => ({
-        batch_id: batchId,
-        company_id: activeCompanyId(c) ?? null,
-        doc_no: docNo,
-        phone,
-        payload: JSON.stringify(payload),
-        http_code: httpCode,
-        success: ok,
-        error: errText,
-        source: 'delivery-planning',
-        created_by: user?.id ?? null,
-      })));
-    } catch (e) {
-      console.warn(`[delivery-messages] log insert failed: ${String((e as Error).message).slice(0, 120)}`);
-    }
-
-    if (ok) sent.push({ phone, docNos: groupDocs, httpCode: httpCode ?? 0 });
-    else failed.push({ phone, docNos: groupDocs, error: errText ?? 'send failed' });
   }
 
   return c.json({ sent, failed, skipped });

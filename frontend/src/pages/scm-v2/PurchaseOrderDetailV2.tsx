@@ -32,6 +32,7 @@ import {
   Share2,
   Split,
   Plus,
+  Undo2,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -604,6 +605,14 @@ function PurchaseOrderDetailV2ReadOnly() {
   useOpenPrintPreviewFromUrl(print.openPreview, !!purchaseOrder);
   const goGrnFromPo = () =>
     id && navigate(convertToLink('poToGrn', id));
+
+  /* Raise Return — the PO-sourced purchase return. The button existed only on
+     the legacy detail page, which no route renders any more, so a received PO
+     had NO way into a return at all (owner 2026-09-28, HC-PO-010114). The link
+     goes through convertToLink so the scope params stay the ones
+     lib/convertScope owns. */
+  const goReturnFromPo = () =>
+    id && navigate(convertToLink('poToPr', id));
 
   /* Email this PO to its supplier — a HUMAN action (the agent only drafts). The
      PDF is rendered here in the browser (the backend has no PDF engine) and posted
@@ -1254,6 +1263,15 @@ function PurchaseOrderDetailV2ReadOnly() {
                 Raise amendment
               </Button>
             )}
+            {/* Raise Return — once anything has been received against this PO.
+                Offered only to someone who can open the Purchase Returns area:
+                a button that lands on Forbidden is worse than no button. */}
+            {(purchaseOrder.status === 'PARTIALLY_RECEIVED' || purchaseOrder.status === 'RECEIVED')
+              && pageAccess('scm.procurement.pr') !== 'none' && (
+              <Button variant="secondary" icon={<Undo2 size={14} />} onClick={goReturnFromPo}>
+                Raise Return
+              </Button>
+            )}
             <Button variant="secondary" icon={<Plus size={14} />} onClick={goAddLine}>{ADD_LINE_LABEL}</Button>
             <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>
               Edit
@@ -1606,8 +1624,8 @@ function PurchaseOrderDetailV2ReadOnly() {
         pairing={chainPairing}
       />
       {/* A chain slot standing for several documents opens this chooser instead
-          of a notice that only named them. The picked one opens in a new tab, so
-          the map stays open behind it. */}
+          of a notice that only named them. The picked one opens in its own tab of the
+          in-app strip. */}
       <DocumentChoiceDialog
         prompt={chainChoice}
         onClose={closeChainChoice}

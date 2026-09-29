@@ -21,6 +21,7 @@ import {
   runSoLineWrites,
   settleParallelLineWrites,
   settleSequentialLineWrites,
+  splitSofaPiecesOnEdit,
   stagedAddDrafts,
   stagedAddLabel,
   visibleLineCounts,
@@ -278,5 +279,30 @@ describe('runSoLineWrites — the page Save chain', () => {
       onAddsLanded: (rows) => landed.push(rows as string[]),
     })).rejects.toThrow(/BF-2: so_sofa_no_other_main/);
     expect(landed).toEqual([['SOFA-1', 'MT-3']]);
+  });
+});
+
+describe('one sofa piece = one line on the edit page (HC-SO-2609-221)', () => {
+  let n = 0;
+  const mintKey = () => `minted-${++n}`;
+  const sofa = (qty: number, extra: Partial<SoLineDraft> = {}): SoLineDraft =>
+    ({ ...emptySoLine(), itemCode: '8030-CNR', itemGroup: 'sofa', qty, ...extra });
+
+  it('a staged sofa add x2 becomes two staged adds in place', () => {
+    const out = splitSofaPiecesOnEdit({ editing: {}, originals: {}, adding: [staged('a', sofa(2)), staged('b')], mintKey });
+    expect(out!.adding.map((r) => [r.key === 'a', r.draft.qty])).toEqual([[true, 1], [false, 1], [false, 1]]);
+    expect(out!.adding[1]!.idempotencyKey).not.toBe('idem-a');
+  });
+
+  it('an existing line whose qty was raised stays that line at 1 and stages the rest', () => {
+    const out = splitSofaPiecesOnEdit({
+      editing: { row1: sofa(2, { discountSen: 101 }) }, originals: { row1: sofa(1) }, adding: [], mintKey,
+    });
+    expect(out!.editing.row1).toMatchObject({ qty: 1, discountSen: 51 });
+    expect(out!.adding.map((r) => [r.draft.qty, r.draft.discountSen])).toEqual([[1, 50]]);
+  });
+
+  it('an untouched imported x2 line is left alone', () => {
+    expect(splitSofaPiecesOnEdit({ editing: { row1: sofa(2) }, originals: { row1: sofa(2) }, adding: [], mintKey })).toBeNull();
   });
 });

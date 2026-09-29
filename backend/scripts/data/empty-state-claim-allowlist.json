@@ -82,7 +82,7 @@
       "why": "A SQL comment inside a template literal, so it is invisible to the stripper and to every user; it describes a computed column, not an empty state."
     },
     {
-      "file": "frontend/src/components/NotificationBell.tsx",
+      "file": "frontend/src/components/NotificationBellPopover.tsx",
       "text": "Nothing new. You're caught up.",
       "why": "Per-user notification feed, and the arm above it now renders the failed-poll case separately — useNotifications exposes loadFailed and all three consumers consult it. No document chain hangs on this sentence."
     },

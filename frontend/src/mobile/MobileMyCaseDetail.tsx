@@ -42,6 +42,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { formatDate, formatDateTime } from "../lib/utils";
 import { formatPhone } from "../vendor/shared/phone";
+import { orderDeliveryOf } from "../vendor/scm/lib/assr/order-delivery";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import "./mobile.css";
@@ -177,6 +178,7 @@ export function MobileMyCaseDetail({ id, onBack }: { id: number; onBack: () => v
 
   const busy = postComment.isPending || nudge.isPending;
   const address = [c.addr1, c.addr2, c.addr3, c.addr4].filter(Boolean).map(String).join(", ");
+  const orderDelivery = orderDeliveryOf(c);
 
   return (
     <div className="hz-m" style={{ position: "fixed", inset: 0, background: "var(--app-bg)", display: "flex", flexDirection: "column" }}>
@@ -217,6 +219,8 @@ export function MobileMyCaseDetail({ id, onBack }: { id: number; onBack: () => v
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 14px" }}>
                 <Field label="SO" value={field(c, "docNo", "doc_no")} />
                 <Field label="Ref No." value={field(c, "refNo", "ref_no")} />
+                <Field label="DO No" value={orderDelivery.doNo || "—"} />
+                <Field label="Delivery Date" value={orderDelivery.deliveryDate ? formatDate(orderDelivery.deliveryDate) : "—"} />
                 <Field label="Priority" value={cap(field(c, "priority") || "normal")} />
                 <Field label="Reported" value={formatDate(field(c, "complainedDate", "complained_date"))} />
               </div>

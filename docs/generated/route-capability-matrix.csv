@@ -1144,6 +1144,7 @@ POST,/api/scm/receipts,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireS
 GET,/api/scm/receipts/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/receipts.ts
 PATCH,/api/scm/receipts/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/receipts.ts
 POST,/api/scm/receipts/:id/void,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/receipts.ts
+GET,/api/scm/reports/costing-gap-listing,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/reports.ts
 GET,/api/scm/reports/delivery-order-detail-listing,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/reports.ts
 GET,/api/scm/reports/delivery-return-detail-listing,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/reports.ts
 GET,/api/scm/reports/fair-report,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/reports.ts

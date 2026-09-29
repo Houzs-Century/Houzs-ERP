@@ -7,7 +7,7 @@
 // shared at the left. Connector lines are coloured by transfer kind. Clicking
 // any node jumps to that document's detail page.
 
-import { openDocInNewTab } from '../../../lib/openDocInNewTab';
+import { useOpenDocInTab } from '../../../lib/openDocInTab';
 import {
   useDocumentFlow,
   usePoSoCoverage,
@@ -99,6 +99,7 @@ const LEGEND: Array<{ key: string; color: string; label: string; dashed?: boolea
 const colX = (col: number) => PAD + col * (NODE_W + COL_GAP);
 
 export function DocumentFlowModal({ type, id, open, onClose }: Props) {
+  const openDoc = useOpenDocInTab();
   const { data, isLoading, isError } = useDocumentFlow(open ? type : null, open ? id : null);
   /* Floating pre-DO pairing for a PURCHASE anchor — read from the SAME
      usePoSoCoverage query key the detail pages / list drill-downs use, so the
@@ -122,7 +123,8 @@ export function DocumentFlowModal({ type, id, open, onClose }: Props) {
   const poAmendments = data?.poAmendments ?? [];
 
   const goPoAmendment = (amendmentId: string) => {
-    openDocInNewTab(`/scm/po-amendments/${amendmentId}`);
+    onClose();
+    openDoc(`/scm/po-amendments/${amendmentId}`);
   };
 
   // ── Layout: assign every node an (x, y) ─────────────────────────────────
@@ -169,8 +171,9 @@ export function DocumentFlowModal({ type, id, open, onClose }: Props) {
   const go = (n: FlowNode) => {
     const route = TYPE_META[n.type].route;
     if (!route) return;
-    // A new tab, the map stays open (owner 2026-09-27).
-    openDocInNewTab(route(n.id));
+    onClose();
+    // Its own tab in the in-app strip (owner 2026-09-27).
+    openDoc(route(n.id));
   };
 
   return (

@@ -79,6 +79,13 @@ just `completed`.
 - `order_pos` (read-only, merged: the SO's raised purchase orders) must never
   be confused with `po_no` (the case's own service PO — hand-edited or
   `generate-po`, refuses once set).
+- `order_dos` (read-only, detail route only, `services/assrOrderDos.ts`) =
+  the SALES ORDER's delivery orders with each one's delivery date
+  (SCM `delivered_at` → `do_date`, else AutoCount mirror `doc_date`), shown
+  as "DO No" / "Delivery Date" on the Customer card (desktop
+  `components/assr/CaseDocChips.tsx`, mobile `MobileCaseDocChips.tsx` +
+  `MobileMyCaseDetail.tsx`, one reader `assr/order-delivery.ts`). It is NOT
+  the case's `do_date`, which is the SERVICE delivery leg's date.
 - The pre-auth form-intake endpoints scope strictly by the caller's **secret**
   → company mapping; an unmapped secret 503s, it must never fall back to "no
   predicate" (that would leak both companies' PII).

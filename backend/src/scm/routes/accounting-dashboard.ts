@@ -147,7 +147,7 @@ type Preload = {
   /** The Performance P&L's own inputs, read once for the window: the sales orders and their lines, the rate and account, the rate's account row. */
   perf: { settings: PerformanceSettings; orders: PerfOrder[]; lines: PerfLine[]; rateAccount: { code: string; name: string } | null };
   /** The Cash Flow's own inputs, read once: the money accounts and what the window's supplier-payment vouchers settled. */
-  rp: { moneyAccounts: Array<{ code: string; name: string }>; splits: Map<string, RpSplit[]> };
+  rp: { moneyAccounts: Array<{ code: string; name: string }>; splits: Map<string, RpSplit[]>; acquirerTransits: string[] };
 };
 
 /* Two waves of parallel reads (2026-09-22, the owner's "loading 很慢": the
@@ -188,7 +188,7 @@ async function preload(sb: Sb, companyId: number, layoutIds: number[], windowSta
   };
 
   /* Wave 1 — the window's tables. */
-  const [gl, moves, wh, accs, roles, closings, laidPnl, laidBs, laidPerf, laidRp, fAccounts, bindings, settings, orders, money] = await Promise.all([
+  const [gl, moves, wh, accs, roles, closings, laidPnl, laidBs, laidPerf, laidRp, fAccounts, bindings, settings, orders, money, acquirers] = await Promise.all([
     paginateAll<GlRow>((f, t) => sb.from('v_gl_entries').select(GL_COLS).eq('company_id', companyId).lte('entry_date', windowEnd).order('line_id').range(f, t)),
     loadOwnedMovementsUpTo(sb, companyId, windowEnd),
     bucketByWarehouse(sb, companyId),
@@ -204,6 +204,7 @@ async function preload(sb: Sb, companyId: number, layoutIds: number[], windowSta
     perfDb.settings(),
     perfDb.orders(windowStart, windowEnd),
     rpDb.moneyAccounts(),
+    rpDb.acquirerTransits(),
   ]);
   if (gl.error) return { ok: false, reason: `ledger: ${failed(gl.error)}` };
   if (!moves.ok) return { ok: false, reason: `stock: ${moves.reason}` };
@@ -219,6 +220,7 @@ async function preload(sb: Sb, companyId: number, layoutIds: number[], windowSta
   if (!settings.ok) return { ok: false, reason: `performance settings: ${settings.reason}` };
   if (!orders.ok) return { ok: false, reason: `orders: ${orders.reason}` };
   if (!money.ok) return { ok: false, reason: `money accounts: ${money.reason}` };
+  if (!acquirers.ok) return { ok: false, reason: `acquirers: ${acquirers.reason}` };
   const layouts: Preload['layouts'] = { pnl: laidPnl, balance_sheet: laidBs, performance: laidPerf, rp: laidRp };
   const glRows = (gl.data ?? []).filter((r) => countsInTheBooks(r));
 
@@ -252,7 +254,7 @@ async function preload(sb: Sb, companyId: number, layoutIds: number[], windowSta
       moves: moves.rows, bucketOf: wh.of, accounts: accs.accounts, roles, closingBooked: closings.closingBooked, layouts,
       forecast: { grid, accounts: fAccounts.accounts }, purchaseAccountsOf: bindings.purchaseAccountsOf, categoryOfItem, compareAccounts: bindings.compareAccounts,
       perf: { settings: settings.settings, orders: orders.orders, lines: lines.lines, rateAccount: rateAccount.account },
-      rp: { moneyAccounts: money.accounts, splits: splits.byPv },
+      rp: { moneyAccounts: money.accounts, splits: splits.byPv, acquirerTransits: acquirers.codes },
     },
   };
 }
@@ -272,10 +274,17 @@ function sourcesOf(pre: Preload): { report: ReportSources; rp: RpSources; perf: 
     closingBooked: async (monthEnd) => ({ ok: true as const, booked: pre.closingBooked.get(monthEnd.slice(0, 7)) === true }),
   };
   const rp: RpSources = {
-    lines: async (moneyCodes, from, to) => {
+    lines: async (moneyCodes, clearingCodes, from, to) => {
       const money = new Set(moneyCodes);
-      return { ok: true as const, money: pre.gl.filter((r) => money.has(r.account_code) && r.entry_date <= to), period: pre.gl.filter((r) => r.entry_date >= from && r.entry_date <= to) };
+      const clearing = new Set(clearingCodes);
+      return {
+        ok: true as const,
+        money: pre.gl.filter((r) => money.has(r.account_code) && r.entry_date <= to),
+        period: pre.gl.filter((r) => r.entry_date >= from && r.entry_date <= to),
+        clearing: pre.gl.filter((r) => clearing.has(r.account_code) && r.entry_date <= to),
+      };
     },
+    acquirerTransits: async () => ({ ok: true as const, codes: pre.rp.acquirerTransits }),
     layout: () => layout('rp'),
     moneyAccounts: async () => ({ ok: true as const, accounts: pre.rp.moneyAccounts }),
     roles: async () => pre.roles,

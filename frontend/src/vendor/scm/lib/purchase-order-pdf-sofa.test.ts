@@ -111,6 +111,23 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
     expect(raw).not.toContain('2A\\(RHF\\)');
   });
 
+  /* HC-SO-2609-221 (owner 2026-09-28): a U booked as five lines with the two
+     corners on ONE "CNR x2" line. The diagram must count the line's qty as
+     pieces (it drew one corner) and turn the run at the corners (it drew a
+     straight row). */
+  it('draws both corners of a "CNR x2" line', async () => {
+    const line = (moduleId: string, qty = 1) => ({ ...sofaLine(moduleId), item_code: `8030-${moduleId}`, qty });
+    const b64 = await purchaseOrderPdfBase64(
+      header,
+      asItems([line('1A(LHF)'), line('2NA'), line('1NA'), line('CNR', 2), line('1A(RHF)')]),
+    );
+    const pdf = Buffer.from(b64, 'base64');
+    const raw = pdf.toString('latin1');
+    expect(raw).toContain('Sofa layout');
+    expect(raw.match(/CNR/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    if (process.env.SOFA_PDF_OUT) writeFileSync(process.env.SOFA_PDF_OUT.replace(/\.pdf$/, '-u.pdf'), pdf);
+  });
+
   it('draws nothing sofa-shaped for a non-sofa PO', async () => {
     const b64 = await purchaseOrderPdfBase64(header, asItems([{
       item_code: 'ANGGN-FIRM-K',

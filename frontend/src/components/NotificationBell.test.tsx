@@ -79,6 +79,13 @@ vi.mock("react-router-dom", () => ({
 
 vi.mock("./Avatar", () => ({ Avatar: () => null }));
 
+/* The popover body is lazy-loaded on the first open: wait for it, or a test
+   passes only when an earlier one already loaded the chunk. */
+async function openBell() {
+  fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+  await screen.findByRole("tab", { name: /System/ });
+}
+
 function renderBell() {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -119,7 +126,7 @@ describe("NotificationBell — system notices section", () => {
     );
     expect(apiGet).toHaveBeenCalledWith("/api/announcements/banner?scope=system");
 
-    fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+    await openBell();
     // One unread entry point: tabs split announcements from system notices,
     // and a system row wears its source as the tag.
     expect(screen.getByRole("tab", { name: /System/ })).toBeTruthy();
@@ -137,7 +144,7 @@ describe("NotificationBell — system notices section", () => {
       ).toBeTruthy(),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+    await openBell();
     fireEvent.click(screen.getByRole("button", { name: /Mark read/ }));
 
     await waitFor(() =>

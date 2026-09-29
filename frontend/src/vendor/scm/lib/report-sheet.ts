@@ -17,7 +17,7 @@ import type { FlatLine, MonthColumn, MonthlyLine } from './report-monthly';
 import type { RpReport } from './rp-report-queries';
 import { performanceNotes, performanceSummaryLines, type PerformanceReport } from './performance-report-queries';
 
-export type SheetRowKind = 'block' | 'category' | 'row' | 'unassigned' | 'total' | 'net';
+export type SheetRowKind = 'block' | 'category' | 'row' | 'unassigned' | 'total' | 'net' | 'memo';
 export type SheetColumn = {
   label: string;
   kind: 'amount' | 'pct' | 'text';
