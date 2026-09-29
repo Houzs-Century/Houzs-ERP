@@ -89,3 +89,31 @@ describe("a defect action the server refuses", () => {
     );
   });
 });
+
+// Owner 2026-09-28: the defect Model + Reason must be readable by EVERY viewer
+// on mobile — the bug was that the caption rendered only in the hidden tasklist,
+// so nobody on the card view (Shukor included) could see it. These pin that the
+// remark shows regardless of review/purchase rights.
+describe("the photo's Model + Reason are shown to every viewer", () => {
+  const withCaption = (caption: string, canReview = false) =>
+    render(
+      <DefectActionsCtx.Provider value={{ actions: [], canReview, canPurchase: false, reload }}>
+        <DefectFileActions att={{ id: 5, caption }} />
+      </DefectActionsCtx.Provider>,
+    );
+
+  test("a structured caption renders both labelled lines even with NO review rights", () => {
+    withCaption("Model: AKEMI Elevation\nReason: Dented corner", false);
+    expect(screen.getByText("Model:")).toBeDefined();
+    expect(screen.getByText(/AKEMI Elevation/)).toBeDefined();
+    expect(screen.getByText("Reason:")).toBeDefined();
+    expect(screen.getByText(/Dented corner/)).toBeDefined();
+    // A plain viewer gets no Done/Replace buttons — only the remark.
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+  });
+
+  test("a legacy free-text caption still reads out (as the reason)", () => {
+    withCaption("Elevation", false);
+    expect(screen.getByText(/Elevation/)).toBeDefined();
+  });
+});
