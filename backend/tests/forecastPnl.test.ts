@@ -29,8 +29,8 @@ const ACCOUNTS: Row[] = [
   acc('950-0000', 'TAXATION', 'EXPENSE', 'TAXATION'),
 ];
 
-function harness(perms: string[] = ['scm.payment_voucher.post', 'scm.payment_voucher.write'], rows: Row[] = []) {
-  const sb = fakeSb({ accounts: ACCOUNTS.map((r) => ({ ...r })), acc_forecast_pnl: rows.map((r) => ({ ...r })), acc_report_layouts: [] });
+function harness(perms: string[] = ['scm.payment_voucher.post', 'scm.payment_voucher.write'], rows: Row[] = [], bindings: Row[] = []) {
+  const sb = fakeSb({ accounts: ACCOUNTS.map((r) => ({ ...r })), acc_forecast_pnl: rows.map((r) => ({ ...r })), acc_report_layouts: [], acc_item_group_accounts: bindings.map((r) => ({ ...r })) });
   const app = new Hono();
   app.use('*', async (c, next) => {
     c.set('supabase' as never, sb as never);
@@ -124,6 +124,34 @@ describe('PUT /accounting/forecast', () => {
   test('writing needs the vouchers\' write key', async () => {
     const { app } = harness(['scm.payment_voucher.post']);
     expect((await put(app, { months: { '2026-10': OCT } })).status).toBe(403);
+  });
+});
+
+/* The item-group bindings give a purchase account its basis (owner 2026-09-29:
+   purchase of bedding 应该是根据回他的 sales 的 amount 算，而不是 total sales). */
+describe("a purchase account's basis comes from the item-group bindings", () => {
+  const BINDINGS: Row[] = [
+    { company_id: CO, group_code: 'SOFA', sales_account: '500-0003', purchase_account: '601-0003' },
+    { company_id: CO, group_code: 'MATTRESS', sales_account: '500-0001', purchase_account: '601-0001' },   // 601-0001 is not a forecast line here — nothing to stamp
+    { company_id: CO, group_code: 'SERVICE', sales_account: '503-0000', purchase_account: '615-0000' },    // 503-0000 is not on the chart — left out, 615 stays on the whole sales
+    { company_id: 99, group_code: 'SOFA', sales_account: '500-0001', purchase_account: '601-0003' },       // another company's binding never reaches this one
+  ];
+
+  test('GET stamps basis on the bound purchase accounts and nothing else; the figures take a purchase % of its own sales', async () => {
+    const { app } = harness(undefined, [{ company_id: CO, month: '2026-10', lines: OCT }], BINDINGS);
+    const b = await (await app.request('/accounting/forecast')).json() as { accounts: Array<{ code: string; basis?: string[] }> };
+    const basis = Object.fromEntries(b.accounts.map((a) => [a.code, a.basis ?? null]));
+    expect(basis['601-0003']).toEqual(['500-0003']);
+    expect(basis['615-0000']).toBeNull();
+    expect(basis['500-0003']).toBeNull();
+    expect(basis['900-T003']).toBeNull();
+    const fig = await (await app.request('/accounting/forecast/figures?from=2026-10&to=2026-10')).json() as { months: Array<{ salesSen: number; lines: Array<{ code: string; amountSen: number; basisSen: number }>; totals: { costOfSalesSen: number } }> };
+    const oct = fig.months[0]!;
+    expect(oct.salesSen).toBe(10_000_000);
+    /* 55% of the sofa sales (80,000) = 44,000 — not 55,000 of the whole. */
+    expect(oct.lines.find((l) => l.code === '601-0003')).toMatchObject({ amountSen: 4_400_000, basisSen: 8_000_000 });
+    expect(oct.lines.find((l) => l.code === '615-0000')).toMatchObject({ amountSen: 100_000, basisSen: 10_000_000 });
+    expect(oct.totals.costOfSalesSen).toBe(4_500_000);
   });
 });
 
