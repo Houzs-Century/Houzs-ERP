@@ -103,7 +103,7 @@ const demandRed = (qty: number): Row => ({
   item_group: 'bedframe', variants: { fabricCode: 'RED' }, qty,
   warehouse_id: 'W1', line_delivery_date: '2026-12-01', line_no: 1, created_at: '2026-07-01T00:00:00Z',
   cancelled: false,
-  so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: null, customer_state: null },
+  so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: '2026-07-02', customer_state: null },
 });
 
 // A PO supply line for BF-100 → W1. `variant` null builds the legacy '' key.
@@ -399,7 +399,7 @@ const sofaDemand = (id: string, docNo: string, qty: number, delivery: string | n
   item_group: 'sofa', variants: { fabricCode: 'RED' }, qty,
   warehouse_id: 'W1', line_delivery_date: delivery, line_no: 1, created_at: '2026-07-01T00:00:00Z',
   cancelled: false,
-  so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: delivery, processing_date: null, customer_state: null },
+  so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: delivery, processing_date: '2026-07-02', customer_state: null },
 });
 
 // A sofa PO supply line for SF-100 → W1. `variant` null builds the legacy '' key.
@@ -486,7 +486,7 @@ describe('computeMrp — includeUndated is visibility, not a demand filter (audi
   const undated: Row = {
     ...demandRed(5), id: 'si-undated', doc_no: 'SO-2',
     line_delivery_date: null,
-    so: { debtor_name: 'Beta', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: null, processing_date: null, customer_state: null },
+    so: { debtor_name: 'Beta', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: null, processing_date: '2026-07-02', customer_state: null },
   };
   const tables = () => ({
     ...BASE_TABLES,
@@ -610,11 +610,11 @@ describe('computeMrp — undated demand is COUNTED even when it is hidden', () =
   const d2 = {
     ...demandRed(1), id: 'si-d2', doc_no: 'SO-D2',
     line_delivery_date: '2026-12-02',
-    so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-02', processing_date: null, customer_state: null },
+    so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-02', processing_date: '2026-07-02', customer_state: null },
   };
   const undatedSo = (id: string, docNo: string, qty: number): Row => ({
     ...demandRed(qty), id, doc_no: docNo, line_delivery_date: null,
-    so: { debtor_name: 'Beta', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: null, processing_date: null, customer_state: null },
+    so: { debtor_name: 'Beta', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: null, processing_date: '2026-07-02', customer_state: null },
   });
   const tables = () => ({
     ...BASE_TABLES,
@@ -753,7 +753,7 @@ describe('computeMrp — SHIPPED no longer creates demand (audit D4)', () => {
   test('a SHIPPED-status SO line is done, matching so-stock-allocation / reservations', async () => {
     const shipped: Row = {
       ...demandRed(5),
-      so: { debtor_name: 'Acme', status: 'SHIPPED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: null, customer_state: null },
+      so: { debtor_name: 'Acme', status: 'SHIPPED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: '2026-07-02', customer_state: null },
     };
     const sb = fakeSb({ ...BASE_TABLES, mfg_sales_order_items: [shipped] });
     const res = await computeMrp(asSb(sb), opts);
@@ -1057,7 +1057,7 @@ const demandFor = (docNo: string, dates: Row): Row => ({
   line_delivery_date_overridden: false,
   so: {
     debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01',
-    amended_delivery_date: null, processing_date: null, customer_state: null,
+    amended_delivery_date: null, processing_date: '2026-07-02', customer_state: null,
     ...dates,
   },
 });
@@ -1136,6 +1136,37 @@ describe('computeMrp — allocation ranks on the EFFECTIVE delivery date', () =>
     const l1 = res.skus[0]!.lines.find((l) => l.soDocNo === 'SO-1')!;
     expect(l1.deliveryDate).toBe('2026-10-01');
     expect(l1.orderByDate).toBe('2026-10-01');
+  });
+});
+
+/* Owner 2026-09-15: 「没有 Processing date 的单子就不进来」. BUG-39 (2026-09-29):
+   HC-SO-013393 had a delivery date and no Processing Date and still showed on
+   MRP as SHORT with a supplier picked. */
+describe('computeMrp — an order with no Processing Date is not demand', () => {
+  test('an unreleased order with the EARLIER delivery date takes nothing; the released one gets the unit', async () => {
+    const sb = oneUnitWorld(
+      demandFor('SO-1', { customer_delivery_date: '2026-10-01', processing_date: null }),
+      demandFor('SO-2', { customer_delivery_date: '2026-12-01' }),
+    );
+
+    const res = await computeMrp(asSb(sb), opts);
+
+    expect(sourceByDoc(res)).toEqual({ 'SO-2': 'stock' });
+    expect(res.totals.shortageUnits).toBe(0);
+    const bucket = mrpStockAssignment(res).get(stockAssignmentKey('W1', 'BF-100', 'fabriccode=red'))!;
+    expect(bucket.claims.map((c) => c.soDocNo)).toEqual(['SO-2']);
+  });
+
+  test('a bucket whose only demand is unreleased has no row, even with undated shown', async () => {
+    const sb = oneUnitWorld(
+      demandFor('SO-1', { customer_delivery_date: '2026-10-01', processing_date: null }),
+      demandFor('SO-2', { customer_delivery_date: '2026-11-01', processing_date: null }),
+    );
+
+    const res = await computeMrp(asSb(sb), { ...opts, includeUndated: true });
+
+    expect(res.skus).toHaveLength(0);
+    expect(res.totals.shortageSkuCount).toBe(0);
   });
 });
 
@@ -1472,7 +1503,7 @@ describe('an uncatalogued line keeps its category on the row, not just in the fi
     item_group: 'accessory', variants: {}, qty,
     warehouse_id: 'W1', line_delivery_date: '2026-12-01', line_no: 1, created_at: '2026-07-01T00:00:00Z',
     cancelled: false,
-    so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: null, customer_state: null },
+    so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: '2026-07-02', customer_state: null },
   });
 
   test('mfg_products has no row for it: the SKU still says ACCESSORY', async () => {

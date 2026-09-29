@@ -150,7 +150,7 @@ Desktop / mobile parity
 - `stock_status` and `stock_state` come from different engines. Render `stock_status_effective`, never either input alone.
 - `is_main_ready` is true when the order has no main line at all. Gate on `is_ship_ready`.
 - `proceeded_at` is retired and waiting to be dropped: add no readers. Use `processing_date` via `SO_PROCESSING_DATE_COLUMN` (`.mjs` scripts: `backend/scripts/lib/so-processing-date.mjs`), never a string literal.
-- The Processing Date releases the order to purchasing. There is no production scheduling; MRP orders by delivery date minus lead days.
+- The Processing Date releases the order to purchasing. There is no production scheduling. An order without one is not MRP demand; a released order is ordered by delivery date minus lead days.
 - Don't remove `target_date` (the POS still writes it), don't rename `PDate` / `ac_udf_pdate`, and don't join `sales_entries` rows to SOs.
 - Don't add a deposit condition back into the Processing-Date gate. `proceedGateFailures` / `soProceedGateBlocked` have no callers but still contain one, so don't reuse them on a new path.
 - Don't put variant completeness back into the confirm gate; it belongs in the Processing-Date gate.

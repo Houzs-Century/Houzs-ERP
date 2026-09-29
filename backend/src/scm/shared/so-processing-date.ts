@@ -20,12 +20,11 @@
 // as they are found. If you meet another, it is stale — fix it, do not copy it.
 //
 // NOTE WHAT IS *NOT* IMPLEMENTED: the ~1 day lag the owner describes exists in
-// the business, not in this code. Nothing here defers anything by a day, and
-// MRP does not read this date to decide when to order at all — it derives
-// `orderByDate = delivery date − category lead days` (routes/mrp.ts) and only
-// DISPLAYS the Processing Date. Do not write a comment claiming otherwise; the
-// comment at routes/mrp.ts:193 claimed exactly that for months while the code
-// ignored the field.
+// the business, not in this code. Nothing here defers anything by a day. MRP
+// reads this date for ONE thing: an order without one is not demand at all
+// (owner 2026-09-15, routes/mrp.ts isReleased). WHEN a released order is
+// ordered is still `orderByDate = delivery date − category lead days`, never
+// derived from the Processing Date.
 //
 // ─── WHY THIS FILE EXISTS ───────────────────────────────────────────────────
 //
