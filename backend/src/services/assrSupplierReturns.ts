@@ -47,6 +47,18 @@ export function currentSupplierReturn<
   return live.reduce((a, b) => (b.round_no > a.round_no ? b : a));
 }
 
+/** The live trips BEFORE `current`, oldest first, that carry a number — so the
+ *  supplier's paper for trip N also lists trips 1..N-1 (owner 2026-09-29).
+ *  Pure, so it is unit-tested directly. */
+export function earlierSupplierReturns<
+  T extends { round_no: number; ref_no?: string | null; archived_at?: string | null },
+>(rows: readonly T[], current: T | null): T[] {
+  if (!current) return [];
+  return rows
+    .filter((r) => !r.archived_at && r.ref_no && Number(r.round_no) < Number(current.round_no))
+    .sort((a, b) => Number(a.round_no) - Number(b.round_no));
+}
+
 /** Next round number to mint = highest EXISTING number (archived included, so a
  *  number is never reused) + 1. Pure, so it is unit-tested directly. */
 export function nextSupplierReturnRoundNo(

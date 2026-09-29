@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import { requirePermission } from "../middleware/auth";
 import { getAssrDetail } from "../services/assr";
-import { ensureFirstSupplierReturn, listSupplierReturns } from "../services/assrSupplierReturns";
+import { earlierSupplierReturns, ensureFirstSupplierReturn, listSupplierReturns } from "../services/assrSupplierReturns";
 import { assrCaseRowInScope, assrCallerIsScoped, stripCreditorFields } from "../services/assrVisibility";
 import { allowedCompanyIds } from "../scm/lib/companyScope";
 import {
@@ -1220,10 +1220,16 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       // Owner 2026-09-29: ALWAYS print these rows on the supplier order (blank "—"
       // when no return trip exists yet) so the paper form is complete — never omit them.
       const t: any = trip || currentReturn;
+      // A 2nd/3rd trip's paper also lists the earlier trips' numbers, so the
+      // supplier can match it to what they already received (owner 2026-09-29).
+      const earlier = earlierSupplierReturns((detail as any).supplier_returns ?? [], t);
       return `
     <!-- this trip — Return # dropped (round is implied by the SVC-RTN in the header); owner 2026-09-28 -->
     <div class="mgrid cols-2">
-      <div class="lc">Reason</div><div class="vc">${esc(t?.reason || "—")}</div>
+      <div class="lc">Reason</div><div class="vc">${esc(t?.reason || "—")}</div>${earlier.length ? `
+      <div class="lc">Previous Return No.</div><div class="vc mono">${earlier
+        .map((r: any) => `${esc(r.ref_no)} <span class="dim">(Trip ${esc(r.round_no)}${r.pickup_at ? `, sent ${fmtDate(r.pickup_at)}` : ""})</span>`)
+        .join("<br>")}</div>` : ""}
     </div>
     <div class="mgrid cols-4">
       <div class="lc">Sent to Supplier</div><div class="vc mono">${fmtDate(t?.pickup_at)}</div>
