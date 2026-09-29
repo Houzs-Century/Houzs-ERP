@@ -24,6 +24,7 @@ const plan = (over) => planDuplicateSkuMerge({
   products: [product(DROP), product(KEEP)],
   refs: [],
   stock: [],
+  stockTakeLines: [],
   ...over,
 });
 
@@ -94,8 +95,32 @@ describe('planDuplicateSkuMerge', () => {
   });
 
   it('refuses a re-key it could not undo row by row', () => {
-    const r = plan({ refs: [ref('hr_item_kpi', 1, { col: 'ref', hasId: false }), ref('stock_take_lines', 1, { hasId: false })] });
-    expect(r.pairs[0].refusals).toEqual(['scm.stock_take_lines has no id column, so a re-key could not be undone row by row']);
+    const r = plan({ refs: [ref('hr_item_kpi', 1, { col: 'ref', hasId: false }), ref('warehouse_rack_items', 1, { hasId: false })] });
+    expect(r.pairs[0].refusals).toEqual(['scm.warehouse_rack_items has no id column, so a re-key could not be undone row by row']);
+  });
+
+  describe('stock take lines - unique per (take, code, variant), so the kept line is usually already there', () => {
+    const take = (id, over = {}) => ({ id, code: DROP, takeStatus: 'POSTED', collides: true, systemQty: 0, countedQty: 0, ...over });
+
+    it("leaves a closed take's line as the record of that count, and does not re-key it into a collision", () => {
+      const r = plan({ refs: [ref('stock_take_lines', 2)], stockTakeLines: [take('t1'), take('t2', { takeStatus: 'CANCELLED', collides: false })] });
+      expect(r.pairs[0].refusals).toEqual([]);
+      expect(r.pairs[0].rekey).toEqual([]);
+      expect(r.pairs[0].stay).toEqual([{ table: 'stock_take_lines', col: 'item_code', rows: 2 }]);
+      expect(r.pairs[0].retire).toBe(true);
+    });
+
+    it("moves an open take's line only where the kept code has none", () => {
+      const r = plan({ stockTakeLines: [take('t1', { takeStatus: 'OPEN', collides: false }), take('t2', { takeStatus: 'OPEN' })] });
+      expect(r.pairs[0].rekey).toEqual([{ table: 'stock_take_lines', col: 'item_code', rows: 1, ids: ['t1'] }]);
+      expect(r.pairs[0].stay).toEqual([{ table: 'stock_take_lines', col: 'item_code', rows: 1 }]);
+    });
+
+    it('refuses while an open take has counted the dropped code beside the kept one', () => {
+      const r = plan({ stockTakeLines: [take('t1', { takeStatus: 'OPEN', countedQty: 1 })] });
+      expect(r.pairs[0].refusals[0]).toMatch(/OPEN stock take counts/);
+      expect(r.pairs[0].retire).toBe(false);
+    });
   });
 
   it('only leaves behind tables the rename cascade knows about', () => {
