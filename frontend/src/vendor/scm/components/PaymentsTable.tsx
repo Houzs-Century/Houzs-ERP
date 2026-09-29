@@ -401,6 +401,12 @@ type SavedModeProps = {
   currency?: string;
   /** When true, hides Add Payment + per-row trash/save controls. */
   locked?: boolean;
+  /** A CANCELLED order (owner 2026-09-29). The card stays shut — no Add, no
+   *  Edit, no proof — but Finance (the correction right) gets a trash on each
+   *  row, to remove money that never came in here (one swipe keyed on two
+   *  orders). The reason is always asked; the server holds the same rule and
+   *  reverses the entry on its own day, not today. */
+  cancelledRemoval?: boolean;
   /** Owner 2026-07-13 (no-naked-payment-edits) — set when the parent SO is a
    *  DRAFT. A draft's payments are never locked by the same-day rule, so the
    *  per-row Edit (pencil) shows on EVERY persisted row (not just today's).
@@ -635,6 +641,8 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
   /* ── SAVED MODE hooks (always called — TanStack Query lazily skips
         when enabled=false). docNo is non-null in SAVED mode. ──────────── */
   const isSaved = props.docNo !== null;
+  /* Finance's remove door on a cancelled order — see SavedModeProps.cancelledRemoval. */
+  const removalOnly = isSaved && ((props as SavedModeProps).cancelledRemoval ?? false) && mayAmend;
   const paymentsQ     = useSalesOrderPayments(isSaved ? props.docNo : null);
   const addPayment    = useAddSalesOrderPayment();
   const editPayment   = useEditSalesOrderPayment();
@@ -1436,7 +1444,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                       <Printer size={14} strokeWidth={1.75} />
                     </button>
                   )}
-                  {!locked && (
+                  {(!locked || removalOnly) && (
                     <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end', alignItems: 'center' }}>
                       {/* Same-day EDIT (owner 2026-07-13) — only for a payment
                           recorded today; after MYT midnight it locks (no pencil).
@@ -1444,7 +1452,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                           every persisted row keeps its pencil while unconfirmed. */}
                       {/* Money moved from a cancelled order is moved back by
                           deleting the row, never edited in place (docs/bugs/0931). */}
-                      {rowMutable(p.created_at) && p.method !== CONVERTED_METHOD && (
+                      {!locked && rowMutable(p.created_at) && p.method !== CONVERTED_METHOD && (
                         <button
                           type="button"
                           disabled={editPayment.isPending}
@@ -1474,19 +1482,31 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                           className={paymentsStyles.trashBtn}
                           disabled={deletePayment.isPending}
                           onClick={async () => {
-                            const why = reasonWhyFor(rowVia(p.created_at), reasonOnEvery);
+                            /* Off a cancelled order a reason is always owed — the server refuses without one. */
+                            const why = reasonWhyFor(rowVia(p.created_at), reasonOnEvery) ?? (removalOnly ? 'amend' : null);
                             const reason = why ? await askReason(paymentReasonAsk('delete', why)) : '';
                             if (reason === null) return;
-                            if (await askConfirm({
+                            if (await askConfirm(removalOnly ? {
+                              title: `Remove this ${methodDisplay(p)} payment of ${fmtRm(p.amount_sen, currency)} from the cancelled order?`,
+                              body: 'Only for money that never came in on this order, such as one swipe keyed on two orders. '
+                                + `Its journal entry is reversed on ${p.method === CONVERTED_METHOD ? 'the day the money was moved' : formatDate(p.paid_at)}, not today, `
+                                + 'and its draft receipt is removed. It cannot be undone.',
+                              confirmLabel: 'Remove',
+                              danger: true,
+                            } : {
                               title: `Delete this ${methodDisplay(p)} payment of ${fmtRm(p.amount_sen, currency)}?`,
                               body: 'This removes the payment from the order, so the balance owing goes back up. It cannot be undone.',
                               confirmLabel: 'Delete',
                               danger: true,
                             })) {
-                              deletePayment.mutate({ docNo: (props as SavedModeProps).docNo, id: p.id, version: p.version, ...(reason ? { reason } : {}) });
+                              deletePayment.mutate(
+                                { docNo: (props as SavedModeProps).docNo, id: p.id, version: p.version, ...(reason ? { reason } : {}) },
+                                /* A refusal is said, never swallowed: reconciled, a locked month, money already refunded or moved. */
+                                { onError: (e) => { void notify({ title: 'Payment not removed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }); } },
+                              );
                             }
                           }}
-                          title="Remove payment (same-day only)"
+                          title={removalOnly ? 'Remove payment (Finance — cancelled order)' : 'Remove payment (same-day only)'}
                         >
                           <Trash2 size={14} strokeWidth={1.75} />
                         </button>

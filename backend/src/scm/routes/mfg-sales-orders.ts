@@ -267,7 +267,7 @@ import {
   type SoCreatePayment,
 } from '../lib/so-create-payment-slips';
 import { pickCrossCategoryMatch, type AutoMatchCandidate } from '../lib/cross-category-match';
-import { convertGuard, type ConvertPlan } from '../lib/so-money';
+import { cancelledRemovalGuard, convertGuard, type ConvertPlan } from '../lib/so-money';
 import { cancelledWithMoneyHandler, ordersWithMoneyHandler, soConvertSourcesHandler, soMoneyHandler, soMoneyRefundHandler } from './so-money-routes';
 import { recomputeSoStockAllocation, isHardBoundLine } from '../lib/so-stock-allocation';
 import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink, soLineVariantSig } from '../lib/so-line-relink';
@@ -10416,6 +10416,7 @@ export const deleteSoPaymentHandler = async (c: any) => {
     .eq('doc_no', docNo)
     .maybeSingle();
   const soIsDraft = (soStatusRow?.status as string | undefined) === 'DRAFT';
+  const soIsCancelled = (soStatusRow?.status as string | undefined) === 'CANCELLED';
   const createdAtRaw = (row as { created_at?: unknown }).created_at;
   if (typeof createdAtRaw !== 'string' || Number.isNaN(new Date(createdAtRaw).getTime())) {
     /* An unreadable created_at means we cannot tell whether the window is open.
@@ -10429,6 +10430,12 @@ export const deleteSoPaymentHandler = async (c: any) => {
   }
   // STRICT like the PATCH/POST either side: scopeToCompany degrades, and this DELETEs.
   const delCo = requireActiveCompanyId(c); if (!delCo.ok) return c.json(delCo.refusal, 409);
+  /* A CANCELLED order's payment comes off only at Finance's hand, and only while
+     its money is still on the order (owner 2026-09-29; lib/so-money.ts). */
+  if (soIsCancelled) {
+    const g = await cancelledRemovalGuard(sb, delCo.companyId, { docNo, paymentId: id, mayAmend: hasHouzsPerm(c, SO_PAYMENT_AMEND) });
+    if (!g.ok) return c.json({ error: g.error, message: g.message }, g.status);
+  }
   const windowCheck = await paymentMayChange(sb, {
     companyId: delCo.companyId, paymentId: id,
     createdDateMyt: mytDateOf(createdAtRaw), todayDateMyt: todayMyt(),
@@ -10442,7 +10449,7 @@ export const deleteSoPaymentHandler = async (c: any) => {
   }
   /* A DELETE carries no body here — version already rides the query, so the
      reason does too. Required on the amend right, same as the PATCH. */
-  const owed = paymentReasonRule(c, { reason: c.req.query('reason'), viaAmend: windowCheck.via === 'amend' });
+  const owed = paymentReasonRule(c, { reason: c.req.query('reason'), viaAmend: windowCheck.via === 'amend' || soIsCancelled });
   if (owed.refusal) return c.json(owed.refusal, 400);
 
   const { data: deleted, error } = await scopeToCompanyId(sb.from('mfg_sales_order_payments').delete()
@@ -10459,7 +10466,7 @@ export const deleteSoPaymentHandler = async (c: any) => {
 
   // Void the ledger entry AND re-roll the invoices this deposit was settling
   // (lib/so-payment-row afterSoPaymentRemoved). Best-effort, never blocks.
-  const delLedger = await afterSoPaymentRemoved(sb, { paymentId: id, docNo, companyId: delCo.companyId });
+  const delLedger = await afterSoPaymentRemoved(sb, { paymentId: id, docNo, companyId: delCo.companyId, neverHappened: soIsCancelled });
 
   /* Post-merge stitch — DELETE_PAYMENT audit row. Carries the typed reason as a
      field change so it renders in AuditHistoryPanel alongside the amount that
@@ -10476,6 +10483,7 @@ export const deleteSoPaymentHandler = async (c: any) => {
       { field: 'amountSen',  from: rowTyped.amount_sen,  to: null },
       ...(rowTyped.approval_code ? [{ field: 'approvalCode', from: rowTyped.approval_code, to: null } satisfies FieldChange] : []),
       ...ledgerFieldChange(delLedger),
+      ...(delLedger.draftReceipt ? [{ field: 'draftReceipt', from: delLedger.draftReceipt, to: null } satisfies FieldChange] : []),
     ],
     ...owed.audit,
   });

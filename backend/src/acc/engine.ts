@@ -315,6 +315,11 @@ export type ReverseJournalInput = {
   narration: (orig: { je_no: string }) => string;
   /** entry_date for the contra. Defaults to today (MYT) — a void happens when it happens. */
   entryDate?: string;
+  /** Date the contra on the ORIGINAL entry's own day instead: the entry records
+      something that never happened (a payment Finance removes from a cancelled
+      order, owner 2026-09-29), so the pair must net to zero in the month it sits
+      in rather than leave that month overstated. `entryDate`, when given, wins. */
+  onOriginalDate?: boolean;
   /** canonical 2-line fallback if the original somehow has no lines. */
   fallbackLines?: (totalSen: number) => EngineLine[];
 };
@@ -408,7 +413,9 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
   // NUMBERED in that same month's series — mirror postJournal, which mints from
   // the entry's OWN date. Minting from orig.entry_date put an Aug void into the
   // original's (e.g. Jan) JE-YYMM series while the row itself was dated Aug.
-  const contraEntryDate = dateOrNull(input.entryDate) ?? todayMyt();
+  const contraEntryDate = dateOrNull(input.entryDate)
+    ?? (input.onOriginalDate ? dateOrNull(String(orig.entry_date ?? '').slice(0, 10)) : null)
+    ?? todayMyt();
 
   let revJe: { id: string; je_no: string } | null = null;
   let lastErr: { code?: string; message?: string } | null = null;
