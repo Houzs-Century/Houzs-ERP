@@ -1429,6 +1429,16 @@
       "check": "D2",
       "key": "AMENDMENT_PO_APPROVED,CANCEL,CREATE,DELETE,POST,REVERSE,SEND ~ CANCEL,CREATE,DELETE,POST,REVERSE,SEND,UPDATE",
       "why": "TWO DIFFERENT QUESTIONS over the PO audit verbs. RELATED_AUDIT_ACTIONS (mfg-sales-orders/history.ts) picks which of a child PO / DO / SI trail surfaces on the SO History drawer: lifecycle moves only, so it drops UPDATE (line and date edits stay on the PO drawer) and keeps AMENDMENT_PO_APPROVED (the PO re-derived from this SO amendment, DEV-16). PO_ACTIONS is the PO drawer label map, which must name every verb it may render. They are not required to agree; a verb missing from the labels still renders through the lower-case fallback."
+    },
+    {
+      "check": "D1",
+      "key": "ALL,ODB,SI|backend/src/scm/routes/ar-invoices.ts frontend/src/vendor/scm/lib/ar-invoice-listing-pdf.ts",
+      "why": "THE AR LIST'S THREE KIND WORDS at two homes: the route REFUSES any other kind (ar-invoices.ts KINDS, pinned by arInvoices.test.ts kind=PI → bad_kind) and the listing PRINTS the word for the kind chosen (ar-invoice-listing-pdf.ts SHOWING, pinned by ar-invoice-listing-pdf.test.ts) — the same pair the AP list carries in ap-invoices.ts and ap-invoice-listing-pdf.ts. A backend/frontend shared mirror for three words would cost more than it guards; a fourth kind arrives through the route first and the two tests name it."
+    },
+    {
+      "check": "D2",
+      "key": "CUSTOMER / DEBTOR,DATE,DESCRIPTION,DUE,KIND,NO.,OUTSTANDING,PAID,REF,STATUS,TOTAL ~ DATE,DESCRIPTION,DUE,KIND,NO.,OUTSTANDING,PAID,REF,STATUS,SUPPLIER,TOTAL",
+      "why": "TWO LISTINGS' COLUMN HEADS differing by one word: the supplier-invoice listing names the SUPPLIER, the customer-invoice listing the CUSTOMER / DEBTOR — each paper's own party column on the same table dress, not one rule with two homes."
     }
   ]
 }

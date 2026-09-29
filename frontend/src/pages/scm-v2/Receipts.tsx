@@ -22,7 +22,10 @@
 // Other Debtors page's picker; Post raises the ODR through that module's own
 // route with postNow, which books Dr bank / Cr 305 and knocks the bills off in
 // the same call — no four layers on this door. The bill itself (记它欠多少) is
-// still raised on the Other Debtors page.
+// raised on the AR Invoices page (owner 2026-09-29: the Other Debtors page is
+// the registry alone), and a POSTED Other Debtor receipt is VOIDED from here
+// — the ODR contra, the ticked bills take their money back — so this page is
+// the one door for that money in and out again.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -31,7 +34,7 @@ import { Ban, Pencil, Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
   useAccounts, useReceipts, useCreateReceipt, useVoidReceipt, useReceiptDetail, useUpdateReceipt,
-  useOtherDebtors, useDebtorDetail, useCreateDebtorReceipt,
+  useOtherDebtors, useDebtorDetail, useCreateDebtorReceipt, useVoidDebtorReceipt,
   postableAccounts,
   type Account, type ReceiptRow, type DebtorBill,
 } from '../../vendor/scm/lib/accounting-queries';
@@ -88,7 +91,7 @@ const buildReceiptColumns = (h: {
     accessor: (r) => (
       <span style={{ fontFamily: 'var(--font-mono)' }}>
         {r.kind === 'DEBTOR'
-          ? <Link to="/scm/other-debtors" style={{ color: 'inherit' }}>{r.number}</Link>
+          ? <Link to={`/scm/ar-invoices?debtor=${r.debtorId ?? ''}`} style={{ color: 'inherit' }}>{r.number}</Link>
           : r.kind === 'CUSTOMER'
             ? <Link to={`/scm/sales-orders/${r.number}`} style={{ color: 'inherit' }}>{r.number}</Link>
             : r.number}
@@ -149,7 +152,7 @@ const buildReceiptColumns = (h: {
             <Pencil size={14} strokeWidth={1.75} />
           </button>
         )}
-        {r.kind === 'GENERAL' && r.status === 'POSTED' && h.canCancel && (
+        {(r.kind === 'GENERAL' || r.kind === 'DEBTOR') && r.status === 'POSTED' && h.canCancel && (
           <button type="button" aria-label={`Void ${r.number}`} style={iconButton}
             onClick={(e) => { e.stopPropagation(); h.onVoid(r); }}>
             <Ban size={14} strokeWidth={1.75} />
@@ -184,6 +187,7 @@ export const Receipts = () => {
 
   const createReceipt = useCreateReceipt();
   const voidReceipt = useVoidReceipt();
+  const voidDebtorReceipt = useVoidDebtorReceipt();
   const updateReceipt = useUpdateReceipt();
 
   const [adding, setAdding] = useState(false);
@@ -275,12 +279,15 @@ export const Receipts = () => {
   const onVoid = async (r: ReceiptRow) => {
     const ok = await askConfirm({
       title: `Void ${r.number}?`,
-      body: 'The RCT journal is reversed and the receipt turns CANCELLED — the ledger keeps both sides.',
+      body: r.kind === 'DEBTOR'
+        ? 'The ODR journal is reversed, the ticked bills take their money back and the receipt turns CANCELLED — the ledger keeps both sides.'
+        : 'The RCT journal is reversed and the receipt turns CANCELLED — the ledger keeps both sides.',
       confirmLabel: 'Void', danger: true,
     });
     if (!ok) return;
     try {
-      await voidReceipt.mutateAsync(r.id);
+      if (r.kind === 'DEBTOR') await voidDebtorReceipt.mutateAsync(r.id);
+      else await voidReceipt.mutateAsync(r.id);
     } catch (e) {
       void notify({ title: 'Void failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
     }
