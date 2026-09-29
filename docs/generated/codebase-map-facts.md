@@ -28,7 +28,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/assrAccess.ts` | 0 | 101 |
 | `backend/src/routes/assrFormIntake.ts` | 6 | 952 |
 | `backend/src/routes/assrPortal.ts` | 14 | 540 |
-| `backend/src/routes/assr_print.ts` | 1 | 1343 |
+| `backend/src/routes/assr_print.ts` | 1 | 1344 |
 | `backend/src/routes/audit.ts` | 1 | 74 |
 | `backend/src/routes/auth.ts` | 13 | 867 |
 | `backend/src/routes/brandShare.ts` | 2 | 53 |
@@ -81,7 +81,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-chart.ts` | 0 | 787 |
 | `backend/src/scm/routes/accounting-collection.ts` | 0 | 184 |
 | `backend/src/scm/routes/accounting-dashboard.ts` | 0 | 527 |
-| `backend/src/scm/routes/accounting-forecast.ts` | 0 | 129 |
+| `backend/src/scm/routes/accounting-forecast.ts` | 0 | 155 |
 | `backend/src/scm/routes/accounting-item-groups.ts` | 0 | 259 |
 | `backend/src/scm/routes/accounting-journal-edit.ts` | 0 | 193 |
 | `backend/src/scm/routes/accounting-ledger.ts` | 0 | 252 |
@@ -238,7 +238,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/state-warehouse-mappings.ts` | 3 | 106 |
 | `backend/src/scm/routes/stock-takes.ts` | 8 | 1125 |
 | `backend/src/scm/routes/stock-transfers.ts` | 6 | 813 |
-| `backend/src/scm/routes/suppliers.ts` | 14 | 1321 |
+| `backend/src/scm/routes/suppliers.ts` | 14 | 1335 |
 | `backend/src/scm/routes/threepl-companies.ts` | 5 | 319 |
 | `backend/src/scm/routes/trip-scan-token.ts` | 1 | 61 |
 | `backend/src/scm/routes/trips.ts` | 15 | 1391 |
@@ -258,13 +258,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 161 | `162_table_layouts_company_shared.sql` (162) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 468 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 469 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (2989 files, 860819 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (2991 files, 861284 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -281,7 +281,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/mobile/MobilePMS.tsx` | 4488 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4436 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4205 |
-| `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 3771 |
+| `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 3778 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3749 |
 | `frontend/src/components/DataTable.tsx` | 3541 |
 | `backend/src/scm/routes/grns.ts` | 3379 |

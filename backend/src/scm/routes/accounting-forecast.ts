@@ -24,7 +24,7 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { defaultSectionFor } from '../lib/account-sections';
 import { allowedIds, resolveLayout } from './accounting-report-layouts';
 import {
-  FORECAST_MONTH_RE, blockOfSection, monthFigures, sortedMonths, validateGrid,
+  FORECAST_MONTH_RE, blockOfSection, isSalesAccount, monthFigures, sortedMonths, validateGrid,
   type ForecastAccount, type ForecastGrid, type ForecastLines,
 } from '../shared/forecast-pnl';
 
@@ -39,7 +39,13 @@ const who = (c: Ctx): string => String((c.get('houzsUser') as { name?: string } 
 
 /** The P&L's own accounts a forecast line may name: active leaves of the five
     blocks, sectioned as the statement sections them (the stored section, else
-    the default shelf for the type — the P&L's own rule). */
+    the default shelf for the type — the P&L's own rule). A PURCHASE account
+    carries its `basis`: the sales accounts of the item groups bound to it
+    (scm.acc_item_group_accounts — bedding's two groups both name 601-0001 →
+    500-0001), so its percentage is of its own group's sales, not the month's
+    whole (owner 2026-09-29). A bound sales account that is not itself a
+    forecast line (inactive, a header) is left out; a binding with none left
+    stamps nothing and the line stays on the whole sales. */
 export async function loadForecastAccounts(sb: any, companyId: number): Promise<{ ok: true; accounts: ForecastAccount[] } | { ok: false; reason: string }> {
   const { data, error } = await sb.from('accounts')
     .select('account_code, account_name, account_type, parent_code, section, is_active')
@@ -57,7 +63,27 @@ export async function loadForecastAccounts(sb: any, companyId: number): Promise<
     }))
     .filter((a) => blockOfSection(a.section) !== null)
     .sort((a, b) => a.code.localeCompare(b.code));
-  return { ok: true, accounts };
+  const { data: bound, error: bErr } = await sb.from('acc_item_group_accounts')
+    .select('group_code, sales_account, purchase_account')
+    .eq('company_id', companyId);
+  if (bErr) return { ok: false, reason: String((bErr as { message?: string }).message ?? bErr) };
+  const salesCodes = new Set(accounts.filter(isSalesAccount).map((a) => a.code));
+  const basisOf = new Map<string, Set<string>>();
+  for (const b of (bound ?? []) as Array<{ sales_account: string | null; purchase_account: string | null }>) {
+    const purchase = String(b.purchase_account ?? '').trim();
+    const sales = String(b.sales_account ?? '').trim();
+    if (!purchase || !sales || !salesCodes.has(sales)) continue;
+    const set = basisOf.get(purchase) ?? new Set<string>();
+    set.add(sales);
+    basisOf.set(purchase, set);
+  }
+  return {
+    ok: true,
+    accounts: accounts.map((a) => {
+      const set = basisOf.get(a.code);
+      return set && set.size > 0 && !isSalesAccount(a) ? { ...a, basis: [...set].sort() } : a;
+    }),
+  };
 }
 
 export async function loadGrid(sb: any, companyId: number): Promise<{ ok: true; grid: ForecastGrid } | { ok: false; reason: string }> {

@@ -705,20 +705,20 @@ Total: 1345 route registrations across 190 files.
 - L1956  DELETE /:id/items/:itemId
 
 ## backend/src/scm/routes/suppliers.ts  (14)
-- L313  GET    /
-- L408  GET    /:id
-- L439  POST   /
-- L581  PATCH  /:id
-- L584  GET    /:id/bindings
-- L684  POST   /:id/bindings
-- L801  POST   /:id/bindings/batch
-- L893  PATCH  /:id/bindings/:bindingId
-- L905  PATCH  /:id/bindings/:bindingId/cost-anchor
-- L970  DELETE /:id/bindings/:bindingId
-- L1074  GET    /:id/bindings/:bindingId/price-changes
-- L1157  POST   /:id/bindings/:bindingId/price-changes
-- L1168  GET    /:id/scorecard
-- L1298  GET    /material/:kind/:code
+- L314  GET    /
+- L409  GET    /:id
+- L440  POST   /
+- L582  PATCH  /:id
+- L585  GET    /:id/bindings
+- L685  POST   /:id/bindings
+- L802  POST   /:id/bindings/batch
+- L894  PATCH  /:id/bindings/:bindingId
+- L906  PATCH  /:id/bindings/:bindingId/cost-anchor
+- L971  DELETE /:id/bindings/:bindingId
+- L1075  GET    /:id/bindings/:bindingId/price-changes
+- L1171  POST   /:id/bindings/:bindingId/price-changes
+- L1182  GET    /:id/scorecard
+- L1312  GET    /material/:kind/:code
 
 ## backend/src/routes/auth.ts  (13)
 - L53  GET    /status
@@ -1481,8 +1481,8 @@ Total: 1345 route registrations across 190 files.
 - L93  DELETE /:state
 
 ## backend/src/index.ts  (2)
-- L248  GET    /
-- L262  GET    /health
+- L250  GET    /
+- L264  GET    /health
 
 ## backend/src/routes/brandShare.ts  (2)
 - L36  POST   /:id/share-link
