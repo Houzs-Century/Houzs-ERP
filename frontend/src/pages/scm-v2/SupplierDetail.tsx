@@ -2201,8 +2201,9 @@ const SkuFormDialog = ({
 // ── B1 — effective-dated supplier price timeline for a binding ───────────────
 // The binding's unit cost by date (via the reusable EffectiveDatedHistory) plus
 // a "schedule a future price" form. Append-only: scheduling never rewrites the
-// past. NOTE (owner): these rows are the same table auto-derive reads as-of, so
-// a scheduled price moves the derived product cost on its date.
+// past. A row becomes the binding's current cost on its date (the nightly apply
+// job, or at once when dated today or earlier), which then moves the derived
+// product cost.
 const BindingPriceTimeline = ({ supplierId, binding }: { supplierId: string; binding: BindingRow }) => {
   const history = useBindingPriceHistory(supplierId, binding.id);
   const schedule = useScheduleBindingPrice();
@@ -2220,7 +2221,13 @@ const BindingPriceTimeline = ({ supplierId, binding }: { supplierId: string; bin
     schedule.mutate(
       { supplierId, bindingId: binding.id, effectiveFrom, unitPriceSen: priceSen },
       {
-        onSuccess: (r) => notify({ title: r.baselined ? 'Price scheduled (current cost baselined at today).' : 'Price scheduled.' }),
+        onSuccess: (r) => notify({
+          title: r.applied
+            ? 'Price applied — it is the current cost from today.'
+            : r.baselined
+              ? `Price scheduled for ${effectiveFrom} (current cost baselined at today).`
+              : `Price scheduled for ${effectiveFrom}.`,
+        }),
         onError: (e) => notify({ title: 'Schedule failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
       },
     );
@@ -2230,7 +2237,7 @@ const BindingPriceTimeline = ({ supplierId, binding }: { supplierId: string; bin
     <div className={styles.formGridFull} style={{ marginTop: 'var(--space-4)', borderTop: '1px solid var(--line)', paddingTop: 'var(--space-3)' }}>
       <span className={styles.fieldLabel}>Supplier price timeline</span>
       <p style={{ fontSize: 'var(--fs-11)', color: '#767b6e', margin: '2px 0 10px' }}>
-        The unit cost this supplier charges, by date. Scheduling a future price never touches past orders — it applies from its own date.
+        The unit cost this supplier charges, by date. A scheduled price becomes the current cost on its date (POs and the Product Maintenance cost follow). Past orders are never touched.
       </p>
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
         <label className={styles.field} style={{ margin: 0 }}>

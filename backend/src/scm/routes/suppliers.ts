@@ -28,6 +28,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { bindingToProductPatch } from '../lib/cost-anchor-sync';
 import { autoDeriveEnabled, recomputeDerivedProductCostSafe, recordSupplierPriceHistorySafe } from '../lib/auto-derive-cost';
+import { applyDueSupplierPrices } from '../lib/supplier-price-apply';
 import { todayMyt } from '../lib/my-time';
 import { paginateAll } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId, stampCompany,
@@ -1129,7 +1130,7 @@ export const createBindingPriceChangeHandler = async (c: any) => {
       toInsert.push({
         company_id: co.companyId, supplier_id: b.supplier_id, material_kind: b.material_kind,
         item_code: b.item_code, unit_price_sen: b.unit_price_sen ?? null, price_matrix: b.price_matrix ?? null,
-        is_main_supplier: Boolean(b.is_main_supplier), effective_from: today,
+        is_main_supplier: Boolean(b.is_main_supplier), effective_from: today, applied_at: new Date().toISOString(),
         notes: 'Auto-baseline: current cost before the first scheduled change.', created_by: createdBy,
       });
     }
@@ -1152,7 +1153,20 @@ export const createBindingPriceChangeHandler = async (c: any) => {
   }
   const inserted = (data ?? []) as Array<{ effective_from: string }>;
   const row = inserted.find((r) => r.effective_from === effectiveFrom) ?? inserted.at(-1) ?? null;
-  return c.json({ ok: true, baselined, row }, 201);
+  // Today or back-dated: live now, so POs and the product cost pick it up now
+  // rather than at the nightly run. A future date waits for that run.
+  let applied = false;
+  if (effectiveFrom <= today) {
+    try {
+      const r = await applyDueSupplierPrices(supabase, {
+        today, companyId: co.companyId, supplierId: b.supplier_id, itemCode: b.item_code,
+      });
+      applied = r.applied > 0;
+    } catch (e) {
+      console.error('[supplier-price-apply] immediate apply failed:', e instanceof Error ? e.message : e);
+    }
+  }
+  return c.json({ ok: true, baselined, applied, row }, 201);
 };
 suppliers.post('/:id/bindings/:bindingId/price-changes', createBindingPriceChangeHandler);
 
