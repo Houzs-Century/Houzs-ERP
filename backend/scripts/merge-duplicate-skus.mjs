@@ -129,7 +129,20 @@ async function readWorld(sql, cols) {
      WHERE b.company_id = ${CO} AND b.item_code = ANY(${codes})
        AND b.material_kind::text = 'mfg_product' AND b.is_main_supplier = true`;
 
-  return { products, refs, ids, missing, stock, uniques, masters, mainSuppliers };
+  /* A take lists every SKU of its scope, so both codes usually sit in the same take. */
+  const takeRows = await sql`
+    SELECT l.id::text AS id, l.stock_take_id::text AS take_id, l.item_code, l.variant_key,
+           l.system_qty::int AS system_qty, l.counted_qty::int AS counted_qty, t.status::text AS take_status
+      FROM scm.stock_take_lines l JOIN scm.stock_takes t ON t.id = l.stock_take_id
+     WHERE l.company_id = ${CO} AND l.item_code = ANY(${codes})`;
+  const keepOf = new Map(PAIRS.map((p) => [p.drop, p.keep]));
+  const stockTakeLines = takeRows.filter((l) => keepOf.has(l.item_code)).map((l) => ({
+    id: l.id, code: l.item_code, takeStatus: l.take_status, systemQty: l.system_qty, countedQty: l.counted_qty,
+    collides: takeRows.some((k) => k.take_id === l.take_id && k.item_code === keepOf.get(l.item_code)
+      && (k.variant_key ?? "") === (l.variant_key ?? "")),
+  }));
+
+  return { products, refs, ids, missing, stock, uniques, masters, mainSuppliers, stockTakeLines };
 }
 
 /* The kept row is what every moved line prices and costs against from now on, so
@@ -160,7 +173,10 @@ async function main() {
   const world = await readWorld(sql, cols);
   for (const m of world.missing) log(`   cascade column ${m} is not on this database - skipped`);
 
-  const result = planDuplicateSkuMerge({ pairs: PAIRS, products: world.products, refs: world.refs, stock: world.stock });
+  const result = planDuplicateSkuMerge({
+    pairs: PAIRS, products: world.products, refs: world.refs, stock: world.stock, stockTakeLines: world.stockTakeLines,
+  });
+  const idsOf = (p, r) => r.ids ?? world.ids.get(`${r.table}.${r.col}|${p.drop}`);
 
   log("");
   log("PER PAIR  (dropped code -> kept code)");
@@ -171,7 +187,10 @@ async function main() {
     log(`     dropped row: ${p.dropRowStatus ?? "not in the catalogue"}; stock on it ${dropStock.join(", ") || "none"}; on the kept code ${keepStock.join(", ") || "none"}`);
     log(`     SKU master: ${masterComparison(world, p).join("; ")}`);
     for (const r of p.rekey) log(`     re-key ${r.rows} row(s) in scm.${r.table}.${r.col}`);
-    for (const r of p.stay) log(`     stays  ${r.rows} row(s) in scm.${r.table}.${r.col} (catalogue-side, inert once the row is INACTIVE)`);
+    for (const r of p.stay) {
+      const why = r.table === "stock_take_lines" ? "a closed or empty stock take line: the record of that count" : "catalogue-side, inert once the row is INACTIVE";
+      log(`     stays  ${r.rows} row(s) in scm.${r.table}.${r.col} (${why})`);
+    }
     if (p.retire) log("     then switch the dropped row off (INACTIVE)");
     for (const r of p.refusals) log(`     REFUSED: ${r}`);
   }
@@ -206,7 +225,7 @@ async function main() {
   log("");
   log("UNDO  (before any write): each list below goes back with UPDATE scm.<table> SET <col> = '<dropped>' WHERE id::text = ANY(<ids>), and the row with status = 'ACTIVE'");
   for (const p of work) {
-    for (const r of p.rekey) log(`   undo "${p.drop}" scm.${r.table}.${r.col}: ${JSON.stringify(world.ids.get(`${r.table}.${r.col}|${p.drop}`))}`);
+    for (const r of p.rekey) log(`   undo "${p.drop}" scm.${r.table}.${r.col}: ${JSON.stringify(idsOf(p, r))}`);
     if (p.retire) log(`   undo "${p.drop}" scm.mfg_products: ["${p.dropRowId}"]`);
   }
 
@@ -219,7 +238,8 @@ async function main() {
       await sql.begin(async (tx) => {
         for (const r of p.rekey) {
           const c = PRODUCT_CODE_CASCADE.find((x) => x.table === r.table && x.col === r.col);
-          const ids = world.ids.get(`${r.table}.${r.col}|${p.drop}`);
+          const ids = idsOf(p, r);
+          const staying = world.ids.get(`${r.table}.${r.col}|${p.drop}`).length - ids.length;
           const done = await tx`
             UPDATE ${tx(`scm.${r.table}`)} SET ${tx(r.col)} = ${p.keep}
              WHERE company_id = ${CO} AND ${tx(r.col)} = ${p.drop} AND id::text = ANY(${ids}) ${kindClause(tx, c)}
@@ -228,7 +248,7 @@ async function main() {
           const [left] = await tx`
             SELECT COUNT(*)::int AS n FROM ${tx(`scm.${r.table}`)}
              WHERE company_id = ${CO} AND ${tx(r.col)} = ${p.drop} ${kindClause(tx, c)}`;
-          if (left.n !== 0) throw new Error(`scm.${r.table}: ${left.n} row(s) still carry "${p.drop}" after the re-key`);
+          if (left.n !== staying) throw new Error(`scm.${r.table}: ${left.n} row(s) still carry "${p.drop}" after the re-key, planned ${staying}`);
           n += done.length;
         }
         if (p.retire) {
@@ -260,7 +280,7 @@ async function main() {
   const v = postgres(DST, { ssl: "require", prepare: false, max: 1 });
   for (const p of committed) {
     for (const r of p.rekey) {
-      const ids = world.ids.get(`${r.table}.${r.col}|${p.drop}`);
+      const ids = idsOf(p, r);
       const rows = await v`SELECT id::text AS id, ${v(r.col)} AS code FROM ${v(`scm.${r.table}`)} WHERE id::text = ANY(${ids})`;
       for (const row of rows) if (row.code !== p.keep) problems.push(`scm.${r.table} ${row.id} carries "${row.code}", wanted "${p.keep}"`);
       if (rows.length !== ids.length) problems.push(`scm.${r.table}: ${ids.length - rows.length} re-keyed row(s) are gone`);

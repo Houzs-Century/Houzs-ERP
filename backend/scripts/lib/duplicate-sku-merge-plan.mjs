@@ -18,6 +18,13 @@
 // Stock moves by re-keying its ledger rows, exactly as a rename does, so
 // quantity and FIFO cost are unchanged; only which code holds them changes.
 //
+// STOCK TAKE LINES are the one re-keyed table with a unique key on the code:
+// (stock_take_id, item_code, variant_key). A take usually lists both codes, so
+// the dropped line would collide with the kept one. A line of a POSTED or
+// CANCELLED take is the record of that count and stays; a line of an OPEN take
+// moves when the kept code has no line there, stays when it is empty (posting
+// books nothing), and otherwise refuses the pair until the take is closed.
+//
 // A PAIR IS ALL OR NOTHING. Any refusal empties that pair's plan.
 //
 // NO SHEBANG: tests/duplicateSkuMergePlan.test.mjs imports this module.
@@ -45,6 +52,8 @@ const sum = (rows, f) => rows.reduce((s, r) => s + Number(f(r) ?? 0), 0);
  *   rows on each DROP code, one entry per cascade column that holds any
  * @param {Array<{code: string, warehouseCode: string, ledgerQty: number, lotQty: number}>} w.stock
  *   per dropped code and warehouse: the movement-ledger balance and the open lots
+ * @param {Array<{id: string, code: string, takeStatus: string, collides: boolean, systemQty: number|null, countedQty: number|null}>} w.stockTakeLines
+ *   every stock take line on a DROP code; `collides` = the kept code has a line in the same take and variant
  */
 export function planDuplicateSkuMerge(w) {
   const productByCode = new Map(w.products.map((p) => [normCode(p.code), p]));
@@ -73,9 +82,20 @@ export function planDuplicateSkuMerge(w) {
       refusals.push(`"${drop}" is category ${dropRow.category} but "${keep}" is ${keepRow.category}`);
     }
 
-    const refs = w.refs.filter((r) => normCode(r.code) === dk && Number(r.rows) > 0);
+    const refs = w.refs.filter((r) => normCode(r.code) === dk && Number(r.rows) > 0 && r.table !== "stock_take_lines");
     const rekey = refs.filter((r) => !STAYS_ON_DROP.has(r.table));
     const stay = refs.filter((r) => STAYS_ON_DROP.has(r.table));
+
+    const takeLines = w.stockTakeLines.filter((l) => normCode(l.code) === dk);
+    const takeMove = takeLines.filter((l) => l.takeStatus === "OPEN" && !l.collides);
+    const takeStay = takeLines.filter((l) => !takeMove.includes(l));
+    for (const l of takeStay) {
+      if (l.takeStatus === "OPEN" && (Number(l.systemQty ?? 0) !== 0 || Number(l.countedQty ?? 0) !== 0)) {
+        refusals.push(`an OPEN stock take counts "${drop}" (system ${l.systemQty ?? "-"}, counted ${l.countedQty ?? "-"}) where "${keep}" also has a line - post or cancel that take first`);
+      }
+    }
+    if (takeMove.length > 0) rekey.push({ table: "stock_take_lines", col: "item_code", rows: takeMove.length, hasId: true, ids: takeMove.map((l) => l.id) });
+    if (takeStay.length > 0) stay.push({ table: "stock_take_lines", col: "item_code", rows: takeStay.length });
     for (const r of rekey) {
       if (!r.hasId) refusals.push(`scm.${r.table} has no id column, so a re-key could not be undone row by row`);
     }
@@ -96,7 +116,7 @@ export function planDuplicateSkuMerge(w) {
       dropRowId: dropRow?.id ?? null,
       dropRowStatus: dropRow?.status ?? null,
       refusals,
-      rekey: refused ? [] : rekey.map((r) => ({ table: r.table, col: r.col, rows: Number(r.rows) })),
+      rekey: refused ? [] : rekey.map((r) => ({ table: r.table, col: r.col, rows: Number(r.rows), ...(r.ids ? { ids: r.ids } : {}) })),
       stay: stay.map((r) => ({ table: r.table, col: r.col, rows: Number(r.rows) })),
       unitsMoved: refused ? 0 : sum(stock, (s) => s.ledgerQty),
       retire: !refused && dropRow?.status === "ACTIVE",
