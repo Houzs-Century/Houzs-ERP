@@ -213,6 +213,8 @@ const METRICS: Metric[] = [
   { key: 'other', label: 'Other Expenses', of: (f) => f.otherExpensesSen, higherIsBetter: false },
   { key: 'net', label: 'Net Profit', of: (f) => f.netProfitSen, higherIsBetter: true },
 ];
+/** The Income Statement's readings, side by side under each period — the sample's two. */
+const IS_SOURCES: SideSource[] = [{ key: 'actual', label: 'Actual' }, { key: 'forecast', label: 'Forecast' }];
 
 const IncomeStatementCard = ({ periods }: { periods: DashboardPeriod[] }) => {
   const [metricKey, setMetricKey] = useState('revenue');
@@ -231,19 +233,29 @@ const IncomeStatementCard = ({ periods }: { periods: DashboardPeriod[] }) => {
   });
   const bars: ChartSeries[] = [{ key: 'actual', label: `Actual ${metric.label}`, color: ACTUAL, values: actual, tips: periods.map((p, i) => (actual[i] == null ? null : `${labelOf(p)} · Actual ${metric.label}: RM ${fmtSenPlain(actual[i])} (${fmtPct(actualPct[i])} of revenue)`)) }];
   const lines: ChartLine[] = [{ key: 'forecast', label: `Forecast ${metric.label}`, color: RED, dashed: true, values: forecast, tips: periods.map((p, i) => (forecast[i] == null ? null : `${labelOf(p)} · Forecast ${metric.label}: RM ${fmtSenPlain(forecast[i])} (${fmtPct(forecastPct[i])} of forecast revenue)`)) }];
-  const rows: TableRow[] = [
-    { id: 'actual', label: 'Actual', cells: actual.map(fmtOrDash), strong: true },
-    { id: 'actual-pct', label: '% of actual revenue', cells: actualPct.map(fmtPct) },
-    { id: 'forecast', label: 'Forecast', cells: forecast.map(fmtOrDash) },
-    { id: 'forecast-pct', label: '% of forecast revenue', cells: forecastPct.map(fmtPct) },
-    { id: 'vs-forecast', label: 'vs Forecast (RM)', cells: gap.map(fmtSigned), tone: gap.map(tone) },
-    { id: 'vs-forecast-pp', label: 'vs Forecast (pp)', cells: gapPp.map(fmtPp), tone: gapPp.map((g) => tone(g)) },
-    { id: 'vs-last', label: periods.length > 0 && periods[0]!.months.length > 1 ? 'vs last quarter' : 'vs last month', cells: vsLast.map((v) => (v == null ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(1)}%`)) },
+  /* The table, side by side (owner 2026-09-29: Income Statement 也改 — the sample's
+     own shape): every line of the statement a row — Revenue, COGS, Gross
+     Profit, Staff Cost, Other Expenses, Net Profit — and under each period
+     Actual | Forecast, the grey % beside a figure its share of THAT reading's
+     revenue (an actual of ACTUAL revenue, a forecast of FORECAST revenue —
+     never mixed). The tab's metric keeps its gaps below, one figure a period. */
+  const isRows: SideRow[] = METRICS.map((m) => ({
+    id: `is:${m.key}`, label: m.label, strong: m.key === 'revenue' || m.key === 'gp' || m.key === 'net',
+    cells: periods.map((p) => [
+      { text: fmtOrDash(p.actual ? m.of(p.actual) : null), pct: p.actual && m.key !== 'revenue' ? pct1(m.of(p.actual), p.actual.salesSen) : null },
+      { text: fmtOrDash(p.forecast ? m.of(p.forecast) : null), pct: p.forecast && m.key !== 'revenue' ? pct1(m.of(p.forecast), p.forecast.salesSen) : null },
+    ]),
+  }));
+  const lastWord = periods.length > 0 && periods[0]!.months.length > 1 ? 'vs last quarter' : 'vs last month';
+  const gaps: TableRow[] = [
+    { id: 'vs-forecast', label: `${metric.label} vs Forecast (RM)`, cells: gap.map(fmtSigned), tone: gap.map(tone) },
+    { id: 'vs-forecast-pp', label: `${metric.label} vs Forecast (pp)`, cells: gapPp.map(fmtPp), tone: gapPp.map((g) => tone(g)) },
+    { id: 'vs-last', label: `${metric.label} ${lastWord}`, cells: vsLast.map((v) => (v == null ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(1)}%`)) },
   ];
   return (
     <CardShell title="Income Statement" controls={<Tabs options={METRICS} value={metricKey} onChange={setMetricKey} />}>
       <DashboardChart labels={periods.map(labelOf)} bars={bars} lines={lines} ariaLabel={`${metric.label} — actual bars, forecast line`} />
-      <FiguresTable periods={periods} rows={rows} ariaLabel={`${metric.label} figures`} />
+      <SideBySideTable periods={periods} sources={IS_SOURCES} rows={isRows} spans={gaps} ariaLabel="Income statement figures" />
     </CardShell>
   );
 };
