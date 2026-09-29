@@ -106,7 +106,8 @@ beforeEach(() => { lastParams.value = null; });
 describe('the Financial Dashboard page', () => {
   test('reads the periods as labelled, marks the unfinished ones, and names the provisional stock', () => {
     render(<MemoryRouter><FinanceDashboard /></MemoryRouter>);
-    const table = screen.getByLabelText('Revenue figures');
+    /* The Income Statement's table carries every line of the statement now, not one metric (2026-09-29). */
+    const table = screen.getByLabelText('Income statement figures');
     expect(within(table).getByText('08/2026')).toBeTruthy();
     expect(within(table).getByText('09/2026 *')).toBeTruthy();
     expect(within(table).getByText('10/2026 *')).toBeTruthy();
@@ -115,21 +116,34 @@ describe('the Financial Dashboard page', () => {
     expect(lastParams.value).toEqual({ granularity: 'month', from: null, to: null });
   });
 
-  test('the Income Statement: actual and forecast with their own %, the gap in RM and points coloured, vs last month; the tabs switch the metric', () => {
+  /* Side by side too (owner 2026-09-29: Income Statement 也改): every line of the
+     statement a row, under each period Actual | Forecast, the grey % of that
+     reading's own revenue; the tab's gaps below. */
+  test('the Income Statement: every line a row, actual and forecast side by side under each period with their own %, the tab\'s gap in RM and points coloured, vs last month', () => {
     render(<MemoryRouter><FinanceDashboard /></MemoryRouter>);
-    expect(cells('actual')).toEqual(['100,000.00', '50,000.00', '—']);
-    expect(cells('forecast')).toEqual(['—', '120,000.00', '150,000.00']);
-    expect(cells('actual-pct')).toEqual(['100.0%', '100.0%', '—']);
+    const table = screen.getByLabelText('Income statement figures');
+    expect([...table.querySelectorAll('th[data-source]')].map((h) => h.textContent)).toEqual(['Actual', 'Forecast', 'Actual', 'Forecast', 'Actual', 'Forecast']);
+    expect([...table.querySelectorAll('tbody tr[data-row^="is:"]')].map((r) => r.getAttribute('data-row'))).toEqual(['is:revenue', 'is:cogs', 'is:gp', 'is:staff', 'is:other', 'is:net']);
+    /* Revenue carries no %; every other line its share of THAT reading's revenue — an actual of actual, a forecast of forecast. */
+    expect(side('is:revenue')).toEqual(['100,000.00', '—', '50,000.00', '120,000.00', '—', '150,000.00']);
+    expect(side('is:cogs')).toEqual(['58,000.00 58.0%', '—', '30,000.00 60.0%', '72,000.00 60.0%', '—', '90,000.00 60.0%']);
+    expect(side('is:gp')).toEqual(['42,000.00 42.0%', '—', '20,000.00 40.0%', '48,000.00 40.0%', '—', '60,000.00 40.0%']);
+    expect(side('is:staff')).toEqual(['20,000.00 20.0%', '—', '0.00 0.0%', '20,000.00 16.7%', '—', '0.00 0.0%']);
+    expect(side('is:other')).toEqual(['5,000.00 5.0%', '—', '2,000.00 4.0%', '6,000.00 5.0%', '—', '0.00 0.0%']);
+    expect(side('is:net')).toEqual(['19,000.00 19.0%', '—', '18,000.00 36.0%', '22,000.00 18.3%', '—', '60,000.00 40.0%']);
+    /* The tab's metric keeps its gaps, one figure a period, named for the metric. */
     expect(cells('vs-forecast')).toEqual(['—', '(70,000.00)', '—']);
     expect(cells('vs-last')).toEqual(['—', '-50.0%', '—']);
+    expect(rowText('vs-forecast')).toContain('Revenue vs Forecast (RM)');
+    /* The old stacked rows are gone. */
+    expect(document.querySelector('[data-row="actual"]')).toBeNull();
+    expect(document.querySelector('[data-row="forecast-pct"]')).toBeNull();
     /* The forecast's line has one segment (Sep → Oct) and two points: August has no forecast, so nothing is drawn there. */
     expect(document.querySelectorAll('[data-segment="forecast"]').length).toBe(1);
     expect(document.querySelectorAll('[data-point="forecast"]').length).toBe(2);
     expect(inCard('Income Statement', '[data-group="actual"]')).toBe(2);
     fireEvent.click(screen.getByRole('tab', { name: 'Net Profit' }));
-    expect(cells('actual')).toEqual(['19,000.00', '18,000.00', '—']);
-    expect(cells('actual-pct')).toEqual(['19.0%', '36.0%', '—']);
-    expect(cells('forecast-pct')).toEqual(['—', '18.3%', '40.0%']);
+    expect(rowText('vs-forecast')).toContain('Net Profit vs Forecast (RM)');
     /* Net profit under forecast is worse: red; a cost under forecast would be green. */
     const gapCell = (document.querySelector('[data-row="vs-forecast"]') as HTMLElement).querySelectorAll('td')[2]!;
     expect(gapCell.textContent).toBe('(4,000.00)');
@@ -138,6 +152,8 @@ describe('the Financial Dashboard page', () => {
     const cogsGap = (document.querySelector('[data-row="vs-forecast"]') as HTMLElement).querySelectorAll('td')[2]!;
     expect(cogsGap.textContent).toBe('(42,000.00)');
     expect(cogsGap.style.color).toContain('2F5D4F');
+    /* The rows do not change with the tab — the whole statement stays on the table. */
+    expect(side('is:net')).toEqual(['19,000.00 19.0%', '—', '18,000.00 36.0%', '22,000.00 18.3%', '—', '60,000.00 40.0%']);
   });
 
   test('Monthly / Quarterly and the range reach the query', () => {
