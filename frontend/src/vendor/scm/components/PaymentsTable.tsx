@@ -1890,28 +1890,16 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                          required sub-field(s). */
                       const noAmount = d.amountSen <= 0;
                       const missing  = missingMethodSubField(d);
-                      const blocked  = noAmount || missing !== null || slipProblem !== null;
+                      /* Too old for the window: commitDraft sends it as a request instead. */
+                      const asRequest = !noAmount && !missing && needsRequest(d);
+                      const blocked  = noAmount || missing !== null || (slipProblem !== null && !asRequest);
                       const title = noAmount
                         ? 'Enter an amount > 0 first'
                         : missing
                           ? `Pick the ${missing} for this ${d.methodLabel} payment first`
-                          : slipProblem
+                          : asRequest ? REQUEST_HINT : slipProblem
                             ? slipProblem
                             : d.editingPersistedId ? 'Save changes' : 'Save payment';
-                      if (!noAmount && !missing && needsRequest(d)) {
-                        return (
-                          <button
-                            type="button"
-                            className={paymentsStyles.saveBtn}
-                            onClick={() => void requestDraft(d)}
-                            disabled={locked || raiseBackdate.isPending}
-                            title={REQUEST_HINT}
-                          >
-                            <Save size={13} strokeWidth={1.75} />
-                            {raiseBackdate.isPending ? 'Sending…' : 'Request approval'}
-                          </button>
-                        );
-                      }
                       /* A LABELLED button, not a bare glyph — see the note on
                          the drafts block. `title` still carries the reason the
                          button is unavailable, which a label cannot. */
@@ -1920,11 +1908,11 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                           type="button"
                           className={paymentsStyles.saveBtn}
                           onClick={() => commitDraft(d)}
-                          disabled={locked || addPayment.isPending || blocked}
+                          disabled={locked || addPayment.isPending || raiseBackdate.isPending || blocked}
                           title={title}
                         >
                           <Save size={13} strokeWidth={1.75} />
-                          {addPayment.isPending ? 'Saving…' : 'Save'}
+                          {addPayment.isPending || raiseBackdate.isPending ? 'Saving…' : asRequest ? 'Request approval' : 'Save'}
                         </button>
                       );
                     })()}
