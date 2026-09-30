@@ -879,17 +879,17 @@ Total: 1361 route registrations across 193 files.
 - L551  GET    /
 
 ## backend/src/scm/routes/payment-requests.ts  (11)
-- L114  GET    /
-- L117  GET    /event-options
-- L143  POST   /:id/files
-- L144  GET    /:id/files
-- L145  GET    /:id/files/:fileId
-- L146  DELETE /:id/files/:fileId
-- L159  GET    /:id
-- L218  POST   /
-- L265  PATCH  /:id
-- L293  POST   /:id/withdraw
-- L332  POST   /:id/return
+- L162  GET    /
+- L165  GET    /event-options
+- L191  POST   /:id/files
+- L192  GET    /:id/files
+- L193  GET    /:id/files/:fileId
+- L194  DELETE /:id/files/:fileId
+- L207  GET    /:id
+- L266  POST   /
+- L313  PATCH  /:id
+- L341  POST   /:id/withdraw
+- L380  POST   /:id/return
 
 ## backend/src/scm/routes/scan-so.ts  (11)
 - L2206  GET    /salespeople
@@ -930,16 +930,16 @@ Total: 1361 route registrations across 193 files.
 - L497  POST   /po-dates
 
 ## backend/src/scm/routes/ap-invoices.ts  (10)
-- L420  GET    /
-- L421  POST   /
-- L424  POST   /:id/files
-- L425  GET    /:id/files
-- L426  GET    /:id/files/:fileId
-- L427  DELETE /:id/files/:fileId
-- L428  GET    /:id
-- L429  PATCH  /:id
-- L430  POST   /:id/post
-- L431  POST   /:id/cancel
+- L437  GET    /
+- L438  POST   /
+- L441  POST   /:id/files
+- L442  GET    /:id/files
+- L443  GET    /:id/files/:fileId
+- L444  DELETE /:id/files/:fileId
+- L445  GET    /:id
+- L446  PATCH  /:id
+- L447  POST   /:id/post
+- L448  POST   /:id/cancel
 
 ## backend/src/scm/routes/autocount-outbox.ts  (10)
 - L816  GET    /book-doc
