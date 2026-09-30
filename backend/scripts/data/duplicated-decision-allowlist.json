@@ -187,8 +187,8 @@
     },
     {
       "check": "D1",
-      "key": "GIF,HEIC,JPEG,JPG,PNG,WEBP|frontend/src/mobile/MobilePMS.tsx frontend/src/mobile/MobileServiceCase.tsx frontend/src/pages/ServiceCases.tsx",
-      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 3 homes: unnamed inline literal(s). Divergence costs a refused upload, never money or stock."
+      "key": "GIF,HEIC,JPEG,JPG,PNG,WEBP|frontend/src/mobile/MobilePmsDocCard.tsx frontend/src/mobile/MobileServiceCase.tsx frontend/src/pages/ServiceCases.tsx",
+      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 3 homes: unnamed inline literal(s). Divergence costs a refused upload, never money or stock. The mobile home MOVED from MobilePMS.tsx into MobilePmsDocCard.tsx (2026-09-30 SalesDocsCard extraction at the size ceiling) — same literal, same surface, not a new decision."
     },
     {
       "check": "D1",
@@ -287,8 +287,8 @@
     },
     {
       "check": "D1",
-      "key": "2D,3D,BD,DO,PIC,PO,PPE|frontend/src/mobile/MobilePMS.tsx frontend/src/pages/Projects.tsx",
-      "why": "A DESKTOP/MOBILE TWIN of the same list — the two surfaces render the same thing and neither can import the other. 2 homes: ROLE_ACRONYMS. Divergence shows as one surface missing an option."
+      "key": "2D,3D,BD,DO,PIC,PO,PPE|frontend/src/mobile/MobilePmsDocCard.tsx frontend/src/pages/Projects.tsx",
+      "why": "A DESKTOP/MOBILE TWIN of the same list — the two surfaces render the same thing and neither can import the other. 2 homes: ROLE_ACRONYMS. Divergence shows as one surface missing an option. The mobile home MOVED from MobilePMS.tsx into MobilePmsDocCard.tsx (2026-09-30 SalesDocsCard extraction at the size ceiling)."
     },
     {
       "check": "D1",
