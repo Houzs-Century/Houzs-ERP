@@ -212,26 +212,26 @@ describe('the stock lines read the engine as of the date (owner 2026-09-21: 报�
   test('a range that starts after goods arrived opens on them and closes on what is left; the buckets each print their own line; the month-close pair in the GL never counts twice', async () => {
     const { app } = harness(WORLD, [
       ...MOVES,                                                                                                                  // customer 100.00 on 10 Aug
-      { company_id: CO, movement_type: 'IN', qty: 1, total_cost_sen: 3_000, movement_date: '2026-08-20', created_at: '2026-08-20T02:00:00Z', item_code: 'MAT-1', warehouse_id: 'wh-show' },   // display 30.00
+      { company_id: CO, movement_type: 'IN', qty: 1, total_cost_sen: 3_000, movement_date: '2026-08-20', created_at: '2026-08-20T02:00:00Z', item_code: 'MAT-1', warehouse_id: 'wh-show' },   // showroom 30.00
       { company_id: CO, movement_type: 'OUT', qty: 1, total_cost_sen: 2_500, movement_date: '2026-09-05', created_at: '2026-09-05T02:00:00Z', item_code: 'SOFA-1', warehouse_id: null },     // customer −25.00 in Sept
     ], [{ id: 'wh-show', company_id: CO, type: 'showroom', stock_bucket: null }]);
-    /* September: opening = the engine as of 31 Aug (customer 100, display 30), closing = as of 30 Sept (customer 75, display 30). */
+    /* September: opening = the engine as of 31 Aug (customer 100, showroom 30), closing = as of 30 Sept (customer 75, showroom 30). */
     const sep = await (await app.request('/accounting/reports/pnl?from=2026-09-01&to=2026-09-30')).json() as { costOfSales: Line[]; totals: Record<string, number>; stock: { closingProvisional: boolean; asOf: string } };
-    expect(sep.costOfSales.map((l) => [l.code, l.amountSen])).toEqual([['600-0001', 10_000], ['600-0002', 3_000], ['620-0001', -7_500], ['620-0002', -3_000]]);
+    expect(sep.costOfSales.map((l) => [l.code, l.amountSen])).toEqual([['600-0001', 10_000], ['600-0004', 3_000], ['620-0001', -7_500], ['620-0004', -3_000]]);
     expect(sep.totals.costOfSalesSen).toBe(2_500);
     /* No closing entry on file for September in this world: provisional. */
     expect(sep.stock).toEqual({ closingProvisional: true, asOf: '2026-09-30' });
     /* A mid-month date is always provisional, and reads the engine that day. */
     const mid = await (await app.request('/accounting/reports/pnl?from=2026-09-01&to=2026-09-21')).json() as { costOfSales: Line[]; stock: { closingProvisional: boolean } };
-    expect(mid.costOfSales.map((l) => [l.code, l.amountSen])).toEqual([['600-0001', 10_000], ['600-0002', 3_000], ['620-0001', -7_500], ['620-0002', -3_000]]);
+    expect(mid.costOfSales.map((l) => [l.code, l.amountSen])).toEqual([['600-0001', 10_000], ['600-0004', 3_000], ['620-0001', -7_500], ['620-0004', -3_000]]);
     expect(mid.stock.closingProvisional).toBe(true);
     /* August: no opening (nothing before 1 Aug), closing = both buckets. */
     const aug = await (await app.request('/accounting/reports/pnl?from=2026-08-01&to=2026-08-31')).json() as { costOfSales: Line[]; totals: Record<string, number> };
-    expect(aug.costOfSales.map((l) => [l.code, l.amountSen])).toEqual([['601-0003', 60_000], ['615-0000', 1_000], ['620-0001', -10_000], ['620-0002', -3_000]]);
+    expect(aug.costOfSales.map((l) => [l.code, l.amountSen])).toEqual([['601-0003', 60_000], ['615-0000', 1_000], ['620-0001', -10_000], ['620-0004', -3_000]]);
     expect(aug.totals.costOfSalesSen).toBe(48_000);
     /* The balance sheet as at 30 Sept: stock 75 + 30 on the buckets' accounts; the self-check still reads zero. */
     const bs = await (await app.request('/accounting/reports/balance-sheet?asOf=2026-09-30')).json() as { assets: Line[]; totals: Record<string, number> };
-    expect(bs.assets.map((l) => [l.code, l.amountSen])).toEqual([['310-0010', 91_000], ['330-0001', 7_500], ['330-0002', 3_000]]);
+    expect(bs.assets.map((l) => [l.code, l.amountSen])).toEqual([['310-0010', 91_000], ['330-0001', 7_500], ['330-0004', 3_000]]);
     expect(bs.totals.checkSen).toBe(0);
     expect(bs.totals.assetsSen).toBe(101_500);
   });

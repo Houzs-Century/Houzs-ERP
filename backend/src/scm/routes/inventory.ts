@@ -306,7 +306,7 @@ export const patchWarehouseHandler = async (c: any) => {
   /* The closing-stock bucket (owner 2026-09-21): one of the three, or null = by type. */
   if (body.stockBucket !== undefined) {
     if (body.stockBucket !== null && !isStockBucket(body.stockBucket)) {
-      return c.json({ error: 'bad_stock_bucket', message: 'stockBucket must be customer, display, service or null (by type).' }, 400);
+      return c.json({ error: 'bad_stock_bucket', message: 'stockBucket must be customer, display, service, showroom, others or null (by type).' }, 400);
     }
     updates.stock_bucket = body.stockBucket;
   }
