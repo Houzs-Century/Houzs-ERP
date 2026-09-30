@@ -893,17 +893,17 @@ Total: 1362 route registrations across 193 files.
 - L380  POST   /:id/return
 
 ## backend/src/scm/routes/scan-so.ts  (11)
-- L2206  GET    /salespeople
-- L2239  GET    /rules/:salesperson
-- L2262  POST   /rules/:salesperson/distill
-- L2282  GET    /slip-image
-- L2313  POST   /warm
-- L2862  POST   /extract
-- L4089  POST   /enqueue
-- L4515  GET    /jobs
-- L4544  GET    /jobs/:id
-- L4582  POST   /jobs/clear-failed
-- L4623  POST   /samples/:id/confirm
+- L2207  GET    /salespeople
+- L2240  GET    /rules/:salesperson
+- L2263  POST   /rules/:salesperson/distill
+- L2283  GET    /slip-image
+- L2314  POST   /warm
+- L2863  POST   /extract
+- L4090  POST   /enqueue
+- L4516  GET    /jobs
+- L4545  GET    /jobs/:id
+- L4583  POST   /jobs/clear-failed
+- L4624  POST   /samples/:id/confirm
 
 ## backend/src/scm/routes/venture-portal-feed.ts  (11)
 - L159  GET    /status

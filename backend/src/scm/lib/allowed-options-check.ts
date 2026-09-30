@@ -183,6 +183,16 @@ const isZeroLeg = (s: string): boolean => {
 const legInPool = (pool: string[], value: string): boolean =>
   inPool(pool, value) || (isZeroLeg(value) && pool.some(isZeroLeg));
 
+/* Compartment codes are identifiers, not labels, and the catalogue spells the
+   same module both ways: 2026-09-30, company 1 carried `8030-Console` AND
+   `8030-CONSOLE` (plus 5535/8050/8051/9028 with only the upper-case SKU) against
+   a pool that lists `Console`. Every scan resolving to the upper-case SKU was
+   refused, and so was a manual pick of it. Case-folded for compartments ONLY —
+   fabric / height pools keep their exact spelling. */
+const compartmentInPool = (pool: string[], value: string): boolean =>
+  inPool(pool, value)
+  || pool.some((p) => foldForPool(p).toUpperCase() === foldForPool(value).toUpperCase());
+
 const toSpecialsArray = (s: string[] | string | null | undefined): string[] => {
   if (!s) return [];
   if (Array.isArray(s)) return s.map((x) => String(x).trim()).filter(Boolean);
@@ -251,7 +261,7 @@ export function checkAllowedOptions(
           : '';
         if (!moduleId) continue;
         const code = normalizeCompartmentCode(moduleId);
-        if (code && !inPool(opts.compartments, code)) {
+        if (code && !compartmentInPool(opts.compartments, code)) {
           return {
             error: 'variant_not_allowed',
             field: 'compartment',
@@ -263,7 +273,7 @@ export function checkAllowedOptions(
     } else {
       const dashAt = product.code.indexOf('-');
       const compartment = dashAt > 0 ? product.code.slice(dashAt + 1).trim() : '';
-      if (compartment && !inPool(opts.compartments, compartment)) {
+      if (compartment && !compartmentInPool(opts.compartments, compartment)) {
         return {
           error: 'variant_not_allowed',
           field: 'compartment',
@@ -517,6 +527,17 @@ export async function loadProductsAndModels(
     out.set(p.code, { product: p, model: p.model_id ? (modelById.get(p.model_id) ?? null) : null });
   }
   return { byCode: out, lookupError: null };
+}
+
+/** One plain sentence for a `variant_not_allowed` body, for callers with no
+ *  client-side humanApiError to compose it — the background scan job surfaced
+ *  this refusal as a bare "could not be created" (ZNT 4821, 2026-09-30). */
+export function variantNotAllowedSentence(body: Record<string, unknown>): string | null {
+  if (body.error !== 'variant_not_allowed') return null;
+  const item = typeof body.itemCode === 'string' && body.itemCode ? body.itemCode : 'One item';
+  const field = typeof body.field === 'string' ? body.field.replace(/_/g, ' ') : 'option';
+  const value = typeof body.value === 'string' ? ` "${body.value}"` : '';
+  return `${item}: the ${field}${value} is not allowed for this model. Please enter this order manually.`;
 }
 
 /** Canonical refusal for "the catalog could not be read, so no variant verdict
