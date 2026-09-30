@@ -59,8 +59,13 @@ export const DefectActionsCtx = createContext<{
 
 export function DefectFileActions({
   att,
+  wide = false,
 }: {
   att: { id: number; r2_key?: string; content_type?: string | null; caption?: string | null };
+  /** B2 big-preview layout (owner 2026-09-30): the card already shows the
+   *  photo full-width, so skip the small thumb; the Model/Reason strip and
+   *  the Done/Replace pair render full-width under the preview instead. */
+  wide?: boolean;
 }) {
   const ctx = useContext(DefectActionsCtx);
   const [draft, setDraft] = useState<null | "done" | "replace">(null);
@@ -107,28 +112,42 @@ export function DefectFileActions({
     }
   };
   const ts = (v: string) => String(v || "").slice(0, 16).replace("T", " ");
+  // Wide (B2) button styling — big half-width outline buttons under the
+  // full-width photo, per the owner's picked mockup.
+  const wideBtn: CSSProperties | undefined = wide
+    ? { flex: 1, padding: "9px 0", fontSize: 12.5, borderRadius: 9, textAlign: "center" }
+    : undefined;
   return (
-    <div style={{ paddingLeft: 2 }}>
-      {(att.r2_key || model || reason) && (
-        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginTop: 4 }}>
-          <DefectThumb r2Key={att.r2_key} contentType={att.content_type} />
-          {(model || reason) && (
-            <div style={{ fontSize: 11.5, color: "#6b6f63", minWidth: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-              {model && <div><b style={{ color: "#8c968a" }}>Model:</b> {model}</div>}
-              {reason && <div><b style={{ color: "#8c968a" }}>Reason:</b> {reason}</div>}
-            </div>
-          )}
-        </div>
+    <div style={{ paddingLeft: wide ? 0 : 2 }}>
+      {wide ? (
+        (model || reason) && (
+          <div style={{ background: "#faf9f5", borderLeft: "3px solid #d8a85a", borderRadius: 7, padding: "7px 10px", fontSize: 11.5, lineHeight: 1.45, color: "#414539", marginTop: 6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            {model && <div><b style={{ color: "#a16a2e" }}>Model:</b> {model}</div>}
+            {reason && <div><b style={{ color: "#a16a2e" }}>Reason:</b> {reason}</div>}
+          </div>
+        )
+      ) : (
+        (att.r2_key || model || reason) && (
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginTop: 4 }}>
+            <DefectThumb r2Key={att.r2_key} contentType={att.content_type} />
+            {(model || reason) && (
+              <div style={{ fontSize: 11.5, color: "#6b6f63", minWidth: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                {model && <div><b style={{ color: "#8c968a" }}>Model:</b> {model}</div>}
+                {reason && <div><b style={{ color: "#8c968a" }}>Reason:</b> {reason}</div>}
+              </div>
+            )}
+          </div>
+        )
       )}
       {isFresh && ctx.canReview && (
-        <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
-          <button className="tinybtn" disabled={saving} style={{ background: draft === "done" ? "#e2f0e9" : "#fff", borderColor: "#bcdcd7", color: "#2f8a5b", fontWeight: draft === "done" ? 800 : 700 }} onClick={() => setDraft("done")}>Done</button>
-          <button className="tinybtn" disabled={saving} style={{ background: draft === "replace" ? "#f7e3e3" : "#fff", borderColor: "#e6bcbc", color: "#b4362f", fontWeight: draft === "replace" ? 800 : 700 }} onClick={() => setDraft("replace")}>Replace</button>
+        <div style={{ display: "flex", gap: 6, marginTop: wide ? 8 : 2 }}>
+          <button className="tinybtn" disabled={saving} style={{ ...wideBtn, background: draft === "done" ? "#e2f0e9" : "#fff", borderColor: "#bcdcd7", color: "#2f8a5b", fontWeight: draft === "done" ? 800 : 700 }} onClick={() => setDraft("done")}>Done</button>
+          <button className="tinybtn" disabled={saving} style={{ ...wideBtn, background: draft === "replace" ? "#f7e3e3" : "#fff", borderColor: "#e6bcbc", color: "#b4362f", fontWeight: draft === "replace" ? 800 : 700 }} onClick={() => setDraft("replace")}>Replace</button>
         </div>
       )}
       {isEscalated && ctx.canPurchase && (
-        <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
-          <button className="tinybtn" disabled={saving} style={{ background: draft === "done" ? "#e2f0e9" : "#fff", borderColor: "#bcdcd7", color: "#2f8a5b", fontWeight: draft === "done" ? 800 : 700 }} onClick={() => setDraft("done")}>Done</button>
+        <div style={{ display: "flex", gap: 6, marginTop: wide ? 8 : 2 }}>
+          <button className="tinybtn" disabled={saving} style={{ ...wideBtn, background: draft === "done" ? "#e2f0e9" : "#fff", borderColor: "#bcdcd7", color: "#2f8a5b", fontWeight: draft === "done" ? 800 : 700 }} onClick={() => setDraft("done")}>Done</button>
         </div>
       )}
       {draft && (

@@ -515,7 +515,7 @@
     },
     "frontend/src/mobile/MobilePMS.tsx": {
       "reads": 0,
-      "catches": 2
+      "catches": 1
     },
     "frontend/src/mobile/MobileScan.tsx": {
       "reads": 0,
