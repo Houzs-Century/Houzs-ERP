@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-234 route modules (56 in `backend/src/routes`, 178 in `backend/src/scm/routes`), 1378 endpoint registrations.
+234 route modules (56 in `backend/src/routes`, 178 in `backend/src/scm/routes`), 1379 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -79,7 +79,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-bank-config.ts` | 0 | 126 |
 | `backend/src/scm/routes/accounting-bank-locks.ts` | 0 | 230 |
 | `backend/src/scm/routes/accounting-bank-months.ts` | 0 | 685 |
-| `backend/src/scm/routes/accounting-bank.ts` | 0 | 1456 |
+| `backend/src/scm/routes/accounting-bank.ts` | 0 | 1476 |
 | `backend/src/scm/routes/accounting-chart.ts` | 0 | 787 |
 | `backend/src/scm/routes/accounting-collection.ts` | 0 | 184 |
 | `backend/src/scm/routes/accounting-dashboard.ts` | 0 | 527 |
@@ -87,10 +87,10 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-item-groups.ts` | 0 | 259 |
 | `backend/src/scm/routes/accounting-journal-edit.ts` | 0 | 193 |
 | `backend/src/scm/routes/accounting-ledger.ts` | 0 | 252 |
-| `backend/src/scm/routes/accounting-merchant-charges.ts` | 0 | 233 |
+| `backend/src/scm/routes/accounting-merchant-charges.ts` | 0 | 254 |
 | `backend/src/scm/routes/accounting-numbering.ts` | 0 | 134 |
 | `backend/src/scm/routes/accounting-payment-corrections.ts` | 0 | 210 |
-| `backend/src/scm/routes/accounting-payouts.ts` | 0 | 265 |
+| `backend/src/scm/routes/accounting-payouts.ts` | 0 | 286 |
 | `backend/src/scm/routes/accounting-performance.ts` | 0 | 164 |
 | `backend/src/scm/routes/accounting-pi-backfill.ts` | 0 | 149 |
 | `backend/src/scm/routes/accounting-receipts-backfill.ts` | 0 | 239 |
@@ -99,10 +99,10 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-report-layouts.ts` | 0 | 205 |
 | `backend/src/scm/routes/accounting-reports.ts` | 0 | 434 |
 | `backend/src/scm/routes/accounting-rp.ts` | 0 | 474 |
-| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1585 |
+| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1618 |
 | `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 53 |
 | `backend/src/scm/routes/accounting-unmatched-payments.ts` | 0 | 45 |
-| `backend/src/scm/routes/accounting.ts` | 107 | 1664 |
+| `backend/src/scm/routes/accounting.ts` | 108 | 1666 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ap-invoice-files.ts` | 0 | 50 |
@@ -263,13 +263,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 161 | `162_table_layouts_company_shared.sql` (162) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 474 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 475 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (3045 files, 869926 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (3046 files, 870374 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |

@@ -54,7 +54,7 @@ import { bankLocks, bankMonthLock, bankMonthUnlock } from './accounting-bank-loc
 import { paymentCorrections } from './accounting-payment-corrections';
 import { unmatchedPaymentsHandler } from './accounting-unmatched-payments';
 import { bankConfigList, bankConfigSave } from './accounting-bank-config';
-import { payoutUpload, payoutList, payoutCharge, payoutChargeUndo } from './accounting-payouts';
+import { payoutUpload, payoutList, payoutCharge, payoutChargeUndo, chargeAccountsHandler } from './accounting-payouts';
 import {
   chartUnionHandler, chartTickHandler, chartImportHandler,
   chartRenameHandler, chartUpdateHandler, chartDeleteHandler, chartCreateHandler,
@@ -144,6 +144,8 @@ accounting.get('/settlement/payouts', payoutList);
    Finance picks (docs/bugs/0787); and its undo. */
 accounting.post('/settlement/payouts/:id/days/:settledOn/charge', payoutCharge);
 accounting.delete('/settlement/payouts/:id/days/:settledOn/charge', payoutChargeUndo);
+/* Where a charge may go, alone — for one kept off a bank credit (owner 2026-09-30). */
+accounting.get('/settlement/charge-accounts', chargeAccountsHandler);
 
 /* Layer 4 — reconciling the BANK's own statement (brief §3.5). Registered the
    same way and for the same reason: one path each, every one in the matrix.

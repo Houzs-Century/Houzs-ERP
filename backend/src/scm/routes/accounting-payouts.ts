@@ -156,6 +156,34 @@ export const payoutUpload = guard(async (c) => {
   return c.json({ ok: true, payoutId, advice, status });
 });
 
+/** Where a bank charge may be booked — active expense leaves of this company,
+    the same list the Setup page offers for the merchant fee — and each
+    acquirer's fee account, which a charge form starts on. One home for the
+    advice day's form and the bank credit's (owner 2026-09-30). */
+async function chargeChoices(sb: any, companyId: number): Promise<
+  | { ok: true; chargeAccounts: Array<{ accountCode: string; accountName: string }>; feeAccountByAcquirer: Record<string, string | null> }
+  | { ok: false; reason: string }
+> {
+  const accounts = await expenseLeafAccounts(sb, companyId);
+  if (!accounts.ok) return { ok: false, reason: accounts.reason };
+  const { data: acqRaw, error: acqErr } = await sb.from('acc_acquirers')
+    .select('code, fee_account_code').eq('company_id', companyId);
+  if (acqErr) return { ok: false, reason: acqErr.message };
+  const feeAccountByAcquirer: Record<string, string | null> = {};
+  for (const a of (acqRaw ?? []) as Array<Record<string, any>>) feeAccountByAcquirer[String(a.code)] = a.fee_account_code == null ? null : String(a.fee_account_code);
+  return { ok: true, chargeAccounts: accounts.accounts, feeAccountByAcquirer };
+}
+
+/* ── GET /settlement/charge-accounts — the choices alone, for a charge kept
+   off a bank credit (owner 2026-09-30: GHL sends no advice) ─────────────── */
+export const chargeAccountsHandler = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const choices = await chargeChoices(c.get('supabase'), co.companyId);
+  if (!choices.ok) return c.json({ error: 'load_failed', reason: choices.reason }, 500);
+  return c.json({ chargeAccounts: choices.chargeAccounts, feeAccountByAcquirer: choices.feeAccountByAcquirer });
+});
+
 /* ── GET /settlement/payouts — the list, each re-checked live ─────────────── */
 
 export const payoutList = guard(async (c) => {
@@ -188,16 +216,9 @@ export const payoutList = guard(async (c) => {
     });
     daysByPayout.set(id, at);
   }
-  /* The accounts a charge may be booked to — active expense leaves of this
-     company, the same list the Setup page offers for the merchant fee — and
-     each acquirer's fee account, which the dialog defaults to. */
-  const chargeAccounts = await expenseLeafAccounts(sb, co.companyId);
-  if (!chargeAccounts.ok) return c.json({ error: 'load_failed', reason: chargeAccounts.reason }, 500);
-  const { data: acqRaw, error: acqErr } = await sb.from('acc_acquirers')
-    .select('code, fee_account_code').eq('company_id', co.companyId);
-  if (acqErr) return c.json({ error: 'load_failed', reason: acqErr.message }, 500);
-  const feeAccountByAcquirer: Record<string, string | null> = {};
-  for (const a of (acqRaw ?? []) as Array<Record<string, any>>) feeAccountByAcquirer[String(a.code)] = a.fee_account_code == null ? null : String(a.fee_account_code);
+  const choices = await chargeChoices(sb, co.companyId);
+  if (!choices.ok) return c.json({ error: 'load_failed', reason: choices.reason }, 500);
+  const { chargeAccounts, feeAccountByAcquirer } = choices;
 
   const out = [];
   for (const p of payouts) {
@@ -213,7 +234,7 @@ export const payoutList = guard(async (c) => {
     );
     out.push({ ...p, status });
   }
-  return c.json({ payouts: out, chargeAccounts: chargeAccounts.accounts, feeAccountByAcquirer });
+  return c.json({ payouts: out, chargeAccounts, feeAccountByAcquirer });
 });
 
 /* ── POST /settlement/payouts/:id/days/:settledOn/charge — the bank deducted a

@@ -889,12 +889,31 @@ export const bankLineReceipt = guard(async (c) => {
     }, 400);
   }
 
+  /* WHAT THE ACQUIRER KEPT off this credit (owner 2026-09-30: 这个RM54 是charges
+     来的，和之前的public bank一样 → 做). GHL sends no advice, so the charge rides
+     the credit: named against ONE of the statements it pays, booked with that
+     share, to the account Finance picks. The shares above still add up to the
+     credit to the sen; the charge is what the statement is owed beyond them. */
+  let charge: { batchId: number; amountSen: number; accountCode: string; note: string } | null = null;
+  if (body.charge != null) {
+    const c0 = body.charge as Record<string, unknown>;
+    charge = {
+      batchId: Number(c0.batchId ?? 0),
+      amountSen: Math.round(Number(c0.amountSen ?? 0)),
+      accountCode: String(c0.accountCode ?? '').trim(),
+      note: String(c0.note ?? '').trim(),
+    };
+    if (!allocations.some((a) => a.batchId === charge!.batchId)) {
+      return c.json({ error: 'charge_batch', message: 'Say which of the statements this credit pays the charge was kept from.' }, 400);
+    }
+  }
+
   /* The DATE comes off the bank statement, not off the request: it is what the
      bank says, and the whole point of uploading the file is that nobody has to
      retype it. */
   const receivedOn = String(line.booked_on).slice(0, 10);
   const bankRef = line.reference ?? null;
-  const posted: Array<{ batchId: number; receiptId: number; jeNo?: string; outstandingSen: number }> = [];
+  const posted: Array<{ batchId: number; receiptId: number; jeNo?: string; outstandingSen: number; chargeSen: number }> = [];
 
   /* WHICH BANK the money is in — the statement's own account, not the
      acquirer's configured one. The owner asked exactly this: 不确定 maybank 对
@@ -911,6 +930,7 @@ export const bankLineReceipt = guard(async (c) => {
   for (const a of allocations) {
     const r = await postBatchReceipt(sb, co.companyId, a.batchId, {
       receivedOn, amountSen: a.amountSen, bankRef, bankAccountCode, userName: userName(c),
+      charge: charge && charge.batchId === a.batchId ? { amountSen: charge.amountSen, accountCode: charge.accountCode, note: charge.note } : null,
     });
     if (!r.ok) {
       /* A refusal partway through must not leave half a payout booked. Every
@@ -929,7 +949,7 @@ export const bankLineReceipt = guard(async (c) => {
             : posted.length > 0 ? ` The other ${posted.length} share(s) were taken back, so nothing is half-booked.` : ''),
       }, 409);
     }
-    posted.push({ batchId: a.batchId, receiptId: r.receiptId, jeNo: r.jeNo, outstandingSen: r.outstandingSen });
+    posted.push({ batchId: a.batchId, receiptId: r.receiptId, jeNo: r.jeNo, outstandingSen: r.outstandingSen, chargeSen: r.chargeSen });
   }
 
   /* Point every receipt back at the movement it was read from. */
@@ -957,7 +977,7 @@ export const bankLineReceipt = guard(async (c) => {
     jeNo: posted.map((p) => p.jeNo).filter(Boolean).join(', '),
     /* Per statement, because a split has no single outstanding figure and the
        operator wants to know which of them is now clear. */
-    results: posted.map((p) => ({ batchId: p.batchId, jeNo: p.jeNo ?? null, outstandingSen: p.outstandingSen })),
+    results: posted.map((p) => ({ batchId: p.batchId, jeNo: p.jeNo ?? null, outstandingSen: p.outstandingSen, chargeSen: p.chargeSen })),
   });
 });
 

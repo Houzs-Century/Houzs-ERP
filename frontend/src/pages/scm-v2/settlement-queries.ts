@@ -472,6 +472,17 @@ export const usePayouts = () => useQuery({
   retryDelay: 800,
 });
 
+/** Where a charge may be booked, alone — for a charge kept off a bank credit
+    (owner 2026-09-30); read only once somebody opens that form. */
+export const useChargeChoices = (enabled: boolean) => useQuery({
+  queryKey: ['settlement-charge-accounts'],
+  queryFn: () => authedFetch<{ chargeAccounts: ChargeAccount[]; feeAccountByAcquirer: Record<string, string | null> }>(`/accounting/settlement/charge-accounts`),
+  enabled,
+  staleTime: 60_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
 /** The bank deducted a charge from one day of an advice — book it where
     Finance says (docs/bugs/0787). The journal moves, so the entries list is
     re-read along with the advices. */

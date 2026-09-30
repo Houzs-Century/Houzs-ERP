@@ -119,7 +119,7 @@ export async function loadPayableBatches(
     sb.from('acc_settlement_rows')
       .select('batch_id, confirmed_at, bucket').eq('company_id', companyId),
     sb.from('acc_settlement_receipts')
-      .select('batch_id, amount_sen').eq('company_id', companyId),
+      .select('batch_id, amount_sen, charge_sen').eq('company_id', companyId),
     /* What the bank KEPT off a payout and Finance booked as a charge
        (docs/bugs/0787) is settled the same way a credit is — the report is
        owed its net less it. Read here too (docs/bugs/0812): the bank side was
@@ -140,11 +140,13 @@ export async function loadPayableBatches(
     openByBatch.set(id, (openByBatch.get(id) ?? 0) + open);
   }
   const receivedByBatch = new Map<number, number>();
+  const chargedByBatch = new Map<number, number>();
   for (const r of (recRes.data ?? []) as Array<Record<string, any>>) {
     const id = Number(r.batch_id);
     receivedByBatch.set(id, (receivedByBatch.get(id) ?? 0) + Number(r.amount_sen ?? 0));
+    /* A charge kept off a credit (owner 2026-09-30, GHL) settles like one booked on an advice day. */
+    chargedByBatch.set(id, (chargedByBatch.get(id) ?? 0) + Number(r.charge_sen ?? 0));
   }
-  const chargedByBatch = new Map<number, number>();
   for (const r of (chargeRes.data ?? []) as Array<{ batch_id: number | null; charge_sen: number | null }>) {
     if (r.batch_id == null) continue;
     const id = Number(r.batch_id);
