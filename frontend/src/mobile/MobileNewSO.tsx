@@ -43,7 +43,7 @@ import { SgPostcodeField } from "../vendor/scm/components/SgPostcodeField";
 import { diffHeaderPayload, hasHeaderChanges } from "../vendor/scm/lib/so-header-diff";
 import { soSaveEndFields, soVersionAfter } from "../vendor/scm/lib/so-save-lease";
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER, AMENDMENT_NOTHING_TO_SUBMIT, AMENDMENT_REASON_REQUIRED } from "../vendor/scm/lib/so-amendment-submit";
-import { useAmendmentSubmitDialog } from "../vendor/scm/components/AmendmentSubmitDialog";
+import { useAmendmentSubmitDialog, RequestProcessingDateRemoval } from "../vendor/scm/components/AmendmentSubmitDialog";
 import { LOCKED_STATUSES, procLockActive, migratedReadonly as soMigratedReadonly, soDownstreamHardLocked, soItemFrozen, type SoDetailGateHeader } from "../vendor/scm/lib/so-detail-gates";
 import { FROZEN_LINE_LABEL, FROZEN_LINE_LABEL_STYLE, FROZEN_LINE_STYLE } from "../vendor/scm/lib/so-frozen-line-style";
 import { MigratedReadonlyBanner } from "../vendor/scm/components/MigratedReadonlyBanner";
@@ -2424,10 +2424,9 @@ export function MobileNewSO({
                   />
                 </Field>
                 <div style={{ fontSize: 10, color: "#9aa093", marginTop: -3 }}>
-                  {amendmentMode
-                    ? "Changing a date here submits an amendment request — it applies once approved."
-                    : "Set both dates together, or leave both empty to keep this a draft."}
+                  {amendmentMode ? "Changing a date here submits an amendment request — it applies once approved." : "Set both dates together, or leave both empty to keep this a draft."}
                 </div>
+                <RequestProcessingDateRemoval docNo={docNo ?? ""} surface="mobile" show={!!(isEdit && docNo && origProcDate) && !procLocked && !amendmentMode && !migratedLocked && !lineLocked && !canRemoveProcessingDate} />
                 <Field label="Note" scanned={scanned("note", note)}>
                   <input className="fld-i" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Internal notes — SO detail only" />
                 </Field>

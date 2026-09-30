@@ -135,6 +135,25 @@ describe('splitAmendmentByLane', () => {
     expect(split.perLane.DELIVERY.headerKeys).toEqual(['customerDeliveryDate']);
   });
 
+  /* Owner 2026-09-30: a Processing Date removal is ONE request the Purchaser
+     signs. Split across two desks, each half alone would leave one date and the
+     approve-time pair re-check would refuse both forever. */
+  it('a Processing Date removal keeps the Delivery Date clear with it on LINES', () => {
+    const split = splitAmendmentByLane<L>(
+      { processingDate: null, customerDeliveryDate: null },
+      [],
+      byCode, noPrice, false,
+    );
+    expect(split.lanes).toEqual(['LINES']);
+    expect(split.perLane.LINES.headerChanges).toEqual({ processingDate: null, customerDeliveryDate: null });
+    expect(split.perLane.DELIVERY.headerKeys).toEqual([]);
+  });
+
+  it('a Delivery Date clear without a Processing Date removal still signs with Logistic', () => {
+    const split = splitAmendmentByLane<L>({ customerDeliveryDate: null }, [], byCode, noPrice, false);
+    expect(split.lanes).toEqual(['DELIVERY']);
+  });
+
   it('an address / disposal change yields only DELIVERY', () => {
     const split = splitAmendmentByLane<L>(
       { address1: '12 Jalan Baru', replacementDisposal: 'Old sofa 1pc' },
