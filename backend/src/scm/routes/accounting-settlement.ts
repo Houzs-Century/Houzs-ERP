@@ -697,6 +697,25 @@ const BATCH_COLUMNS =
 const payableOf = (b: { stated_net_sen?: number | null; net_sen?: number | null }) =>
   Number(b.stated_net_sen ?? b.net_sen ?? 0);
 
+/** What the bank or acquirer KEPT off each statement's payout: charges booked
+    on an advice day (docs/bugs/0787) and charges kept off a credit, carried on
+    the receipt rows the caller already read (owner 2026-09-30). A read that
+    fails is a refusal, not "nothing was kept". */
+async function chargedByBatchOf(
+  sb: any, companyId: number, receipts: Array<{ batch_id: number; charge_sen?: number | null }>,
+): Promise<{ ok: true; byBatch: Map<number, number> } | { ok: false; reason: string }> {
+  const byBatch = new Map<number, number>();
+  const add = (id: number, sen: number) => { if (sen !== 0) byBatch.set(id, (byBatch.get(id) ?? 0) + sen); };
+  for (const r of receipts) add(Number(r.batch_id), Number(r.charge_sen ?? 0));
+  const { data, error } = await sb.from('acc_settlement_payout_batches')
+    .select('batch_id, charge_sen').eq('company_id', companyId);
+  if (error) return { ok: false, reason: error.message };
+  for (const d of (data ?? []) as Array<{ batch_id: number | null; charge_sen: number | null }>) {
+    if (d.batch_id != null) add(Number(d.batch_id), Number(d.charge_sen ?? 0));
+  }
+  return { ok: true, byBatch };
+}
+
 /* GET /batches — the upload history, newest first, each carrying how much of
    its payout has actually arrived. Derived from the receipts on every read
    (§2.3: no caches), because "one statement, one credit" is not true — Hong
@@ -713,8 +732,12 @@ export const settlementBatches = guard(async (c) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
   const { data: recRaw, error: rcErr } = await sb.from('acc_settlement_receipts')
-    .select('batch_id, received_on, amount_sen').eq('company_id', co.companyId);
+    .select('batch_id, received_on, amount_sen, charge_sen').eq('company_id', co.companyId);
   if (rcErr) return c.json({ error: 'load_failed', reason: rcErr.message }, 500);
+  /* What the bank or acquirer KEPT — booked on an advice day, or off a credit
+     (owner 2026-09-30) — settles the statement the way a credit does. */
+  const charged = await chargedByBatchOf(sb, co.companyId, (recRaw ?? []) as Array<{ batch_id: number; charge_sen?: number | null }>);
+  if (!charged.ok) return c.json({ error: 'load_failed', reason: charged.reason }, 500);
 
   /* How far the CARD MACHINE side has got. The two steps are two screens, so
      each list has to say where the other one stands: the payouts screen must
@@ -757,6 +780,7 @@ export const settlementBatches = guard(async (c) => {
     const at = got.get(Number(b.id)) ?? { sen: 0, count: 0, lastOn: null };
     const done = reconciled.get(Number(b.id)) ?? { confirmed: 0, open: 0, toConfirm: 0, toChoose: 0, noRecord: 0 };
     const payable = payableOf(b);
+    const kept = charged.byBatch.get(Number(b.id)) ?? 0;
     return {
       ...b,
       confirmed_count: done.confirmed,
@@ -765,11 +789,13 @@ export const settlementBatches = guard(async (c) => {
       to_choose_count: done.toChoose,
       no_record_count: done.noRecord,
       received_sen: at.sen,
+      charged_sen: kept,
       receipt_count: at.count,
       /* The day it was FULLY received, and null while any of it is still out —
-         "partly in the bank" must not read as "in the bank". */
-      received_on: at.sen === payable && payable !== 0 ? at.lastOn : null,
-      outstanding_sen: payable - at.sen,
+         "partly in the bank" must not read as "in the bank". What the bank kept
+         counts as settled. */
+      received_on: at.sen + kept === payable && payable !== 0 ? at.lastOn : null,
+      outstanding_sen: payable - at.sen - kept,
     };
   });
   return c.json({ batches });
@@ -1390,8 +1416,14 @@ export const settlementInTransit = guard(async (c) => {
     .select('id, net_sen, stated_net_sen, adjustment_sen, adjustment_je_no').eq('company_id', co.companyId);
   if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
   const { data: recRaw, error: rcErr } = await sb.from('acc_settlement_receipts')
-    .select('batch_id, amount_sen').eq('company_id', co.companyId);
+    .select('batch_id, amount_sen, charge_sen').eq('company_id', co.companyId);
   if (rcErr) return c.json({ error: 'load_failed', reason: rcErr.message }, 500);
+  /* A charge the bank kept (an advice day's, or one kept off a credit — owner
+     2026-09-30) is booked Dr expense / Cr transit: it has left transit exactly
+     as a credit has, so it counts beside the credits here, or this list and the
+     transit account would tell different stories by the charge. */
+  const kept = await chargedByBatchOf(sb, co.companyId, (recRaw ?? []) as Array<{ batch_id: number; charge_sen?: number | null }>);
+  if (!kept.ok) return c.json({ error: 'load_failed', reason: kept.reason }, 500);
 
   type BatchRow = { id: number; net_sen: number | null; stated_net_sen: number | null; adjustment_sen: number | null; adjustment_je_no: string | null };
   const batches = (batchRaw ?? []) as BatchRow[];
@@ -1402,8 +1434,9 @@ export const settlementInTransit = guard(async (c) => {
   for (const r of (recRaw ?? []) as Array<{ batch_id: number; amount_sen: number }>) {
     receivedByBatch.set(Number(r.batch_id), (receivedByBatch.get(Number(r.batch_id)) ?? 0) + Number(r.amount_sen ?? 0));
   }
+  const settledOf = (id: number): number => (receivedByBatch.get(id) ?? 0) + (kept.byBatch.get(id) ?? 0);
   const paidBatch = new Set(batches
-    .filter((b) => payableOf(b) !== 0 && (receivedByBatch.get(Number(b.id)) ?? 0) === payableOf(b))
+    .filter((b) => payableOf(b) !== 0 && settledOf(Number(b.id)) === payableOf(b))
     .map((b) => Number(b.id)));
   const rowInfo = new Map(((rowRaw ?? []) as Array<{ id: number; batch_id: number; confirmed_at: string | null; fee_sen: number | null }>)
     .map((r) => [Number(r.id), {
@@ -1469,7 +1502,7 @@ export const settlementInTransit = guard(async (c) => {
     const list = matchesByBatch.get(id);
     if (!list || list.length === 0) continue;
     const adjustment = b.adjustment_je_no ? Number(b.adjustment_sen ?? 0) : 0;
-    const alreadyPaid = receivedByBatch.get(id) ?? 0;
+    const alreadyPaid = settledOf(id);
     if (adjustment !== 0) spread(adjustment, list, outOfTransit);
     if (alreadyPaid !== 0) spread(alreadyPaid, list, outOfTransit);
   }

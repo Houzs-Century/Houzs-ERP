@@ -48,6 +48,7 @@ const channelRank = (acquirer: string): number => (acquirer === CASH_CHANNEL ? 1
 type LineRow = { batch_id: number | null; acquirer_code: string | null; txn_date: string; gross_sen: number | null; fee_sen: number | null; net_sen: number | null; confirmed_at: string | null };
 type BatchRow = { id: number; acquirer_code: string | null; file_name: string | null; period_from: string | null; period_to: string | null };
 type PayoutRow = { batch_id: number | null; settled_on: string; charge_sen: number | null };
+type KeptRow = { batch_id: number | null; charge_sen: number | null };
 type PaymentRow = { id: string; so_doc_no: string; paid_at: string; method: string; online_type: string | null; amount_sen: number | null };
 
 export type ChargeFigures = {
@@ -118,7 +119,19 @@ export const merchantChargesReport = async (c: Ctx): Promise<Response> => {
   if (payouts.error) return failed('payouts', payouts.error);
   const charged = ((payouts.data ?? []) as PayoutRow[]).filter((p) => Number(p.charge_sen ?? 0) !== 0 && p.batch_id != null);
 
-  const batchIds = [...new Set([...kept.map((l) => l.batch_id), ...charged.map((p) => p.batch_id)].filter((x): x is number => typeof x === 'number'))];
+  /* …and what an acquirer kept off a CREDIT when it sends no advice (owner
+     2026-09-30, GHL's RM 54) — carried on the receipt, and dated, as its entry
+     is, by the report's settlement day (filtered to the range once the reports
+     are read below). */
+  const keptOff = await paginateAll<KeptRow>((f, t) =>
+    sb.from('acc_settlement_receipts')
+      .select('batch_id, charge_sen')
+      .eq('company_id', companyId).neq('charge_sen', 0)
+      .order('id').range(f, t));
+  if (keptOff.error) return failed('kept charges', keptOff.error);
+  const keptCharges = ((keptOff.data ?? []) as KeptRow[]).filter((k) => k.batch_id != null);
+
+  const batchIds = [...new Set([...kept.map((l) => l.batch_id), ...charged.map((p) => p.batch_id), ...keptCharges.map((k) => k.batch_id)].filter((x): x is number => typeof x === 'number'))];
   const batches = new Map<number, BatchRow>();
   for (let i = 0; i < batchIds.length; i += 150) {
     const { data, error } = await sb.from('acc_settlement_batches')
@@ -181,6 +194,14 @@ export const merchantChargesReport = async (c: Ctx): Promise<Response> => {
     const acquirer = String(batches.get(Number(p.batch_id))?.acquirer_code ?? '?').toUpperCase();
     if (onlyAcquirer != null && acquirer !== onlyAcquirer) continue;
     at(String(p.settled_on).slice(0, 7), acquirer, Number(p.batch_id)).bankChargeSen += Number(p.charge_sen ?? 0);
+  }
+  for (const k of keptCharges) {
+    const b = batches.get(Number(k.batch_id));
+    const day = String(b?.period_to ?? '').slice(0, 10);
+    if (!day || day < fromDay || day > toDay) continue;
+    const acquirer = String(b?.acquirer_code ?? '?').toUpperCase();
+    if (onlyAcquirer != null && acquirer !== onlyAcquirer) continue;
+    at(day.slice(0, 7), acquirer, Number(k.batch_id)).bankChargeSen += Number(k.charge_sen ?? 0);
   }
 
   /* month → channel → the payments. */

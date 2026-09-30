@@ -233,14 +233,17 @@ export const useUploadBankStatement = () => {
 export const useBookBankReceipt = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ lineId, allocations }: {
+    mutationFn: ({ lineId, allocations, charge }: {
       lineId: number;
       /** One entry for the ordinary payout, several when one credit pays
           several statements. The shares must add up to the credit. */
       allocations: Array<{ batchId: number; amountSen: number }>;
+      /** What the acquirer KEPT off this credit, named against one of those
+          statements (owner 2026-09-30: GHL's RM 54, no advice to book it on). */
+      charge?: { batchId: number; amountSen: number; accountCode: string; note: string } | null;
     }) =>
-      authedFetch<{ ok: boolean; status: string; jeNo?: string; results: Array<{ batchId: number; jeNo: string | null; outstandingSen: number }> }>(
-        `/accounting/bank/lines/${lineId}/receipt`, { method: 'POST', body: JSON.stringify({ allocations }) },
+      authedFetch<{ ok: boolean; status: string; jeNo?: string; results: Array<{ batchId: number; jeNo: string | null; outstandingSen: number; chargeSen?: number }> }>(
+        `/accounting/bank/lines/${lineId}/receipt`, { method: 'POST', body: JSON.stringify(charge ? { allocations, charge } : { allocations }) },
       ),
     onSuccess: () => invalidateAfterBankPosting(qc),
   });
