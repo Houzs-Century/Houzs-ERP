@@ -43,6 +43,8 @@ import { ListPager } from '../../components/ListPager';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useDebouncedSearchTerm, useSearchResultTransition } from '../../hooks/useServerSearch';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { useCapability } from '../../auth/capabilities';
+import { withoutSupplierFinanceKeys } from '../../vendor/shared/supplier-finance-fields';
 import styles from './Suppliers.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -409,7 +411,9 @@ const BatchEditModal = ({
     for (const id of ids) {
       try {
         if (field === 'payment_terms') {
-          await update.mutateAsync({ id, payment_terms: paymentTerms.trim() || null });
+          /* The PATCH reads `paymentTerms`; `payment_terms` was ignored and the
+             batch reported every supplier updated while changing none. */
+          await update.mutateAsync({ id, paymentTerms: paymentTerms.trim() || null } as unknown as Partial<SupplierRow> & { id: string });
         } else {
           await update.mutateAsync({ id, status: statusValue });
         }
@@ -532,6 +536,9 @@ const SupplierCreateDrawer = ({ onClose }: { onClose: () => void }) => (
 const CreateForm = ({ onClose }: { onClose: () => void }) => {
   const create = useCreateSupplier();
   const notify = useNotify();
+  /* Owner 2026-09-30: a purchaser opens a supplier with its code and the
+     purchasing part; the Finance part is Finance's to fill. */
+  const isFinance = useCapability('scm.money.move');
   const [form, setForm] = useState<Record<string, string | number>>({
     code: '',
     name: '',
@@ -580,7 +587,7 @@ const CreateForm = ({ onClose }: { onClose: () => void }) => {
       return;
     }
     create.mutate({
-      ...form,
+      ...(isFinance ? form : withoutSupplierFinanceKeys(form)),
       rating: Number(form.rating) || 0,
     } as unknown as Partial<SupplierRow>, { onSuccess: onClose });
   };
@@ -588,7 +595,7 @@ const CreateForm = ({ onClose }: { onClose: () => void }) => {
   return (
     <>
       <div className={styles.drawerBody}>
-        <SupplierFields form={form} onChange={onChange} />
+        <SupplierFields form={form} onChange={onChange} finance={isFinance} />
       </div>
       <footer className={styles.drawerFooter}>
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
@@ -603,9 +610,12 @@ const CreateForm = ({ onClose }: { onClose: () => void }) => {
 const SupplierFields = ({
   form,
   onChange,
+  finance,
 }: {
   form: Record<string, string | number>;
   onChange: (k: string, v: string | number) => void;
+  /** Finance sees the Finance part (TIN, registration numbers); nobody else does. */
+  finance: boolean;
 }) => (
   <div className={styles.section}>
     <p className={styles.eyebrow}>Identity</p>
@@ -624,11 +634,15 @@ const SupplierFields = ({
           labelClassName={styles.fieldLabel}
         />
       </div>
-      <Field label="TIN Number" value={(form.tinNumber as string) ?? ''} onChange={(v) => onChange('tinNumber', v)} />
-      <Field label="Business Reg No" value={(form.businessRegNo as string) ?? ''} onChange={(v) => onChange('businessRegNo', v)} />
-      {/* Mig 0028 — AutoCount creditor-export parity. */}
-      <Field label="Registration No." value={(form.registrationNo as string) ?? ''} onChange={(v) => onChange('registrationNo', v)} />
-      <Field label="Exemption No." value={(form.exemptionNo as string) ?? ''} onChange={(v) => onChange('exemptionNo', v)} />
+      {finance && (
+        <>
+          <Field label="TIN Number" value={(form.tinNumber as string) ?? ''} onChange={(v) => onChange('tinNumber', v)} />
+          <Field label="Business Reg No" value={(form.businessRegNo as string) ?? ''} onChange={(v) => onChange('businessRegNo', v)} />
+          {/* Mig 0028 — AutoCount creditor-export parity. */}
+          <Field label="Registration No." value={(form.registrationNo as string) ?? ''} onChange={(v) => onChange('registrationNo', v)} />
+          <Field label="Exemption No." value={(form.exemptionNo as string) ?? ''} onChange={(v) => onChange('exemptionNo', v)} />
+        </>
+      )}
       <Field label="Nature of Business" value={(form.natureOfBusiness as string) ?? ''} onChange={(v) => onChange('natureOfBusiness', v)} />
     </div>
     <p className={styles.eyebrow} style={{ marginTop: 'var(--space-3)' }}>Contact</p>
