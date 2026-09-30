@@ -43,6 +43,9 @@ export const ENTITY_TYPES = [
      does not carry it either), so the row exists for an investigator and for
      /inventory/reconcile, not for a tab. */
   'PURCHASE_RETURN',
+  /* 申请付款 (owner 2026-09-30): a payment request's own trail — submitted,
+     edited, withdrawn, returned by Finance with the why, answered by a voucher. */
+  'PAYMENT_REQUEST',
 ] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 

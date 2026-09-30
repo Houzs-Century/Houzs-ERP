@@ -166,6 +166,10 @@ export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
      its own PR, not smuggled in with the feed. */
   "/venture-portal-feed",
   "/currencies",
+  /* 申请付款 (2026-09-30): the requester holds no SCM area — a sales PIC asking
+     Finance to pay a bill. Authorization is the flat scm.payment_request.create
+     key (own requests) or scm.payment_voucher.create (Finance) inside the route. */
+  "/payment-requests",
   "/hr",
   "/localities",
   // SG postcode -> address via OneMap (2026-09-11): a shared reference lookup

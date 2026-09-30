@@ -1,0 +1,328 @@
+// /payment-requests — 申请付款 (owner 2026-09-29/30: 3a a new document, 4a a new
+// permission; Event 的 rental 要还的要相关负责人 upload，然后我 finance 这里负责做
+// payment，慢慢接下来全部 payment 都会需要).
+//
+//   GET    /                    requests: a requester's own; Finance's all
+//   GET    /event-options       the event picker, for a requester too
+//   GET    /:id                 one request, its voucher and where it stands
+//   POST   /                    raise a request (SUBMITTED)
+//   PATCH  /:id                 the requester changes it — or sends a returned one again
+//   POST   /:id/withdraw        the requester takes it back
+//   POST   /:id/return          Finance sends it back, saying why
+//   POST|GET /:id/files, GET|DELETE /:id/files/:fileId — the bill
+//
+// Finance answers a request with a voucher raised on PV New (?fromRequest=),
+// whose create door links the two (lib/payment-request.ts). The stage the
+// requester reads — Processing, Paid (the voucher approved), Bank confirmed — is
+// read off that voucher on every request, never stored here.
+//
+// NO area guard (scm/index.ts): a sales PIC has no SCM area, only the flat key
+// scm.payment_request.create, which requireScmAccess admits for this prefix
+// alone. Every handler checks the key or Finance's own (scm.payment_voucher.create)
+// against the real caller, and a requester sees their own requests only.
+
+import { Hono } from 'hono';
+import { supabaseAuth } from '../middleware/auth';
+import type { Env, Variables } from '../env';
+import { companyDocPrefix, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
+import { hasHouzsPerm } from '../lib/houzs-perms';
+import { docMonthTag, mintMonthlyDocNo } from '../lib/doc-no';
+import { dateOrNull } from '../lib/date-coerce';
+import { todayMyt } from '../lib/my-time';
+import { assertAuditWritable, auditUnavailableBody, compactChanges, fieldChange, recordEntityAudit } from '../lib/entity-audit';
+import { makeDocFileHandlers, type DocFilesSpec } from '../lib/doc-files';
+import { parseEventId, unknownEventRefusal } from '../lib/event-tags';
+import { eventOptionsHandler } from './acc-events';
+import {
+  PAYMENT_REQUEST_KEY, bankConfirmedVoucherNumbers, callerUserId, isRequestFinance, requestStage,
+  requesterMayChange, type VoucherFacts,
+} from '../lib/payment-request';
+
+type Row = Record<string, any>;
+
+export const paymentRequests = new Hono<{ Bindings: Env; Variables: Variables }>();
+paymentRequests.use('*', supabaseAuth);
+
+const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee_name, amount_sen, due_date, purpose, project_id, bank_name, bank_account_no, bank_account_name, status, pv_id, finance_note, decided_by, decided_at, created_at, updated_at';
+const NO_PERM = { error: "You don't have permission to do that." };
+
+const mayRequest = (c: any): boolean => hasHouzsPerm(c, PAYMENT_REQUEST_KEY);
+const mayOpen = (c: any): boolean => mayRequest(c) || isRequestFinance(c);
+
+const text = (v: unknown): string | null => {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return s ? s : null;
+};
+
+/** The request under the active company that the caller may see — the
+    requester's own, or any for Finance — else a 404 that names nothing. */
+async function loadVisible(c: any, id: string): Promise<{ req: Row } | { resp: Response }> {
+  const sb = c.get('supabase');
+  const { data, error } = await scopeToCompany(sb.from('acc_payment_requests').select(COLS).eq('id', id), c).maybeSingle();
+  if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
+  const me = callerUserId(c);
+  if (!data || (!isRequestFinance(c) && Number(data.requested_by) !== me)) {
+    return { resp: c.json({ error: 'not_found', message: 'That payment request is not one you can open.' }, 404) };
+  }
+  return { req: data as Row };
+}
+
+/** Each request with its voucher's facts and the stage those facts say. */
+async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
+  const sb = c.get('supabase');
+  const pvIds = [...new Set(rows.map((r) => r.pv_id).filter(Boolean))] as string[];
+  let vouchers = new Map<string, VoucherFacts>();
+  if (pvIds.length > 0) {
+    const { data, error } = await sb.from('payment_vouchers').select('id, pv_number, status, approved_at, posted_at')
+      .eq('company_id', companyId).in('id', pvIds);
+    if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
+    vouchers = new Map(((data ?? []) as VoucherFacts[]).map((v) => [v.id, v]));
+  }
+  const postedNos = [...vouchers.values()].filter((v) => v.status === 'POSTED' && v.pv_number).map((v) => String(v.pv_number));
+  const bank = await bankConfirmedVoucherNumbers(sb, companyId, postedNos);
+  if (!bank.ok) return { resp: c.json({ error: 'load_failed', reason: bank.reason }, 500) };
+  return {
+    rows: rows.map((r) => {
+      const pv = r.pv_id ? vouchers.get(String(r.pv_id)) ?? null : null;
+      const confirmed = !!pv?.pv_number && bank.confirmed.has(String(pv.pv_number));
+      return {
+        ...r,
+        stage: requestStage(String(r.status), pv, confirmed),
+        voucher: pv ? { id: pv.id, pvNumber: pv.pv_number, status: pv.status, approvedAt: pv.approved_at, postedAt: pv.posted_at, bankConfirmed: confirmed } : null,
+      };
+    }),
+  };
+}
+
+/* ── GET / ─────────────────────────────────────────────────────────────────── */
+export const listPaymentRequestsHandler = async (c: any): Promise<Response> => {
+  if (!mayOpen(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const finance = isRequestFinance(c);
+  const me = callerUserId(c);
+  if (!finance && me == null) return c.json(NO_PERM, 403);
+  const sb = c.get('supabase');
+  let q = scopeToCompany(sb.from('acc_payment_requests').select(COLS), c);
+  if (!finance || c.req.query('mine') === '1') q = q.eq('requested_by', me);
+  const { data, error } = await q.order('created_at', { ascending: false }).limit(500);
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const staged = await withStages(c, co.companyId, (data ?? []) as Row[]);
+  if ('resp' in staged) return staged.resp;
+  return c.json({ requests: staged.rows, finance });
+};
+paymentRequests.get('/', listPaymentRequestsHandler);
+
+/* ── GET /event-options — the picker for a requester, who has no Finance area ── */
+paymentRequests.get('/event-options', async (c) => {
+  if (!mayOpen(c)) return c.json(NO_PERM, 403);
+  return eventOptionsHandler(c);
+});
+
+/* ── The bill — the factory's four handlers, fed this document's rules ────── */
+export const PAYMENT_REQUEST_FILES: DocFilesSpec = {
+  table: 'acc_payment_request_files',
+  fkColumn: 'request_id',
+  keyPrefix: 'payment-request-files',
+  writePerms: [PAYMENT_REQUEST_KEY, 'scm.payment_voucher.create'],
+  load: async (c: any) => {
+    const found = await loadVisible(c, c.req.param('id'));
+    if ('resp' in found) return found;
+    const r = found.req;
+    /* The bill stays once Finance has answered: its voucher carries a copy. */
+    return { doc: { id: String(r.id), closed: r.status === 'WITHDRAWN', locked: r.status === 'VOUCHERED' } };
+  },
+  closedRefusal: { error: 'request_withdrawn', message: 'A withdrawn request takes no more files.' },
+  lockedRefusal: { error: 'request_answered', message: 'Finance has made the voucher for this request — its bill stays.' },
+};
+const files = makeDocFileHandlers(PAYMENT_REQUEST_FILES);
+paymentRequests.post('/:id/files', files.upload);
+paymentRequests.get('/:id/files', files.list);
+paymentRequests.get('/:id/files/:fileId', files.stream);
+paymentRequests.delete('/:id/files/:fileId', files.remove);
+
+/* ── GET /:id ──────────────────────────────────────────────────────────────── */
+export const getPaymentRequestHandler = async (c: any): Promise<Response> => {
+  if (!mayOpen(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const found = await loadVisible(c, c.req.param('id'));
+  if ('resp' in found) return found.resp;
+  const staged = await withStages(c, co.companyId, [found.req]);
+  if ('resp' in staged) return staged.resp;
+  return c.json({ request: staged.rows[0], finance: isRequestFinance(c) });
+};
+paymentRequests.get('/:id', getPaymentRequestHandler);
+
+/* ── The requester's fields, as the body sends them ───────────────────────── */
+type Fields = {
+  payee_name: string; amount_sen: number; due_date: string | null; purpose: string;
+  project_id: number | null; bank_name: string | null; bank_account_no: string | null; bank_account_name: string | null;
+};
+function readFields(body: Row): { fields: Fields } | { error: string; message: string } {
+  const payee = text(body.payeeName);
+  if (!payee) return { error: 'payee_required', message: 'Who is to be paid?' };
+  const amount = Number(body.amountSen);
+  if (!Number.isInteger(amount) || amount <= 0) return { error: 'amount_invalid', message: 'The amount must be more than zero.' };
+  const purpose = text(body.purpose);
+  if (!purpose) return { error: 'purpose_required', message: 'Say what the payment is for.' };
+  const project = parseEventId(body.projectId);
+  if (project === 'invalid') return { error: 'bad_event', message: 'projectId must be an event id.' };
+  return {
+    fields: {
+      payee_name: payee, amount_sen: amount, due_date: dateOrNull(body.dueDate), purpose, project_id: project,
+      bank_name: text(body.bankName), bank_account_no: text(body.bankAccountNo), bank_account_name: text(body.bankAccountName),
+    },
+  };
+}
+
+/* ── POST / ────────────────────────────────────────────────────────────────── */
+export const createPaymentRequestHandler = async (c: any): Promise<Response> => {
+  if (!mayOpen(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const me = callerUserId(c);
+  if (me == null) return c.json({ error: 'no_user', message: 'Sign in again — the request needs to know who is asking.' }, 409);
+  let body: Row;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const read = readFields(body);
+  if ('error' in read) return c.json(read, 400);
+  const eventErr = await unknownEventRefusal(c, [read.fields.project_id]);
+  if (eventErr) return eventErr;
+
+  const sb = c.get('supabase');
+  const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_REQUEST', action: 'CREATE', companyId: co.companyId });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  const requestNo = await mintMonthlyDocNo(sb, 'acc_payment_requests', 'request_no', `${companyDocPrefix(c)}PRQ-${docMonthTag(todayMyt())}`);
+  const houzsUser = c.get('houzsUser') as { name?: string | null; email?: string | null } | undefined;
+  const { data: row, error } = await sb.from('acc_payment_requests').insert({
+    company_id: co.companyId,
+    request_no: requestNo,
+    requested_by: me,
+    requested_by_name: houzsUser?.name ?? houzsUser?.email ?? null,
+    ...read.fields,
+    status: 'SUBMITTED',
+  }).select(COLS).single();
+  if (error || !row) return c.json({ error: 'save_failed', reason: error?.message ?? 'insert returned nothing' }, 500);
+  await recordEntityAudit(sb, {
+    entityType: 'PAYMENT_REQUEST', entityId: String(row.id), entityDocNo: requestNo, action: 'CREATE',
+    actor: c.get('houzsUser'), companyId: co.companyId, statusSnapshot: 'SUBMITTED',
+    fieldChanges: compactChanges([fieldChange('payeeName', null, read.fields.payee_name), fieldChange('amountSen', null, read.fields.amount_sen), fieldChange('projectId', null, read.fields.project_id)]),
+  });
+  return c.json({ ok: true, request: { ...row, stage: 'SUBMITTED', voucher: null } }, 201);
+};
+paymentRequests.post('/', createPaymentRequestHandler);
+
+/* ── PATCH /:id — the requester's change; a returned request goes back in ─── */
+export const updatePaymentRequestHandler = async (c: any): Promise<Response> => {
+  if (!mayOpen(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const found = await loadVisible(c, c.req.param('id'));
+  if ('resp' in found) return found.resp;
+  const before = found.req;
+  if (Number(before.requested_by) !== callerUserId(c)) {
+    return c.json({ error: 'not_yours', message: 'Only the person who asked can change a request — Finance returns it instead.' }, 403);
+  }
+  if (!requesterMayChange(String(before.status))) {
+    return c.json({ error: 'request_locked', message: `${before.request_no} is ${before.status === 'WITHDRAWN' ? 'withdrawn' : 'answered by Finance'} — it can no longer change.` }, 409);
+  }
+  let body: Row;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const read = readFields({
+    payeeName: body.payeeName ?? before.payee_name, amountSen: body.amountSen ?? before.amount_sen,
+    dueDate: body.dueDate !== undefined ? body.dueDate : before.due_date, purpose: body.purpose ?? before.purpose,
+    projectId: body.projectId !== undefined ? body.projectId : before.project_id,
+    bankName: body.bankName !== undefined ? body.bankName : before.bank_name,
+    bankAccountNo: body.bankAccountNo !== undefined ? body.bankAccountNo : before.bank_account_no,
+    bankAccountName: body.bankAccountName !== undefined ? body.bankAccountName : before.bank_account_name,
+  });
+  if ('error' in read) return c.json(read, 400);
+  const eventErr = await unknownEventRefusal(c, [read.fields.project_id]);
+  if (eventErr) return eventErr;
+  const sb = c.get('supabase');
+  const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_REQUEST', entityId: String(before.id), action: 'UPDATE', companyId: co.companyId });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  const resubmit = before.status === 'REJECTED';
+  const { data: row, error } = await sb.from('acc_payment_requests')
+    .update({ ...read.fields, ...(resubmit ? { status: 'SUBMITTED' } : {}), updated_at: new Date().toISOString() })
+    .eq('company_id', co.companyId).eq('id', before.id).eq('status', String(before.status)).select(COLS).maybeSingle();
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  if (!row) return c.json({ error: 'request_moved', message: `${before.request_no} changed a moment ago — open it again.` }, 409);
+  await recordEntityAudit(sb, {
+    entityType: 'PAYMENT_REQUEST', entityId: String(before.id), entityDocNo: before.request_no, action: resubmit ? 'SUBMIT_FOR_APPROVAL' : 'UPDATE',
+    actor: c.get('houzsUser'), companyId: co.companyId, statusSnapshot: String(row.status),
+    fieldChanges: compactChanges((Object.keys(read.fields) as Array<keyof Fields>).map((k) => fieldChange(k, before[k] ?? null, read.fields[k] ?? null))),
+  });
+  const staged = await withStages(c, co.companyId, [row as Row]);
+  if ('resp' in staged) return staged.resp;
+  return c.json({ ok: true, request: staged.rows[0] });
+};
+paymentRequests.patch('/:id', updatePaymentRequestHandler);
+
+/* ── POST /:id/withdraw ────────────────────────────────────────────────────── */
+export const withdrawPaymentRequestHandler = async (c: any): Promise<Response> => {
+  if (!mayOpen(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const found = await loadVisible(c, c.req.param('id'));
+  if ('resp' in found) return found.resp;
+  const r = found.req;
+  if (Number(r.requested_by) !== callerUserId(c)) return c.json({ error: 'not_yours', message: 'Only the person who asked can withdraw a request.' }, 403);
+  if (r.status === 'WITHDRAWN') return c.json({ ok: true, already: true });
+  if (!requesterMayChange(String(r.status))) {
+    return c.json({ error: 'request_answered', message: `Finance has made the voucher for ${r.request_no} — ask Finance to cancel it instead.` }, 409);
+  }
+  const sb = c.get('supabase');
+  const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_REQUEST', entityId: String(r.id), action: 'CANCEL', companyId: co.companyId });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  const { data: row, error } = await sb.from('acc_payment_requests').update({ status: 'WITHDRAWN', updated_at: new Date().toISOString() })
+    .eq('company_id', co.companyId).eq('id', r.id).eq('status', String(r.status)).select('id').maybeSingle();
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  if (!row) return c.json({ error: 'request_moved', message: `${r.request_no} changed a moment ago — open it again.` }, 409);
+  await recordEntityAudit(sb, {
+    entityType: 'PAYMENT_REQUEST', entityId: String(r.id), entityDocNo: r.request_no, action: 'CANCEL',
+    actor: c.get('houzsUser'), companyId: co.companyId, statusSnapshot: 'WITHDRAWN',
+  });
+  return c.json({ ok: true });
+};
+paymentRequests.post('/:id/withdraw', withdrawPaymentRequestHandler);
+
+/* ── POST /:id/return — Finance sends it back, with the why ────────────────── */
+export const returnPaymentRequestHandler = async (c: any): Promise<Response> => {
+  if (!isRequestFinance(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: Row;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const note = text(body.note);
+  if (!note) return c.json({ error: 'note_required', message: 'Say why it goes back — the requester reads it.' }, 400);
+  const found = await loadVisible(c, c.req.param('id'));
+  if ('resp' in found) return found.resp;
+  const r = found.req;
+  const sb = c.get('supabase');
+  if (r.status === 'VOUCHERED' && r.pv_id) {
+    const { data: pv, error: pvErr } = await scopeToCompany(sb.from('payment_vouchers').select('pv_number, status').eq('id', r.pv_id), c).maybeSingle();
+    if (pvErr) return c.json({ error: 'load_failed', reason: pvErr.message }, 500);
+    if (pv && pv.status !== 'CANCELLED') {
+      return c.json({ error: 'request_has_voucher', message: `${r.request_no} is answered by ${pv.pv_number} — cancel that voucher first.` }, 409);
+    }
+  } else if (r.status !== 'SUBMITTED' && r.status !== 'VOUCHERED') {
+    return c.json({ error: 'request_closed', message: `${r.request_no} is ${String(r.status).toLowerCase()} — there is nothing to return.` }, 409);
+  }
+  const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_REQUEST', entityId: String(r.id), action: 'REJECT', companyId: co.companyId });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  const decider = String(c.get('houzsUser')?.name ?? c.get('houzsUser')?.email ?? '');
+  const { data: row, error } = await sb.from('acc_payment_requests')
+    .update({ status: 'REJECTED', finance_note: note, decided_by: decider, decided_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq('company_id', co.companyId).eq('id', r.id).eq('status', String(r.status)).select('id').maybeSingle();
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  if (!row) return c.json({ error: 'request_moved', message: `${r.request_no} changed a moment ago — open it again.` }, 409);
+  await recordEntityAudit(sb, {
+    entityType: 'PAYMENT_REQUEST', entityId: String(r.id), entityDocNo: r.request_no, action: 'REJECT',
+    actor: c.get('houzsUser'), companyId: co.companyId, statusSnapshot: 'REJECTED',
+    fieldChanges: compactChanges([fieldChange('financeNote', r.finance_note ?? null, note)]),
+  });
+  return c.json({ ok: true });
+};
+paymentRequests.post('/:id/return', returnPaymentRequestHandler);

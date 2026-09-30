@@ -165,6 +165,14 @@ export const PERMISSIONS: PermissionDef[] = [
   // default except '*' — the owner grants it per position when he delegates.
   { key: "scm.payment_voucher.check", resource: "Supply Chain", verb: "manage", label: "Check payment voucher", description: "The first of the two yeses (owner 2026-09-02): check a prepared Payment Voucher — checking locks it and reserves it against Daily Bank's available money; a checker may also reject back to draft" },
   { key: "scm.payment_voucher.approve", resource: "Supply Chain", verb: "manage", label: "Approve payment voucher", description: "The second yes: approve a checked Payment Voucher — approval posts the GL entry in the same breath; an approver may also reject back to draft" },
+  // 申请付款 (owner 2026-09-30, 4a: Event 的 rental 要还的要相关负责人 upload，然后我
+  // finance 这里负责做 payment). The requester's half of a payment: who to pay, how
+  // much, for which event, and the bill itself. Finance answers with a voucher
+  // (scm.payment_voucher.create) through the untouched cycle; the requester sees
+  // their own requests only. Nobody holds it by default except '*' — grant it to
+  // a ROLE under Team > Roles & Permissions (Roles). It is also the one SCM door
+  // such a person has: requireScmAccess admits it for /payment-requests alone.
+  { key: "scm.payment_request.create", resource: "Supply Chain", verb: "create", label: "Request a payment (申请付款)", description: "Ask Finance to pay a bill — payee, amount, due date, the event it is for, the payee's bank details and the bill itself; see your own requests move from Submitted to Paid and Bank confirmed" },
 
   // Correcting a customer payment after the day it was keyed (owner +
   // management, 2026-09-10: 让权限在finance 这里更改). Sales records the money
