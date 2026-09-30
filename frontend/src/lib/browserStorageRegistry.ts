@@ -130,6 +130,10 @@ export function classifyBrowserStorageKey(
 /** Files allowed to access browser storage directly. New callers require an
  * explicit ownership review; consumers should otherwise use existing helpers. */
 export const PRODUCTION_STORAGE_CALLERS = [
+  // Logout sweeps `filters:*` from session + localStorage (owner 2026-09-30) —
+  // a reload does not clear sessionStorage, so sign-out would otherwise keep the
+  // sticky list/calendar filters. Removes by key in a loop, never .clear().
+  "auth/AuthContext.tsx",
   "components/AndroidInstallGuide.tsx",
   "components/announcementLocalAcks.ts",
   "components/AssistantLauncher.tsx",
