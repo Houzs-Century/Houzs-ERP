@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { canOperateDeliveryOrders, canDriverCompleteDelivery, canOperateSalesInvoices, canOperateGoodsReceipts, canOperatePurchaseOrders, canViewFairReport, isSalesDirectorUser } from "../auth/salesAccess";
 import { memberEditFormFor, memberInviteFormFor } from "./member-invite-form";
+import { supplierFormFor } from "./supplier-form";
 import { capability, type CapabilityKey } from "../auth/capabilities";
 import { NAV_TABS, type NavTab } from "../components/Sidebar";
 import { makeNavVisible } from "../components/navFilter";
@@ -987,7 +988,10 @@ function MobileAppInner() {
       ? memberEditFormFor(FORM_MEMBERS_EDIT, scopedSalesDirector)
       : screen.key === "members" && baseForm
         ? memberInviteFormFor(baseForm, scopedSalesDirector)
-        : baseForm;
+        : screen.key === "suppliers" && baseForm
+          /* Owner 2026-09-30: the Finance part and (on edit) the code are Finance's. */
+          ? supplierFormFor(baseForm, capability(user, "scm.money.move"), screen.mode)
+          : baseForm;
     const title = cfg?.title ?? screen.key;
     overlay = !schema ? <Stub title={title} onBack={back} /> : (
       <MobileModuleForm schema={schema} mode={screen.mode} initial={screen.mode === "edit" ? screen.row : undefined}

@@ -1439,6 +1439,16 @@
       "check": "D2",
       "key": "CUSTOMER / DEBTOR,DATE,DESCRIPTION,DUE,KIND,NO.,OUTSTANDING,PAID,REF,STATUS,TOTAL ~ DATE,DESCRIPTION,DUE,KIND,NO.,OUTSTANDING,PAID,REF,STATUS,SUPPLIER,TOTAL",
       "why": "TWO LISTINGS' COLUMN HEADS differing by one word: the supplier-invoice listing names the SUPPLIER, the customer-invoice listing the CUSTOMER / DEBTOR — each paper's own party column on the same table dress, not one rule with two homes."
+    },
+    {
+      "check": "D1",
+      "key": "AGING_BASIS,BUSINESS_REG_NO,CREDIT_LIMIT_SEN,EXEMPTION_NO,REGISTRATION_NO,STATEMENT_TYPE,TIN_NUMBER|backend/src/scm/shared/supplier-finance-fields.ts frontend/src/vendor/shared/supplier-finance-fields.ts",
+      "why": "THE SUPPLIER FINANCE PART (owner 2026-09-30: 采购只看采购的部分; finance 这里的权限最大), a VENDORED TWIN, not a second decision. backend/src/scm/shared/supplier-finance-fields.ts is the home — the supplier routes strip these fields from what a caller who is not Finance reads and ignore them in what that caller writes; frontend/src/vendor/shared/supplier-finance-fields.ts is a byte-identical copy because the browser cannot import from backend/src, and the screens hide exactly what it names. Refereed by frontend/src/vendor/shared/supplier-finance-fields.canonical.test.ts, which byte-compares the two files and pins that the column list and the body-key list name the same seven fields. This entry: the COLUMN spelling (scm.suppliers)."
+    },
+    {
+      "check": "D1",
+      "key": "AGINGBASIS,BUSINESSREGNO,CREDITLIMITSEN,EXEMPTIONNO,REGISTRATIONNO,STATEMENTTYPE,TINNUMBER|backend/src/scm/shared/supplier-finance-fields.ts frontend/src/vendor/shared/supplier-finance-fields.ts",
+      "why": "THE SUPPLIER FINANCE PART (owner 2026-09-30: 采购只看采购的部分; finance 这里的权限最大), a VENDORED TWIN, not a second decision. backend/src/scm/shared/supplier-finance-fields.ts is the home — the supplier routes strip these fields from what a caller who is not Finance reads and ignore them in what that caller writes; frontend/src/vendor/shared/supplier-finance-fields.ts is a byte-identical copy because the browser cannot import from backend/src, and the screens hide exactly what it names. Refereed by frontend/src/vendor/shared/supplier-finance-fields.canonical.test.ts, which byte-compares the two files and pins that the column list and the body-key list name the same seven fields. This entry: the BODY-KEY spelling (create / update bodies)."
     }
   ]
 }

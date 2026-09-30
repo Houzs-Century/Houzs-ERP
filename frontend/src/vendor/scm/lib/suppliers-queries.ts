@@ -37,6 +37,10 @@ export type StatementType = 'OPEN_ITEM' | 'BALANCE_FORWARD' | 'NO_STATEMENT';
 export type AgingBasis    = 'INVOICE_DATE' | 'DUE_DATE';
 
 export type SupplierRow = {
+  /* The Finance part (vendor/shared/supplier-finance-fields: TIN, business reg,
+     registration, exemption, credit limit, statement type, aging basis) is
+     OPTIONAL: the server leaves it out for a caller who is not Finance
+     (owner 2026-09-30, 采购只看采购的部分). */
   id: string;
   code: string;
   name: string;
@@ -53,8 +57,8 @@ export type SupplierRow = {
   /* PR #40 — full master record (Commander 2026-05-26 AutoCount parity) */
   supplier_type: string | null;
   category: string | null;
-  tin_number: string | null;
-  business_reg_no: string | null;
+  tin_number?: string | null;
+  business_reg_no?: string | null;
   postcode: string | null;
   area: string | null;
   /* Mig 0131 — structured city (dropdown from scm.my_localities). Null on
@@ -68,14 +72,14 @@ export type SupplierRow = {
   business_nature: string | null;
   country: string;                          // PR #47 — default 'Malaysia'
   currency: Currency;
-  statement_type: StatementType;
-  aging_basis: AgingBasis;
-  credit_limit_sen: number;
+  statement_type?: StatementType;
+  aging_basis?: AgingBasis;
+  credit_limit_sen?: number;
   /* Mig 0028 — AutoCount creditor-export parity (registration_no /
      nature_of_business / exemption_no / phone2). */
-  registration_no: string | null;
+  registration_no?: string | null;
   nature_of_business: string | null;
-  exemption_no: string | null;
+  exemption_no?: string | null;
   phone2: string | null;
   created_at: string;
   updated_at: string;

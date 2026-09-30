@@ -67,6 +67,8 @@ import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
    403, or a 504 - changed nothing and reported nothing. That is the owner's
    exact report on 2026-09-07: "我点了main 为什么没反应". */
 import { writeFailed } from '../../vendor/scm/lib/mutation-error';
+import { useCapability } from '../../auth/capabilities';
+import { supplierSaveBody } from '../../vendor/scm/lib/supplier-save-body';
 import { useProductModels, type ProductModelRow } from '../../vendor/scm/lib/product-models-queries';
 import {
   useLocalities,
@@ -2284,6 +2286,10 @@ const SupplierInfoCard = ({
 }) => {
   const update = useUpdateSupplier();
   const notify = useNotify();
+  /* Owner 2026-09-30 (采购只看采购的部分; 代码只有 finance 能改): the Finance part —
+     TIN, business reg, registration, exemption — shows to Finance only (the
+     server does not send it to anyone else), and only Finance edits the code. */
+  const isFinance = useCapability('scm.money.move');
   // Owner spec 2026-06-12 — maintained Supply Category pool, for rendering
   // the stored comma-joined list with canonical casing.
   const categoryPool = useSupplierCategoryPool();
@@ -2324,7 +2330,7 @@ const SupplierInfoCard = ({
   const setF = (k: keyof typeof form, v: string) => setForm((s) => ({ ...s, [k]: v }));
 
   const save = () => {
-    update.mutate({ id: supplier.id, ...form } as Partial<SupplierRow> & { id: string }, {
+    update.mutate({ id: supplier.id, ...supplierSaveBody(form, supplier.code, isFinance) } as Partial<SupplierRow> & { id: string }, {
       onSuccess: onClose,
       // Never fail silently (Commander 2026-06-16 — "Save 没有反应"): surface the
       // real error so a server reject (e.g. a stale DB constraint) is visible.
@@ -2383,11 +2389,15 @@ const SupplierInfoCard = ({
               label="Supply Category"
               value={displaySupplierCategories(supplier.category, categoryPool) || '—'}
             />
-            <InfoCell label="TIN Number" value={supplier.tin_number ?? '—'} />
-            <InfoCell label="Business Reg No" value={supplier.business_reg_no ?? '—'} />
-            {/* Mig 0028 — AutoCount creditor-export parity. */}
-            <InfoCell label="Registration No." value={supplier.registration_no ?? '—'} />
-            <InfoCell label="Exemption No." value={supplier.exemption_no ?? '—'} />
+            {isFinance && (
+              <>
+                <InfoCell label="TIN Number" value={supplier.tin_number ?? '—'} />
+                <InfoCell label="Business Reg No" value={supplier.business_reg_no ?? '—'} />
+                {/* Mig 0028 — AutoCount creditor-export parity. */}
+                <InfoCell label="Registration No." value={supplier.registration_no ?? '—'} />
+                <InfoCell label="Exemption No." value={supplier.exemption_no ?? '—'} />
+              </>
+            )}
             <InfoCell label="Nature of Business" value={supplier.nature_of_business ?? '—'} />
             <InfoCell label="Contact Person" value={supplier.contact_person ?? '—'} />
             <InfoCell label="Attention" value={supplier.attention ?? '—'} />
@@ -2425,7 +2435,7 @@ const SupplierInfoCard = ({
         ) : (
           <div className={styles.formGrid}>
             {/* Identity */}
-            <EditField label="Credit Account *" value={form.code} onChange={(v) => setF('code', v)} />
+            <EditField label={isFinance ? 'Credit Account *' : 'Credit Account (Finance changes it)'} value={form.code} onChange={(v) => setF('code', v)} disabled={!isFinance} />
             <EditField label="Company Name *" value={form.name} onChange={(v) => setF('name', v)} />
             <EditField label="Supplier Type" value={form.supplierType} onChange={(v) => setF('supplierType', v)} placeholder="Matrix / Distributor / Maker" />
             {/* Owner spec 2026-06-12 — Supply Category is a multi-select chip
@@ -2439,11 +2449,15 @@ const SupplierInfoCard = ({
               fieldClassName={styles.field}
               labelClassName={styles.fieldLabel}
             />
-            <EditField label="TIN Number" value={form.tinNumber} onChange={(v) => setF('tinNumber', v)} />
-            <EditField label="Business Reg No" value={form.businessRegNo} onChange={(v) => setF('businessRegNo', v)} />
-            {/* Mig 0028 — AutoCount creditor-export parity. */}
-            <EditField label="Registration No." value={form.registrationNo} onChange={(v) => setF('registrationNo', v)} />
-            <EditField label="Exemption No." value={form.exemptionNo} onChange={(v) => setF('exemptionNo', v)} />
+            {isFinance && (
+              <>
+                <EditField label="TIN Number" value={form.tinNumber} onChange={(v) => setF('tinNumber', v)} />
+                <EditField label="Business Reg No" value={form.businessRegNo} onChange={(v) => setF('businessRegNo', v)} />
+                {/* Mig 0028 — AutoCount creditor-export parity. */}
+                <EditField label="Registration No." value={form.registrationNo} onChange={(v) => setF('registrationNo', v)} />
+                <EditField label="Exemption No." value={form.exemptionNo} onChange={(v) => setF('exemptionNo', v)} />
+              </>
+            )}
             <EditField label="Nature of Business" value={form.natureOfBusiness} onChange={(v) => setF('natureOfBusiness', v)} />
             {/* Contact */}
             <EditField label="Contact Person" value={form.contactPerson} onChange={(v) => setF('contactPerson', v)} />
@@ -2504,10 +2518,10 @@ const SupplierInfoCard = ({
 };
 
 const EditField = ({
-  label, value, onChange, multiline, placeholder,
+  label, value, onChange, multiline, placeholder, disabled,
 }: {
   label: string; value: string; onChange: (v: string) => void;
-  multiline?: boolean; placeholder?: string;
+  multiline?: boolean; placeholder?: string; disabled?: boolean;
 }) => (
   <label className={`${styles.field} ${multiline ? styles.formGridFull : ''}`}>
     <span className={styles.fieldLabel}>{label}</span>
@@ -2525,6 +2539,7 @@ const EditField = ({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        disabled={disabled}
       />
     )}
   </label>
