@@ -41,6 +41,7 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
+import { SupplierFinanceReminder } from '../../vendor/scm/components/SupplierFinanceReminder';
 import { EventSelect } from '../../vendor/scm/components/EventSelect';
 import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
 import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
@@ -739,6 +740,7 @@ export const PaymentVoucherNew = () => {
                   className={styles.fieldInput}
                   placeholder={suppliersQ.isLoading ? 'Loading suppliers…' : 'Type to find the supplier this pays'}
                 />
+                <SupplierFinanceReminder supplierId={supplierId} />
               </label>
             )}
             <label className={styles.field}>

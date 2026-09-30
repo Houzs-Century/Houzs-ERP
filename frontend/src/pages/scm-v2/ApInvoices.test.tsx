@@ -76,6 +76,8 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
 }));
 vi.mock('../../vendor/scm/lib/suppliers-queries', () => ({
   useSuppliers: () => ({ data: [{ id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD' }], isLoading: false }),
+  /* The finance-details reminder reads the detail; this supplier has its TIN, so it stays quiet. */
+  useSupplierDetail: (id: string | null) => ({ data: id ? { supplier: { id, name: 'HOUZS VENTURE HOLDING SDN BHD', tin_number: 'C123', business_reg_no: '201901', registration_no: null }, bindings: [] } : undefined }),
 }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
 const confirmFn = vi.fn(async (_a: unknown) => true);
