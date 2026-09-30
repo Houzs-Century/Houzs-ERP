@@ -25,7 +25,11 @@ vi.mock("../vendor/scm/components/NotifyDialog", () => ({ useNotify: () => notif
 // opens; a stub keeps the render about the card itself.
 vi.mock("../components/MediaLightbox", () => ({ MediaLightbox: () => null }));
 
-import { SalesDocsCard, type ChecklistItem, type TaskAttachment, type DocTile } from "./MobilePmsDocCard";
+import {
+  SalesDocsCard,
+  type ChecklistItem, type TaskAttachment, type DocTile,
+  type NotifyFn, type PromptFn, type ConfirmFn,
+} from "./MobilePmsDocCard";
 import { DefectActionsCtx } from "./MobilePmsDefectActions";
 
 afterEach(cleanup);
@@ -42,13 +46,18 @@ const att = (id: number, itemId: number, name: string, caption?: string): TaskAt
 });
 
 const noop = vi.fn();
+// Typed stubs, not `as never` casts — the card's dialog props keep their real
+// signatures so a prop change here fails the test instead of sliding past it.
+const notifyFn: NotifyFn = async () => {};
+const promptFn: PromptFn = async () => null;
+const confirmFn: ConfirmFn = async () => false;
 const dialogs = {
   canTick: true,
   busy: false,
   setBusy: noop,
-  notify: notify as never,
-  prompt: vi.fn() as never,
-  confirm: vi.fn() as never,
+  notify: notifyFn,
+  prompt: promptFn,
+  confirm: confirmFn,
   reload: noop,
 };
 
