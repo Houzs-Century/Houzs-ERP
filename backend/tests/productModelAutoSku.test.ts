@@ -37,7 +37,7 @@ class Q {
 function setup(failInsert = false) {
   const data: Record<string, Row[]> = {
     product_models: [
-      { id: 'm1', company_id: 1, model_code: '8030', name: '8030', category: 'SOFA', allowed_options: { compartments: ['1S'] } },
+      { id: 'm1', company_id: 1, model_code: '8030', name: 'Soffio', branding: 'ZANOTTI', category: 'SOFA', allowed_options: { compartments: ['1S'] } },
     ],
     mfg_products: [
       { id: 's1', company_id: 1, model_id: 'm1', code: '8030-1S', category: 'SOFA' },
@@ -67,7 +67,8 @@ describe('PATCH /product-models/:id — sofa compartment auto-creates its item c
     expect(body.autoCreatedSkus).toEqual(['8030-2B(LHF)', '8030-2B(RHF)']);
     expect(body.autoCreateFailed).toEqual([]);
     expect(data.mfg_products.map((r) => r.code)).toEqual(['8030-1S', '8030-2B(LHF)', '8030-2B(RHF)']);
-    expect(data.mfg_products[1]).toMatchObject({ company_id: 1, model_id: 'm1', category: 'SOFA', status: 'ACTIVE' });
+    // Brand lives in its own column; the item name must not carry it.
+    expect(data.mfg_products[1]).toMatchObject({ name: 'SOFA SOFFIO 2B(LHF)', branding: 'ZANOTTI', company_id: 1, model_id: 'm1', category: 'SOFA', status: 'ACTIVE' });
   });
 
   test('a refused insert is reported, not hidden: the options still save', async () => {
