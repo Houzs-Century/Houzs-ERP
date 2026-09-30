@@ -2261,6 +2261,7 @@ export const SalesOrderNew = () => {
                      ` *` marker + red ring stay off while the order is still a
                      no-date draft (owner 2026-07-14). */
                   variantsRequired={!!processingDate}
+                  lineDateLocked={!processingDate}
                   seedSofaLegDefault={true}
                   /* Scan-Order (Task #73) — a NO-MATCH scanned line seeds an
                      empty SKU picker; pass the slip rawText as the picker's

@@ -45,7 +45,7 @@ const { SoLineCard } = await import('./SoLineCard');
 
 const NOTE = 'Special Fabric-GD526-16 (BEETEX Chenille)';
 
-function renderArmRest(isEditing: boolean) {
+function renderArmRest(isEditing: boolean, lineDateLocked = false) {
   return render(
     <SoLineCard
       index={3}
@@ -62,6 +62,7 @@ function renderArmRest(isEditing: boolean) {
       itemId="line-ar01"
       isEditing={isEditing}
       variantsRequired
+      lineDateLocked={lineDateLocked}
       seedSofaLegDefault
     />,
   );
@@ -88,5 +89,17 @@ describe('SO line card — a Sofa Accessory line', () => {
     renderArmRest(true);
     expect(screen.getByText('SOFA ACCESSORY')).toBeTruthy();
     expect(screen.queryByText('OTHERS')).toBeNull();
+  });
+});
+
+describe('SO line card — the line delivery date (BUG-39)', () => {
+  it('is locked while the order has no Processing Date', () => {
+    renderArmRest(true, true);
+    expect((screen.getByTitle('Set the Processing Date first') as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it('stays editable once the order has one', () => {
+    renderArmRest(true, false);
+    expect(screen.queryByTitle('Set the Processing Date first')).toBeNull();
   });
 });

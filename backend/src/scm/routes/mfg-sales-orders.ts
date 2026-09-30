@@ -237,6 +237,8 @@ import {
   readSoProcessingDateFromBody,
   soDatePairCascadeColumns,
   soDatePairRefusal,
+  soDateYmd,
+  soLineDateRefusal,
 } from '../shared/so-processing-date';
 import { ATTRIBUTE_OTHER_REFUSAL, SO_IDENTITY_LOCK_COLS, changedIdentityLockCols, salespersonReattributed } from '../shared/so-identity-lock';
 /* Variants-vocabulary unification (port of 2990 73aeeb1e, 2026-06-26):
@@ -2344,6 +2346,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       nextProc: procDate, nextDeliv: delivDate, origProc: null, origDeliv: null,
     });
     if (createPairRefusal) return c.json(createPairRefusal, 400);
+    const createLineDateRefusal = soLineDateRefusal({
+      processingDate: procDate, lineDeliveryDates: items.map((it) => it.lineDeliveryDate),
+    });
+    if (createLineDateRefusal) return c.json(createLineDateRefusal, 400);
     /* Aggregate the remaining Processing-Date gates into ONE response instead of
        returning on the first (owner 2026-07-18): the category-mandatory variants
        (Commander 2026-05-29 — a Processing Date means purchasing is released to
@@ -6892,6 +6898,11 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   if (await soPoLocked(sb, docNo)) {
     return refuseWithoutWriting(c, SO_PO_LOCKED_RESPONSE, 409);
   }
+  const addLineDateRefusal = soLineDateRefusal({
+    processingDate: (header as { processing_date?: string | null }).processing_date,
+    lineDeliveryDates: [it.lineDeliveryDate],
+  });
+  if (addLineDateRefusal) return refuseWithoutWriting(c, addLineDateRefusal, 400);
   /* Commander 2026-05-31 — a line added later inherits the SO state's warehouse
      by default (migration 0118). Explicit it.warehouseId override wins. */
   /* The line inherits the ORDER'S warehouse (resolveSoWarehouseId: recorded
@@ -7186,7 +7197,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   const hasExplicitLineDate = it.lineDeliveryDate !== undefined && it.lineDeliveryDate !== null;
   const lineDeliveryDate = hasExplicitLineDate
     ? (it.lineDeliveryDate as string | null)
-    : (header.customer_delivery_date as string | null) ?? null;
+    : (header.processing_date ? (header.customer_delivery_date as string | null) ?? null : null);
   const lineDeliveryDateOverridden = hasExplicitLineDate
     ? (it.lineDeliveryDateOverridden === undefined ? true : Boolean(it.lineDeliveryDateOverridden))
     : Boolean(it.lineDeliveryDateOverridden ?? false);
@@ -7828,6 +7839,24 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
      forget. A separate lineDeliveryDateOverridden=false reset path lets
      the UI deliberately rejoin the header cascade. */
   if (it.lineDeliveryDate !== undefined) {
+    /* Only a date that CHANGES is judged: the detail screen resends every
+       field of an edited line, so an untouched legacy date must not block a
+       qty edit. */
+    const { data: dateRow, error: dateErr } = dateOrNull(it.lineDeliveryDate)
+      ? await scopeSoItemToDocument(sb.from('mfg_sales_order_items').select('line_delivery_date'), docNo, itemId).maybeSingle()
+      : { data: null, error: null };
+    if (dateErr) return c.json({ error: 'so_read_failed', reason: dateErr.message }, 500);
+    if (dateOrNull(it.lineDeliveryDate)
+      && soDateYmd(it.lineDeliveryDate) !== soDateYmd((dateRow as { line_delivery_date?: string | null } | null)?.line_delivery_date)) {
+      const { data: procHdr, error: procErr } = await sb.from('mfg_sales_orders')
+        .select('processing_date').eq('doc_no', docNo).maybeSingle();
+      if (procErr) return c.json({ error: 'so_read_failed', reason: procErr.message }, 500);
+      const patchLineDateRefusal = soLineDateRefusal({
+        processingDate: (procHdr as { processing_date?: string | null } | null)?.processing_date,
+        lineDeliveryDates: [it.lineDeliveryDate],
+      });
+      if (patchLineDateRefusal) return c.json(patchLineDateRefusal, 400);
+    }
     updates['line_delivery_date'] = dateOrNull(it.lineDeliveryDate);
     updates['line_delivery_date_overridden'] = true;
   }

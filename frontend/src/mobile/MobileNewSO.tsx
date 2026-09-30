@@ -2596,6 +2596,7 @@ export function MobileNewSO({
                           soDocNo={docNo}
                           onChange={(patch) => patchLine(l.key, patch)}
                           onDdateChange={(v) => setLineDdateManual(l.key, v)}
+                          lineDateLocked={!procDate}
                           onRemove={async () => {
                             if (!(await confirm({ title: "Remove this line?", body: l.name ? `"${l.name}" will be removed from the order.` : undefined, confirmLabel: "Remove", danger: true }))) return;
                             setDdateOverrides((prev) => {
@@ -2981,6 +2982,7 @@ function LineCard({
   soDocNo,
   onChange,
   onDdateChange,
+  lineDateLocked,
   onRemove,
 }: {
   line: LineItem;
@@ -3006,6 +3008,8 @@ function LineCard({
   /* FIX D1(b) — a manual Item Delivery Date edit routes through here so the
      parent can flag the line as an override the header cascade won't touch. */
   onDdateChange: (value: string) => void;
+  /* BUG-39 — no Processing Date, no line delivery date (soLineDateRefusal). */
+  lineDateLocked: boolean;
   onRemove: () => void;
 }) {
   const amt = fmt(num(line.qty) * num(line.price));
@@ -3159,7 +3163,7 @@ function LineCard({
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
           <Field label="Line Delivery Date" style={{ flex: 1 }} onClear={line.ddate ? () => onDdateChange("") : undefined}>
-            <DateField fullWidth className="fld-i" value={line.ddate} onChange={(iso) => onDdateChange(iso)}/>
+            <DateField fullWidth className="fld-i" value={line.ddate} disabled={lineDateLocked} title={lineDateLocked ? "Set the Processing Date first" : undefined} onChange={(iso) => onDdateChange(iso)}/>
           </Field>
         </div>
         <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>

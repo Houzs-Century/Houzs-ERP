@@ -622,6 +622,7 @@ export const ConsignmentNoteNew = () => {
               client-side invention - a red ring and a ` *` for a field the
               backend never asked for. */
               variantsRequired={false}
+              lineDateLocked={false}
               seedSofaLegDefault={false}
             />
           ))}

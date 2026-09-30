@@ -487,6 +487,27 @@ export function soDatePairRefusal(
   return unchanged ? null : SO_DATE_PAIR_REFUSAL;
 }
 
+/* THE LINE HALF OF THE PAIR (BUG-39, Sim 2026-09-30: 「no proceed date will be
+   no any delivery date」). soDatePairRefusal guards the header; a line date was
+   free, so an order with no Processing Date could still carry a delivery date
+   on its lines and read as dated demand. Only a date being SET is refused —
+   clearing one is always allowed. */
+export const SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL = {
+  error: 'line_delivery_needs_processing_date',
+  reason: 'Set the Processing Date first — a line cannot carry a Delivery Date while the order has none.',
+} as const;
+
+export function soLineDateRefusal(i: {
+  /** The order's Processing Date after this write. */
+  processingDate: unknown;
+  /** The line delivery dates this write sets. */
+  lineDeliveryDates: readonly unknown[];
+}): typeof SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL | null {
+  const present = (v: unknown): boolean => String(v ?? '').trim() !== '';
+  if (present(i.processingDate)) return null;
+  return i.lineDeliveryDates.some(present) ? SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL : null;
+}
+
 /**
  * CLEARING ONE CLEARS BOTH — the other half of the owner's rule, for the one
  * shape where refusing would be wrong.
