@@ -35,6 +35,14 @@ import { cornerCompositeFromCells, drawCornerSofa } from './sofa-corner-pdf';
 
 type JsPdf = import('jspdf').jsPDF;
 
+/** The motion variant a module code carries: "1A(P)(LHF)" → "P", "1NA(R)" →
+ *  "R", "1S(L)" → "L" (Power / Recliner / Power leg). Only the FIRST paren
+ *  group counts, so the chaise "L(LHF)" and a plain "1A(LHF)" return null. */
+export function motionMark(moduleId: string): 'P' | 'R' | 'L' | null {
+  const m = /^[^(]+\(([PRL])\)/.exec(moduleId);
+  return m ? (m[1] as 'P' | 'R' | 'L') : null;
+}
+
 /**
  * Draw a small top-down sofa schematic at (x, y) within (maxW × maxH) mm.
  * Returns the height (mm) actually drawn (sofa + TV block + dims caption).
@@ -173,11 +181,23 @@ export function drawSofaLayout(
       if (solid(en)) doc.rect(px, py, w, t, 'F');
       if (solid(ee)) doc.rect(px + w - t, py, t, h, 'F');
       if (solid(es)) doc.rect(px, py + h - t, w, t, 'F');
-      continue;
+    } else {
+      doc.rect(px, py, w, t, 'F'); // backrest (top / back)
+      if (Math.abs(c.x - bbox.x) < eps) doc.rect(px, py, t, h, 'F'); // left arm
+      if (Math.abs((c.x + fp.w) - (bbox.x + bbox.w)) < eps) doc.rect(px + w - t, py, t, h, 'F'); // right arm
     }
-    doc.rect(px, py, w, t, 'F'); // backrest (top / back)
-    if (Math.abs(c.x - bbox.x) < eps) doc.rect(px, py, t, h, 'F'); // left arm
-    if (Math.abs((c.x + fp.w) - (bbox.x + bbox.w)) < eps) doc.rect(px + w - t, py, t, h, 'F'); // right arm
+    /* BUG-42 (Sim 2026-09-30, HC-PO-2609-318): a power seat drew as a plain
+       seat, so the supplier could not tell 1A(P) from 1A on the plan while the
+       item photos beside it showed the "P". Stamp the letter the POS art
+       carries — these codes have no PNG, so they always land here. */
+    const mark = motionMark(c.moduleId);
+    if (mark) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(Math.max(4, Math.min(14, (Math.min(w, h) - t) * 0.55 * 2.835)));
+      doc.setTextColor(44, 44, 42);
+      doc.text(mark, px + w / 2, py + h / 2, { align: 'center', baseline: 'middle' });
+      doc.setTextColor(0);
+    }
   }
   }
 
