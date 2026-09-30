@@ -82,3 +82,54 @@ describe("useStickyFilters is session-scoped", () => {
     expect(screen.getByTestId("params").textContent).toBe("");
   });
 });
+
+// Owner 2026-09-30: the calendar filter "should remain unless u log out or leave
+// the page without touching for 1 hour". The idle-TTL mode stores {v,t} and
+// drops it once an hour has passed since the last CHANGE.
+function CalProbe() {
+  const [params] = useStickyFilters("projects-calendar", ["q", "status"], { idleTtlMs: 60 * 60 * 1000 });
+  return <output data-testid="params">{params.toString()}</output>;
+}
+
+describe("useStickyFilters idle TTL", () => {
+  it("stores the snapshot with a timestamp", async () => {
+    bindBrowserStorageIdentity(7);
+    render(<MemoryRouter initialEntries={["/?status=confirmed"]}><CalProbe /></MemoryRouter>);
+    await waitFor(() => {
+      const raw = sessionStorage.getItem("filters:projects-calendar:u7:c0");
+      expect(raw).toBeTruthy();
+      const rec = JSON.parse(raw as string);
+      expect(rec.v).toBe("status=confirmed");
+      expect(typeof rec.t).toBe("number");
+    });
+  });
+
+  it("restores a snapshot changed less than an hour ago", async () => {
+    bindBrowserStorageIdentity(7);
+    sessionStorage.setItem("filters:projects-calendar:u7:c0",
+      JSON.stringify({ v: "status=confirmed", t: Date.now() - 30 * 60 * 1000 }));
+    render(<MemoryRouter initialEntries={["/"]}><CalProbe /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("params").textContent).toBe("status=confirmed"));
+  });
+
+  it("drops a snapshot untouched for more than an hour", async () => {
+    bindBrowserStorageIdentity(7);
+    sessionStorage.setItem("filters:projects-calendar:u7:c0",
+      JSON.stringify({ v: "status=confirmed", t: Date.now() - 61 * 60 * 1000 }));
+    render(<MemoryRouter initialEntries={["/"]}><CalProbe /></MemoryRouter>);
+    await waitFor(() => expect(sessionStorage.getItem("filters:projects-calendar:u7:c0")).toBeNull());
+    expect(screen.getByTestId("params").textContent).toBe("");
+  });
+
+  it("does not restart the clock when the same filter is restored on navigation", async () => {
+    bindBrowserStorageIdentity(7);
+    const t0 = Date.now() - 50 * 60 * 1000;
+    sessionStorage.setItem("filters:projects-calendar:u7:c0", JSON.stringify({ v: "status=confirmed", t: t0 }));
+    render(<MemoryRouter initialEntries={["/"]}><CalProbe /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("params").textContent).toBe("status=confirmed"));
+    // Navigating back re-mirrors the unchanged value — `t` must be preserved,
+    // not bumped, or the filter would never expire while it is being viewed.
+    const rec = JSON.parse(sessionStorage.getItem("filters:projects-calendar:u7:c0") as string);
+    expect(rec.t).toBe(t0);
+  });
+});
