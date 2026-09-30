@@ -194,6 +194,7 @@ const SoLineCardInner = ({
   itemId,
   isEditing = true,
   variantsRequired,
+  lineDateLocked,
   seedSofaLegDefault,
   searchHint,
 }: {
@@ -236,6 +237,11 @@ const SoLineCardInner = ({
          (DO, consignment note/return, delivery return, sales invoice — the
           variants ride in with the items and are not re-specified here) */
   variantsRequired: boolean;
+  /* BUG-39 (Sim 2026-09-30): an SO with no Processing Date carries no delivery
+     date, on the lines either — the server refuses one (soLineDateRefusal).
+     SO New/Detail -> !processingDate; every other document -> false. Mandatory
+     for the same reason as variantsRequired. */
+  lineDateLocked: boolean;
   /* Whether this document may AUTO-FILL a blank sofa Leg Height with the
      maintenance "Default" option (owner 2026-07-13).
 
@@ -1025,8 +1031,10 @@ const SoLineCardInner = ({
           fullWidth
           className={styles.input}
           value={draft.lineDeliveryDate ?? ''}
-          disabled={!isEditing}
-          title={!draft.lineDeliveryDateOverridden && draft.lineDeliveryDate ? 'Auto-inherited from SO header' : undefined}
+          disabled={!isEditing || lineDateLocked}
+          title={lineDateLocked
+            ? 'Set the Processing Date first'
+            : !draft.lineDeliveryDateOverridden && draft.lineDeliveryDate ? 'Auto-inherited from SO header' : undefined}
           onChange={(iso) => onChange({
             lineDeliveryDate: iso || null,
             lineDeliveryDateOverridden: true,

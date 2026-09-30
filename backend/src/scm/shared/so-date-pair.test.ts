@@ -18,6 +18,8 @@ import {
   SO_DATE_PAIR_REFUSAL,
   soDatePairCascadeColumns,
   soDatePairRefusal,
+  soLineDateRefusal,
+  SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL,
   soDateDay,
   soDateYmd,
 } from './so-processing-date';
@@ -167,5 +169,23 @@ describe('soDateDay / soDateYmd — a Date object is a day, not "Fri Aug 28"', (
   it('treats an invalid Date as absent', () => {
     expect(soDateDay(new Date('garbage'))).toBe('');
     expect(soDateYmd(new Date('garbage'))).toBeNull();
+  });
+});
+
+describe('soLineDateRefusal — no Processing Date, no line delivery date (BUG-39)', () => {
+  it('refuses a line date on an order with no Processing Date', () => {
+    expect(soLineDateRefusal({ processingDate: null, lineDeliveryDates: [null, '2026-09-30'] }))
+      .toBe(SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL);
+    expect(soLineDateRefusal({ processingDate: '', lineDeliveryDates: ['2026-09-30'] }))
+      .toBe(SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL);
+  });
+
+  it('accepts a line date once the order has a Processing Date', () => {
+    expect(soLineDateRefusal({ processingDate: '2026-09-01', lineDeliveryDates: ['2026-09-30'] })).toBeNull();
+  });
+
+  it('never refuses clearing or leaving the line date empty', () => {
+    expect(soLineDateRefusal({ processingDate: null, lineDeliveryDates: [null, undefined, ''] })).toBeNull();
+    expect(soLineDateRefusal({ processingDate: null, lineDeliveryDates: [] })).toBeNull();
   });
 });

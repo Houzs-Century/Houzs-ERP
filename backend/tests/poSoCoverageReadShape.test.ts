@@ -97,9 +97,9 @@ function fixture(): Record<string, Row[]> {
     }],
     purchase_order_item_allocations: [],
     mfg_sales_orders: [
-      { doc_no: 'SO-STORED', customer_delivery_date: DD, amended_delivery_date: null, status: 'CONFIRMED', so_date: '2026-07-01', debtor_name: 'Acme', processing_date: null, customer_state: null, sales_location: null, company_id: CO },
-      { doc_no: 'SO-FLOAT', customer_delivery_date: DD, amended_delivery_date: null, status: 'CONFIRMED', so_date: '2026-07-02', debtor_name: 'Beta', processing_date: null, customer_state: null, sales_location: null, company_id: CO },
-      { doc_no: 'SO-SHIPPED', customer_delivery_date: DD, amended_delivery_date: null, status: 'CONFIRMED', so_date: '2026-07-03', debtor_name: 'Gamma', processing_date: null, customer_state: null, sales_location: null, company_id: CO },
+      { doc_no: 'SO-STORED', customer_delivery_date: DD, amended_delivery_date: null, status: 'CONFIRMED', so_date: '2026-07-01', debtor_name: 'Acme', processing_date: '2026-07-05', customer_state: null, sales_location: null, company_id: CO },
+      { doc_no: 'SO-FLOAT', customer_delivery_date: DD, amended_delivery_date: null, status: 'CONFIRMED', so_date: '2026-07-02', debtor_name: 'Beta', processing_date: '2026-07-05', customer_state: null, sales_location: null, company_id: CO },
+      { doc_no: 'SO-SHIPPED', customer_delivery_date: DD, amended_delivery_date: null, status: 'CONFIRMED', so_date: '2026-07-03', debtor_name: 'Gamma', processing_date: '2026-07-05', customer_state: null, sales_location: null, company_id: CO },
     ],
     mfg_sales_order_items: [
       { id: 'si-stored', doc_no: 'SO-STORED', item_code: SKU, description: 'Baron', item_group: 'bedframe', variants: {}, qty: 1, warehouse_id: 'W1', line_delivery_date: DD, line_no: 1, created_at: '2026-07-01T00:00:00Z', cancelled: false, company_id: CO },

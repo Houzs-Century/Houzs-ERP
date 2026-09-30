@@ -2595,7 +2595,7 @@ export function MobileNewSO({
                           canEditPrice={canEditPrice}
                           soDocNo={docNo}
                           onChange={(patch) => patchLine(l.key, patch)}
-                          onDdateChange={(v) => setLineDdateManual(l.key, v)}
+                          onDdateChange={procDate ? (v) => setLineDdateManual(l.key, v) : null}
                           onRemove={async () => {
                             if (!(await confirm({ title: "Remove this line?", body: l.name ? `"${l.name}" will be removed from the order.` : undefined, confirmLabel: "Remove", danger: true }))) return;
                             setDdateOverrides((prev) => {
@@ -3003,9 +3003,9 @@ function LineCard({
      a signed URL and to route photo delete to the right document. */
   soDocNo?: string;
   onChange: (patch: Partial<LineItem>) => void;
-  /* FIX D1(b) — a manual Item Delivery Date edit routes through here so the
-     parent can flag the line as an override the header cascade won't touch. */
-  onDdateChange: (value: string) => void;
+  /* FIX D1(b) — a manual Item Delivery Date edit routes through here so the header
+     cascade won't touch it. null = no Processing Date, date locked (BUG-39). */
+  onDdateChange: ((value: string) => void) | null;
   onRemove: () => void;
 }) {
   const amt = fmt(num(line.qty) * num(line.price));
@@ -3158,8 +3158,8 @@ function LineCard({
           </Field>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-          <Field label="Line Delivery Date" style={{ flex: 1 }} onClear={line.ddate ? () => onDdateChange("") : undefined}>
-            <DateField fullWidth className="fld-i" value={line.ddate} onChange={(iso) => onDdateChange(iso)}/>
+          <Field label="Line Delivery Date" style={{ flex: 1 }} onClear={line.ddate && onDdateChange ? () => onDdateChange("") : undefined}>
+            <DateField fullWidth className="fld-i" value={line.ddate} disabled={!onDdateChange} title={onDdateChange ? undefined : "Set the Processing Date first"} onChange={(iso) => onDdateChange?.(iso)}/>
           </Field>
         </div>
         <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>

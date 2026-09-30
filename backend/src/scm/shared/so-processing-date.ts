@@ -20,12 +20,11 @@
 // as they are found. If you meet another, it is stale — fix it, do not copy it.
 //
 // NOTE WHAT IS *NOT* IMPLEMENTED: the ~1 day lag the owner describes exists in
-// the business, not in this code. Nothing here defers anything by a day, and
-// MRP does not read this date to decide when to order at all — it derives
-// `orderByDate = delivery date − category lead days` (routes/mrp.ts) and only
-// DISPLAYS the Processing Date. Do not write a comment claiming otherwise; the
-// comment at routes/mrp.ts:193 claimed exactly that for months while the code
-// ignored the field.
+// the business, not in this code. Nothing here defers anything by a day. MRP
+// reads this date for ONE thing: an order without one is not demand at all
+// (owner 2026-09-15, routes/mrp.ts isReleased). WHEN a released order is
+// ordered is still `orderByDate = delivery date − category lead days`, never
+// derived from the Processing Date.
 //
 // ─── WHY THIS FILE EXISTS ───────────────────────────────────────────────────
 //
@@ -486,6 +485,27 @@ export function soDatePairRefusal(
     present(facts.nextProc) === present(facts.origProc) &&
     present(facts.nextDeliv) === present(facts.origDeliv);
   return unchanged ? null : SO_DATE_PAIR_REFUSAL;
+}
+
+/* THE LINE HALF OF THE PAIR (BUG-39, Sim 2026-09-30: 「no proceed date will be
+   no any delivery date」). soDatePairRefusal guards the header; a line date was
+   free, so an order with no Processing Date could still carry a delivery date
+   on its lines and read as dated demand. Only a date being SET is refused —
+   clearing one is always allowed. */
+export const SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL = {
+  error: 'line_delivery_needs_processing_date',
+  reason: 'Set the Processing Date first — a line cannot carry a Delivery Date while the order has none.',
+} as const;
+
+export function soLineDateRefusal(i: {
+  /** The order's Processing Date after this write. */
+  processingDate: unknown;
+  /** The line delivery dates this write sets. */
+  lineDeliveryDates: readonly unknown[];
+}): typeof SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL | null {
+  const present = (v: unknown): boolean => String(v ?? '').trim() !== '';
+  if (present(i.processingDate)) return null;
+  return i.lineDeliveryDates.some(present) ? SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL : null;
 }
 
 /**

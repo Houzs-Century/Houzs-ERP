@@ -91,6 +91,7 @@ import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { mapBounded, eager } from '../lib/concurrency';
 import type { Env, Variables } from '../env';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
+import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 import { isDefaultMrpView, readMrpSnapshot, refreshMrpSnapshot } from '../lib/mrp-snapshot';
 import { allocSourceOf, allocSourceCoveringPo, type AllocSource } from '../shared/mrp-alloc-source';
 import { isHardBoundLine, HARD_BOUND_COMPANY_ID } from '../lib/so-stock-allocation';
@@ -211,9 +212,10 @@ type DemandRow = {
     customer_delivery_date: string | null;   // the customer's ORIGINAL promise — never overwritten
     amended_delivery_date: string | null;    // the reschedule Logistics confirmed; wins over the original
     processing_date: string | null; /* Release-for-purchasing signal (owner 2026-08-18: "Processing Date
-       就代表这张单可以安排订货了"). Carried for DISPLAY only — this page's
-       "when to order" is orderByDate below, derived from the delivery date and
-       the category lead time. NOT a production date: there is no production. */
+       就代表这张单可以安排订货了"). GATES entry: a line whose order has none is
+       not demand (see isReleased). Once in, "when to order" is orderByDate below,
+       derived from the delivery date and the category lead time. NOT a
+       production date: there is no production. */
     customer_state: string | null;       // staff #8 — show the customer's state (info-only)
     sales_location: string | null;       // the SO's OWN warehouse of record (lib/so-warehouse.ts)
   } | null;
@@ -638,10 +640,20 @@ export async function computeMrp(
       so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, amended_delivery_date, processing_date, customer_state, sales_location )
     `)
     .eq('cancelled', false)
-    .not('so.status', 'in', SO_DONE_SQL))
+    .not('so.status', 'in', SO_DONE_SQL)
+    .not(`so.${SO_PROCESSING_DATE_COLUMN}`, 'is', null))
     .order('id')
     .range(from, to));
   if (demandErr) throw new Error(`mrp_load_failed: ${demandErr.message}`);
+
+  /* NO PROCESSING DATE, NO DEMAND (owner 2026-09-15, BUG-39 2026-09-29).
+     「没有 Processing date 的单子就不进来」 — the Processing Date is the release
+     for purchasing, so an order without one takes no stock, claims no PO and
+     shows no shortage, on every consumer of this engine. Priority among the
+     released orders is still the delivery date. The stock allocator applies the
+     same gate (so-stock-allocation.ts); the SQL filter above only saves read
+     budget, this one is authoritative. */
+  const isReleased = (r: DemandRow): boolean => !!r.so?.processing_date;
 
   /* Undated lines (no line delivery date AND no SO delivery date) are not ready
      to order — the MRP page HIDES them by default (owner 2026-08-18;
@@ -658,7 +670,7 @@ export async function computeMrp(
      under both flag values. `includeUndated` only controls whether undated
      rows appear in the RESULT (visibility, not math). */
   const demandActive = ((demandRaw ?? []) as unknown as DemandRow[]).filter(
-    (r) => r.item_code && r.so && !SO_DONE.has(r.so.status) && r.qty > 0,
+    (r) => r.item_code && r.so && !SO_DONE.has(r.so.status) && isReleased(r) && r.qty > 0,
   );
   const isDatedLine = (r: DemandRow): boolean => deliveryOf(r) !== null;
 

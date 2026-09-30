@@ -30,6 +30,11 @@ to decide what to buy, and read by SO/PO/GRN/PI/Inventory screens as
   dedicated PO line — never the pooled bucket, in either direction (a bound
   demand line never reads pooled stock; a bound PO line is dedicated and
   leaves the pool). Company 2 stays fully pooled/soft.
+- **No Processing Date, no demand** (owner 2026-09-15, BUG-39). A line whose
+  SO has no `processing_date` is not in the allocation at all: no stock
+  claim, no PO coverage, no shortage, on every consumer. Unlike
+  `includeUndated` this IS a demand filter. Among released orders the
+  priority is still the effective delivery date.
 - `includeUndated` is **display-only** — it never changes what the allocator
   computes, only which undated rows/sets are shown; a dated line's coverage
   is identical either way (undated demand always sorts last). Default is
