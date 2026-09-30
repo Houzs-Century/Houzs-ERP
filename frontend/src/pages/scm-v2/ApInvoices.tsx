@@ -57,7 +57,7 @@ import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { DataTable, type Column } from '../../components/DataTable';
 import { ApInvoiceForm, emptyApForm, formFromExtraction, scanNoteFor, type ApFormMode, type ApFormSubmit, type ApFormValues } from './ApInvoiceForm';
 import { eventCellText } from '../../vendor/scm/components/EventSelect';
-import { useEventLabels } from '../../vendor/scm/lib/event-queries';
+import { useEventLabels, type EventSuggestion } from '../../vendor/scm/lib/event-queries';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
@@ -102,7 +102,7 @@ const fromDetail = (d: Detail, copy: boolean): ApFormValues => ({
 type FormState = {
   mode: ApFormMode; initial: ApFormValues; invoiceId?: string; invoiceNumber?: string; posted?: boolean; paidSen?: number;
   /** A bill handed over from the pile page: its read pages and the reader's sentence. */
-  scan?: { files: PvFilePayload[]; note: string };
+  scan?: { files: PvFilePayload[]; note: string; eventSuggestions?: EventSuggestion[] };
 };
 
 export const ApInvoices = () => {
@@ -162,13 +162,13 @@ export const ApInvoices = () => {
   const location = useLocation();
   const navigate = useNavigate();
   useEffect(() => {
-    const st = location.state as { apPrefill?: { extraction: BillExtraction; supplierMatch: { id: string; name: string } | null; memory: VendorMemory | null } } | null;
+    const st = location.state as { apPrefill?: { extraction: BillExtraction; supplierMatch: { id: string; name: string } | null; memory: VendorMemory | null; eventSuggestions?: EventSuggestion[] } } | null;
     if (!st?.apPrefill) return;
-    const { extraction, supplierMatch, memory } = st.apPrefill;
+    const { extraction, supplierMatch, memory, eventSuggestions } = st.apPrefill;
     setForm({
       mode: 'new',
       initial: { ...emptyApForm(), ...formFromExtraction(extraction, supplierMatch, memory) },
-      scan: { files: takePvFiles(), note: scanNoteFor({ extraction, supplierMatch, memory }) },
+      scan: { files: takePvFiles(), note: scanNoteFor({ extraction, supplierMatch, memory }), eventSuggestions: eventSuggestions ?? [] },
     });
     navigate(location.pathname, { replace: true, state: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -427,6 +427,7 @@ export const ApInvoices = () => {
             initial={form.initial}
             initialFiles={form.scan?.files}
             initialNote={form.scan?.note}
+            initialEventSuggestions={form.scan?.eventSuggestions}
             suppliers={suppliersQ.data ?? []}
             suppliersLoading={suppliersQ.isLoading}
             lineAccounts={lineAccounts}

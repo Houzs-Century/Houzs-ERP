@@ -35,6 +35,7 @@ import { useNavigate } from 'react-router-dom';
 import { Camera, FileText, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useExtractBills, fileToBase64, type ExtractedBill, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
 import { stashPvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { fmtDate } from '../../vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
@@ -155,13 +156,13 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
     return [...map.entries()].map(([key, g]) => ({ key, ...g }));
   }, [results]);
 
-  const openVoucher = (extraction: BillExtraction, extras?: { lines?: Array<{ description: string | null; amountSen: number | null }>; memory?: VendorMemory | null; files?: PvFilePayload[] }) => {
+  const openVoucher = (extraction: BillExtraction, extras?: { lines?: Array<{ description: string | null; amountSen: number | null }>; memory?: VendorMemory | null; files?: PvFilePayload[]; eventSuggestions?: EventSuggestion[] }) => {
     /* The bill's own bytes ride ALONG (module stash, not location.state — see
        pv-file-handoff.ts): the New page attaches them once the voucher saves,
        so the evidence lives with the document instead of dying with this tab.
        Stashed even when empty, so a stale earlier pile can't attach here. */
     stashPvFiles(extras?.files ?? []);
-    navigate('/scm/payment-vouchers/new', { state: { billPrefill: { extraction, ...(extras?.lines ? { lines: extras.lines } : {}), memory: extras?.memory ?? null } } });
+    navigate('/scm/payment-vouchers/new', { state: { billPrefill: { extraction, ...(extras?.lines ? { lines: extras.lines } : {}), memory: extras?.memory ?? null, ...(extras?.eventSuggestions ? { eventSuggestions: extras.eventSuggestions } : {}) } } });
   };
 
   /* 扫 → bill (the owner, 2026-09-03, confirming the flow himself: 他是扫
@@ -182,7 +183,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
      uses, attached on save. */
   const openApInvoice = (b: Extract<ExtractedBill, { ok: true }>) => {
     stashPvFiles(billFiles[b.index] ?? []);
-    navigate('/scm/ap-invoices', { state: { apPrefill: { extraction: b.extraction, supplierMatch: b.supplierMatch, memory: b.memory } } });
+    navigate('/scm/ap-invoices', { state: { apPrefill: { extraction: b.extraction, supplierMatch: b.supplierMatch, memory: b.memory, eventSuggestions: b.eventSuggestions ?? [] } } });
   };
 
   /* Case 4 — the ticked receipts, whatever shop each came from, as ONE voucher. */
@@ -355,7 +356,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                           </Button>
                         ) : split ? (
                           <span style={{ display: 'inline-flex', gap: 6 }}>
-                            <Button variant="secondary" size="sm" onClick={() => openVoucher(b.extraction, { memory: b.memory, files: billFiles[b.index] ?? [] })}>
+                            <Button variant="secondary" size="sm" onClick={() => openVoucher(b.extraction, { memory: b.memory, files: billFiles[b.index] ?? [], eventSuggestions: b.eventSuggestions ?? [] })}>
                               Open as voucher
                             </Button>
                             <Button variant="ghost" size="sm" onClick={() => openBill(b.extraction, g.supplierId)}>

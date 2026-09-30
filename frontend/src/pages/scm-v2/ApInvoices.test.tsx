@@ -369,3 +369,33 @@ describe('the event each line is for (owner 2026-09-30, 5a — the header a defa
     expect((createAsync.mock.calls[0]![0] as { lines: unknown }).lines).toEqual([{ debitAccountCode: '900-A001', amountSen: 80_000, projectId: 348 }]);
   });
 });
+
+describe('the event a scanned bill names (owner 2026-09-30, 6a — suggest, never bind)', () => {
+  test('the pile hands over the suggestions; nothing is set until Use, which puts the event on every line', async () => {
+    createAsync.mockClear();
+    stashPvFiles([]);
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/scm/ap-invoices', state: { apPrefill: {
+        extraction: {
+          vendorName: 'MLE EVENTS SDN BHD', vendorRegNo: null, documentKind: 'invoice', invoiceNumber: 'MLE-0925',
+          invoiceDate: '2026-09-02', dueDate: null, currency: 'MYR', totalSen: 850_000, sstSen: null,
+          lines: [{ description: 'Booth F1 rental', amountSen: 850_000 }],
+          event: { name: 'MLE Home Expo', venue: 'PWCC', booth: 'F1', dateFrom: '2026-09-25', dateTo: '2026-09-27' },
+        },
+        supplierMatch: { id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD', confidence: 'contains' },
+        memory: { payeeName: null, debitAccountCode: '900-A001', purpose: 'SUPPLIER_PAYMENT', timesSeen: 1 },
+        eventSuggestions: [{ id: 348, score: 120, reasons: ['booth F1', 'same days', 'organiser MLE'], event: EVENT_OPTIONS[1] }],
+      } } }]}><ApInvoices /></MemoryRouter>,
+    );
+    const d = dialog();
+    const note = within(d).getByRole('note', { name: 'Events the bill names' });
+    expect(note.textContent).toContain('booth F1 · same days · organiser MLE');
+    expect((within(d).getByLabelText('line 1 event') as HTMLInputElement).value).toBe('— No event —');
+    fireEvent.click(within(note).getByLabelText('Use Pulau Pinang [AKEMI] MLE @ PWCC'));
+    expect((within(d).getByLabelText('line 1 event') as HTMLInputElement).value).toMatch(/MLE @ PWCC/);
+    expect(within(note).getByText('✓ in use')).toBeTruthy();
+    fireEvent.click(within(d).getByText('Save as draft'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalled());
+    expect((createAsync.mock.calls[0]![0] as { lines: unknown }).lines).toEqual([expect.objectContaining({ amountSen: 850_000, projectId: 348 })]);
+  });
+});

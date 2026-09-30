@@ -50,6 +50,19 @@ export type BillExtraction = {
   totalSen: number | null;
   sstSen: number | null;
   lines: BillLine[];
+  /** The event (fair / exhibition / roadshow) the bill is FOR, as printed —
+      owner 2026-09-30: ocr 要有办法 detect 相关的 event. Read, never matched:
+      server code turns it into suggestions (scm/lib/event-match.ts), and a
+      person picks (6a, suggest only). null when the bill names no event. */
+  event: BillEventHint | null;
+};
+
+export type BillEventHint = {
+  name: string | null;
+  venue: string | null;
+  booth: string | null;
+  dateFrom: string | null;
+  dateTo: string | null;
 };
 
 const PROMPT = `You are reading ONE incoming bill/invoice for a Malaysian furniture company's finance clerk. The input images/PDF pages all belong to THIS ONE document.
@@ -65,7 +78,8 @@ Return ONLY a JSON object, no prose, with exactly these keys:
   "currency": the 3-letter currency printed (default "MYR"),
   "totalRm": the GRAND TOTAL payable as a plain number (e.g. 1234.56) or null,
   "sstRm": the SST/tax amount as a plain number, or null when not itemised,
-  "lines": the rows that ADD UP to the amount paid — EVERY goods/service line printed, in order, plus any discount, tax or rounding row [{ "description": string, "amountRm": number|null }] — one entry per printed line however many there are, or ONE entry summarising the charge when the bill has no itemisation
+  "lines": the rows that ADD UP to the amount paid — EVERY goods/service line printed, in order, plus any discount, tax or rounding row [{ "description": string, "amountRm": number|null }] — one entry per printed line however many there are, or ONE entry summarising the charge when the bill has no itemisation,
+  "event": ONLY when the bill is for an exhibition / fair / expo / roadshow / event space (booth rental, setup, electricity at a venue, and the like): { "name": the event's name as printed or null, "venue": the venue / hall / mall as printed or null, "booth": the booth / lot / stand number(s) as printed or null, "dateFrom": the event's first day as YYYY-MM-DD or null, "dateTo": its last day as YYYY-MM-DD or null } — otherwise null
 }
 
 Rules:
@@ -159,7 +173,27 @@ export function coerceBillJson(raw: unknown): BillExtraction {
         amountSen: rmToSen(li.amountRm),
       };
     })),
+    event: coerceEventHint(o.event),
   };
+}
+
+/** The printed event, or null when nothing of it was read — an object of five
+    nulls is no event, and saying so keeps the suggestions from running on air. */
+export function coerceEventHint(raw: unknown): BillEventHint | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const e = raw as Record<string, unknown>;
+  const text = (v: unknown, max: number): string | null => {
+    const s = typeof v === 'string' || typeof v === 'number' ? String(v).trim() : '';
+    return s ? s.slice(0, max) : null;
+  };
+  const hint: BillEventHint = {
+    name: text(e.name, 160),
+    venue: text(e.venue, 160),
+    booth: text(e.booth, 80),
+    dateFrom: isoOrNull(e.dateFrom),
+    dateTo: isoOrNull(e.dateTo),
+  };
+  return Object.values(hint).some((v) => v != null) ? hint : null;
 }
 
 /* The model sometimes wraps JSON in prose or a fence — take the outermost

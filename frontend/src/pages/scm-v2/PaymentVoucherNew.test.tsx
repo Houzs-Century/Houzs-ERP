@@ -516,6 +516,31 @@ describe('the event each line is for (owner 2026-09-30, 5a — the header a defa
   });
 });
 
+describe('the event a scanned bill names (6a — suggest, never bind)', () => {
+  test('the pile hands the suggestion over; Use sets the header event and every line', () => {
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: '/scm/payment-vouchers/new',
+        state: { billPrefill: {
+          extraction: {
+            vendorName: 'HOMELOVE EXPO', vendorRegNo: null, documentKind: 'invoice' as const,
+            invoiceNumber: 'HL-0904', invoiceDate: '2026-09-01', dueDate: null, currency: 'MYR', totalSen: 10500, sstSen: null,
+            lines: [{ description: 'Booth rental', amountSen: 10000 }, { description: 'Admin fee', amountSen: 500 }],
+          },
+          memory: null,
+          eventSuggestions: [{ id: 336, score: 95, reasons: ['booth 1129', 'same days'], event: EVENT_OPTIONS[0] }],
+        } },
+      }]}><PaymentVoucherNew /></MemoryRouter>,
+    );
+    const note = screen.getByRole('note', { name: 'Events the bill names' });
+    expect(note.textContent).toContain('booth 1129 · same days');
+    fireEvent.click(screen.getByLabelText('Use Pulau Pinang [AKEMI] HOMELOVE @ SETIA SPICE'));
+    expect((screen.getByLabelText('Event for all lines') as HTMLInputElement).value).toMatch(/HOMELOVE @ SETIA SPICE/);
+    expect((screen.getByLabelText('line 2 event') as HTMLInputElement).value).toMatch(/HOMELOVE @ SETIA SPICE/);
+    expect(screen.getByText('✓ in use')).toBeTruthy();
+  });
+});
+
 describe('answering a payment request (?fromRequest=, 申请付款)', () => {
   test('the payee, the asked amount, the purpose, the event and the request fill in; the save names the request', async () => {
     mutateAsync.mockClear();

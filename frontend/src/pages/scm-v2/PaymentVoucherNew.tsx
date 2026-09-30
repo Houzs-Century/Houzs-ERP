@@ -42,6 +42,8 @@ import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDial
 import { DateField } from '../../vendor/scm/components/DateField';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
 import { EventSelect } from '../../vendor/scm/components/EventSelect';
+import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
+import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
 import { usePaymentRequest } from '../../vendor/scm/lib/payment-request-queries';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { fmtDate } from '../../vendor/shared/format';
@@ -174,6 +176,9 @@ export const PaymentVoucherNew = () => {
   const location = useLocation();
   const extract = useExtractBills();
   const [scanNote, setScanNote] = useState<string | null>(null);
+  /* The events the scanned bill points at (owner 2026-09-30, 6a) — offered
+     beside the header's event, set only when a person presses Use. */
+  const [eventSuggestions, setEventSuggestions] = useState<EventSuggestion[]>([]);
   /* The scanned bill's own bytes, waiting to ATTACH once the voucher exists
      (owner 2026-09-03: print pv include ocr 的文件一起 — so the file must
      live with the voucher, not die with this tab). Filled by the batch
@@ -218,9 +223,10 @@ export const PaymentVoucherNew = () => {
      pv-file-handoff.ts); take() clears, so only set when something was
      actually taken (a double-run effect must not wipe the first take). */
   useEffect(() => {
-    const st = location.state as { billPrefill?: { extraction: BillExtraction; lines?: Array<{ description: string | null; amountSen: number | null }>; memory?: VendorMemory | null } } | null;
+    const st = location.state as { billPrefill?: { extraction: BillExtraction; lines?: Array<{ description: string | null; amountSen: number | null }>; memory?: VendorMemory | null; eventSuggestions?: EventSuggestion[] } } | null;
     if (st?.billPrefill) {
       applyExtraction(st.billPrefill.extraction, { lines: st.billPrefill.lines, memory: st.billPrefill.memory });
+      setEventSuggestions(st.billPrefill.eventSuggestions ?? []);
       const carried = takePvFiles();
       if (carried.length > 0) setPendingFiles(carried);
     }
@@ -239,6 +245,7 @@ export const PaymentVoucherNew = () => {
       if (!bill) { setScanNote('The bill could not be read.'); return; }
       if (!bill.ok) { setScanNote(bill.reason); return; }
       applyExtraction(bill.extraction, { memory: bill.memory });
+      setEventSuggestions(bill.eventSuggestions ?? []);
       /* The read pages become the voucher's attachments on save. The LAST
          successful read wins, matching applyExtraction overwriting the lines
          — this page reads ONE bill at a time. */
@@ -938,6 +945,8 @@ export const PaymentVoucherNew = () => {
             <EventSelect value={defaultEvent} around={voucherDate} className={styles.fieldInput} aria-label="Event for all lines"
               onChange={(v) => { setDefaultEvent(v); setLines((prev) => prev.map((x) => ({ ...x, projectId: v }))); }} />
           </label>
+          <EventSuggestions suggestions={eventSuggestions} current={defaultEvent}
+            onUse={(id) => { setDefaultEvent(id); setLines((prev) => prev.map((x) => ({ ...x, projectId: id }))); }} />
           {lines.map((l, idx) => (
             <div key={l.rid} data-line={l.rid}
               onKeyDown={(e) => { if (e.key === 'Insert') { e.preventDefault(); addLineAndLand(); } }}
