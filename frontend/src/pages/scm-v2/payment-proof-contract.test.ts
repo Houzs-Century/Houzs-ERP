@@ -149,7 +149,8 @@ describe('unsaved payment rows are legible as unsaved', () => {
 
   test('the commit control carries a word, not just a glyph', () => {
     expect(tableSource).toContain('className={paymentsStyles.saveBtn}');
-    expect(tableSource).toContain("{addPayment.isPending ? 'Saving…' : 'Save'}");
+    /* A too-old slip turns the same button into "Request approval" (2026-09-30). */
+    expect(tableSource).toContain("{addPayment.isPending || raiseBackdate.isPending ? 'Saving…' : asRequest ? 'Request approval' : 'Save'}");
   });
 
   test('the row is marked, and the mark reaches the summary line too', () => {
