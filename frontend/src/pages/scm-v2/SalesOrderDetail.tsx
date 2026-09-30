@@ -147,6 +147,7 @@ import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { generateSalesOrderPdf } from '../../vendor/scm/lib/sales-order-pdf';
 import { newIdempotencyKey } from '../../lib/idempotency';
+import { deferLineDateToHeader } from '../../vendor/scm/lib/so-line-date-defer';
 import { useSoVariantCascade, useSoLineDeliveryDateCascade } from './use-so-variant-cascade';
 import {
   dropStagedAdd, firstBlankStagedAdd, namedStagedAdds,
@@ -1484,7 +1485,8 @@ export const SalesOrderDetail = () => {
       unitCostSen:  d.unitCostSen,
       variants:       d.variants,
       remark:         d.remark,
-      lineDeliveryDate:           d.lineDeliveryDate ?? null,
+      // A cascaded date while the order has no Processing Date is the header save's to stamp (so-line-date-defer).
+      lineDeliveryDate: deferLineDateToHeader({ storedProcessingDate: header!.processing_date, overridden: !!d.lineDeliveryDateOverridden }) ? undefined : (d.lineDeliveryDate ?? null),
       lineDeliveryDateOverridden: d.lineDeliveryDateOverridden ?? false,
     });
 
@@ -1512,7 +1514,8 @@ export const SalesOrderDetail = () => {
       unitCostSen:  d.unitCostSen,
       variants:       d.variants,
       remark:         d.remark,
-      lineDeliveryDate:           d.lineDeliveryDate ?? null,
+      // A cascaded date while the order has no Processing Date is the header save's to stamp (so-line-date-defer).
+      lineDeliveryDate: deferLineDateToHeader({ storedProcessingDate: header!.processing_date, overridden: !!d.lineDeliveryDateOverridden }) ? undefined : (d.lineDeliveryDate ?? null),
       lineDeliveryDateOverridden: d.lineDeliveryDateOverridden ?? false,
     });
     /* POST /:docNo/items returns the inserted row; pull its id and upload

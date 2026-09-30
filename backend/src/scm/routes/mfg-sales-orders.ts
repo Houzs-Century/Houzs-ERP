@@ -211,6 +211,7 @@ import {
    restriction; null model_id = skip entirely. */
 import {
   checkAllowedOptions,
+  variantsForEditCheck,
   loadProductAndModel,
   loadProductsAndModels,
   variantCheckUnavailableResponse,
@@ -7608,7 +7609,8 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     const aoErr = checkAllowedOptions(
       product,
       model,
-      variantsAfter as Parameters<typeof checkAllowedOptions>[2],
+      // A special the line already held is grandfathered; only what the edit adds is judged.
+      variantsForEditCheck(variantsAfter as Parameters<typeof checkAllowedOptions>[2], (prev as { variants?: Parameters<typeof checkAllowedOptions>[2] }).variants ?? null),
     );
     if (aoErr) return c.json({ ...aoErr, itemCode: itemCodeAfter }, 400);
     /* Go-live review #6 — variant completeness on the LINE-EDIT route. When the
