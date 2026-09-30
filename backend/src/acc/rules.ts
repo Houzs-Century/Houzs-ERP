@@ -43,12 +43,13 @@ export type AccountRole =
   | 'AR' | 'AR_OTHER' | 'SALES' | 'INVENTORY' | 'AP' | 'AP_OTHER'
   | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS' | 'OVER_SHORT'
   | 'CLOSING_STOCK'
-  /* The three closing stocks by warehouse bucket (owner 2026-09-21: closing
-     stock - customer / display / service): each bucket's stock, opening and
-     closing account — children of 330-0000 / 600-0000 / 620-0000. */
-  | 'INVENTORY_CUSTOMER' | 'INVENTORY_DISPLAY' | 'INVENTORY_SERVICE'
-  | 'OPENING_STOCK_CUSTOMER' | 'OPENING_STOCK_DISPLAY' | 'OPENING_STOCK_SERVICE'
-  | 'CLOSING_STOCK_CUSTOMER' | 'CLOSING_STOCK_DISPLAY' | 'CLOSING_STOCK_SERVICE'
+  /* The closing stocks by warehouse bucket (owner 2026-09-21: closing stock -
+     customer / display / service; 2026-09-30: + showroom, + others): each
+     bucket's stock, opening and closing account — children of 330-0000 /
+     600-0000 / 620-0000. */
+  | 'INVENTORY_CUSTOMER' | 'INVENTORY_DISPLAY' | 'INVENTORY_SERVICE' | 'INVENTORY_SHOWROOM' | 'INVENTORY_OTHERS'
+  | 'OPENING_STOCK_CUSTOMER' | 'OPENING_STOCK_DISPLAY' | 'OPENING_STOCK_SERVICE' | 'OPENING_STOCK_SHOWROOM' | 'OPENING_STOCK_OTHERS'
+  | 'CLOSING_STOCK_CUSTOMER' | 'CLOSING_STOCK_DISPLAY' | 'CLOSING_STOCK_SERVICE' | 'CLOSING_STOCK_SHOWROOM' | 'CLOSING_STOCK_OTHERS'
   /* Where a credit note's lines land when the note names no account
      (docs/bugs/0827): a customer's return, a supplier's return. */
   | 'SALES_RETURNS' | 'PURCHASE_RETURNS'
@@ -80,12 +81,18 @@ export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
   INVENTORY_CUSTOMER: '330-0001',      // STOCK - CUSTOMER
   INVENTORY_DISPLAY: '330-0002',       // STOCK - DISPLAY
   INVENTORY_SERVICE: '330-0003',       // STOCK - SERVICE
+  INVENTORY_SHOWROOM: '330-0004',      // STOCK - SHOWROOM
+  INVENTORY_OTHERS: '330-0005',        // STOCK - OTHERS
   OPENING_STOCK_CUSTOMER: '600-0001',  // STOCKS AT THE BEGINNING OF YEAR - CUSTOMER (the month's opening)
   OPENING_STOCK_DISPLAY: '600-0002',   // STOCKS AT THE BEGINNING OF YEAR - DISPLAY
   OPENING_STOCK_SERVICE: '600-0003',   // STOCKS AT THE BEGINNING OF YEAR - SERVICE
+  OPENING_STOCK_SHOWROOM: '600-0004',  // STOCKS AT THE BEGINNING OF YEAR - SHOWROOM
+  OPENING_STOCK_OTHERS: '600-0005',    // STOCKS AT THE BEGINNING OF YEAR - OTHERS
   CLOSING_STOCK_CUSTOMER: '620-0001',  // STOCKS AT THE END OF YEAR - CUSTOMER
   CLOSING_STOCK_DISPLAY: '620-0002',   // STOCKS AT THE END OF YEAR - DISPLAY
   CLOSING_STOCK_SERVICE: '620-0003',   // STOCKS AT THE END OF YEAR - SERVICE
+  CLOSING_STOCK_SHOWROOM: '620-0004',  // STOCKS AT THE END OF YEAR - SHOWROOM
+  CLOSING_STOCK_OTHERS: '620-0005',    // STOCKS AT THE END OF YEAR - OTHERS
   SALES_RETURNS: '510-0000',     // RETURN INWARDS (a customer credit note's default line)
   PURCHASE_RETURNS: '612-0000',  // PURCHASES RETURN (a supplier credit note's default line)
   DEPOSIT_INCOME: '509-0000',    // DEPOSIT PAY BY CUSTOMER (a deposit invoice's credit side)
@@ -96,6 +103,8 @@ export const STOCK_BUCKET_ROLES: Record<StockBucket, { inventory: AccountRole; o
   customer: { inventory: 'INVENTORY_CUSTOMER', opening: 'OPENING_STOCK_CUSTOMER', closing: 'CLOSING_STOCK_CUSTOMER' },
   display: { inventory: 'INVENTORY_DISPLAY', opening: 'OPENING_STOCK_DISPLAY', closing: 'CLOSING_STOCK_DISPLAY' },
   service: { inventory: 'INVENTORY_SERVICE', opening: 'OPENING_STOCK_SERVICE', closing: 'CLOSING_STOCK_SERVICE' },
+  showroom: { inventory: 'INVENTORY_SHOWROOM', opening: 'OPENING_STOCK_SHOWROOM', closing: 'CLOSING_STOCK_SHOWROOM' },
+  others: { inventory: 'INVENTORY_OTHERS', opening: 'OPENING_STOCK_OTHERS', closing: 'CLOSING_STOCK_OTHERS' },
 };
 
 /* Control accounts (brief §2.4): system-maintained, and a MANUAL journal may

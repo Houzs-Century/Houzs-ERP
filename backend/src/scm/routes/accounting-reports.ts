@@ -72,7 +72,7 @@ import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { allowedIds, resolveLayout, type ResolvedLayout } from './accounting-report-layouts';
 import { resolveRoles, STOCK_BUCKET_ROLES, type AccountRole } from '../../acc/rules';
 import { stockValueByBucketAsOf } from '../../acc/stock-close';
-import { STOCK_BUCKETS, type StockBucket } from '../lib/stock-bucket';
+import { STOCK_BUCKETS, emptyBuckets, type StockBucket } from '../lib/stock-bucket';
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 const NO_PERM = { error: "You don't have permission to read the financial statements." };
@@ -196,10 +196,13 @@ const monthEndOf = (iso: string): string => {
 /** The name a stock line prints when the chart has no row for its code yet (the seed not run). */
 const STOCK_ROLE_NAMES: Partial<Record<AccountRole, string>> = {
   INVENTORY_CUSTOMER: 'STOCK - CUSTOMER', INVENTORY_DISPLAY: 'STOCK - DISPLAY', INVENTORY_SERVICE: 'STOCK - SERVICE',
+  INVENTORY_SHOWROOM: 'STOCK - SHOWROOM', INVENTORY_OTHERS: 'STOCK - OTHERS',
   OPENING_STOCK_CUSTOMER: 'STOCKS AT THE BEGINNING OF YEAR - CUSTOMER', OPENING_STOCK_DISPLAY: 'STOCKS AT THE BEGINNING OF YEAR - DISPLAY', OPENING_STOCK_SERVICE: 'STOCKS AT THE BEGINNING OF YEAR - SERVICE',
+  OPENING_STOCK_SHOWROOM: 'STOCKS AT THE BEGINNING OF YEAR - SHOWROOM', OPENING_STOCK_OTHERS: 'STOCKS AT THE BEGINNING OF YEAR - OTHERS',
   CLOSING_STOCK_CUSTOMER: 'STOCKS AT THE END OF YEAR - CUSTOMER', CLOSING_STOCK_DISPLAY: 'STOCKS AT THE END OF YEAR - DISPLAY', CLOSING_STOCK_SERVICE: 'STOCKS AT THE END OF YEAR - SERVICE',
+  CLOSING_STOCK_SHOWROOM: 'STOCKS AT THE END OF YEAR - SHOWROOM', CLOSING_STOCK_OTHERS: 'STOCKS AT THE END OF YEAR - OTHERS',
 };
-/** Every code the ledger books stock on — the legacy one-account pair and the nine bucket accounts. */
+/** Every code the ledger books stock on — the legacy one-account pair and each bucket's three accounts. */
 const stockCodesOf = (roles: Record<AccountRole, string>): Set<string> => new Set([
   roles.INVENTORY, roles.CLOSING_STOCK,
   ...STOCK_BUCKETS.flatMap((b) => [roles[STOCK_BUCKET_ROLES[b].inventory], roles[STOCK_BUCKET_ROLES[b].opening], roles[STOCK_BUCKET_ROLES[b].closing]]),
@@ -220,7 +223,7 @@ type StockLines = {
 async function loadStockLines(src: ReportSources, from: string | null, to: string): Promise<{ ok: true; stock: StockLines } | Fail> {
   const roles = await src.roles();
   const [openingR, closingR] = await Promise.all([
-    from ? src.stockByBucket(dayBefore(from)) : Promise.resolve({ ok: true as const, buckets: { customer: 0, display: 0, service: 0 }, totalSen: 0 }),
+    from ? src.stockByBucket(dayBefore(from)) : Promise.resolve({ ok: true as const, buckets: emptyBuckets(), totalSen: 0 }),
     src.stockByBucket(to),
   ]);
   if (!openingR.ok) return { ok: false, reason: `opening stock: ${openingR.reason}` };

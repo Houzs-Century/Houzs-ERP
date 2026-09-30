@@ -30,6 +30,9 @@ import { retryUnlessClientError } from '../../../lib/queryClient';
    not fit. `is_showroom` (mig 0148) is now derived: `is_showroom = (type =
    'showroom')`. The old boolean stays in reads so the venue resolver and the
    Members page keep working without a rewrite. */
+/** The closing stock a warehouse's goods book on at month end (backend scm/lib/stock-bucket.ts). */
+export type StockBucket = 'customer' | 'display' | 'service' | 'showroom' | 'others';
+
 export type WarehouseType =
   | 'warehouse'
   | 'showroom'
@@ -62,8 +65,8 @@ export type Warehouse = {
   /* Optional on the type so a pre-mig-0171 response still parses (backend
      defaults to 'warehouse' on POST when unspecified). */
   type?: WarehouseType;
-  /** The closing-stock bucket override (mig 20260921T2000): customer / display / service; null = by type. */
-  stock_bucket?: 'customer' | 'display' | 'service' | null;
+  /** The closing-stock bucket override (mig 20260921T2000; showroom / others since 2026-09-30); null = by type. */
+  stock_bucket?: StockBucket | null;
 };
 
 export type InventoryBalance = {
@@ -237,7 +240,7 @@ export function useWarehouses(opts?: { includeInactive?: boolean }) {
 export function useCreateWarehouse() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { code: string; name: string; location?: string; country?: string | null; state?: string | null; postcode?: string | null; city?: string | null; isDefault?: boolean; isShowroom?: boolean; venueName?: string | null; type?: WarehouseType; stockBucket?: 'customer' | 'display' | 'service' | null }) =>
+    mutationFn: (body: { code: string; name: string; location?: string; country?: string | null; state?: string | null; postcode?: string | null; city?: string | null; isDefault?: boolean; isShowroom?: boolean; venueName?: string | null; type?: WarehouseType; stockBucket?: StockBucket | null }) =>
       authedFetch<{ warehouse: Warehouse }>(`/inventory/warehouses`, { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
     onError: writeFailed,
@@ -247,7 +250,7 @@ export function useCreateWarehouse() {
 export function useUpdateWarehouse() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; location?: string; country?: string | null; state?: string | null; postcode?: string | null; city?: string | null; isActive?: boolean; isDefault?: boolean; isShowroom?: boolean; venueName?: string | null; type?: WarehouseType; stockBucket?: 'customer' | 'display' | 'service' | null }) =>
+    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; location?: string; country?: string | null; state?: string | null; postcode?: string | null; city?: string | null; isActive?: boolean; isDefault?: boolean; isShowroom?: boolean; venueName?: string | null; type?: WarehouseType; stockBucket?: StockBucket | null }) =>
       authedFetch<{ warehouse: Warehouse }>(`/inventory/warehouses/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
     onError: writeFailed,

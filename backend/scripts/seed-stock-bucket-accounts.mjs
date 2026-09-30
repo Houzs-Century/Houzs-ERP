@@ -1,18 +1,20 @@
 #!/usr/bin/env node
-// seed-stock-bucket-accounts — open the nine child accounts the three closing
+// seed-stock-bucket-accounts — open the fifteen child accounts the five closing
 // stocks book on, in every company whose chart carries the parents (owner
 // 2026-09-21: closing stock - customer / display / service; chart of account
 // 那边也需要分出来; 父户不记账 — the close posts to these children, never to
-// 330-0000 / 600-0000 / 620-0000 again). Rows built by scripts/lib/
+// 330-0000 / 600-0000 / 620-0000 again; 2026-09-30: + showroom, + others,
+// which migration 20260930T0239 opens by itself). Rows built by scripts/lib/
 // stock-bucket-accounts.mjs: -0001 customer, -0002 display, -0003 service,
-// the parent's type, section and special marker, is_active, no money flag.
+// -0004 showroom, -0005 others, the parent's type, section and special
+// marker, is_active, no money flag.
 //
 // MODE=plan (default) reads every company's chart and prints, per company,
 // the children it lacks, the ones it already has (and whether they sit under
 // the right parent) and any parent it lacks — writing nothing. MODE=apply
 // with CONFIRM='seed the closing stock bucket accounts' INSERTS the missing
 // rows only, then re-reads every company on a fresh connection and checks
-// the shape: the nine exist, active, each under its parent.
+// the shape: the fifteen exist, active, each under its parent.
 //
 // RE-RUN: a second apply finds nothing missing and inserts nothing — rows
 // already on the chart are never updated (a renamed child keeps its name).
