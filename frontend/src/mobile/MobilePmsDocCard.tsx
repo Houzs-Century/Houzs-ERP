@@ -208,6 +208,18 @@ export function BigFilePreview({
   );
 }
 
+// Upload glyph — owner 2026-09-30: every task the viewer may edit must SHOW
+// its upload affordance, icon included, so the button reads as an action and
+// an editable doc is never mistaken for a view-only one.
+export function UploadGlyph() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }} aria-hidden="true">
+      <path d="M12 16V4m0 0 4 4m-4-4-4 4" />
+      <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
+    </svg>
+  );
+}
+
 // The mockup's "Reason:" strip — a per-photo remark under its preview.
 export function RemarkStrip({ label = "Remark", text }: { label?: string; text: string }) {
   return (
@@ -674,7 +686,8 @@ export function SalesDocsCard({
               )}
 
               {editable && !t.remarkTile && (
-                <button className="tinybtn" style={{ width: "100%", padding: "8px 9px" }} disabled={busy} onClick={() => void startUpload(t)}>
+                <button className="tinybtn" style={{ width: "100%", padding: "8px 9px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }} disabled={busy} onClick={() => void startUpload(t)}>
+                  <UploadGlyph />
                   {t.files.length ? "+ Add more" : "Upload"}
                 </button>
               )}
