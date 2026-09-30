@@ -24,7 +24,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
-import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, usePvReservations, NO_RESERVATIONS, useExtractBills, useUploadPvFile, useRefundSource, fileToBase64, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, usePvReservations, NO_RESERVATIONS, useExtractBills, useUploadPvFile, useRefundSource, useExtractRequestBill, fileToBase64, type BillExtraction, type ExtractedBill, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useAccounts, useAccountRoles, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
@@ -52,7 +52,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
 
-import { fmtMoneySen } from '../../vendor/shared/format';
+import { fmtMoneySen, fmtSen } from '../../vendor/shared/format';
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
@@ -363,7 +363,50 @@ export const PaymentVoucherNew = () => {
     setNotes(`Payment request ${r.request_no} — ${r.purpose}${bank ? ` · pay to ${bank}` : ''}`);
     setDefaultEvent(r.project_id);
     setLines([{ ...newLine(), description: r.purpose.slice(0, 200), amountSen: r.amount_sen, projectId: r.project_id }]);
-    setScanNote(`Answering ${r.request_no} from ${r.requested_by_name ?? 'the requester'} — its bill is attached to this voucher when you save.`);
+    setScanNote(`Answering ${r.request_no} from ${r.requested_by_name ?? 'the requester'} — its bill is attached to this voucher when you save. Reading its bill…`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromRequest, requestQ.data]);
+  /* …and its bill is READ on opening (owner 2026-09-30, 6.2 — the server reads
+     the request's own files): the bill's lines replace the one asked for, each
+     on the request's event, under the account this vendor was last paid from;
+     the bill's number and date join the notes; a total that differs from the
+     amount asked is said out loud. The payee stays the one the requester named. */
+  const extractRequest = useExtractRequestBill();
+  const requestRead = useRef(false);
+  useEffect(() => {
+    const r = requestQ.data?.request;
+    if (!fromRequest || requestRead.current || !r) return;
+    requestRead.current = true;
+    const who = r.requested_by_name ?? 'the requester';
+    const asked = `Answering ${r.request_no} from ${who} — its bill is attached to this voucher when you save.`;
+    void (async () => {
+      let bill: ExtractedBill | undefined;
+      try {
+        bill = (await extractRequest.mutateAsync(fromRequest)).bills.at(0);
+      } catch (e) {
+        setScanNote(`${asked} Its bill could not be read (${e instanceof Error ? e.message : 'the reader failed'}).`);
+        return;
+      }
+      if (!bill) { setScanNote(`${asked} It carries no bill to read.`); return; }
+      if (!bill.ok) { setScanNote(`${asked} Its bill could not be read (${bill.reason}).`); return; }
+      const ex = bill.extraction;
+      const account = bill.memory?.debitAccountCode ?? '';
+      const read = ex.lines
+        .filter((l) => l.amountSen != null && l.amountSen > 0)
+        .map((l) => ({ ...newLine(), description: upperFill(l.description) ?? '', amountSen: l.amountSen!, debitAccountCode: account, projectId: r.project_id }));
+      if (read.length > 0) setLines(read);
+      else if (account) setLines((prev) => prev.map((l) => ({ ...l, debitAccountCode: l.debitAccountCode || account })));
+      const billBits = upperFill([ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : null, ex.invoiceDate ? `dated ${ex.invoiceDate}` : null].filter(Boolean).join(' · '));
+      if (billBits) setNotes((prev) => (prev.includes(billBits) ? prev : `${prev} · ${billBits}`));
+      if (r.project_id == null) setEventSuggestions(bill.eventSuggestions ?? []);
+      setScanNote([
+        asked,
+        'Its bill was read — check every figure before saving.',
+        ex.totalSen != null && ex.totalSen !== r.amount_sen ? `The bill reads ${fmtSen(ex.totalSen)} but ${who} asked for ${fmtSen(r.amount_sen)} — check which is right.` : null,
+        account ? `Account ${account} filled from your last ${bill.memory?.payeeName ?? 'same-vendor'} voucher — check it.` : null,
+        ex.totalSen == null ? 'The TOTAL was not readable — check the amount yourself.' : null,
+      ].filter(Boolean).join(' '));
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fromRequest, requestQ.data]);
 

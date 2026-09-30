@@ -525,3 +525,22 @@ export const variantCheckUnavailableResponse = (reason: string) => ({
   error: 'variant_check_failed',
   message: `Could not check this line's allowed options, so it was not saved — try again (${reason}).`,
 });
+
+/**
+ * The variants a line EDIT must answer for: every key as sent, except the
+ * specials the line ALREADY held. An untouched line is grandfathered whole (the
+ * PATCH skips the check); a touched line used to be re-judged whole, so a special
+ * stored before the Model's pool changed spelling (38 lines hold "hydraulic"
+ * against a pool offering "Hydraulic") refused ANY edit to the line — picking
+ * the fabric needed to proceed included (HC-SO-011014, 2026-09-30). A special the
+ * edit ADDS is still judged against today's pool.
+ */
+export function variantsForEditCheck(next: VariantsLite, prev: VariantsLite): VariantsLite {
+  if (next == null || typeof next !== 'object') return next;
+  const had = new Set(toSpecialsArray((prev as { specials?: string[] | string | null } | null)?.specials));
+  if (had.size === 0) return next;
+  const n = next as { specials?: string[] | string | null; special?: string[] | string | null };
+  const kept = toSpecialsArray(n.specials ?? n.special).filter((p) => !had.has(p));
+  const { special: _legacy, ...rest } = n;
+  return { ...rest, specials: kept } as VariantsLite;
+}

@@ -30,7 +30,7 @@ import { DateField } from "../vendor/scm/components/DateField";
 import { EditProjectSheet } from "./MobileEditProjectSheet";
 import { DefectActionsCtx, DefectFileActions, type AttachmentAction } from "./MobilePmsDefectActions";
 import {
-  SalesDocsCard, BigFilePreview, ReviewBadge, ReviewButtons, R2Thumb,
+  SalesDocsCard, BigFilePreview, ReviewBadge, ReviewButtons, R2Thumb, UploadGlyph,
   CREW_DOC_TILES, DEFECT_REVIEW_TILES,
   autoSubmitReviewable, checklistReviewVisible, removeChecklistAttachment,
   mimeFromKey, humanize, roleColor, roleLabelParts, formatRoleLabel,
@@ -1015,8 +1015,13 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const opsSdTiles: DocTile[] = [
     { label: "Setup Image (Driver)", match: /^setup image/i, driverOnly: true, readOnly: true },
     { label: "Setup Image (Sales PIC)", match: /^setup image/i, salesPicOnly: true, readOnly: true },
-    { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: true },
-    { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: true },
+    // A reviewer (Nancy, Ops Exec) has the dedicated Defect list card — drop
+    // the view-only defect pair here so it doesn't render twice (same rule as
+    // the crew card).
+    ...(defectActionsValue.canReview ? [] : [
+      { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: true },
+      { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: true },
+    ]),
     { label: "Event Complete Image", match: /^event complete image/i, readOnly: true },
     { label: "Dismantle Image", match: /^dismantle image/i, readOnly: true },
   ];
@@ -1283,22 +1288,6 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                     </div>
                   </div>
                 )}
-                {/* Agreement / Quotation — owner 2026-09-30: "quotation move
-                    below PIC name". The contract block renders here, inside
-                    the Team card right under the PIC, instead of as its own
-                    card below. Same visibility tier as before (owner / BD /
-                    weisiang / Ummu / Kingsley). */}
-                {cohortMgmt && canContractEdit && (
-                  <SalesDocsCard
-                    bare
-                    tiles={mgmtContractTiles}
-                    showRoleTags
-                    checklist={data.checklist}
-                    attachments={data.checklist_attachments}
-                    canTick={canTick}
-                    busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
-                  />
-                )}
                 <SalesAttending
                   projectId={id}
                   attendees={data.sales_attendees ?? []}
@@ -1310,6 +1299,24 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                   confirm={confirm}
                   reload={reload}
                 />
+                {/* Agreement / Quotation — owner 2026-09-30: inside the Team
+                    card, AFTER Sales Attending ("sales attending supposed
+                    below PIC"), so the card reads PIC → Sales attending →
+                    Quotation. Same visibility tier as the old Contract card
+                    (owner / BD / weisiang / Ummu / Kingsley). */}
+                {cohortMgmt && canContractEdit && (
+                  <div style={{ marginTop: 10 }}>
+                    <SalesDocsCard
+                      bare
+                      tiles={mgmtContractTiles}
+                      showRoleTags
+                      checklist={data.checklist}
+                      attachments={data.checklist_attachments}
+                      canTick={canTick}
+                      busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
+                    />
+                  </div>
+                )}
               </div>
             </details>
 
@@ -1410,8 +1417,13 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
             )}
 
             {/* Defect list — the state reviewer's own card (owner 2026-09-15):
-                per-photo Done/Replace for Shukor / Nancy / admin. See the guide. */}
-            {defectActionsValue.canReview && (
+                per-photo Done/Replace for Shukor / Nancy. See the guide.
+                NOT for the mgmt cohort (owner 2026-09-30 "no upload button"):
+                admin matches canReview too, and this read-only card rendered
+                BESIDE their editable defect tiles in the S&D documents card —
+                the duplicate without an upload path read as a missing button.
+                Their own tiles carry Done/Replace as well, so nothing is lost. */}
+            {defectActionsValue.canReview && !cohortMgmt && (
               <SalesDocsCard
                 tiles={DEFECT_REVIEW_TILES}
                 title="Defect list"
@@ -2716,8 +2728,9 @@ function SetupDismantle({
           )}
           {canScheduleEdit && (
             <>
-              <button className="tinybtn" style={{ width: "100%" }} disabled={busy} onClick={() => void startScheduleUpload()}>
-                {scheduleShots.length ? "+ Add / replace screenshot" : "Upload handbook schedule screenshot"}
+              <button className="tinybtn" style={{ width: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }} disabled={busy} onClick={() => void startScheduleUpload()}>
+                <UploadGlyph />
+                {scheduleShots.length ? "+ Add / replace screenshot" : "Upload handbook schedule (image or PDF)"}
               </button>
               <input ref={schedRef} type="file" accept="image/*,application/pdf,.heic" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadSchedule(f); }} />
             </>
@@ -3138,6 +3151,8 @@ function FloorPlans({
   const threeDItem = itemByPrefix(/^3d\s*(design|render)/i);
   const twoDItem = itemByPrefix(/^2d\s*design/i);
   const displayItem = itemByPrefix(/^display\s*floor\s*plan/i);
+  const blankItem = itemByPrefix(/^blank\s*floor\s*plan/i);
+  const filledItem = itemByPrefix(/^filled\s*floor\s*plan/i);
   const stockOutItem = itemByPrefix(/^stock\s*out\s*transfer/i);
 
   // The tiles mirror the "Blank Floorplan" / "Filled Floorplan" CHECKLIST
@@ -3187,7 +3202,6 @@ function FloorPlans({
   // Checklist task ids by title prefix — used to attach uploads to the right task.
   const taskIdByPrefix = (prefix: RegExp): number | null =>
     (checklist ?? []).find((it) => prefix.test((it.title || "").trim()))?.id ?? null;
-  const filledPlanTaskId = taskIdByPrefix(/^filled\s*floor\s*plan/i);
   // Purchaser stock-out edit (owner 2026-07-23) — uploads land on the Stock
   // Out Transfer Record task.
   const stockOutUploadTaskId = taskIdByPrefix(/^stock\s*out\s*transfer/i);
@@ -3221,59 +3235,39 @@ function FloorPlans({
       if (stockRef.current) stockRef.current.value = "";
     }
   };
-  // Stock out transfer — mirrors the "Stock Out Transfer Record" CHECKLIST task
-  // attachments. (The legacy project-level stock_transfers store is unused: every
-  // stock-out record is attached to the task, which is why this read empty.)
+  // Stock transfer records — the "Stock Out" AND "Stock In" CHECKLIST tasks'
+  // attachments, pooled into one list. (The legacy project-level
+  // stock_transfers store is unused: every record is attached to its task,
+  // which is why this read empty.) Each row carries WHICH task it came from —
+  // the badge used to hardcode OUT, so a Stock In record wore an OUT badge and
+  // the owner read one event's out+in pair as "two stock outs" (2026-09-30).
   const stockOutAtts = (() => {
-    const ids = new Set(
-      (checklist ?? []).filter((it) => /^stock\s*(out|in)\s*transfer/i.test((it.title || "").trim())).map((it) => it.id)
+    const dirById = new Map(
+      (checklist ?? [])
+        .filter((it) => /^stock\s*(out|in)\s*transfer/i.test((it.title || "").trim()))
+        .map((it) => [it.id, /^stock\s*in/i.test((it.title || "").trim()) ? "IN" : "OUT"] as const)
     );
-    return (checklistAttachments ?? []).filter((a) => !a.archived_at && ids.has(a.item_id));
+    return (checklistAttachments ?? [])
+      .filter((a) => !a.archived_at && dirById.has(a.item_id))
+      .map((a) => ({ ...a, dir: dirById.get(a.item_id) ?? "OUT" }));
   })();
-  // Sales upload the Filled Floorplan straight from this card (owner 2026-07-17)
-  // — it attaches to the "Filled Floorplan" checklist task, so the tasklist row
-  // and this card stay one and the same file.
-  const filledRef = useRef<HTMLInputElement | null>(null);
-  const uploadFilledPlan = async (file: File) => {
-    if (!filledPlanTaskId) {
-      await notify({ title: "No Filled Floorplan task", body: "This event has no Filled Floorplan task to attach to.", tone: "error" });
-      return;
-    }
-    if (file.size > 10 * 1024 * 1024) {
-      await notify({ title: "File too large", body: "Max 10MB.", tone: "error" });
-      return;
-    }
-    const ext = (file.name.split(".").pop() || "").toLowerCase();
-    if (!ext) {
-      await notify({ title: "Missing extension", body: "The file needs an extension.", tone: "error" });
-      return;
-    }
-    setBusy(true);
-    try {
-      const buf = await file.arrayBuffer();
-      await api.putBinary(
-        `/api/projects/checklist/${filledPlanTaskId}/attachments?ext=${encodeURIComponent(ext)}&name=${encodeURIComponent(file.name)}`,
-        buf,
-        file.type || "application/octet-stream",
-      );
-      reload();
-    } catch (e) {
-      await notify({ title: "Upload failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
-    } finally {
-      setBusy(false);
-      if (filledRef.current) filledRef.current.value = "";
-    }
+  // Plan uploads — ONE path for every tile (owner 2026-09-30: "task mana yang
+  // user boleh edit ... sini tak ada icon upload utk owner" — only Filled and
+  // Display had upload wired; 3D / 2D / Unfilled gave an editor no way to put
+  // a file on the task from the phone). Each tile carries its checklist task;
+  // the button attaches there, exactly like the doc cards, and reviewable
+  // titles auto-submit so the approver's Approve/Reject reappear.
+  const planUpRef = useRef<HTMLInputElement | null>(null);
+  const pendingPlanRef = useRef<{ taskId: number; title: string | null } | null>(null);
+  const startPlanUpload = (task: ChecklistItem | undefined) => {
+    if (!task) return;
+    pendingPlanRef.current = { taskId: task.id, title: task.title };
+    planUpRef.current?.click();
   };
-  // Upload straight onto the Display floor plan task — the replace half of the
-  // same complaint: with no upload here, removing a wrong plan left the tile
-  // empty and the phone with no way to put the right one back.
-  const displayRef = useRef<HTMLInputElement | null>(null);
-  const displayPlanTaskId = displayItem?.id ?? null;
-  const uploadDisplayPlan = async (file: File) => {
-    if (displayPlanTaskId == null) {
-      await notify({ title: "No Display Floor Plan task", body: "This event has no Display Floor Plan task to attach to.", tone: "error" });
-      return;
-    }
+  const uploadPlanFile = async (file: File) => {
+    const pending = pendingPlanRef.current;
+    pendingPlanRef.current = null;
+    if (!pending) return;
     if (file.size > 10 * 1024 * 1024) {
       await notify({ title: "File too large", body: "Max 10MB.", tone: "error" });
       return;
@@ -3287,19 +3281,20 @@ function FloorPlans({
     try {
       const buf = await file.arrayBuffer();
       await api.putBinary(
-        `/api/projects/checklist/${displayPlanTaskId}/attachments?ext=${encodeURIComponent(ext)}&name=${encodeURIComponent(file.name)}`,
+        `/api/projects/checklist/${pending.taskId}/attachments?ext=${encodeURIComponent(ext)}&name=${encodeURIComponent(file.name)}`,
         buf,
         file.type || "application/octet-stream",
       );
-      // Display Floor Plan is reviewable — mirror the doc tiles so the
-      // approver's Approve/Reject reappear after a re-upload.
-      await autoSubmitReviewable(displayPlanTaskId, displayItem?.title ?? "Display Floor Plan");
+      // Display / 3D / 2D are reviewable — mirror the doc cards so the
+      // approver's Approve/Reject reappear after a re-upload (no-op for the
+      // non-reviewable plan tasks).
+      await autoSubmitReviewable(pending.taskId, pending.title);
       reload();
     } catch (e) {
       await notify({ title: "Upload failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
     } finally {
       setBusy(false);
-      if (displayRef.current) displayRef.current.value = "";
+      if (planUpRef.current) planUpRef.current.value = "";
     }
   };
   const [planView, setPlanView] = useState<{ items: MediaItem[]; idx: number } | null>(null);
@@ -3322,11 +3317,11 @@ function FloorPlans({
             2026-07-23: sales/SD/mgt/BD only). */}
         <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
           {([
-            { key: "Display", label: "Display floor plan", files: displayPlanFiles, atts: displayPlanAtts, badge: "PLAN", bg: "#f3ece0", col: "#a16a2e", item: displayItem },
-            { key: "3D Design", label: "3D Design", files: threeDFiles, atts: threeDAtts, badge: "3D", bg: "#e9e6f4", col: "#5b4b8a", item: threeDItem },
-            { key: "2D Design", label: "2D Design", files: twoDFiles, atts: twoDAtts, badge: "2D", bg: "#e2ecf5", col: "#2f5c8a", item: twoDItem },
-            { key: "Unfilled", label: "Unfilled plan", files: unfilledFiles, atts: unfilledAtts, badge: "DRAFT", bg: "#f6efd9", col: "#6e4d12", item: undefined },
-            { key: "Filled", label: "Filled plan", files: filledFiles, atts: filledAtts, badge: "PLACED", bg: "#e2f0e9", col: "#2f8a5b", item: undefined },
+            { key: "Display", label: "Display floor plan", files: displayPlanFiles, atts: displayPlanAtts, badge: "PLAN", bg: "#f3ece0", col: "#a16a2e", item: displayItem, task: displayItem },
+            { key: "3D Design", label: "3D Design", files: threeDFiles, atts: threeDAtts, badge: "3D", bg: "#e9e6f4", col: "#5b4b8a", item: threeDItem, task: threeDItem },
+            { key: "2D Design", label: "2D Design", files: twoDFiles, atts: twoDAtts, badge: "2D", bg: "#e2ecf5", col: "#2f5c8a", item: twoDItem, task: twoDItem },
+            { key: "Unfilled", label: "Unfilled plan", files: unfilledFiles, atts: unfilledAtts, badge: "DRAFT", bg: "#f6efd9", col: "#6e4d12", item: undefined, task: blankItem },
+            { key: "Filled", label: "Filled plan", files: filledFiles, atts: filledAtts, badge: "PLACED", bg: "#e2f0e9", col: "#2f8a5b", item: undefined, task: filledItem },
           ] as const).filter((t) => floorPlanTileVisible(t.key, { crewPlanView, hidePlanTiles })).map((t) => {
             const files = t.files;
             // Display / 3D / 2D are reviewable (owner 2026-07-29); the
@@ -3358,27 +3353,27 @@ function FloorPlans({
                   />
                 ))}
                 {files.length === 0 && (
-                  <div style={{ border: "1px dashed #d6d9d2", borderRadius: 9, padding: "13px 10px", textAlign: "center", fontSize: 11, color: "#9aa093" }}>
-                    No file yet
+                  <div
+                    role={canWrite && t.task ? "button" : undefined}
+                    tabIndex={canWrite && t.task ? 0 : undefined}
+                    onClick={() => { if (canWrite && t.task && !busy) startPlanUpload(t.task); }}
+                    onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && canWrite && t.task && !busy) { e.preventDefault(); startPlanUpload(t.task); } }}
+                    style={{ border: "1px dashed #d6d9d2", borderRadius: 9, padding: "13px 10px", textAlign: "center", fontSize: 11, color: "#9aa093", ...(canWrite && t.task ? { cursor: "pointer" } : {}) }}
+                  >
+                    {canWrite && t.task ? "No file yet — tap to upload" : "No file yet"}
                   </div>
                 )}
-                {t.key === "Filled" && canWrite && filledPlanTaskId != null && (
+                {/* Owner 2026-09-30: EVERY plan task an editor may write shows
+                    its upload button (icon included) — 3D / 2D / Unfilled had
+                    none, so the owner had no way to put a file on them here. */}
+                {canWrite && t.task && (
                   <button
                     className="tinybtn"
-                    style={{ width: "100%", padding: "8px 9px" }}
+                    style={{ width: "100%", padding: "8px 9px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
                     disabled={busy}
-                    onClick={() => filledRef.current?.click()}
+                    onClick={() => startPlanUpload(t.task)}
                   >
-                    {files.length ? "+ Add / replace" : "Upload"}
-                  </button>
-                )}
-                {t.key === "Display" && canWrite && displayPlanTaskId != null && (
-                  <button
-                    className="tinybtn"
-                    style={{ width: "100%", padding: "8px 9px" }}
-                    disabled={busy}
-                    onClick={() => displayRef.current?.click()}
-                  >
+                    <UploadGlyph />
                     {files.length ? "+ Add / replace" : "Upload"}
                   </button>
                 )}
@@ -3389,8 +3384,7 @@ function FloorPlans({
             );
           })}
         </div>
-        <input ref={filledRef} type="file" accept="image/*,.pdf" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadFilledPlan(f); }} />
-        <input ref={displayRef} type="file" accept="image/*,.pdf" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadDisplayPlan(f); }} />
+        <input ref={planUpRef} type="file" accept="image/*,.pdf" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadPlanFile(f); }} />
 
         <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093", margin: "10px 0 6px" }}>Stock transfer record</div>
         {stockOutAtts.length === 0 && <div style={{ fontSize: 12, color: "#9aa093", marginBottom: 8 }}>No stock transfer recorded yet.</div>}
@@ -3410,7 +3404,9 @@ function FloorPlans({
                     ? <R2Thumb r2Key={a.r2_key} style={{ width: 54, height: 44 }} />
                     : <span className="ph" style={{ display: "block", width: 54, height: 44 }} />}
                 </span>
-                <span className="rbadge" style={{ background: "#e2f0e9", color: "#2f8a5b" }}>OUT</span>
+                <span className="rbadge" style={a.dir === "IN"
+                  ? { background: "#e2ecf5", color: "#2f5c8a" }
+                  : { background: "#e2f0e9", color: "#2f8a5b" }}>{a.dir}</span>
                 <span style={{ flex: 1, minWidth: 80, fontSize: 11, color: "#414539" }}>
                   {[a.file_name || "Record", a.uploader_name || null, a.uploaded_at ? dm(a.uploaded_at) : null].filter(Boolean).join(" · ")}
                 </span>
@@ -3466,7 +3462,8 @@ function FloorPlans({
             row used, so desktop and mobile stay one file set. */}
         {canStockEdit && stockOutUploadTaskId != null && (
           <>
-            <button className="tinybtn" style={{ width: "100%", marginBottom: 8 }} disabled={busy} onClick={() => stockRef.current?.click()}>
+            <button className="tinybtn" style={{ width: "100%", marginBottom: 8, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }} disabled={busy} onClick={() => stockRef.current?.click()}>
+              <UploadGlyph />
               + Upload stock out transfer record
             </button>
             <input

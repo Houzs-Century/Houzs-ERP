@@ -22,7 +22,7 @@
 //      inputs he CAN change — so the client can say which boxes to move.
 // ----------------------------------------------------------------------------
 import { describe, expect, it } from 'vitest';
-import { checkAllowedOptions } from './allowed-options-check';
+import { checkAllowedOptions, variantsForEditCheck } from './allowed-options-check';
 
 /** The live prod pool, verbatim, including the mixed inch glyphs. */
 const PROD_TOTAL_HEIGHTS = [
@@ -315,5 +315,29 @@ describe('checkAllowedOptions — leg height: the zero-inch glyph is "No Leg"', 
   it('does NOT invent "No Leg" — a pool offering neither zero spelling still refuses 0"', () => {
     const m = model({ leg_heights: ['1"', '2"', '4"'] });
     expect(checkAllowedOptions(product(), m, { legHeight: '0"' })?.field).toBe('leg_height');
+  });
+});
+
+
+describe('variantsForEditCheck — a special the line already held is grandfathered (HC-SO-011014)', () => {
+  const product = { model_id: 'm1' } as Parameters<typeof checkAllowedOptions>[0];
+  const model = { allowed_options: { specials: ['Hydraulic', 'HB Fully Cover'] } } as Parameters<typeof checkAllowedOptions>[1];
+  const prev = { specials: ['hydraulic', 'HB Fully Cover'], fabricCode: null };
+
+  it('picking the fabric no longer trips on an old lowercase special', () => {
+    const next = { specials: ['hydraulic', 'HB Fully Cover'], fabricCode: 'PC151-01' };
+    expect(checkAllowedOptions(product, model, next)).not.toBeNull();
+    expect(checkAllowedOptions(product, model, variantsForEditCheck(next, prev))).toBeNull();
+  });
+
+  it('a special the edit ADDS is still judged', () => {
+    const next = { specials: ['hydraulic', 'Bogus'] };
+    expect(checkAllowedOptions(product, model, variantsForEditCheck(next, prev))).toMatchObject({ field: 'specials', value: 'Bogus' });
+  });
+
+  it('leaves variants alone when the line held no specials', () => {
+    const next = { specials: ['hydraulic'] };
+    expect(variantsForEditCheck(next, { specials: [] })).toBe(next);
+    expect(variantsForEditCheck(next, null)).toBe(next);
   });
 });

@@ -253,6 +253,16 @@ export const useExtractBills = () => useMutation({
     }),
 });
 
+/* The bill a payment request carries, read when Finance opens the voucher or
+   AP invoice that answers it (owner 2026-09-30, 6.2): the server reads the
+   request's own files, so nothing is uploaded twice. No bill → `bills: []`. */
+export const useExtractRequestBill = () => useMutation({
+  mutationFn: (requestId: string) =>
+    authedFetch<{ bills: ExtractedBill[] }>(`/payment-vouchers/extract`, {
+      method: 'POST', body: JSON.stringify({ fromRequest: requestId }),
+    }),
+});
+
 /* ── PV attachments (2026-09-03) — the bill LIVES with its voucher. Before
    this the scan flow read the bill and kept nothing, so there was no evidence
    to show or to print (owner: 我希望可以 print pv include ocr 的文件一起).

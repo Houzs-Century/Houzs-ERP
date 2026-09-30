@@ -11,10 +11,11 @@
 //   POST   /:id/return          Finance sends it back, saying why
 //   POST|GET /:id/files, GET|DELETE /:id/files/:fileId — the bill
 //
-// Finance answers a request with a voucher raised on PV New (?fromRequest=),
-// whose create door links the two (lib/payment-request.ts). The stage the
-// requester reads — Processing, Paid (the voucher approved), Bank confirmed — is
-// read off that voucher on every request, never stored here.
+// Finance answers a request with a voucher raised on PV New (?fromRequest=), or
+// with an AP invoice raised on AP Invoices (?fromRequest=, owner 2026-09-30
+// 6.1); each create door links the two (lib/payment-request.ts). The stage the
+// requester reads — Processing, Booked, Partly paid, Paid, Bank confirmed — is
+// read off that document on every request, never stored here.
 //
 // NO area guard (scm/index.ts): a sales PIC has no SCM area, only the flat key
 // scm.payment_request.create, which requireScmAccess admits for this prefix
@@ -34,8 +35,8 @@ import { makeDocFileHandlers, type DocFilesSpec } from '../lib/doc-files';
 import { parseEventId, unknownEventRefusal } from '../lib/event-tags';
 import { eventOptionsHandler } from './acc-events';
 import {
-  PAYMENT_REQUEST_KEY, bankConfirmedVoucherNumbers, callerUserId, isRequestFinance, requestStage,
-  requesterMayChange, type VoucherFacts,
+  PAYMENT_REQUEST_KEY, bankConfirmedVoucherNumbers, callerUserId, isRequestFinance, liveAnswerOf, requestStage,
+  requesterMayChange, type InvoiceFacts, type VoucherFacts,
 } from '../lib/payment-request';
 
 type Row = Record<string, any>;
@@ -43,7 +44,7 @@ type Row = Record<string, any>;
 export const paymentRequests = new Hono<{ Bindings: Env; Variables: Variables }>();
 paymentRequests.use('*', supabaseAuth);
 
-const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee_name, amount_sen, due_date, purpose, project_id, bank_name, bank_account_no, bank_account_name, status, pv_id, finance_note, decided_by, decided_at, created_at, updated_at';
+const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee_name, amount_sen, due_date, purpose, project_id, bank_name, bank_account_no, bank_account_name, status, pv_id, ap_invoice_id, finance_note, decided_by, decided_at, created_at, updated_at';
 const NO_PERM = { error: "You don't have permission to do that." };
 
 const mayRequest = (c: any): boolean => hasHouzsPerm(c, PAYMENT_REQUEST_KEY);
@@ -67,7 +68,8 @@ async function loadVisible(c: any, id: string): Promise<{ req: Row } | { resp: R
   return { req: data as Row };
 }
 
-/** Each request with its voucher's facts and the stage those facts say. */
+/** Each request with its answering document's facts — the voucher's, or the
+    AP invoice's and the AP Payments' that paid it — and the stage they say. */
 async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
   const sb = c.get('supabase');
   const pvIds = [...new Set(rows.map((r) => r.pv_id).filter(Boolean))] as string[];
@@ -78,17 +80,63 @@ async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ row
     if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
     vouchers = new Map(((data ?? []) as VoucherFacts[]).map((v) => [v.id, v]));
   }
-  const postedNos = [...vouchers.values()].filter((v) => v.status === 'POSTED' && v.pv_number).map((v) => String(v.pv_number));
+  const invoiceIds = [...new Set(rows.map((r) => r.ap_invoice_id).filter(Boolean))] as string[];
+  let invoices = new Map<string, InvoiceFacts>();
+  /* An invoice's payers: the posted AP Payments with an allocation on it. */
+  const payersOf = new Map<string, string[]>();
+  if (invoiceIds.length > 0) {
+    const { data, error } = await sb.from('ap_invoices').select('id, invoice_number, status, total_sen, paid_sen')
+      .eq('company_id', companyId).in('id', invoiceIds);
+    if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
+    invoices = new Map(((data ?? []) as InvoiceFacts[]).map((v) => [v.id, v]));
+    const { data: allocs, error: aErr } = await sb.from('pv_allocations').select('pv_id, ap_invoice_id')
+      .eq('company_id', companyId).in('ap_invoice_id', invoiceIds);
+    if (aErr) return { resp: c.json({ error: 'load_failed', reason: aErr.message }, 500) };
+    const payerIds = [...new Set(((allocs ?? []) as Row[]).map((a) => String(a.pv_id)))];
+    if (payerIds.length > 0) {
+      const { data: payers, error: pErr } = await sb.from('payment_vouchers').select('id, pv_number, status')
+        .eq('company_id', companyId).in('id', payerIds);
+      if (pErr) return { resp: c.json({ error: 'load_failed', reason: pErr.message }, 500) };
+      const postedNo = new Map(((payers ?? []) as Row[]).filter((p) => p.status === 'POSTED' && p.pv_number).map((p) => [String(p.id), String(p.pv_number)]));
+      for (const a of (allocs ?? []) as Row[]) {
+        const no = postedNo.get(String(a.pv_id));
+        if (!no) continue;
+        const list = payersOf.get(String(a.ap_invoice_id)) ?? [];
+        if (!list.includes(no)) list.push(no);
+        payersOf.set(String(a.ap_invoice_id), list);
+      }
+    }
+  }
+  const postedNos = [
+    ...[...vouchers.values()].filter((v) => v.status === 'POSTED' && v.pv_number).map((v) => String(v.pv_number)),
+    ...[...payersOf.values()].flat(),
+  ];
   const bank = await bankConfirmedVoucherNumbers(sb, companyId, postedNos);
   if (!bank.ok) return { resp: c.json({ error: 'load_failed', reason: bank.reason }, 500) };
   return {
     rows: rows.map((r) => {
+      const inv = r.ap_invoice_id ? invoices.get(String(r.ap_invoice_id)) ?? null : null;
+      if (inv) {
+        const payers = payersOf.get(inv.id) ?? [];
+        /* Bank-confirmed once EVERY AP Payment that paid it is on a statement. */
+        const confirmed = payers.length > 0 && payers.every((no) => bank.confirmed.has(no));
+        return {
+          ...r,
+          stage: requestStage(String(r.status), null, confirmed, inv),
+          voucher: null,
+          invoice: {
+            id: inv.id, invoiceNumber: inv.invoice_number, status: inv.status,
+            totalSen: Number(inv.total_sen ?? 0), paidSen: Number(inv.paid_sen ?? 0), paidBy: payers, bankConfirmed: confirmed,
+          },
+        };
+      }
       const pv = r.pv_id ? vouchers.get(String(r.pv_id)) ?? null : null;
       const confirmed = !!pv?.pv_number && bank.confirmed.has(String(pv.pv_number));
       return {
         ...r,
         stage: requestStage(String(r.status), pv, confirmed),
         voucher: pv ? { id: pv.id, pvNumber: pv.pv_number, status: pv.status, approvedAt: pv.approved_at, postedAt: pv.posted_at, bankConfirmed: confirmed } : null,
+        invoice: null,
       };
     }),
   };
@@ -133,7 +181,7 @@ export const PAYMENT_REQUEST_FILES: DocFilesSpec = {
     return { doc: { id: String(r.id), closed: r.status === 'WITHDRAWN', locked: r.status === 'VOUCHERED' } };
   },
   closedRefusal: { error: 'request_withdrawn', message: 'A withdrawn request takes no more files.' },
-  lockedRefusal: { error: 'request_answered', message: 'Finance has made the voucher for this request — its bill stays.' },
+  lockedRefusal: { error: 'request_answered', message: 'Finance has answered this request — its bill stays.' },
 };
 const fileHandlers = makeDocFileHandlers(PAYMENT_REQUEST_FILES);
 export const uploadPaymentRequestFileHandler = fileHandlers.upload;
@@ -275,7 +323,7 @@ export const withdrawPaymentRequestHandler = async (c: any): Promise<Response> =
   if (Number(r.requested_by) !== callerUserId(c)) return c.json({ error: 'not_yours', message: 'Only the person who asked can withdraw a request.' }, 403);
   if (r.status === 'WITHDRAWN') return c.json({ ok: true, already: true });
   if (!requesterMayChange(String(r.status))) {
-    return c.json({ error: 'request_answered', message: `Finance has made the voucher for ${r.request_no} — ask Finance to cancel it instead.` }, 409);
+    return c.json({ error: 'request_answered', message: `Finance has answered ${r.request_no} with a voucher or AP invoice — ask Finance to cancel it instead.` }, 409);
   }
   const sb = c.get('supabase');
   const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_REQUEST', entityId: String(r.id), action: 'CANCEL', companyId: co.companyId });
@@ -305,13 +353,13 @@ export const returnPaymentRequestHandler = async (c: any): Promise<Response> => 
   if ('resp' in found) return found.resp;
   const r = found.req;
   const sb = c.get('supabase');
-  if (r.status === 'VOUCHERED' && r.pv_id) {
-    const { data: pv, error: pvErr } = await scopeToCompany(sb.from('payment_vouchers').select('pv_number, status').eq('id', r.pv_id), c).maybeSingle();
-    if (pvErr) return c.json({ error: 'load_failed', reason: pvErr.message }, 500);
-    if (pv && pv.status !== 'CANCELLED') {
-      return c.json({ error: 'request_has_voucher', message: `${r.request_no} is answered by ${pv.pv_number} — cancel that voucher first.` }, 409);
+  if (r.status === 'VOUCHERED') {
+    const live = await liveAnswerOf(c, r);
+    if ('resp' in live) return live.resp;
+    if (live.answer) {
+      return c.json({ error: 'request_has_voucher', message: `${r.request_no} is answered by ${live.answer.number} — cancel that ${live.answer.kind === 'PV' ? 'voucher' : 'AP invoice'} first.` }, 409);
     }
-  } else if (r.status !== 'SUBMITTED' && r.status !== 'VOUCHERED') {
+  } else if (r.status !== 'SUBMITTED') {
     return c.json({ error: 'request_closed', message: `${r.request_no} is ${String(r.status).toLowerCase()} — there is nothing to return.` }, 409);
   }
   const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_REQUEST', entityId: String(r.id), action: 'REJECT', companyId: co.companyId });

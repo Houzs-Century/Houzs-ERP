@@ -47,6 +47,7 @@ import {
 import { supabaseAuth } from '../middleware/auth';
 import { fmtSen } from '../shared/format';
 import { parseEventId, unknownEventRefusal } from '../lib/event-tags';
+import { linkPaymentRequest, paymentRequestLinkGuard } from '../lib/payment-request';
 
 type Row = Record<string, any>;
 
@@ -196,6 +197,10 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
   }
   const eventErr = await unknownEventRefusal(c, built.lines.map((l) => l.projectId));
   if (eventErr) return eventErr;
+  /* 申请付款 answered by a bill (owner 2026-09-30, 6.1): the request must still
+     be waiting — one with a live voucher or AP invoice is refused by name. */
+  const prq = await paymentRequestLinkGuard(c, body.paymentRequestId);
+  if ('resp' in prq) return prq.resp;
 
   const sb = c.get('supabase');
   const invoiceNumber = await mintMonthlyDocNo(sb, 'ap_invoices', 'invoice_number', `${companyDocPrefix(c)}API-${docMonthTag(invoiceDate)}`);
@@ -229,6 +234,18 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
     await sb.from('ap_invoices').delete().eq('company_id', co.companyId).eq('id', (inv as Row).id);
     return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
   }
+  /* The request is claimed only if still waiting — else this bill never
+     stood — and its files are copied onto the bill. */
+  let requestFilesCopied = 0;
+  if (prq.request) {
+    const linked = await linkPaymentRequest(c, prq.request, { kind: 'API', id: String((inv as Row).id), number: invoiceNumber });
+    if (!linked.ok) {
+      await sb.from('ap_invoice_lines').delete().eq('company_id', co.companyId).eq('invoice_id', (inv as Row).id);
+      await sb.from('ap_invoices').delete().eq('company_id', co.companyId).eq('id', (inv as Row).id);
+      return c.json(linked.body, linked.status);
+    }
+    requestFilesCopied = linked.filesCopied;
+  }
   /* The habit this bill teaches: the supplier's name → the first line's
      account, so the OCR's next reading of the same vendor's bill pre-fills
      it. A voucher paying a supplier has nothing to teach (its line is the AP
@@ -238,7 +255,7 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
     payeeName: sup.supplier.name, purpose: 'SUPPLIER_PAYMENT', source: 'AP_INVOICE',
     lines: built.lines.map((l, i) => ({ line_no: i + 1, debit_account_code: l.code })),
   });
-  return c.json({ ok: true, invoice: inv }, 201);
+  return c.json({ ok: true, invoice: inv, ...(prq.request ? { requestFilesCopied } : {}) }, 201);
 };
 
 /* ── PATCH /:id — every field may change (owner 2026-09-06: edit 这个不能全部

@@ -31,6 +31,18 @@ const extractAsync = vi.fn(async (_bills: unknown) => ({ bills: [{
   supplierMatch: { id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD', confidence: 'contains' },
   memory: { payeeName: 'HOUZS VENTURE HOLDING SDN BHD', debitAccountCode: '900-A001', purpose: 'SUPPLIER_PAYMENT', timesSeen: 1 },
 }] }));
+/* 申请付款 answered by a bill (owner 2026-09-30, 6.1–6.2) — set by that test only. */
+let requestDetail: Record<string, unknown> | undefined;
+const extractRequestAsync = vi.fn(async (_id: unknown) => ({ bills: [{
+  index: 0, ok: true,
+  extraction: {
+    vendorName: 'HOUZS VENTURE HOLDING SDN. BHD.', vendorRegNo: null, documentKind: 'invoice', invoiceNumber: 'HVH-0930',
+    invoiceDate: '2026-09-10', dueDate: null, currency: 'MYR', totalSen: 800_000, sstSen: null,
+    lines: [{ description: 'Booth F1 rental 50%', amountSen: 800_000 }],
+  },
+  supplierMatch: { id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD', confidence: 'contains' },
+  memory: { payeeName: 'HOUZS VENTURE HOLDING SDN BHD', debitAccountCode: '900-A001', purpose: 'SUPPLIER_PAYMENT', timesSeen: 1 },
+}] }));
 /* The detail's status — flipped by tests: a DRAFT may lose a file and edits plainly, a POSTED bill keeps files and re-posts on edit. */
 let detailStatus = 'DRAFT';
 
@@ -55,8 +67,12 @@ vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
   useDeleteApInvoiceFile: () => ({ mutateAsync: deleteAsync, isPending: false }),
   fetchApInvoiceFileBlobUrl: vi.fn(),
 }));
+vi.mock('../../vendor/scm/lib/payment-request-queries', () => ({
+  usePaymentRequest: (id: string | null) => ({ data: id && requestDetail ? { request: requestDetail, finance: true } : undefined, isLoading: false }),
+}));
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useExtractBills: () => ({ mutateAsync: extractAsync, isPending: false }),
+  useExtractRequestBill: () => ({ mutateAsync: extractRequestAsync, isPending: false }),
   fileToBase64: async (f: File) => `b64:${f.name}`,
   PV_FILE_ACCEPT: 'image/jpeg,image/png,image/webp,application/pdf',
 }));
@@ -399,5 +415,39 @@ describe('the event a scanned bill names (owner 2026-09-30, 6a — suggest, neve
     fireEvent.click(within(d).getByText('Save as draft'));
     await waitFor(() => expect(createAsync).toHaveBeenCalled());
     expect((createAsync.mock.calls[0]![0] as { lines: unknown }).lines).toEqual([expect.objectContaining({ amountSen: 850_000, projectId: 348 })]);
+  });
+});
+
+describe('a payment request answered by a bill (?fromRequest=, owner 2026-09-30 6.1–6.2)', () => {
+  test('its bill is read first; what was asked is overlaid, every line on its event; a total that differs is said; the save names the request', async () => {
+    createAsync.mockClear(); extractRequestAsync.mockClear();
+    requestDetail = {
+      id: 'prq-1', request_no: 'HC-PRQ-2609-001', requested_by_name: 'James Seow', payee_name: 'MLE EVENTS SDN BHD',
+      amount_sen: 850_000, purpose: 'Booth F1 rental', due_date: '2026-09-15', project_id: 348, status: 'SUBMITTED', stage: 'SUBMITTED', voucher: null,
+    };
+    try {
+      render(<MemoryRouter initialEntries={['/scm/ap-invoices?fromRequest=prq-1']}><ApInvoices /></MemoryRouter>);
+      const d = await screen.findByRole('dialog');
+      expect(extractRequestAsync).toHaveBeenCalledWith('prq-1');
+      expect(d.textContent).toContain('Answering HC-PRQ-2609-001 from James Seow — its bill is copied onto this invoice when you save.');
+      expect(d.textContent).toContain('The bill reads RM 8,000.00 but James Seow asked for RM 8,500.00 — check which is right.');
+      expect((within(d).getByLabelText('AP invoice description') as HTMLInputElement).value).toBe('Payment request HC-PRQ-2609-001 — Booth F1 rental');
+      expect((within(d).getByLabelText('line 1 event') as HTMLInputElement).value).toMatch(/MLE @ PWCC/);
+      fireEvent.click(within(d).getByText('Save as draft'));
+      await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+      expect(createAsync.mock.calls[0]![0]).toEqual({
+        supplierId: 'sup-h', supplierInvoiceRef: 'HVH-0930', invoiceDate: '2026-09-10', dueDate: '2026-09-15',
+        notes: 'Payment request HC-PRQ-2609-001 — Booth F1 rental',
+        lines: [{ description: 'BOOTH F1 RENTAL 50%', debitAccountCode: '900-A001', amountSen: 800_000, projectId: 348 }],
+        paymentRequestId: 'prq-1',
+      });
+    } finally {
+      requestDetail = undefined;
+    }
+  });
+
+  test('?open= opens a bill\'s detail — the request\'s link to its invoice', () => {
+    render(<MemoryRouter initialEntries={['/scm/ap-invoices?open=api-1']}><ApInvoices /></MemoryRouter>);
+    expect(within(dialog()).getByText('Rent Sept')).toBeTruthy();
   });
 });

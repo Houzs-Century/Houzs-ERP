@@ -10,8 +10,9 @@
  *
  * IT OWNS NO RULES. Every read and write is the desktop page's own hook
  * (vendor/scm/lib/payment-request-queries.ts), the stage words are its STAGE
- * table, and the stage itself is the SERVER's reading of the voucher. Finance
- * answers a request on the computer (PV New ?fromRequest=); on the phone
+ * table, and the stage itself is the SERVER's reading of the document that
+ * answered it. Finance answers a request on the computer — a voucher (PV New
+ * ?fromRequest=) or an AP invoice (AP Invoices ?fromRequest=); on the phone
  * Finance can read requests and return one with its note.
  *
  * Gate: the menu row points at /scm/payment-requests, whose NAV_TABS entries
@@ -21,7 +22,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import {
-  STAGE, awaitsFinance, fetchPaymentRequestFileBlobUrl, useCreatePaymentRequest, useDeletePaymentRequestFile,
+  STAGE, answerText, awaitsFinance, fetchPaymentRequestFileBlobUrl, financeWorking, requestPaid, useCreatePaymentRequest, useDeletePaymentRequestFile,
   usePaymentRequest, usePaymentRequestFiles, usePaymentRequests, useReturnPaymentRequest, useUpdatePaymentRequest,
   useUploadPaymentRequestFile, useWithdrawPaymentRequest,
   type PaymentRequest, type PaymentRequestInput,
@@ -83,8 +84,8 @@ function RequestListScreen({ onBack, onNew, onOpen }: { onBack: () => void; onNe
   const [filter, setFilter] = useState<Filter>("all");
   const shown = rows.filter((r) =>
     filter === "all" ? true
-      : filter === "waiting" ? awaitsFinance(r) || r.stage === "PROCESSING"
-        : filter === "paid" ? r.stage === "PAID" || r.stage === "BANK_CONFIRMED"
+      : filter === "waiting" ? awaitsFinance(r) || financeWorking(r)
+        : filter === "paid" ? requestPaid(r)
           : r.stage === "RETURNED" || r.stage === "WITHDRAWN");
   const chips: Array<[Filter, string]> = [["all", "All"], ["waiting", "Waiting"], ["paid", "Paid"], ["returned", "Returned"]];
 
@@ -104,7 +105,7 @@ function RequestListScreen({ onBack, onNew, onOpen }: { onBack: () => void; onNe
         </div>
         <div style={{ fontSize: 11.5, marginTop: 2 }}>{r.purpose}</div>
         {r.project_id != null && <div style={{ fontSize: 11, color: "var(--mut)", marginTop: 2 }}>{eventCellText(labels.data, r.project_id)}</div>}
-        <div style={{ marginTop: 4 }}><StageText r={r} />{r.voucher?.pvNumber ? <span style={{ fontSize: 11, color: "var(--mut)" }}> · {r.voucher.pvNumber}</span> : null}</div>
+        <div style={{ marginTop: 4 }}><StageText r={r} />{answerText(r) ? <span style={{ fontSize: 11, color: "var(--mut)" }}> · {answerText(r)}</span> : null}</div>
       </button>
     ));
   };
@@ -196,7 +197,7 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
         <div className="st-warn" role="status">Returned by {r.decided_by ?? "Finance"}: {r.finance_note}</div>
       )}
       {finance && awaitsFinance(r) && (
-        <div style={{ fontSize: 11.5, color: "var(--mut)" }}>Make the voucher for it on the computer — Payment Requests › Make voucher.</div>
+        <div style={{ fontSize: 11.5, color: "var(--mut)" }}>Answer it on the computer — Payment Requests › Make voucher or Make AP invoice.</div>
       )}
       {row("Amount", <b>{fmtSen(r.amount_sen)}</b>)}
       {row("Pay by", fmtDateOrDash(r.due_date))}
@@ -205,6 +206,7 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
       {row("Payee's bank", [r.bank_name, r.bank_account_no, r.bank_account_name].filter(Boolean).join(" · ") || "—")}
       {row("Requested by", `${r.requested_by_name ?? "—"} · ${fmtDateOrDash(r.created_at)}`)}
       {r.voucher && row("Voucher", `${r.voucher.pvNumber ?? "Draft"}${r.voucher.postedAt ? ` · paid ${fmtDateOrDash(r.voucher.approvedAt ?? r.voucher.postedAt)}` : ""}${r.voucher.bankConfirmed ? " · bank ✓" : ""}`)}
+      {r.invoice && row("AP invoice", `${answerText(r) ?? ""}${r.invoice.bankConfirmed ? " · bank ✓" : ""}`)}
 
       <div className="sc-sl"><span className="t">The bill</span><span className="ln" /></div>
       {fileError && <div className="st-warn" role="alert">{fileError}</div>}

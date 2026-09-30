@@ -57,9 +57,13 @@ Access is layered on **four independent axes** — do not conflate them:
    every project, regardless of PIC or brand.
 3. **Write authority** is the flat role permission matrix
    (`backend/src/services/permissions.ts`): `projects.read`, `.chat`,
-   `.checklist.tick`, `.write`, `.approve`, `.manage`, plus
+   `.checklist.tick`, `.write`, `.approve`, `.manage`, `.reminders`, plus
    `stock_transfer.approve`, `agreement.approve`, `projects.finance.view`,
-   `stock_in.approve`. A bare `*` does **not** confer the four
+   `stock_in.approve`. `projects.reminders` gates only the **Reminder view**
+   (see below) — it is deliberately narrower than `.manage` (which BD Exec /
+   IT Admin also carry) so a manager can be handed the cross-event chase-list
+   without full project admin; Owner + Super Admin cover it via `*`. A bare
+   `*` does **not** confer the four
    `EXPLICIT_APPROVAL_KEYS` (`projects.approve`, `stock_transfer.approve`,
    `agreement.approve`, and the stock-in equivalent) — those gate checklist
    tick/status/review explicitly.
@@ -195,6 +199,15 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   `frontend/src/components/ProjectChat.tsx`, `ProjectGantt.tsx`,
   `PnlCalendar.tsx`. Public share pages: `frontend/src/pages/
   ContractorCalendar.tsx`, `ShareCalendar.tsx`.
+- **Reminder view** (owner/admin chase-list, owner 2026-09-30):
+  `frontend/src/pages/projects/OutstandingReminders.tsx` — the third mode of
+  the Project List `Cards | Table | Reminder` toggle, shown only to
+  `projects.reminders` holders. Pulls every incomplete checklist task from
+  `GET /api/projects/outstanding-tasks` (one payload) and slices it
+  client-side by task / status / month / group-by (Organizer · Owner · Sales
+  PIC), then copies a paste-ready WhatsApp reminder per group or for all
+  groups — clipboard only, no `wa.me` / personal numbers. Grouping + message
+  formatting are pure functions unit-tested in `OutstandingReminders.test.ts`.
 - PMS agent pages: `frontend/src/pages/SetupInvoiceFill.tsx`,
   `ScheduleReconcile.tsx`, `FairReportFill.tsx`,
   `frontend/src/pages/scm-v2/FairReport.tsx`.
@@ -206,10 +219,14 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   `canWrite && access.canEdit`, saved through the same project PATCH).
 - Backend routes: `backend/src/routes/projects.ts` (~90 routes — see
   `docs/generated/route-capability-matrix.csv` for the full inventory),
+  `projectsOutstanding.ts` (the Reminder view feed
+  `GET /api/projects/outstanding-tasks`, gated `projects.reminders`; its own
+  file, mounted before the projects router so `/:id` cannot swallow it),
   `projects_print.ts`, `finance.ts`, `notifications.ts`,
   `publicContractorCalendar.ts`, `publicBrandCalendar.ts`, `brandShare.ts`,
   `backend/src/scm/routes/reports.ts` (Fair/Sales Report).
-- Backend services: `backend/src/services/projects.ts`, `auth.ts`,
+- Backend services: `backend/src/services/projects.ts`, `outstandingTasks.ts`
+  (Reminder view query), `auth.ts`,
   `positionPolicy.ts`, `pmsAccess.ts`, `projectGates.ts`, `contractorShare.ts`,
   `brandShare.ts`, `shareCalendar.ts`, `permissions.ts`,
   `agents/fair-report-parse.ts`, `agents/schedule-reconcile.ts`.

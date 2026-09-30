@@ -16,7 +16,7 @@ import { Button } from '@2990s/design-system';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import type { Account } from '../../vendor/scm/lib/accounting-queries';
 import {
-  useExtractBills, fileToBase64, PV_FILE_ACCEPT, type BillExtraction, type VendorMemory, type PvFilePayload,
+  useExtractBills, fileToBase64, PV_FILE_ACCEPT, type BillExtraction, type ExtractedBill, type VendorMemory, type PvFilePayload,
 } from '../../vendor/scm/lib/payment-voucher-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
 import { SupplierFinanceReminder } from '../../vendor/scm/components/SupplierFinanceReminder';
@@ -40,6 +40,8 @@ export type ApFormMode = 'new' | 'edit' | 'copy';
 export type ApFormSubmit = {
   supplierId: string; supplierInvoiceRef?: string; invoiceDate: string; dueDate: string | null; notes?: string;
   lines: Array<{ description?: string; debitAccountCode: string; amountSen: number; projectId?: number }>;
+  /** The 申请付款 this bill answers — set by the page, never by the form. */
+  paymentRequestId?: string;
 };
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
@@ -95,6 +97,38 @@ export const scanNoteFor = (bill: { extraction: BillExtraction; supplierMatch: {
   bill.extraction.totalSen == null ? 'The TOTAL was not readable — enter it yourself.' : null,
   bill.extraction.currency !== 'MYR' ? `The bill reads as ${bill.extraction.currency}; AP invoices are MYR — a foreign bill goes through a purchase invoice.` : null,
 ].filter(Boolean).join(' ');
+
+/** A payment request answered by a bill (owner 2026-09-30, 6.1–6.2): what was
+    asked — the amount, what for, the event, the pay-by date — overlaid by what
+    its bill reads (the supplier, number, date and lines), every line on the
+    request's event. The note says where each came from, and a bill total that
+    differs from the amount asked. */
+export const formFromRequest = (
+  r: { request_no: string; requested_by_name: string | null; purpose: string; amount_sen: number; due_date: string | null; project_id: number | null },
+  bill: ExtractedBill | undefined,
+  readError: string | null,
+): { initial: ApFormValues; note: string; eventSuggestions: EventSuggestion[] } => {
+  const who = r.requested_by_name ?? 'the requester';
+  const read = bill?.ok ? formFromExtraction(bill.extraction, bill.supplierMatch, bill.memory) : {};
+  const lines = (read.lines ?? [{ rid: 1, description: r.purpose.slice(0, 200), debitAccountCode: '', amountSen: r.amount_sen, projectId: null }])
+    .map((l) => ({ ...l, projectId: r.project_id }));
+  const initial: ApFormValues = {
+    ...emptyApForm(), ...read,
+    dueDate: read.dueDate ?? r.due_date ?? '',
+    description: `Payment request ${r.request_no} — ${r.purpose}`,
+    lines,
+  };
+  const total = bill?.ok ? bill.extraction.totalSen : null;
+  const note = [
+    `Answering ${r.request_no} from ${who} — its bill is copied onto this invoice when you save.`,
+    bill?.ok ? scanNoteFor(bill)
+      : readError ? `Its bill could not be read (${readError}) — fill the bill in yourself.`
+        : bill ? `Its bill could not be read (${bill.reason}) — fill the bill in yourself.`
+          : 'It carries no bill to read — fill the bill in yourself.',
+    total != null && total !== r.amount_sen ? `The bill reads ${fmtSen(total)} but ${who} asked for ${fmtSen(r.amount_sen)} — check which is right.` : null,
+  ].filter(Boolean).join(' ');
+  return { initial, note, eventSuggestions: r.project_id == null && bill?.ok ? (bill.eventSuggestions ?? []) : [] };
+};
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const th: React.CSSProperties = {

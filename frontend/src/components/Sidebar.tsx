@@ -723,6 +723,9 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/daily-bank", label: "Daily Bank", icon: Landmark, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
           { to: "/scm/merchant-recon", label: "Merchant Recon", icon: CreditCard, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
           { to: "/scm/bank-recon", label: "Bank Recon", icon: Banknote, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
+          // Card AND transfer payments not matched yet, one list (owner
+          // 2026-09-30: 我有没有一个表是显示全部还没 match 的); the recon key family.
+          { to: "/scm/unmatched-payments", label: "Unmatched Payments", icon: AlertCircle, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
         ],
       },
       {

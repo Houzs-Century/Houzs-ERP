@@ -46,6 +46,8 @@ describe('the Finance sidebar', () => {
       '/scm/credit-notes', '/scm/deposit-invoices', '/scm/forecast', '/scm/finance-dashboard',
       /* AR Invoices (2026-09-29) — the AP list's twin. */
       '/scm/ar-invoices',
+      /* Card and transfer payments not matched yet, one list (2026-09-30). */
+      '/scm/unmatched-payments',
     ]) expect(tos, `${to} is still reachable`).toContain(to);
     /* The Accounting page's tabs, now reachable by name. */
     for (const tab of ['je', 'gl', 'tb', 'close', 'check', 'pnl', 'bs', 'rp', 'ar', 'ap', 'corrections', 'collection', 'charges', 'groups', 'performance']) {
