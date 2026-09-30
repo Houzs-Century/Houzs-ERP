@@ -1282,7 +1282,7 @@
     },
     {
       "check": "D1",
-      "key": "DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,PAYMENT_VOUCHER,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
+      "key": "DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,PAYMENT_REQUEST,PAYMENT_VOUCHER,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
       "why": "PINNED BY A TEST, which is this checker's own prescribed remedy for a pair that must stay two. The list cannot be imported across the app boundary (the frontend does not build backend sources), so frontend/src/vendor/scm/lib/entity-audit-queries.test.ts READS backend/src/scm/lib/entity-audit.ts and asserts the two are equal, with a second assertion that the read found more than five names so a dead matcher cannot report a pass. Recorded rather than collapsed because this pair already cost four documents their change log while the comment said 'must stay in step' and nothing made it - docs/bugs/0847-four-documents-kept-a-change-log-nobody-could-read.md."
     },
     {

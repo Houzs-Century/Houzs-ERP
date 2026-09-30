@@ -135,11 +135,15 @@ export const PAYMENT_REQUEST_FILES: DocFilesSpec = {
   closedRefusal: { error: 'request_withdrawn', message: 'A withdrawn request takes no more files.' },
   lockedRefusal: { error: 'request_answered', message: 'Finance has made the voucher for this request — its bill stays.' },
 };
-const files = makeDocFileHandlers(PAYMENT_REQUEST_FILES);
-paymentRequests.post('/:id/files', files.upload);
-paymentRequests.get('/:id/files', files.list);
-paymentRequests.get('/:id/files/:fileId', files.stream);
-paymentRequests.delete('/:id/files/:fileId', files.remove);
+const fileHandlers = makeDocFileHandlers(PAYMENT_REQUEST_FILES);
+export const uploadPaymentRequestFileHandler = fileHandlers.upload;
+export const listPaymentRequestFilesHandler = fileHandlers.list;
+export const streamPaymentRequestFileHandler = fileHandlers.stream;
+export const deletePaymentRequestFileHandler = fileHandlers.remove;
+paymentRequests.post('/:id/files', uploadPaymentRequestFileHandler);
+paymentRequests.get('/:id/files', listPaymentRequestFilesHandler);
+paymentRequests.get('/:id/files/:fileId', streamPaymentRequestFileHandler);
+paymentRequests.delete('/:id/files/:fileId', deletePaymentRequestFileHandler);
 
 /* ── GET /:id ──────────────────────────────────────────────────────────────── */
 export const getPaymentRequestHandler = async (c: any): Promise<Response> => {

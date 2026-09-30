@@ -60,6 +60,7 @@ export const AUDIT_ENTITY_TYPES = [
   'PURCHASE_INVOICE',
   'DELIVERY_ORDER',
   'PURCHASE_RETURN',
+  'PAYMENT_REQUEST',
 ] as const;
 
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];

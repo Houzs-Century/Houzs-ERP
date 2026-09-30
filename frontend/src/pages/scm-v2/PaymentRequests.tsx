@@ -19,10 +19,10 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
-  STAGE_LABEL, awaitsFinance, fetchPaymentRequestFileBlobUrl, useCreatePaymentRequest, useDeletePaymentRequestFile,
+  STAGE, awaitsFinance, fetchPaymentRequestFileBlobUrl, useCreatePaymentRequest, useDeletePaymentRequestFile,
   usePaymentRequest, usePaymentRequestFiles, usePaymentRequests, useReturnPaymentRequest, useUpdatePaymentRequest,
   useUploadPaymentRequestFile, useWithdrawPaymentRequest,
-  type PaymentRequest, type PaymentRequestInput, type RequestStage,
+  type PaymentRequest, type PaymentRequestInput,
 } from '../../vendor/scm/lib/payment-request-queries';
 import { fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { useEventLabels } from '../../vendor/scm/lib/event-queries';
@@ -44,18 +44,9 @@ const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-m
 const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)' };
 const linkBtn: React.CSSProperties = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--c-orange)', textDecoration: 'underline' };
 
-const STAGE_TONE: Record<RequestStage, string> = {
-  SUBMITTED: 'var(--fg-muted)',
-  PROCESSING: 'var(--c-orange)',
-  PAID: 'var(--c-green, #2f7d32)',
-  BANK_CONFIRMED: 'var(--c-green-deep, #1b5e20)',
-  RETURNED: 'var(--c-festive-b, #B8331F)',
-  WITHDRAWN: 'var(--fg-muted)',
-  VOUCHER_CANCELLED: 'var(--c-festive-b, #B8331F)',
-};
 const StageChip = ({ r }: { r: PaymentRequest }) => (
-  <span style={{ fontSize: 'var(--fs-11)', fontWeight: 600, color: STAGE_TONE[r.stage], whiteSpace: 'nowrap' }}>
-    {STAGE_LABEL[r.stage]}{r.voucher?.pvNumber ? <span style={{ ...soft, fontWeight: 400 }}> · {r.voucher.pvNumber}</span> : null}
+  <span style={{ fontSize: 'var(--fs-11)', fontWeight: 600, color: STAGE[r.stage].tone, whiteSpace: 'nowrap' }}>
+    {STAGE[r.stage].label}{r.voucher?.pvNumber ? <span style={{ ...soft, fontWeight: 400 }}> · {r.voucher.pvNumber}</span> : null}
   </span>
 );
 
@@ -108,7 +99,7 @@ export const PaymentRequests = () => {
     { key: 'purpose', label: 'For', width: '220px', render: (r) => r.purpose, getValue: (r) => r.purpose },
     { key: 'amount', label: 'Amount', align: 'right', render: (r) => fmtSen(r.amount_sen), getValue: (r) => r.amount_sen, exportValue: (r) => r.amount_sen / 100, exportFormat: 'money' },
     { key: 'due', label: 'Pay by', render: (r) => fmtDateOrDash(r.due_date), getValue: (r) => r.due_date, exportFormat: 'date' },
-    { key: 'stage', label: 'Stage', render: (r) => <StageChip r={r} />, getValue: (r) => STAGE_LABEL[r.stage] },
+    { key: 'stage', label: 'Stage', render: (r) => <StageChip r={r} />, getValue: (r) => STAGE[r.stage].label },
   ], [finance, labelsQ.data]);
 
   const mine = (r: PaymentRequest) => Number(r.requested_by) === me;
@@ -117,7 +108,7 @@ export const PaymentRequests = () => {
   const onWithdraw = async (r: PaymentRequest) => {
     const ok = await askConfirm({ title: `Withdraw ${r.request_no}?`, body: 'Finance will not pay it. You can raise a new request later.', confirmLabel: 'Withdraw', danger: true });
     if (!ok) return;
-    await withdraw.mutateAsync(r.id).catch(() => undefined);
+    withdraw.mutate(r.id); // a refusal reaches the user through the mutation's own onError
   };
   const onReturn = async (r: PaymentRequest) => {
     const note = await askPrompt({
@@ -127,7 +118,7 @@ export const PaymentRequests = () => {
       input: { label: 'Why it goes back', placeholder: 'e.g. Attach the organiser invoice, not the quotation', required: true },
     });
     if (!note) return;
-    await sendBack.mutateAsync({ id: r.id, note }).catch(() => undefined);
+    sendBack.mutate({ id: r.id, note }); // a refusal reaches the user through the mutation's own onError
   };
 
   return (

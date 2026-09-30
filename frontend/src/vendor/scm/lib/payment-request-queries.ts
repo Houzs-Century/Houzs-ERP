@@ -37,15 +37,16 @@ export type PaymentRequest = {
   voucher: { id: string; pvNumber: string | null; status: string | null; approvedAt: string | null; postedAt: string | null; bankConfirmed: boolean } | null;
 };
 
-/** The owner's words for each stage (2026-09-29): 已提交 → Finance 处理中 → 已付 → 银行已确认. */
-export const STAGE_LABEL: Record<RequestStage, string> = {
-  SUBMITTED: 'Submitted · 已提交',
-  PROCESSING: 'Finance processing · 处理中',
-  PAID: 'Paid · 已付',
-  BANK_CONFIRMED: 'Bank confirmed · 银行已确认',
-  RETURNED: 'Returned · 已退回',
-  WITHDRAWN: 'Withdrawn · 已撤回',
-  VOUCHER_CANCELLED: 'Voucher cancelled · 付款单已取消',
+/** Each stage in the owner's words (2026-09-29: 已提交 → Finance 处理中 → 已付 →
+    银行已确认) and the colour it reads in — one home for both. */
+export const STAGE: Record<RequestStage, { label: string; tone: string }> = {
+  SUBMITTED: { label: 'Submitted · 已提交', tone: 'var(--fg-muted)' },
+  PROCESSING: { label: 'Finance processing · 处理中', tone: 'var(--c-orange)' },
+  PAID: { label: 'Paid · 已付', tone: 'var(--c-green, #2f7d32)' },
+  BANK_CONFIRMED: { label: 'Bank confirmed · 银行已确认', tone: 'var(--c-green-deep, #1b5e20)' },
+  RETURNED: { label: 'Returned · 已退回', tone: 'var(--c-festive-b, #B8331F)' },
+  WITHDRAWN: { label: 'Withdrawn · 已撤回', tone: 'var(--fg-muted)' },
+  VOUCHER_CANCELLED: { label: 'Voucher cancelled · 付款单已取消', tone: 'var(--c-festive-b, #B8331F)' },
 };
 
 /** Finance's to-do: nothing answers these yet. */
