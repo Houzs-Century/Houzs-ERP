@@ -133,6 +133,24 @@ export async function pvLineEventRefusal(c: any, purpose: unknown, rows: Readonl
   return unknownEventRefusal(c, ids);
 }
 
+/** The company's live (not archived) events that overlap [from, to] — what a
+    scanned bill is matched against (scm/lib/event-match.ts). */
+export async function loadEventsBetween(db: EventDb, companySql: string, from: string, to: string): Promise<EventRow[]> {
+  const res = await db
+    .prepare(
+      `SELECT ${EVENT_COLUMNS} FROM projects p
+        WHERE p.archived_at IS NULL
+          AND p.start_date IS NOT NULL
+          AND p.start_date <= ?
+          AND coalesce(p.end_date, p.start_date) >= ?${companySql}
+        ORDER BY p.start_date, p.id
+        LIMIT 1000`,
+    )
+    .bind(to, from)
+    .all<Record<string, unknown>>();
+  return ((res.results ?? []) as Array<Record<string, unknown>>).map(toEventRow).filter((e) => Number.isFinite(e.id));
+}
+
 /** The picker's window without a search: events that ended up to 60 days
     before the document date, through those starting 180 days after it — a
     booth is often paid months ahead of its fair, its last bill soon after. */

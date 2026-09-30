@@ -24,6 +24,10 @@ export type EventOption = {
   boothNo: string | null;
 };
 
+/** An event the server matched to what a scanned bill printed, with why
+ *  (backend scm/lib/event-match.ts) — a suggestion only (6a). */
+export type EventSuggestion = { id: number; score: number; reasons: string[]; event: EventOption };
+
 /** "Pulau Pinang [AKEMI] MLE @ PENANG WATERFRONT CONVENTION CENTRE · 25/09 - 27/09 · booth F1". */
 export function eventLabel(e: Pick<EventOption, 'name' | 'startDate' | 'endDate' | 'boothNo' | 'status'>): string {
   const parts = [e.name];

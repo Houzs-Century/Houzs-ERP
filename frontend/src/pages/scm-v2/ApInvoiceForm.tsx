@@ -20,6 +20,8 @@ import {
 } from '../../vendor/scm/lib/payment-voucher-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
 import { EventSelect } from '../../vendor/scm/components/EventSelect';
+import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
+import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
 import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
 import { upperFill } from '../../vendor/scm/lib/ocr-fill';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
@@ -104,7 +106,7 @@ const iconBtn: React.CSSProperties = { border: 'none', background: 'none', curso
 
 export const ApInvoiceForm = ({
   mode, initial, suppliers, suppliersLoading = false, lineAccounts, posted = false, paidSen = 0, saving, onSubmit, onCancel,
-  initialFiles, initialNote,
+  initialFiles, initialNote, initialEventSuggestions,
 }: {
   mode: ApFormMode;
   initial: ApFormValues;
@@ -115,6 +117,8 @@ export const ApInvoiceForm = ({
       on save, and the reader's sentence about it. */
   initialFiles?: PvFilePayload[];
   initialNote?: string | null;
+  /** The events the handed-over bill points at (owner 2026-09-30, 6a — suggestions only). */
+  initialEventSuggestions?: EventSuggestion[];
   /** Editing a bill already on the books: saving re-posts, and money paid
       caps the total and pins the supplier — the same rules the route holds. */
   posted?: boolean;
@@ -171,6 +175,7 @@ export const ApInvoiceForm = ({
   const extract = useExtractBills();
   const [scanNote, setScanNote] = useState<string | null>(initialNote ?? null);
   const [pendingFiles, setPendingFiles] = useState<PvFilePayload[]>(initialFiles ?? []);
+  const [eventSuggestions, setEventSuggestions] = useState<EventSuggestion[]>(initialEventSuggestions ?? []);
   /* 拖进来 upload (owner 2026-09-08): the scan row takes a dropped bill too. */
   const [dragOver, setDragOver] = useState(false);
   /* F3 / Ctrl+S = the save button (owner 2026-09-08: 像 autocount 按 f3);
@@ -189,6 +194,7 @@ export const ApInvoiceForm = ({
       if (!bill) { setScanNote('The bill could not be read.'); return; }
       if (!bill.ok) { setScanNote(bill.reason); return; }
       applyExtraction(bill.extraction, bill.supplierMatch, bill.memory);
+      setEventSuggestions(bill.eventSuggestions ?? []);
       /* The LAST successful read wins, matching applyExtraction overwriting
          the lines — this form reads ONE bill at a time. */
       setPendingFiles(files);
@@ -272,6 +278,8 @@ export const ApInvoiceForm = ({
         <EventSelect value={commonEvent} around={v.invoiceDate || null} className={styles.fieldInput} aria-label="Event for all lines"
           onChange={(id) => setV((prev) => ({ ...prev, lines: prev.lines.map((l) => ({ ...l, projectId: id })) }))} />
       </label>
+      <EventSuggestions suggestions={eventSuggestions} current={commonEvent}
+        onUse={(id) => setV((prev) => ({ ...prev, lines: prev.lines.map((l) => ({ ...l, projectId: id })) }))} />
 
       {/* The lines, in the owner's order: account number, description, amount.
           Insert anywhere in the table adds a line and lands on it. */}

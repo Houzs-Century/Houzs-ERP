@@ -4,7 +4,10 @@
 // registers the route and re-exports the handler.
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
-import { requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
+import { activeCompanySql, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
+import { loadEventsBetween, type EventRow } from '../lib/event-tags';
+import { suggestEvents } from '../lib/event-match';
+import { todayMyt } from '../lib/my-time';
 import { extractOneBill, matchSupplier, normalizeVendor, BILL_IMAGE_MIMES, MAX_BILLS_PER_CALL, MAX_FILES_PER_BILL, MAX_BILL_FILE_BYTES } from '../../acc/bill-extract';
 
 /* ── Bill OCR — read incoming bills into voucher pre-fills (2026-09-02) ──────
@@ -78,23 +81,47 @@ export const extractBillsHandler = async (c: any) => {
     return null;
   };
 
-  const out = [] as Array<Record<string, unknown>>;
+  const read: Array<Awaited<ReturnType<typeof extractOneBill>>> = [];
   for (const [i, b] of bills.entries()) {
     const files = (b.files as Array<{ name?: unknown; mime?: unknown; dataBase64?: unknown }>).map((f) => ({
       name: String(f.name ?? `file-${i}`), mime: String(f.mime ?? ''), dataBase64: String(f.dataBase64 ?? ''),
     }));
-    const r = await extractOneBill(apiKey, files);
-    if (!r.ok) {
-      out.push({ index: i, ok: false, reason: r.reason });
-      continue;
+    read.push(await extractOneBill(apiKey, files));
+  }
+
+  /* The events the bills could be for (owner 2026-09-30: ocr 要有办法 detect
+     相关的 event) — read ONCE for the batch, only when a bill printed an event,
+     over a window around the dates it printed. A failed read offers nothing;
+     it never fails the scan: the suggestion is a convenience (6a). */
+  const anchors = read.flatMap((r) => (r.ok && r.extraction.event ? [r.extraction.event.dateFrom ?? r.extraction.invoiceDate ?? todayMyt(), r.extraction.event.dateTo ?? r.extraction.event.dateFrom ?? r.extraction.invoiceDate ?? todayMyt()] : []));
+  let events: EventRow[] = [];
+  if (anchors.length > 0) {
+    const shift = (ymd: string, days: number) => { const d = new Date(`${ymd}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
+    const sorted = [...anchors].sort();
+    try {
+      events = await loadEventsBetween(c.env.DB, activeCompanySql(c, 'p.company_id'), shift(sorted[0]!, -60), shift(sorted[sorted.length - 1]!, 180));
+    } catch {
+      events = [];
     }
+  }
+
+  const out = read.map((r, i) => {
+    if (!r.ok) return { index: i, ok: false, reason: r.reason };
     const match = matchSupplier(r.extraction.vendorName, suppliers);
     const mem = memoryFor(r.extraction.vendorName, match?.supplier.name ?? null);
-    out.push({
+    return {
       index: i, ok: true, extraction: r.extraction,
       supplierMatch: match ? { id: match.supplier.id, code: match.supplier.code, name: match.supplier.name, confidence: match.confidence } : null,
       memory: mem ? { payeeName: mem.payee_name, debitAccountCode: mem.debit_account_code, purpose: mem.purpose, timesSeen: mem.times_seen } : null,
-    });
-  }
+      eventSuggestions: r.extraction.event
+        ? suggestEvents({
+          hint: r.extraction.event,
+          vendorName: r.extraction.vendorName,
+          lineText: r.extraction.lines.map((l) => l.description ?? '').join(' '),
+          billDate: r.extraction.invoiceDate,
+        }, events)
+        : [],
+    };
+  });
   return c.json({ bills: out });
 };

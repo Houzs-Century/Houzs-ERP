@@ -17,6 +17,7 @@ import {
   requestIdFromResponse,
 } from '../../../lib/requestCorrelation';
 import { idempotentInit } from '../../../lib/idempotency';
+import type { EventSuggestion } from './event-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
 // baseQuery is a custom-hook factory — only ever called from use* hooks below.
@@ -220,6 +221,8 @@ export type BillExtraction = {
   invoiceNumber: string | null; invoiceDate: string | null; dueDate: string | null;
   currency: string; totalSen: number | null; sstSen: number | null;
   lines: Array<{ description: string | null; amountSen: number | null }>;
+  /** The event the bill prints (owner 2026-09-30) — read, never matched here. */
+  event?: { name: string | null; venue: string | null; booth: string | null; dateFrom: string | null; dateTo: string | null } | null;
 };
 /* Vendor memory (mig 0341) — what the operator saved the LAST time this
    vendor was paid; the reader hands it back so the form can pre-fill the
@@ -227,7 +230,11 @@ export type BillExtraction = {
 export type VendorMemory = { payeeName: string | null; debitAccountCode: string | null; purpose: string | null; timesSeen: number };
 
 export type ExtractedBill =
-  | { index: number; ok: true; extraction: BillExtraction; supplierMatch: { id: string; code: string | null; name: string; confidence: 'exact' | 'contains' } | null; memory: VendorMemory | null }
+  | {
+    index: number; ok: true; extraction: BillExtraction; supplierMatch: { id: string; code: string | null; name: string; confidence: 'exact' | 'contains' } | null; memory: VendorMemory | null;
+    /** The events the server matched to what the bill printed — suggestions only (6a). */
+    eventSuggestions?: EventSuggestion[];
+  }
   | { index: number; ok: false; reason: string };
 
 /* FileReader, not buf→btoa: a chunked fromCharCode spread stack-overflows on a
