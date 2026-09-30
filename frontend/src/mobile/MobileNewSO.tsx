@@ -66,6 +66,7 @@ import {
 } from "../vendor/scm/lib/address-cascade";
 import { StatePicker } from "../vendor/scm/components/StatePicker";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
+import { deferLineDateToHeader, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
@@ -1720,7 +1721,7 @@ export function MobileNewSO({
     unitPriceSen: toSen(l.price),
     /* An EXISTING line: its 0 IS its persisted price (desktop's PATCH said so since #2425). */
     ...zeroPriceClaim(toSen(l.price), true),
-    lineDeliveryDate: l.ddate || null,
+    ...(deferLineDateToHeader({ storedProcessingDate: origProcDate, overridden: ddateOverrides.has(l.key) }) ? {} : { lineDeliveryDate: l.ddate || null }),
     variants: buildVariants(l),
   });
 
@@ -1738,7 +1739,7 @@ export function MobileNewSO({
     if ((num(l.qty) || 1) !== (snap.qty ?? 1)) return true;
     if (toSen(l.price) !== (snap.unit_price_sen ?? 0)) return true;
     if (l.name.trim() !== (snap.description ?? "").trim()) return true;
-    if ((l.ddate || "") !== ((snap.line_delivery_date ?? "").slice(0, 10))) return true;
+    if (!deferLineDateToHeader({ storedProcessingDate: origProcDate, overridden: ddateOverrides.has(l.key) }) && (l.ddate || "") !== ((snap.line_delivery_date ?? "").slice(0, 10))) return true; // a cascaded date is the header save's (so-line-date-defer)
     if (canonJson(buildVariants(l)) !== canonJson(snap.variants ?? {})) return true;
     return false;
   };
@@ -1789,7 +1790,7 @@ export function MobileNewSO({
           await authedFetch(base, {
             method: "POST",
             headers: mobileLineAddHeaders(l, leaseToken),
-            body: JSON.stringify(itemBody(l)),
+            body: JSON.stringify(deferLineDateToHeader({ storedProcessingDate: origProcDate, overridden: ddateOverrides.has(l.key) }) ? withoutLineDate(itemBody(l)) : itemBody(l)),
           });
         }
         catch (e) { failures.push(lineWriteFailure(l.itemCode.trim(), e)); }

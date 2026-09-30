@@ -380,6 +380,26 @@ describe('a month with an outstanding payment', () => {
     expect(sb.tables.acc_bank_month_locks[0]).toMatchObject({ difference_sen: 310168, was_complete: true, lock_note: null });
   });
 
+  /* Owner 2026-09-30: the MONTH's outstanding list showed a customer's
+     transfer as "SOPAY · <payment uuid>" with no customer, while the file view
+     named it — only the month door skipped the naming (docs/bugs/0918). */
+  test('the month names a customer transfer by its receipt, its order and its customer', async () => {
+    const { app } = harness({
+      acc_bank_statement_config: [MBB_ACCOUNT, HLB_ACCOUNT],
+      v_gl_entries: [
+        { company_id: CO, account_code: '310-0020', je_no: 'JE-2602-0001', entry_date: '2026-02-07', source_type: 'PV', source_doc_no: 'HPV-2602-028', debit_sen: 300000, credit_sen: 0, notes: null },
+        { company_id: CO, account_code: '310-0020', je_no: 'JE-2604-0030', entry_date: '2026-04-29', source_type: 'SOPAY', source_doc_no: 'pay-1', debit_sen: 143300, credit_sen: 0, party_name: null, notes: 'Payment received (transfer) — SO-2604-031' },
+      ],
+      mfg_sales_order_payments: [{ id: 'pay-1', company_id: CO, so_doc_no: 'SO-2604-031' }],
+      acc_official_receipts: [{ company_id: CO, payment_id: 'pay-1', or_number: 'OR-2604-009' }],
+      mfg_sales_orders: [{ company_id: CO, doc_no: 'SO-2604-031', debtor_name: 'Chong Hui Wen' }],
+    });
+    expect((await post(app, '/bank/statements', { accountCode: '310-0020', fileName: 'acs_23600600000_30042026.csv', content: HLB_APRIL, statementMonth: '2026-04' })).status).toBe(200);
+    const month = await (await app.request('/bank/months/310-0020/2026-04')).json() as any;
+    const transfer = (month.unmatchedEntries as any[]).find((e) => e.jeNo === 'JE-2604-0030');
+    expect(transfer).toMatchObject({ reference: 'OR-2604-009 · SO-2604-031', who: 'Chong Hui Wen' });
+  });
+
   /* An entry the books name NOBODY for is not obvious, so the movement waits
      for a hand (docs/bugs/0814) — and the month stays open. */
   test('a movement still to decide keeps the month open', async () => {
