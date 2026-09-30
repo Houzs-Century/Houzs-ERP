@@ -37,6 +37,7 @@ import { formaliseReceiptsForSettlement } from './receipts';
 import { companyCodeById } from '../scm/lib/doc-no';
 import type { PaymentCandidate } from './settlement-match';
 import { fmtSen } from '../scm/shared/format';
+import { checkReceiptCharge, postReceiptCharge, undoReceiptCharge, type ReceiptChargeInput } from './charge-account';
 
 export type AcquirerRow = {
   company_id: number;
@@ -1040,6 +1041,10 @@ export type ReceiptInput = {
       Left unset by the type-it-in-by-hand path, which has no statement to
       read and must fall back to the configuration. */
   bankAccountCode?: string | null;
+  /** What the acquirer KEPT off this credit, when it sends no advice to book
+      it on (owner 2026-09-30, GHL's RM 54): booked with the credit, to the
+      account Finance picks, and counted toward what the statement is paid. */
+  charge?: ReceiptChargeInput | null;
 };
 
 /** Every credit recorded against a batch, oldest first, with what is left. */
@@ -1138,7 +1143,7 @@ export async function loadBatchReceipts(
 ): Promise<{ ok: true; receipts: Array<Record<string, any>>; receivedSen: number; chargedSen: number } | { ok: false; reason: string }> {
   const { data, error } = await sb
     .from('acc_settlement_receipts')
-    .select('id, batch_id, received_on, amount_sen, bank_ref, note, je_no, created_by, created_at')
+    .select('id, batch_id, received_on, amount_sen, bank_ref, note, je_no, created_by, created_at, charge_sen, charge_account_code, charge_note, charge_je_no')
     .eq('company_id', companyId)
     .eq('batch_id', batchId)
     .order('received_on');
@@ -1154,7 +1159,10 @@ export async function loadBatchReceipts(
     .eq('company_id', companyId)
     .eq('batch_id', batchId);
   if (dErr) return { ok: false, reason: dErr.message };
-  const chargedSen = ((dayRaw ?? []) as Array<Record<string, any>>).reduce((s, r) => s + Number(r.charge_sen ?? 0), 0);
+  /* …and what an acquirer kept off a CREDIT when it sends no advice (owner
+     2026-09-30, GHL) — the same settling, carried on the receipt itself. */
+  const chargedSen = ((dayRaw ?? []) as Array<Record<string, any>>).reduce((s, r) => s + Number(r.charge_sen ?? 0), 0)
+    + receipts.reduce((s, r) => s + Number(r.charge_sen ?? 0), 0);
   return { ok: true, receipts, receivedSen: receipts.reduce((s, r) => s + Number(r.amount_sen ?? 0), 0), chargedSen };
 }
 
@@ -1164,7 +1172,7 @@ export async function postBatchReceipt(
   batchId: number,
   input: ReceiptInput,
 ): Promise<
-  | { ok: true; status: 'posted'; receiptId: number; jeNo?: string; amountSen: number; receivedSen: number; payableSen: number; outstandingSen: number }
+  | { ok: true; status: 'posted'; receiptId: number; jeNo?: string; amountSen: number; receivedSen: number; payableSen: number; outstandingSen: number; chargeSen: number }
   | { ok: false; status: string; reason: string }
 > {
   const receivedOn = String(input.receivedOn ?? '');
@@ -1216,6 +1224,26 @@ export async function postBatchReceipt(
     };
   }
 
+  /* A CHARGE KEPT OFF THIS CREDIT (owner 2026-09-30: 这个RM54 是charges 来的 →
+     做). Checked before anything is written; together with the credit it may
+     settle what the statement still owes, never more. */
+  let charge: ReceiptChargeInput | null = null;
+  if (input.charge) {
+    const checked = await checkReceiptCharge(sb, companyId, input.charge);
+    if (!checked.ok) return { ok: false, status: checked.status, reason: checked.reason };
+    charge = checked.charge;
+    if (amountSen <= 0) {
+      return { ok: false, status: 'bad_amount', reason: 'A charge is kept off money received — this movement is not a credit.' };
+    }
+    if (amountSen + charge.amountSen > outstanding) {
+      return {
+        ok: false,
+        status: 'over_receipt',
+        reason: `${batch.acquirer_code} still owes ${fmtSen(outstanding)} on this statement; this credit of ${fmtSen(amountSen)} and a charge of ${fmtSen(charge.amountSen)} come to ${fmtSen(amountSen + charge.amountSen)}. Record only what this statement paid and kept.`,
+      };
+    }
+  }
+
   const acq = await loadAcquirer(sb, companyId, batch.acquirer_code);
   if (!acq.ok) return { ok: false, status: 'acquirer_unavailable', reason: acq.reason };
 
@@ -1249,6 +1277,7 @@ export async function postBatchReceipt(
     bank_ref: input.bankRef ?? null,
     note: input.note ?? null,
     created_by: input.userName ?? null,
+    ...(charge ? { charge_sen: charge.amountSen, charge_account_code: charge.accountCode, charge_note: charge.note } : {}),
   }).select('id').single();
   if (insErr) return { ok: false, status: 'save_failed', reason: insErr.message };
   const receiptId = Number((rowRaw as { id: number }).id);
@@ -1282,6 +1311,28 @@ export async function postBatchReceipt(
     return { ok: false, status: 'stamp_failed', reason: `${upErr.message} (entry ${posted.jeNo} DID post — the credit is recorded, only its entry number is missing)` };
   }
 
+  /* The charge kept off it, booked with it: dated the statement's settlement
+     day as an advice charge is. A charge that cannot post takes the credit back
+     with it — half of what the bank did is not a record of it. */
+  if (charge) {
+    const kept = await postReceiptCharge(sb, companyId, {
+      receiptId, acquirerCode: batch.acquirer_code, transitAccountCode: acq.acquirer.transit_account_code,
+      settledOn: isoDay(batch.period_to) || receivedOn, receivedOn, charge,
+    });
+    if (!kept.ok) {
+      await reverseJournal(sb, {
+        sourceType: 'SETTLEBANK', sourceDocNo: `SETTLEBANK-${batchId}-${receiptId}`, companyId, onOriginalDate: true,
+        narration: (orig) => `Reversal of ${orig.je_no} — the charge kept off this credit could not be booked`,
+      });
+      await sb.from('acc_settlement_receipts').delete().eq('id', receiptId);
+      return { ok: false, status: kept.status, reason: kept.reason };
+    }
+    const { error: chErr } = await sb.from('acc_settlement_receipts').update({ charge_je_no: kept.jeNo, charge_je_id: kept.jeId }).eq('id', receiptId);
+    if (chErr) {
+      return { ok: false, status: 'stamp_failed', reason: `${chErr.message} (the credit and its charge ${kept.jeNo} DID post — only the charge's entry number is missing)` };
+    }
+  }
+
   const receivedSen = already.receivedSen + amountSen;
   return {
     ok: true,
@@ -1298,7 +1349,8 @@ export async function postBatchReceipt(
     payableSen,
     /* Charges the bank deducted count as settled (docs/bugs/0787): the credit
        that arrives after a RM 324 fee is the whole of what was still owed. */
-    outstandingSen: payableSen - receivedSen - already.chargedSen,
+    outstandingSen: payableSen - receivedSen - already.chargedSen - (charge?.amountSen ?? 0),
+    chargeSen: charge?.amountSen ?? 0,
   };
 }
 
@@ -1318,11 +1370,11 @@ export async function undoBatchReceipt(
 ): Promise<{ ok: true; status: 'undone'; jeNo?: string } | { ok: false; status: string; reason: string }> {
   const { data: rowRaw, error } = await sb
     .from('acc_settlement_receipts')
-    .select('id, batch_id, amount_sen, received_on, je_no')
+    .select('id, batch_id, amount_sen, received_on, je_no, charge_sen')
     .eq('id', receiptId).eq('company_id', companyId).maybeSingle();
   if (error) return { ok: false, status: 'load_failed', reason: error.message };
   if (!rowRaw) return { ok: false, status: 'not_found', reason: `credit ${receiptId} not found` };
-  const row = rowRaw as { batch_id: number; amount_sen: number; received_on: string; je_no: string | null };
+  const row = rowRaw as { batch_id: number; amount_sen: number; received_on: string; je_no: string | null; charge_sen?: number | null };
 
   const reversed = await reverseJournal(sb, {
     sourceType: 'SETTLEBANK',
@@ -1332,6 +1384,14 @@ export async function undoBatchReceipt(
     narration: (orig) => `Reversal of ${orig.je_no} — that credit was not this statement's`,
   });
   if (!reversed.ok) return { ok: false, status: reversed.status, reason: reversed.reason ?? 'the reversal was refused' };
+  /* The charge kept off it goes back with it (owner 2026-09-30). The row stays
+     until both are reversed, so a second press finishes what the first began. */
+  if (Number(row.charge_sen ?? 0) > 0) {
+    const unkept = await undoReceiptCharge(sb, companyId, receiptId);
+    if (!unkept.ok) {
+      return { ok: false, status: unkept.status, reason: `${unkept.reason} (the credit's entry WAS reversed — press undo again to finish taking back its charge)` };
+    }
+  }
 
   const { error: delErr } = await sb.from('acc_settlement_receipts').delete().eq('id', receiptId);
   if (delErr) {
