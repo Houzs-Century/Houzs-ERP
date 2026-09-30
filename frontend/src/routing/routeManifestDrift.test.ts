@@ -84,7 +84,9 @@ describe("executable route contract", () => {
     // beside the forecast, per month or quarter.
     // 163 since 2026-09-29: /scm/ar-invoices — the AP list's twin: sales
     // invoices mirrored beside the other-debtor bills raised there.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(163);
+    // 164 since 2026-09-30: /scm/payment-requests — 申请付款, a requester asks
+    // Finance to pay a bill; Finance answers with a voucher.
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(164);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -125,7 +127,8 @@ describe("executable route contract", () => {
     // 170 since 2026-09-21 — /scm/forecast; see the staff-route count above.
     // 171 since 2026-09-21 — /scm/finance-dashboard; see the staff-route count above.
     // 172 since 2026-09-29 — /scm/ar-invoices; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(172);
+    // 173 since 2026-09-30 — /scm/payment-requests; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(173);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

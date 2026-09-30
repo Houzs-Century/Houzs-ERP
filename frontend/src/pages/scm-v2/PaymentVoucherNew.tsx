@@ -42,6 +42,7 @@ import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDial
 import { DateField } from '../../vendor/scm/components/DateField';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
 import { EventSelect } from '../../vendor/scm/components/EventSelect';
+import { usePaymentRequest } from '../../vendor/scm/lib/payment-request-queries';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { fmtDate } from '../../vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
@@ -336,6 +337,28 @@ export const PaymentVoucherNew = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [copyFrom, copyQ.data]);
 
+  /* ── Answering a payment request (申请付款, owner 2026-09-30) ─────────────
+     ?fromRequest=<id> fills the payee, one line for what was asked — the
+     purpose as its description, the event on it and on the header — and names
+     the request (and the payee's bank) in the notes. Saving sends
+     paymentRequestId: the server claims the request for this voucher and
+     copies its bill across (backend lib/payment-request.ts). */
+  const fromRequest = searchParams.get('fromRequest');
+  const requestQ = usePaymentRequest(fromRequest);
+  const requestApplied = useRef(false);
+  useEffect(() => {
+    const r = requestQ.data?.request;
+    if (!fromRequest || requestApplied.current || !r) return;
+    requestApplied.current = true;
+    setPayeeName(r.payee_name);
+    const bank = [r.bank_name, r.bank_account_no, r.bank_account_name].filter(Boolean).join(' ');
+    setNotes(`Payment request ${r.request_no} — ${r.purpose}${bank ? ` · pay to ${bank}` : ''}`);
+    setDefaultEvent(r.project_id);
+    setLines([{ ...newLine(), description: r.purpose.slice(0, 200), amountSen: r.amount_sen, projectId: r.project_id }]);
+    setScanNote(`Answering ${r.request_no} from ${r.requested_by_name ?? 'the requester'} — its bill is attached to this voucher when you save.`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromRequest, requestQ.data]);
+
   // Supplier link is optional. When set, auto-fill the payee (if blank) + adopt
   // the supplier's default currency (e.g. a China vendor billing RMB).
   const supplierRow = useMemo(() => (suppliersQ.data ?? []).find((s) => s.id === supplierId) ?? null, [suppliersQ.data, supplierId]);
@@ -598,6 +621,7 @@ export const PaymentVoucherNew = () => {
           : 1,
         lines: sendLines,
         ...(sendAllocations.length > 0 ? { allocations: sendAllocations } : {}),
+        ...(fromRequest ? { paymentRequestId: fromRequest } : {}),
       });
       /* Attach the scanned bill AFTER the voucher exists — sequentially, so
          sort_no (= print order) is the scan order. A failed upload never

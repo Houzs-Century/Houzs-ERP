@@ -253,6 +253,17 @@ export const NAV_TABS: NavTab[] = [
     // App.tsx ScmGuard allowSales).
     showForSalesRep: true,
   },
+  // 申请付款 (owner 2026-09-30): whoever holds scm.payment_request.create — a PIC
+  // paying an event's rental — asks Finance to pay a bill here. Finance works
+  // the same page from Money out.
+  {
+    section: "workspace",
+    to: "/scm/payment-requests",
+    label: "Payment Requests",
+    icon: HandCoins,
+    anyPerm: ["*", "scm.payment_request.create"],
+    showForSalesRep: true,
+  },
   // Sales Entries — Nico 2026-07-09: "sales entries 我不要了". Sidebar
   // entry removed. The /sales route + Sales.tsx page + backend endpoints
   // are intentionally left intact so any deep-link / bookmark keeps
@@ -699,6 +710,8 @@ export const NAV_TABS: NavTab[] = [
         children: [
           { to: "/scm/payment-vouchers", label: "Payment Vouchers", icon: Wallet, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.accounting"] },
           { to: "/scm/ap-invoices", label: "AP Invoices", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
+          // 申请付款 (owner 2026-09-30) — the requests waiting for a voucher.
+          { to: "/scm/payment-requests", label: "Payment Requests", icon: HandCoins, anyPerm: ["*", "scm.payment_voucher.create"] },
         ],
       },
       {

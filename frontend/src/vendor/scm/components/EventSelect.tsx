@@ -9,7 +9,7 @@
 
 import { useMemo } from 'react';
 import { SearchCombo, type ComboOption } from './SearchCombo';
-import { eventLabel, useEventLabels, useEventOptions, type EventOption } from '../lib/event-queries';
+import { eventLabel, useEventLabels, useEventOptions, type EventOption, type EventOptionsPath } from '../lib/event-queries';
 
 /* Grouped by the month the event starts, read as the ISO word the data carries
    (2026-09) — no month-name table (the house date rule, check-date-formatting). */
@@ -22,6 +22,7 @@ export function EventSelect({
   className,
   placeholder = '— No event —',
   disabled,
+  optionsPath,
   'aria-label': ariaLabel,
 }: {
   value: number | null;
@@ -31,11 +32,13 @@ export function EventSelect({
   className?: string;
   placeholder?: string;
   disabled?: boolean;
+  /** A requester's picker reads the payment requests' copy of the list. */
+  optionsPath?: EventOptionsPath;
   'aria-label'?: string;
 }) {
-  const list = useEventOptions(around, !disabled);
+  const list = useEventOptions(around, !disabled, optionsPath);
   const inList = value != null && (list.data ?? []).some((e) => e.id === value);
-  const labels = useEventLabels(value != null && !inList ? [value] : []);
+  const labels = useEventLabels(value != null && !inList ? [value] : [], optionsPath);
 
   const options = useMemo<ComboOption[]>(() => {
     const seen = new Set<number>();
