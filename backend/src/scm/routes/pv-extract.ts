@@ -9,6 +9,7 @@ import { loadEventsBetween, type EventRow } from '../lib/event-tags';
 import { suggestEvents } from '../lib/event-match';
 import { todayMyt } from '../lib/my-time';
 import { extractOneBill, matchSupplier, normalizeVendor, BILL_IMAGE_MIMES, MAX_BILLS_PER_CALL, MAX_FILES_PER_BILL, MAX_BILL_FILE_BYTES } from '../../acc/bill-extract';
+import { toBase64 } from '../lib/scan-ocr';
 
 /* ── Bill OCR — read incoming bills into voucher pre-fills (2026-09-02) ──────
    我想要把ocr 功能放去payment 那边. Each `bills` entry is ONE document (its
@@ -29,7 +30,19 @@ export const extractBillsHandler = async (c: any) => {
 
   let body: any;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const bills = Array.isArray(body.bills) ? body.bills : [];
+  /* { fromRequest } — the bill a payment request carries, read when Finance
+     opens the voucher or AP invoice that answers it (owner 2026-09-30, 6.2).
+     The request's files are the pages of ONE bill; a request with none reads
+     as no bill at all, and the form keeps what the request said. */
+  let bills: any[];
+  if (typeof body.fromRequest === 'string' && body.fromRequest.trim()) {
+    const got = await requestBill(c, body.fromRequest.trim());
+    if ('resp' in got) return got.resp;
+    if (got.files.length === 0) return c.json({ bills: [] });
+    bills = [{ files: got.files }];
+  } else {
+    bills = Array.isArray(body.bills) ? body.bills : [];
+  }
   if (bills.length === 0) return c.json({ error: 'no_bills', message: 'Send at least one bill.' }, 400);
   if (bills.length > MAX_BILLS_PER_CALL) {
     return c.json({ error: 'too_many_bills', message: `At most ${MAX_BILLS_PER_CALL} bills per batch — split the pile.` }, 400);
@@ -125,3 +138,28 @@ export const extractBillsHandler = async (c: any) => {
   });
   return c.json({ bills: out });
 };
+
+/** A payment request's files, read from the file store as one bill's pages —
+    the same shape a scanned bill arrives in. The request must be this
+    company's; the extract's own checks (types, sizes, page count) still apply. */
+async function requestBill(c: any, requestId: string): Promise<{ files: Array<{ name: string; mime: string; dataBase64: string }> } | { resp: Response }> {
+  const sb = c.get('supabase');
+  const { data: req, error } = await scopeToCompany(sb.from('acc_payment_requests').select('id').eq('id', requestId), c).maybeSingle();
+  if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
+  if (!req) return { resp: c.json({ error: 'request_not_found', message: 'That payment request is not in the company you are working in.' }, 404) };
+  const { data: rows, error: fErr } = await scopeToCompany(sb.from('acc_payment_request_files')
+    .select('file_key, file_name, mime, sort_no').eq('request_id', requestId), c).order('sort_no');
+  if (fErr) return { resp: c.json({ error: 'load_failed', reason: fErr.message }, 500) };
+  const list = (rows ?? []) as Array<{ file_key: string; file_name: string; mime: string }>;
+  if (list.length === 0) return { files: [] };
+  const bucket = (c.env as { SLIPS?: { get: (k: string) => Promise<any> } }).SLIPS;
+  if (!bucket) return { resp: c.json({ error: 'file_store_missing', message: 'The file store is not configured here — the bill cannot be read.' }, 503) };
+  const files: Array<{ name: string; mime: string; dataBase64: string }> = [];
+  for (const f of list) {
+    const obj = await bucket.get(String(f.file_key));
+    if (!obj) continue;
+    const bytes: ArrayBuffer = typeof obj.arrayBuffer === 'function' ? await obj.arrayBuffer() : await new Response(obj.body).arrayBuffer();
+    files.push({ name: String(f.file_name), mime: String(f.mime), dataBase64: toBase64(bytes) });
+  }
+  return { files };
+}

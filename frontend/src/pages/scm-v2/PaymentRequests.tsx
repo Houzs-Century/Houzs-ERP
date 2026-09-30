@@ -8,10 +8,12 @@
 //     watches it move: Submitted → Finance processing → Paid (the voucher
 //     approved) → Bank confirmed (its bank line matched). A returned request
 //     says why; they fix it and send it again.
-//   • Finance (scm.payment_voucher.create) sees every request, makes the
-//     voucher that answers one (PV New, ?fromRequest=, which carries the bill
-//     across) or returns it with the why.
-// The stage is the server's reading of the voucher, never a field typed here.
+//   • Finance (scm.payment_voucher.create) sees every request and answers one
+//     with a payment voucher (PV New, ?fromRequest=) — money out now — or with
+//     an AP invoice (AP Invoices, ?fromRequest=) — the bill booked first, paid
+//     later by an AP Payment (owner 2026-09-30, 6.1). Either carries the bill
+//     across and reads it on opening (6.2). Or Finance returns it with the why.
+// The stage is the server's reading of that document, never a field typed here.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
@@ -19,7 +21,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
-  STAGE, awaitsFinance, fetchPaymentRequestFileBlobUrl, useCreatePaymentRequest, useDeletePaymentRequestFile,
+  STAGE, answerText, awaitsFinance, fetchPaymentRequestFileBlobUrl, financeWorking, requestPaid, useCreatePaymentRequest, useDeletePaymentRequestFile,
   usePaymentRequest, usePaymentRequestFiles, usePaymentRequests, useReturnPaymentRequest, useUpdatePaymentRequest,
   useUploadPaymentRequestFile, useWithdrawPaymentRequest,
   type PaymentRequest, type PaymentRequestInput,
@@ -46,7 +48,7 @@ const linkBtn: React.CSSProperties = { background: 'none', border: 'none', paddi
 
 const StageChip = ({ r }: { r: PaymentRequest }) => (
   <span style={{ fontSize: 'var(--fs-11)', fontWeight: 600, color: STAGE[r.stage].tone, whiteSpace: 'nowrap' }}>
-    {STAGE[r.stage].label}{r.voucher?.pvNumber ? <span style={{ ...soft, fontWeight: 400 }}> · {r.voucher.pvNumber}</span> : null}
+    {STAGE[r.stage].label}{answerText(r) ? <span style={{ ...soft, fontWeight: 400 }}> · {answerText(r)}</span> : null}
   </span>
 );
 
@@ -57,8 +59,8 @@ const FILTERS: Array<[StageFilter, string]> = [
 const inFilter = (r: PaymentRequest, f: StageFilter): boolean => {
   if (f === 'all') return true;
   if (f === 'waiting') return awaitsFinance(r);
-  if (f === 'processing') return r.stage === 'PROCESSING';
-  if (f === 'paid') return r.stage === 'PAID' || r.stage === 'BANK_CONFIRMED';
+  if (f === 'processing') return financeWorking(r);
+  if (f === 'paid') return requestPaid(r);
   return r.stage === 'RETURNED' || r.stage === 'WITHDRAWN';
 };
 
@@ -175,14 +177,24 @@ export const PaymentRequests = () => {
               {requesterMayChange(detail) && (
                 <Button variant="ghost" size="sm" onClick={() => void onWithdraw(detail)} disabled={withdraw.isPending}>Withdraw</Button>
               )}
+              {/* Two answers (owner 2026-09-30, 6.1): pay now with a voucher, or
+                  book the supplier's bill first as an AP invoice and pay it later. */}
               {finance && awaitsFinance(detail) && (
-                <Button variant="primary" size="sm" onClick={() => navigate(`/scm/payment-vouchers/new?fromRequest=${encodeURIComponent(detail.id)}`)}>Make voucher</Button>
+                <Button variant="primary" size="sm" title="Pay now — a payment voucher, the bill attached"
+                  onClick={() => navigate(`/scm/payment-vouchers/new?fromRequest=${encodeURIComponent(detail.id)}`)}>Make voucher</Button>
+              )}
+              {finance && awaitsFinance(detail) && (
+                <Button variant="secondary" size="sm" title="Book the supplier's bill first — an AP invoice, paid later by an AP Payment"
+                  onClick={() => navigate(`/scm/ap-invoices?fromRequest=${encodeURIComponent(detail.id)}`)}>Make AP invoice</Button>
               )}
               {finance && awaitsFinance(detail) && (
                 <Button variant="ghost" size="sm" onClick={() => void onReturn(detail)} disabled={sendBack.isPending}>Return…</Button>
               )}
               {finance && detail.voucher && (
                 <Link to={`/scm/payment-vouchers/${detail.voucher.id}`} style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)' }}>Open {detail.voucher.pvNumber ?? 'voucher'} →</Link>
+              )}
+              {finance && detail.invoice && (
+                <Link to={`/scm/ap-invoices?open=${encodeURIComponent(detail.invoice.id)}`} style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)' }}>Open {detail.invoice.invoiceNumber ?? 'AP invoice'} →</Link>
               )}
             </>
           )}
@@ -200,9 +212,11 @@ export const PaymentRequests = () => {
             <Meta label="Event" value={eventCellText(labelsQ.data, detail.project_id)} />
             <Meta label="For" value={detail.purpose} />
             <Meta label="Payee's bank" value={[detail.bank_name, detail.bank_account_no, detail.bank_account_name].filter(Boolean).join(' · ') || '—'} />
-            <Meta label="Voucher" value={detail.voucher
+            <Meta label="Answered by" value={detail.voucher
               ? <>{detail.voucher.pvNumber ?? 'Draft voucher'}{detail.voucher.postedAt ? <span style={soft}> · paid {fmtDateOrDash(detail.voucher.approvedAt ?? detail.voucher.postedAt)}</span> : null}{detail.voucher.bankConfirmed ? <span style={soft}> · bank ✓</span> : null}</>
-              : '—'} />
+              : detail.invoice
+                ? <>{answerText(detail)}{detail.invoice.paidBy.length > 0 ? <span style={soft}> · by {detail.invoice.paidBy.join(', ')}</span> : null}{detail.invoice.bankConfirmed ? <span style={soft}> · bank ✓</span> : null}</>
+                : '—'} />
           </div>
           <RequestFilesCard request={detail} canWrite={finance || requesterMayChange(detail)} />
         </Modal>
@@ -233,7 +247,7 @@ function RequestFilesCard({ request, canWrite }: { request: PaymentRequest; canW
       canWrite={canWrite}
       locked={request.status === 'VOUCHERED'}
       closed={request.status === 'WITHDRAWN'}
-      lockedNote=" · kept with the voucher Finance made"
+      lockedNote=" · kept with the voucher or AP invoice Finance made"
       emptyNote="No bill attached yet — attach the invoice or quotation Finance should pay."
       removeBody="The file leaves this request."
       attachAriaLabel="Attach the bill"

@@ -14,12 +14,13 @@
    Same fake-PostgREST harness as tests/eventPerLine.test.ts. */
 
 import { Hono } from 'hono';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
 import { requireScmAccess } from '../src/middleware/auth';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import { paymentVouchers } from '../src/scm/routes/payment-vouchers';
 import { paymentRequests } from '../src/scm/routes/payment-requests';
+import { apInvoices } from '../src/scm/routes/ap-invoices';
 import { requestStage } from '../src/scm/lib/payment-request';
 
 const CO = 1;
@@ -75,7 +76,10 @@ function world() {
       acct('900-A001', 'RENTAL', 'EXPENSE', { parent_code: '900-0000' }),
       acct('310-0010', 'MAYBANK', 'ASSET', { acc_money: true }),
     ],
-    suppliers: [],
+    suppliers: [{ id: 'sup-mle', company_id: CO, code: '400-M001', name: 'MLE EVENTS SDN BHD', status: 'ACTIVE' }],
+    ap_invoices: [],
+    ap_invoice_lines: [],
+    acc_ap_invoice_files: [],
     companies: [{ id: CO, code: 'HC' }],
     acc_account_roles: [],
     acc_payment_requests: [],
@@ -110,8 +114,9 @@ function as(w: ReturnType<typeof world>, who: { id: number; name: string; perms:
   });
   app.route('/payment-requests', paymentRequests);
   app.route('/payment-vouchers', paymentVouchers);
+  app.route('/ap-invoices', apInvoices);
   return async (path: string, method = 'GET', body?: unknown) => {
-    const res = await app.request(path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }, { DB: fakeDb, SLIPS: w.r2 });
+    const res = await app.request(path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }, { DB: fakeDb, SLIPS: w.r2, ANTHROPIC_API_KEY: 'k' });
     return { status: res.status, body: await res.json() as Row };
   };
 }
@@ -272,6 +277,139 @@ describe('the voucher that answers a request', () => {
   });
 });
 
+/* ── The AP invoice that answers a request (owner 2026-09-30, 6.1–6.4 → 做) ──
+   A supplier's bill is booked first and paid later by an AP Payment; the
+   request points at ONE live document of either kind. */
+describe('the AP invoice that answers a request', () => {
+  const invoiceFor = (id: string) => ({
+    supplierId: 'sup-mle', supplierInvoiceRef: 'MLE-0925', invoiceDate: '2026-09-10', paymentRequestId: id,
+    lines: [{ debitAccountCode: '900-A001', description: 'Booth F1 rental', amountSen: 850_000, projectId: 348 }],
+  });
+  const voucherFor = (id: string) => ({
+    payeeName: 'MLE EVENTS SDN BHD', creditAccountCode: '310-0010', voucherDate: '2026-09-10', purpose: 'OTHER', paymentRequestId: id,
+    lines: [{ debitAccountCode: '900-A001', description: 'Booth F1 rental', amountSen: 850_000, projectId: 348 }],
+  });
+
+  test('claims the request and carries its bill onto the invoice; a second answer of either kind is refused', async () => {
+    const w = world();
+    const { james, id } = await raised(w);
+    expect((await james(`/payment-requests/${id}/files`, 'POST', { fileName: 'mle-invoice.pdf', mime: 'application/pdf', dataBase64: btoa('%PDF-1.4 bill') })).status).toBe(201);
+    const fin = as(w, FINANCE);
+    const inv = await fin('/ap-invoices', 'POST', invoiceFor(id));
+    expect(inv.status).toBe(201);
+    expect(inv.body.requestFilesCopied).toBe(1);
+    const invId = String(inv.body.invoice.id);
+    expect(w.sb.tables.acc_payment_requests[0]).toMatchObject({ status: 'VOUCHERED', ap_invoice_id: invId, pv_id: null });
+    expect(w.sb.tables.acc_ap_invoice_files).toHaveLength(1);
+    expect(String(w.sb.tables.acc_ap_invoice_files[0]!.file_key)).toMatch(new RegExp(`^ap-invoice-files/1/${invId}/`));
+    expect((await james(`/payment-requests/${id}`)).body.request).toMatchObject({
+      stage: 'PROCESSING', voucher: null, invoice: { id: invId, status: 'DRAFT', totalSen: 850_000, paidSen: 0 },
+    });
+
+    const again = await fin('/ap-invoices', 'POST', invoiceFor(id));
+    expect(again.status).toBe(409);
+    expect(again.body.error).toBe('request_has_voucher');
+    expect(String(again.body.message)).toContain('AP invoice');
+    const pv = await fin('/payment-vouchers', 'POST', voucherFor(id));
+    expect(pv.status).toBe(409);
+    expect(w.sb.tables.ap_invoices).toHaveLength(1);
+    expect(w.sb.tables.payment_vouchers).toHaveLength(0);
+  });
+
+  test('Booked when posted, Partly paid, Paid, then Bank confirmed once every AP Payment that paid it is on a statement', async () => {
+    const w = world();
+    const { james, id } = await raised(w);
+    const fin = as(w, FINANCE);
+    const invId = String((await fin('/ap-invoices', 'POST', invoiceFor(id))).body.invoice.id);
+    const bill = w.sb.tables.ap_invoices[0]!;
+    const stage = async () => (await james(`/payment-requests/${id}`)).body.request;
+
+    bill.status = 'POSTED';
+    expect((await stage()).stage).toBe('BOOKED');
+
+    /* An AP Payment paid part of it: posted, with an allocation on the bill. */
+    w.sb.tables.payment_vouchers.push({ id: 'pv-a', company_id: CO, pv_number: 'HC-PV-2609-010', status: 'POSTED' });
+    w.sb.tables.pv_allocations.push({ id: 'al-a', company_id: CO, pv_id: 'pv-a', ap_invoice_id: invId, amount_sen: 300_000, applied_sen: 300_000 });
+    Object.assign(bill, { status: 'PARTIALLY_PAID', paid_sen: 300_000 });
+    expect(await stage()).toMatchObject({ stage: 'PARTLY_PAID', invoice: { paidSen: 300_000, totalSen: 850_000, paidBy: ['HC-PV-2609-010'] } });
+
+    /* A second one paid the rest — and a DRAFT payment is nobody's payer yet. */
+    w.sb.tables.payment_vouchers.push({ id: 'pv-b', company_id: CO, pv_number: 'HC-PV-2609-011', status: 'POSTED' });
+    w.sb.tables.payment_vouchers.push({ id: 'pv-c', company_id: CO, pv_number: null, status: 'DRAFT' });
+    w.sb.tables.pv_allocations.push({ id: 'al-b', company_id: CO, pv_id: 'pv-b', ap_invoice_id: invId, amount_sen: 550_000, applied_sen: 550_000 });
+    w.sb.tables.pv_allocations.push({ id: 'al-c', company_id: CO, pv_id: 'pv-c', ap_invoice_id: invId, amount_sen: 1, applied_sen: 0 });
+    Object.assign(bill, { status: 'PAID', paid_sen: 850_000 });
+    expect(await stage()).toMatchObject({ stage: 'PAID', invoice: { bankConfirmed: false, paidBy: ['HC-PV-2609-010', 'HC-PV-2609-011'] } });
+
+    /* One payment on the bank is not enough; both are. */
+    const onBank = (pvNo: string, lineId: string) => {
+      w.sb.tables.journal_entries.push({ id: `je-${lineId}`, company_id: CO, je_no: `JE-${pvNo}`, source_type: 'PV', source_doc_no: pvNo, reversed: false, posted: true });
+      w.sb.tables.acc_bank_statement_lines.push({ id: lineId, company_id: CO, state: 'POSTED' });
+      w.sb.tables.acc_bank_statement_matches.push({ company_id: CO, je_no: `JE-${pvNo}`, bank_line_id: lineId, amount_sen: 1 });
+    };
+    onBank('HC-PV-2609-010', 'bl-a');
+    expect((await stage()).stage).toBe('PAID');
+    onBank('HC-PV-2609-011', 'bl-b');
+    expect(await stage()).toMatchObject({ stage: 'BANK_CONFIRMED', invoice: { bankConfirmed: true } });
+  });
+
+  test('a live AP invoice stops a return; once cancelled, Finance may answer with a voucher instead', async () => {
+    const w = world();
+    const { james, id } = await raised(w);
+    const fin = as(w, FINANCE);
+    await fin('/ap-invoices', 'POST', invoiceFor(id));
+    const blocked = await fin(`/payment-requests/${id}/return`, 'POST', { note: 'wrong supplier' });
+    expect(blocked.status).toBe(409);
+    expect(String(blocked.body.message)).toContain('cancel that AP invoice first');
+    w.sb.tables.ap_invoices[0]!.status = 'CANCELLED';
+    expect((await james(`/payment-requests/${id}`)).body.request.stage).toBe('VOUCHER_CANCELLED');
+    const pv = await fin('/payment-vouchers', 'POST', voucherFor(id));
+    expect(pv.status).toBe(201);
+    /* The request now points at the voucher alone. */
+    expect(w.sb.tables.acc_payment_requests[0]).toMatchObject({ status: 'VOUCHERED', pv_id: pv.body.id, ap_invoice_id: null });
+    expect((await james(`/payment-requests/${id}`)).body.request).toMatchObject({ stage: 'PROCESSING', invoice: null, voucher: { id: pv.body.id } });
+  });
+});
+
+/* ── The bill read when Finance opens the answer (6.2) ─────────────────────── */
+describe('POST /payment-vouchers/extract { fromRequest } reads the request\'s own bill', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  test('its files are one bill\'s pages, read from the file store', async () => {
+    const w = world();
+    const { james, id } = await raised(w);
+    await james(`/payment-requests/${id}/files`, 'POST', { fileName: 'p1.jpg', mime: 'image/jpeg', dataBase64: btoa('page one') });
+    await james(`/payment-requests/${id}/files`, 'POST', { fileName: 'p2.jpg', mime: 'image/jpeg', dataBase64: btoa('page two') });
+    const sent: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init?: { body?: unknown }) => {
+      sent.push(String(init?.body ?? ''));
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({ vendorName: 'MLE EVENTS SDN BHD', documentKind: 'invoice', invoiceNumber: 'MLE-0925', invoiceDate: '2026-09-01', currency: 'MYR', totalRm: 8500, lines: [{ description: 'Booth F1 rental', amountRm: 8500 }], event: null }) }] }), { status: 200 });
+    }));
+    const res = await as(w, FINANCE)('/payment-vouchers/extract', 'POST', { fromRequest: id });
+    expect(res.status).toBe(200);
+    expect(res.body.bills).toHaveLength(1);
+    expect(res.body.bills[0]).toMatchObject({ ok: true, extraction: { invoiceNumber: 'MLE-0925', totalSen: 850_000 }, supplierMatch: { id: 'sup-mle' } });
+    /* One call, both pages in it. */
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain(btoa('page one'));
+    expect(sent[0]).toContain(btoa('page two'));
+  });
+
+  test('a request with no bill reads as none, without calling the reader; another company\'s is not found; a requester cannot ask', async () => {
+    const w = world();
+    const { id } = await raised(w);
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const fin = as(w, FINANCE);
+    const none = await fin('/payment-vouchers/extract', 'POST', { fromRequest: id });
+    expect(none.status).toBe(200);
+    expect(none.body.bills).toEqual([]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect((await fin('/payment-vouchers/extract', 'POST', { fromRequest: 'no-such-request' })).status).toBe(404);
+    expect((await as(w, JAMES)('/payment-vouchers/extract', 'POST', { fromRequest: id })).status).toBe(403);
+  });
+});
+
 describe('the files are the requester\'s own', () => {
   test('another requester cannot add to it or read it', async () => {
     const w = world();
@@ -314,5 +452,13 @@ describe('requestStage — the pure reading', () => {
     expect(requestStage('VOUCHERED', pv('CANCELLED'), false)).toBe('VOUCHER_CANCELLED');
     expect(requestStage('REJECTED', null, false)).toBe('RETURNED');
     expect(requestStage('WITHDRAWN', pv('POSTED'), true)).toBe('WITHDRAWN');
+    const inv = (status: string) => ({ id: 'i', invoice_number: 'API-1', status, total_sen: 100, paid_sen: 0 });
+    expect(requestStage('VOUCHERED', null, false, inv('DRAFT'))).toBe('PROCESSING');
+    expect(requestStage('VOUCHERED', null, false, inv('POSTED'))).toBe('BOOKED');
+    expect(requestStage('VOUCHERED', null, false, inv('PARTIALLY_PAID'))).toBe('PARTLY_PAID');
+    expect(requestStage('VOUCHERED', null, false, inv('PAID'))).toBe('PAID');
+    expect(requestStage('VOUCHERED', null, true, inv('PAID'))).toBe('BANK_CONFIRMED');
+    expect(requestStage('VOUCHERED', null, false, inv('CANCELLED'))).toBe('VOUCHER_CANCELLED');
+    expect(requestStage('REJECTED', null, false, inv('POSTED'))).toBe('RETURNED');
   });
 });

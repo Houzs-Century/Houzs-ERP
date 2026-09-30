@@ -14,6 +14,8 @@ import { describe, expect, test, vi } from 'vitest';
 const mutateAsync = vi.fn(async (_body: Record<string, unknown>) => ({ id: 'pv-1', pvNumber: 'PV-2609-001' }));
 
 const extractAsync = vi.fn(async () => ({ bills: [] }));
+/* The bill a payment request carries, read on opening (6.2) — none unless a test says. */
+const extractRequestAsync = vi.fn(async (_id: string): Promise<{ bills: unknown[] }> => ({ bills: [] }));
 const uploadPvAsync = vi.fn(async (_v: { pvId: string; file: { name: string } }) => ({ ok: true, file: { id: 'f1' } }));
 /* Set by the copy-as-new test; undefined everywhere else (no ?copyFrom → the
    detail hook is disabled and the page never sees it). */
@@ -30,6 +32,7 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   usePaymentVoucherDetail: (id: string | null) => ({ data: id ? copySourceDetail : undefined, isLoading: false }),
   useRefundSource: (_type: string, docNo: string) => ({ data: docNo && refundSource ? { source: refundSource } : undefined, isLoading: false, isError: false, error: null }),
   useExtractBills: () => ({ mutateAsync: extractAsync, isPending: false }),
+  useExtractRequestBill: () => ({ mutateAsync: extractRequestAsync, isPending: false }),
   useUploadPvFile: () => ({ mutateAsync: uploadPvAsync, isPending: false }),
   fileToBase64: async (f: File) => `b64:${f.name}`,
   useSupplierAdvances: () => ({ data: { advances: [
@@ -559,6 +562,31 @@ describe('answering a payment request (?fromRequest=, 申请付款)', () => {
     expect(payload.paymentRequestId).toBe('prq-1');
     expect(payload.notes).toBe('Payment request HC-PRQ-2609-004 — Booth F1 rental · pay to Maybank 5123 MLE EVENTS SDN BHD');
     expect(payload.lines).toEqual([expect.objectContaining({ description: 'Booth F1 rental', debitAccountCode: '900-A002', amountSen: 850000, projectId: 348 })]);
+    requestDetail = undefined;
+  });
+
+  /* 6.2 (owner 2026-09-30): the requester's bill is READ on opening — its lines
+     replace the one asked for, on the request's event, under the account this
+     vendor was last paid from; its number and date join the notes; a total that
+     differs from the amount asked is said. */
+  test('its bill is read on opening: the lines, the bill in the notes, and a total that differs is said', async () => {
+    mutateAsync.mockClear(); extractRequestAsync.mockClear();
+    requestDetail = { id: 'prq-1', request_no: 'HC-PRQ-2609-004', requested_by_name: 'James Seow', payee_name: 'MLE EVENTS SDN BHD', amount_sen: 850000, purpose: 'Booth F1 rental', project_id: 348, bank_name: null, bank_account_no: null, bank_account_name: null, status: 'SUBMITTED', stage: 'SUBMITTED', voucher: null };
+    extractRequestAsync.mockResolvedValueOnce({ bills: [{
+      index: 0, ok: true,
+      extraction: { vendorName: 'MLE EVENTS SDN BHD', vendorRegNo: null, documentKind: 'invoice', invoiceNumber: 'MLE-0925', invoiceDate: '2026-09-01', dueDate: null, currency: 'MYR', totalSen: 800000, sstSen: null, lines: [{ description: 'Booth F1 rental 50%', amountSen: 800000 }] },
+      supplierMatch: null, memory: { payeeName: 'MLE EVENTS', debitAccountCode: '900-A002', purpose: 'OTHER', timesSeen: 2 }, eventSuggestions: [],
+    }] });
+    draw('/scm/payment-vouchers/new?fromRequest=prq-1');
+    expect(await screen.findByText(/The bill reads RM 8,000\.00 but James Seow asked for RM 8,500\.00 — check which is right\./)).toBeTruthy();
+    expect(extractRequestAsync).toHaveBeenCalledWith('prq-1');
+    expect((screen.getByLabelText(/^Payee/) as HTMLInputElement).value).toBe('MLE EVENTS SDN BHD');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3', cancelable: true, bubbles: true }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const payload = mutateAsync.mock.calls[0]![0];
+    expect(payload.paymentRequestId).toBe('prq-1');
+    expect(payload.notes).toBe('Payment request HC-PRQ-2609-004 — Booth F1 rental · BILL MLE-0925 · DATED 2026-09-01');
+    expect(payload.lines).toEqual([expect.objectContaining({ description: 'BOOTH F1 RENTAL 50%', debitAccountCode: '900-A002', amountSen: 800000, projectId: 348 })]);
     requestDetail = undefined;
   });
 });
