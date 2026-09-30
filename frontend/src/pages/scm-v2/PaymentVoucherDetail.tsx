@@ -50,6 +50,9 @@ import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
+import { EventSelect } from '../../vendor/scm/components/EventSelect';
+import { useEventLabels } from '../../vendor/scm/lib/event-queries';
+import { PvLineEventCell } from './PvLineEventCell';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -90,6 +93,8 @@ type EditLine = {
   description:      string;
   debitAccountCode: string;
   amountSen:      number;
+  /** The event this line's money is for (owner 2026-09-30, 5a) — null = none. */
+  projectId:        number | null;
 };
 
 const newLine = (): EditLine => ({
@@ -97,6 +102,7 @@ const newLine = (): EditLine => ({
   description:      '',
   debitAccountCode: '',
   amountSen:      0,
+  projectId:        null,
 });
 
 function InfoCell({ label, value }: { label: string; value: string | null | undefined }) {
@@ -229,6 +235,10 @@ export const PaymentVoucherDetail = () => {
   /* A Customer Refund (§14) has ONE line the system writes; an edit moves the
      amount and the server re-composes it (refundAmountSen), never the lines. */
   const isRefundPv = isRefundPurpose(pv?.purpose);
+  /* 5a: an event rides a line that IS the money spent — not a supplier
+     payment's AP line (its event is on the AP invoice it pays) nor a refund's. */
+  const eventsAllowed = !!pv && !isRefundPv && pvTypeOf(pv.purpose) !== 'SUPPLIER_PAYMENT';
+  const eventLabelsQ = useEventLabels(lines.map((l) => (l.project_id == null ? null : Number(l.project_id))));
   const [editRefundAmountSen, setEditRefundAmountSen] = useState<number>(0);
   // Migration 0202 — edit allocations: applied amount per invoice id (PI or AP invoice), in sen.
   const [allocAmounts, setAllocAmounts]           = useState<Record<string, number>>({});
@@ -274,6 +284,7 @@ export const PaymentVoucherDetail = () => {
             description:      l.description ?? '',
             debitAccountCode: l.debit_account_code ?? '',
             amountSen:      Number(l.amount_sen ?? 0),
+            projectId:        l.project_id == null ? null : Number(l.project_id),
           }))
         : [newLine()],
     );
@@ -283,7 +294,10 @@ export const PaymentVoucherDetail = () => {
   const setLine  = (rid: string, patch: Partial<EditLine>) =>
     setEditLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
   const dropLine = (rid: string) => setEditLines((prev) => (prev.length <= 1 ? prev : prev.filter((l) => l.rid !== rid)));
-  const addLine  = () => setEditLines((prev) => [...prev, newLine()]);
+  /* The lines' shared event, when they all name one (5a's header default on
+     this page): the "all lines" picker shows it, and a line added takes it. */
+  const commonEditEvent = editLines.length > 0 && editLines.every((l) => l.projectId === editLines[0]!.projectId) ? editLines[0]!.projectId : null;
+  const addLine  = () => setEditLines((prev) => [...prev, { ...newLine(), projectId: commonEditEvent }]);
 
   const editLinesTotalSen = useMemo(() => editLines.reduce((s, l) => s + l.amountSen, 0), [editLines]);
   const viewTotalSen = Number(pv?.total_sen ?? 0);
@@ -457,6 +471,7 @@ export const PaymentVoucherDetail = () => {
               description:      l.description || undefined,
               debitAccountCode: l.debitAccountCode,
               amountSen:      l.amountSen,
+              ...(l.projectId != null ? { projectId: l.projectId } : {}),
             })) }),
         // Always send allocations for a SUPPLIER_PAYMENT edit (empty clears
         // them); FREIGHT/OTHER omit the key so the server leaves them untouched.
@@ -748,6 +763,7 @@ export const PaymentVoucherDetail = () => {
                     <th style={{ padding: '6px 8px' }}>#</th>
                     <th style={{ padding: '6px 8px' }}>Account (Debit)</th>
                     <th style={{ padding: '6px 8px' }}>Description</th>
+                    {eventsAllowed && <th style={{ padding: '6px 8px' }}>Event</th>}
                     <th style={{ padding: '6px 8px', textAlign: 'right' }}>Amount</th>
                   </tr>
                 </thead>
@@ -760,6 +776,12 @@ export const PaymentVoucherDetail = () => {
                           journal (owner 2026-09-08: 看不到是谁 → 可以). */}
                       <td style={{ padding: '6px 8px' }}>{accountLabel(l.debit_account_code)}{isRefundPv && pv.payee_name ? ` · ${pv.payee_name}` : ''}</td>
                       <td style={{ padding: '6px 8px' }}>{l.description || '—'}</td>
+                      {eventsAllowed && (
+                        <td style={{ padding: '6px 8px' }}>
+                          <PvLineEventCell lineId={String(l.id)} projectId={l.project_id == null ? null : Number(l.project_id)}
+                            labels={eventLabelsQ.data} around={pv.voucher_date ?? null} canChange={canWrite && pv.status !== 'CANCELLED'} />
+                        </td>
+                      )}
                       <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(Number(l.amount_sen ?? 0), currency)}</td>
                     </tr>
                   ))}
@@ -768,6 +790,12 @@ export const PaymentVoucherDetail = () => {
             )
           ) : (
             <>
+              {/* 5a's header default: one event for every line; a line can still name its own. */}
+              <label className={styles.field} style={{ maxWidth: 640 }}>
+                <span className={styles.fieldLabel}>Event (all lines)</span>
+                <EventSelect value={commonEditEvent} around={voucherDate || null} className={styles.fieldInput} aria-label="Event for all lines"
+                  onChange={(v) => setEditLines((prev) => prev.map((x) => ({ ...x, projectId: v })))} />
+              </label>
               {editLines.map((l, idx) => (
                 <div key={l.rid} style={{
                   background: 'var(--c-paper)', border: '1px solid var(--line)',
@@ -804,6 +832,11 @@ export const PaymentVoucherDetail = () => {
                       <MoneyInput bare valueSen={l.amountSen}
                         onCommit={(sen) => setLine(l.rid, { amountSen: sen ?? 0 })}
                         inputClassName={styles.fieldInput} selectOnFocus />
+                    </label>
+                    <label className={styles.field}>
+                      <span className={styles.fieldLabel}>Event</span>
+                      <EventSelect value={l.projectId} around={voucherDate || null} className={styles.fieldInput} aria-label={`line ${idx + 1} event`}
+                        onChange={(v) => setLine(l.rid, { projectId: v })} />
                     </label>
                   </div>
                 </div>

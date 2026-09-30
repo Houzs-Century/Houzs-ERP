@@ -79,6 +79,19 @@ vi.mock('../../vendor/scm/lib/currencies-queries', async (importOriginal) => ({
   rateFor: () => 1,
 }));
 
+/* Events (owner 2026-09-30, 5a) — the picker's list and the labels, stubbed; the real eventLabel stays. */
+const EVENT_OPTIONS = [
+  { id: 336, code: 'E-336', name: 'Pulau Pinang [AKEMI] HOMELOVE @ SETIA SPICE', startDate: '2026-09-04', endDate: '2026-09-06', status: 'confirmed', archived: false, venue: null, brand: 'AKEMI', organizer: 'HOMELOVE', boothNo: null },
+  { id: 348, code: 'E-348', name: 'Pulau Pinang [AKEMI] MLE @ PWCC', startDate: '2026-09-25', endDate: '2026-09-27', status: 'confirmed', archived: false, venue: null, brand: 'AKEMI', organizer: 'MLE', boothNo: 'F1' },
+];
+const retagMutate = vi.fn();
+vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/event-queries')>()),
+  useEventOptions: () => ({ data: EVENT_OPTIONS, isLoading: false }),
+  useEventLabels: () => ({ data: new Map(EVENT_OPTIONS.map((e) => [e.id, e])) }),
+  useRetagPvLine: () => ({ mutate: retagMutate, isPending: false }),
+}));
+
 import { PaymentVoucherNew } from './PaymentVoucherNew';
 import { stashPvFiles, takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { todayMyt } from '../../vendor/scm/lib/dates';
@@ -454,6 +467,47 @@ describe('the plain Payment Voucher (/new)', () => {
     /* Picking writes the VALUE and restores the full label. */
     fireEvent.mouseDown(screen.getByText('320-1000 · Cash in hand'));
     expect(paidFrom.value).toBe('320-1000 · Cash in hand');
+  });
+});
+
+describe('the event each line is for (owner 2026-09-30, 5a — the header a default)', () => {
+  test('the header event sets every line and each new one; a line may name its own; the payload carries each', async () => {
+    mutateAsync.mockClear();
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: '/scm/payment-vouchers/new',
+        state: { billPrefill: {
+          extraction: {
+            vendorName: 'HOMELOVE EXPO', vendorRegNo: null, documentKind: 'invoice' as const,
+            invoiceNumber: 'HL-0904', invoiceDate: '2026-09-01', dueDate: null,
+            currency: 'MYR', totalSen: 10500, sstSen: null,
+            lines: [{ description: 'Booth rental', amountSen: 10000 }, { description: 'Admin fee', amountSen: 500 }],
+          },
+          memory: { payeeName: 'HOMELOVE EXPO', debitAccountCode: '900-A002', purpose: 'OTHER', timesSeen: 2 },
+        } },
+      }]}><PaymentVoucherNew /></MemoryRouter>,
+    );
+    fireEvent.focus(screen.getByLabelText('Event for all lines'));
+    fireEvent.mouseDown(screen.getByText(/HOMELOVE @ SETIA SPICE/));
+    expect((screen.getByLabelText('line 1 event') as HTMLInputElement).value).toMatch(/HOMELOVE @ SETIA SPICE/);
+    expect((screen.getByLabelText('line 2 event') as HTMLInputElement).value).toMatch(/HOMELOVE @ SETIA SPICE/);
+
+    /* Line 2 names its own event. */
+    fireEvent.focus(screen.getByLabelText('line 2 event'));
+    fireEvent.mouseDown(screen.getByText(/MLE @ PWCC/));
+    expect((screen.getByLabelText('line 2 event') as HTMLInputElement).value).toMatch(/MLE @ PWCC/);
+
+    /* A line added now takes the header's event. */
+    fireEvent.keyDown(screen.getByLabelText('line 2 amount'), { key: 'Insert' });
+    expect((screen.getByLabelText('line 3 event') as HTMLInputElement).value).toMatch(/HOMELOVE @ SETIA SPICE/);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3', cancelable: true, bubbles: true }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    /* The empty third line is not sent; each sent line carries its own event. */
+    expect(mutateAsync.mock.calls[0]![0].lines).toEqual([
+      expect.objectContaining({ description: 'BOOTH RENTAL', amountSen: 10000, projectId: 336 }),
+      expect.objectContaining({ description: 'ADMIN FEE', amountSen: 500, projectId: 348 }),
+    ]);
   });
 });
 

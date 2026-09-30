@@ -82,6 +82,19 @@ const confirmFn = vi.fn(async (_a: unknown) => true);
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmFn }));
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => vi.fn() }));
 
+/* Events (owner 2026-09-30, 5a) — the picker's list and the labels, stubbed; the real eventLabel stays. */
+const EVENT_OPTIONS = [
+  { id: 336, code: 'E-336', name: 'Pulau Pinang [AKEMI] HOMELOVE @ SETIA SPICE', startDate: '2026-09-04', endDate: '2026-09-06', status: 'confirmed', archived: false, venue: null, brand: 'AKEMI', organizer: 'HOMELOVE', boothNo: null },
+  { id: 348, code: 'E-348', name: 'Pulau Pinang [AKEMI] MLE @ PWCC', startDate: '2026-09-25', endDate: '2026-09-27', status: 'confirmed', archived: false, venue: null, brand: 'AKEMI', organizer: 'MLE', boothNo: 'F1' },
+];
+const retagMutate = vi.fn();
+vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/event-queries')>()),
+  useEventOptions: () => ({ data: EVENT_OPTIONS, isLoading: false }),
+  useEventLabels: () => ({ data: new Map(EVENT_OPTIONS.map((e) => [e.id, e])) }),
+  useRetagPvLine: () => ({ mutate: retagMutate, isPending: false }),
+}));
+
 import { ApInvoices } from './ApInvoices';
 
 const draw = () => render(<MemoryRouter><ApInvoices /></MemoryRouter>);
@@ -165,7 +178,7 @@ describe('raising an AP invoice', () => {
     fireEvent.click(screen.getByText('New AP invoice'));
     const d = dialog();
     const amountHead = within(d).getByText('Amount (RM)');
-    expect([...amountHead.parentElement!.children].map((c) => c.textContent)).toEqual(['Account', 'Description', 'Amount (RM)', '']);
+    expect([...amountHead.parentElement!.children].map((c) => c.textContent)).toEqual(['Account', 'Description', 'Amount (RM)', 'Event', '']);
 
     fireEvent.keyDown(within(d).getByLabelText('line 1 amount'), { key: 'Insert' });
     expect(within(d).getByLabelText('line 2 amount')).toBeTruthy();
@@ -333,5 +346,26 @@ describe('editing and copying a bill (round 3)', () => {
     expect(body.supplierInvoiceRef).toBeUndefined();
     expect(body.notes).toBe('Rent September');
     expect(body.lines).toHaveLength(2);
+  });
+});
+
+describe('the event each line is for (owner 2026-09-30, 5a — the header a default)', () => {
+  test('the header event sets every line and rides the create payload; the event column sits after the amount', async () => {
+    createAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('New AP invoice'));
+    const d = dialog();
+    fireEvent.focus(within(d).getByLabelText('AP invoice supplier'));
+    fireEvent.mouseDown(screen.getByText('405-H001 · HOUZS VENTURE HOLDING SDN BHD'));
+    const accountBox = within(d).getAllByRole('combobox').find((el) => (el as HTMLInputElement).placeholder.includes('account this line'))!;
+    fireEvent.focus(accountBox);
+    fireEvent.mouseDown(screen.getByText('900-A001 · RENTAL'));
+    setAmount('line 1 amount', '800');
+    fireEvent.focus(within(d).getByLabelText('Event for all lines'));
+    fireEvent.mouseDown(screen.getByText(/MLE @ PWCC/));
+    expect((within(d).getByLabelText('line 1 event') as HTMLInputElement).value).toBe('Pulau Pinang [AKEMI] MLE @ PWCC · 09/25 - 09/27 · booth F1');
+    fireEvent.click(within(d).getByText('Save as draft'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalled());
+    expect((createAsync.mock.calls[0]![0] as { lines: unknown }).lines).toEqual([{ debitAccountCode: '900-A001', amountSen: 80_000, projectId: 348 }]);
   });
 });

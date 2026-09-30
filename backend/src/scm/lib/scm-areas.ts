@@ -85,6 +85,7 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/ar-invoices/*", "scm.finance.accounting"],
   ["/credit-notes/*", "scm.finance.accounting"],
   ["/deposit-invoices/*", "scm.finance.accounting"],
+  ["/acc-events/*", "scm.finance.accounting"],
   ["/payment-audit-log/*", "scm.finance.accounting"],
   ["/mrp/*", "scm.procurement.mrp"],
   ["/mrp-lead-times/*", "scm.procurement.mrp"],

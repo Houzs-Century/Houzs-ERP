@@ -56,6 +56,8 @@ import { PageHeader } from '../../components/Layout';
 import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { DataTable, type Column } from '../../components/DataTable';
 import { ApInvoiceForm, emptyApForm, formFromExtraction, scanNoteFor, type ApFormMode, type ApFormSubmit, type ApFormValues } from './ApInvoiceForm';
+import { eventCellText } from '../../vendor/scm/components/EventSelect';
+import { useEventLabels } from '../../vendor/scm/lib/event-queries';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
@@ -94,7 +96,7 @@ const fromDetail = (d: Detail, copy: boolean): ApFormValues => ({
   invoiceDate: copy ? myt() : d.invoice.invoice_date,
   dueDate: copy ? '' : (d.invoice.due_date ?? ''),
   description: d.invoice.notes ?? '',
-  lines: d.lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', debitAccountCode: l.debit_account_code, amountSen: l.amount_sen })),
+  lines: d.lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', debitAccountCode: l.debit_account_code, amountSen: l.amount_sen, projectId: l.project_id ?? null })),
 });
 
 type FormState = {
@@ -117,6 +119,7 @@ export const ApInvoices = () => {
   const [detailId, setDetailId] = useState<string | null>(null);
   const detailQ = useApInvoiceDetail(detailId);
   const detail = detailQ.data;
+  const eventLabelsQ = useEventLabels((detail?.lines ?? []).map((l) => l.project_id ?? null));
 
   /* The supplier filter (owner: supplier 筛选) — the suppliers ON the list,
      never the whole registry, so every choice shows something. */
@@ -390,6 +393,7 @@ export const ApInvoices = () => {
                 <th style={{ ...th, width: 36 }}>#</th>
                 <th style={th}>Account</th>
                 <th style={th}>Description</th>
+                <th style={th}>Event</th>
                 <th style={{ ...th, textAlign: 'right' }}>Amount</th>
               </tr>
             </thead>
@@ -399,11 +403,12 @@ export const ApInvoices = () => {
                   <td style={{ ...td, ...mono, color: 'var(--fg-muted)' }}>{l.line_no}</td>
                   <td style={td}><span style={mono}>{l.debit_account_code}</span>{accountName(l.debit_account_code) ? <span style={soft}> · {accountName(l.debit_account_code)}</span> : null}</td>
                   <td style={td}>{l.description ?? '—'}</td>
+                  <td style={{ ...td, ...(l.project_id == null ? soft : {}) }}>{eventCellText(eventLabelsQ.data, l.project_id)}</td>
                   <td style={{ ...td, ...right }}>{fmtSen(l.amount_sen)}</td>
                 </tr>
               ))}
               <tr style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
-                <td colSpan={3} style={{ ...td, fontWeight: 600 }}>Total · paid {fmtSen(detail.invoice.paid_sen)}</td>
+                <td colSpan={4} style={{ ...td, fontWeight: 600 }}>Total · paid {fmtSen(detail.invoice.paid_sen)}</td>
                 <td style={{ ...td, ...right, fontWeight: 700 }}>{fmtSen(detail.invoice.total_sen)}</td>
               </tr>
             </tbody>

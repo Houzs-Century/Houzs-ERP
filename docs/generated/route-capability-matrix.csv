@@ -444,6 +444,9 @@ GET,/api/sales/entries/change-requests,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,
 POST,/api/sales/entries/change-requests/:reqId/approve,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""sales"", ""full"")",,YES,DECLARED_GATE,backend/src/routes/sales.ts
 POST,/api/sales/entries/change-requests/:reqId/reject,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""sales"", ""full"")",,YES,DECLARED_GATE,backend/src/routes/sales.ts
 GET,/api/sales/entries/export,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""sales"")",,NO,DECLARED_GATE,backend/src/routes/sales.ts
+GET,/api/scm/acc-events/costs,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/acc-events.ts
+GET,/api/scm/acc-events/options,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/acc-events.ts
+POST,/api/scm/acc-events/pv-lines/:lineId/event,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/acc-events.ts
 GET,/api/scm/accounting/accounts,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 POST,/api/scm/accounting/accounts,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 PATCH,/api/scm/accounting/accounts/:code,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
