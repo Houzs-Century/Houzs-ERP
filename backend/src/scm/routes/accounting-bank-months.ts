@@ -512,6 +512,13 @@ export const bankMonthDetail = bankGuard(async (c) => {
     loadLiveMonthLock(sb, co.companyId, accountCode, month),
   ]);
   if (!ledger.ok) return c.json({ error: 'load_failed', reason: ledger.reason }, 500);
+  /* Named the way a person knows them (docs/bugs/0918), as the statement
+     detail and the lock already name them: the month's outstanding list showed
+     a customer's transfer as "SOPAY · <payment uuid>" with no customer (owner
+     2026-09-30) because only this door skipped the naming. */
+  const named = await withJournalRefs(sb, co.companyId, ledger.movements);
+  if (!named.ok) return c.json({ error: 'load_failed', reason: named.reason }, 500);
+  ledger.movements = named.entries;
   /* A LOCK THE SCREEN CANNOT READ IS A REFUSAL, not an omission. A month that
      draws its buttons as though it were open, because the lock read quietly
      failed, is the one way this can mislead somebody into attempting a write
