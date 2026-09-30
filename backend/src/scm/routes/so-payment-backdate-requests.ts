@@ -23,6 +23,7 @@
 
      Inbox        (admin only — scm.payment.backdate)
        GET  /payment-backdate-requests?scope=open|all
+       GET  /payment-backdate-requests/pending-count  the sidebar badge; 0 for non-admins
        POST /payment-backdate-requests/:id/approve   { note? }
        POST /payment-backdate-requests/:id/reject    { note }
 
@@ -51,6 +52,7 @@ import { recordSoAudit } from '../lib/so-audit';
 import { paymentMethodFieldRefusal } from '../lib/payment-method-fields';
 import { SO_PAYMENT_BACKDATE } from '../../acc/payment-reconciled';
 import { selfScopedSalesBlocked } from '../lib/so-self-scope';
+import { notifyBackdateRequest } from '../../services/backdateRequestNotify';
 
 export const BACKDATE_REQUESTS_TABLE = 'so_payment_backdate_requests';
 
@@ -202,6 +204,10 @@ soPaymentBackdateRequests.post('/:docNo/payment-backdate-requests', async (c: An
     actorName: actor.name,
     note: `${fmtSen(p.amountSen)} dated ${p.paidAt.slice(0, 10)} — ${p.reason}`,
   });
+  await notifyBackdateRequest(c.env, 'raised', {
+    docNo, amount: fmtSen(p.amountSen), slipDate: p.paidAt.slice(0, 10), reason: p.reason,
+    companyId: co.companyId, requesterUserId: actor.id, requesterName: actor.name, actorUserId: actor.id,
+  });
   return c.json({ request: created }, 201);
 });
 
@@ -211,6 +217,20 @@ export const paymentBackdateInbox = new Hono<{ Bindings: Env; Variables: Variabl
 paymentBackdateInbox.use('*', supabaseAuth);
 
 const ADMIN_ONLY = { error: 'forbidden', reason: 'Only an admin can see payment backdate requests.' };
+
+/* The red count on the sidebar entry (owner 2026-09-30: 「sidebar 红点」). An
+   admin by the same rule as every handler here — `*` counts, deliberately (see
+   services/backdateRequestNotify.ts) — and 0 for anyone else, so the badge
+   never shows a number its reader cannot clear. */
+paymentBackdateInbox.get('/pending-count', async (c: AnyCtx) => {
+  if (!isAdmin(c)) return c.json({ count: 0 });
+  const { count, error } = await scopeToCompany(
+    c.get('supabase').from(BACKDATE_REQUESTS_TABLE).select('id', { count: 'exact', head: true }).eq('status', 'REQUESTED'),
+    c,
+  );
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  return c.json({ count: count ?? 0 });
+});
 
 paymentBackdateInbox.get('/', async (c: AnyCtx) => {
   if (!isAdmin(c)) return c.json(ADMIN_ONLY, 403);
@@ -309,6 +329,10 @@ paymentBackdateInbox.post('/:id/approve', async (c: AnyCtx) => {
     .maybeSingle();
   // eslint-disable-next-line no-console
   if (linkErr) console.error(`[backdate-request] ${r.id} booked payment ${paymentId} but not linked: ${linkErr.message}`);
+  await notifyBackdateRequest(c.env, 'approved', {
+    docNo: r.so_doc_no, amount: fmtSen(Number(r.amount_sen)), slipDate: String(r.paid_at).slice(0, 10),
+    companyId: r.company_id, requesterUserId: Number(r.requested_by), actorUserId: actor.id, actorName: actor.name,
+  });
   return c.json({ request: updated ?? { ...r, status: 'APPROVED', payment_id: paymentId }, payment });
 });
 
@@ -327,6 +351,10 @@ paymentBackdateInbox.post('/:id/reject', async (c: AnyCtx) => {
   await recordSoAudit(c.get('supabase'), {
     docNo: r.so_doc_no, action: 'PAYMENT_BACKDATE_REJECTED', actorName: actor.name,
     note: `${fmtSen(Number(r.amount_sen))} dated ${String(r.paid_at).slice(0, 10)} — ${note}`,
+  });
+  await notifyBackdateRequest(c.env, 'rejected', {
+    docNo: r.so_doc_no, amount: fmtSen(Number(r.amount_sen)), slipDate: String(r.paid_at).slice(0, 10), reason: note,
+    companyId: r.company_id, requesterUserId: Number(r.requested_by), actorUserId: actor.id, actorName: actor.name,
   });
   return c.json({ ok: true });
 });

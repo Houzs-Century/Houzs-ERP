@@ -17,6 +17,8 @@ const record = vi.fn(async (_sb: unknown, _p: Record<string, unknown>) => ({ pay
 vi.mock('../lib/so-payment-row', () => ({ recordSoPaymentRow: (sb: unknown, p: Record<string, unknown>) => record(sb, p) }));
 const soAudit = vi.fn(async (_sb: unknown, _args: unknown) => undefined);
 vi.mock('../lib/so-audit', () => ({ recordSoAudit: (sb: unknown, args: unknown) => soAudit(sb, args) }));
+const notify = vi.fn(async (..._a: unknown[]) => undefined);
+vi.mock('../../services/backdateRequestNotify', () => ({ notifyBackdateRequest: (...a: unknown[]) => notify(...a) }));
 vi.mock('../middleware/auth', () => ({ supabaseAuth: async (_c: unknown, next: () => Promise<void>) => next() }));
 
 const { soPaymentBackdateRequests, paymentBackdateInbox } = await import('./so-payment-backdate-requests');
@@ -74,7 +76,7 @@ beforeEach(() => {
     pending_slip_uploads: [{ upload_session_id: 'sess-1', r2_key: 'slips/x.jpg', status: 'uploaded' }],
   };
   sb = fakeSb(tables);
-  record.mockClear(); soAudit.mockClear();
+  record.mockClear(); soAudit.mockClear(); notify.mockClear();
 });
 
 describe('raising a request', () => {
@@ -87,6 +89,7 @@ describe('raising a request', () => {
     });
     expect(record).not.toHaveBeenCalled();
     expect(tables.pending_slip_uploads![0]).toMatchObject({ status: 'promoted' });
+    expect(notify).toHaveBeenCalledWith(expect.anything(), 'raised', expect.objectContaining({ docNo: 'SO-1', amount: 'RM 500.00', requesterUserId: 11, companyId: CO }));
   });
 
   it('needs a reason', async () => {
@@ -127,6 +130,11 @@ describe('who sees the requests', () => {
     await post(OTHER, '/mfg-sales-orders/SO-1/payment-backdate-requests', payment({ amountSen: 1000 }));
   });
 
+  it('the sidebar count is the open requests for an admin, 0 for anyone else', async () => {
+    expect((await get(ADMIN, '/payment-backdate-requests/pending-count')).body).toEqual({ count: 2 });
+    expect((await get(SALES, '/payment-backdate-requests/pending-count')).body).toEqual({ count: 0 });
+  });
+
   it('the inbox is admin only', async () => {
     expect((await get(SALES, '/payment-backdate-requests')).status).toBe(403);
     const r = await get(ADMIN, '/payment-backdate-requests');
@@ -165,6 +173,7 @@ describe('deciding', () => {
     });
     expect(String(record.mock.calls[0]![1].auditNote)).toContain('requested by Sales Amy');
     expect(rows()[0]).toMatchObject({ status: 'APPROVED', decided_by: 1, payment_id: 'pay-1' });
+    expect(notify).toHaveBeenLastCalledWith(expect.anything(), 'approved', expect.objectContaining({ requesterUserId: 11, actorUserId: 1 }));
     const again = await post(ADMIN, `/payment-backdate-requests/${id}/approve`);
     expect(again.status).toBe(409);
     expect(record).toHaveBeenCalledTimes(1);
@@ -182,6 +191,7 @@ describe('deciding', () => {
     const r = await post(ADMIN, `/payment-backdate-requests/${id}/reject`, { note: 'No bank line for this date' });
     expect(r.status).toBe(200);
     expect(rows()[0]).toMatchObject({ status: 'REJECTED', decision_note: 'No bank line for this date' });
+    expect(notify).toHaveBeenLastCalledWith(expect.anything(), 'rejected', expect.objectContaining({ reason: 'No bank line for this date', requesterUserId: 11 }));
     expect(record).not.toHaveBeenCalled();
   });
 

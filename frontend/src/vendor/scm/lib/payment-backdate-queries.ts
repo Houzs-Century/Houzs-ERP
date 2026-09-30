@@ -97,6 +97,8 @@ function useInvalidate() {
   return () => {
     void qc.invalidateQueries({ queryKey: ['so-payment-backdate-requests'] });
     void qc.invalidateQueries({ queryKey: [INBOX_KEY] });
+    /* The sidebar's red count (hooks/useAmendmentApprovals). */
+    void qc.invalidateQueries({ queryKey: ['scm', 'payment-backdate-approvals'] });
     /* An approval books a payment: the ledger and the list totals move. */
     void qc.invalidateQueries({ queryKey: ['mfg-sales-orders'] });
   };
