@@ -621,7 +621,6 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
       const codePrefix = modelCode.toUpperCase();
       const modelName  = String((data as { name?: string }).name ?? '').trim();
       const branding   = String((data as { branding?: string | null }).branding ?? '').trim();
-      const namePrefix = (branding ? `${branding} ` : '').toUpperCase();
       const upperName  = (modelName || modelCode).toUpperCase();
       // The request's own client: it is already service-role AND pointed at the
       // `scm` schema. A raw createClient() here defaulted to `public`, where
@@ -646,7 +645,7 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
           return {
             id:         `mfg-${rand.replace(/-/g, '').slice(0, 12)}`,
             code:       `${codePrefix}-${comp}`,
-            name:       `${namePrefix}SOFA ${upperName} ${comp}`.trim(),
+            name:       `SOFA ${upperName} ${comp}`,
             category:   'SOFA',
             base_model: modelCode,
             model_id:   id,
@@ -821,11 +820,9 @@ productModels.post('/:id/generate-skus', async (c) => {
   //               data sample. Empty branding → prefix + space dropped.
   //
   //   SOFA      code:  {model_code}-{compartment}                  5530-1A(LHF)
-  //             name:  {branding?} SOFA {model.name} {compartment} SOFA 5530 1A(LHF)
-  //                                                                SOFA ADDA 1A(LHF)
-  //                                                                Houzs SOFA ADDA 1A(LHF)
-  //             — "SOFA" literal added in PR #81 to match commander's
-  //               legacy data sample. Empty branding → prefix dropped.
+  //             name:  SOFA {model.name} {compartment}   SOFA 5530 1A(LHF)
+  //                                                       SOFA ADDA 1A(LHF)
+  //             — no branding in the name; it lives in the branding column.
   //
   const modelName = (model.name ?? '').trim();
   const sizesArr  = Array.isArray(opts.sizes)        ? (opts.sizes as string[])        : [];
@@ -862,13 +859,11 @@ productModels.post('/:id/generate-skus', async (c) => {
     // (commander typed "SOFA 5530" as the name). Now the template adds
     // them so commander can keep `model.name` short ("ADDA" → "SOFA ADDA
     // 1A(LHF)"). Mattress branch below got the same treatment.
-    const branding = (model.branding ?? '').trim();
-    const prefix   = branding ? `${branding} ` : '';
     for (const comp of compsArr) {
       wanted.push({
         code:       `${model.model_code}-${comp}`,
-        // "SOFA 5530 1A(LHF)" or "Houzs SOFA ADDA 1A(RHF)"
-        name:       `${prefix}SOFA ${modelName} ${comp}`.trim(),
+        // Brand stays in the branding column, not the name: "SOFA ADDA 1A(RHF)"
+        name:       `SOFA ${modelName} ${comp}`,
         size_code:  null,
         size_label: null,
       });
