@@ -115,7 +115,9 @@ export function R2Thumb({ r2Key, style }: { r2Key: string; style?: CSSProperties
     let made: string | null = null;
     api.fetchBlobUrl(`/api/projects/attachments/${r2Key}`)
       .then((u) => { if (live) { made = u; setUrl(u); } else URL.revokeObjectURL(u); })
-      .catch(() => {});
+      // Preview only — a failed fetch keeps the hatched placeholder; the
+      // full-size viewer surfaces the real error when the file is opened.
+      .catch(() => { if (live) setUrl(null); });
     return () => { live = false; if (made) URL.revokeObjectURL(made); };
   }, [r2Key]);
   if (!url) return <div className="ph" style={style} />;
