@@ -138,6 +138,17 @@ describe("toSheetRecord — the AutoCount-named record the sheet writes", () => 
     expect(toSheetRecord({ ...HEAD, ref: null, customer_so_no: null }, []).Ref).toBeNull();
   });
 
+  test("BUG-40 HC8962: a postcode corrected in the ERP replaces the migrated order's old town line", () => {
+    const r = toSheetRecord(
+      { ...HEAD, address1: "312, Jalan Banjaran Utama,", address2: "Kawasan Kempas Banjaran,",
+        address3: "51200 Kuala Lumpur", address4: "Kuala Lumpur",
+        postcode: "81200", city: "Johor Bahru", customer_state: "Johor" },
+      [],
+    );
+    expect(r.InvAddr3).toBe("81200 Johor Bahru");
+    expect(r.InvAddr4).toBe("Johor");
+  });
+
   test("a native order keys on its own number; a Singapore address routes SG; a stored Remarks 2 wins", () => {
     const r = toSheetRecord(
       { ...HEAD, doc_no: "HC-SO-2609-078", linked_ac_docno: "HC-SO-2609-078", address3: "SINGAPORE 123456", remark2: "READY (PARTIAL)" },

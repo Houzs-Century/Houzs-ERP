@@ -14,6 +14,7 @@
  */
 import { LOCATION_MAP } from "../services/autocount-master-maps";
 import { bookSpellingOrOwn, resolveAcAgent } from "../services/autocount-writeback";
+import { soTownLines } from "../services/autocount-address-fit";
 import { summariseReadiness } from "../scm/lib/so-readiness";
 import { SO_DELIVERED_OR_BEYOND } from "../scm/shared/so-deliverable-states";
 import { canonicalizeMyState } from "../scm/lib/canonical-state";
@@ -392,8 +393,8 @@ export function resolveSheetRemark2(remark2Header: string | null, lines: Readonl
 
 export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow>): DeliverySheetRecord {
   const salesLocation = bookSpellingOrOwn(row.sales_location, LOCATION_MAP);
-  const addr3 = blankToNull(row.address3) ?? blankToNull([row.postcode, row.city].filter(Boolean).join(" "));
-  const addr4 = sheetStateSpelling(blankToNull(row.address4) ?? blankToNull(row.customer_state));
+  const [addr3, rawAddr4] = soTownLines(row);
+  const addr4 = sheetStateSpelling(rawAddr4);
   const remark2 = resolveSheetRemark2(row.remark2, lines);
   return {
     DocNo: row.linked_ac_docno ?? row.doc_no,
