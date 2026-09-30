@@ -193,7 +193,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/pos-cart.ts` | 2 | 157 |
 | `backend/src/scm/routes/pos-pools.ts` | 14 | 400 |
 | `backend/src/scm/routes/pos-sofa-combos.ts` | 0 | 279 |
-| `backend/src/scm/routes/product-models.ts` | 16 | 1518 |
+| `backend/src/scm/routes/product-models.ts` | 16 | 1521 |
 | `backend/src/scm/routes/products.ts` | 2 | 86 |
 | `backend/src/scm/routes/public-images.ts` | 2 | 47 |
 | `backend/src/scm/routes/purchase-consignment-orders.ts` | 10 | 746 |
@@ -267,7 +267,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (3029 files, 867319 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (3031 files, 867502 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -283,7 +283,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/scm/routes/scan-so.ts` | 4723 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4436 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4205 |
-| `frontend/src/mobile/MobilePMS.tsx` | 3860 |
+| `frontend/src/mobile/MobilePMS.tsx` | 3857 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 3793 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3749 |
 | `frontend/src/components/DataTable.tsx` | 3541 |
@@ -528,11 +528,11 @@ Page files by directory:
 | `frontend/src/mobile/MobileNewProject.tsx` | 196 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3749 |
 | `frontend/src/mobile/MobileOrderMoney.tsx` | 84 |
-| `frontend/src/mobile/MobilePMS.tsx` | 3860 |
+| `frontend/src/mobile/MobilePMS.tsx` | 3857 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
 | `frontend/src/mobile/MobilePaymentRequests.tsx` | 324 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 178 |
-| `frontend/src/mobile/MobilePmsDocCard.tsx` | 740 |
+| `frontend/src/mobile/MobilePmsDocCard.tsx` | 755 |
 | `frontend/src/mobile/MobilePmsPlanFileChips.tsx` | 96 |
 | `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 466 |
 | `frontend/src/mobile/MobilePoAmendments.tsx` | 182 |
