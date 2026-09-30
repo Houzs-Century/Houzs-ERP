@@ -88,7 +88,9 @@ describe("executable route contract", () => {
     // Finance to pay a bill; Finance answers with a voucher.
     // 165 since 2026-09-30: /scm/unmatched-payments — every card and transfer
     // payment not matched yet, on one list.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(165);
+    // 166 since 2026-09-30: /scm/payment-backdate-requests — the admin inbox
+    // for payments whose slip is more than 14 days old.
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(166);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -131,7 +133,8 @@ describe("executable route contract", () => {
     // 172 since 2026-09-29 — /scm/ar-invoices; see the staff-route count above.
     // 173 since 2026-09-30 — /scm/payment-requests; see the staff-route count above.
     // 174 since 2026-09-30 — /scm/unmatched-payments; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(174);
+    // 175 since 2026-09-30 — /scm/payment-backdate-requests; same.
+    expect(ROUTE_CONTRACT).toHaveLength(175);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

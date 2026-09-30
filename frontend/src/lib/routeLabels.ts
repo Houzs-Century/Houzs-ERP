@@ -62,6 +62,7 @@ const SCM_SEGMENT_LABELS: Record<string, [string, string]> = {
   "purchase-orders": ["Purchase Orders", "Purchase Order"],
   "po-amendments": ["PO Amdt.", "PO Amdt."],
   "cancel-requests": ["Cancel Requests", "Cancel Request"],
+  "payment-backdate-requests": ["Payment Backdate Requests", "Payment Backdate Request"],
   "purchase-invoices": ["Purchase Invoices", "Purchase Invoice"],
   "purchase-returns": ["Purchase Returns", "Purchase Return"],
   "grns": ["Goods Received Notes", "Goods Received Note"],

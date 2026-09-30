@@ -36,6 +36,8 @@ import { MoneyInput } from './MoneyInput';
 import { DateField } from './DateField';
 import { RefundsLine } from './RefundsLine';
 import { OrderMoneyPanel } from './OrderMoneyPanel';
+import { BackdateRequestsPanel } from './BackdateRequestsPanel';
+import { BACKDATE_REASON_ASK, REQUEST_HINT, slipDateNeedsRequest, useRaiseBackdateRequest } from '../lib/payment-backdate-queries';
 import { CONVERT_LABEL, CONVERTED_METHOD, convertPicksFrom, useAddedConvertSources, useConvertSources, type ConvertSource } from '../lib/so-money-queries';
 import { useNotify } from './NotifyDialog';
 import { useConfirm } from './ConfirmDialog';
@@ -579,6 +581,12 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      The wording of every ask lives in lib/payment-reason, shared with mobile. */
   const reasonOnEvery = owesPaymentReason(houzsUser);
   const askReason = usePrompt();
+  /* Too old for the window, and not a backdater: the row can still go to an
+     admin as a request (owner 2026-09-30). Only a NEW row — an edit of a booked
+     payment keeps its refusal. */
+  const raiseBackdate = useRaiseBackdateRequest();
+  const needsRequest = (d: PaymentDraft): boolean =>
+    !d.editingPersistedId && d.methodLabel !== CONVERT_LABEL && slipDateNeedsRequest(d.paidAt, todayMyt(), mayBackdateSlip);
 
   /* ── Official Receipt print (GL redesign 9b) ──────────────────────────
      ensure-then-print: the endpoint fetches the payment's OR (creating one
@@ -961,6 +969,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     /* Slip-date window (owner 2026-09-23). The field is already bounded, but a
        row seeded from a scanned receipt carries the receipt's own date and a
        stale draft can outlive the window while the page sits open. */
+    if (needsRequest(d)) { void requestDraft(d); return; }
     const outOfWindow = slipDateProblem(d, todayMyt(), mayBackdateSlip);
     if (outOfWindow) {
       void notify({ title: 'Check the slip date', body: outOfWindow, tone: 'error' });
@@ -1007,6 +1016,37 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     });
   };
 
+  /* Send a too-old row to an admin instead of booking it (owner 2026-09-30).
+     Same body the payments route takes, plus the reason; the row leaves the
+     table and reappears under the requests card until an admin decides. */
+  const requestDraft = async (d: PaymentDraft) => {
+    if (!isSaved || d.amountSen <= 0) return;
+    const missing = missingMethodSubField(d);
+    if (missing) { void notify({ title: `Pick the ${missing} for this ${d.methodLabel} payment.`, tone: 'error' }); return; }
+    let method: PaymentMethod;
+    try { ({ method } = labelToApi(d.methodLabel)); }
+    catch (e) { void notify({ title: 'Payment method not recognised', body: e instanceof Error ? e.message : String(e), tone: 'error' }); return; }
+    const reason = await askReason(BACKDATE_REASON_ASK);
+    if (!reason) return;
+    try {
+      await raiseBackdate.mutateAsync({
+        docNo:           (props as SavedModeProps).docNo,
+        reason,
+        paidAt:          d.paidAt,
+        method,
+        amountSen:       d.amountSen,
+        accountSheet:    d.accountSheet || null,
+        approvalCode:    d.approvalCode || null,
+        collectedBy:     d.collectedBy || null,
+        uploadSessionId: d.slipUploadSessionId,
+        ...draftMethodFields(method, d),
+      });
+      removeDraft(d.uid);
+    } catch (e) {
+      void notify({ title: 'Request not sent', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+
   /* THE PAGE'S SAVE COMMITS THESE ROWS TOO (owner 2026-08-31).
    *
    * A typed payment row used to be booked ONLY by its own Save button. The page
@@ -1033,7 +1073,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       const missing = missingMethodSubField(d);
       if (missing) { blocked.push(`${d.methodLabel}: pick the ${missing}`); continue; }
       const outOfWindow = slipDateProblem(d, todayMyt(), mayBackdateSlip);
-      if (outOfWindow) { blocked.push(`${d.methodLabel}: ${outOfWindow}`); continue; }
+      if (outOfWindow) { blocked.push(`${d.methodLabel}: ${needsRequest(d) ? REQUEST_HINT : outOfWindow}`); continue; }
       let method: PaymentMethod;
       try { ({ method } = labelToApi(d.methodLabel)); }
       catch (e) { blocked.push(`${d.methodLabel}: ${e instanceof Error ? e.message : 'payment method not recognised'}`); continue; }
@@ -1547,15 +1587,14 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                     className={paymentsStyles.inlineInput}
                     value={d.paidAt ?? ''}
                     disabled={locked}
-                    /* The calendar cannot offer a day the save would bounce.
-                       A backdater gets no bounds at all — the field is theirs. */
-                    min={mayBackdateSlip ? undefined : slipWindow.min}
+                    /* No future day for a non-backdater. No lower bound: an older
+                       slip goes to an admin as a request (owner 2026-09-30). */
                     max={mayBackdateSlip ? undefined : slipWindow.max}
                     invalid={slipProblem !== null}
                     onChange={(iso) => patchDraft(d.uid, { paidAt: iso })}
                   />
                   {slipProblem && (
-                    <span className={paymentsStyles.fieldProblem}>{slipProblem}</span>
+                    <span className={paymentsStyles.fieldProblem}>{needsRequest(d) ? REQUEST_HINT : slipProblem}</span>
                   )}
                 </span>
                 <span className={`${paymentsStyles.cell} ${unsavedCls}`} data-label="Method" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
@@ -1851,12 +1890,14 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                          required sub-field(s). */
                       const noAmount = d.amountSen <= 0;
                       const missing  = missingMethodSubField(d);
-                      const blocked  = noAmount || missing !== null || slipProblem !== null;
+                      /* Too old for the window: commitDraft sends it as a request instead. */
+                      const asRequest = !noAmount && !missing && needsRequest(d);
+                      const blocked  = noAmount || missing !== null || (slipProblem !== null && !asRequest);
                       const title = noAmount
                         ? 'Enter an amount > 0 first'
                         : missing
                           ? `Pick the ${missing} for this ${d.methodLabel} payment first`
-                          : slipProblem
+                          : asRequest ? REQUEST_HINT : slipProblem
                             ? slipProblem
                             : d.editingPersistedId ? 'Save changes' : 'Save payment';
                       /* A LABELLED button, not a bare glyph — see the note on
@@ -1867,11 +1908,11 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                           type="button"
                           className={paymentsStyles.saveBtn}
                           onClick={() => commitDraft(d)}
-                          disabled={locked || addPayment.isPending || blocked}
+                          disabled={locked || addPayment.isPending || raiseBackdate.isPending || blocked}
                           title={title}
                         >
                           <Save size={13} strokeWidth={1.75} />
-                          {addPayment.isPending ? 'Saving…' : 'Save'}
+                          {addPayment.isPending || raiseBackdate.isPending ? 'Saving…' : asRequest ? 'Request approval' : 'Save'}
                         </button>
                       );
                     })()}
@@ -1943,6 +1984,8 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
           {/* Money that went BACK (§14) — every refund voucher on a saved
               order, linked by number; nothing when there is none. */}
           {isSaved && <RefundsLine docNo={(props as SavedModeProps).docNo} />}
+          {/* Payments sent to an admin because the slip is older than 14 days. */}
+          {isSaved && <BackdateRequestsPanel docNo={(props as SavedModeProps).docNo} />}
           {/* A CANCELLED order's money and its two exits — refund or convert
               (docs/bugs/0931); the panel decides for itself whether to show. */}
           {isSaved && <OrderMoneyPanel docNo={(props as SavedModeProps).docNo} />}

@@ -51,6 +51,8 @@ import {
 import { paymentMethodCodeForValue, PAYMENT_METHOD_CODE_TO_VALUE } from "../vendor/scm/lib/payment-methods";
 import { missingMethodSubField, slipDateProblem } from "../vendor/scm/components/PaymentsTable";
 import { paymentSlipDateWindow } from "../vendor/scm/lib/payment-slip-date";
+import { BACKDATE_REASON_ASK, REQUEST_HINT, slipDateNeedsRequest, useRaiseBackdateRequest } from "../vendor/scm/lib/payment-backdate-queries";
+import { BackdateRequestsPanel } from "../vendor/scm/components/BackdateRequestsPanel";
 import { fmtSen } from "../lib/scm";
 import { useIdempotencyKey } from "../lib/idempotency";
 import { PaymentInfoBlock, type RecordedPaymentLike } from "./PaymentInfoBlock";
@@ -290,6 +292,7 @@ export function AddPaymentSheet({
   const { can: canSheet } = useHouzsAuth();
   const addPaymentMut = useAddSalesOrderPayment();
   const editPaymentMut = useEditSalesOrderPayment();
+  const raiseBackdateMut = useRaiseBackdateRequest();
   const askReason = usePrompt();
   const isEdit = Boolean(editPayment);
   /* One key for the one payment this sheet is open to record (lib/idempotency.ts).
@@ -374,6 +377,9 @@ export function AddPaymentSheet({
   const maySheetBackdate = canSheet("scm.payment.backdate");
   const slipWindow = paymentSlipDateWindow(todayMyt());
   const slipProblem = slipDateProblem({ paidAt: date, methodLabel: method }, todayMyt(), maySheetBackdate);
+  /* Too old for the window: a new payment goes to an admin as a request
+     instead (owner 2026-09-30) — the desktop panel's rule, same helper. */
+  const needsRequest = !isEdit && method !== CONVERT_LABEL && slipDateNeedsRequest(date, todayMyt(), maySheetBackdate);
   /* Method ⇒ sub-field cascade, via the SHARED desktop rule (missingMethodSubField,
      PaymentsTable) rather than a mobile re-implementation: Merchant needs a Bank
      + Plan, Online needs a Sub-Type. The server enforces the same on write
@@ -391,7 +397,7 @@ export function AddPaymentSheet({
   /* Owner 2026-07-13 — the slip is OPTIONAL now; recording needs only an
      amount > 0 (+ method/date + the method's own sub-fields). The slip upload
      stays available for when one IS on hand. */
-  const canSave = amtOk && !missingSubField && !slipProblem && !busy && slipPhase !== "uploading";
+  const canSave = amtOk && !missingSubField && (!slipProblem || needsRequest) && !busy && slipPhase !== "uploading";
 
   const save = async () => {
     if (!canSave) return;
@@ -414,6 +420,18 @@ export function AddPaymentSheet({
     if (code === "merchant") { body.merchantProvider = bank || null; body.installmentMonths = planToMonths(plan); }
     else if (code === "installment") { body.merchantProvider = bank || null; body.installmentMonths = planToMonths(plan); }
     else if (code === "transfer") { body.onlineType = online || null; }
+    if (needsRequest) {
+      const why = await askReason(BACKDATE_REASON_ASK);
+      if (!why) { setBusy(false); return; }
+      try {
+        await raiseBackdateMut.mutateAsync({ docNo, ...body, reason: why });
+        await onSaved();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Couldn't send the request. Please try again.");
+        setBusy(false);
+      }
+      return;
+    }
     const reason = reasonWhy ? await askReason(paymentReasonAsk(isEdit ? "edit" : "add", reasonWhy)) : "";
     if (reason === null) return;
     try {
@@ -461,15 +479,14 @@ export function AddPaymentSheet({
                   fullWidth
                   className="fld-i"
                   value={date}
-                  /* Bounded for everyone but a backdater, so the picker cannot
-                     offer a day the save would bounce. */
-                  min={maySheetBackdate ? undefined : slipWindow.min}
+                  /* No future day for a non-backdater; no lower bound — an older
+                     slip goes to an admin as a request (owner 2026-09-30). */
                   max={maySheetBackdate ? undefined : slipWindow.max}
                   invalid={slipProblem !== null}
                   onChange={(iso) => setDate(iso)}
                 />
                 {slipProblem && (
-                  <span style={{ fontSize: 11, lineHeight: 1.3, color: "var(--red)" }}>{slipProblem}</span>
+                  <span style={{ fontSize: 11, lineHeight: 1.3, color: "var(--red)" }}>{needsRequest ? REQUEST_HINT : slipProblem}</span>
                 )}
               </label>
               <label className="fld" style={{ flex: 1.1 }}>
@@ -598,7 +615,7 @@ export function AddPaymentSheet({
         </div>
         <div className="sheet-foot">
           <button type="button" className="btn-ghost" style={{ flex: 1, opacity: busy ? 0.55 : 1 }} disabled={busy} onClick={() => onClose()}>Cancel</button>
-          <button type="button" className="btn" style={{ flex: 1.3, opacity: canSave ? 1 : 0.5 }} disabled={!canSave} onClick={() => void save()}>{busy ? (isEdit ? "Saving…" : "Recording…") : (isEdit ? "Save changes" : "Record Payment")}</button>
+          <button type="button" className="btn" style={{ flex: 1.3, opacity: canSave ? 1 : 0.5 }} disabled={!canSave} onClick={() => void save()}>{busy ? (isEdit ? "Saving…" : needsRequest ? "Sending…" : "Recording…") : (isEdit ? "Save changes" : needsRequest ? "Send for approval" : "Record Payment")}</button>
         </div>
       </div>
     </div>
@@ -847,6 +864,9 @@ export function RecordedPaymentsList({
         <div style={{ padding: inset ? "9px 0" : "11px 13px", borderTop: inset ? "none" : "1px solid var(--line2)", fontSize: 11.5, color: "var(--mut2)" }}>{emptyText}</div>
       )}
       {error && <div style={{ padding: inset ? "4px 0" : "0 13px 9px", fontSize: 11.5, color: "var(--red)" }}>{error}</div>}
+      {/* Payments sent to an admin because the slip is older than 14 days —
+          the same card the desktop panel shows. */}
+      <BackdateRequestsPanel docNo={docNo} style={{ margin: inset ? "8px 0" : "8px 13px" }} />
       {editPay && (
         <AddPaymentSheet
           docNo={docNo}

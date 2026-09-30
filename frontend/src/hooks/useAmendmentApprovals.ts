@@ -30,13 +30,16 @@ import { useAuth } from "../auth/AuthContext";
 /** Shared keys so every reader hits one fetch, and any writer can invalidate. */
 export const AMENDMENT_APPROVALS_KEY = ["scm", "amendment-approvals"] as const;
 export const PO_AMENDMENT_APPROVALS_KEY = ["scm", "po-amendment-approvals"] as const;
+/* Payment backdate requests (owner 2026-09-30: 「sidebar 红点」) — counted for
+   the admins who decide them, `*` included (see backdateRequestNotify.ts). */
+export const PAYMENT_BACKDATE_APPROVALS_KEY = ["scm", "payment-backdate-approvals"] as const;
 
 interface PendingCountResponse {
   count: number;
 }
 
 /** The two badge sources a nav entry can name. Mirrored by NavTab["badge"]. */
-export type ApprovalBadgeSource = "amendment-approvals" | "po-amendment-approvals";
+export type ApprovalBadgeSource = "amendment-approvals" | "po-amendment-approvals" | "payment-backdate-approvals";
 
 /**
  * One poll per source. Returns 0 while loading and 0 on any failure — a
@@ -70,7 +73,7 @@ function usePendingCount(
  * the renderer does not need to know how many sources exist.
  */
 export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const enabled = !!user?.id;
   return {
     "amendment-approvals": usePendingCount(
@@ -82,6 +85,12 @@ export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
       PO_AMENDMENT_APPROVALS_KEY,
       "/api/scm/po-amendments/pending-count",
       enabled,
+    ),
+    /* Only an admin can have a non-zero count, so nobody else is polled. */
+    "payment-backdate-approvals": usePendingCount(
+      PAYMENT_BACKDATE_APPROVALS_KEY,
+      "/api/scm/payment-backdate-requests/pending-count",
+      enabled && (can("*") || can("scm.payment.backdate")),
     ),
   };
 }
@@ -98,5 +107,6 @@ export function useRefreshApprovalBadges(): () => void {
   return () => {
     void qc.invalidateQueries({ queryKey: AMENDMENT_APPROVALS_KEY });
     void qc.invalidateQueries({ queryKey: PO_AMENDMENT_APPROVALS_KEY });
+    void qc.invalidateQueries({ queryKey: PAYMENT_BACKDATE_APPROVALS_KEY });
   };
 }
