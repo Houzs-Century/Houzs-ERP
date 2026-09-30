@@ -70,7 +70,7 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   // above already use for their detail-Back. It was localStorage (an
   // IDENTITY_PREF), which kept last week's filters alive on the next login.
   // The legacy localStorage copies are cleaned up by useStickyFilters.
-  { id: "list-filters", classification: "TRANSIENT", storage: ["localStorage", "sessionStorage"], keyFamily: "filters:<page>:u<user>:c<company> (per-tab list filters; localStorage listed for cleanup of the pre-2026-08-24 copies only)", matches: (key) => /^filters:.+:u\d+:c\d+$/.test(key) },
+  { id: "list-filters", classification: "TRANSIENT", storage: ["localStorage", "sessionStorage"], keyFamily: "filters:<page>:u<user>:c<company> (per-tab list/calendar filters. Plain snapshot string; OR, for idle-TTL scopes like projects-calendar / mobile-calendar, a {v,t} blob dropped 1h after the last change — owner 2026-09-30. Cleared outright on logout. localStorage listed for cleanup of the pre-2026-08-24 copies only)", matches: (key) => /^filters:.+:u\d+:c\d+$/.test(key) },
   { id: "mobile-mode-override", classification: "TRANSIENT", storage: ["localStorage", "sessionStorage"], keyFamily: "hz_force_mobile (session + legacy local cleanup)", matches: exact("hz_force_mobile") },
   { id: "legacy-notification-preference", classification: "TRANSIENT", storage: ["localStorage"], keyFamily: "notifications:browserPush (ownerless cleanup only)", matches: exact("notifications:browserPush") },
   { id: "scan-toast-acks", classification: "TRANSIENT", storage: ["localStorage"], keyFamily: "houzs:scan-draft-acked:u<user>:c<company>", matches: prefix("houzs:scan-draft-acked:") },
@@ -130,6 +130,10 @@ export function classifyBrowserStorageKey(
 /** Files allowed to access browser storage directly. New callers require an
  * explicit ownership review; consumers should otherwise use existing helpers. */
 export const PRODUCTION_STORAGE_CALLERS = [
+  // Logout sweeps `filters:*` from session + localStorage (owner 2026-09-30) —
+  // a reload does not clear sessionStorage, so sign-out would otherwise keep the
+  // sticky list/calendar filters. Removes by key in a loop, never .clear().
+  "auth/AuthContext.tsx",
   "components/AndroidInstallGuide.tsx",
   "components/announcementLocalAcks.ts",
   "components/AssistantLauncher.tsx",
@@ -160,6 +164,9 @@ export const PRODUCTION_STORAGE_CALLERS = [
   // presentation only and no longer touches storage.
   "components/useAnnouncementBanner.ts",
   "hooks/useIdentityPreference.ts",
+  // Mobile calendar's non-URL filters (brand/section/organizer): sessionStorage
+  // under the shared filters: family, 1h idle TTL (list-filters rule).
+  "hooks/useIdleSessionFilter.ts",
   "hooks/useLocalStorage.ts",
   "hooks/usePendingReminder.ts",
   "hooks/useStickyFilters.ts",

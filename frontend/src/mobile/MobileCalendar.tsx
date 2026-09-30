@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { getHolidaysOn } from "../lib/holidays";
 import { useBranding } from "../hooks/useBranding";
+import { useIdleSessionFilter } from "../hooks/useIdleSessionFilter";
 import { HOUZS_COMPANY_CODE, shortCompanyName } from "../lib/branding";
 import { compareCalendarEvents } from "../lib/calendarSort";
 import "./mobile.css";
@@ -240,9 +241,21 @@ export function MobileCalendar({
   const [year, setYear] = useState(initialYear ?? today.getFullYear());
   const [month, setMonth] = useState(initialMonth ?? today.getMonth());
   const [mode, setMode] = useState<"month" | "week">("month");
-  const [brandF, setBrandF] = useState("all");
-  const [sectionF, setSectionF] = useState("all");
-  const [orgF, setOrgF] = useState("all");
+  // Owner 2026-09-30: the calendar filter must survive going into a project and
+  // back, clearing only on logout or after an hour untouched — same rule as the
+  // desktop calendar. These are plain state (not URL params), so they persist
+  // through useIdleSessionFilter rather than useStickyFilters.
+  const [calFilter, patchCalFilter] = useIdleSessionFilter(
+    "mobile-calendar",
+    { brand: "all", section: "all", org: "all" },
+    60 * 60 * 1000,
+  );
+  const brandF = calFilter.brand;
+  const sectionF = calFilter.section;
+  const orgF = calFilter.org;
+  const setBrandF = (v: string) => patchCalFilter({ brand: v });
+  const setSectionF = (v: string) => patchCalFilter({ section: v });
+  const setOrgF = (v: string) => patchCalFilter({ org: v });
   const [showTasks, setShowTasks] = useState(false);
   // My-holidays toggle — overlays Malaysian federal public holidays from the
   // local src/lib/holidays.ts table (same source as the desktop calendar); no

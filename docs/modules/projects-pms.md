@@ -150,6 +150,14 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
 
 ## Gotchas
 
+- Calendar/list filters persist so a project round-trip does not lose them.
+  Desktop calendar + list use `useStickyFilters` (URL ↔ sessionStorage, keyed
+  `filters:<page>:u<user>:c<company>`); the **key allow-list must include every
+  filter param** (a param that is read/set but not listed is silently dropped —
+  that was the `status` bug). The projects-calendar scope and the mobile
+  calendar (`useIdleSessionFilter`, non-URL state) carry a **1-hour idle TTL**:
+  the filter clears an hour after the last change, not on mere navigation, and
+  logout sweeps `filters:*` (AuthContext) — owner 2026-09-30.
 - Do not reintroduce PIC- or brand-based row filtering — that ACL
   (`projectAcl.ts`) was deliberately deleted 2026-08-19; row visibility is
   company scope plus crew scoping only.
