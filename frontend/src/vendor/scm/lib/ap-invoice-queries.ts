@@ -38,7 +38,8 @@ export type ApInvoiceHeader = {
   invoice_date: string; due_date: string | null; currency: string; total_sen: number; paid_sen: number;
   status: string; notes: string | null; posted_at: string | null; posted_by: string | null;
 };
-export type ApInvoiceLine = { id: string; line_no: number; description: string | null; debit_account_code: string; amount_sen: number };
+/** project_id: the event the line's money is for (owner 2026-09-30, 5a). */
+export type ApInvoiceLine = { id: string; line_no: number; description: string | null; debit_account_code: string; amount_sen: number; project_id?: number | null };
 
 export const useApInvoices = (kind: ApListKind = 'ALL') => useQuery({
   queryKey: ['ap-invoices', kind],
@@ -58,7 +59,7 @@ const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['ap-aging'] });
 };
 
-export type ApInvoiceLineInput = { description?: string; debitAccountCode: string; amountSen: number };
+export type ApInvoiceLineInput = { description?: string; debitAccountCode: string; amountSen: number; projectId?: number };
 
 export const useCreateApInvoice = () => {
   const qc = useQueryClient();

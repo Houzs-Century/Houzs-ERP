@@ -743,6 +743,8 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/accounting?tab=charges", label: "Merchant charges", icon: CreditCard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
           // The month's orders per group against a budgeted operating expense (owner 2026-09-12; docs/bugs/0835).
           { to: "/scm/accounting?tab=performance", label: "Performance P&L", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          // What each event cost, from the ledger — voucher and AP invoice lines tagged with it (owner 2026-09-30, 5a).
+          { to: "/scm/accounting?tab=events", label: "Event costs", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
           { to: "/reports/fair-report", label: "Sales Report", icon: BarChart3, requireFairReport: true, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance", "scm.finance.accounting", "scm.finance.outstanding", "projects.finances"] },
         ],
       },

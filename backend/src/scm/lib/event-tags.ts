@@ -133,8 +133,11 @@ export async function pvLineEventRefusal(c: any, purpose: unknown, rows: Readonl
   return unknownEventRefusal(c, ids);
 }
 
-/** Days either side of the document date the picker offers without a search. */
-export const EVENT_WINDOW_DAYS = 60;
+/** The picker's window without a search: events that ended up to 60 days
+    before the document date, through those starting 180 days after it — a
+    booth is often paid months ahead of its fair, its last bill soon after. */
+export const EVENT_WINDOW_BEFORE_DAYS = 60;
+export const EVENT_WINDOW_AFTER_DAYS = 180;
 
 const shiftDay = (ymd: string, days: number): string => {
   const d = new Date(`${ymd}T00:00:00Z`);
@@ -145,9 +148,9 @@ const shiftDay = (ymd: string, days: number): string => {
 /**
  * What the event picker offers. With a search (two or more characters): any
  * live event of the company whose code, name, venue, organizer, brand or booth
- * holds it, newest first. Without one: the events that overlap the window of
- * EVENT_WINDOW_DAYS either side of the document date, in date order — a bill
- * usually arrives near its event. Archived events are left out (owner
+ * holds it, newest first. Without one: the events inside the window around the
+ * document date (EVENT_WINDOW_BEFORE_DAYS / _AFTER_DAYS), in date order.
+ * Archived events are left out (owner
  * 2026-09-19: an archived project is one the office withdrew — the rule every
  * other reader of projects keeps); cancelled ones stay, marked, since a
  * cancelled fair can still carry a cost.
@@ -181,9 +184,9 @@ export async function listEventOptions(
           AND p.start_date <= ?
           AND coalesce(p.end_date, p.start_date) >= ?${companySql}
         ORDER BY p.start_date, p.id
-        LIMIT 200`,
+        LIMIT 400`,
     )
-    .bind(shiftDay(opts.around, EVENT_WINDOW_DAYS), shiftDay(opts.around, -EVENT_WINDOW_DAYS))
+    .bind(shiftDay(opts.around, EVENT_WINDOW_AFTER_DAYS), shiftDay(opts.around, -EVENT_WINDOW_BEFORE_DAYS))
     .all<Record<string, unknown>>();
   return ((res.results ?? []) as Array<Record<string, unknown>>).map(toEventRow).filter((e) => Number.isFinite(e.id));
 }

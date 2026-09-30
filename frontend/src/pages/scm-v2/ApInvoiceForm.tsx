@@ -19,6 +19,7 @@ import {
   useExtractBills, fileToBase64, PV_FILE_ACCEPT, type BillExtraction, type VendorMemory, type PvFilePayload,
 } from '../../vendor/scm/lib/payment-voucher-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
+import { EventSelect } from '../../vendor/scm/components/EventSelect';
 import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
 import { upperFill } from '../../vendor/scm/lib/ocr-fill';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
@@ -28,17 +29,18 @@ import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { fmtSen } from '../../vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 
-export type ApFormLine = { rid: number; description: string; debitAccountCode: string; amountSen: number };
+/** projectId: the event the line's money is for (owner 2026-09-30, 5a) — null = none. */
+export type ApFormLine = { rid: number; description: string; debitAccountCode: string; amountSen: number; projectId: number | null };
 export type ApFormValues = { supplierId: string; supplierRef: string; invoiceDate: string; dueDate: string; description: string; lines: ApFormLine[] };
 export type ApFormMode = 'new' | 'edit' | 'copy';
 /** What the routes take — POST / for new and copy, PATCH /:id for edit. */
 export type ApFormSubmit = {
   supplierId: string; supplierInvoiceRef?: string; invoiceDate: string; dueDate: string | null; notes?: string;
-  lines: Array<{ description?: string; debitAccountCode: string; amountSen: number }>;
+  lines: Array<{ description?: string; debitAccountCode: string; amountSen: number; projectId?: number }>;
 };
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
-export const emptyLine = (rid: number): ApFormLine => ({ rid, description: '', debitAccountCode: '', amountSen: 0 });
+export const emptyLine = (rid: number, projectId: number | null = null): ApFormLine => ({ rid, description: '', debitAccountCode: '', amountSen: 0, projectId });
 export const emptyApForm = (): ApFormValues => ({ supplierId: '', supplierRef: '', invoiceDate: myt(), dueDate: '', description: '', lines: [emptyLine(1)] });
 
 export const toSubmit = (v: ApFormValues): ApFormSubmit => ({
@@ -49,7 +51,11 @@ export const toSubmit = (v: ApFormValues): ApFormSubmit => ({
   ...(v.description.trim() ? { notes: v.description.trim() } : {}),
   lines: v.lines
     .filter((l) => l.debitAccountCode && l.amountSen > 0)
-    .map((l) => ({ ...(l.description.trim() ? { description: l.description.trim() } : {}), debitAccountCode: l.debitAccountCode, amountSen: l.amountSen })),
+    .map((l) => ({
+      ...(l.description.trim() ? { description: l.description.trim() } : {}),
+      debitAccountCode: l.debitAccountCode, amountSen: l.amountSen,
+      ...(l.projectId != null ? { projectId: l.projectId } : {}),
+    })),
 });
 
 /* The reader's answer as form values — the supplier from the server's match,
@@ -61,10 +67,10 @@ export const formFromExtraction = (ex: BillExtraction, match: { id: string } | n
   const account = memory?.debitAccountCode ?? '';
   const drafts: ApFormLine[] = ex.lines
     .filter((l): l is { description: string | null; amountSen: number } => l.amountSen != null && l.amountSen > 0)
-    .map((l, i) => ({ rid: i + 1, description: upperFill(l.description) ?? '', debitAccountCode: account, amountSen: l.amountSen }));
+    .map((l, i) => ({ rid: i + 1, description: upperFill(l.description) ?? '', debitAccountCode: account, amountSen: l.amountSen, projectId: null }));
   /* A bill with no readable lines still carries its total — one line. */
   if (drafts.length === 0 && ex.totalSen != null && ex.totalSen > 0) {
-    drafts.push({ rid: 1, description: upperFill(ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : 'As per bill') ?? '', debitAccountCode: account, amountSen: ex.totalSen });
+    drafts.push({ rid: 1, description: upperFill(ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : 'As per bill') ?? '', debitAccountCode: account, amountSen: ex.totalSen, projectId: null });
   }
   return {
     ...(match ? { supplierId: match.id } : {}),
@@ -122,6 +128,9 @@ export const ApInvoiceForm = ({
   const patchLine = (rid: number, patch: Partial<ApFormLine>) =>
     setV((prev) => ({ ...prev, lines: prev.lines.map((l) => (l.rid === rid ? { ...l, ...patch } : l)) }));
   const nextRid = (lines: ApFormLine[]) => Math.max(0, ...lines.map((x) => x.rid)) + 1;
+  /* 5a's header default: the lines' shared event, when they all name one — the
+     "all lines" picker shows it, and a line added takes it. */
+  const commonEvent = v.lines.length > 0 && v.lines.every((l) => l.projectId === v.lines[0]!.projectId) ? v.lines[0]!.projectId : null;
 
   /* Insert adds a line and LANDS on it (owner: 按 Ins 直接加然后直接跳到那一行);
      Enter on an amount hops to the next line's account, adding one when
@@ -138,7 +147,8 @@ export const ApInvoiceForm = ({
     setV((prev) => {
       const rid = nextRid(prev.lines);
       if (land) setLandOn(rid);
-      return { ...prev, lines: [...prev.lines, emptyLine(rid)] };
+      const shared = prev.lines.length > 0 && prev.lines.every((l) => l.projectId === prev.lines[0]!.projectId) ? prev.lines[0]!.projectId : null;
+      return { ...prev, lines: [...prev.lines, emptyLine(rid, shared)] };
     });
   };
   const removeLine = (rid: number) => setV((prev) => (prev.lines.length > 1 ? { ...prev, lines: prev.lines.filter((l) => l.rid !== rid) } : prev));
@@ -255,6 +265,14 @@ export const ApInvoiceForm = ({
           placeholder="What this bill is for — shows on the list and prints on the listing" />
       </label>
 
+      {/* The event this bill is for (owner 2026-09-30, 5a) — sets every line; a
+          line can still name its own in the table. */}
+      <label className={styles.field} style={{ maxWidth: 640 }}>
+        <span className={styles.fieldLabel}>Event (all lines)</span>
+        <EventSelect value={commonEvent} around={v.invoiceDate || null} className={styles.fieldInput} aria-label="Event for all lines"
+          onChange={(id) => setV((prev) => ({ ...prev, lines: prev.lines.map((l) => ({ ...l, projectId: id })) }))} />
+      </label>
+
       {/* The lines, in the owner's order: account number, description, amount.
           Insert anywhere in the table adds a line and lands on it. */}
       <table ref={tableRef} style={{ width: '100%', borderCollapse: 'collapse' }}
@@ -264,6 +282,7 @@ export const ApInvoiceForm = ({
             <th style={{ ...th, width: '34%' }}>Account</th>
             <th style={th}>Description</th>
             <th style={{ ...th, textAlign: 'right', width: 150 }}>Amount (RM)</th>
+            <th style={{ ...th, width: '24%' }}>Event</th>
             <th style={{ ...th, width: 36 }} />
           </tr>
         </thead>
@@ -284,6 +303,12 @@ export const ApInvoiceForm = ({
                   onCommit={(sen) => patchLine(l.rid, { amountSen: sen ?? 0 })}
                   onKeyDown={(e) => { if (e.key === 'Enter') hopFrom(l.rid); }} />
               </td>
+              {/* The event last: the owner's typing order (account, description,
+                  amount) stays unbroken; the header's picker usually sets it. */}
+              <td style={td}>
+                <EventSelect value={l.projectId} around={v.invoiceDate || null} className={styles.fieldInput} aria-label={`line ${l.rid} event`}
+                  onChange={(id) => patchLine(l.rid, { projectId: id })} />
+              </td>
               <td style={td}>
                 {v.lines.length > 1 && (
                   <button type="button" aria-label={`remove line ${l.rid}`} onClick={() => removeLine(l.rid)} style={iconBtn}>
@@ -301,6 +326,7 @@ export const ApInvoiceForm = ({
               <span style={{ ...soft, marginLeft: 'var(--space-3)' }}>Insert adds a line · Enter on an amount moves down</span>
             </td>
             <td style={{ ...td, ...right, fontWeight: 700, color: belowPaid ? 'var(--c-festive-b, #B8331F)' : undefined }}>Total {fmtSen(total)}</td>
+            <td />
             <td />
           </tr>
         </tfoot>

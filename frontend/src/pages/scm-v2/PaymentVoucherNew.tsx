@@ -41,6 +41,7 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
+import { EventSelect } from '../../vendor/scm/components/EventSelect';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { fmtDate } from '../../vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
@@ -66,6 +67,8 @@ type DraftLine = {
   description:      string;
   debitAccountCode: string;
   amountSen:      number;
+  /** The event this line's money is for (owner 2026-09-30, 5a) — null = none. */
+  projectId:        number | null;
 };
 
 const newLine = (): DraftLine => ({
@@ -73,6 +76,7 @@ const newLine = (): DraftLine => ({
   description:      '',
   debitAccountCode: '',
   amountSen:      0,
+  projectId:        null,
 });
 
 /* One outstanding-PI row in the "Apply to PI" picker, with the amount the
@@ -268,6 +272,9 @@ export const PaymentVoucherNew = () => {
      supplier's currency (below). */
   const [currencyOverride, setCurrencyOverride]   = useState<string | null>(null);
   const [lines, setLines]                         = useState<DraftLine[]>([newLine()]);
+  /* The header's event (5a): picking one sets every line, and each line added
+     after takes it; a line can still name its own. */
+  const [defaultEvent, setDefaultEvent]           = useState<number | null>(null);
   const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string } | null>(null);
   /* ── Customer Refund state (§14). refundDocNo is the COMMITTED number (blur /
      Enter on the input); the source is read from the server by that number. */
@@ -322,6 +329,7 @@ export const PaymentVoucherNew = () => {
         description: String((l as Record<string, unknown>).description ?? ''),
         amountSen: Number((l as Record<string, unknown>).amount_sen ?? 0),
         debitAccountCode: String((l as Record<string, unknown>).debit_account_code ?? ''),
+        projectId: ((l as Record<string, unknown>).project_id as number | null | undefined) ?? null,
       }));
     if (copied.length > 0) setLines(copied);
     setScanNote(`Copied from ${String(v.pv_number ?? 'voucher')} — new number, today's date, approvals restart; nothing is applied to bills yet.`);
@@ -356,7 +364,7 @@ export const PaymentVoucherNew = () => {
   const setLine  = (rid: string, patch: Partial<DraftLine>) =>
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
   const dropLine = (rid: string) => setLines((prev) => (prev.length <= 1 ? prev : prev.filter((l) => l.rid !== rid)));
-  const addLine  = () => setLines((prev) => [...prev, newLine()]);
+  const addLine  = () => setLines((prev) => [...prev, { ...newLine(), projectId: defaultEvent }]);
   /* Insert adds a line and LANDS on its account (owner 2026-09-06: 按 Ins 直接
      加然后直接跳到那一行去输入资料 — the AP invoice's manners, here too);
      Enter on an amount hops to the next line's account, adding one when
@@ -368,7 +376,7 @@ export const PaymentVoucherNew = () => {
     setLandOn(null);
   }, [landOn, lines]);
   const addLineAndLand = () => {
-    const l = newLine();
+    const l = { ...newLine(), projectId: defaultEvent };
     setLines((prev) => [...prev, l]);
     setLandOn(l.rid);
   };
@@ -564,6 +572,7 @@ export const PaymentVoucherNew = () => {
         description:      l.description || undefined,
         debitAccountCode: l.debitAccountCode,
         amountSen:      l.amountSen,
+        ...(l.projectId != null ? { projectId: l.projectId } : {}),
       }));
     const sendAllocations = applyToPi
       ? allocations.filter((a) => a.amountSen > 0).map((a) => (
@@ -897,6 +906,14 @@ export const PaymentVoucherNew = () => {
               {pendingFiles.map((f) => f.name).join(', ')}
             </div>
           )}
+          {/* The event these lines are for (owner 2026-09-30, 5a) — the header
+              default: picking one here sets every line and each new line; a
+              line can still name its own below. */}
+          <label className={styles.field} style={{ maxWidth: 640 }}>
+            <span className={styles.fieldLabel}>Event (all lines)</span>
+            <EventSelect value={defaultEvent} around={voucherDate} className={styles.fieldInput} aria-label="Event for all lines"
+              onChange={(v) => { setDefaultEvent(v); setLines((prev) => prev.map((x) => ({ ...x, projectId: v }))); }} />
+          </label>
           {lines.map((l, idx) => (
             <div key={l.rid} data-line={l.rid}
               onKeyDown={(e) => { if (e.key === 'Insert') { e.preventDefault(); addLineAndLand(); } }}
@@ -946,6 +963,11 @@ export const PaymentVoucherNew = () => {
                     onCommit={(sen) => setLine(l.rid, { amountSen: sen ?? 0 })}
                     onKeyDown={(e) => { if (e.key === 'Enter') hopFrom(l.rid); }}
                     inputClassName={styles.fieldInput} selectOnFocus />
+                </label>
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Event</span>
+                  <EventSelect value={l.projectId} around={voucherDate} className={styles.fieldInput} aria-label={`line ${idx + 1} event`}
+                    onChange={(v) => setLine(l.rid, { projectId: v })} />
                 </label>
               </div>
             </div>

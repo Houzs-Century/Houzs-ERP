@@ -81,6 +81,19 @@ vi.mock('../../components/scm-v2/PrintPreviewModal', () => ({
   useOpenPrintPreviewFromUrl: () => {},
 }));
 
+/* Events (owner 2026-09-30, 5a) — the picker's list and the labels, stubbed; the real eventLabel stays. */
+const EVENT_OPTIONS = [
+  { id: 336, code: 'E-336', name: 'Pulau Pinang [AKEMI] HOMELOVE @ SETIA SPICE', startDate: '2026-09-04', endDate: '2026-09-06', status: 'confirmed', archived: false, venue: null, brand: 'AKEMI', organizer: 'HOMELOVE', boothNo: null },
+  { id: 348, code: 'E-348', name: 'Pulau Pinang [AKEMI] MLE @ PWCC', startDate: '2026-09-25', endDate: '2026-09-27', status: 'confirmed', archived: false, venue: null, brand: 'AKEMI', organizer: 'MLE', boothNo: 'F1' },
+];
+const retagMutate = vi.fn();
+vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/event-queries')>()),
+  useEventOptions: () => ({ data: EVENT_OPTIONS, isLoading: false }),
+  useEventLabels: () => ({ data: new Map(EVENT_OPTIONS.map((e) => [e.id, e])) }),
+  useRetagPvLine: () => ({ mutate: retagMutate, isPending: false }),
+}));
+
 import { PaymentVoucherDetail } from './PaymentVoucherDetail';
 
 const draw = () => render(
