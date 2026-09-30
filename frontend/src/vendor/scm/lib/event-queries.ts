@@ -33,13 +33,17 @@ export function eventLabel(e: Pick<EventOption, 'name' | 'startDate' | 'endDate'
   return parts.join(' · ');
 }
 
+/** Where the picker reads: Finance's /acc-events, or — for a requester, who
+ *  holds no Finance area — the payment requests' own copy of the same list. */
+export type EventOptionsPath = '/acc-events/options' | '/payment-requests/event-options';
+
 /** The picker's list: the company's events around a document date (the
  *  server's window — a booth is often paid months ahead of its fair). */
-export function useEventOptions(around: string | null | undefined, enabled = true) {
+export function useEventOptions(around: string | null | undefined, enabled = true, path: EventOptionsPath = '/acc-events/options') {
   const date = around && /^\d{4}-\d{2}-\d{2}/.test(around) ? around.slice(0, 10) : null;
   return useQuery({
-    queryKey: ['acc-events', 'options', date ?? 'today'],
-    queryFn: () => authedFetch<{ events: EventOption[] }>(`/acc-events/options${date ? `?around=${date}` : ''}`).then((r) => r.events),
+    queryKey: ['acc-events', 'options', path, date ?? 'today'],
+    queryFn: () => authedFetch<{ events: EventOption[] }>(`${path}${date ? `?around=${date}` : ''}`).then((r) => r.events),
     staleTime: 60_000,
     enabled,
   });
@@ -47,11 +51,11 @@ export function useEventOptions(around: string | null | undefined, enabled = tru
 
 /** Labels for events already on lines — archived ones included, so a tag the
  *  office later withdrew still reads as what it is. */
-export function useEventLabels(ids: ReadonlyArray<number | null | undefined>) {
+export function useEventLabels(ids: ReadonlyArray<number | null | undefined>, path: EventOptionsPath = '/acc-events/options') {
   const clean = [...new Set(ids.filter((n): n is number => typeof n === 'number' && n > 0))].sort((a, b) => a - b);
   return useQuery({
-    queryKey: ['acc-events', 'labels', clean.join(',')],
-    queryFn: () => authedFetch<{ events: EventOption[] }>(`/acc-events/options?ids=${clean.join(',')}`)
+    queryKey: ['acc-events', 'labels', path, clean.join(',')],
+    queryFn: () => authedFetch<{ events: EventOption[] }>(`${path}?ids=${clean.join(',')}`)
       .then((r) => new Map(r.events.map((e) => [e.id, e]))),
     staleTime: 60_000,
     enabled: clean.length > 0,

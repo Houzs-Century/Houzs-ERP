@@ -407,6 +407,15 @@ export const requireScmAccess: MiddlewareHandler<{ Bindings: Env }> = async (c, 
     await next();
     return;
   }
+  // Additive (owner 2026-09-30, 申请付款): a holder of the flat key
+  // scm.payment_request.create — a sales PIC asking Finance to pay an event's
+  // rental — reaches the payment-request router and nothing else. TIGHT: that one
+  // prefix; the router answers such a caller with their OWN requests only and
+  // keeps every voucher, account and supplier behind Finance's own doors.
+  if (/\/scm\/payment-requests(\/|$)/.test(c.req.path) && hasPermission(granted, "scm.payment_request.create")) {
+    await next();
+    return;
+  }
   // Additive (owner 2026-07-16): a code-keyed Sales rep must be able to READ the
   // Delivery Orders / Sales Invoices generated from their OWN Sales Orders (e.g.
   // to find + resend a customer's invoice) and the relationship-map graph that

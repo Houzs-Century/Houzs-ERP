@@ -71,6 +71,7 @@ import { settlePiPaidSen } from '../lib/pi-settlement';
 import { normalizeVendor } from '../../acc/bill-extract';
 import { extractBillsHandler } from './pv-extract';
 import { parseEventId, pvLineEventRefusal } from '../lib/event-tags';
+import { paymentRequestLinkGuard, linkPaymentRequest } from '../lib/payment-request';
 import { requireLeafAccount } from './accounting-chart';
 import { planPvRateAdoption, isRateRetainedFromPv, roundRate6 } from '../lib/pv-rate-adoption';
 import { recostFromGrn } from '../lib/recost';
@@ -613,6 +614,9 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
   }
   const eventErr = await pvLineEventRefusal(c, body.purpose, built.rows); // lib/event-tags.ts
   if (eventErr) return eventErr;
+  /* 申请付款: the request this voucher answers, still waiting (lib/payment-request.ts). */
+  const prq = await paymentRequestLinkGuard(c, body.paymentRequestId);
+  if ('resp' in prq) return prq.resp;
 
   /* The AP split (owner 2026-09-03): a 405-x supplier's paper belongs to
      AP_OTHER (405-0000), everyone else's to AP (400-0000) — apControlRole in
@@ -727,6 +731,10 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
     const allocRows = allocBuilt.rows.map((r) => ({ ...r, pv_id: h.id }));
     const { error: aErr } = await sb.from('pv_allocations').insert(stampCompany(allocRows, c));
     if (aErr) { await rollbackHeader(); return c.json({ error: 'allocations_insert_failed', reason: aErr.message }, 500); }
+  }
+  if (prq.request) { /* claimed only if still waiting; else this voucher never stood */
+    const linked = await linkPaymentRequest(c, prq.request, { id: h.id, pvNumber: h.pv_number });
+    if (!linked.ok) { await rollbackHeader(); return c.json(linked.body, linked.status); }
   }
 
   /* Recorded only after every compensating-delete path above is behind us, so

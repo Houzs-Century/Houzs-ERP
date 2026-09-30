@@ -85,6 +85,11 @@ const EVENT_OPTIONS = [
   { id: 348, code: 'E-348', name: 'Pulau Pinang [AKEMI] MLE @ PWCC', startDate: '2026-09-25', endDate: '2026-09-27', status: 'confirmed', archived: false, venue: null, brand: 'AKEMI', organizer: 'MLE', boothNo: 'F1' },
 ];
 const retagMutate = vi.fn();
+/* 申请付款 — the request a voucher may answer (?fromRequest=); set by that test only. */
+let requestDetail: Record<string, unknown> | undefined;
+vi.mock('../../vendor/scm/lib/payment-request-queries', () => ({
+  usePaymentRequest: (id: string | null) => ({ data: id && requestDetail ? { request: requestDetail, finance: true } : undefined, isLoading: false }),
+}));
 vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/event-queries')>()),
   useEventOptions: () => ({ data: EVENT_OPTIONS, isLoading: false }),
@@ -508,6 +513,28 @@ describe('the event each line is for (owner 2026-09-30, 5a — the header a defa
       expect.objectContaining({ description: 'BOOTH RENTAL', amountSen: 10000, projectId: 336 }),
       expect.objectContaining({ description: 'ADMIN FEE', amountSen: 500, projectId: 348 }),
     ]);
+  });
+});
+
+describe('answering a payment request (?fromRequest=, 申请付款)', () => {
+  test('the payee, the asked amount, the purpose, the event and the request fill in; the save names the request', async () => {
+    mutateAsync.mockClear();
+    requestDetail = { id: 'prq-1', request_no: 'HC-PRQ-2609-004', requested_by_name: 'James Seow', payee_name: 'MLE EVENTS SDN BHD', amount_sen: 850000, purpose: 'Booth F1 rental', project_id: 348, bank_name: 'Maybank', bank_account_no: '5123', bank_account_name: 'MLE EVENTS SDN BHD', status: 'SUBMITTED', stage: 'SUBMITTED', voucher: null };
+    draw('/scm/payment-vouchers/new?fromRequest=prq-1');
+    expect((screen.getByLabelText(/^Payee/) as HTMLInputElement).value).toBe('MLE EVENTS SDN BHD');
+    expect(screen.getByText(/Answering HC-PRQ-2609-004 from James Seow/)).toBeTruthy();
+    expect((screen.getByLabelText('line 1 event') as HTMLInputElement).value).toMatch(/MLE @ PWCC/);
+    expect((screen.getByLabelText('Event for all lines') as HTMLInputElement).value).toMatch(/MLE @ PWCC/);
+    const account = screen.getByLabelText('line 1 amount').closest('[data-line]')!.querySelector('[role="combobox"]') as HTMLInputElement;
+    fireEvent.focus(account);
+    fireEvent.mouseDown(screen.getByText('900-A002 · Advertisement'));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3', cancelable: true, bubbles: true }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const payload = mutateAsync.mock.calls[0]![0];
+    expect(payload.paymentRequestId).toBe('prq-1');
+    expect(payload.notes).toBe('Payment request HC-PRQ-2609-004 — Booth F1 rental · pay to Maybank 5123 MLE EVENTS SDN BHD');
+    expect(payload.lines).toEqual([expect.objectContaining({ description: 'Booth F1 rental', debitAccountCode: '900-A002', amountSen: 850000, projectId: 348 })]);
+    requestDetail = undefined;
   });
 });
 

@@ -53,6 +53,7 @@ import { arInvoices } from "./routes/ar-invoices";
 import { creditNotes } from "./routes/credit-notes";
 import { depositInvoices } from "./routes/deposit-invoices";
 import { accEvents } from "./routes/acc-events";
+import { paymentRequests } from "./routes/payment-requests";
 import { receipts } from "./routes/receipts";
 import { entityAuditLog } from "./routes/entity-audit-log";
 import { changeLog } from "./routes/change-log";
@@ -706,6 +707,11 @@ scm.route("/venture-portal-feed", venturePortalFeed);
 // lookup left on the coarse scm gate (reads open); writes are gated inside the
 // route by scm.currency.manage.
 scm.route("/currencies", currencies);
+// 申请付款 (owner 2026-09-30) — NO area guard: a sales PIC asking Finance to pay
+// an event's rental holds no SCM area, only the flat scm.payment_request.create,
+// which requireScmAccess admits for this prefix alone. Each handler checks that
+// key or Finance's scm.payment_voucher.create, and a requester sees their own.
+scm.route("/payment-requests", paymentRequests);
 // HR / Commission (port of 2990 apps/api routes/hr.ts + migration 0123). The
 // only place commission is calculated — the last thing keeping 2990's apps/api
 // alive. NO scmAreaGuard: an L2 area key is a PAGE key, and there is no HR page
