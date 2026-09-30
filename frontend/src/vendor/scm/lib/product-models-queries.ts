@@ -232,8 +232,8 @@ export function useUpdateProductModel() {
       // The PATCH auto-creates a SKU per newly ticked sofa compartment and the
       // catalogue rows carry the Model's allowed_options; without this the
       // SO/PO picker keeps its 5-minute-old list and the new code is missing.
-      qc.invalidateQueries({ queryKey: ['mfg-products'] });
-      qc.invalidateQueries({ queryKey: ['model-allowed-options-by-code'] });
+      void qc.invalidateQueries({ queryKey: ['mfg-products'] });
+      void qc.invalidateQueries({ queryKey: ['model-allowed-options-by-code'] });
     },
   });
 }
