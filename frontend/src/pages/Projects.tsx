@@ -94,6 +94,7 @@ import { paymentPillOptions } from "../vendor/scm/lib/pms-project-status";
 import { Forbidden } from "./Forbidden";
 import { useNotifications } from "../hooks/useNotifications";
 import { api, buildQuery } from "../api/client";
+import OutstandingReminders from "./projects/OutstandingReminders";
 import { formatPhone } from "../vendor/shared/phone";
 import { MediaLightbox } from "../components/MediaLightbox";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
@@ -612,7 +613,15 @@ function ProjectsListView() {
 
   const [perPage, setPerPage] = useIdentityPreference("pp:projects", 50, pageSizePreference([10, 25, 50, 100, 200]));
   // List render mode — cards (P2 design) vs the full data table. Default cards.
-  const [listMode, setListMode] = useIdentityPreference("projects:listMode", "cards", enumPreference(["cards", "table"] as const));
+  const [listMode, setListMode] = useIdentityPreference("projects:listMode", "cards", enumPreference(["cards", "table", "reminder"] as const));
+  // Reminder = the owner/admin chase list (Projects › Reminder). Only holders of
+  // projects.reminders (Owner + Super Admin via "*") see the toggle; if someone
+  // lands on a stored "reminder" pref without the grant, snap them back to cards
+  // so they never sit on a view whose data endpoint 403s.
+  const canReminders = can("projects.reminders");
+  useEffect(() => {
+    if (listMode === "reminder" && !canReminders) setListMode("cards");
+  }, [listMode, canReminders, setListMode]);
   const [showCreate, setShowCreate] = useState(false);
   // Deep-link: the global "+" quick-action FAB opens the New Project modal via
   // /projects?new=1. Consume the flag once and strip it so refresh/back don't reopen.
@@ -1244,6 +1253,10 @@ function ProjectsListView() {
         }
       />
 
+      {/* Reminder mode owns its own filters, so the project-list stat cards and
+          filter toolbar are hidden while it is active. */}
+      {listMode !== "reminder" && (
+      <>
       <DashboardGrid cols={3}>
         <StatCard
           label="Live Now"
@@ -1425,6 +1438,9 @@ function ProjectsListView() {
         )}
       </div>
 
+      </>
+      )}
+
       {/* View toggle — cards (P2 design) vs the full data table. */}
       <div className="mb-3 flex items-center justify-end gap-2">
         {/* Export is part of the Table toolbar; add it here so Cards view can
@@ -1452,12 +1468,23 @@ function ProjectsListView() {
           >
             Table
           </button>
+          {canReminders && (
+            <button
+              onClick={() => setListMode("reminder")}
+              className={cn("border-l border-border px-3 py-1.5 transition-colors", listMode === "reminder" ? "bg-primary text-white" : "text-ink-secondary hover:bg-surface-dim")}
+              title="Compile everyone's incomplete tasks and copy a reminder to paste into WhatsApp (owner/admin only)"
+            >
+              Reminder
+            </button>
+          )}
         </div>
       </div>
 
       <div className={cn(listMode === "cards" && "grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_300px]")}>
       <div className="min-w-0">
-      {listMode === "cards" ? (
+      {listMode === "reminder" ? (
+        <OutstandingReminders />
+      ) : listMode === "cards" ? (
         list.error ? (
           <ListErrorPanel message={list.error} />
         ) : (list.loading && !list.data) || searchTransition.isSearching ? (

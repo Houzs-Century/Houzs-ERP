@@ -40,6 +40,7 @@ import pushDevices from "./routes/push";
 import { runPushFleetReminders } from "./services/pushFleetReminders";
 import presence from "./routes/presence";
 import projects from "./routes/projects";
+import projectsOutstanding from "./routes/projectsOutstanding";
 // Sales entries (/api/sales) is retained as a DEPENDENCY of Projects — the
 // Projects page embeds the sales-entry EntryPanel + submit/void/delete flow.
 // It has no standalone nav/route after the cutover.
@@ -439,6 +440,9 @@ app.route("/api/notifications", notifications);
 // Native-app push device registry (any signed-in user, own device only).
 app.route("/api/push", pushDevices);
 app.route("/api/presence", presence);
+// Mounted at the EXACT path BEFORE the projects router so its "/:id" catch-all
+// does not swallow "outstanding-tasks" as an id (owner/admin Reminder view).
+app.route("/api/projects/outstanding-tasks", projectsOutstanding);
 app.route("/api/projects", projects);
 // The office side of a brand's share link (generate / revoke). Own file because
 // routes/projects.ts is at its size ceiling. See routes/brandShare.ts.
