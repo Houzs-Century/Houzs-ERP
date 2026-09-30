@@ -282,6 +282,7 @@ export async function postJournal(sb: any, input: PostJournalInput): Promise<Pos
     party_code: l.partyCode ?? null,
     party_name: l.partyName ?? null,
     notes: l.notes ?? null,
+    project_id: l.projectId ?? null,
   }));
   const { error: linesErr } = await sb.from('journal_entry_lines').insert(lineRows);
   if (linesErr) {
@@ -385,13 +386,14 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
     return { ok: true, status: 'reversed', jeNo: orig.je_no, jeId: orig.id, originalJeNo: orig.je_no };
   }
 
-  // Mirror the SAME accounts + parties with debit/credit swapped — a faithful
-  // contra. The read is caught before the `?? []` fold: a failed read is not
-  // "the original had no lines", and falling through would contra assumed
+  // Mirror the SAME accounts + parties + events with debit/credit swapped — a
+  // faithful contra, so an event's cost nets to zero with its voided entry.
+  // The read is caught before the `?? []` fold: a failed read is not "the
+  // original had no lines", and falling through would contra assumed
   // accounts instead of the real ones.
   const { data: origLines, error: origLinesErr } = await sb
     .from('journal_entry_lines')
-    .select('account_code, debit_sen, credit_sen, party_type, party_code, party_name, notes')
+    .select('account_code, debit_sen, credit_sen, party_type, party_code, party_name, notes, project_id')
     .eq('journal_entry_id', orig.id)
     .order('line_no');
   if (origLinesErr) return { ok: false, status: 'reversal_read_failed', reason: `origLines: ${origLinesErr.message}` };
@@ -403,6 +405,7 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
     party_code: string | null;
     party_name: string | null;
     notes: string | null;
+    project_id?: number | null;
   }>;
 
   const companyId = orig.company_id ?? null;
@@ -458,6 +461,7 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
           party_code: l.party_code ?? null,
           party_name: l.party_name ?? null,
           notes: `Reversal — ${l.notes ?? ''}`.trim(),
+          project_id: l.project_id ?? null,
         }))
       : (input.fallbackLines ? input.fallbackLines(totalSen) : []).map((l, i) => ({
           ...companyCol,
@@ -470,6 +474,7 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
           party_code: l.partyCode ?? null,
           party_name: l.partyName ?? null,
           notes: l.notes ?? null,
+          project_id: l.projectId ?? null,
         }));
   if (swapped.length === 0) {
     await sb.from('journal_entries').delete().eq('id', revJe.id);

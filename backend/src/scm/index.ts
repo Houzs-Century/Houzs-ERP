@@ -52,6 +52,7 @@ import { apInvoices } from "./routes/ap-invoices";
 import { arInvoices } from "./routes/ar-invoices";
 import { creditNotes } from "./routes/credit-notes";
 import { depositInvoices } from "./routes/deposit-invoices";
+import { accEvents } from "./routes/acc-events";
 import { receipts } from "./routes/receipts";
 import { entityAuditLog } from "./routes/entity-audit-log";
 import { changeLog } from "./routes/change-log";
@@ -626,6 +627,11 @@ scm.route("/credit-notes", creditNotes);
 // and holds the switch. Same area as the notes and receipts beside it.
 scm.use("/deposit-invoices/*", scmAreaGuard("scm.finance.accounting"));
 scm.route("/deposit-invoices", depositInvoices);
+// Events on the money side (owner 2026-09-30, 5a) — the event picker for voucher
+// and AP invoice lines, the event cost report, and changing a paid voucher
+// line's event. Same area as the vouchers it serves.
+scm.use("/acc-events/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/acc-events", accEvents);
 // Payment Audit Log — Finance's payment TRAIL (port of 2990's /admin/audit-log):
 // one row per mfg_sales_order_payments entry + its SO header context. Read-only.
 // Same L2 area as Accounting: it is the money ledger's read side, not a new

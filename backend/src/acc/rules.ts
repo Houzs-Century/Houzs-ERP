@@ -183,6 +183,10 @@ export type RuleLine = {
   partyCode?: string | null;
   partyName?: string | null;
   notes?: string | null;
+  /** The event (public.projects id) this leg's money is for — owner 2026-09-30,
+      5a: an event per voucher / AP invoice line, carried onto that line's own
+      leg (never the bank or AP-control leg), and onto its contra. */
+  projectId?: number | null;
 };
 
 /** Sales invoice issued (docs/bugs/0829): Dr AR for the invoice total, the
@@ -304,7 +308,7 @@ export function apInvoiceLines(
   roles: RoleCodes,
   inv: { invoice_number: string },
   supplier: { code: string | null; name: string | null },
-  debits: Array<{ accountCode: string; myrSen: number; description: string | null }>,
+  debits: Array<{ accountCode: string; myrSen: number; description: string | null; projectId?: number | null }>,
 ): RuleLine[] {
   const totalSen = debits.reduce((s, d) => s + d.myrSen, 0);
   return [
@@ -316,6 +320,7 @@ export function apInvoiceLines(
       partyCode: null,
       partyName: null,
       notes: d.description ?? `AP invoice ${inv.invoice_number}`,
+      projectId: d.projectId ?? null,
     })),
     {
       accountCode: roles[apControlRole(supplier.code)],
@@ -365,7 +370,7 @@ export function piLines(
  */
 export function pvLines(
   pv: { pv_number: string; payee_name: string; credit_account_code: string },
-  debitLegs: Array<{ description: string | null; debit_account_code: string; myrSen: number }>,
+  debitLegs: Array<{ description: string | null; debit_account_code: string; myrSen: number; project_id?: number | null }>,
   supplier: { code: string | null; name: string | null },
   /** The supplier's own AP control (a supplier payment): the Dr leg on it IS
       the supplier's sub-ledger, so it carries the party the way the invoice
@@ -384,6 +389,7 @@ export function pvLines(
       partyCode: onControl ? supplier.code : null,
       partyName: onControl ? (supplier.name ?? pv.payee_name) : null,
       notes: `${l.description ?? 'Payment'} — ${pv.pv_number}`,
+      projectId: l.project_id ?? null,
     };
   });
   lines.push({
