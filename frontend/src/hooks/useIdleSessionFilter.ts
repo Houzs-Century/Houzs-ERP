@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { identityStorageKey } from "../lib/storageIdentity";
 
 // A small filter object persisted in sessionStorage for state that is NOT in the
@@ -37,6 +37,24 @@ export function useIdleSessionFilter<T extends Record<string, string>>(
       return initial;
     }
   });
+
+  // Opening the page counts as touching it — re-stamp a restored value's clock
+  // so the idle TTL measures time AWAY from the page, matching useStickyFilters.
+  // Only re-stamps an entry that already exists (a fresh/expired one is left
+  // absent, so a default filter never creates storage noise).
+  const touched = useRef(false);
+  useEffect(() => {
+    if (touched.current || !key) return;
+    touched.current = true;
+    try {
+      if (sessionStorage.getItem(key)) {
+        sessionStorage.setItem(key, JSON.stringify({ v: value, t: Date.now() }));
+      }
+    } catch {
+      // storage unavailable — nothing to refresh
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const patch = useCallback(
     (p: Partial<T>) => {

@@ -160,6 +160,9 @@ export const PRODUCTION_STORAGE_CALLERS = [
   // presentation only and no longer touches storage.
   "components/useAnnouncementBanner.ts",
   "hooks/useIdentityPreference.ts",
+  // Mobile calendar's non-URL filters (brand/section/organizer): sessionStorage
+  // under the shared filters: family, 1h idle TTL (list-filters rule).
+  "hooks/useIdleSessionFilter.ts",
   "hooks/useLocalStorage.ts",
   "hooks/usePendingReminder.ts",
   "hooks/useStickyFilters.ts",

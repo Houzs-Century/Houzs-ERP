@@ -121,15 +121,18 @@ describe("useStickyFilters idle TTL", () => {
     expect(screen.getByTestId("params").textContent).toBe("");
   });
 
-  it("does not restart the clock when the same filter is restored on navigation", async () => {
+  it("restores the filter on navigation and re-stamps the idle clock", async () => {
     bindBrowserStorageIdentity(7);
     const t0 = Date.now() - 50 * 60 * 1000;
     sessionStorage.setItem("filters:projects-calendar:u7:c0", JSON.stringify({ v: "status=confirmed", t: t0 }));
     render(<MemoryRouter initialEntries={["/"]}><CalProbe /></MemoryRouter>);
     await waitFor(() => expect(screen.getByTestId("params").textContent).toBe("status=confirmed"));
-    // Navigating back re-mirrors the unchanged value — `t` must be preserved,
-    // not bumped, or the filter would never expire while it is being viewed.
-    const rec = JSON.parse(sessionStorage.getItem("filters:projects-calendar:u7:c0") as string);
-    expect(rec.t).toBe(t0);
+    // Opening the page is "touching" it, so the clock moves forward from the old
+    // t0 — the hour is measured AWAY from the page (owner 2026-09-30).
+    await waitFor(() => {
+      const rec = JSON.parse(sessionStorage.getItem("filters:projects-calendar:u7:c0") as string);
+      expect(rec.v).toBe("status=confirmed");
+      expect(rec.t).toBeGreaterThan(t0);
+    });
   });
 });

@@ -28,12 +28,12 @@ import { identityStorageKey } from "../lib/storageIdentity";
  *               in the URL (e.g. `?focus=123` from a deep-link) won't
  *               be persisted. When omitted, every param is persisted.
  * @param opts.idleTtlMs  When set, the stored filter is dropped once this many
- *               ms have passed since the filter was last CHANGED (owner
- *               2026-09-30: the calendar filter should "remain unless u log out
- *               or leave the page without touching for 1 hour"). Mere
- *               navigation back to the page restores the filter and does NOT
- *               restart the clock — only editing a filter value does. Logout
- *               clears it outright (AuthContext sweeps `filters:*`).
+ *               ms have passed since the page was last used (owner 2026-09-30:
+ *               the calendar filter should "remain unless u log out or leave the
+ *               page without touching for 1 hour"). Opening the page restores the
+ *               filter AND re-stamps the clock, so the TTL measures time AWAY
+ *               from the page, not time since an edit. Logout clears it outright
+ *               (AuthContext sweeps `filters:*`).
  */
 export function useStickyFilters(
   scope: string,
@@ -108,15 +108,11 @@ export function useStickyFilters(
       const snap = pluck(params).toString();
       if (snap === "") { sessionStorage.removeItem(storageKey); return; }
       if (idleTtlMs != null) {
-        // Keep the timestamp when the value did not change — restoring the same
-        // filter on navigation must NOT restart the 1-hour idle clock; only a
-        // real edit does. So `t` moves forward only when `v` differs.
-        let t = Date.now();
-        try {
-          const prev = JSON.parse(sessionStorage.getItem(storageKey) ?? "null") as { v?: unknown; t?: unknown } | null;
-          if (prev && prev.v === snap && typeof prev.t === "number") t = prev.t;
-        } catch { /* corrupt entry — restamp */ }
-        sessionStorage.setItem(storageKey, JSON.stringify({ v: snap, t }));
+        // Stamp the time on every write — mounting/using the page (which restores
+        // the filter and re-mirrors it) counts as "touching" it, so the 1-hour
+        // idle clock measures time AWAY from the page. Owner 2026-09-30: "leave
+        // the page without touching for 1 hour".
+        sessionStorage.setItem(storageKey, JSON.stringify({ v: snap, t: Date.now() }));
       } else {
         sessionStorage.setItem(storageKey, snap);
       }
