@@ -277,6 +277,23 @@ export const ProductModelDetail = ({
       name,
       description: description.trim() || null,
       allowedOptions: allowed,
+    }, {
+      onSuccess: (res) => {
+        const made = res.autoCreatedSkus ?? [];
+        const failed = res.autoCreateFailed ?? [];
+        if (failed.length > 0) {
+          void notify({
+            title: 'Saved, but some item codes were not created.',
+            body: `${failed.join(', ')}. Use "Add codes" to create them.`,
+            tone: 'error',
+          });
+        } else {
+          void notify({
+            title: 'Saved.',
+            body: made.length > 0 ? `New item codes: ${made.join(', ')}.` : undefined,
+          });
+        }
+      },
     });
   };
 

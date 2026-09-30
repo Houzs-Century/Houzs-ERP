@@ -603,6 +603,9 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
   // "Console") — the engine matches case-sensitively, so the code suffix must
   // equal the laid-out cell code.
   const autoCreatedSkus: string[] = [];
+  // Codes the insert refused: the options are saved, so the PATCH still
+  // succeeds, but the screen must say these codes do not exist yet.
+  const autoCreateFailed: string[] = [];
   if (cat === 'SOFA' && parsed.data.allowedOptions !== undefined) {
     const oldComps = new Set(
       Array.isArray((before?.allowed_options as { compartments?: unknown } | null)?.compartments)
@@ -620,12 +623,11 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
       const branding   = String((data as { branding?: string | null }).branding ?? '').trim();
       const namePrefix = (branding ? `${branding} ` : '').toUpperCase();
       const upperName  = (modelName || modelCode).toUpperCase();
-      // Backend-authority client (bypasses POS-role RLS for the system insert).
-      const admin = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
+      // The request's own client: it is already service-role AND pointed at the
+      // `scm` schema. A raw createClient() here defaulted to `public`, where
+      // this table is not, so every auto-create failed and was swallowed.
       const wantCodes = added.map((comp) => `${codePrefix}-${comp}`);
-      const { data: existing, error: existingErr } = await pgrestIn(admin
+      const { data: existing, error: existingErr } = await pgrestIn(supabase
         .from('mfg_products')
         .select('code'), 'code', wantCodes)
         .eq('company_id', activeCompanyId(c));
@@ -658,13 +660,14 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
         // Best-effort: allowed_options already saved; don't fail the PATCH if the
         // auto-create hiccups (Master Admin can still add via SKU Master). 23505
         // = a concurrent create already made it — treat as success (idempotent).
-        const { error: insErr } = await admin.from('mfg_products').insert(stampCompany(rows, c));
+        const { error: insErr } = await supabase.from('mfg_products').insert(stampCompany(rows, c));
         if (!insErr || insErr.code === '23505') autoCreatedSkus.push(...rows.map((r) => r.code));
+        else autoCreateFailed.push(...rows.map((r) => r.code));
       }
     }
   }
 
-  return c.json({ model: data, autoCreatedSkus });
+  return c.json({ model: data, autoCreatedSkus, autoCreateFailed });
 };
 productModels.patch('/:id', patchProductModelHandler);
 
