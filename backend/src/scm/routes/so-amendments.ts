@@ -39,7 +39,7 @@ import {
   notifyPoAmendmentRaised,
 } from '../../services/amendmentNotify';
 import { collectProcessingGateProblems } from '../shared/so-save-problems';
-import { canonicaliseSoHeaderChanges, soDateDay, soDatePairRefusal } from '../shared/so-processing-date';
+import { canonicaliseSoHeaderChanges, soDateDay, soDatePairRefusal, withProcessingRemovalCascade } from '../shared/so-processing-date';
 import { recordSoAudit } from '../lib/so-audit';
 import { scopeToCompany, isMirroredDocNo, houzsOwns2990, MIRRORED_SO_READONLY, activeCompanyId, requireActiveCompanyId } from '../lib/companyScope';
 import {
@@ -772,8 +772,14 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     const nextProc = 'processingDate' in headerChanges
       ? ymd(headerChanges['processingDate'])
       : ymd(cur.processing_date);
-    const nextDeliv = 'customerDeliveryDate' in headerChanges
-      ? ymd(headerChanges['customerDeliveryDate'])
+    /* Judged AFTER the removal cascade applySoAmendment performs, so a Processing
+       Date removal filed before 2026-09-30 (its Delivery Date half split onto the
+       other desk) can still be approved instead of refused as "one date left". */
+    const effective = withProcessingRemovalCascade(headerChanges, {
+      processingDate: cur.processing_date, deliveryDate: cur.customer_delivery_date,
+    });
+    const nextDeliv = 'customerDeliveryDate' in effective
+      ? ymd(effective['customerDeliveryDate'])
       : ymd(cur.customer_delivery_date);
     /* THE PAIR RE-CHECK, which this path did not have. The submit-time XOR
        (mfg-sales-orders.ts, amendment_dates_xor) validates the COMBINED request,

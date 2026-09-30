@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { purchaseOrderPdfBase64 } from './purchase-order-pdf';
+import { motionMark } from './sofa-layout-pdf';
 
 /* One cast for every test's line array, instead of one per call site: the
    generator takes the rich PoItem[]; these fixtures carry only the fields each
@@ -126,6 +127,31 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
     expect(raw).toContain('Sofa layout');
     expect(raw.match(/CNR/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
     if (process.env.SOFA_PDF_OUT) writeFileSync(process.env.SOFA_PDF_OUT.replace(/\.pdf$/, '-u.pdf'), pdf);
+  });
+
+  /* BUG-42, HC-PO-2609-318 (Sim 2026-09-30): power seats drew as plain seats.
+     The plan must stamp "P" on each one — a bare "(P) Tj" text op, distinct
+     from the escaped "1A\(P\)..." caption. */
+  it('marks power seats with P on the plan', async () => {
+    const line = (moduleId: string) => ({ ...sofaLine(moduleId), item_code: `DSL-8038-${moduleId}` });
+    const b64 = await purchaseOrderPdfBase64(
+      header,
+      asItems([line('1A(P)(LHF)'), line('1A(P)(RHF)'), line('Console')]),
+    );
+    const pdf = Buffer.from(b64, 'base64');
+    const raw = pdf.toString('latin1');
+    expect(raw).toContain('Sofa layout');
+    expect(raw.match(/\(P\) Tj/g)?.length ?? 0).toBe(2);
+    if (process.env.SOFA_PDF_OUT) writeFileSync(process.env.SOFA_PDF_OUT.replace(/\.pdf$/, '-p.pdf'), pdf);
+  });
+
+  it('reads the motion letter from the first paren group only', () => {
+    expect(motionMark('1A(P)(LHF)')).toBe('P');
+    expect(motionMark('1NA(R)')).toBe('R');
+    expect(motionMark('1S(L)')).toBe('L');
+    expect(motionMark('L(LHF)')).toBeNull();
+    expect(motionMark('1A(LHF)')).toBeNull();
+    expect(motionMark('Console')).toBeNull();
   });
 
   it('draws nothing sofa-shaped for a non-sofa PO', async () => {

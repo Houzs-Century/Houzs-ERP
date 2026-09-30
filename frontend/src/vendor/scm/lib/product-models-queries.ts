@@ -221,7 +221,7 @@ export function useUpdateProductModel() {
       active?: boolean;
     }) => {
       const { id, ...body } = args;
-      return authedFetch<{ model: ProductModelRow }>(`/product-models/${id}`, {
+      return authedFetch<{ model: ProductModelRow; autoCreatedSkus?: string[]; autoCreateFailed?: string[] }>(`/product-models/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(body),
       });
@@ -229,6 +229,11 @@ export function useUpdateProductModel() {
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['product-models'] });
       qc.invalidateQueries({ queryKey: ['product-models', vars.id] });
+      // The PATCH auto-creates a SKU per newly ticked sofa compartment and the
+      // catalogue rows carry the Model's allowed_options; without this the
+      // SO/PO picker keeps its 5-minute-old list and the new code is missing.
+      void qc.invalidateQueries({ queryKey: ['mfg-products'] });
+      void qc.invalidateQueries({ queryKey: ['model-allowed-options-by-code'] });
     },
   });
 }

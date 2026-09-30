@@ -80,7 +80,7 @@ import { diffHeaderPayload, hasHeaderChanges } from '../../vendor/scm/lib/so-hea
 import { soSaveEndFields, soVersionAfter } from '../../vendor/scm/lib/so-save-lease';
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER,
   AMENDMENT_NOTHING_TO_SUBMIT } from '../../vendor/scm/lib/so-amendment-submit';
-import { useAmendmentSubmitDialog } from '../../vendor/scm/components/AmendmentSubmitDialog';
+import { useAmendmentSubmitDialog, RequestProcessingDateRemoval } from '../../vendor/scm/components/AmendmentSubmitDialog';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { addressLineProps } from '../../lib/acColumnWidths';
 /* lib/utils formatDate (NOT the vendored fmtDate) for the amendment's header
@@ -3181,7 +3181,8 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
       today,
       originalProcessingDate: originalProcessing,
       originalDeliveryDate: originalDelivery,
-      canRemoveProcessingDate,
+      // In amendment mode the removal is a REQUEST the Purchaser signs (owner 2026-09-30), not a direct write.
+      canRemoveProcessingDate: canRemoveProcessingDate || amendmentMode,
     });
     return err ? soErrorText(err) : null;
   };
@@ -3464,14 +3465,8 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 onChange={(iso) => set('processingDate', iso)}
                 style={datesXor && !form.processingDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
               />
-              {/* Remove-Processing-Date gate (Owner 2026-07-09) — the server 403s
-                  a non-holder's clear; surface the rule up front instead of
-                  letting them find out on Save. */}
-              {originalProcessing !== '' && !inputsDisabled && !processingLocked && !canRemoveProcessingDate && (
-                <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>
-                  Only a Super Admin can remove this date.
-                </span>
-              )}
+              {/* Remove-Processing-Date gate: the direct clear is Super-Admin-only (2026-07-09); anyone else REQUESTS it for the Purchaser (2026-09-30). */}
+              <RequestProcessingDateRemoval docNo={header.doc_no} surface="desktop" hint={originalProcessing !== '' && !inputsDisabled && !processingLocked && !canRemoveProcessingDate && !amendmentMode} show={originalProcessing !== '' && !locked && !processingLocked && !canRemoveProcessingDate && !amendmentMode} />
             </label>
             <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Delivery Date</span>

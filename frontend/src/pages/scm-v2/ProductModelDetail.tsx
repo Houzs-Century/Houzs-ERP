@@ -277,6 +277,23 @@ export const ProductModelDetail = ({
       name,
       description: description.trim() || null,
       allowedOptions: allowed,
+    }, {
+      onSuccess: (res) => {
+        const made = res.autoCreatedSkus ?? [];
+        const failed = res.autoCreateFailed ?? [];
+        if (failed.length > 0) {
+          void notify({
+            title: 'Saved, but some item codes were not created.',
+            body: `${failed.join(', ')}. Use "Add codes" to create them.`,
+            tone: 'error',
+          });
+        } else {
+          void notify({
+            title: 'Saved.',
+            body: made.length > 0 ? `New item codes: ${made.join(', ')}.` : undefined,
+          });
+        }
+      },
     });
   };
 
@@ -865,8 +882,8 @@ const DEFAULT_FORMATS = {
   // template ('{model_name} {compartment}') worked only when commander
   // typed "SOFA 5530" into model.name; for new Models like "ADDA" it
   // produced "ADDA 1A(LHF)" (no "SOFA" word). Now inserts "SOFA" literal
-  // + optional branding prefix. Mirrors API §SOFA branch.
-  sofaName:     '{branding} SOFA {model_name} {compartment}',
+  // (no branding: it lives in its own column). Mirrors API §SOFA branch.
+  sofaName:     'SOFA {model_name} {compartment}',
   // PR #88 — Drop the "-NF" suffix per Commander ("NF 不需要"). Was
   // '{branding_nf}{model_code} MATT ({size})' producing "HAPPI.S-NF
   // PUREZONE MATT (K)"; now just prepends "{branding} " for a plain

@@ -543,6 +543,50 @@ export function soDatePairCascadeColumns(i: {
 }
 
 /**
+ * The amendment twin of soDatePairCascadeColumns (owner 2026-09-30: a Processing
+ * Date removal is requested by amendment and signed by the Purchaser). A request
+ * that clears a stored Processing Date also clears the Delivery Date, as the SAME
+ * change — so it is one document on one desk, and the approve-time pair re-check
+ * sees both dates go together instead of refusing each half forever.
+ *
+ * Returns the header changes to store/apply: unchanged unless the cascade fires.
+ */
+export function withProcessingRemovalCascade<T>(
+  headerChanges: Record<string, T | null>,
+  stored: { processingDate: unknown; deliveryDate: unknown },
+): Record<string, T | null> {
+  if (!Object.prototype.hasOwnProperty.call(headerChanges, 'processingDate')) return headerChanges;
+  const cols = soDatePairCascadeColumns({
+    procCleared: soDateDay(headerChanges['processingDate']) === '' && soDateDay(stored.processingDate) !== '',
+    delivInPatch: Object.prototype.hasOwnProperty.call(headerChanges, 'customerDeliveryDate'),
+    origDeliv: soDateDay(stored.deliveryDate) || null,
+  });
+  return cols.length > 0 ? { ...headerChanges, customerDeliveryDate: null } : headerChanges;
+}
+
+/**
+ * True when an amendment request is a Processing Date REMOVAL and nothing else:
+ * the stored date is set, the request clears it (and at most the Delivery Date
+ * with it), and carries no line. The one request an order that is NOT yet
+ * locked may still raise (owner 2026-09-30: 「还没锁定的也是 purchaser 可以审批」)
+ * — every other change on an unlocked order is a direct edit.
+ */
+export function isProcessingRemovalOnlyRequest(i: {
+  headerChanges: unknown;
+  lines: unknown;
+  storedProcessingDate: unknown;
+}): boolean {
+  if (Array.isArray(i.lines) && i.lines.length > 0) return false;
+  if (i.headerChanges == null || typeof i.headerChanges !== 'object' || Array.isArray(i.headerChanges)) return false;
+  const hc = i.headerChanges as Record<string, unknown>;
+  const keys = Object.keys(hc);
+  if (!keys.includes('processingDate')) return false;
+  if (!keys.every((k) => k === 'processingDate' || k === 'customerDeliveryDate')) return false;
+  if (!keys.every((k) => hc[k] == null || (typeof hc[k] === 'string' && soDateDay(hc[k]) === ''))) return false;
+  return soDateDay(i.storedProcessingDate) !== '';
+}
+
+/**
  * The Processing Date carried by a REQUEST BODY, under the canonical key or any
  * key still aliased onto it.
  *
