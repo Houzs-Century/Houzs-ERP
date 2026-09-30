@@ -72,6 +72,7 @@ const MobileStockCard = lazy(() => import("./MobileStockCard").then((m) => ({ de
 const MobileStockTransferNew = lazy(() => import("./MobileStockTransferNew").then((m) => ({ default: m.MobileStockTransferNew })));
 const MobilePurchaseDocNew = lazy(() => import("./MobilePurchaseDocNew").then((m) => ({ default: m.MobilePurchaseDocNew })));
 const MobileRacks = lazy(() => import("./MobileRacks").then((m) => ({ default: m.MobileRacks })));
+const MobilePaymentRequests = lazy(() => import("./MobilePaymentRequests").then((m) => ({ default: m.MobilePaymentRequests })));
 const MobileFairReport = lazy(() => import("./MobileFairReport").then((m) => ({ default: m.MobileFairReport })));
 const MobileAutoCountSync = lazy(() => import("./MobileAutoCountSync").then((m) => ({ default: m.MobileAutoCountSync })));
 const MobileVenturePortalFeed = lazy(() => import("./MobileVenturePortalFeed").then((m) => ({ default: m.MobileVenturePortalFeed })));
@@ -143,6 +144,8 @@ type Screen =
      desktop Racks & Bins page at the same URL is the edit surface. Rack
      CREATE stays on MobileModuleList's FORM_RACK, unchanged. */
   | { t: "racks" }
+  /* 申请付款 (owner 2026-09-30) — a PIC asks Finance to pay a bill, photo and all. */
+  | { t: "payment-requests" }
   | { t: "service"; startNew?: boolean }
   | { t: "delivery-planning" }
   | { t: "pms"; projectId?: number }
@@ -186,6 +189,7 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/titles") return { t: "titles" };
   if (path === "/scm/delivery-planning") return { t: "delivery-planning" };
   if (path === "/scm/warehouses/racks") return { t: "racks" };
+  if (path === "/scm/payment-requests") return { t: "payment-requests" };
   // Fleet Health on a phone IS the driver's mileage capture; the desktop Fleet
   // Health dashboard (plans admin + board) is the same URL's desktop surface.
   if (path === "/fleet-health") return { t: "mileage-capture" };
@@ -357,6 +361,10 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
        salesperson never gets this row. Routes to the MOBILE screen
        (MobileFairReport), NOT the desktop table. */
     { to: "/reports/fair-report", label: "Sales Report" },
+    /* 申请付款 (owner 2026-09-30): the PIC at a fair asks Finance to pay the
+       organiser, photo of the bill and all. Gated by its own NAV_TABS entries —
+       the requester's key (Workspace) or Finance's voucher key (Money out). */
+    { to: "/scm/payment-requests", label: "Payment Requests" },
   ]},
   { group: "Projects · PMS", items: [
     { to: "/projects", label: "Projects" },
@@ -950,6 +958,7 @@ function MobileAppInner() {
       onNewTransfer={() => setScreen({ t: "stock-transfer-new", key: screen.key, row: screen.row, title: screen.title })} />;
   }
   else if (screen.t === "racks") overlay = <MobileRacks onBack={back} />;
+  else if (screen.t === "payment-requests") overlay = <MobilePaymentRequests onBack={back} />;
   else if (screen.t === "stock-transfer-new") {
     const backToCard = () => setScreen({ t: "module-detail", key: screen.key, row: screen.row, title: screen.title });
     overlay = <MobileStockTransferNew onBack={backToCard} onCreated={backToCard} />;
