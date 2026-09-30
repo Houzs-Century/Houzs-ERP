@@ -54,6 +54,7 @@ import {
   type ExtractedPayment,
 } from '../lib/scan-receipt-plan';
 import { safeScanDepositSen } from '../lib/scan-header-deposit';
+import { variantNotAllowedSentence } from '../lib/allowed-options-check';
 // Document-type-agnostic OCR transport, shared with the GR/PI scanners.
 import {
   CLAUDE_MODEL,
@@ -4041,7 +4042,7 @@ async function runScanJob(
     const reason =
       typeof outcome.body.reason === 'string' ? outcome.body.reason
       : typeof outcome.body.message === 'string' ? outcome.body.message
-      : JOB_MSG.createFallback;
+      : variantNotAllowedSentence(outcome.body) ?? JOB_MSG.createFallback;
     await fail(reason);
   } catch (e) {
     console.error('[scan-job] pipeline threw:', job.id, e);
