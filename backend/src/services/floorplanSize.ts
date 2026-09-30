@@ -63,8 +63,23 @@ export type FloorplanSizeResult =
 /** Does this checklist item hold the floorplan we read sizes from? Templates
  *  use both namings, and titles carry owner-added suffixes. */
 export function isFloorplanTitle(title: string | null | undefined): boolean {
-  return /^(display floor\s*plan|blank floorplan)/i.test((title ?? "").trim());
+  return /^(display floor\s*plan|blank floorplan|3d design)/i.test((title ?? "").trim());
 }
+
+/* The same titles as a SQL LIKE list, so the upload trigger above and the
+   candidate query below cannot drift apart. 3D Design joined them on
+   2026-09-30: the owner's measurement often reaches us on whichever of the
+   three arrives first, and reading only two meant a size printed on the 3D
+   was ignored. */
+const SIZE_SOURCE_TITLES_SQL =
+  "(pc.title LIKE 'Display Floor Plan%' OR pc.title LIKE 'Blank Floorplan%' OR pc.title LIKE '3D Design%')";
+
+/* Newest-first, stop at the first file that yields a number. One model call
+   per candidate, so this cap is the cost ceiling. Before this, only the single
+   newest file was read: a Display Floor Plan uploaded weeks after a dimensioned
+   Blank Floorplan became "the" source, found no measurement on itself, and the
+   project kept whatever was already there with no second look. */
+const MAX_SIZE_CANDIDATES = 3;
 
 /**
  * `overwrite`:
@@ -110,24 +125,38 @@ export async function detectFloorplanSize(
     .first<{ id: number; size_sqm: number | null; booth_no: string | null }>();
   if (!project) return { ok: false, status: 404, error: "Not found" };
 
-  // Newest live attachment on a Display Floor Plan item (title tolerates the
-  // "Display Floor Plan" / "Blank Floorplan" naming both used in templates).
-  const att = await env.DB.prepare(
+  // Live attachments on any size-bearing item, newest first. Each is tried in
+  // turn until one yields a number (MAX_SIZE_CANDIDATES).
+  const candidates = await env.DB.prepare(
     `SELECT a.r2_key, a.file_name, a.content_type
        FROM project_checklist_attachments a
        JOIN project_checklist pc ON pc.id = a.item_id
       WHERE pc.project_id = ?
         AND a.archived_at IS NULL
-        AND (pc.title LIKE 'Display Floor Plan%' OR pc.title LIKE 'Blank Floorplan%')
+        AND ${SIZE_SOURCE_TITLES_SQL}
       ORDER BY a.uploaded_at DESC, a.id DESC
-      LIMIT 1`
+      LIMIT ?`
   )
-    .bind(id)
-    .first<{ r2_key: string; file_name: string; content_type: string | null }>();
-  if (!att) return { ok: false, status: 400, error: "No floorplan uploaded yet." };
+    .bind(id, MAX_SIZE_CANDIDATES)
+    .all<{ r2_key: string; file_name: string; content_type: string | null }>();
+  const files = candidates.results ?? [];
+  if (files.length === 0) return { ok: false, status: 400, error: "No floorplan uploaded yet." };
 
+  /* One file, one model call. Returns null for "this file cannot be read"
+     (missing, wrong type, too big) so the caller moves to the next candidate
+     instead of failing the whole read — a 20MB 3D render must not stop us
+     reading the dimensioned floorplan sitting behind it. */
+  const readOne = async (
+    att: { r2_key: string; file_name: string; content_type: string | null },
+  ): Promise<{
+    total_sqm: number | null;
+    method?: string;
+    evidence?: string;
+    booth_count?: number | null;
+    confidence?: string;
+  } | null> => {
   const obj = await env.POD_BUCKET.get(att.r2_key);
-  if (!obj) return { ok: false, status: 404, error: "The floorplan file is missing from storage." };
+  if (!obj) return null;
   const buf = await obj.arrayBuffer();
   const mime = (att.content_type || obj.httpMetadata?.contentType || "").toLowerCase();
   // Images go as image blocks; PDFs as a document block (both supported by the
@@ -135,9 +164,7 @@ export async function detectFloorplanSize(
   const isPdf = mime.includes("pdf") || /\.pdf$/i.test(att.file_name);
   const isImage =
     /^image\/(jpeg|png|webp|gif)$/.test(mime) || /\.(jpe?g|png|webp|gif)$/i.test(att.file_name);
-  if (!isPdf && !isImage) {
-    return { ok: false, status: 400, error: "Only image or PDF floorplans can be read." };
-  }
+  if (!isPdf && !isImage) return null;
   // Per-kind ceilings: the API caps an IMAGE block near 5MB, while a PDF
   // document block may be much larger (the 32MB request budget is the real
   // limit, and base64 inflates ~33%, so 12MB of PDF is about 16MB on the wire).
@@ -145,13 +172,8 @@ export async function detectFloorplanSize(
   // rejected them outright (project 187, verified 2026-08-05).
   const maxBytes = isPdf ? 12 * 1024 * 1024 : 5 * 1024 * 1024;
   if (buf.byteLength > maxBytes) {
-    return {
-      ok: false,
-      status: 400,
-      error: `That floorplan is too large to read (${Math.round(
-        buf.byteLength / 1024 / 1024,
-      )}MB; limit ${maxBytes / 1024 / 1024}MB for ${isPdf ? "PDFs" : "images"}). Please type the size in.`,
-    };
+    console.warn("[floorplan-size] skipping oversized file", att.file_name, buf.byteLength);
+    return null;
   }
   const b64 = arrayBufferToBase64(buf);
   const fileBlock = isPdf
@@ -173,13 +195,6 @@ export async function detectFloorplanSize(
     ? `\n\nThe operator recorded our booth number(s) as: ${project.booth_no}. Use it to identify OUR booth and, if it names a count, to sanity-check booth_count.`
     : "";
 
-  let parsed: {
-    total_sqm: number | null;
-    method?: string;
-    evidence?: string;
-    booth_count?: number | null;
-    confidence?: string;
-  } | null = null;
   try {
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -200,7 +215,7 @@ export async function detectFloorplanSize(
     if (!resp.ok) {
       const detail = await resp.text().catch(() => "");
       console.error("[floorplan-size] anthropic", resp.status, detail.slice(0, 300));
-      return { ok: false, status: 502, error: "Couldn't read the floorplan just now. Please try again." };
+      return null;
     }
     const data = await resp.json<{ content?: { type: string; text?: string }[] }>();
     const text = (data.content ?? [])
@@ -208,9 +223,30 @@ export async function detectFloorplanSize(
       .map((b) => b.text ?? "")
       .join("");
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+    return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
   } catch (e) {
     console.error("[floorplan-size] failed", e);
+    return null;
+  }
+  };
+
+  /* Try each candidate newest-first, keeping the first that yields a number.
+     If none does, report against the newest so the message names the file the
+     operator just uploaded. */
+  let parsed: Awaited<ReturnType<typeof readOne>> = null;
+  let att = files[0];
+  let anyRead = false;
+  for (const f of files) {
+    const got = await readOne(f);
+    if (got) anyRead = true;
+    if (got && typeof got.total_sqm === "number" && got.total_sqm > 0) {
+      parsed = got;
+      att = f;
+      break;
+    }
+    if (!parsed && got) parsed = got;
+  }
+  if (!anyRead) {
     return { ok: false, status: 502, error: "Couldn't read the floorplan just now. Please try again." };
   }
 
