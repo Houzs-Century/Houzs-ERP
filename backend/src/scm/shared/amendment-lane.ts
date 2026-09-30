@@ -178,10 +178,19 @@ export function splitAmendmentByLane<L>(
   const mk = () => ({ headerChanges: {} as Record<string, string | null>, headerKeys: [] as string[], lines: [] as L[] });
   const perLane: LaneSplit<L>['perLane'] = { LINES: mk(), DELIVERY: mk(), PRICE: mk() };
 
+  /* A Processing Date REMOVAL takes the Delivery Date clear with it onto LINES
+     (owner 2026-09-30: the Purchaser signs it). Split across two desks, each half
+     alone would leave the order holding one date and the approve-time pair
+     re-check refuses both — neither could ever be approved. */
+  const blank = (v: unknown): boolean => String(v ?? '').trim() === '';
+  const removesProc = Object.prototype.hasOwnProperty.call(headerChanges, 'processingDate')
+    && blank(headerChanges['processingDate']);
   for (const [k, v] of Object.entries(headerChanges)) {
     // Header keys only ever answer LINES or DELIVERY — a price is a line-level
     // value, so classifyHeaderKey never routes to PRICE.
-    const lane = classifyHeaderKey(k);
+    const lane = removesProc && k === 'customerDeliveryDate' && blank(v)
+      ? 'LINES'
+      : classifyHeaderKey(k);
     perLane[lane].headerChanges[k] = v;
     perLane[lane].headerKeys.push(k);
   }

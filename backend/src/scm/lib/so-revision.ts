@@ -62,7 +62,8 @@ import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine } from './po-line-order
 import { soIsMigratedShape } from './so-is-migrated';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
 import { soAmendableHeaderFields } from '../shared/so-field-policy';
-import { canonicaliseSoHeaderChanges } from '../shared/so-processing-date';
+import { canonicaliseSoHeaderChanges, soDateYmd, withProcessingRemovalCascade } from '../shared/so-processing-date';
+import { soStatusAfterProcessingDateChange } from './so-proceed-status-change';
 import { readSoLineFreeze, soLineWriteRefusal } from './downstream-lock';
 import { SO_IDENTITY_LOCK_COLS } from '../shared/so-identity-lock';
 
@@ -381,7 +382,7 @@ export async function applySoAmendment(
      mig 0091 gave the column a HOUZS DEFAULT — so a blip books a 2990 order's new
      line to Houzs, silently, exactly as the note on that insert warns. */
   const { data: soHdrCo, error: soHdrCoErr } = await sb.from('mfg_sales_orders')
-    .select('company_id, linked_ac_docno, so_date').eq('doc_no', docNo).maybeSingle();
+    .select('company_id, linked_ac_docno, so_date, status, processing_date, customer_delivery_date').eq('doc_no', docNo).maybeSingle();
   if (soHdrCoErr) throw new Error(`applySoAmendment: SO company load failed: ${soHdrCoErr.message}`);
   const soCompanyId = (soHdrCo as { company_id?: number | null } | null)?.company_id ?? null;
   // Stage 3c: re-price a bound line's COST as-of the order's own date (auto-derive,
@@ -831,10 +832,27 @@ export async function applySoAmendment(
      its value. Rewriting legacy spellings onto today's keys before anything
      reads them is what stops that; it is an identity map until a rename lands.
      See shared/so-processing-date.ts for the removal condition. */
-  const headerChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null);
+  const soHdrNow = (soHdrCo ?? {}) as { status?: string | null; processing_date?: unknown; customer_delivery_date?: unknown };
+  const storedHeaderChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null);
+  /* A Processing Date removal clears the Delivery Date with it — the same cascade
+     the direct header PATCH runs (soDatePairCascadeColumns), so the order never
+     keeps a Delivery Date promised against a Processing Date it no longer has. */
+  const headerChanges = storedHeaderChanges && withProcessingRemovalCascade(storedHeaderChanges, {
+    processingDate: soHdrNow.processing_date, deliveryDate: soHdrNow.customer_delivery_date,
+  });
   const headerApplied: string[] = [];
   if (headerChanges && Object.keys(headerChanges).length > 0) {
     const headerUpdates: Record<string, unknown> = {};
+    /* THE DATE IS THE ANSWER, BOTH WAYS — the status follows the Processing Date
+       exactly as on the header PATCH (so-proceed-status-change). */
+    if ('processingDate' in headerChanges) {
+      const nextStatus = await soStatusAfterProcessingDateChange(sb, docNo, {
+        currentStatus: soHdrNow.status,
+        storedProcessingDate: soDateYmd(soHdrNow.processing_date),
+        effectiveProcessingDate: soDateYmd(headerChanges['processingDate']),
+      });
+      if (nextStatus) headerUpdates['status'] = nextStatus;
+    }
     for (const [key, value] of Object.entries(headerChanges)) {
       // hasOwnProperty, NOT `in` / a bare lookup — a stored key of "constructor"
       // would otherwise resolve to an inherited value and write a garbage column.

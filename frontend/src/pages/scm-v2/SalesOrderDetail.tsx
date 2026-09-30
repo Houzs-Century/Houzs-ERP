@@ -3181,7 +3181,8 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
       today,
       originalProcessingDate: originalProcessing,
       originalDeliveryDate: originalDelivery,
-      canRemoveProcessingDate,
+      // In amendment mode the removal is a REQUEST the Purchaser signs (owner 2026-09-30), not a direct write.
+      canRemoveProcessingDate: canRemoveProcessingDate || amendmentMode,
     });
     return err ? soErrorText(err) : null;
   };
@@ -3467,7 +3468,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               {/* Remove-Processing-Date gate (Owner 2026-07-09) — the server 403s
                   a non-holder's clear; surface the rule up front instead of
                   letting them find out on Save. */}
-              {originalProcessing !== '' && !inputsDisabled && !processingLocked && !canRemoveProcessingDate && (
+              {originalProcessing !== '' && !inputsDisabled && !processingLocked && !canRemoveProcessingDate && !amendmentMode && (
                 <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>
                   Only a Super Admin can remove this date.
                 </span>

@@ -543,6 +543,28 @@ export function soDatePairCascadeColumns(i: {
 }
 
 /**
+ * The amendment twin of soDatePairCascadeColumns (owner 2026-09-30: a Processing
+ * Date removal is requested by amendment and signed by the Purchaser). A request
+ * that clears a stored Processing Date also clears the Delivery Date, as the SAME
+ * change — so it is one document on one desk, and the approve-time pair re-check
+ * sees both dates go together instead of refusing each half forever.
+ *
+ * Returns the header changes to store/apply: unchanged unless the cascade fires.
+ */
+export function withProcessingRemovalCascade<T>(
+  headerChanges: Record<string, T | null>,
+  stored: { processingDate: unknown; deliveryDate: unknown },
+): Record<string, T | null> {
+  if (!Object.prototype.hasOwnProperty.call(headerChanges, 'processingDate')) return headerChanges;
+  const cols = soDatePairCascadeColumns({
+    procCleared: soDateDay(headerChanges['processingDate']) === '' && soDateDay(stored.processingDate) !== '',
+    delivInPatch: Object.prototype.hasOwnProperty.call(headerChanges, 'customerDeliveryDate'),
+    origDeliv: soDateDay(stored.deliveryDate) || null,
+  });
+  return cols.length > 0 ? { ...headerChanges, customerDeliveryDate: null } : headerChanges;
+}
+
+/**
  * The Processing Date carried by a REQUEST BODY, under the canonical key or any
  * key still aliased onto it.
  *

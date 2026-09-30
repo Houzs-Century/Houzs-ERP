@@ -22,6 +22,7 @@ import {
   SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL,
   soDateDay,
   soDateYmd,
+  withProcessingRemovalCascade,
 } from './so-processing-date';
 
 describe('soDatePairRefusal — the predicate', () => {
@@ -131,6 +132,40 @@ describe('soDatePairCascadeColumns — clearing one clears both', () => {
     expect(soDatePairCascadeColumns({
       procCleared: false, delivInPatch: false, origDeliv: '2026-09-20',
     })).toEqual([]);
+  });
+});
+
+describe('withProcessingRemovalCascade — the amendment twin', () => {
+  const stored = { processingDate: '2026-09-01', deliveryDate: '2026-09-20' };
+
+  it('a removal also clears the stored Delivery Date', () => {
+    expect(withProcessingRemovalCascade({ processingDate: null }, stored))
+      .toEqual({ processingDate: null, customerDeliveryDate: null });
+  });
+
+  it('an empty string counts as a removal', () => {
+    expect(withProcessingRemovalCascade({ processingDate: '' }, stored))
+      .toEqual({ processingDate: '', customerDeliveryDate: null });
+  });
+
+  it('a Date object on the stored row is still a stored date', () => {
+    expect(withProcessingRemovalCascade({ processingDate: null }, { processingDate: new Date('2026-09-01T00:00:00Z'), deliveryDate: new Date('2026-09-20T00:00:00Z') }))
+      .toEqual({ processingDate: null, customerDeliveryDate: null });
+  });
+
+  it('leaves a request that already names the Delivery Date alone', () => {
+    const hc = { processingDate: null, customerDeliveryDate: '2026-10-01' };
+    expect(withProcessingRemovalCascade(hc, stored)).toBe(hc);
+  });
+
+  it('moving the Processing Date is not a removal', () => {
+    const hc = { processingDate: '2026-09-05' };
+    expect(withProcessingRemovalCascade(hc, stored)).toBe(hc);
+  });
+
+  it('nothing to cascade when the order had no Processing Date', () => {
+    const hc = { processingDate: null };
+    expect(withProcessingRemovalCascade(hc, { processingDate: null, deliveryDate: '2026-09-20' })).toBe(hc);
   });
 });
 

@@ -239,6 +239,7 @@ import {
   soDatePairRefusal,
   soDateYmd,
   soLineDateRefusal,
+  withProcessingRemovalCascade,
 } from '../shared/so-processing-date';
 import { ATTRIBUTE_OTHER_REFUSAL, SO_IDENTITY_LOCK_COLS, changedIdentityLockCols, salespersonReattributed } from '../shared/so-identity-lock';
 /* Variants-vocabulary unification (port of 2990 73aeeb1e, 2026-06-26):
@@ -10997,6 +10998,9 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       return c.json({ error: 'header_field_invalid', reason: 'Customer name cannot be blank — enter the corrected name instead.' }, 400);
     }
   }
+  // A Processing Date removal clears the Delivery Date with it — one request, Purchaser signs (owner 2026-09-30).
+  { const s = soRow as { processing_date?: unknown; customer_delivery_date?: unknown };
+    Object.assign(headerChanges, withProcessingRemovalCascade(headerChanges, { processingDate: s.processing_date, deliveryDate: s.customer_delivery_date })); }
   const hasHeaderChanges = Object.keys(headerChanges).length > 0;
   /* The header PATCH's identity lock, on this road too: once a live DO / SI exists the snapshotted fields stay put. */
   const lockedByAmendment = Object.keys(headerChanges).map((k) => AMENDABLE_HEADER_FIELDS[k]).filter((col) => SO_IDENTITY_LOCK_COLS.has(col));
