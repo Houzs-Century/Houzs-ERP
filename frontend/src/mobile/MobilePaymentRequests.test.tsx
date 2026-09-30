@@ -95,7 +95,7 @@ describe('MobilePaymentRequests', () => {
     isFinance = true; returnMutate.mockClear();
     render(<MobilePaymentRequests onBack={() => undefined} />);
     fireEvent.click(screen.getByText('MLE EVENTS SDN BHD').closest('button')!);
-    expect(screen.getByText(/Make the voucher for it on the computer/)).toBeTruthy();
+    expect(screen.getByText(/Answer it on the computer — Payment Requests › Make voucher or Make AP invoice/)).toBeTruthy();
     fireEvent.click(screen.getByText('Return…'));
     await waitFor(() => expect(returnMutate).toHaveBeenCalledWith({ id: 'r1', note: 'Attach the organiser invoice' }));
   });

@@ -64,8 +64,10 @@ export type ApInvoiceLineInput = { description?: string; debitAccountCode: strin
 export const useCreateApInvoice = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { supplierId: string; supplierInvoiceRef?: string; invoiceDate: string; dueDate?: string | null; notes?: string; lines: ApInvoiceLineInput[] }) =>
-      authedFetch<{ ok: boolean; invoice: ApInvoiceHeader }>(`/ap-invoices`, { method: 'POST', body: JSON.stringify(body) }),
+    /* paymentRequestId: the 申请付款 this bill answers (owner 2026-09-30, 6.1) —
+       the server claims it and copies its files on (requestFilesCopied). */
+    mutationFn: (body: { supplierId: string; supplierInvoiceRef?: string; invoiceDate: string; dueDate?: string | null; notes?: string; lines: ApInvoiceLineInput[]; paymentRequestId?: string }) =>
+      authedFetch<{ ok: boolean; invoice: ApInvoiceHeader; requestFilesCopied?: number }>(`/ap-invoices`, { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => invalidate(qc),
   });
 };

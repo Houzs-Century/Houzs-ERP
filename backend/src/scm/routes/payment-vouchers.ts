@@ -733,7 +733,7 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
     if (aErr) { await rollbackHeader(); return c.json({ error: 'allocations_insert_failed', reason: aErr.message }, 500); }
   }
   if (prq.request) { /* claimed only if still waiting; else this voucher never stood */
-    const linked = await linkPaymentRequest(c, prq.request, { id: h.id, pvNumber: h.pv_number });
+    const linked = await linkPaymentRequest(c, prq.request, { kind: 'PV', id: h.id, number: h.pv_number });
     if (!linked.ok) { await rollbackHeader(); return c.json(linked.body, linked.status); }
   }
 

@@ -30,8 +30,8 @@
 // read 1,800.00).
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Camera, Plus, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useAccounts, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
@@ -41,7 +41,8 @@ import {
   useApInvoiceFiles, useUploadApInvoiceFile, useDeleteApInvoiceFile, fetchApInvoiceFileBlobUrl,
   type ApListKind, type ApListRow, type ApInvoiceHeader, type ApInvoiceLine,
 } from '../../vendor/scm/lib/ap-invoice-queries';
-import type { PvFilePayload, BillExtraction, VendorMemory } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useExtractRequestBill, type PvFilePayload, type BillExtraction, type ExtractedBill, type VendorMemory } from '../../vendor/scm/lib/payment-voucher-queries';
+import { usePaymentRequest } from '../../vendor/scm/lib/payment-request-queries';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { generateApListingPdf } from '../../vendor/scm/lib/ap-invoice-listing-pdf';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
@@ -55,7 +56,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { DataTable, type Column } from '../../components/DataTable';
-import { ApInvoiceForm, emptyApForm, formFromExtraction, scanNoteFor, type ApFormMode, type ApFormSubmit, type ApFormValues } from './ApInvoiceForm';
+import { ApInvoiceForm, emptyApForm, formFromExtraction, formFromRequest, scanNoteFor, type ApFormMode, type ApFormSubmit, type ApFormValues } from './ApInvoiceForm';
 import { eventCellText } from '../../vendor/scm/components/EventSelect';
 import { useEventLabels, type EventSuggestion } from '../../vendor/scm/lib/event-queries';
 
@@ -103,6 +104,8 @@ type FormState = {
   mode: ApFormMode; initial: ApFormValues; invoiceId?: string; invoiceNumber?: string; posted?: boolean; paidSen?: number;
   /** A bill handed over from the pile page: its read pages and the reader's sentence. */
   scan?: { files: PvFilePayload[]; note: string; eventSuggestions?: EventSuggestion[] };
+  /** The 申请付款 this new bill answers (owner 2026-09-30, 6.1). */
+  request?: { id: string; no: string };
 };
 
 export const ApInvoices = () => {
@@ -173,6 +176,38 @@ export const ApInvoices = () => {
     navigate(location.pathname, { replace: true, state: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
+  /* 申请付款 answered by a bill (owner 2026-09-30, 6.1–6.2): ?fromRequest=<id>
+     reads the request's own bill first, then opens the New form with what was
+     asked overlaid by what the bill reads (formFromRequest). The server claims
+     the request and copies its files onto the invoice on save. ?open=<id>
+     opens a bill's detail — the request's link to its invoice. */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const fromRequest = searchParams.get('fromRequest');
+  const requestQ = usePaymentRequest(fromRequest);
+  const extractRequest = useExtractRequestBill();
+  const requestTaken = useRef<string | null>(null);
+  const [readingRequest, setReadingRequest] = useState<string | null>(null);
+  useEffect(() => {
+    const r = requestQ.data?.request;
+    if (!fromRequest || !r || requestTaken.current === fromRequest) return;
+    requestTaken.current = fromRequest;
+    setReadingRequest(r.request_no);
+    void (async () => {
+      let bill: ExtractedBill | undefined;
+      let readError: string | null = null;
+      try {
+        bill = (await extractRequest.mutateAsync(fromRequest)).bills.at(0);
+      } catch (e) {
+        readError = e instanceof Error ? e.message : 'the reader failed';
+      }
+      const built = formFromRequest(r, bill, readError);
+      setReadingRequest(null);
+      setForm({ mode: 'new', initial: built.initial, request: { id: r.id, no: r.request_no }, scan: { files: [], note: built.note, eventSuggestions: built.eventSuggestions } });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromRequest, requestQ.data]);
+  const openParam = searchParams.get('open');
+  useEffect(() => { if (openParam) setDetailId(openParam); }, [openParam]);
   const openEdit = (d: Detail) => setForm({
     mode: 'edit', initial: fromDetail(d, false), invoiceId: d.invoice.id, invoiceNumber: d.invoice.invoice_number,
     posted: d.invoice.status !== 'DRAFT', paidSen: Number(d.invoice.paid_sen),
@@ -192,7 +227,10 @@ export const ApInvoices = () => {
         });
         return;
       }
-      const res = await create.mutateAsync(values);
+      const res = await create.mutateAsync(form.request ? { ...values, paymentRequestId: form.request.id } : values);
+      if (form.request) {
+        setSearchParams((prev) => { const next = new URLSearchParams(prev); next.delete('fromRequest'); return next; }, { replace: true });
+      }
       /* Attach the scanned bill AFTER the invoice exists — sequentially, so
          sort_no (= print order) is the scan order. A failed upload never
          un-saves the bill: the notice says what still needs adding, and the
@@ -216,6 +254,7 @@ export const ApInvoices = () => {
         body: [
           `${fmtSen(res.invoice.total_sen)} as a draft — post it to put it on the books.`,
           form.mode === 'copy' && form.invoiceNumber ? `Copied from ${form.invoiceNumber}.` : null,
+          form.request ? `It answers ${form.request.no}${res.requestFilesCopied ? ` — ${res.requestFilesCopied} file(s) from the request attached` : ''}.` : null,
           attached > 0 ? `${attached} scanned file(s) attached.` : null,
           attachErr ? `${pendingFiles.length - attached} file(s) did not attach (${attachErr}) — add them from the bill's Files card.` : null,
         ].filter(Boolean).join(' '),
@@ -315,6 +354,7 @@ export const ApInvoices = () => {
         ) : undefined}
       />
 
+      {readingRequest && <div style={soft} role="status">Reading the bill on {readingRequest}…</div>}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Supplier invoices — both kinds</h2>

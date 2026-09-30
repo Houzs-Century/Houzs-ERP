@@ -67,6 +67,7 @@ const draw = () => render(
     <Routes>
       <Route path="/scm/payment-requests" element={<PaymentRequests />} />
       <Route path="/scm/payment-vouchers/new" element={<div>PV New opened</div>} />
+      <Route path="/scm/ap-invoices" element={<div>AP Invoices opened</div>} />
     </Routes>
   </MemoryRouter>,
 );
@@ -143,6 +144,31 @@ describe('Finance', () => {
     expect(within(d).queryByText('Edit')).toBeNull();
     fireEvent.click(within(d).getByText('Make voucher'));
     expect(screen.getByText('PV New opened')).toBeTruthy();
+  });
+
+  /* 6.1 (owner 2026-09-30): or book the supplier's bill first as an AP invoice. */
+  test('may answer with an AP invoice instead, opened from the request', () => {
+    requests = [base({ requested_by: 40, requested_by_name: 'Luis Teo' })];
+    isFinance = true;
+    draw();
+    fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
+    fireEvent.click(within(screen.getByRole('dialog')).getByText('Make AP invoice'));
+    expect(screen.getByText('AP Invoices opened')).toBeTruthy();
+  });
+
+  test('a request answered by an AP invoice reads how much of it is paid, and links the bill', () => {
+    requests = [base({
+      requested_by: 40, requested_by_name: 'Luis Teo', status: 'VOUCHERED', stage: 'PARTLY_PAID', ap_invoice_id: 'api-7',
+      invoice: { id: 'api-7', invoiceNumber: 'HC-API-2609-007', status: 'PARTIALLY_PAID', totalSen: 850_000, paidSen: 300_000, paidBy: ['HC-PV-2609-010'], bankConfirmed: false },
+    })];
+    isFinance = true;
+    draw();
+    expect(screen.getByText(/HC-API-2609-007 · RM 3,000\.00 of RM 8,500\.00 paid/)).toBeTruthy();
+    fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
+    const d = screen.getByRole('dialog');
+    expect(within(d).queryByText('Make voucher')).toBeNull();
+    expect(within(d).getByText('Open HC-API-2609-007 →').getAttribute('href')).toBe('/scm/ap-invoices?open=api-7');
+    expect(d.textContent).toContain('by HC-PV-2609-010');
   });
 
   test('returns a request with the note the prompt demands', async () => {
