@@ -61,6 +61,7 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/mfg-sales-orders/*", "scm.sales.orders"],
   ["/so-amendments/*", "scm.sales.orders"],
   ["/so-handover/*", "scm.sales.orders"],
+  ["/payment-backdate-requests/*", "scm.sales.orders"],
   ["/delivery-orders-mfg/*", "scm.sales.delivery"],
   ["/sales-invoices/*", "scm.sales.invoices"],
   ["/delivery-returns/*", "scm.sales.returns"],

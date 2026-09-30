@@ -185,6 +185,7 @@ const ScmAmendmentsV2 = lazy(() => import("./pages/scm-v2/Amendments").then((m) 
 const ScmAmendmentDetailV2 = lazy(() => import("./pages/scm-v2/AmendmentDetailV2").then((m) => ({ default: m.AmendmentDetailV2 })));
 const ScmPoAmendmentsV2 = lazy(() => import("./pages/scm-v2/PoAmendments").then((m) => ({ default: m.PoAmendments })));
 const ScmCancelRequestsV2 = lazy(() => import("./pages/scm-v2/CancelRequests").then((m) => ({ default: m.CancelRequests })));
+const ScmPaymentBackdateRequestsV2 = lazy(() => import("./pages/scm-v2/PaymentBackdateRequests").then((m) => ({ default: m.PaymentBackdateRequests })));
 const ScmFairPending = lazy(() => import("./pages/scm-v2/FairPending").then((m) => ({ default: m.FairPending })));
 const ScmPoAmendmentDetailV2 = lazy(() => import("./pages/scm-v2/PoAmendmentDetailV2").then((m) => ({ default: m.PoAmendmentDetailV2 })));
 const ScmSoDetailListingV2 = lazy(() => import("./pages/scm-v2/SalesOrderDetailListing").then((m) => ({ default: m.SalesOrderDetailListing })));
@@ -697,6 +698,9 @@ export default function App() {
         {/* Cancellation requests (owner 2026-09-08) — one inbox for both documents; a
             row's actions still hit the per-document routes behind their own area guards. */}
         <Route path="/scm/cancel-requests" element={<ScmGuard area="scm" allowDirector><Scm2990Shell><ScmCancelRequestsV2 /></Scm2990Shell></ScmGuard>} />
+        {/* Admin only (owner 2026-09-30: 「只有 admin 可以看到 request」) — the key the
+            endpoint asks; `*` covers Owner / IT Admin. */}
+        <Route path="/scm/payment-backdate-requests" element={<Guard anyPerm={["*", "scm.payment.backdate"]}><Scm2990Shell><ScmPaymentBackdateRequestsV2 /></Scm2990Shell></Guard>} />
         {/* Fair links still to settle (owner 2026-09-13). Same guard as the SO
             list — deciding which exhibition a sale belongs to is a sales-order
             decision, and the row's own write goes through the SO routes. */}

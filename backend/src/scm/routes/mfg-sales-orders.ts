@@ -52,6 +52,8 @@ import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
    that still name this module. */
 import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, bookSoPaymentBestEffort, repostSoPaymentBestEffort, soPaymentFieldChanges, type SoPaymentRowInput } from '../lib/so-payment-row';
 import { enqueueSoPaymentEdit } from '../lib/ac-so-payment-edit';
+import { paymentMethodFieldRefusal } from '../lib/payment-method-fields';
+import { selfScopedSalesBlocked } from '../lib/so-self-scope';
 import { recomputeSiPaidForOrder } from '../lib/si-order-deposit';
 export { recordSoPaymentRow };
 export type { SoPaymentRowInput };
@@ -693,40 +695,6 @@ async function isPriceOverrideCaller(c: any): Promise<boolean> {
    NOT the pinned scm.staff uuid on user.id). Returns TRUE ⇒ block (the caller
    answers 404, indistinguishable from a nonexistent doc_no). A missing SO also
    returns TRUE (fail closed). */
-/* Row-scope guard for the 18 /:docNo handlers that hang off a sales order.
-
-   TWO dimensions. The salesperson one answers "is this MY order" and returns
-   false immediately for a view-all tier - correct for its own question, and
-   useless for tenancy, since a view-all caller holding the other company's
-   doc_no passed every caller of this guard, four money-writing payment verbs
-   included. So COMPANY is checked FIRST and for everyone. It belongs here
-   rather than in each handler: 18 callers share it, and the 19th gets it free. */
-async function selfScopedSalesBlocked(c: any, docNo: string): Promise<boolean> {
-  const sb = c.get('supabase');
-
-  /* 1. Tenancy - every tier, view-all included. scopeToCompany DEGRADES when the
-     company is UNRESOLVED and must NOT fail closed: unresolved means the
-     companies master could not be read (pre-migration, D1 test mirror,
-     Hyperdrive cold start), and refusing there locks every user out of all 18
-     handlers. See "THE ALLOW-LIST SENTINEL" in companyScope.ts. */
-  const { data: owned, error: ownedErr } = await scopeToCompany(
-    sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', docNo),
-    c,
-  ).maybeSingle();
-  if (ownedErr || !owned) return true;
-
-  // 2. Salesperson - only for the self-scoped tier.
-  if (canViewAllSales(c)) return false; // view-all tier (director / office / *)
-  const { data, error } = await sb
-    .from('mfg_sales_orders')
-    .select('salesperson_id, access_staff_ids, open_to_all')
-    .eq('doc_no', docNo)
-    .maybeSingle();
-  if (error || !data) return true; // fail closed - unknown/unreadable doc is out of scope
-  const r = data as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null; open_to_all?: boolean | null };
-  return soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, false, { salespersonId: r.salesperson_id, accessStaffIds: r.access_staff_ids, openToAll: r.open_to_all });
-}
-
 /* THE venue_id coercion — every writer of mfg_sales_orders.venue_id goes
    through this. The column is a UUID FK to the (empty/unused) scm.venues, but
    the Venue picker is fed from TWO other masters whose ids are not uuids:
@@ -10037,31 +10005,9 @@ export const postSoPaymentHandler = async (c: any) => {
     }
   }
 
-  /* FIX 3 (2026-07-16) — method ⇒ bank/account mapping, enforced server-side.
-     The desktop New-SO / Payments cascade blocks saving a Merchant payment with
-     no Bank or an Online (transfer) payment with no Sub-Type
-     (missingMethodSubField in PaymentsTable.tsx), but mobile / API POST straight
-     to this route and paymentCreateSchema left every sub-field optional. Mirror
-     the desktop rule for the SERVER-observable part: an amount-bearing Merchant
-     needs a Bank (merchantProvider); an Online/transfer needs a Sub-Type
-     (onlineType); Cash and legacy Installment need nothing. NOTE: the desktop also
-     makes a Merchant pick a Plan, but "One-off" serialises to installmentMonths
-     null — indistinguishable from unset — so requiring it here would reject a
-     legitimate one-shot card payment; the Plan is deliberately NOT gated. Slip
-     stays optional (owner 2026-07-13). Only amount > 0 rows are checked, matching
-     the desktop guard (a zeroed row carries no method commitment). */
-  if (p.amountSen > 0) {
-    let missing: string | null = null;
-    let methodName = '';
-    if (p.method === 'merchant' && !p.merchantProvider?.trim()) { missing = 'bank'; methodName = 'card / merchant'; }
-    else if (p.method === 'transfer' && !p.onlineType?.trim()) { missing = 'sub-type'; methodName = 'bank transfer / online'; }
-    if (missing) {
-      return c.json({
-        error: 'payment_method_field_required',
-        reason: `A ${methodName} payment needs a ${missing} before it can be recorded.`,
-      }, 400);
-    }
-  }
+  /* Method => bank/sub-type mapping (FIX 3) — lib/payment-method-fields. */
+  const methodRefusal = paymentMethodFieldRefusal(p);
+  if (methodRefusal) return c.json(methodRefusal, 400);
 
   /* OVER-COLLECTION IS ALLOWED (owner 2026-08-16). Spec D6's guard used to
      refuse Σ(ledger) + this payment > total_revenue_sen. It is deleted, not

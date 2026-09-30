@@ -45,18 +45,28 @@ describe("slipDateProblem — the rule plus the two things the rule must not kno
 });
 
 describe("every surface that keys a payment date bounds its own field", () => {
-  const surfaces: Array<[string, string]> = [
-    ["the desktop payments panel", "./PaymentsTable.tsx"],
-    ["the mobile payments sheet", "../../../mobile/RecordedPayments.tsx"],
-    ["the mobile New SO", "../../../mobile/MobileNewSO.tsx"],
+  /* `requests` — the two balance-collection surfaces drop the LOWER bound since
+     owner 2026-09-30: an older slip becomes a request an admin approves
+     (payment-backdate-queries), so the picker must be able to offer it. The
+     future bound stays everywhere. */
+  const surfaces: Array<[string, string, boolean]> = [
+    ["the desktop payments panel", "./PaymentsTable.tsx", true],
+    ["the mobile payments sheet", "../../../mobile/RecordedPayments.tsx", true],
+    ["the mobile New SO", "../../../mobile/MobileNewSO.tsx", false],
   ];
 
-  for (const [name, rel] of surfaces) {
+  for (const [name, rel, requests] of surfaces) {
     test(`${name} reads the shared window and bounds the picker`, () => {
       const text = src(rel);
       // Non-vacuous: the file still renders a payment date field.
       expect(text).toContain("paymentSlipDateWindow");
-      expect(text).toMatch(/min=\{may\w*[Bb]ackdate\w*\s*\?\s*undefined\s*:\s*slipWindow\.min\}/);
+      if (requests) {
+        expect(text).not.toMatch(/slipWindow\.min/);
+        expect(text).toContain("slipDateNeedsRequest");
+        expect(text).toContain("useRaiseBackdateRequest");
+      } else {
+        expect(text).toMatch(/min=\{may\w*[Bb]ackdate\w*\s*\?\s*undefined\s*:\s*slipWindow\.min\}/);
+      }
       expect(text).toMatch(/max=\{may\w*[Bb]ackdate\w*\s*\?\s*undefined\s*:\s*slipWindow\.max\}/);
       // Quote style differs by file; the KEY is what must not drift.
       expect(text).toMatch(/can\w*\(\s*["']scm\.payment\.backdate["']\s*\)/);

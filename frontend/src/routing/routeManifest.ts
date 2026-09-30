@@ -40,6 +40,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/po-amendments",
   "/scm/po-amendments/:id",
   "/scm/cancel-requests",
+  "/scm/payment-backdate-requests",
   "/scm/mrp",
   "/scm/accounting",
   "/scm/daily-bank",

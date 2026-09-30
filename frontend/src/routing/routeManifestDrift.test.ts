@@ -86,7 +86,9 @@ describe("executable route contract", () => {
     // invoices mirrored beside the other-debtor bills raised there.
     // 164 since 2026-09-30: /scm/payment-requests — 申请付款, a requester asks
     // Finance to pay a bill; Finance answers with a voucher.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(164);
+    // 165 since 2026-09-30: /scm/payment-backdate-requests — the admin inbox
+    // for payments whose slip is more than 14 days old.
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(165);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -128,7 +130,8 @@ describe("executable route contract", () => {
     // 171 since 2026-09-21 — /scm/finance-dashboard; see the staff-route count above.
     // 172 since 2026-09-29 — /scm/ar-invoices; see the staff-route count above.
     // 173 since 2026-09-30 — /scm/payment-requests; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(173);
+    // 174 since 2026-09-30 — /scm/payment-backdate-requests; same.
+    expect(ROUTE_CONTRACT).toHaveLength(174);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

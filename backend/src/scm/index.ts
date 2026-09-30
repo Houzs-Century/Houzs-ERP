@@ -40,6 +40,7 @@ import {
   poCancelRequests,
   soCancelRequests,
 } from "./routes/document-cancel-routes";
+import { soPaymentBackdateRequests, paymentBackdateInbox } from "./routes/so-payment-backdate-requests";
 import { grns } from "./routes/grns";
 import { grnsListEnrichment } from "./routes/grns-list-enrichment";
 import { grnExports } from "./routes/grn-exports";
@@ -421,6 +422,9 @@ scm.route("/mfg-sales-orders", salesOrderExports);
 // the status route — which only wakes when the body says CANCELLED — is mounted
 // above, ahead of the area guard. routes/document-cancel-routes.ts.
 scm.route("/mfg-sales-orders", soCancelRequests);
+// A payment whose slip is older than the 14-day window, as a request an admin
+// approves (owner 2026-09-30). routes/so-payment-backdate-requests.ts.
+scm.route("/mfg-sales-orders", soPaymentBackdateRequests);
 // The fair picker (owner 2026-09-13). Mounted BEFORE the main router for the same
 // reason as the enrichment above: its static `/fair-options` and `/fair-pending`
 // paths must resolve ahead of `/:docNo`. In its own file because
@@ -459,6 +463,11 @@ scm.route("/so-handover", soHandover);
 // scm.access only: an inbox spanning the sales and procurement areas cannot
 // pick one of them; each row's actions still hit the per-document routes above.
 scm.route("/cancel-requests", cancelRequestsInbox);
+// The backdate-request inbox — admin only (scm.payment.backdate), checked in
+// every handler; approving books a Sales Order payment, so it rides the same
+// area guard (and write freeze) as the order itself.
+scm.use("/payment-backdate-requests/*", scmAreaGuard("scm.sales.orders"));
+scm.route("/payment-backdate-requests", paymentBackdateInbox);
 // state-warehouse-mappings: cross-area lookup (SO/DO warehouse routing) — left
 // on the coarse gate, see SHARED READ HELPERS note above.
 scm.route("/state-warehouse-mappings", stateWarehouseMappings);
