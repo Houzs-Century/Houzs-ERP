@@ -565,6 +565,28 @@ export function withProcessingRemovalCascade<T>(
 }
 
 /**
+ * True when an amendment request is a Processing Date REMOVAL and nothing else:
+ * the stored date is set, the request clears it (and at most the Delivery Date
+ * with it), and carries no line. The one request an order that is NOT yet
+ * locked may still raise (owner 2026-09-30: 「还没锁定的也是 purchaser 可以审批」)
+ * — every other change on an unlocked order is a direct edit.
+ */
+export function isProcessingRemovalOnlyRequest(i: {
+  headerChanges: unknown;
+  lines: unknown;
+  storedProcessingDate: unknown;
+}): boolean {
+  if (Array.isArray(i.lines) && i.lines.length > 0) return false;
+  if (i.headerChanges == null || typeof i.headerChanges !== 'object' || Array.isArray(i.headerChanges)) return false;
+  const hc = i.headerChanges as Record<string, unknown>;
+  const keys = Object.keys(hc);
+  if (!keys.includes('processingDate')) return false;
+  if (!keys.every((k) => k === 'processingDate' || k === 'customerDeliveryDate')) return false;
+  if (!keys.every((k) => hc[k] == null || (typeof hc[k] === 'string' && soDateDay(hc[k]) === ''))) return false;
+  return soDateDay(i.storedProcessingDate) !== '';
+}
+
+/**
  * The Processing Date carried by a REQUEST BODY, under the canonical key or any
  * key still aliased onto it.
  *

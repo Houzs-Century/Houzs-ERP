@@ -66,6 +66,7 @@ import {
 } from "../vendor/scm/lib/address-cascade";
 import { StatePicker } from "../vendor/scm/components/StatePicker";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
+import { RequestProcessingDateRemoval } from "../vendor/scm/components/RequestProcessingDateRemoval";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
@@ -2428,6 +2429,10 @@ export function MobileNewSO({
                     ? "Changing a date here submits an amendment request — it applies once approved."
                     : "Set both dates together, or leave both empty to keep this a draft."}
                 </div>
+                {/* Not yet locked and no remove permission: ask the Purchaser (owner 2026-09-30; desktop parity). */}
+                {isEdit && docNo && origProcDate && !procLocked && !amendmentMode && !migratedLocked && !lineLocked && !canRemoveProcessingDate && (
+                  <RequestProcessingDateRemoval docNo={docNo} style={{ alignSelf: "flex-start", background: "none", border: "none", padding: 0, color: "#B8331F", fontWeight: 600, fontSize: 11, textDecoration: "underline" }} />
+                )}
                 <Field label="Note" scanned={scanned("note", note)}>
                   <input className="fld-i" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Internal notes — SO detail only" />
                 </Field>

@@ -23,6 +23,7 @@ import {
   soDateDay,
   soDateYmd,
   withProcessingRemovalCascade,
+  isProcessingRemovalOnlyRequest,
 } from './so-processing-date';
 
 describe('soDatePairRefusal — the predicate', () => {
@@ -166,6 +167,33 @@ describe('withProcessingRemovalCascade — the amendment twin', () => {
   it('nothing to cascade when the order had no Processing Date', () => {
     const hc = { processingDate: null };
     expect(withProcessingRemovalCascade(hc, { processingDate: null, deliveryDate: '2026-09-20' })).toBe(hc);
+  });
+});
+
+describe('isProcessingRemovalOnlyRequest — the one request an unlocked order may raise', () => {
+  const stored = '2026-10-05';
+  it('a removal of both dates, no lines', () => {
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: { processingDate: null, customerDeliveryDate: null }, lines: [], storedProcessingDate: stored })).toBe(true);
+  });
+  it('a removal of the Processing Date alone (the server cascades the other)', () => {
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: { processingDate: '' }, lines: undefined, storedProcessingDate: stored })).toBe(true);
+  });
+  it('not when a line rides along', () => {
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: { processingDate: null }, lines: [{ changeType: 'QTY' }], storedProcessingDate: stored })).toBe(false);
+  });
+  it('not when another header field rides along', () => {
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: { processingDate: null, address1: 'x' }, lines: [], storedProcessingDate: stored })).toBe(false);
+  });
+  it('not when a date is moved rather than cleared', () => {
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: { processingDate: '2026-10-09' }, lines: [], storedProcessingDate: stored })).toBe(false);
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: { processingDate: null, customerDeliveryDate: '2026-10-20' }, lines: [], storedProcessingDate: stored })).toBe(false);
+  });
+  it('not when the order has no Processing Date to remove', () => {
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: { processingDate: null }, lines: [], storedProcessingDate: null })).toBe(false);
+  });
+  it('not on a malformed body', () => {
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: null, lines: [], storedProcessingDate: stored })).toBe(false);
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: { processingDate: 5 }, lines: [], storedProcessingDate: stored })).toBe(false);
   });
 });
 

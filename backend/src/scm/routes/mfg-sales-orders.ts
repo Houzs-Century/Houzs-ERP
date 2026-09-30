@@ -240,6 +240,7 @@ import {
   soDateYmd,
   soLineDateRefusal,
   withProcessingRemovalCascade,
+  isProcessingRemovalOnlyRequest,
 } from '../shared/so-processing-date';
 import { ATTRIBUTE_OTHER_REFUSAL, SO_IDENTITY_LOCK_COLS, changedIdentityLockCols, salespersonReattributed } from '../shared/so-identity-lock';
 /* Variants-vocabulary unification (port of 2990 73aeeb1e, 2026-06-26):
@@ -10920,7 +10921,9 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      PO-locked SO would be refused BOTH roads (409 on the direct edit, 409 here
      for "not locked yet") and the operator would have no way to change anything
      at all. Keep the two definitions in lock-step. */
-  if (!await soEditLocked(sb, docNo, soRow as unknown as { processing_date?: string | null; status: string | null })) {
+  // A Processing Date removal is requestable before the lock too — the Purchaser signs it (owner 2026-09-30).
+  const removalOnly = isProcessingRemovalOnlyRequest({ headerChanges: body.headerChanges, lines: body.lines, storedProcessingDate: (soRow as { processing_date?: unknown }).processing_date });
+  if (!removalOnly && !await soEditLocked(sb, docNo, soRow as unknown as { processing_date?: string | null; status: string | null })) {
     return c.json({
       error: 'not_locked_no_amendment_needed',
       reason: 'This Sales Order is not processing-locked yet — edit it directly instead of raising an amendment.',
