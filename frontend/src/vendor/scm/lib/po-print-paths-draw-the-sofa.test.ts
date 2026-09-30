@@ -74,11 +74,14 @@ describe('one sheet, whichever button raised it', () => {
     }
   });
 
-  test('the four that pass nothing are not silently a different document', () => {
-    /* Asserted as a COUNT so the test fails when a fifth caller appears, which
-       is the moment somebody should think about this again rather than the
-       moment a supplier gets a different-looking sheet. */
+  test('no caller supplies its own artwork map', () => {
+    /* The V2 detail was the one that did, and a supplied map WINS over the
+       generator's own load. Its map came from walking the stored config — the
+       loader the test above retired — so every default compartment was
+       missing and HC-PO-2609-318 printed its Console as a blank box from
+       Print PDF while the list's Print drew the cabinet (2026-09-30). */
     const passing = CALLERS.filter(([, p]) => read(p).includes('sofaPhotos'));
-    expect(passing.map(([n]) => n)).toEqual(['V2 detail']);
+    expect(passing.map(([n]) => n)).toEqual([]);
+    expect(read('./sales-order-queries.ts')).not.toContain('loadSofaCompartmentPhotos');
   });
 });
