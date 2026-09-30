@@ -12,9 +12,10 @@
  * The numbering is unit-tested for real; the wiring is source-anchored (same
  * style as acNotSentWiring.test.ts) because there is no DB in this suite. */
 import { describe, expect, test } from 'vitest';
-import { nextSupplierReturnRoundNo } from '../src/services/assrSupplierReturns';
+import { earlierSupplierReturns, nextSupplierReturnRoundNo } from '../src/services/assrSupplierReturns';
 import routeRaw from '../src/routes/assr.ts?raw';
 import svcRaw from '../src/services/assrSupplierReturns.ts?raw';
+import printRaw from '../src/routes/assr_print.ts?raw';
 
 describe('nextSupplierReturnRoundNo', () => {
   test('no trips yet -> 1', () => {
@@ -25,6 +26,28 @@ describe('nextSupplierReturnRoundNo', () => {
   });
   test('an archived trip still consumes its number — the next is 3, never 2 again', () => {
     expect(nextSupplierReturnRoundNo([{ round_no: 1 }, { round_no: 2 }])).toBe(3);
+  });
+});
+
+describe('earlierSupplierReturns — the 2nd trip paper also lists trip 1', () => {
+  const t1 = { round_no: 1, ref_no: 'SVC-RTN-2609-0001', archived_at: null };
+  const t2 = { round_no: 2, ref_no: 'SVC-RTN-2609-0002', archived_at: 'x' };
+  const t3 = { round_no: 3, ref_no: 'SVC-RTN-2610-0001', archived_at: null };
+  test('first trip has nothing earlier', () => {
+    expect(earlierSupplierReturns([t1], t1)).toEqual([]);
+  });
+  test('trip 3 lists live earlier trips oldest first, skipping a removed one', () => {
+    expect(earlierSupplierReturns([t3, t2, t1], t3).map((r) => r.ref_no)).toEqual(['SVC-RTN-2609-0001']);
+  });
+  test('no current trip -> nothing', () => {
+    expect(earlierSupplierReturns([t1], null)).toEqual([]);
+  });
+});
+
+describe('supplier print lists the earlier return numbers', () => {
+  test('the trip box renders Previous Return No. from earlierSupplierReturns', () => {
+    expect(printRaw).toMatch(/earlierSupplierReturns\(/);
+    expect(printRaw).toMatch(/Previous Return No\./);
   });
 });
 
