@@ -50,6 +50,7 @@ import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
+import { SupplierFinanceReminder } from '../../vendor/scm/components/SupplierFinanceReminder';
 import { EventSelect } from '../../vendor/scm/components/EventSelect';
 import { useEventLabels } from '../../vendor/scm/lib/event-queries';
 import { PvLineEventCell } from './PvLineEventCell';
@@ -645,6 +646,7 @@ export const PaymentVoucherDetail = () => {
             <div className={styles.formGrid2}>
               <InfoCell label={isRefundPv ? 'Customer' : 'Payee'} value={pv.payee_name} />
               {!isRefundPv && <InfoCell label="Supplier" value={pv.supplier?.name ?? null} />}
+              {!isRefundPv && pv.supplier_id && <SupplierFinanceReminder supplierId={String(pv.supplier_id)} />}
               <InfoCell label="Type" value={pvTypeLabel(pv.purpose)} />
               {isRefundPv && (
                 <div className={styles.field}>
@@ -683,6 +685,7 @@ export const PaymentVoucherDetail = () => {
                     <option key={s.id} value={s.id}>{s.code} · {s.name}</option>
                   ))}
                 </select>
+                <SupplierFinanceReminder supplierId={supplierId} />
               </label>
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Type</span>

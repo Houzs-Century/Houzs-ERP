@@ -19,6 +19,7 @@ import {
   useExtractBills, fileToBase64, PV_FILE_ACCEPT, type BillExtraction, type VendorMemory, type PvFilePayload,
 } from '../../vendor/scm/lib/payment-voucher-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
+import { SupplierFinanceReminder } from '../../vendor/scm/components/SupplierFinanceReminder';
 import { EventSelect } from '../../vendor/scm/components/EventSelect';
 import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
 import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
@@ -251,6 +252,7 @@ export const ApInvoiceForm = ({
             value={v.supplierId} onChange={(id) => set({ supplierId: id })} aria-label="AP invoice supplier" className={styles.fieldInput}
             disabled={supplierLocked}
             placeholder={suppliersLoading ? 'Loading suppliers…' : 'Type to find the supplier'} />
+          <SupplierFinanceReminder supplierId={v.supplierId} />
         </label>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Supplier's invoice no.</span>
