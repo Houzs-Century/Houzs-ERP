@@ -221,7 +221,7 @@ export function useUpdateProductModel() {
       active?: boolean;
     }) => {
       const { id, ...body } = args;
-      return authedFetch<{ model: ProductModelRow }>(`/product-models/${id}`, {
+      return authedFetch<{ model: ProductModelRow; autoCreatedSkus?: string[]; autoCreateFailed?: string[] }>(`/product-models/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(body),
       });
