@@ -24,6 +24,9 @@
      3  5562-1S: base_model 5562 (it was NULL, which is what keyed it as a Model)
      4  Model 5562: name "5562", so the next auto-created piece reads
         "SOFA 5562 <comp>" and not "SOFA SOFA 5562 <comp>"
+     5  the generated bindings' supplier_sku HOK-5562-1S-<comp> -> HOK-5562-<comp>:
+        the cascade keeps supplier_sku (the supplier's code), but these were
+        stamped from our wrong code on 2026-10-01 and print on the Hookka PO
    It refuses unless every source SKU is still exactly as measured: on model 5562,
    used nowhere but its binding rows, and its target code free.
 
@@ -114,8 +117,13 @@ try {
         if (Object.keys(refs).length) problems.push(`${s.code} id is referenced by ${JSON.stringify(refs)}`);
       }
       const name = `SOFA ${MODEL} ${comp}`;
-      planned.push({ ...s, comp, target, name, action, used });
+      const supSkus = action === 'recode' ? (await tx`
+        SELECT DISTINCT supplier_sku FROM scm.supplier_material_bindings
+         WHERE company_id = ${CO} AND item_code = ${s.code} AND material_kind = 'mfg_product'
+           AND supplier_sku LIKE ${'%' + OLD_PREFIX + '%'}`).map((r) => r.supplier_sku) : [];
+      planned.push({ ...s, comp, target, name, action, used, supSkus });
       say(`  ${action === 'delete' ? 'DELETE' : 'RECODE'} ${s.code} "${s.name}"${action === 'recode' ? ` -> ${target} "${name}"` : ` (duplicate of ${ONE_SEATER})`}  [${Object.entries(used).map(([k, n]) => `${k}=${n}`).join(', ') || 'unused'}]`);
+      for (const sk of supSkus) say(`      supplier_sku ${sk} -> ${sk.replace(OLD_PREFIX, `${MODEL}-`)}`);
     }
     const [one] = await tx`
       SELECT id::text AS id, base_model, model_id::text AS model_id FROM scm.mfg_products
@@ -142,6 +150,12 @@ try {
           [p.target, CO, p.code]);
         if (r.count) say(`    ${t.table}.${t.col}: ${r.count}`);
       }
+      for (const sk of p.supSkus) {
+        const r = await tx`
+          UPDATE scm.supplier_material_bindings SET supplier_sku = ${sk.replace(OLD_PREFIX, `${MODEL}-`)}
+           WHERE company_id = ${CO} AND item_code = ${p.target} AND material_kind = 'mfg_product' AND supplier_sku = ${sk}`;
+        say(`    supplier_sku ${sk}: ${r.count}`);
+      }
       const u = await tx`
         UPDATE scm.mfg_products SET code = ${p.target}, name = ${p.name}, base_model = ${MODEL}, updated_at = now()
          WHERE company_id = ${CO} AND id = ${p.id}`;
@@ -166,6 +180,9 @@ if (APPLY && process.exitCode !== 1 && planned.length) {
     const [{ n: left }] = await verify`
       SELECT count(*)::int AS n FROM scm.mfg_products WHERE company_id = ${CO} AND code LIKE ${OLD_PREFIX + '%'}`;
     if (left) fails.push(`${left} SKU(s) still on ${OLD_PREFIX}`);
+    const [{ n: supLeft }] = await verify`
+      SELECT count(*)::int AS n FROM scm.supplier_material_bindings WHERE company_id = ${CO} AND supplier_sku LIKE ${'%' + OLD_PREFIX + '%'}`;
+    if (supLeft) fails.push(`${supLeft} binding(s) still carry supplier_sku *${OLD_PREFIX}*`);
     for (const p of planned) {
       const [row] = await verify`
         SELECT code, name, base_model, model_id::text AS model_id FROM scm.mfg_products WHERE company_id = ${CO} AND id = ${p.id}`;
