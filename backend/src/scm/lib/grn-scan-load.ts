@@ -12,7 +12,7 @@
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { isDocumentHeld } from './document-hold';
 import { RECEIVABLE_PO_STATUSES } from './source-document-gates';
-import type { OpenPoLine, SupplierSkuBinding } from './grn-scan-match';
+import type { OpenPoLine, SupplierRef, SupplierSkuBinding } from './grn-scan-match';
 
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
@@ -80,4 +80,17 @@ export async function loadSupplierBindings(
     out.push({ supplierSku: r.supplier_sku ?? null, acItemCode: r.ac_item_code ?? null, itemCode });
   }
   return out;
+}
+
+// The company's suppliers (id, code, name) for resolveScannedSupplier.
+export async function loadSuppliers(
+  svc: SupabaseClient,
+  companyId: number | null,
+): Promise<SupplierRef[]> {
+  let q = svc.from('suppliers').select('id, code, name');
+  if (companyId != null) q = q.eq('company_id', companyId);
+  const { data, error } = await q.limit(5000);
+  if (error) throw new Error(`load suppliers failed: ${error.message}`);
+  type Row = { id: string; code: string | null; name: string | null };
+  return (data as unknown as Row[]).map((r) => ({ id: r.id, code: r.code, name: r.name }));
 }
