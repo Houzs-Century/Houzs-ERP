@@ -55,7 +55,7 @@ export const callerUserId = (c: any): number | null => {
 };
 
 export type VoucherFacts = { id: string; pv_number: string | null; status: string | null; approved_at: string | null; posted_at: string | null };
-export type InvoiceFacts = { id: string; invoice_number: string | null; status: string | null; total_sen: number | null; paid_sen: number | null };
+export type InvoiceFacts = { id: string; invoice_number: string | null; status: string | null; total_sen: number | null; paid_sen: number | null; supplier_id?: string | null };
 
 /** What the requester reads, from the stored status and the answering
     document's own state — the voucher's, or the AP invoice's. `bankConfirmed`
@@ -77,6 +77,47 @@ export function requestStage(status: string, pv: VoucherFacts | null, bankConfir
   if (pv.status === 'POSTED') return bankConfirmed ? 'BANK_CONFIRMED' : 'PAID';
   return 'PROCESSING';
 }
+
+/* ── A bill paid in instalments (owner 2026-10-01, item 2: 一张单付两次 — 我不想要
+   他们上传两次) ──────────────────────────────────────────────────────────────
+   The FIRST request names the bill — its total read off it — and how much is
+   paid now; each balance is a request of its own on the same bill
+   (parent_request_id → the first, installment_no 2, 3…), raised with one press
+   and no second upload. What the requester reads, for the whole bill: its total,
+   what is paid (an instalment whose money is out), what is asked and not yet
+   paid, and what is left to ask. A withdrawn instalment asks for nothing. */
+export type FamilyMember = { id: string; request_no: string; installment_no: number; amount_sen: number; pay_pct: number | null; stage: RequestStage };
+export type BillFamily = {
+  rootId: string;
+  rootNo: string;
+  totalSen: number | null;
+  askedSen: number;
+  paidSen: number;
+  /** Asked, not paid yet — waiting for Finance, in its cycle, or returned to fix. */
+  pendingSen: number;
+  /** Left to ask on the bill; null when its total is not known. */
+  remainingSen: number | null;
+  installments: FamilyMember[];
+};
+
+export function familyFigures(rootId: string, rootNo: string, totalSen: number | null, members: FamilyMember[]): BillFamily {
+  const live = members.filter((m) => m.stage !== 'WITHDRAWN');
+  const askedSen = live.reduce((t, m) => t + m.amount_sen, 0);
+  const paidSen = live.filter((m) => m.stage === 'PAID' || m.stage === 'BANK_CONFIRMED').reduce((t, m) => t + m.amount_sen, 0);
+  return {
+    rootId,
+    rootNo,
+    totalSen,
+    askedSen,
+    paidSen,
+    pendingSen: askedSen - paidSen,
+    remainingSen: totalSen == null ? null : Math.max(0, totalSen - askedSen),
+    installments: [...members].sort((a, b) => a.installment_no - b.installment_no),
+  };
+}
+
+/** The bill's first request — itself, or the one a balance was raised from. */
+export const familyRootId = (r: Row): string => String(r.parent_request_id ?? r.id);
 
 /** Who may edit / withdraw: the requester, while Finance has not answered. */
 export const requesterMayChange = (status: string): boolean => status === 'SUBMITTED' || status === 'REJECTED';
@@ -148,7 +189,7 @@ export async function paymentRequestLinkGuard(c: any, rawId: unknown): Promise<{
   if (!id) return { request: null };
   const sb = c.get('supabase');
   const { data: req, error } = await scopeToCompany(sb.from('acc_payment_requests')
-    .select('id, company_id, request_no, status, pv_id, ap_invoice_id, bill_no, bill_date').eq('id', id), c).maybeSingle();
+    .select('id, company_id, request_no, status, pv_id, ap_invoice_id, bill_no, bill_date, parent_request_id').eq('id', id), c).maybeSingle();
   if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
   if (!req) return { resp: c.json({ error: 'request_not_found', message: 'That payment request is not in the company you are working in.' }, 404) };
   if (req.status === 'WITHDRAWN' || req.status === 'REJECTED') {
@@ -161,8 +202,10 @@ export async function paymentRequestLinkGuard(c: any, rawId: unknown): Promise<{
       return { resp: c.json({ error: 'request_has_voucher', message: `${req.request_no} is already answered by ${live.answer.number} — open that ${live.answer.kind === 'PV' ? 'voucher' : 'AP invoice'} instead.` }, 409) };
     }
   }
-  /* 申请一定要有 (owner 2026-10-01): no bill, no payment — Finance returns it. */
-  const { data: files, error: fErr } = await scopeToCompany(sb.from('acc_payment_request_files').select('id').eq('request_id', req.id), c);
+  /* 申请一定要有 (owner 2026-10-01): no bill, no payment — Finance returns it.
+     A balance carries the bill of the request it was raised from (item 2). */
+  const owners = [String(req.id), ...(req.parent_request_id ? [String(req.parent_request_id)] : [])];
+  const { data: files, error: fErr } = await scopeToCompany(sb.from('acc_payment_request_files').select('id').in('request_id', owners), c);
   if (fErr) return { resp: c.json({ error: 'load_failed', reason: fErr.message }, 500) };
   if (((files ?? []) as Row[]).length === 0) {
     return { resp: c.json({ error: 'request_no_bill', message: `${req.request_no} has no bill attached — return it so the requester attaches one.` }, 409) };
@@ -195,7 +238,12 @@ export async function linkPaymentRequest(
   if (!claimed) {
     return { ok: false, status: 409, body: { error: 'request_taken', message: `${req.request_no} was answered by another document a moment ago — nothing was created.` } };
   }
-  return { ok: true, filesCopied: await copyRequestFiles(c, co.companyId, String(req.id), doc) };
+  /* A balance's answer carries the bill (on the first request) and anything
+     attached to the balance itself — the official invoice, say. */
+  let copied = 0;
+  if (req.parent_request_id) copied += await copyRequestFiles(c, co.companyId, String(req.parent_request_id), doc);
+  copied += await copyRequestFiles(c, co.companyId, String(req.id), doc);
+  return { ok: true, filesCopied: copied };
 }
 
 /* The bill travels with the money: each request file is copied into the SLIPS

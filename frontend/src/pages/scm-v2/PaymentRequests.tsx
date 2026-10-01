@@ -21,13 +21,13 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
-  NO_EVENT_REASON_MIN, STAGE, answerText, awaitsFinance, billMatchText, fetchPaymentRequestFileBlobUrl, financeWorking, requestPaid, useCreatePaymentRequest, useDeletePaymentRequestFile,
-  usePaymentRequest, usePaymentRequestFiles, usePaymentRequests, useReturnPaymentRequest, useUpdatePaymentRequest,
+  NO_EVENT_REASON_MIN, STAGE, answerText, awaitsFinance, billMatchText, fetchPaymentRequestFileBlobUrl, financeWorking, hasInstalments, mayAskBalance, pctOf, requestPaid, useCreatePaymentRequest, useDeletePaymentRequestFile,
+  usePaymentRequest, usePaymentRequestFiles, usePaymentRequests, useRequestBalance, useReturnPaymentRequest, useUpdatePaymentRequest,
   useUploadPaymentRequestFile, useWithdrawPaymentRequest,
   type PaymentRequest, type PaymentRequestInput,
 } from '../../vendor/scm/lib/payment-request-queries';
 import { billFactsOf, needsEvent, useRequestBillRead } from '../../vendor/scm/lib/request-bill-read';
-import { BillMatchesNote, BillReadNote, billFactsLine } from '../../vendor/scm/components/RequestBill';
+import { BillInstalments, BillMatchesNote, BillReadNote, billFactsLine } from '../../vendor/scm/components/RequestBill';
 import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
 import { fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { useEventLabels } from '../../vendor/scm/lib/event-queries';
@@ -92,6 +92,8 @@ export const PaymentRequests = () => {
   const detailQ = usePaymentRequest(openId);
   const detail = detailQ.data?.request ?? null;
   const [form, setForm] = useState<{ mode: 'new' } | { mode: 'edit'; req: PaymentRequest } | null>(null);
+  /* 申请付余额 (item 2): the request the next instalment is asked from. */
+  const [balanceOf, setBalanceOf] = useState<PaymentRequest | null>(null);
   const withdraw = useWithdrawPaymentRequest();
   const sendBack = useReturnPaymentRequest();
 
@@ -99,6 +101,8 @@ export const PaymentRequests = () => {
     { key: 'no', label: 'No.', render: (r) => (
       <span style={{ whiteSpace: 'nowrap' }}>
         <button type="button" onClick={() => setOpenId(r.id)} style={{ ...linkBtn, ...mono }}>{r.request_no}</button>
+        {/* An instalment of a bill (item 2): which one. */}
+        {(r.installment_no ?? 1) > 1 && <span style={{ ...soft, marginLeft: 6 }}>#{r.installment_no} · balance</span>}
         {/* 同一张单: the same bill number and date on another live document. */}
         {(r.billMatches?.length ?? 0) > 0 && (
           <span title={`Same bill: ${(r.billMatches ?? []).map(billMatchText).join(' | ')}`} aria-label="Same bill elsewhere"
@@ -199,8 +203,20 @@ export const PaymentRequests = () => {
                 <Button variant="secondary" size="sm" title="Book the supplier's bill first — an AP invoice, paid later by an AP Payment"
                   onClick={() => navigate(`/scm/ap-invoices?fromRequest=${encodeURIComponent(detail.id)}`)}>Make AP invoice</Button>
               )}
+              {/* A balance of a bill Finance booked as an AP invoice (item 2) is
+                  paid ON that invoice — an AP Payment ticking this instalment. */}
+              {finance && awaitsFinance(detail) && apBalanceOn(detail) && (
+                <Button variant="secondary" size="sm" title="Pay this instalment on the bill's AP invoice"
+                  onClick={() => navigate(`/scm/payment-vouchers/new?${new URLSearchParams({ type: 'ap', supplier: detail.familyInvoice?.supplierId ?? '', pi: detail.familyInvoice?.id ?? '', amount: String(detail.amount_sen), fromRequest: detail.id }).toString()}`)}>
+                  Pay on {detail.familyInvoice?.invoiceNumber ?? 'the AP invoice'}
+                </Button>
+              )}
               {finance && awaitsFinance(detail) && (
                 <Button variant="ghost" size="sm" onClick={() => void onReturn(detail)} disabled={sendBack.isPending}>Return…</Button>
+              )}
+              {/* 申请付余额 (item 2): the next instalment of the same bill — no second upload. */}
+              {(finance || mine(detail)) && mayAskBalance(detail) && (
+                <Button variant="secondary" size="sm" onClick={() => setBalanceOf(detail)}>Request the balance · 申请付余额</Button>
               )}
               {finance && detail.voucher && (
                 <Link to={`/scm/payment-vouchers/${detail.voucher.id}`} style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)' }}>Open {detail.voucher.pvNumber ?? 'voucher'} →</Link>
@@ -236,8 +252,19 @@ export const PaymentRequests = () => {
                 ? <>{answerText(detail)}{detail.invoice.paidBy.length > 0 ? <span style={soft}> · by {detail.invoice.paidBy.join(', ')}</span> : null}{detail.invoice.bankConfirmed ? <span style={soft}> · bank ✓</span> : null}</>
                 : '—'} />
           </div>
+          {hasInstalments(detail.family) && <BillInstalments family={detail.family} currentId={detail.id} />}
           <BillMatchesNote matches={detail.billMatches} />
+          {detail.parent_request_id && (
+            <div style={soft}>The bill is on {detail.family?.rootNo ?? 'the first request'} — it travels with the payment; nothing to upload again.</div>
+          )}
           <RequestFilesCard request={detail} canWrite={finance || requesterMayChange(detail)} />
+        </Modal>
+      )}
+
+      {balanceOf && (
+        <Modal title={`Request the balance · 申请付余额 — ${balanceOf.family?.rootNo ?? balanceOf.request_no}`} onClose={() => setBalanceOf(null)} width="min(640px, 100%)"
+          ariaLabel="Request the balance">
+          <BalanceForm request={balanceOf} onDone={(id) => { setBalanceOf(null); setOpenId(id); }} onCancel={() => setBalanceOf(null)} />
         </Modal>
       )}
 
@@ -255,6 +282,93 @@ export const PaymentRequests = () => {
     </div>
   );
 };
+
+/** A balance of a bill Finance booked as an AP invoice — paid ON that invoice (item 2). */
+const apBalanceOn = (r: PaymentRequest): boolean =>
+  !!r.parent_request_id && !!r.familyInvoice?.supplierId
+  && (r.familyInvoice.status === 'POSTED' || r.familyInvoice.status === 'PARTIALLY_PAID');
+
+/* ── 申请付余额 — the next instalment of the same bill (item 2) ─────────────────
+   No second upload: the bill is on the first request and travels with every
+   instalment's payment. The amount starts at what is left to ask; more is the
+   requester's call, said out loud. The official invoice may be attached here. */
+function BalanceForm({ request, onDone, onCancel }: { request: PaymentRequest; onDone: (id: string) => void; onCancel: () => void }) {
+  const notify = useNotify();
+  const balance = useRequestBalance();
+  const upload = useUploadPaymentRequestFile();
+  const fam = request.family;
+  const total = fam?.totalSen ?? null;
+  const left = fam?.remainingSen ?? null;
+  const [amount, setAmount] = useState<number>(left ?? 0);
+  const [pct, setPct] = useState('');
+  const [dueDate, setDueDate] = useState<string | null>(null);
+  const [purpose, setPurpose] = useState(`Balance — ${request.purpose.replace(/^Balance — /, '')}`);
+  const [files, setFiles] = useState<File[]>([]);
+  const busy = balance.isPending || upload.isPending;
+  const pctValue = (() => { const n = Number(pct); return pct.trim() !== '' && Number.isFinite(n) && n > 0 && n <= 100 ? n : null; })();
+  const over = left != null && amount > left;
+
+  const save = async () => {
+    if (amount <= 0) { void notify({ title: 'Not yet complete', body: 'Say how much this instalment is.', tone: 'error' }); return; }
+    try {
+      const res = await balance.mutateAsync({
+        id: request.id, amountSen: amount, dueDate, purpose: purpose.trim() || null,
+        payPct: pctValue != null && total != null && pctOf(total, pctValue) === amount ? pctValue : null,
+      });
+      for (const f of files) {
+        const payload: PvFilePayload = { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) };
+        try { await upload.mutateAsync({ id: res.request.id, file: payload }); } catch (e) {
+          void notify({ title: `${f.name} did not attach`, body: e instanceof Error ? e.message : 'Attach it from the request.', tone: 'error' });
+        }
+      }
+      onDone(res.request.id);
+    } catch { /* the mutation's own onError told the user */ }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+      {fam && hasInstalments(fam) && <BillInstalments family={fam} currentId={request.id} />}
+      <div style={soft}>
+        {left != null ? `Left to ask on this bill: ${fmtSen(left)}${total != null ? ` of ${fmtSen(total)}` : ''}.` : 'The bill\'s total is not known — type this instalment\'s amount.'}
+        {' '}The bill is already on {fam?.rootNo ?? request.request_no} — nothing to upload again.
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-3)' }}>
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Amount (MYR) *</span>
+          <MoneyInput bare valueSen={amount} onCommit={(sen) => { setAmount(sen ?? 0); setPct(''); }} inputClassName={styles.fieldInput} selectOnFocus aria-label="Balance amount" />
+        </label>
+        {total != null && (
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>…or a percent of the bill</span>
+            <input className={styles.fieldInput} inputMode="decimal" value={pct} aria-label="Balance percent" placeholder="e.g. 50"
+              onChange={(e) => { setPct(e.target.value); const n = Number(e.target.value); if (Number.isFinite(n) && n > 0 && n <= 100) setAmount(pctOf(total, n)); }} />
+          </label>
+        )}
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Pay by</span>
+          <DateField fullWidth value={dueDate ?? ''} onChange={(iso) => setDueDate(iso || null)} className={styles.fieldInput} aria-label="Balance pay by" />
+        </label>
+      </div>
+      {over && (
+        <div role="alert" style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-12)' }}>
+          More than is left to ask on the bill ({fmtSen(left)}) — it still goes, and Finance sees it.
+        </div>
+      )}
+      <label className={styles.field}>
+        <span className={styles.fieldLabel}>What is it for</span>
+        <input className={styles.fieldInput} value={purpose} onChange={(e) => setPurpose(e.target.value)} aria-label="Balance purpose" />
+      </label>
+      <label className={styles.field}>
+        <span className={styles.fieldLabel}>The official invoice (optional — when the first was a proforma)</span>
+        <input type="file" multiple accept={PV_FILE_ACCEPT} aria-label="Official invoice files" onChange={(e) => setFiles([...(e.target.files ?? [])])} />
+      </label>
+      <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>
+        <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
+        <Button variant="primary" size="sm" onClick={() => void save()} disabled={busy}>{busy ? 'Sending…' : 'Send to Finance'}</Button>
+      </div>
+    </div>
+  );
+}
 
 /* ── The bill — the requester's own until Finance answers ─────────────────── */
 function RequestFilesCard({ request, canWrite }: { request: PaymentRequest; canWrite: boolean }) {
@@ -303,9 +417,23 @@ function RequestForm({ initial, hasEvents, onDone, onCancel }: { initial: Paymen
   const [noEvent, setNoEvent] = useState(() => !!initial?.no_event_reason);
   const [noEventReason, setNoEventReason] = useState(initial?.no_event_reason ?? '');
   const set = (patch: Partial<PaymentRequestInput>) => setV((prev) => ({ ...prev, ...patch }));
+  /* A bill paid in instalments (item 2): its total — read off it, or typed —
+     and this payment as an amount OR a percent of it. A balance's total is its
+     first request's, not edited here. */
+  const isBalance = !!initial?.parent_request_id;
+  const [billTotal, setBillTotal] = useState<number | null>(initial?.bill_total_sen ?? null);
+  const [pct, setPct] = useState<string>(initial?.pay_pct != null ? String(initial.pay_pct) : '');
+  const pctValue = (() => { const n = Number(pct); return pct.trim() !== '' && Number.isFinite(n) && n > 0 && n <= 100 ? n : null; })();
+  const applyPct = (raw: string, total: number | null) => {
+    setPct(raw);
+    const n = Number(raw);
+    if (total != null && total > 0 && raw.trim() !== '' && Number.isFinite(n) && n > 0 && n <= 100) set({ amountSen: pctOf(total, n) });
+  };
   const pickFiles = async (list: File[]) => {
     setFiles(list);
     const read = await billRead.run(list);
+    const readTotal = read?.bill.totalSen ?? null;
+    if (readTotal != null && readTotal > 0) setBillTotal((prev) => prev ?? readTotal);
     /* The event the bill points at most strongly is picked for them — they confirm or change it. */
     const top = read?.eventBill ? read.eventSuggestions[0] : undefined;
     if (top) setV((prev) => (prev.projectId == null ? { ...prev, projectId: top.id } : prev));
@@ -334,6 +462,10 @@ function RequestForm({ initial, hasEvents, onDone, onCancel }: { initial: Paymen
       ...v,
       ...billFactsOf(billRead.state),
       noEventReason: v.projectId == null && noEvent ? noEventReason.trim() : null,
+      /* The total as it stands on the form (read, or typed over), and the percent
+         only while the amount is still what it makes. */
+      ...(isBalance ? {} : { billTotalSen: billTotal }),
+      payPct: pctValue != null && billTotal != null && pctOf(billTotal, pctValue) === v.amountSen ? pctValue : null,
     };
     try {
       const res = initial
@@ -361,12 +493,27 @@ function RequestForm({ initial, hasEvents, onDone, onCancel }: { initial: Paymen
           <input className={styles.fieldInput} value={v.payeeName} onChange={(e) => set({ payeeName: e.target.value })} aria-label="Pay to" placeholder="e.g. MLE EVENTS SDN BHD" />
         </label>
         <label className={styles.field}>
-          <span className={styles.fieldLabel}>Amount (MYR) *</span>
+          <span className={styles.fieldLabel}>Amount to pay now (MYR) *</span>
           <MoneyInput bare valueSen={v.amountSen} onCommit={(sen) => set({ amountSen: sen ?? 0 })} inputClassName={styles.fieldInput} selectOnFocus aria-label="Amount" />
         </label>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Pay by</span>
           <DateField fullWidth value={v.dueDate ?? ''} onChange={(iso) => set({ dueDate: iso || null })} className={styles.fieldInput} aria-label="Pay by" />
+        </label>
+      </div>
+      {/* 一张单付两次 (item 2): the bill's total, and this payment as a percent of it. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--space-3)' }}>
+        {!isBalance && (
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>The bill's total (MYR)</span>
+            <MoneyInput bare valueSen={billTotal ?? 0} inputClassName={styles.fieldInput} selectOnFocus aria-label="Bill total"
+              onCommit={(sen) => { const t = sen != null && sen > 0 ? sen : null; setBillTotal(t); if (pct) applyPct(pct, t); }} />
+          </label>
+        )}
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>…or a percent of it</span>
+          <input className={styles.fieldInput} inputMode="decimal" value={pct} aria-label="Percent of the bill" placeholder={billTotal ? 'e.g. 50' : 'Type the bill total first'}
+            disabled={!billTotal} onChange={(e) => applyPct(e.target.value, billTotal)} />
         </label>
       </div>
       {!initial && (

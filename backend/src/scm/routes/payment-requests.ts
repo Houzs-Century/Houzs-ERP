@@ -7,6 +7,7 @@
 //   GET    /:id                 one request, its voucher and where it stands
 //   POST   /                    raise a request (SUBMITTED)
 //   PATCH  /:id                 the requester changes it — or sends a returned one again
+//   POST   /:id/balance         申请付余额 — the next instalment of the same bill
 //   POST   /:id/withdraw        the requester takes it back
 //   POST   /:id/return          Finance sends it back, saying why
 //   POST|GET /:id/files, GET|DELETE /:id/files/:fileId — the bill
@@ -47,8 +48,8 @@ import { eventBillRefusal, findBillMatches, readBillFacts, type BillMatch, type 
 import { eventOptionsHandler } from './acc-events';
 import { billMatchesHandler, readRequestBillHandler } from './payment-request-bill';
 import {
-  PAYMENT_REQUEST_KEY, bankConfirmedVoucherNumbers, callerUserId, isRequestFinance, liveAnswerOf, requestStage,
-  requesterMayChange, type InvoiceFacts, type VoucherFacts,
+  PAYMENT_REQUEST_KEY, bankConfirmedVoucherNumbers, callerUserId, familyFigures, familyRootId, isRequestFinance, liveAnswerOf, requestStage,
+  requesterMayChange, type FamilyMember, type InvoiceFacts, type VoucherFacts,
 } from '../lib/payment-request';
 
 type Row = Record<string, any>;
@@ -56,7 +57,7 @@ type Row = Record<string, any>;
 export const paymentRequests = new Hono<{ Bindings: Env; Variables: Variables }>();
 paymentRequests.use('*', supabaseAuth);
 
-const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee_name, amount_sen, due_date, purpose, project_id, bank_name, bank_account_no, bank_account_name, status, pv_id, ap_invoice_id, finance_note, decided_by, decided_at, created_at, updated_at, bill_no, bill_date, bill_total_sen, event_bill, no_event_reason';
+const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee_name, amount_sen, due_date, purpose, project_id, bank_name, bank_account_no, bank_account_name, status, pv_id, ap_invoice_id, finance_note, decided_by, decided_at, created_at, updated_at, bill_no, bill_date, bill_total_sen, event_bill, no_event_reason, parent_request_id, installment_no, pay_pct';
 const NO_PERM = { error: "You don't have permission to do that." };
 
 const mayRequest = (c: any): boolean => hasHouzsPerm(c, PAYMENT_REQUEST_KEY);
@@ -97,7 +98,7 @@ async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ row
   /* An invoice's payers: the posted AP Payments with an allocation on it. */
   const payersOf = new Map<string, string[]>();
   if (invoiceIds.length > 0) {
-    const { data, error } = await sb.from('ap_invoices').select('id, invoice_number, status, total_sen, paid_sen')
+    const { data, error } = await sb.from('ap_invoices').select('id, invoice_number, status, total_sen, paid_sen, supplier_id')
       .eq('company_id', companyId).in('id', invoiceIds);
     if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
     invoices = new Map(((data ?? []) as InvoiceFacts[]).map((v) => [v.id, v]));
@@ -137,7 +138,7 @@ async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ row
           stage: requestStage(String(r.status), null, confirmed, inv),
           voucher: null,
           invoice: {
-            id: inv.id, invoiceNumber: inv.invoice_number, status: inv.status,
+            id: inv.id, invoiceNumber: inv.invoice_number, status: inv.status, supplierId: inv.supplier_id ?? null,
             totalSen: Number(inv.total_sen ?? 0), paidSen: Number(inv.paid_sen ?? 0), paidBy: payers, bankConfirmed: confirmed,
           },
         };
@@ -154,13 +155,58 @@ async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ row
   };
 }
 
+/** Each request with its bill's instalments (item 2): the first request and
+    every balance raised from it, each with its stage, and the figures the
+    requester reads — total, paid, pending, left to ask (lib/payment-request.ts
+    familyFigures). The first request's answer rides along: a balance of a bill
+    booked as an AP invoice is paid ON that invoice. */
+async function withFamilies(c: any, companyId: number, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
+  const roots = [...new Set(rows.map(familyRootId))];
+  if (roots.length === 0) return { rows };
+  const sb = c.get('supabase');
+  const [byId, byParent] = await Promise.all([
+    sb.from('acc_payment_requests').select(COLS).eq('company_id', companyId).in('id', roots),
+    sb.from('acc_payment_requests').select(COLS).eq('company_id', companyId).in('parent_request_id', roots),
+  ]);
+  const err = byId.error ?? byParent.error;
+  if (err) return { resp: c.json({ error: 'load_failed', reason: err.message }, 500) };
+  const members = new Map<string, Row>();
+  for (const r of [...((byId.data ?? []) as Row[]), ...((byParent.data ?? []) as Row[])]) members.set(String(r.id), r);
+  const staged = await withStages(c, companyId, [...members.values()]);
+  if ('resp' in staged) return staged;
+  const family = new Map<string, FamilyMember[]>();
+  const first = new Map<string, Row>();
+  for (const m of staged.rows) {
+    const root = familyRootId(m);
+    if (String(m.id) === root) first.set(root, m);
+    const list = family.get(root) ?? [];
+    list.push({
+      id: String(m.id), request_no: String(m.request_no), installment_no: Number(m.installment_no ?? 1),
+      amount_sen: Number(m.amount_sen ?? 0), pay_pct: m.pay_pct == null ? null : Number(m.pay_pct), stage: m.stage,
+    });
+    family.set(root, list);
+  }
+  return {
+    rows: rows.map((r) => {
+      const root = familyRootId(r);
+      const top = first.get(root);
+      const total = top?.bill_total_sen == null ? null : Number(top.bill_total_sen);
+      return { ...r, family: familyFigures(root, String(top?.request_no ?? ''), total, family.get(root) ?? []), familyInvoice: top?.invoice ?? null };
+    }),
+  };
+}
+
 /** Each request with the OTHER live documents carrying its bill's number and
     date (lib/bill-matches.ts) — said out loud on the list and on the request,
-    never refused. A request is never a match of its own answer. */
+    never refused. A request is never a match of its own answer, nor of the
+    other instalments of its own bill (item 2). */
 async function withBillMatches(c: any, companyId: number, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
   const found = await findBillMatches(c.get('supabase'), companyId, rows.map((r) => ({
     key: String(r.id), billNo: r.bill_no, billDate: r.bill_date,
-    exclude: { requestIds: [String(r.id)], pvIds: [r.pv_id], apInvoiceIds: [r.ap_invoice_id] },
+    exclude: {
+      requestIds: [String(r.id), ...((r.family?.installments ?? []) as FamilyMember[]).map((m) => m.id)],
+      pvIds: [r.pv_id], apInvoiceIds: [r.ap_invoice_id],
+    },
   })));
   if (!found.ok) return { resp: c.json({ error: 'load_failed', reason: found.reason }, 500) };
   return { rows: rows.map((r) => ({ ...r, billMatches: found.matches.get(String(r.id)) ?? ([] as BillMatch[]) })) };
@@ -188,7 +234,9 @@ export const listPaymentRequestsHandler = async (c: any): Promise<Response> => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const staged = await withStages(c, co.companyId, (data ?? []) as Row[]);
   if ('resp' in staged) return staged.resp;
-  const matched = await withBillMatches(c, co.companyId, staged.rows);
+  const families = await withFamilies(c, co.companyId, staged.rows);
+  if ('resp' in families) return families.resp;
+  const matched = await withBillMatches(c, co.companyId, families.rows);
   if ('resp' in matched) return matched.resp;
   return c.json({ requests: matched.rows, finance, hasEvents: await hasEventsOf(c) });
 };
@@ -242,7 +290,9 @@ export const getPaymentRequestHandler = async (c: any): Promise<Response> => {
   if ('resp' in found) return found.resp;
   const staged = await withStages(c, co.companyId, [found.req]);
   if ('resp' in staged) return staged.resp;
-  const matched = await withBillMatches(c, co.companyId, staged.rows);
+  const families = await withFamilies(c, co.companyId, staged.rows);
+  if ('resp' in families) return families.resp;
+  const matched = await withBillMatches(c, co.companyId, families.rows);
   if ('resp' in matched) return matched.resp;
   return c.json({ request: matched.rows[0], finance: isRequestFinance(c) });
 };
@@ -252,7 +302,17 @@ paymentRequests.get('/:id', getPaymentRequestHandler);
 type Fields = {
   payee_name: string; amount_sen: number; due_date: string | null; purpose: string;
   project_id: number | null; bank_name: string | null; bank_account_no: string | null; bank_account_name: string | null;
+  /** The percent of the bill this instalment is, as the requester typed it (item 2). */
+  pay_pct: number | null;
 } & RequestBillFacts;
+
+/** A percent as typed: more than 0, at most 100, two decimals — or none. */
+function readPayPct(v: unknown): number | null | 'invalid' {
+  if (v === undefined || v === null || v === '') return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0 || n > 100) return 'invalid';
+  return Math.round(n * 100) / 100;
+}
 function readFields(body: Row): { fields: Fields } | { error: string; message: string } {
   const payee = text(body.payeeName);
   if (!payee) return { error: 'payee_required', message: 'Who is to be paid?' };
@@ -264,9 +324,11 @@ function readFields(body: Row): { fields: Fields } | { error: string; message: s
   if (project === 'invalid') return { error: 'bad_event', message: 'projectId must be an event id.' };
   const bill = readBillFacts(body);
   if ('error' in bill) return bill;
+  const pct = readPayPct(body.payPct);
+  if (pct === 'invalid') return { error: 'pay_pct_invalid', message: 'The percent must be more than 0 and at most 100.' };
   return {
     fields: {
-      payee_name: payee, amount_sen: amount, due_date: dateOrNull(body.dueDate), purpose, project_id: project,
+      payee_name: payee, amount_sen: amount, due_date: dateOrNull(body.dueDate), purpose, project_id: project, pay_pct: pct,
       bank_name: text(body.bankName), bank_account_no: text(body.bankAccountNo), bank_account_name: text(body.bankAccountName),
       ...bill.facts,
       /* With its Event picked, the reason why there is none is moot. */
@@ -351,6 +413,7 @@ export const updatePaymentRequestHandler = async (c: any): Promise<Response> => 
     billTotalSen: body.billTotalSen !== undefined ? body.billTotalSen : before.bill_total_sen,
     eventBill: body.eventBill !== undefined ? body.eventBill : before.event_bill,
     noEventReason: body.noEventReason !== undefined ? body.noEventReason : before.no_event_reason,
+    payPct: body.payPct !== undefined ? body.payPct : before.pay_pct,
   });
   if ('error' in read) return c.json(read, 400);
   const eventErr = await unknownEventRefusal(c, [read.fields.project_id]);
@@ -376,6 +439,96 @@ export const updatePaymentRequestHandler = async (c: any): Promise<Response> => 
   return c.json({ ok: true, request: staged.rows[0] });
 };
 paymentRequests.patch('/:id', updatePaymentRequestHandler);
+
+/* ── POST /:id/balance — 申请付余额 (owner 2026-10-01, item 2) ─────────────────
+   The next instalment of the SAME bill, raised from any of its requests with
+   one press: no second upload — the bill stays on the first request, and the
+   answer to this one carries it. Payee, bank and event come from the first
+   request; the amount defaults (on the form) to what is left to ask, and more
+   than that is the requester's call — said, never refused. Anything attached
+   to the balance itself (the official invoice) uploads to it afterwards. */
+export const requestBalanceHandler = async (c: any): Promise<Response> => {
+  if (!mayOpen(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const me = callerUserId(c);
+  if (me == null) return c.json({ error: 'no_user', message: 'Sign in again — the request needs to know who is asking.' }, 409);
+  const found = await loadVisible(c, c.req.param('id'));
+  if ('resp' in found) return found.resp;
+  const sb = c.get('supabase');
+  const rootId = familyRootId(found.req);
+  let root = found.req;
+  if (String(root.id) !== rootId) {
+    const { data, error } = await scopeToCompany(sb.from('acc_payment_requests').select(COLS).eq('id', rootId), c).maybeSingle();
+    if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+    if (!data) return c.json({ error: 'not_found', message: 'The first request of this bill is not in the company you are working in.' }, 404);
+    root = data as Row;
+  }
+  if (root.status === 'WITHDRAWN') {
+    return c.json({ error: 'bill_withdrawn', message: `${root.request_no} was withdrawn — raise a new request for this bill.` }, 409);
+  }
+  let body: Row;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const amount = Number(body.amountSen);
+  if (!Number.isInteger(amount) || amount <= 0) return c.json({ error: 'amount_invalid', message: 'The amount must be more than zero.' }, 400);
+  const pct = readPayPct(body.payPct);
+  if (pct === 'invalid') return c.json({ error: 'pay_pct_invalid', message: 'The percent must be more than 0 and at most 100.' }, 400);
+
+  const { data: kin, error: kErr } = await sb.from('acc_payment_requests').select('id, amount_sen, status, installment_no')
+    .eq('company_id', co.companyId).or(`id.eq.${rootId},parent_request_id.eq.${rootId}`);
+  if (kErr) return c.json({ error: 'load_failed', reason: kErr.message }, 500);
+  const family = (kin ?? []) as Row[];
+  const next = family.reduce((m, r) => Math.max(m, Number(r.installment_no ?? 1)), 1) + 1;
+  const asked = family.filter((r) => r.status !== 'WITHDRAWN').reduce((t, r) => t + Number(r.amount_sen ?? 0), 0);
+  const total = root.bill_total_sen == null ? null : Number(root.bill_total_sen);
+
+  const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_REQUEST', action: 'CREATE', companyId: co.companyId });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  const requestNo = await mintMonthlyDocNo(sb, 'acc_payment_requests', 'request_no', `${companyDocPrefix(c)}PRQ-${docMonthTag(todayMyt())}`);
+  const houzsUser = c.get('houzsUser') as { name?: string | null; email?: string | null } | undefined;
+  const { data: row, error } = await sb.from('acc_payment_requests').insert({
+    company_id: co.companyId,
+    request_no: requestNo,
+    requested_by: me,
+    requested_by_name: houzsUser?.name ?? houzsUser?.email ?? null,
+    payee_name: root.payee_name,
+    amount_sen: amount,
+    due_date: dateOrNull(body.dueDate),
+    purpose: text(body.purpose) ?? `Balance — ${String(root.purpose)}`.slice(0, 500),
+    project_id: root.project_id ?? null,
+    bank_name: root.bank_name ?? null,
+    bank_account_no: root.bank_account_no ?? null,
+    bank_account_name: root.bank_account_name ?? null,
+    status: 'SUBMITTED',
+    /* The same bill: its number, date and total, for reading and for the
+       same-bill check (which leaves a bill's own instalments out). */
+    bill_no: root.bill_no ?? null,
+    bill_date: dateOrNull(root.bill_date),
+    bill_total_sen: root.bill_total_sen ?? null,
+    event_bill: false,
+    no_event_reason: root.no_event_reason ?? null,
+    parent_request_id: rootId,
+    installment_no: next,
+    pay_pct: pct,
+  }).select(COLS).single();
+  if (error || !row) {
+    const taken = String(error?.code ?? '') === '23505' || /duplicate key/i.test(String(error?.message ?? ''));
+    if (taken) return c.json({ error: 'balance_taken', message: `Another instalment of ${root.request_no} was asked a moment ago — open it again.` }, 409);
+    return c.json({ error: 'save_failed', reason: error?.message ?? 'insert returned nothing' }, 500);
+  }
+  await recordEntityAudit(sb, {
+    entityType: 'PAYMENT_REQUEST', entityId: String(row.id), entityDocNo: requestNo, action: 'CREATE',
+    actor: c.get('houzsUser'), companyId: co.companyId, statusSnapshot: 'SUBMITTED',
+    fieldChanges: compactChanges([fieldChange('balanceOf', null, root.request_no), fieldChange('installmentNo', null, next), fieldChange('amountSen', null, amount)]),
+  });
+  return c.json({
+    ok: true,
+    request: { ...row, stage: 'SUBMITTED', voucher: null },
+    /* Said, not refused: more asked on the bill than it totals. */
+    overTotal: total != null && asked + amount > total,
+  }, 201);
+};
+paymentRequests.post('/:id/balance', requestBalanceHandler);
 
 /* ── POST /:id/withdraw ────────────────────────────────────────────────────── */
 export const withdrawPaymentRequestHandler = async (c: any): Promise<Response> => {

@@ -144,12 +144,19 @@ export const extractBillsHandler = async (c: any) => {
     company's; the extract's own checks (types, sizes, page count) still apply. */
 export async function requestBill(c: any, requestId: string): Promise<{ files: Array<{ name: string; mime: string; dataBase64: string }> } | { resp: Response }> {
   const sb = c.get('supabase');
-  const { data: req, error } = await scopeToCompany(sb.from('acc_payment_requests').select('id').eq('id', requestId), c).maybeSingle();
+  const { data: req, error } = await scopeToCompany(sb.from('acc_payment_requests').select('id, parent_request_id').eq('id', requestId), c).maybeSingle();
   if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
   if (!req) return { resp: c.json({ error: 'request_not_found', message: 'That payment request is not in the company you are working in.' }, 404) };
-  const { data: rows, error: fErr } = await scopeToCompany(sb.from('acc_payment_request_files')
-    .select('file_key, file_name, mime, sort_no').eq('request_id', requestId), c).order('sort_no');
+  const filesOf = async (id: string) => scopeToCompany(sb.from('acc_payment_request_files')
+    .select('file_key, file_name, mime, sort_no').eq('request_id', id), c).order('sort_no');
+  let { data: rows, error: fErr } = await filesOf(requestId);
   if (fErr) return { resp: c.json({ error: 'load_failed', reason: fErr.message }, 500) };
+  /* A balance with nothing of its own reads the bill of the request it was
+     raised from (payment-request item 2: no second upload). */
+  if ((rows ?? []).length === 0 && req.parent_request_id) {
+    ({ data: rows, error: fErr } = await filesOf(String(req.parent_request_id)));
+    if (fErr) return { resp: c.json({ error: 'load_failed', reason: fErr.message }, 500) };
+  }
   const list = (rows ?? []) as Array<{ file_key: string; file_name: string; mime: string }>;
   if (list.length === 0) return { files: [] };
   const bucket = (c.env as { SLIPS?: { get: (k: string) => Promise<any> } }).SLIPS;
