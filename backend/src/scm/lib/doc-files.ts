@@ -48,6 +48,9 @@ export type DocFilesSpec = {
   /** The refusals, worded for THIS document. */
   closedRefusal: { error: string; message: string };
   lockedRefusal: { error: string; message: string };
+  /** Set when the document must keep at least one file (a payment request's
+      bill, owner 2026-10-01: 申请一定要有) — removing the last one is refused. */
+  keepOne?: { error: string; message: string };
 };
 
 type Bucket = {
@@ -168,6 +171,11 @@ export function makeDocFileHandlers(spec: DocFilesSpec) {
     ).maybeSingle();
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     if (!row) return c.json({ error: 'not_found' }, 404);
+    if (spec.keepOne) {
+      const { data: all, error: allErr } = await scopeToCompany(sb.from(spec.table).select('id').eq(spec.fkColumn, found.doc.id), c);
+      if (allErr) return c.json({ error: 'load_failed', reason: allErr.message }, 500);
+      if (((all ?? []) as Row[]).length <= 1) return c.json(spec.keepOne, 409);
+    }
     const { error: delErr } = await sb.from(spec.table)
       .delete().eq('company_id', (row as Row).company_id).eq('id', (row as Row).id);
     if (delErr) return c.json({ error: 'delete_failed', reason: delErr.message }, 500);

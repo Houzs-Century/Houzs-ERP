@@ -142,7 +142,7 @@ export const extractBillsHandler = async (c: any) => {
 /** A payment request's files, read from the file store as one bill's pages —
     the same shape a scanned bill arrives in. The request must be this
     company's; the extract's own checks (types, sizes, page count) still apply. */
-async function requestBill(c: any, requestId: string): Promise<{ files: Array<{ name: string; mime: string; dataBase64: string }> } | { resp: Response }> {
+export async function requestBill(c: any, requestId: string): Promise<{ files: Array<{ name: string; mime: string; dataBase64: string }> } | { resp: Response }> {
   const sb = c.get('supabase');
   const { data: req, error } = await scopeToCompany(sb.from('acc_payment_requests').select('id').eq('id', requestId), c).maybeSingle();
   if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };

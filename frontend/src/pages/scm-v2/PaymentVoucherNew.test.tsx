@@ -90,8 +90,16 @@ const EVENT_OPTIONS = [
 const retagMutate = vi.fn();
 /* 申请付款 — the request a voucher may answer (?fromRequest=); set by that test only. */
 let requestDetail: Record<string, unknown> | undefined;
+/* 同一张单 (2026-10-01): other documents carrying the typed bill number and date. */
+let billMatches: Array<Record<string, unknown>> = [];
+const billMatchAsks: Array<[string, string, string | null]> = [];
 vi.mock('../../vendor/scm/lib/payment-request-queries', () => ({
   usePaymentRequest: (id: string | null) => ({ data: id && requestDetail ? { request: requestDetail, finance: true } : undefined, isLoading: false }),
+  useBillMatches: (no: string, date: string, excludeRequest: string | null) => {
+    billMatchAsks.push([no, date, excludeRequest]);
+    return { data: no && date ? { matches: billMatches } : undefined };
+  },
+  billMatchText: (m: { number: string }) => `match ${m.number}`,
 }));
 vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/event-queries')>()),
@@ -587,7 +595,29 @@ describe('answering a payment request (?fromRequest=, 申请付款)', () => {
     expect(payload.paymentRequestId).toBe('prq-1');
     expect(payload.notes).toBe('Payment request HC-PRQ-2609-004 — Booth F1 rental · BILL MLE-0925 · DATED 2026-09-01');
     expect(payload.lines).toEqual([expect.objectContaining({ description: 'BOOTH F1 RENTAL 50%', debitAccountCode: '900-A002', amountSen: 800000, projectId: 348 })]);
+    /* The bill's own number and date ride the voucher (item 1, 2026-10-01). */
+    expect(payload).toMatchObject({ billRef: 'MLE-0925', billDate: '2026-09-01' });
     requestDetail = undefined;
+  });
+
+  /* Item 1 (owner 2026-10-01): the request's bill number and date fill the
+     voucher's; the same pair on another document is said out loud. */
+  test('the request\'s bill number and date fill in; the same bill elsewhere is said; the save carries the pair', async () => {
+    mutateAsync.mockClear(); billMatchAsks.length = 0;
+    billMatches = [{ kind: 'PV', id: 'pv-4', number: 'HC-PV-2609-004', amountSen: 850000, status: 'POSTED', answeredBy: null }];
+    requestDetail = { id: 'prq-1', request_no: 'HC-PRQ-2609-004', requested_by_name: 'James Seow', payee_name: 'MLE EVENTS SDN BHD', amount_sen: 850000, purpose: 'Booth F1 rental', project_id: 348, bank_name: null, bank_account_no: null, bank_account_name: null, status: 'SUBMITTED', stage: 'SUBMITTED', voucher: null, bill_no: 'MLE-0925', bill_date: '2026-09-01' };
+    draw('/scm/payment-vouchers/new?fromRequest=prq-1');
+    expect((screen.getByLabelText('Bill no.') as HTMLInputElement).value).toBe('MLE-0925');
+    expect(screen.getByText('match HC-PV-2609-004')).toBeTruthy();
+    /* Asked without the request itself — a request is never its own match. */
+    expect(billMatchAsks).toContainEqual(['MLE-0925', '2026-09-01', 'prq-1']);
+    const account = screen.getByLabelText('line 1 amount').closest('[data-line]')!.querySelector('[role="combobox"]') as HTMLInputElement;
+    fireEvent.focus(account);
+    fireEvent.mouseDown(screen.getByText('900-A002 · Advertisement'));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3', cancelable: true, bubbles: true }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0]![0]).toMatchObject({ billRef: 'MLE-0925', billDate: '2026-09-01', paymentRequestId: 'prq-1' });
+    requestDetail = undefined; billMatches = [];
   });
 });
 
