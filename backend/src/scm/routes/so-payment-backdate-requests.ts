@@ -67,7 +67,13 @@ const actorOf = (c: AnyCtx): { id: number | null; name: string | null } => {
   return Number.isInteger(id) && id > 0 ? { id, name: hu?.name ?? null } : { id: null, name: null };
 };
 
-const isAdmin = (c: AnyCtx): boolean => hasHouzsPerm(c, SO_PAYMENT_BACKDATE);
+/* Who decides a request: the backdate right itself (Finance, `*`), or the
+   approve-only key (Logistic, owner 2026-09-30) — which does NOT let its holder
+   key an old slip directly, so their own late slips still come here. */
+export const BACKDATE_APPROVE = 'scm.payment.backdate.approve';
+const isAdmin = (c: AnyCtx): boolean => hasHouzsPerm(c, SO_PAYMENT_BACKDATE) || hasHouzsPerm(c, BACKDATE_APPROVE);
+
+const OWN_REQUEST = { error: 'own_request', reason: 'You cannot decide your own request. Another admin has to.' };
 
 const requestSchema = z.object({
   paidAt:            z.string().min(1),
@@ -285,6 +291,7 @@ paymentBackdateInbox.post('/:id/approve', async (c: AnyCtx) => {
   if (r.status !== 'REQUESTED') return c.json(NOT_OPEN, 409);
   const note = await readNote(c);
   const actor = actorOf(c);
+  if (actor.id != null && actor.id === Number(r.requested_by)) return c.json(OWN_REQUEST, 403);
   const decidedAt = nowIso();
   if (!(await claim(c, r, { status: 'APPROVED', decided_by: actor.id, decided_by_name: actor.name, decided_at: decidedAt, decision_note: note || null }))) {
     return c.json(NOT_OPEN, 409);
@@ -345,6 +352,7 @@ paymentBackdateInbox.post('/:id/reject', async (c: AnyCtx) => {
   const note = await readNote(c);
   if (note.length < 3) return c.json({ error: 'reason_required', reason: 'Say why the request is rejected.' }, 400);
   const actor = actorOf(c);
+  if (actor.id != null && actor.id === Number(r.requested_by)) return c.json(OWN_REQUEST, 403);
   if (!(await claim(c, r, { status: 'REJECTED', decided_by: actor.id, decided_by_name: actor.name, decided_at: nowIso(), decision_note: note }))) {
     return c.json(NOT_OPEN, 409);
   }

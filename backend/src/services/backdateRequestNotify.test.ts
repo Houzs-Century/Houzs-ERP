@@ -15,15 +15,16 @@ const base = { docNo: 'SO-1', amount: 'RM 500.00', slipDate: '2026-09-10', compa
 
 beforeEach(() => {
   holders['scm.payment.backdate'] = [30, 31];
+  holders['scm.payment.backdate.approve'] = [40];
   holders['*'] = [1, 31];
   posted.mockClear();
 });
 
 describe('notifyBackdateRequest', () => {
-  it('a raised request reaches Finance AND the wildcard admins, once each, never the raiser', async () => {
+  it('a raised request reaches Finance, Logistic AND the wildcard admins, once each, never the raiser', async () => {
     await notifyBackdateRequest(ENV, 'raised', { ...base, reason: 'late slip', requesterUserId: 30, requesterName: 'Fin', actorUserId: 30 });
     expect(posted).toHaveBeenCalledTimes(1);
-    expect(posted.mock.calls[0]![1].userIds.sort()).toEqual([1, 31]);
+    expect(posted.mock.calls[0]![1].userIds.sort((a, b) => a - b)).toEqual([1, 31, 40]);
     expect(posted.mock.calls[0]![1].body).toContain('late slip');
   });
 
