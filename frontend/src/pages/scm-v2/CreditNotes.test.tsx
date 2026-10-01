@@ -28,6 +28,25 @@ const NOTES: CreditNote[] = [
 const createMutate = vi.fn(async (body: unknown) => ({ ok: true, note: { ...NOTES[0]!, id: 'n3', note_number: '2990-CN-2609-002', ...(body as object) } }));
 const postMutate = vi.fn(async () => ({ ok: true, jeNo: '2990-JE-2609-0008', status: 'posted' }));
 const cancelMutate = vi.fn(async () => ({ ok: true }));
+/* Scan supplier CN (owner 2026-10-01): the reader's answer for Diglant's display-discount note. */
+const SCAN = {
+  ok: true,
+  read: { isCreditNote: true, vendorName: 'DIGLANT MANUFACTURING SDN. BHD.', vendorRegNo: '1459872-U', cnNumber: 'DGPSC26000263', cnDate: '2026-09-07', invoiceNumbers: ['DGSIZ26001811'], subtotalSen: 59_091, sstSen: 5_909, totalSen: 65_000, remark: '25% display discount' },
+  supplier: { id: 'sup-d', code: '400-D002', name: 'DIGLANT MANUFACTURING SDN BHD.', confidence: 'exact' },
+  lines: [
+    { description: 'Mattress Akemi Medi+Health Equinox K — Aeon Big Puchong · inv. DGSIZ26001811', itemCode: 'T1MAMJA0MK', qty: 1, printedSen: 29_545, amountSen: 32_499, accountCode: '610-0001', accountName: 'DISCOUNT RECEIVED', rule: 'discount received', creditsDocId: 'pi-17' },
+    { description: 'Mattress Akemi Medi+Health Equinox K — Mid Valley · inv. DGSIZ26001811', itemCode: 'T1MAMJA0MK', qty: 1, printedSen: 29_546, amountSen: 32_501, accountCode: '610-0001', accountName: 'DISCOUNT RECEIVED', rule: 'discount received', creditsDocId: 'pi-17' },
+  ],
+  invoices: [
+    { kind: 'PI', id: 'pi-17', number: 'HC-PI-2610-017', invoiceRef: 'DGSIZ26001811', invoiceDate: '2026-09-07', totalSen: 260_000, paidSen: 0, status: 'POSTED', outstandingSen: 260_000 },
+    { kind: 'PI', id: 'pi-18', number: 'HC-PI-2610-018', invoiceRef: 'DGSIZ26001811', invoiceDate: '2026-09-07', totalSen: 130_000, paidSen: 0, status: 'POSTED', outstandingSen: 130_000 },
+  ],
+  suggested: { kind: 'PI', id: 'pi-17', number: 'HC-PI-2610-017' },
+  duplicates: [],
+  notes: ['SST RM 59.09 is spread over the lines — the purchase was booked with its SST.'],
+};
+const scanMutate = vi.fn(async (_pages: unknown) => SCAN);
+const uploadMutate = vi.fn(async (_b: unknown) => ({ ok: true }));
 const lastList = { value: '' };
 const pdfSingle = vi.fn(async (..._args: unknown[]) => {});
 const pdfBatch = vi.fn(async (..._args: unknown[]) => {});
@@ -55,6 +74,19 @@ vi.mock('../../vendor/scm/lib/credit-note-queries', async (importOriginal) => ({
   useUpdateCreditNote: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
   usePostCreditNote: () => ({ mutate: postMutate, mutateAsync: postMutate, isPending: false, isError: false, isSuccess: false, error: null }),
   useCancelCreditNote: () => ({ mutate: cancelMutate, isPending: false, isError: false, error: null }),
+  useScanSupplierCreditNote: () => ({ mutateAsync: scanMutate, isPending: false }),
+  useCreditNoteFiles: () => ({ data: { files: [] }, isLoading: false }),
+  useUploadCreditNoteFile: () => ({ mutateAsync: uploadMutate, isPending: false }),
+  useDeleteCreditNoteFile: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+/* The Files card asks the shell's notifier (Scm2990Shell provides it in the app). */
+vi.mock('../../vendor/scm/components/NotifyDialog', async (importOriginal) => ({
+  ...(await importOriginal() as object),
+  useNotify: () => vi.fn(),
+}));
+vi.mock('../../vendor/scm/lib/payment-voucher-queries', async (importOriginal) => ({
+  ...(await importOriginal() as object),
+  fileToBase64: async (f: File) => `b64:${f.name}`,
 }));
 vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
@@ -65,7 +97,7 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
 }));
 vi.mock('../../vendor/scm/lib/suppliers-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
-  useSuppliers: () => ({ data: [{ id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD' }], isLoading: false }),
+  useSuppliers: () => ({ data: [{ id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD' }, { id: 'sup-d', code: '400-D002', name: 'DIGLANT MANUFACTURING SDN BHD.' }], isLoading: false }),
 }));
 
 const { CreditNotes, bodyOf } = await import('./CreditNotes');
@@ -139,5 +171,39 @@ describe('the Credit & Debit Notes page', () => {
     expect(items.map((i) => i.header.note_number)).toEqual(['2990-CN-2609-001', '2990-SCN-2609-001']);
     expect(items[0]?.lines).toHaveLength(1);
     expect(pdfBatch.mock.calls[0]?.[2]).toEqual({ action: 'print' });
+  });
+});
+
+/* Scan supplier CN (owner 2026-10-01: supplier 给我 cn，我要做 ocr for cn；这个 cn 可能会 link 去相对应的 supplier invoice). */
+describe('Scan supplier CN', () => {
+  test('the paper fills the New note form — supplier, CN number, date, reason, lines on their accounts, the invoice it credits; Save sends them and the pages attach', async () => {
+    createMutate.mockClear(); scanMutate.mockClear(); uploadMutate.mockClear();
+    render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
+    const page = new File(['%PDF'], 'DGPSC26000263.pdf', { type: 'application/pdf' });
+    fireEvent.change(screen.getByLabelText('Supplier credit note pages'), { target: { files: [page] } });
+    await waitFor(() => expect(scanMutate).toHaveBeenCalledWith([{ name: 'DGPSC26000263.pdf', mime: 'application/pdf', dataBase64: 'b64:DGPSC26000263.pdf' }]));
+    const d = await screen.findByLabelText('What the credit note reads');
+    expect(within(d).getByText('SST RM 59.09 is spread over the lines — the purchase was booked with its SST.')).toBeTruthy();
+    expect((within(d).getByLabelText('Credits HC-PI-2610-017') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Line 1 amount') as HTMLInputElement).value).toBe('324.99');
+    expect((screen.getByLabelText('Reference') as HTMLInputElement).value).toBe('DGPSC26000263');
+    fireEvent.click(screen.getByText('Save note'));
+    await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
+    expect(createMutate.mock.calls[0]![0]).toMatchObject({
+      kind: 'SCN', supplierId: 'sup-d', noteDate: '2026-09-07', sourceDocNo: 'DGPSC26000263', reason: '25% display discount', purchaseInvoiceId: 'pi-17',
+      lines: [{ accountCode: '610-0001', amountSen: 32_499 }, { accountCode: '610-0001', amountSen: 32_501 }],
+    });
+    await waitFor(() => expect(uploadMutate).toHaveBeenCalledWith({ noteId: 'n3', file: { name: 'DGPSC26000263.pdf', mime: 'application/pdf', dataBase64: 'b64:DGPSC26000263.pdf' } }));
+  });
+
+  test('choosing none of the invoices leaves the credit with the supplier — no invoice is sent', async () => {
+    createMutate.mockClear();
+    render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
+    fireEvent.change(screen.getByLabelText('Supplier credit note pages'), { target: { files: [new File(['%PDF'], 'cn.pdf', { type: 'application/pdf' })] } });
+    const d = await screen.findByLabelText('What the credit note reads');
+    fireEvent.click(within(d).getByLabelText('Credits no one invoice'));
+    fireEvent.click(screen.getByText('Save note'));
+    await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
+    expect(createMutate.mock.calls[0]![0]).not.toHaveProperty('purchaseInvoiceId');
   });
 });

@@ -15,6 +15,12 @@
 //
 // Numbering: {co}-CN-YYMM-NNN / {co}-DN-YYMM-NNN / {co}-SCN-YYMM-NNN — NEW
 // series (flagged to the owner 2026-09-12).
+//
+// 2026-10-01 (owner: supplier 给我 cn，我要做 ocr for cn；这个 cn 可能会 link 去相对应
+// 的 supplier invoice): POST /scan reads a supplier's credit note into the note it
+// should become (routes/credit-note-scan.ts), the note keeps its paper
+// (/:id/files — routes/credit-note-files.ts), and a supplier note may name the
+// purchase invoice or AP invoice it credits — one of that supplier's own.
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
@@ -30,6 +36,8 @@ import {
 } from '../../acc/credit-notes';
 import { requireLeafAccount } from './accounting-chart';
 import { supabaseAuth } from '../middleware/auth';
+import { scanSupplierCreditNoteHandler } from './credit-note-scan';
+import { deleteCreditNoteFileHandler, listCreditNoteFilesHandler, streamCreditNoteFileHandler, uploadCreditNoteFileHandler } from './credit-note-files';
 
 type Row = Record<string, any>;
 const NO_PERM = (what: string) => ({ error: `You don't have permission to ${what}.` });
@@ -108,16 +116,21 @@ async function resolveCustomer(c: any, body: any): Promise<
     only the id. Read once per list, the way the deposit-invoice page reads
     its note numbers. */
 async function withInvoiceNumbers(c: any, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
-  const ids = [...new Set(rows.map((r) => r.sales_invoice_id).filter((x): x is string => typeof x === 'string' && x !== ''))];
+  const idsOf = (col: string) => [...new Set(rows.map((r) => r[col]).filter((x): x is string => typeof x === 'string' && x !== ''))];
   const numberOf = new Map<string, string>();
-  if (ids.length > 0) {
+  /* The sales invoice a close-out note follows, and (2026-10-01) the purchase
+     invoice or AP invoice a supplier note credits. */
+  for (const [col, table] of [['sales_invoice_id', 'sales_invoices'], ['purchase_invoice_id', 'purchase_invoices'], ['ap_invoice_id', 'ap_invoices']] as const) {
+    const ids = idsOf(col);
+    if (ids.length === 0) continue;
     const co = requireActiveCompanyId(c);
     if (!co.ok) return { resp: c.json(co.refusal, 409) };
-    const { data, error } = await c.get('supabase').from('sales_invoices').select('id, invoice_number').eq('company_id', co.companyId).in('id', ids);
+    const { data, error } = await c.get('supabase').from(table).select('id, invoice_number').eq('company_id', co.companyId).in('id', ids);
     if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
     for (const s of (Array.isArray(data) ? data : []) as Array<{ id: string; invoice_number: string }>) numberOf.set(String(s.id), String(s.invoice_number));
   }
-  return { rows: rows.map((r) => ({ ...r, sales_invoice_number: typeof r.sales_invoice_id === 'string' ? numberOf.get(r.sales_invoice_id) ?? null : null })) };
+  const num = (v: unknown) => (typeof v === 'string' ? numberOf.get(v) ?? null : null);
+  return { rows: rows.map((r) => ({ ...r, sales_invoice_number: num(r.sales_invoice_id), purchase_invoice_number: num(r.purchase_invoice_id), ap_invoice_number: num(r.ap_invoice_id) })) };
 }
 
 export const listCreditNotesHandler = async (c: any): Promise<Response> => {
@@ -193,6 +206,22 @@ export const createCreditNoteHandler = async (c: any): Promise<Response> => {
     if (leafErr) return leafErr;
   }
 
+  /* The invoice a supplier note credits (owner 2026-10-01: 这个 cn 可能会 link 去
+     相对应的 supplier invoice) — one of this supplier's own, in this company. */
+  const apInvoiceId = String(body.apInvoiceId ?? '').trim() || null;
+  const purchaseInvoiceId = String(body.purchaseInvoiceId ?? '').trim() || null;
+  if (apInvoiceId || purchaseInvoiceId) {
+    if (kind !== 'SCN') return c.json({ error: 'invoice_not_this_kind', message: 'Only a supplier credit note credits a supplier\'s invoice.' }, 400);
+    for (const [table, docId] of [['purchase_invoices', purchaseInvoiceId], ['ap_invoices', apInvoiceId]] as const) {
+      if (!docId) continue;
+      const { data: doc, error: docErr } = await sb.from(table).select('id, supplier_id').eq('company_id', co.companyId).eq('id', docId).maybeSingle();
+      if (docErr) return c.json({ error: 'load_failed', reason: docErr.message }, 500);
+      if (!doc || String((doc as Row).supplier_id) !== supplierId) {
+        return c.json({ error: 'invoice_not_this_supplier', message: 'That invoice is not one of this supplier\'s here — pick it again.' }, 400);
+      }
+    }
+  }
+
   const raised = await insertCreditNote(sb, {
     companyId: co.companyId,
     docPrefix: companyDocPrefix(c),
@@ -201,8 +230,8 @@ export const createCreditNoteHandler = async (c: any): Promise<Response> => {
     supplierId,
     soDocNo,
     salesInvoiceId,
-    apInvoiceId: String(body.apInvoiceId ?? '').trim() || null,
-    purchaseInvoiceId: String(body.purchaseInvoiceId ?? '').trim() || null,
+    apInvoiceId,
+    purchaseInvoiceId,
     sourceDocNo: String(body.sourceDocNo ?? '').trim() || null,
     noteDate,
     reason: String(body.reason ?? '').trim() || null,
@@ -299,7 +328,12 @@ export const creditNotes = new Hono();
 creditNotes.use('*', supabaseAuth);
 creditNotes.get('/', listCreditNotesHandler);
 creditNotes.post('/', createCreditNoteHandler);
+creditNotes.post('/scan', scanSupplierCreditNoteHandler);
 creditNotes.get('/:id', creditNoteDetailHandler);
 creditNotes.patch('/:id', updateCreditNoteHandler);
 creditNotes.post('/:id/post', postCreditNoteHandler);
 creditNotes.post('/:id/cancel', cancelCreditNoteHandler);
+creditNotes.post('/:id/files', uploadCreditNoteFileHandler);
+creditNotes.get('/:id/files', listCreditNoteFilesHandler);
+creditNotes.get('/:id/files/:fileId', streamCreditNoteFileHandler);
+creditNotes.delete('/:id/files/:fileId', deleteCreditNoteFileHandler);
