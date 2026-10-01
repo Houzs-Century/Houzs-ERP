@@ -121,12 +121,12 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/currencies.ts` | 3 | 148 |
 | `backend/src/scm/routes/customer-mirror.ts` | 1 | 103 |
 | `backend/src/scm/routes/delivery-fees.ts` | 5 | 237 |
-| `backend/src/scm/routes/delivery-messages.ts` | 2 | 188 |
+| `backend/src/scm/routes/delivery-messages.ts` | 2 | 186 |
 | `backend/src/scm/routes/delivery-order-exports.ts` | 1 | 56 |
 | `backend/src/scm/routes/delivery-order-item-photos.ts` | 2 | 151 |
 | `backend/src/scm/routes/delivery-order-revert.ts` | 0 | 206 |
 | `backend/src/scm/routes/delivery-order-scan-token.ts` | 1 | 53 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 13 | 5359 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 13 | 5292 |
 | `backend/src/scm/routes/delivery-planning-fields.ts` | 0 | 127 |
 | `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 356 |
 | `backend/src/scm/routes/delivery-planning-row-marks.ts` | 3 | 68 |
@@ -169,7 +169,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 82 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4436 |
 | `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 2 | 327 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 35 | 11209 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 35 | 11297 |
 | `backend/src/scm/routes/mfg-sales-orders/cross-category.ts` | 2 | 80 |
 | `backend/src/scm/routes/mfg-sales-orders/customer-credit.ts` | 1 | 19 |
 | `backend/src/scm/routes/mfg-sales-orders/debtor-search.ts` | 1 | 30 |
@@ -266,28 +266,28 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 161 | `162_table_layouts_company_shared.sql` (162) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 485 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 486 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (3076 files, 875523 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (3091 files, 877105 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 11209 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11297 |
 | `frontend/src/pages/ServiceCases.tsx` | 8846 |
 | `frontend/src/pages/Projects.tsx` | 8792 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 8581 |
 | `frontend/src/pages/Team.tsx` | 5675 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5359 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5292 |
 | `backend/src/routes/projects.ts` | 5186 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 4933 |
 | `backend/src/scm/routes/scan-so.ts` | 4724 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4436 |
-| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4203 |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4171 |
 | `frontend/src/mobile/MobilePMS.tsx` | 3877 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 3808 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3749 |
@@ -484,14 +484,14 @@ Page files by directory:
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/projects` | 13 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 207 |
+| `frontend/src/pages/scm-v2` | 208 |
 | `frontend/src/pages/scm-v2/products` | 2 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 12 |
 
 ## 5. Mobile screen inventory
 
-72 screen/component modules in `frontend/src/mobile`.
+73 screen/component modules in `frontend/src/mobile`.
 
 | file | lines |
 |---|---|
@@ -519,6 +519,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileFactoryTrips.tsx` | 104 |
 | `frontend/src/mobile/MobileFairReport.tsx` | 749 |
 | `frontend/src/mobile/MobileGantt.tsx` | 230 |
+| `frontend/src/mobile/MobileGrnLineRack.tsx` | 75 |
 | `frontend/src/mobile/MobileGrnScan.tsx` | 181 |
 | `frontend/src/mobile/MobileGrnZeroCost.tsx` | 247 |
 | `frontend/src/mobile/MobileInbox.tsx` | 261 |
@@ -538,7 +539,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileOrderMoney.tsx` | 84 |
 | `frontend/src/mobile/MobilePMS.tsx` | 3877 |
 | `frontend/src/mobile/MobilePOD.tsx` | 558 |
-| `frontend/src/mobile/MobilePaymentRequests.tsx` | 500 |
+| `frontend/src/mobile/MobilePaymentRequests.tsx` | 501 |
 | `frontend/src/mobile/MobilePmsDefectActions.tsx` | 178 |
 | `frontend/src/mobile/MobilePmsDocCard.tsx` | 755 |
 | `frontend/src/mobile/MobilePmsPlanFileChips.tsx` | 96 |

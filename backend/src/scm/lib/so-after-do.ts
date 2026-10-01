@@ -122,9 +122,10 @@ export async function copyCustomerDetailsToDos(
   if (cols.length === 0) return [];
   const failed: string[] = [];
   for (const t of targets) {
-    const { data: before } = await scopeToCompanyId(
+    const { data: before, error: beforeErr } = await scopeToCompanyId(
       sb.from('delivery_orders').select(cols.join(', ')).eq('id', t.id), who.companyId,
     ).maybeSingle();
+    if (beforeErr) { failed.push(t.do_number ?? t.id); continue; } // no history row without its from-values
     const { error } = await scopeToCompanyId(
       sb.from('delivery_orders').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', t.id), who.companyId,
     );
@@ -155,8 +156,9 @@ export async function addChargeLineToDo(
   ).maybeSingle();
   if (soErr || !so) return { ok: false, reason: soErr?.message ?? 'sales order line not found' };
   const l = so as Record<string, unknown>;
-  const { data: maxNoRow } = await sb.from('delivery_order_items').select('line_no')
+  const { data: maxNoRow, error: maxNoErr } = await sb.from('delivery_order_items').select('line_no')
     .eq('delivery_order_id', target.id).order('line_no', { ascending: false, nullsFirst: false }).limit(1).maybeSingle();
+  if (maxNoErr) return { ok: false, reason: `delivery_order_items: ${maxNoErr.message}` };
   const maxNo = (maxNoRow as { line_no?: number | null } | null)?.line_no;
   const row = buildDoItemRow(target.id, {
     itemCode: l.item_code, itemGroup: l.item_group, description: l.description, description2: l.description2,
@@ -203,11 +205,12 @@ export async function copyChargeLineToDo(
   doLine: DoLineOfSoLine,
   target: AfterDoTarget,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const [{ data: so, error: soErr }, { data: prev }] = await Promise.all([
+  const [{ data: so, error: soErr }, { data: prev, error: prevErr }] = await Promise.all([
     scopeToCompanyId(sb.from('mfg_sales_order_items').select(SO_LINE_COLS).eq('id', soItemId), who.companyId).maybeSingle(),
     scopeToCompanyId(sb.from('delivery_order_items').select('qty, unit_price_sen, discount_sen, description').eq('id', doLine.id), who.companyId).maybeSingle(),
   ]);
   if (soErr || !so) return { ok: false, reason: soErr?.message ?? 'sales order line not found' };
+  if (prevErr) return { ok: false, reason: `delivery_order_items: ${prevErr.message}` };
   const l = so as Record<string, unknown>;
   const qty = Number(l.qty ?? 0), unit = Number(l.unit_price_sen ?? 0), disc = Number(l.discount_sen ?? 0), cost = Number(l.unit_cost_sen ?? 0);
   const lineTotal = Math.max(0, qty * unit - disc), lineCost = qty * cost;

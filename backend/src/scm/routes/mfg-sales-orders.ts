@@ -6566,9 +6566,9 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      reported by DO number rather than rolled back: the SO save stands. */
   let doCopyFailed: string[] = [];
   if (afterDo && afterDoCopyCols.length > 0) {
-    const { data: soRow } = await sb.from('mfg_sales_orders')
+    const { data: soRow, error: soRowErr } = await sb.from('mfg_sales_orders')
       .select(Object.keys(SO_AFTER_DO_CUSTOMER_COLS).join(', ')).eq('doc_no', docNo).maybeSingle();
-    doCopyFailed = soRow
+    doCopyFailed = soRow && !soRowErr
       ? await copyCustomerDetailsToDos(sb, { companyId: afterDo.companyId, actor: c.get('houzsUser') ?? null, soDocNo: docNo }, soRow as Record<string, unknown>, afterDoCopyCols, afterDo.targets)
       : afterDo.targets.map((t) => t.do_number ?? t.id);
   }
@@ -7520,7 +7520,8 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     const open = await openAfterDo(sb, docNo, hasHouzsPerm(c, SO_EDIT_AFTER_DO_PERMISSION), co.companyId);
     if (!open.ok) return c.json(open.body, open.status);
     if (open.invoicedWithoutDo) return c.json(AFTER_DO_INVOICED, 409);
-    const { data: line } = await scopeSoItemToDocument(sb.from('mfg_sales_order_items').select('item_code'), docNo, itemId).maybeSingle();
+    const { data: line, error: lineErr } = await scopeSoItemToDocument(sb.from('mfg_sales_order_items').select('item_code'), docNo, itemId).maybeSingle();
+    if (lineErr) return c.json({ error: 'downstream_check_failed', message: 'Could not read the line, so nothing was changed. Try again.' }, 409);
     if (!line) return c.json({ error: 'not_found' }, 404);
     const code = String((line as { item_code?: string | null }).item_code ?? '');
     const service = await catalogSaysService(sb, code, co.companyId);
