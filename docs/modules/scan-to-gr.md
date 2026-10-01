@@ -47,7 +47,10 @@ other's rows.
 
 ## Matcher (`lib/grn-scan-match.ts`) — how confidence is decided
 
-Match order: **PO number first, then item code / barcode.**
+Match order: **supplier, then PO number, then item code / barcode.**
+- The printed supplier name resolves to ONE of our suppliers
+  (`resolveScannedSupplier`: normalised name / code, else a unique containment
+  match). When resolved, only that supplier's PO lines are candidates.
 - The scanned `poNo` (e.g. `PO-010070`) is normalised (uppercase, strip non-alnum)
   and compared to our `po_number` (`HC-PO-…` / `2990-PO-…`). A hit **scopes**
   matching to that PO. Supplier-printed PO numbers usually differ from ours, so
@@ -59,6 +62,11 @@ Match order: **PO number first, then item code / barcode.**
 - A scanned line becomes a **pick only when it resolves to EXACTLY ONE open PO
   line.** Zero → `no_open_po_line`; many → `ambiguous`; both leave it unmatched
   (never guessed). Qty is clamped to the PO line's remaining.
+
+**Confidence gate (no PO-number hit):** the scan is refused (needs-review, no
+document) when the supplier is unresolved, when the picks span more than one PO,
+or when half or fewer of the scanned lines matched. One stray item-code hit must
+never link a delivery order to some other PO.
 
 **Outcomes:** ≥1 pick → DRAFT GRN(s) linked to the source PO(s), any unmatched
 lines noted for the operator to add. 0 picks (or convert refused, e.g. an

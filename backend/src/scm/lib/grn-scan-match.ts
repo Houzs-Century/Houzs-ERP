@@ -59,6 +59,17 @@ export type ScannedGrnLine = {
 
 export type MatchedPick = { poItemId: string; qty: number };
 
+// A suppliers row, narrowed to what resolveScannedSupplier compares against.
+export type SupplierRef = { id: string; code: string | null; name: string | null };
+
+// Why a scan with item-level hits was still refused (no document created).
+//   supplier_unknown — no PO-number hit and the printed supplier did not
+//                      resolve to exactly one of our suppliers.
+//   multiple_pos     — no PO-number hit and the hits spread over several POs.
+//   too_few_lines    — no PO-number hit and half or fewer of the scanned lines
+//                      matched, so the one PO they hit is not trustworthy.
+export type GrnMatchRefusal = 'supplier_unknown' | 'multiple_pos' | 'too_few_lines';
+
 export type UnmatchedScanLine = {
   line: ScannedGrnLine;
   // Why it did not become a pick — plain enough for the operator note.
@@ -79,6 +90,8 @@ export type GrnMatchResult = {
   // whole receive is scoped to that PO (the highest-confidence path).
   poNumberMatched: boolean;
   matchedPoNumberValue: string | null;
+  // Set when the confidence gate threw every pick away; picks is then [].
+  refused: GrnMatchRefusal | null;
 };
 
 // Normalise a code/number for comparison: uppercase, drop every non-alnum char.
@@ -86,6 +99,41 @@ export type GrnMatchResult = {
 // "AMN-SF9050 SOFA 2B(RHF)" -> "AMNSF9050SOFA2BRHF".
 export function normalizeCode(v: string | null | undefined): string {
   return (v ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+// Normalise a company name: drop "(M)", every non-alnum char and a trailing
+// legal suffix. "HOOKKA INDUSTRIES (M) SDN. BHD." -> "HOOKKAINDUSTRIES".
+export function normalizeSupplierName(v: string | null | undefined): string {
+  return normalizeCode((v ?? '').replace(/\(M\)/gi, ''))
+    .replace(/(SENDIRIANBERHAD|SDNBHD|BERHAD|BHD|PLT|LLP)$/, '');
+}
+
+/**
+ * Resolve the supplier printed on a delivery order to ONE of our suppliers, or
+ * null. Exact (normalised name or code) first; else a unique containment match
+ * (the letterhead often carries a registration number or address tail). More
+ * than one candidate is null — never guessed.
+ */
+export function resolveScannedSupplier(scannedName: string | null, suppliers: SupplierRef[]): string | null {
+  const n = normalizeSupplierName(scannedName);
+  const code = normalizeCode(scannedName);
+  if (n.length < 3) return null;
+  const unique = (ids: string[]): string | null => {
+    const set = new Set(ids);
+    return set.size === 1 ? [...set][0] : null;
+  };
+  const exact = suppliers
+    .filter((s) => normalizeSupplierName(s.name) === n || (normalizeCode(s.code) !== '' && normalizeCode(s.code) === code))
+    .map((s) => s.id);
+  if (exact.length > 0) return unique(exact);
+  if (n.length < 5) return null;
+  const contains = suppliers
+    .filter((s) => {
+      const sn = normalizeSupplierName(s.name);
+      return sn.length >= 5 && (n.includes(sn) || sn.includes(n));
+    })
+    .map((s) => s.id);
+  return unique(contains);
 }
 
 /**
@@ -98,12 +146,20 @@ export function normalizeCode(v: string | null | undefined): string {
  *                     lines' po_number, matching is RESTRICTED to that PO.
  * @param bindings     supplier_material_bindings rows (company-scoped) mapping a
  *                     supplier SKU / AutoCount code -> our item code.
+ * @param supplierId   the delivery order's supplier (resolveScannedSupplier), or
+ *                     null when unresolved. When set, only that supplier's PO
+ *                     lines are candidates. Without a PO-number hit, a null
+ *                     supplier refuses the scan, and the picks must land on ONE
+ *                     PO covering more than half the scanned lines — a single
+ *                     stray item-code hit once linked a delivery order to
+ *                     another supplier's PO and posted the wrong receipt.
  */
 export function matchGrnScanToPoLines(
   scannedPoNo: string | null,
   scannedLines: ScannedGrnLine[],
   openLines: OpenPoLine[],
   bindings: SupplierSkuBinding[],
+  supplierId: string | null,
 ): GrnMatchResult {
   // supplier SKU / AutoCount code (normalised) -> our item codes (normalised).
   // A supplier SKU that maps to more than one item code carries every candidate
@@ -122,18 +178,22 @@ export function matchGrnScanToPoLines(
     add(b.acItemCode, b.itemCode);
   }
 
+  const supplierLines = supplierId !== null
+    ? openLines.filter((l) => l.supplierId === supplierId)
+    : openLines;
+
   // PO-number scoping — does the scanned P.O. No equal one of our open POs?
   const scannedPoNorm = normalizeCode(scannedPoNo);
   let matchedPoNumberValue: string | null = null;
   if (scannedPoNorm) {
-    for (const l of openLines) {
+    for (const l of supplierLines) {
       if (normalizeCode(l.poNumber) === scannedPoNorm) { matchedPoNumberValue = l.poNumber; break; }
     }
   }
   const poNumberMatched = matchedPoNumberValue !== null;
   const scope = poNumberMatched
-    ? openLines.filter((l) => l.poNumber === matchedPoNumberValue)
-    : openLines;
+    ? supplierLines.filter((l) => l.poNumber === matchedPoNumberValue)
+    : supplierLines;
 
   // Index the in-scope open lines by their item code AND their own supplier SKU,
   // both normalised, so a scanned line can match on either axis.
@@ -156,9 +216,12 @@ export function matchGrnScanToPoLines(
   for (const l of scope) remainingById.set(l.poItemId, l.remaining);
   const unmatched: UnmatchedScanLine[] = [];
   const matchedPoNumberSet = new Set<string>();
+  let scannedCount = 0;
+  let matchedCount = 0;
 
   for (const sl of scannedLines) {
     if (!(sl.qty > 0)) continue; // a zero/blank qty line carries nothing to receive
+    scannedCount += 1;
 
     // Candidate item-code keys this scanned line could resolve to, in priority:
     // its own printed code (direct), then the supplier-SKU / barcode bindings.
@@ -205,17 +268,27 @@ export function matchGrnScanToPoLines(
     pickQtyByPoItem.set(hit.poItemId, Math.min(want, remaining));
     pickPoNumbers.set(hit.poItemId, hit.poNumber);
     matchedPoNumberSet.add(hit.poNumber);
+    matchedCount += 1;
   }
 
   const picks: MatchedPick[] = [...pickQtyByPoItem.entries()]
     .filter(([, qty]) => qty > 0)
     .map(([poItemId, qty]) => ({ poItemId, qty }));
 
+  // Confidence gate when our PO number was not printed on the delivery order.
+  let refused: GrnMatchRefusal | null = null;
+  if (!poNumberMatched && picks.length > 0) {
+    if (supplierId === null) refused = 'supplier_unknown';
+    else if (matchedPoNumberSet.size > 1) refused = 'multiple_pos';
+    else if (matchedCount * 2 <= scannedCount) refused = 'too_few_lines';
+  }
+
   return {
-    picks,
+    picks: refused ? [] : picks,
     matchedPoNumbers: [...matchedPoNumberSet],
     unmatched,
     poNumberMatched,
     matchedPoNumberValue,
+    refused,
   };
 }

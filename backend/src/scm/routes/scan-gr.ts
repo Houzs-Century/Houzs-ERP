@@ -37,8 +37,8 @@ import {
   type UploadedImage,
 } from '../lib/scan-ocr';
 import { callClaudeGrExtract, loadGrnFewShot, type GrnExtracted } from '../lib/grn-scan-extract';
-import { loadOpenPoLines, loadSupplierBindings } from '../lib/grn-scan-load';
-import { matchGrnScanToPoLines, type ScannedGrnLine } from '../lib/grn-scan-match';
+import { loadOpenPoLines, loadSupplierBindings, loadSuppliers } from '../lib/grn-scan-load';
+import { matchGrnScanToPoLines, resolveScannedSupplier, type GrnMatchResult, type ScannedGrnLine } from '../lib/grn-scan-match';
 import { createDraftGrnFromPoItems } from '../lib/grn-from-po-core';
 
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
@@ -141,9 +141,21 @@ const toScanned = (l: GrnExtracted['lines'][number]): ScannedGrnLine => ({
 
 // A plain-language note for a NEEDS-REVIEW job (no GRN created): tell the
 // operator what we saw so they can receive from the PO by hand.
-function buildNeedsReviewNote(parsed: GrnExtracted, poMatched: string | null): string {
+function buildNeedsReviewNote(parsed: GrnExtracted, match: GrnMatchResult): string {
   const po = parsed.poNo ? `P.O. ${parsed.poNo}` : 'this delivery order';
   const doRef = parsed.doNo ? ` (D.O. ${parsed.doNo})` : '';
+  const poMatched = match.matchedPoNumberValue;
+  const tail = 'Please open the right PO and create the goods receipt from it.';
+  if (match.refused === 'supplier_unknown') {
+    const who = parsed.supplierName ? `"${parsed.supplierName}"` : 'the supplier';
+    return `We read ${po}${doRef} but could not tell which of our suppliers ${who} is, so no receipt was created. ${tail}`;
+  }
+  if (match.refused === 'multiple_pos') {
+    return `We read ${po}${doRef} but its items point to more than one PO (${match.matchedPoNumbers.join(', ')}), so no receipt was created. ${tail}`;
+  }
+  if (match.refused === 'too_few_lines') {
+    return `We read ${po}${doRef} but only a few of its lines match PO ${match.matchedPoNumbers.join(', ')}, so it may be the wrong PO and no receipt was created. ${tail}`;
+  }
   if (poMatched) {
     return `We read ${po}${doRef} but could not line its items up to open PO ${poMatched} automatically. Please open that PO and receive against it.`;
   }
@@ -226,15 +238,17 @@ async function runGrnScanJob(
     const companyCode = await companyCodeById(svc, job.companyId);
 
     // Candidate open PO lines + supplier-SKU bindings, then the pure match.
-    const [openLines, bindings] = await Promise.all([
+    const [openLines, bindings, suppliers] = await Promise.all([
       loadOpenPoLines(svc, job.companyId),
       loadSupplierBindings(svc, job.companyId),
+      loadSuppliers(svc, job.companyId),
     ]);
-    const match = matchGrnScanToPoLines(parsed.poNo, parsed.lines.map(toScanned), openLines, bindings);
+    const supplierId = resolveScannedSupplier(parsed.supplierName, suppliers);
+    const match = matchGrnScanToPoLines(parsed.poNo, parsed.lines.map(toScanned), openLines, bindings, supplierId);
 
     if (match.picks.length === 0) {
       // No confident PO line — never fabricate a standalone GRN or a wrong link.
-      return await needsReview(buildNeedsReviewNote(parsed, match.matchedPoNumberValue));
+      return await needsReview(buildNeedsReviewNote(parsed, match));
     }
 
     // CONVERT the confident picks into a DRAFT GRN, linked to the source PO(s).
