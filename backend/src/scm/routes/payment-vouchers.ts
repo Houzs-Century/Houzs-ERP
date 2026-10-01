@@ -74,6 +74,7 @@ import { parseEventId, pvLineEventRefusal } from '../lib/event-tags';
 import { paymentRequestLinkGuard, linkPaymentRequest } from '../lib/payment-request';
 import { pvBillFields, pvBillUpdates } from '../lib/bill-matches';
 import { officialActor, officialOwedFields, officialOwedUpdates } from '../lib/official-doc';
+import { pvEventAccountRefusal } from '../lib/event-accounts';
 import { requireLeafAccount } from './accounting-chart';
 import { planPvRateAdoption, isRateRetainedFromPv, roundRate6 } from '../lib/pv-rate-adoption';
 import { recostFromGrn } from '../lib/recost';
@@ -1521,6 +1522,8 @@ export const approvePaymentVoucherHandler = async (c: any) => {
   const loaded = await loadPvForApproval(c);
   if ('refusal' in loaded) return loaded.refusal;
   const { sb, id, pv, companyId } = loaded;
+  const evErr = await pvEventAccountRefusal(c, companyId, id); // 需要 Event — lib/event-accounts.ts (item 4)
+  if (evErr) return evErr;
   const resume = pv.status === 'DRAFT' && pv.approved_at != null;
   if (!resume) {
     const v = pvCanApprove(pv as PvApprovalShape);

@@ -26,6 +26,7 @@
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { ACCOUNT_SECTIONS, defaultSectionFor, isAccountSection, sectionType } from '../lib/account-sections';
+import { PMS_ROWS, PMS_ROW_LABELS, isPmsRow } from '../lib/event-accounts';
 
 const requireChartPerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 
@@ -52,12 +53,15 @@ type AccountRow = {
   /** The AutoCount top node the account hangs under — decides account_type
       (lib/account-sections.ts). NULL only on a row older than the migration. */
   section: string | null;
+  /** 需要 Event / the PMS event page's row (owner 2026-10-01, payment-request item 4). */
+  needs_event?: boolean | null;
+  pms_row?: string | null;
 };
 
 /* Every field a definition COPY carries (tick-ON, create chains, re-parent
    instantiation) — one list, so a new column cannot be copied in one walk and
    forgotten in another. */
-const DEFINITION_FIELDS = 'account_code, account_name, account_type, parent_code, acc_money, special_type, section';
+const DEFINITION_FIELDS = 'account_code, account_name, account_type, parent_code, acc_money, special_type, section, needs_event, pms_row';
 
 /** The caller's company allow-list, fail-CLOSED like every scoping helper:
     no resolved list means no cross-company picture. */
@@ -85,7 +89,7 @@ export const chartUnionHandler = async (c: any): Promise<Response> => {
   /* One row per code. Definition fields prefer the LOWEST company id that
      carries the code (company 1 = the master book where the accountant's
      import lands), so a rename there leads the union. */
-  const byCode = new Map<string, { code: string; name: string; type: string; parentCode: string | null; accMoney: boolean; special: string | null; section: string | null; definedBy: number; perCompany: Record<number, { active: boolean }> }>();
+  const byCode = new Map<string, { code: string; name: string; type: string; parentCode: string | null; accMoney: boolean; special: string | null; section: string | null; needsEvent: boolean; pmsRow: string | null; definedBy: number; perCompany: Record<number, { active: boolean }> }>();
   for (const raw of (data ?? []) as AccountRow[]) {
     const cur = byCode.get(raw.account_code);
     if (!cur || raw.company_id < cur.definedBy) {
@@ -97,6 +101,8 @@ export const chartUnionHandler = async (c: any): Promise<Response> => {
         accMoney: raw.acc_money === true,
         special: raw.special_type ?? null,
         section: raw.section ?? null,
+        needsEvent: raw.needs_event === true,
+        pmsRow: raw.pms_row ?? null,
         definedBy: raw.company_id,
         perCompany: { ...(cur?.perCompany ?? {}), [raw.company_id]: { active: raw.is_active } },
       });
@@ -113,6 +119,8 @@ export const chartUnionHandler = async (c: any): Promise<Response> => {
        headers, its Section pickers and the import's heading check all read
        THIS list, never a copy of their own. */
     sections: ACCOUNT_SECTIONS,
+    /* The PMS event page's rows an account can fill (item 4) — one list, read by the page's picker. */
+    pmsRows: PMS_ROWS.map((row) => ({ row, label: PMS_ROW_LABELS[row] })),
     accounts: [...byCode.values()].map(({ definedBy: _d, ...row }) => row),
   });
 };
@@ -561,6 +569,14 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
     patch.account_type = type;
   }
   if (body.accMoney !== undefined) patch.acc_money = body.accMoney === true;
+  /* 需要 Event and the PMS row (owner 2026-10-01, item 4): Finance's own call, per account. */
+  if (body.needsEvent !== undefined) patch.needs_event = body.needsEvent === true;
+  if (body.pmsRow !== undefined) {
+    if (body.pmsRow !== null && body.pmsRow !== '' && !isPmsRow(body.pmsRow)) {
+      return c.json({ error: 'bad_pms_row', message: `pmsRow must be one of ${PMS_ROWS.join(' / ')}, or empty.` }, 400);
+    }
+    patch.pms_row = isPmsRow(body.pmsRow) ? body.pmsRow : null;
+  }
 
   const sb = c.get('supabase');
 

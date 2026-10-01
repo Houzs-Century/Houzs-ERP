@@ -459,27 +459,27 @@ Total: 1375 route registrations across 195 files.
 - L2294  POST   /:id/impersonate
 
 ## backend/src/scm/routes/payment-vouchers.ts  (21)
-- L414  GET    /
-- L419  POST   /print-bundle
-- L420  GET    /refund-source
-- L421  POST   /:id/files
-- L422  GET    /:id/files
-- L423  GET    /:id/files/:fileId
-- L424  DELETE /:id/files/:fileId
-- L426  GET    /:id
-- L775  POST   /
-- L977  PATCH  /:id
-- L1383  POST   /:id/post
-- L1433  POST   /:id/submit
-- L1458  POST   /:id/withdraw
-- L1510  POST   /:id/check
-- L1541  POST   /:id/approve
-- L1570  POST   /:id/reject
-- L1779  POST   /:id/cancel
-- L1809  GET    /advances/list
-- L1810  GET    /reservations/list
-- L1910  POST   /:id/apply-advance
-- L1914  POST   /extract
+- L415  GET    /
+- L420  POST   /print-bundle
+- L421  GET    /refund-source
+- L422  POST   /:id/files
+- L423  GET    /:id/files
+- L424  GET    /:id/files/:fileId
+- L425  DELETE /:id/files/:fileId
+- L427  GET    /:id
+- L776  POST   /
+- L978  PATCH  /:id
+- L1384  POST   /:id/post
+- L1434  POST   /:id/submit
+- L1459  POST   /:id/withdraw
+- L1511  POST   /:id/check
+- L1544  POST   /:id/approve
+- L1573  POST   /:id/reject
+- L1782  POST   /:id/cancel
+- L1812  GET    /advances/list
+- L1813  GET    /reservations/list
+- L1913  POST   /:id/apply-advance
+- L1917  POST   /extract
 
 ## backend/src/scm/routes/consignment-orders.ts  (19)
 - L211  GET    /
@@ -935,16 +935,16 @@ Total: 1375 route registrations across 195 files.
 - L497  POST   /po-dates
 
 ## backend/src/scm/routes/ap-invoices.ts  (10)
-- L440  GET    /
-- L441  POST   /
-- L444  POST   /:id/files
-- L445  GET    /:id/files
-- L446  GET    /:id/files/:fileId
-- L447  DELETE /:id/files/:fileId
-- L448  GET    /:id
-- L449  PATCH  /:id
-- L450  POST   /:id/post
-- L451  POST   /:id/cancel
+- L444  GET    /
+- L445  POST   /
+- L448  POST   /:id/files
+- L449  GET    /:id/files
+- L450  GET    /:id/files/:fileId
+- L451  DELETE /:id/files/:fileId
+- L452  GET    /:id
+- L453  PATCH  /:id
+- L454  POST   /:id/post
+- L455  POST   /:id/cancel
 
 ## backend/src/scm/routes/autocount-outbox.ts  (10)
 - L816  GET    /book-doc
@@ -1128,13 +1128,13 @@ Total: 1375 route registrations across 195 files.
 - L1371  GET    /fair-report/:docNo
 
 ## backend/src/scm/routes/so-payment-backdate-requests.ts  (7)
-- L99  GET    /:docNo/payment-backdate-requests
-- L115  POST   /:docNo/payment-backdate-requests
-- L225  GET    /pending-count
-- L235  GET    /
-- L280  POST   /:id/approve
-- L339  POST   /:id/reject
-- L364  POST   /:docNo/payment-backdate-requests/:id/withdraw
+- L105  GET    /:docNo/payment-backdate-requests
+- L121  POST   /:docNo/payment-backdate-requests
+- L231  GET    /pending-count
+- L241  GET    /
+- L286  POST   /:id/approve
+- L346  POST   /:id/reject
+- L372  POST   /:docNo/payment-backdate-requests/:id/withdraw
 
 ## backend/src/routes/assrFormIntake.ts  (6)
 - L112  POST   /
