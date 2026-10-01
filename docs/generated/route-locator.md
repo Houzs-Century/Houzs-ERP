@@ -930,9 +930,9 @@ Total: 1375 route registrations across 195 files.
 - L244  POST   /prune-check
 - L330  POST   /feed-by-docnos
 - L363  GET    /assr-legs
-- L397  POST   /updates
-- L477  GET    /outstanding-po
-- L497  POST   /po-dates
+- L395  POST   /updates
+- L475  GET    /outstanding-po
+- L495  POST   /po-dates
 
 ## backend/src/scm/routes/ap-invoices.ts  (10)
 - L444  GET    /
