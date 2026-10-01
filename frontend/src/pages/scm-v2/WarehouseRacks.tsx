@@ -20,17 +20,18 @@
 //
 // URL is state: ?warehouseId=… and ?tab=… (shareable / reload-stable).
 //
-// DEFERRED to a later phase (NOT built here): rack-QR / item-QR generation +
-// download-all, and the public camera-scan stock-in flow.
+// Print labels renders one QR sticker per rack (vendor/scm/lib/rack-label-pdf).
+// DEFERRED: item-QR, and the storekeeper's scan-the-shelf put-away on the GRN.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, ChevronDown, Plus, Layers,
+  ArrowLeft, ChevronDown, Plus, Layers, Printer,
   ArrowDownToLine, ArrowUpFromLine, History,
 } from 'lucide-react';
 import { Button } from '../../components/Button';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
@@ -196,6 +197,11 @@ export const WarehouseRacks = () => {
   // Preselect a rack when jumping from the detail popup into the stock-in form.
   const [stockInRackId, setStockInRackId] = useState<string>('');
 
+  const warehouseCode = warehouses.data?.find((w) => w.id === warehouseId)?.code ?? '';
+  const printLabels = usePrintPreview((action) =>
+    import('../../vendor/scm/lib/rack-label-pdf').then(({ generateRackLabelsPdf }) =>
+      generateRackLabelsPdf(rackList.map((r) => r.rack), { warehouseCode, action })));
+
   return (
     <div>
       <PageHeader back
@@ -218,6 +224,14 @@ export const WarehouseRacks = () => {
               </Link>
               <Button
                 variant="secondary"
+                icon={<Printer size={14} />}
+                onClick={printLabels.openPreview}
+                disabled={!warehouseId || rackList.length === 0}
+              >
+                Print labels
+              </Button>
+              <Button
+                variant="secondary"
                 icon={<Layers size={14} />}
                 onClick={() => { setEditing(null); setCreatingMode('seed'); }}
                 disabled={!warehouseId}
@@ -236,6 +250,18 @@ export const WarehouseRacks = () => {
             <HeaderStatStrip summary={summary} />
           </div>
         }
+      />
+      <PrintPreviewModal
+        open={printLabels.open}
+        onClose={printLabels.close}
+        docTitle="Rack Labels"
+        docNo={warehouseCode}
+        rows={[
+          { label: 'Warehouse', value: warehouseCode || '—' },
+          { label: 'Labels', value: String(rackList.length) },
+          { label: 'Sheets', value: `${Math.ceil(rackList.length / 10)} x A4` },
+        ]}
+        {...printLabels.handlers}
       />
 
       <div className="space-y-4">

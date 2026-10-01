@@ -38,6 +38,7 @@ Racks (`scm.warehouse_racks`) live one level under a warehouse, unique per `(war
 - Filter `type='showroom'` for "sales point", `type='warehouse'` for "stock location", or `is_active=true` alone for "everything selectable" — don't reuse `is_showroom` for a new consumer.
 - Rack labels carry no implicit prefix — the grid renders the stored `rack` string verbatim, so a seeded label must already contain everything that should show.
 - On mobile, racks are read-only lookup (plus create) — rename, re-zone, batch-edit and delete are still desktop-only.
+- Rack QR stickers (Warehouse page → Print labels, A4 2x5) encode `HZRACK:<rack label>`, NOT the rack row id: one shelf label is fanned out to a row per warehouse record, so a scanner must resolve the label inside the GRN's own warehouse. Do not switch the payload to an id — every sticker already on a shelf would stop matching.
 
 ## Where the code is
 
@@ -47,4 +48,5 @@ Racks (`scm.warehouse_racks`) live one level under a warehouse, unique per `(war
 - `backend/src/scm/shared/adjustment-cost.ts` — variance cost resolution.
 - `frontend/src/pages/scm-v2/Warehouses.tsx`, `CrossCompanyRacks.tsx` — desktop surfaces.
 - `frontend/src/mobile/MobileRacks.tsx` — mobile rack lookup.
+- `frontend/src/vendor/scm/lib/rack-label-pdf.ts` — rack QR sticker sheet + the `HZRACK:` payload.
 - `frontend/src/vendor/scm/lib/inventory-queries.ts` — `useWarehouses`.
