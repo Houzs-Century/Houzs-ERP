@@ -31,7 +31,7 @@ const sql = postgres(DSN, { ssl: 'require', max: 1, prepare: false });
 try {
   await sql.begin(async (tx) => {
     await tx`SET TRANSACTION READ ONLY`;
-    await tx`SET LOCAL statement_timeout = '120s'`;
+    await tx`SET LOCAL statement_timeout = '300s'`;
 
     const models = await tx`
       SELECT id::text AS id, model_code, name, branding, active, allowed_options, created_at
@@ -111,6 +111,44 @@ try {
       say(`  ${s.code} | "${s.name}" | model=${s.model_code ?? 'NONE'} ("${s.model_name ?? ''}") | base_model=${s.base_model ?? 'NULL'} | ${s.status} | created=${s.created_at?.toISOString?.() ?? s.created_at}`);
       say(`    -> ${target}${taken ? `  ** TAKEN by "${taken.name}" model_id=${taken.model_id} **` : ''}`);
       say(`    used: ${uses.length ? uses.join(', ') : 'nowhere'}`);
+    }
+    /* NEEDLE (e.g. 5562-1S-): every text / json / array column in scm + public
+       whose value CONTAINS it — catches what the cascade list does not name
+       (jsonb builds, AutoCount outbox payloads, POS catalogue, kept columns). */
+    const NEEDLE = (process.env.NEEDLE || '').trim();
+    if (NEEDLE) {
+      const cols = await tx`
+        SELECT c.table_schema AS s, c.table_name AS t, c.column_name AS col
+          FROM information_schema.columns c
+          JOIN pg_namespace n ON n.nspname = c.table_schema
+          JOIN pg_class k ON k.relname = c.table_name AND k.relnamespace = n.oid AND k.relkind IN ('r', 'p')
+         WHERE c.table_schema IN ('scm', 'public')
+           AND (c.data_type IN ('text', 'character varying', 'character', 'json', 'jsonb', 'ARRAY'))
+         ORDER BY 1, 2, 3`;
+      const byTable = new Map();
+      for (const c of cols) {
+        const key = `"${c.s}"."${c.t}"`;
+        if (!byTable.has(key)) byTable.set(key, []);
+        byTable.get(key).push(c.col);
+      }
+      say(`=== 4. sweep for "${NEEDLE}" across ${byTable.size} tables / ${cols.length} columns ===`);
+      let hits = 0;
+      for (const [rel, list] of byTable) {
+        if (rel === '"scm"."mfg_products"') continue;
+        try {
+          await tx`SAVEPOINT w`;
+          const sel = list.map((c) => `count(*) FILTER (WHERE "${c}"::text LIKE $1)::int AS "${c}"`).join(', ');
+          const [r] = await tx.unsafe(`SELECT ${sel} FROM ${rel}`, [`%${NEEDLE}%`]);
+          await tx`RELEASE SAVEPOINT w`;
+          for (const [c, n] of Object.entries(r)) if (n) { hits += 1; say(`  ${rel}.${c}: ${n} row(s)`); }
+        } catch (e) { await tx`ROLLBACK TO SAVEPOINT w`; say(`  ${rel}: sweep failed: ${e.message}`); }
+      }
+      say(`  ${hits} column(s) outside mfg_products hold "${NEEDLE}"`);
+      const binds = await tx`
+        SELECT b.item_code, b.ac_item_code, b.supplier_sku, b.supplier_id::text AS supplier_id, b.created_at
+          FROM scm.supplier_material_bindings b
+         WHERE b.company_id = ${CO} AND b.item_code LIKE ${'%' + NEEDLE + '%'} ORDER BY b.item_code`;
+      for (const b of binds) say(`  binding ${b.item_code}: ac_item_code=${b.ac_item_code ?? 'NULL'} supplier_sku=${b.supplier_sku ?? 'NULL'} supplier=${b.supplier_id} created=${b.created_at?.toISOString?.() ?? b.created_at}`);
     }
     if (PREFIX) {
       const [m] = await tx`
