@@ -29,7 +29,6 @@ import {
   isConnectConfigured,
   buildDeliveryFollowUp,
   postConnectContact,
-  chunkOrders,
   type ConnectOrder,
 } from '../../services/connect';
 
@@ -103,46 +102,45 @@ deliveryMessages.post('/send', async (c) => {
   const failed: Array<{ phone: string; docNos: string[]; error: string }> = [];
 
   for (const [phone, group] of byPhone) {
-    const name = String(group[0]?.debtor_name ?? '');
-    // The Connect schema tops out at 3 orders per message (ref_1..3 etc.), so a
-    // customer with more gets one send per chunk of 3 — never a dropped order.
-    for (const chunk of chunkOrders(group)) {
-      const chunkDocs = chunk.map((r) => String(r.doc_no));
-      // ref = the number the customer knows (the AutoCount doc if linked, else
-      // ours); effective (amended ?? original) date as yyyy/mm/dd, as the board.
-      const orders: ConnectOrder[] = chunk.map((r) => ({
-        ref: String(r.linked_ac_docno ?? r.doc_no ?? ''),
-        branding: String(r.branding ?? ''),
-        deliveryDate: payloadDate(effectiveSoDelivery(r as SoDeliveryDateRow)),
-      }));
-      const contact = buildDeliveryFollowUp(phone, name, orders);
+    const groupDocs = group.map((r) => String(r.doc_no));
+    // ONE message per customer phone. buildDeliveryFollowUp shows the first 3
+    // orders and carries the TRUE count in order_total, so a customer with 4+
+    // orders gets a single "first 3 of N" message, not several sends. ref = the
+    // number the customer knows (AutoCount doc if linked, else ours); effective
+    // (amended ?? original) date as yyyy/mm/dd, same as the board.
+    const orders: ConnectOrder[] = group.map((r) => ({
+      ref: String(r.linked_ac_docno ?? r.doc_no ?? ''),
+      branding: String(r.branding ?? ''),
+      deliveryDate: payloadDate(effectiveSoDelivery(r as SoDeliveryDateRow)),
+    }));
+    const contact = buildDeliveryFollowUp(phone, String(group[0]?.debtor_name ?? ''), orders);
 
-      const result = await postConnectContact(c.env, contact);
+    const result = await postConnectContact(c.env, contact);
 
-      // Log one row per doc, tied by batch_id. Best-effort: a log failure must
-      // not turn a delivered WhatsApp into a reported error — but it is COUNTED
-      // (console.warn), never silently dropped.
-      const batchId = crypto.randomUUID();
-      try {
-        await sb.from('wa_message_log').insert(chunkDocs.map((docNo) => ({
-          batch_id: batchId,
-          company_id: activeCompanyId(c) ?? null,
-          doc_no: docNo,
-          phone,
-          payload: JSON.stringify(contact),
-          http_code: result.httpCode,
-          success: result.ok,
-          error: result.error,
-          source: 'delivery-planning',
-          created_by: user?.id ?? null,
-        })));
-      } catch (e) {
-        console.warn(`[delivery-messages] log insert failed: ${String((e as Error).message).slice(0, 120)}`);
-      }
-
-      if (result.ok) sent.push({ phone, docNos: chunkDocs, httpCode: result.httpCode ?? 0 });
-      else failed.push({ phone, docNos: chunkDocs, error: result.error ?? 'send failed' });
+    // Log one row per doc (all of the phone's docs, not only the 3 shown — the
+    // send covers them all), tied by batch_id. Best-effort: a log failure must
+    // not turn a delivered WhatsApp into a reported error — but it is COUNTED
+    // (console.warn), never silently dropped.
+    const batchId = crypto.randomUUID();
+    try {
+      await sb.from('wa_message_log').insert(groupDocs.map((docNo) => ({
+        batch_id: batchId,
+        company_id: activeCompanyId(c) ?? null,
+        doc_no: docNo,
+        phone,
+        payload: JSON.stringify(contact),
+        http_code: result.httpCode,
+        success: result.ok,
+        error: result.error,
+        source: 'delivery-planning',
+        created_by: user?.id ?? null,
+      })));
+    } catch (e) {
+      console.warn(`[delivery-messages] log insert failed: ${String((e as Error).message).slice(0, 120)}`);
     }
+
+    if (result.ok) sent.push({ phone, docNos: groupDocs, httpCode: result.httpCode ?? 0 });
+    else failed.push({ phone, docNos: groupDocs, error: result.error ?? 'send failed' });
   }
 
   return c.json({ sent, failed, skipped });

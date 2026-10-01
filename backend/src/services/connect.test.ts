@@ -3,7 +3,6 @@ import {
   buildDeliveryFollowUp,
   isConnectConfigured,
   postConnectContact,
-  chunkOrders,
   CONNECT_DELIVERY_AUTOMATION,
 } from './connect';
 
@@ -13,16 +12,6 @@ describe('isConnectConfigured', () => {
     expect(isConnectConfigured({ CONNECT_WEBHOOK_URL: 'x' })).toBe(false);
     expect(isConnectConfigured({ CONNECT_WEBHOOK_KEY: 'y' })).toBe(false);
     expect(isConnectConfigured({})).toBe(false);
-  });
-});
-
-describe('chunkOrders', () => {
-  it('splits into chunks of at most 3 (the Connect 3-order ceiling)', () => {
-    expect(chunkOrders([1, 2, 3, 4, 5, 6, 7])).toEqual([[1, 2, 3], [4, 5, 6], [7]]);
-  });
-  it('leaves a small list as one chunk, and an empty list as none', () => {
-    expect(chunkOrders([1, 2])).toEqual([[1, 2]]);
-    expect(chunkOrders([])).toEqual([]);
   });
 });
 
@@ -57,6 +46,23 @@ describe('buildDeliveryFollowUp', () => {
     expect(contact.attributes.ref_3).toBe('C3');
     expect(contact.attributes.delivery_date_2).toBe('2026/10/06');
     expect(contact.attributes.brand_3).toBe('GOODNITE');
+  });
+
+  it('4+ orders → shows the first 3 lines but order_total carries the TRUE count', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+      { ref: 'B2', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06' },
+      { ref: 'C3', branding: 'GOODNITE', deliveryDate: '2026/10/07' },
+      { ref: 'D4', branding: 'VONO', deliveryDate: '2026/10/08' },
+      { ref: 'E5', branding: 'DREAMLAND', deliveryDate: '2026/10/09' },
+    ]);
+    expect(contact.attributes.order_total).toBe('5');
+    expect(contact.attributes.ref_1).toBe('A1');
+    expect(contact.attributes.ref_3).toBe('C3');
+    expect(contact.attributes.brand_3).toBe('GOODNITE');
+    expect(contact.attributes.ref_4).toBeUndefined();
+    expect(contact.attributes.delivery_date_4).toBeUndefined();
+    expect(contact.attributes.brand_4).toBeUndefined();
   });
 });
 
