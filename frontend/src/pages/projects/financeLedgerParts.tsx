@@ -6,7 +6,7 @@ import { LEDGER_COST_CATS, LEDGER_INCOME_CATS, ledgerCategoryLabel } from "../..
 import { api } from "../../api/client";
 import { formatDate, formatCurrency, cn } from "../../lib/utils";
 import { DateField } from "../../vendor/scm/components/DateField";
-import type { FinanceLine } from "./types";
+import type { FinanceBooks, FinanceLine } from "./types";
 import { viewableMime } from "./projectHelpers";
 
 // Single Cost Lines section at the bottom of the Financial Snapshot.
@@ -18,6 +18,7 @@ import { viewableMime } from "./projectHelpers";
 export function FinanceAttachmentsSection({
   projectId,
   lines,
+  books,
   adding,
   onAddOpen,
   onAddClose,
@@ -26,6 +27,8 @@ export function FinanceAttachmentsSection({
 }: {
   projectId: number;
   lines: FinanceLine[];
+  /** The books on this event (payment-request item 5). */
+  books?: FinanceBooks | null;
   adding: boolean;
   onAddOpen: () => void;
   onAddClose: () => void;
@@ -39,7 +42,14 @@ export function FinanceAttachmentsSection({
   // hides these so a category never gets a duplicate line — the user
   // edits the existing row instead.
   const usedCategories = new Set(costLines.map((l) => ((l.category as string | null) ?? "").trim()));
+  // A row the books fill takes no typed line — it would not count.
+  for (const c of books?.closed_categories ?? []) usedCategories.add(c);
+  const booksLines = lines.filter((l) => l.kind === "cost" && l.source === "books");
   return (
+    <>
+    {(booksLines.length > 0 || (books?.replaced.length ?? 0) > 0) && (
+      <BooksLines lines={booksLines} replaced={books?.replaced ?? []} />
+    )}
     <div className="border-t border-border px-4 py-3">
       <div className="mb-2 flex items-center justify-between">
         <h4 className="text-[10.5px] font-bold uppercase tracking-brand text-ink-muted">
@@ -81,6 +91,43 @@ export function FinanceAttachmentsSection({
           />
         </div>
       )}
+    </div>
+    </>
+  );
+}
+
+// From the books (owner 2026-10-01, payment-request item 5): what Finance
+// posted to this event, each line with the voucher / AP invoice number that
+// posted it — nobody edits these here; Finance corrects the document. Below
+// them, the typed and auto lines those rows replaced, struck out: kept, not
+// lost, and back on their own if the document is cancelled.
+function BooksLines({ lines, replaced }: { lines: FinanceLine[]; replaced: FinanceLine[] }) {
+  return (
+    <div className="border-t border-border px-4 py-3" data-testid="books-lines">
+      <h4 className="mb-2 text-[10.5px] font-bold uppercase tracking-brand text-ink-muted">
+        From the books · 入账 ({lines.length})
+      </h4>
+      <div className="space-y-1">
+        {lines.map((l) => (
+          <div key={l.id} className="flex items-center justify-between gap-3 text-[11.5px]">
+            <span className="min-w-0 truncate text-ink-secondary">
+              <span className="font-mono text-ink">{l.doc_no}</span>
+              <span className="text-ink-muted"> · {ledgerCategoryLabel(l.category)} · {l.account_code} {l.account_name}</span>
+              {l.description && l.description !== l.account_name && <span className="text-ink-muted"> · {l.description}</span>}
+              {l.occurred_at && <span className="text-ink-muted"> · {formatDate(l.occurred_at)}</span>}
+            </span>
+            <span className="shrink-0 font-mono text-ink">{formatCurrency(l.amount)}</span>
+          </div>
+        ))}
+        {replaced.map((l) => (
+          <div key={`set-aside-${l.id}`} className="flex items-center justify-between gap-3 text-[11px] text-ink-muted">
+            <span className="min-w-0 truncate">
+              {ledgerCategoryLabel(l.category)}{l.description ? ` · ${l.description}` : ""} — {l.auto_source ? "auto" : "typed"}, replaced by the books
+            </span>
+            <span className="shrink-0 font-mono line-through">{formatCurrency(l.amount)}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -236,10 +283,13 @@ export function SnapshotRow({
   lineCount,
   expanded,
   onToggleExpand,
+  books,
 }: {
   label: string;
   value: number;
   annotation?: string;
+  /** The row is Finance's figure from the books (payment-request item 5). */
+  books?: boolean;
   subtotal?: boolean;
   indent?: boolean;
   tone?: "synced" | "err";
@@ -285,6 +335,14 @@ export function SnapshotRow({
         )}
       >
         {label}
+        {books && (
+          <span
+            className="ml-1.5 rounded bg-accent-soft px-1 py-px text-[10px] font-semibold text-accent"
+            title="From the books — approved payment vouchers and posted AP invoices on this event replace the typed figure"
+          >
+            入账
+          </span>
+        )}
         {annotation && (
           <span className="ml-1.5 font-mono text-[10px] font-normal text-ink-muted">
             {annotation}

@@ -2448,6 +2448,7 @@ app.get("/:id", requirePageAccess("projects.list"), async (c) => {
       ...payload,
       finance: null,
       finance_lines: [],
+      finance_books: null,
     };
   }
   if (stripPayment) {
