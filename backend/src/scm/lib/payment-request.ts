@@ -148,7 +148,7 @@ export async function paymentRequestLinkGuard(c: any, rawId: unknown): Promise<{
   if (!id) return { request: null };
   const sb = c.get('supabase');
   const { data: req, error } = await scopeToCompany(sb.from('acc_payment_requests')
-    .select('id, company_id, request_no, status, pv_id, ap_invoice_id').eq('id', id), c).maybeSingle();
+    .select('id, company_id, request_no, status, pv_id, ap_invoice_id, bill_no, bill_date').eq('id', id), c).maybeSingle();
   if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
   if (!req) return { resp: c.json({ error: 'request_not_found', message: 'That payment request is not in the company you are working in.' }, 404) };
   if (req.status === 'WITHDRAWN' || req.status === 'REJECTED') {
@@ -160,6 +160,12 @@ export async function paymentRequestLinkGuard(c: any, rawId: unknown): Promise<{
     if (live.answer) {
       return { resp: c.json({ error: 'request_has_voucher', message: `${req.request_no} is already answered by ${live.answer.number} — open that ${live.answer.kind === 'PV' ? 'voucher' : 'AP invoice'} instead.` }, 409) };
     }
+  }
+  /* 申请一定要有 (owner 2026-10-01): no bill, no payment — Finance returns it. */
+  const { data: files, error: fErr } = await scopeToCompany(sb.from('acc_payment_request_files').select('id').eq('request_id', req.id), c);
+  if (fErr) return { resp: c.json({ error: 'load_failed', reason: fErr.message }, 500) };
+  if (((files ?? []) as Row[]).length === 0) {
+    return { resp: c.json({ error: 'request_no_bill', message: `${req.request_no} has no bill attached — return it so the requester attaches one.` }, 409) };
   }
   return { request: req };
 }

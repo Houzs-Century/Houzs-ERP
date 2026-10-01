@@ -45,7 +45,8 @@ import { SupplierFinanceReminder } from '../../vendor/scm/components/SupplierFin
 import { EventSelect } from '../../vendor/scm/components/EventSelect';
 import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
 import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
-import { usePaymentRequest } from '../../vendor/scm/lib/payment-request-queries';
+import { useBillMatches, usePaymentRequest } from '../../vendor/scm/lib/payment-request-queries';
+import { BillMatchesNote } from '../../vendor/scm/components/RequestBill';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { fmtDate } from '../../vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
@@ -155,6 +156,15 @@ export const PaymentVoucherNew = () => {
   }, [rolesQ.data, moneyAccounts]);
   const [voucherDate, setVoucherDate]             = useState<string>(() => todayMyt());
   const [notes, setNotes]                         = useState<string>('');
+  /* The bill's own number and date (owner 2026-10-01: 同一张单 — the same pair on
+     another request, voucher or AP invoice is said out loud, never refused). */
+  const [billRef, setBillRef]                     = useState<string>('');
+  const [billDate, setBillDate]                   = useState<string>('');
+  /* One bill's pair: a voucher paying several bills ("A, B") keeps none. */
+  const takeBillPair = (no: string | null | undefined, date: string | null | undefined) => {
+    if (no && !no.includes(',')) setBillRef((prev) => prev.trim() ? prev : (upperFill(no) ?? no));
+    if (date) setBillDate((prev) => prev || date);
+  };
 
   /* Internal transfer INSIDE the PV (GL redesign item 10, owner: 不能直接在
      pv 那边开转账就好吗) — same document, same Draft→Checked→Approved chain,
@@ -205,6 +215,7 @@ export const PaymentVoucherNew = () => {
       ex.dueDate ? `due ${ex.dueDate}` : null,
     ].filter(Boolean).join(' · '));
     if (noteBits) setNotes((prev) => prev.trim() ? prev : noteBits);
+    takeBillPair(ex.invoiceNumber, ex.invoiceDate);
     /* The account: ONLY what this operator saved for this vendor before
        (mig 0341) — never a model guess. Absent a memory it stays empty and a
        person picks it. */
@@ -362,6 +373,7 @@ export const PaymentVoucherNew = () => {
     const bank = [r.bank_name, r.bank_account_no, r.bank_account_name].filter(Boolean).join(' ');
     setNotes(`Payment request ${r.request_no} — ${r.purpose}${bank ? ` · pay to ${bank}` : ''}`);
     setDefaultEvent(r.project_id);
+    takeBillPair(r.bill_no, r.bill_date);
     setLines([{ ...newLine(), description: r.purpose.slice(0, 200), amountSen: r.amount_sen, projectId: r.project_id }]);
     setScanNote(`Answering ${r.request_no} from ${r.requested_by_name ?? 'the requester'} — its bill is attached to this voucher when you save. Reading its bill…`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -398,6 +410,7 @@ export const PaymentVoucherNew = () => {
       else if (account) setLines((prev) => prev.map((l) => ({ ...l, debitAccountCode: l.debitAccountCode || account })));
       const billBits = upperFill([ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : null, ex.invoiceDate ? `dated ${ex.invoiceDate}` : null].filter(Boolean).join(' · '));
       if (billBits) setNotes((prev) => (prev.includes(billBits) ? prev : `${prev} · ${billBits}`));
+      takeBillPair(ex.invoiceNumber, ex.invoiceDate);
       if (r.project_id == null) setEventSuggestions(bill.eventSuggestions ?? []);
       setScanNote([
         asked,
@@ -606,6 +619,10 @@ export const PaymentVoucherNew = () => {
       : !!payeeName.trim() && !!creditAccountCode && realLines.length > 0;
 
   const transferMode = !isAp && isTransfer;
+  /* A plain payment of a bill keeps the bill's number and date — not a transfer,
+     a refund or an AP Payment (the AP invoice it pays carries its own). */
+  const showBill = !isAp && !isRefund && !transferMode;
+  const billMatchesQ = useBillMatches(showBill ? billRef : '', billDate, fromRequest);
   const transferPayee = toAccount ? `Internal transfer to ${toAccount.account_code} ${toAccount.account_name}` : '';
   const onSave = async () => {
     if (isRefund) {
@@ -673,6 +690,7 @@ export const PaymentVoucherNew = () => {
         lines: sendLines,
         ...(sendAllocations.length > 0 ? { allocations: sendAllocations } : {}),
         ...(fromRequest ? { paymentRequestId: fromRequest } : {}),
+        ...(showBill ? { billRef: billRef.trim() || null, billDate: billDate || null } : {}),
       });
       /* Attach the scanned bill AFTER the voucher exists — sequentially, so
          sort_no (= print order) is the scan order. A failed upload never
@@ -805,6 +823,22 @@ export const PaymentVoucherNew = () => {
               <span className={styles.fieldLabel}>Notes</span>
               <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Internal notes" className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
             </label>
+            {showBill && (
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Bill no. (the supplier's own)</span>
+                <input type="text" value={billRef} onChange={(e) => setBillRef(e.target.value)} aria-label="Bill no."
+                  placeholder="Filled when the bill is read" className={styles.fieldInput} />
+              </label>
+            )}
+            {showBill && (
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Bill date</span>
+                <DateField fullWidth value={billDate} onChange={(iso) => setBillDate(iso)} className={styles.fieldInput} aria-label="Bill date" />
+              </label>
+            )}
+            {showBill && (billMatchesQ.data?.matches.length ?? 0) > 0 && (
+              <div style={{ gridColumn: '1 / -1' }}><BillMatchesNote matches={billMatchesQ.data?.matches} /></div>
+            )}
 
             {/* Multi-currency (Phase 1-A). Currency defaults to the linked
                 supplier's currency (MYR = strict no-op, rate field hidden); a

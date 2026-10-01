@@ -126,11 +126,17 @@ const RENTAL = {
   projectId: 348, bankName: 'Maybank', bankAccountNo: '5123 4567 8901', bankAccountName: 'MLE EVENTS SDN BHD',
 };
 
-async function raised(w: ReturnType<typeof world>) {
+/* A request goes with its bill (申请一定要有, 2026-10-01 — Finance cannot answer
+   one without); `bill: false` raises one whose files a test attaches itself. */
+async function raised(w: ReturnType<typeof world>, opts: { bill?: boolean } = {}) {
   const james = as(w, JAMES);
   const r = await james('/payment-requests', 'POST', RENTAL);
   expect(r.status).toBe(201);
-  return { james, id: String(r.body.request.id), no: String(r.body.request.request_no) };
+  const id = String(r.body.request.id);
+  if (opts.bill !== false) {
+    expect((await james(`/payment-requests/${id}/files`, 'POST', { fileName: 'bill.pdf', mime: 'application/pdf', dataBase64: btoa('%PDF-1.4 the bill') })).status).toBe(201);
+  }
+  return { james, id, no: String(r.body.request.request_no) };
 }
 
 describe('the requester raises, changes and withdraws their own request', () => {
@@ -207,7 +213,7 @@ describe('the voucher that answers a request', () => {
 
   test('claims the request and carries its bill; a second voucher for it is refused and never stands', async () => {
     const w = world();
-    const { james, id } = await raised(w);
+    const { james, id } = await raised(w, { bill: false });
     const up = await james(`/payment-requests/${id}/files`, 'POST', { fileName: 'mle-invoice.pdf', mime: 'application/pdf', dataBase64: btoa('%PDF-1.4 bill') });
     expect(up.status).toBe(201);
     const fin = as(w, FINANCE);
@@ -292,7 +298,7 @@ describe('the AP invoice that answers a request', () => {
 
   test('claims the request and carries its bill onto the invoice; a second answer of either kind is refused', async () => {
     const w = world();
-    const { james, id } = await raised(w);
+    const { james, id } = await raised(w, { bill: false });
     expect((await james(`/payment-requests/${id}/files`, 'POST', { fileName: 'mle-invoice.pdf', mime: 'application/pdf', dataBase64: btoa('%PDF-1.4 bill') })).status).toBe(201);
     const fin = as(w, FINANCE);
     const inv = await fin('/ap-invoices', 'POST', invoiceFor(id));
@@ -377,7 +383,7 @@ describe('POST /payment-vouchers/extract { fromRequest } reads the request\'s ow
 
   test('its files are one bill\'s pages, read from the file store', async () => {
     const w = world();
-    const { james, id } = await raised(w);
+    const { james, id } = await raised(w, { bill: false });
     await james(`/payment-requests/${id}/files`, 'POST', { fileName: 'p1.jpg', mime: 'image/jpeg', dataBase64: btoa('page one') });
     await james(`/payment-requests/${id}/files`, 'POST', { fileName: 'p2.jpg', mime: 'image/jpeg', dataBase64: btoa('page two') });
     const sent: string[] = [];
@@ -397,7 +403,7 @@ describe('POST /payment-vouchers/extract { fromRequest } reads the request\'s ow
 
   test('a request with no bill reads as none, without calling the reader; another company\'s is not found; a requester cannot ask', async () => {
     const w = world();
-    const { id } = await raised(w);
+    const { id } = await raised(w, { bill: false });
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
     const fin = as(w, FINANCE);

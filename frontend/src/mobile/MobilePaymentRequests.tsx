@@ -22,11 +22,14 @@
 
 import { useMemo, useRef, useState } from "react";
 import {
-  STAGE, answerText, awaitsFinance, fetchPaymentRequestFileBlobUrl, financeWorking, requestPaid, useCreatePaymentRequest, useDeletePaymentRequestFile,
+  NO_EVENT_REASON_MIN, STAGE, answerText, awaitsFinance, fetchPaymentRequestFileBlobUrl, financeWorking, requestPaid, useCreatePaymentRequest, useDeletePaymentRequestFile,
   usePaymentRequest, usePaymentRequestFiles, usePaymentRequests, useReturnPaymentRequest, useUpdatePaymentRequest,
   useUploadPaymentRequestFile, useWithdrawPaymentRequest,
   type PaymentRequest, type PaymentRequestInput,
 } from "../vendor/scm/lib/payment-request-queries";
+import { billFactsOf, needsEvent, useRequestBillRead } from "../vendor/scm/lib/request-bill-read";
+import { BillMatchesNote, BillReadNote, billFactsLine } from "../vendor/scm/components/RequestBill";
+import { EventSuggestions } from "../vendor/scm/components/EventSuggestions";
 import { fileToBase64, PV_FILE_ACCEPT } from "../vendor/scm/lib/payment-voucher-queries";
 import { useEventLabels } from "../vendor/scm/lib/event-queries";
 import { EventSelect, eventCellText } from "../vendor/scm/components/EventSelect";
@@ -203,6 +206,9 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
       {row("Pay by", fmtDateOrDash(r.due_date))}
       {row("Event", eventCellText(labels.data, r.project_id))}
       {row("For", r.purpose)}
+      {row("The bill", r.bill_no || r.bill_date || r.bill_total_sen != null ? billFactsLine({ billNo: r.bill_no, billDate: r.bill_date, totalSen: r.bill_total_sen }) : "— not read")}
+      {r.project_id == null && r.no_event_reason && row("No event — why", r.no_event_reason)}
+      <BillMatchesNote matches={r.billMatches} />
       {row("Payee's bank", [r.bank_name, r.bank_account_no, r.bank_account_name].filter(Boolean).join(" · ") || "—")}
       {row("Requested by", `${r.requested_by_name ?? "—"} · ${fmtDateOrDash(r.created_at)}`)}
       {r.voucher && row("Voucher", `${r.voucher.pvNumber ?? "Draft"}${r.voucher.postedAt ? ` · paid ${fmtDateOrDash(r.voucher.approvedAt ?? r.voucher.postedAt)}` : ""}${r.voucher.bankConfirmed ? " · bank ✓" : ""}`)}
@@ -214,7 +220,8 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
       {(files.data?.files ?? []).map((f) => (
         <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "#fff", borderRadius: 10, fontSize: 12.5 }}>
           <button type="button" onClick={() => void view(f.id)} style={{ flex: 1, textAlign: "left", border: "none", background: "none", color: "var(--brand-d)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.file_name}</button>
-          {mayAttach && (
+          {/* 申请一定要有: the last file stays — attach the right one first. */}
+          {mayAttach && (files.data?.files ?? []).length > 1 && (
             <button type="button" onClick={() => remove.mutate({ id: r.id, fileId: f.id })} disabled={remove.isPending}
               style={{ border: "none", background: "none", color: "#a33", fontSize: 12 }}>Remove</button>
           )}
@@ -239,6 +246,8 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
   const create = useCreatePaymentRequest();
   const update = useUpdatePaymentRequest();
   const upload = useUploadPaymentRequestFile();
+  /* Whether the company runs events (2990 does not) — the list's own answer. */
+  const hasEvents = usePaymentRequests(false).data?.hasEvents ?? true;
   const camRef = useRef<HTMLInputElement>(null);
   const libRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
@@ -253,16 +262,41 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
     bankAccountNo: initial?.bank_account_no ?? null,
     bankAccountName: initial?.bank_account_name ?? null,
   }));
+  /* The bill is READ as it is attached (owner 2026-10-01, item 1). */
+  const billRead = useRequestBillRead();
+  const [noEvent, setNoEvent] = useState(() => !!initial?.no_event_reason);
+  const [noEventReason, setNoEventReason] = useState(initial?.no_event_reason ?? "");
   const set = (patch: Partial<PaymentRequestInput>) => setV((prev) => ({ ...prev, ...patch }));
-  const ready = v.payeeName.trim() !== "" && v.amountSen > 0 && v.purpose.trim() !== "";
+  const takeFiles = async (list: File[]) => {
+    setFiles(list);
+    const read = await billRead.run(list);
+    const top = read?.eventBill ? read.eventSuggestions[0] : undefined;
+    if (top) setV((prev) => (prev.projectId == null ? { ...prev, projectId: top.id } : prev));
+  };
+  const eventNeeded = hasEvents && (needsEvent(billRead.state) || !!initial?.event_bill);
+  const eventOk = !eventNeeded || v.projectId != null || (noEvent && noEventReason.trim().length >= NO_EVENT_REASON_MIN);
+  const reading = billRead.state.status === "reading";
+  const missing = [
+    v.payeeName.trim() === "" ? "who to pay" : null,
+    v.amountSen > 0 ? null : "the amount",
+    v.purpose.trim() === "" ? "what it is for" : null,
+    !initial && files.length === 0 ? "a photo of the bill" : null,
+    eventOk ? null : "the event (or why there is none)",
+  ].filter(Boolean) as string[];
+  const ready = missing.length === 0 && !reading;
   const busy = create.isPending || update.isPending || upload.isPending;
   const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 
   const save = async () => {
     setError(null);
-    if (!ready) { setError("Pay to, the amount and what it is for are needed."); return; }
+    if (!ready) { setError(reading ? "The bill is still being read — a moment." : `Still needed: ${missing.join(", ")}.`); return; }
+    const body: PaymentRequestInput = {
+      ...v,
+      ...billFactsOf(billRead.state),
+      noEventReason: v.projectId == null && noEvent ? noEventReason.trim() : null,
+    };
     try {
-      const res = initial ? await update.mutateAsync({ id: initial.id, ...v }) : await create.mutateAsync(v);
+      const res = initial ? await update.mutateAsync({ id: initial.id, ...body }) : await create.mutateAsync(body);
       for (const f of files) {
         try {
           await upload.mutateAsync({ id: res.request.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
@@ -286,39 +320,52 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
 
   return (
     <Shell eyebrow="Payments · 申请付款" title={initial ? `Edit ${initial.request_no}` : "New payment request"} onBack={onBack}
-      footer={<button className="btn" style={{ flex: 1, opacity: busy || !ready ? 0.5 : 1 }} disabled={busy} onClick={() => void save()}>
-        {busy ? "Sending…" : initial ? (initial.status === "REJECTED" ? "Send again" : "Save") : "Send to Finance"}
+      footer={<button className="btn" style={{ flex: 1, opacity: busy || !ready ? 0.5 : 1 }} disabled={busy || reading} onClick={() => void save()}>
+        {busy ? "Sending…" : reading ? "Reading the bill…" : initial ? (initial.status === "REJECTED" ? "Send again" : "Save") : "Send to Finance"}
       </button>}>
       {initial?.status === "REJECTED" && initial.finance_note && <div className="st-warn" role="status">Finance returned it: {initial.finance_note}</div>}
       {error && <div className="st-warn" role="alert">{error}</div>}
-      {field("Pay to *", <input className="cal-sel" aria-label="Pay to" value={v.payeeName} onChange={(e) => set({ payeeName: e.target.value })} placeholder="e.g. MLE EVENTS SDN BHD" />)}
-      {field("Amount (MYR) *", <MoneyInput bare valueSen={v.amountSen} onCommit={(sen) => set({ amountSen: sen ?? 0 })} inputClassName="cal-sel" selectOnFocus aria-label="Amount" />)}
-      {field("Pay by", <DateField fullWidth className="cal-sel" aria-label="Pay by" value={v.dueDate ?? ""} onChange={(iso) => set({ dueDate: iso || null })} />)}
-      {field("Event", <EventSelect value={v.projectId} around={v.dueDate || today} optionsPath={EVENTS_PATH} className="cal-sel" aria-label="Event" onChange={(id) => set({ projectId: id })} />)}
-      {field("What is it for *", <textarea className="cal-sel" rows={2} aria-label="What is it for" value={v.purpose} onChange={(e) => set({ purpose: e.target.value })} placeholder="e.g. Booth F1 rental, balance 50%" />)}
-      <div className="sc-sl"><span className="t">Payee's bank</span><span className="ln" /></div>
-      {field("Bank", <input className="cal-sel" aria-label="Payee's bank" value={v.bankName ?? ""} onChange={(e) => set({ bankName: e.target.value || null })} placeholder="e.g. Maybank" />)}
-      {field("Account no.", <input className="cal-sel" aria-label="Account no." inputMode="numeric" value={v.bankAccountNo ?? ""} onChange={(e) => set({ bankAccountNo: e.target.value || null })} />)}
-      {field("Account name", <input className="cal-sel" aria-label="Account name" value={v.bankAccountName ?? ""} onChange={(e) => set({ bankAccountName: e.target.value || null })} />)}
       {!initial && (
         <>
-          <div className="sc-sl"><span className="t">The bill</span><span className="ln" /></div>
+          <div className="sc-sl"><span className="t">The bill *</span><span className="ln" /></div>
           <input ref={camRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} aria-label="Take a photo of the bill"
-            onChange={(e) => { setFiles((cur) => [...cur, ...(e.target.files ?? [])]); e.target.value = ""; }} />
+            onChange={(e) => { void takeFiles([...files, ...(e.target.files ?? [])]); e.target.value = ""; }} />
           <input ref={libRef} type="file" accept={PV_FILE_ACCEPT} multiple style={{ display: "none" }} aria-label="Pick bill files"
-            onChange={(e) => { setFiles((cur) => [...cur, ...(e.target.files ?? [])]); e.target.value = ""; }} />
+            onChange={(e) => { void takeFiles([...files, ...(e.target.files ?? [])]); e.target.value = ""; }} />
           {files.map((f, i) => (
             <div key={`${f.name}-${i}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "#fff", borderRadius: 10, fontSize: 12.5 }}>
               <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
-              <button type="button" onClick={() => setFiles((cur) => cur.filter((_, k) => k !== i))} style={{ border: "none", background: "none", color: "#a33", fontSize: 12 }}>Remove</button>
+              <button type="button" onClick={() => void takeFiles(files.filter((_, k) => k !== i))} style={{ border: "none", background: "none", color: "#a33", fontSize: 12 }}>Remove</button>
             </div>
           ))}
           <div style={{ display: "flex", gap: 8 }}>
             <button type="button" className="btn" style={{ flex: 1 }} onClick={() => camRef.current?.click()}>📷 Photo</button>
             <button type="button" className="btn" style={{ flex: 1, background: "var(--bg)", color: "var(--ink)" }} onClick={() => libRef.current?.click()}>Pick file</button>
           </div>
+          <BillReadNote state={billRead.state} />
         </>
       )}
+      {field("Pay to *", <input className="cal-sel" aria-label="Pay to" value={v.payeeName} onChange={(e) => set({ payeeName: e.target.value })} placeholder="e.g. MLE EVENTS SDN BHD" />)}
+      {field("Amount (MYR) *", <MoneyInput bare valueSen={v.amountSen} onCommit={(sen) => set({ amountSen: sen ?? 0 })} inputClassName="cal-sel" selectOnFocus aria-label="Amount" />)}
+      {field("Pay by", <DateField fullWidth className="cal-sel" aria-label="Pay by" value={v.dueDate ?? ""} onChange={(iso) => set({ dueDate: iso || null })} />)}
+      {hasEvents && field(eventNeeded ? "Event * — this bill is for an event" : "Event", <EventSelect value={v.projectId} around={v.dueDate || today} optionsPath={EVENTS_PATH} className="cal-sel" aria-label="Event" onChange={(id) => set({ projectId: id })} />)}
+      {eventNeeded && billRead.state.status === "done" && (
+        <EventSuggestions suggestions={billRead.state.result.eventSuggestions} current={v.projectId} onUse={(id) => set({ projectId: id })} />
+      )}
+      {eventNeeded && v.projectId == null && (
+        <>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+            <input type="checkbox" checked={noEvent} onChange={(e) => setNoEvent(e.target.checked)} aria-label="I cannot find this event" />
+            I cannot find this event · 找不到这场活动
+          </label>
+          {noEvent && field("Why there is no event *", <input className="cal-sel" aria-label="Why there is no event" value={noEventReason} onChange={(e) => setNoEventReason(e.target.value)} placeholder="e.g. the fair is not in PMS yet" />)}
+        </>
+      )}
+      {field("What is it for *", <textarea className="cal-sel" rows={2} aria-label="What is it for" value={v.purpose} onChange={(e) => set({ purpose: e.target.value })} placeholder="e.g. Booth F1 rental, balance 50%" />)}
+      <div className="sc-sl"><span className="t">Payee's bank</span><span className="ln" /></div>
+      {field("Bank", <input className="cal-sel" aria-label="Payee's bank" value={v.bankName ?? ""} onChange={(e) => set({ bankName: e.target.value || null })} placeholder="e.g. Maybank" />)}
+      {field("Account no.", <input className="cal-sel" aria-label="Account no." inputMode="numeric" value={v.bankAccountNo ?? ""} onChange={(e) => set({ bankAccountNo: e.target.value || null })} />)}
+      {field("Account name", <input className="cal-sel" aria-label="Account name" value={v.bankAccountName ?? ""} onChange={(e) => set({ bankAccountName: e.target.value || null })} />)}
     </Shell>
   );
 }

@@ -10,6 +10,16 @@
 //   POST   /:id/withdraw        the requester takes it back
 //   POST   /:id/return          Finance sends it back, saying why
 //   POST|GET /:id/files, GET|DELETE /:id/files/:fileId — the bill
+//   POST   /read-bill, GET /bill-matches — the bill READ as it is attached
+//                                (routes/payment-request-bill.ts)
+//
+// The bill (owner 2026-10-01, item 1 → 做: 申请一定要有): a request keeps its
+// last file, and Finance cannot answer one that has none. What the reader read
+// off it — number, date, total, whether it is for an event — rides the request
+// (bill_no, bill_date, bill_total_sen, event_bill); an event bill goes with its
+// Event or the requester's reason why there is none; and every other live
+// request, voucher or AP invoice carrying the same number and date is named on
+// it (lib/bill-matches.ts — said out loud, never refused).
 //
 // Finance answers a request with a voucher raised on PV New (?fromRequest=), or
 // with an AP invoice raised on AP Invoices (?fromRequest=, owner 2026-09-30
@@ -25,15 +35,17 @@
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
-import { companyDocPrefix, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
+import { activeCompanySql, companyDocPrefix, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { docMonthTag, mintMonthlyDocNo } from '../lib/doc-no';
 import { dateOrNull } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
 import { assertAuditWritable, auditUnavailableBody, compactChanges, fieldChange, recordEntityAudit } from '../lib/entity-audit';
 import { makeDocFileHandlers, type DocFilesSpec } from '../lib/doc-files';
-import { parseEventId, unknownEventRefusal } from '../lib/event-tags';
+import { companyHasEvents, parseEventId, unknownEventRefusal } from '../lib/event-tags';
+import { eventBillRefusal, findBillMatches, readBillFacts, type BillMatch, type RequestBillFacts } from '../lib/bill-matches';
 import { eventOptionsHandler } from './acc-events';
+import { billMatchesHandler, readRequestBillHandler } from './payment-request-bill';
 import {
   PAYMENT_REQUEST_KEY, bankConfirmedVoucherNumbers, callerUserId, isRequestFinance, liveAnswerOf, requestStage,
   requesterMayChange, type InvoiceFacts, type VoucherFacts,
@@ -44,7 +56,7 @@ type Row = Record<string, any>;
 export const paymentRequests = new Hono<{ Bindings: Env; Variables: Variables }>();
 paymentRequests.use('*', supabaseAuth);
 
-const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee_name, amount_sen, due_date, purpose, project_id, bank_name, bank_account_no, bank_account_name, status, pv_id, ap_invoice_id, finance_note, decided_by, decided_at, created_at, updated_at';
+const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee_name, amount_sen, due_date, purpose, project_id, bank_name, bank_account_no, bank_account_name, status, pv_id, ap_invoice_id, finance_note, decided_by, decided_at, created_at, updated_at, bill_no, bill_date, bill_total_sen, event_bill, no_event_reason';
 const NO_PERM = { error: "You don't have permission to do that." };
 
 const mayRequest = (c: any): boolean => hasHouzsPerm(c, PAYMENT_REQUEST_KEY);
@@ -142,6 +154,25 @@ async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ row
   };
 }
 
+/** Each request with the OTHER live documents carrying its bill's number and
+    date (lib/bill-matches.ts) — said out loud on the list and on the request,
+    never refused. A request is never a match of its own answer. */
+async function withBillMatches(c: any, companyId: number, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
+  const found = await findBillMatches(c.get('supabase'), companyId, rows.map((r) => ({
+    key: String(r.id), billNo: r.bill_no, billDate: r.bill_date,
+    exclude: { requestIds: [String(r.id)], pvIds: [r.pv_id], apInvoiceIds: [r.ap_invoice_id] },
+  })));
+  if (!found.ok) return { resp: c.json({ error: 'load_failed', reason: found.reason }, 500) };
+  return { rows: rows.map((r) => ({ ...r, billMatches: found.matches.get(String(r.id)) ?? ([] as BillMatch[]) })) };
+}
+
+/** Whether the company runs events (2990 does not): the form hides the Event
+    field without them. Unreadable reads as "yes" — a field shown in vain beats
+    one hidden from a company that needs it. */
+async function hasEventsOf(c: any): Promise<boolean> {
+  try { return await companyHasEvents(c.env.DB, activeCompanySql(c, 'p.company_id')); } catch { return true; }
+}
+
 /* ── GET / ─────────────────────────────────────────────────────────────────── */
 export const listPaymentRequestsHandler = async (c: any): Promise<Response> => {
   if (!mayOpen(c)) return c.json(NO_PERM, 403);
@@ -157,7 +188,9 @@ export const listPaymentRequestsHandler = async (c: any): Promise<Response> => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const staged = await withStages(c, co.companyId, (data ?? []) as Row[]);
   if ('resp' in staged) return staged.resp;
-  return c.json({ requests: staged.rows, finance });
+  const matched = await withBillMatches(c, co.companyId, staged.rows);
+  if ('resp' in matched) return matched.resp;
+  return c.json({ requests: matched.rows, finance, hasEvents: await hasEventsOf(c) });
 };
 paymentRequests.get('/', listPaymentRequestsHandler);
 
@@ -166,6 +199,10 @@ paymentRequests.get('/event-options', async (c) => {
   if (!mayOpen(c)) return c.json(NO_PERM, 403);
   return eventOptionsHandler(c);
 });
+
+/* ── The bill read as it is attached, and its matches (before GET /:id) ────── */
+paymentRequests.post('/read-bill', readRequestBillHandler);
+paymentRequests.get('/bill-matches', billMatchesHandler);
 
 /* ── The bill — the factory's four handlers, fed this document's rules ────── */
 export const PAYMENT_REQUEST_FILES: DocFilesSpec = {
@@ -182,6 +219,9 @@ export const PAYMENT_REQUEST_FILES: DocFilesSpec = {
   },
   closedRefusal: { error: 'request_withdrawn', message: 'A withdrawn request takes no more files.' },
   lockedRefusal: { error: 'request_answered', message: 'Finance has answered this request — its bill stays.' },
+  /* 申请一定要有 (owner 2026-10-01): the last file stays — a wrong bill is
+     replaced by attaching the right one first. */
+  keepOne: { error: 'bill_required', message: 'A request keeps its bill — attach the right file first, then remove this one.' },
 };
 const fileHandlers = makeDocFileHandlers(PAYMENT_REQUEST_FILES);
 export const uploadPaymentRequestFileHandler = fileHandlers.upload;
@@ -202,7 +242,9 @@ export const getPaymentRequestHandler = async (c: any): Promise<Response> => {
   if ('resp' in found) return found.resp;
   const staged = await withStages(c, co.companyId, [found.req]);
   if ('resp' in staged) return staged.resp;
-  return c.json({ request: staged.rows[0], finance: isRequestFinance(c) });
+  const matched = await withBillMatches(c, co.companyId, staged.rows);
+  if ('resp' in matched) return matched.resp;
+  return c.json({ request: matched.rows[0], finance: isRequestFinance(c) });
 };
 paymentRequests.get('/:id', getPaymentRequestHandler);
 
@@ -210,7 +252,7 @@ paymentRequests.get('/:id', getPaymentRequestHandler);
 type Fields = {
   payee_name: string; amount_sen: number; due_date: string | null; purpose: string;
   project_id: number | null; bank_name: string | null; bank_account_no: string | null; bank_account_name: string | null;
-};
+} & RequestBillFacts;
 function readFields(body: Row): { fields: Fields } | { error: string; message: string } {
   const payee = text(body.payeeName);
   if (!payee) return { error: 'payee_required', message: 'Who is to be paid?' };
@@ -220,12 +262,26 @@ function readFields(body: Row): { fields: Fields } | { error: string; message: s
   if (!purpose) return { error: 'purpose_required', message: 'Say what the payment is for.' };
   const project = parseEventId(body.projectId);
   if (project === 'invalid') return { error: 'bad_event', message: 'projectId must be an event id.' };
+  const bill = readBillFacts(body);
+  if ('error' in bill) return bill;
   return {
     fields: {
       payee_name: payee, amount_sen: amount, due_date: dateOrNull(body.dueDate), purpose, project_id: project,
       bank_name: text(body.bankName), bank_account_no: text(body.bankAccountNo), bank_account_name: text(body.bankAccountName),
+      ...bill.facts,
+      /* With its Event picked, the reason why there is none is moot. */
+      ...(project != null ? { no_event_reason: null } : {}),
     },
   };
+}
+
+/** An event bill goes to Finance with its Event, or with the requester's reason
+    why there is none (lib/bill-matches.ts) — asked only of a company that runs
+    events; anywhere else the flag is dropped. */
+async function eventBillCheck(c: any, f: Fields): Promise<{ error: string; message: string } | null> {
+  if (!f.event_bill) return null;
+  if (!(await hasEventsOf(c))) { f.event_bill = false; return null; }
+  return eventBillRefusal(f);
 }
 
 /* ── POST / ────────────────────────────────────────────────────────────────── */
@@ -241,6 +297,8 @@ export const createPaymentRequestHandler = async (c: any): Promise<Response> => 
   if ('error' in read) return c.json(read, 400);
   const eventErr = await unknownEventRefusal(c, [read.fields.project_id]);
   if (eventErr) return eventErr;
+  const billErr = await eventBillCheck(c, read.fields);
+  if (billErr) return c.json(billErr, 400);
 
   const sb = c.get('supabase');
   const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_REQUEST', action: 'CREATE', companyId: co.companyId });
@@ -259,7 +317,7 @@ export const createPaymentRequestHandler = async (c: any): Promise<Response> => 
   await recordEntityAudit(sb, {
     entityType: 'PAYMENT_REQUEST', entityId: String(row.id), entityDocNo: requestNo, action: 'CREATE',
     actor: c.get('houzsUser'), companyId: co.companyId, statusSnapshot: 'SUBMITTED',
-    fieldChanges: compactChanges([fieldChange('payeeName', null, read.fields.payee_name), fieldChange('amountSen', null, read.fields.amount_sen), fieldChange('projectId', null, read.fields.project_id)]),
+    fieldChanges: compactChanges([fieldChange('payeeName', null, read.fields.payee_name), fieldChange('amountSen', null, read.fields.amount_sen), fieldChange('projectId', null, read.fields.project_id), fieldChange('billNo', null, read.fields.bill_no)]),
   });
   return c.json({ ok: true, request: { ...row, stage: 'SUBMITTED', voucher: null } }, 201);
 };
@@ -288,10 +346,17 @@ export const updatePaymentRequestHandler = async (c: any): Promise<Response> => 
     bankName: body.bankName !== undefined ? body.bankName : before.bank_name,
     bankAccountNo: body.bankAccountNo !== undefined ? body.bankAccountNo : before.bank_account_no,
     bankAccountName: body.bankAccountName !== undefined ? body.bankAccountName : before.bank_account_name,
+    billNo: body.billNo !== undefined ? body.billNo : before.bill_no,
+    billDate: body.billDate !== undefined ? body.billDate : before.bill_date,
+    billTotalSen: body.billTotalSen !== undefined ? body.billTotalSen : before.bill_total_sen,
+    eventBill: body.eventBill !== undefined ? body.eventBill : before.event_bill,
+    noEventReason: body.noEventReason !== undefined ? body.noEventReason : before.no_event_reason,
   });
   if ('error' in read) return c.json(read, 400);
   const eventErr = await unknownEventRefusal(c, [read.fields.project_id]);
   if (eventErr) return eventErr;
+  const billErr = await eventBillCheck(c, read.fields);
+  if (billErr) return c.json(billErr, 400);
   const sb = c.get('supabase');
   const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_REQUEST', entityId: String(before.id), action: 'UPDATE', companyId: co.companyId });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
