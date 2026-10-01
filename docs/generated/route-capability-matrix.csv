@@ -1009,6 +1009,7 @@ GET,/api/scm/payment-requests,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + re
 POST,/api/scm/payment-requests,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
 GET,/api/scm/payment-requests/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
 PATCH,/api/scm/payment-requests/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
+POST,/api/scm/payment-requests/:id/balance,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
 GET,/api/scm/payment-requests/:id/files,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
 POST,/api/scm/payment-requests/:id/files,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
 DELETE,/api/scm/payment-requests/:id/files/:fileId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts

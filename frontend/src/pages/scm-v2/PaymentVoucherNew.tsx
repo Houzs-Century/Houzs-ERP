@@ -372,6 +372,12 @@ export const PaymentVoucherNew = () => {
     setPayeeName(r.payee_name);
     const bank = [r.bank_name, r.bank_account_no, r.bank_account_name].filter(Boolean).join(' ');
     setNotes(`Payment request ${r.request_no} — ${r.purpose}${bank ? ` · pay to ${bank}` : ''}`);
+    /* An AP Payment answering a balance (item 2) pays the bill's AP invoice:
+       its lines come from the tick below, not from the request. */
+    if (isAp) {
+      setScanNote(`Answering ${r.request_no} from ${r.requested_by_name ?? 'the requester'} — paid on the bill's AP invoice; the bill stays with the invoice.`);
+      return;
+    }
     setDefaultEvent(r.project_id);
     takeBillPair(r.bill_no, r.bill_date);
     setLines([{ ...newLine(), description: r.purpose.slice(0, 200), amountSen: r.amount_sen, projectId: r.project_id }]);
@@ -387,7 +393,7 @@ export const PaymentVoucherNew = () => {
   const requestRead = useRef(false);
   useEffect(() => {
     const r = requestQ.data?.request;
-    if (!fromRequest || requestRead.current || !r) return;
+    if (!fromRequest || isAp || requestRead.current || !r) return;
     requestRead.current = true;
     const who = r.requested_by_name ?? 'the requester';
     const asked = `Answering ${r.request_no} from ${who} — its bill is attached to this voucher when you save.`;
@@ -518,6 +524,9 @@ export const PaymentVoucherNew = () => {
      so an operator who unticks it is not overruled; an invoice the list does
      not offer (paid since, reserved by another voucher) is simply not ticked. */
   const piParam = isAp ? searchParams.get('pi') : null;
+  /* ?amount= (sen) ticks only that much — a balance request (item 2) pays its
+     own instalment on the bill's AP invoice, not the whole of what is owed. */
+  const amountParam = (() => { const n = Number(searchParams.get('amount')); return Number.isInteger(n) && n > 0 ? n : null; })();
   const piTicked = useRef(false);
   useEffect(() => {
     if (!piParam || piTicked.current) return;
@@ -525,7 +534,8 @@ export const PaymentVoucherNew = () => {
     if (!row) return;
     piTicked.current = true;
     const owed = Number(row.total_sen ?? 0) - Number(row.paid_sen ?? 0) - (reserved.byPi[piParam] ?? 0);
-    setAllocAmounts((prev) => ({ ...prev, [piParam]: owed }));
+    setAllocAmounts((prev) => ({ ...prev, [piParam]: amountParam != null ? Math.min(amountParam, owed) : owed }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [piParam, outstandingPiRows, reserved]);
 
   /* AP Payment: every row starts at 0 — TICK pays an invoice in full, typing
@@ -541,6 +551,17 @@ export const PaymentVoucherNew = () => {
       && (r.status === 'POSTED' || r.status === 'PARTIALLY_PAID')
       && r.outstandingSen - (reserved.byApInvoice[r.id] ?? 0) > 0);
   }, [applyToPi, apListQ.data, supplierId, reserved]);
+  /* ?pi= may name an AP INVOICE as well — the bill a balance request is paid on
+     (item 2) — ticked the same way, for ?amount= when given. */
+  useEffect(() => {
+    if (!piParam || piTicked.current) return;
+    const row = outstandingApiRows.find((r) => r.id === piParam);
+    if (!row) return;
+    piTicked.current = true;
+    const owed = row.outstandingSen - (reserved.byApInvoice[piParam] ?? 0);
+    setAllocAmounts((prev) => ({ ...prev, [piParam]: amountParam != null ? Math.min(amountParam, owed) : owed }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [piParam, outstandingApiRows, reserved]);
 
   const allocations: PiAlloc[] = useMemo(() => {
     const fromPis: PiAlloc[] = outstandingPiRows.map((r) => {

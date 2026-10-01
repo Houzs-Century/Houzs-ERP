@@ -6,7 +6,7 @@
 // desktop form, the phone sheet and Finance's voucher form say the same words.
 // ----------------------------------------------------------------------------
 
-import { billMatchText, type BillMatch } from '../lib/payment-request-queries';
+import { STAGE, billMatchText, type BillFamily, type BillMatch } from '../lib/payment-request-queries';
 import type { BillReadState } from '../lib/request-bill-read';
 import { fmtDateOrDash, fmtSen } from '../../shared/format';
 
@@ -31,6 +31,28 @@ export function BillMatchesNote({ matches }: { matches: BillMatch[] | undefined 
       <div style={{ fontWeight: 600 }}>Same bill already asked for or paid · 这张单已经有了</div>
       {matches.map((m) => <div key={`${m.kind}-${m.id}`}>{billMatchText(m)}</div>)}
       <div style={{ marginTop: 2, color: 'var(--fg-muted, #666)' }}>A balance on the same bill is fine — otherwise check it is not paid twice.</div>
+    </div>
+  );
+}
+
+/** A bill paid in instalments (owner 2026-10-01, item 2: 一张单付两次): the whole
+    bill's figures and each instalment, the one open marked. */
+export function BillInstalments({ family, currentId }: { family: BillFamily; currentId: string }) {
+  const figures = [
+    family.totalSen != null ? `Total ${fmtSen(family.totalSen)}` : 'Total not known',
+    `Paid ${fmtSen(family.paidSen)}`,
+    family.pendingSen > 0 ? `Waiting ${fmtSen(family.pendingSen)}` : null,
+    family.remainingSen != null ? `Left to ask ${fmtSen(family.remainingSen)}` : null,
+  ].filter(Boolean).join(' · ');
+  return (
+    <div role="group" aria-label="Instalments of this bill" style={box('note')}>
+      <div style={{ fontWeight: 600 }}>This bill, in instalments · 分期</div>
+      <div>{figures}</div>
+      {family.installments.map((m) => (
+        <div key={m.id} style={{ fontWeight: m.id === currentId ? 600 : 400 }}>
+          #{m.installment_no} · {m.request_no} · {fmtSen(m.amount_sen)}{m.pay_pct != null ? ` (${m.pay_pct}%)` : ''} · {STAGE[m.stage].label}
+        </div>
+      ))}
     </div>
   );
 }

@@ -22,6 +22,8 @@ const createAsync = vi.fn(async (_b: Req) => ({ ok: true, request: base({ id: 'r
 const updateAsync = vi.fn(async (_b: Req) => ({ ok: true, request: base({}) }));
 const uploadAsync = vi.fn(async (_b: Req) => ({ ok: true }));
 const returnMutate = vi.fn();
+/* 申请付余额 (item 2, 2026-10-01). */
+const balanceAsync = vi.fn(async (_b: Req) => ({ ok: true, request: base({ id: 'r-bal' }), overTotal: false }));
 /* The bill reader's answer for the photo being attached (item 1, 2026-10-01). */
 const readAsync = vi.fn(async (_b: Req) => ({
   ok: true, bill: { billNo: 'MLE-0925', billDate: '2026-09-01', totalSen: 850_000, vendorName: 'MLE EVENTS SDN BHD' },
@@ -32,6 +34,7 @@ vi.mock('../vendor/scm/lib/payment-request-queries', async (importOriginal) => (
   ...(await importOriginal<typeof import('../vendor/scm/lib/payment-request-queries')>()),
   usePaymentRequests: () => ({ data: { requests, finance: isFinance, hasEvents: true }, isLoading: false, isError: false }),
   useReadRequestBill: () => ({ mutateAsync: readAsync, isPending: false }),
+  useRequestBalance: () => ({ mutateAsync: balanceAsync, isPending: false }),
   usePaymentRequest: (id: string | null) => ({ data: id ? { request: requests.find((r) => r.id === id), finance: isFinance } : undefined, isLoading: false }),
   useCreatePaymentRequest: () => ({ mutateAsync: createAsync, isPending: false }),
   useUpdatePaymentRequest: () => ({ mutateAsync: updateAsync, isPending: false }),
@@ -99,6 +102,23 @@ describe('MobilePaymentRequests', () => {
     expect(screen.getByText('Returned by Chew: Attach the organiser invoice')).toBeTruthy();
     fireEvent.click(screen.getByText('Fix and send again'));
     expect(screen.getByText('Send again')).toBeTruthy();
+  });
+
+  test('a paid first instalment offers 申请付余额; the balance goes with no upload', async () => {
+    const family = {
+      rootId: 'r1', rootNo: 'HC-PRQ-2609-001', totalSen: 1_000_000, askedSen: 400_000, paidSen: 400_000, pendingSen: 0, remainingSen: 600_000,
+      installments: [{ id: 'r1', request_no: 'HC-PRQ-2609-001', installment_no: 1, amount_sen: 400_000, pay_pct: 40, stage: 'PAID' }],
+    };
+    requests = [base({ status: 'VOUCHERED', stage: 'PAID', amount_sen: 400_000, family })];
+    isFinance = false; balanceAsync.mockClear();
+    render(<MobilePaymentRequests onBack={() => undefined} />);
+    fireEvent.click(screen.getByText('MLE EVENTS SDN BHD').closest('button')!);
+    expect(screen.getByText('Total RM 10,000.00 · Paid RM 4,000.00 · Left to ask RM 6,000.00')).toBeTruthy();
+    fireEvent.click(screen.getByText('申请付余额 · Balance'));
+    expect(screen.getByText(/Left to ask: RM 6,000\.00 of RM 10,000\.00\./)).toBeTruthy();
+    fireEvent.click(screen.getByText('Send to Finance'));
+    await waitFor(() => expect(balanceAsync).toHaveBeenCalledTimes(1));
+    expect(balanceAsync.mock.calls[0]![0]).toMatchObject({ id: 'r1', amountSen: 600_000, payPct: null });
   });
 
   test('Finance returns a waiting request with the note the prompt demands', async () => {

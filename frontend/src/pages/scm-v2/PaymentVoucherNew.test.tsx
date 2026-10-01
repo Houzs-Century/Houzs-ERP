@@ -199,6 +199,23 @@ describe('an AP invoice beside the purchase invoices (owner 2026-09-06)', () => 
     expect(payload.allocations).toEqual([{ apInvoiceId: 'api-1', amountSen: 42000 }]);
     expect(payload.lines).toEqual([expect.objectContaining({ debitAccountCode: '400-0000', amountSen: 42000 })]);
   });
+
+  /* Item 2 (owner 2026-10-01): a balance request of a bill booked as an AP
+     invoice is paid ON that invoice — ticked for the instalment, not the whole. */
+  test('a balance request opens on its bill\'s AP invoice, ticked for the instalment, and the save names the request', async () => {
+    mutateAsync.mockClear(); extractRequestAsync.mockClear();
+    requestDetail = { id: 'prq-2', request_no: 'HC-PRQ-2610-002', requested_by_name: 'James Seow', payee_name: 'Foshan Chairs', amount_sen: 30000, purpose: 'Balance — rent', project_id: null, bank_name: null, bank_account_no: null, bank_account_name: null, status: 'SUBMITTED', stage: 'SUBMITTED', voucher: null, parent_request_id: 'prq-1', installment_no: 2 };
+    draw('/scm/payment-vouchers/new?type=ap&supplier=sup-1&pi=api-1&amount=30000&fromRequest=prq-2');
+    expect(await screen.findByText(/Applying RM 300\.00/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Create AP Payment'));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    const payload = mutateAsync.mock.calls[0]![0];
+    expect(payload.allocations).toEqual([{ apInvoiceId: 'api-1', amountSen: 30000 }]);
+    expect(payload.paymentRequestId).toBe('prq-2');
+    /* The bill stays with the invoice — nothing to read for an AP Payment. */
+    expect(extractRequestAsync).not.toHaveBeenCalled();
+    requestDetail = undefined;
+  });
 });
 
 /* docs/bugs/0889 — a purchase invoice's Record payment opens this page with
