@@ -316,7 +316,7 @@ export const useSetGrnLineRack = () => {
         method: 'PATCH', body: JSON.stringify({ rackId }),
       }),
     onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['grn-detail', vars.grnId] });
+      void qc.invalidateQueries({ queryKey: ['grn-detail', vars.grnId] });
       void qc.invalidateQueries({ queryKey: ['warehouse'] });
     },
   });

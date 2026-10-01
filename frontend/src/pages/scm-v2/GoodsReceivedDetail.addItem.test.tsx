@@ -35,6 +35,7 @@ vi.mock('../../vendor/scm/lib/grn-queries', () => ({
   }),
   useUpdateGrnHeader: () => ({ mutateAsync: vi.fn().mockResolvedValue({}) }),
   useUpdateGrnItem: () => ({ mutateAsync: vi.fn().mockResolvedValue({}) }),
+  useSetGrnLineRack: () => ({ mutateAsync: vi.fn().mockResolvedValue({}) }),
   useDeleteGrnItem: () => ({ mutate: vi.fn(), isPending: false }),
   useAddGrnItem: () => ({ mutateAsync: h.addMock, isPending: false }),
   useCancelGrn: () => ({ mutate: vi.fn(), isPending: false }),
