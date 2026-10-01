@@ -416,8 +416,9 @@ export type OtherDebtor = {
   id: string; name: string; phone: string | null; notes: string | null;
   is_active: boolean; outstanding_sen: number;
 } & Partial<DebtorPartyColumns>;
-/** A bill line: a money line names its account; a TEXT line (2026-09-21) has no account and a zero amount — description only. */
-export type DebtorBillLine = { id: string; line_no: number; description: string | null; credit_account_code: string | null; amount_sen: number };
+/** A bill line: a money line names its account; a TEXT line (2026-09-21) has no account and a zero amount — description only.
+    project_id: the event a money line is for (2026-10-01, payment-request item 6 — optional). */
+export type DebtorBillLine = { id: string; line_no: number; description: string | null; credit_account_code: string | null; amount_sen: number; project_id?: number | null };
 export type DebtorBill = {
   id: string; bill_number: string; bill_date: string;
   total_sen: number; received_sen: number; status: string; notes: string | null;

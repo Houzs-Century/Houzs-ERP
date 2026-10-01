@@ -644,20 +644,20 @@ Total: 1375 route registrations across 195 files.
 - L1622  GET    /:id/price-changes
 
 ## backend/src/scm/routes/other-debtors.ts  (14)
-- L759  GET    /
-- L760  POST   /
-- L761  GET    /:id
-- L762  PATCH  /:id
-- L763  POST   /:id/bills
-- L764  POST   /bills/:billId/cancel
-- L765  PATCH  /bills/:billId
-- L766  POST   /:id/receipts
-- L767  POST   /receipts/:receiptId/submit
-- L768  POST   /receipts/:receiptId/withdraw
-- L769  POST   /receipts/:receiptId/check
-- L770  POST   /receipts/:receiptId/reject
-- L771  POST   /receipts/:receiptId/approve
-- L772  POST   /receipts/:receiptId/void
+- L776  GET    /
+- L777  POST   /
+- L778  GET    /:id
+- L779  PATCH  /:id
+- L780  POST   /:id/bills
+- L781  POST   /bills/:billId/cancel
+- L782  PATCH  /bills/:billId
+- L783  POST   /:id/receipts
+- L784  POST   /receipts/:receiptId/submit
+- L785  POST   /receipts/:receiptId/withdraw
+- L786  POST   /receipts/:receiptId/check
+- L787  POST   /receipts/:receiptId/reject
+- L788  POST   /receipts/:receiptId/approve
+- L789  POST   /receipts/:receiptId/void
 
 ## backend/src/scm/routes/pos-pools.ts  (14)
 - L132  GET    /mfg-catalog

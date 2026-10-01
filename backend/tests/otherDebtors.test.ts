@@ -562,3 +562,93 @@ describe('numbers follow the document date (owner 2026-09-07: 要根据文件日
     expect(billRow.bill_number).toBe(bill.billNumber);
   });
 });
+
+/* An event on a bill line (owner 2026-10-01, payment-request item 6: other
+   debtor 单也要，但不是一定要选) — optional. Posting carries it onto the line's
+   OWN credit leg, never the control; an edit's contra and fresh entry carry it,
+   so a rental billed back to an organiser nets per event. An event the company
+   does not have, or a malformed id, is refused before anything is written.
+   public.projects is a small fake of the DB binding (lib/event-tags.ts). */
+describe('an event on a bill line — optional, onto its own credit leg', () => {
+  const EVENTS = [
+    { id: 348, company_id: CO, name: 'Pulau Pinang [AKEMI] MLE @ PENANG WATERFRONT CONVENTION CENTRE' },
+    { id: 900, company_id: 2, name: "Another company's fair" },
+  ];
+  const projectsDb = {
+    prepare(sql: string) {
+      return {
+        bind(...vals: unknown[]) {
+          return {
+            async all() {
+              const co = /p\.company_id = (\d+)/.exec(sql);
+              return { results: EVENTS.filter((e) => (!co || e.company_id === Number(co[1])) && vals.map(Number).includes(e.id)) };
+            },
+          };
+        },
+      };
+    },
+  };
+  const send = (app: Hono, method: string, path: string, body: Row) =>
+    app.request(path, { method, body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }, { DB: projectsDb });
+  const netOn = (tables: Record<string, Row[]>, projectId: number | null) =>
+    tables.journal_entry_lines.filter((l) => (l.project_id ?? null) === projectId && l.account_code !== '305-0000')
+      .reduce((s, l) => s + Number(l.debit_sen) - Number(l.credit_sen), 0);
+
+  test('a tagged line posts its credit leg with the event, the control leg never; untagged and text lines stay untagged; the detail hands it back', async () => {
+    const tables = baseTables();
+    const app = harness(tables);
+    const res = await send(app, 'POST', '/d1/bills', {
+      billDate: '2026-09-28',
+      lines: [
+        { description: 'Rental share — MLE Penang', creditAccountCode: '700-0000', amountSen: 150000, projectId: 348 },
+        { description: 'Electricity', creditAccountCode: '910-0000', amountSen: 20000 },
+        { description: 'A note on the paper', projectId: 348 },
+      ],
+    });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const billRow = tables.acc_debtor_bills[0]!;
+    expect(tables.acc_debtor_bill_lines.filter((l) => l.bill_id === billRow.id).map((l) => [l.line_no, l.project_id])).toEqual([[1, 348], [2, null], [3, null]]);
+    const je = tables.journal_entries.find((j) => j.source_type === 'ODB')!;
+    const legs = tables.journal_entry_lines.filter((l) => l.journal_entry_id === je.id);
+    expect(legs.map((l) => [l.account_code, l.project_id ?? null])).toEqual([['305-0000', null], ['700-0000', 348], ['910-0000', null]]);
+    const detail = await (await app.request('/d1')).json() as { bills: Array<{ lines: Row[] }> };
+    expect(detail.bills[0]!.lines.map((l) => l.project_id ?? null)).toEqual([348, null, null]);
+  });
+
+  test("an edit re-posts with the event: a date-only edit keeps the lines' events, a lines edit moves them — the contra always undoes the tagged leg", async () => {
+    const tables = baseTables();
+    const app = harness(tables);
+    expect((await send(app, 'POST', '/d1/bills', { billDate: '2026-09-28', lines: [{ creditAccountCode: '700-0000', amountSen: 150000, projectId: 348 }] })).status).toBe(201);
+    const billRow = tables.acc_debtor_bills[0]!;
+    expect(netOn(tables, 348)).toBe(-150000);
+
+    const dateOnly = await send(app, 'PATCH', `/bills/${billRow.id}`, { billDate: '2026-09-29' });
+    expect(dateOnly.status, await dateOnly.clone().text()).toBe(200);
+    expect(netOn(tables, 348)).toBe(-150000);
+
+    const moved = await send(app, 'PATCH', `/bills/${billRow.id}`, { lines: [{ creditAccountCode: '700-0000', amountSen: 120000 }] });
+    expect(moved.status, await moved.clone().text()).toBe(200);
+    expect(netOn(tables, 348)).toBe(0);
+    expect(netOn(tables, null)).toBe(-120000);
+  });
+
+  test("an event of another company, or a malformed id, is refused before anything is written — on a new bill and on an edit", async () => {
+    const tables = baseTables();
+    const app = harness(tables);
+    const other = await send(app, 'POST', '/d1/bills', { lines: [{ creditAccountCode: '700-0000', amountSen: 100, projectId: 900 }] });
+    expect(other.status).toBe(400);
+    expect((await other.json() as { error: string }).error).toBe('event_not_found');
+    const bad = await send(app, 'POST', '/d1/bills', { lines: [{ creditAccountCode: '700-0000', amountSen: 100, projectId: 'abc' }] });
+    expect(bad.status).toBe(400);
+    expect((await bad.json() as { message: string }).message).toMatch(/^Line 1: projectId must be an event id/);
+    expect(tables.acc_debtor_bills).toHaveLength(0);
+    expect(tables.journal_entries).toHaveLength(0);
+
+    expect((await send(app, 'POST', '/d1/bills', { lines: [{ creditAccountCode: '700-0000', amountSen: 100 }] })).status).toBe(201);
+    const billRow = tables.acc_debtor_bills[0]!;
+    const editOther = await send(app, 'PATCH', `/bills/${billRow.id}`, { lines: [{ creditAccountCode: '700-0000', amountSen: 100, projectId: 900 }] });
+    expect(editOther.status).toBe(400);
+    expect(tables.journal_entries).toHaveLength(1);
+    expect(tables.acc_debtor_bill_lines.filter((l) => l.bill_id === billRow.id).map((l) => l.project_id ?? null)).toEqual([null]);
+  });
+});

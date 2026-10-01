@@ -8,6 +8,9 @@
 // on it, Enter on an amount moves down, amounts read 1,800.00. A line with a
 // description and neither account nor amount is a TEXT line (owner 2026-09-21:
 // 有一些我只想放 description 罢了): it prints on the invoice and books nothing.
+// A money line may name its Event (owner 2026-10-01, payment-request item 6:
+// other debtor 单也要，但不是一定要选) — optional; the posted credit leg carries
+// it, so a rental billed back to an organiser lowers that event's Rental.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useRef, useState } from 'react';
@@ -19,16 +22,18 @@ import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
 import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { EventSelect } from '../../vendor/scm/components/EventSelect';
 import { fmtSen } from '../../vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 
-export type BillFormLine = { rid: number; description: string; creditAccountCode: string; amountSen: number };
+/** projectId: the event a money line is for (item 6, optional) — null = none. */
+export type BillFormLine = { rid: number; description: string; creditAccountCode: string; amountSen: number; projectId: number | null };
 export type BillFormValues = { billDate: string; notes: string; lines: BillFormLine[] };
 export type BillFormMode = 'new' | 'edit' | 'copy';
-export type BillFormSubmit = { billDate: string; notes?: string; lines: Array<{ description?: string; creditAccountCode?: string; amountSen: number }> };
+export type BillFormSubmit = { billDate: string; notes?: string; lines: Array<{ description?: string; creditAccountCode?: string; amountSen: number; projectId?: number }> };
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
-export const emptyBillLine = (rid: number): BillFormLine => ({ rid, description: '', creditAccountCode: '', amountSen: 0 });
+export const emptyBillLine = (rid: number, projectId: number | null = null): BillFormLine => ({ rid, description: '', creditAccountCode: '', amountSen: 0, projectId });
 export const emptyBillForm = (): BillFormValues => ({ billDate: myt(), notes: '', lines: [emptyBillLine(1)] });
 
 /** A description with neither account nor amount: text on the paper, nothing in the books. */
@@ -41,8 +46,16 @@ export const toBillSubmit = (v: BillFormValues): BillFormSubmit => ({
     .filter((l) => (l.creditAccountCode && l.amountSen > 0) || isTextLine(l))
     .map((l) => (isTextLine(l)
       ? { description: l.description.trim(), amountSen: 0 }
-      : { ...(l.description.trim() ? { description: l.description.trim() } : {}), creditAccountCode: l.creditAccountCode, amountSen: l.amountSen })),
+      : {
+          ...(l.description.trim() ? { description: l.description.trim() } : {}),
+          creditAccountCode: l.creditAccountCode, amountSen: l.amountSen,
+          ...(l.projectId != null ? { projectId: l.projectId } : {}),
+        })),
 });
+
+/** The one event every line names, or null when they differ (or none is named). */
+const sharedEvent = (lines: BillFormLine[]): number | null =>
+  lines.length > 0 && lines.every((l) => l.projectId === lines[0]!.projectId) ? lines[0]!.projectId : null;
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const th: React.CSSProperties = {
@@ -79,7 +92,7 @@ export const DebtorBillForm = ({ mode, initial, accounts, receivedSen = 0, savin
     setV((prev) => {
       const rid = Math.max(0, ...prev.lines.map((x) => x.rid)) + 1;
       if (land) setLandOn(rid);
-      return { ...prev, lines: [...prev.lines, emptyBillLine(rid)] };
+      return { ...prev, lines: [...prev.lines, emptyBillLine(rid, sharedEvent(prev.lines))] };
     });
   };
   const removeLine = (rid: number) => setV((prev) => (prev.lines.length > 1 ? { ...prev, lines: prev.lines.filter((l) => l.rid !== rid) } : prev));
@@ -88,6 +101,7 @@ export const DebtorBillForm = ({ mode, initial, accounts, receivedSen = 0, savin
     if (next) setLandOn(next.rid); else addLine(true);
   };
 
+  const commonEvent = sharedEvent(v.lines);
   const total = v.lines.reduce((s, l) => s + (l.amountSen > 0 ? l.amountSen : 0), 0);
   const belowReceived = mode === 'edit' && total < receivedSen;
   const ready = !!v.billDate && total > 0 && !belowReceived && v.lines.filter((l) => l.amountSen > 0).every((l) => !!l.creditAccountCode);
@@ -116,6 +130,14 @@ export const DebtorBillForm = ({ mode, initial, accounts, receivedSen = 0, savin
         </label>
       </div>
 
+      {/* The event this bill is for — optional: sets every line, and a line can
+          still name its own in the table. */}
+      <label className={styles.field} style={{ maxWidth: 640 }}>
+        <span className={styles.fieldLabel}>Event (all lines, optional)</span>
+        <EventSelect value={commonEvent} around={v.billDate || null} className={styles.fieldInput} aria-label="Event for all lines"
+          onChange={(id) => setV((prev) => ({ ...prev, lines: prev.lines.map((l) => ({ ...l, projectId: id })) }))} />
+      </label>
+
       <table ref={tableRef} style={{ width: '100%', borderCollapse: 'collapse' }}
         onKeyDown={(e) => { if (e.key === 'Insert') { e.preventDefault(); addLine(true); } }}>
         <thead>
@@ -123,6 +145,7 @@ export const DebtorBillForm = ({ mode, initial, accounts, receivedSen = 0, savin
             <th style={{ ...th, width: '34%' }}>Account (credit)</th>
             <th style={th}>Description</th>
             <th style={{ ...th, textAlign: 'right', width: 150 }}>Amount (RM)</th>
+            <th style={{ ...th, width: '24%' }}>Event</th>
             <th style={{ ...th, width: 36 }} />
           </tr>
         </thead>
@@ -143,6 +166,12 @@ export const DebtorBillForm = ({ mode, initial, accounts, receivedSen = 0, savin
                   onCommit={(sen) => patchLine(l.rid, { amountSen: sen ?? 0 })}
                   onKeyDown={(e) => { if (e.key === 'Enter') hopFrom(l.rid); }} />
               </td>
+              {/* The event last: the owner's typing order (account, description,
+                  amount) stays unbroken; the picker above usually sets it. */}
+              <td style={td}>
+                <EventSelect value={l.projectId} around={v.billDate || null} className={styles.fieldInput} aria-label={`line ${l.rid} event`}
+                  onChange={(id) => patchLine(l.rid, { projectId: id })} />
+              </td>
               <td style={td}>
                 {v.lines.length > 1 && (
                   <button type="button" aria-label={`remove line ${l.rid}`} onClick={() => removeLine(l.rid)} style={iconBtn}>
@@ -160,6 +189,7 @@ export const DebtorBillForm = ({ mode, initial, accounts, receivedSen = 0, savin
               <span style={{ ...soft, marginLeft: 'var(--space-3)' }}>Insert adds a line · Enter on an amount moves down · a description alone is a text line: it prints, books nothing</span>
             </td>
             <td style={{ ...td, ...right, fontWeight: 700, color: belowReceived ? 'var(--c-festive-b, #B8331F)' : undefined }}>Total {fmtSen(total)}</td>
+            <td />
             <td />
           </tr>
         </tfoot>
