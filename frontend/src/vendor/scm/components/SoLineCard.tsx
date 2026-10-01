@@ -37,7 +37,7 @@ import { missingVariantAxes } from '@2990s/shared/so-variant-rule';
 import { computeTotalHeight, totalHeightPatch } from '../../shared/total-height';
 import { restrictPricedToPool, restrictStringsToPool } from '../../shared/maintenance-pools';
 import { fabricAllowedByPool } from '../../shared/fabric-pool';
-import { activeOptions, isColourKiv, isDeliveryFeeServiceCode, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
+import { activeOptions, isColourKiv, isDeliveryFeeServiceCode, isServiceCategory, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import {
   useMfgProducts,
   matchesProductQuery,
@@ -197,6 +197,7 @@ const SoLineCardInner = ({
   lineDateLocked,
   seedSofaLegDefault,
   searchHint,
+  chargeOnly = false,
 }: {
   index:     number;
   draft:     SoLineDraft;
@@ -274,6 +275,9 @@ const SoLineCardInner = ({
      they pick a real SKU. It is a HINT ONLY — never committed as the product
      value (a no-match line must be filled from the dropdown, not free-typed). */
   searchHint?: string;
+  /* DEV-32 — an SO line after its DO: the picker offers charge (SERVICE) SKUs
+     only, and the amount is typed: a transport or storage charge is priced per order. */
+  chargeOnly?: boolean;
 }) => {
   const notify = useNotify();
   const maintQ   = useMaintenanceConfig('master');
@@ -299,7 +303,7 @@ const SoLineCardInner = ({
      lines. The server still enforces the catalog price on lines it CAN price
      (isHatchSales in lib/auth.tsx — remove with the hatch). */
   const { staff } = useAuth();
-  const canEditPrice = isAdminLevel(staff?.role) || isHatchSales(staff?.role);
+  const canEditPrice = chargeOnly || isAdminLevel(staff?.role) || isHatchSales(staff?.role);
   /* DELIVERY FEE — the amount cell edits the LINE AMOUNT, not the unit price.
      The fee is derived (owner 2026-08-07, "every ringgit is a LINE"), so a
      typed unit price never survived: the next rebuild re-derived 250 over it
@@ -378,9 +382,9 @@ const SoLineCardInner = ({
   const allProducts = productsQuery.data ?? [];
   const candidates = useMemo(
     () => (trimmedSearch.length >= 2
-      ? allProducts.filter((p) => matchesProductQuery(p, trimmedSearch))
+      ? allProducts.filter((p) => matchesProductQuery(p, trimmedSearch) && (!chargeOnly || isServiceCategory(p.category)))
       : []),
-    [allProducts, trimmedSearch],
+    [allProducts, trimmedSearch, chargeOnly],
   );
   /* Owner 2026-08-08 ("square pillow", HC-SO-2607-013) — typed text the
      catalog does not match must read as an ERROR, not sit quietly in the box:
