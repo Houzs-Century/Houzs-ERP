@@ -3,8 +3,9 @@
 // (a slip older than 14 days, keyed as a request an admin approves).
 //
 // Owner 2026-09-30: 「要加提醒, sidebar 红点 + 通知 admin」, and on who the admin
-// is: Owner + Super Admin + Finance. So the audience is every active holder of
-// `scm.payment.backdate` — Finance holds it literally — AND every `*` holder.
+// is: Owner + Super Admin + Finance, then Logistic. So the audience is every
+// active holder of `scm.payment.backdate` (Finance), of the approve-only
+// `scm.payment.backdate.approve` (Logistic), AND every `*` holder.
 // That second half is a deliberate exception to the literal-keys-only rule the
 // amendment and cancellation notices follow (owner 2026-09-09): for THIS queue
 // the owner named the wildcard roles as the approvers.
@@ -24,6 +25,8 @@ import { postPersonalNotice } from "./personalNotice";
 
 const SOURCE = "payment_backdate";
 export const BACKDATE_ADMIN_PERM = "scm.payment.backdate";
+/** Approve-only (Logistic, owner 2026-09-30). */
+export const BACKDATE_APPROVE_PERM = "scm.payment.backdate.approve";
 
 export type BackdateNotifyEvent = "raised" | "approved" | "rejected";
 
@@ -48,11 +51,12 @@ const clip = (s: string | null | undefined): string => {
 /** Active users who may decide a backdate request — the literal key holders
  *  plus the wildcard roles (see the header). */
 export async function backdateAdminIds(env: Env, companyId?: number | string | null): Promise<number[]> {
-  const [literal, wildcard] = await Promise.all([
+  const [literal, approveOnly, wildcard] = await Promise.all([
     usersHoldingPermission(env, BACKDATE_ADMIN_PERM, { companyId: companyId ?? null }),
+    usersHoldingPermission(env, BACKDATE_APPROVE_PERM, { companyId: companyId ?? null }),
     usersHoldingPermission(env, "*", { companyId: companyId ?? null }),
   ]);
-  return Array.from(new Set([...literal, ...wildcard].map(Number).filter((n) => Number.isFinite(n) && n > 0)));
+  return Array.from(new Set([...literal, ...approveOnly, ...wildcard].map(Number).filter((n) => Number.isFinite(n) && n > 0)));
 }
 
 export async function notifyBackdateRequest(env: Env, event: BackdateNotifyEvent, opts: BackdateNotifyOpts): Promise<void> {

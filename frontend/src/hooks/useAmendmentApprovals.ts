@@ -90,7 +90,7 @@ export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
     "payment-backdate-approvals": usePendingCount(
       PAYMENT_BACKDATE_APPROVALS_KEY,
       "/api/scm/payment-backdate-requests/pending-count",
-      enabled && (can("*") || can("scm.payment.backdate")),
+      enabled && (can("scm.payment.backdate") || can("scm.payment.backdate.approve")),
     ),
   };
 }

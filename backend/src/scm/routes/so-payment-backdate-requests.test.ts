@@ -32,6 +32,7 @@ type Who = { id: number; name: string; perms: string[] };
 const SALES: Who = { id: 11, name: 'Sales Amy', perms: ['scm.access', 'scm.so.view_all'] };
 const OTHER: Who = { id: 12, name: 'Sales Bob', perms: ['scm.access', 'scm.so.view_all'] };
 const ADMIN: Who = { id: 1, name: 'Owner', perms: ['*'] };
+const LOGISTIC: Who = { id: 23, name: 'Logistic Lee', perms: ['scm.access', 'scm.so.view_all', 'scm.payment.backdate.approve'] };
 
 function app(who: Who) {
   const a = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -193,6 +194,23 @@ describe('deciding', () => {
     expect(rows()[0]).toMatchObject({ status: 'REJECTED', decision_note: 'No bank line for this date' });
     expect(notify).toHaveBeenLastCalledWith(expect.anything(), 'rejected', expect.objectContaining({ reason: 'No bank line for this date', requesterUserId: 11 }));
     expect(record).not.toHaveBeenCalled();
+  });
+
+  it('Logistic approves with the approve-only key, sees the inbox and the count', async () => {
+    expect((await get(LOGISTIC, '/payment-backdate-requests')).status).toBe(200);
+    expect((await get(LOGISTIC, '/payment-backdate-requests/pending-count')).body).toEqual({ count: 1 });
+    expect((await post(LOGISTIC, `/payment-backdate-requests/${id}/approve`)).status).toBe(200);
+    expect(record).toHaveBeenCalledTimes(1);
+  });
+
+  it('nobody decides their own request — and the approve-only key still has to request its own late slip', async () => {
+    const r = await post(LOGISTIC, '/mfg-sales-orders/SO-1/payment-backdate-requests', payment({ amountSen: 700 }));
+    expect(r.status).toBe(201);
+    const own = r.body.request.id as string;
+    expect((await post(LOGISTIC, `/payment-backdate-requests/${own}/approve`)).body.error).toBe('own_request');
+    expect((await post(LOGISTIC, `/payment-backdate-requests/${own}/reject`, { note: 'changed my mind' })).status).toBe(403);
+    expect(record).not.toHaveBeenCalled();
+    expect((await post(ADMIN, `/payment-backdate-requests/${own}/approve`)).status).toBe(200);
   });
 
   it('only the requester (or an admin) withdraws', async () => {

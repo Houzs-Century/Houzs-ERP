@@ -2,8 +2,9 @@
 // PaymentBackdateRequests — the admin inbox for Sales Order payments whose slip
 // date is more than 14 days old (owner 2026-09-30: 「balance collection 需要
 // request key in 如果是超过14天 from today - 只有 admin 可以看到 request」).
-// Only a holder of `scm.payment.backdate` reaches it (route, sidebar and the
-// server all ask that key). Approve books the payment; Reject records nothing.
+// Only a holder of `scm.payment.backdate` or the approve-only
+// `scm.payment.backdate.approve` (Logistic) reaches it (route, sidebar and the
+// server all ask those keys). Nobody decides their own request. Approve books the payment; Reject records nothing.
 // Double-clicking a row opens the Sales Order.
 // ----------------------------------------------------------------------------
 
@@ -15,6 +16,7 @@ import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
 import { PAYMENT_METHOD_CODE_TO_VALUE } from '../../vendor/scm/lib/payment-methods';
 import { useBackdateDecisions } from '../../vendor/scm/components/BackdateRequestsPanel';
+import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { backdateStatusLabel, useBackdateInbox, type BackdateRequestRow } from '../../vendor/scm/lib/payment-backdate-queries';
 
 const STORAGE_KEY = 'payment-backdate-requests.layout.v1';
@@ -45,6 +47,7 @@ export const PaymentBackdateRequests = () => {
 
   const q = useBackdateInbox(scope);
   const { run, busy } = useBackdateDecisions();
+  const myId = Number(useHouzsAuth().user?.id);
 
   const columns = useMemo<GridColumn<BackdateRequestRow>[]>(() => [
     {
@@ -104,7 +107,7 @@ export const PaymentBackdateRequests = () => {
     },
     {
       key: 'actions', label: 'Actions', width: 170,
-      accessor: (r) => (r.status !== 'REQUESTED' ? null : (
+      accessor: (r) => (r.status !== 'REQUESTED' || Number(r.requested_by) === myId ? null : (
         <span style={{ display: 'inline-flex', gap: 6 }} onDoubleClick={(e) => e.stopPropagation()}>
           <button type="button" style={actionBtn} disabled={busy} onClick={() => void run(r, 'approve')}>Approve</button>
           <button type="button" style={actionBtn} disabled={busy} onClick={() => void run(r, 'reject')}>Reject</button>
@@ -113,7 +116,7 @@ export const PaymentBackdateRequests = () => {
       exportValue: () => '',
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the action closures read the latest hooks on click; the column set itself is static
-  ], [busy]);
+  ], [busy, myId]);
 
   const rows = q.data?.requests ?? [];
   const openCount = rows.filter((r) => r.status === 'REQUESTED').length;
