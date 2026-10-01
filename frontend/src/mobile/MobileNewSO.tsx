@@ -67,7 +67,7 @@ import {
 import { StatePicker } from "../vendor/scm/components/StatePicker";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { deferLineDateToHeader, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
-import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
+import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
 import { MobileSavedPhotoThumb, StagedPhotoThumb } from "./MobileSavedPhotoThumb";
@@ -103,6 +103,7 @@ import { RecordedPaymentsList, type RecordedPayment } from "./RecordedPayments";
    keeps missing (#583, then again in fix/b3-pay). */
 import { missingMethodSubField, slipDateProblem } from "../vendor/scm/components/PaymentsTable";
 import { paymentSlipDateWindow } from "../vendor/scm/lib/payment-slip-date";
+import { REQUEST_HINT, askNewSoBackdateReason, isBackdateRequestRow, sendNewSoBackdateRequests } from "../vendor/scm/lib/new-so-backdate";
 /* Money moved from a cancelled order (docs/bugs/0933): the method option, its pick, the body, the seed. */
 import { ConvertSourceField, convertedBody, rmInput, useMobileConvertSources, withConvertOption, type MobileConvertPrefill } from "./MobileOrderMoney";
 import { CONVERT_LABEL, type ConvertSource } from "../vendor/scm/lib/so-money-queries";
@@ -618,7 +619,7 @@ export function MobileNewSO({
 }) {
   const qc = useQueryClient();
   const notify = useNotify();
-  const confirm = useConfirm();
+  const confirm = useConfirm(); const prompt = usePrompt(); const backdateReasonRef = useRef("");
   const submitDialog = useAmendmentSubmitDialog();
   /* SO-amendment CREATE (Phase 1-C) — the SAME vendored mutation the desktop
      SalesOrderDetail.submitAmendment uses (POST /:docNo/amendments). Reused
@@ -662,6 +663,8 @@ export function MobileNewSO({
      Salesperson default + the scm.so.attribute_other gate, mirroring desktop
      SalesOrderNew (which reads `can` + `user` from the same context). */
   const { user: currentUser, can } = useHouzsAuth();
+  /* Too old for the window: posted as an admin request, not booked (owner 2026-10-01, lib/new-so-backdate). */
+  const isBackdateRow = (p: Payment) => isBackdateRequestRow({ paidAt: p.date, methodLabel: p.method, receiptBacked: false }, can("scm.payment.backdate"));
   const canChangeSalesperson = can("scm.so.attribute_other");
   /* Remove-Processing-Date gate (Owner 2026-07-09, port of 2990 #717) — clearing
      a SET Processing Date pulls the SO back out of Proceed, so it is admin-level
@@ -1422,13 +1425,11 @@ export function MobileNewSO({
     })),
   }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, fairPick, noFair, resolvedVenueName, linkedFair, linkedDay, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origItems, pays]);
 
-  /* The payment rows whose slip date falls outside the window (owner 2026-09-23).
-     A blocker rather than a post-create failure: the payments are posted AFTER
-     the order is created, so without this the order lands and the money does
-     not. The server refuses the same row with the same sentence. */
+  /* A slip date outside the window blocks the save (the payments post AFTER the
+     create) — except a too-old row, which becomes an admin request (isBackdateRow). */
   const outOfWindowPayments = useMemo(
     () => pays
-      .filter((p) => toSen(p.amount) > 0)
+      .filter((p) => toSen(p.amount) > 0 && !isBackdateRow(p))
       .map((p) => slipDateProblem({ paidAt: p.date, methodLabel: p.method }, todayMyt(), can("scm.payment.backdate")))
       .filter((m): m is string => m !== null),
     [pays, can],
@@ -1627,6 +1628,7 @@ export function MobileNewSO({
     if (rows.length === 0) return;
     let failed = 0;
     let firstError = "";
+    const requests: Array<Record<string, unknown>> = [];
     for (const p of rows) {
       const code = paymentMethodCodeForValue(p.method) ?? "cash";
       const body: Record<string, unknown> = {
@@ -1644,6 +1646,7 @@ export function MobileNewSO({
       else if (code === "transfer") { body.onlineType = p.online || null; }
       /* A converted row posts only its source and amount — the server fixes the day and the collector. */
       const posted = p.method === CONVERT_LABEL ? convertedBody(p.convertedFromDocNo ?? "", toSen(p.amount)) : body;
+      if (isBackdateRow(p)) { requests.push(body); continue; }
       try {
         await authedFetch(`/mfg-sales-orders/${encodeURIComponent(createdDocNo)}/payments`,
           idempotentInit(p.idempotencyKey, { method: "POST", body: JSON.stringify(posted) }));
@@ -1656,6 +1659,7 @@ export function MobileNewSO({
       const detail = firstError ? ` ${firstError}` : "";
       void notify({ title: "Some payments weren't recorded", body: `${failed} of ${rows.length} payment(s) failed to post.${detail} Record them again from the SO detail screen.`, tone: "error" });
     }
+    await sendNewSoBackdateRequests(createdDocNo, requests, backdateReasonRef.current, notify);
   }
 
   /* Post-save per-line photo upload. Uploads each staged File against the saved
@@ -1928,6 +1932,9 @@ export function MobileNewSO({
       await notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: "error" });
       return;
     }
+    const backdateReason = await askNewSoBackdateReason(prompt, pays.filter((p) => toSen(p.amount) > 0 && isBackdateRow(p)).length);
+    if (backdateReason === null) return;
+    backdateReasonRef.current = backdateReason;
     setError(null);
     setSubmitting(true);
     try {
@@ -2130,20 +2137,14 @@ export function MobileNewSO({
         /* EXPLICIT draft flag — the backend statuses DRAFT only on
            body.asDraft === true; nulling the dates alone saves CONFIRMED. */
         asDraft: asDraft === true,
-        /* GATE-ONLY, never booked. recordNewPayments runs AFTER this
-           create, so at CREATE time the backend saw RM0 and the Processing-Date
-           deposit gate refused the save with the money plainly on screen — and
-           the create had to succeed before the payments could ever be posted.
-           Deadlock, identical to the desktop screen (same fix, same PR: the two
-           surfaces share this rule and only one of them being fixed is the
-           recurring bug class in CLAUDE.md). Same filter recordNewPayments
-           uses — the AMOUNT, and only the amount — so this can never claim
-           money it is not about to record. It used to also demand a
-           slipSession; once the slip became optional (Owner 2026-08-13) that
-           would have re-opened this very deadlock for a slip-less deposit. */
+        /* GATE-ONLY, never booked: recordNewPayments posts AFTER the create, so
+           without this the Processing-Date deposit gate saw RM0 (deadlock; same
+           fix as desktop). The AMOUNT only — never the slip (optional since
+           2026-08-13) — and never a backdate-request row, which is not money
+           the order holds until an admin approves it. */
         pendingDepositSen: (() => {
           const c = pays
-            .filter((p) => toSen(p.amount) > 0)
+            .filter((p) => toSen(p.amount) > 0 && !isBackdateRow(p))
             .reduce((sum, p) => sum + toSen(p.amount), 0);
           return c > 0 ? c : undefined;
         })(),
@@ -3651,13 +3652,12 @@ function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pay: Paym
               fullWidth
               className="fld-i"
               value={pay.date}
-              min={mayBackdateSlip ? undefined : slipWindow.min}
               max={mayBackdateSlip ? undefined : slipWindow.max}
               invalid={slipProblem !== null}
               onChange={(iso) => onChange({ date: iso })}
             />
             {slipProblem && (
-              <span style={{ fontSize: 11, lineHeight: 1.3, color: "var(--red)" }}>{slipProblem}</span>
+              <span style={{ fontSize: 11, lineHeight: 1.3, color: "var(--red)" }}>{isBackdateRequestRow({ paidAt: pay.date, methodLabel: pay.method, receiptBacked: false }, mayBackdateSlip) ? REQUEST_HINT : slipProblem}</span>
             )}
           </Field>
           <Field label="Amount" style={{ flex: 1.1 }}>

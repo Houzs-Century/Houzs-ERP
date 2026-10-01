@@ -52,6 +52,8 @@ import { api } from '../../api/client';
 import type { Department, TeamMember } from '../../types';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { usePrompt } from '../../vendor/scm/components/ConfirmDialog';
+import { askNewSoBackdateReason, draftRequestBody, isBackdateRequestRow, sendNewSoBackdateRequests } from '../../vendor/scm/lib/new-so-backdate';
 import {
   useCreateMfgSalesOrder, useDebtorSearch, useAddSalesOrderPayment,
   useUploadSoItemPhoto, useMfgSalesOrderDetail,
@@ -150,7 +152,7 @@ const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, cu
 
 export const SalesOrderNew = () => {
   const navigate = useNavigate();
-  const notify = useNotify();
+  const notify = useNotify(); const prompt = usePrompt();
   /* Copy-to-new-SO: ?copyFrom=<docNo> seeds this form from an existing SO
      (customer + line items only — dates, payments, customer SO ref, doc no
      and status are intentionally left blank so the operator starts fresh). */
@@ -1205,7 +1207,8 @@ export const SalesOrderNew = () => {
     return failures;
   };
 
-  const paymentIntents = () => paymentDrafts.filter((d) => d.amountSen > 0 && !d.receiptImageKey);
+  const backdateRows = () => paymentDrafts.filter((d) => d.amountSen > 0 && isBackdateRequestRow({ ...d, receiptBacked: Boolean(d.receiptImageKey) }, can('scm.payment.backdate')));
+  const paymentIntents = () => paymentDrafts.filter((d) => d.amountSen > 0 && !d.receiptImageKey && !backdateRows().includes(d));
 
   const flushPaymentDrafts = async (docNo: string, drafts: PaymentDraft[]): Promise<{ failedDrafts: PaymentDraft[] }> => {
     const tasks = drafts
@@ -1445,15 +1448,13 @@ export const SalesOrderNew = () => {
         }]
       : [];
   }, [lines, scanLineMeta]);
-  /* The other client-only blocker: a payment row dated outside the slip window
-     (owner 2026-09-23). The validate dry-run carries the rows but not their
-     DATES, so the backend cannot author this one — and it has to block the SAVE,
-     not just the row, because the payments are posted after the order is
-     created. Mobile's New SO carries the same extra. */
+  /* A slip date the backend cannot see (validate carries no dates) blocks the SAVE,
+     as mobile's does — except a too-old row, which goes to an admin as a request
+     after the order is created (owner 2026-10-01, lib/new-so-backdate). */
   const slipDateExtras = useMemo<SaveProblem[]>(() => {
     const mayBackdate = can('scm.payment.backdate');
     const problems = paymentDrafts
-      .filter((d) => d.amountSen > 0)
+      .filter((d) => d.amountSen > 0 && !isBackdateRequestRow({ ...d, receiptBacked: Boolean(d.receiptImageKey) }, mayBackdate))
       .map((d) => slipDateProblem(d, todayMyt(), mayBackdate))
       .filter((m): m is string => m !== null);
     return problems.length > 0
@@ -1535,6 +1536,8 @@ export const SalesOrderNew = () => {
       void notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: 'error' });
       return;
     }
+    const backdateReason = await askNewSoBackdateReason(prompt, backdateRows().length);
+    if (backdateReason === null) return;
 
     /* Edit-gate — operator committed to saving, so fold their corrections back
        into the few-shot pool (fire-and-forget, fromScan only). */
@@ -1674,16 +1677,15 @@ export const SalesOrderNew = () => {
           /* THE ACCOUNTS MAY HAVE REFUSED IT, and until 2026-08-19 only a queue
              behind a permission key knew. Never blocks — the order is saved. */
           await notifyAcNotSent(notify, res, 'Sales order');
-          /* Task #105 — Fire the queued payment drafts as follow-up POSTs.
-             We don't gate navigation on success — if a payment fails the
-             SO still exists, so we navigate to the Detail page where
-             commander can re-enter the affected row. */
+          /* Task #105 — the queued drafts post after the create; a failure never
+             blocks navigation (the SO exists), the Detail page retries it. */
           const intents = paymentIntents();
           const staged = intents.length === 0 || writePaymentRetryHandoff('so', res.docNo, intents);
           const { failedDrafts } = staged
             ? await flushPaymentDrafts(res.docNo, intents)
             : { failedDrafts: intents };
           const failed = failedDrafts.length;
+          await sendNewSoBackdateRequests(res.docNo, backdateRows().map(draftRequestBody), backdateReason, notify);
           /* Line-card-redesign — Drain pendingPhotoFiles for every line
              after the SO + items exist. Same non-blocking pattern as
              payments: a photo failure leaves the SO intact and we

@@ -45,14 +45,14 @@ describe("slipDateProblem — the rule plus the two things the rule must not kno
 });
 
 describe("every surface that keys a payment date bounds its own field", () => {
-  /* `requests` — the two balance-collection surfaces drop the LOWER bound since
-     owner 2026-09-30: an older slip becomes a request an admin approves
+  /* `requests` — every keying surface drops the LOWER bound (owner 2026-09-30,
+     the New SO 2026-10-01): an older slip becomes a request an admin approves
      (payment-backdate-queries), so the picker must be able to offer it. The
      future bound stays everywhere. */
   const surfaces: Array<[string, string, boolean]> = [
     ["the desktop payments panel", "./PaymentsTable.tsx", true],
     ["the mobile payments sheet", "../../../mobile/RecordedPayments.tsx", true],
-    ["the mobile New SO", "../../../mobile/MobileNewSO.tsx", false],
+    ["the mobile New SO", "../../../mobile/MobileNewSO.tsx", true],
   ];
 
   for (const [name, rel, requests] of surfaces) {
@@ -62,8 +62,8 @@ describe("every surface that keys a payment date bounds its own field", () => {
       expect(text).toContain("paymentSlipDateWindow");
       if (requests) {
         expect(text).not.toMatch(/slipWindow\.min/);
-        expect(text).toContain("slipDateNeedsRequest");
-        expect(text).toContain("useRaiseBackdateRequest");
+        expect(text).toMatch(/slipDateNeedsRequest|isBackdateRequestRow/);
+        expect(text).toMatch(/useRaiseBackdateRequest|sendNewSoBackdateRequests/);
       } else {
         expect(text).toMatch(/min=\{may\w*[Bb]ackdate\w*\s*\?\s*undefined\s*:\s*slipWindow\.min\}/);
       }
