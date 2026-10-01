@@ -978,6 +978,8 @@ DELETE,/api/scm/mrp-supplier-lead-times,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT
 GET,/api/scm/mrp-supplier-lead-times,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.mrp"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/mrp-supplier-lead-times.ts
 PUT,/api/scm/mrp-supplier-lead-times,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.mrp"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/mrp-supplier-lead-times.ts
 POST,/api/scm/mrp/regenerate,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.mrp"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/mrp.ts
+GET,/api/scm/official-docs,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/official-docs.ts
+POST,/api/scm/official-docs/:kind/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/official-docs.ts
 GET,/api/scm/other-debtors,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/other-debtors.ts
 POST,/api/scm/other-debtors,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/other-debtors.ts
 GET,/api/scm/other-debtors/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/other-debtors.ts
@@ -1014,6 +1016,7 @@ GET,/api/scm/payment-requests/:id/files,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT
 POST,/api/scm/payment-requests/:id/files,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
 DELETE,/api/scm/payment-requests/:id/files/:fileId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
 GET,/api/scm/payment-requests/:id/files/:fileId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
+POST,/api/scm/payment-requests/:id/official-doc,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
 POST,/api/scm/payment-requests/:id/return,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
 POST,/api/scm/payment-requests/:id/withdraw,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
 GET,/api/scm/payment-requests/bill-matches,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts

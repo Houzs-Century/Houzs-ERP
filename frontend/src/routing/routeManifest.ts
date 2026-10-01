@@ -82,6 +82,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/deposit-invoices",
   "/scm/ar-invoices",
   "/scm/payment-requests",
+  "/scm/official-docs",
   "/scm/forecast",
   "/scm/finance-dashboard",
   "/scm/payment-vouchers/:id",

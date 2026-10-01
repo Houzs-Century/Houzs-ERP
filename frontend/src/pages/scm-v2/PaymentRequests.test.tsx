@@ -38,6 +38,14 @@ const withdrawAsync = vi.fn(async (_id: string) => ({ ok: true }));
 const returnAsync = vi.fn(async (_b: Req) => ({ ok: true }));
 const uploadAsync = vi.fn(async (_b: Req) => ({ ok: true }));
 
+/* 欠正式单 (item 3): Finance's marks and the requester's upload — stubbed. */
+const markOfficial = vi.fn();
+const uploadOfficialAsync = vi.fn(async (_b: unknown) => ({ ok: true, received: [{ kind: 'PV', number: 'HC-PV-2610-001' }], note: null as string | null }));
+vi.mock('../../vendor/scm/lib/official-doc-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/official-doc-queries')>()),
+  useMarkOfficialDoc: () => ({ mutate: markOfficial, isPending: false }),
+  useUploadOfficialDoc: () => ({ mutateAsync: uploadOfficialAsync, isPending: false }),
+}));
 vi.mock('../../vendor/scm/lib/payment-request-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/payment-request-queries')>()),
   usePaymentRequests: () => ({ data: { requests, finance: isFinance, hasEvents }, isLoading: false, isError: false, error: null }),
@@ -236,6 +244,25 @@ describe('the requester', () => {
     fireEvent.click(within(b).getByText('Send to Finance'));
     await waitFor(() => expect(balanceAsync).toHaveBeenCalledTimes(1));
     expect(balanceAsync.mock.calls[0]![0]).toEqual({ id: 'r1', amountSen: 500_000, dueDate: null, purpose: 'Balance — Booth F1 rental', payPct: null });
+  });
+
+  /* Item 3 (owner 2026-10-01): paid on a proforma — the official invoice is owed. */
+  test('a payment owing its official invoice is marked and filtered; the requester uploads it on the request', async () => {
+    requests = [
+      base({ status: 'VOUCHERED', stage: 'PAID', officialDoc: { state: 'OWED', note: null }, voucher: { id: 'pv-1', pvNumber: 'HC-PV-2610-001', status: 'POSTED', approvedAt: null, postedAt: '2026-10-01T02:00:00Z', bankConfirmed: false } }),
+      base({ id: 'r2', request_no: 'HC-PRQ-2609-002' }),
+    ];
+    isFinance = false; uploadOfficialAsync.mockClear();
+    draw();
+    expect(screen.getAllByText('Official invoice owed · 欠正式单').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Official invoice owed · 欠正式单' }));
+    expect(screen.getByText('HC-PRQ-2609-001')).toBeTruthy();
+    expect(screen.queryByText('HC-PRQ-2609-002')).toBeNull();
+    fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
+    const d = screen.getByRole('dialog');
+    expect(within(d).getByText(/upload the official invoice when you have it/)).toBeTruthy();
+    fireEvent.change(within(d).getByLabelText('Upload the official invoice'), { target: { files: [new File(['%PDF'], 'official.pdf', { type: 'application/pdf' })] } });
+    await waitFor(() => expect(uploadOfficialAsync).toHaveBeenCalledWith({ requestId: 'r1', file: { name: 'official.pdf', mime: 'application/pdf', dataBase64: 'b64:official.pdf' } }));
   });
 
   test('a returned request shows Finance\'s note and goes back with "Fix and send again"', () => {

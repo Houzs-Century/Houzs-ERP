@@ -30,6 +30,14 @@ const readAsync = vi.fn(async (_b: Req) => ({
   hasEvents: true, eventBill: false, eventSuggestions: [], matches: [],
 }));
 
+/* 欠正式单 (item 3): Finance's marks and the requester's upload — stubbed. */
+const markOfficial = vi.fn();
+const uploadOfficialAsync = vi.fn(async (_b: unknown) => ({ ok: true, received: [{ kind: 'PV', number: 'HC-PV-2610-001' }], note: null as string | null }));
+vi.mock('../vendor/scm/lib/official-doc-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../vendor/scm/lib/official-doc-queries')>()),
+  useMarkOfficialDoc: () => ({ mutate: markOfficial, isPending: false }),
+  useUploadOfficialDoc: () => ({ mutateAsync: uploadOfficialAsync, isPending: false }),
+}));
 vi.mock('../vendor/scm/lib/payment-request-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../vendor/scm/lib/payment-request-queries')>()),
   usePaymentRequests: () => ({ data: { requests, finance: isFinance, hasEvents: true }, isLoading: false, isError: false }),
@@ -119,6 +127,17 @@ describe('MobilePaymentRequests', () => {
     fireEvent.click(screen.getByText('Send to Finance'));
     await waitFor(() => expect(balanceAsync).toHaveBeenCalledTimes(1));
     expect(balanceAsync.mock.calls[0]![0]).toMatchObject({ id: 'r1', amountSen: 600_000, payPct: null });
+  });
+
+  /* Item 3: paid on a proforma — 欠正式单 on the list, and 补正式单 on the request. */
+  test('a payment owing its official invoice is marked; the requester uploads it from the phone', async () => {
+    requests = [base({ status: 'VOUCHERED', stage: 'PAID', officialDoc: { state: 'OWED', note: null } })];
+    isFinance = false; uploadOfficialAsync.mockClear();
+    render(<MobilePaymentRequests onBack={() => undefined} />);
+    expect(screen.getByText('Official invoice owed · 欠正式单')).toBeTruthy();
+    fireEvent.click(screen.getByText('MLE EVENTS SDN BHD').closest('button')!);
+    fireEvent.change(screen.getByLabelText('Upload the official invoice'), { target: { files: [new File(['jpg'], 'official.jpg', { type: 'image/jpeg' })] } });
+    await waitFor(() => expect(uploadOfficialAsync).toHaveBeenCalledWith({ requestId: 'r1', file: { name: 'official.jpg', mime: 'image/jpeg', dataBase64: 'b64:official.jpg' } }));
   });
 
   test('Finance returns a waiting request with the note the prompt demands', async () => {

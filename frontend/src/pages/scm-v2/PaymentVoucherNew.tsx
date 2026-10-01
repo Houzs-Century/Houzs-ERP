@@ -160,6 +160,10 @@ export const PaymentVoucherNew = () => {
      another request, voucher or AP invoice is said out loud, never refused). */
   const [billRef, setBillRef]                     = useState<string>('');
   const [billDate, setBillDate]                   = useState<string>('');
+  /* 欠正式单 (item 3): paid on a proforma or quotation — the official invoice is
+     still owed. Finance's tick, pre-ticked when the reader read either word. */
+  const [officialOwed, setOfficialOwed]           = useState<boolean>(false);
+  const takeProvisional = (kind: BillExtraction['documentKind']) => { if (kind === 'proforma' || kind === 'quotation') setOfficialOwed(true); };
   /* One bill's pair: a voucher paying several bills ("A, B") keeps none. */
   const takeBillPair = (no: string | null | undefined, date: string | null | undefined) => {
     if (no && !no.includes(',')) setBillRef((prev) => prev.trim() ? prev : (upperFill(no) ?? no));
@@ -216,6 +220,7 @@ export const PaymentVoucherNew = () => {
     ].filter(Boolean).join(' · '));
     if (noteBits) setNotes((prev) => prev.trim() ? prev : noteBits);
     takeBillPair(ex.invoiceNumber, ex.invoiceDate);
+    takeProvisional(ex.documentKind);
     /* The account: ONLY what this operator saved for this vendor before
        (mig 0341) — never a model guess. Absent a memory it stays empty and a
        person picks it. */
@@ -417,6 +422,7 @@ export const PaymentVoucherNew = () => {
       const billBits = upperFill([ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : null, ex.invoiceDate ? `dated ${ex.invoiceDate}` : null].filter(Boolean).join(' · '));
       if (billBits) setNotes((prev) => (prev.includes(billBits) ? prev : `${prev} · ${billBits}`));
       takeBillPair(ex.invoiceNumber, ex.invoiceDate);
+      takeProvisional(ex.documentKind);
       if (r.project_id == null) setEventSuggestions(bill.eventSuggestions ?? []);
       setScanNote([
         asked,
@@ -712,6 +718,7 @@ export const PaymentVoucherNew = () => {
         ...(sendAllocations.length > 0 ? { allocations: sendAllocations } : {}),
         ...(fromRequest ? { paymentRequestId: fromRequest } : {}),
         ...(showBill ? { billRef: billRef.trim() || null, billDate: billDate || null } : {}),
+        ...(showBill && officialOwed ? { officialDocOwed: true } : {}),
       });
       /* Attach the scanned bill AFTER the voucher exists — sequentially, so
          sort_no (= print order) is the scan order. A failed upload never
@@ -855,6 +862,12 @@ export const PaymentVoucherNew = () => {
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Bill date</span>
                 <DateField fullWidth value={billDate} onChange={(iso) => setBillDate(iso)} className={styles.fieldInput} aria-label="Bill date" />
+              </label>
+            )}
+            {showBill && (
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', alignSelf: 'end' }}>
+                <input type="checkbox" checked={officialOwed} onChange={(e) => setOfficialOwed(e.target.checked)} aria-label="Official invoice owed" />
+                Proforma / quotation — official invoice owed · 欠正式单
               </label>
             )}
             {showBill && (billMatchesQ.data?.matches.length ?? 0) > 0 && (

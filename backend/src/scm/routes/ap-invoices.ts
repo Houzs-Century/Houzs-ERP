@@ -48,12 +48,13 @@ import { supabaseAuth } from '../middleware/auth';
 import { fmtSen } from '../shared/format';
 import { parseEventId, unknownEventRefusal } from '../lib/event-tags';
 import { linkPaymentRequest, paymentRequestLinkGuard } from '../lib/payment-request';
+import { officialActor, officialOwedFields, officialOwedUpdates } from '../lib/official-doc';
 
 type Row = Record<string, any>;
 
 const NO_PERM = (what: string) => ({ error: `You don't have permission to ${what}.` });
 
-const HEADER = 'id, company_id, invoice_number, supplier_id, supplier_invoice_ref, invoice_date, due_date, currency, exchange_rate, total_sen, paid_sen, status, notes, created_at, created_by, posted_at, posted_by, cancelled_at, cancelled_by';
+const HEADER = 'id, company_id, invoice_number, supplier_id, supplier_invoice_ref, invoice_date, due_date, currency, exchange_rate, total_sen, paid_sen, status, notes, created_at, created_by, posted_at, posted_by, cancelled_at, cancelled_by, official_doc, official_doc_note, official_doc_at, official_doc_by';
 const LINE = 'id, line_no, description, debit_account_code, amount_sen, project_id';
 
 /** projectId: the event the line's money is for (owner 2026-09-30, 5a; lib/event-tags.ts). */
@@ -209,6 +210,7 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
     invoice_number: invoiceNumber,
     supplier_id: sup.supplier.id,
     supplier_invoice_ref: body.supplierInvoiceRef ? String(body.supplierInvoiceRef).trim() : null,
+    ...officialOwedFields(body, officialActor(c)), // 欠正式单 — booked on a proforma (lib/official-doc.ts)
     invoice_date: invoiceDate,
     due_date: dueDate,
     currency: 'MYR',
@@ -297,6 +299,7 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
     patch.supplier_id = sup.supplier.id;
   }
   if (body.supplierInvoiceRef !== undefined) patch.supplier_invoice_ref = body.supplierInvoiceRef ? String(body.supplierInvoiceRef).trim() : null;
+  Object.assign(patch, officialOwedUpdates(body, officialActor(c), inv));
   if (body.invoiceDate !== undefined) patch.invoice_date = dateOrNull(body.invoiceDate) ?? inv.invoice_date;
   if (body.dueDate !== undefined) patch.due_date = dateOrNull(body.dueDate);
   if (body.notes !== undefined) patch.notes = body.notes ? String(body.notes).trim() : null;

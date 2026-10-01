@@ -129,7 +129,7 @@ export function makeDocFileHandlers(spec: DocFilesSpec) {
     if ('resp' in found) return found.resp;
     const sb = c.get('supabase');
     const { data, error } = await scopeToCompany(
-      sb.from(spec.table).select('id, file_name, mime, size_bytes, sort_no, created_at').eq(spec.fkColumn, found.doc.id), c,
+      sb.from(spec.table).select('id, file_name, mime, size_bytes, sort_no, created_at, kind').eq(spec.fkColumn, found.doc.id), c,
     ).order('sort_no');
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     return c.json({ files: data ?? [] });

@@ -713,6 +713,8 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/ap-invoices", label: "AP Invoices", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
           // 申请付款 (owner 2026-09-30) — the requests waiting for a voucher.
           { to: "/scm/payment-requests", label: "Payment Requests", icon: HandCoins, anyPerm: ["*", "scm.payment_voucher.create"] },
+          // 欠正式单 (owner 2026-10-01) — payments made on a proforma, still owing the official invoice.
+          { to: "/scm/official-docs", label: "Official Invoices Owed", icon: FileText, anyPerm: ["*", "scm.payment_voucher.create"] },
         ],
       },
       {

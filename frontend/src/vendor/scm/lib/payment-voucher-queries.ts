@@ -217,7 +217,8 @@ export const useRejectPaymentVoucher = () => {
    this call. */
 export type BillExtraction = {
   vendorName: string | null; vendorRegNo: string | null;
-  documentKind: 'invoice' | 'bill' | 'receipt' | 'statement' | 'unknown';
+  /** proforma / quotation: not yet the real invoice — a payment on it owes the official one (item 3). */
+  documentKind: 'invoice' | 'bill' | 'receipt' | 'statement' | 'proforma' | 'quotation' | 'unknown';
   invoiceNumber: string | null; invoiceDate: string | null; dueDate: string | null;
   currency: string; totalSen: number | null; sstSen: number | null;
   lines: Array<{ description: string | null; amountSen: number | null }>;

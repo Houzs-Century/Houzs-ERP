@@ -617,6 +617,23 @@ describe('answering a payment request (?fromRequest=, 申请付款)', () => {
     requestDetail = undefined;
   });
 
+  /* Item 3 (owner 2026-10-01): a bill read as a PROFORMA is paid owing its official invoice — pre-ticked. */
+  test('a proforma read off the request\'s bill pre-ticks 欠正式单; the save sends it', async () => {
+    mutateAsync.mockClear(); extractRequestAsync.mockClear();
+    requestDetail = { id: 'prq-1', request_no: 'HC-PRQ-2609-004', requested_by_name: 'James Seow', payee_name: 'MLE EVENTS SDN BHD', amount_sen: 850000, purpose: 'Booth F1 rental', project_id: 348, bank_name: null, bank_account_no: null, bank_account_name: null, status: 'SUBMITTED', stage: 'SUBMITTED', voucher: null };
+    extractRequestAsync.mockResolvedValueOnce({ bills: [{
+      index: 0, ok: true,
+      extraction: { vendorName: 'MLE EVENTS SDN BHD', vendorRegNo: null, documentKind: 'proforma', invoiceNumber: 'PF-0925', invoiceDate: '2026-09-01', dueDate: null, currency: 'MYR', totalSen: 850000, sstSen: null, lines: [{ description: 'Booth F1 rental', amountSen: 850000 }] },
+      supplierMatch: null, memory: { payeeName: 'MLE EVENTS', debitAccountCode: '900-A002', purpose: 'OTHER', timesSeen: 2 }, eventSuggestions: [],
+    }] });
+    draw('/scm/payment-vouchers/new?fromRequest=prq-1');
+    await waitFor(() => expect((screen.getByLabelText('Official invoice owed') as HTMLInputElement).checked).toBe(true));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3', cancelable: true, bubbles: true }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0]![0]).toMatchObject({ officialDocOwed: true, billRef: 'PF-0925' });
+    requestDetail = undefined;
+  });
+
   /* Item 1 (owner 2026-10-01): the request's bill number and date fill the
      voucher's; the same pair on another document is said out loud. */
   test('the request\'s bill number and date fill in; the same bill elsewhere is said; the save carries the pair', async () => {
