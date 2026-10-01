@@ -163,7 +163,9 @@ describe("document reference numbers", () => {
     expect((await peekNextRefNo(env as never, { deptCode: "QA", typeCode: "SOP", now: OCT_BY_MYT })).refNo).toBe("QA-SOP-2610-0001");
     const r = await call(STAFF, "/api/document-refs/next?typeCode=sop&deptCode=qa");
     expect(r.status).toBe(200);
-    expect(r.body.data.refNo).toMatch(/^QA-SOP-\d{4}-0002$/);
+    // The route reads the real clock, so compare with the service's own preview
+    // for "now" rather than pinning a month (0002 only held while it was September).
+    expect(r.body.data.refNo).toBe((await peekNextRefNo(env as never, { deptCode: "QA", typeCode: "SOP" })).refNo);
     expect((await call(STAFF, "/api/document-refs/next?typeCode=x&deptCode=qa")).status).toBe(400);
     expect((await call(STAFF, "/api/document-refs/next?typeCode=SOP&deptCode=toolong")).status).toBe(400);
   });
