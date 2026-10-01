@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   LABELS_PER_PAGE,
+  RACK_LABEL_MM,
   RACK_QR_PREFIX,
   rackLabelCell,
   rackLabelsInPrintOrder,
@@ -27,6 +28,11 @@ describe('rack label sheet', () => {
     expect(third.y).toBeGreaterThan(first.y);
     expect(rackLabelCell(LABELS_PER_PAGE - 1).page).toBe(0);
     expect(rackLabelCell(LABELS_PER_PAGE)).toEqual({ ...first, page: 1 });
+  });
+
+  it('stays under the 60mm beam face it is stuck on', () => {
+    expect(RACK_LABEL_MM.h).toBeLessThanOrEqual(60);
+    expect(rackLabelCell(LABELS_PER_PAGE - 1).y + RACK_LABEL_MM.h).toBeLessThanOrEqual(297 - 5);
   });
 
   it('fits the 76-slot KL warehouse on 8 sheets', () => {

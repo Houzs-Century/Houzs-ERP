@@ -12,7 +12,9 @@
 // receipt is for. The prefix lets a scanner tell a shelf from a DO or packing
 // list QR, which encode URLs.
 //
-// A4, 2 x 5 stickers, dashed cut lines. The rack number is printed as large as
+// A4, 2 x 5 stickers, dashed cut lines. Each sticker is 57mm tall because the
+// beam face it goes on is 60mm (owner 2026-10-01); the slack absorbs a crooked
+// cut. The rack number is printed as large as
 // fits, since it is read from across an aisle; the QR is drawn as vectors by
 // the shared drawQrIntoPdf.
 // ----------------------------------------------------------------------------
@@ -27,14 +29,16 @@ export const rackQrPayload = (label: string): string => `${RACK_QR_PREFIX}${labe
 
 const PAGE_W = 210;
 const PAGE_H = 297;
-const MARGIN = 10;
+const MARGIN_X = 10;
 const COLS = 2;
 const ROWS = 5;
 export const LABELS_PER_PAGE = COLS * ROWS;
-const CELL_W = (PAGE_W - MARGIN * 2) / COLS;
-const CELL_H = (PAGE_H - MARGIN * 2) / ROWS;
+const CELL_W = (PAGE_W - MARGIN_X * 2) / COLS;
+const CELL_H = 57;
+export const RACK_LABEL_MM = { w: CELL_W, h: CELL_H };
+const MARGIN_Y = (PAGE_H - CELL_H * ROWS) / 2;
 const PAD = 5;
-const QR_MM = 42;
+const QR_MM = 46;
 
 /** Where sticker `index` (0-based, print order) lands. */
 export function rackLabelCell(index: number): { page: number; x: number; y: number } {
@@ -42,8 +46,8 @@ export function rackLabelCell(index: number): { page: number; x: number; y: numb
   const slot = index % LABELS_PER_PAGE;
   return {
     page,
-    x: MARGIN + (slot % COLS) * CELL_W,
-    y: MARGIN + Math.floor(slot / COLS) * CELL_H,
+    x: MARGIN_X + (slot % COLS) * CELL_W,
+    y: MARGIN_Y + Math.floor(slot / COLS) * CELL_H,
   };
 }
 
