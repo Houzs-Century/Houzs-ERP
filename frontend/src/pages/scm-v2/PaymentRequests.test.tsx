@@ -241,9 +241,14 @@ describe('the requester', () => {
     fireEvent.click(within(d).getByText('Request the balance · 申请付余额'));
     const b = screen.getByRole('dialog', { name: 'Request the balance' });
     expect(within(b).getByText(/Left to ask on this bill: RM 5,000\.00 of RM 10,000\.00\./)).toBeTruthy();
+    /* 漏洞 3: the official invoice attached here goes up AS the official invoice, on the new balance. */
+    fireEvent.change(within(b).getByLabelText('Official invoice files'), { target: { files: [new File(['x'], 'official.pdf', { type: 'application/pdf' })] } });
+    uploadOfficialAsync.mockClear(); uploadAsync.mockClear();
     fireEvent.click(within(b).getByText('Send to Finance'));
     await waitFor(() => expect(balanceAsync).toHaveBeenCalledTimes(1));
     expect(balanceAsync.mock.calls[0]![0]).toEqual({ id: 'r1', amountSen: 500_000, dueDate: null, purpose: 'Balance — Booth F1 rental', payPct: null });
+    await waitFor(() => expect(uploadOfficialAsync).toHaveBeenCalledWith({ requestId: 'r-bal', file: { name: 'official.pdf', mime: 'application/pdf', dataBase64: 'b64:official.pdf' } }));
+    expect(uploadAsync).not.toHaveBeenCalled();
   });
 
   /* Item 3 (owner 2026-10-01): paid on a proforma — the official invoice is owed. */

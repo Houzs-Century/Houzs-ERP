@@ -1550,8 +1550,8 @@ Total: 1375 route registrations across 195 files.
 - L198  GET    /bills/:billId
 
 ## backend/src/scm/routes/delivery-messages.ts  (2)
-- L61  POST   /send
-- L156  POST   /statuses
+- L60  POST   /send
+- L154  POST   /statuses
 
 ## backend/src/scm/routes/delivery-order-item-photos.ts  (2)
 - L118  GET    /:id/items/:itemId/photos/:photoKey/signed

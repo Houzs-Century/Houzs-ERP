@@ -256,14 +256,15 @@ export const NAV_TABS: NavTab[] = [
   },
   // 申请付款 (owner 2026-09-30): whoever holds scm.payment_request.create — a PIC
   // paying an event's rental — asks Finance to pay a bill here. Finance works
-  // the same page from Money out.
+  // the same page from Money out. The key alone shows it: the sales team was
+  // left out of the grant (owner 2026-10-01, 除了 sales team), so a sales rep
+  // without it no longer sees an entry the route and the server refuse.
   {
     section: "workspace",
     to: "/scm/payment-requests",
     label: "Payment Requests",
     icon: HandCoins,
     anyPerm: ["*", "scm.payment_request.create"],
-    showForSalesRep: true,
   },
   // Sales Entries — Nico 2026-07-09: "sales entries 我不要了". Sidebar
   // entry removed. The /sales route + Sales.tsx page + backend endpoints

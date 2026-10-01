@@ -3,7 +3,9 @@
 // payment is read: the state of its official invoice, and Finance's own marks —
 // owed (paid on a proforma or quotation), checked (the official invoice came and
 // is right), or clear. RECEIVED is never marked here: it is the requester's
-// upload (POST /payment-requests/:id/official-doc).
+// upload (POST /payment-requests/:id/official-doc). Checked is offered on OWED
+// too (owner 2026-10-01, 漏洞 2): the official invoice may reach Finance another
+// way, and a payment that answers no request has nobody to upload it.
 // ----------------------------------------------------------------------------
 
 import { OFFICIAL_LABEL, isOfficialState, useMarkOfficialDoc } from '../lib/official-doc-queries';
@@ -33,7 +35,7 @@ export function OfficialDocActions({ kind, id, state, note }: { kind: 'PV' | 'AP
           Mark: official invoice owed · 欠正式单
         </button>
       )}
-      {state === 'RECEIVED' && (
+      {(state === 'RECEIVED' || state === 'OWED') && (
         <button type="button" style={linkBtn} disabled={mark.isPending} onClick={() => mark.mutate({ kind, id, state: 'CHECKED' })}>
           Checked ✓ · 核对好了
         </button>

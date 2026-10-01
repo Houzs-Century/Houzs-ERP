@@ -124,9 +124,14 @@ describe('MobilePaymentRequests', () => {
     expect(screen.getByText('Total RM 10,000.00 · Paid RM 4,000.00 · Left to ask RM 6,000.00')).toBeTruthy();
     fireEvent.click(screen.getByText('申请付余额 · Balance'));
     expect(screen.getByText(/Left to ask: RM 6,000\.00 of RM 10,000\.00\./)).toBeTruthy();
+    /* 漏洞 3: the official invoice goes up AS the official invoice. */
+    fireEvent.change(screen.getByLabelText('Official invoice files'), { target: { files: [new File(['x'], 'official.jpg', { type: 'image/jpeg' })] } });
+    uploadOfficialAsync.mockClear(); uploadAsync.mockClear();
     fireEvent.click(screen.getByText('Send to Finance'));
     await waitFor(() => expect(balanceAsync).toHaveBeenCalledTimes(1));
     expect(balanceAsync.mock.calls[0]![0]).toMatchObject({ id: 'r1', amountSen: 600_000, payPct: null });
+    await waitFor(() => expect(uploadOfficialAsync).toHaveBeenCalledWith({ requestId: 'r-bal', file: { name: 'official.jpg', mime: 'image/jpeg', dataBase64: 'b64:official.jpg' } }));
+    expect(uploadAsync).not.toHaveBeenCalled();
   });
 
   /* Item 3: paid on a proforma — 欠正式单 on the list, and 补正式单 on the request. */

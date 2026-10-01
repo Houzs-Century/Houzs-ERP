@@ -310,7 +310,9 @@ const apBalanceOn = (r: PaymentRequest): boolean =>
 function BalanceForm({ request, onDone, onCancel }: { request: PaymentRequest; onDone: (id: string) => void; onCancel: () => void }) {
   const notify = useNotify();
   const balance = useRequestBalance();
-  const upload = useUploadPaymentRequestFile();
+  /* The official invoice attached here is uploaded AS the official invoice (owner
+     2026-10-01, 漏洞 3): it moves every owed payment of this bill to 待核对. */
+  const official = useUploadOfficialDoc();
   const fam = request.family;
   const total = fam?.totalSen ?? null;
   const left = fam?.remainingSen ?? null;
@@ -319,7 +321,7 @@ function BalanceForm({ request, onDone, onCancel }: { request: PaymentRequest; o
   const [dueDate, setDueDate] = useState<string | null>(null);
   const [purpose, setPurpose] = useState(`Balance — ${request.purpose.replace(/^Balance — /, '')}`);
   const [files, setFiles] = useState<File[]>([]);
-  const busy = balance.isPending || upload.isPending;
+  const busy = balance.isPending || official.isPending;
   const pctValue = (() => { const n = Number(pct); return pct.trim() !== '' && Number.isFinite(n) && n > 0 && n <= 100 ? n : null; })();
   const over = left != null && amount > left;
 
@@ -332,8 +334,8 @@ function BalanceForm({ request, onDone, onCancel }: { request: PaymentRequest; o
       });
       for (const f of files) {
         const payload: PvFilePayload = { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) };
-        try { await upload.mutateAsync({ id: res.request.id, file: payload }); } catch (e) {
-          void notify({ title: `${f.name} did not attach`, body: e instanceof Error ? e.message : 'Attach it from the request.', tone: 'error' });
+        try { await official.mutateAsync({ requestId: res.request.id, file: payload }); } catch (e) {
+          void notify({ title: `${f.name} did not attach`, body: e instanceof Error ? e.message : 'Upload it from the request — 补正式单.', tone: 'error' });
         }
       }
       onDone(res.request.id);
