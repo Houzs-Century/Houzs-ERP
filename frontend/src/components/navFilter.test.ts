@@ -378,3 +378,19 @@ describe("nav — every sub-group hub groupId still resolves", () => {
     expect(g!.children?.length ?? 0).toBeGreaterThan(0);
   });
 });
+
+/* 申请付款 (owner 2026-10-01: 除了 sales team) — the request key alone shows the
+   Payment Requests entry. A sales rep without it used to see the entry through
+   the rep bypass and then hit a refusal on both the route and the server. */
+describe("Payment Requests — the key alone shows it", () => {
+  it("a sales rep without the key sees no Payment Requests, on either surface", () => {
+    const ctx = ctxFor(rep());
+    expect(desktopPaths(ctx)).not.toContain("/scm/payment-requests");
+    expect(phoneAllows(ctx, "/scm/payment-requests")).toBe(false);
+  });
+  it("a holder of the key sees it on both", () => {
+    const ctx = ctxFor(rep({ permissions: ["scm.payment_request.create"] }));
+    expect(desktopPaths(ctx)).toContain("/scm/payment-requests");
+    expect(phoneAllows(ctx, "/scm/payment-requests")).toBe(true);
+  });
+});

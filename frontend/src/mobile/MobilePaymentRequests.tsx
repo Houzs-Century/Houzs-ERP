@@ -435,7 +435,8 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
    is left to ask; the official invoice may come along. */
 function BalanceScreen({ request, onBack, onDone }: { request: PaymentRequest; onBack: () => void; onDone: (id: string) => void }) {
   const balance = useRequestBalance();
-  const upload = useUploadPaymentRequestFile();
+  /* Uploaded AS the official invoice (漏洞 3) — the desktop balance form's rule. */
+  const official = useUploadOfficialDoc();
   const camRef = useRef<HTMLInputElement>(null);
   const fam = request.family;
   const total = fam?.totalSen ?? null;
@@ -446,7 +447,7 @@ function BalanceScreen({ request, onBack, onDone }: { request: PaymentRequest; o
   const [purpose, setPurpose] = useState(`Balance — ${request.purpose.replace(/^Balance — /, "")}`);
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const busy = balance.isPending || upload.isPending;
+  const busy = balance.isPending || official.isPending;
   const pctValue = (() => { const n = Number(pct); return pct.trim() !== "" && Number.isFinite(n) && n > 0 && n <= 100 ? n : null; })();
 
   const save = async () => {
@@ -459,7 +460,7 @@ function BalanceScreen({ request, onBack, onDone }: { request: PaymentRequest; o
       });
       for (const f of files) {
         try {
-          await upload.mutateAsync({ id: res.request.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+          await official.mutateAsync({ requestId: res.request.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
         } catch { break; }
       }
       onDone(res.request.id);

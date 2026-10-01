@@ -47,10 +47,13 @@ describe('Official invoices owed', () => {
     expect(markOfficial).toHaveBeenCalledWith({ kind: 'PV', id: 'pv-2', state: 'CHECKED' });
   });
 
-  test('an owed mark can be cleared; nothing owed says so', () => {
-    rows = [row({})];
+  test('an owed mark can be checked straight away or cleared; nothing owed says so', () => {
+    rows = [row({ request: null })];
     markOfficial.mockClear();
     const { unmount } = render(<MemoryRouter><OfficialDocs /></MemoryRouter>);
+    /* 漏洞 2: a voucher answering no request has nobody to upload — Finance checks it here. */
+    fireEvent.click(screen.getByText('Checked ✓ · 核对好了'));
+    expect(markOfficial).toHaveBeenCalledWith({ kind: 'PV', id: 'pv-1', state: 'CHECKED' });
     fireEvent.click(screen.getByText('Clear the mark'));
     expect(markOfficial).toHaveBeenCalledWith({ kind: 'PV', id: 'pv-1', state: null });
     unmount();
