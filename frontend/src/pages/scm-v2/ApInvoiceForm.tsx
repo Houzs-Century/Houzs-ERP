@@ -34,7 +34,8 @@ import styles from './SalesOrderDetail.module.css';
 
 /** projectId: the event the line's money is for (owner 2026-09-30, 5a) — null = none. */
 export type ApFormLine = { rid: number; description: string; debitAccountCode: string; amountSen: number; projectId: number | null };
-export type ApFormValues = { supplierId: string; supplierRef: string; invoiceDate: string; dueDate: string; description: string; lines: ApFormLine[] };
+/** officialDocOwed: booked on a proforma or quotation — the official invoice is still owed (欠正式单, item 3). */
+export type ApFormValues = { supplierId: string; supplierRef: string; invoiceDate: string; dueDate: string; description: string; lines: ApFormLine[]; officialDocOwed?: boolean };
 export type ApFormMode = 'new' | 'edit' | 'copy';
 /** What the routes take — POST / for new and copy, PATCH /:id for edit. */
 export type ApFormSubmit = {
@@ -42,6 +43,8 @@ export type ApFormSubmit = {
   lines: Array<{ description?: string; debitAccountCode: string; amountSen: number; projectId?: number }>;
   /** The 申请付款 this bill answers — set by the page, never by the form. */
   paymentRequestId?: string;
+  /** 欠正式单 (item 3): sent only when ticked. */
+  officialDocOwed?: boolean;
 };
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
@@ -54,6 +57,7 @@ export const toSubmit = (v: ApFormValues): ApFormSubmit => ({
   invoiceDate: v.invoiceDate,
   dueDate: v.dueDate || null,
   ...(v.description.trim() ? { notes: v.description.trim() } : {}),
+  ...(v.officialDocOwed ? { officialDocOwed: true } : {}),
   lines: v.lines
     .filter((l) => l.debitAccountCode && l.amountSen > 0)
     .map((l) => ({
@@ -83,8 +87,13 @@ export const formFromExtraction = (ex: BillExtraction, match: { id: string } | n
     ...(ex.invoiceDate ? { invoiceDate: ex.invoiceDate } : {}),
     ...(ex.dueDate ? { dueDate: ex.dueDate } : {}),
     ...(drafts.length > 0 ? { lines: drafts } : {}),
+    /* A proforma or quotation owes its official invoice — pre-ticked; Finance decides. */
+    ...(isProvisional(ex) ? { officialDocOwed: true } : {}),
   };
 };
+
+/** The reader read PROFORMA or QUOTATION on it (item 3). */
+export const isProvisional = (ex: Pick<BillExtraction, 'documentKind'>): boolean => ex.documentKind === 'proforma' || ex.documentKind === 'quotation';
 
 /* What the form says after a read — the same sentences whether the bill was
    picked here or handed over from the pile. */
@@ -292,6 +301,13 @@ export const ApInvoiceForm = ({
           <span className={styles.fieldLabel}>Supplier's invoice no.</span>
           <input className={styles.fieldInput} value={v.supplierRef} onChange={(e) => set({ supplierRef: e.target.value })} aria-label="Supplier invoice ref" placeholder="As printed on the bill" />
         </label>
+        {/* 欠正式单 (item 3): a new bill booked on a proforma; an existing one is marked from its detail. */}
+        {mode !== 'edit' && (
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', alignSelf: 'end' }}>
+            <input type="checkbox" checked={!!v.officialDocOwed} onChange={(e) => set({ officialDocOwed: e.target.checked })} aria-label="Official invoice owed" />
+            Proforma / quotation — official invoice owed · 欠正式单
+          </label>
+        )}
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Invoice date *</span>
           <DateField fullWidth className={styles.fieldInput} value={v.invoiceDate} onChange={(iso) => set({ invoiceDate: iso })} aria-label="AP invoice date" />

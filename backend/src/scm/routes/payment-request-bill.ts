@@ -25,6 +25,10 @@ import { PAYMENT_REQUEST_KEY, callerUserId, isRequestFinance } from '../lib/paym
 import { todayMyt } from '../lib/my-time';
 import { BILL_IMAGE_MIMES, MAX_BILL_FILE_BYTES, MAX_FILES_PER_BILL, extractOneBill, type BillFile } from '../../acc/bill-extract';
 import { requestBill } from './pv-extract';
+import { DOC_FILE_MIMES, MAX_DOC_FILE_BYTES, decodeBase64, type DocFilesSpec } from '../lib/doc-files';
+import { compareOfficial, officialActor } from '../lib/official-doc';
+import { PV_FILES } from './pv-files';
+import { AP_INVOICE_FILES } from './ap-invoice-files';
 
 type Row = Record<string, any>;
 const NO_PERM = { error: "You don't have permission to do that." };
@@ -147,4 +151,106 @@ export const billMatchesHandler = async (c: any): Promise<Response> => {
   }]);
   if (!found.ok) return c.json({ error: 'load_failed', reason: found.reason }, 500);
   return c.json({ matches: found.matches.get('q') ?? [] });
+};
+
+/* ── POST /:id/official-doc — 补正式单 (owner 2026-10-01, item 3) ──────────────
+   The official invoice for a bill paid on a proforma or a quotation, uploaded
+   AFTER the payment — on any request of the bill, by its requester (or by
+   Finance). It stays on the request as an 'official' file, is copied to every
+   live payment of the bill (each instalment's voucher or AP invoice), and each
+   one Finance marked as owing moves to RECEIVED — to check — with what the
+   reader found against the proforma (lib/official-doc.ts compareOfficial).
+   Nothing in the ledger moves. */
+const EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
+type Bucket = { put: (k: string, v: ArrayBuffer, o?: unknown) => Promise<unknown> };
+
+async function putIndexed(c: any, bucket: Bucket, spec: Pick<DocFilesSpec, 'table' | 'fkColumn' | 'keyPrefix'>, companyId: number, docId: string, file: { name: string; mime: string; bytes: Uint8Array }): Promise<Row | null> {
+  const sb = c.get('supabase');
+  const { data: existing, error: exErr } = await sb.from(spec.table).select('sort_no').eq('company_id', companyId).eq(spec.fkColumn, docId);
+  /* An unreadable index is not "no files yet": nothing is stored on a guess. */
+  if (exErr) return null;
+  const sortNo = ((existing ?? []) as Row[]).reduce((m, r) => Math.max(m, Number(r.sort_no ?? 0)), 0) + 1;
+  const key = `${spec.keyPrefix}/${companyId}/${docId}/${crypto.randomUUID()}.${EXT[file.mime] ?? 'bin'}`;
+  await bucket.put(key, file.bytes.buffer as ArrayBuffer, { httpMetadata: { contentType: file.mime } });
+  const { data: row, error } = await sb.from(spec.table).insert({
+    company_id: companyId, [spec.fkColumn]: docId, file_key: key, file_name: file.name, mime: file.mime,
+    size_bytes: file.bytes.byteLength, sort_no: sortNo, created_by: String(c.get('user')?.id ?? 'payment-request'), kind: 'official',
+  }).select('id, file_name, mime, size_bytes, sort_no, kind').single();
+  return error ? null : (row as Row);
+}
+
+export const uploadOfficialDocHandler = async (c: any): Promise<Response> => {
+  if (!mayOpen(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const { data: req, error } = await scopeToCompany(sb.from('acc_payment_requests')
+    .select('id, request_no, requested_by, status, parent_request_id').eq('id', c.req.param('id')), c).maybeSingle();
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (!req || (!isRequestFinance(c) && Number(req.requested_by) !== callerUserId(c))) {
+    return c.json({ error: 'not_found', message: 'That payment request is not one you can open.' }, 404);
+  }
+  if (req.status === 'WITHDRAWN') return c.json({ error: 'request_withdrawn', message: `${req.request_no} was withdrawn — it takes no more files.` }, 409);
+  let body: Row;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const mime = String(body.mime ?? '').trim().toLowerCase();
+  if (!DOC_FILE_MIMES.has(mime)) return c.json({ error: 'bad_mime', message: `${mime || '(none)'} is not an image or a PDF.` }, 400);
+  const dataBase64 = String(body.dataBase64 ?? '');
+  const bytes = dataBase64 ? decodeBase64(dataBase64) : null;
+  if (!bytes || bytes.byteLength === 0 || bytes.byteLength > MAX_DOC_FILE_BYTES) {
+    return c.json({ error: 'bad_size', message: `Files are capped at ${MAX_DOC_FILE_BYTES / 1024 / 1024}MB.` }, 400);
+  }
+  const bucket = (c.env as { SLIPS?: Bucket }).SLIPS;
+  if (!bucket) return c.json({ error: 'r2_not_configured', reason: 'R2 binding SLIPS not configured' }, 500);
+  const file = { name: String(body.fileName ?? '').trim() || 'official-invoice', mime, bytes };
+
+  /* On the request itself, as the official invoice. */
+  const kept = await putIndexed(c, bucket, { table: 'acc_payment_request_files', fkColumn: 'request_id', keyPrefix: 'payment-request-files' }, co.companyId, String(req.id), file);
+  if (!kept) return c.json({ error: 'save_failed', reason: 'The file could not be indexed on the request.' }, 500);
+
+  /* The bill's live payments: every instalment's answer. */
+  const rootId = String(req.parent_request_id ?? req.id);
+  const { data: kin, error: kErr } = await sb.from('acc_payment_requests').select('id, pv_id, ap_invoice_id, bill_no, bill_total_sen, parent_request_id')
+    .eq('company_id', co.companyId).or(`id.eq.${rootId},parent_request_id.eq.${rootId}`);
+  if (kErr) return c.json({ error: 'load_failed', reason: kErr.message }, 500);
+  const family = (kin ?? []) as Row[];
+  const root = family.find((r) => String(r.id) === rootId) ?? null;
+  const pvIds = [...new Set(family.map((r) => r.pv_id).filter(Boolean).map(String))];
+  const apiIds = [...new Set(family.map((r) => r.ap_invoice_id).filter(Boolean).map(String))];
+  const [pvs, apis] = await Promise.all([
+    pvIds.length > 0 ? sb.from('payment_vouchers').select('id, pv_number, status, official_doc').eq('company_id', co.companyId).in('id', pvIds) : Promise.resolve({ data: [], error: null }),
+    apiIds.length > 0 ? sb.from('ap_invoices').select('id, invoice_number, status, official_doc').eq('company_id', co.companyId).in('id', apiIds) : Promise.resolve({ data: [], error: null }),
+  ]);
+  const dErr = pvs.error ?? apis.error;
+  if (dErr) return c.json({ error: 'load_failed', reason: dErr.message }, 500);
+
+  /* What the reader reads off it against the proforma — said, never decided. */
+  let note: string | null = null;
+  const apiKey = c.env?.ANTHROPIC_API_KEY;
+  if (apiKey) {
+    const read = await extractOneBill(apiKey, [{ name: file.name, mime, dataBase64 }]);
+    if (read.ok) {
+      note = compareOfficial(
+        { invoiceNumber: read.extraction.invoiceNumber, totalSen: read.extraction.totalSen },
+        { billNo: root?.bill_no ?? null, totalSen: root?.bill_total_sen == null ? null : Number(root.bill_total_sen) },
+      );
+    }
+  }
+
+  const received: Array<{ kind: 'PV' | 'API'; number: string | null }> = [];
+  const stamp = { official_doc: 'RECEIVED', official_doc_note: note, official_doc_at: new Date().toISOString(), official_doc_by: officialActor(c) };
+  for (const [kind, rows, spec, table, numberCol] of [
+    ['PV', (pvs.data ?? []) as Row[], PV_FILES, 'payment_vouchers', 'pv_number'],
+    ['API', (apis.data ?? []) as Row[], AP_INVOICE_FILES, 'ap_invoices', 'invoice_number'],
+  ] as const) {
+    for (const d of rows) {
+      if (d.status === 'CANCELLED') continue;
+      /* The file travels with the money, marked or not. */
+      await putIndexed(c, bucket, spec, co.companyId, String(d.id), file);
+      if (d.official_doc !== 'OWED' && d.official_doc !== 'RECEIVED') continue;
+      const { error: upErr } = await sb.from(table).update(stamp).eq('company_id', co.companyId).eq('id', d.id);
+      if (!upErr) received.push({ kind, number: d[numberCol] ?? null });
+    }
+  }
+  return c.json({ ok: true, file: kept, received, note }, 201);
 };

@@ -51,6 +51,14 @@ const ROWS = [
   { kind: 'PI', id: 'pi-1', invoiceNumber: '2990-PI-2607-005', supplierId: 'sup-t', supplierCode: '400-H004', supplierName: 'HOOKKA INDUSTRIES SDN. BHD.', supplierInvoiceRef: null, description: null, invoiceDate: '2026-06-27', dueDate: '2026-07-27', currency: 'MYR', totalSen: 300_000, paidSen: 100_000, outstandingSen: 200_000, status: 'PARTIALLY_PAID' },
 ];
 
+/* 欠正式单 (item 3): Finance's marks and the requester's upload — stubbed. */
+const markOfficial = vi.fn();
+const uploadOfficialAsync = vi.fn(async (_b: unknown) => ({ ok: true, received: [{ kind: 'PV', number: 'HC-PV-2610-001' }], note: null as string | null }));
+vi.mock('../../vendor/scm/lib/official-doc-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/official-doc-queries')>()),
+  useMarkOfficialDoc: () => ({ mutate: markOfficial, isPending: false }),
+  useUploadOfficialDoc: () => ({ mutateAsync: uploadOfficialAsync, isPending: false }),
+}));
 vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
   useApInvoices: () => ({ data: { rows: ROWS }, isLoading: false, isError: false, error: null }),
   useApInvoiceDetail: (id: string | null) => ({ data: id ? {

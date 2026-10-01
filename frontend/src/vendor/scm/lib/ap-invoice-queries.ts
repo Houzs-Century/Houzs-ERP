@@ -37,6 +37,8 @@ export type ApInvoiceHeader = {
   id: string; invoice_number: string; supplier_id: string; supplier_invoice_ref: string | null;
   invoice_date: string; due_date: string | null; currency: string; total_sen: number; paid_sen: number;
   status: string; notes: string | null; posted_at: string | null; posted_by: string | null;
+  /** 欠正式单 (item 3): booked on a proforma — OWED, RECEIVED (to check), CHECKED. */
+  official_doc?: string | null; official_doc_note?: string | null;
 };
 /** project_id: the event the line's money is for (owner 2026-09-30, 5a). */
 export type ApInvoiceLine = { id: string; line_no: number; description: string | null; debit_account_code: string; amount_sen: number; project_id?: number | null };

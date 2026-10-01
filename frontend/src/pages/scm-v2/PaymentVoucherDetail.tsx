@@ -60,6 +60,7 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { OfficialDocActions } from '../../vendor/scm/components/OfficialDoc';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
 import { PAYMENT_VOUCHER_AUDIT_LABELS } from './entity-audit-labels';
 import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
@@ -661,6 +662,14 @@ export const PaymentVoucherDetail = () => {
               <InfoCell label="Currency" value={viewCurrency} />
               {viewCurrency !== 'MYR' && <InfoCell label="Exchange Rate" value={`${pv.exchange_rate} (MYR per 1 ${viewCurrency})`} />}
               <InfoCell label="Notes" value={pv.notes ?? null} />
+              {/* The bill's own number and date (item 1) and its official invoice (欠正式单, item 3). */}
+              {(pv.bill_ref || pv.bill_date) && <InfoCell label="Bill" value={`${pv.bill_ref ?? '—'}${pv.bill_date ? ` · ${fmtDateOrDash(pv.bill_date)}` : ''}`} />}
+              {!isRefundPv && pv.status !== 'CANCELLED' && (
+                <div className={styles.field}>
+                  <span className={styles.fieldLabel}>Official invoice</span>
+                  <OfficialDocActions kind="PV" id={String(pv.id)} state={pv.official_doc ?? null} note={pv.official_doc_note ?? null} />
+                </div>
+              )}
             </div>
           ) : (
             <div className={styles.formGrid2}>

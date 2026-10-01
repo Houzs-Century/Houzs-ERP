@@ -54,6 +54,7 @@ import { arInvoices } from "./routes/ar-invoices";
 import { creditNotes } from "./routes/credit-notes";
 import { depositInvoices } from "./routes/deposit-invoices";
 import { accEvents } from "./routes/acc-events";
+import { officialDocs } from "./routes/official-docs";
 import { paymentRequests } from "./routes/payment-requests";
 import { receipts } from "./routes/receipts";
 import { entityAuditLog } from "./routes/entity-audit-log";
@@ -642,6 +643,11 @@ scm.route("/deposit-invoices", depositInvoices);
 // line's event. Same area as the vouchers it serves.
 scm.use("/acc-events/*", scmAreaGuard("scm.finance.accounting"));
 scm.route("/acc-events", accEvents);
+// Official invoices owed (owner 2026-10-01, payment-request item 3) — the
+// payments made on a proforma or quotation, still owing the real invoice:
+// Finance's list and its owed / checked marks. Same area as the vouchers.
+scm.use("/official-docs/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/official-docs", officialDocs);
 // Payment Audit Log — Finance's payment TRAIL (port of 2990's /admin/audit-log):
 // one row per mfg_sales_order_payments entry + its SO header context. Read-only.
 // Same L2 area as Accounting: it is the money ledger's read side, not a new

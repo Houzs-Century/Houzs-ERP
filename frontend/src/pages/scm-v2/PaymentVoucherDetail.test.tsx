@@ -32,6 +32,14 @@ const { updateAsync, idle, DETAIL } = vi.hoisted(() => {
   };
   return { updateAsync, idle, DETAIL };
 });
+/* 欠正式单 (item 3): Finance's marks and the requester's upload — stubbed. */
+const markOfficial = vi.fn();
+const uploadOfficialAsync = vi.fn(async (_b: unknown) => ({ ok: true, received: [{ kind: 'PV', number: 'HC-PV-2610-001' }], note: null as string | null }));
+vi.mock('../../vendor/scm/lib/official-doc-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/official-doc-queries')>()),
+  useMarkOfficialDoc: () => ({ mutate: markOfficial, isPending: false }),
+  useUploadOfficialDoc: () => ({ mutateAsync: uploadOfficialAsync, isPending: false }),
+}));
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', async (importOriginal) => ({
   /* The real constants stay (PV_FILE_ACCEPT for the files card); only the hooks are stubbed. */
   ...(await importOriginal<typeof import('../../vendor/scm/lib/payment-voucher-queries')>()),

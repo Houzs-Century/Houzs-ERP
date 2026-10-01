@@ -63,6 +63,8 @@ export type PaymentRequest = {
   pay_pct?: number | null;
   /** The whole bill's figures and its instalments, read on every request. */
   family?: BillFamily;
+  /** 欠正式单 (item 3): the answering payment's official-invoice state, read off it. */
+  officialDoc?: { state: 'OWED' | 'RECEIVED' | 'CHECKED'; note: string | null } | null;
   /** The first request's AP invoice, when Finance booked the bill — a balance is paid ON it. */
   familyInvoice?: { id: string; invoiceNumber: string | null; status: string | null; supplierId: string | null; totalSen: number; paidSen: number } | null;
 };

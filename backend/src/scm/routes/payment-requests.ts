@@ -46,7 +46,7 @@ import { makeDocFileHandlers, type DocFilesSpec } from '../lib/doc-files';
 import { companyHasEvents, parseEventId, unknownEventRefusal } from '../lib/event-tags';
 import { eventBillRefusal, findBillMatches, readBillFacts, type BillMatch, type RequestBillFacts } from '../lib/bill-matches';
 import { eventOptionsHandler } from './acc-events';
-import { billMatchesHandler, readRequestBillHandler } from './payment-request-bill';
+import { billMatchesHandler, readRequestBillHandler, uploadOfficialDocHandler } from './payment-request-bill';
 import {
   PAYMENT_REQUEST_KEY, bankConfirmedVoucherNumbers, callerUserId, familyFigures, familyRootId, isRequestFinance, liveAnswerOf, requestStage,
   requesterMayChange, type FamilyMember, type InvoiceFacts, type VoucherFacts,
@@ -81,6 +81,11 @@ async function loadVisible(c: any, id: string): Promise<{ req: Row } | { resp: R
   return { req: data as Row };
 }
 
+/** 欠正式单 (owner 2026-10-01, item 3) as the requester reads it: the answering
+    document's mark — OWED, RECEIVED (to check) or CHECKED — and the reader's note. */
+const officialOf = (doc: Row): { state: string; note: string | null } | null =>
+  doc.official_doc ? { state: String(doc.official_doc), note: doc.official_doc_note ?? null } : null;
+
 /** Each request with its answering document's facts — the voucher's, or the
     AP invoice's and the AP Payments' that paid it — and the stage they say. */
 async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
@@ -88,7 +93,7 @@ async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ row
   const pvIds = [...new Set(rows.map((r) => r.pv_id).filter(Boolean))] as string[];
   let vouchers = new Map<string, VoucherFacts>();
   if (pvIds.length > 0) {
-    const { data, error } = await sb.from('payment_vouchers').select('id, pv_number, status, approved_at, posted_at')
+    const { data, error } = await sb.from('payment_vouchers').select('id, pv_number, status, approved_at, posted_at, official_doc, official_doc_note')
       .eq('company_id', companyId).in('id', pvIds);
     if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
     vouchers = new Map(((data ?? []) as VoucherFacts[]).map((v) => [v.id, v]));
@@ -98,7 +103,7 @@ async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ row
   /* An invoice's payers: the posted AP Payments with an allocation on it. */
   const payersOf = new Map<string, string[]>();
   if (invoiceIds.length > 0) {
-    const { data, error } = await sb.from('ap_invoices').select('id, invoice_number, status, total_sen, paid_sen, supplier_id')
+    const { data, error } = await sb.from('ap_invoices').select('id, invoice_number, status, total_sen, paid_sen, supplier_id, official_doc, official_doc_note')
       .eq('company_id', companyId).in('id', invoiceIds);
     if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
     invoices = new Map(((data ?? []) as InvoiceFacts[]).map((v) => [v.id, v]));
@@ -136,6 +141,8 @@ async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ row
         return {
           ...r,
           stage: requestStage(String(r.status), null, confirmed, inv),
+          /* 欠正式单 (item 3): read off the document answering it. */
+          officialDoc: officialOf(inv),
           voucher: null,
           invoice: {
             id: inv.id, invoiceNumber: inv.invoice_number, status: inv.status, supplierId: inv.supplier_id ?? null,
@@ -148,6 +155,7 @@ async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ row
       return {
         ...r,
         stage: requestStage(String(r.status), pv, confirmed),
+        officialDoc: pv && pv.status !== 'CANCELLED' ? officialOf(pv) : null,
         voucher: pv ? { id: pv.id, pvNumber: pv.pv_number, status: pv.status, approvedAt: pv.approved_at, postedAt: pv.posted_at, bankConfirmed: confirmed } : null,
         invoice: null,
       };
@@ -529,6 +537,8 @@ export const requestBalanceHandler = async (c: any): Promise<Response> => {
   }, 201);
 };
 paymentRequests.post('/:id/balance', requestBalanceHandler);
+/* 补正式单 (item 3): the official invoice, after a proforma was paid (routes/payment-request-bill.ts). */
+paymentRequests.post('/:id/official-doc', uploadOfficialDocHandler);
 
 /* ── POST /:id/withdraw ────────────────────────────────────────────────────── */
 export const withdrawPaymentRequestHandler = async (c: any): Promise<Response> => {

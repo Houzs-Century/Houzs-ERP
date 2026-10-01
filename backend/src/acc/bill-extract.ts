@@ -42,7 +42,9 @@ export type BillLine = { description: string | null; amountSen: number | null };
 export type BillExtraction = {
   vendorName: string | null;
   vendorRegNo: string | null;
-  documentKind: 'invoice' | 'bill' | 'receipt' | 'statement' | 'unknown';
+  /** proforma / quotation: not yet the real invoice — a payment on it owes the
+      official one (owner 2026-10-01, payment-request item 3). */
+  documentKind: 'invoice' | 'bill' | 'receipt' | 'statement' | 'proforma' | 'quotation' | 'unknown';
   invoiceNumber: string | null;
   invoiceDate: string | null;   // ISO yyyy-mm-dd, null when unreadable
   dueDate: string | null;
@@ -71,7 +73,7 @@ Return ONLY a JSON object, no prose, with exactly these keys:
 {
   "vendorName": the issuing company's name as PRINTED (the party asking to be paid) or null,
   "vendorRegNo": the issuer's registration number (e.g. 202301027399, 1234567-X) or null,
-  "documentKind": one of "invoice" | "bill" | "receipt" | "statement" | "unknown",
+  "documentKind": one of "invoice" | "bill" | "receipt" | "statement" | "proforma" | "quotation" | "unknown" — "proforma" when the paper is titled PROFORMA / PRO FORMA INVOICE, "quotation" when titled QUOTATION / QUOTE,
   "invoiceNumber": the document's own number or null,
   "invoiceDate": the document date as YYYY-MM-DD or null,
   "dueDate": the payment due date as YYYY-MM-DD or null,
@@ -151,7 +153,7 @@ export const stripFooterLines = (lines: BillLine[]): BillLine[] =>
 export function coerceBillJson(raw: unknown): BillExtraction {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const kindRaw = String(o.documentKind ?? '').toLowerCase();
-  const kind = (['invoice', 'bill', 'receipt', 'statement'] as const).find((k) => k === kindRaw) ?? 'unknown';
+  const kind = (['invoice', 'bill', 'receipt', 'statement', 'proforma', 'quotation'] as const).find((k) => k === kindRaw) ?? 'unknown';
   const linesRaw = Array.isArray(o.lines) ? o.lines : [];
   return {
     vendorName: o.vendorName ? String(o.vendorName).slice(0, 200) : null,

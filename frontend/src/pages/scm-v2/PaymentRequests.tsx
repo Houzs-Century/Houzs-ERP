@@ -29,6 +29,8 @@ import {
 import { billFactsOf, needsEvent, useRequestBillRead } from '../../vendor/scm/lib/request-bill-read';
 import { BillInstalments, BillMatchesNote, BillReadNote, billFactsLine } from '../../vendor/scm/components/RequestBill';
 import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
+import { OfficialDocActions, OfficialDocChip } from '../../vendor/scm/components/OfficialDoc';
+import { useUploadOfficialDoc } from '../../vendor/scm/lib/official-doc-queries';
 import { fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { useEventLabels } from '../../vendor/scm/lib/event-queries';
 import { EventSelect, eventCellText } from '../../vendor/scm/components/EventSelect';
@@ -55,15 +57,19 @@ const StageChip = ({ r }: { r: PaymentRequest }) => (
   </span>
 );
 
-type StageFilter = 'all' | 'waiting' | 'processing' | 'paid' | 'returned';
+type StageFilter = 'all' | 'waiting' | 'processing' | 'paid' | 'returned' | 'official';
 const FILTERS: Array<[StageFilter, string]> = [
   ['all', 'All'], ['waiting', 'Waiting for Finance'], ['processing', 'Processing'], ['paid', 'Paid'], ['returned', 'Returned / withdrawn'],
+  ['official', 'Official invoice owed · 欠正式单'],
 ];
+/** 欠正式单 (item 3): the payment answering it owes its official invoice, or has it waiting to be checked. */
+const owesOfficial = (r: PaymentRequest): boolean => r.officialDoc?.state === 'OWED' || r.officialDoc?.state === 'RECEIVED';
 const inFilter = (r: PaymentRequest, f: StageFilter): boolean => {
   if (f === 'all') return true;
   if (f === 'waiting') return awaitsFinance(r);
   if (f === 'processing') return financeWorking(r);
   if (f === 'paid') return requestPaid(r);
+  if (f === 'official') return owesOfficial(r);
   return r.stage === 'RETURNED' || r.stage === 'WITHDRAWN';
 };
 
@@ -117,7 +123,12 @@ export const PaymentRequests = () => {
     { key: 'purpose', label: 'For', width: '220px', render: (r) => r.purpose, getValue: (r) => r.purpose },
     { key: 'amount', label: 'Amount', align: 'right', render: (r) => fmtSen(r.amount_sen), getValue: (r) => r.amount_sen, exportValue: (r) => r.amount_sen / 100, exportFormat: 'money' },
     { key: 'due', label: 'Pay by', render: (r) => fmtDateOrDash(r.due_date), getValue: (r) => r.due_date, exportFormat: 'date' },
-    { key: 'stage', label: 'Stage', render: (r) => <StageChip r={r} />, getValue: (r) => STAGE[r.stage].label },
+    { key: 'stage', label: 'Stage', render: (r) => (
+      <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+        <StageChip r={r} />
+        <OfficialDocChip state={r.officialDoc?.state} note={r.officialDoc?.note} />
+      </span>
+    ), getValue: (r) => STAGE[r.stage].label },
   ], [finance, labelsQ.data]);
 
   const mine = (r: PaymentRequest) => Number(r.requested_by) === me;
@@ -253,6 +264,10 @@ export const PaymentRequests = () => {
                 : '—'} />
           </div>
           {hasInstalments(detail.family) && <BillInstalments family={detail.family} currentId={detail.id} />}
+          {/* 欠正式单 (item 3): the payment owes its official invoice — the requester uploads it here; Finance checks it. */}
+          {(detail.officialDoc || (finance && (detail.voucher || detail.invoice))) && (
+            <OfficialDocPanel request={detail} finance={finance} mayUpload={finance || mine(detail)} />
+          )}
           <BillMatchesNote matches={detail.billMatches} />
           {detail.parent_request_id && (
             <div style={soft}>The bill is on {detail.family?.rootNo ?? 'the first request'} — it travels with the payment; nothing to upload again.</div>
@@ -366,6 +381,43 @@ function BalanceForm({ request, onDone, onCancel }: { request: PaymentRequest; o
         <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
         <Button variant="primary" size="sm" onClick={() => void save()} disabled={busy}>{busy ? 'Sending…' : 'Send to Finance'}</Button>
       </div>
+    </div>
+  );
+}
+
+/* ── 欠正式单 — the official invoice after a proforma was paid (item 3) ─────────
+   Finance marked the payment as owing it; the requester (or Finance) uploads it
+   here, it travels to the payment and waits for Finance's check. */
+function OfficialDocPanel({ request, finance, mayUpload }: { request: PaymentRequest; finance: boolean; mayUpload: boolean }) {
+  const notify = useNotify();
+  const upload = useUploadOfficialDoc();
+  const state = request.officialDoc?.state ?? null;
+  const doc = request.voucher ? { kind: 'PV' as const, id: request.voucher.id } : request.invoice ? { kind: 'API' as const, id: request.invoice.id } : null;
+  const pick = async (list: FileList | null) => {
+    for (const f of [...(list ?? [])]) {
+      try {
+        const res = await upload.mutateAsync({ requestId: request.id, file: { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) } });
+        void notify({
+          title: 'Official invoice uploaded',
+          body: res.note ?? (res.received.length > 0 ? `Finance checks it on ${res.received.map((d) => d.number ?? d.kind).join(', ')}.` : 'It is kept with the request and its payment.'),
+          tone: res.note ? 'error' : 'info',
+        });
+      } catch { /* the mutation's own onError told the user */ }
+    }
+  };
+  return (
+    <div role="group" aria-label="Official invoice" style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 'var(--space-3)', borderRadius: 8, border: '1px dashed var(--line)' }}>
+      {finance && doc
+        ? <OfficialDocActions kind={doc.kind} id={doc.id} state={state} note={request.officialDoc?.note} />
+        : <OfficialDocChip state={state} note={request.officialDoc?.note} />}
+      {state === 'OWED' && !finance && <span style={soft}>Paid on a proforma or quotation — upload the official invoice when you have it.</span>}
+      {mayUpload && (state === 'OWED' || state === 'RECEIVED') && (
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-12)', flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 600 }}>Upload the official invoice · 补正式单</span>
+          <input type="file" accept={PV_FILE_ACCEPT} aria-label="Upload the official invoice" disabled={upload.isPending}
+            onChange={(e) => { void pick(e.target.files); e.target.value = ''; }} />
+        </label>
+      )}
     </div>
   );
 }
