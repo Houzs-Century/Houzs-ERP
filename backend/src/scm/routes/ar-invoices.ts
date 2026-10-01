@@ -179,7 +179,7 @@ export const arBillDetailHandler = async (c: any): Promise<Response> => {
   if (!data) return c.json({ error: 'not_found', message: 'That bill is not in the company you are working in.' }, 404);
   const bill = data as Row;
   const [lines, debtor] = await Promise.all([
-    scopeToCompany(sb.from('acc_debtor_bill_lines').select('id, bill_id, line_no, description, credit_account_code, amount_sen').eq('bill_id', bill.id), c).order('line_no'),
+    scopeToCompany(sb.from('acc_debtor_bill_lines').select('id, bill_id, line_no, description, credit_account_code, amount_sen, project_id').eq('bill_id', bill.id), c).order('line_no'),
     scopeToCompany(sb.from('acc_debtors').select(`id, name, phone, notes, is_active, ${DEBTOR_PARTY_COLS}`).eq('id', bill.debtor_id), c).maybeSingle(),
   ]);
   if (lines.error) return c.json({ error: 'load_failed', reason: lines.error.message }, 500);
