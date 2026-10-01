@@ -11,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { writeFailedAs } from './mutation-error';
 import { fetchDocFileBlobUrl, type PvFile, type PvFilePayload } from './payment-voucher-queries';
+import type { EventSuggestion } from './event-queries';
 import { fmtSen } from '../../shared/format';
 
 export type RequestStage =
@@ -43,7 +44,32 @@ export type PaymentRequest = {
   /** The AP invoice answering it, when Finance booked the bill first: what is
       paid of it so far, and by which AP Payments. */
   invoice?: { id: string; invoiceNumber: string | null; status: string | null; totalSen: number; paidSen: number; paidBy: string[]; bankConfirmed: boolean } | null;
+  /** What the bill reader read off its bill when it was attached (owner
+      2026-10-01, item 1): the bill's own number, date and total, and whether it
+      is for an event — with the requester's reason when it went without one. */
+  bill_no?: string | null;
+  bill_date?: string | null;
+  bill_total_sen?: number | null;
+  event_bill?: boolean;
+  no_event_reason?: string | null;
+  /** Other live requests, vouchers and AP invoices with the same bill number
+      and date (同一张单) — said out loud, never refused. */
+  billMatches?: BillMatch[];
 };
+
+/** Another live document carrying the same bill number and date (server:
+    lib/bill-matches.ts). A request names the voucher or AP invoice answering it. */
+export type BillMatch = { kind: 'PRQ' | 'PV' | 'API'; id: string; number: string | null; amountSen: number; status: string; answeredBy: string | null };
+
+const MATCH_STATUS: Record<string, string> = {
+  SUBMITTED: 'waiting for Finance', VOUCHERED: 'answered', REJECTED: 'returned',
+  DRAFT: 'draft', POSTED: 'posted', PARTIALLY_PAID: 'partly paid', PAID: 'paid',
+};
+const MATCH_KIND: Record<BillMatch['kind'], string> = { PRQ: 'Request', PV: 'Voucher', API: 'AP invoice' };
+
+/** One match in one line: "Request HC-PRQ-2610-003 · RM 5,000.00 → HC-PV-2610-010 · answered". */
+export const billMatchText = (m: BillMatch): string =>
+  `${MATCH_KIND[m.kind]} ${m.number ?? '(no number yet)'} · ${fmtSen(m.amountSen)}${m.answeredBy ? ` → ${m.answeredBy}` : ''} · ${MATCH_STATUS[m.status] ?? m.status.toLowerCase()}`;
 
 /** Each stage in the owner's words (2026-09-29: 已提交 → Finance 处理中 → 已付 →
     银行已确认; 2026-09-30 for a booked bill: 已入账、未付 → 部分已付) and the
@@ -82,13 +108,55 @@ export const answerText = (r: Pick<PaymentRequest, 'voucher' | 'invoice'>): stri
 export type PaymentRequestInput = {
   payeeName: string; amountSen: number; dueDate: string | null; purpose: string; projectId: number | null;
   bankName: string | null; bankAccountNo: string | null; bankAccountName: string | null;
+  /* What the reader read off the bill (absent = keep what the request has). */
+  billNo?: string | null; billDate?: string | null; billTotalSen?: number | null; eventBill?: boolean;
+  /** Why an event bill goes without its Event (找不到这场活动) — 5 characters at least. */
+  noEventReason?: string | null;
 };
+
+/** The reason a requester gives when the event bill's event cannot be found. */
+export const NO_EVENT_REASON_MIN = 5;
 
 export const usePaymentRequests = (mine = false) => useQuery({
   queryKey: ['payment-requests', mine ? 'mine' : 'all'],
-  queryFn: () => authedFetch<{ requests: PaymentRequest[]; finance: boolean }>(`/payment-requests${mine ? '?mine=1' : ''}`),
+  /* hasEvents: whether the company runs events (2990 does not) — the form
+     hides the Event field without them. */
+  queryFn: () => authedFetch<{ requests: PaymentRequest[]; finance: boolean; hasEvents?: boolean }>(`/payment-requests${mine ? '?mine=1' : ''}`),
   staleTime: 15_000,
 });
+
+/** What the reader read off a bill being attached (POST /payment-requests/read-bill). */
+export type ReadBillResult =
+  | { ok: false; reason: string }
+  | {
+    ok: true;
+    bill: { billNo: string | null; billDate: string | null; totalSen: number | null; vendorName: string | null };
+    hasEvents: boolean;
+    /** The bill is for an event — it goes with its Event, or a reason. */
+    eventBill: boolean;
+    eventSuggestions: EventSuggestion[];
+    matches: BillMatch[];
+  };
+
+/** Read the bill as it is attached — before the request exists ({ files }) or
+    a request's stored bill ({ requestId }). Writes nothing; a reader that
+    cannot read says so (ok: false) and the request still goes. */
+export const useReadRequestBill = () => useMutation({
+  mutationFn: (body: { files: PvFilePayload[] } | { requestId: string }) =>
+    authedFetch<ReadBillResult>('/payment-requests/read-bill', { method: 'POST', body: JSON.stringify(body) }),
+});
+
+/** Finance's voucher form asks the same question of a typed bill number and date. */
+export const useBillMatches = (no: string, date: string, excludeRequest: string | null = null) => {
+  const n = no.trim();
+  const ok = n !== '' && /^\d{4}-\d{2}-\d{2}$/.test(date);
+  return useQuery({
+    queryKey: ['payment-request-bill-matches', n, date, excludeRequest],
+    queryFn: () => authedFetch<{ matches: BillMatch[] }>(`/payment-requests/bill-matches?${new URLSearchParams({ no: n, date, ...(excludeRequest ? { excludeRequest } : {}) }).toString()}`),
+    enabled: ok,
+    staleTime: 30_000,
+  });
+};
 
 export const usePaymentRequest = (id: string | null) => useQuery({
   queryKey: ['payment-request', id],

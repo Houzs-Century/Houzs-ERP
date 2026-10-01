@@ -22,10 +22,16 @@ const createAsync = vi.fn(async (_b: Req) => ({ ok: true, request: base({ id: 'r
 const updateAsync = vi.fn(async (_b: Req) => ({ ok: true, request: base({}) }));
 const uploadAsync = vi.fn(async (_b: Req) => ({ ok: true }));
 const returnMutate = vi.fn();
+/* The bill reader's answer for the photo being attached (item 1, 2026-10-01). */
+const readAsync = vi.fn(async (_b: Req) => ({
+  ok: true, bill: { billNo: 'MLE-0925', billDate: '2026-09-01', totalSen: 850_000, vendorName: 'MLE EVENTS SDN BHD' },
+  hasEvents: true, eventBill: false, eventSuggestions: [], matches: [],
+}));
 
 vi.mock('../vendor/scm/lib/payment-request-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../vendor/scm/lib/payment-request-queries')>()),
-  usePaymentRequests: () => ({ data: { requests, finance: isFinance }, isLoading: false, isError: false }),
+  usePaymentRequests: () => ({ data: { requests, finance: isFinance, hasEvents: true }, isLoading: false, isError: false }),
+  useReadRequestBill: () => ({ mutateAsync: readAsync, isPending: false }),
   usePaymentRequest: (id: string | null) => ({ data: id ? { request: requests.find((r) => r.id === id), finance: isFinance } : undefined, isLoading: false }),
   useCreatePaymentRequest: () => ({ mutateAsync: createAsync, isPending: false }),
   useUpdatePaymentRequest: () => ({ mutateAsync: updateAsync, isPending: false }),
@@ -67,12 +73,17 @@ describe('MobilePaymentRequests', () => {
     fireEvent.focus(screen.getByLabelText('Event'));
     fireEvent.mouseDown(screen.getByText(/MLE @ PWCC/));
     fireEvent.change(screen.getByLabelText("Payee's bank"), { target: { value: 'Maybank' } });
+    /* No photo yet: nothing is sent, and the sheet says what is missing. */
+    fireEvent.click(screen.getByText('Send to Finance'));
+    expect(screen.getByText('Still needed: a photo of the bill.')).toBeTruthy();
+    expect(createAsync).not.toHaveBeenCalled();
     const photo = new File(['jpg'], 'bill.jpg', { type: 'image/jpeg' });
     fireEvent.change(screen.getByLabelText('Take a photo of the bill'), { target: { files: [photo] } });
     expect(screen.getByText('bill.jpg')).toBeTruthy();
+    await waitFor(() => expect(screen.getByText(/Read from the bill: No\. MLE-0925/)).toBeTruthy());
     fireEvent.click(screen.getByText('Send to Finance'));
     await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
-    expect(createAsync.mock.calls[0]![0]).toMatchObject({ payeeName: 'MLE EVENTS SDN BHD', amountSen: 850_000, purpose: 'Booth F1 rental', projectId: 348, bankName: 'Maybank' });
+    expect(createAsync.mock.calls[0]![0]).toMatchObject({ payeeName: 'MLE EVENTS SDN BHD', amountSen: 850_000, purpose: 'Booth F1 rental', projectId: 348, bankName: 'Maybank', billNo: 'MLE-0925', billDate: '2026-09-01', eventBill: false });
     await waitFor(() => expect(uploadAsync).toHaveBeenCalledWith({ id: 'r-new', file: { name: 'bill.jpg', mime: 'image/jpeg', dataBase64: 'b64:bill.jpg' } }));
   });
 
