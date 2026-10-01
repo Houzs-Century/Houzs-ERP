@@ -52,9 +52,17 @@ export function isConnectConfigured(env: ConnectConfig): boolean {
   return Boolean(env.CONNECT_WEBHOOK_URL && env.CONNECT_WEBHOOK_KEY);
 }
 
-/** Build the /api/webhooks/erp body for ONE customer phone. ref_N / brand_N /
- *  delivery_date_N are 1-indexed to match the WhatsApp templates' numbered
- *  variables; order_total lets Connect's flow pick the N-order template. */
+/** The delivery templates render at most this many order lines
+ *  (ref_1..3 / delivery_date_1..3 / brand_1..3) — Connect's contact schema also
+ *  carries only three. A customer with more orders still gets ONE message:
+ *  order_total carries the true count and the N>=4 template shows the first 3
+ *  plus "you have {order_total} orders" (owner's master list, 2026-10-01). */
+export const CONNECT_ORDER_LINES = 3;
+
+/** Build the /api/webhooks/erp body for ONE customer phone — ONE message. The
+ *  ref_N / delivery_date_N / brand_N lines are 1-indexed and capped at
+ *  CONNECT_ORDER_LINES (the first N orders); order_total is the TRUE order count,
+ *  which Connect's flow routes on to pick the 1 / 2 / 3 / 4+ template. */
 export function buildDeliveryFollowUp(
   phone: string,
   name: string,
@@ -64,28 +72,13 @@ export function buildDeliveryFollowUp(
     full_name: name,
     order_total: String(orders.length),
   };
-  orders.forEach((o, i) => {
+  orders.slice(0, CONNECT_ORDER_LINES).forEach((o, i) => {
     const n = i + 1;
     attributes[`ref_${n}`] = o.ref;
     attributes[`delivery_date_${n}`] = o.deliveryDate;
     attributes[`brand_${n}`] = o.branding;
   });
   return { phone, name, automation: CONNECT_DELIVERY_AUTOMATION, attributes };
-}
-
-/** The Connect contact schema only carries ref_1..3 / delivery_date_1..3 /
- *  brand_1..3, and the flow only has an N-order template for N in 1..3, so a
- *  customer with more ready orders gets one message per chunk of this many
- *  (owner 2026-09-28, "cap at 3"). */
-export const CONNECT_MAX_ORDERS_PER_MESSAGE = 3;
-
-/** Split a phone's orders into chunks of at most CONNECT_MAX_ORDERS_PER_MESSAGE,
- *  so every Connect send stays within the 3-order template ceiling and no order
- *  is ever dropped from the bundle. */
-export function chunkOrders<T>(orders: T[], size = CONNECT_MAX_ORDERS_PER_MESSAGE): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < orders.length; i += size) chunks.push(orders.slice(i, i + size));
-  return chunks;
 }
 
 /** POST one contact event to Connect. Never throws — a network / non-2xx
