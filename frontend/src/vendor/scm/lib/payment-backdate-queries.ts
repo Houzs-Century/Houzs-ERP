@@ -17,6 +17,10 @@ import { checkPaymentSlipDate } from './payment-slip-date';
 
 export const PAYMENT_BACKDATE_KEY = 'scm.payment.backdate';
 
+/** Who reaches the inbox and its sidebar entry: the backdate right (Finance,
+ *  `*`) or the approve-only key (Logistic) — the server's own rule. */
+export const BACKDATE_DECIDER_PERMS: string[] = ['*', PAYMENT_BACKDATE_KEY, 'scm.payment.backdate.approve'];
+
 /** Mirrors scm.so_payment_backdate_requests (mig 20260930T1500). */
 export type BackdateRequestRow = {
   id: string;
