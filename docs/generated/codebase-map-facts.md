@@ -80,7 +80,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/accounting-bank-locks.ts` | 0 | 230 |
 | `backend/src/scm/routes/accounting-bank-months.ts` | 0 | 685 |
 | `backend/src/scm/routes/accounting-bank.ts` | 0 | 1476 |
-| `backend/src/scm/routes/accounting-chart.ts` | 0 | 787 |
+| `backend/src/scm/routes/accounting-chart.ts` | 0 | 803 |
 | `backend/src/scm/routes/accounting-collection.ts` | 0 | 184 |
 | `backend/src/scm/routes/accounting-dashboard.ts` | 0 | 527 |
 | `backend/src/scm/routes/accounting-forecast.ts` | 0 | 155 |
@@ -106,7 +106,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ap-invoice-files.ts` | 0 | 50 |
-| `backend/src/scm/routes/ap-invoices.ts` | 10 | 455 |
+| `backend/src/scm/routes/ap-invoices.ts` | 10 | 459 |
 | `backend/src/scm/routes/ar-invoices.ts` | 2 | 198 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
 | `backend/src/scm/routes/autocount-line-sweep.ts` | 0 | 202 |
@@ -188,7 +188,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/outstanding.ts` | 3 | 407 |
 | `backend/src/scm/routes/payment-request-bill.ts` | 0 | 256 |
 | `backend/src/scm/routes/payment-requests.ts` | 15 | 608 |
-| `backend/src/scm/routes/payment-vouchers.ts` | 21 | 1935 |
+| `backend/src/scm/routes/payment-vouchers.ts` | 21 | 1938 |
 | `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 212 |
 | `backend/src/scm/routes/po-amendments.ts` | 7 | 763 |
 | `backend/src/scm/routes/po-gates.ts` | 0 | 90 |
@@ -235,7 +235,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/so-handover.ts` | 4 | 487 |
 | `backend/src/scm/routes/so-mirror.ts` | 1 | 333 |
 | `backend/src/scm/routes/so-money-routes.ts` | 0 | 100 |
-| `backend/src/scm/routes/so-payment-backdate-requests.ts` | 7 | 379 |
+| `backend/src/scm/routes/so-payment-backdate-requests.ts` | 7 | 387 |
 | `backend/src/scm/routes/so-settings.ts` | 2 | 62 |
 | `backend/src/scm/routes/sofa-combos.ts` | 5 | 768 |
 | `backend/src/scm/routes/sofa-compartment-photos.ts` | 3 | 308 |
@@ -266,13 +266,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 161 | `162_table_layouts_company_shared.sql` (162) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 480 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 482 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (3067 files, 874325 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (3069 files, 874514 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |

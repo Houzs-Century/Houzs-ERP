@@ -49,6 +49,7 @@ import { fmtSen } from '../shared/format';
 import { parseEventId, unknownEventRefusal } from '../lib/event-tags';
 import { linkPaymentRequest, paymentRequestLinkGuard } from '../lib/payment-request';
 import { officialActor, officialOwedFields, officialOwedUpdates } from '../lib/official-doc';
+import { eventAccountRefusal } from '../lib/event-accounts';
 
 type Row = Record<string, any>;
 
@@ -378,6 +379,9 @@ export const postApInvoiceHandler = async (c: any): Promise<Response> => {
   if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
   const lines = (lineRows ?? []) as Array<{ description: string | null; debit_account_code: string; amount_sen: number; project_id?: number | null }>;
   if (lines.length === 0) return c.json({ error: 'lines_required', message: 'This bill has no lines to post.' }, 400);
+  /* 需要 Event (item 4): a line on an account Finance ticked needs its event to post. */
+  const evErr = await eventAccountRefusal(c, co.companyId, lines);
+  if (evErr) return evErr;
   const sup = await loadSupplier(c, String(inv.supplier_id));
   if ('resp' in sup) return sup.resp;
 

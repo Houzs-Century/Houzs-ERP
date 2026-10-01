@@ -111,6 +111,7 @@ import type {
   PaymentStatus,
   StockTransfer,
   FinanceLine,
+  FinanceBooks,
   ProjectAttachment,
   ProjectDefect,
   ProjectTrip,
@@ -253,6 +254,8 @@ interface ProjectDetail {
     notes: string | null;
   } | null;
   finance_lines: FinanceLine[];
+  /** The books on the event (payment-request item 5); null when finance is hidden. */
+  finance_books?: FinanceBooks | null;
   stock_transfers: StockTransfer[];
   checklist: ChecklistItem[];
   checklist_comments: ChecklistComment[];
@@ -3681,6 +3684,7 @@ function ProjectDetailContent({
                   sizeSqm={p.size_sqm ?? null}
                   durationDays={p.duration_days ?? null}
                   lines={detail.data?.finance_lines ?? []}
+                  books={detail.data?.finance_books ?? null}
                   lumpSales={detail.data?.finance?.total_sales ?? null}
                   onChange={() => detail.reload()}
                   toast={toast}
@@ -8449,6 +8453,7 @@ function FinanceLedgerSection({
   sizeSqm,
   durationDays,
   lines,
+  books,
   lumpSales,
   onChange,
   toast,
@@ -8457,6 +8462,9 @@ function FinanceLedgerSection({
   sizeSqm: number | null;
   durationDays: number | null;
   lines: FinanceLine[];
+  /** The books on this event (payment-request item 5): the rows they fill are
+   *  Finance's figures — read-only here. `lines` already carries them. */
+  books: FinanceBooks | null;
   /** project_finance.total_sales — the quick lump-sum "Total Sales" box.
    *  Used as the snapshot's sales figure when no individual sales-entry
    *  lines exist, so the green box and the snapshot agree. */
@@ -8476,6 +8484,10 @@ function FinanceLedgerSection({
   // section below.
   const [addingReceipt, setAddingReceipt] = useState(false);
   const dialog = useDialog();
+  // A row the books fill shows Finance's figure and cannot be typed over.
+  const filled = new Set(books?.rows ?? []);
+  const typedRow = (row: string, category: string) =>
+    filled.has(row) ? undefined : { onSave: (n: number) => replaceCategoryAmount(category, n) };
   async function replaceCategoryAmount(category: string, nextAmount: number) {
     const existing = lines.filter(
       (l) =>
@@ -8688,29 +8700,34 @@ function FinanceLedgerSection({
             label="Rental"
             annotation={`${formatCurrency(rentPerSqmPerDay)}/sqm/day`}
             value={rentalTotal}
-            editable={{ onSave: (n) => replaceCategoryAmount("rental", n) }}
+            editable={typedRow("rental", "rental")}
+            books={filled.has("rental")}
             busy={savingCat === "rental"}
           />
           <SnapshotRow
             label="Setup"
             value={setupTotal}
-            editable={{ onSave: (n) => replaceCategoryAmount("setup", n) }}
+            editable={typedRow("setup", "setup")}
+            books={filled.has("setup")}
             busy={savingCat === "setup"}
           />
           <SnapshotRow
             label="Transport Fee"
-            annotation="auto · % of sales"
+            annotation={filled.has("transport_fee") ? undefined : "auto · % of sales"}
+            books={filled.has("transport_fee")}
             value={transportFee}
           />
           <SnapshotRow
             label="Transport Setup & Dismantle"
             value={transportSetupDismantle}
-            editable={{ onSave: (n) => replaceCategoryAmount("transport_setup_dismantle", n) }}
+            editable={typedRow("transport_setup_dismantle", "transport_setup_dismantle")}
+            books={filled.has("transport_setup_dismantle")}
             busy={savingCat === "transport_setup_dismantle"}
           />
           <SnapshotRow
             label="Commission"
-            annotation="auto · % of sales"
+            annotation={filled.has("commission") ? undefined : "auto · % of sales"}
+            books={filled.has("commission")}
             value={commissionTotal}
           />
           <SnapshotRow
@@ -8718,7 +8735,7 @@ function FinanceLedgerSection({
             annotation="auto · % of sales"
             value={merchandiseTotal}
           />
-          <SnapshotRow label="Others Costing" value={othersTotal} />
+          <SnapshotRow label="Others Costing" value={othersTotal} books={filled.has("others")} />
           <SnapshotRow
             label="Total Cost"
             value={totalCost}
@@ -8741,6 +8758,7 @@ function FinanceLedgerSection({
         <FinanceAttachmentsSection
           projectId={projectId}
           lines={lines}
+          books={books}
           adding={addingReceipt}
           onAddOpen={() => setAddingReceipt(true)}
           onAddClose={() => setAddingReceipt(false)}
@@ -8750,7 +8768,13 @@ function FinanceLedgerSection({
       </div>
       <p className="mt-1 text-[10.5px] text-ink-muted">
         Tap a row to set its amount. Individual cost lines and their receipts live in the Cost lines section above. Sales live in the Sales section above; auto rows are computed from the rate card.
+        {filled.size > 0 && " Rows marked 入账 are Finance's figures — approved payment vouchers and posted AP invoices on this event — and replace the typed or auto amount."}
       </p>
+      {books && !books.ok && (
+        <p className="mt-1 text-[10.5px] text-warning-text" role="status">
+          The books could not be read just now, so these are the typed figures. Reload to try again.
+        </p>
+      )}
     </PanelSection>
   );
 }

@@ -218,7 +218,9 @@ type StockTransfer = {
   fileName?: string | null;
 };
 
-// Finance ledger line (income/cost). Synthetic sales rows carry source='sales_entry'.
+// Finance ledger line (income/cost). Synthetic sales rows carry source='sales_entry';
+// money Finance posted to the event carries source='books' and its document
+// number (payment-request item 5 — the server already set aside what it replaced).
 type FinanceLine = {
   id: number;
   kind: string;
@@ -237,6 +239,7 @@ type FinanceLine = {
   autoSource?: string | null;
   source?: string | null;
   source_id?: number | null;
+  doc_no?: string | null;
 };
 
 type ProjectAttachment = {
@@ -3579,8 +3582,11 @@ function QuickRentalField({
   const existing = lines.filter(
     (l) => (l.kind ?? "").toLowerCase() === "cost"
       && (l.category ?? "").trim() === "rental"
-      && !pick(l.auto_source, l.autoSource),
+      && !pick(l.auto_source, l.autoSource)
+      && !l.source,
   );
+  // Rental from the books: Finance's figure, shown, never typed over.
+  const fromBooks = lines.filter((l) => (l.kind ?? "").toLowerCase() === "cost" && l.source === "books" && l.category === "rental");
   const current = existing.reduce((s, l) => s + (l.amount || 0), 0);
   const [val, setVal] = useState(current ? String(current) : "");
   useEffect(() => {
@@ -3616,6 +3622,18 @@ function QuickRentalField({
       setBusy(false);
     }
   };
+
+  if (fromBooks.length > 0) {
+    return (
+      <div style={{ background: "#f4f6f3", borderRadius: 10, padding: 11 }}>
+        <span className="pkv-l">Rental (RM) · 入账</span>
+        <div className="money" style={{ fontSize: 15, fontWeight: 700, color: "#11140f", marginTop: 4 }}>
+          {formatCurrency(fromBooks.reduce((s, l) => s + (l.amount || 0), 0))}
+        </div>
+        <div style={{ fontSize: 10, color: "#9aa093", marginTop: 2 }}>{[...new Set(fromBooks.map((l) => l.doc_no).filter(Boolean))].join(", ")}</div>
+      </div>
+    );
+  }
 
   return (
     <label style={{ background: "#f4f6f3", borderRadius: 10, padding: 11, display: "block" }}>
@@ -3725,12 +3743,14 @@ function FinancialSnapshot({
           <div style={{ border: "1px solid #eceee9", borderRadius: 10, overflow: "hidden" }}>
             {costLines.map((line, i) => {
               const auto = !!pick(line.auto_source, line.autoSource);
+              const fromBooks = line.source === "books";
               const receiptKey = pick(line.r2_key, line.r2Key);
               return (
                 <div key={line.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderTop: i === 0 ? "none" : "1px solid #eceee9", flexWrap: "wrap" }}>
                   <span style={{ flex: 1, minWidth: 90, fontSize: 12, color: "#414539" }}>
                     {line.description || ledgerCategoryLabel(line.category)}
                     {auto && <span style={{ marginLeft: 5, fontSize: 9, color: "#9aa093" }}>auto</span>}
+                    {fromBooks && <span style={{ marginLeft: 5, fontSize: 9, color: "#8a4b12" }}>入账 {line.doc_no}</span>}
                   </span>
                   <span className="money" style={{ fontSize: 12, fontWeight: 700 }}>{formatCurrency(line.amount)}</span>
                   {receiptKey && <button className="tinybtn" disabled={busy} onClick={() => openReceipt(line)}>Receipt</button>}
