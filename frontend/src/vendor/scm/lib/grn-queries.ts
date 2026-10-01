@@ -306,6 +306,22 @@ export const useUpdateGrnItem = () => {
   });
 };
 
+/* Rack is physical placement only — its own endpoint, so it stays settable on a
+   line the PI/PR child-lock freezes. Posted lines also move on the rack board. */
+export const useSetGrnLineRack = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ grnId, itemId, rackId }: { grnId: string; itemId: string; rackId: string | null }) =>
+      authedFetch<{ ok: true }>(`/grns/${grnId}/items/${itemId}/rack`, {
+        method: 'PATCH', body: JSON.stringify({ rackId }),
+      }),
+    onSuccess: (_, vars) => {
+      void qc.invalidateQueries({ queryKey: ['grn-detail', vars.grnId] });
+      void qc.invalidateQueries({ queryKey: ['warehouse'] });
+    },
+  });
+};
+
 export const useDeleteGrnItem = () => {
   const qc = useQueryClient();
   return useMutation({
