@@ -19,7 +19,7 @@
 //   2. Run erpSeedFromSheet()   — pushes EVERY row's col A / col O into the ERP,
 //      so the first ERP pull does not overwrite the sheet with older values.
 //   3. Run setupErpTriggers()   — removes the AutoCount scheduledPull /
-//      scheduledPush triggers and installs scheduledErpSync every 15 minutes.
+//      scheduledPush triggers and installs scheduledErpSync every 5 minutes.
 //
 // ENDPOINTS (backend/src/routes/deliverySheetSync.ts, X-Intake-Key = SHEET_SYNC_KEY):
 //   GET  {ERP_BASE_URL}/api/delivery-sheet/so-since?since=<checkpoint>&limit=300
@@ -562,10 +562,19 @@ function runErpAssrPull(triggerType) {
   }
 }
 
+// A slow run (max seen ~5 min) can outlast the 5-minute interval; the pull has no
+// lock of its own, so two overlapping runs could both append the same new order.
+// Document lock, not the script lock pushUpdatesToErp takes inside.
 function scheduledErpSync() {
-  pushUpdatesToErp("SCHEDULED");
-  runErpPullProcess("SCHEDULED");
-  runErpAssrPull("SCHEDULED");
+  const lock = LockService.getDocumentLock();
+  if (!lock.tryLock(0)) { Log.warn("scheduled", "Previous ERP sync still running; skipped."); return; }
+  try {
+    pushUpdatesToErp("SCHEDULED");
+    runErpPullProcess("SCHEDULED");
+    runErpAssrPull("SCHEDULED");
+  } finally {
+    lock.releaseLock();
+  }
 }
 function manualErpPull() { runErpPullProcess("MANUAL"); }
 function manualErpPush() { pushUpdatesToErp("MANUAL"); }
@@ -588,9 +597,9 @@ function setupErpTriggers() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (stop.indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t);
   });
-  ScriptApp.newTrigger("scheduledErpSync").timeBased().everyMinutes(15).create();
-  Log.info("setup", "AutoCount pull/push triggers removed; scheduledErpSync installed every 15 minutes.");
-  try { SpreadsheetApp.getUi().alert("ERP sync installed (every 15 min). AutoCount pull/push triggers removed."); } catch (e) {}
+  ScriptApp.newTrigger("scheduledErpSync").timeBased().everyMinutes(5).create();
+  Log.info("setup", "AutoCount pull/push triggers removed; scheduledErpSync installed every 5 minutes.");
+  try { SpreadsheetApp.getUi().alert("ERP sync installed (every 5 min). AutoCount pull/push triggers removed."); } catch (e) {}
 }
 
 // ── One-off cleanup of the rows the FIRST pull appended (2026-09-16 15:04) ──
