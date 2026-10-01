@@ -22,6 +22,14 @@ const base = (over: Req): Req => ({
 });
 let requests: Req[] = [];
 let isFinance = false;
+let hasEvents: boolean | undefined;
+/* What the bill reader read off the bill being attached (item 1, 2026-10-01). */
+const plainRead = (over: Req = {}): Req => ({
+  ok: true, bill: { billNo: 'MLE-0925', billDate: '2026-09-01', totalSen: 850_000, vendorName: 'MLE EVENTS SDN BHD' },
+  hasEvents: true, eventBill: false, eventSuggestions: [], matches: [], ...over,
+});
+let readResult: Req = plainRead();
+const readAsync = vi.fn(async (_b: Req) => readResult);
 const createAsync = vi.fn(async (_b: Req) => ({ ok: true, request: base({ id: 'r-new' }) }));
 const updateAsync = vi.fn(async (_b: Req) => ({ ok: true, request: base({}) }));
 const withdrawAsync = vi.fn(async (_id: string) => ({ ok: true }));
@@ -30,7 +38,8 @@ const uploadAsync = vi.fn(async (_b: Req) => ({ ok: true }));
 
 vi.mock('../../vendor/scm/lib/payment-request-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/payment-request-queries')>()),
-  usePaymentRequests: () => ({ data: { requests, finance: isFinance }, isLoading: false, isError: false, error: null }),
+  usePaymentRequests: () => ({ data: { requests, finance: isFinance, hasEvents }, isLoading: false, isError: false, error: null }),
+  useReadRequestBill: () => ({ mutateAsync: readAsync, isPending: false }),
   usePaymentRequest: (id: string | null) => ({ data: id ? { request: requests.find((r) => r.id === id), finance: isFinance } : undefined, isLoading: false }),
   useCreatePaymentRequest: () => ({ mutateAsync: createAsync, isPending: false }),
   useUpdatePaymentRequest: () => ({ mutateAsync: updateAsync, isPending: false }),
@@ -73,8 +82,8 @@ const draw = () => render(
 );
 
 describe('the requester', () => {
-  test('raises a request with the event and the payee\'s bank; the bill attaches after it is sent', async () => {
-    requests = []; isFinance = false; createAsync.mockClear(); uploadAsync.mockClear();
+  test('raises a request with the event and the payee\'s bank; the bill is read, and attaches after it is sent', async () => {
+    requests = []; isFinance = false; hasEvents = undefined; readResult = plainRead(); createAsync.mockClear(); uploadAsync.mockClear(); readAsync.mockClear();
     draw();
     expect(screen.getByText(/You have not raised a payment request yet/)).toBeTruthy();
     fireEvent.click(screen.getByText('New request'));
@@ -89,11 +98,15 @@ describe('the requester', () => {
     fireEvent.change(within(d).getByLabelText('Account no.'), { target: { value: '5123' } });
     const bill = new File(['%PDF'], 'mle-invoice.pdf', { type: 'application/pdf' });
     fireEvent.change(within(d).getByLabelText('Bill files'), { target: { files: [bill] } });
+    /* Read as it is attached: number, date and total said back. */
+    await waitFor(() => expect(within(d).getByText(/Read from the bill: No\. MLE-0925 · 2026\/09\/01 · total RM 8,500\.00/)).toBeTruthy());
+    expect(readAsync).toHaveBeenCalledWith({ files: [{ name: 'mle-invoice.pdf', mime: 'application/pdf', dataBase64: 'b64:mle-invoice.pdf' }] });
     fireEvent.click(within(d).getByText('Send to Finance'));
     await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
     expect(createAsync.mock.calls[0]![0]).toEqual({
       payeeName: 'MLE EVENTS SDN BHD', amountSen: 850_000, dueDate: null, purpose: 'Booth F1 rental', projectId: 348,
       bankName: 'Maybank', bankAccountNo: '5123', bankAccountName: null,
+      billNo: 'MLE-0925', billDate: '2026-09-01', billTotalSen: 850_000, eventBill: false, noEventReason: null,
     });
     await waitFor(() => expect(uploadAsync).toHaveBeenCalledWith({ id: 'r-new', file: { name: 'mle-invoice.pdf', mime: 'application/pdf', dataBase64: 'b64:mle-invoice.pdf' } }));
     /* The requester's picker reads the requests' own event list, not Finance's. */
@@ -116,6 +129,74 @@ describe('the requester', () => {
     expect(within(d).queryByText('Make voucher')).toBeNull();
     fireEvent.click(within(d).getByText('Withdraw'));
     await waitFor(() => expect(withdrawAsync).toHaveBeenCalledWith('r1'));
+  });
+
+  /* Item 1 (owner 2026-10-01): an event bill goes with its Event — the strongest
+     suggestion picked for them — or with the reason there is none. */
+  const fillBasics = (d: HTMLElement) => {
+    fireEvent.change(within(d).getByLabelText('Pay to'), { target: { value: 'MLE EVENTS SDN BHD' } });
+    const amount = within(d).getByLabelText('Amount');
+    fireEvent.focus(amount); fireEvent.change(amount, { target: { value: '8500' } }); fireEvent.blur(amount);
+    fireEvent.change(within(d).getByLabelText('What is it for'), { target: { value: 'Booth F1 rental' } });
+  };
+  const attach = (d: HTMLElement) => fireEvent.change(within(d).getByLabelText('Bill files'), { target: { files: [new File(['%PDF'], 'mle.pdf', { type: 'application/pdf' })] } });
+
+  test('an event bill picks the event it points at most strongly; the request carries it', async () => {
+    requests = []; isFinance = false; hasEvents = true; createAsync.mockClear();
+    readResult = plainRead({ eventBill: true, eventSuggestions: [{ id: 348, score: 70, reasons: ['booth F1', 'same days'], event: EVENT_OPTIONS[0] }] });
+    draw();
+    fireEvent.click(screen.getByText('New request'));
+    const d = screen.getByRole('dialog');
+    fillBasics(d);
+    attach(d);
+    await waitFor(() => expect(within(d).getByText('Event * — this bill is for an event')).toBeTruthy());
+    expect(within(d).getByText('✓ in use')).toBeTruthy();
+    fireEvent.click(within(d).getByText('Send to Finance'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+    expect(createAsync.mock.calls[0]![0]).toMatchObject({ projectId: 348, eventBill: true, noEventReason: null });
+  });
+
+  test('an event bill without its event waits for the reason why there is none', async () => {
+    requests = []; isFinance = false; hasEvents = true; createAsync.mockClear();
+    readResult = plainRead({ eventBill: true, eventSuggestions: [] });
+    draw();
+    fireEvent.click(screen.getByText('New request'));
+    const d = screen.getByRole('dialog');
+    fillBasics(d);
+    attach(d);
+    await waitFor(() => expect(within(d).getByText('Event * — this bill is for an event')).toBeTruthy());
+    fireEvent.click(within(d).getByText('Send to Finance'));
+    expect(createAsync).not.toHaveBeenCalled();
+    fireEvent.click(within(d).getByLabelText('I cannot find this event'));
+    fireEvent.change(within(d).getByLabelText('Why there is no event'), { target: { value: 'Fair not in PMS yet' } });
+    fireEvent.click(within(d).getByText('Send to Finance'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+    expect(createAsync.mock.calls[0]![0]).toMatchObject({ projectId: null, eventBill: true, noEventReason: 'Fair not in PMS yet' });
+  });
+
+  test('the same bill elsewhere is said out loud — and the request still goes', async () => {
+    requests = []; isFinance = false; hasEvents = true; createAsync.mockClear();
+    readResult = plainRead({ matches: [{ kind: 'PRQ', id: 'r9', number: 'HC-PRQ-2609-003', amountSen: 425_000, status: 'VOUCHERED', answeredBy: 'HC-PV-2609-010' }] });
+    draw();
+    fireEvent.click(screen.getByText('New request'));
+    const d = screen.getByRole('dialog');
+    fillBasics(d);
+    attach(d);
+    await waitFor(() => expect(within(d).getByText('Same bill already asked for or paid · 这张单已经有了')).toBeTruthy());
+    expect(within(d).getByText('Request HC-PRQ-2609-003 · RM 4,250.00 → HC-PV-2609-010 · answered')).toBeTruthy();
+    fireEvent.click(within(d).getByText('Send to Finance'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+  });
+
+  test('without the bill nothing is sent; a company without events shows no Event field', () => {
+    requests = []; isFinance = false; hasEvents = false; createAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('New request'));
+    const d = screen.getByRole('dialog');
+    fillBasics(d);
+    expect(within(d).queryByLabelText('Event')).toBeNull();
+    fireEvent.click(within(d).getByText('Send to Finance'));
+    expect(createAsync).not.toHaveBeenCalled();
   });
 
   test('a returned request shows Finance\'s note and goes back with "Fix and send again"', () => {
@@ -169,6 +250,20 @@ describe('Finance', () => {
     expect(within(d).queryByText('Make voucher')).toBeNull();
     expect(within(d).getByText('Open HC-API-2609-007 →').getAttribute('href')).toBe('/scm/ap-invoices?open=api-7');
     expect(d.textContent).toContain('by HC-PV-2609-010');
+  });
+
+  test('a request whose bill is on another document is marked on the list, and the request says which and what was read', () => {
+    requests = [base({
+      requested_by: 40, requested_by_name: 'Luis Teo', bill_no: 'MLE-0925', bill_date: '2026-09-01', bill_total_sen: 850_000,
+      billMatches: [{ kind: 'PV', id: 'pv-4', number: 'HC-PV-2609-004', amountSen: 850_000, status: 'POSTED', answeredBy: null }],
+    })];
+    isFinance = true;
+    draw();
+    expect(screen.getByLabelText('Same bill elsewhere').textContent).toBe('⚠ same bill');
+    fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
+    const d = screen.getByRole('dialog');
+    expect(within(d).getByText('No. MLE-0925 · 2026/09/01 · total RM 8,500.00')).toBeTruthy();
+    expect(within(d).getByText('Voucher HC-PV-2609-004 · RM 8,500.00 · posted')).toBeTruthy();
   });
 
   test('returns a request with the note the prompt demands', async () => {

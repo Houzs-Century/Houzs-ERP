@@ -21,11 +21,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
-  STAGE, answerText, awaitsFinance, fetchPaymentRequestFileBlobUrl, financeWorking, requestPaid, useCreatePaymentRequest, useDeletePaymentRequestFile,
+  NO_EVENT_REASON_MIN, STAGE, answerText, awaitsFinance, billMatchText, fetchPaymentRequestFileBlobUrl, financeWorking, requestPaid, useCreatePaymentRequest, useDeletePaymentRequestFile,
   usePaymentRequest, usePaymentRequestFiles, usePaymentRequests, useReturnPaymentRequest, useUpdatePaymentRequest,
   useUploadPaymentRequestFile, useWithdrawPaymentRequest,
   type PaymentRequest, type PaymentRequestInput,
 } from '../../vendor/scm/lib/payment-request-queries';
+import { billFactsOf, needsEvent, useRequestBillRead } from '../../vendor/scm/lib/request-bill-read';
+import { BillMatchesNote, BillReadNote, billFactsLine } from '../../vendor/scm/components/RequestBill';
+import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
 import { fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { useEventLabels } from '../../vendor/scm/lib/event-queries';
 import { EventSelect, eventCellText } from '../../vendor/scm/components/EventSelect';
@@ -93,7 +96,16 @@ export const PaymentRequests = () => {
   const sendBack = useReturnPaymentRequest();
 
   const columns = useMemo<Column<PaymentRequest>[]>(() => [
-    { key: 'no', label: 'No.', render: (r) => <button type="button" onClick={() => setOpenId(r.id)} style={{ ...linkBtn, ...mono }}>{r.request_no}</button>, getValue: (r) => r.request_no },
+    { key: 'no', label: 'No.', render: (r) => (
+      <span style={{ whiteSpace: 'nowrap' }}>
+        <button type="button" onClick={() => setOpenId(r.id)} style={{ ...linkBtn, ...mono }}>{r.request_no}</button>
+        {/* 同一张单: the same bill number and date on another live document. */}
+        {(r.billMatches?.length ?? 0) > 0 && (
+          <span title={`Same bill: ${(r.billMatches ?? []).map(billMatchText).join(' | ')}`} aria-label="Same bill elsewhere"
+            style={{ marginLeft: 6, color: 'var(--c-festive-b, #B8331F)', fontWeight: 700 }}>⚠ same bill</span>
+        )}
+      </span>
+    ), getValue: (r) => r.request_no },
     { key: 'date', label: 'Date', render: (r) => fmtDateOrDash(r.created_at), getValue: (r) => r.created_at, exportFormat: 'date' },
     ...(finance ? [{ key: 'by', label: 'Requested by', render: (r: PaymentRequest) => r.requested_by_name ?? '—', getValue: (r: PaymentRequest) => r.requested_by_name ?? '' }] : []),
     { key: 'payee', label: 'Pay to', render: (r) => r.payee_name, getValue: (r) => r.payee_name },
@@ -211,6 +223,12 @@ export const PaymentRequests = () => {
             <Meta label="Pay by" value={fmtDateOrDash(detail.due_date)} />
             <Meta label="Event" value={eventCellText(labelsQ.data, detail.project_id)} />
             <Meta label="For" value={detail.purpose} />
+            <Meta label="The bill" value={detail.bill_no || detail.bill_date || detail.bill_total_sen != null
+              ? billFactsLine({ billNo: detail.bill_no, billDate: detail.bill_date, totalSen: detail.bill_total_sen })
+              : '— not read'} />
+            {detail.project_id == null && detail.no_event_reason && (
+              <Meta label="No event — why" value={detail.no_event_reason} />
+            )}
             <Meta label="Payee's bank" value={[detail.bank_name, detail.bank_account_no, detail.bank_account_name].filter(Boolean).join(' · ') || '—'} />
             <Meta label="Answered by" value={detail.voucher
               ? <>{detail.voucher.pvNumber ?? 'Draft voucher'}{detail.voucher.postedAt ? <span style={soft}> · paid {fmtDateOrDash(detail.voucher.approvedAt ?? detail.voucher.postedAt)}</span> : null}{detail.voucher.bankConfirmed ? <span style={soft}> · bank ✓</span> : null}</>
@@ -218,6 +236,7 @@ export const PaymentRequests = () => {
                 ? <>{answerText(detail)}{detail.invoice.paidBy.length > 0 ? <span style={soft}> · by {detail.invoice.paidBy.join(', ')}</span> : null}{detail.invoice.bankConfirmed ? <span style={soft}> · bank ✓</span> : null}</>
                 : '—'} />
           </div>
+          <BillMatchesNote matches={detail.billMatches} />
           <RequestFilesCard request={detail} canWrite={finance || requesterMayChange(detail)} />
         </Modal>
       )}
@@ -227,6 +246,7 @@ export const PaymentRequests = () => {
           ariaLabel={form.mode === 'new' ? 'New payment request' : `Edit ${form.req.request_no}`}>
           <RequestForm
             initial={form.mode === 'edit' ? form.req : null}
+            hasEvents={listQ.data?.hasEvents ?? true}
             onDone={(id) => { setForm(null); setOpenId(id); }}
             onCancel={() => setForm(null)}
           />
@@ -261,7 +281,7 @@ function RequestFilesCard({ request, canWrite }: { request: PaymentRequest; canW
 }
 
 /* ── New / edit ─────────────────────────────────────────────────────────── */
-function RequestForm({ initial, onDone, onCancel }: { initial: PaymentRequest | null; onDone: (id: string) => void; onCancel: () => void }) {
+function RequestForm({ initial, hasEvents, onDone, onCancel }: { initial: PaymentRequest | null; hasEvents: boolean; onDone: (id: string) => void; onCancel: () => void }) {
   const notify = useNotify();
   const create = useCreatePaymentRequest();
   const update = useUpdatePaymentRequest();
@@ -277,20 +297,48 @@ function RequestForm({ initial, onDone, onCancel }: { initial: PaymentRequest | 
     bankAccountName: initial?.bank_account_name ?? null,
   }));
   const [files, setFiles] = useState<File[]>([]);
+  /* The bill is READ as it is attached (owner 2026-10-01, item 1): its number,
+     date and total, whether it is for an event, the same bill elsewhere. */
+  const billRead = useRequestBillRead();
+  const [noEvent, setNoEvent] = useState(() => !!initial?.no_event_reason);
+  const [noEventReason, setNoEventReason] = useState(initial?.no_event_reason ?? '');
   const set = (patch: Partial<PaymentRequestInput>) => setV((prev) => ({ ...prev, ...patch }));
-  const ready = v.payeeName.trim() !== '' && v.amountSen > 0 && v.purpose.trim() !== '';
+  const pickFiles = async (list: File[]) => {
+    setFiles(list);
+    const read = await billRead.run(list);
+    /* The event the bill points at most strongly is picked for them — they confirm or change it. */
+    const top = read?.eventBill ? read.eventSuggestions[0] : undefined;
+    if (top) setV((prev) => (prev.projectId == null ? { ...prev, projectId: top.id } : prev));
+  };
+  /* An event bill goes with its Event — or the reason there is none (找不到这场活动). */
+  const eventNeeded = hasEvents && (needsEvent(billRead.state) || !!initial?.event_bill);
+  const eventOk = !eventNeeded || v.projectId != null || (noEvent && noEventReason.trim().length >= NO_EVENT_REASON_MIN);
+  const reading = billRead.state.status === 'reading';
+  const missing = [
+    v.payeeName.trim() === '' ? 'who to pay' : null,
+    v.amountSen > 0 ? null : 'the amount',
+    v.purpose.trim() === '' ? 'what it is for' : null,
+    !initial && files.length === 0 ? 'the bill' : null,
+    eventOk ? null : 'the event (or why there is none)',
+  ].filter(Boolean) as string[];
+  const ready = missing.length === 0 && !reading;
   const saving = create.isPending || update.isPending || upload.isPending;
   const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 
   const save = async () => {
     if (!ready) {
-      void notify({ title: 'Not yet complete', body: 'Pay to, the amount and what it is for are needed.', tone: 'error' });
+      void notify({ title: 'Not yet complete', body: reading ? 'The bill is still being read — a moment.' : `Still needed: ${missing.join(', ')}.`, tone: 'error' });
       return;
     }
+    const body: PaymentRequestInput = {
+      ...v,
+      ...billFactsOf(billRead.state),
+      noEventReason: v.projectId == null && noEvent ? noEventReason.trim() : null,
+    };
     try {
       const res = initial
-        ? await update.mutateAsync({ id: initial.id, ...v })
-        : await create.mutateAsync(v);
+        ? await update.mutateAsync({ id: initial.id, ...body })
+        : await create.mutateAsync(body);
       const id = res.request.id;
       for (const f of files) {
         const payload: PvFilePayload = { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) };
@@ -321,11 +369,36 @@ function RequestForm({ initial, onDone, onCancel }: { initial: PaymentRequest | 
           <DateField fullWidth value={v.dueDate ?? ''} onChange={(iso) => set({ dueDate: iso || null })} className={styles.fieldInput} aria-label="Pay by" />
         </label>
       </div>
-      <label className={styles.field}>
-        <span className={styles.fieldLabel}>Event</span>
-        <EventSelect value={v.projectId} around={v.dueDate || today} optionsPath={EVENTS_PATH} className={styles.fieldInput} aria-label="Event"
-          onChange={(id) => set({ projectId: id })} />
-      </label>
+      {!initial && (
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>The bill * (invoice / quotation / proforma — photo or PDF; several files = one bill's pages)</span>
+          <input type="file" multiple accept={PV_FILE_ACCEPT} aria-label="Bill files" onChange={(e) => void pickFiles([...(e.target.files ?? [])])} />
+          {files.length > 0 && <span style={soft}>{files.length} file(s) attach when the request is sent: {files.map((f) => f.name).join(', ')}</span>}
+        </label>
+      )}
+      <BillReadNote state={billRead.state} />
+      {hasEvents && (
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>{eventNeeded ? 'Event * — this bill is for an event' : 'Event'}</span>
+          <EventSelect value={v.projectId} around={v.dueDate || today} optionsPath={EVENTS_PATH} className={styles.fieldInput} aria-label="Event"
+            onChange={(id) => set({ projectId: id })} />
+        </label>
+      )}
+      {eventNeeded && billRead.state.status === 'done' && (
+        <EventSuggestions suggestions={billRead.state.result.eventSuggestions} current={v.projectId} onUse={(id) => set({ projectId: id })} />
+      )}
+      {eventNeeded && v.projectId == null && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <label style={{ ...soft, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <input type="checkbox" checked={noEvent} onChange={(e) => setNoEvent(e.target.checked)} aria-label="I cannot find this event" />
+            I cannot find this event · 找不到这场活动
+          </label>
+          {noEvent && (
+            <input className={styles.fieldInput} value={noEventReason} onChange={(e) => setNoEventReason(e.target.value)} aria-label="Why there is no event"
+              placeholder="Say why in a line — Finance reads it (e.g. the fair is not in PMS yet)" />
+          )}
+        </div>
+      )}
       <label className={styles.field}>
         <span className={styles.fieldLabel}>What is it for *</span>
         <textarea className={styles.fieldInput} rows={2} value={v.purpose} onChange={(e) => set({ purpose: e.target.value })} aria-label="What is it for"
@@ -345,16 +418,10 @@ function RequestForm({ initial, onDone, onCancel }: { initial: PaymentRequest | 
           <input className={styles.fieldInput} value={v.bankAccountName ?? ''} onChange={(e) => set({ bankAccountName: e.target.value || null })} aria-label="Account name" />
         </label>
       </div>
-      {!initial && (
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>The bill (invoice / quotation — photo or PDF)</span>
-          <input type="file" multiple accept={PV_FILE_ACCEPT} aria-label="Bill files" onChange={(e) => setFiles([...(e.target.files ?? [])])} />
-          {files.length > 0 && <span style={soft}>{files.length} file(s) attach when the request is sent: {files.map((f) => f.name).join(', ')}</span>}
-        </label>
-      )}
       <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>
         <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
-        <Button variant="primary" size="sm" onClick={() => void save()} disabled={saving || !ready}>
+        {/* Pressable while incomplete: the press says what is still missing. */}
+        <Button variant="primary" size="sm" onClick={() => void save()} disabled={saving || reading}>
           {saving ? 'Sending…' : initial ? (initial.status === 'REJECTED' ? 'Send again' : 'Save') : 'Send to Finance'}
         </Button>
       </div>

@@ -72,6 +72,7 @@ import { normalizeVendor } from '../../acc/bill-extract';
 import { extractBillsHandler } from './pv-extract';
 import { parseEventId, pvLineEventRefusal } from '../lib/event-tags';
 import { paymentRequestLinkGuard, linkPaymentRequest } from '../lib/payment-request';
+import { pvBillFields, pvBillUpdates } from '../lib/bill-matches';
 import { requireLeafAccount } from './accounting-chart';
 import { planPvRateAdoption, isRateRetainedFromPv, roundRate6 } from '../lib/pv-rate-adoption';
 import { recostFromGrn } from '../lib/recost';
@@ -92,10 +93,12 @@ const PV_AUDIT_FIELDS: Array<[string, string]> = [
   ['currency', 'currency'],
   ['exchangeRate', 'exchange_rate'],
   ['totalSen', 'total_sen'],
+  ['billRef', 'bill_ref'],
+  ['billDate', 'bill_date'],
 ];
 
 const HEADER =
-  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by, refund_source_type, refund_source_doc_no, customer_id, debtor_code';
+  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by, refund_source_type, refund_source_doc_no, customer_id, debtor_code, bill_ref, bill_date';
 
 const LINE = 'id, pv_id, line_no, description, debit_account_code, amount_sen, created_at, project_id';
 
@@ -707,6 +710,7 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
       status:              'DRAFT',
       created_by:          user.id,
       ...(refund && refund.ok ? refund.fields : {}),
+      ...pvBillFields(body, prq.request), // the bill's own number and date (lib/bill-matches.ts)
     }).select(HEADER).single(),
   );
   if (hErr) return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
@@ -832,6 +836,7 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   }
   if (body.supplierId !== undefined) updates.supplier_id = (body.supplierId as string | null) || null;
   if (body.notes !== undefined) updates.notes = (body.notes as string | null) ?? null;
+  Object.assign(updates, pvBillUpdates(body));
   // PV→PI settlement (0202) — purpose is editable while DRAFT.
   if (body.purpose !== undefined) updates.purpose = normalizePurpose(body.purpose);
 

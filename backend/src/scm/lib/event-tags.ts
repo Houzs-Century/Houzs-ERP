@@ -208,3 +208,14 @@ export async function listEventOptions(
     .all<Record<string, unknown>>();
   return ((res.results ?? []) as Array<Record<string, unknown>>).map(toEventRow).filter((e) => Number.isFinite(e.id));
 }
+
+/** Whether the company runs events at all (owner 2026-09-30: 2990 不会有 event
+    的) — one live project is enough. A company without events is never asked
+    for one: its requests hide the field and its bills never need it. */
+export async function companyHasEvents(db: EventDb, companySql: string): Promise<boolean> {
+  const res = await db
+    .prepare(`SELECT p.id AS id FROM projects p WHERE p.archived_at IS NULL${companySql} LIMIT 1`)
+    .bind()
+    .all<Record<string, unknown>>();
+  return (res.results ?? []).length > 0;
+}
