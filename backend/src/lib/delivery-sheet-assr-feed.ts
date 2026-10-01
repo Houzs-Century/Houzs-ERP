@@ -71,7 +71,11 @@ export type AssrFeedRow = {
 export type AssrLegRecord = DeliverySheetRecord & { Kind: AssrLegKind };
 
 /**
- * Binds, in order: ?1 company_id, ?2 since (timestamptz text), ?3 limit.
+ * Binds, in order: ?1 since (timestamptz text), ?2 limit.
+ *
+ * NOT company-scoped (owner 2026-10-01: a Service Case is not split HOUZS / 2990).
+ * `assr_cases.company_id` follows the creator's active company, so a HOUZS order's
+ * case raised under 2990 (ASSR/2608-016, SO-012823) never reached the sheet.
  *
  * Open cases (`closed_at` / `archived_at` NULL) carrying at least one OWN-TEAM
  * leg with a date, changed since the cursor. Ordered by the cursor so the page
@@ -107,17 +111,16 @@ SELECT assr_no,
        delivery_by, do_date,
        updated_at::text AS last_modified_text
   FROM assr_cases
- WHERE company_id = ?1
-   AND closed_at IS NULL
+ WHERE closed_at IS NULL
    AND archived_at IS NULL
    AND (
         (inspection_by = 'own'      AND inspection_visit_at IS NOT NULL) OR
         (pickup_by     = 'customer' AND customer_pickup_at  IS NOT NULL) OR
         (delivery_by   = 'own'      AND do_date             IS NOT NULL)
        )
-   AND updated_at::timestamptz > ?2::timestamptz
+   AND updated_at::timestamptz > ?1::timestamptz
  ORDER BY updated_at::timestamptz, assr_no
- LIMIT ?3`;
+ LIMIT ?2`;
 
 const blankToNull = (v: string | null | undefined): string | null => {
   const s = (v ?? "").trim();

@@ -288,9 +288,13 @@ export type ChartRow = {
   accMoney: boolean;
   special: string | null;
   section: string | null;
+  /** 需要 Event and the PMS event page's row (owner 2026-10-01, payment-request item 4). */
+  needsEvent?: boolean;
+  pmsRow?: string | null;
   perCompany: Partial<Record<number, { active: boolean }>>;
 };
-export const useChartUnion = () => baseQuery<{ companies: ChartCompany[]; sections: AccountSection[]; accounts: ChartRow[] }>(
+/** pmsRows: the PMS event page's rows an account can fill — one list, from the server. */
+export const useChartUnion = () => baseQuery<{ companies: ChartCompany[]; sections: AccountSection[]; accounts: ChartRow[]; pmsRows?: Array<{ row: string; label: string }> }>(
   ['chart-union'], `/accounting/chart`,
 );
 
@@ -372,7 +376,7 @@ export const useChartRename = () => {
 export const useChartUpdate = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { code: string; name?: string; accountType?: string; accMoney?: boolean; parentCode?: string | null; section?: string }) =>
+    mutationFn: (body: { code: string; name?: string; accountType?: string; accMoney?: boolean; parentCode?: string | null; section?: string; needsEvent?: boolean; pmsRow?: string | null }) =>
       authedFetch<{ ok: boolean; companies: number }>(
         `/accounting/chart/update`, { method: 'PUT', body: JSON.stringify(body) },
       ),
@@ -412,8 +416,9 @@ export type OtherDebtor = {
   id: string; name: string; phone: string | null; notes: string | null;
   is_active: boolean; outstanding_sen: number;
 } & Partial<DebtorPartyColumns>;
-/** A bill line: a money line names its account; a TEXT line (2026-09-21) has no account and a zero amount — description only. */
-export type DebtorBillLine = { id: string; line_no: number; description: string | null; credit_account_code: string | null; amount_sen: number };
+/** A bill line: a money line names its account; a TEXT line (2026-09-21) has no account and a zero amount — description only.
+    project_id: the event a money line is for (2026-10-01, payment-request item 6 — optional). */
+export type DebtorBillLine = { id: string; line_no: number; description: string | null; credit_account_code: string | null; amount_sen: number; project_id?: number | null };
 export type DebtorBill = {
   id: string; bill_number: string; bill_date: string;
   total_sen: number; received_sen: number; status: string; notes: string | null;

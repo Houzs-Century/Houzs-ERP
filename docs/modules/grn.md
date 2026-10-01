@@ -117,6 +117,19 @@ go through `/api/scm/grns`.
   (`vendor/scm/lib/line-add-lock.ts`), and the per-line PO reference
   (`vendor/scm/lib/line-po-link.ts`).
 
+- Line rack: `PATCH /:id/items/:itemId/rack` (`lib/grn-line-rack.ts`) sets,
+  changes or clears one line's `rack_id` after the GRN exists — the New GRN form
+  is no longer the only place. Placement only (no stock, money or AutoCount), so
+  it is NOT behind the PI/PR child-lock; refused on CANCELLED/CLOSED. On a POSTED
+  GRN it mirrors the rack ledger: none->rack places (STOCK_IN), rack->rack moves
+  the placed row keeping `source_grn_id` (TRANSFER), rack->none pulls it
+  (STOCK_OUT). If the placed row was already moved on the rack board it refuses
+  (`rack_already_moved`) rather than placing the goods twice. Both surfaces:
+  desktop Edit mode (`GoodsReceivedDetail`) and the phone receipt detail
+  (`MobileGrnLineRack`, saves on pick); who may change it and the option list
+  live in the shared `vendor/scm/lib/grn-line-rack.ts`. The phone's create
+  forms still have no rack — set it on the detail after creating.
+
 ## Gotchas
 
 - Don't read `PATCH /:id/post`'s 200 as success alone — it can carry
@@ -180,5 +193,5 @@ go through `/api/scm/grns`.
   `warehouse-label.ts`.
 - Mobile: `frontend/src/mobile/MobileModuleList.tsx`, `MobileModuleDetail.tsx`,
   `MobileConvertWizard.tsx`, `MobilePurchaseDocNew.tsx`, `MobileGrnZeroCost.tsx`,
-  `MobileLinePoRef.tsx`, `MobileAddLine.tsx`.
+  `MobileLinePoRef.tsx`, `MobileAddLine.tsx`, `MobileGrnLineRack.tsx`.
 - Auth: `frontend/src/auth/salesAccess.ts` (`canOperateGoodsReceipts`).

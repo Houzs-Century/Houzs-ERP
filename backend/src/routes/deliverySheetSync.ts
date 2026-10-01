@@ -366,13 +366,11 @@ app.get("/assr-legs", async (c) => {
   const since = parseSince(c.req.query("since"));
   if (!since) return c.json({ error: "bad_since", message: "since must be a timestamp (yyyy-mm-dd hh:mm:ss[.ffffff][+hh])" }, 400);
   const limit = parseLimit(c.req.query("limit"));
-  const co = await sheetCompanyId(c);
-  if ("refusal" in co) return co.refusal;
 
   let cases: AssrFeedRow[];
   try {
-    // company-scope: ?1 is the secret's company id, resolved from the master.
-    const res = (await c.env.DB.prepare(FEED_ASSR_LEGS_SQL).bind(co.id, since, limit).all()) as { results?: AssrFeedRow[] };
+    // company-scope: none by owner ruling — Service Cases are not split by company (see FEED_ASSR_LEGS_SQL).
+    const res = (await c.env.DB.prepare(FEED_ASSR_LEGS_SQL).bind(since, limit).all()) as { results?: AssrFeedRow[] };
     cases = res.results ?? [];
   } catch (e) {
     return c.json({ error: "feed_read_failed", message: e instanceof Error ? e.message : String(e) }, 502);

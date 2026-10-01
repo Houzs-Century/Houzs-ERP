@@ -6,6 +6,7 @@ import { canonicalizeMyState } from "../scm/lib/canonical-state";
 import { canonicalizeVenue } from "../scm/lib/canonical-venue";
 import { deriveProjectCode, deriveProjectName, syncedNameForOrganizerChange } from "./project-naming";
 import { checklistRowDone } from "./checklistProgress";
+import { eventFinanceLines } from "./projectFinanceLines";
 export { deriveProjectCode, deriveProjectName };
 
 /** Disambiguate against existing codes by appending -2, -3, … */
@@ -822,71 +823,11 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
   }
 
   // Finance ledger lines — the new canonical source. Frontend shows
-  // these directly; project_finance is only the cached rollup.
-  const ledger = await listLedgerLines(env, id);
-
-  // Sales entries surface as virtual income rows in the ledger so the
-  // Finance section reflects rep-entered sales without double-bookkeeping.
-  // sales_entries is the source of truth (managed via the Sales section);
-  // these synthetic rows carry source='sales_entry' so the UI suppresses
-  // edit/delete controls.
-  const salesEntryLines = await env.DB.prepare(
-    `SELECT s.id, s.amount, s.occurred_at, s.created_at,
-            s.customer_name, s.ref_no, s.notes,
-            COALESCE(sp.name, u.name) as created_by_name
-       FROM sales_entries s
-       LEFT JOIN users u  ON u.id  = s.created_by
-       LEFT JOIN users sp ON sp.id = s.sales_person_id
-      WHERE s.project_id = ?
-        AND s.archived_at IS NULL
-        AND s.status != 'void'
-      ORDER BY s.occurred_at DESC, s.id DESC`
-  )
-    .bind(id)
-    .all<{
-      id: number;
-      amount: number;
-      occurred_at: string;
-      created_at: string;
-      customer_name: string;
-      ref_no: string | null;
-      notes: string | null;
-      created_by_name: string | null;
-    }>();
-  // Quick-log rows (rep entered amount + ref_no only at the project)
-  // carry the sentinel "(quick log)" in customer_name. Render them
-  // with a friendlier "Quick log · {ref}" label in the project finance
-  // ledger so the boss isn't squinting at a parenthesised placeholder.
-  const QUICK_LOG_SENTINEL = "(quick log)";
-  const synthIncome = (salesEntryLines.results ?? []).map((s) => ({
-    id: -s.id,
-    project_id: id,
-    kind: "income" as const,
-    category: "sales",
-    description:
-      s.customer_name === QUICK_LOG_SENTINEL
-        ? `Quick log · ${s.ref_no ?? "no ref"}`
-        : (s.ref_no ? `${s.ref_no} · ` : "") + s.customer_name,
-    amount: s.amount,
-    occurred_at: s.occurred_at,
-    r2_key: null,
-    file_name: null,
-    mime_type: null,
-    notes: s.notes,
-    created_by_name: s.created_by_name,
-    created_at: s.created_at,
-    archived_at: null,
-    source: "sales_entry" as const,
-    source_id: s.id,
-  }));
-  const ledgerWithSales = [...ledger, ...synthIncome].sort((a: any, b: any) => {
-    const ao = a.occurred_at ?? "";
-    const bo = b.occurred_at ?? "";
-    if (ao && bo) return bo.localeCompare(ao);
-    if (!ao && bo) return 1;
-    if (ao && !bo) return -1;
-    return (b.id ?? 0) - (a.id ?? 0);
-  });
+  // these directly; project_finance is only the cached rollup. With the books
+  // and the sales entries in: services/projectFinanceLines.ts.
+  const { financeLines, books } = await eventFinanceLines(
+    env, id, project.company_id ?? companyId ?? null, await listLedgerLines(env, id), LEDGER_COST_CATEGORIES,
+  );
 
   // Stock transfers — OUT + RETURN records, confirmation-tracked.
   const stockTransfers = await env.DB.prepare(
@@ -968,7 +909,8 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
   return {
     project: { ...project, progress_pct, duration_days },
     finance: finance ?? null,
-    finance_lines: ledgerWithSales,
+    finance_lines: financeLines,
+    finance_books: books,
     stock_transfers: stockTransfers.results ?? [],
     checklist: checklist.results ?? [],
     checklist_comments: comments,

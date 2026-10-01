@@ -46,6 +46,10 @@ vi.mock('../../vendor/scm/lib/inventory-queries', async (importOriginal) => ({
   }),
 }));
 
+vi.mock('../../components/scm-v2/PrintPreviewModal', () => ({
+  PrintPreviewModal: () => null,
+  usePrintPreview: () => ({ open: false, openPreview: vi.fn(), close: vi.fn(), handlers: {} }),
+}));
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({
   useNotify: () => () => {},
   NotifyProvider: ({ children }: { children: React.ReactNode }) => children,

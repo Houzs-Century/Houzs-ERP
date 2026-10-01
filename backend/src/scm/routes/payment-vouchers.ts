@@ -73,6 +73,8 @@ import { extractBillsHandler } from './pv-extract';
 import { parseEventId, pvLineEventRefusal } from '../lib/event-tags';
 import { paymentRequestLinkGuard, linkPaymentRequest } from '../lib/payment-request';
 import { pvBillFields, pvBillUpdates } from '../lib/bill-matches';
+import { officialActor, officialOwedFields, officialOwedUpdates } from '../lib/official-doc';
+import { pvEventAccountRefusal } from '../lib/event-accounts';
 import { requireLeafAccount } from './accounting-chart';
 import { planPvRateAdoption, isRateRetainedFromPv, roundRate6 } from '../lib/pv-rate-adoption';
 import { recostFromGrn } from '../lib/recost';
@@ -98,7 +100,7 @@ const PV_AUDIT_FIELDS: Array<[string, string]> = [
 ];
 
 const HEADER =
-  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by, refund_source_type, refund_source_doc_no, customer_id, debtor_code, bill_ref, bill_date';
+  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by, refund_source_type, refund_source_doc_no, customer_id, debtor_code, bill_ref, bill_date, official_doc, official_doc_note, official_doc_at, official_doc_by';
 
 const LINE = 'id, pv_id, line_no, description, debit_account_code, amount_sen, created_at, project_id';
 
@@ -711,6 +713,7 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
       created_by:          user.id,
       ...(refund && refund.ok ? refund.fields : {}),
       ...pvBillFields(body, prq.request), // the bill's own number and date (lib/bill-matches.ts)
+      ...officialOwedFields(body, officialActor(c)), // 欠正式单 — paid on a proforma (lib/official-doc.ts)
     }).select(HEADER).single(),
   );
   if (hErr) return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
@@ -836,7 +839,7 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   }
   if (body.supplierId !== undefined) updates.supplier_id = (body.supplierId as string | null) || null;
   if (body.notes !== undefined) updates.notes = (body.notes as string | null) ?? null;
-  Object.assign(updates, pvBillUpdates(body));
+  Object.assign(updates, pvBillUpdates(body), officialOwedUpdates(body, officialActor(c), before));
   // PV→PI settlement (0202) — purpose is editable while DRAFT.
   if (body.purpose !== undefined) updates.purpose = normalizePurpose(body.purpose);
 
@@ -1519,6 +1522,8 @@ export const approvePaymentVoucherHandler = async (c: any) => {
   const loaded = await loadPvForApproval(c);
   if ('refusal' in loaded) return loaded.refusal;
   const { sb, id, pv, companyId } = loaded;
+  const evErr = await pvEventAccountRefusal(c, companyId, id); // 需要 Event — lib/event-accounts.ts (item 4)
+  if (evErr) return evErr;
   const resume = pv.status === 'DRAFT' && pv.approved_at != null;
   if (!resume) {
     const v = pvCanApprove(pv as PvApprovalShape);

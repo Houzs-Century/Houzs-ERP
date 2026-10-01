@@ -32,7 +32,7 @@ const DETAILS: Record<string, unknown> = {
   },
   b2: {
     bill: { id: 'b2', bill_number: 'HC-ODB-2608-003', bill_date: '2026-08-20', total_sen: 10000, received_sen: 0, status: 'POSTED', notes: null,
-      lines: [{ id: 'l2', line_no: 1, description: null, credit_account_code: '700-0000', amount_sen: 10000 }] },
+      lines: [{ id: 'l2', line_no: 1, description: null, credit_account_code: '700-0000', amount_sen: 10000, project_id: 348 }] },
     debtor: { id: 'd2', name: 'OLD DEBTOR', phone: null, notes: null, is_active: true, outstanding_sen: 10000 },
   },
 };
@@ -63,6 +63,15 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   useCancelDebtorBill: () => ({ mutateAsync: cancelBillAsync, isPending: false }),
 }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
+/* Events (owner 2026-10-01, payment-request item 6) — the picker's list and labels, stubbed; the real eventLabel stays. */
+const EVENT_OPTIONS = [
+  { id: 348, code: 'E-348', name: 'Pulau Pinang [AKEMI] MLE @ PWCC', startDate: '2026-09-25', endDate: '2026-09-27', status: 'confirmed', archived: false, venue: null, brand: 'AKEMI', organizer: 'MLE', boothNo: 'F1' },
+];
+vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/event-queries')>()),
+  useEventOptions: () => ({ data: EVENT_OPTIONS, isLoading: false }),
+  useEventLabels: () => ({ data: new Map(EVENT_OPTIONS.map((e) => [e.id, e])) }),
+}));
 const confirmFn = vi.fn(async (_a: unknown) => true);
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmFn }));
 const notifyFn = vi.fn();
@@ -236,5 +245,42 @@ describe('raising a debtor bill here', () => {
     await waitFor(() => expect(notifyFn).toHaveBeenCalled());
     expect(JSON.stringify(notifyFn.mock.calls.at(-1)![0])).toMatch(/Pick the debtor/);
     expect(createBillAsync).not.toHaveBeenCalled();
+  });
+});
+
+/* An event on a bill line (owner 2026-10-01, payment-request item 6: other debtor 单也要，但不是一定要选) —
+   optional: the picker above the lines sets every line, the posted credit leg carries it (backend/tests/otherDebtors.test.ts). */
+describe('an event on a bill line — optional', () => {
+  test('the event picked for all lines rides on each money line', async () => {
+    createBillAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('New debtor bill'));
+    const d = dialog();
+    fireEvent.focus(within(d).getByLabelText('Bill debtor'));
+    fireEvent.mouseDown(screen.getByRole('option', { name: 'AHMAD BIN ALI' }));
+    const accountBox = within(d).getAllByRole('combobox').find((el) => (el as HTMLInputElement).placeholder.includes('account this line'))!;
+    fireEvent.focus(accountBox);
+    fireEvent.mouseDown(screen.getByText('700-0000 · Other Income'));
+    setAmount(d, 'line 1 amount', '1500');
+    expect((within(d).getByLabelText('line 1 event') as HTMLInputElement).value).toBe('— No event —');
+    fireEvent.focus(within(d).getByLabelText('Event for all lines'));
+    fireEvent.mouseDown(screen.getByText(/MLE @ PWCC/));
+    expect((within(d).getByLabelText('line 1 event') as HTMLInputElement).value).toMatch(/MLE @ PWCC/);
+    fireEvent.click(within(d).getByText('Post bill'));
+    await waitFor(() => expect(createBillAsync).toHaveBeenCalledTimes(1));
+    expect((createBillAsync.mock.calls[0]![0] as { lines: unknown[] }).lines).toEqual([{ creditAccountCode: '700-0000', amountSen: 150000, projectId: 348 }]);
+  });
+
+  test("Edit keeps a line's event", async () => {
+    updateBillAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('HC-ODB-2608-003'));
+    fireEvent.click(within(dialog()).getByText('Edit'));
+    const d = screen.getAllByRole('dialog').at(-1)!;
+    expect((within(d).getByLabelText('line 1 event') as HTMLInputElement).value).toMatch(/MLE @ PWCC/);
+    fireEvent.click(within(d).getByText('Save & re-post'));
+    await waitFor(() => expect(updateBillAsync).toHaveBeenCalledWith({
+      billId: 'b2', body: { billDate: '2026-08-20', lines: [{ creditAccountCode: '700-0000', amountSen: 10000, projectId: 348 }] },
+    }));
   });
 });

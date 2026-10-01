@@ -21,6 +21,9 @@ import { paymentVouchers } from '../src/scm/routes/payment-vouchers';
 import { paymentRequests } from '../src/scm/routes/payment-requests';
 import { apInvoices } from '../src/scm/routes/ap-invoices';
 import { eventBillRefusal, normalizeBillNo, pvBillFields, readBillFacts } from '../src/scm/lib/bill-matches';
+import { officialDocs } from '../src/scm/routes/official-docs';
+import { chartUnionHandler, chartUpdateHandler } from '../src/scm/routes/accounting-chart';
+import { compareOfficial, officialOwedFields, officialOwedUpdates } from '../src/scm/lib/official-doc';
 
 const CO = 1;
 const PV_KEYS = ['scm.payment_voucher.create', 'scm.payment_voucher.write', 'scm.payment_voucher.post', 'scm.payment_voucher.cancel'];
@@ -118,6 +121,9 @@ function as(w: ReturnType<typeof world>, who: { id: number; name: string; perms:
   app.route('/payment-requests', paymentRequests);
   app.route('/payment-vouchers', paymentVouchers);
   app.route('/ap-invoices', apInvoices);
+  app.route('/official-docs', officialDocs);
+  app.get('/accounting/chart', chartUnionHandler);
+  app.put('/accounting/chart/update', chartUpdateHandler);
   return async (path: string, method = 'GET', body?: unknown) => {
     const res = await app.request(path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }, { DB: fakeDb, SLIPS: w.r2, ANTHROPIC_API_KEY: 'k' });
     return { status: res.status, body: await res.json() as Row };
@@ -450,4 +456,179 @@ describe('a bill paid in instalments', () => {
     const stray = await raise(w, KAR, { billNo: 'MLE 0925', billDate: '2026-09-01' });
     expect((await fin(`/payment-requests/${stray.id}`)).body.request.billMatches.map((m: Row) => m.id).sort()).toEqual([first.id, String(bal.body.request.id)].sort());
   });
+});
+
+/* ── Item 3 (owner 2026-10-01): 欠正式单 — a payment made on a proforma owes its
+   official invoice. FINANCE marks it (the voucher's tick); the requester sees
+   it on their request and uploads the official invoice later — copied to the
+   payment, RECEIVED, with what the reader found; Finance checks it off its list.
+   The ledger never moves. */
+describe('a payment on a proforma owes its official invoice', () => {
+  const PROFORMA = { billNo: 'MLE-PF-0925', billDate: '2026-09-01', billTotalSen: 850_000 };
+  const paidOn = async (w: ReturnType<typeof world>, over: Row = {}) => {
+    const req = await raise(w, JAMES, PROFORMA);
+    const fin = as(w, FINANCE);
+    const pv = await fin('/payment-vouchers', 'POST', voucherFor(req.id, { officialDocOwed: true, ...over }));
+    expect(pv.status).toBe(201);
+    return { req, fin, pvId: String(pv.body.id) };
+  };
+  const OFFICIAL = { fileName: 'official.pdf', mime: 'application/pdf', dataBase64: btoa('%PDF official') };
+
+  test('Finance marks it on the voucher; the requester reads it on their request', async () => {
+    const w = world();
+    const { req, pvId } = await paidOn(w);
+    expect(w.sb.tables.payment_vouchers.find((v) => v.id === pvId)).toMatchObject({ official_doc: 'OWED', official_doc_by: 'Chew' });
+    expect((await req.ask(`/payment-requests/${req.id}`)).body.request.officialDoc).toEqual({ state: 'OWED', note: null });
+  });
+
+  test('the requester uploads the official invoice: it stays on the request, travels to the voucher, and waits for Finance with the reader\'s note', async () => {
+    const w = world();
+    const { req, fin, pvId } = await paidOn(w);
+    reads({ invoiceNumber: 'MLE-0925', invoiceDate: '2026-09-20', totalRm: 9000 });
+    const up = await req.ask(`/payment-requests/${req.id}/official-doc`, 'POST', OFFICIAL);
+    expect(up.status).toBe(201);
+    expect(up.body.received).toEqual([{ kind: 'PV', number: w.sb.tables.payment_vouchers[0]!.pv_number ?? null }]);
+    expect(up.body.note).toBe('The official invoice reads RM 9,000.00; the proforma read RM 8,500.00 (more by RM 500.00).');
+    expect(w.sb.tables.acc_payment_request_files.filter((f) => f.request_id === req.id && f.kind === 'official')).toHaveLength(1);
+    expect(w.sb.tables.acc_pv_files.filter((f) => f.pv_id === pvId && f.kind === 'official')).toHaveLength(1);
+    expect(w.sb.tables.payment_vouchers.find((v) => v.id === pvId)).toMatchObject({ official_doc: 'RECEIVED', official_doc_note: up.body.note });
+    expect((await req.ask(`/payment-requests/${req.id}`)).body.request.officialDoc).toMatchObject({ state: 'RECEIVED' });
+
+    /* Finance's list: received, to check — with the request and who asked. */
+    const list = await fin('/official-docs');
+    expect(list.body.rows).toEqual([expect.objectContaining({ kind: 'PV', id: pvId, state: 'RECEIVED', request: { id: req.id, requestNo: req.no, requestedBy: 'James Seow' } })]);
+    expect((await fin(`/official-docs/PV/${pvId}`, 'POST', { state: 'CHECKED', note: 'Balance RM 500 paid separately' })).status).toBe(200);
+    expect((await fin('/official-docs')).body.rows).toEqual([]);
+    expect((await fin('/official-docs?all=1')).body.rows).toEqual([expect.objectContaining({ id: pvId, state: 'CHECKED', note: 'Balance RM 500 paid separately' })]);
+    /* The voucher's ledger was never touched by any of it. */
+    expect(w.sb.tables.journal_entries).toHaveLength(0);
+  });
+
+  test('Finance alone marks; checked needs a mark first; RECEIVED is the upload\'s; a cancelled payment owes nothing', async () => {
+    const w = world();
+    const { req, fin, pvId } = await paidOn(w, { officialDocOwed: false });
+    expect(w.sb.tables.payment_vouchers.find((v) => v.id === pvId)!.official_doc ?? null).toBeNull();
+    expect((await fin(`/official-docs/PV/${pvId}`, 'POST', { state: 'CHECKED' })).body.error).toBe('nothing_owed');
+    expect((await fin(`/official-docs/PV/${pvId}`, 'POST', { state: 'RECEIVED' })).body.error).toBe('bad_state');
+    expect((await req.ask(`/official-docs/PV/${pvId}`, 'POST', { state: 'OWED' })).status).toBe(403);
+    expect((await req.ask('/official-docs')).status).toBe(403);
+    expect((await fin(`/official-docs/PV/${pvId}`, 'POST', { state: 'OWED' })).status).toBe(200);
+    expect(w.sb.tables.payment_vouchers.find((v) => v.id === pvId)).toMatchObject({ official_doc: 'OWED' });
+    expect((await fin(`/official-docs/PV/${pvId}`, 'POST', { state: null })).status).toBe(200);
+    expect(w.sb.tables.payment_vouchers.find((v) => v.id === pvId)!.official_doc).toBeNull();
+    w.sb.tables.payment_vouchers.find((v) => v.id === pvId)!.status = 'CANCELLED';
+    expect((await fin(`/official-docs/PV/${pvId}`, 'POST', { state: 'OWED' })).body.error).toBe('doc_cancelled');
+  });
+
+  test('uploaded on the balance, it reaches every payment of the bill that owes it', async () => {
+    const w = world();
+    const first = await raise(w, JAMES, { ...PROFORMA, amountSen: 500_000 });
+    const fin = as(w, FINANCE);
+    const pv1 = await fin('/payment-vouchers', 'POST', voucherFor(first.id, { officialDocOwed: true, lines: [{ debitAccountCode: '900-R032', description: 'Deposit', amountSen: 500_000 }] }));
+    const bal = await first.ask(`/payment-requests/${first.id}/balance`, 'POST', { amountSen: 350_000 });
+    const pv2 = await fin('/payment-vouchers', 'POST', voucherFor(String(bal.body.request.id), { officialDocOwed: true, lines: [{ debitAccountCode: '900-R032', description: 'Balance', amountSen: 350_000 }] }));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('busy', { status: 529 })));
+    const up = await first.ask(`/payment-requests/${bal.body.request.id}/official-doc`, 'POST', OFFICIAL);
+    expect(up.status).toBe(201);
+    expect(up.body.received).toHaveLength(2);
+    expect(up.body.note).toBeNull();
+    for (const id of [pv1.body.id, pv2.body.id]) {
+      expect(w.sb.tables.payment_vouchers.find((v) => v.id === id)).toMatchObject({ official_doc: 'RECEIVED' });
+    }
+  });
+
+  test('a draft voucher\'s tick goes on and comes off; an AP invoice booked on a proforma owes the same way', async () => {
+    const w = world();
+    const { fin, pvId } = await paidOn(w, { officialDocOwed: false });
+    expect((await fin(`/payment-vouchers/${pvId}`, 'PATCH', { officialDocOwed: true })).status).toBe(200);
+    expect(w.sb.tables.payment_vouchers.find((v) => v.id === pvId)).toMatchObject({ official_doc: 'OWED' });
+    expect((await fin(`/payment-vouchers/${pvId}`, 'PATCH', { officialDocOwed: false })).status).toBe(200);
+    expect(w.sb.tables.payment_vouchers.find((v) => v.id === pvId)!.official_doc).toBeNull();
+
+    const req2 = await raise(w, KAR, { billNo: 'Q-1', billDate: '2026-09-02' });
+    const inv = await fin('/ap-invoices', 'POST', {
+      supplierId: 'sup-mle', supplierInvoiceRef: 'Q-1', invoiceDate: '2026-09-02', paymentRequestId: req2.id, officialDocOwed: true,
+      lines: [{ debitAccountCode: '900-R032', description: 'Booth', amountSen: 850_000 }],
+    });
+    expect(inv.status).toBe(201);
+    expect(w.sb.tables.ap_invoices[0]).toMatchObject({ official_doc: 'OWED' });
+    expect((await as(w, KAR)(`/payment-requests/${req2.id}`)).body.request.officialDoc).toEqual({ state: 'OWED', note: null });
+    expect((await fin('/official-docs')).body.rows.map((r: Row) => r.kind).sort()).toEqual(['API']);
+  });
+
+  test('the pure pieces: the reader against the proforma, and the tick', () => {
+    expect(compareOfficial({ invoiceNumber: 'INV-1', totalSen: 850_000 }, { billNo: 'PF-1', totalSen: 850_000 })).toBeNull();
+    expect(compareOfficial({ invoiceNumber: 'pf 1', totalSen: 850_000 }, { billNo: 'PF-1', totalSen: 850_000 })).toBe("It carries the proforma's own number (pf 1) — check it is the official invoice.");
+    expect(compareOfficial(null, { billNo: null, totalSen: null })).toBeNull();
+    expect(officialOwedFields({ officialDocOwed: true }, 'Chew')).toMatchObject({ official_doc: 'OWED', official_doc_by: 'Chew' });
+    expect(officialOwedFields({}, 'Chew')).toEqual({});
+    expect(officialOwedUpdates({ officialDocOwed: false }, 'Chew', { official_doc: 'RECEIVED' })).toEqual({});
+  });
+});
+
+/* ── Item 4 (owner 2026-10-01): 申请人不用选类型，我定好哪里一些类型需要就一定要选event.
+   FINANCE decides on the chart, per account: 需要 Event, and which PMS row the
+   money fills. A line on a needs-Event account is refused at APPROVAL (the step
+   that posts) until it has its Event — in a company that runs events. */
+describe('需要 Event — decided on the chart, asked at approval', () => {
+  const APPROVER = { id: 10, name: 'Boss', perms: [...PV_KEYS, 'scm.payment_voucher.approve'] };
+  const needsEvent = (w: ReturnType<typeof world>) => { Object.assign(w.sb.tables.accounts.find((a) => a.account_code === '900-R032')!, { needs_event: true, pms_row: 'rental' }); };
+  const readyToApprove = (w: ReturnType<typeof world>, id: string) =>
+    Object.assign(w.sb.tables.payment_vouchers.find((v) => v.id === id)!, { pv_number: 'HC-PV-2610-009', submitted_at: '2026-10-01T01:00:00Z', checked_at: '2026-10-01T02:00:00Z' });
+
+  test('a line on a needs-Event account without its event is refused at approval; with it, it posts', async () => {
+    const w = world();
+    needsEvent(w);
+    const { id } = await raise(w);
+    const pv = await as(w, FINANCE)('/payment-vouchers', 'POST', voucherFor(id, { lines: [{ debitAccountCode: '900-R032', description: 'Booth F1', amountSen: 850_000 }] }));
+    expect(pv.status).toBe(201);
+    readyToApprove(w, String(pv.body.id));
+    const boss = as(w, APPROVER);
+    const refused = await boss(`/payment-vouchers/${pv.body.id}/approve`, 'POST');
+    expect(refused.status).toBe(409);
+    expect(refused.body).toEqual({ error: 'event_required_on_line', message: 'Line 1 (900-R032 RENTAL - EXHIBITION) needs its Event — pick it, or untick 需要 Event on the account.' });
+    expect(w.sb.tables.payment_vouchers[0]!.approved_at ?? null).toBeNull();
+    w.sb.tables.payment_voucher_lines.find((l) => l.pv_id === pv.body.id)!.project_id = 348;
+    expect((await boss(`/payment-vouchers/${pv.body.id}/approve`, 'POST')).status).toBe(200);
+    expect(w.sb.tables.payment_vouchers[0]).toMatchObject({ status: 'POSTED' });
+  });
+
+  const withApControl = (w: ReturnType<typeof world>, companyId = CO) => {
+    w.sb.tables.accounts.push(acct('400-0000', 'ACCOUNT PAYABLE', 'LIABILITY', { company_id: companyId }));
+  };
+
+  test('an AP invoice line the same way at posting; an untick on the chart lifts it', async () => {
+    const w = world();
+    needsEvent(w);
+    withApControl(w);
+    const fin = as(w, FINANCE);
+    const inv = await fin('/ap-invoices', 'POST', {
+      supplierId: 'sup-mle', supplierInvoiceRef: 'MLE-1', invoiceDate: '2026-09-10',
+      lines: [{ debitAccountCode: '900-R032', description: 'Booth', amountSen: 850_000 }],
+    });
+    expect(inv.status).toBe(201);
+    const refused = await fin(`/ap-invoices/${inv.body.invoice.id}/post`, 'POST');
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toBe('event_required_on_line');
+    /* Finance unticks it on the chart (tests/accountingChart.test.ts pins the
+       chart's own write) — the same bill now posts. */
+    w.sb.tables.accounts.find((a) => a.account_code === '900-R032')!.needs_event = false;
+    expect((await fin(`/ap-invoices/${inv.body.invoice.id}/post`, 'POST')).status).toBe(200);
+  });
+
+  test('a company without events is never asked', async () => {
+    const w = world();
+    needsEvent(w);
+    for (const a of w.sb.tables.accounts) a.company_id = 2;
+    withApControl(w, 2);
+    w.sb.tables.suppliers[0]!.company_id = 2;
+    const fin = as(w, FINANCE, 2);
+    const inv = await fin('/ap-invoices', 'POST', {
+      supplierId: 'sup-mle', supplierInvoiceRef: 'X-1', invoiceDate: '2026-09-10',
+      lines: [{ debitAccountCode: '900-R032', description: 'Rent', amountSen: 100_000 }],
+    });
+    expect(inv.status).toBe(201);
+    expect((await fin(`/ap-invoices/${inv.body.invoice.id}/post`, 'POST')).status).toBe(200);
+  });
+
 });

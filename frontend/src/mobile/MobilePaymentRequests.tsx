@@ -29,6 +29,8 @@ import {
 } from "../vendor/scm/lib/payment-request-queries";
 import { billFactsOf, needsEvent, useRequestBillRead } from "../vendor/scm/lib/request-bill-read";
 import { BillInstalments, BillMatchesNote, BillReadNote, billFactsLine } from "../vendor/scm/components/RequestBill";
+import { OfficialDocChip } from "../vendor/scm/components/OfficialDoc";
+import { useUploadOfficialDoc } from "../vendor/scm/lib/official-doc-queries";
 import { EventSuggestions } from "../vendor/scm/components/EventSuggestions";
 import { fileToBase64, PV_FILE_ACCEPT } from "../vendor/scm/lib/payment-voucher-queries";
 import { useEventLabels } from "../vendor/scm/lib/event-queries";
@@ -41,7 +43,7 @@ import { fmtDateOrDash, fmtSen } from "../vendor/shared/format";
 
 const EVENTS_PATH = "/payment-requests/event-options" as const;
 type View = { t: "list" } | { t: "new" } | { t: "edit"; req: PaymentRequest } | { t: "detail"; id: string } | { t: "balance"; req: PaymentRequest };
-type Filter = "all" | "waiting" | "paid" | "returned";
+type Filter = "all" | "waiting" | "paid" | "returned" | "official";
 
 export function MobilePaymentRequests({ onBack }: { onBack: () => void }) {
   const [view, setView] = useState<View>({ t: "list" });
@@ -90,8 +92,10 @@ function RequestListScreen({ onBack, onNew, onOpen }: { onBack: () => void; onNe
     filter === "all" ? true
       : filter === "waiting" ? awaitsFinance(r) || financeWorking(r)
         : filter === "paid" ? requestPaid(r)
-          : r.stage === "RETURNED" || r.stage === "WITHDRAWN");
-  const chips: Array<[Filter, string]> = [["all", "All"], ["waiting", "Waiting"], ["paid", "Paid"], ["returned", "Returned"]];
+          /* 欠正式单 (item 3): still owes the official invoice, or it waits to be checked. */
+          : filter === "official" ? r.officialDoc?.state === "OWED" || r.officialDoc?.state === "RECEIVED"
+            : r.stage === "RETURNED" || r.stage === "WITHDRAWN");
+  const chips: Array<[Filter, string]> = [["all", "All"], ["waiting", "Waiting"], ["paid", "Paid"], ["returned", "Returned"], ["official", "欠正式单"]];
 
   const body = () => {
     if (q.isLoading) return <Note>Loading requests…</Note>;
@@ -110,6 +114,7 @@ function RequestListScreen({ onBack, onNew, onOpen }: { onBack: () => void; onNe
         <div style={{ fontSize: 11.5, marginTop: 2 }}>{r.purpose}</div>
         {r.project_id != null && <div style={{ fontSize: 11, color: "var(--mut)", marginTop: 2 }}>{eventCellText(labels.data, r.project_id)}</div>}
         <div style={{ marginTop: 4 }}><StageText r={r} />{answerText(r) ? <span style={{ fontSize: 11, color: "var(--mut)" }}> · {answerText(r)}</span> : null}</div>
+        {r.officialDoc && <div style={{ marginTop: 2 }}><OfficialDocChip state={r.officialDoc.state} /></div>}
       </button>
     ));
   };
@@ -137,6 +142,9 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
   const files = usePaymentRequestFiles(id);
   const upload = useUploadPaymentRequestFile();
   const remove = useDeletePaymentRequestFile();
+  /* 补正式单 (item 3). */
+  const official = useUploadOfficialDoc();
+  const offRef = useRef<HTMLInputElement>(null);
   const withdraw = useWithdrawPaymentRequest();
   const sendBack = useReturnPaymentRequest();
   const askConfirm = useConfirm();
@@ -161,6 +169,17 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
         await upload.mutateAsync({ id: r.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
       } catch (e) {
         setFileError(`${f.name} did not attach — ${e instanceof Error ? e.message : "try again"}.`);
+        break;
+      }
+    }
+  };
+  const sendOfficial = async (list: FileList | null) => {
+    setFileError(null);
+    for (const f of [...(list ?? [])]) {
+      try {
+        await official.mutateAsync({ requestId: r.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+      } catch (e) {
+        setFileError(`${f.name} did not upload — ${e instanceof Error ? e.message : "try again"}.`);
         break;
       }
     }
@@ -217,6 +236,20 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
         <button type="button" className="btn" style={{ background: "var(--bg)", color: "var(--ink)" }} onClick={() => onBalance(r)}>申请付余额 · Request the balance</button>
       )}
       <BillMatchesNote matches={r.billMatches} />
+      {/* 欠正式单 (item 3): paid on a proforma — the official invoice is uploaded here, Finance checks it. */}
+      {r.officialDoc && (
+        <div role="group" aria-label="Official invoice" style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 10px", background: "#fff", borderRadius: 10 }}>
+          <OfficialDocChip state={r.officialDoc.state} note={r.officialDoc.note} />
+          {r.officialDoc.note && <div style={{ fontSize: 12, color: "var(--mut)" }}>{r.officialDoc.note}</div>}
+          {(mine || finance) && (r.officialDoc.state === "OWED" || r.officialDoc.state === "RECEIVED") && (
+            <>
+              <input ref={offRef} type="file" accept={PV_FILE_ACCEPT} style={{ display: "none" }} aria-label="Upload the official invoice"
+                onChange={(e) => { void sendOfficial(e.target.files); e.target.value = ""; }} />
+              <button type="button" className="btn" onClick={() => offRef.current?.click()} disabled={official.isPending}>补正式单 · Upload the official invoice</button>
+            </>
+          )}
+        </div>
+      )}
       {row("Payee's bank", [r.bank_name, r.bank_account_no, r.bank_account_name].filter(Boolean).join(" · ") || "—")}
       {row("Requested by", `${r.requested_by_name ?? "—"} · ${fmtDateOrDash(r.created_at)}`)}
       {r.voucher && row("Voucher", `${r.voucher.pvNumber ?? "Draft"}${r.voucher.postedAt ? ` · paid ${fmtDateOrDash(r.voucher.approvedAt ?? r.voucher.postedAt)}` : ""}${r.voucher.bankConfirmed ? " · bank ✓" : ""}`)}
@@ -402,7 +435,8 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
    is left to ask; the official invoice may come along. */
 function BalanceScreen({ request, onBack, onDone }: { request: PaymentRequest; onBack: () => void; onDone: (id: string) => void }) {
   const balance = useRequestBalance();
-  const upload = useUploadPaymentRequestFile();
+  /* Uploaded AS the official invoice (漏洞 3) — the desktop balance form's rule. */
+  const official = useUploadOfficialDoc();
   const camRef = useRef<HTMLInputElement>(null);
   const fam = request.family;
   const total = fam?.totalSen ?? null;
@@ -413,7 +447,7 @@ function BalanceScreen({ request, onBack, onDone }: { request: PaymentRequest; o
   const [purpose, setPurpose] = useState(`Balance — ${request.purpose.replace(/^Balance — /, "")}`);
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const busy = balance.isPending || upload.isPending;
+  const busy = balance.isPending || official.isPending;
   const pctValue = (() => { const n = Number(pct); return pct.trim() !== "" && Number.isFinite(n) && n > 0 && n <= 100 ? n : null; })();
 
   const save = async () => {
@@ -426,7 +460,7 @@ function BalanceScreen({ request, onBack, onDone }: { request: PaymentRequest; o
       });
       for (const f of files) {
         try {
-          await upload.mutateAsync({ id: res.request.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+          await official.mutateAsync({ requestId: res.request.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
         } catch { break; }
       }
       onDone(res.request.id);

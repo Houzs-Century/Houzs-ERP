@@ -26,8 +26,10 @@ export function QuickRentalField({
   toast: ReturnType<typeof useToast>;
 }) {
   const existing = financeLines.filter(
-    (l) => l.kind === "cost" && ((l.category as string | null) ?? "").trim() === "rental" && !l.auto_source,
+    (l) => l.kind === "cost" && ((l.category as string | null) ?? "").trim() === "rental" && !l.auto_source && !l.source,
   );
+  // Rental from the books (payment-request item 5): Finance's figure, not typed over.
+  const fromBooks = financeLines.filter((l) => l.kind === "cost" && l.source === "books" && l.category === "rental");
   const current = existing.reduce((s, l) => s + (l.amount || 0), 0);
   const [val, setVal] = useState(current ? String(current) : "");
   const [saving, setSaving] = useState(false);
@@ -68,6 +70,19 @@ export function QuickRentalField({
       setSaving(false);
     }
   };
+
+  if (fromBooks.length > 0) {
+    const docs = [...new Set(fromBooks.map((l) => l.doc_no).filter(Boolean))].join(", ");
+    return (
+      <span
+        className="flex items-center gap-1.5 px-2 py-1 text-[12.5px] font-medium text-ink"
+        title={`From the books — ${docs}`}
+      >
+        {fromBooks.reduce((s, l) => s + (l.amount || 0), 0).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        <span className="rounded bg-accent-soft px-1 py-px text-[10px] font-semibold text-accent">入账</span>
+      </span>
+    );
+  }
 
   return (
     <input

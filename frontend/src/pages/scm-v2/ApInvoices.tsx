@@ -43,6 +43,7 @@ import {
 } from '../../vendor/scm/lib/ap-invoice-queries';
 import { useExtractRequestBill, type PvFilePayload, type BillExtraction, type ExtractedBill, type VendorMemory } from '../../vendor/scm/lib/payment-voucher-queries';
 import { usePaymentRequest } from '../../vendor/scm/lib/payment-request-queries';
+import { OfficialDocActions } from '../../vendor/scm/components/OfficialDoc';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { generateApListingPdf } from '../../vendor/scm/lib/ap-invoice-listing-pdf';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
@@ -426,6 +427,9 @@ export const ApInvoices = () => {
             <Meta label="Invoice date" value={fmtDateOrDash(detail.invoice.invoice_date)} />
             <Meta label="Due date" value={fmtDateOrDash(detail.invoice.due_date)} />
             <Meta label="Description" value={detail.invoice.notes ?? '—'} />
+            {detail.invoice.status !== 'CANCELLED' && (
+              <Meta label="Official invoice" value={<OfficialDocActions kind="API" id={detail.invoice.id} state={detail.invoice.official_doc ?? null} note={detail.invoice.official_doc_note ?? null} />} />
+            )}
           </div>
           <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
             <thead>

@@ -54,8 +54,8 @@ export const callerUserId = (c: any): number | null => {
   return Number.isInteger(id) && id > 0 ? id : null;
 };
 
-export type VoucherFacts = { id: string; pv_number: string | null; status: string | null; approved_at: string | null; posted_at: string | null };
-export type InvoiceFacts = { id: string; invoice_number: string | null; status: string | null; total_sen: number | null; paid_sen: number | null; supplier_id?: string | null };
+export type VoucherFacts = { id: string; pv_number: string | null; status: string | null; approved_at: string | null; posted_at: string | null; official_doc?: string | null; official_doc_note?: string | null };
+export type InvoiceFacts = { id: string; invoice_number: string | null; status: string | null; total_sen: number | null; paid_sen: number | null; supplier_id?: string | null; official_doc?: string | null; official_doc_note?: string | null };
 
 /** What the requester reads, from the stored status and the answering
     document's own state — the voucher's, or the AP invoice's. `bankConfirmed`
@@ -257,7 +257,7 @@ async function copyRequestFiles(c: any, companyId: number, requestId: string, do
   const home = doc.kind === 'PV' ? PV_FILES : AP_INVOICE_FILES;
   const sb = c.get('supabase');
   const { data: files, error } = await sb.from('acc_payment_request_files')
-    .select('file_key, file_name, mime, size_bytes, sort_no').eq('company_id', companyId).eq('request_id', requestId).order('sort_no');
+    .select('file_key, file_name, mime, size_bytes, sort_no, kind').eq('company_id', companyId).eq('request_id', requestId).order('sort_no');
   if (error || !files) return 0;
   let copied = 0;
   for (const f of files as Row[]) {
@@ -271,7 +271,7 @@ async function copyRequestFiles(c: any, companyId: number, requestId: string, do
       await bucket.put(key, bytes, { httpMetadata: { contentType: String(f.mime) } });
       const { error: insErr } = await sb.from(home.table).insert({
         company_id: companyId, [home.fkColumn]: doc.id, file_key: key, file_name: f.file_name, mime: f.mime,
-        size_bytes: f.size_bytes, sort_no: Number(f.sort_no ?? copied + 1), created_by: 'payment-request',
+        size_bytes: f.size_bytes, sort_no: Number(f.sort_no ?? copied + 1), created_by: 'payment-request', kind: f.kind ?? 'bill',
       });
       if (!insErr) copied += 1;
     } catch {

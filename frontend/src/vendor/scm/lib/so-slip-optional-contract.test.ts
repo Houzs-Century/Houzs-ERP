@@ -101,7 +101,8 @@ describe('mobile: a slip-less payment is POSTED, not dropped', () => {
        recorder posts and a slip-less deposit reads RM0 against a Processing
        Date, which 422s the create — the deadlock this field exists to close. */
     const body = sliceFrom(mobileSource, 'pendingDepositSen: (() => {', 'items,');
-    expect(body).toContain('.filter((p) => toSen(p.amount) > 0)');
+    /* Minus a backdate-request row (owner 2026-10-01): that money is not the order's until an admin approves it. */
+    expect(body).toContain('.filter((p) => toSen(p.amount) > 0 && !isBackdateRow(p))');
     expect(body).not.toContain('p.slipSession');
   });
 
@@ -119,7 +120,7 @@ describe('mobile: a slip-less payment is POSTED, not dropped', () => {
 describe('desktop: a slip-less payment is POSTED, not dropped', () => {
   test('the rows to post are chosen on amount (receipt-backed rows go their own way)', () => {
     expect(desktopSource).toContain(
-      'const paymentIntents = () => paymentDrafts.filter((d) => d.amountSen > 0 && !d.receiptImageKey);',
+      'const paymentIntents = () => paymentDrafts.filter((d) => d.amountSen > 0 && !d.receiptImageKey && !backdateRows().includes(d));',
     );
   });
 

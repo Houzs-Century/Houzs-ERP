@@ -77,6 +77,7 @@ import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { eager } from '../lib/concurrency';
 import { keyedVariantWithWarning, skuCategoryResolver, lineIdentityFields } from '../lib/sku-category';
 import { pgrestIn } from '../lib/pgrest-in-list';
+import { setGrnLineRackHandler } from '../lib/grn-line-rack';
 
 export const grns = new Hono<{ Bindings: Env; Variables: Variables }>();
 grns.use('*', supabaseAuth);
@@ -3189,6 +3190,9 @@ grns.patch('/:id/items/:itemId', async (c) => {
   await queueAcGrnEdit(c, sb, grnId);
   return c.json({ ok: true });
 });
+
+// Rack is physical placement only — no stock/money, so not behind the PI/PR child-lock.
+grns.patch('/:id/items/:itemId/rack', setGrnLineRackHandler);
 
 /* ── DELETE /:id/items/:itemId — remove a line + roll back its PO receipt. ──
    Deliverable 4 (migration 0106): reading the line's qty_accepted +

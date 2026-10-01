@@ -5,7 +5,8 @@
  * parser before the sheet's next pull does.
  *
  * Asserted: only OPEN cases (closed_at / archived_at NULL) with at least one
- * OWN-TEAM dated leg appear, scoped to the secret's company; a supplier / 3PL /
+ * OWN-TEAM dated leg appear, from EVERY company (Service Cases are not split by
+ * company, owner 2026-10-01); a supplier / 3PL /
  * unconfirmed leg or a leg with no date is excluded; the cursor is strict; and
  * the mapper expands each returned case into the right leg rows.
  *
@@ -73,14 +74,14 @@ async function resetFixture(s: Sql): Promise<void> {
        NULL, NULL, NULL, NULL, NULL, NULL, 'customer', '2026-09-21', NULL, NULL, '2026-09-14 00:00:00+00', NULL, '2026-09-14 00:00:00+00', NULL, NULL, NULL),
       ('ASSR/2609-015', 'SO-9015', 1, 'In Progress', 'Gone', NULL, 'KL WAREHOUSE', NULL, NULL,
        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'own', '2026-09-25', NULL, '2026-09-15 00:00:00+00', '2026-09-15 00:00:00+00', NULL, NULL, NULL),
-      -- Other company → excluded for company 1.
+      -- Recorded under company 2 → still included: Service Cases are not split by company.
       ('ASSR/2609-016', 'SO-9016', 2, 'In Progress', 'OtherCo', NULL, 'KL WAREHOUSE', NULL, NULL,
        NULL, NULL, NULL, NULL, NULL, NULL, 'customer', '2026-09-21', NULL, NULL, NULL, NULL, '2026-09-16 00:00:00+00', NULL, NULL, NULL);
   `);
 }
 
-async function page(company: number, since: string, limit: number): Promise<AssrFeedRow[]> {
-  return (await sql.unsafe(toPgPlaceholders(FEED_ASSR_LEGS_SQL), [company, since, limit] as never[])) as unknown as AssrFeedRow[];
+async function page(since: string, limit: number): Promise<AssrFeedRow[]> {
+  return (await sql.unsafe(toPgPlaceholders(FEED_ASSR_LEGS_SQL), [since, limit] as never[])) as unknown as AssrFeedRow[];
 }
 
 describePg('HC Delivery sheet ASSR leg feed SQL — real Postgres', () => {
@@ -96,15 +97,15 @@ describePg('HC Delivery sheet ASSR leg feed SQL — real Postgres', () => {
     await sql?.end();
   });
 
-  test('only open, own-team, dated cases of the company, oldest change first', async () => {
-    const rows = await page(1, FEED_EPOCH, 10);
-    // 012 (all supplier), 013 (no dates), 014 (closed), 015 (archived) are gone.
-    expect(rows.map((r) => r.assr_no)).toEqual(['ASSR/2609-010', 'ASSR/2609-011']);
-    expect(await page(2, FEED_EPOCH, 10)).toHaveLength(1);
+  test('only open, own-team, dated cases of any company, oldest change first', async () => {
+    const rows = await page(FEED_EPOCH, 10);
+    // 012 (all supplier), 013 (no dates), 014 (closed), 015 (archived) are gone;
+    // 016 is recorded under company 2 and still comes through.
+    expect(rows.map((r) => r.assr_no)).toEqual(['ASSR/2609-010', 'ASSR/2609-011', 'ASSR/2609-016']);
   });
 
   test('the mapper expands the page into its legs', async () => {
-    const rows = await page(1, FEED_EPOCH, 10);
+    const rows = await page(FEED_EPOCH, 10);
     const legs = rows.flatMap(toAssrLegRecords);
     // col B key is the S/O with the Farra-linkage word (delivery-back = SERVICE),
     // so the delivery tabs treat an ERP-pulled leg as the same row a Farra edit
@@ -112,6 +113,7 @@ describePg('HC Delivery sheet ASSR leg feed SQL — real Postgres', () => {
     expect(legs.map((l) => l.DocNo)).toEqual([
       'SO-9010-INSPECTION', 'SO-9010-PICKUP', 'SO-9010-SERVICE',
       'HC-SO-9011-PICKUP',
+      'SO-9016-PICKUP',
     ]);
     const del = legs.find((l) => l.Kind === 'DELIVERY')!;
     // col C (TransferTo) is the ASSR number so syncDeliveryDateToASSR can key a
@@ -127,14 +129,14 @@ describePg('HC Delivery sheet ASSR leg feed SQL — real Postgres', () => {
   });
 
   test('the cursor is strict — a page never re-sends its own last case', async () => {
-    const all = await page(1, FEED_EPOCH, 10);
+    const all = await page(FEED_EPOCH, 10);
     const last = all[all.length - 1]!.last_modified_text;
-    expect(await page(1, last, 10)).toHaveLength(0);
-    // A cursor between the two cases sends only the later one.
-    expect((await page(1, all[0]!.last_modified_text, 10)).map((r) => r.assr_no)).toEqual(['ASSR/2609-011']);
+    expect(await page(last, 10)).toHaveLength(0);
+    // A cursor after the first case sends only the later ones.
+    expect((await page(all[0]!.last_modified_text, 10)).map((r) => r.assr_no)).toEqual(['ASSR/2609-011', 'ASSR/2609-016']);
   });
 
   test('limit pages by case', async () => {
-    expect((await page(1, FEED_EPOCH, 1)).map((r) => r.assr_no)).toEqual(['ASSR/2609-010']);
+    expect((await page(FEED_EPOCH, 1)).map((r) => r.assr_no)).toEqual(['ASSR/2609-010']);
   });
 });
