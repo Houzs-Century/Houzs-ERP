@@ -92,7 +92,9 @@ just `completed`.
 - A logistics leg reaches the HC Delivery sheet ONLY when its own-team marker
   AND its date are both set: inspection (`inspection_by='own'` +
   `inspection_visit_at`), pickup (`pickup_by='customer'` + `customer_pickup_at`),
-  delivery (`delivery_by='own'` + `do_date`). Supplier / 3PL / unset legs never
+  delivery (`delivery_by='own'` + `do_date`), from EVERY company: the sheet
+  feed is the one deliberate exception to `assrCompanySql` (owner 2026-10-01,
+  Service Cases are not split by company). Supplier / 3PL / unset legs never
   sync. `GET /api/delivery-sheet/assr-legs` is the own-team-gated feed
   (`delivery-sheet-assr-feed.ts`); the Delivery Planning board is deliberately
   NOT gated (it shows every dated leg), so board and sheet differ on purpose.
