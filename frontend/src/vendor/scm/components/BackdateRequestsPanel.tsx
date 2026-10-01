@@ -90,8 +90,9 @@ export function BackdateRequestsPanel({ docNo, style }: { docNo: string; style?:
             </div>
             {open && (
               <div style={{ display: 'flex', gap: 6 }}>
-                {isAdmin && <button type="button" style={btn} disabled={busy} onClick={() => void run(r, 'approve')}>Approve</button>}
-                {isAdmin && <button type="button" style={btn} disabled={busy} onClick={() => void run(r, 'reject')}>Reject</button>}
+                {/* Nobody decides their own request — the server refuses it too. */}
+                {isAdmin && Number(r.requested_by) !== myId && <button type="button" style={btn} disabled={busy} onClick={() => void run(r, 'approve')}>Approve</button>}
+                {isAdmin && Number(r.requested_by) !== myId && <button type="button" style={btn} disabled={busy} onClick={() => void run(r, 'reject')}>Reject</button>}
                 {Number(r.requested_by) === myId && <button type="button" style={btn} disabled={busy} onClick={() => void run(r, 'withdraw')}>Withdraw</button>}
               </div>
             )}

@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+import { BACKDATE_DECIDER_PERMS } from "./vendor/scm/lib/payment-backdate-perms";
 import { Routes, Route, Navigate, useParams } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { useAuth } from "./auth/AuthContext";
@@ -701,7 +702,7 @@ export default function App() {
         <Route path="/scm/cancel-requests" element={<ScmGuard area="scm" allowDirector><Scm2990Shell><ScmCancelRequestsV2 /></Scm2990Shell></ScmGuard>} />
         {/* Admin only (owner 2026-09-30: 「只有 admin 可以看到 request」) — the key the
             endpoint asks; `*` covers Owner / IT Admin. */}
-        <Route path="/scm/payment-backdate-requests" element={<Guard anyPerm={["*", "scm.payment.backdate"]}><Scm2990Shell><ScmPaymentBackdateRequestsV2 /></Scm2990Shell></Guard>} />
+        <Route path="/scm/payment-backdate-requests" element={<Guard anyPerm={BACKDATE_DECIDER_PERMS}><Scm2990Shell><ScmPaymentBackdateRequestsV2 /></Scm2990Shell></Guard>} />
         {/* Fair links still to settle (owner 2026-09-13). Same guard as the SO
             list — deciding which exhibition a sale belongs to is a sales-order
             decision, and the row's own write goes through the SO routes. */}

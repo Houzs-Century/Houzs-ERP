@@ -110,6 +110,9 @@ export const PERMISSIONS: PermissionDef[] = [
   // is the exception: Finance / management keying a receipt that surfaced late.
   // Owner + IT Admin cover it via "*"; grant the ROLE under Team > Roles & Permissions.
   { key: "scm.payment.backdate", resource: "Supply Chain", verb: "manage", label: "Backdate a payment slip", description: "Record or re-date a Sales Order payment whose transaction-slip date is older than the 14-day window (or in the future); the entry is audited as an override" },
+  // Owner 2026-09-30: Logistic decides backdate REQUESTS without being able to
+  // key an old slip itself — their own late slips still go through a request.
+  { key: "scm.payment.backdate.approve", resource: "Supply Chain", verb: "approve", label: "Approve backdated payment requests", description: "See, approve or reject Sales Order payment requests whose slip date is older than the 14-day window; does not let the holder key such a payment directly, and never their own request" },
   // SO amendment / revision workflow — TWO-LANE model (owner rework 2026-07-27).
   // A processing-locked SO changes only through an amendment; at submit the
   // request is auto-classified (and, when mixed, SPLIT) into two independent
