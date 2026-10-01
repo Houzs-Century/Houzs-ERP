@@ -64,6 +64,7 @@ import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
+import { grnRackEditable, grnRackOptions } from '../../vendor/scm/lib/grn-line-rack';
 import { LinePoRefLink } from '../../vendor/scm/components/LinePoRefLink';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
@@ -251,7 +252,7 @@ export const GoodsReceivedDetail = () => {
     return m;
   }, [racksQ.data?.racks]);
   const rackOptions = useMemo(
-    () => sortByText((racksQ.data?.racks ?? []).map((r) => ({ value: r.id, label: r.rack }))),
+    () => grnRackOptions(racksQ.data?.racks ?? []),
     [racksQ.data?.racks],
   );
 
@@ -1078,7 +1079,7 @@ export const GoodsReceivedDetail = () => {
                         board. Options = racks of this GRN's warehouse. */}
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Rack</span>
-                      {isEditing && !hardLocked ? (
+                      {isEditing && grnRackEditable(grn.status) ? (
                         <SearchableSelect
                           className={styles.fieldInput}
                           value={d.rackId}

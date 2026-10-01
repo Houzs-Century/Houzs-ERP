@@ -124,8 +124,11 @@ go through `/api/scm/grns`.
   GRN it mirrors the rack ledger: none->rack places (STOCK_IN), rack->rack moves
   the placed row keeping `source_grn_id` (TRANSFER), rack->none pulls it
   (STOCK_OUT). If the placed row was already moved on the rack board it refuses
-  (`rack_already_moved`) rather than placing the goods twice. Desktop only —
-  mobile GRN has no rack field on any screen yet.
+  (`rack_already_moved`) rather than placing the goods twice. Both surfaces:
+  desktop Edit mode (`GoodsReceivedDetail`) and the phone receipt detail
+  (`MobileGrnLineRack`, saves on pick); who may change it and the option list
+  live in the shared `vendor/scm/lib/grn-line-rack.ts`. The phone's create
+  forms still have no rack — set it on the detail after creating.
 
 ## Gotchas
 
@@ -190,5 +193,5 @@ go through `/api/scm/grns`.
   `warehouse-label.ts`.
 - Mobile: `frontend/src/mobile/MobileModuleList.tsx`, `MobileModuleDetail.tsx`,
   `MobileConvertWizard.tsx`, `MobilePurchaseDocNew.tsx`, `MobileGrnZeroCost.tsx`,
-  `MobileLinePoRef.tsx`, `MobileAddLine.tsx`.
+  `MobileLinePoRef.tsx`, `MobileAddLine.tsx`, `MobileGrnLineRack.tsx`.
 - Auth: `frontend/src/auth/salesAccess.ts` (`canOperateGoodsReceipts`).
