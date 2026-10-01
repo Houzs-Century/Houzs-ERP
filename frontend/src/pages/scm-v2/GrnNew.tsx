@@ -47,6 +47,8 @@ import { useRacks } from '../../vendor/scm/lib/warehouse-queries';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { skuMapFromBindings, supplierCodeFor } from '../../vendor/scm/lib/supplier-doc-data';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
+import { LinePoRefLink } from '../../vendor/scm/components/LinePoRefLink';
+import { linePoLink, type LinePoFields } from '../../vendor/scm/lib/line-po-link';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
@@ -122,6 +124,10 @@ type DraftLine = {
   /* Commander 2026-06-04 — optional per-line destination Rack (warehouse-scoped).
      Persists to grn_items.rack_id when the create payload forwards rackId. */
   rackId:            string;
+  /* DEV-28 (Sim 2026-10-01): the PO each line came from, shown on the line like
+     the purchase invoice does. A from-PO receipt can span several orders, so it
+     is per line, never the header's PO. Absent on drafts stashed before this. */
+  sourcePo?:         LinePoFields | null;
 };
 
 /* Stashed to sessionStorage before leaving for the From-PO-multi picker, so the
@@ -340,6 +346,7 @@ export const GrnNew = () => {
         unitPriceSen:      p.unitPriceSen ?? 0,
         notes:               '',
         rackId:              '',
+        sourcePo:            { source_po_id: p.poId, source_po_number: p.poDocNo },
       }));
     setLines([...baseLines, ...pickLines]);
 
@@ -384,6 +391,7 @@ export const GrnNew = () => {
       return;
     }
     if (!poQ.data) return;
+    const header = poQ.data.purchaseOrder;
     const next: DraftLine[] = poQ.data.items
       .map((it: any) => {
         const outstanding = (it.qty ?? 0) - (it.received_qty ?? 0);
@@ -403,6 +411,7 @@ export const GrnNew = () => {
           unitPriceSen:    it.unit_price_sen ?? 0,
           notes:             '',
           rackId:            '',
+          sourcePo:          { source_po_id: header.id, source_po_number: header.po_number },
         };
       })
       .filter((l) => (l.outstanding ?? 0) > 0);
@@ -1093,6 +1102,11 @@ export const GrnNew = () => {
                         LINE {idx + 1}
                       </span>
                       {l.itemGroup && <ItemGroupPill group={l.itemGroup} />}
+                      {l.sourcePo && linePoLink(l.sourcePo) && (
+                        <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                          From PO <LinePoRefLink line={l.sourcePo} />
+                        </span>
+                      )}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
                       <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
@@ -1351,30 +1365,25 @@ export const GrnNew = () => {
                         has none. Empty value = "— No rack —". */}
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Rack</span>
-                      <span className={styles.selectWrap}>
-                        <select
-                          className={styles.fieldSelect}
-                          value={l.rackId}
-                          onChange={(e) => setLine(l.rid, { rackId: e.target.value })}
-                          disabled={!warehouseId || racksQ.isLoading}
-                        >
-                          {!warehouseId ? (
-                            <option value="">— Pick a warehouse first —</option>
-                          ) : racksQ.isLoading ? (
-                            <option value="">Loading racks…</option>
-                          ) : racks.length === 0 ? (
-                            <option value="">No racks in this warehouse</option>
-                          ) : (
-                            <>
-                              <option value="">— No rack —</option>
-                              {sortByText(racks).map((r) => (
-                                <option key={r.id} value={r.id}>{r.rack}</option>
-                              ))}
-                            </>
-                          )}
-                        </select>
-                        <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
-                      </span>
+                      <SearchableSelect
+                        className={styles.fieldInput}
+                        value={l.rackId}
+                        onChange={(v) => setLine(l.rid, { rackId: v })}
+                        disabled={!warehouseId || racksQ.isLoading || racks.length === 0}
+                        ariaLabel={`Rack for line ${idx + 1}`}
+                        placeholder={!warehouseId ? '— Pick a warehouse first —'
+                          : racksQ.isLoading ? 'Loading racks…'
+                          : racks.length === 0 ? 'No racks in this warehouse'
+                          : '— No rack — (type to search)'}
+                        /* The picker seeds its search with the selected label, so
+                           an empty rack must have no option of its own or opening
+                           it would filter the list down to "— No rack —". The
+                           clear option appears once a rack is picked. */
+                        options={[
+                          ...(l.rackId ? [{ value: '', label: '— No rack —' }] : []),
+                          ...sortByText(racks).map((r) => ({ value: r.id, label: r.rack })),
+                        ]}
+                      />
                     </label>
                   </div>
                 </div>
