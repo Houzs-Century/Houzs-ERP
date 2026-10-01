@@ -15,11 +15,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { checkPaymentSlipDate } from './payment-slip-date';
 
-export const PAYMENT_BACKDATE_KEY = 'scm.payment.backdate';
-
-/** Who reaches the inbox and its sidebar entry: the backdate right (Finance,
- *  `*`) or the approve-only key (Logistic) — the server's own rule. */
-export const BACKDATE_DECIDER_PERMS: string[] = ['*', PAYMENT_BACKDATE_KEY, 'scm.payment.backdate.approve'];
+export { PAYMENT_BACKDATE_KEY, BACKDATE_DECIDER_PERMS } from './payment-backdate-perms';
 
 /** Mirrors scm.so_payment_backdate_requests (mig 20260930T1500). */
 export type BackdateRequestRow = {

@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { BACKDATE_DECIDER_PERMS } from "./vendor/scm/lib/payment-backdate-queries";
+import { BACKDATE_DECIDER_PERMS } from "./vendor/scm/lib/payment-backdate-perms";
 import { Routes, Route, Navigate, useParams } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { useAuth } from "./auth/AuthContext";

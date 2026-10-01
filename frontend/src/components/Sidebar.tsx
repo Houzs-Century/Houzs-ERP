@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from "react-router-dom";
-import { BACKDATE_DECIDER_PERMS } from "../vendor/scm/lib/payment-backdate-queries";
+import { BACKDATE_DECIDER_PERMS } from "../vendor/scm/lib/payment-backdate-perms";
 import { markWorkspaceOpenIntent } from "../lib/workspaceTabs";
 
 // Workspace tab strip: a plain left-click on a sidebar destination is the ONE
