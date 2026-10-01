@@ -81,6 +81,50 @@ try {
         if (binds.length) say(`        bindings: ${binds.map((b) => `ac=${b.ac_item_code ?? '-'} sup=${b.supplier_sku ?? '-'}`).join('; ')}`);
       }
     }
+
+    /* A Model recoded by hand (5562-1S -> 5562) leaves its generated SKUs on the
+       old prefix: `5562-1S-1A(LHF)` under model 5562. */
+    const doubled = await tx`
+      SELECT s.id::text AS id, s.code, s.name, s.base_model, s.status, s.created_at,
+             m.model_code, m.name AS model_name
+        FROM scm.mfg_products s
+        LEFT JOIN scm.product_models m ON m.id = s.model_id
+       WHERE s.company_id = ${CO} AND s.category = 'SOFA'
+         AND s.code ~* '-1S-.+$'
+         AND (${PREFIX} = '' OR s.code LIKE ${PREFIX + '%'})
+       ORDER BY s.code`;
+    say(`=== 2. company ${CO}: ${doubled.length} SOFA SKU(s) coded <model>-1S-<piece> ===`);
+    for (const s of doubled) {
+      const target = s.code.replace(/-1S-(?=.+$)/i, '-');
+      const [taken] = await tx`SELECT code, name, model_id::text AS model_id FROM scm.mfg_products WHERE company_id = ${CO} AND code = ${target}`;
+      const uses = [];
+      for (const t of PRODUCT_CODE_CASCADE) {
+        try {
+          await tx`SAVEPOINT q`;
+          const [r] = await tx.unsafe(
+            `SELECT count(*)::int AS n FROM scm.${t.table} WHERE company_id = $1 AND ${t.col} = $2${t.kind ? " AND material_kind = 'mfg_product'" : ''}`,
+            [CO, s.code]);
+          await tx`RELEASE SAVEPOINT q`;
+          if (r.n) uses.push(`${t.table}.${t.col}=${r.n}`);
+        } catch (e) { await tx`ROLLBACK TO SAVEPOINT q`; uses.push(`${t.table}: ${e.message}`); }
+      }
+      say(`  ${s.code} | "${s.name}" | model=${s.model_code ?? 'NONE'} ("${s.model_name ?? ''}") | base_model=${s.base_model ?? 'NULL'} | ${s.status} | created=${s.created_at?.toISOString?.() ?? s.created_at}`);
+      say(`    -> ${target}${taken ? `  ** TAKEN by "${taken.name}" model_id=${taken.model_id} **` : ''}`);
+      say(`    used: ${uses.length ? uses.join(', ') : 'nowhere'}`);
+    }
+    if (PREFIX) {
+      const [m] = await tx`
+        SELECT id::text AS id, model_code, name, branding, active, allowed_options, updated_at
+          FROM scm.product_models WHERE company_id = ${CO} AND category = 'SOFA' AND model_code = ${PREFIX}`;
+      say(`=== 3. model ${PREFIX}: ${m ? `id=${m.id} name="${m.name}" branding=${m.branding ?? 'NULL'} active=${m.active} updated=${m.updated_at?.toISOString?.() ?? m.updated_at}` : 'NONE'} ===`);
+      if (m) {
+        say(`    allowed_options=${JSON.stringify(m.allowed_options)}`);
+        const skus = await tx`
+          SELECT code, name, base_model, status FROM scm.mfg_products
+           WHERE company_id = ${CO} AND (model_id::text = ${m.id} OR code LIKE ${PREFIX + '-%'}) ORDER BY code`;
+        for (const s of skus) say(`    ${s.code} | "${s.name}" | base_model=${s.base_model ?? 'NULL'} | ${s.status}`);
+      }
+    }
   });
 } finally {
   await sql.end();
