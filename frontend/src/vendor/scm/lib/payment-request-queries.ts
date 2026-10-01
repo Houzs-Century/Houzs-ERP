@@ -55,6 +55,45 @@ export type PaymentRequest = {
   /** Other live requests, vouchers and AP invoices with the same bill number
       and date (同一张单) — said out loud, never refused. */
   billMatches?: BillMatch[];
+  /** A bill paid in instalments (owner 2026-10-01, item 2): a balance names the
+      bill's FIRST request; 1 for the first itself. */
+  parent_request_id?: string | null;
+  installment_no?: number;
+  /** The percent of the bill this instalment is, as typed. */
+  pay_pct?: number | null;
+  /** The whole bill's figures and its instalments, read on every request. */
+  family?: BillFamily;
+  /** The first request's AP invoice, when Finance booked the bill — a balance is paid ON it. */
+  familyInvoice?: { id: string; invoiceNumber: string | null; status: string | null; supplierId: string | null; totalSen: number; paidSen: number } | null;
+};
+
+/** A bill's instalments and its figures (server: lib/payment-request.ts familyFigures). */
+export type BillFamily = {
+  rootId: string;
+  rootNo: string;
+  totalSen: number | null;
+  askedSen: number;
+  paidSen: number;
+  pendingSen: number;
+  remainingSen: number | null;
+  installments: Array<{ id: string; request_no: string; installment_no: number; amount_sen: number; pay_pct: number | null; stage: RequestStage }>;
+};
+
+/** A bill worth reading as instalments: more than one, or a known total partly asked. */
+export const hasInstalments = (f: BillFamily | undefined): f is BillFamily =>
+  !!f && (f.installments.length > 1 || (f.totalSen != null && f.askedSen < f.totalSen));
+
+/** The sen a percent of a total comes to — rounded to the sen. */
+export const pctOf = (totalSen: number, pct: number): number => Math.round((totalSen * pct) / 100);
+
+/** 申请付余额 is offered while the bill's first request stands and something is
+    left to ask — or, its total unknown, once the bill already runs in instalments. */
+export const mayAskBalance = (r: Pick<PaymentRequest, 'family'>): boolean => {
+  const f = r.family;
+  if (!f) return false;
+  const first = f.installments.find((m) => m.id === f.rootId);
+  if (!first || first.stage === 'WITHDRAWN') return false;
+  return f.remainingSen != null ? f.remainingSen > 0 : f.installments.length > 1;
 };
 
 /** Another live document carrying the same bill number and date (server:
@@ -112,7 +151,10 @@ export type PaymentRequestInput = {
   billNo?: string | null; billDate?: string | null; billTotalSen?: number | null; eventBill?: boolean;
   /** Why an event bill goes without its Event (找不到这场活动) — 5 characters at least. */
   noEventReason?: string | null;
+  /** The percent of the bill this payment is, when typed as one (item 2). */
+  payPct?: number | null;
 };
+
 
 /** The reason a requester gives when the event bill's event cannot be found. */
 export const NO_EVENT_REASON_MIN = 5;
@@ -195,6 +237,19 @@ export const useWithdrawPaymentRequest = () => {
     mutationFn: (id: string) => authedFetch<{ ok: true }>(`/payment-requests/${id}/withdraw`, { method: 'POST' }),
     onSuccess: () => invalidate(qc),
     onError: writeFailedAs('Request not withdrawn'),
+  });
+};
+
+/** 申请付余额 — the next instalment of the same bill (POST /payment-requests/:id/balance). */
+export type BalanceInput = { amountSen: number; payPct: number | null; dueDate: string | null; purpose: string | null };
+
+export const useRequestBalance = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: BalanceInput & { id: string }) =>
+      authedFetch<{ ok: true; request: PaymentRequest; overTotal: boolean }>(`/payment-requests/${id}/balance`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => invalidate(qc),
+    onError: writeFailedAs('Balance not requested'),
   });
 };
 

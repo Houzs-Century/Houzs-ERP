@@ -361,3 +361,93 @@ describe('the pure pieces', () => {
     expect(pvBillFields({}, null)).toEqual({ bill_ref: null, bill_date: null });
   });
 });
+
+/* ── Item 2 (owner 2026-10-01): 一张单付两次 — 我不想要他们上传两次 ─────────────
+   The first request names the bill (its total) and how much is paid now — an
+   amount or a percent; 申请付余额 raises the next instalment of the SAME bill
+   from it: no second upload, payee / bank / event carried, the bill's figures
+   read for the whole family. */
+describe('a bill paid in instalments', () => {
+  const FIRST = { billNo: 'MLE-0925', billDate: '2026-09-01', billTotalSen: 1_000_000, amountSen: 500_000, payPct: 50 };
+
+  test('申请付余额 raises the next instalment of the same bill — no upload, payee, bank and event carried', async () => {
+    const w = world();
+    const first = await raise(w, JAMES, { ...FIRST, bankName: 'Maybank', bankAccountNo: '5123', bankAccountName: 'MLE EVENTS SDN BHD' });
+    const bal = await first.ask(`/payment-requests/${first.id}/balance`, 'POST', { amountSen: 500_000, dueDate: '2026-10-15' });
+    expect(bal.status).toBe(201);
+    expect(bal.body.overTotal).toBe(false);
+    const child = w.sb.tables.acc_payment_requests.find((r) => r.id === bal.body.request.id)!;
+    expect(child).toMatchObject({
+      parent_request_id: first.id, installment_no: 2, status: 'SUBMITTED', amount_sen: 500_000, due_date: '2026-10-15',
+      payee_name: 'MLE EVENTS SDN BHD', bank_name: 'Maybank', bank_account_no: '5123', project_id: 348,
+      bill_no: 'MLE-0925', bill_date: '2026-09-01', bill_total_sen: 1_000_000, event_bill: false,
+      purpose: 'Balance — Booth F1 rental — MLE Penang',
+    });
+    expect(w.sb.tables.acc_payment_request_files.filter((f) => f.request_id === child.id)).toHaveLength(0);
+    expect(w.sb.tables.acc_payment_requests.find((r) => r.id === first.id)).toMatchObject({ pay_pct: 50 });
+  });
+
+  test('the bill\'s figures read for the whole family: total, asked, paid, pending, left to ask', async () => {
+    const w = world();
+    const first = await raise(w, JAMES, FIRST);
+    const bal = await first.ask(`/payment-requests/${first.id}/balance`, 'POST', { amountSen: 300_000 });
+    const fin = as(w, FINANCE);
+    const pv = await fin('/payment-vouchers', 'POST', voucherFor(first.id, { lines: [{ debitAccountCode: '900-R032', description: 'Deposit', amountSen: 500_000, projectId: 348 }] }));
+    expect(pv.status).toBe(201);
+    Object.assign(w.sb.tables.payment_vouchers[0]!, { pv_number: 'HC-PV-2610-001', checked_at: '2026-10-01T01:00:00Z', approved_at: '2026-10-01T02:00:00Z' });
+    expect((await fin(`/payment-vouchers/${pv.body.id}/post`, 'POST')).status).toBe(200);
+    for (const id of [first.id, String(bal.body.request.id)]) {
+      const fam = (await first.ask(`/payment-requests/${id}`)).body.request.family;
+      expect(fam).toMatchObject({ rootId: first.id, rootNo: first.no, totalSen: 1_000_000, askedSen: 800_000, paidSen: 500_000, pendingSen: 300_000, remainingSen: 200_000 });
+      expect(fam.installments.map((m: Row) => [m.installment_no, m.amount_sen, m.stage])).toEqual([[1, 500_000, 'PAID'], [2, 300_000, 'SUBMITTED']]);
+    }
+    /* A withdrawn instalment asks for nothing. */
+    await first.ask(`/payment-requests/${bal.body.request.id}/withdraw`, 'POST');
+    expect((await first.ask(`/payment-requests/${first.id}`)).body.request.family).toMatchObject({ askedSen: 500_000, remainingSen: 500_000 });
+  });
+
+  test('more than the bill is said, not refused; a balance of a balance is the next of the first; a withdrawn first takes none', async () => {
+    const w = world();
+    const first = await raise(w, JAMES, FIRST);
+    const two = await first.ask(`/payment-requests/${first.id}/balance`, 'POST', { amountSen: 500_000 });
+    const over = await first.ask(`/payment-requests/${two.body.request.id}/balance`, 'POST', { amountSen: 100_000 });
+    expect(over.status).toBe(201);
+    expect(over.body.overTotal).toBe(true);
+    expect(w.sb.tables.acc_payment_requests.find((r) => r.id === over.body.request.id)).toMatchObject({ parent_request_id: first.id, installment_no: 3 });
+    expect((await first.ask(`/payment-requests/${first.id}/balance`, 'POST', { amountSen: 0 })).status).toBe(400);
+    expect((await first.ask(`/payment-requests/${first.id}/balance`, 'POST', { amountSen: 1, payPct: 101 })).body.error).toBe('pay_pct_invalid');
+    expect((await as(w, KAR)(`/payment-requests/${first.id}/balance`, 'POST', { amountSen: 1 })).status).toBe(404);
+
+    const w2 = world();
+    const gone = await raise(w2, JAMES, FIRST);
+    await gone.ask(`/payment-requests/${gone.id}/withdraw`, 'POST');
+    const refused = await gone.ask(`/payment-requests/${gone.id}/balance`, 'POST', { amountSen: 500_000 });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toBe('bill_withdrawn');
+  });
+
+  test('Finance answers a balance with the first request\'s bill — it travels to the voucher, and the reader reads it', async () => {
+    const w = world();
+    const first = await raise(w, JAMES, FIRST);
+    const bal = await first.ask(`/payment-requests/${first.id}/balance`, 'POST', { amountSen: 500_000 });
+    const balId = String(bal.body.request.id);
+    const pv = await as(w, FINANCE)('/payment-vouchers', 'POST', voucherFor(balId, { lines: [{ debitAccountCode: '900-R032', description: 'Balance', amountSen: 500_000, projectId: 348 }] }));
+    expect(pv.status).toBe(201);
+    expect(w.sb.tables.acc_pv_files.filter((f) => f.pv_id === pv.body.id)).toHaveLength(1);
+    const sent = reads({ invoiceNumber: 'MLE-0925', invoiceDate: '2026-09-01', totalRm: 10000 });
+    const read = await as(w, FINANCE)('/payment-vouchers/extract', 'POST', { fromRequest: balId });
+    expect(read.body.bills).toHaveLength(1);
+    expect(sent[0]).toContain(btoa('page 0'));
+  });
+
+  test('a bill\'s own instalments are never its matches; a NEW request for the same bill names them all', async () => {
+    const w = world();
+    const first = await raise(w, JAMES, FIRST);
+    const bal = await first.ask(`/payment-requests/${first.id}/balance`, 'POST', { amountSen: 500_000 });
+    const fin = as(w, FINANCE);
+    expect((await fin(`/payment-requests/${first.id}`)).body.request.billMatches).toEqual([]);
+    expect((await fin(`/payment-requests/${bal.body.request.id}`)).body.request.billMatches).toEqual([]);
+    const stray = await raise(w, KAR, { billNo: 'MLE 0925', billDate: '2026-09-01' });
+    expect((await fin(`/payment-requests/${stray.id}`)).body.request.billMatches.map((m: Row) => m.id).sort()).toEqual([first.id, String(bal.body.request.id)].sort());
+  });
+});

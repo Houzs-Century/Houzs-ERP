@@ -30,6 +30,8 @@ const plainRead = (over: Req = {}): Req => ({
 });
 let readResult: Req = plainRead();
 const readAsync = vi.fn(async (_b: Req) => readResult);
+/* 申请付余额 (item 2). */
+const balanceAsync = vi.fn(async (_b: Req) => ({ ok: true, request: base({ id: 'r-bal', installment_no: 2, parent_request_id: 'r1' }), overTotal: false }));
 const createAsync = vi.fn(async (_b: Req) => ({ ok: true, request: base({ id: 'r-new' }) }));
 const updateAsync = vi.fn(async (_b: Req) => ({ ok: true, request: base({}) }));
 const withdrawAsync = vi.fn(async (_id: string) => ({ ok: true }));
@@ -40,6 +42,7 @@ vi.mock('../../vendor/scm/lib/payment-request-queries', async (importOriginal) =
   ...(await importOriginal<typeof import('../../vendor/scm/lib/payment-request-queries')>()),
   usePaymentRequests: () => ({ data: { requests, finance: isFinance, hasEvents }, isLoading: false, isError: false, error: null }),
   useReadRequestBill: () => ({ mutateAsync: readAsync, isPending: false }),
+  useRequestBalance: () => ({ mutateAsync: balanceAsync, isPending: false }),
   usePaymentRequest: (id: string | null) => ({ data: id ? { request: requests.find((r) => r.id === id), finance: isFinance } : undefined, isLoading: false }),
   useCreatePaymentRequest: () => ({ mutateAsync: createAsync, isPending: false }),
   useUpdatePaymentRequest: () => ({ mutateAsync: updateAsync, isPending: false }),
@@ -106,7 +109,7 @@ describe('the requester', () => {
     expect(createAsync.mock.calls[0]![0]).toEqual({
       payeeName: 'MLE EVENTS SDN BHD', amountSen: 850_000, dueDate: null, purpose: 'Booth F1 rental', projectId: 348,
       bankName: 'Maybank', bankAccountNo: '5123', bankAccountName: null,
-      billNo: 'MLE-0925', billDate: '2026-09-01', billTotalSen: 850_000, eventBill: false, noEventReason: null,
+      billNo: 'MLE-0925', billDate: '2026-09-01', billTotalSen: 850_000, eventBill: false, noEventReason: null, payPct: null,
     });
     await waitFor(() => expect(uploadAsync).toHaveBeenCalledWith({ id: 'r-new', file: { name: 'mle-invoice.pdf', mime: 'application/pdf', dataBase64: 'b64:mle-invoice.pdf' } }));
     /* The requester's picker reads the requests' own event list, not Finance's. */
@@ -199,6 +202,42 @@ describe('the requester', () => {
     expect(createAsync).not.toHaveBeenCalled();
   });
 
+  /* Item 2 (owner 2026-10-01): the first payment as an amount OR a percent of the bill. */
+  test('a percent of the bill\'s total fills the amount; the request carries both', async () => {
+    requests = []; isFinance = false; hasEvents = true; createAsync.mockClear();
+    readResult = plainRead({ bill: { billNo: 'MLE-0925', billDate: '2026-09-01', totalSen: 1_000_000, vendorName: 'MLE' } });
+    draw();
+    fireEvent.click(screen.getByText('New request'));
+    const d = screen.getByRole('dialog');
+    fillBasics(d);
+    attach(d);
+    await waitFor(() => expect(within(d).getByText(/Read from the bill/)).toBeTruthy());
+    fireEvent.change(within(d).getByLabelText('Percent of the bill'), { target: { value: '50' } });
+    fireEvent.click(within(d).getByText('Send to Finance'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+    expect(createAsync.mock.calls[0]![0]).toMatchObject({ amountSen: 500_000, billTotalSen: 1_000_000, payPct: 50 });
+  });
+
+  test('a bill in instalments reads its figures; 申请付余额 asks the balance — no upload', async () => {
+    const family = {
+      rootId: 'r1', rootNo: 'HC-PRQ-2609-001', totalSen: 1_000_000, askedSen: 500_000, paidSen: 500_000, pendingSen: 0, remainingSen: 500_000,
+      installments: [{ id: 'r1', request_no: 'HC-PRQ-2609-001', installment_no: 1, amount_sen: 500_000, pay_pct: 50, stage: 'PAID' }],
+    };
+    requests = [base({ status: 'VOUCHERED', stage: 'PAID', amount_sen: 500_000, family, voucher: { id: 'pv-1', pvNumber: 'HC-PV-2609-020', status: 'POSTED', approvedAt: null, postedAt: '2026-09-20T02:00:00Z', bankConfirmed: false } })];
+    isFinance = false; balanceAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
+    const d = screen.getByRole('dialog');
+    expect(within(d).getByText('Total RM 10,000.00 · Paid RM 5,000.00 · Left to ask RM 5,000.00')).toBeTruthy();
+    expect(within(d).getByText('#1 · HC-PRQ-2609-001 · RM 5,000.00 (50%) · Paid · 已付')).toBeTruthy();
+    fireEvent.click(within(d).getByText('Request the balance · 申请付余额'));
+    const b = screen.getByRole('dialog', { name: 'Request the balance' });
+    expect(within(b).getByText(/Left to ask on this bill: RM 5,000\.00 of RM 10,000\.00\./)).toBeTruthy();
+    fireEvent.click(within(b).getByText('Send to Finance'));
+    await waitFor(() => expect(balanceAsync).toHaveBeenCalledTimes(1));
+    expect(balanceAsync.mock.calls[0]![0]).toEqual({ id: 'r1', amountSen: 500_000, dueDate: null, purpose: 'Balance — Booth F1 rental', payPct: null });
+  });
+
   test('a returned request shows Finance\'s note and goes back with "Fix and send again"', () => {
     requests = [base({ status: 'REJECTED', stage: 'RETURNED', finance_note: 'Attach the organiser invoice', decided_by: 'Chew', decided_at: '2026-09-11T02:00:00Z' })];
     isFinance = false;
@@ -264,6 +303,20 @@ describe('Finance', () => {
     const d = screen.getByRole('dialog');
     expect(within(d).getByText('No. MLE-0925 · 2026/09/01 · total RM 8,500.00')).toBeTruthy();
     expect(within(d).getByText('Voucher HC-PV-2609-004 · RM 8,500.00 · posted')).toBeTruthy();
+  });
+
+  /* Item 2: a balance of a bill booked as an AP invoice is paid ON that invoice. */
+  test('a balance of a bill booked as an AP invoice offers "Pay on" that invoice', () => {
+    requests = [base({
+      id: 'r2', request_no: 'HC-PRQ-2610-002', requested_by: 40, requested_by_name: 'Luis Teo', parent_request_id: 'r1', installment_no: 2,
+      familyInvoice: { id: 'api-7', invoiceNumber: 'HC-API-2610-001', status: 'POSTED', supplierId: 'sup-mle', totalSen: 1_000_000, paidSen: 500_000 },
+    })];
+    isFinance = true;
+    draw();
+    expect(screen.getByText('#2 · balance')).toBeTruthy();
+    fireEvent.click(screen.getByText('HC-PRQ-2610-002'));
+    fireEvent.click(within(screen.getByRole('dialog')).getByText('Pay on HC-API-2610-001'));
+    expect(screen.getByText('PV New opened')).toBeTruthy();
   });
 
   test('returns a request with the note the prompt demands', async () => {
