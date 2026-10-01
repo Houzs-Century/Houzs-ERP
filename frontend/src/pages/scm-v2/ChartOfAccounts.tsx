@@ -136,6 +136,12 @@ export const ChartOfAccounts = () => {
   const doImport = useChartImport();
   const doRename = useChartRename();
   const doUpdate = useChartUpdate();
+  /* 需要 Event / PMS row (item 4): one field at a time, a refusal said out loud. */
+  const setEventFields = async (code: string, patch: { needsEvent?: boolean; pmsRow?: string | null }) => {
+    try { await doUpdate.mutateAsync({ code, ...patch }); } catch (e) {
+      void notify({ title: `${code} not saved`, body: e instanceof Error ? e.message : 'Try again.', tone: 'error' });
+    }
+  };
   const doDelete = useChartDelete();
   const doCreate = useChartCreate();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -143,6 +149,9 @@ export const ChartOfAccounts = () => {
   const companies = unionQ.data?.companies ?? [];
   const accounts = useMemo(() => treeOrder(unionQ.data?.accounts ?? []), [unionQ.data]);
   const sections = useMemo(() => unionQ.data?.sections ?? [], [unionQ.data]);
+  /* 需要 Event / PMS row (owner 2026-10-01, payment-request item 4): the rows a
+     Finance account can fill on the PMS event page — the server's one list. */
+  const pmsRows = useMemo(() => unionQ.data?.pmsRows ?? [], [unionQ.data]);
 
   /* ── The AutoCount tree (owner 2026-09-06: 每个 account type 的 header):
      one header row per SECTION in the server's order, the accounts of that
@@ -759,6 +768,8 @@ export const ChartOfAccounts = () => {
                         <th style={stickyTh}>Code</th>
                         <th style={stickyTh}>Name</th>
                         <th style={stickyTh}>Type</th>
+                        <th style={stickyTh} title="A voucher or AP invoice line on this account needs its Event before it is approved">需要 Event</th>
+                        <th style={stickyTh} title="Which row of the PMS event page this account's money fills">PMS row</th>
                         {companies.map((co) => (
                           <th key={co.id} style={{ ...stickyTh, textAlign: 'center' }}>{co.code}</th>
                         ))}
@@ -778,7 +789,7 @@ export const ChartOfAccounts = () => {
                       onDrop={(e) => { e.preventDefault(); void onDropIntoSection(grp.section); }}
                       style={{ background: 'var(--c-cream, #f5f1ea)' }}
                     >
-                      <td colSpan={3 + companies.length + (canManage ? 1 : 0)} data-section={grp.section}
+                      <td colSpan={5 + companies.length + (canManage ? 1 : 0)} data-section={grp.section}
                           style={{ padding: '6px 8px', fontWeight: 700, letterSpacing: '0.04em', color: TYPE_TONE[grp.type] ?? 'inherit', whiteSpace: 'nowrap' }}>
                         <button
                           type="button"
@@ -842,6 +853,24 @@ export const ChartOfAccounts = () => {
                         {a.type}
                         {a.type === 'INCOME' && isOtherIncome(a.code) && (
                           <span style={{ color: 'var(--fg-muted)' }}> · Other</span>
+                        )}
+                      </td>
+                      {/* 需要 Event and the PMS row: a money account a line can debit — not a header. */}
+                      <td style={{ padding: '4px 8px', textAlign: 'center' }}>
+                        {!isParent && (a.type === 'EXPENSE' || a.type === 'ASSET') && (
+                          <input type="checkbox" checked={a.needsEvent === true} disabled={!canManage || doUpdate.isPending}
+                            aria-label={`${a.code} needs its Event`}
+                            onChange={(e) => { void setEventFields(a.code, { needsEvent: e.target.checked }); }} />
+                        )}
+                      </td>
+                      <td style={{ padding: '4px 8px' }}>
+                        {!isParent && (a.type === 'EXPENSE' || a.type === 'ASSET') && (
+                          <select value={a.pmsRow ?? ''} disabled={!canManage || doUpdate.isPending} aria-label={`${a.code} PMS row`}
+                            onChange={(e) => { void setEventFields(a.code, { pmsRow: e.target.value || null }); }}
+                            style={{ fontSize: 'var(--fs-12)', maxWidth: 190 }}>
+                            <option value="">—</option>
+                            {pmsRows.map((r) => <option key={r.row} value={r.row}>{r.label}</option>)}
+                          </select>
                         )}
                       </td>
                       {companies.map((co) => {

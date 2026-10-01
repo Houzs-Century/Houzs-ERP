@@ -22,6 +22,7 @@ import { paymentRequests } from '../src/scm/routes/payment-requests';
 import { apInvoices } from '../src/scm/routes/ap-invoices';
 import { eventBillRefusal, normalizeBillNo, pvBillFields, readBillFacts } from '../src/scm/lib/bill-matches';
 import { officialDocs } from '../src/scm/routes/official-docs';
+import { chartUnionHandler, chartUpdateHandler } from '../src/scm/routes/accounting-chart';
 import { compareOfficial, officialOwedFields, officialOwedUpdates } from '../src/scm/lib/official-doc';
 
 const CO = 1;
@@ -121,6 +122,8 @@ function as(w: ReturnType<typeof world>, who: { id: number; name: string; perms:
   app.route('/payment-vouchers', paymentVouchers);
   app.route('/ap-invoices', apInvoices);
   app.route('/official-docs', officialDocs);
+  app.get('/accounting/chart', chartUnionHandler);
+  app.put('/accounting/chart/update', chartUpdateHandler);
   return async (path: string, method = 'GET', body?: unknown) => {
     const res = await app.request(path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }, { DB: fakeDb, SLIPS: w.r2, ANTHROPIC_API_KEY: 'k' });
     return { status: res.status, body: await res.json() as Row };
@@ -561,4 +564,71 @@ describe('a payment on a proforma owes its official invoice', () => {
     expect(officialOwedFields({}, 'Chew')).toEqual({});
     expect(officialOwedUpdates({ officialDocOwed: false }, 'Chew', { official_doc: 'RECEIVED' })).toEqual({});
   });
+});
+
+/* ── Item 4 (owner 2026-10-01): 申请人不用选类型，我定好哪里一些类型需要就一定要选event.
+   FINANCE decides on the chart, per account: 需要 Event, and which PMS row the
+   money fills. A line on a needs-Event account is refused at APPROVAL (the step
+   that posts) until it has its Event — in a company that runs events. */
+describe('需要 Event — decided on the chart, asked at approval', () => {
+  const APPROVER = { id: 10, name: 'Boss', perms: [...PV_KEYS, 'scm.payment_voucher.approve'] };
+  const needsEvent = (w: ReturnType<typeof world>) => { Object.assign(w.sb.tables.accounts.find((a) => a.account_code === '900-R032')!, { needs_event: true, pms_row: 'rental' }); };
+  const readyToApprove = (w: ReturnType<typeof world>, id: string) =>
+    Object.assign(w.sb.tables.payment_vouchers.find((v) => v.id === id)!, { pv_number: 'HC-PV-2610-009', submitted_at: '2026-10-01T01:00:00Z', checked_at: '2026-10-01T02:00:00Z' });
+
+  test('a line on a needs-Event account without its event is refused at approval; with it, it posts', async () => {
+    const w = world();
+    needsEvent(w);
+    const { id } = await raise(w);
+    const pv = await as(w, FINANCE)('/payment-vouchers', 'POST', voucherFor(id, { lines: [{ debitAccountCode: '900-R032', description: 'Booth F1', amountSen: 850_000 }] }));
+    expect(pv.status).toBe(201);
+    readyToApprove(w, String(pv.body.id));
+    const boss = as(w, APPROVER);
+    const refused = await boss(`/payment-vouchers/${pv.body.id}/approve`, 'POST');
+    expect(refused.status).toBe(409);
+    expect(refused.body).toEqual({ error: 'event_required_on_line', message: 'Line 1 (900-R032 RENTAL - EXHIBITION) needs its Event — pick it, or untick 需要 Event on the account.' });
+    expect(w.sb.tables.payment_vouchers[0]!.approved_at ?? null).toBeNull();
+    w.sb.tables.payment_voucher_lines.find((l) => l.pv_id === pv.body.id)!.project_id = 348;
+    expect((await boss(`/payment-vouchers/${pv.body.id}/approve`, 'POST')).status).toBe(200);
+    expect(w.sb.tables.payment_vouchers[0]).toMatchObject({ status: 'POSTED' });
+  });
+
+  const withApControl = (w: ReturnType<typeof world>, companyId = CO) => {
+    w.sb.tables.accounts.push(acct('400-0000', 'ACCOUNT PAYABLE', 'LIABILITY', { company_id: companyId }));
+  };
+
+  test('an AP invoice line the same way at posting; an untick on the chart lifts it', async () => {
+    const w = world();
+    needsEvent(w);
+    withApControl(w);
+    const fin = as(w, FINANCE);
+    const inv = await fin('/ap-invoices', 'POST', {
+      supplierId: 'sup-mle', supplierInvoiceRef: 'MLE-1', invoiceDate: '2026-09-10',
+      lines: [{ debitAccountCode: '900-R032', description: 'Booth', amountSen: 850_000 }],
+    });
+    expect(inv.status).toBe(201);
+    const refused = await fin(`/ap-invoices/${inv.body.invoice.id}/post`, 'POST');
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toBe('event_required_on_line');
+    /* Finance unticks it on the chart (tests/accountingChart.test.ts pins the
+       chart's own write) — the same bill now posts. */
+    w.sb.tables.accounts.find((a) => a.account_code === '900-R032')!.needs_event = false;
+    expect((await fin(`/ap-invoices/${inv.body.invoice.id}/post`, 'POST')).status).toBe(200);
+  });
+
+  test('a company without events is never asked', async () => {
+    const w = world();
+    needsEvent(w);
+    for (const a of w.sb.tables.accounts) a.company_id = 2;
+    withApControl(w, 2);
+    w.sb.tables.suppliers[0]!.company_id = 2;
+    const fin = as(w, FINANCE, 2);
+    const inv = await fin('/ap-invoices', 'POST', {
+      supplierId: 'sup-mle', supplierInvoiceRef: 'X-1', invoiceDate: '2026-09-10',
+      lines: [{ debitAccountCode: '900-R032', description: 'Rent', amountSen: 100_000 }],
+    });
+    expect(inv.status).toBe(201);
+    expect((await fin(`/ap-invoices/${inv.body.invoice.id}/post`, 'POST')).status).toBe(200);
+  });
+
 });
