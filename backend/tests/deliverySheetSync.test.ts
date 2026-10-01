@@ -823,16 +823,15 @@ describe("toAssrLegRecords — one own-team leg per set date, in the sheet's rec
 });
 
 describe("GET /assr-legs", () => {
-  test("wrong key 401, bad since 400, no HOUZS row 503 — all before any case is read", async () => {
+  test("wrong key 401, bad since 400 — both before any case is read", async () => {
     const bad = fakeDb(() => []);
     expect((await app.request("/assr-legs", { headers: { "X-Intake-Key": "wrong" } }, env(bad.db))).status).toBe(401);
     expect(bad.seen).toHaveLength(0);
     expect((await app.request("/assr-legs?since=last%20week", { headers: { "X-Intake-Key": KEY } }, env(bad.db))).status).toBe(400);
-    const noco = fakeDb((sql) => (/FROM companies/i.test(sql) ? null : []));
-    expect((await app.request("/assr-legs", { headers: { "X-Intake-Key": KEY } }, env(noco.db))).status).toBe(503);
+    expect(bad.seen.filter((s) => /FROM assr_cases/.test(s.sql))).toHaveLength(0);
   });
 
-  test("reads the secret's company, own-team gated, expands each case to its legs and pages by case", async () => {
+  test("every company's cases (Service Cases are not split by company), own-team gated, expanded to legs, paged by case", async () => {
     const { db, seen } = fakeDb((sql) => {
       if (/FROM companies/i.test(sql)) return { id: HOUZS };
       if (/FROM assr_cases/.test(sql)) return [ASSR];
@@ -847,8 +846,8 @@ describe("GET /assr-legs", () => {
     expect(body.next_since).toBe(ASSR.last_modified_text);
     expect(body.has_more).toBe(false);
     const feed = seen.find((s) => /FROM assr_cases/.test(s.sql))!;
-    expect(feed.binds).toEqual([HOUZS, "2026-09-01 00:00:00", 100]);
-    expect(feed.sql).toContain("company_id = ?1");
+    expect(feed.binds).toEqual(["2026-09-01 00:00:00", 100]);
+    expect(feed.sql).not.toMatch(/company_id/);
     expect(feed.sql).toContain("closed_at IS NULL");
     expect(feed.sql).toContain("archived_at IS NULL");
     expect(feed.sql).toMatch(/inspection_by\s*=\s*'own'/);
