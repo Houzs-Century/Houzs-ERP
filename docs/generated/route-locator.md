@@ -945,16 +945,16 @@ Total: 1389 route registrations across 195 files.
 - L566  POST   /rows/:id/requeue
 
 ## backend/src/routes/deliverySheetSync.ts  (10)
-- L161  GET    /so-since
-- L192  GET    /overdue
-- L204  GET    /balance-collection
-- L220  GET    /ready-open
-- L244  POST   /prune-check
-- L330  POST   /feed-by-docnos
-- L363  GET    /assr-legs
-- L395  POST   /updates
-- L475  GET    /outstanding-po
-- L495  POST   /po-dates
+- L175  GET    /so-since
+- L206  GET    /overdue
+- L218  GET    /balance-collection
+- L234  GET    /ready-open
+- L258  POST   /prune-check
+- L344  POST   /feed-by-docnos
+- L377  GET    /assr-legs
+- L409  POST   /updates
+- L489  GET    /outstanding-po
+- L509  POST   /po-dates
 
 ## backend/src/scm/routes/ap-invoices.ts  (10)
 - L444  GET    /
