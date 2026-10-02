@@ -1221,7 +1221,7 @@ const SoLineCardInner = ({
               options={sortByNumeric(restrictP(activeOptions(maint!.sofaLegHeights, String(draft.variants.legHeight ?? '')), allowOpts?.leg_heights))}
               onChange={(v) => setVariant('legHeight', v)}
             />
-            {attachOptions && attachOptions.length > 0 ? (
+            {attachOptions ? (
               <VariantSelect
                 label="Attached to"
                 value={String(draft.variants[CONSOLE_ATTACH_KEY] ?? '')}

@@ -2,7 +2,8 @@
 // module list. Corners turn the run (owner 2026-09-28, HC-SO-2609-221: a U with
 // two CNRs was drawn as one straight row).
 import { describe, expect, it } from 'vitest';
-import { buildDefaultSofaCells, cellEdges, consoleAttachOptions } from './sofa-build';
+import { cellEdges } from './sofa-build';
+import { buildDefaultSofaCells, consoleAttachOptions } from './sofa-default-layout';
 
 const mods = (...ids: string[]) => ids.map((moduleId) => ({ moduleId, attachTo: null }));
 const shape = (ids: string[]) =>
@@ -98,6 +99,6 @@ describe('buildDefaultSofaCells — separate sofas and Console joins', () => {
       { itemCode: 'HOK-SQUARE PILLOW', itemGroup: 'accessory' },
     ];
     expect(consoleAttachOptions(lines, 1)).toEqual(['1A(LHF)', '1A(RHF)', '2S']);
-    expect(consoleAttachOptions(lines, 0)).toEqual([]);
+    expect(consoleAttachOptions(lines, 0)).toBeNull();
   });
 });

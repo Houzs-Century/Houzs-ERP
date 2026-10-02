@@ -639,11 +639,8 @@ export const SalesOrderDetail = () => {
       return { id: it.id, itemCode: d?.itemCode ?? it.item_code ?? '', itemGroup: d?.itemGroup ?? it.item_group ?? '' };
     });
     for (const a of addingDrafts) rows.push({ id: a.key, itemCode: a.draft.itemCode, itemGroup: a.draft.itemGroup });
-    const out: Record<string, string[] | undefined> = {};
-    rows.forEach((r, i) => {
-      const opts = consoleAttachOptions(rows, i);
-      if (opts.length > 0) out[r.id] = opts;
-    });
+    const out: Record<string, string[] | null> = {};
+    rows.forEach((r, i) => { out[r.id] = consoleAttachOptions(rows, i); });
     return out;
   }, [items, editingDrafts, addingDrafts]);
   const [overriding, setOverriding] = useState<SoItem | null>(null);

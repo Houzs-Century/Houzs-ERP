@@ -807,17 +807,6 @@ export const SalesOrderNew = () => {
     [lines],
   );
 
-  /* Console lines only: the sofa modules each can be joined to. Undefined for
-     every other line, so those memoized SoLineCard rows keep a stable prop. */
-  const attachOptionsByRid = useMemo(() => {
-    const out: Record<string, string[] | undefined> = {};
-    lines.forEach((l, i) => {
-      const opts = consoleAttachOptions(lines, i);
-      if (opts.length > 0) out[l.rid] = opts;
-    });
-    return out;
-  }, [lines]);
-
   // ── Locality cascade — shared layer, both directions (address-cascade.ts) ──
   const locRows = useMemo(() => loc.data ?? [], [loc.data]);
   const { cities: cityChoices, postcodes: postcodeChoices } =
@@ -2275,13 +2264,12 @@ export const SalesOrderNew = () => {
                      no-date draft (owner 2026-07-14). */
                   variantsRequired={!!processingDate}
                   lineDateLocked={!processingDate}
-                  seedSofaLegDefault={true}
+                  seedSofaLegDefault={true} attachOptions={consoleAttachOptions(lines, idx)}
                   /* Scan-Order (Task #73) — a NO-MATCH scanned line seeds an
                      empty SKU picker; pass the slip rawText as the picker's
                      placeholder hint so the operator can pick a real SKU
                      (never free-text). Only while the line is still unpicked. */
                   searchHint={!line.itemCode && meta?.rawText ? meta.rawText : undefined}
-                  attachOptions={attachOptionsByRid[line.rid] ?? null}
                 />
               </div>
             );

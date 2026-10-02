@@ -116,6 +116,7 @@ import { isColourKiv } from "../vendor/shared/variant-summary";
    sortNumeric below, and a shared parser serves both readers. */
 import { computeTotalHeight, isTotalHeightCategory, parseInches } from "../vendor/shared/total-height";
 import { CONSOLE_ATTACH_KEY, consoleAttachOptions, lineIdentity } from "@2990s/shared";
+import { Field, SpecSel } from "./mobile-fields";
 import { normalizePhone } from "../vendor/shared/phone";
 import { PhoneInput } from "../vendor/scm/components/PhoneInput";
 import { fmtSen as fmtSharedSen } from "../vendor/shared/format";
@@ -354,7 +355,6 @@ const fmt = (n: number) => n.toLocaleString("en-MY", { minimumFractionDigits: 2,
    the compartments of one sofa. */
 const FABRIC_SYNC_KEYS: readonly string[] = FABRIC_IDENTITY_KEYS;
 
-
 function newLine(): LineItem {
   return {
     key: uid(), addIdempotencyKey: newIdempotencyKey(), itemCode: "", itemGroup: "", itemId: "",
@@ -585,7 +585,6 @@ const planToMonths = (label: string): number | null => {
   return m ? Number(m[1]) : null;
 };
 
-type Opt = { value: string; label: string };
 type VariantPools = {
   ready: boolean; // maintenance config loaded (pools meaningful)
   /* Owner #1 scaling pain (2026-07-14): the fabric-colour library is NO LONGER
@@ -805,16 +804,6 @@ export function MobileNewSO({
   const [lines, setLines] = useState<LineItem[]>(() =>
     scanLines.length > 0 ? scanLines.map((s) => s.line) : [newLine()],
   );
-  /* Console lines only: the sofa modules each can be joined to (desktop
-     SalesOrderNew parity). Keyed by line key. */
-  const attachOptionsByKey = useMemo(() => {
-    const out: Record<string, string[] | undefined> = {};
-    lines.forEach((l, i) => {
-      const opts = consoleAttachOptions(lines, i);
-      if (opts.length > 0) out[l.key] = opts;
-    });
-    return out;
-  }, [lines]);
   const [pays, setPays] = useState<Payment[]>(() => seededPays);
   /* This customer's cancelled orders with money — what a converted row may draw on; read by phone, there is no order yet. */
   const convertSources = useMobileConvertSources({ phone });
@@ -2607,7 +2596,7 @@ export function MobileNewSO({
                           soDocNo={docNo}
                           onChange={(patch) => patchLine(l.key, patch)}
                           onDdateChange={procDate ? (v) => setLineDdateManual(l.key, v) : null}
-                          attachOptions={attachOptionsByKey[l.key] ?? null}
+                          attachOptions={consoleAttachOptions(lines, i)}
                           onRemove={async () => {
                             if (!(await confirm({ title: "Remove this line?", body: l.name ? `"${l.name}" will be removed from the order.` : undefined, confirmLabel: "Remove", danger: true }))) return;
                             setDdateOverrides((prev) => {
@@ -2928,40 +2917,6 @@ function soHeaderPatchFrom(v: SoHeaderPatchInput): Record<string, unknown> {
 
 // ---- Sub-components ---------------------------------------------------------
 
-function Field({ label, error, scanned, onClear, style, children }: { label: string; error?: boolean; scanned?: boolean; onClear?: () => void; style?: React.CSSProperties; children: React.ReactNode }) {
-  return (
-    <label className="fld" style={style}>
-      <span className="fld-l" style={{ display: "flex", alignItems: "center", gap: 6, ...(error ? { color: "#b23a3a" } : null) }}>
-        {label}
-        {scanned && <ScannedTag />}
-        {/* A native date input has no way back once a value is set — the iOS
-            wheel cannot land on "nothing". Owner, 2026-08-03: "当他不小心选了一个
-            日期，它不能 reset 的吗?". A label-level Clear costs no row width, which
-            the three-across line row has none of. */}
-        {onClear && (
-          <span
-            role="button"
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClear(); }}
-            style={{ marginLeft: "auto", color: "#9aa093", fontSize: 9, fontWeight: 700, letterSpacing: ".04em", cursor: "pointer", padding: "0 2px" }}
-          >
-            CLEAR
-          </span>
-        )}
-      </span>
-      {children}
-    </label>
-  );
-}
-
-function ScannedTag() {
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "1px 6px", borderRadius: 999, background: "#eaf2f0", color: "#16695f", fontSize: 8, fontWeight: 700, letterSpacing: ".04em" }}>
-      <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" /><circle cx="12" cy="13" r="3" /></svg>
-      SCANNED
-    </span>
-  );
-}
-
 /* ── Variant pool → option list builders (REAL sources) ─────────────────── */
 /* The restrict step is the SHARED restrictStringsToPool / restrictPricedToPool
    (the same helpers PoLineCard and PcVariantEditor call), not a private copy —
@@ -3020,9 +2975,7 @@ function LineCard({
      cascade won't touch it. null = no Processing Date, date locked (BUG-39). */
   onDdateChange: ((value: string) => void) | null;
   onRemove: () => void;
-  /* Console lines: modules it can be joined to (variants.attachTo, read by the
-     PO layout). Null on every other line. */
-  attachOptions: string[] | null;
+  attachOptions: string[] | null; // Console lines: modules it can join (variants.attachTo)
 }) {
   const amt = fmt(num(line.qty) * num(line.price));
   const picked = Boolean(line.itemCode.trim());
@@ -3222,11 +3175,9 @@ function LineCard({
               <SpecSel label="Leg height" invalid={showErrors && missing.has("legHeight")}
                 value={String(v.legHeight ?? "")} opts={sofaLegOpts} onChange={(x) => setVar({ legHeight: x })} />
             </div>
-            {attachOptions && attachOptions.length > 0 && (
-              <SpecSel label="Attached to"
-                value={String(v[CONSOLE_ATTACH_KEY] ?? "")}
-                opts={attachOptions.map((id) => ({ value: id, label: id }))}
-                onChange={(x) => setVar({ [CONSOLE_ATTACH_KEY]: x })} />
+            {attachOptions && (
+              <SpecSel label="Attached to" value={String(v[CONSOLE_ATTACH_KEY] ?? "")}
+                opts={attachOptions.map((id) => ({ value: id, label: id }))} onChange={(x) => setVar({ [CONSOLE_ATTACH_KEY]: x })} />
             )}
           </>
         )}
@@ -3604,28 +3555,6 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
         </div>
       </div>
     </div>
-  );
-}
-
-/* SpecSel — a labelled <select> bound to a real option list. */
-function SpecSel({ label, value, opts, onChange, required = false, invalid = false, emptyHint }: {
-  label: string; value: string; opts: Opt[]; onChange: (v: string) => void;
-  required?: boolean; invalid?: boolean; emptyHint?: string;
-}) {
-  const hasCurrent = Boolean(value) && opts.some((o) => o.value === value);
-  return (
-    <Field label={label + (required ? " *" : "")} style={{ flex: 1, minWidth: 0 }}>
-      <select
-        className="fld-i"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        style={invalid ? { borderColor: "#b23a3a", boxShadow: "0 0 0 2px rgba(178,58,58,.12)" } : undefined}
-      >
-        <option value="" disabled>{opts.length === 0 && emptyHint ? emptyHint : "Select…"}</option>
-        {value && !hasCurrent && <option value={value}>{value} (current)</option>}
-        {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-    </Field>
   );
 }
 
