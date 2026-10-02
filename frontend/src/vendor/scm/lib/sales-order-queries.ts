@@ -1211,34 +1211,6 @@ export async function loadSofaCompartmentArtForPrint(
   return out;
 }
 
-export async function loadSofaCompartmentPhotos(
-  meta: Record<string, { imageKey?: string }> | undefined | null,
-): Promise<Record<string, string>> {
-  if (!meta) return {};
-  const entries = Object.entries(meta)
-    .filter((e): e is [string, { imageKey: string }] => typeof e[1].imageKey === 'string' && e[1].imageKey.length > 0);
-  const out: Record<string, string> = {};
-  await Promise.all(entries.map(async ([code, m]) => {
-    try {
-      const url = resolveCompartmentArtUrl(code, m.imageKey, API_URL);
-      if (!url) return;
-      /* An UPLOADED photo needs the session; a bundled one is a plain static
-         file on this origin and must NOT carry a bearer token. */
-      if (url.startsWith(`${API_URL}/`)) {
-        const blob = await fetchSofaCompartmentPhotoBlob(code, m.imageKey);
-        const dataUrl = await blobToDataUrl(blob);
-        if (dataUrl) out[code] = dataUrl;
-        return;
-      }
-      const art = await loadCompartmentArt(url);
-      if (art) out[code] = art.dataUrl;
-    } catch {
-      /* skip this compartment — the engine draws its schematic instead */
-    }
-  }));
-  return out;
-}
-
 /** One salesperson who holds Sales Orders in the ACTIVE company. */
 export type SoHandoverHolder = {
   staffId: string;
