@@ -229,6 +229,7 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
       {row("Pay by", fmtDateOrDash(r.due_date))}
       {row("Event", eventCellText(labels.data, r.project_id))}
       {row("For", r.purpose)}
+      {r.note && row("Note · 备注", r.note)}
       {row("The bill", r.bill_no || r.bill_date || r.bill_total_sen != null ? billFactsLine({ billNo: r.bill_no, billDate: r.bill_date, totalSen: r.bill_total_sen }) : "— not read")}
       {r.project_id == null && r.no_event_reason && row("No event — why", r.no_event_reason)}
       {hasInstalments(r.family) && <BillInstalments family={r.family} currentId={r.id} />}
@@ -304,6 +305,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
     bankName: initial?.bank_name ?? null,
     bankAccountNo: initial?.bank_account_no ?? null,
     bankAccountName: initial?.bank_account_name ?? null,
+    note: initial?.note ?? null,
   }));
   /* The bill is READ as it is attached (owner 2026-10-01, item 1). */
   const billRead = useRequestBillRead();
@@ -358,6 +360,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
     const body: PaymentRequestInput = {
       ...v,
       ...billFactsOf(billRead.state),
+      note: v.note?.trim() || null,
       noEventReason: v.projectId == null && noEvent ? noEventReason.trim() : null,
       ...(isBalance ? {} : { billTotalSen: billTotal }),
       payPct: pctValue != null && billTotal != null && pctOf(billTotal, pctValue) === v.amountSen ? pctValue : null,
@@ -441,6 +444,8 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
           {noEvent && field("Why there is no event *", <input className="cal-sel" aria-label="Why there is no event" value={noEventReason} onChange={(e) => setNoEventReason(e.target.value)} placeholder="e.g. the fair is not in PMS yet" />)}
         </>
       )}
+      <div className="sc-sl"><span className="t">{initial ? "备注 · Note" : "⑤ 备注 · Note"}</span><span className="ln" /></div>
+      {field("Note to Finance (optional)", <textarea className="cal-sel" rows={3} aria-label="Note" maxLength={2000} value={v.note ?? ""} onChange={(e) => set({ note: e.target.value })} placeholder="e.g. Please pay before the fair starts" />)}
     </Shell>
   );
 }

@@ -197,3 +197,21 @@ test('the phone form runs bill, who is paid (with the bank), how much, what for'
   expect(before(screen.getByLabelText("Payee's bank"), screen.getByLabelText('Amount'))).toBe(true);
   expect(before(screen.getByLabelText('Amount'), screen.getByLabelText('What is it for'))).toBe(true);
 });
+
+/* Owner 2026-10-02: ⑤ the note to Finance, on the phone too. */
+test('the phone form takes a note to Finance, sent trimmed; the request shows it', async () => {
+  requests = []; isFinance = false; createAsync.mockClear();
+  render(<MobilePaymentRequests onBack={() => undefined} />);
+  fireEvent.click(screen.getByText('New request'));
+  expect(screen.getByText('⑤ 备注 · Note')).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Note'), { target: { value: ' Pay before Friday ' } });
+  fireEvent.change(screen.getByLabelText('Pay to'), { target: { value: 'MLE EVENTS SDN BHD' } });
+  const amount = screen.getByLabelText('Amount');
+  fireEvent.focus(amount); fireEvent.change(amount, { target: { value: '8500' } }); fireEvent.blur(amount);
+  fireEvent.change(screen.getByLabelText('What is it for'), { target: { value: 'Booth F1 rental' } });
+  fireEvent.change(screen.getByLabelText('Take a photo of the bill'), { target: { files: [new File(['jpg'], 'bill.jpg', { type: 'image/jpeg' })] } });
+  await waitFor(() => expect(screen.getByText(/Read from the bill/)).toBeTruthy());
+  fireEvent.click(screen.getByText('Send to Finance'));
+  await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+  expect(createAsync.mock.calls[0]![0]).toMatchObject({ note: 'Pay before Friday' });
+});

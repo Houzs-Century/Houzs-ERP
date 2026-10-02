@@ -27,6 +27,8 @@ export type PaymentRequest = {
   amount_sen: number;
   due_date: string | null;
   purpose: string;
+  /** The requester's note to Finance (2026-10-02) — absent before then. */
+  note?: string | null;
   project_id: number | null;
   bank_name: string | null;
   bank_account_no: string | null;
@@ -155,6 +157,8 @@ export type PaymentRequestInput = {
   noEventReason?: string | null;
   /** The percent of the bill this payment is, when typed as one (item 2). */
   payPct?: number | null;
+  /** The requester's note to Finance (owner 2026-10-02: 多一个第五给他们写note). */
+  note?: string | null;
 };
 
 

@@ -32,6 +32,11 @@
 // scm.payment_request.create, which requireScmAccess admits for this prefix
 // alone. Every handler checks the key or Finance's own (scm.payment_voucher.create)
 // against the real caller, and a requester sees their own requests only.
+//
+// The requester's note (owner 2026-10-02: 我希望多一个第五给他们写note): free
+// words to Finance, the form's fifth step — kept on the request (note), carried
+// into the voucher's or AP invoice's Notes when Finance answers. Finance's own
+// words when it returns a request stay finance_note.
 
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
@@ -57,7 +62,7 @@ type Row = Record<string, any>;
 export const paymentRequests = new Hono<{ Bindings: Env; Variables: Variables }>();
 paymentRequests.use('*', supabaseAuth);
 
-const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee_name, amount_sen, due_date, purpose, project_id, bank_name, bank_account_no, bank_account_name, status, pv_id, ap_invoice_id, finance_note, decided_by, decided_at, created_at, updated_at, bill_no, bill_date, bill_total_sen, event_bill, no_event_reason, parent_request_id, installment_no, pay_pct';
+const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee_name, amount_sen, due_date, purpose, project_id, bank_name, bank_account_no, bank_account_name, status, pv_id, ap_invoice_id, finance_note, decided_by, decided_at, created_at, updated_at, bill_no, bill_date, bill_total_sen, event_bill, no_event_reason, parent_request_id, installment_no, pay_pct, note';
 const NO_PERM = { error: "You don't have permission to do that." };
 
 const mayRequest = (c: any): boolean => hasHouzsPerm(c, PAYMENT_REQUEST_KEY);
@@ -312,7 +317,12 @@ type Fields = {
   project_id: number | null; bank_name: string | null; bank_account_no: string | null; bank_account_name: string | null;
   /** The percent of the bill this instalment is, as the requester typed it (item 2). */
   pay_pct: number | null;
+  /** The requester's note to Finance (2026-10-02) — optional. */
+  note: string | null;
 } & RequestBillFacts;
+
+/** A note is a few lines to Finance, not a document. */
+export const REQUEST_NOTE_MAX = 2000;
 
 /** A percent as typed: more than 0, at most 100, two decimals — or none. */
 function readPayPct(v: unknown): number | null | 'invalid' {
@@ -334,9 +344,11 @@ function readFields(body: Row): { fields: Fields } | { error: string; message: s
   if ('error' in bill) return bill;
   const pct = readPayPct(body.payPct);
   if (pct === 'invalid') return { error: 'pay_pct_invalid', message: 'The percent must be more than 0 and at most 100.' };
+  const note = text(body.note);
+  if (note && note.length > REQUEST_NOTE_MAX) return { error: 'note_too_long', message: `Keep the note to ${REQUEST_NOTE_MAX.toLocaleString('en-MY')} characters.` };
   return {
     fields: {
-      payee_name: payee, amount_sen: amount, due_date: dateOrNull(body.dueDate), purpose, project_id: project, pay_pct: pct,
+      payee_name: payee, amount_sen: amount, due_date: dateOrNull(body.dueDate), purpose, project_id: project, pay_pct: pct, note,
       bank_name: text(body.bankName), bank_account_no: text(body.bankAccountNo), bank_account_name: text(body.bankAccountName),
       ...bill.facts,
       /* With its Event picked, the reason why there is none is moot. */
@@ -422,6 +434,7 @@ export const updatePaymentRequestHandler = async (c: any): Promise<Response> => 
     eventBill: body.eventBill !== undefined ? body.eventBill : before.event_bill,
     noEventReason: body.noEventReason !== undefined ? body.noEventReason : before.no_event_reason,
     payPct: body.payPct !== undefined ? body.payPct : before.pay_pct,
+    note: body.note !== undefined ? body.note : before.note,
   });
   if ('error' in read) return c.json(read, 400);
   const eventErr = await unknownEventRefusal(c, [read.fields.project_id]);

@@ -117,7 +117,7 @@ describe('the requester', () => {
     expect(createAsync.mock.calls[0]![0]).toEqual({
       payeeName: 'MLE EVENTS SDN BHD', amountSen: 850_000, dueDate: null, purpose: 'Booth F1 rental', projectId: 348,
       bankName: 'Maybank', bankAccountNo: '5123', bankAccountName: null,
-      billNo: 'MLE-0925', billDate: '2026-09-01', billTotalSen: 850_000, eventBill: false, noEventReason: null, payPct: null,
+      billNo: 'MLE-0925', billDate: '2026-09-01', billTotalSen: 850_000, eventBill: false, note: null, noEventReason: null, payPct: null,
     });
     await waitFor(() => expect(uploadAsync).toHaveBeenCalledWith({ id: 'r-new', file: { name: 'mle-invoice.pdf', mime: 'application/pdf', dataBase64: 'b64:mle-invoice.pdf' } }));
     /* The requester's picker reads the requests' own event list, not Finance's. */
@@ -437,5 +437,34 @@ describe('the form in the order it is filled', () => {
     const payTo = screen.getByRole('region', { name: '付给谁 · Pay to' });
     expect(within(payTo).getByText('1')).toBeTruthy();
     expect((within(payTo).getByLabelText('Pay to') as HTMLInputElement).value).toBe('MLE EVENTS SDN BHD');
+  });
+});
+
+/* Owner 2026-10-02 (我希望多一个第五给他们写note): ⑤ the requester's note to Finance. */
+describe('⑤ the note to Finance', () => {
+  test('the fifth step takes a note, sent trimmed; the request shows it to Finance', async () => {
+    requests = []; isFinance = false; hasEvents = undefined; readResult = plainRead(); createAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('New request'));
+    const d = screen.getByRole('dialog');
+    const step = within(d).getByRole('region', { name: '备注 · Note' });
+    expect(within(step).getByText('5')).toBeTruthy();
+    fireEvent.change(within(step).getByLabelText('Note'), { target: { value: '  Please pay before the fair starts.  ' } });
+    fireEvent.change(within(d).getByLabelText('Pay to'), { target: { value: 'MLE EVENTS SDN BHD' } });
+    const amount = within(d).getByLabelText('Amount');
+    fireEvent.focus(amount); fireEvent.change(amount, { target: { value: '8500' } }); fireEvent.blur(amount);
+    fireEvent.change(within(d).getByLabelText('What is it for'), { target: { value: 'Booth F1 rental' } });
+    fireEvent.change(within(d).getByLabelText('Bill files'), { target: { files: [new File(['%PDF'], 'mle.pdf', { type: 'application/pdf' })] } });
+    await waitFor(() => expect(within(d).getByText(/Read from the bill/)).toBeTruthy());
+    fireEvent.click(within(d).getByText('Send to Finance'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+    expect(createAsync.mock.calls[0]![0]).toMatchObject({ note: 'Please pay before the fair starts.' });
+  });
+
+  test('the request\'s detail shows the note', () => {
+    requests = [base({ id: 'r1', note: 'Two instalments agreed with the organiser.' })]; isFinance = true;
+    draw();
+    fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
+    expect(within(screen.getByRole('dialog')).getByText('Two instalments agreed with the organiser.')).toBeTruthy();
   });
 });

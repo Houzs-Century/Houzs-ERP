@@ -468,3 +468,23 @@ describe('requestStage — the pure reading', () => {
     expect(requestStage('REJECTED', null, false, inv('POSTED'))).toBe('RETURNED');
   });
 });
+
+/* Owner 2026-10-02 (我希望多一个第五给他们写note): the requester's note to Finance. */
+describe('the requester\'s note to Finance', () => {
+  test('rides the request, changes with it, stays when a change leaves it out, clears; past 2,000 characters is refused', async () => {
+    const w = world();
+    const james = as(w, JAMES);
+    const r = await james('/payment-requests', 'POST', { ...RENTAL, note: '  Please pay before the fair starts on 25/09.  ' });
+    expect(r.status).toBe(201);
+    expect(r.body.request.note).toBe('Please pay before the fair starts on 25/09.');
+    const id = String(r.body.request.id);
+    expect((await james(`/payment-requests/${id}`)).body.request.note).toBe('Please pay before the fair starts on 25/09.');
+    expect((await james(`/payment-requests/${id}`, 'PATCH', { note: 'Two instalments agreed with the organiser.' })).body.request.note).toBe('Two instalments agreed with the organiser.');
+    expect((await james(`/payment-requests/${id}`, 'PATCH', { purpose: 'Booth F1 rental' })).body.request.note).toBe('Two instalments agreed with the organiser.');
+    expect((await james(`/payment-requests/${id}`, 'PATCH', { note: '   ' })).body.request.note).toBeNull();
+    expect((await james('/payment-requests', 'POST', RENTAL)).body.request.note).toBeNull();
+    const long = await james('/payment-requests', 'POST', { ...RENTAL, note: 'x'.repeat(2001) });
+    expect(long.status).toBe(400);
+    expect(long.body).toMatchObject({ error: 'note_too_long', message: 'Keep the note to 2,000 characters.' });
+  });
+});
