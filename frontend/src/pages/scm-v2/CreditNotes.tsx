@@ -14,6 +14,11 @@
 // (rebate and sponsorship 591-0000, a discount 610-0001) with the printed SST
 // spread in, and the purchase invoice it credits — and Finance saves it; the
 // scanned pages attach to the saved note.
+//
+// Knock off (owner 2026-10-02: CN 的方式应该是类似 ap payment 这样 knock off；扣错了
+// 就我 untick 会 knock off 的 invoice 就行了): a supplier note picks the invoices its
+// credit comes off on the AP Payment's own table (CreditNoteKnockOff.tsx) — on the
+// form as the plan the post carries out, on a posted note to change at any time.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useRef, useState } from 'react';
@@ -32,9 +37,9 @@ import { useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
 import {
   useCreditNotes, useCreditNoteDetail, useCreateCreditNote, useUpdateCreditNote, usePostCreditNote, useCancelCreditNote,
   useScanSupplierCreditNote, useCreditNoteFiles, useUploadCreditNoteFile, useDeleteCreditNoteFile, fetchCreditNoteFileBlobUrl,
-  useCreditNoteOpenInvoices, useApplyCreditNote, useRemoveCreditNoteAllocation,
-  type CreditAllocation, type CreditNote, type CreditNoteLine, type CreditNoteLineInput, type NoteKind, type NoteStatus, type ScnScan,
+  type CreditAllocation, type CreditNote, type CreditNoteLine, type CreditNoteLineInput, type KnockOffTarget, type NoteKind, type NoteStatus, type ScnScan,
 } from '../../vendor/scm/lib/credit-note-queries';
+import { FormKnockOff, NoteKnockOff, pickSen, pickTargets, type KnockOffPick } from './CreditNoteKnockOff';
 import { fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
@@ -67,11 +72,21 @@ type FormLine = { rid: number; description: string; accountCode: string; amountR
 type FormValues = {
   kind: NoteKind; noteDate: string; soDocNo: string; partyName: string; supplierId: string;
   sourceDocNo: string; reason: string; lines: FormLine[];
-  /** The supplier's invoice a supplier note credits (set from a scan). */
+  /** The supplier's invoice a supplier note names (set from a scan) — its reference. */
   creditedDoc?: { kind: 'PI' | 'API'; id: string } | null;
+  /** A supplier note's knock-off ticks — the plan the post carries out (2026-10-02). */
+  knockOff?: KnockOffPick;
 };
 const emptyLine = (rid: number): FormLine => ({ rid, description: '', accountCode: '', amountRm: '' });
-const emptyForm = (kind: NoteKind = 'CN'): FormValues => ({ kind, noteDate: myt(), soDocNo: '', partyName: '', supplierId: '', sourceDocNo: '', reason: '', lines: [emptyLine(1)], creditedDoc: null });
+const emptyForm = (kind: NoteKind = 'CN'): FormValues => ({ kind, noteDate: myt(), soDocNo: '', partyName: '', supplierId: '', sourceDocNo: '', reason: '', lines: [emptyLine(1)], creditedDoc: null, knockOff: {} });
+
+/** The invoice the paper names, ticked — as much of the credit as it owes. */
+const scanKnockOff = (r: ScnScan): KnockOffPick => {
+  const named = r.suggested ? r.invoices.find((i) => i.id === r.suggested?.id) : undefined;
+  const credit = r.lines.reduce((sum, l) => sum + l.amountSen, 0);
+  const sen = named ? Math.min(credit, named.outstandingSen) : 0;
+  return named && sen > 0 ? { [named.id]: { kind: named.kind, id: named.id, amountSen: sen } } : {};
+};
 
 /** The New note form, filled from a scanned supplier credit note. */
 export const fromScan = (r: ScnScan): FormValues => ({
@@ -85,18 +100,21 @@ export const fromScan = (r: ScnScan): FormValues => ({
     ? r.lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', accountCode: l.accountCode ?? '', amountRm: (l.amountSen / 100).toFixed(2) }))
     : [emptyLine(1)],
   creditedDoc: r.suggested ? { kind: r.suggested.kind, id: r.suggested.id } : null,
+  knockOff: scanKnockOff(r),
 });
 const toSen = (rm: string): number => Math.round(Number(rm) * 100);
 
 /* The body the server takes, off the form — the lines with a sen amount; an
    account left blank lets the server land it on the kind's default. */
-export const bodyOf = (v: FormValues): { kind: NoteKind; noteDate: string; reason: string | null; sourceDocNo: string | null; soDocNo?: string; partyName?: string; supplierId?: string; purchaseInvoiceId?: string; apInvoiceId?: string; lines: CreditNoteLineInput[] } => ({
+export const bodyOf = (v: FormValues): { kind: NoteKind; noteDate: string; reason: string | null; sourceDocNo: string | null; soDocNo?: string; partyName?: string; supplierId?: string; purchaseInvoiceId?: string; apInvoiceId?: string; allocations?: KnockOffTarget[]; lines: CreditNoteLineInput[] } => ({
   kind: v.kind,
   noteDate: v.noteDate,
   reason: v.reason.trim() || null,
   sourceDocNo: v.sourceDocNo.trim() || null,
   ...(v.kind === 'SCN' ? { supplierId: v.supplierId } : v.soDocNo.trim() ? { soDocNo: v.soDocNo.trim() } : { partyName: v.partyName.trim() }),
   ...(v.kind === 'SCN' && v.creditedDoc ? (v.creditedDoc.kind === 'PI' ? { purchaseInvoiceId: v.creditedDoc.id } : { apInvoiceId: v.creditedDoc.id }) : {}),
+  /* A supplier note always says its ticks — none ticked is a plan too. */
+  ...(v.kind === 'SCN' ? { allocations: pickTargets(v.knockOff ?? {}) } : {}),
   lines: v.lines
     .filter((l) => l.amountRm.trim() !== '')
     .map((l) => ({ description: l.description.trim() || null, accountCode: l.accountCode || null, amountSen: toSen(l.amountRm) })),
@@ -213,7 +231,7 @@ export const CreditNotes = () => {
 
       {openId && (
         <NoteDetail id={openId} onClose={() => setOpenId(null)}
-          onEdit={(n, lines) => {
+          onEdit={(n, lines, allocations) => {
             setForm({
               mode: 'edit', id: n.id,
               values: {
@@ -221,6 +239,7 @@ export const CreditNotes = () => {
                 sourceDocNo: n.source_doc_no ?? '', reason: n.reason ?? '',
                 lines: lines.length > 0 ? lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', accountCode: l.account_code, amountRm: (l.amount_sen / 100).toFixed(2) })) : [emptyLine(1)],
                 creditedDoc: null,
+                knockOff: Object.fromEntries(allocations.map((a) => [a.docId, { kind: a.kind, id: a.docId, amountSen: a.amountSen }])),
               },
             });
             setOpenId(null);
@@ -256,7 +275,7 @@ const Field = ({ label, children }: { label: string; children: React.ReactNode }
   </label>
 );
 
-const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; onEdit: (n: CreditNote, lines: Array<{ description: string | null; account_code: string; amount_sen: number }>) => void }) => {
+const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; onEdit: (n: CreditNote, lines: Array<{ description: string | null; account_code: string; amount_sen: number }>, allocations: CreditAllocation[]) => void }) => {
   const q = useCreditNoteDetail(id);
   const post = usePostCreditNote();
   const cancel = useCancelCreditNote();
@@ -280,7 +299,7 @@ const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; 
       actions={n && (
         <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
           <Button variant="ghost" size="sm" onClick={() => void printOne()} disabled={busy || printing}>{printing ? 'Preparing…' : 'Print'}</Button>
-          {n.status === 'DRAFT' && <Button variant="ghost" size="sm" onClick={() => onEdit(n, lines)} disabled={busy}>Edit</Button>}
+          {n.status === 'DRAFT' && <Button variant="ghost" size="sm" onClick={() => onEdit(n, lines, q.data?.allocations ?? [])} disabled={busy}>Edit</Button>}
           {n.status === 'DRAFT' && <Button size="sm" onClick={() => post.mutate(n.id)} disabled={busy}>{post.isPending ? 'Posting…' : 'Post to ledger'}</Button>}
           {n.status !== 'CANCELLED' && (
             <Button variant="ghost" size="sm" disabled={busy}
@@ -317,9 +336,7 @@ const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; 
               <tr><td colSpan={3} style={{ ...td, fontWeight: 700 }}>Total</td><td style={{ ...td, ...num, fontWeight: 700 }}>{fmtSen(n.total_sen)}</td></tr>
             </tbody>
           </table>
-          {n.kind === 'SCN' && n.status === 'POSTED' && (
-            <NoteCredit noteId={n.id} totalSen={n.total_sen} allocations={q.data?.allocations ?? []} leftSen={q.data?.leftSen ?? n.total_sen} />
-          )}
+          {n.kind === 'SCN' && n.status !== 'CANCELLED' && <NoteKnockOff noteId={n.id} posted={n.status === 'POSTED'} totalSen={n.total_sen} />}
           <NoteFilesCard noteId={n.id} locked={n.status === 'POSTED'} closed={n.status === 'CANCELLED'} />
           {post.isSuccess && (
             <div style={{ fontSize: 'var(--fs-13)', color: good }}>
@@ -352,7 +369,7 @@ const NoteForm = ({ mode, id, initial, scan, scanFiles, onClose, onSaved }: { mo
   const busy = create.isPending || update.isPending || post.isPending;
   const failed = create.isError ? create.error : update.isError ? update.error : post.isError ? post.error : null;
   const setLine = (rid: number, patch: Partial<FormLine>) => setV((p) => ({ ...p, lines: p.lines.map((l) => (l.rid === rid ? { ...l, ...patch } : l)) }));
-  const canSave = totalSen > 0 && v.noteDate !== '' && (v.kind === 'SCN' ? v.supplierId !== '' : v.soDocNo.trim() !== '' || v.partyName.trim() !== '');
+  const canSave = totalSen > 0 && v.noteDate !== '' && (v.kind === 'SCN' ? v.supplierId !== '' && pickSen(v.knockOff ?? {}) <= totalSen : v.soDocNo.trim() !== '' || v.partyName.trim() !== '');
 
   const save = async () => {
     try {
@@ -368,7 +385,7 @@ const NoteForm = ({ mode, id, initial, scan, scanFiles, onClose, onSaved }: { mo
           } catch (e) { setAttachError(`${f.name} did not attach — ${errText(e)}`); }
         }
       } else if (id) {
-        await update.mutateAsync({ id, noteDate: body.noteDate, reason: body.reason, sourceDocNo: body.sourceDocNo, lines: body.lines });
+        await update.mutateAsync({ id, noteDate: body.noteDate, reason: body.reason, sourceDocNo: body.sourceDocNo, lines: body.lines, ...(body.allocations ? { allocations: body.allocations } : {}) });
       }
       if (postAfter && noteId) await post.mutateAsync(noteId);
       onSaved(noteId);
@@ -378,7 +395,7 @@ const NoteForm = ({ mode, id, initial, scan, scanFiles, onClose, onSaved }: { mo
   return (
     <Modal title={mode === 'new' ? (scan ? 'New note — from the scanned credit note' : 'New note') : `Edit ${initial.kind}`} onClose={onClose} width="min(900px, 100%)" ariaLabel="Note form">
       <div className="space-y-3">
-        {scan && <ScanPanel scan={scan} credited={v.creditedDoc} onCredit={(d) => setV({ ...v, creditedDoc: d })} />}
+        {scan && <ScanPanel scan={scan} />}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-3)' }}>
           <Field label="Kind">
             <select value={v.kind} onChange={(e) => setV({ ...v, kind: e.target.value as NoteKind })} disabled={mode === 'edit'} aria-label="Kind" style={input}>
@@ -390,7 +407,7 @@ const NoteForm = ({ mode, id, initial, scan, scanFiles, onClose, onSaved }: { mo
           <Field label="Date"><DateField value={v.noteDate} onChange={(d) => setV({ ...v, noteDate: d })} aria-label="Note date" /></Field>
           {v.kind === 'SCN' ? (
             <Field label="Supplier">
-              <SearchCombo options={supplierOptions} value={v.supplierId} onChange={(s) => setV({ ...v, supplierId: s })} aria-label="Supplier" placeholder="— type to search suppliers —" />
+              <SearchCombo options={supplierOptions} value={v.supplierId} onChange={(s) => setV({ ...v, supplierId: s, knockOff: s === v.supplierId ? v.knockOff : {} })} aria-label="Supplier" placeholder="— type to search suppliers —" />
             </Field>
           ) : (
             <>
@@ -435,6 +452,11 @@ const NoteForm = ({ mode, id, initial, scan, scanFiles, onClose, onSaved }: { mo
           </tbody>
         </table>
 
+        {v.kind === 'SCN' && (
+          <FormKnockOff supplierId={v.supplierId} noteId={mode === 'edit' ? id : undefined} totalSen={totalSen}
+            pick={v.knockOff ?? {}} onChange={(knockOff) => setV((p) => ({ ...p, knockOff }))} />
+        )}
+
         <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
           <label style={{ ...soft, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <input type="checkbox" checked={postAfter} onChange={(e) => setPostAfter(e.target.checked)} aria-label="Post to the ledger after saving" />
@@ -452,9 +474,9 @@ const NoteForm = ({ mode, id, initial, scan, scanFiles, onClose, onSaved }: { mo
 };
 
 /* What the scan read, said before the form: the issuer and the paper, what to
-   check (the server's sentences), and the supplier's invoices the note names —
-   the one it credits picked, still Finance's call. */
-const ScanPanel = ({ scan, credited, onCredit }: { scan: ScnScan; credited: FormValues['creditedDoc']; onCredit: (d: FormValues['creditedDoc']) => void }) => (
+   check (the server's sentences), and the invoice the paper names — ticked in
+   the knock-off table below, still Finance's call. */
+const ScanPanel = ({ scan }: { scan: ScnScan }) => (
   <div style={{ border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 'var(--space-3)', display: 'grid', gap: 8, fontSize: 'var(--fs-13)' }} aria-label="What the credit note reads">
     <div>
       <strong>{scan.read.vendorName ?? 'Issuer not read'}</strong>
@@ -462,91 +484,14 @@ const ScanPanel = ({ scan, credited, onCredit }: { scan: ScnScan; credited: Form
       {scan.supplier && <span style={soft}> · supplier {scan.supplier.code} {scan.supplier.name}</span>}
     </div>
     {scan.notes.map((t) => <div key={t} style={{ color: 'var(--c-orange)' }}>{t}</div>)}
-    {scan.invoices.length > 0 && (
-      <div role="radiogroup" aria-label="The invoice this note credits" style={{ display: 'grid', gap: 4 }}>
-        <div style={soft}>The invoice this note credits — {scan.read.invoiceNumbers.join(', ')}</div>
-        {scan.invoices.map((d) => (
-          <label key={d.id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input type="radio" name="credited-doc" checked={credited?.id === d.id} onChange={() => onCredit({ kind: d.kind, id: d.id })} aria-label={`Credits ${d.number}`} />
-            <span style={{ fontFamily: 'var(--font-mono)' }}>{d.number}</span>
-            <span style={soft}>{d.kind === 'PI' ? 'purchase invoice' : 'AP invoice'} · {fmtSen(d.totalSen)} · still owed {fmtSen(d.outstandingSen)}</span>
-          </label>
-        ))}
-        <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <input type="radio" name="credited-doc" checked={credited == null} onChange={() => onCredit(null)} aria-label="Credits no one invoice" />
-          <span style={soft}>none of these — the credit stays with the supplier</span>
-        </label>
+    {scan.read.invoiceNumbers.length > 0 && (
+      <div style={soft} aria-label="The invoice the paper names">
+        The paper names {scan.read.invoiceNumbers.join(', ')}
+        {scan.suggested ? <> — <span style={{ fontFamily: 'var(--font-mono)' }}>{scan.suggested.number}</span> is ticked under Knock off below; untick it to keep the credit with the supplier.</> : ' — none of this supplier\'s invoices matched it; tick below.'}
       </div>
     )}
   </div>
 );
-
-/* Where a posted supplier note's credit went (owner 2026-10-01, Supplier CN part
-   2: 有写发票的 CN 直接扣那张发票的欠款；没写的先挂在供应商名下，再选要扣哪几张发票；
-   付款时只付剩下的): each invoice it came off, the credit left, and — while some
-   is left — the supplier's invoices still owing, each taking an amount. */
-const NoteCredit = ({ noteId, totalSen, allocations, leftSen }: { noteId: string; totalSen: number; allocations: CreditAllocation[]; leftSen: number }) => {
-  const [picking, setPicking] = useState(false);
-  /* An invoice nobody has typed against yet has no entry — hence undefined. */
-  const [amounts, setAmounts] = useState<Record<string, string | undefined>>({});
-  const openQ = useCreditNoteOpenInvoices(picking ? noteId : null);
-  const apply = useApplyCreditNote();
-  const remove = useRemoveCreditNoteAllocation();
-  const askConfirm = useConfirm();
-  const picked = (openQ.data?.invoices ?? [])
-    .map((i) => ({ i, sen: amounts[i.id]?.trim() ? toSen(amounts[i.id]!) : 0 }))
-    .filter((x) => x.sen > 0);
-  const pickedSen = picked.reduce((s, x) => s + x.sen, 0);
-  const failed = apply.isError ? apply.error : remove.isError ? remove.error : null;
-  return (
-    <div style={{ display: 'grid', gap: 6, fontSize: 'var(--fs-13)' }} aria-label="Where the credit went">
-      <div style={{ fontWeight: 600 }}>Credit · 扣发票</div>
-      {allocations.length === 0 && <div style={soft}>Not taken off any invoice yet — the credit stays with the supplier.</div>}
-      {allocations.map((a) => (
-        <div key={a.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={{ fontFamily: 'var(--font-mono)' }}>{a.number ?? a.docId}</span>
-          <span style={num}>{fmtSen(a.appliedSen)}</span>
-          <button type="button" style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--c-orange)', textDecoration: 'underline', fontSize: 'var(--fs-12)' }}
-            disabled={remove.isPending} aria-label={`Give back ${a.number ?? a.docId}`}
-            onClick={async () => {
-              const yes = await askConfirm({ title: `Give ${fmtSen(a.appliedSen)} back from ${a.number ?? 'the invoice'}?`, body: 'The invoice owes it again; the credit returns to the note.', confirmLabel: 'Give back' });
-              if (yes) remove.mutate({ noteId, allocationId: a.id });
-            }}>
-            Give back
-          </button>
-        </div>
-      ))}
-      <div><span style={soft}>Credit left </span><strong style={num}>{fmtSen(leftSen)}</strong><span style={soft}> of {fmtSen(totalSen)}</span></div>
-      {leftSen > 0 && !picking && (
-        <div><Button variant="ghost" size="sm" onClick={() => setPicking(true)}>Take it off invoices… · 扣发票</Button></div>
-      )}
-      {picking && (
-        <div style={{ border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 'var(--space-2)', display: 'grid', gap: 6 }}>
-          {openQ.isLoading && <div style={soft}>Loading the supplier's invoices…</div>}
-          {openQ.data && openQ.data.invoices.length === 0 && <div style={soft}>No invoice of this supplier owes anything now.</div>}
-          {(openQ.data?.invoices ?? []).map((i) => (
-            <label key={i.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-              <span style={{ fontFamily: 'var(--font-mono)', minWidth: 140 }}>{i.number}</span>
-              <span style={soft}>{i.invoiceRef ? `${i.invoiceRef} · ` : ''}{fmtDateOrDash(i.invoiceDate)} · owes {fmtSen(i.outstandingSen)}</span>
-              <input type="number" min={0} step="0.01" value={amounts[i.id] ?? ''} placeholder="0.00" aria-label={`Amount off ${i.number}`}
-                onChange={(e) => setAmounts({ ...amounts, [i.id]: e.target.value })} style={{ ...input, minWidth: 110, textAlign: 'right' }} />
-            </label>
-          ))}
-          <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ ...soft, color: pickedSen > leftSen ? danger : undefined }}>Taking {fmtSen(pickedSen)} of {fmtSen(leftSen)} left</span>
-            <span style={{ flex: 1 }} />
-            <Button variant="ghost" size="sm" onClick={() => { setPicking(false); setAmounts({}); }} disabled={apply.isPending}>Close</Button>
-            <Button size="sm" disabled={apply.isPending || picked.length === 0 || pickedSen > leftSen}
-              onClick={() => apply.mutate({ noteId, targets: picked.map((x) => ({ kind: x.i.kind, id: x.i.id, amountSen: x.sen })) }, { onSuccess: () => { setPicking(false); setAmounts({}); } })}>
-              {apply.isPending ? 'Applying…' : 'Take it off'}
-            </Button>
-          </div>
-        </div>
-      )}
-      {failed != null && <div style={{ color: danger }}>{errText(failed)}</div>}
-    </div>
-  );
-};
 
 /* The note's paper — the AP invoice's files card bound to this document: a
    POSTED note keeps what it has, a CANCELLED one takes no more. */

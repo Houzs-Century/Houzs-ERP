@@ -33,6 +33,8 @@ export type CreditNoteCreate = {
   supplierId?: string | null; lines: CreditNoteLineInput[];
   /** The supplier's invoice a supplier note credits — one of that supplier's own (2026-10-01). */
   purchaseInvoiceId?: string | null; apInvoiceId?: string | null;
+  /** A supplier note's knock-off ticks (2026-10-02) — the draft's plan, carried out by the post. */
+  allocations?: KnockOffTarget[];
 };
 
 /* A scanned supplier credit note (owner 2026-10-01: supplier 给我 cn，我要做 ocr for
@@ -83,10 +85,19 @@ export type CreditAllocation = {
   id: string; kind: 'PI' | 'API'; docId: string; number: string | null;
   amountSen: number; appliedSen: number; createdAt: string | null; createdBy: string | null;
 };
-export type CreditOpenInvoice = {
+/* Knock off like an AP Payment (owner 2026-10-02: CN 的方式应该是类似 ap payment 这样
+   knock off；扣错了就 untick) — one row per invoice the note can take from. */
+export type KnockOffRow = {
   kind: 'PI' | 'API'; id: string; number: string; invoiceRef: string | null; invoiceDate: string | null;
-  totalSen: number; paidSen: number; outstandingSen: number; status: string;
+  totalSen: number;
+  /** What the invoice owes before THIS note — the most the note can take from it. */
+  owedSen: number;
+  /** What this note takes off it: applied once posted, planned while a draft. */
+  noteSen: number;
+  status: string;
 };
+export type KnockOffTarget = { kind: 'PI' | 'API'; id: string; amountSen: number };
+export type NoteKnockOff = { rows: KnockOffRow[]; totalSen: number; takenSen: number; leftSen: number; posted: boolean };
 export type CreditNoteDetail = {
   note: CreditNote; lines: CreditNoteLine[];
   /** A supplier note only: where its credit went, and what is left. */
@@ -113,7 +124,7 @@ export const useCreateCreditNote = () => {
 export const useUpdateCreditNote = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; noteDate?: string; reason?: string | null; sourceDocNo?: string | null; notes?: string | null; lines?: CreditNoteLineInput[] }) =>
+    mutationFn: ({ id, ...body }: { id: string; noteDate?: string; reason?: string | null; sourceDocNo?: string | null; notes?: string | null; lines?: CreditNoteLineInput[]; allocations?: KnockOffTarget[] }) =>
       authedFetch<{ ok: boolean; note: CreditNote }>(`/credit-notes/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => invalidate(qc),
   });
@@ -124,7 +135,7 @@ export const usePostCreditNote = () => {
   return useMutation({
     mutationFn: (id: string) => authedFetch<{
       ok: boolean; jeNo: string; status: string;
-      /** A supplier note naming its invoice: what came off it at once, or why nothing did. */
+      /** A supplier note's knock-off carried out at post: what came off each invoice, and what could not. */
       applied?: Array<{ kind: 'PI' | 'API'; id: string; number: string; appliedSen: number }>; notApplied?: string;
     }>(`/credit-notes/${id}/post`, { method: 'POST', body: '{}' }),
     onSuccess: () => invalidate(qc),
@@ -171,29 +182,35 @@ export const useDeleteCreditNoteFile = () => {
 export const fetchCreditNoteFileBlobUrl = (noteId: string, fileId: string): Promise<{ url: string; contentType: string }> =>
   fetchDocFileBlobUrl(`/credit-notes/${noteId}/files/${fileId}`);
 
-/** The supplier's invoices still owing — what the note's credit can come off. */
-export const useCreditNoteOpenInvoices = (noteId: string | null) => useQuery({
-  queryKey: [KEY, 'open-invoices', noteId],
+/** A note's knock-off table — what it takes from each invoice, and the credit left. */
+export const useCreditNoteKnockOff = (noteId: string | null) => useQuery({
+  queryKey: [KEY, 'knock-off', noteId],
   enabled: !!noteId,
-  queryFn: () => authedFetch<{ invoices: CreditOpenInvoice[] }>(`/credit-notes/${noteId}/open-invoices`),
+  queryFn: () => authedFetch<NoteKnockOff>(`/credit-notes/${noteId}/knock-off`),
+  staleTime: 0,
   retry: retryUnlessClientError,
 });
 
-export const useApplyCreditNote = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ noteId, targets }: { noteId: string; targets: Array<{ kind: 'PI' | 'API'; id: string; amountSen: number }> }) =>
-      authedFetch<{ ok: boolean; applied: Array<{ kind: 'PI' | 'API'; id: string; number: string; appliedSen: number }> }>(`/credit-notes/${noteId}/apply`, { method: 'POST', body: JSON.stringify({ targets }) }),
-    onSuccess: () => invalidate(qc),
-  });
-};
+/** A new note's knock-off table — the supplier's invoices still owing. */
+export const useSupplierKnockOff = (supplierId: string | null) => useQuery({
+  queryKey: [KEY, 'knock-off', 'supplier', supplierId],
+  enabled: !!supplierId,
+  queryFn: () => authedFetch<{ rows: KnockOffRow[] }>(`/credit-notes/knock-off?supplierId=${encodeURIComponent(supplierId ?? '')}`),
+  staleTime: 0,
+  retry: retryUnlessClientError,
+});
 
-export const useRemoveCreditNoteAllocation = () => {
+/** PUT /credit-notes/:id/allocations — the knock-off set whole (untick = give it
+    back). The lists are read again before the caller hears it went through. */
+export const useSetCreditNoteAllocations = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ noteId, allocationId }: { noteId: string; allocationId: string }) =>
-      authedFetch<{ ok: boolean }>(`/credit-notes/${noteId}/allocations/${allocationId}/remove`, { method: 'POST', body: '{}' }),
-    onSuccess: () => invalidate(qc),
+    mutationFn: ({ noteId, targets }: { noteId: string; targets: KnockOffTarget[] }) =>
+      authedFetch<{ ok: boolean; short: Array<{ number: string; askedSen: number; appliedSen: number }> }>(`/credit-notes/${noteId}/allocations`, { method: 'PUT', body: JSON.stringify({ targets }) }),
+    onSuccess: async () => {
+      invalidate(qc);
+      await qc.invalidateQueries({ queryKey: [KEY, 'knock-off'] });
+    },
   });
 };
 
