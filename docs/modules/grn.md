@@ -167,7 +167,9 @@ go through `/api/scm/grns`.
   test). UI: `useGrnLineRackSplit` (`vendor/scm/lib/grn-line-rack.ts`) rendered by
   `MobileGrnLineRack` (scan/pick + qty) and desktop `GrnRackSplitField` (edit
   mode). Adding a shelf to a line that sits whole on one other rack takes the
-  qty off that rack (`addRackShare`).
+  qty off that rack (`addRackShare`). The desktop VIEW page (`GoodsReceivedDetailV2`) has a
+  Racks column (`L3.1 ×6, L3.2 ×4`, plus "N not on a rack" for a partly placed
+  line), formatted by the shared `lineRackSummary` (owner 2026-10-02).
 
 ## Gotchas
 

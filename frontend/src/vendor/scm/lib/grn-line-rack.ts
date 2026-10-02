@@ -30,6 +30,20 @@ export function grnRackOptions(racks: ReadonlyArray<{ id: string; rack: string }
   return sortByText(racks.map((r) => ({ value: r.id, label: r.rack })));
 }
 
+/** How a line's racks read wherever they are shown — "L3.1 ×6, L3.2 ×4" — and
+ *  how many accepted units are on no rack yet (owner 2026-10-02: the GRN view
+ *  page shows the racks, as the phone's line card does). */
+export function lineRackSummary(
+  splits: ReadonlyArray<RackSplit>,
+  qtyAccepted: number,
+  labelOf: (rackId: string) => string | undefined,
+): { text: string; unplaced: number } {
+  return {
+    text: splits.map((s) => `${labelOf(s.rackId) ?? '?'} ×${s.qty}`).join(', '),
+    unplaced: rackSplitRemaining(qtyAccepted, splits),
+  };
+}
+
 /**
  * Put `qty` on `rackId`. When the line already sits whole on ONE other rack and
  * there is no room left, the qty is taken off that rack — "scan L3.2, 4" on a
