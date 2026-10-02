@@ -28,6 +28,7 @@ import type { Env, Variables } from '../env';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { paginateAll } from '../lib/paginate-all';
 import { toMyrSen } from '../lib/fx';
+import { OPEN_PI_STATUSES } from '../lib/open-invoice-states';
 import { isSupplierFinanceCaller } from '../lib/supplier-finance';
 import { withoutSupplierFinance } from '../shared/supplier-finance-fields';
 import { SUPPLIER_COLS } from './suppliers';
@@ -41,7 +42,7 @@ export const supplierMaintenance = new Hono<{ Bindings: Env; Variables: Variable
 supplierMaintenance.use('*', supabaseAuth);
 
 /* An invoice still owing: posted and not paid down, or held (still owed). */
-const OPEN_PI = ['POSTED', 'PARTIALLY_PAID', 'ON_HOLD'];
+const OPEN_PI = [...OPEN_PI_STATUSES];
 const OPEN_API = ['POSTED', 'PARTIALLY_PAID'];
 
 const LIST_COLS = 'id, code, name, status, currency, payment_terms, tin_number, business_reg_no, registration_no, '

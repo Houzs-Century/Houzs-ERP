@@ -1459,6 +1459,16 @@
       "check": "D2",
       "key": "ON_HOLD,PAID,PARTIALLY_PAID,POSTED ~ ON_HOLD,PARTIALLY_PAID,POSTED",
       "why": "TWO DIFFERENT QUESTIONS about purchase invoices, differing by PAID on purpose: routes/ap-invoices.ts mirrors EVERY posted purchase invoice into the AP Invoices list, a paid one included (it shows Paid); routes/supplier-maintenance.ts OPEN_PI counts only the ones still OWING a supplier (owner 2026-10-02, Supplier Maintenance's open bills) — a paid invoice owes nothing. Not one rule with two homes."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,OVERDUE,PARTIALLY_PAID,SENT ~ OVERDUE,PARTIALLY_PAID,SENT",
+      "why": "TWO DIFFERENT QUESTIONS about a sales invoice, differing by CANCELLED on purpose: routes/sales-invoices.ts names the statuses an invoice may MOVE to from one state (cancelling included); scm/lib/open-invoice-states.ts OPEN_SI_STATUSES names the ones that still OWE (owner 2026-10-02, the formal AR Aging's count of AutoCount invoices outside the books) — a cancelled invoice owes nothing. Not one rule with two homes."
+    },
+    {
+      "check": "D2",
+      "key": "OVERDUE,PAID,PARTIALLY_PAID,SENT ~ OVERDUE,PARTIALLY_PAID,SENT",
+      "why": "TWO DIFFERENT QUESTIONS about a sales invoice, differing by PAID on purpose: routes/ar-invoices.ts SI_MIRROR_STATUSES mirrors every issued invoice into the AR Invoices list, a paid one included (it shows Paid); scm/lib/open-invoice-states.ts OPEN_SI_STATUSES names only the ones still OWED (owner 2026-10-02, the formal AR Aging) — a paid invoice owes nothing. Not one rule with two homes."
     }
   ]
 }
