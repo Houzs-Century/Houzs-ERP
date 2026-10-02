@@ -255,7 +255,7 @@ function backendSofaKey(it: PoItem): { key: string; moduleId: string } | null {
 /* Rows of each geometry-less build re-ordered into walking order
    (splitBackendSofa) within the slots the build already holds, so the table
    reads in the same order the layout draws. Other rows do not move. */
-function walkBackendSofaRows(rows: PoItem[]): PoItem[] {
+function walkBackendSofaRows<T extends PoItem>(rows: T[]): T[] {
   const byKey = new Map<string, number[]>();
   rows.forEach((it, i) => {
     const k = backendSofaKey(it);
@@ -311,12 +311,12 @@ async function renderPurchaseOrderInto(
      photo block, which is why the photos scrambled with the lines. It is
      applied here as well as in the detail route's SQL because a caller may have
      fetched the items from somewhere with no ORDER BY. */
-  const orderedItems = walkBackendSofaRows(orderSofaModuleRowsWithinBuilds(
-    sortSoLinesByGroupRank(
+  const orderedItems = orderSofaModuleRowsWithinBuilds(
+    walkBackendSofaRows(sortSoLinesByGroupRank(
       sortLinesByStoredLineNo(items.map((it) => ({ ...it, item_code: it.item_code, __row: it }))),
       (r) => r.item_group as string | null | undefined,
-    ),
-  ).map((r) => r.__row));
+    )),
+  ).map((r) => r.__row);
 
   /* Owner spec 2026-08 — photos follow the line onto the supplier PO. The
      code beside each row chip is the SUPPLIER code (the code they act on).
