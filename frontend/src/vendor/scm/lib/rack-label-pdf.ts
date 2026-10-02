@@ -21,11 +21,8 @@
 
 import { deliverPdf, ensurePdfCjkFont, safeName, type PdfAction } from './pdf-common';
 import { drawQrIntoPdf } from './pdf-qr';
+import { rackQrPayload } from './rack-qr';
 import { compareRackLabels } from './warehouse-floorplan';
-
-export const RACK_QR_PREFIX = 'HZRACK:';
-
-export const rackQrPayload = (label: string): string => `${RACK_QR_PREFIX}${label.trim()}`;
 
 const PAGE_W = 210;
 const PAGE_H = 297;

@@ -2,11 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   LABELS_PER_PAGE,
   RACK_LABEL_MM,
-  RACK_QR_PREFIX,
   rackLabelCell,
   rackLabelsInPrintOrder,
-  rackQrPayload,
 } from './rack-label-pdf';
+import { RACK_QR_PREFIX, rackQrPayload } from './rack-qr';
 
 describe('rack label sheet', () => {
   it('encodes the rack LABEL behind the shelf prefix, not a row id', () => {

@@ -128,7 +128,14 @@ go through `/api/scm/grns`.
   desktop Edit mode (`GoodsReceivedDetail`) and the phone receipt detail
   (`MobileGrnLineRack`, saves on pick); who may change it and the option list
   live in the shared `vendor/scm/lib/grn-line-rack.ts`. The phone's create
-  forms still have no rack — set it on the detail after creating.
+  forms still have no rack — set it on the detail after creating. The phone
+  row also has **Scan**: it reads a shelf's rack sticker (`HZRACK:<label>`) and
+  resolves it among the racks of the GRN's own warehouse via
+  `vendor/scm/lib/rack-qr.ts`, then saves through the same PATCH. A sticker of
+  another warehouse or any other QR is explained, never saved. This is the
+  storekeeper's put-away step of the receiving flow the owner chose 2026-10-01:
+  storekeeper converts the PO to a DRAFT on the phone and scans each line's
+  shelf; the purchaser posts, and posting places the goods on those racks.
 
 ## Gotchas
 

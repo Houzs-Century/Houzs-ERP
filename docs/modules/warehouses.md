@@ -48,5 +48,5 @@ Racks (`scm.warehouse_racks`) live one level under a warehouse, unique per `(war
 - `backend/src/scm/shared/adjustment-cost.ts` — variance cost resolution.
 - `frontend/src/pages/scm-v2/Warehouses.tsx`, `CrossCompanyRacks.tsx` — desktop surfaces.
 - `frontend/src/mobile/MobileRacks.tsx` — mobile rack lookup.
-- `frontend/src/vendor/scm/lib/rack-label-pdf.ts` — rack QR sticker sheet + the `HZRACK:` payload.
+- `frontend/src/vendor/scm/lib/rack-label-pdf.ts` — rack QR sticker sheet; `rack-qr.ts` — the `HZRACK:` payload and how a scan resolves to a rack.
 - `frontend/src/vendor/scm/lib/inventory-queries.ts` — `useWarehouses`.
