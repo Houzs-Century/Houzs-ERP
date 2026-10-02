@@ -19,13 +19,10 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { ACCOUNTING_TAB_TITLES, accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
 import {
   useAccountBalances,
-  useArAging,
-  useApAging,
   useAccounts,
   type Account,
-  type ArAgingRow,
-  type ApAgingRow,
 } from '../../vendor/scm/lib/accounting-queries';
+import { AgingReport } from './AgingReport';
 import {
   useControlCheck,
   usePaymentBookingDryRun,
@@ -95,8 +92,10 @@ export const Accounting = () => {
       {tab === 'pnl'   && <PnLTab />}
       {tab === 'bs'    && <BalanceSheetTab />}
       {tab === 'rp'    && <ReceiptsPaymentsTab />}
-      {tab === 'ar'    && <ArAgingTab />}
-      {tab === 'ap'    && <ApAgingTab />}
+      {/* The formal debtor and creditor aging (owner 2026-10-02, B4: it replaces
+          the old lists under the same names). */}
+      {tab === 'ar'    && <AgingReport side="ar" />}
+      {tab === 'ap'    && <AgingReport side="ap" />}
       {tab === 'check' && <SelfCheckTab />}
       {tab === 'corrections' && <PaymentCorrectionsTab />}
       {tab === 'collection' && <CollectionTab />}
@@ -628,106 +627,7 @@ const ControlCheckCard = ({ check }: { check: ControlCheckRow }) => {
   );
 };
 
-/* ── AR Aging ────────────────────────────────────────────────────────── */
-const ArAgingTab = () => {
-  const q = useArAging();
-  const rows = useMemo(() => q.data?.arAging ?? [], [q.data]);
-  const totals = useMemo(() => bucketTotals<ArAgingRow>(rows), [rows]);
-
-  return (
-    <>
-      <BucketSummary totals={totals} grandTotal={rows.reduce((s, r) => s + r.outstanding_sen, 0)} />
-      <DataTable<ArAgingRow>
-        tableId="accounting-ar-aging"
-        layoutFamily="accounting-ar-aging"
-        exportName="ar-aging"
-        rows={q.isLoading ? null : rows}
-        loading={q.isLoading}
-        emptyLabel="No outstanding AR."
-        getRowKey={(r) => r.invoice_id}
-        columns={[
-          { key: 'invoice', label: 'Invoice', width: '140px', getValue: (r) => r.invoice_number, render: (r) => <span className={styles.codeChip}>{r.invoice_number}</span> },
-          { key: 'customer', label: 'Customer', getValue: (r) => `${r.debtor_name}${r.debtor_code ? ` (${r.debtor_code})` : ''}`, render: (r) => `${r.debtor_name}${r.debtor_code ? ` (${r.debtor_code})` : ''}` },
-          { key: 'invoice_date', label: 'Date', width: '110px', getValue: (r) => r.invoice_date, render: (r) => fmtDateOrDash(r.invoice_date) },
-          { key: 'due', label: 'Due', width: '110px', getValue: (r) => r.due_date ?? '', render: (r) => fmtDateOrDash(r.due_date) },
-          {
-            key: 'outstanding', label: 'Outstanding', align: 'right', width: '140px',
-            getValue: (r) => r.outstanding_sen / 100,
-            render: (r) => <span style={{ fontWeight: 700 }}>{fmt(r.outstanding_sen)}</span>,
-          },
-          { key: 'days_overdue', label: 'Days Overdue', align: 'right', width: '120px', getValue: (r) => r.days_overdue, render: (r) => (r.days_overdue > 0 ? r.days_overdue : '—') },
-          { key: 'bucket', label: 'Bucket', width: '110px', getValue: (r) => r.aging_bucket, render: (r) => <BucketPill bucket={r.aging_bucket} /> },
-        ] satisfies Column<ArAgingRow>[]}
-      />
-    </>
-  );
-};
-
-/* ── AP Aging ────────────────────────────────────────────────────────── */
-const ApAgingTab = () => {
-  const q = useApAging();
-  const rows = useMemo(() => q.data?.apAging ?? [], [q.data]);
-  const totals = useMemo(() => bucketTotals<ApAgingRow>(rows), [rows]);
-
-  return (
-    <>
-      <BucketSummary totals={totals} grandTotal={rows.reduce((s, r) => s + r.outstanding_sen, 0)} />
-      <DataTable<ApAgingRow>
-        tableId="accounting-ap-aging"
-        layoutFamily="accounting-ap-aging"
-        exportName="ap-aging"
-        rows={q.isLoading ? null : rows}
-        loading={q.isLoading}
-        emptyLabel="No outstanding AP."
-        getRowKey={(r) => r.invoice_id}
-        columns={[
-          { key: 'invoice', label: 'Invoice', width: '140px', getValue: (r) => r.invoice_number, render: (r) => <span className={styles.codeChip}>{r.invoice_number}</span> },
-          /* Both kinds age here since 2026-09-06 — the AP invoice (non-stock
-             bill) beside the purchase invoice; the column says which. */
-          { key: 'kind', label: 'Kind', width: '90px', getValue: (r) => r.kind ?? 'PI', render: (r) => (r.kind === 'API' ? 'AP inv' : 'PI') },
-          // Owner 2026-07-24: supplier NAME and CODE are separate columns on
-          // every procurement table, not one combined cell.
-          { key: 'supplier', label: 'Supplier', getValue: (r) => r.supplier_name ?? '', render: (r) => r.supplier_name ?? '—' },
-          {
-            key: 'supplier_code', label: 'Supplier Code', width: '130px',
-            getValue: (r) => r.supplier_code ?? '',
-            render: (r) => (r.supplier_code ? <span className={styles.codeChip}>{r.supplier_code}</span> : '—'),
-          },
-          { key: 'invoice_date', label: 'Date', width: '110px', getValue: (r) => r.invoice_date, render: (r) => fmtDateOrDash(r.invoice_date) },
-          { key: 'due', label: 'Due', width: '110px', getValue: (r) => r.due_date ?? '', render: (r) => fmtDateOrDash(r.due_date) },
-          {
-            key: 'outstanding', label: 'Outstanding', align: 'right', width: '140px',
-            getValue: (r) => r.outstanding_sen / 100,
-            render: (r) => <span style={{ fontWeight: 700 }}>{fmt(r.outstanding_sen)}</span>,
-          },
-          { key: 'days_overdue', label: 'Days Overdue', align: 'right', width: '120px', getValue: (r) => r.days_overdue, render: (r) => (r.days_overdue > 0 ? r.days_overdue : '—') },
-          { key: 'bucket', label: 'Bucket', width: '110px', getValue: (r) => r.aging_bucket, render: (r) => <BucketPill bucket={r.aging_bucket} /> },
-        ] satisfies Column<ApAgingRow>[]}
-      />
-    </>
-  );
-};
-
 /* ── Helpers ─────────────────────────────────────────────────────────── */
-type Bucket = 'CURRENT' | '1-30' | '31-60' | '61-90' | '90+';
-
-const bucketTotals = <T extends { aging_bucket: Bucket; outstanding_sen: number }>(rows: T[]) => {
-  const out: Record<Bucket, number> = { 'CURRENT': 0, '1-30': 0, '31-60': 0, '61-90': 0, '90+': 0 };
-  for (const r of rows) out[r.aging_bucket] += r.outstanding_sen;
-  return out;
-};
-
-const BucketSummary = ({
-  totals, grandTotal,
-}: { totals: Record<Bucket, number>; grandTotal: number }) => (
-  <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-3)' }}>
-    {(['CURRENT', '1-30', '31-60', '61-90', '90+'] as const).map((b) => (
-      <SummaryTile key={b} label={b} value={fmt(totals[b])} muted={b === 'CURRENT'} />
-    ))}
-    <SummaryTile label="Total" value={fmt(grandTotal)} bold />
-  </section>
-);
-
 const SummaryTile = ({
   label, value, muted, bold,
 }: { label: string; value: string; muted?: boolean; bold?: boolean }) => (
@@ -744,22 +644,3 @@ const SummaryTile = ({
   </div>
 );
 
-const BucketPill = ({ bucket }: { bucket: Bucket }) => {
-  const colorMap: Record<Bucket, { bg: string; fg: string }> = {
-    'CURRENT': { bg: 'rgba(47, 93, 79, 0.12)', fg: 'var(--c-secondary-a, #2F5D4F)' },
-    '1-30':    { bg: 'rgba(232, 107, 58, 0.10)', fg: 'var(--c-orange)' },
-    '31-60':   { bg: 'rgba(232, 107, 58, 0.18)', fg: 'var(--c-orange)' },
-    '61-90':   { bg: 'rgba(184, 51, 31, 0.10)', fg: 'var(--c-festive-b, #B8331F)' },
-    '90+':     { bg: 'rgba(184, 51, 31, 0.18)', fg: 'var(--c-festive-b, #B8331F)' },
-  };
-  const c = colorMap[bucket];
-  return (
-    <span style={{
-      display: 'inline-block', padding: '2px 8px',
-      borderRadius: 999, background: c.bg, color: c.fg,
-      fontSize: 'var(--fs-12)', fontWeight: 700,
-    }}>
-      {bucket}
-    </span>
-  );
-};

@@ -92,7 +92,9 @@ describe("executable route contract", () => {
     // for payments whose slip is more than 14 days old.
     // 167 since 2026-10-01: /scm/official-docs — 欠正式单, the payments made on a
     // proforma still owing the official invoice (payment-request item 3).
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(167);
+    // 168 since 2026-10-02: /scm/supplier-maintenance — Finance's own supplier
+    // list in Money out (owed, bank, the ones Finance keeps to itself).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(168);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -137,7 +139,8 @@ describe("executable route contract", () => {
     // 174 since 2026-09-30 — /scm/unmatched-payments; see the staff-route count above.
     // 175 since 2026-09-30 — /scm/payment-backdate-requests; same.
     // 176 since 2026-10-01 — /scm/official-docs; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(176);
+    // 177 since 2026-10-02 — /scm/supplier-maintenance; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(177);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

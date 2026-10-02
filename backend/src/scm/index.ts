@@ -55,6 +55,7 @@ import { creditNotes } from "./routes/credit-notes";
 import { depositInvoices } from "./routes/deposit-invoices";
 import { accEvents } from "./routes/acc-events";
 import { officialDocs } from "./routes/official-docs";
+import { supplierMaintenance } from "./routes/supplier-maintenance";
 import { paymentRequests } from "./routes/payment-requests";
 import { receipts } from "./routes/receipts";
 import { entityAuditLog } from "./routes/entity-audit-log";
@@ -648,6 +649,11 @@ scm.route("/acc-events", accEvents);
 // Finance's list and its owed / checked marks. Same area as the vouchers.
 scm.use("/official-docs/*", scmAreaGuard("scm.finance.accounting"));
 scm.route("/official-docs", officialDocs);
+// Supplier Maintenance (owner 2026-10-02) — Finance's own supplier list in
+// Money out: what the books say each supplier is owed, its advances, credit
+// left and open invoices. Reads only; the record is edited through /suppliers.
+scm.use("/supplier-maintenance/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/supplier-maintenance", supplierMaintenance);
 // Payment Audit Log — Finance's payment TRAIL (port of 2990's /admin/audit-log):
 // one row per mfg_sales_order_payments entry + its SO header context. Read-only.
 // Same L2 area as Accounting: it is the money ledger's read side, not a new

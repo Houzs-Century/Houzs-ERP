@@ -259,14 +259,23 @@ export function fakeSb(
         filters.push((r) => (val === null ? r[col] === null || r[col] === undefined : r[col] === val));
         return builder;
       },
-      /* THE NEGATION OF `is`, and only of `is`. PostgREST's `.not(col, op,
-         val)` takes any operator, but the only shape this repo asks for is
-         `.not(col, 'is', null)` — "has a value" — so an unknown operator
+      /* THE NEGATION OF `is` and of `in`, and only of those. PostgREST's
+         `.not(col, op, val)` takes any operator, but the shapes this repo asks
+         for are `.not(col, 'is', null)` — "has a value" — and `.not(col, 'in',
+         list)` — "none of these" — so an unknown operator
          THROWS rather than quietly matching everything. A fake that answered a
          filter it does not implement by returning every row would make a scope
          test pass for the wrong reason, which is the exact failure mode this
          file exists to avoid. */
       not(col: string, op: string, val: unknown) {
+        /* `.not(col, 'in', '(a,b)')` — "none of these", the escaped in-list the
+           app builds with pgrestInList (the supplier list leaves out Finance's
+           own suppliers). Parsed by the same function, like filter() below. */
+        if (op === 'in') {
+          const vals = parsePgrestInList(String(val));
+          filters.push((r) => !vals.includes(String(r[col])));
+          return builder;
+        }
         if (op !== 'is') throw new Error(`fake-postgrest: not(${op}) is not implemented`);
         filters.push((r) => !(val === null ? r[col] === null || r[col] === undefined : r[col] === val));
         return builder;

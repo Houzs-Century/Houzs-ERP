@@ -236,45 +236,8 @@ export const useAccountBalances = () => baseQuery<{ balances: AccountBalance[] }
   ['account-balances'], `/accounting/balances`,
 );
 
-export type ArAgingRow = {
-  invoice_id: string;
-  invoice_number: string;
-  debtor_code: string | null;
-  debtor_name: string;
-  invoice_date: string;
-  due_date: string | null;
-  total_sen: number;
-  paid_sen: number;
-  outstanding_sen: number;
-  days_overdue: number;
-  aging_bucket: 'CURRENT' | '1-30' | '31-60' | '61-90' | '90+';
-  status: string;
-};
-export const useArAging = () => baseQuery<{ arAging: ArAgingRow[] }>(
-  ['ar-aging'], `/accounting/ar-aging`,
-);
-
-export type ApAgingRow = {
-  invoice_id: string;
-  /** 'PI' (purchase invoice) or 'API' (AP invoice) — v_ap_aging lists both since 2026-09-06. */
-  kind?: 'PI' | 'API';
-  invoice_number: string;
-  supplier_invoice_ref: string | null;
-  supplier_id: string;
-  supplier_code: string | null;
-  supplier_name: string | null;
-  invoice_date: string;
-  due_date: string | null;
-  total_sen: number;
-  paid_sen: number;
-  outstanding_sen: number;
-  days_overdue: number;
-  aging_bucket: 'CURRENT' | '1-30' | '31-60' | '61-90' | '90+';
-  status: string;
-};
-export const useApAging = () => baseQuery<{ apAging: ApAgingRow[] }>(
-  ['ap-aging'], `/accounting/ap-aging`,
-);
+/* AR / AP Aging moved to aging-queries.ts (owner 2026-10-02: the formal debtor
+   and creditor aging replaced the per-invoice lists). */
 
 /* ── The Chart of Accounts maintenance surface (roadmap A, 2026-09-03) ──────
    The owner's selective sharing: one union across the granted companies, a

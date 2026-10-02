@@ -1442,18 +1442,33 @@
     },
     {
       "check": "D1",
-      "key": "AGING_BASIS,BUSINESS_REG_NO,CREDIT_LIMIT_SEN,EXEMPTION_NO,REGISTRATION_NO,STATEMENT_TYPE,TIN_NUMBER|backend/src/scm/shared/supplier-finance-fields.ts frontend/src/vendor/shared/supplier-finance-fields.ts",
-      "why": "THE SUPPLIER FINANCE PART (owner 2026-09-30: 采购只看采购的部分; finance 这里的权限最大), a VENDORED TWIN, not a second decision. backend/src/scm/shared/supplier-finance-fields.ts is the home — the supplier routes strip these fields from what a caller who is not Finance reads and ignore them in what that caller writes; frontend/src/vendor/shared/supplier-finance-fields.ts is a byte-identical copy because the browser cannot import from backend/src, and the screens hide exactly what it names. Refereed by frontend/src/vendor/shared/supplier-finance-fields.canonical.test.ts, which byte-compares the two files and pins that the column list and the body-key list name the same seven fields. This entry: the COLUMN spelling (scm.suppliers)."
+      "key": "AGING_BASIS,BANK_ACCOUNT_NAME,BANK_ACCOUNT_NO,BANK_NAME,BUSINESS_REG_NO,CREDIT_LIMIT_SEN,EXEMPTION_NO,FOR_PURCHASING,REGISTRATION_NO,STATEMENT_TYPE,TIN_NUMBER|backend/src/scm/shared/supplier-finance-fields.ts frontend/src/vendor/shared/supplier-finance-fields.ts",
+      "why": "THE SUPPLIER FINANCE PART (owner 2026-09-30: 采购只看采购的部分; finance 这里的权限最大 — and 2026-10-02 Supplier Maintenance added the supplier's bank and the purchasing tick), a VENDORED TWIN, not a second decision. backend/src/scm/shared/supplier-finance-fields.ts is the home — the supplier routes strip these fields from what a caller who is not Finance reads and ignore them in what that caller writes; frontend/src/vendor/shared/supplier-finance-fields.ts is a byte-identical copy because the browser cannot import from backend/src, and the screens hide exactly what it names. Refereed by frontend/src/vendor/shared/supplier-finance-fields.canonical.test.ts, which byte-compares the two files and pins that the column list and the body-key list name the same eleven fields. This entry: the COLUMN spelling (scm.suppliers)."
     },
     {
       "check": "D1",
-      "key": "AGINGBASIS,BUSINESSREGNO,CREDITLIMITSEN,EXEMPTIONNO,REGISTRATIONNO,STATEMENTTYPE,TINNUMBER|backend/src/scm/shared/supplier-finance-fields.ts frontend/src/vendor/shared/supplier-finance-fields.ts",
-      "why": "THE SUPPLIER FINANCE PART (owner 2026-09-30: 采购只看采购的部分; finance 这里的权限最大), a VENDORED TWIN, not a second decision. backend/src/scm/shared/supplier-finance-fields.ts is the home — the supplier routes strip these fields from what a caller who is not Finance reads and ignore them in what that caller writes; frontend/src/vendor/shared/supplier-finance-fields.ts is a byte-identical copy because the browser cannot import from backend/src, and the screens hide exactly what it names. Refereed by frontend/src/vendor/shared/supplier-finance-fields.canonical.test.ts, which byte-compares the two files and pins that the column list and the body-key list name the same seven fields. This entry: the BODY-KEY spelling (create / update bodies)."
+      "key": "AGINGBASIS,BANKACCOUNTNAME,BANKACCOUNTNO,BANKNAME,BUSINESSREGNO,CREDITLIMITSEN,EXEMPTIONNO,FORPURCHASING,REGISTRATIONNO,STATEMENTTYPE,TINNUMBER|backend/src/scm/shared/supplier-finance-fields.ts frontend/src/vendor/shared/supplier-finance-fields.ts",
+      "why": "THE SUPPLIER FINANCE PART (owner 2026-09-30: 采购只看采购的部分; finance 这里的权限最大 — and 2026-10-02 Supplier Maintenance added the supplier's bank and the purchasing tick), a VENDORED TWIN, not a second decision. backend/src/scm/shared/supplier-finance-fields.ts is the home — the supplier routes strip these fields from what a caller who is not Finance reads and ignore them in what that caller writes; frontend/src/vendor/shared/supplier-finance-fields.ts is a byte-identical copy because the browser cannot import from backend/src, and the screens hide exactly what it names. Refereed by frontend/src/vendor/shared/supplier-finance-fields.canonical.test.ts, which byte-compares the two files and pins that the column list and the body-key list name the same eleven fields. This entry: the BODY-KEY spelling (create / update bodies)."
     },
     {
       "check": "D1",
       "key": "ADDRESS1,ADDRESS2,ADDRESS3,ADDRESS4,BILL_TO_ADDRESS,BUILDING_TYPE,CITY,CUSTOMER_ID,CUSTOMER_TYPE,DEBTOR_NAME,EMAIL,EMERGENCY_CONTACT_NAME,EMERGENCY_CONTACT_PHONE,EMERGENCY_CONTACT_RELATIONSHIP,INSTALL_TO_ADDRESS,PHONE,POSTCODE,SHIP_TO_ADDRESS|backend/src/scm/shared/so-after-do-edit.ts frontend/src/vendor/shared/so-after-do-edit.ts",
       "why": "THE CUSTOMER DETAILS LOGISTICS MAY CHANGE ON A SALES ORDER AFTER ITS DELIVERY ORDER (DEV-32, Syu 2026-10-01), a VENDORED TWIN, not a second decision. backend/src/scm/shared/so-after-do-edit.ts is the home - the SO header PATCH lets a scm.so.edit_after_do caller past the identity lock for exactly these columns and copies them onto the live DOs; frontend/src/vendor/shared/so-after-do-edit.ts is its byte-identical copy so the SO editor reopens the same fields. Refereed by frontend/src/vendor/shared/so-line-freeze.canonical.test.ts, which byte-compares the two files."
+    },
+    {
+      "check": "D2",
+      "key": "ON_HOLD,PAID,PARTIALLY_PAID,POSTED ~ ON_HOLD,PARTIALLY_PAID,POSTED",
+      "why": "TWO DIFFERENT QUESTIONS about purchase invoices, differing by PAID on purpose: routes/ap-invoices.ts mirrors EVERY posted purchase invoice into the AP Invoices list, a paid one included (it shows Paid); routes/supplier-maintenance.ts OPEN_PI counts only the ones still OWING a supplier (owner 2026-10-02, Supplier Maintenance's open bills) — a paid invoice owes nothing. Not one rule with two homes."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,OVERDUE,PARTIALLY_PAID,SENT ~ OVERDUE,PARTIALLY_PAID,SENT",
+      "why": "TWO DIFFERENT QUESTIONS about a sales invoice, differing by CANCELLED on purpose: routes/sales-invoices.ts names the statuses an invoice may MOVE to from one state (cancelling included); scm/lib/open-invoice-states.ts OPEN_SI_STATUSES names the ones that still OWE (owner 2026-10-02, the formal AR Aging's count of AutoCount invoices outside the books) — a cancelled invoice owes nothing. Not one rule with two homes."
+    },
+    {
+      "check": "D2",
+      "key": "OVERDUE,PAID,PARTIALLY_PAID,SENT ~ OVERDUE,PARTIALLY_PAID,SENT",
+      "why": "TWO DIFFERENT QUESTIONS about a sales invoice, differing by PAID on purpose: routes/ar-invoices.ts SI_MIRROR_STATUSES mirrors every issued invoice into the AR Invoices list, a paid one included (it shows Paid); scm/lib/open-invoice-states.ts OPEN_SI_STATUSES names only the ones still OWED (owner 2026-10-02, the formal AR Aging) — a paid invoice owes nothing. Not one rule with two homes."
     }
   ]
 }

@@ -125,6 +125,7 @@ import { parseMoneyToSen } from '../../lib/money';
 import styles from './Products.module.css';
 import { normalizeImportHeader, looksLikeGridExport, mapGridHeaders, isGridNoPrice, importFailureMessage } from './products-import-headers';
 import { ProductRow, fmtRm, fmtUnit, priceForHeightTier, useSkuGridOrder, saveStagedEdits, stageRowEdit, type ProductEditPatch } from './products/SkuEditRow';
+import { renameCompartmentMeta } from './compartmentRename';
 
 const ICON_PROPS = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -1930,15 +1931,10 @@ const SofaCompartmentsList = ({
     const old  = arr[idx] != null ? maintEntryValue(arr[idx]!) : undefined;
     if (arr[idx] != null) arr[idx] = maintEntryWithValue(arr[idx]!, newVal);
     next.sofaCompartments = arr;
-    // Migrate the meta key alongside the code rename so the override
-    // doesn't get orphaned. If the new code already has meta, leave it.
-    if (old && old !== newVal) {
-      const m = next.sofaCompartmentMeta ?? {};
-      if (m[old] && !m[newVal]) {
-        m[newVal] = m[old]!;
-        delete m[old];
-        next.sofaCompartmentMeta = m;
-      }
+    if (old) {
+      next.sofaCompartmentMeta = renameCompartmentMeta(
+        next.sofaCompartmentMeta ?? {}, old, newVal, seedCompartmentMeta,
+      );
     }
     onChange(next);
   };
