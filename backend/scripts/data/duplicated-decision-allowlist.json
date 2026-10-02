@@ -1449,6 +1449,11 @@
       "check": "D1",
       "key": "AGINGBASIS,BUSINESSREGNO,CREDITLIMITSEN,EXEMPTIONNO,REGISTRATIONNO,STATEMENTTYPE,TINNUMBER|backend/src/scm/shared/supplier-finance-fields.ts frontend/src/vendor/shared/supplier-finance-fields.ts",
       "why": "THE SUPPLIER FINANCE PART (owner 2026-09-30: 采购只看采购的部分; finance 这里的权限最大), a VENDORED TWIN, not a second decision. backend/src/scm/shared/supplier-finance-fields.ts is the home — the supplier routes strip these fields from what a caller who is not Finance reads and ignore them in what that caller writes; frontend/src/vendor/shared/supplier-finance-fields.ts is a byte-identical copy because the browser cannot import from backend/src, and the screens hide exactly what it names. Refereed by frontend/src/vendor/shared/supplier-finance-fields.canonical.test.ts, which byte-compares the two files and pins that the column list and the body-key list name the same seven fields. This entry: the BODY-KEY spelling (create / update bodies)."
+    },
+    {
+      "check": "D1",
+      "key": "ADDRESS1,ADDRESS2,ADDRESS3,ADDRESS4,BILL_TO_ADDRESS,BUILDING_TYPE,CITY,CUSTOMER_ID,CUSTOMER_TYPE,DEBTOR_NAME,EMAIL,EMERGENCY_CONTACT_NAME,EMERGENCY_CONTACT_PHONE,EMERGENCY_CONTACT_RELATIONSHIP,INSTALL_TO_ADDRESS,PHONE,POSTCODE,SHIP_TO_ADDRESS|backend/src/scm/shared/so-after-do-edit.ts frontend/src/vendor/shared/so-after-do-edit.ts",
+      "why": "THE CUSTOMER DETAILS LOGISTICS MAY CHANGE ON A SALES ORDER AFTER ITS DELIVERY ORDER (DEV-32, Syu 2026-10-01), a VENDORED TWIN, not a second decision. backend/src/scm/shared/so-after-do-edit.ts is the home - the SO header PATCH lets a scm.so.edit_after_do caller past the identity lock for exactly these columns and copies them onto the live DOs; frontend/src/vendor/shared/so-after-do-edit.ts is its byte-identical copy so the SO editor reopens the same fields. Refereed by frontend/src/vendor/shared/so-line-freeze.canonical.test.ts, which byte-compares the two files."
     }
   ]
 }

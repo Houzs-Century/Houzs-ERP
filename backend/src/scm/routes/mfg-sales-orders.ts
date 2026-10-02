@@ -246,6 +246,8 @@ import {
   isProcessingRemovalOnlyRequest,
 } from '../shared/so-processing-date';
 import { ATTRIBUTE_OTHER_REFUSAL, SO_IDENTITY_LOCK_COLS, changedIdentityLockCols, salespersonReattributed } from '../shared/so-identity-lock';
+import { SO_EDIT_AFTER_DO_PERMISSION, SO_AFTER_DO_CUSTOMER_COLS, AFTER_DO_INVOICED, AFTER_DO_SERVICE_ONLY, afterDoBlockedCols, afterDoFieldsRefusal, afterDoHeaderRefusal, afterDoTargetLockedRefusal, pickAfterDoTarget, type AfterDoTarget } from '../shared/so-after-do-edit';
+import { openAfterDo, readAfterDoTargets, catalogSaysService, copyCustomerDetailsToDos, addChargeLineToDo, readDoLinesOfSoLine, copyChargeLineToDo, type DoLineOfSoLine } from '../lib/so-after-do';
 /* Variants-vocabulary unification (port of 2990 73aeeb1e, 2026-06-26):
    POS-handover sofa lines speak `depth`/`sofaLegHeight`/`fabricColor`, Backend
    editors read `seatHeight`/`legHeight`/`fabricCode`. canonicalizeVariants
@@ -1702,10 +1704,15 @@ mfgSalesOrders.get('/:docNo', async (c) => {
       }));
   }
   const openAmendment = openAmendments[0] ?? null;
+  /* DEV-32 — the live DOs an after-DO edit would write to (shared/so-after-do-edit.ts). Null = unreadable. */
+  const afterDoCo = activeCompanyId(c);
+  const afterDoRead = (doCount ?? 0) > 0 && afterDoCo != null ? await readAfterDoTargets(sb, docNo, afterDoCo) : null;
   const salesOrder = {
     ...(h.data as unknown as Record<string, unknown>),
     has_children: (doCount ?? 0) > 0 || (siCount ?? 0) > 0,
     downstream_fully_frozen: fullyFrozen,
+    after_do_targets: afterDoRead ? (afterDoRead.ok ? afterDoRead.targets : null) : [],
+    after_do_invoiced: afterDoRead?.ok ? afterDoRead.invoicedWithoutDo : false,
     // Amendment flags (read-only; the FE routes on these).
     amendment_eligible: amendmentEligible,
     /* The PO half of the soft lock, as its own fact — so-detail-gates.procLockActive
@@ -6167,6 +6174,19 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     }
   }
 
+  /* DEV-32 — after the DO, a permitted caller may still change the customer
+     details; they are copied onto every live DO (shared/so-after-do-edit.ts). */
+  let afterDo: { targets: AfterDoTarget[]; companyId: number } | null = null;
+  let afterDoCopyCols: string[] = [];
+  if (body['afterDo'] === true) {
+    const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
+    const open = await openAfterDo(sb, docNo, hasHouzsPerm(c, SO_EDIT_AFTER_DO_PERMISSION), co.companyId);
+    if (!open.ok) return c.json(open.body, open.status);
+    const refusal = afterDoHeaderRefusal(open.targets, open.invoicedWithoutDo);
+    if (refusal) return c.json(refusal, 409);
+    afterDo = { targets: open.targets, companyId: co.companyId };
+  }
+
   /* Owner 2026-06-12 — processing-date lock: once the processing day has
      passed (midnight MYT after), the SO is what we PO to the supplier — every
      header edit is rejected wholesale. Status transitions (/status route),
@@ -6208,7 +6228,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        bypass of the exact rule 2990-SO-2608-017 exists to justify. */
     const changedSchedule = lockedColumnsChanged(updates, beforeRowProc, {
       superAdminClearsProcessingDate: patchDateLocked ? superAdminClearsProc : false,
-    });
+    }).filter((col) => !afterDo || !(col in SO_AFTER_DO_CUSTOMER_COLS)); // DEV-32: after the DO, city/postcode follow the customer, not the PO
     if (changedSchedule.length > 0) {
       return c.json(patchDateLocked ? SO_PROCESSING_LOCKED_RESPONSE : SO_PO_LOCKED_RESPONSE, 409);
     }
@@ -6392,7 +6412,11 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     const changedLocked = changedIdentityLockCols(updates, beforeRow, { agentFollowedSalesperson });
     if (changedLocked.length > 0) {
       const lock = await soHasDownstream(sb, docNo);
-      if (lock) {
+      if (lock && afterDo && lock.error === 'so_has_downstream') {
+        const blocked = afterDoBlockedCols(changedLocked);
+        if (blocked.length > 0) return c.json(afterDoFieldsRefusal(blocked), 409);
+        afterDoCopyCols = changedLocked;
+      } else if (lock) {
         return c.json({
           error: 'so_identity_locked',
           message: 'SO has a Delivery Order / Sales Invoice — customer, branding, address, reference and value fields are locked. Payment and remarks can still be edited.',
@@ -6538,12 +6562,24 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      a key when the request body carried it. */
   await queueAcSoEdit(c, docNo, [], [], Object.keys(updates));
 
+  /* DEV-32 — the order is saved; now make its DOs say the same. A failed copy is
+     reported by DO number rather than rolled back: the SO save stands. */
+  let doCopyFailed: string[] = [];
+  if (afterDo && afterDoCopyCols.length > 0) {
+    const { data: soRow, error: soRowErr } = await sb.from('mfg_sales_orders')
+      .select(Object.keys(SO_AFTER_DO_CUSTOMER_COLS).join(', ')).eq('doc_no', docNo).maybeSingle();
+    doCopyFailed = soRow && !soRowErr
+      ? await copyCustomerDetailsToDos(sb, { companyId: afterDo.companyId, actor: c.get('houzsUser') ?? null, soDocNo: docNo }, soRow as Record<string, unknown>, afterDoCopyCols, afterDo.targets)
+      : afterDo.targets.map((t) => t.do_number ?? t.id);
+  }
+
   return c.json({
     ok: true,
     docNo,
     /* The bumped token, so a version-aware editor can advance its pinned value
        after a successful Save without waiting for the detail refetch. */
     version: savedVersion,
+    ...(afterDo && afterDoCopyCols.length > 0 ? { doCopied: afterDo.targets.map((t) => t.do_number), doCopyFailed } : {}),
     ...(crossCategoryRedetect ? {
       deliveryRedetected: true,
       crossCategory: crossCategoryRedetect.isFollowup,
@@ -6830,8 +6866,26 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   }
 
   /* Line-add stays open while the order has something left to convert (owner 2026-09-15, shared/so-line-freeze.ts). */
+  /* DEV-32 — after the DO a permitted caller may add a CHARGE line; it goes onto
+     one live DO (shared/so-after-do-edit.ts), so the order-wide freeze and the
+     processing/PO locks below do not stand in its way. */
+  let afterDoTarget: AfterDoTarget | null = null;
+  let afterDoCompanyId = 0;
+  if (it.afterDo === true) {
+    const co = requireActiveCompanyId(c); if (!co.ok) return refuseWithoutWriting(c, co.refusal, 409);
+    const open = await openAfterDo(sb, docNo, hasHouzsPerm(c, SO_EDIT_AFTER_DO_PERMISSION), co.companyId);
+    if (!open.ok) return refuseWithoutWriting(c, open.body, open.status);
+    const service = await catalogSaysService(sb, String(it.itemCode).trim(), co.companyId);
+    if (service === null) return refuseWithoutWriting(c, { error: 'downstream_check_failed', message: 'Could not read the product, so nothing was added. Try again.' }, 409);
+    if (!service) return refuseWithoutWriting(c, AFTER_DO_SERVICE_ONLY, 409);
+    const pick = pickAfterDoTarget(open.targets, typeof it.targetDoId === 'string' ? it.targetDoId : null);
+    if (!pick.ok) return refuseWithoutWriting(c, pick.refusal, 409);
+    afterDoTarget = pick.target;
+    afterDoCompanyId = co.companyId;
+  }
+
   const freezeRead = await readSoLineFreeze(sb, docNo);
-  if (!freezeRead.ok || freezeRead.fullyFrozen) return refuseWithoutWriting(c, freezeRead.ok ? SO_FULLY_FROZEN_REFUSAL : freezeRead.refusal, 409);
+  if (!freezeRead.ok || (freezeRead.fullyFrozen && !afterDoTarget)) return refuseWithoutWriting(c, freezeRead.ok ? SO_FULLY_FROZEN_REFUSAL : freezeRead.refusal, 409);
 
   /* TBC fill-in (Loo 2026-06-11) — self-scoped selling roles only touch
      their own SO. */
@@ -6863,10 +6917,10 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      SO's processing day has passed (already PO'd to the supplier). Owner
      2026-08-12 — nor once a live PO actually exists (2990), which is the case
      this rule was always describing and only sometimes catching. */
-  if (soProcessingLocked(header as { processing_date?: string | null; status: string | null })) {
+  if (!afterDoTarget && soProcessingLocked(header as { processing_date?: string | null; status: string | null })) {
     return refuseWithoutWriting(c, SO_PROCESSING_LOCKED_RESPONSE, 409);
   }
-  if (await soPoLocked(sb, docNo)) {
+  if (!afterDoTarget && await soPoLocked(sb, docNo)) {
     return refuseWithoutWriting(c, SO_PO_LOCKED_RESPONSE, 409);
   }
   const addLineDateRefusal = soLineDateRefusal({
@@ -7429,6 +7483,13 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
 
   await queueAcSoEdit(c, docNo, [], data?.id ? [String(data.id)] : []);
 
+  /* DEV-32 — the charge goes onto the picked DO. A failed copy is reported, not
+     rolled back: the SO line stands and can be added on the DO page by hand. */
+  if (afterDoTarget && data?.id) {
+    const put = await addChargeLineToDo(sb, { companyId: afterDoCompanyId, actor: c.get('houzsUser') ?? null, soDocNo: docNo }, String(data.id), afterDoTarget);
+    return c.json({ item: data, doNumber: afterDoTarget.do_number, ...(put.ok ? {} : { doCopyFailed: [afterDoTarget.do_number ?? afterDoTarget.id], doCopyError: put.reason }) }, 201);
+  }
+
   return c.json({ item: data }, 201);
 });
 
@@ -7451,9 +7512,32 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown, codeCheck.inactive), 409);
   }
 
+  /* DEV-32 — after the DO a permitted caller may edit a CHARGE line its one DO
+     line carries; the DO line follows (shared/so-after-do-edit.ts). */
+  let afterDoLine: { doLine: DoLineOfSoLine; target: AfterDoTarget; companyId: number } | null = null;
+  if (it.afterDo === true) {
+    const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
+    const open = await openAfterDo(sb, docNo, hasHouzsPerm(c, SO_EDIT_AFTER_DO_PERMISSION), co.companyId);
+    if (!open.ok) return c.json(open.body, open.status);
+    if (open.invoicedWithoutDo) return c.json(AFTER_DO_INVOICED, 409);
+    const { data: line, error: lineErr } = await scopeSoItemToDocument(sb.from('mfg_sales_order_items').select('item_code'), docNo, itemId).maybeSingle();
+    if (lineErr) return c.json({ error: 'downstream_check_failed', message: 'Could not read the line, so nothing was changed. Try again.' }, 409);
+    if (!line) return c.json({ error: 'not_found' }, 404);
+    const code = String((line as { item_code?: string | null }).item_code ?? '');
+    const service = await catalogSaysService(sb, code, co.companyId);
+    if (service === null) return c.json({ error: 'downstream_check_failed', message: 'Could not read the product, so nothing was changed. Try again.' }, 409);
+    if (!service || (it.itemCode !== undefined && String(it.itemCode).trim() !== code)) return c.json(AFTER_DO_SERVICE_ONLY, 409);
+    const doLines = await readDoLinesOfSoLine(sb, itemId, co.companyId, open.targets);
+    if (doLines === null) return c.json({ error: 'downstream_check_failed', message: 'Could not read the Delivery Order lines, so nothing was changed. Try again.' }, 409);
+    if (doLines.length > 1) return c.json({ error: 'after_do_split_line', message: 'This charge is split over more than one Delivery Order line. Change it on each Delivery Order instead.' }, 409);
+    const target = doLines.length === 1 ? open.targets.find((t) => t.id === doLines[0].delivery_order_id) : undefined;
+    if (target?.locked) return c.json(afterDoTargetLockedRefusal([target.do_number ?? target.id]), 409);
+    if (target) afterDoLine = { doLine: doLines[0], target, companyId: co.companyId };
+  }
+
   /* A line a live DO / SI carries is frozen; its siblings are not (owner 2026-09-15, shared/so-line-freeze.ts). */
   const lineLock = soLineWriteRefusal(await readSoLineFreeze(sb, docNo), [itemId]);
-  if (lineLock) return c.json(lineLock, 409);
+  if (lineLock && !(afterDoLine && lineLock.error === 'so_line_frozen')) return c.json(lineLock, 409);
 
   /* TBC fill-in (Loo 2026-06-11) — self-scoped selling roles only touch
      their own SO. */
@@ -7468,7 +7552,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
 
   /* Owner 2026-06-12 — processing-date lock: no line EDIT once the processing
      day has passed (the locked order is already PO'd to the supplier). */
-  {
+  if (!afterDoLine) {
     const procLock = await soProcessingLockBlocked(sb, docNo);
     if (procLock) return c.json(procLock, 409);
   }
@@ -7891,6 +7975,11 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   deferAllocationRecompute(c, sb, 'post-line-edit');
 
   await queueAcSoEdit(c, docNo);
+
+  if (afterDoLine) {
+    const put = await copyChargeLineToDo(sb, { companyId: afterDoLine.companyId, actor: c.get('houzsUser') ?? null, soDocNo: docNo }, itemId, afterDoLine.doLine, afterDoLine.target);
+    return c.json({ ok: true, doNumber: afterDoLine.target.do_number, ...(put.ok ? {} : { doCopyFailed: [afterDoLine.target.do_number ?? afterDoLine.target.id], doCopyError: put.reason }) });
+  }
 
   return c.json({ ok: true });
 });

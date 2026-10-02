@@ -18,6 +18,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Legacy relay it-houzs.dev serves the PO dump and debtor list with no key: take it down or add a key — 2026-08-12
 
 ## Waiting on others
+- DEV-32 Edit SO after DO is desktop-only: the phone has no Override and `MobileNewSO.tsx` is at its size ceiling; port the after-DO mode (customer details + charge lines + DO pick) when Logistics needs it on the phone — Samuel — 2026-10-02
 - Accountant: start date for the customer receipt (OR) write-back — 2026-09-14
 - Office: Remark 2 run in AutoCount for receipts after 2026-09-10 18:25 — 2026-09-15
 - Cloudflare account holder: staging Worker needs the staging service_role key (staging rehearsal red) — 2026-09-12
