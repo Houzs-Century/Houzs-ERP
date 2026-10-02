@@ -635,8 +635,8 @@ export const SalesOrderDetail = () => {
      lines as currently edited (saved lines, their open drafts, staged adds). */
   const attachOptionsById = useMemo(() => {
     const rows = items.map((it) => {
-      const d = editingDrafts[it.id];
-      return { id: it.id, itemCode: d?.itemCode ?? it.item_code ?? '', itemGroup: d?.itemGroup ?? it.item_group ?? '' };
+      const d = it.id in editingDrafts ? editingDrafts[it.id] : null;
+      return { id: it.id, itemCode: d ? d.itemCode : it.item_code, itemGroup: d ? d.itemGroup : it.item_group };
     });
     for (const a of addingDrafts) rows.push({ id: a.key, itemCode: a.draft.itemCode, itemGroup: a.draft.itemGroup });
     const out: Record<string, string[] | null> = {};
