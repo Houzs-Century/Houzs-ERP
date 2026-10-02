@@ -133,7 +133,7 @@ export function MobilePurchaseDocNew({
 }: {
   kind: PurchaseDocKind;
   onBack: () => void;
-  onCreated: () => void;
+  onCreated: (created: Created) => void;
   /** The existing convert wizard for this document, or null where the phone has
    *  none (a PI from a GRN is desktop-only today). Required, not optional: a
    *  caller that forgets it would silently hide a flow the desktop offers. */
@@ -208,7 +208,7 @@ export function MobilePurchaseDocNew({
     await notify({
       title: `${cfg.label} ${created.number} ${asDraft ? "saved as draft" : "created"}`,
     });
-    onCreated();
+    onCreated(created);
   };
 
   const submit = async (asDraft: boolean) => {

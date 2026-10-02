@@ -229,7 +229,9 @@ export function MobileConvertWizard({
 }: {
   target: ConvertTarget;
   onBack: () => void;
-  onCreated: (docNo: string) => void;
+  /* docId is set only where the next step happens ON the new document — a GRN
+     draft, whose racks the storekeeper scans next (owner 2026-10-02). */
+  onCreated: (docNo: string, docId?: string) => void;
   /* Pre-seed the source document (single-source targets only: SO→DO / SO→PO /
      DO→SI). When set, the wizard opens straight on the line/qty step for that
      document — mirrors the desktop's per-row "Issue Delivery Order" action,
@@ -521,6 +523,7 @@ export function MobileConvertWizard({
     setSubmitting(true);
     try {
       let newDocNo = "";
+      let newDocId = "";
 
       if (target === "do") {
         /* asDraft:true — the DO is PARKED, not shipped. `from-sos` reads
@@ -626,19 +629,20 @@ export function MobileConvertWizard({
         };
         if (deliveryNoteRef.trim()) body.deliveryNoteRef = deliveryNoteRef.trim();
         if (notes.trim()) body.notes = notes.trim();
-        const res = await authedFetch<{ grnNumber?: string }>("/grns",
+        const res = await authedFetch<{ id?: string; grnNumber?: string }>("/grns",
           idempotentInit(idemKey, {
             method: "POST",
             body: JSON.stringify(body),
           }));
         newDocNo = str(res?.grnNumber);
+        newDocId = str(res.id);
         await qc.invalidateQueries({ queryKey: ["mobile-module"] });
       }
 
       // Also refresh the shared/desktop doc lists (source + target) so a desktop
       // tab doesn't read a stale picker/list after a mobile convert.
       invalidateConvertShared(qc);
-      onCreated(newDocNo);
+      onCreated(newDocNo, newDocId || undefined);
     } catch (e) {
       // A declined short-stock / drop-ship confirm surfaces as a thrown marker;
       // treat any non-success as a plain in-app error (never a naked alert).
