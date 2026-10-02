@@ -770,11 +770,18 @@ async function renderPurchaseOrderInto(
        Keyed by module code because the code IS the artwork's name: the stored
        config carries no imageKey for the defaults (Products.tsx seeds those
        client-side), so a config lookup alone found nothing and drew schematics.
-       See docs/bugs/0561. */
-    const sofaArt = opts?.sofaPhotos
-      ?? await loadSofaCompartmentArtForPrint(
+       See docs/bugs/0561.
+
+       A supplied map only OVERRIDES per code, never replaces the lookup: the
+       PO detail page passed the codes that had a stored imageKey, so once
+       Maintenance stored "Console Fabric" every 1A/Console/2S on HC-PO-2610-007
+       printed as a bare box (owner 2026-10-03: 为什么没有cupholder?). */
+    const sofaArt = {
+      ...await loadSofaCompartmentArtForPrint(
         distinctSofas.flatMap((s2) => s2.cells.map((c) => c.moduleId)),
-      );
+      ),
+      ...opts?.sofaPhotos,
+    };
     for (const sofa of distinctSofas) {
       // New row when the current row is full.
       if (col >= perRow) {
