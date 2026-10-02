@@ -140,7 +140,10 @@ go through `/api/scm/grns`.
   desktop Edit mode (`GoodsReceivedDetail`) and the phone receipt detail
   (`MobileGrnLineRack`, saves on pick); who may change it and the option list
   live in the shared `vendor/scm/lib/grn-line-rack.ts`. The phone's create
-  forms still have no rack — set it on the detail after creating. The phone
+  forms still have no rack — set it on the detail after creating. Creating a GRN on
+  the phone — the PO convert wizard or the manual form, draft or not — opens the
+  new receipt's card (`MobileApp` on the GRN `id` the create returns), so the
+  racks are set next without finding it in the list (owner 2026-10-02). The phone
   row also has **Scan**: it reads a shelf's rack sticker (`HZRACK:<label>`) and
   resolves it among the racks of the GRN's own warehouse via
   `vendor/scm/lib/rack-qr.ts`, then saves through the same PATCH. A sticker of

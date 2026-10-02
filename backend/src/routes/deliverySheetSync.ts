@@ -105,16 +105,30 @@ async function badSheetKey(c: any): Promise<Response | null> {
   return c.json({ error: "unauthorized" }, 401);
 }
 
+/** BUG-49: the sheet's 2990 pull appends 2990 orders onto the same tabs, and a
+ *  date edited on those rows has to reach the ERP too. SHEET_SYNC_KEY speaks for
+ *  HOUZS only, so those rows write back with the 2990 pull's own key, which
+ *  opens 2990's orders and nothing else. Only POST /updates accepts it. */
+async function updatesKeyCompany(c: any): Promise<string | Response> {
+  const provided = c.req.header("X-Intake-Key") || "";
+  const key2990 = c.env.SHEET_SYNC_KEY_2990 || "";
+  if (key2990 && timingSafeEqualStr(provided, key2990)) {
+    c.set("sheetAuthed", true);
+    return "2990";
+  }
+  return (await badSheetKey(c)) ?? SHEET_KEY_COMPANY;
+}
+
 /** The secret's company id, or the refusal to send. Never degrades to "no
  *  predicate": on a master-less install there is nothing this feed may serve. */
-async function sheetCompanyId(c: any): Promise<{ id: number } | { refusal: Response }> {
-  const keyCo = await intakeCompany(c.env.DB, SHEET_KEY_COMPANY);
+async function sheetCompanyId(c: any, code = SHEET_KEY_COMPANY): Promise<{ id: number } | { refusal: Response }> {
+  const keyCo = await intakeCompany(c.env.DB, code);
   if (keyCo.id == null) {
     return {
       refusal: c.json(
         {
           error: "company_unresolved",
-          message: `No company is configured for code ${SHEET_KEY_COMPANY}, so this sync cannot be scoped and is refused.`,
+          message: `No company is configured for code ${code}, so this sync cannot be scoped and is refused.`,
         },
         503,
       ),
@@ -393,8 +407,8 @@ app.get("/assr-legs", async (c) => {
 type SheetUpdate = { DocNo?: unknown; Remark4?: unknown; ExpiryDate?: unknown };
 
 app.post("/updates", async (c) => {
-  const denied = await badSheetKey(c);
-  if (denied) return denied;
+  const keyCode = await updatesKeyCompany(c);
+  if (typeof keyCode !== "string") return keyCode;
   let body: { updates?: unknown };
   try {
     body = (await c.req.json()) as { updates?: unknown };
@@ -404,7 +418,7 @@ app.post("/updates", async (c) => {
   const updates = Array.isArray(body.updates) ? (body.updates as SheetUpdate[]) : null;
   if (!updates) return c.json({ error: "bad_request", message: "updates[] required" }, 400);
   if (updates.length > UPDATES_MAX) return c.json({ error: "too_many", max: UPDATES_MAX }, 413);
-  const co = await sheetCompanyId(c);
+  const co = await sheetCompanyId(c, keyCode);
   if ("refusal" in co) return co.refusal;
 
   // Validate every row first; the writable ones go to the database as ONE

@@ -19,6 +19,7 @@ Feeds the dispatch team's working Google Sheet ("HC Delivery Updated": tabs *Del
 ## Permissions
 
 - Both routes are mounted PRE-AUTH and instead check a single shared secret header, `X-Intake-Key` = `SHEET_SYNC_KEY` — no session, no permission key. A wrong key answers 401 after a fixed delay, and 429 after repeated failures from one IP (the same rate-limit shape as the other pre-auth intake endpoints).
+- **BUG-49 (2026-10-02): `POST /updates` alone also accepts `SHEET_SYNC_KEY_2990`** and then writes 2990's orders only (`company_id` of code `2990`). The 2990 pull (`/api/assr-form-intake/so-export`, live-only `sync2990FromErp`) appends `2990-SO-...` rows onto the same regional tabs; before this their col Q/O date edits pushed under the HOUZS key, answered `no_order`, and the sheet showed `ERR: NO ORDER` while the ERP kept the old `customer_delivery_date`. The Apps Script routes any `2990-` Doc. No. through Script property `SHEET_SYNC_KEY_2990` (left PENDING and logged when unset); `erpRetry2990Rows()` re-marks the rows the old push had failed. The 2990 key opens no feed route.
 
 ## Rules that must not break
 

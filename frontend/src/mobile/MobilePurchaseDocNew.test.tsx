@@ -135,6 +135,8 @@ describe("MobilePurchaseDocNew — what it sends", () => {
     expect(await screen.findByText("Goods receipt GRN-2609-100 created")).toBeTruthy();
     await okDialog();
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+    // The app opens the new receipt from this: its racks are set on the card.
+    expect(onCreated).toHaveBeenCalledWith({ id: "grn-1", number: "GRN-2609-100" });
 
     const [create, post] = writes();
     expect(create.url).toBe("/grns");
