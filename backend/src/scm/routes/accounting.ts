@@ -11,8 +11,8 @@
 //   POST   /post/pi/:invoiceNumber    — auto-post a PI: Dr Inventory, Cr AP
 //   GET    /gl                        — flat GL stream (v_gl_entries)
 //   GET    /balances                  — running account balances (v_account_balances)
-//   GET    /ar-aging                  — v_ar_aging
-//   GET    /ap-aging                  — v_ap_aging
+//   GET    /ar-aging                  — the formal debtor aging (accounting-aging.ts)
+//   GET    /ap-aging                  — the formal creditor aging (accounting-aging.ts)
 //
 // Note: this is intentionally minimal — single legal entity, single currency.
 // ERPNext-style chart hierarchy + cost centres are deferred.
@@ -53,6 +53,7 @@ import { bankMonths, bankMonthDetail, bankMonthClosing } from './accounting-bank
 import { bankLocks, bankMonthLock, bankMonthUnlock } from './accounting-bank-locks';
 import { paymentCorrections } from './accounting-payment-corrections';
 import { unmatchedPaymentsHandler } from './accounting-unmatched-payments';
+import { arAgingHandler, apAgingHandler } from './accounting-aging';
 import { bankConfigList, bankConfigSave } from './accounting-bank-config';
 import { payoutUpload, payoutList, payoutCharge, payoutChargeUndo, chargeAccountsHandler } from './accounting-payouts';
 import {
@@ -935,45 +936,12 @@ accounting.get('/balances', async (c) => {
   return c.json({ balances: data ?? [] });
 });
 
-accounting.get('/ar-aging', async (c) => {
-  const sb = c.get('supabase');
-  /* LEAK GUARD (DRAFT, two-state — 2026-06-25 anchoring diff vs 2990) — v_ar_aging
-     filters CANCELLED/VOID but NOT DRAFT (the view predates the SI two-state). A
-     DRAFT SI has posted no AR yet, so it must never appear in the aging buckets; the
-     view exposes s.status, so filter DRAFT out here at the route (migrations are
-     frozen). */
-  // PostgREST's 1000-row cap silently truncated the aging buckets — page through
-  // so the full AR ledger is bucketed, not just the first 1000 rows. Ordering
-  // stays inside the page factory so every page is consistent.
-  const { data, error } = await paginateAll((from, to) => scopeToCompany(sb
-    .from('v_ar_aging')
-    .select('*')
-    .neq('status', 'DRAFT'), c) // multi-company: isolate AR aging to the active company (view exposes company_id, mig 0106)
-    .order('days_overdue', { ascending: false })
-    .range(from, to));
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ arAging: data ?? [] });
-});
-
-accounting.get('/ap-aging', async (c) => {
-  const sb = c.get('supabase');
-  /* LEAK GUARD (DRAFT, PI two-state — 2026-06-25 anchoring diff vs 2990) — v_ap_aging
-     filters CANCELLED/VOID but NOT DRAFT (the view predates the PI two-state). A
-     DRAFT PI has posted no AP yet, so it must never appear in the aging buckets; the
-     view exposes p.status, so filter DRAFT out here at the route (migrations are
-     frozen). Mirrors the /ar-aging DRAFT fix. */
-  // PostgREST's 1000-row cap silently truncated the aging buckets — page through
-  // so the full AP ledger is bucketed, not just the first 1000 rows. Ordering
-  // stays inside the page factory so every page is consistent.
-  const { data, error } = await paginateAll((from, to) => scopeToCompany(sb
-    .from('v_ap_aging')
-    .select('*')
-    .neq('status', 'DRAFT'), c) // multi-company: isolate AP aging to the active company (view exposes company_id, mig 0106)
-    .order('days_overdue', { ascending: false })
-    .range(from, to));
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ apAging: data ?? [] });
-});
+/* AR Aging / AP Aging — the formal debtor and creditor aging (owner 2026-10-02,
+   B4: replace the old ones, keep the names): as at a date, one row per debtor
+   or creditor, by the invoice's month, money not tied to a bill in 未冲, the
+   rows adding up to the control accounts. accounting-aging.ts; acc/aging.ts. */
+accounting.get('/ar-aging', arAgingHandler);
+accounting.get('/ap-aging', apAgingHandler);
 
 /* ════════════════════════════════════════════════════════════════════════
    Phase 1 — chart management, manual-JV reversal, control-account self-check
