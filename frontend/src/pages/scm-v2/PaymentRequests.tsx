@@ -250,6 +250,7 @@ export const PaymentRequests = () => {
             <Meta label="Pay by" value={fmtDateOrDash(detail.due_date)} />
             <Meta label="Event" value={eventCellText(labelsQ.data, detail.project_id)} />
             <Meta label="For" value={detail.purpose} />
+            {detail.note && <Meta label="Note · 备注" value={detail.note} />}
             <Meta label="The bill" value={detail.bill_no || detail.bill_date || detail.bill_total_sen != null
               ? billFactsLine({ billNo: detail.bill_no, billDate: detail.bill_date, totalSen: detail.bill_total_sen })
               : '— not read'} />
@@ -477,6 +478,7 @@ function RequestForm({ initial, hasEvents, onDone, onCancel }: { initial: Paymen
     bankName: initial?.bank_name ?? null,
     bankAccountNo: initial?.bank_account_no ?? null,
     bankAccountName: initial?.bank_account_name ?? null,
+    note: initial?.note ?? null,
   }));
   const [files, setFiles] = useState<File[]>([]);
   /* The bill is READ as it is attached (owner 2026-10-01, item 1): its number,
@@ -542,6 +544,7 @@ function RequestForm({ initial, hasEvents, onDone, onCancel }: { initial: Paymen
     const body: PaymentRequestInput = {
       ...v,
       ...billFactsOf(billRead.state),
+      note: v.note?.trim() || null,
       noEventReason: v.projectId == null && noEvent ? noEventReason.trim() : null,
       /* The total as it stands on the form (read, or typed over), and the percent
          only while the amount is still what it makes. */
@@ -567,7 +570,7 @@ function RequestForm({ initial, hasEvents, onDone, onCancel }: { initial: Paymen
      which fills the rest; ② who is paid, and into which account; ③ how much and
      by when; ④ what for, and the event. An edit has no bill step — its files
      are on the request. */
-  const steps = [initial ? null : 'bill', 'payee', 'amount', 'purpose'].filter((x): x is string => x != null);
+  const steps = [initial ? null : 'bill', 'payee', 'amount', 'purpose', 'note'].filter((x): x is string => x != null);
   const stepNo = (key: string): number => steps.indexOf(key) + 1;
   const grid = (min: number): React.CSSProperties => ({ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${min}px, 1fr))`, gap: 'var(--space-3)' });
 
@@ -682,6 +685,15 @@ function RequestForm({ initial, hasEvents, onDone, onCancel }: { initial: Paymen
             )}
           </div>
         )}
+      </FormSection>
+
+      {/* ⑤ The requester's own words to Finance (owner 2026-10-02: 多一个第五给他们写note). */}
+      <FormSection n={stepNo('note')} title="备注 · Note">
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Note to Finance (optional)</span>
+          <textarea className={styles.fieldInput} rows={3} value={v.note ?? ''} onChange={(e) => set({ note: e.target.value })} aria-label="Note"
+            maxLength={2000} placeholder="e.g. Please pay before the fair starts · 已跟对方讲好分两期付" />
+        </label>
       </FormSection>
       <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end', paddingTop: 'var(--space-3)', borderTop: '1px solid var(--line, #ece9e2)' }}>
         <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>

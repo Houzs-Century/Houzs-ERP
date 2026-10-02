@@ -3,7 +3,7 @@
    invoice — pre-ticked; the flag rides the submit only when ticked. */
 
 import { describe, expect, test } from 'vitest';
-import { emptyApForm, formFromExtraction, isProvisional, toSubmit } from './ApInvoiceForm';
+import { emptyApForm, formFromExtraction, formFromRequest, isProvisional, toSubmit } from './ApInvoiceForm';
 import type { BillExtraction } from '../../vendor/scm/lib/payment-voucher-queries';
 
 const read = (documentKind: BillExtraction['documentKind']): BillExtraction => ({
@@ -24,4 +24,11 @@ describe('the AP invoice form and the official invoice', () => {
     expect(toSubmit(base)).not.toHaveProperty('officialDocOwed');
     expect(toSubmit({ ...base, officialDocOwed: true })).toMatchObject({ officialDocOwed: true });
   });
+});
+
+/* Owner 2026-10-02 (多一个第五给他们写note): the requester's note comes along into the invoice's notes. */
+test('an AP invoice answering a request carries the requester\'s note', () => {
+  const r = { request_no: 'HC-PRQ-2610-002', requested_by_name: 'James Seow', purpose: 'Booth F1 rental', amount_sen: 850_000, due_date: null, project_id: null };
+  expect(formFromRequest({ ...r, note: 'Pay before 25/09' }, undefined, null).initial.description).toBe('Payment request HC-PRQ-2610-002 — Booth F1 rental · Note: Pay before 25/09');
+  expect(formFromRequest(r, undefined, null).initial.description).toBe('Payment request HC-PRQ-2610-002 — Booth F1 rental');
 });

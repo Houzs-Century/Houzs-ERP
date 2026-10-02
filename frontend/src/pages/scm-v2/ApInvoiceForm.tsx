@@ -113,7 +113,7 @@ export const scanNoteFor = (bill: { extraction: BillExtraction; supplierMatch: {
     request's event. The note says where each came from, and a bill total that
     differs from the amount asked. */
 export const formFromRequest = (
-  r: { request_no: string; requested_by_name: string | null; purpose: string; amount_sen: number; due_date: string | null; project_id: number | null },
+  r: { request_no: string; requested_by_name: string | null; purpose: string; amount_sen: number; due_date: string | null; project_id: number | null; note?: string | null },
   bill: ExtractedBill | undefined,
   readError: string | null,
 ): { initial: ApFormValues; note: string; eventSuggestions: EventSuggestion[] } => {
@@ -124,7 +124,8 @@ export const formFromRequest = (
   const initial: ApFormValues = {
     ...emptyApForm(), ...read,
     dueDate: read.dueDate ?? r.due_date ?? '',
-    description: `Payment request ${r.request_no} — ${r.purpose}`,
+    /* The requester's note comes along (owner 2026-10-02). */
+    description: `Payment request ${r.request_no} — ${r.purpose}${r.note ? ` · Note: ${r.note}` : ''}`,
     lines,
   };
   const total = bill?.ok ? bill.extraction.totalSen : null;

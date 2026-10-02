@@ -376,7 +376,8 @@ export const PaymentVoucherNew = () => {
     requestApplied.current = true;
     setPayeeName(r.payee_name);
     const bank = [r.bank_name, r.bank_account_no, r.bank_account_name].filter(Boolean).join(' ');
-    setNotes(`Payment request ${r.request_no} — ${r.purpose}${bank ? ` · pay to ${bank}` : ''}`);
+    /* The requester's note comes along (owner 2026-10-02: 多一个第五给他们写note). */
+    setNotes(`Payment request ${r.request_no} — ${r.purpose}${bank ? ` · pay to ${bank}` : ''}${r.note ? ` · Note: ${r.note}` : ''}`);
     /* An AP Payment answering a balance (item 2) pays the bill's AP invoice:
        its lines come from the tick below, not from the request. */
     if (isAp) {
