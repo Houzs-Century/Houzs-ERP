@@ -21,6 +21,12 @@
 // should become (routes/credit-note-scan.ts), the note keeps its paper
 // (/:id/files — routes/credit-note-files.ts), and a supplier note may name the
 // purchase invoice or AP invoice it credits — one of that supplier's own.
+//
+// 2026-10-02 (owner: CN 的方式应该是类似 ap payment 这样 knock off；扣错了就 untick):
+// a supplier note knocks off the supplier's invoices on the AP Payment's ticks —
+// GET /knock-off?supplierId= and GET /:id/knock-off give the table, PUT
+// /:id/allocations sets it whole. A draft carries its ticks as a plan (create
+// and edit take `allocations` too) and the post carries it out.
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
@@ -37,8 +43,12 @@ import {
 import { requireLeafAccount } from './accounting-chart';
 import { supabaseAuth } from '../middleware/auth';
 import { scanSupplierCreditNoteHandler } from './credit-note-scan';
-import { applyCreditNote, noteAllocations, removeAllocation, supplierOpenInvoices, type CreditTarget } from '../../acc/credit-note-allocations';
+import {
+  applyCreditNote, carryOutPlan, checkKnockOff, knockOffRows, noteAllocations, parseTargets, removeAllocation, setNoteKnockOff,
+  supplierOpenInvoices, writePlan, type CreditTarget,
+} from '../../acc/credit-note-allocations';
 import { deleteCreditNoteFileHandler, listCreditNoteFilesHandler, streamCreditNoteFileHandler, uploadCreditNoteFileHandler } from './credit-note-files';
+import { fmtSen } from '../shared/format';
 
 type Row = Record<string, any>;
 const NO_PERM = (what: string) => ({ error: `You don't have permission to ${what}.` });
@@ -230,6 +240,35 @@ export const createCreditNoteHandler = async (c: any): Promise<Response> => {
     }
   }
 
+  /* The knock-off (owner 2026-10-02: 类似 ap payment 这样 knock off) — the ticks,
+     carried by the draft as its plan and carried out by the post. A body that
+     names its invoice but brings no ticks (the API before them) plans the
+     credit off that invoice, as much as it owes. Checked before anything is
+     written. */
+  let plan: CreditTarget[] = [];
+  if (body.allocations !== undefined && kind !== 'SCN' && parseTargets(body.allocations).length > 0) {
+    return c.json({ error: 'invoice_not_this_kind', message: 'Only a supplier credit note knocks off a supplier\'s invoice.' }, 400);
+  }
+  if (kind === 'SCN' && supplierId) {
+    if (body.allocations !== undefined) {
+      plan = parseTargets(body.allocations);
+    } else {
+      const namedId = purchaseInvoiceId ?? apInvoiceId;
+      const namedKind = purchaseInvoiceId ? 'PI' as const : 'API' as const;
+      if (namedId) {
+        const { data: doc, error: docErr } = await sb.from(namedKind === 'PI' ? 'purchase_invoices' : 'ap_invoices')
+          .select('total_sen, paid_sen, status').eq('company_id', co.companyId).eq('id', namedId).maybeSingle();
+        if (docErr) return c.json({ error: 'load_failed', reason: docErr.message }, 500);
+        const d = doc as Row | null;
+        const owed = d && (d.status === 'POSTED' || d.status === 'PARTIALLY_PAID') ? Number(d.total_sen ?? 0) - Number(d.paid_sen ?? 0) : 0;
+        const amount = Math.min(built.total, owed);
+        if (amount > 0) plan = [{ kind: namedKind, id: namedId, amountSen: amount }];
+      }
+    }
+    const checked = await checkKnockOff(sb, { companyId: co.companyId, label: 'This note', supplierId, totalSen: built.total, posted: false, targets: plan, current: new Map() });
+    if (!checked.ok) return c.json({ error: checked.refusal.error, message: checked.refusal.message }, checked.refusal.status);
+  }
+
   const raised = await insertCreditNote(sb, {
     companyId: co.companyId,
     docPrefix: companyDocPrefix(c),
@@ -248,6 +287,13 @@ export const createCreditNoteHandler = async (c: any): Promise<Response> => {
     createdBy: who(c),
   });
   if (!raised.ok) return c.json({ error: 'save_failed', reason: raised.reason }, 500);
+  if (plan.length > 0) {
+    /* The note stands either way — a second Save would raise it twice. */
+    const written = await writePlan(sb, { companyId: co.companyId, noteId: String(raised.note.id), targets: plan, actor: who(c) });
+    if (!written.ok) {
+      return c.json({ ok: true, note: raised.note, knockOffFailed: `${raised.note.note_number} is saved, but its knock-off is not (${written.reason}) — open it and tick again.` }, 201);
+    }
+  }
   return c.json({ ok: true, note: raised.note }, 201);
 };
 
@@ -269,14 +315,35 @@ export const updateCreditNoteHandler = async (c: any): Promise<Response> => {
   }
   const sb = c.get('supabase');
   const roles = await resolveRoles(sb, co.companyId);
+  /* The lines are checked first — the knock-off below is held against their total. */
+  const built = body.lines !== undefined ? buildLines(body.lines) : null;
+  if (built && 'error' in built) return c.json({ error: built.error, message: built.message }, 400);
+  const newTotal = built ? built.total : Number(note.total_sen ?? 0);
+  /* A draft's knock-off plan (2026-10-02): replaced when the body brings ticks;
+     a new total below what is planned is refused, never trimmed — the ticks
+     are Finance's. */
+  let plan: CreditTarget[] | null = null;
+  if (body.allocations !== undefined) {
+    if (note.kind !== 'SCN') return c.json({ error: 'invoice_not_this_kind', message: 'Only a supplier credit note knocks off a supplier\'s invoice.' }, 400);
+    plan = parseTargets(body.allocations);
+    const checked = await checkKnockOff(sb, {
+      companyId: co.companyId, label: String(note.note_number), supplierId: String(note.supplier_id), totalSen: newTotal, posted: false, targets: plan, current: new Map(),
+    });
+    if (!checked.ok) return c.json({ error: checked.refusal.error, message: checked.refusal.message }, checked.refusal.status);
+  } else if (note.kind === 'SCN' && built) {
+    const al = await noteAllocations(sb, co.companyId, note);
+    if (!al.ok) return c.json({ error: 'load_failed', reason: al.reason }, 500);
+    const planned = al.allocations.reduce((s, a) => s + a.amountSen, 0);
+    if (planned > newTotal) {
+      return c.json({ error: 'over_credit', message: `The knock-off planned (${fmtSen(planned)}) is more than the note's new total (${fmtSen(newTotal)}) — untick some first.` }, 409);
+    }
+  }
   const patch: Row = { updated_at: new Date().toISOString() };
   if (body.noteDate !== undefined) patch.note_date = dateOrNull(body.noteDate) ?? note.note_date;
   if (body.reason !== undefined) patch.reason = String(body.reason ?? '').trim() || null;
   if (body.notes !== undefined) patch.notes = String(body.notes ?? '').trim() || null;
   if (body.sourceDocNo !== undefined) patch.source_doc_no = String(body.sourceDocNo ?? '').trim() || null;
-  if (body.lines !== undefined) {
-    const built = buildLines(body.lines);
-    if ('error' in built) return c.json({ error: built.error, message: built.message }, 400);
+  if (built) {
     const fallback = note.kind === 'SCN' ? roles.PURCHASE_RETURNS : roles.SALES_RETURNS;
     const lines = built.lines.map((l) => ({ ...l, code: l.code ?? fallback }));
     for (const code of [...new Set(lines.map((l) => l.code))]) {
@@ -293,6 +360,10 @@ export const updateCreditNoteHandler = async (c: any): Promise<Response> => {
   }
   const { data: saved, error: upErr } = await sb.from('acc_credit_notes').update(patch).eq('company_id', co.companyId).eq('id', note.id).select(HEADER).single();
   if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+  if (plan) {
+    const written = await writePlan(sb, { companyId: co.companyId, noteId: String(note.id), targets: plan, actor: who(c) });
+    if (!written.ok) return c.json({ error: 'save_failed', reason: written.reason }, 500);
+  }
   return c.json({ ok: true, note: saved });
 };
 
@@ -310,25 +381,20 @@ export const postCreditNoteHandler = async (c: any): Promise<Response> => {
     if (posted.status === 'load_failed' || posted.status === 'save_failed') return c.json({ error: posted.status, reason: posted.reason }, 500);
     return c.json({ error: 'post_failed', status: posted.status, reason: posted.reason }, 500);
   }
-  /* 有写发票的 CN 直接扣那张发票的欠款 (owner 2026-10-01, part 2): a supplier note
-     naming its invoice takes the credit off it now — as much as the invoice
-     still owes; the rest stays as the supplier's credit. The post stands
-     whatever this says. */
-  const named = note.kind === 'SCN' && posted.status === 'posted'
-    ? (note.purchase_invoice_id ? { kind: 'PI' as const, id: String(note.purchase_invoice_id) } : note.ap_invoice_id ? { kind: 'API' as const, id: String(note.ap_invoice_id) } : null)
-    : null;
-  if (!named) return c.json({ ok: true, jeNo: posted.jeNo, status: posted.status });
-  const sb = c.get('supabase');
-  const { data: doc, error: docErr } = await sb.from(named.kind === 'PI' ? 'purchase_invoices' : 'ap_invoices')
-    .select('total_sen, paid_sen, status').eq('company_id', co.companyId).eq('id', named.id).maybeSingle();
-  const owed = !docErr && doc && ((doc as Row).status === 'POSTED' || (doc as Row).status === 'PARTIALLY_PAID')
-    ? Number((doc as Row).total_sen ?? 0) - Number((doc as Row).paid_sen ?? 0) : 0;
-  const amount = Math.min(Number(note.total_sen ?? 0), owed);
-  if (amount <= 0) {
-    return c.json({ ok: true, jeNo: posted.jeNo, status: posted.status, applied: [], notApplied: docErr ? docErr.message : 'The invoice it names owes nothing now — the credit stays with the supplier.' });
+  /* The draft's knock-off carried out (owner 2026-10-01 有写发票的 CN 直接扣那张发票
+     的欠款; 2026-10-02 the ticks): each planned invoice takes its credit now — as
+     much as it still owes; what it cannot take stays with the supplier. The
+     post stands whatever this says. */
+  if (note.kind !== 'SCN' || posted.status !== 'posted') return c.json({ ok: true, jeNo: posted.jeNo, status: posted.status });
+  const done = await carryOutPlan(c.get('supabase'), { companyId: co.companyId, note: { ...note, status: 'POSTED' } });
+  if (!done.ok) {
+    return c.json({ ok: true, jeNo: posted.jeNo, status: posted.status, applied: [], notApplied: `The knock-off did not run (${done.reason}) — open the note and save its ticks again.` });
   }
-  const applied = await applyCreditNote(sb, { companyId: co.companyId, note: { ...note, status: 'POSTED' }, targets: [{ ...named, amountSen: amount }], actor: who(c) });
-  return c.json({ ok: true, jeNo: posted.jeNo, status: posted.status, applied: applied.ok ? applied.applied : [], ...(applied.ok ? {} : { notApplied: applied.refusal.message }) });
+  return c.json({
+    ok: true, jeNo: posted.jeNo, status: posted.status,
+    ...(done.applied.length > 0 ? { applied: done.applied } : {}),
+    ...(done.notApplied.length > 0 ? { notApplied: done.notApplied.join(' ') } : {}),
+  });
 };
 
 /* ── The credit coming off the supplier's invoices (part 2) ──────────────── */
@@ -361,6 +427,56 @@ export const applyCreditNoteHandler = async (c: any): Promise<Response> => {
   const applied = await applyCreditNote(c.get('supabase'), { companyId: co.companyId, note: found.note, targets, actor: who(c) });
   if (!applied.ok) return c.json({ error: applied.refusal.error, message: applied.refusal.message }, applied.refusal.status);
   return c.json({ ok: true, applied: applied.applied });
+};
+
+/* ── Knock off like an AP Payment (owner 2026-10-02) ───────────────────────── */
+
+/** GET /knock-off?supplierId= — a new note's table: the supplier's invoices still owing. */
+export const supplierKnockOffHandler = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const supplierId = String(c.req.query('supplierId') ?? '').trim();
+  if (!supplierId) return c.json({ rows: [] });
+  const sup = await loadSupplier(c, supplierId);
+  if ('resp' in sup) return sup.resp;
+  const rows = await knockOffRows(c.get('supabase'), co.companyId, { supplierId: sup.supplier.id, note: null });
+  if (!rows.ok) return c.json({ error: 'load_failed', reason: rows.reason }, 500);
+  return c.json({ rows: rows.rows });
+};
+
+/** GET /:id/knock-off — the note's table: what it takes from each invoice, and the credit left. */
+export const creditNoteKnockOffHandler = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const found = await loadNote(c, c.req.param('id'));
+  if ('resp' in found) return found.resp;
+  const note = found.note;
+  const totalSen = Number(note.total_sen ?? 0);
+  if (note.kind !== 'SCN' || !note.supplier_id) return c.json({ rows: [], totalSen, takenSen: 0, leftSen: totalSen, posted: note.status === 'POSTED' });
+  const rows = await knockOffRows(c.get('supabase'), co.companyId, { supplierId: String(note.supplier_id), note });
+  if (!rows.ok) return c.json({ error: 'load_failed', reason: rows.reason }, 500);
+  const takenSen = rows.rows.reduce((s, r) => s + r.noteSen, 0);
+  return c.json({ rows: rows.rows, totalSen, takenSen, leftSen: Math.max(0, totalSen - takenSen), posted: note.status === 'POSTED' });
+};
+
+/** PUT /:id/allocations { targets: [{ kind, id, amountSen }] } — the knock-off
+    set whole: a draft's plan (the editor's keys), a posted note's knock-off
+    carried out at once (the poster's key) — untick = give it back. */
+export const setCreditNoteAllocationsHandler = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const found = await loadNote(c, c.req.param('id'));
+  if ('resp' in found) return found.resp;
+  const note = found.note;
+  const may = note.status === 'POSTED'
+    ? hasHouzsPerm(c, 'scm.payment_voucher.post')
+    : hasHouzsPerm(c, 'scm.payment_voucher.create') || hasHouzsPerm(c, 'scm.payment_voucher.write');
+  if (!may) return c.json(NO_PERM('knock off a supplier\'s invoice'), 403);
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const set = await setNoteKnockOff(c.get('supabase'), { companyId: co.companyId, note, targets: parseTargets(body?.targets), actor: who(c) });
+  if (!set.ok) return c.json({ error: set.refusal.error, message: set.refusal.message }, set.refusal.status);
+  return c.json({ ok: true, short: set.short });
 };
 
 /** POST /:id/allocations/:allocationId/remove — the credit given back to the note; the invoice owes it again. */
@@ -401,6 +517,8 @@ creditNotes.use('*', supabaseAuth);
 creditNotes.get('/', listCreditNotesHandler);
 creditNotes.post('/', createCreditNoteHandler);
 creditNotes.post('/scan', scanSupplierCreditNoteHandler);
+/* Before /:id, or 'knock-off' would be read as a note id. */
+creditNotes.get('/knock-off', supplierKnockOffHandler);
 creditNotes.get('/:id', creditNoteDetailHandler);
 creditNotes.patch('/:id', updateCreditNoteHandler);
 creditNotes.post('/:id/post', postCreditNoteHandler);
@@ -408,6 +526,8 @@ creditNotes.post('/:id/cancel', cancelCreditNoteHandler);
 creditNotes.get('/:id/open-invoices', creditNoteOpenInvoicesHandler);
 creditNotes.post('/:id/apply', applyCreditNoteHandler);
 creditNotes.post('/:id/allocations/:allocationId/remove', removeCreditNoteAllocationHandler);
+creditNotes.get('/:id/knock-off', creditNoteKnockOffHandler);
+creditNotes.put('/:id/allocations', setCreditNoteAllocationsHandler);
 creditNotes.post('/:id/files', uploadCreditNoteFileHandler);
 creditNotes.get('/:id/files', listCreditNoteFilesHandler);
 creditNotes.get('/:id/files/:fileId', streamCreditNoteFileHandler);
