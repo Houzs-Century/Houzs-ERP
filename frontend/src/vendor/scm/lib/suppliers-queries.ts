@@ -81,6 +81,14 @@ export type SupplierRow = {
   nature_of_business: string | null;
   exemption_no?: string | null;
   phone2: string | null;
+  /* Supplier Maintenance (owner 2026-10-02) — also the Finance part, so also
+     optional: the bank a payment carries, and whether purchasing shares the
+     supplier (false = Finance's alone). Base-table reads only (detail / create /
+     patch); the list view predates them. */
+  bank_name?: string | null;
+  bank_account_no?: string | null;
+  bank_account_name?: string | null;
+  for_purchasing?: boolean;
   created_at: string;
   updated_at: string;
   /* PR — Commander 2026-05-27: auto-derived from the supplier's assigned

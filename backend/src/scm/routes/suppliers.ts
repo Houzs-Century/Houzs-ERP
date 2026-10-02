@@ -36,7 +36,7 @@ import { scopeToCompany, activeCompanyId, stampCompany,
   detailMissResponse } from '../lib/companyScope';
 import type { Env, Variables } from '../env';
 import type { Context } from 'hono';
-import { pgrestIn } from '../lib/pgrest-in-list';
+import { pgrestIn, pgrestInList } from '../lib/pgrest-in-list';
 import { isSupplierFinanceCaller, supplierCodeChangeRefusal } from '../lib/supplier-finance';
 import { withoutSupplierFinance, withoutSupplierFinanceKeys } from '../shared/supplier-finance-fields';
 
@@ -47,6 +47,13 @@ type SupplierCtx = Context<{ Bindings: Env; Variables: Variables }>;
 const normPhone = (v: unknown): string | null => {
   if (typeof v !== 'string') return null;
   return normalizePhone(v) ?? v;
+};
+
+/* A free-text field as stored: trimmed, and blank is NULL (the bank details). */
+const textOrNull = (v: unknown): string | null => {
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  return t ? t : null;
 };
 
 export const suppliers = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -80,10 +87,29 @@ const SUPPLIER_BASE_COLS =
    table but NOT on the view — see SUPPLIER_LIST_COLS. */
 const SUPPLIER_STRUCTURED_ADDRESS_COLS = 'address1, address2, address3, address4, city';
 
+/* Supplier Maintenance (owner 2026-10-02, mig 20261002T2000) — the supplier's
+   bank and the purchasing tick, both in the Finance part. Base table only: the
+   list view froze its columns before them, like the structured address. */
+const SUPPLIER_MAINTENANCE_COLS = 'for_purchasing, bank_name, bank_account_no, bank_account_name';
+
 /* Base-table column set — used by the DETAIL / create / patch reads, which hit
    `scm.suppliers` directly (not the view) and so can see the structured address. */
-const SUPPLIER_COLS =
-  `${SUPPLIER_BASE_COLS}, ${SUPPLIER_STRUCTURED_ADDRESS_COLS}, created_at, updated_at`;
+export const SUPPLIER_COLS =
+  `${SUPPLIER_BASE_COLS}, ${SUPPLIER_STRUCTURED_ADDRESS_COLS}, ${SUPPLIER_MAINTENANCE_COLS}, created_at, updated_at`;
+
+/* A supplier Finance keeps to itself (for_purchasing false — owner 2026-10-02,
+   A2a: 「Finance 开的 supplier 只有 Finance 看得到，采购看不到」) is not shown to a
+   caller who is not Finance: not in the list, not on its page, not editable. */
+const NOT_FOR_PURCHASING = { error: 'not_found', message: 'That supplier is not one you can open.' };
+
+/** The ids of this company's Finance-only suppliers — what the list leaves out
+    for a caller who is not Finance. Read from the base table: the list view has
+    no for_purchasing column. */
+async function financeOnlySupplierIds(supabase: SupabaseClient, c: SupplierCtx): Promise<{ ok: true; ids: string[] } | { ok: false; reason: string }> {
+  const { data, error } = await scopeToCompany(supabase.from('suppliers').select('id').eq('for_purchasing', false), c);
+  if (error) return { ok: false, reason: error.message };
+  return { ok: true, ids: ((data ?? []) as Array<{ id: string }>).map((r) => String(r.id)) };
+}
 
 /* PR — Commander 2026-05-27 ("当 Assign SKU 之后，你就会知道它是什么 Category 了呀"):
    List endpoint queries the `suppliers_with_derived_category` view (migration
@@ -322,7 +348,16 @@ export const listSuppliersHandler = async (c: SupplierCtx) => {
   const status = c.req.query('status');
   const search = c.req.query('search');
   const supabase = c.get('supabase');
-  const readable = <T extends object>(rows: T[]): T[] => (isSupplierFinanceCaller(c) ? rows : rows.map((r) => withoutSupplierFinance(r)));
+  const finance = isSupplierFinanceCaller(c);
+  const readable = <T extends object>(rows: T[]): T[] => (finance ? rows : rows.map((r) => withoutSupplierFinance(r)));
+  /* Finance's own suppliers stay out of a purchaser's list — pickers included
+     (owner 2026-10-02, A2a). Finance sees every supplier. */
+  let hidden: string[] = [];
+  if (!finance) {
+    const r = await financeOnlySupplierIds(supabase, c);
+    if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
+    hidden = r.ids;
+  }
 
   /* Opt-in server-side pagination + search + sort + Supply-Category filter
      (mirrors usePurchaseOrdersPaged in mfg-purchase-orders.ts). The PRESENCE
@@ -347,6 +382,7 @@ export const listSuppliersHandler = async (c: SupplierCtx) => {
       .limit(2000);
     if (status && SUPPLIER_STATUSES.has(status)) q = q.eq('status', status);
     if (search) { const s = escapeForOr(search); if (s) q = q.or(`code.ilike.%${s}%,name.ilike.%${s}%,contact_person.ilike.%${s}%`); }
+    if (hidden.length > 0) q = q.not('id', 'in', pgrestInList(hidden));
     q = scopeToCompany(q, c); // multi-company: suppliers are per-company (view exposes company_id via mig 0062)
 
     const { data, error } = await q;
@@ -404,6 +440,7 @@ export const listSuppliersHandler = async (c: SupplierCtx) => {
     const s = escapeForOr(category);
     if (s) q = q.ilike('category', `%${s}%`);
   }
+  if (hidden.length > 0) q = q.not('id', 'in', pgrestInList(hidden));
 
   q = scopeToCompany(q, c); // multi-company: suppliers are per-company (view exposes company_id via mig 0062)
   q = q.range(page * pageSize, page * pageSize + pageSize - 1);
@@ -442,7 +479,9 @@ export const getSupplierHandler = async (c: SupplierCtx) => {
   }
   if (bindingsRes.error) return c.json({ error: 'load_failed', reason: bindingsRes.error.message }, 500);
 
-  const supplier = isSupplierFinanceCaller(c) ? supplierRes.data : withoutSupplierFinance(supplierRes.data);
+  const finance = isSupplierFinanceCaller(c);
+  if (!finance && (supplierRes.data as { for_purchasing?: boolean }).for_purchasing === false) return c.json(NOT_FOR_PURCHASING, 404);
+  const supplier = finance ? supplierRes.data : withoutSupplierFinance(supplierRes.data);
   return c.json({ supplier, bindings: bindingsRes.data ?? [] });
 };
 suppliers.get('/:id', getSupplierHandler);
@@ -502,6 +541,13 @@ export const createSupplierHandler = async (c: SupplierCtx) => {
     statement_type: STATEMENT_TYPES.has(body.statementType as string) ? body.statementType : 'OPEN_ITEM',
     aging_basis: AGING_BASES.has(body.agingBasis as string) ? body.agingBasis : 'INVOICE_DATE',
     credit_limit_sen: typeof body.creditLimitSen === 'number' ? body.creditLimitSen : 0,
+    /* Supplier Maintenance (owner 2026-10-02) — the bank a payment carries, and
+       whether purchasing shares the supplier. Finance's alone: a purchaser's body
+       has neither (stripped above), so a supplier purchasing opens is shared. */
+    bank_name: textOrNull(body.bankName),
+    bank_account_no: textOrNull(body.bankAccountNo),
+    bank_account_name: textOrNull(body.bankAccountName),
+    for_purchasing: body.forPurchasing !== false,
     /* Mig 0028 — AutoCount creditor-export parity. phone2 normalizes to E.164
        like the other phone fields. */
     registration_no: (body.registrationNo as string) ?? null,
@@ -548,6 +594,14 @@ export const patchSupplierHandler = async (c: any) => {
      than mutating a supplier the caller can't even see in its own list. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+
+  /* A supplier Finance keeps to itself is not a purchaser's to edit (owner
+     2026-10-02, A2a) — answered exactly as a supplier that is not there. */
+  if (!finance) {
+    const { data: own, error: ownErr } = await scopeToCompanyId(supabase.from('suppliers').select('id, for_purchasing').eq('id', id), co.companyId).maybeSingle();
+    if (ownErr) return c.json({ error: 'load_failed', reason: ownErr.message }, 500);
+    if (own && (own as { for_purchasing?: boolean }).for_purchasing === false) return c.json(NOT_FOR_PURCHASING, 404);
+  }
 
   /* The code: the same code is no change; a new one is Finance's, and only while
      nothing carries the old one yet (lib/supplier-finance.ts). */
@@ -610,6 +664,13 @@ export const patchSupplierHandler = async (c: any) => {
   if (body.agingBasis !== undefined && AGING_BASES.has(body.agingBasis as string)) {
     updates.aging_basis = body.agingBasis;
   }
+  /* Supplier Maintenance (owner 2026-10-02): the bank, trimmed, blank clears it;
+     the purchasing tick only as a true boolean. A purchaser's body carries
+     neither — both are the Finance part, stripped above. */
+  for (const [from, to] of [['bankName', 'bank_name'], ['bankAccountNo', 'bank_account_no'], ['bankAccountName', 'bank_account_name']] as const) {
+    if (body[from] !== undefined) updates[to] = textOrNull(body[from]);
+  }
+  if (typeof body.forPurchasing === 'boolean') updates.for_purchasing = body.forPurchasing;
 
   const { data, error } = await scopeToCompanyId(supabase.from('suppliers').update(updates).eq('id', id), co.companyId).select(SUPPLIER_COLS).maybeSingle();
   if (error) {

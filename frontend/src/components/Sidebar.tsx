@@ -717,6 +717,9 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/payment-requests", label: "Payment Requests", icon: HandCoins, anyPerm: ["*", "scm.payment_voucher.create"] },
           // 欠正式单 (owner 2026-10-01) — payments made on a proforma, still owing the official invoice.
           { to: "/scm/official-docs", label: "Official Invoices Owed", icon: FileText, anyPerm: ["*", "scm.payment_voucher.create"] },
+          // Supplier Maintenance (owner 2026-10-02: 放在 money out 的 sidebar) — Finance's own
+          // supplier list: what each is owed, its bank, and the ones Finance keeps to itself.
+          { to: "/scm/supplier-maintenance", label: "Supplier Maintenance", icon: Truck, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
         ],
       },
       {

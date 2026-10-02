@@ -17,6 +17,11 @@
 
 import { Link } from 'react-router-dom';
 import { useSupplierDetail, type SupplierRow } from '../lib/suppliers-queries';
+import { supplierBankLine } from '../lib/supplier-maintenance-queries';
+
+/** Where Finance fills a supplier's Finance part: its pop-out in Supplier
+    Maintenance (owner 2026-10-02). */
+export const supplierMaintenanceHref = (id: string): string => `/scm/supplier-maintenance?open=${encodeURIComponent(id)}`;
 
 type FinanceIdentity = Partial<Pick<SupplierRow, 'tin_number' | 'business_reg_no' | 'registration_no'>>;
 
@@ -40,7 +45,27 @@ export function SupplierFinanceReminder({ supplierId }: { supplierId: string | n
     <div role="status" aria-label="Supplier finance details missing"
       style={{ fontSize: 'var(--fs-12)', color: '#8a5a12', background: '#fdf2df', borderRadius: 8, padding: '6px 10px' }}>
       {s.name} has no {missing.join(' or ')} in its Finance details — the payment can still go ahead; fill {missing.length > 1 ? 'them' : 'it'} in on
-      {' '}<Link to={`/scm/suppliers/${s.id}`} style={{ color: 'inherit', textDecoration: 'underline' }}>the supplier page</Link> (the e-invoice will need {missing.length > 1 ? 'them' : 'it'}).
+      {' '}<Link to={supplierMaintenanceHref(s.id)} style={{ color: 'inherit', textDecoration: 'underline' }}>Supplier Maintenance</Link> (the e-invoice will need {missing.length > 1 ? 'them' : 'it'}).
+    </div>
+  );
+}
+
+/**
+ * The supplier's bank — where the payment goes (owner 2026-10-02, A3a:
+ * 加上银行资料，付款时自动带出来). Shown only to a caller who sees the Finance
+ * part (the server leaves the bank out for anyone else); a supplier with no bank
+ * kept says where to add it.
+ */
+export function SupplierPayTo({ supplierId }: { supplierId: string | null | undefined }) {
+  const q = useSupplierDetail(supplierId || null);
+  const s = q.data?.supplier;
+  if (!s || !('bank_name' in s || 'bank_account_no' in s || 'bank_account_name' in s)) return null;
+  const line = supplierBankLine(s);
+  return (
+    <div aria-label="Supplier bank" style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+      {line
+        ? <>Pay to: <span style={{ color: 'var(--c-ink)', fontWeight: 600 }}>{line}</span></>
+        : <>No bank kept for {s.name} — add it in <Link to={supplierMaintenanceHref(s.id)} style={{ color: 'inherit', textDecoration: 'underline' }}>Supplier Maintenance</Link>.</>}
     </div>
   );
 }
