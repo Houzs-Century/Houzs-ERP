@@ -57,6 +57,7 @@ import {
   type SupplierRecord,
 } from './supplier-doc-data';
 import { loadSofaCompartmentArtForPrint } from './sales-order-queries';
+import { splitBackendSofa } from './sofa-walk-order';
 import {
   blobToSquarePdfImage,
   buildPhotoGroups,
@@ -242,6 +243,33 @@ function sofaModuleFromLine(
   return null;
 }
 
+/* A geometry-less backend sofa line, keyed to its build (SO no + base model). */
+function backendSofaKey(it: PoItem): { key: string; moduleId: string } | null {
+  if ((it.item_group ?? '').toLowerCase() !== 'sofa') return null;
+  if (sofaCellFromLine(it.variants, it.item_code)) return null;
+  const mod = sofaModuleFromLine(it.item_code, it.material_name || it.description);
+  if (!mod) return null;
+  return { key: `${(it.so_doc_no ?? '').trim()}|${mod.baseModel.toUpperCase()}`, moduleId: mod.moduleId };
+}
+
+/* Rows of each geometry-less build re-ordered into walking order
+   (splitBackendSofa) within the slots the build already holds, so the table
+   reads in the same order the layout draws. Other rows do not move. */
+function walkBackendSofaRows<T extends PoItem>(rows: T[]): T[] {
+  const byKey = new Map<string, number[]>();
+  rows.forEach((it, i) => {
+    const k = backendSofaKey(it);
+    if (!k) return;
+    byKey.set(k.key, [...(byKey.get(k.key) ?? []), i]);
+  });
+  const out = [...rows];
+  for (const positions of byKey.values()) {
+    const walked = splitBackendSofa(positions.map((i) => rows[i]!), (it) => backendSofaKey(it)!.moduleId).flat();
+    positions.forEach((pos, k) => { out[pos] = walked[k]!; });
+  }
+  return out;
+}
+
 type JsPdf = import('jspdf').jsPDF;
 type AutoTableFn = (typeof import('jspdf-autotable'))['default'];
 
@@ -284,10 +312,10 @@ async function renderPurchaseOrderInto(
      applied here as well as in the detail route's SQL because a caller may have
      fetched the items from somewhere with no ORDER BY. */
   const orderedItems = orderSofaModuleRowsWithinBuilds(
-    sortSoLinesByGroupRank(
+    walkBackendSofaRows(sortSoLinesByGroupRank(
       sortLinesByStoredLineNo(items.map((it) => ({ ...it, item_code: it.item_code, __row: it }))),
       (r) => r.item_group as string | null | undefined,
-    ),
+    )),
   ).map((r) => r.__row);
 
   /* Owner spec 2026-08 — photos follow the line onto the supplier PO. The
@@ -632,7 +660,7 @@ async function renderPurchaseOrderInto(
   const geometryKeys = new Set<string>();
   const baseModelKey = (soNo: string, baseModel: string): string => `${soNo}|${baseModel.toUpperCase()}`;
 
-  for (const it of items) {
+  for (const it of orderedItems) {
     const soNo = (it.so_doc_no ?? '').trim();
     const part = sofaCellFromLine(it.variants, it.item_code);
     if (part) {
@@ -690,11 +718,13 @@ async function renderPurchaseOrderInto(
   }
   for (const [fk, g] of fallbackGroups) {
     if (geometryKeys.has(fk)) continue; // already drawn from real geometry
-    const cells = buildDefaultSofaCells(g.modules, g.depth);
-    if (cells.length === 0) continue;
-    // Caption from the module list ("L(LHF) + 2A(RHF)"), else the per-line name.
-    const caption = cells.map((c) => c.moduleId).join(' + ') || g.model;
-    distinctSofas.push({ cells, depth: g.depth, model: caption, soNo: g.soNo });
+    for (const pieces of splitBackendSofa(g.modules, (m) => m.moduleId)) {
+      const cells = buildDefaultSofaCells(pieces, g.depth);
+      if (cells.length === 0) continue;
+      // Caption from the module list ("L(LHF) + 2A(RHF)"), else the per-line name.
+      const caption = cells.map((c) => c.moduleId).join(' + ') || g.model;
+      distinctSofas.push({ cells, depth: g.depth, model: caption, soNo: g.soNo });
+    }
   }
 
   /* Where the last sofa-diagram row leaves usable width, the ITEM PHOTOS
