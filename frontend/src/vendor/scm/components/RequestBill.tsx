@@ -57,6 +57,17 @@ export function BillInstalments({ family, currentId }: { family: BillFamily; cur
   );
 }
 
+/** The fields the bill filled in — every one still the requester's to change
+    (owner 2026-10-02: 自动填了资料还能手动改). */
+export function BillFilledNote({ fields }: { fields: string[] }) {
+  if (fields.length === 0) return null;
+  return (
+    <div role="status" aria-label="Filled in from the bill" style={box('note')}>
+      Filled in from the bill: {fields.join(' · ')} — check them and change anything that is wrong · 都可以自己改
+    </div>
+  );
+}
+
 /** While the bill is read; what was read; or why it could not be. */
 export function BillReadNote({ state }: { state: BillReadState }) {
   if (state.status === 'idle') return null;

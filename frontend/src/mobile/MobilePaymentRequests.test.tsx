@@ -25,7 +25,7 @@ const returnMutate = vi.fn();
 /* 申请付余额 (item 2, 2026-10-01). */
 const balanceAsync = vi.fn(async (_b: Req) => ({ ok: true, request: base({ id: 'r-bal' }), overTotal: false }));
 /* The bill reader's answer for the photo being attached (item 1, 2026-10-01). */
-const readAsync = vi.fn(async (_b: Req) => ({
+const readAsync = vi.fn(async (_b: Req): Promise<Req> => ({
   ok: true, bill: { billNo: 'MLE-0925', billDate: '2026-09-01', totalSen: 850_000, vendorName: 'MLE EVENTS SDN BHD' },
   hasEvents: true, eventBill: false, eventSuggestions: [], matches: [],
 }));
@@ -153,5 +153,35 @@ describe('MobilePaymentRequests', () => {
     expect(screen.getByText(/Answer it on the computer — Payment Requests › Make voucher or Make AP invoice/)).toBeTruthy();
     fireEvent.click(screen.getByText('Return…'));
     await waitFor(() => expect(returnMutate).toHaveBeenCalledWith({ id: 'r1', note: 'Attach the organiser invoice' }));
+  });
+});
+
+/* Owner 2026-10-02: upload 后很多资料都没有填 — and 自动填了资料还能手动改. On the
+   phone the bill comes page by page: a later page fills more, never what was typed. */
+describe('the phone form filled from the bill', () => {
+  test('page one fills the payee and the summary; page two fills the rest; what was typed stays', async () => {
+    requests = []; isFinance = false; createAsync.mockClear();
+    const read = (bill: Req) => ({ ok: true, bill, hasEvents: true, eventBill: false, eventSuggestions: [], matches: [] });
+    const full: Req = { billNo: 'HV-INV-202608-0051', billDate: '2026-08-31', totalSen: 808_233, vendorName: 'HOUZS VENTURE HOLDINGS SDN BHD', dueDate: '2026-09-30', summary: "Payroll cost share — Aug'26 · adjustment", bankName: 'Hong Leong Bank Berhad', bankAccountNo: '123-4567-8901', bankAccountName: 'Houzs Venture Holding Sdn Bhd' };
+    readAsync
+      .mockImplementationOnce(async () => read({ ...full, totalSen: null, dueDate: null, bankName: null, bankAccountNo: null, bankAccountName: null }))
+      .mockImplementationOnce(async () => read(full));
+    render(<MobilePaymentRequests onBack={() => undefined} />);
+    fireEvent.click(screen.getByText('New request'));
+    fireEvent.change(screen.getByLabelText('Take a photo of the bill'), { target: { files: [new File(['jpg'], 'page-1.jpg', { type: 'image/jpeg' })] } });
+    await waitFor(() => expect((screen.getByLabelText('Pay to') as HTMLInputElement).value).toBe('HOUZS VENTURE HOLDINGS SDN BHD'));
+    expect((screen.getByLabelText('What is it for') as HTMLTextAreaElement).value).toBe("Payroll cost share — Aug'26 · adjustment");
+    /* They change what it is for — the next page does not take it back. */
+    fireEvent.change(screen.getByLabelText('What is it for'), { target: { value: 'HC share of Aug payroll' } });
+    fireEvent.change(screen.getByLabelText('Take a photo of the bill'), { target: { files: [new File(['jpg'], 'page-2.jpg', { type: 'image/jpeg' })] } });
+    await waitFor(() => expect((screen.getByLabelText('Account no.') as HTMLInputElement).value).toBe('123-4567-8901'));
+    expect((screen.getByLabelText('What is it for') as HTMLTextAreaElement).value).toBe('HC share of Aug payroll');
+    expect(screen.getByLabelText('Filled in from the bill').textContent).toContain("Pay to · Amount · Pay by · Payee's bank · Account no. · Account name");
+    fireEvent.click(screen.getByText('Send to Finance'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+    expect(createAsync.mock.calls[0]![0]).toMatchObject({
+      payeeName: 'HOUZS VENTURE HOLDINGS SDN BHD', amountSen: 808_233, dueDate: '2026-09-30', purpose: 'HC share of Aug payroll',
+      bankName: 'Hong Leong Bank Berhad', bankAccountNo: '123-4567-8901', bankAccountName: 'Houzs Venture Holding Sdn Bhd',
+    });
   });
 });

@@ -9,7 +9,9 @@
 //   GET  /payment-requests/bill-matches?no=&date=[&excludeRequest=&excludePv=&excludeApInvoice=]
 //
 // The reader (acc/bill-extract.ts) reads what is PRINTED — the bill's number,
-// date and total, and the event it is for when it names one. Plain code does the
+// date and total, and the event it is for when it names one; since 2026-10-02
+// also who issued it, its due date, a one-line summary and the bank account it
+// asks to be paid into, which the form fills in where empty. Plain code does the
 // rest: which events those hints point at (lib/event-match.ts), and every OTHER
 // live request, voucher or AP invoice carrying the same number and date
 // (lib/bill-matches.ts — a warning, never a refusal). NOTHING here writes: the
@@ -125,9 +127,16 @@ export const readRequestBillHandler = async (c: any): Promise<Response> => {
 
   const found = await findBillMatches(sb, co.companyId, [{ key: 'bill', billNo: ex.invoiceNumber, billDate: ex.invoiceDate, exclude }]);
   if (!found.ok) return c.json({ error: 'load_failed', reason: found.reason }, 500);
+  /* Everything the form can fill from the paper (owner 2026-10-02: upload 后很多
+     资料都没有填) — who to pay, by when, what for and into which account. The
+     form fills only what is still empty; what the requester typed stays. */
   return c.json({
     ok: true,
-    bill: { billNo: ex.invoiceNumber, billDate: ex.invoiceDate, totalSen: ex.totalSen, vendorName: ex.vendorName },
+    bill: {
+      billNo: ex.invoiceNumber, billDate: ex.invoiceDate, totalSen: ex.totalSen, vendorName: ex.vendorName,
+      dueDate: ex.dueDate, summary: ex.summary,
+      bankName: ex.payTo?.bankName ?? null, bankAccountNo: ex.payTo?.accountNo ?? null, bankAccountName: ex.payTo?.accountName ?? null,
+    },
     hasEvents,
     eventBill,
     event: ex.event,

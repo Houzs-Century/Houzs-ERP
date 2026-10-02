@@ -361,3 +361,33 @@ describe('Finance', () => {
     expect(JSON.stringify(promptFn.mock.calls[0]![0])).toContain('"required":true');
   });
 });
+
+/* Owner 2026-10-02: upload 后很多资料都没有填 — and 自动填了资料还能手动改. */
+describe('the form filled from the bill', () => {
+  test('fills what is still empty; what was typed stays, and every field stays theirs to change', async () => {
+    requests = []; isFinance = false; hasEvents = undefined; createAsync.mockClear(); readAsync.mockClear();
+    readResult = plainRead({ bill: { billNo: 'HV-INV-202608-0051', billDate: '2026-08-31', totalSen: 808_233, vendorName: 'HOUZS VENTURE HOLDINGS SDN BHD', dueDate: '2026-09-30', summary: "Payroll cost share — Aug'26 · adjustment", bankName: 'Hong Leong Bank Berhad', bankAccountNo: '123-4567-8901', bankAccountName: 'Houzs Venture Holding Sdn Bhd' } });
+    draw();
+    fireEvent.click(screen.getByText('New request'));
+    const d = screen.getByRole('dialog');
+    /* Typed before the bill is read — it stays. */
+    fireEvent.change(within(d).getByLabelText('What is it for'), { target: { value: 'HC share of Aug payroll' } });
+    fireEvent.change(within(d).getByLabelText('Bill files'), { target: { files: [new File(['%PDF'], 'invoice-HV-INV-202608-0051.pdf', { type: 'application/pdf' })] } });
+    const note = await within(d).findByLabelText('Filled in from the bill');
+    expect(note.textContent).toContain("Pay to · Amount · Pay by · Payee's bank · Account no. · Account name");
+    expect(note.textContent).toContain('都可以自己改');
+    expect((within(d).getByLabelText('Pay to') as HTMLInputElement).value).toBe('HOUZS VENTURE HOLDINGS SDN BHD');
+    expect((within(d).getByLabelText('What is it for') as HTMLTextAreaElement).value).toBe('HC share of Aug payroll');
+    expect((within(d).getByLabelText('Account no.') as HTMLInputElement).value).toBe('123-4567-8901');
+    /* Still theirs to change: a changed field leaves the note and goes as typed. */
+    fireEvent.change(within(d).getByLabelText('Pay to'), { target: { value: 'Houzs Venture Holding Sdn Bhd' } });
+    expect(within(d).getByLabelText('Filled in from the bill').textContent).not.toContain('Pay to');
+    fireEvent.click(within(d).getByText('Send to Finance'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+    expect(createAsync.mock.calls[0]![0]).toMatchObject({
+      payeeName: 'Houzs Venture Holding Sdn Bhd', amountSen: 808_233, dueDate: '2026-09-30', purpose: 'HC share of Aug payroll',
+      bankName: 'Hong Leong Bank Berhad', bankAccountNo: '123-4567-8901', bankAccountName: 'Houzs Venture Holding Sdn Bhd',
+      billNo: 'HV-INV-202608-0051', billDate: '2026-08-31', billTotalSen: 808_233,
+    });
+  });
+});

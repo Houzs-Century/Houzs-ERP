@@ -27,8 +27,8 @@ import {
   useUploadPaymentRequestFile, useWithdrawPaymentRequest,
   type PaymentRequest, type PaymentRequestInput,
 } from "../vendor/scm/lib/payment-request-queries";
-import { billFactsOf, needsEvent, useRequestBillRead } from "../vendor/scm/lib/request-bill-read";
-import { BillInstalments, BillMatchesNote, BillReadNote, billFactsLine } from "../vendor/scm/components/RequestBill";
+import { BILL_FILL_LABEL, billFactsOf, billOffer, fillFromBill, filledFromBill, needsEvent, useRequestBillRead, type BillOffer } from "../vendor/scm/lib/request-bill-read";
+import { BillFilledNote, BillInstalments, BillMatchesNote, BillReadNote, billFactsLine } from "../vendor/scm/components/RequestBill";
 import { OfficialDocChip } from "../vendor/scm/components/OfficialDoc";
 import { useUploadOfficialDoc } from "../vendor/scm/lib/official-doc-queries";
 import { EventSuggestions } from "../vendor/scm/components/EventSuggestions";
@@ -307,6 +307,8 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
   }));
   /* The bill is READ as it is attached (owner 2026-10-01, item 1). */
   const billRead = useRequestBillRead();
+  /* What the last read offered each field — page by page, a later read may say more. */
+  const lastOffer = useRef<BillOffer>({});
   const [noEvent, setNoEvent] = useState(() => !!initial?.no_event_reason);
   const [noEventReason, setNoEventReason] = useState(initial?.no_event_reason ?? "");
   const set = (patch: Partial<PaymentRequestInput>) => setV((prev) => ({ ...prev, ...patch }));
@@ -323,6 +325,13 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
   const takeFiles = async (list: File[]) => {
     setFiles(list);
     const read = await billRead.run(list);
+    /* Owner 2026-10-02: fill what is still empty from the paper — all of it stays editable. */
+    if (read) {
+      const offer = billOffer(read.bill);
+      const before = lastOffer.current;
+      lastOffer.current = offer;
+      setV((prev) => fillFromBill(prev, offer, before));
+    }
     const readTotal = read?.bill.totalSen ?? null;
     if (readTotal != null && readTotal > 0) setBillTotal((prev) => prev ?? readTotal);
     const top = read?.eventBill ? read.eventSuggestions[0] : undefined;
@@ -331,6 +340,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
   const eventNeeded = hasEvents && (needsEvent(billRead.state) || !!initial?.event_bill);
   const eventOk = !eventNeeded || v.projectId != null || (noEvent && noEventReason.trim().length >= NO_EVENT_REASON_MIN);
   const reading = billRead.state.status === "reading";
+  const filledFields = filledFromBill(v, billRead.state.status === "done" ? billOffer(billRead.state.result.bill) : {}).map((k) => BILL_FILL_LABEL[k]);
   const missing = [
     v.payeeName.trim() === "" ? "who to pay" : null,
     v.amountSen > 0 ? null : "the amount",
@@ -400,6 +410,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
             <button type="button" className="btn" style={{ flex: 1, background: "var(--bg)", color: "var(--ink)" }} onClick={() => libRef.current?.click()}>Pick file</button>
           </div>
           <BillReadNote state={billRead.state} />
+          <BillFilledNote fields={filledFields} />
         </>
       )}
       {field("Pay to *", <input className="cal-sel" aria-label="Pay to" value={v.payeeName} onChange={(e) => set({ payeeName: e.target.value })} placeholder="e.g. MLE EVENTS SDN BHD" />)}
