@@ -92,7 +92,7 @@ Rules:
 - vendorName is the ISSUER, never the addressee (the addressee is our own company).
 - Line descriptions stay short (under 80 chars), in the bill's own words.`;
 
-const rmToSen = (v: unknown): number | null => {
+export const rmToSen = (v: unknown): number | null => {
   /* null / undefined / '' are ABSENT, not zero — Number(null) is 0, and a
      bill whose total the model could not read must never arrive as RM 0.00. */
   if (v == null || v === '') return null;
@@ -100,7 +100,7 @@ const rmToSen = (v: unknown): number | null => {
   return Number.isFinite(n) ? Math.round(n * 100) : null;
 };
 
-const isoOrNull = (v: unknown): string | null => {
+export const isoOrNull = (v: unknown): string | null => {
   const s = String(v ?? '').trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
 };
@@ -207,14 +207,17 @@ export function parseModelJson(text: string): unknown {
   try { return JSON.parse(text.slice(start, end + 1)); } catch { return null; }
 }
 
-/** ONE bill → one vision call. fetchImpl is injectable so tests never touch
-    the network. Throws only on programmer error; API trouble comes back as
-    { ok: false, reason } for the route to say out loud. */
-export async function extractOneBill(
+/** ONE paper → one vision call, its answer as parsed JSON (null when the
+    model answered with something else). Shared by the bill reader below and
+    the credit-note reader (acc/cn-extract.ts). fetchImpl is injectable so
+    tests never touch the network; API trouble comes back as { ok: false,
+    reason } for the route to say out loud. */
+export async function readPaperJson(
   apiKey: string,
   files: BillFile[],
+  prompt: string,
   fetchImpl: typeof fetch = fetch,
-): Promise<{ ok: true; extraction: BillExtraction } | { ok: false; reason: string }> {
+): Promise<{ ok: true; json: unknown } | { ok: false; reason: string }> {
   const blocks = files.map((f) => (
     BILL_IMAGE_MIMES.has(f.mime)
       ? { type: 'image', source: { type: 'base64', media_type: f.mime, data: f.dataBase64 } }
@@ -235,7 +238,7 @@ export async function extractOneBill(
            choked past ~50 lines and the cut JSON failed the parse, reading the
            WHOLE bill as a failure. 8000 carries ~300 lines. */
         max_tokens: 8000,
-        messages: [{ role: 'user', content: [...blocks, { type: 'text', text: PROMPT }] }],
+        messages: [{ role: 'user', content: [...blocks, { type: 'text', text: prompt }] }],
       }),
     });
   } catch (e) {
@@ -254,9 +257,19 @@ export async function extractOneBill(
     return { ok: false, reason: `The reader's answer was unreadable: ${e instanceof Error ? e.message : String(e)}` };
   }
   const text = (data.content ?? []).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('');
-  const parsed = parseModelJson(text);
-  if (!parsed) return { ok: false, reason: 'The reader answered, but not with a bill — try a clearer photo.' };
-  return { ok: true, extraction: coerceBillJson(parsed) };
+  return { ok: true, json: parseModelJson(text) };
+}
+
+/** ONE bill → one vision call. Throws only on programmer error. */
+export async function extractOneBill(
+  apiKey: string,
+  files: BillFile[],
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ ok: true; extraction: BillExtraction } | { ok: false; reason: string }> {
+  const read = await readPaperJson(apiKey, files, PROMPT, fetchImpl);
+  if (!read.ok) return read;
+  if (!read.json) return { ok: false, reason: 'The reader answered, but not with a bill — try a clearer photo.' };
+  return { ok: true, extraction: coerceBillJson(read.json) };
 }
 
 /* ── Supplier fuzzy match — server-side, plain code ─────────────────────────
