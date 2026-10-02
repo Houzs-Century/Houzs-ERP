@@ -31,6 +31,11 @@
 //        sheet's date write-back finds it). Own-team gated by the ERP; the leg
 //        rows are never pushed back (erpCollectUpdates_ skips '#' and the
 //        "-<KIND>" leg key).
+//
+// 2990 ROWS (BUG-49): the 2990 pull (sync2990FromErp) appends "2990-SO-..."
+// rows onto the same tabs. SHEET_SYNC_KEY only opens HOUZS orders, so those
+// rows push with Script property SHEET_SYNC_KEY_2990 (the 2990 pull's key);
+// without it they stay PENDING and are logged, never sent under the HOUZS key.
 
 const ERP_CHECKPOINT_PROP = "ERP_SYNC_CHECKPOINT";
 // Service-Case legs ride their own cursor so a stuck ASSR page never holds up
@@ -52,7 +57,11 @@ function erpConfig_() {
   const base = (props.getProperty("ERP_BASE_URL") || ERP_DEFAULT_BASE_URL).replace(/\/+$/, "");
   const key = props.getProperty("SHEET_SYNC_KEY") || (typeof ASSR_SYNC_KEY !== "undefined" ? ASSR_SYNC_KEY : "");
   if (!base || !key) throw new Error("Set Script property SHEET_SYNC_KEY (or keep ASSR_SYNC_KEY in ERPMain.gs).");
-  return { base: base, key: key };
+  return { base: base, key: key, key2990: props.getProperty("SHEET_SYNC_KEY_2990") || "" };
+}
+
+function erpIs2990Doc_(docNo) {
+  return /^2990-/i.test(String(docNo || "").trim());
 }
 
 function erpFetch_(cfg, path, options, rid) {
@@ -432,9 +441,18 @@ function pushUpdatesToErp(triggerType) {
       if (!sheet) { Log.warn(rid, "Sheet [" + sConfig.name + "] not found. Skipping."); return; }
       const updates = erpCollectUpdates_(sheet, sConfig, false);
       if (!updates.length) return;
-      const r = erpPushRows_(cfg, sheet, sConfig, updates, rid, true);
-      pushCount += r.ok;
-      errorCount += r.err;
+      const houzs = updates.filter(function (u) { return !erpIs2990Doc_(u.DocNo); });
+      const rows2990 = updates.filter(function (u) { return erpIs2990Doc_(u.DocNo); });
+      [[houzs, cfg], [rows2990, { base: cfg.base, key: cfg.key2990 }]].forEach(function (leg) {
+        if (!leg[0].length) return;
+        if (!leg[1].key) {
+          Log.warn(rid, "[" + sConfig.name + "] " + leg[0].length + " 2990 row(s) left PENDING: Script property SHEET_SYNC_KEY_2990 is not set.");
+          return;
+        }
+        const r = erpPushRows_(leg[1], sheet, sConfig, leg[0], rid, true);
+        pushCount += r.ok;
+        errorCount += r.err;
+      });
     });
     let status = "SYNCED";
     let message = "Pushed " + pushCount + " row(s) to the ERP.";
@@ -577,6 +595,24 @@ function scheduledErpSync() {
   }
 }
 function manualErpPull() { runErpPullProcess("MANUAL"); }
+
+/** One-off after BUG-49 deploys: the 2990 rows the HOUZS-only push marked
+ *  "ERR: NO ORDER" go back to PENDING so the next push sends their dates. */
+function erpRetry2990Rows() {
+  const ss = getTargetSs();
+  erpRegionalSheets_().forEach(function (sConfig) {
+    const sheet = ss.getSheetByName(sConfig.name);
+    if (!sheet) return;
+    const data = sheet.getDataRange().getValues();
+    let n = 0;
+    for (let i = sConfig.start - 1; i < data.length; i++) {
+      if (!erpIs2990Doc_(data[i][1]) || data[i][sConfig.statusCol - 1] !== "ERR: NO ORDER") continue;
+      sheet.getRange(i + 1, sConfig.statusCol).setValue("PENDING").setBackground("#fff2cc");
+      n++;
+    }
+    Log.info("retry2990", sConfig.name + ": " + n + " row(s) back to PENDING");
+  });
+}
 function manualErpPush() { pushUpdatesToErp("MANUAL"); }
 function manualErpAssrPull() { runErpAssrPull("MANUAL"); }
 
