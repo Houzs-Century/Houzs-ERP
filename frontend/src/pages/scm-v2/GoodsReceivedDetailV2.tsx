@@ -30,9 +30,13 @@ import { DATA_TABLE_LAYOUT_FAMILIES } from "../../components/dataTableLayoutFami
 import { DetailGrid, DetailMain, DetailAside, Section } from "../../components/DetailLayout";
 import {
   useGrnDetail,
+  useGrnItemRacks,
   usePostGrn,
   useCancelGrn,
 } from "../../vendor/scm/lib/grn-queries";
+import { useRacks } from "../../vendor/scm/lib/warehouse-queries";
+import { lineRackSummary } from "../../vendor/scm/lib/grn-line-rack";
+import { effectiveRackSplit } from "../../vendor/shared/rack-split";
 import { useSupplierDetail } from "../../vendor/scm/lib/suppliers-queries";
 import { skuMapFromBindings, supplierCodeFor } from "../../vendor/scm/lib/supplier-doc-data";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
@@ -109,6 +113,9 @@ type GrnItem = {
      PO line's qty, stamped by the detail GET (null on manual lines). */
   qty_received?: number | null;
   qty_accepted?: number | null;
+  /* The one rack the line is on (NULL when split over several — those are in
+     scm.grn_item_racks, read by useGrnItemRacks). */
+  rack_id?: string | null;
   ordered_qty?: number | null;
   source_po_id?: string | null;
   source_po_number?: string | null;
@@ -337,6 +344,20 @@ function GoodsReceivedDetailV2ReadOnly() {
     [detail.data]
   );
 
+  /* Owner 2026-10-02: the view page shows each line's racks, as the phone's
+     line card does, instead of only the Edit page. */
+  const racksQ = useRacks({ warehouseId: grn?.warehouse_id ?? undefined });
+  const splitQ = useGrnItemRacks(grn?.id);
+  const rackSummaryOf = useMemo(() => {
+    const labels = new Map((racksQ.data?.racks ?? []).map((r) => [r.id, r.rack] as const));
+    const rows = new Map<string, { rackId: string; qty: number }[]>();
+    for (const r of splitQ.data ?? []) rows.set(r.grnItemId, [...(rows.get(r.grnItemId) ?? []), { rackId: r.rackId, qty: r.qty }]);
+    return (l: GrnItem) => {
+      const accepted = Number(l.qty_accepted ?? 0);
+      return lineRackSummary(effectiveRackSplit(l.rack_id ?? null, accepted, rows.get(l.id) ?? []), accepted, (rid) => labels.get(rid));
+    };
+  }, [racksQ.data?.racks, splitQ.data]);
+
   // The 5-node receipt chain + what each node does when clicked (shared hook,
   // one logic layer — mirrors how the PO / DO detail pages consume their map).
   const {
@@ -520,6 +541,22 @@ function GoodsReceivedDetailV2ReadOnly() {
         const ordered = Number(l.ordered_qty ?? 0);
         const full = ordered > 0 && rec >= ordered;
         return <span className={cn("font-money text-[13px] font-semibold", full ? "text-synced" : "text-ink")}>{rec}</span>;
+      },
+    },
+    {
+      key: "racks",
+      label: "Racks",
+      width: "150px",
+      getValue: (l) => rackSummaryOf(l).text,
+      render: (l) => {
+        const { text, unplaced } = rackSummaryOf(l);
+        if (!text) return <span className="text-ink-muted">—</span>;
+        return (
+          <div className="min-w-0">
+            <div className="font-mono text-[12px] text-ink">{text}</div>
+            {unplaced > 0 && <div className="text-[11px] text-amber-700">{unplaced} not on a rack</div>}
+          </div>
+        );
       },
     },
     {
