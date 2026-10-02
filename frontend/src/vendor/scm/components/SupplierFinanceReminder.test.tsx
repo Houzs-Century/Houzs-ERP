@@ -29,13 +29,13 @@ describe('missingSupplierFinance', () => {
 describe('SupplierFinanceReminder', () => {
   const draw = () => render(<MemoryRouter><SupplierFinanceReminder supplierId="sup-1" /></MemoryRouter>);
 
-  test('names what is missing and links the supplier page; the payment is not blocked', () => {
+  test('names what is missing and links Supplier Maintenance; the payment is not blocked', () => {
     detail = { id: 'sup-1', name: 'MLE EVENTS SDN BHD', tin_number: null, business_reg_no: null, registration_no: null };
     draw();
     const note = screen.getByRole('status', { name: 'Supplier finance details missing' });
     expect(note.textContent).toContain('MLE EVENTS SDN BHD has no TIN or registration no.');
     expect(note.textContent).toContain('the payment can still go ahead');
-    expect(screen.getByText('the supplier page').getAttribute('href')).toBe('/scm/suppliers/sup-1');
+    expect(screen.getByText('Supplier Maintenance').getAttribute('href')).toBe('/scm/supplier-maintenance?open=sup-1');
   });
 
   test('stays quiet for a complete supplier, and for a caller who cannot see the Finance part', () => {

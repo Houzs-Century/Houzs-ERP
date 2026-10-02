@@ -124,6 +124,7 @@ const ScmApInvoicesV2 = lazy(() => import("./pages/scm-v2/ApInvoices").then((m) 
 const ScmArInvoicesV2 = lazy(() => import("./pages/scm-v2/ArInvoices").then((m) => ({ default: m.ArInvoices })));
 const ScmPaymentRequestsV2 = lazy(() => import("./pages/scm-v2/PaymentRequests").then((m) => ({ default: m.PaymentRequests })));
 const ScmOfficialDocsV2 = lazy(() => import("./pages/scm-v2/OfficialDocs").then((m) => ({ default: m.OfficialDocs })));
+const ScmSupplierMaintenanceV2 = lazy(() => import("./pages/scm-v2/SupplierMaintenance").then((m) => ({ default: m.SupplierMaintenance })));
 const ScmCreditNotesV2 = lazy(() => import("./pages/scm-v2/CreditNotes").then((m) => ({ default: m.CreditNotes })));
 const ScmDepositInvoicesV2 = lazy(() => import("./pages/scm-v2/DepositInvoices").then((m) => ({ default: m.DepositInvoices })));
 const ScmForecastPnlV2 = lazy(() => import("./pages/scm-v2/ForecastPnl").then((m) => ({ default: m.ForecastPnl })));
@@ -761,6 +762,8 @@ export default function App() {
         <Route path="/scm/payment-requests" element={<Guard anyPerm={["*", "scm.payment_request.create", "scm.payment_voucher.create"]}><Scm2990Shell><ScmPaymentRequestsV2 /></Scm2990Shell></Guard>} />
         {/* 欠正式单 (owner 2026-10-01, item 3) — Finance's list of payments still owing the official invoice. */}
         <Route path="/scm/official-docs" element={<Guard anyPerm={["*", "scm.payment_voucher.create"]}><Scm2990Shell><ScmOfficialDocsV2 /></Scm2990Shell></Guard>} />
+        {/* Supplier Maintenance (owner 2026-10-02) — Finance's own supplier list; same area as the AP Invoices it sits beside. */}
+        <Route path="/scm/supplier-maintenance" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmSupplierMaintenanceV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/ap-invoices/scan" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherScanV2 target="ap" /></Scm2990Shell></ScmGuard>} />
         {/* Credit and debit notes (owner 2026-09-12; docs/bugs/0827). */}
         <Route path="/scm/credit-notes" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmCreditNotesV2 /></Scm2990Shell></ScmGuard>} />

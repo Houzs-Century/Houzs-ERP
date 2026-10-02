@@ -18,8 +18,8 @@ describe('the two copies of supplier-finance-fields are the same file', () => {
 
   /* A byte comparison passes for the wrong reason if both reads came back
      empty; prove the lists are real and pair up. */
-  test('the column list and the body-key list name the same seven fields', () => {
-    expect(SUPPLIER_FINANCE_COLUMNS).toHaveLength(7);
+  test('the column list and the body-key list name the same eleven fields', () => {
+    expect(SUPPLIER_FINANCE_COLUMNS).toHaveLength(11);
     const camel = SUPPLIER_FINANCE_COLUMNS.map((c) => c.replace(/_([a-z])/g, (_, ch: string) => ch.toUpperCase()));
     expect(camel).toEqual([...SUPPLIER_FINANCE_BODY_KEYS]);
   });

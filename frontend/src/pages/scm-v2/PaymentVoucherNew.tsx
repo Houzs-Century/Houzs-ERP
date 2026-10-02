@@ -41,7 +41,8 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
-import { SupplierFinanceReminder } from '../../vendor/scm/components/SupplierFinanceReminder';
+import { SupplierFinanceReminder, SupplierPayTo } from '../../vendor/scm/components/SupplierFinanceReminder';
+import { supplierBankLine } from '../../vendor/scm/lib/supplier-maintenance-queries';
 import { EventSelect } from '../../vendor/scm/components/EventSelect';
 import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
 import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
@@ -445,6 +446,17 @@ export const PaymentVoucherNew = () => {
     if (!supplierRow) return;
     setPayeeName((prev) => prev.trim() ? prev : supplierRow.name);
   }, [supplierRow]);
+  /* The supplier's bank rides into the Notes, which the voucher prints under PAY
+     TO (owner 2026-10-02, A3a: 付款时自动带出来). Only into empty Notes, or Notes
+     still holding the last supplier's bank line — what Finance typed stays. */
+  const lastBankNote = useRef('');
+  useEffect(() => {
+    if (!isAp) return;
+    const line = supplierBankLine(supplierDetail);
+    const next = line ? `Pay to ${line}` : '';
+    setNotes((prev) => (!prev.trim() || prev === lastBankNote.current ? next : prev));
+    lastBankNote.current = next;
+  }, [isAp, supplierDetail]);
 
   /* Multi-currency (Phase 1-A) — the PV's currency defaults to the linked
      supplier's currency; MYR when unset (strict no-op, no rate field). The
@@ -831,6 +843,7 @@ export const PaymentVoucherNew = () => {
                   placeholder={suppliersQ.isLoading ? 'Loading suppliers…' : 'Type to find the supplier this pays'}
                 />
                 <SupplierFinanceReminder supplierId={supplierId} />
+                <SupplierPayTo supplierId={supplierId} />
               </label>
             )}
             <label className={styles.field}>
