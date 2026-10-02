@@ -890,23 +890,38 @@ export const useSaveSpecialAddons = () => {
   });
 };
 
+/** What scm.rename_sofa_compartment reports, for a preview or a run. */
+export type SofaCompartmentRenameResult = {
+  from: string;
+  to: string;
+  applied: boolean;
+  refused: 'in_use' | null;
+  /** `<table>.<column>` -> rows of THIS company still using the code. */
+  inUse: Record<string, number>;
+  inUseTotal: number;
+  /** table -> rows the rename rewrites (pool, Model ticks, combos, quick picks). */
+  changes: Record<string, number>;
+  /** An uploaded photo is filed under the old code and is dropped. */
+  photoCleared: boolean;
+};
+
 /**
- * Maintenance-is-master cascade rename — renames a sofa compartment code text
- * ATOMICALLY across the whole stack. Backed by the rename_sofa_compartment()
- * SECURITY DEFINER function; admin only.
+ * Renames a sofa compartment code in the ACTIVE company only. `apply: false`
+ * is a preview (no write). A code still used by any SKU, document or stock row
+ * of the company is refused (409 in_use).
  */
 export function useRenameSofaCompartment() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (args: { from: string; to: string }) => {
-      return authedFetch<{ ok: boolean; result: unknown }>(
+    mutationFn: async (args: { from: string; to: string; apply: boolean }) => {
+      return authedFetch<{ ok: boolean; applied: boolean; result: SofaCompartmentRenameResult }>(
         `/maintenance-config/sofa-compartments/rename`,
         { method: 'POST', body: JSON.stringify(args) },
       );
     },
-    onSuccess: () => {
+    onSuccess: (_data, args) => {
+      if (!args.apply) return;
       qc.invalidateQueries({ queryKey: ['maintenance-config'] });
-      qc.invalidateQueries({ queryKey: ['mfg-products'] });
       qc.invalidateQueries({ queryKey: ['product-models'] });
       qc.invalidateQueries({ queryKey: ['sofa-combos'] });
     },
