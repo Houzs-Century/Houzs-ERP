@@ -21,6 +21,7 @@ import { postJournal, reverseJournal } from './engine';
 import { creditNoteLines, debitNoteLines, supplierCreditNoteLines, resolveRoles, type NoteLine, type NoteParty } from './rules';
 import { docMonthTag, mintMonthlyDocNo } from '../scm/lib/doc-no';
 import { todayMyt } from '../scm/lib/my-time';
+import { removeAllAllocations } from './credit-note-allocations';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
 type Db = any;
@@ -148,6 +149,12 @@ export async function cancelCreditNote(
 ): Promise<{ ok: true; status: 'cancelled' | 'already_cancelled'; contraJeNo: string | null } | { ok: false; status: string; reason: string }> {
   const note = p.note;
   if (note.status === 'CANCELLED') return { ok: true, status: 'already_cancelled', contraJeNo: null };
+  /* A supplier note's credit comes back off the invoices it was applied to
+     first (2026-10-01, Supplier CN part 2) — they owe it again. */
+  if (note.kind === 'SCN') {
+    const back = await removeAllAllocations(sb, { companyId: p.companyId, note });
+    if (!back.ok) return { ok: false, status: back.refusal.error, reason: back.refusal.message };
+  }
   let contraJeNo: string | null = null;
   if (note.status === 'POSTED') {
     const kind = String(note.kind) as NoteKind;

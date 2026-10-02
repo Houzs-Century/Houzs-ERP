@@ -46,6 +46,11 @@ const SCAN = {
   notes: ['SST RM 59.09 is spread over the lines — the purchase was booked with its SST.'],
 };
 const scanMutate = vi.fn(async (_pages: unknown) => SCAN);
+/* Part 2: the posted supplier note n2 has RM 200.00 taken off one invoice, RM 300.00 left. */
+const ALLOCS = [{ id: 'al-1', kind: 'PI', docId: 'pi-1', number: '2990-PI-2609-004', amountSen: 20_000, appliedSen: 20_000, createdAt: '2026-09-03T00:00:00Z', createdBy: 'Chew' }];
+const OPEN = [{ kind: 'PI', id: 'pi-2', number: '2990-PI-2609-007', invoiceRef: 'INV-77', invoiceDate: '2026-09-05', totalSen: 40_000, paidSen: 0, outstandingSen: 40_000, status: 'POSTED' }];
+const applyMutate = vi.fn();
+const removeMutate = vi.fn();
 const uploadMutate = vi.fn(async (_b: unknown) => ({ ok: true }));
 const lastList = { value: '' };
 const pdfSingle = vi.fn(async (..._args: unknown[]) => {});
@@ -67,9 +72,12 @@ vi.mock('../../vendor/scm/lib/credit-note-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
   useCreditNotes: (kind: string, status: string) => { lastList.value = `${kind}|${status}`; return { data: { rows: NOTES }, isLoading: false, isError: false, error: null }; },
   useCreditNoteDetail: (id: string | null) => ({
-    data: id ? { note: NOTES.find((n) => n.id === id)!, lines: LINES } : undefined,
+    data: id ? { note: NOTES.find((n) => n.id === id)!, lines: LINES, ...(id === 'n2' ? { allocations: ALLOCS, appliedSen: 20_000, leftSen: 30_000 } : {}) } : undefined,
     isLoading: false,
   }),
+  useCreditNoteOpenInvoices: (id: string | null) => ({ data: id ? { invoices: OPEN } : undefined, isLoading: false }),
+  useApplyCreditNote: () => ({ mutate: applyMutate, isPending: false, isError: false, error: null }),
+  useRemoveCreditNoteAllocation: () => ({ mutate: removeMutate, isPending: false, isError: false, error: null }),
   useCreateCreditNote: () => ({ mutateAsync: createMutate, isPending: false, isError: false, error: null }),
   useUpdateCreditNote: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
   usePostCreditNote: () => ({ mutate: postMutate, mutateAsync: postMutate, isPending: false, isError: false, isSuccess: false, error: null }),
@@ -205,5 +213,36 @@ describe('Scan supplier CN', () => {
     fireEvent.click(screen.getByText('Save note'));
     await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
     expect(createMutate.mock.calls[0]![0]).not.toHaveProperty('purchaseInvoiceId');
+  });
+});
+
+/* Supplier CN part 2 (owner 2026-10-01: 有写发票的 CN 直接扣那张发票的欠款；没写的先挂在供应商名下，再选要扣哪几张发票). */
+describe('where a posted supplier note\'s credit goes', () => {
+  test('the detail shows the invoice it came off and the credit left; the rest comes off the invoice picked; one application is given back', async () => {
+    applyMutate.mockClear(); removeMutate.mockClear();
+    render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
+    fireEvent.click(screen.getByText('2990-SCN-2609-001'));
+    const credit = await screen.findByLabelText('Where the credit went');
+    expect(within(credit).getByText('2990-PI-2609-004')).toBeTruthy();
+    expect(within(credit).getByText('RM 300.00')).toBeTruthy();
+    fireEvent.click(within(credit).getByText('Take it off invoices… · 扣发票'));
+    fireEvent.change(within(credit).getByLabelText('Amount off 2990-PI-2609-007'), { target: { value: '300' } });
+    fireEvent.click(within(credit).getByText('Take it off'));
+    expect(applyMutate).toHaveBeenCalledWith({ noteId: 'n2', targets: [{ kind: 'PI', id: 'pi-2', amountSen: 30_000 }] }, expect.anything());
+
+    fireEvent.click(within(credit).getByLabelText('Give back 2990-PI-2609-004'));
+    const confirm = await screen.findByRole('button', { name: 'Give back' });
+    fireEvent.click(confirm);
+    await waitFor(() => expect(removeMutate).toHaveBeenCalledWith({ noteId: 'n2', allocationId: 'al-1' }));
+  });
+
+  test('more than is left cannot be taken off', async () => {
+    applyMutate.mockClear();
+    render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
+    fireEvent.click(screen.getByText('2990-SCN-2609-001'));
+    const credit = await screen.findByLabelText('Where the credit went');
+    fireEvent.click(within(credit).getByText('Take it off invoices… · 扣发票'));
+    fireEvent.change(within(credit).getByLabelText('Amount off 2990-PI-2609-007'), { target: { value: '350' } });
+    expect((within(credit).getByText('Take it off').closest('button') as HTMLButtonElement).disabled).toBe(true);
   });
 });

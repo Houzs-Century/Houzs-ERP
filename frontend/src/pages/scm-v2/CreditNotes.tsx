@@ -32,7 +32,8 @@ import { useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
 import {
   useCreditNotes, useCreditNoteDetail, useCreateCreditNote, useUpdateCreditNote, usePostCreditNote, useCancelCreditNote,
   useScanSupplierCreditNote, useCreditNoteFiles, useUploadCreditNoteFile, useDeleteCreditNoteFile, fetchCreditNoteFileBlobUrl,
-  type CreditNote, type CreditNoteLine, type CreditNoteLineInput, type NoteKind, type NoteStatus, type ScnScan,
+  useCreditNoteOpenInvoices, useApplyCreditNote, useRemoveCreditNoteAllocation,
+  type CreditAllocation, type CreditNote, type CreditNoteLine, type CreditNoteLineInput, type NoteKind, type NoteStatus, type ScnScan,
 } from '../../vendor/scm/lib/credit-note-queries';
 import { fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
@@ -316,8 +317,17 @@ const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; 
               <tr><td colSpan={3} style={{ ...td, fontWeight: 700 }}>Total</td><td style={{ ...td, ...num, fontWeight: 700 }}>{fmtSen(n.total_sen)}</td></tr>
             </tbody>
           </table>
+          {n.kind === 'SCN' && n.status === 'POSTED' && (
+            <NoteCredit noteId={n.id} totalSen={n.total_sen} allocations={q.data?.allocations ?? []} leftSen={q.data?.leftSen ?? n.total_sen} />
+          )}
           <NoteFilesCard noteId={n.id} locked={n.status === 'POSTED'} closed={n.status === 'CANCELLED'} />
-          {post.isSuccess && <div style={{ fontSize: 'var(--fs-13)', color: good }}>Posted as {post.data.jeNo}.</div>}
+          {post.isSuccess && (
+            <div style={{ fontSize: 'var(--fs-13)', color: good }}>
+              Posted as {post.data.jeNo}.
+              {(post.data.applied ?? []).map((a) => ` ${fmtSen(a.appliedSen)} came off ${a.number}.`).join('')}
+              {post.data.notApplied ? ` ${post.data.notApplied}` : ''}
+            </div>
+          )}
           {printError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{printError}</div>}
           {failed != null && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{errText(failed)}</div>}
         </div>
@@ -470,6 +480,73 @@ const ScanPanel = ({ scan, credited, onCredit }: { scan: ScnScan; credited: Form
     )}
   </div>
 );
+
+/* Where a posted supplier note's credit went (owner 2026-10-01, Supplier CN part
+   2: 有写发票的 CN 直接扣那张发票的欠款；没写的先挂在供应商名下，再选要扣哪几张发票；
+   付款时只付剩下的): each invoice it came off, the credit left, and — while some
+   is left — the supplier's invoices still owing, each taking an amount. */
+const NoteCredit = ({ noteId, totalSen, allocations, leftSen }: { noteId: string; totalSen: number; allocations: CreditAllocation[]; leftSen: number }) => {
+  const [picking, setPicking] = useState(false);
+  /* An invoice nobody has typed against yet has no entry — hence undefined. */
+  const [amounts, setAmounts] = useState<Record<string, string | undefined>>({});
+  const openQ = useCreditNoteOpenInvoices(picking ? noteId : null);
+  const apply = useApplyCreditNote();
+  const remove = useRemoveCreditNoteAllocation();
+  const askConfirm = useConfirm();
+  const picked = (openQ.data?.invoices ?? [])
+    .map((i) => ({ i, sen: amounts[i.id]?.trim() ? toSen(amounts[i.id]!) : 0 }))
+    .filter((x) => x.sen > 0);
+  const pickedSen = picked.reduce((s, x) => s + x.sen, 0);
+  const failed = apply.isError ? apply.error : remove.isError ? remove.error : null;
+  return (
+    <div style={{ display: 'grid', gap: 6, fontSize: 'var(--fs-13)' }} aria-label="Where the credit went">
+      <div style={{ fontWeight: 600 }}>Credit · 扣发票</div>
+      {allocations.length === 0 && <div style={soft}>Not taken off any invoice yet — the credit stays with the supplier.</div>}
+      {allocations.map((a) => (
+        <div key={a.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontFamily: 'var(--font-mono)' }}>{a.number ?? a.docId}</span>
+          <span style={num}>{fmtSen(a.appliedSen)}</span>
+          <button type="button" style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--c-orange)', textDecoration: 'underline', fontSize: 'var(--fs-12)' }}
+            disabled={remove.isPending} aria-label={`Give back ${a.number ?? a.docId}`}
+            onClick={async () => {
+              const yes = await askConfirm({ title: `Give ${fmtSen(a.appliedSen)} back from ${a.number ?? 'the invoice'}?`, body: 'The invoice owes it again; the credit returns to the note.', confirmLabel: 'Give back' });
+              if (yes) remove.mutate({ noteId, allocationId: a.id });
+            }}>
+            Give back
+          </button>
+        </div>
+      ))}
+      <div><span style={soft}>Credit left </span><strong style={num}>{fmtSen(leftSen)}</strong><span style={soft}> of {fmtSen(totalSen)}</span></div>
+      {leftSen > 0 && !picking && (
+        <div><Button variant="ghost" size="sm" onClick={() => setPicking(true)}>Take it off invoices… · 扣发票</Button></div>
+      )}
+      {picking && (
+        <div style={{ border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 'var(--space-2)', display: 'grid', gap: 6 }}>
+          {openQ.isLoading && <div style={soft}>Loading the supplier's invoices…</div>}
+          {openQ.data && openQ.data.invoices.length === 0 && <div style={soft}>No invoice of this supplier owes anything now.</div>}
+          {(openQ.data?.invoices ?? []).map((i) => (
+            <label key={i.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontFamily: 'var(--font-mono)', minWidth: 140 }}>{i.number}</span>
+              <span style={soft}>{i.invoiceRef ? `${i.invoiceRef} · ` : ''}{fmtDateOrDash(i.invoiceDate)} · owes {fmtSen(i.outstandingSen)}</span>
+              <input type="number" min={0} step="0.01" value={amounts[i.id] ?? ''} placeholder="0.00" aria-label={`Amount off ${i.number}`}
+                onChange={(e) => setAmounts({ ...amounts, [i.id]: e.target.value })} style={{ ...input, minWidth: 110, textAlign: 'right' }} />
+            </label>
+          ))}
+          <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ ...soft, color: pickedSen > leftSen ? danger : undefined }}>Taking {fmtSen(pickedSen)} of {fmtSen(leftSen)} left</span>
+            <span style={{ flex: 1 }} />
+            <Button variant="ghost" size="sm" onClick={() => { setPicking(false); setAmounts({}); }} disabled={apply.isPending}>Close</Button>
+            <Button size="sm" disabled={apply.isPending || picked.length === 0 || pickedSen > leftSen}
+              onClick={() => apply.mutate({ noteId, targets: picked.map((x) => ({ kind: x.i.kind, id: x.i.id, amountSen: x.sen })) }, { onSuccess: () => { setPicking(false); setAmounts({}); } })}>
+              {apply.isPending ? 'Applying…' : 'Take it off'}
+            </Button>
+          </div>
+        </div>
+      )}
+      {failed != null && <div style={{ color: danger }}>{errText(failed)}</div>}
+    </div>
+  );
+};
 
 /* The note's paper — the AP invoice's files card bound to this document: a
    POSTED note keeps what it has, a CANCELLED one takes no more. */

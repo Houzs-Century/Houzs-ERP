@@ -37,6 +37,7 @@ import {
 import { requireLeafAccount } from './accounting-chart';
 import { supabaseAuth } from '../middleware/auth';
 import { scanSupplierCreditNoteHandler } from './credit-note-scan';
+import { applyCreditNote, noteAllocations, removeAllocation, supplierOpenInvoices, type CreditTarget } from '../../acc/credit-note-allocations';
 import { deleteCreditNoteFileHandler, listCreditNoteFilesHandler, streamCreditNoteFileHandler, uploadCreditNoteFileHandler } from './credit-note-files';
 
 type Row = Record<string, any>;
@@ -159,7 +160,14 @@ export const creditNoteDetailHandler = async (c: any): Promise<Response> => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const numbered = await withInvoiceNumbers(c, [found.note as unknown as Row]);
   if ('resp' in numbered) return numbered.resp;
-  return c.json({ note: numbered.rows[0], lines: (Array.isArray(lines) ? lines : []) as Row[] });
+  /* A supplier note's applications and the credit it has left (part 2). */
+  let credit: Row = {};
+  if (found.note.kind === 'SCN') {
+    const al = await noteAllocations(sb, co.companyId, found.note);
+    if (!al.ok) return c.json({ error: 'load_failed', reason: al.reason }, 500);
+    credit = { allocations: al.allocations, appliedSen: al.appliedSen, leftSen: al.leftSen };
+  }
+  return c.json({ note: numbered.rows[0], lines: (Array.isArray(lines) ? lines : []) as Row[], ...credit });
 };
 
 export const createCreditNoteHandler = async (c: any): Promise<Response> => {
@@ -302,7 +310,70 @@ export const postCreditNoteHandler = async (c: any): Promise<Response> => {
     if (posted.status === 'load_failed' || posted.status === 'save_failed') return c.json({ error: posted.status, reason: posted.reason }, 500);
     return c.json({ error: 'post_failed', status: posted.status, reason: posted.reason }, 500);
   }
-  return c.json({ ok: true, jeNo: posted.jeNo, status: posted.status });
+  /* 有写发票的 CN 直接扣那张发票的欠款 (owner 2026-10-01, part 2): a supplier note
+     naming its invoice takes the credit off it now — as much as the invoice
+     still owes; the rest stays as the supplier's credit. The post stands
+     whatever this says. */
+  const named = note.kind === 'SCN' && posted.status === 'posted'
+    ? (note.purchase_invoice_id ? { kind: 'PI' as const, id: String(note.purchase_invoice_id) } : note.ap_invoice_id ? { kind: 'API' as const, id: String(note.ap_invoice_id) } : null)
+    : null;
+  if (!named) return c.json({ ok: true, jeNo: posted.jeNo, status: posted.status });
+  const sb = c.get('supabase');
+  const { data: doc, error: docErr } = await sb.from(named.kind === 'PI' ? 'purchase_invoices' : 'ap_invoices')
+    .select('total_sen, paid_sen, status').eq('company_id', co.companyId).eq('id', named.id).maybeSingle();
+  const owed = !docErr && doc && ((doc as Row).status === 'POSTED' || (doc as Row).status === 'PARTIALLY_PAID')
+    ? Number((doc as Row).total_sen ?? 0) - Number((doc as Row).paid_sen ?? 0) : 0;
+  const amount = Math.min(Number(note.total_sen ?? 0), owed);
+  if (amount <= 0) {
+    return c.json({ ok: true, jeNo: posted.jeNo, status: posted.status, applied: [], notApplied: docErr ? docErr.message : 'The invoice it names owes nothing now — the credit stays with the supplier.' });
+  }
+  const applied = await applyCreditNote(sb, { companyId: co.companyId, note: { ...note, status: 'POSTED' }, targets: [{ ...named, amountSen: amount }], actor: who(c) });
+  return c.json({ ok: true, jeNo: posted.jeNo, status: posted.status, applied: applied.ok ? applied.applied : [], ...(applied.ok ? {} : { notApplied: applied.refusal.message }) });
+};
+
+/* ── The credit coming off the supplier's invoices (part 2) ──────────────── */
+
+/** The supplier's invoices still owing — what the note's credit can come off. */
+export const creditNoteOpenInvoicesHandler = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const found = await loadNote(c, c.req.param('id'));
+  if ('resp' in found) return found.resp;
+  if (found.note.kind !== 'SCN' || !found.note.supplier_id) return c.json({ invoices: [] });
+  const open = await supplierOpenInvoices(c.get('supabase'), co.companyId, String(found.note.supplier_id));
+  if (!open.ok) return c.json({ error: 'load_failed', reason: open.reason }, 500);
+  return c.json({ invoices: open.invoices });
+};
+
+/** POST /:id/apply { targets: [{ kind: 'PI' | 'API', id, amountSen }] } — 没写的先挂在
+    供应商名下，再选要扣哪几张发票 (owner 2026-10-01). */
+export const applyCreditNoteHandler = async (c: any): Promise<Response> => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) return c.json(NO_PERM('take a credit off an invoice'), 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const found = await loadNote(c, c.req.param('id'));
+  if ('resp' in found) return found.resp;
+  const targets: CreditTarget[] = (Array.isArray(body?.targets) ? body.targets : []).map((t: any) => ({
+    kind: String(t?.kind ?? '').toUpperCase() as CreditTarget['kind'], id: String(t?.id ?? '').trim(), amountSen: Number(t?.amountSen),
+  }));
+  const applied = await applyCreditNote(c.get('supabase'), { companyId: co.companyId, note: found.note, targets, actor: who(c) });
+  if (!applied.ok) return c.json({ error: applied.refusal.error, message: applied.refusal.message }, applied.refusal.status);
+  return c.json({ ok: true, applied: applied.applied });
+};
+
+/** POST /:id/allocations/:allocationId/remove — the credit given back to the note; the invoice owes it again. */
+export const removeCreditNoteAllocationHandler = async (c: any): Promise<Response> => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) return c.json(NO_PERM('give a credit back'), 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const found = await loadNote(c, c.req.param('id'));
+  if ('resp' in found) return found.resp;
+  if (found.note.status !== 'POSTED') return c.json({ error: 'note_not_posted', message: `${found.note.note_number} is ${String(found.note.status).toLowerCase()}.` }, 409);
+  const back = await removeAllocation(c.get('supabase'), { companyId: co.companyId, note: found.note, allocationId: c.req.param('allocationId') });
+  if (!back.ok) return c.json({ error: back.refusal.error, message: back.refusal.message }, back.refusal.status);
+  return c.json({ ok: true });
 };
 
 export const cancelCreditNoteHandler = async (c: any): Promise<Response> => {
@@ -316,6 +387,7 @@ export const cancelCreditNoteHandler = async (c: any): Promise<Response> => {
   const cancelled = await cancelCreditNote(c.get('supabase'), { companyId: co.companyId, note, actor: who(c) });
   if (!cancelled.ok) {
     if (cancelled.status === 'save_failed') return c.json({ error: 'save_failed', reason: cancelled.reason }, 500);
+    if (cancelled.status === 'settle_failed' || cancelled.status === 'load_failed') return c.json({ error: cancelled.status, message: cancelled.reason }, 500);
     return c.json({ error: 'reverse_failed', status: cancelled.status, reason: cancelled.reason }, 500);
   }
   return c.json({ ok: true });
@@ -333,6 +405,9 @@ creditNotes.get('/:id', creditNoteDetailHandler);
 creditNotes.patch('/:id', updateCreditNoteHandler);
 creditNotes.post('/:id/post', postCreditNoteHandler);
 creditNotes.post('/:id/cancel', cancelCreditNoteHandler);
+creditNotes.get('/:id/open-invoices', creditNoteOpenInvoicesHandler);
+creditNotes.post('/:id/apply', applyCreditNoteHandler);
+creditNotes.post('/:id/allocations/:allocationId/remove', removeCreditNoteAllocationHandler);
 creditNotes.post('/:id/files', uploadCreditNoteFileHandler);
 creditNotes.get('/:id/files', listCreditNoteFilesHandler);
 creditNotes.get('/:id/files/:fileId', streamCreditNoteFileHandler);
