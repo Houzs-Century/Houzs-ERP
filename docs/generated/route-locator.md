@@ -1644,8 +1644,8 @@ Total: 1391 route registrations across 196 files.
 - L40  PATCH  /:key
 
 ## backend/src/scm/routes/supplier-maintenance.ts  (2)
-- L180  GET    /
-- L255  GET    /:id
+- L181  GET    /
+- L256  GET    /:id
 
 ## backend/src/routes/assr_print.ts  (1)
 - L146  GET    /:id
