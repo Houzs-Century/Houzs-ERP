@@ -198,9 +198,17 @@ export const WarehouseRacks = () => {
   const [stockInRackId, setStockInRackId] = useState<string>('');
 
   const warehouseCode = warehouses.data?.find((w) => w.id === warehouseId)?.code ?? '';
+  /* null = every rack of the warehouse; a list = just those (reprinting a
+     damaged sticker from the slot drawer or the batch bar, owner 2026-10-02). */
+  const [labelSet, setLabelSet] = useState<string[] | null>(null);
+  const printing = labelSet ?? rackList.map((r) => r.rack);
   const printLabels = usePrintPreview((action) =>
     import('../../vendor/scm/lib/rack-label-pdf').then(({ generateRackLabelsPdf }) =>
-      generateRackLabelsPdf(rackList.map((r) => r.rack), { warehouseCode, action })));
+      generateRackLabelsPdf(printing, { warehouseCode, action })));
+  const openPrint = (labels: string[] | null) => {
+    setLabelSet(labels);
+    printLabels.openPreview();
+  };
 
   return (
     <div>
@@ -225,7 +233,7 @@ export const WarehouseRacks = () => {
               <Button
                 variant="secondary"
                 icon={<Printer size={14} />}
-                onClick={printLabels.openPreview}
+                onClick={() => openPrint(null)}
                 disabled={!warehouseId || rackList.length === 0}
               >
                 Print labels
@@ -258,8 +266,9 @@ export const WarehouseRacks = () => {
         docNo={warehouseCode}
         rows={[
           { label: 'Warehouse', value: warehouseCode || '—' },
-          { label: 'Labels', value: String(rackList.length) },
-          { label: 'Sheets', value: `${Math.ceil(rackList.length / 10)} x A4` },
+          ...(labelSet ? [{ label: 'Racks', value: labelSet.join(', ') }] : []),
+          { label: 'Labels', value: String(printing.length) },
+          { label: 'Sheets', value: `${Math.ceil(printing.length / 10)} x A4` },
         ]}
         {...printLabels.handlers}
       />
@@ -338,6 +347,7 @@ export const WarehouseRacks = () => {
             view={view}
             onEditRack={(r) => { setEditing(r); setCreatingMode(null); }}
             onStockInHere={(rackId) => { setStockInRackId(rackId); selectTab('stockio'); }}
+            onPrintLabels={openPrint}
           />
         )}
 
