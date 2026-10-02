@@ -69,7 +69,7 @@ Locks
 
 Validation
 - Confirm gate (`lib/so-confirm-gate.ts`), run on DRAFT -> live and on any create not sent as a draft. It requires: every live line in the company catalog; a salesperson (`salesperson_id`, or `agent` text that `resolveAcAgent` accepts); a venue. Returns 422 `validation_failed` listing every problem. It does not check variants.
-- Catalog-only lines, on every insert path: unknown code -> 409 `unknown_item_code`; an inactive code on a new pick is refused; blank code with typed text -> 409 `so_free_text_line`; a fully blank placeholder line is allowed on DRAFTs only.
+- Catalog-only lines, on every insert path: unknown code -> 409 `unknown_item_code`; an inactive code (SKU status INACTIVE, or its Model deactivated) is not offered by the picker and is refused on a new pick; blank code with typed text -> 409 `so_free_text_line`; a fully blank placeholder line is allowed on DRAFTs only.
 - Processing-Date gate (`collectProcessingGateProblems`, `shared/so-save-problems.ts`) runs whenever a date is set or changed: required variant axes present; no colour-KIV line (`fabric_colour_kiv`); customer name, address line 1, postcode and delivery date filled; no newly entered past dates; processing date <= delivery date. One 422 lists every problem. There is no deposit condition.
 - Required axes (`REQUIRED_VARIANT_AXES_BY_CATEGORY` in `shared/so-variant-rule.ts`, with an identical copy under `vendor/shared`): bedframe needs divan, leg, gap, fabric; sofa needs seat, fabric; Sofa Accessory (`fabric_accessory`) needs fabric only.
 - Exemptions by item code: DIVAN ONLY skips gap; divanless frames (ADJUSTABLE, (S+S), DOUBLE DECKER, DDB) skip divan, leg and gap; CONSOLE/CT compartments skip seat. `itemCode` stays a required argument.

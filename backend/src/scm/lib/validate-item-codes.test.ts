@@ -51,6 +51,7 @@ const sb = () => makeSb([
   { _table: 'mfg_products', code: 'CODY-(K)', company_id: 1, status: 'ACTIVE' },
   { _table: 'mfg_products', code: 'OLD-SOFA', company_id: 1, status: 'INACTIVE' },
   { _table: 'mfg_products', code: 'SVC-DELIVERY', company_id: 1, status: 'ACTIVE' },
+  { _table: 'mfg_products', code: 'BAMBOO-(K)', company_id: 1, status: 'ACTIVE', model: { active: false } },
 ]);
 
 describe('validateItemCodes requireActive', () => {
@@ -62,6 +63,12 @@ describe('validateItemCodes requireActive', () => {
   it('an INACTIVE code is refused as a NEW pick…', async () => {
     expect(await validateItemCodes(sb(), ['OLD-SOFA'], 1, { requireActive: true }))
       .toEqual({ ok: false, unknown: [], inactive: ['OLD-SOFA'] });
+  });
+
+  it('BUG-50: an ACTIVE SKU under a deactivated Model is refused as a NEW pick', async () => {
+    expect(await validateItemCodes(sb(), ['BAMBOO-(K)'], 1, { requireActive: true }))
+      .toEqual({ ok: false, unknown: [], inactive: ['BAMBOO-(K)'] });
+    expect(await validateItemCodes(sb(), ['BAMBOO-(K)'], 1)).toEqual({ ok: true });
   });
 
   it('…but passes the default existence-only check (unchanged-code line edits)', async () => {
