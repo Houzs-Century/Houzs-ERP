@@ -57,6 +57,19 @@ export type BillExtraction = {
       server code turns it into suggestions (scm/lib/event-match.ts), and a
       person picks (6a, suggest only). null when the bill names no event. */
   event: BillEventHint | null;
+  /** What the bill is FOR, one line in its own words — a payment request's
+      "What is it for" (owner 2026-10-02: upload 后很多资料都没有填). */
+  summary: string | null;
+  /** The bank account PRINTED for paying this bill (a Payment / Bank details
+      block) — a payment request's payee bank. Read as printed, never looked
+      up; null when the paper prints none. */
+  payTo: BillPayTo | null;
+};
+
+export type BillPayTo = {
+  bankName: string | null;
+  accountNo: string | null;
+  accountName: string | null;
 };
 
 export type BillEventHint = {
@@ -81,7 +94,9 @@ Return ONLY a JSON object, no prose, with exactly these keys:
   "totalRm": the GRAND TOTAL payable as a plain number (e.g. 1234.56) or null,
   "sstRm": the SST/tax amount as a plain number, or null when not itemised,
   "lines": the rows that ADD UP to the amount paid — EVERY goods/service line printed, in order, plus any discount, tax or rounding row [{ "description": string, "amountRm": number|null }] — one entry per printed line however many there are, or ONE entry summarising the charge when the bill has no itemisation,
-  "event": ONLY when the bill is for an exhibition / fair / expo / roadshow / event space (booth rental, setup, electricity at a venue, and the like): { "name": the event's name as printed or null, "venue": the venue / hall / mall as printed or null, "booth": the booth / lot / stand number(s) as printed or null, "dateFrom": the event's first day as YYYY-MM-DD or null, "dateTo": its last day as YYYY-MM-DD or null } — otherwise null
+  "event": ONLY when the bill is for an exhibition / fair / expo / roadshow / event space (booth rental, setup, electricity at a venue, and the like): { "name": the event's name as printed or null, "venue": the venue / hall / mall as printed or null, "booth": the booth / lot / stand number(s) as printed or null, "dateFrom": the event's first day as YYYY-MM-DD or null, "dateTo": its last day as YYYY-MM-DD or null } — otherwise null,
+  "summary": what the bill is FOR in one short line (under 100 chars), in the bill's own words — its printed subject / summary / description line, or its main charge when it prints none — or null,
+  "payTo": ONLY when the paper prints the bank account to pay into (a "Payment details" / "Bank details" / remittance block): { "bankName": the bank as printed or null, "accountNo": the account number as a STRING, exactly as printed, or null, "accountName": the account holder's name as printed or null } — otherwise null
 }
 
 Rules:
@@ -90,7 +105,8 @@ Rules:
 - totalRm is the amount the vendor asks to be PAID (after tax/rounding), not a subtotal.
 - A receipt's FOOTER is not line items: never list a Sub Total / Total / Net Total / Amount Due row, a payment or tender row (Cash, Card, DuitNow, QR, e-wallet, Tendered, Paid), the Change, or a Total Items count — those restate the total, they are not charges.
 - vendorName is the ISSUER, never the addressee (the addressee is our own company).
-- Line descriptions stay short (under 80 chars), in the bill's own words.`;
+- Line descriptions stay short (under 80 chars), in the bill's own words.
+- payTo.accountNo is copied character for character — never completed, re-grouped or guessed; an account you cannot read in full is null.`;
 
 export const rmToSen = (v: unknown): number | null => {
   /* null / undefined / '' are ABSENT, not zero — Number(null) is 0, and a
@@ -147,6 +163,12 @@ export function isFooterLine(description: string | null, amountSen: number | nul
 export const stripFooterLines = (lines: BillLine[]): BillLine[] =>
   lines.filter((l) => !isFooterLine(l.description, l.amountSen));
 
+/** A printed word or number as trimmed text, or null. */
+const printedText = (v: unknown, max: number): string | null => {
+  const s = typeof v === 'string' || typeof v === 'number' ? String(v).trim() : '';
+  return s ? s.slice(0, max) : null;
+};
+
 /** Coerce whatever the model said into the strict shape — every field
     defensively, because a vision model under a bad photo says strange things
     and NONE of them may crash a finance screen. */
@@ -176,7 +198,20 @@ export function coerceBillJson(raw: unknown): BillExtraction {
       };
     })),
     event: coerceEventHint(o.event),
+    summary: printedText(o.summary, 160),
+    payTo: coercePayTo(o.payTo),
   };
+}
+
+/** The printed bank account, or null when nothing of it was read. An account
+    number that came back as a JSON number is taken only while it is exact — a
+    long one has already lost digits, and a wrong account is worse than none. */
+export function coercePayTo(raw: unknown): BillPayTo | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const p = raw as Record<string, unknown>;
+  const accountNo = typeof p.accountNo === 'number' && !Number.isSafeInteger(p.accountNo) ? null : printedText(p.accountNo, 40);
+  const payTo: BillPayTo = { bankName: printedText(p.bankName, 120), accountNo, accountName: printedText(p.accountName, 160) };
+  return Object.values(payTo).some((v) => v != null) ? payTo : null;
 }
 
 /** The printed event, or null when nothing of it was read — an object of five
@@ -184,14 +219,10 @@ export function coerceBillJson(raw: unknown): BillExtraction {
 export function coerceEventHint(raw: unknown): BillEventHint | null {
   if (!raw || typeof raw !== 'object') return null;
   const e = raw as Record<string, unknown>;
-  const text = (v: unknown, max: number): string | null => {
-    const s = typeof v === 'string' || typeof v === 'number' ? String(v).trim() : '';
-    return s ? s.slice(0, max) : null;
-  };
   const hint: BillEventHint = {
-    name: text(e.name, 160),
-    venue: text(e.venue, 160),
-    booth: text(e.booth, 80),
+    name: printedText(e.name, 160),
+    venue: printedText(e.venue, 160),
+    booth: printedText(e.booth, 80),
     dateFrom: isoOrNull(e.dateFrom),
     dateTo: isoOrNull(e.dateTo),
   };

@@ -208,6 +208,28 @@ describe('POST /payment-requests/read-bill — the bill read as it is attached',
     expect(w.sb.tables.acc_payment_requests).toHaveLength(0); // nothing written
   });
 
+  /* Owner 2026-10-02 (upload 后很多资料都没有填): what the form fills where empty —
+     the due date, a one-line summary, and the bank account printed for payment.
+     Nothing printed comes back null. */
+  test('says the due date, the summary and the bank account printed on the bill', async () => {
+    const w = world();
+    reads({
+      invoiceNumber: 'HV-INV-202608-0051', invoiceDate: '2026-08-31', dueDate: '2026-09-30', totalRm: 8082.33,
+      summary: "Payroll cost share — Aug'26 · adjustment",
+      payTo: { bankName: 'Hong Leong Bank Berhad', accountNo: '123-4567-8901', accountName: 'Houzs Venture Holding Sdn Bhd' },
+    });
+    const res = await as(w, JAMES)('/payment-requests/read-bill', 'POST', { files: [PAGE] });
+    expect(res.body.bill).toEqual({
+      billNo: 'HV-INV-202608-0051', billDate: '2026-08-31', totalSen: 808_233, vendorName: 'MLE EVENTS SDN BHD',
+      dueDate: '2026-09-30', summary: "Payroll cost share — Aug'26 · adjustment",
+      bankName: 'Hong Leong Bank Berhad', bankAccountNo: '123-4567-8901', bankAccountName: 'Houzs Venture Holding Sdn Bhd',
+    });
+    reads({ invoiceNumber: 'TNB-1', invoiceDate: '2026-09-01', totalRm: 120 });
+    expect((await as(w, JAMES)('/payment-requests/read-bill', 'POST', { files: [PAGE] })).body.bill).toMatchObject({
+      dueDate: null, summary: null, bankName: null, bankAccountNo: null, bankAccountName: null,
+    });
+  });
+
   test('a bill naming no event, or any bill of a company without events, needs none', async () => {
     const w = world();
     reads({ invoiceNumber: 'TNB-1', invoiceDate: '2026-09-01', totalRm: 120, event: null });

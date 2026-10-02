@@ -16,7 +16,7 @@
 // The stage is the server's reading of that document, never a field typed here.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
@@ -26,8 +26,8 @@ import {
   useUploadPaymentRequestFile, useWithdrawPaymentRequest,
   type PaymentRequest, type PaymentRequestInput,
 } from '../../vendor/scm/lib/payment-request-queries';
-import { billFactsOf, needsEvent, useRequestBillRead } from '../../vendor/scm/lib/request-bill-read';
-import { BillInstalments, BillMatchesNote, BillReadNote, billFactsLine } from '../../vendor/scm/components/RequestBill';
+import { BILL_FILL_LABEL, billFactsOf, billOffer, fillFromBill, filledFromBill, needsEvent, useRequestBillRead, type BillOffer } from '../../vendor/scm/lib/request-bill-read';
+import { BillFilledNote, BillInstalments, BillMatchesNote, BillReadNote, billFactsLine } from '../../vendor/scm/components/RequestBill';
 import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
 import { OfficialDocActions, OfficialDocChip } from '../../vendor/scm/components/OfficialDoc';
 import { useUploadOfficialDoc } from '../../vendor/scm/lib/official-doc-queries';
@@ -468,6 +468,9 @@ function RequestForm({ initial, hasEvents, onDone, onCancel }: { initial: Paymen
   /* The bill is READ as it is attached (owner 2026-10-01, item 1): its number,
      date and total, whether it is for an event, the same bill elsewhere. */
   const billRead = useRequestBillRead();
+  /* What the last read offered each field — a field still holding it is the
+     reader's, not the requester's, and a newer read may replace it. */
+  const lastOffer = useRef<BillOffer>({});
   const [noEvent, setNoEvent] = useState(() => !!initial?.no_event_reason);
   const [noEventReason, setNoEventReason] = useState(initial?.no_event_reason ?? '');
   const set = (patch: Partial<PaymentRequestInput>) => setV((prev) => ({ ...prev, ...patch }));
@@ -486,6 +489,14 @@ function RequestForm({ initial, hasEvents, onDone, onCancel }: { initial: Paymen
   const pickFiles = async (list: File[]) => {
     setFiles(list);
     const read = await billRead.run(list);
+    /* Owner 2026-10-02 (upload 后很多资料都没有填): fill what is still empty from
+       the paper; what they typed meanwhile stays, and all of it stays editable. */
+    if (read) {
+      const offer = billOffer(read.bill);
+      const before = lastOffer.current;
+      lastOffer.current = offer;
+      setV((prev) => fillFromBill(prev, offer, before));
+    }
     const readTotal = read?.bill.totalSen ?? null;
     if (readTotal != null && readTotal > 0) setBillTotal((prev) => prev ?? readTotal);
     /* The event the bill points at most strongly is picked for them — they confirm or change it. */
@@ -496,6 +507,7 @@ function RequestForm({ initial, hasEvents, onDone, onCancel }: { initial: Paymen
   const eventNeeded = hasEvents && (needsEvent(billRead.state) || !!initial?.event_bill);
   const eventOk = !eventNeeded || v.projectId != null || (noEvent && noEventReason.trim().length >= NO_EVENT_REASON_MIN);
   const reading = billRead.state.status === 'reading';
+  const filledFields = filledFromBill(v, billRead.state.status === 'done' ? billOffer(billRead.state.result.bill) : {}).map((k) => BILL_FILL_LABEL[k]);
   const missing = [
     v.payeeName.trim() === '' ? 'who to pay' : null,
     v.amountSen > 0 ? null : 'the amount',
@@ -578,6 +590,7 @@ function RequestForm({ initial, hasEvents, onDone, onCancel }: { initial: Paymen
         </label>
       )}
       <BillReadNote state={billRead.state} />
+      <BillFilledNote fields={filledFields} />
       {hasEvents && (
         <label className={styles.field}>
           <span className={styles.fieldLabel}>{eventNeeded ? 'Event * — this bill is for an event' : 'Event'}</span>

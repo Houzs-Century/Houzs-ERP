@@ -174,7 +174,13 @@ export type ReadBillResult =
   | { ok: false; reason: string }
   | {
     ok: true;
-    bill: { billNo: string | null; billDate: string | null; totalSen: number | null; vendorName: string | null };
+    bill: {
+      billNo: string | null; billDate: string | null; totalSen: number | null; vendorName: string | null;
+      /* What the form fills where empty (owner 2026-10-02) — absent from a
+         server older than that, so optional. */
+      dueDate?: string | null; summary?: string | null;
+      bankName?: string | null; bankAccountNo?: string | null; bankAccountName?: string | null;
+    };
     hasEvents: boolean;
     /** The bill is for an event — it goes with its Event, or a reason. */
     eventBill: boolean;
