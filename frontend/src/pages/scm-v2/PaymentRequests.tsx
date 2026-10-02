@@ -18,7 +18,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { Paperclip, Plus, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
   NO_EVENT_REASON_MIN, STAGE, answerText, awaitsFinance, billMatchText, fetchPaymentRequestFileBlobUrl, financeWorking, hasInstalments, mayAskBalance, pctOf, requestPaid, useCreatePaymentRequest, useDeletePaymentRequestFile,
@@ -27,7 +27,7 @@ import {
   type PaymentRequest, type PaymentRequestInput,
 } from '../../vendor/scm/lib/payment-request-queries';
 import { BILL_FILL_LABEL, billFactsOf, billOffer, fillFromBill, filledFromBill, needsEvent, useRequestBillRead, type BillOffer } from '../../vendor/scm/lib/request-bill-read';
-import { BillFilledNote, BillInstalments, BillMatchesNote, BillReadNote, billFactsLine } from '../../vendor/scm/components/RequestBill';
+import { BillInstalments, BillMatchesNote, BillReadPanel, billFactsLine } from '../../vendor/scm/components/RequestBill';
 import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
 import { OfficialDocActions, OfficialDocChip } from '../../vendor/scm/components/OfficialDoc';
 import { useUploadOfficialDoc } from '../../vendor/scm/lib/official-doc-queries';
@@ -448,6 +448,20 @@ function RequestFilesCard({ request, canWrite }: { request: PaymentRequest; canW
   );
 }
 
+/* One step of the request form — a numbered heading over its fields (owner
+   2026-10-02: 看了有点乱，整齐一点 — the mockup he said 做 to). */
+function FormSection({ n, title, required = false, first = false, children }: { n: number; title: string; required?: boolean; first?: boolean; children: React.ReactNode }) {
+  return (
+    <section aria-label={title} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', padding: 'var(--space-4, 16px) 0', borderTop: first ? 'none' : '1px solid var(--line, #ece9e2)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 'var(--fs-14, 14px)' }}>
+        <span aria-hidden="true" style={{ width: 22, height: 22, borderRadius: '50%', background: 'var(--c-secondary-a, #2F5D4F)', color: '#fff', fontSize: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{n}</span>
+        <span>{title}{required && <span style={{ color: 'var(--c-festive-b, #B8331F)' }}> *</span>}</span>
+      </div>
+      {children}
+    </section>
+  );
+}
+
 /* ── New / edit ─────────────────────────────────────────────────────────── */
 function RequestForm({ initial, hasEvents, onDone, onCancel }: { initial: PaymentRequest | null; hasEvents: boolean; onDone: (id: string) => void; onCancel: () => void }) {
   const notify = useNotify();
@@ -471,6 +485,7 @@ function RequestForm({ initial, hasEvents, onDone, onCancel }: { initial: Paymen
   /* What the last read offered each field — a field still holding it is the
      reader's, not the requester's, and a newer read may replace it. */
   const lastOffer = useRef<BillOffer>({});
+  const fileRef = useRef<HTMLInputElement>(null);
   const [noEvent, setNoEvent] = useState(() => !!initial?.no_event_reason);
   const [noEventReason, setNoEventReason] = useState(initial?.no_event_reason ?? '');
   const set = (patch: Partial<PaymentRequestInput>) => setV((prev) => ({ ...prev, ...patch }));
@@ -548,91 +563,127 @@ function RequestForm({ initial, hasEvents, onDone, onCancel }: { initial: Paymen
     } catch { /* the mutation's own onError told the user */ }
   };
 
+  /* The order it is filled in (owner 2026-10-02: 看了有点乱，整齐一点): ① the bill,
+     which fills the rest; ② who is paid, and into which account; ③ how much and
+     by when; ④ what for, and the event. An edit has no bill step — its files
+     are on the request. */
+  const steps = [initial ? null : 'bill', 'payee', 'amount', 'purpose'].filter((x): x is string => x != null);
+  const stepNo = (key: string): number => steps.indexOf(key) + 1;
+  const grid = (min: number): React.CSSProperties => ({ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${min}px, 1fr))`, gap: 'var(--space-3)' });
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
       {initial?.status === 'REJECTED' && initial.finance_note && (
         <div style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-13)' }}>Finance returned it: {initial.finance_note}</div>
       )}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--space-3)' }}>
+      {!initial && (
+        <FormSection n={stepNo('bill')} title="单据 · The bill" required first>
+          {/* A second pick adds to the first (the same file picked again is not
+              added twice); the ✕ takes one file off. */}
+          <input ref={fileRef} type="file" multiple accept={PV_FILE_ACCEPT} aria-label="Bill files" style={{ display: 'none' }}
+            onChange={(e) => {
+              const picked = [...(e.target.files ?? [])].filter((p) => !files.some((f) => f.name === p.name && f.size === p.size));
+              e.target.value = '';
+              if (picked.length > 0) void pickFiles([...files, ...picked]);
+            }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <Button variant="secondary" size="sm" onClick={() => fileRef.current?.click()}>
+              <Paperclip size={16} strokeWidth={1.75} /> Attach the bill
+            </Button>
+            {files.map((f, i) => (
+              <span key={`${f.name}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 8px', borderRadius: 8, background: 'var(--c-cream, #f4f3ee)', fontSize: 'var(--fs-13)' }}>
+                {f.name}
+                <button type="button" aria-label={`Remove ${f.name}`} onClick={() => void pickFiles(files.filter((_, k) => k !== i))}
+                  style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', display: 'inline-flex', color: 'var(--fg-muted)' }}>
+                  <X size={14} />
+                </button>
+              </span>
+            ))}
+            {files.length === 0 && <span style={soft}>Invoice, quotation or proforma — a photo or PDF; several files are one bill's pages.</span>}
+          </div>
+          <BillReadPanel state={billRead.state} filled={filledFields} />
+        </FormSection>
+      )}
+
+      <FormSection n={stepNo('payee')} title="付给谁 · Pay to" first={!!initial}>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Pay to *</span>
           <input className={styles.fieldInput} value={v.payeeName} onChange={(e) => set({ payeeName: e.target.value })} aria-label="Pay to" placeholder="e.g. MLE EVENTS SDN BHD" />
         </label>
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>Amount to pay now (MYR) *</span>
-          <MoneyInput bare valueSen={v.amountSen} onCommit={(sen) => set({ amountSen: sen ?? 0 })} inputClassName={styles.fieldInput} selectOnFocus aria-label="Amount" />
-        </label>
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>Pay by</span>
-          <DateField fullWidth value={v.dueDate ?? ''} onChange={(iso) => set({ dueDate: iso || null })} className={styles.fieldInput} aria-label="Pay by" />
-        </label>
-      </div>
-      {/* 一张单付两次 (item 2): the bill's total, and this payment as a percent of it. */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--space-3)' }}>
-        {!isBalance && (
+        <div style={grid(180)}>
           <label className={styles.field}>
-            <span className={styles.fieldLabel}>The bill's total (MYR)</span>
-            <MoneyInput bare valueSen={billTotal ?? 0} inputClassName={styles.fieldInput} selectOnFocus aria-label="Bill total"
-              onCommit={(sen) => { const t = sen != null && sen > 0 ? sen : null; setBillTotal(t); if (pct) applyPct(pct, t); }} />
+            <span className={styles.fieldLabel}>Payee's bank</span>
+            <input className={styles.fieldInput} value={v.bankName ?? ''} onChange={(e) => set({ bankName: e.target.value || null })} aria-label="Payee's bank" placeholder="e.g. Maybank" />
+          </label>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Account no.</span>
+            <input className={styles.fieldInput} value={v.bankAccountNo ?? ''} onChange={(e) => set({ bankAccountNo: e.target.value || null })} aria-label="Account no." />
+          </label>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Account name</span>
+            <input className={styles.fieldInput} value={v.bankAccountName ?? ''} onChange={(e) => set({ bankAccountName: e.target.value || null })} aria-label="Account name" />
+          </label>
+        </div>
+      </FormSection>
+
+      {/* 一张单付两次 (item 2): the bill's total, and this payment as an amount or a percent of it. */}
+      <FormSection n={stepNo('amount')} title="付多少 · Amount">
+        <div style={grid(140)}>
+          {!isBalance && (
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Bill total (MYR)</span>
+              <MoneyInput bare valueSen={billTotal ?? 0} inputClassName={styles.fieldInput} selectOnFocus aria-label="Bill total"
+                onCommit={(sen) => { const t = sen != null && sen > 0 ? sen : null; setBillTotal(t); if (pct) applyPct(pct, t); }} />
+            </label>
+          )}
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Pay now (MYR) *</span>
+            <MoneyInput bare valueSen={v.amountSen} onCommit={(sen) => set({ amountSen: sen ?? 0 })} inputClassName={styles.fieldInput} selectOnFocus aria-label="Amount" />
+          </label>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>…or %</span>
+            <input className={styles.fieldInput} inputMode="decimal" value={pct} aria-label="Percent of the bill" placeholder={billTotal ? 'e.g. 50' : 'bill total first'}
+              disabled={!billTotal} onChange={(e) => applyPct(e.target.value, billTotal)} />
+          </label>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Pay by</span>
+            {/* Dressed like the fields beside it — the date field's own pill stood out in the row. */}
+            <DateField fullWidth value={v.dueDate ?? ''} onChange={(iso) => set({ dueDate: iso || null })} className={styles.fieldInput} aria-label="Pay by"
+              style={{ background: '#fff', border: '1px solid #d6d9d2', borderRadius: 8 }} />
+          </label>
+        </div>
+      </FormSection>
+
+      <FormSection n={stepNo('purpose')} title="用途 · What for">
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>What is it for *</span>
+          <textarea className={styles.fieldInput} rows={2} value={v.purpose} onChange={(e) => set({ purpose: e.target.value })} aria-label="What is it for"
+            placeholder="e.g. Booth F1 rental, balance 50%" />
+        </label>
+        {hasEvents && (
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>{eventNeeded ? 'Event * — this bill is for an event' : 'Event'}</span>
+            <EventSelect value={v.projectId} around={v.dueDate || today} optionsPath={EVENTS_PATH} className={styles.fieldInput} aria-label="Event"
+              onChange={(id) => set({ projectId: id })} />
           </label>
         )}
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>…or a percent of it</span>
-          <input className={styles.fieldInput} inputMode="decimal" value={pct} aria-label="Percent of the bill" placeholder={billTotal ? 'e.g. 50' : 'Type the bill total first'}
-            disabled={!billTotal} onChange={(e) => applyPct(e.target.value, billTotal)} />
-        </label>
-      </div>
-      {!initial && (
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>The bill * (invoice / quotation / proforma — photo or PDF; several files = one bill's pages)</span>
-          <input type="file" multiple accept={PV_FILE_ACCEPT} aria-label="Bill files" onChange={(e) => void pickFiles([...(e.target.files ?? [])])} />
-          {files.length > 0 && <span style={soft}>{files.length} file(s) attach when the request is sent: {files.map((f) => f.name).join(', ')}</span>}
-        </label>
-      )}
-      <BillReadNote state={billRead.state} />
-      <BillFilledNote fields={filledFields} />
-      {hasEvents && (
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>{eventNeeded ? 'Event * — this bill is for an event' : 'Event'}</span>
-          <EventSelect value={v.projectId} around={v.dueDate || today} optionsPath={EVENTS_PATH} className={styles.fieldInput} aria-label="Event"
-            onChange={(id) => set({ projectId: id })} />
-        </label>
-      )}
-      {eventNeeded && billRead.state.status === 'done' && (
-        <EventSuggestions suggestions={billRead.state.result.eventSuggestions} current={v.projectId} onUse={(id) => set({ projectId: id })} />
-      )}
-      {eventNeeded && v.projectId == null && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <label style={{ ...soft, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <input type="checkbox" checked={noEvent} onChange={(e) => setNoEvent(e.target.checked)} aria-label="I cannot find this event" />
-            I cannot find this event · 找不到这场活动
-          </label>
-          {noEvent && (
-            <input className={styles.fieldInput} value={noEventReason} onChange={(e) => setNoEventReason(e.target.value)} aria-label="Why there is no event"
-              placeholder="Say why in a line — Finance reads it (e.g. the fair is not in PMS yet)" />
-          )}
-        </div>
-      )}
-      <label className={styles.field}>
-        <span className={styles.fieldLabel}>What is it for *</span>
-        <textarea className={styles.fieldInput} rows={2} value={v.purpose} onChange={(e) => set({ purpose: e.target.value })} aria-label="What is it for"
-          placeholder="e.g. Booth F1 rental, balance 50%" />
-      </label>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-3)' }}>
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>Payee's bank</span>
-          <input className={styles.fieldInput} value={v.bankName ?? ''} onChange={(e) => set({ bankName: e.target.value || null })} aria-label="Payee's bank" placeholder="e.g. Maybank" />
-        </label>
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>Account no.</span>
-          <input className={styles.fieldInput} value={v.bankAccountNo ?? ''} onChange={(e) => set({ bankAccountNo: e.target.value || null })} aria-label="Account no." />
-        </label>
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>Account name</span>
-          <input className={styles.fieldInput} value={v.bankAccountName ?? ''} onChange={(e) => set({ bankAccountName: e.target.value || null })} aria-label="Account name" />
-        </label>
-      </div>
-      <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>
+        {eventNeeded && billRead.state.status === 'done' && (
+          <EventSuggestions suggestions={billRead.state.result.eventSuggestions} current={v.projectId} onUse={(id) => set({ projectId: id })} />
+        )}
+        {eventNeeded && v.projectId == null && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label style={{ ...soft, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <input type="checkbox" checked={noEvent} onChange={(e) => setNoEvent(e.target.checked)} aria-label="I cannot find this event" />
+              I cannot find this event · 找不到这场活动
+            </label>
+            {noEvent && (
+              <input className={styles.fieldInput} value={noEventReason} onChange={(e) => setNoEventReason(e.target.value)} aria-label="Why there is no event"
+                placeholder="Say why in a line — Finance reads it (e.g. the fair is not in PMS yet)" />
+            )}
+          </div>
+        )}
+      </FormSection>
+      <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end', paddingTop: 'var(--space-3)', borderTop: '1px solid var(--line, #ece9e2)' }}>
         <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
         {/* Pressable while incomplete: the press says what is still missing. */}
         <Button variant="primary" size="sm" onClick={() => void save()} disabled={saving || reading}>

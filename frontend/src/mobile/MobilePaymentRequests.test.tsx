@@ -185,3 +185,15 @@ describe('the phone form filled from the bill', () => {
     });
   });
 });
+
+/* Owner 2026-10-02: 整齐一点 — the phone form runs in the desktop form's four steps. */
+test('the phone form runs bill, who is paid (with the bank), how much, what for', () => {
+  requests = []; isFinance = false;
+  render(<MobilePaymentRequests onBack={() => undefined} />);
+  fireEvent.click(screen.getByText('New request'));
+  const heads = ['① 单据 · The bill *', '② 付给谁 · Pay to', '③ 付多少 · Amount', '④ 用途 · What for'].map((t) => screen.getByText(t));
+  const before = (a: Node, b: Node) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  for (let i = 1; i < heads.length; i += 1) expect(before(heads[i - 1]!, heads[i]!)).toBe(true);
+  expect(before(screen.getByLabelText("Payee's bank"), screen.getByLabelText('Amount'))).toBe(true);
+  expect(before(screen.getByLabelText('Amount'), screen.getByLabelText('What is it for'))).toBe(true);
+});

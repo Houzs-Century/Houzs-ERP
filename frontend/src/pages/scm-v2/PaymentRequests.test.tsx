@@ -391,3 +391,51 @@ describe('the form filled from the bill', () => {
     });
   });
 });
+
+/* Owner 2026-10-02: 看了有点乱，整齐一点 — the form in the order it is filled: the
+   bill (it fills the rest), who is paid with their bank, how much, what for. */
+describe('the form in the order it is filled', () => {
+  const STEPS = ['单据 · The bill', '付给谁 · Pay to', '付多少 · Amount', '用途 · What for'];
+  const pdf = (name: string) => new File(['%PDF'], name, { type: 'application/pdf' });
+
+  test('four steps; the bank sits with who is paid; a second file adds to the first and ✕ takes one off', async () => {
+    requests = []; isFinance = false; hasEvents = undefined; readResult = plainRead(); readAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('New request'));
+    const d = screen.getByRole('dialog');
+    expect(within(d).getAllByRole('region').map((r) => r.getAttribute('aria-label')).filter((l) => STEPS.includes(l ?? ''))).toEqual(STEPS);
+    const payTo = within(d).getByRole('region', { name: '付给谁 · Pay to' });
+    expect(within(payTo).getByLabelText("Payee's bank")).toBeTruthy();
+    expect(within(payTo).getByLabelText('Account no.')).toBeTruthy();
+    const amount = within(d).getByRole('region', { name: '付多少 · Amount' });
+    expect(['Bill total', 'Amount', 'Percent of the bill', 'Pay by'].every((l) => within(amount).queryByLabelText(l) != null)).toBe(true);
+
+    fireEvent.change(within(d).getByLabelText('Bill files'), { target: { files: [pdf('page-1.pdf')] } });
+    await waitFor(() => expect(readAsync).toHaveBeenCalledTimes(1));
+    fireEvent.change(within(d).getByLabelText('Bill files'), { target: { files: [pdf('page-2.pdf')] } });
+    await waitFor(() => expect(readAsync).toHaveBeenCalledTimes(2));
+    expect(readAsync.mock.calls[1]![0]).toEqual({ files: [
+      { name: 'page-1.pdf', mime: 'application/pdf', dataBase64: 'b64:page-1.pdf' },
+      { name: 'page-2.pdf', mime: 'application/pdf', dataBase64: 'b64:page-2.pdf' },
+    ] });
+    expect(within(d).getByText('page-1.pdf')).toBeTruthy();
+    fireEvent.click(within(d).getByLabelText('Remove page-1.pdf'));
+    await waitFor(() => expect(readAsync).toHaveBeenCalledTimes(3));
+    expect(readAsync.mock.calls[2]![0]).toEqual({ files: [{ name: 'page-2.pdf', mime: 'application/pdf', dataBase64: 'b64:page-2.pdf' }] });
+    expect(within(d).queryByText('page-1.pdf')).toBeNull();
+    /* What was read is said once, under the bill. */
+    const bill = within(d).getByRole('region', { name: '单据 · The bill' });
+    await waitFor(() => expect(within(bill).getByText(/Read from the bill: No\. MLE-0925/)).toBeTruthy());
+  });
+
+  test('an edit has no bill step — its files are on the request; it opens on who is paid', () => {
+    requests = [base({ id: 'r1' })]; isFinance = false;
+    draw();
+    fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
+    fireEvent.click(within(screen.getByRole('dialog')).getByText('Edit'));
+    expect(screen.queryByRole('region', { name: '单据 · The bill' })).toBeNull();
+    const payTo = screen.getByRole('region', { name: '付给谁 · Pay to' });
+    expect(within(payTo).getByText('1')).toBeTruthy();
+    expect((within(payTo).getByLabelText('Pay to') as HTMLInputElement).value).toBe('MLE EVENTS SDN BHD');
+  });
+});
