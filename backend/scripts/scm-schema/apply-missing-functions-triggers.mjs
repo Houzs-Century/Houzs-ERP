@@ -19,7 +19,6 @@ const sql = postgres(url, { ssl: "require", prepare: false, max: 1, connect_time
 const EXPECT_FNS = [
   "upsert_customer_by_name_phone",
   "create_product_with_pricing",
-  "rename_sofa_compartment",
   "fn_check_je_balanced",
   "lease_orphan_slips",
   "count_orphan_slips",

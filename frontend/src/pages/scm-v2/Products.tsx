@@ -75,6 +75,7 @@ import {
   useUploadSofaCompartmentPhoto,
   useDeleteSofaCompartmentPhoto,
   type MfgCategory,
+  type SofaCompartmentRenameResult,
   type MfgProductRow,
   type BatchImportRow,
   type BatchImportResult,
@@ -116,6 +117,7 @@ import { formatSizeRich, formatSizeRichWithCfg, resolveSizeInfo } from '../../ve
 import { formatPhone } from '../../vendor/shared/phone';
 import { ProductModels, NewModelDialog } from './ProductModels';
 import { VariantsTab } from './products/VariantsTab';
+import { describeRenameCounts } from './products/compartmentRename';
 import { Categories } from './Categories';
 import { useBrandingPool, useProductModel } from '../../vendor/scm/lib/product-models-queries';
 import { useQueryClient } from '@tanstack/react-query';
@@ -1405,19 +1407,46 @@ export const MaintenanceTab = ({
         }
       }
       if (renames.length > 0) {
-        const summary = renames.map((r) => `${r.from} → ${r.to}`).join('\n');
+        /* Preview first (no write), one company only. A code any SKU, document
+           or stock row still uses is refused: it is part of every SKU code
+           (<MODEL>-<code>), so only an unused code (a typo) may be renamed. */
+        const previews: SofaCompartmentRenameResult[] = [];
+        for (const r of renames) {
+          try {
+            const res = await renameCompartment.mutateAsync({ ...r, apply: false });
+            previews.push(res.result);
+          } catch (e) {
+            notify({
+              title: `Cannot rename ${r.from} → ${r.to}`,
+              body: e instanceof Error ? e.message : 'Something went wrong.',
+              tone: 'error',
+            });
+            return;
+          }
+        }
+        const blocked = previews.filter((p) => p.inUseTotal > 0);
+        if (blocked.length > 0) {
+          notify({
+            title: `${blocked.map((p) => p.from).join(', ')} is in use and cannot be renamed`,
+            body: blocked.map((p) => `${p.from}: ${describeRenameCounts(p.inUse)}`).join('\n') +
+              '\nTo change the wording staff see, edit the SKU name or the compartment description instead. Nothing was saved.',
+            tone: 'error',
+          });
+          return;
+        }
         const ok = await askConfirm({
           title: `Rename compartment code${renames.length > 1 ? 's' : ''}?`,
-          body: `${summary}\n\n` +
-            `This cascades EVERYWHERE: SKU codes + names, sales orders (incl. history), ` +
-            `delivery orders, invoices, GRN/PO lines, Modular ticks, Combos and Quick Picks.`,
+          body: previews.map((p) =>
+            `${p.from} → ${p.to}: ${describeRenameCounts(p.changes) || 'no other records'}` +
+            (p.photoCleared ? ' (its uploaded photo must be uploaded again)' : ''),
+          ).join('\n') + '\n\nThis company only. SKUs, documents and stock are not touched.',
           confirmLabel: 'Rename',
           danger: true,
         });
         if (!ok) return;
         for (const r of renames) {
           try {
-            await renameCompartment.mutateAsync(r);
+            await renameCompartment.mutateAsync({ ...r, apply: true });
           } catch (e) {
             notify({
               title: `Rename ${r.from} → ${r.to} failed`,
