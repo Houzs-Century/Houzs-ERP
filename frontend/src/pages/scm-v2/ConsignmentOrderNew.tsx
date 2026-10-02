@@ -1028,6 +1028,7 @@ export const ConsignmentOrderNew = () => {
               variantsRequired={!!processingDate}
               lineDateLocked={false}
               seedSofaLegDefault={true}
+              attachOptions={null}
             />
           ))}
 

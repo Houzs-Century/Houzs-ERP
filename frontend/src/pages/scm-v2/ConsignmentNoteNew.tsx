@@ -624,6 +624,7 @@ export const ConsignmentNoteNew = () => {
               variantsRequired={false}
               lineDateLocked={false}
               seedSofaLegDefault={false}
+              attachOptions={null}
             />
           ))}
           <AddLineButton variant="block" onClick={addLine} />

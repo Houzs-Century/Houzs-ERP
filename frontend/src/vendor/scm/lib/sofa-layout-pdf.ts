@@ -28,6 +28,7 @@ import {
   findModule,
   moduleFootprint,
   cellsBbox,
+  groupSofas,
   type Cell,
   type Depth,
 } from '@2990s/shared';
@@ -113,6 +114,17 @@ export function drawSofaLayout(
      leg, a right-hand corner) is drawn as the schematic throughout rather than
      as sideways art or a mix of the two. */
   const artOk = cells.every((c) => ((Number(c.rot) || 0) % 360) === 0);
+  // Arms go on each SEPARATE sofa's outer ends, not just the whole drawing's:
+  // a 2S in front of a wider 1A + Console + 1A is flush with neither edge.
+  const sofaBbox = new Map<Cell, { x: number; w: number }>();
+  try {
+    for (const g of groupSofas(cells, depth)) {
+      const gb = cellsBbox(g, depth);
+      if (gb) for (const c of g) sofaBbox.set(c, gb);
+    }
+  } catch {
+    /* malformed cells: arms fall back to the whole drawing's ends */
+  }
   // ── Cells: each module = a cream SEAT with a tan BACKREST strip on its back
   //    edge (the side away from the TV — the whole sofa faces the TV at the
   //    bottom/+y). Faithful positions → the L-shape notch + LHF/RHF come out
@@ -183,8 +195,9 @@ export function drawSofaLayout(
       if (solid(es)) doc.rect(px, py + h - t, w, t, 'F');
     } else {
       doc.rect(px, py, w, t, 'F'); // backrest (top / back)
-      if (Math.abs(c.x - bbox.x) < eps) doc.rect(px, py, t, h, 'F'); // left arm
-      if (Math.abs((c.x + fp.w) - (bbox.x + bbox.w)) < eps) doc.rect(px + w - t, py, t, h, 'F'); // right arm
+      const sb = sofaBbox.get(c) ?? bbox;
+      if (Math.abs(c.x - sb.x) < eps) doc.rect(px, py, t, h, 'F'); // left arm
+      if (Math.abs((c.x + fp.w) - (sb.x + sb.w)) < eps) doc.rect(px + w - t, py, t, h, 'F'); // right arm
     }
     /* BUG-42 (Sim 2026-09-30, HC-PO-2609-318): a power seat drew as a plain
        seat, so the supplier could not tell 1A(P) from 1A on the plan while the

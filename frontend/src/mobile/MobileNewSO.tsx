@@ -115,7 +115,7 @@ import { isColourKiv } from "../vendor/shared/variant-summary";
 /* parseInches is imported, not redeclared: this file's private copy also served
    sortNumeric below, and a shared parser serves both readers. */
 import { computeTotalHeight, isTotalHeightCategory, parseInches } from "../vendor/shared/total-height";
-import { lineIdentity } from "@2990s/shared";
+import { CONSOLE_ATTACH_KEY, consoleAttachOptions, lineIdentity } from "@2990s/shared";
 import { normalizePhone } from "../vendor/shared/phone";
 import { PhoneInput } from "../vendor/scm/components/PhoneInput";
 import { fmtSen as fmtSharedSen } from "../vendor/shared/format";
@@ -805,6 +805,16 @@ export function MobileNewSO({
   const [lines, setLines] = useState<LineItem[]>(() =>
     scanLines.length > 0 ? scanLines.map((s) => s.line) : [newLine()],
   );
+  /* Console lines only: the sofa modules each can be joined to (desktop
+     SalesOrderNew parity). Keyed by line key. */
+  const attachOptionsByKey = useMemo(() => {
+    const out: Record<string, string[] | undefined> = {};
+    lines.forEach((l, i) => {
+      const opts = consoleAttachOptions(lines, i);
+      if (opts.length > 0) out[l.key] = opts;
+    });
+    return out;
+  }, [lines]);
   const [pays, setPays] = useState<Payment[]>(() => seededPays);
   /* This customer's cancelled orders with money — what a converted row may draw on; read by phone, there is no order yet. */
   const convertSources = useMobileConvertSources({ phone });
@@ -2597,6 +2607,7 @@ export function MobileNewSO({
                           soDocNo={docNo}
                           onChange={(patch) => patchLine(l.key, patch)}
                           onDdateChange={procDate ? (v) => setLineDdateManual(l.key, v) : null}
+                          attachOptions={attachOptionsByKey[l.key] ?? null}
                           onRemove={async () => {
                             if (!(await confirm({ title: "Remove this line?", body: l.name ? `"${l.name}" will be removed from the order.` : undefined, confirmLabel: "Remove", danger: true }))) return;
                             setDdateOverrides((prev) => {
@@ -2983,6 +2994,7 @@ function LineCard({
   onChange,
   onDdateChange,
   onRemove,
+  attachOptions,
 }: {
   line: LineItem;
   index: number;
@@ -3008,6 +3020,9 @@ function LineCard({
      cascade won't touch it. null = no Processing Date, date locked (BUG-39). */
   onDdateChange: ((value: string) => void) | null;
   onRemove: () => void;
+  /* Console lines: modules it can be joined to (variants.attachTo, read by the
+     PO layout). Null on every other line. */
+  attachOptions: string[] | null;
 }) {
   const amt = fmt(num(line.qty) * num(line.price));
   const picked = Boolean(line.itemCode.trim());
@@ -3207,6 +3222,12 @@ function LineCard({
               <SpecSel label="Leg height" invalid={showErrors && missing.has("legHeight")}
                 value={String(v.legHeight ?? "")} opts={sofaLegOpts} onChange={(x) => setVar({ legHeight: x })} />
             </div>
+            {attachOptions && attachOptions.length > 0 && (
+              <SpecSel label="Attached to"
+                value={String(v[CONSOLE_ATTACH_KEY] ?? "")}
+                opts={attachOptions.map((id) => ({ value: id, label: id }))}
+                onChange={(x) => setVar({ [CONSOLE_ATTACH_KEY]: x })} />
+            )}
           </>
         )}
 

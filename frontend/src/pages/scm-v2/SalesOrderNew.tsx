@@ -127,7 +127,7 @@ import {
 import { useOrdersWithMoney } from '../../vendor/scm/lib/so-money-queries';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
-import { fmtMoneySen } from '@2990s/shared';
+import { consoleAttachOptions, fmtMoneySen } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { isSofaGroup, pieceShareSen, SOFA_PIECES_SPLIT_NOTICE, splitSofaPieceLines } from '../../vendor/scm/lib/sofa-piece-lines';
 
@@ -806,6 +806,17 @@ export const SalesOrderNew = () => {
     ),
     [lines],
   );
+
+  /* Console lines only: the sofa modules each can be joined to. Undefined for
+     every other line, so those memoized SoLineCard rows keep a stable prop. */
+  const attachOptionsByRid = useMemo(() => {
+    const out: Record<string, string[] | undefined> = {};
+    lines.forEach((l, i) => {
+      const opts = consoleAttachOptions(lines, i);
+      if (opts.length > 0) out[l.rid] = opts;
+    });
+    return out;
+  }, [lines]);
 
   // ── Locality cascade — shared layer, both directions (address-cascade.ts) ──
   const locRows = useMemo(() => loc.data ?? [], [loc.data]);
@@ -2270,6 +2281,7 @@ export const SalesOrderNew = () => {
                      placeholder hint so the operator can pick a real SKU
                      (never free-text). Only while the line is still unpicked. */
                   searchHint={!line.itemCode && meta?.rawText ? meta.rawText : undefined}
+                  attachOptions={attachOptionsByRid[line.rid] ?? null}
                 />
               </div>
             );
