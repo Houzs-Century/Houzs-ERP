@@ -28,7 +28,7 @@ import {
   type PaymentRequest, type PaymentRequestInput,
 } from "../vendor/scm/lib/payment-request-queries";
 import { BILL_FILL_LABEL, billFactsOf, billOffer, fillFromBill, filledFromBill, needsEvent, useRequestBillRead, type BillOffer } from "../vendor/scm/lib/request-bill-read";
-import { BillFilledNote, BillInstalments, BillMatchesNote, BillReadNote, billFactsLine } from "../vendor/scm/components/RequestBill";
+import { BillInstalments, BillMatchesNote, BillReadPanel, billFactsLine } from "../vendor/scm/components/RequestBill";
 import { OfficialDocChip } from "../vendor/scm/components/OfficialDoc";
 import { useUploadOfficialDoc } from "../vendor/scm/lib/official-doc-queries";
 import { EventSuggestions } from "../vendor/scm/components/EventSuggestions";
@@ -392,9 +392,12 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
       </button>}>
       {initial?.status === "REJECTED" && initial.finance_note && <div className="st-warn" role="status">Finance returned it: {initial.finance_note}</div>}
       {error && <div className="st-warn" role="alert">{error}</div>}
+      {/* The order it is filled in (owner 2026-10-02: 整齐一点 — the desktop form's
+         four steps): the bill, who is paid and into which account, how much,
+         what for. */}
       {!initial && (
         <>
-          <div className="sc-sl"><span className="t">The bill *</span><span className="ln" /></div>
+          <div className="sc-sl"><span className="t">① 单据 · The bill *</span><span className="ln" /></div>
           <input ref={camRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} aria-label="Take a photo of the bill"
             onChange={(e) => { void takeFiles([...files, ...(e.target.files ?? [])]); e.target.value = ""; }} />
           <input ref={libRef} type="file" accept={PV_FILE_ACCEPT} multiple style={{ display: "none" }} aria-label="Pick bill files"
@@ -409,16 +412,22 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
             <button type="button" className="btn" style={{ flex: 1 }} onClick={() => camRef.current?.click()}>📷 Photo</button>
             <button type="button" className="btn" style={{ flex: 1, background: "var(--bg)", color: "var(--ink)" }} onClick={() => libRef.current?.click()}>Pick file</button>
           </div>
-          <BillReadNote state={billRead.state} />
-          <BillFilledNote fields={filledFields} />
+          <BillReadPanel state={billRead.state} filled={filledFields} />
         </>
       )}
+      <div className="sc-sl"><span className="t">{initial ? "付给谁 · Pay to" : "② 付给谁 · Pay to"}</span><span className="ln" /></div>
       {field("Pay to *", <input className="cal-sel" aria-label="Pay to" value={v.payeeName} onChange={(e) => set({ payeeName: e.target.value })} placeholder="e.g. MLE EVENTS SDN BHD" />)}
-      {!isBalance && field("The bill's total (MYR)", <MoneyInput bare valueSen={billTotal ?? 0} inputClassName="cal-sel" selectOnFocus aria-label="Bill total"
+      {field("Payee's bank", <input className="cal-sel" aria-label="Payee's bank" value={v.bankName ?? ""} onChange={(e) => set({ bankName: e.target.value || null })} placeholder="e.g. Maybank" />)}
+      {field("Account no.", <input className="cal-sel" aria-label="Account no." inputMode="numeric" value={v.bankAccountNo ?? ""} onChange={(e) => set({ bankAccountNo: e.target.value || null })} />)}
+      {field("Account name", <input className="cal-sel" aria-label="Account name" value={v.bankAccountName ?? ""} onChange={(e) => set({ bankAccountName: e.target.value || null })} />)}
+      <div className="sc-sl"><span className="t">{initial ? "付多少 · Amount" : "③ 付多少 · Amount"}</span><span className="ln" /></div>
+      {!isBalance && field("Bill total (MYR)", <MoneyInput bare valueSen={billTotal ?? 0} inputClassName="cal-sel" selectOnFocus aria-label="Bill total"
         onCommit={(sen) => { const t = sen != null && sen > 0 ? sen : null; setBillTotal(t); if (pct) applyPct(pct, t); }} />)}
-      {field("Amount to pay now (MYR) *", <MoneyInput bare valueSen={v.amountSen} onCommit={(sen) => set({ amountSen: sen ?? 0 })} inputClassName="cal-sel" selectOnFocus aria-label="Amount" />)}
+      {field("Pay now (MYR) *", <MoneyInput bare valueSen={v.amountSen} onCommit={(sen) => set({ amountSen: sen ?? 0 })} inputClassName="cal-sel" selectOnFocus aria-label="Amount" />)}
       {billTotal != null && field("…or a percent of the bill", <input className="cal-sel" inputMode="decimal" aria-label="Percent of the bill" value={pct} placeholder="e.g. 50" onChange={(e) => applyPct(e.target.value, billTotal)} />)}
       {field("Pay by", <DateField fullWidth className="cal-sel" aria-label="Pay by" value={v.dueDate ?? ""} onChange={(iso) => set({ dueDate: iso || null })} />)}
+      <div className="sc-sl"><span className="t">{initial ? "用途 · What for" : "④ 用途 · What for"}</span><span className="ln" /></div>
+      {field("What is it for *", <textarea className="cal-sel" rows={2} aria-label="What is it for" value={v.purpose} onChange={(e) => set({ purpose: e.target.value })} placeholder="e.g. Booth F1 rental, balance 50%" />)}
       {hasEvents && field(eventNeeded ? "Event * — this bill is for an event" : "Event", <EventSelect value={v.projectId} around={v.dueDate || today} optionsPath={EVENTS_PATH} className="cal-sel" aria-label="Event" onChange={(id) => set({ projectId: id })} />)}
       {eventNeeded && billRead.state.status === "done" && (
         <EventSuggestions suggestions={billRead.state.result.eventSuggestions} current={v.projectId} onUse={(id) => set({ projectId: id })} />
@@ -432,11 +441,6 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
           {noEvent && field("Why there is no event *", <input className="cal-sel" aria-label="Why there is no event" value={noEventReason} onChange={(e) => setNoEventReason(e.target.value)} placeholder="e.g. the fair is not in PMS yet" />)}
         </>
       )}
-      {field("What is it for *", <textarea className="cal-sel" rows={2} aria-label="What is it for" value={v.purpose} onChange={(e) => set({ purpose: e.target.value })} placeholder="e.g. Booth F1 rental, balance 50%" />)}
-      <div className="sc-sl"><span className="t">Payee's bank</span><span className="ln" /></div>
-      {field("Bank", <input className="cal-sel" aria-label="Payee's bank" value={v.bankName ?? ""} onChange={(e) => set({ bankName: e.target.value || null })} placeholder="e.g. Maybank" />)}
-      {field("Account no.", <input className="cal-sel" aria-label="Account no." inputMode="numeric" value={v.bankAccountNo ?? ""} onChange={(e) => set({ bankAccountNo: e.target.value || null })} />)}
-      {field("Account name", <input className="cal-sel" aria-label="Account name" value={v.bankAccountName ?? ""} onChange={(e) => set({ bankAccountName: e.target.value || null })} />)}
     </Shell>
   );
 }
