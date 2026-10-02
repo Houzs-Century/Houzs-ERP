@@ -1291,7 +1291,10 @@ export const controlCheckHandler = async (c: any) => {
         /* API = the AP invoice (docs/bugs/0654): it credits 400 or 405 by the
            supplier's code, exactly as a PI does, and its edit re-post writes
            the reversal. Both were read as foreign until this line. */
-        : new Set(['PI', 'PI_REVERSAL', 'PV', 'PV_REVERSAL', 'API', 'API_REVERSAL']);
+        /* SCN = a supplier's credit note (Dr the supplier's AP control), which
+           since 2026-10-01 also comes off the invoices it credits — part of
+           the family, not a finding. */
+        : new Set(['PI', 'PI_REVERSAL', 'PV', 'PV_REVERSAL', 'API', 'API_REVERSAL', 'SCN', 'SCN_REVERSAL']);
     for (const l of (lines ?? []) as Array<{ je_no: string; source_type: string; debit_sen: number; credit_sen: number }>) {
       bal += Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0);
       if (!family.has(l.source_type)) {

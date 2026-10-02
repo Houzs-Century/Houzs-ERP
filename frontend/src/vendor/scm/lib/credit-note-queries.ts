@@ -77,10 +77,26 @@ export const useCreditNotes = (kind: NoteKind | 'ALL', status: NoteStatus | 'ALL
   retry: retryUnlessClientError,
 });
 
+/* A supplier note's credit coming off the supplier's invoices (2026-10-01,
+   Supplier CN part 2). */
+export type CreditAllocation = {
+  id: string; kind: 'PI' | 'API'; docId: string; number: string | null;
+  amountSen: number; appliedSen: number; createdAt: string | null; createdBy: string | null;
+};
+export type CreditOpenInvoice = {
+  kind: 'PI' | 'API'; id: string; number: string; invoiceRef: string | null; invoiceDate: string | null;
+  totalSen: number; paidSen: number; outstandingSen: number; status: string;
+};
+export type CreditNoteDetail = {
+  note: CreditNote; lines: CreditNoteLine[];
+  /** A supplier note only: where its credit went, and what is left. */
+  allocations?: CreditAllocation[]; appliedSen?: number; leftSen?: number;
+};
+
 export const useCreditNoteDetail = (id: string | null) => useQuery({
   queryKey: [KEY, 'detail', id],
   enabled: id != null,
-  queryFn: () => authedFetch<{ note: CreditNote; lines: CreditNoteLine[] }>(`/credit-notes/${id}`),
+  queryFn: () => authedFetch<CreditNoteDetail>(`/credit-notes/${id}`),
   staleTime: 0,
   retry: retryUnlessClientError,
 });
@@ -106,7 +122,11 @@ export const useUpdateCreditNote = () => {
 export const usePostCreditNote = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => authedFetch<{ ok: boolean; jeNo: string; status: string }>(`/credit-notes/${id}/post`, { method: 'POST', body: '{}' }),
+    mutationFn: (id: string) => authedFetch<{
+      ok: boolean; jeNo: string; status: string;
+      /** A supplier note naming its invoice: what came off it at once, or why nothing did. */
+      applied?: Array<{ kind: 'PI' | 'API'; id: string; number: string; appliedSen: number }>; notApplied?: string;
+    }>(`/credit-notes/${id}/post`, { method: 'POST', body: '{}' }),
     onSuccess: () => invalidate(qc),
   });
 };
@@ -150,6 +170,32 @@ export const useDeleteCreditNoteFile = () => {
 
 export const fetchCreditNoteFileBlobUrl = (noteId: string, fileId: string): Promise<{ url: string; contentType: string }> =>
   fetchDocFileBlobUrl(`/credit-notes/${noteId}/files/${fileId}`);
+
+/** The supplier's invoices still owing — what the note's credit can come off. */
+export const useCreditNoteOpenInvoices = (noteId: string | null) => useQuery({
+  queryKey: [KEY, 'open-invoices', noteId],
+  enabled: !!noteId,
+  queryFn: () => authedFetch<{ invoices: CreditOpenInvoice[] }>(`/credit-notes/${noteId}/open-invoices`),
+  retry: retryUnlessClientError,
+});
+
+export const useApplyCreditNote = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ noteId, targets }: { noteId: string; targets: Array<{ kind: 'PI' | 'API'; id: string; amountSen: number }> }) =>
+      authedFetch<{ ok: boolean; applied: Array<{ kind: 'PI' | 'API'; id: string; number: string; appliedSen: number }> }>(`/credit-notes/${noteId}/apply`, { method: 'POST', body: JSON.stringify({ targets }) }),
+    onSuccess: () => invalidate(qc),
+  });
+};
+
+export const useRemoveCreditNoteAllocation = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ noteId, allocationId }: { noteId: string; allocationId: string }) =>
+      authedFetch<{ ok: boolean }>(`/credit-notes/${noteId}/allocations/${allocationId}/remove`, { method: 'POST', body: '{}' }),
+    onSuccess: () => invalidate(qc),
+  });
+};
 
 export const useCancelCreditNote = () => {
   const qc = useQueryClient();
