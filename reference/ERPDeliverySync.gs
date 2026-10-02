@@ -36,6 +36,9 @@
 // rows onto the same tabs. SHEET_SYNC_KEY only opens HOUZS orders, so those
 // rows push with Script property SHEET_SYNC_KEY_2990 (the 2990 pull's key);
 // without it they stay PENDING and are logged, never sent under the HOUZS key.
+// Menu: "Push Changes TO Houzs ERP" sends HOUZS rows only, "Push Changes TO
+// 2990 ERP" sends 2990 rows only; the 5-minute scheduledErpSync sends both and
+// then runs the 2990 pull (Sync2990.gs, so2990SyncAll_).
 
 const ERP_CHECKPOINT_PROP = "ERP_SYNC_CHECKPOINT";
 // Service-Case legs ride their own cursor so a stuck ASSR page never holds up
@@ -420,8 +423,12 @@ function erpRegionalSheets_() {
   ];
 }
 
-/** Push PENDING rows (col A → remark4, col O → delivery date) to the ERP. */
-function pushUpdatesToErp(triggerType) {
+/**
+ * Push PENDING rows (col A → remark4, col O → delivery date) to the ERP.
+ * scope "HOUZS" = HOUZS rows only, "2990" = 2990 rows only, omitted = both.
+ */
+function pushUpdatesToErp(triggerType, scope) {
+  const label = scope === "2990" ? "2990 ERP push" : "ERP push";
   const rid = Utilities.getUuid();
   const start = new Date();
   const ss = getTargetSs();
@@ -441,8 +448,8 @@ function pushUpdatesToErp(triggerType) {
       if (!sheet) { Log.warn(rid, "Sheet [" + sConfig.name + "] not found. Skipping."); return; }
       const updates = erpCollectUpdates_(sheet, sConfig, false);
       if (!updates.length) return;
-      const houzs = updates.filter(function (u) { return !erpIs2990Doc_(u.DocNo); });
-      const rows2990 = updates.filter(function (u) { return erpIs2990Doc_(u.DocNo); });
+      const houzs = scope === "2990" ? [] : updates.filter(function (u) { return !erpIs2990Doc_(u.DocNo); });
+      const rows2990 = scope === "HOUZS" ? [] : updates.filter(function (u) { return erpIs2990Doc_(u.DocNo); });
       [[houzs, cfg], [rows2990, { base: cfg.base, key: cfg.key2990 }]].forEach(function (leg) {
         if (!leg[0].length) return;
         if (!leg[1].key) {
@@ -459,13 +466,13 @@ function pushUpdatesToErp(triggerType) {
     if (errorCount > 0 && pushCount > 0) { status = "PARTIAL"; message = "Pushed " + pushCount + " row(s). " + errorCount + " failed."; }
     else if (errorCount > 0) { status = "FAILED"; message = "All " + errorCount + " push attempts failed."; }
     else if (pushCount === 0) { status = "SKIPPED"; message = "No PENDING rows."; }
-    Log.info(rid, "ERP push finished: " + status + " - " + message);
-    recordExecutionLog(ss, rid, "ERP_PUSH", start, new Date(), status, message, user);
-    if (triggerType === "MANUAL") SpreadsheetApp.getUi().alert("ERP push: " + status + "\n\n" + message);
+    Log.info(rid, label + " finished: " + status + " - " + message);
+    recordExecutionLog(ss, rid, scope === "2990" ? "ERP_PUSH_2990" : "ERP_PUSH", start, new Date(), status, message, user);
+    if (triggerType === "MANUAL") SpreadsheetApp.getUi().alert(label + ": " + status + "\n\n" + message);
   } catch (e) {
-    Log.error(rid, "ERP push failed", e);
-    recordExecutionLog(ss, rid, "ERP_PUSH", start, new Date(), "FAILED", e.message, user);
-    if (triggerType === "MANUAL") SpreadsheetApp.getUi().alert("ERP push FAILED\n" + e.message);
+    Log.error(rid, label + " failed", e);
+    recordExecutionLog(ss, rid, scope === "2990" ? "ERP_PUSH_2990" : "ERP_PUSH", start, new Date(), "FAILED", e.message, user);
+    if (triggerType === "MANUAL") SpreadsheetApp.getUi().alert(label + " FAILED\n" + e.message);
   } finally {
     lock.releaseLock();
   }
@@ -590,14 +597,18 @@ function scheduledErpSync() {
     pushUpdatesToErp("SCHEDULED");
     runErpPullProcess("SCHEDULED");
     runErpAssrPull("SCHEDULED");
+    // 2990 pull rides the same 5-minute cycle (owner 2026-10-02), after the
+    // push so a PENDING 2990 edit is sent before the ERP's figures land. Its
+    // own try: a 2990 failure must never stop the HOUZS legs above.
+    try { so2990SyncAll_(false); } catch (e) { Log.error("scheduled", "2990 pull failed", e); }
   } finally {
     lock.releaseLock();
   }
 }
 function manualErpPull() { runErpPullProcess("MANUAL"); }
 
-/** One-off after BUG-49 deploys: the 2990 rows the HOUZS-only push marked
- *  "ERR: NO ORDER" go back to PENDING so the next push sends their dates. */
+/** One-off after BUG-49 deploys: the 2990 rows an earlier push marked
+ *  "ERR: ..." go back to PENDING so the next push sends their dates. */
 function erpRetry2990Rows() {
   const ss = getTargetSs();
   erpRegionalSheets_().forEach(function (sConfig) {
@@ -606,14 +617,17 @@ function erpRetry2990Rows() {
     const data = sheet.getDataRange().getValues();
     let n = 0;
     for (let i = sConfig.start - 1; i < data.length; i++) {
-      if (!erpIs2990Doc_(data[i][1]) || data[i][sConfig.statusCol - 1] !== "ERR: NO ORDER") continue;
+      // Any ERR: status - "ERR: NO ORDER" from the HOUZS-key push, "ERR: CONN"
+      // from the 401s while SHEET_SYNC_KEY_2990 was being set up (2026-10-02).
+      if (!erpIs2990Doc_(data[i][1]) || String(data[i][sConfig.statusCol - 1]).indexOf("ERR:") !== 0) continue;
       sheet.getRange(i + 1, sConfig.statusCol).setValue("PENDING").setBackground("#fff2cc");
       n++;
     }
     Log.info("retry2990", sConfig.name + ": " + n + " row(s) back to PENDING");
   });
 }
-function manualErpPush() { pushUpdatesToErp("MANUAL"); }
+function manualErpPush() { pushUpdatesToErp("MANUAL", "HOUZS"); }
+function manualErp2990Push() { pushUpdatesToErp("MANUAL", "2990"); }
 function manualErpAssrPull() { runErpAssrPull("MANUAL"); }
 
 /** Clears the ERP checkpoint so the next pull re-reads every order. */
@@ -629,7 +643,8 @@ function resetErpCheckpoint() {
  * sync. Overdue, Balance Collection and PO triggers are left as they are.
  */
 function setupErpTriggers() {
-  const stop = ["scheduledPull", "scheduledPush", "scheduledErpSync"];
+  // sync2990FromErp: the old nightly 2990 timer — scheduledErpSync pulls 2990 now.
+  const stop = ["scheduledPull", "scheduledPush", "scheduledErpSync", "sync2990FromErp"];
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (stop.indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t);
   });
