@@ -14,7 +14,7 @@
 // — rather than rendering the real PDF up front, which would make every button
 // wait on a jspdf render (the supplier documents pull a fabric catalogue and are
 // measurably slow). "View full PDF" is the escape hatch when the summary is not
-// enough: it renders the true document into a new tab.
+// enough: it renders the true document in an in-app viewer overlay.
 //
 // The three exits map onto the shared PdfAction in vendor/scm/lib/pdf-common:
 //   View full PDF → 'preview'   Print now → 'print'   Download PDF → 'save'
