@@ -52,6 +52,8 @@ import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip"
 import { FocAmount } from "../../vendor/scm/components/FocAmount";
 import { LinePoRefLink } from "../../vendor/scm/components/LinePoRefLink";
 import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
+import { useAuth } from "../../auth/AuthContext";
+import { canPostGoodsReceipts } from "../../auth/salesAccess";
 type GrnStatus = "DRAFT" | "POSTED" | "CANCELLED" | string;
 
 type GrnHeader = HoldFields & {
@@ -307,6 +309,7 @@ export function GoodsReceivedDetailV2() {
 }
 
 function GoodsReceivedDetailV2ReadOnly() {
+  const { user } = useAuth();
   const { id } = useParams<{ id: string }>();
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -613,7 +616,7 @@ function GoodsReceivedDetailV2ReadOnly() {
   };
 
   const rawStatus = (grn.status || "").toUpperCase();
-  const canPost = rawStatus === "DRAFT";
+  const canPost = rawStatus === "DRAFT" && canPostGoodsReceipts(user);
   const canConvertToPi = rawStatus === "POSTED" && !grn.fully_invoiced;
   const canConvertToPr = rawStatus === "POSTED" && !grn.fully_returned;
   const canCancel = rawStatus !== "CANCELLED";

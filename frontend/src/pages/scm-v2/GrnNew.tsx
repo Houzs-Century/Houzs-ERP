@@ -62,6 +62,8 @@ import { PageHeader } from '../../components/Layout';
 import { resolveFxRate } from './fx-rate';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { useAuth } from '../../auth/AuthContext';
+import { canPostGoodsReceipts } from '../../auth/salesAccess';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -151,6 +153,8 @@ type GrnNewDraft = {
 };
 
 export const GrnNew = () => {
+  const { user } = useAuth();
+  const mayPost = canPostGoodsReceipts(user);
   const navigate = useNavigate();
   const notify = useNotify();
   const [params] = useSearchParams();
@@ -791,10 +795,12 @@ export const GrnNew = () => {
               <Save {...ICON} />
               {saving ? 'Saving…' : 'Save as Draft'}
             </Button>
-            <Button variant="primary" size="md" onClick={() => onSave(false)} disabled={saving}>
-              <Save {...ICON} />
-              {saving ? 'Saving…' : 'Create Goods Receipt'}
-            </Button>
+            {mayPost && (
+              <Button variant="primary" size="md" onClick={() => onSave(false)} disabled={saving}>
+                <Save {...ICON} />
+                {saving ? 'Saving…' : 'Create Goods Receipt'}
+              </Button>
+            )}
           </div>
         }
       />

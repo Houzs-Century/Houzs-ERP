@@ -48,6 +48,18 @@ go through `/api/scm/grns`.
   user can no longer reach a create/convert flow that only 403s at the end.
 - Mobile add-line: `mayAddLine` (`frontend/src/mobile/mobile-add-line.ts`) — same
   `canOperateGoodsReceipts` check plus the shared line-lock state.
+- **Posting is its own permission** — position capability `scm.grn.post`
+  ("Post GRN", Roles & Permissions matrix; `*` positions pass). Without it, GRN
+  edit can only save DRAFTs, edit them and set racks. Enforced on every path that
+  posts — `POST /` without `asDraft`, `POST /from-pos`, `POST /from-po-items`,
+  `PATCH /:id/post` — by `grnPostRefusal` (`scm/lib/grn-post-capability.ts`),
+  before any write (`403 capability_required`). UI mirror:
+  `canPostGoodsReceipts` (`auth/salesAccess.ts`) hides Post / Create-and-post on
+  desktop (`GrnNew`, `GoodsReceivedDetailV2`) and phone (`MobileModuleDetail`,
+  `MobilePurchaseDocNew`). Owner 2026-10-01: the storekeeper receives (drafts +
+  scans racks), the purchaser posts. Seeded to Operation Executive, Operation
+  Manager, Procurement/Purchasing (`20261002T1200_grn_post_capability.sql`); the
+  `storekeeper` profile (Storekeeper, Warehouse Crew KL) has GRN edit for this.
 
 ## Rules that must not break
 
