@@ -31,7 +31,7 @@ import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/Prin
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { SoSourceChips } from '../../components/SoSourceChips';
 import { useSetBreadcrumbs } from '../../hooks/useBreadcrumbs';
-import { buildVariantSummary, canonicalizeVariants, fmtSen, fmtDateOrDash, fmtMoneySen, lineIdentity, missingVariantAxes } from '@2990s/shared'; // Commander 2026-05-28
+import { buildVariantSummary, canonicalizeVariants, consoleAttachOptions, fmtSen, fmtDateOrDash, fmtMoneySen, lineIdentity, missingVariantAxes } from '@2990s/shared'; // Commander 2026-05-28
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import {
@@ -631,6 +631,18 @@ export const SalesOrderDetail = () => {
   /* Owner 2026-08-16: "it should be able to keep adding lines." A single
      nullable draft + a self-hiding button capped an edit session at ONE. */
   const [addingDrafts, setAddingDrafts] = useState<StagedAddLine[]>([]);
+  /* Console lines only: the modules each can be joined to, over the order's
+     lines as currently edited (saved lines, their open drafts, staged adds). */
+  const attachOptionsById = useMemo(() => {
+    const rows = items.map((it) => {
+      const d = it.id in editingDrafts ? editingDrafts[it.id] : null;
+      return { id: it.id, itemCode: d ? d.itemCode : it.item_code, itemGroup: d ? d.itemGroup : it.item_group };
+    });
+    for (const a of addingDrafts) rows.push({ id: a.key, itemCode: a.draft.itemCode, itemGroup: a.draft.itemGroup });
+    const out: Record<string, string[] | null> = {};
+    rows.forEach((r, i) => { out[r.id] = consoleAttachOptions(rows, i); });
+    return out;
+  }, [items, editingDrafts, addingDrafts]);
   const [overriding, setOverriding] = useState<SoItem | null>(null);
   const [unlockOverride, setUnlockOverride] = useState(false), [afterDoTargetId, setAfterDoTargetId] = useState<string | null>(null), afterDoRef = useRef<AfterDoSave | null>(null); // DEV-32
   // PR-D — History panel toggle. Commander asked for the HOOKKA-style
@@ -2279,6 +2291,7 @@ export const SalesOrderDetail = () => {
                        marker + red ring stay off on a no-date draft (owner
                        2026-07-14). */
                     variantsRequired={requireVariants} lineDateLocked={!requireVariants} seedSofaLegDefault={true}
+                    attachOptions={attachOptionsById[it.id] ?? null}
                   />
                 </div>
               );
@@ -2304,6 +2317,7 @@ export const SalesOrderDetail = () => {
                     onRemove={cb?.onRemove ?? (() => cancelAddLine(staged.key))}
                     canRemove={true} chargeOnly={chargeAdds}
                     variantsRequired={requireVariants} lineDateLocked={!requireVariants} seedSofaLegDefault={true}
+                    attachOptions={attachOptionsById[staged.key] ?? null}
                   />
                 </div>
               );

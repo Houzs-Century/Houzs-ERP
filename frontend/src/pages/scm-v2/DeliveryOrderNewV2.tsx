@@ -1526,6 +1526,7 @@ export function DeliveryOrderNewV2() {
                 variantsRequired={false}
                 lineDateLocked={false}
                 seedSofaLegDefault={false}
+                attachOptions={null}
               />
             ))}
           </div>

@@ -38,7 +38,7 @@
 // autotable didDrawPage hook + jsPDF putTotalPages.
 // ----------------------------------------------------------------------------
 
-import { buildDefaultSofaCells, effectiveDelivery, findModule, fmtMoneySen, SOFA_MODULES, type Cell, type Depth } from '@2990s/shared';
+import { buildDefaultSofaCells, CONSOLE_ATTACH_KEY, effectiveDelivery, findModule, fmtMoneySen, SOFA_MODULES, type Cell, type Depth } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
 import { parseProvenanceNote } from '../../shared/transfer-vocabulary';
 import {
@@ -625,7 +625,7 @@ async function renderPurchaseOrderInto(
      kept in line (= display) order for a deterministic left→right layout. */
   const fallbackGroups = new Map<
     string,
-    { modules: Array<{ moduleId: string }>; depth: Depth; model: string; soNo: string }
+    { modules: Array<{ moduleId: string; attachTo: string | null }>; depth: Depth; model: string; soNo: string }
   >();
   /* (SO, base model) keys that already produced a geometry-based sofa — used to
      suppress any reconstructed group that would double-draw the same build. */
@@ -670,7 +670,9 @@ async function renderPurchaseOrderInto(
     /* One module per PIECE: an old "CNR x2" line is two corners, not one
        (HC-SO-2609-221 drew a U as a five-piece straight row). */
     const pieces = Math.max(1, Math.min(20, Math.round(Number(it.qty) || 1)));
-    for (let i = 0; i < pieces; i++) fg.modules.push({ moduleId: mod.moduleId });
+    const attachRaw = (it.variants as Record<string, unknown> | null)?.[CONSOLE_ATTACH_KEY];
+    const attachTo = typeof attachRaw === 'string' ? attachRaw : null;
+    for (let i = 0; i < pieces; i++) fg.modules.push({ moduleId: mod.moduleId, attachTo });
   }
 
   const distinctSofas: DistinctSofa[] = [];

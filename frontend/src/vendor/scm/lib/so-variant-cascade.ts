@@ -75,10 +75,15 @@ export const FABRIC_IDENTITY_KEYS: readonly string[] = [
  *  ruling is that a sofa SET's compartments SHARE their special orders, so those
  *  DO travel — but scoped to ONE physical sofa (buildKey), exactly like fabric,
  *  so two different sofa sets on one order never leak specials into each other,
- *  which is the same failure mode as the bedframe note above. */
+ *  which is the same failure mode as the bedframe note above.
+ *
+ *  `attachTo` — the module ONE Console line is joined to (CONSOLE_ATTACH_KEY,
+ *  read by the PO layout). Copied onto a sibling it would join every sofa line
+ *  of the model to that module. */
 export const NEVER_INHERITED_KEYS: readonly string[] = [
   'remark', 'buildKey',
   'extraAddonNote', 'extraAddonAmountRM',
+  'attachTo',
 ];
 
 /** The structured SPECIAL ORDER payload — the ticked add-on codes, their labels
