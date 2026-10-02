@@ -59,6 +59,13 @@ export const POSITION_CAPABILITY_DEFS: readonly PositionCapabilityDef[] = [
     group: "Finance",
     description: "Create sales invoices from delivery orders (DO → SI).",
   },
+  {
+    key: "scm.grn.post",
+    label: "Post GRN",
+    group: "Procurement",
+    description:
+      "Confirm a goods receipt so the stock goes in. Without it, Goods Receipt edit can only save drafts and set racks.",
+  },
 ] as const;
 
 const VALID_KEYS: ReadonlySet<string> = new Set(

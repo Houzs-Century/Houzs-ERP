@@ -56,10 +56,14 @@ const CALLER = {
 
 const { grns } = await import('./grns');
 
-async function createPosted() {
+// The session user the SCM auth bridge turns into houzsUser. The purchaser
+// holds Post GRN, so create-as-posted reaches its insert.
+const POSTER = { ...CALLER, permissions: [], position_capabilities: ['scm.grn.post'] };
+
+async function createPosted(sessionUser: unknown = POSTER) {
   const app = new Hono<{ Bindings: Env; Variables: Variables }>();
   app.use('*', async (c, next) => {
-    c.set('user', CALLER);
+    c.set('user', sessionUser as User);
     c.set('companyId', 1);
     c.set('supabase', sb as never);
     await next();
@@ -90,5 +94,13 @@ describe('GRN create is atomic — inserted DRAFT, never a phantom POSTED', () =
     const header = grnInserts[grnInserts.length - 1]!;
     expect(header.status).toBe('DRAFT');
     expect(header.posted_at).toBeNull();
+  });
+
+  it('refuses create-as-posted for a caller without Post GRN, before inserting anything', async () => {
+    const before = grnInserts.length;
+    const res = await createPosted({ ...CALLER, permissions: [], position_capabilities: ['scm.do.load'] });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error?: string }).error).toBe('capability_required');
+    expect(grnInserts.length).toBe(before);
   });
 });

@@ -284,6 +284,11 @@ const STOREKEEPER_ROWS: readonly PolicyRow[] = [
   { page_key: "scm.warehouse.transfers", level: "none" },
   { page_key: "scm.warehouse.stock_take", level: "none" },
   { page_key: "scm.warehouse.adjustments", level: "none" },
+  // Goods Receipt — edit, so the storekeeper RECEIVES: drafts the GRN (scan the
+  // supplier's delivery order) and scans each line's rack. Posting it is the
+  // purchaser's, on the separate scm.grn.post capability (owner 2026-10-01).
+  // Same no-cascade reasoning as the supervisor's row below.
+  { page_key: "scm.procurement.grn", level: "edit" },
 ];
 
 const STOREKEEPER_SUPERVISOR_ROWS: readonly PolicyRow[] = [
@@ -297,8 +302,8 @@ const STOREKEEPER_SUPERVISOR_ROWS: readonly PolicyRow[] = [
   { page_key: "scm.warehouse.transfers", level: "none" },
   { page_key: "scm.warehouse.stock_take", level: "none" },
   { page_key: "scm.warehouse.adjustments", level: "none" },
-  // Goods Receipt — edit, so the supervisor can RECEIVE goods (raise/confirm a
-  // GRN is a write). This grant alone keeps the Procurement nav GROUP alive (the
+  // Goods Receipt — edit, so the supervisor can RECEIVE goods (raise a GRN is a
+  // write; confirming it also needs scm.grn.post). This grant alone keeps the Procurement nav GROUP alive (the
   // group survives on the grn child), so the L1 `scm.procurement` is deliberately
   // NOT granted — granting it would cascade `view` onto Purchase Order / Purchase
   // Invoice / Products / Suppliers / MRP / Purchase Returns, which the manual

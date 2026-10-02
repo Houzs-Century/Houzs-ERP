@@ -85,6 +85,9 @@ const EXPECTED_WHITELIST: Record<string, Record<string, AccessLevel>> = {
     projects: "view",
     "projects.list": "view", // inherits the L1 parent
     "projects.calendar": "view", // inherits the L1 parent
+    // Goods Receipt edit (owner 2026-10-01): the storekeeper drafts the GRN and
+    // scans racks; POSTING is the separate scm.grn.post capability.
+    "scm.procurement.grn": "edit",
     // transfers / stock_take / adjustments explicitly none — asserted by the
     // "all else none" sweep below.
   },

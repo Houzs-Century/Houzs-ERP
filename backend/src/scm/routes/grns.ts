@@ -47,6 +47,7 @@ import {
 } from '../lib/outstanding-po-lines';
 import { checkReceiptCosts, refuseZeroCostReceipt, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
+import { grnPostRefusal } from '../lib/grn-post-capability';
 import { grnInheritedFieldChanges, grnInheritedLockedRefusal, grnHeaderInheritedChanges, grnHeaderInheritedRefusal, type GrnLinePrev, type GrnLinePatch } from '../lib/grn-inherited-lock';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked, crossCompanySourceRefusal,
@@ -1379,6 +1380,8 @@ grns.post('/', async (c) => {
      through the asDraft flag below, never as a free-form status. */
   const asDraft = (body as { asDraft?: unknown }).asDraft === true;
   if (body.status === 'DRAFT') return refuseWithoutWriting(c, { error: 'draft_status_not_supported', message: 'Use asDraft:true to save a GRN as a draft.' }, 400);
+  const postRefusal = asDraft ? null : grnPostRefusal(c.get('houzsUser'));
+  if (postRefusal) return refuseWithoutWriting(c, postRefusal, 403);
   /* Commander 2026-05-29 — a GRN may now be created WITHOUT a parent PO
      (blank/manual receipt + From-PO-multi picks that feed the New GRN form).
      Only the supplier is required; purchaseOrderId is optional. Each grn_item
@@ -1677,6 +1680,8 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
   try { body = (await c.req.json()) as typeof body; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
   const poIds = body.purchaseOrderIds ?? [];
   if (poIds.length === 0) return refuseWithoutWriting(c, { error: 'po_ids_required' }, 400);
+  const postRefusal = grnPostRefusal(c.get('houzsUser'));
+  if (postRefusal) return refuseWithoutWriting(c, postRefusal, 403);
 
   /* SOURCE LOAD, SCOPED — purchaseOrderIds arrive in the request body, so this
      read is what the conversion can see. Another company's PO id resolves to NO
@@ -1933,6 +1938,8 @@ export const postGrnHandler = async (c: any) => {
   if (row.status === 'CANCELLED' || row.status === 'CLOSED') {
     return refuseWithoutWriting(c, { error: 'cannot_confirm', message: `GRN is ${row.status} — cannot confirm.` }, 409);
   }
+  const postRefusal = grnPostRefusal(c.get('houzsUser'));
+  if (postRefusal) return refuseWithoutWriting(c, postRefusal, 403);
 
   /* Over-receipt verification at confirm — the draft-create path SKIPS this
      guard (a draft consumes no PO headroom), so re-check it here before the
@@ -2029,6 +2036,8 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
   // company via the wired context); every by-id write below acts only on a draft
   // id THAT core just created and returned for this company, and postGrnAndRollup
   // re-scopes by the header's own company_id — no caller-supplied id is touched.
+  const postRefusal = grnPostRefusal(c.get('houzsUser'));
+  if (postRefusal) return refuseWithoutWriting(c, postRefusal, 403);
   /* Delegate the DRAFT creation to the shared core (createDraftGrnsFromPoItemsCore
      above) so the HTTP path and the headless scan queue raise the SAME draft. The
      real Hono context is wired through verbatim, so company scoping, stamping and
