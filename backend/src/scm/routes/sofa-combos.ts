@@ -137,7 +137,11 @@ export function validatePricesByHeight(v: unknown): Record<string, number | null
     // ("24", "37") or named ones like "Flat". Accept alphanumeric labels (with
     // an optional space/dash); reject empty or symbol-only keys. The old
     // /^\d+$/ rejected the entire payload the moment "Flat" entered the pool.
-    if (!/^[A-Za-z0-9][A-Za-z0-9 _-]*$/.test(k)) return null;
+    // The inch mark is allowed too: the pool also holds `25"` / `27"` / `29"`,
+    // and since the composer sends every pool height, rejecting `"` refused
+    // EVERY combo save (BUG-46). Keys stay verbatim so they match the SO
+    // line's seatHeight, which is picked from the same pool.
+    if (!/^[A-Za-z0-9][A-Za-z0-9 _"'-]*$/.test(k)) return null;
     if (raw === null || raw === undefined || raw === '') {
       out[k] = null;
       continue;
