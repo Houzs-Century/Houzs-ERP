@@ -791,8 +791,10 @@ POST,/api/scm/grns/:id/items,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + re
 DELETE,/api/scm/grns/:id/items/:itemId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.grn"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/grns.ts
 PATCH,/api/scm/grns/:id/items/:itemId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.grn"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/grns.ts
 PATCH,/api/scm/grns/:id/items/:itemId/rack,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.grn"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/grns.ts
+PUT,/api/scm/grns/:id/items/:itemId/racks,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.grn"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/grns.ts
 GET,/api/scm/grns/:id/linked,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.grn"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/grns.ts
 PATCH,/api/scm/grns/:id/post,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.grn"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/grns.ts
+GET,/api/scm/grns/:id/racks,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.grn"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/grns.ts
 GET,/api/scm/grns/export/rows,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.grn"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/grn-exports.ts
 POST,/api/scm/grns/from-po-items,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.grn"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/grns.ts
 POST,/api/scm/grns/from-pos,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.grn"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/grns.ts

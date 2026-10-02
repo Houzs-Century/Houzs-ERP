@@ -11,6 +11,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { GoodsReceivedDetail } from './GoodsReceivedDetail';
 
 const h = vi.hoisted(() => ({
+  splitRows: [] as { grnItemId: string; rackId: string; qty: number }[],
   rackMock: vi.fn(),
   updateMock: vi.fn(),
   grn: null as Record<string, unknown> | null,
@@ -31,6 +32,8 @@ vi.mock('../../vendor/scm/lib/grn-queries', () => ({
   useUpdateGrnHeader: () => ({ mutateAsync: vi.fn().mockResolvedValue({}) }),
   useUpdateGrnItem: () => ({ mutateAsync: h.updateMock }),
   useSetGrnLineRack: () => ({ mutateAsync: h.rackMock }),
+  useGrnItemRacks: () => ({ data: h.splitRows, isLoading: false }),
+  useSetGrnLineRacks: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteGrnItem: () => ({ mutate: vi.fn(), isPending: false }),
   useAddGrnItem: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCancelGrn: () => ({ mutate: vi.fn(), isPending: false }),
@@ -100,6 +103,7 @@ beforeEach(() => {
   h.rackMock.mockReset().mockResolvedValue({ ok: true });
   h.updateMock.mockReset().mockResolvedValue({ ok: true });
   h.grn = null;
+  h.splitRows = [];
 });
 
 const pickRack = async () => {
@@ -124,6 +128,22 @@ describe('GoodsReceivedDetail — line Rack', () => {
     h.grn = makeGrn({ has_children: true });
     renderDetail();
     await pickRack();
+  });
+
+  it('on a DRAFT, offers the split editor instead of the one-rack picker', async () => {
+    h.grn = makeGrn({ status: 'DRAFT' });
+    renderDetail();
+    expect(await screen.findByLabelText('Add a rack')).toBeTruthy();
+    expect(screen.queryByLabelText('Rack for line 1')).toBeNull();
+    expect(screen.getByText('1 of 1 not on a rack yet')).toBeTruthy();
+  });
+
+  it('shows a posted split as its racks, not as a picker', async () => {
+    h.grn = makeGrn();
+    h.splitRows = [{ grnItemId: 'I1', rackId: 'R1', qty: 1 }, { grnItemId: 'I1', rackId: 'R9', qty: 2 }];
+    renderDetail();
+    expect(await screen.findByDisplayValue('L1.1 x1, ? x2')).toBeTruthy();
+    expect(screen.queryByLabelText('Rack for line 1')).toBeNull();
   });
 
   it('is read-only on a CANCELLED GRN', async () => {

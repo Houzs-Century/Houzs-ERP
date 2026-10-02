@@ -148,6 +148,23 @@ go through `/api/scm/grns`.
   storekeeper's put-away step of the receiving flow the owner chose 2026-10-01:
   storekeeper converts the PO to a DRAFT on the phone and scans each line's
   shelf; the purchaser posts, and posting places the goods on those racks.
+- Line rack SPLIT (owner 2026-10-02): a DRAFT line can go on several racks, each
+  with a qty, in `scm.grn_item_racks` (`20261002T1400_grn_item_racks.sql`).
+  `GET /:id/racks` reads a GRN's split rows; `PUT /:id/items/:itemId/racks`
+  replaces one line's split (DRAFT only, `409 grn_not_draft` otherwise; racks
+  must be in the GRN's warehouse; total may be LESS than `qty_accepted` while
+  scanning, never more). `PATCH /:id/post` refuses `409 rack_split_incomplete`
+  until every split line's racks add up to `qty_accepted`; posting then places
+  one rack row per share (`planGrnPlacements` in `lib/grn-line-racks.ts`, read
+  by `grn-rack-sync.ts`). `grn_items.rack_id` = the one rack when a split uses
+  one, NULL when several — a reader that only knows `rack_id` never names one
+  shelf for goods on three. The one-rack PATCH on a DRAFT replaces a split; on a
+  POSTED split line it refuses `409 rack_split_posted` (move on the rack board).
+  Rule: `scm/shared/rack-split.ts`, byte-mirrored in `vendor/shared/` (canonical
+  test). UI: `useGrnLineRackSplit` (`vendor/scm/lib/grn-line-rack.ts`) rendered by
+  `MobileGrnLineRack` (scan/pick + qty) and desktop `GrnRackSplitField` (edit
+  mode). Adding a shelf to a line that sits whole on one other rack takes the
+  qty off that rack (`addRackShare`).
 
 ## Gotchas
 
