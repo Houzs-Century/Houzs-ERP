@@ -115,6 +115,7 @@ describe('what never travels', () => {
 
   test('the never-inherit list is exactly the per-line keys we know about', () => {
     expect([...NEVER_INHERITED_KEYS].sort()).toEqual([
+      'attachTo',
       'buildKey',
       'extraAddonAmountRM',
       'extraAddonNote',

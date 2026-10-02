@@ -529,6 +529,7 @@ export const DeliveryReturnNew = () => {
               variantsRequired={false}
               lineDateLocked={false}
               seedSofaLegDefault={false}
+              attachOptions={null}
             />
           ))}
           {/* No free "Add Line Item": a return line must come from a delivered DO

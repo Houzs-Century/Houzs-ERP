@@ -127,7 +127,7 @@ import {
 import { useOrdersWithMoney } from '../../vendor/scm/lib/so-money-queries';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
-import { fmtMoneySen } from '@2990s/shared';
+import { consoleAttachOptions, fmtMoneySen } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { isSofaGroup, pieceShareSen, SOFA_PIECES_SPLIT_NOTICE, splitSofaPieceLines } from '../../vendor/scm/lib/sofa-piece-lines';
 
@@ -2264,7 +2264,7 @@ export const SalesOrderNew = () => {
                      no-date draft (owner 2026-07-14). */
                   variantsRequired={!!processingDate}
                   lineDateLocked={!processingDate}
-                  seedSofaLegDefault={true}
+                  seedSofaLegDefault={true} attachOptions={consoleAttachOptions(lines, idx)}
                   /* Scan-Order (Task #73) — a NO-MATCH scanned line seeds an
                      empty SKU picker; pass the slip rawText as the picker's
                      placeholder hint so the operator can pick a real SKU

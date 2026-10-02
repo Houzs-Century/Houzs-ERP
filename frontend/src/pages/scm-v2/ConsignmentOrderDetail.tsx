@@ -633,6 +633,7 @@ export const ConsignmentOrderDetail = () => {
                   variantsRequired={!!header.processing_date}
                   lineDateLocked={false}
                   seedSofaLegDefault={true}
+                  attachOptions={null}
                 />
               );
             })}
@@ -648,6 +649,7 @@ export const ConsignmentOrderDetail = () => {
                 variantsRequired={!!header.processing_date}
                 lineDateLocked={false}
                 seedSofaLegDefault={true}
+                attachOptions={null}
               />
             )}
 
