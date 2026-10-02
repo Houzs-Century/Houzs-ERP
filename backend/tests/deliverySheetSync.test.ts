@@ -30,6 +30,8 @@ vi.mock("../src/scm/lib/autocount-outbox", () => ({ enqueueEdit: (sb: unknown, o
 
 const KEY = "test-sheet-sync-key";
 const HOUZS = 1;
+const KEY_2990 = "test-sheet-sync-key-2990";
+const CO_2990 = 2;
 
 type Recorded = { sql: string; binds: unknown[] };
 function fakeDb(answer: (sql: string, binds: unknown[]) => unknown) {
@@ -366,6 +368,44 @@ describe("POST /updates — col A → remark4, col O → customer_delivery_date"
     );
     expect(body.written).toBe(0);
     expect(body.results[0]).toMatchObject({ skipped: "no_order" });
+  });
+
+  test("BUG-49: the 2990 key writes a 2990 order's date back, scoped to 2990, never to HOUZS", async () => {
+    const { db, seen } = fakeDb((sql, binds) =>
+      /FROM companies/i.test(sql)
+        ? binds[0] === "2990" ? { id: CO_2990 } : { id: HOUZS }
+        : /UPDATE scm\.mfg_sales_orders/.test(sql)
+          ? [{ doc_no: "2990-SO-2608-019", sheet_doc_no: "2990-SO-2608-019" }]
+          : [],
+    );
+    const res = await app.request(
+      "/updates",
+      {
+        method: "POST",
+        headers: { "X-Intake-Key": KEY_2990, "content-type": "application/json" },
+        body: JSON.stringify({ updates: [{ DocNo: "2990-SO-2608-019", Remark4: "", ExpiryDate: "2026/10/20" }] }),
+      },
+      { DB: db, SHEET_SYNC_KEY: KEY, SHEET_SYNC_KEY_2990: KEY_2990 } as any,
+    );
+    const body = (await res.json()) as any;
+    expect(res.status).toBe(200);
+    expect(body.results[0]).toMatchObject({ DocNo: "2990-SO-2608-019", ok: true, delivery_date: "2026-10-20" });
+    expect(seen.find((s) => /FROM companies/i.test(s.sql))!.binds).toEqual(["2990"]);
+    const upd = seen.find((s) => /UPDATE scm\.mfg_sales_orders/.test(s.sql))!;
+    expect(upd.binds).toEqual(["2990-SO-2608-019", "", "2026-10-20", CO_2990]);
+  });
+
+  test("BUG-49: the 2990 key opens /updates only, and nothing at all while it is unset", async () => {
+    const { db } = fakeDb(() => ({ id: CO_2990 }));
+    const withKey = { DB: db, SHEET_SYNC_KEY: KEY, SHEET_SYNC_KEY_2990: KEY_2990 } as any;
+    const feed = await app.request("/so-since", { headers: { "X-Intake-Key": KEY_2990 } }, withKey);
+    expect(feed.status).toBe(401);
+    const unset = await app.request(
+      "/updates",
+      { method: "POST", headers: { "X-Intake-Key": KEY_2990, "content-type": "application/json" }, body: "{}" },
+      env(db),
+    );
+    expect(unset.status).toBe(401);
   });
 
   test("a wrong key is 401; more than the cap is 413", async () => {
