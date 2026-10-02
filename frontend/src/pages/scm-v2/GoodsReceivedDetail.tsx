@@ -48,6 +48,7 @@ import {
   useUpdateGrnHeader,
   useUpdateGrnItem,
   useSetGrnLineRack,
+  useGrnItemRacks,
   useDeleteGrnItem,
   useAddGrnItem,
   useCancelGrn,
@@ -64,7 +65,8 @@ import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
-import { grnRackEditable, grnRackOptions } from '../../vendor/scm/lib/grn-line-rack';
+import { grnRackEditable, grnRackOptions, grnRackSplitEditable } from '../../vendor/scm/lib/grn-line-rack';
+import { GrnRackSplitField } from './GrnRackSplitField';
 import { LinePoRefLink } from '../../vendor/scm/components/LinePoRefLink';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
@@ -170,6 +172,7 @@ type GrnItemRow = Record<string, unknown> & {
   /* Commander 2026-06-04 — destination rack chosen at receiving time (nullable).
      Resolved to its label via the GRN's warehouse racks for display. */
   rack_id?: string | null;
+  qty_accepted?: number | null;
   /* migration 0280 — zero-cost receipt acknowledgement + who set it. */
   zero_cost_ack?: boolean | null;
   zero_cost_reason?: string | null;
@@ -255,6 +258,15 @@ export const GoodsReceivedDetail = () => {
     () => grnRackOptions(racksQ.data?.racks ?? []),
     [racksQ.data?.racks],
   );
+  /* A line split over several racks (owner 2026-10-02) reads as "L3.1 x6, L3.2 x4". */
+  const splitQ = useGrnItemRacks(grn?.id);
+  const splitTextByLine = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const r of splitQ.data ?? []) {
+      m.set(r.grnItemId, [...(m.get(r.grnItemId) ?? []), `${rackLabelById.get(r.rackId) ?? '?'} x${r.qty}`]);
+    }
+    return m;
+  }, [splitQ.data, rackLabelById]);
 
   /* T12 — maintenance config + special-orders pools drive the per-category
      variant editor on EXISTING bedframe/sofa lines in Edit mode (same dropdown
@@ -1079,7 +1091,17 @@ export const GoodsReceivedDetail = () => {
                         board. Options = racks of this GRN's warehouse. */}
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Rack</span>
-                      {isEditing && grnRackEditable(grn.status) ? (
+                      {isEditing && grnRackSplitEditable(grn.status) ? (
+                        <GrnRackSplitField
+                          grnId={grn.id}
+                          itemId={it.id}
+                          lineRackId={it.rack_id ?? null}
+                          qtyAccepted={Number(it.qty_accepted ?? 0)}
+                          rackOptions={rackOptions}
+                          rackLabelById={rackLabelById}
+                          inputClassName={styles.fieldInput}
+                        />
+                      ) : isEditing && grnRackEditable(grn.status) && !((splitTextByLine.get(it.id)?.length ?? 0) > 1) ? (
                         <SearchableSelect
                           className={styles.fieldInput}
                           value={d.rackId}
@@ -1097,7 +1119,9 @@ export const GoodsReceivedDetail = () => {
                       ) : (
                         <input
                           type="text" readOnly
-                          value={it.rack_id ? (rackLabelById.get(it.rack_id) ?? '—') : '—'}
+                          value={(splitTextByLine.get(it.id)?.length ?? 0) > 1
+                            ? splitTextByLine.get(it.id)!.join(', ')
+                            : it.rack_id ? (rackLabelById.get(it.rack_id) ?? '—') : '—'}
                           className={styles.fieldInput}
                           style={{ background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />

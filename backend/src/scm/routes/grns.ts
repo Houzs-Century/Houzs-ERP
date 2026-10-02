@@ -48,6 +48,7 @@ import {
 import { checkReceiptCosts, refuseZeroCostReceipt, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
 import { refuseWithoutWriting } from '../lib/no-write-refusal';
 import { grnPostRefusal } from '../lib/grn-post-capability';
+import { getGrnItemRacksHandler, grnRackSplitPostRefusal, putGrnItemRacksHandler } from '../lib/grn-line-racks';
 import { grnInheritedFieldChanges, grnInheritedLockedRefusal, grnHeaderInheritedChanges, grnHeaderInheritedRefusal, type GrnLinePrev, type GrnLinePatch } from '../lib/grn-inherited-lock';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked, crossCompanySourceRefusal,
@@ -1940,6 +1941,8 @@ export const postGrnHandler = async (c: any) => {
   }
   const postRefusal = grnPostRefusal(c.get('houzsUser'));
   if (postRefusal) return refuseWithoutWriting(c, postRefusal, 403);
+  const splitRefusal = await grnRackSplitPostRefusal(sb, id, co.companyId);
+  if (splitRefusal) return refuseWithoutWriting(c, splitRefusal.body, splitRefusal.status);
 
   /* Over-receipt verification at confirm — the draft-create path SKIPS this
      guard (a draft consumes no PO headroom), so re-check it here before the
@@ -3202,6 +3205,8 @@ grns.patch('/:id/items/:itemId', async (c) => {
 
 // Rack is physical placement only — no stock/money, so not behind the PI/PR child-lock.
 grns.patch('/:id/items/:itemId/rack', setGrnLineRackHandler);
+grns.get('/:id/racks', getGrnItemRacksHandler);
+grns.put('/:id/items/:itemId/racks', putGrnItemRacksHandler);
 
 /* ── DELETE /:id/items/:itemId — remove a line + roll back its PO receipt. ──
    Deliverable 4 (migration 0106): reading the line's qty_accepted +

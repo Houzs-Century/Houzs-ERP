@@ -89,6 +89,18 @@ export async function setGrnLineRackHandler(c: Context<{ Bindings: Env; Variable
   if (lineErr) return c.json({ error: 'lookup_failed', reason: lineErr.message }, 500);
   if (!line) return c.json({ error: 'not_found' }, 404);
 
+  /* A line split over several racks (grn-line-racks.ts): on a DRAFT, one rack
+     picked here replaces the split; once posted its goods sit on several racks,
+     which this one-row move cannot follow — the rack board can. */
+  const { count: splitCount, error: splitErr } = await scopeToCompanyId(sb.from('grn_item_racks')
+    .select('id', { head: true, count: 'exact' }).eq('grn_item_id', itemId), co.companyId);
+  if (splitErr) return c.json({ error: 'lookup_failed', reason: splitErr.message }, 500);
+  const isDraft = String(grn.status ?? '').toUpperCase() === 'DRAFT';
+  if ((splitCount ?? 0) > 0 && !isDraft) {
+    return c.json({ error: 'rack_split_posted',
+      message: 'This line is on several racks. Move its goods on the rack board.' }, 409);
+  }
+
   const rackIds = [line.rack_id, toRackId].filter(Boolean) as string[];
   const { data: rackList, error: rackErr } = rackIds.length
     ? await scopeToCompanyId(sb.from('warehouse_racks').select('id, rack, warehouse_id, reserved').in('id', rackIds), co.companyId)
@@ -116,8 +128,13 @@ export async function setGrnLineRackHandler(c: Context<{ Bindings: Env; Variable
     placedRows: (placed ?? []) as PlacedRow[],
   });
   if (plan.kind === 'refuse') return c.json(plan.body, plan.status as 409);
-  if (plan.kind === 'noop') return c.json({ ok: true });
+  if (plan.kind === 'noop' && !((splitCount ?? 0) > 0)) return c.json({ ok: true });
 
+  if ((splitCount ?? 0) > 0) {
+    const { error: clearErr } = await scopeToCompanyId(sb.from('grn_item_racks')
+      .delete().eq('grn_item_id', itemId), co.companyId);
+    if (clearErr) return c.json({ error: 'update_failed', reason: clearErr.message }, 500);
+  }
   const { error: upErr } = await scopeToCompanyId(sb.from('grn_items')
     .update({ rack_id: toRackId }).eq('id', itemId), co.companyId);
   if (upErr) return c.json({ error: 'update_failed', reason: upErr.message }, 500);

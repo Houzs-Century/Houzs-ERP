@@ -5,15 +5,19 @@
    vendor/scm/lib/grn-line-rack.ts; only the presentation is the phone's.
    Scan reads the shelf's rack sticker instead of picking from the list
    (owner 2026-10-01: the storekeeper places the goods, so the storekeeper sets
-   the rack); a scan is resolved by the shared vendor/scm/lib/rack-qr.ts. */
+   the rack); a scan is resolved by the shared vendor/scm/lib/rack-qr.ts.
+   On a DRAFT the row is a SPLIT editor (owner 2026-10-02: one delivery of one
+   product often fills several shelves): each shelf with its qty, scanned or
+   picked, through the shared useGrnLineRackSplit. Posted lines keep the
+   one-rack picker; a posted split is shown, and moved on the rack board. */
 import { useEffect, useState } from "react";
 import { Camera, Flashlight, X } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { canOperateGoodsReceipts } from "../auth/salesAccess";
 import { useQrScanner } from "../lib/use-qr-scanner";
 import { useRacks } from "../vendor/scm/lib/warehouse-queries";
-import { useSetGrnLineRack } from "../vendor/scm/lib/grn-queries";
-import { grnRackEditable, grnRackOptions } from "../vendor/scm/lib/grn-line-rack";
+import { useGrnItemRacks, useSetGrnLineRack } from "../vendor/scm/lib/grn-queries";
+import { grnRackEditable, grnRackOptions, grnRackSplitEditable, useGrnLineRackSplit } from "../vendor/scm/lib/grn-line-rack";
 import { rackScanRefusal, resolveRackScan } from "../vendor/scm/lib/rack-qr";
 
 type Header = Record<string, unknown> | null;
@@ -30,7 +34,92 @@ export function MobileGrnLineRack({ moduleKey, grnId, header, line, onSaved }: {
   onSaved: () => void;
 }) {
   if (moduleKey !== "grns" || !str(line.id)) return null;
-  return <RackRow grnId={grnId} header={header} line={line} onSaved={onSaved} />;
+  return <RackCell grnId={grnId} header={header} line={line} onSaved={onSaved} />;
+}
+
+function RackCell({ grnId, header, line, onSaved }: { grnId: string; header: Header; line: Line; onSaved: () => void }) {
+  const { can, pageAccess } = useAuth();
+  const splitting = grnRackSplitEditable(str(header?.status)) && canOperateGoodsReceipts(can, pageAccess);
+  return splitting
+    ? <SplitRow grnId={grnId} header={header} line={line} onSaved={onSaved} />
+    : <RackRow grnId={grnId} header={header} line={line} onSaved={onSaved} />;
+}
+
+const LABEL_STYLE = { fontSize: 9.5, fontWeight: 700, letterSpacing: ".14em", textTransform: "uppercase", color: "#9aa093" } as const;
+const SMALL_BTN = { height: 32, padding: "0 10px", borderRadius: 8, border: "1px solid #e3e6e0", background: "#fff", fontFamily: "inherit", fontSize: 12.5 } as const;
+
+function SplitRow({ grnId, header, line, onSaved }: { grnId: string; header: Header; line: Line; onSaved: () => void }) {
+  const warehouseId = str(header?.warehouse_id);
+  const racksQ = useRacks({ warehouseId: warehouseId || undefined });
+  const racks = racksQ.data?.racks ?? [];
+  const options = grnRackOptions(racks);
+  const labelOf = (id: string) => options.find((o) => o.value === id)?.label ?? "?";
+  const qtyAccepted = Number(line.qty_accepted ?? 0) || 0;
+  const split = useGrnLineRackSplit({ grnId, itemId: str(line.id), lineRackId: str(line.rack_id) || null, qtyAccepted });
+  const [scanOpen, setScanOpen] = useState(false);
+  const [pending, setPending] = useState<string>("");
+  const [qty, setQty] = useState("");
+
+  const choose = (rackId: string) => {
+    setScanOpen(false);
+    setPending(rackId);
+    setQty(String(split.remaining > 0 ? split.remaining : 1));
+  };
+  const add = () => {
+    const n = Number(qty);
+    split.add(pending, n, () => { setPending(""); onSaved(); });
+  };
+  const busy = split.saving || racksQ.isLoading || split.loading;
+
+  return (
+    <div style={{ flexBasis: "100%", display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+        <span style={LABEL_STYLE}>Racks</span>
+        {split.splits.map((s) => (
+          <span key={s.rackId} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 4px 3px 9px", borderRadius: 999, background: "#e8f1ef", color: "#11140f", fontSize: 12.5 }}>
+            {labelOf(s.rackId)} &times; {s.qty}
+            <button type="button" aria-label={`Remove ${labelOf(s.rackId)}`} disabled={busy}
+              onClick={() => split.remove(s.rackId, onSaved)}
+              style={{ display: "inline-flex", border: "none", background: "transparent", padding: 2, color: "#767b6e" }}>
+              <X size={12} />
+            </button>
+          </span>
+        ))}
+        <span style={{ fontSize: 11.5, color: split.remaining > 0 ? "#8a5a00" : "#16695f" }}>
+          {split.remaining > 0 ? `${split.remaining} of ${qtyAccepted} not on a rack yet` : `All ${qtyAccepted} on racks`}
+        </span>
+      </div>
+
+      {pending ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{labelOf(pending)}</span>
+          <input aria-label="Quantity on this rack" inputMode="numeric" value={qty}
+            onChange={(e) => setQty(e.target.value.replace(/[^0-9]/g, ""))}
+            style={{ width: 64, height: 32, padding: "0 8px", borderRadius: 8, border: "1px solid #e3e6e0", fontFamily: "inherit", fontSize: 13 }} />
+          <button type="button" onClick={add} disabled={busy || !qty}
+            style={{ ...SMALL_BTN, border: "1px solid #16695f", background: "#16695f", color: "#fff", fontWeight: 600 }}>
+            Add
+          </button>
+          <button type="button" onClick={() => setPending("")} style={SMALL_BTN}>Cancel</button>
+        </div>
+      ) : !scanOpen && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button type="button" onClick={() => setScanOpen(true)} disabled={busy || options.length === 0}
+            style={{ ...SMALL_BTN, display: "inline-flex", alignItems: "center", gap: 5, border: "1px solid #16695f", color: "#16695f", fontWeight: 600 }}>
+            <Camera size={14} /> Scan
+          </button>
+          <select aria-label="Pick a rack" value="" disabled={busy || options.length === 0}
+            onChange={(e) => e.target.value && choose(e.target.value)}
+            style={{ flex: 1, minWidth: 0, height: 32, padding: "0 8px", borderRadius: 8, border: "1px solid #e3e6e0", background: "#fff", fontFamily: "inherit", fontSize: 13 }}>
+            <option value="">{racksQ.isLoading ? "Loading racks…" : options.length === 0 ? "No racks in this warehouse" : "Pick a rack"}</option>
+            {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+      )}
+      {scanOpen && <RackScanPanel racks={racks} onClose={() => setScanOpen(false)} onRack={choose} />}
+      {split.error && <div role="alert" style={{ fontSize: 11.5, color: "#b23a3a" }}>{split.error}</div>}
+    </div>
+  );
 }
 
 function RackRow({ grnId, header, line, onSaved }: { grnId: string; header: Header; line: Line; onSaved: () => void }) {
@@ -38,10 +127,22 @@ function RackRow({ grnId, header, line, onSaved }: { grnId: string; header: Head
   const warehouseId = str(header?.warehouse_id);
   const racksQ = useRacks({ warehouseId: warehouseId || undefined });
   const setRack = useSetGrnLineRack();
+  const splitQ = useGrnItemRacks(grnId);
   const [error, setError] = useState<string | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
 
   const options = grnRackOptions(racksQ.data?.racks ?? []);
+  const postedSplit = (splitQ.data ?? []).filter((r) => r.grnItemId === str(line.id));
+  if (postedSplit.length > 1) {
+    return (
+      <div style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 6 }}>
+        <span style={LABEL_STYLE}>Racks</span>
+        <span style={{ fontSize: 12, color: "#11140f" }}>
+          {postedSplit.map((r) => `${options.find((o) => o.value === r.rackId)?.label ?? "?"} × ${r.qty}`).join(" · ")}
+        </span>
+      </div>
+    );
+  }
   const current = str(line.rack_id);
   const currentLabel = options.find((o) => o.value === current)?.label ?? "";
   const editable = grnRackEditable(str(header?.status)) && canOperateGoodsReceipts(can, pageAccess);
