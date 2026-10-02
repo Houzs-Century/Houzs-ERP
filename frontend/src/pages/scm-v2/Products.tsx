@@ -1417,7 +1417,7 @@ export const MaintenanceTab = ({
             const res = await renameCompartment.mutateAsync({ ...r, apply: false });
             previews.push(res.result);
           } catch (e) {
-            notify({
+            void notify({
               title: `Cannot rename ${r.from} → ${r.to}`,
               body: e instanceof Error ? e.message : 'Something went wrong.',
               tone: 'error',
@@ -1427,7 +1427,7 @@ export const MaintenanceTab = ({
         }
         const blocked = previews.filter((p) => p.inUseTotal > 0);
         if (blocked.length > 0) {
-          notify({
+          void notify({
             title: `${blocked.map((p) => p.from).join(', ')} is in use and cannot be renamed`,
             body: blocked.map((p) => `${p.from}: ${describeRenameCounts(p.inUse)}`).join('\n') +
               '\nTo change the wording staff see, edit the SKU name or the compartment description instead. Nothing was saved.',
@@ -1449,7 +1449,7 @@ export const MaintenanceTab = ({
           try {
             await renameCompartment.mutateAsync({ ...r, apply: true });
           } catch (e) {
-            notify({
+            void notify({
               title: `Rename ${r.from} → ${r.to} failed`,
               body: `${e instanceof Error ? e.message : 'Something went wrong.'}\nNothing was partially renamed for this pair; fix and retry.`,
               tone: 'error',
