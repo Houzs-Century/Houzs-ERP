@@ -3,7 +3,9 @@ import {
   buildDeliveryFollowUp,
   isConnectConfigured,
   postConnectContact,
+  parseConnectCompanyProfiles,
   CONNECT_DELIVERY_AUTOMATION,
+  type ConnectCompanyProfile,
 } from './connect';
 
 describe('isConnectConfigured', () => {
@@ -19,7 +21,7 @@ describe('buildDeliveryFollowUp', () => {
   it('single order → ref_1 only, order_total 1, automation by name', () => {
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
       { ref: 'HC13234', branding: 'AKEMI', deliveryDate: '2026/10/05' },
-    ]);
+    ], null);
     expect(contact).toEqual({
       phone: '+60123',
       name: 'Wong',
@@ -39,7 +41,7 @@ describe('buildDeliveryFollowUp', () => {
       { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
       { ref: 'B2', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06' },
       { ref: 'C3', branding: 'GOODNITE', deliveryDate: '2026/10/07' },
-    ]);
+    ], null);
     expect(contact.attributes.order_total).toBe('3');
     expect(contact.attributes.ref_1).toBe('A1');
     expect(contact.attributes.ref_2).toBe('B2');
@@ -55,7 +57,7 @@ describe('buildDeliveryFollowUp', () => {
       { ref: 'C3', branding: 'GOODNITE', deliveryDate: '2026/10/07' },
       { ref: 'D4', branding: 'VONO', deliveryDate: '2026/10/08' },
       { ref: 'E5', branding: 'DREAMLAND', deliveryDate: '2026/10/09' },
-    ]);
+    ], null);
     expect(contact.attributes.order_total).toBe('5');
     expect(contact.attributes.ref_1).toBe('A1');
     expect(contact.attributes.ref_3).toBe('C3');
@@ -63,6 +65,61 @@ describe('buildDeliveryFollowUp', () => {
     expect(contact.attributes.ref_4).toBeUndefined();
     expect(contact.attributes.delivery_date_4).toBeUndefined();
     expect(contact.attributes.brand_4).toBeUndefined();
+  });
+
+  it('a company profile adds company_signature / bank_block / disposal_block', () => {
+    const profile: ConnectCompanyProfile = {
+      signature: '2990s Home',
+      bankBlock: 'Bank: Test\nAcc: 000',
+      disposalBlock: 'Disposal: sample',
+    };
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+    ], profile);
+    expect(contact.attributes.company_signature).toBe('2990s Home');
+    expect(contact.attributes.bank_block).toBe('Bank: Test\nAcc: 000');
+    expect(contact.attributes.disposal_block).toBe('Disposal: sample');
+  });
+
+  it('a null profile adds no per-company attributes', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+    ], null);
+    expect(contact.attributes.company_signature).toBeUndefined();
+    expect(contact.attributes.bank_block).toBeUndefined();
+    expect(contact.attributes.disposal_block).toBeUndefined();
+  });
+});
+
+describe('parseConnectCompanyProfiles', () => {
+  it('parses a company_id -> profile map', () => {
+    const raw = JSON.stringify({
+      '1': { signature: 'Houzs Century', bankBlock: 'B1', disposalBlock: 'D1' },
+      '2': { signature: '2990s Home', bankBlock: 'B2', disposalBlock: 'D2' },
+    });
+    const m = parseConnectCompanyProfiles(raw);
+    expect(m['1'].signature).toBe('Houzs Century');
+    expect(m['2'].bankBlock).toBe('B2');
+    expect(m['2'].disposalBlock).toBe('D2');
+  });
+
+  it('returns {} for null, empty or bad JSON', () => {
+    expect(parseConnectCompanyProfiles(null)).toEqual({});
+    expect(parseConnectCompanyProfiles('')).toEqual({});
+    expect(parseConnectCompanyProfiles('{not json')).toEqual({});
+    expect(parseConnectCompanyProfiles('[]')).toEqual({});
+  });
+
+  it('drops a row with no usable fields and coerces missing fields to empty strings', () => {
+    const raw = JSON.stringify({
+      '1': { signature: 'Houzs Century' },
+      '2': {},
+      '3': 'nope',
+    });
+    const m = parseConnectCompanyProfiles(raw);
+    expect(m['1']).toEqual({ signature: 'Houzs Century', bankBlock: '', disposalBlock: '' });
+    expect(m['2']).toBeUndefined();
+    expect(m['3']).toBeUndefined();
   });
 });
 
@@ -72,7 +129,7 @@ describe('postConnectContact', () => {
   const env = { CONNECT_WEBHOOK_URL: 'https://chat.houzscentury.com/', CONNECT_WEBHOOK_KEY: 'secret48' };
   const contact = buildDeliveryFollowUp('+60123', 'Wong', [
     { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
-  ]);
+  ], null);
 
   it('posts to /api/webhooks/erp with the X-Connect-Key header, trimming a trailing slash', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));

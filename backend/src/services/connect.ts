@@ -48,6 +48,49 @@ export interface ConnectResult {
   error: string | null;
 }
 
+/** Per-company message values the ERP fills so ONE template/flow serves both
+ *  companies (2990 delivers from the Houzs number but must show 2990's figures).
+ *  Each field maps to a flow variable the rebuilt flows reference:
+ *  {company_signature}, {bank_block}, {disposal_block}. */
+export interface ConnectCompanyProfile {
+  signature: string;
+  bankBlock: string;
+  disposalBlock: string;
+}
+
+/** app_config key holding a JSON map { "<company_id>": ConnectCompanyProfile }.
+ *  Lives in app_config, NOT in this (public) repo's source, because bank_block
+ *  carries a receiving account number. */
+export const CONNECT_COMPANY_PROFILE_KEY = 'connect.company_profile';
+
+/** Parse the app_config value into a company_id -> profile map. Never throws: a
+ *  missing value, bad JSON, or a non-string field yields {} or drops that row,
+ *  so a mis-edit cannot break a send and an unset key simply sends no
+ *  per-company attributes. */
+export function parseConnectCompanyProfiles(
+  raw: string | null,
+): Record<string, ConnectCompanyProfile> {
+  if (!raw) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (!parsed || typeof parsed !== 'object') return {};
+  const out: Record<string, ConnectCompanyProfile> = {};
+  for (const [id, v] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!v || typeof v !== 'object') continue;
+    const p = v as Record<string, unknown>;
+    const signature = typeof p.signature === 'string' ? p.signature : '';
+    const bankBlock = typeof p.bankBlock === 'string' ? p.bankBlock : '';
+    const disposalBlock = typeof p.disposalBlock === 'string' ? p.disposalBlock : '';
+    if (!signature && !bankBlock && !disposalBlock) continue;
+    out[id] = { signature, bankBlock, disposalBlock };
+  }
+  return out;
+}
+
 export function isConnectConfigured(env: ConnectConfig): boolean {
   return Boolean(env.CONNECT_WEBHOOK_URL && env.CONNECT_WEBHOOK_KEY);
 }
@@ -67,6 +110,7 @@ export function buildDeliveryFollowUp(
   phone: string,
   name: string,
   orders: ConnectOrder[],
+  profile: ConnectCompanyProfile | null,
 ): ConnectContact {
   const attributes: Record<string, string> = {
     full_name: name,
@@ -78,6 +122,11 @@ export function buildDeliveryFollowUp(
     attributes[`delivery_date_${n}`] = o.deliveryDate;
     attributes[`brand_${n}`] = o.branding;
   });
+  if (profile) {
+    attributes.company_signature = profile.signature;
+    attributes.bank_block = profile.bankBlock;
+    attributes.disposal_block = profile.disposalBlock;
+  }
   return { phone, name, automation: CONNECT_DELIVERY_AUTOMATION, attributes };
 }
 
