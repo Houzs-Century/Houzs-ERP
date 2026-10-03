@@ -29,7 +29,10 @@ import {
   isConnectConfigured,
   buildDeliveryFollowUp,
   postConnectContact,
+  parseConnectCompanyProfiles,
+  CONNECT_COMPANY_PROFILE_KEY,
   type ConnectOrder,
+  type ConnectCompanyProfile,
 } from '../../services/connect';
 
 export const deliveryMessages = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -101,6 +104,18 @@ deliveryMessages.post('/send', async (c) => {
   const sent: Array<{ phone: string; docNos: string[]; httpCode: number }> = [];
   const failed: Array<{ phone: string; docNos: string[]; error: string }> = [];
 
+  // Per-company message values (signature / bank / disposal) the rebuilt flows
+  // reference; read once. A profile keyed by company is config, not business
+  // data, so it is read by key and not company-scoped. Unset / malformed
+  // app_config => null => no per-company attributes (the message still goes).
+  // company-scope: app_config is a global key/value config table, not per-company data.
+  const { data: profileRow } = await sb.from('app_config')
+    .select('value').eq('key', CONNECT_COMPANY_PROFILE_KEY).maybeSingle();
+  const companyProfile: ConnectCompanyProfile | null =
+    parseConnectCompanyProfiles((profileRow as { value?: string | null } | null)?.value ?? null)[
+      String(activeCompanyId(c) ?? '')
+    ] ?? null;
+
   for (const [phone, group] of byPhone) {
     const groupDocs = group.map((r) => String(r.doc_no));
     // ONE message per customer phone. buildDeliveryFollowUp shows the first 3
@@ -113,7 +128,7 @@ deliveryMessages.post('/send', async (c) => {
       branding: String(r.branding ?? ''),
       deliveryDate: payloadDate(effectiveSoDelivery(r as SoDeliveryDateRow)),
     }));
-    const contact = buildDeliveryFollowUp(phone, String(group[0]?.debtor_name ?? ''), orders);
+    const contact = buildDeliveryFollowUp(phone, String(group[0]?.debtor_name ?? ''), orders, companyProfile);
 
     const result = await postConnectContact(c.env, contact);
 
