@@ -7,7 +7,7 @@ Canonical reference for every date/timestamp fact in the system: where each one 
 - Read/write the Processing Date through `SO_PROCESSING_DATE_COLUMN` / `SO_PROCESSING_DATE_PAYLOAD_KEY` (`backend/src/scm/shared/so-processing-date.ts`), never a hand-typed literal — a `.mjs` script must use the mirror `backend/scripts/lib/so-processing-date.mjs`, it cannot import the `.ts`.
 - Read supplier ETA on a PO through the shared `effectiveDelivery()` helper (`backend/src/scm/shared/effective-delivery.ts`), never recompute it per caller.
 - Keep `public.sales_entries.processing_date` (legacy native Sales module) and `public.sales_orders.ac_udf_pdate` (AutoCount's own field) separate from the SCM SO's `processing_date` — different documents, different write paths; renaming any of them breaks a stored-payload replay.
-- A header delivery-date change cascades to every line: on the SO it resets `line_delivery_date_overridden` and overwrites all lines; on the Consignment Order it respects the flag and skips overridden lines. This divergence is deliberate — do not "fix" it by making them match.
+- A header delivery-date change overwrites every line's date and resets `line_delivery_date_overridden`, the same on the SO and the Consignment Order; the CO keys this on the date actually changing, since its page re-sends the date on every save.
 - Find the date-coercion helper (`emptyDate` / `dateOrNull`) your own route already imports or declares — there is no shared date-coercion module.
 
 ## Gotchas
