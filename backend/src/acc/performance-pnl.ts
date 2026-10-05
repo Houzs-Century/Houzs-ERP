@@ -105,6 +105,12 @@ export type PerfLine = {
   doc_no: string; item_group: string | null; item_code: string | null; qty: number | null;
   total_sen: number | null; unit_cost_sen: number | null; line_cost_sen: number | null; cancelled: boolean | null;
 };
+/** A sales-order line's own cost: unit cost × quantity, written on the line
+    when it was priced; recomputed from the parts only when the line predates
+    the column. The Performance P&L and the product profit ranking both read it. */
+export const soLineCostSen = (l: Pick<PerfLine, 'qty' | 'unit_cost_sen' | 'line_cost_sen'>): number =>
+  l.line_cost_sen != null ? Number(l.line_cost_sen) : Math.round(Number(l.qty ?? 0) * Number(l.unit_cost_sen ?? 0));
+
 /** A ledger account's live figure for the period, as booked: an EXPENSES-section
     account's debit, or an other-income section's credit. */
 export type PerfExpense = { code: string; name: string; amountSen: number };
@@ -155,10 +161,7 @@ export function buildPerformanceReport(p: {
   for (const l of p.lines) {
     if (!liveDocs.has(l.doc_no) || l.cancelled === true) continue;
     const a = at.get(performanceGroupOf(l))!;
-    /* The order's own cost: unit cost × quantity, written on the line when
-       it was priced; recomputed from the parts only when the line predates
-       the column. */
-    const cost = l.line_cost_sen != null ? Number(l.line_cost_sen) : Math.round(Number(l.qty ?? 0) * Number(l.unit_cost_sen ?? 0));
+    const cost = soLineCostSen(l);
     a.lines += 1;
     a.salesSen += Number(l.total_sen ?? 0);
     a.cogsSen += cost;

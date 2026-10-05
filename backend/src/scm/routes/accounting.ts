@@ -54,6 +54,7 @@ import { bankLocks, bankMonthLock, bankMonthUnlock } from './accounting-bank-loc
 import { paymentCorrections } from './accounting-payment-corrections';
 import { unmatchedPaymentsHandler } from './accounting-unmatched-payments';
 import { arAgingHandler, apAgingHandler } from './accounting-aging';
+import { productProfitHandler } from './accounting-product-profit';
 import { bankConfigList, bankConfigSave } from './accounting-bank-config';
 import { payoutUpload, payoutList, payoutCharge, payoutChargeUndo, chargeAccountsHandler } from './accounting-payouts';
 import {
@@ -186,6 +187,10 @@ accounting.delete('/reports/layout', reportLayoutReset);
    expense in place of one ledger account, the rest as booked (owner
    2026-09-12; docs/bugs/0835). Handlers in accounting-performance.ts. */
 accounting.get('/reports/performance', performanceReport);
+/* The monthly product profit ranking (owner 2026-10-05): every product the
+   month sold, by model, with its own cost and its share of the gifts.
+   accounting-product-profit.ts; acc/product-profit.ts. */
+accounting.get('/product-profit', productProfitHandler);
 /* The Forecast P&L (owner 2026-09-21): a planning grid beside the statements; nothing posts. */
 accounting.get('/forecast', forecastGetHandler);
 accounting.put('/forecast', forecastPutHandler);
