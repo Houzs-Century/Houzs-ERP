@@ -26,10 +26,13 @@ Admin-only diagnostic and manual-refresh surface for integrations that normally 
 - `/rest-page-ceiling` and `/autocount/host-build` both need Worker-only secrets (`SUPABASE_SERVICE_ROLE_KEY`, `AC_SYNC_URL`/`AC_SYNC_KEY`) — they cannot be probed from a GitHub Actions workflow, only by calling the deployed route as a signed-in owner.
 - The month-end stock-close sweep and the inventory valuation page (`GET /inventory/valuation`) share one replay engine (`stock-close.ts`) — don't add a second valuation calculation.
 - `/api/announcements` is served by three routers mounted on the same prefix in order (module, receipts, approval) — a route added to the wrong one can silently shadow or be shadowed.
+- `GET /database`: one catalog statement per metric, each in its own transaction with `SET LOCAL statement_timeout = '5s'`. Never plain `SET`: the Hyperdrive pooler is session mode, so it would leak.
+- Without `pg_read_all_stats`, other roles' sessions are hidden: long-transaction counts become a lower bound and `limitedVisibility` is set. Lock waits read `pg_locks` (any role can read it, and it has `waitstart`).
+- Connections are judged against the smaller of `max_connections` and the 60-connection cap noted in `wrangler.toml`.
 
 ## Where the code is
 
-- `backend/src/routes/systemHealth.ts` — all diagnostic/refresh routes.
+- `backend/src/routes/systemHealth.ts` — all diagnostic/refresh routes; `systemHealthDatabase.ts` (database load) is mounted inside it.
 - `backend/src/scm/lib/paginate-all.ts` — the `paginateAll` pagination helper `/rest-page-ceiling` measures.
 - `backend/src/db/supabase.ts` — PostgREST client used by the ceiling probe.
 - `backend/src/acc/stock-close.ts` — month-end stock close sweep + valuation replay.
