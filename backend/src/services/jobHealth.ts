@@ -42,6 +42,7 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   "idempotency-sweep": DAY,
   "ar-aging-refresh": DAY,
   "job-runs-retention": DAY,
+  "failed-logins-retention": DAY,
   "stock-close": DAY,
   "supplier-price-apply": DAY,
   "scan-so-distill": 7 * DAY,

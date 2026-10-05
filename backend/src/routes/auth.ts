@@ -24,7 +24,7 @@ import { defaultCompanyCodeForHost } from "../middleware/companyContext";
 import { validatePasswordStrength } from "../services/passwordStrength";
 import { verifyTotp, consumeBackupCode } from "../services/totp";
 import { checkRateLimit, clearRateLimit, clientIp } from "../middleware/rateLimit";
-import { recordFailedLogin } from "../services/failedLogins";
+import { recordFailedLogin, recordRateLimitedOnce } from "../services/failedLogins";
 
 /**
  * Auth routes — UNAUTHENTICATED entry points.
@@ -119,7 +119,7 @@ app.post("/login", async (c) => {
   const rlKey = `${email}:${clientIp(c)}`;
   const limited = await checkRateLimit(c, "login", rlKey);
   if (limited) {
-    recordFailedLogin(c, email, null, "rate_limited");
+    recordRateLimitedOnce(c, email, "rate_limited", rlKey, 900);
     return limited;
   }
 
@@ -254,7 +254,7 @@ app.post("/totp/login", async (c) => {
   // 5 guesses / 5 min per challenge.
   const limited = await checkRateLimit(c, "totp", challenge, 5, 300);
   if (limited) {
-    recordFailedLogin(c, null, null, "totp_rate_limited");
+    recordRateLimitedOnce(c, null, "totp_rate_limited", challenge, 300);
     return limited;
   }
 

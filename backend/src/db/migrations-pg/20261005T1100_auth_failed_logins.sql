@@ -34,9 +34,10 @@ CREATE INDEX IF NOT EXISTS idx_auth_failed_logins_created_at ON public.auth_fail
 CREATE INDEX IF NOT EXISTS idx_auth_failed_logins_email ON public.auth_failed_logins (email);
 
 -- Emails and IPs: never readable through the PostgREST anon / authenticated
--- roles (see 0061_enable_rls_scm.sql). No policies, so only the Worker's
--- connection (owner / service_role, which bypass RLS) reads or writes it.
-ALTER TABLE public.auth_failed_logins ENABLE ROW LEVEL SECURITY;
+-- roles. RLS is deliberately not enabled, same as ai_usage_events and
+-- client_errors: the prod Hyperdrive role is not named in this repo (see 0191),
+-- and an RLS table with no policy would silently refuse it if it is not the
+-- owner, losing every row.
 REVOKE ALL ON public.auth_failed_logins FROM PUBLIC;
 DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN REVOKE ALL ON public.auth_failed_logins FROM anon; END IF; END $$;
 DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN REVOKE ALL ON public.auth_failed_logins FROM authenticated; END IF; END $$;

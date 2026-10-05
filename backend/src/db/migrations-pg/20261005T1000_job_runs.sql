@@ -4,8 +4,8 @@
 --   from scheduled() in index.ts, and routes/systemHealthJobs.ts reads them for
 --   GET /api/admin/health/jobs. The rows are a 14-day run log, nothing else
 --   reads them, so dropping the table loses only that history.
---   GRANTS: none to re-apply. Like public.client_errors (0151) it is reached
---   only through the Worker's own connection and grants nothing.
+--   GRANTS: none to re-apply. Reached only through the Worker's own
+--   connection; this file only revokes anon / authenticated.
 -- Verified against: not yet applied anywhere; the normal migrate-before-deploy
 --   path applies it on merge.
 --
@@ -28,3 +28,9 @@ CREATE TABLE IF NOT EXISTS public.job_runs (
   duration_ms integer
 );
 CREATE INDEX IF NOT EXISTS idx_job_runs_job_started ON public.job_runs (job, started_at DESC);
+
+-- Kept off the PostgREST anon / authenticated roles. RLS deliberately not
+-- enabled (prod Hyperdrive role not named in this repo, see 0191).
+REVOKE ALL ON public.job_runs FROM PUBLIC;
+DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN REVOKE ALL ON public.job_runs FROM anon; END IF; END $$;
+DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN REVOKE ALL ON public.job_runs FROM authenticated; END IF; END $$;

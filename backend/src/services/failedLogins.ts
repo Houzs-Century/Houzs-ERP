@@ -41,6 +41,37 @@ export function recordFailedLogin(
   }
 }
 
+/**
+ * A rate-limited refusal, saved once per limiter window instead of once per
+ * refused try: a guessing burst then costs a KV read per attempt, not a DB
+ * write. `windowKey` is the limiter's own key; `windowSec` its window.
+ */
+export function recordRateLimitedOnce(
+  c: Context<{ Bindings: Env }>,
+  email: string | null,
+  reason: "rate_limited" | "totp_rate_limited",
+  windowKey: string,
+  windowSec: number,
+): void {
+  const kv = c.env.SESSION_CACHE;
+  const ip = clientIp(c);
+  const write = (async () => {
+    const mark = `failed-login-rl:${reason}:${windowKey}`;
+    if (kv) {
+      if (await kv.get(mark)) return;
+      await kv.put(mark, "1", { expirationTtl: windowSec });
+    }
+    await insertFailedLogin(c.env, email, null, ip, reason);
+  })().catch((e: unknown) => {
+    console.error("[failed-logins] record failed", e);
+  });
+  try {
+    c.executionCtx.waitUntil(write);
+  } catch {
+    void write;
+  }
+}
+
 async function insertFailedLogin(
   env: Env,
   email: string | null,

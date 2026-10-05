@@ -158,6 +158,7 @@ import { runPOPull, runPODocsPull } from "./services/po";
 import { runSOSnapshot, runPOSnapshot } from "./services/acSnapshot";
 import { isAutoCountSyncDisabled } from "./services/autocount";
 import { jobTracker, purgeOldJobRuns } from "./services/jobRuns";
+import { pruneFailedLogins } from "./services/failedLogins";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -1026,6 +1027,14 @@ export default {
             if (n) console.log(`[cron job-runs-retention] purged ${n} run(s)`);
           })
           .catch((e) => console.error("[cron job-runs-retention]", e)),
+      );
+      // Failed sign-ins (System Health): kept 90 days.
+      ctx.waitUntil(
+        track("failed-logins-retention", () => pruneFailedLogins(env))
+          .then((n) => {
+            if (n) console.log(`[cron failed-logins-retention] purged ${n} row(s)`);
+          })
+          .catch((e) => console.error("[cron failed-logins-retention]", e)),
       );
       // Weekly: re-distill every salesperson's scan-so OCR rules + the
       // __GLOBAL__ alias dictionary. Reuses the daily 02:00 slot, gated to

@@ -83,6 +83,26 @@ describe("failed login recording cannot change the response", () => {
     });
   });
 
+  it("a rate-limited burst is saved once per window, not once per refused try", async () => {
+    silence();
+    getDb.mockClear();
+    const marks = new Map<string, string>();
+    const env = {
+      ...fakeEnv(null, null),
+      SESSION_CACHE: {
+        get: async (k: string) => (k.startsWith("failed-login-rl:") ? (marks.get(k) ?? null) : "10"),
+        put: async (k: string, v: string) => { marks.set(k, v); },
+        delete: async () => {},
+      },
+    } as unknown as ReturnType<typeof fakeEnv>;
+    const pending: Promise<unknown>[] = [];
+    for (let i = 0; i < 3; i++) {
+      expect((await login(env, (p) => pending.push(p))).status).toBe(429);
+    }
+    await Promise.all(pending);
+    expect(getDb).toHaveBeenCalledTimes(1);
+  });
+
   it("disabled account with the right password: 403 unchanged", async () => {
     silence();
     const user = { id: 8, password_hash: await hashPassword("not-it"), status: "disabled", totp_enabled: 0 };
