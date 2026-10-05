@@ -1138,6 +1138,10 @@ export async function patchAssrCase(
   // refreshed, so a combined manual edit still wins. No mirror hit →
   // just the doc_no changes (mirror is frozen; new SOs may be absent).
   let prevDocNo: string | null = null;
+  // A corrected SO number also re-stamps the case's company from that order
+  // (owner 2026-10-05: the case follows its SO's company, at create AND when
+  // the SO no. is edited). null = not an order number → the company stays.
+  let docCompanyId: number | null = null;
   if ("doc_no" in body && typeof body.doc_no === "string" && body.doc_no.trim()) {
     body.doc_no = body.doc_no.trim();
     const prev = await env.DB.prepare(
@@ -1147,6 +1151,7 @@ export async function patchAssrCase(
       .first<{ doc_no: string | null }>();
     prevDocNo = prev?.doc_no ?? null;
     if (prevDocNo !== body.doc_no) {
+      docCompanyId = await scmSoCompanyId(env, body.doc_no);
       let so = await env.DB.prepare(
         `SELECT ref, debtor_name, phone, sales_agent
            FROM sales_orders WHERE LOWER(doc_no) = LOWER(?)`
@@ -1210,6 +1215,10 @@ export async function patchAssrCase(
     }
   }
   if (!sets.length) return false;
+  if (docCompanyId != null) {
+    sets.push("company_id = ?");
+    binds.push(docCompanyId);
+  }
 
   // Mig 081 — when QA sets the verification outcome, server-stamp
   // verified_at + verified_by so the actor can't be spoofed from the
