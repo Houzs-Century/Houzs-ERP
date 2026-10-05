@@ -315,15 +315,22 @@ type RackTarget = { warehouseId: string; companyId: number | undefined };
 async function resolveSiblingTargets(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any, c: Parameters<typeof activeCompanyId>[0], ownIds: string[],
-): Promise<RackTarget[]> {
+): Promise<{ targets: RackTarget[] } | { error: string }> {
   const active = activeCompanyId(c);
-  if (active == null || ownIds.length === 0) return [];
-  const { data: own } = await scopeToCompany(sb.from('warehouses').select('id, code, company_id'), c)
+  if (active == null || ownIds.length === 0) return { targets: [] };
+  // A failed read must NOT quietly become "no siblings": the caller asked for
+  // the fan-out, and creating the label under one record only is the drift
+  // this flag exists to prevent.
+  const { data: own, error: ownErr } = await scopeToCompany(sb.from('warehouses').select('id, code, company_id'), c)
     .in('id', ownIds);
-  const { data: pool } = await scopeToAllowedCompanies(sb.from('warehouses').select('id, code, company_id'), c)
+  if (ownErr) return { error: ownErr.message };
+  const { data: pool, error: poolErr } = await scopeToAllowedCompanies(sb.from('warehouses').select('id, code, company_id'), c)
     .eq('is_active', true);
-  return siblingWarehouses((own ?? []) as WarehouseRef[], (pool ?? []) as WarehouseRef[], active)
-    .map((w) => ({ warehouseId: w.id, companyId: w.company_id ?? undefined }));
+  if (poolErr) return { error: poolErr.message };
+  return {
+    targets: siblingWarehouses((own ?? []) as WarehouseRef[], (pool ?? []) as WarehouseRef[], active)
+      .map((w) => ({ warehouseId: w.id, companyId: w.company_id ?? undefined })),
+  };
 }
 
 // ── POST /warehouse/racks — create one rack, or seed `count` racks ─────────
@@ -340,7 +347,11 @@ export const createWarehouseRacksHandler = async (c: any) => {
   const ownIds = await resolveRackTargets(sb, c, body);
   if (ownIds.length === 0) return c.json({ error: 'warehouse_required' }, 400);
   const targets: RackTarget[] = ownIds.map((warehouseId) => ({ warehouseId, companyId: activeCompanyId(c) }));
-  if (body.alsoSiblingCompanies === true) targets.push(...await resolveSiblingTargets(sb, c, ownIds));
+  if (body.alsoSiblingCompanies === true) {
+    const siblings = await resolveSiblingTargets(sb, c, ownIds);
+    if ('error' in siblings) return c.json({ error: 'lookup_failed', reason: siblings.error }, 500);
+    targets.push(...siblings.targets);
+  }
   const targetIds = targets.map((t) => t.warehouseId);
   const multi = targets.length > 1;
 
