@@ -25,7 +25,8 @@
 // ---------------------------------------------------------------------------
 
 import type { Env } from '../types';
-import { askAgentBrain, askAgentBrainWithTools, type AgentBrainUsageSink } from './agent-brain';
+import { AGENT_BRAIN_MODEL, askAgentBrain, askAgentBrainWithTools, type AgentBrainUsageSink } from './agent-brain';
+import type { AiUsageTag } from './aiUsage';
 import {
   allowedCapabilityKeys,
   redactFacts,
@@ -41,7 +42,7 @@ import {
   ASSISTANT_TOOLS_GUIDANCE,
   type AssistantToolCtx,
 } from './assistant-tools';
-import type { CompanyScopeCtx } from '../scm/lib/companyScope';
+import { activeCompanyId, type CompanyScopeCtx } from '../scm/lib/companyScope';
 
 /** One specialist the router can consult. `briefTable`/`itemsTable` are module
  *  constants — never user input — so they are safe to interpolate. */
@@ -217,6 +218,12 @@ export async function askAssistant(
 ): Promise<AssistantAnswer> {
   const apiKey = env.ANTHROPIC_API_KEY;
   const text = (message ?? '').trim();
+  const userId = (companyCtx?.get('user') as { id?: unknown } | undefined)?.id;
+  const aiUsage: AiUsageTag = {
+    env, feature: 'assistant', model: AGENT_BRAIN_MODEL, waitUntil: null,
+    companyId: companyCtx ? activeCompanyId(companyCtx) ?? null : null,
+    userId: typeof userId === 'number' ? userId : null,
+  };
   const hasFiles = !!(contentBlocks && contentBlocks.length);
   if (!text && !hasFiles) {
     return { answer: 'Ask me something about your orders, deliveries, payments, stock or sales.', agents: [], degraded: false };
@@ -233,6 +240,7 @@ export async function askAssistant(
       payload: { question: text || 'Read the attached file and summarise what matters for our operations.' },
       maxTokens: 700,
       usageSink,
+      aiUsage,
       contentBlocks: contentBlocks as Array<Record<string, unknown>>,
     });
     return { answer: worded?.trim() || 'I could not read that file just now. Please try again.', agents: [], degraded: !worded };
@@ -248,6 +256,7 @@ export async function askAssistant(
       payload: { question: text, agents: CAPABILITIES.map((c) => ({ key: c.key, answers: c.answers })) },
       maxTokens: 200,
       usageSink,
+      aiUsage,
     });
     if (routed) {
       const decision = parseRouterDecision(routed, AGENT_FAMILIES, CAPABILITIES.map((c) => c.key));
@@ -313,6 +322,7 @@ ${ASSISTANT_TOOLS_GUIDANCE}`,
       maxTokens: 600,
       maxTurns: 5,
       usageSink,
+      aiUsage,
     });
     if (worded) {
       const merged = [...agents];
@@ -330,6 +340,7 @@ ${ASSISTANT_TOOLS_GUIDANCE}`,
     payload,
     maxTokens: 500,
     usageSink,
+    aiUsage,
   });
   if (!worded) {
     return { answer: 'I could not reach the AI service just now. The agent console still has the underlying findings.', agents, degraded: true };

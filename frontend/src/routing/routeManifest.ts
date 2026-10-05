@@ -23,6 +23,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/agents",
   "/assistant",
   "/system-health",
+  "/ai-usage",
   "/autocount-sync",
   "/venture-portal-feed",
   "/change-log",

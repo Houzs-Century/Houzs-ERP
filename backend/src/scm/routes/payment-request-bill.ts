@@ -25,8 +25,9 @@ import { suggestEvents, type EventSuggestion } from '../lib/event-match';
 import { findBillMatches, type BillProbe } from '../lib/bill-matches';
 import { PAYMENT_REQUEST_KEY, callerUserId, isRequestFinance } from '../lib/payment-request';
 import { todayMyt } from '../lib/my-time';
-import { BILL_IMAGE_MIMES, MAX_BILL_FILE_BYTES, MAX_FILES_PER_BILL, extractOneBill, type BillFile } from '../../acc/bill-extract';
+import { BILL_IMAGE_MIMES, BILL_MODEL, MAX_BILL_FILE_BYTES, MAX_FILES_PER_BILL, extractOneBill, type BillFile } from '../../acc/bill-extract';
 import { requestBill } from './pv-extract';
+import { requestAiTag } from '../../services/aiUsage';
 import { DOC_FILE_MIMES, MAX_DOC_FILE_BYTES, decodeBase64, type DocFilesSpec } from '../lib/doc-files';
 import { compareOfficial, officialActor } from '../lib/official-doc';
 import { PV_FILES } from './pv-files';
@@ -97,7 +98,7 @@ export const readRequestBillHandler = async (c: any): Promise<Response> => {
      the bill when it answers (pv-extract { fromRequest }). */
   const apiKey = c.env?.ANTHROPIC_API_KEY;
   if (!apiKey) return c.json({ ok: false, reason: 'The bill reader is not set up here — send the request; Finance reads the bill.' });
-  const read = await extractOneBill(apiKey, files);
+  const read = await extractOneBill(apiKey, files, requestAiTag(c, 'bill_extract', BILL_MODEL));
   if (!read.ok) return c.json({ ok: false, reason: read.reason });
   const ex = read.extraction;
 
@@ -237,7 +238,7 @@ export const uploadOfficialDocHandler = async (c: any): Promise<Response> => {
   let note: string | null = null;
   const apiKey = c.env?.ANTHROPIC_API_KEY;
   if (apiKey) {
-    const read = await extractOneBill(apiKey, [{ name: file.name, mime, dataBase64 }]);
+    const read = await extractOneBill(apiKey, [{ name: file.name, mime, dataBase64 }], requestAiTag(c, 'bill_extract', BILL_MODEL));
     if (read.ok) {
       note = compareOfficial(
         { invoiceNumber: read.extraction.invoiceNumber, totalSen: read.extraction.totalSen },

@@ -18,7 +18,8 @@
 import { registerAgent } from '../agent-scheduler';
 import type { Env } from '../../types';
 import { activeInstructions } from '../agent-console';
-import { askAgentBrain, type AgentBrainUsageSink } from '../agent-brain';
+import { AGENT_BRAIN_MODEL, askAgentBrain, type AgentBrainUsageSink } from '../agent-brain';
+import { agentFeature } from '../aiUsage';
 import { summariseReadiness, type ReadinessLine } from '../../scm/lib/so-readiness';
 import { computeReleaseGate } from './release-gate';
 import { assessFulfilment, type FulfilmentInput } from './order-fulfilment';
@@ -232,6 +233,7 @@ registerAgent({
         payload: { brief: r.brief, ownerInstructions },
         maxTokens: 400,
         usageSink: sink,
+        aiUsage: { env, feature: agentFeature('OF'), model: AGENT_BRAIN_MODEL, companyId: null, userId: null, waitUntil: null },
       });
       ctx.addTokens(sink.tokensIn, sink.tokensOut);
       if (focus) {

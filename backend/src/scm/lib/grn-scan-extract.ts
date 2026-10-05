@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
+import { recordAi, type AiUsageTag } from '../../services/aiUsage';
 import {
   CLAUDE_MODEL,
   anthropicFetchWithRetry,
@@ -126,6 +127,7 @@ export async function callClaudeGrExtract(
   apiKey: string,
   fileBlocks: ContentBlock[],
   fewShotText: string,
+  usage: AiUsageTag,
 ): Promise<GrnExtractCall> {
   let errorMsg: string | null = null;
   let timedOut = false;
@@ -134,7 +136,7 @@ export async function callClaudeGrExtract(
   let cacheHit = false;
 
   try {
-    const resp = await anthropicFetchWithRetry({
+    const resp = await recordAi(usage, anthropicFetchWithRetry({
       method: 'POST',
       signal: AbortSignal.timeout(110_000),
       headers: {
@@ -165,7 +167,7 @@ export async function callClaudeGrExtract(
           },
         ],
       }),
-    });
+    }));
 
     const bodyText = await resp.text();
     if (!resp.ok) {

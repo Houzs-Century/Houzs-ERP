@@ -234,7 +234,7 @@ describe("translateAndStore", () => {
       title: "Some other title",
       body: "live",
       bodyHtml: null,
-    });
+    }, null);
     expect(calls).toHaveLength(2);
     calls[1].resolve(claudeReply("Some other title (en)", "live"));
     expect(await run).toBe("stale");
@@ -250,7 +250,7 @@ describe("translateAndStore", () => {
     expect(await storedTranslations(id)).toBeNull();
 
     // 400 is not retried (429 / 5xx / 529 are), so one deferred settles the run.
-    const run = translateAndStore(KEYED_ENV as never, id, { title: "Garbage", body: "g", bodyHtml: null });
+    const run = translateAndStore(KEYED_ENV as never, id, { title: "Garbage", body: "g", bodyHtml: null }, null);
     calls[1].resolve(new Response('{"error":{"type":"invalid_request_error","message":"bad"}}', { status: 400 }));
     expect(await run).toBe("none");
   });

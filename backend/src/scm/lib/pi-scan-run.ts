@@ -30,7 +30,7 @@ import {
   matchInvoiceLinesToGrnLines, docRefMatches, normalizeCode,
   type PiMatchGrnLine,
 } from './pi-scan-match';
-import type { ContentBlock, UploadedImage } from './scan-ocr';
+import { CLAUDE_MODEL, type ContentBlock, type UploadedImage } from './scan-ocr';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schema-parameterised scm client, same alias as scan-so.ts / scan-sample-review.ts
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
@@ -113,7 +113,8 @@ export async function runPiScanJob(env: Env, job: PiScanJob): Promise<void> {
 
     // 1) READ the invoice (one Claude vision call, confirmed-read few-shot pool).
     const fewShot = await loadPiFewShot(svc);
-    const call = await callClaudePiExtract(apiKey, fewShot, job.fileBlocks);
+    const call = await callClaudePiExtract(apiKey, fewShot, job.fileBlocks,
+      { env, feature: 'scan_pi', model: CLAUDE_MODEL, companyId: job.companyId, userId: job.houzsUserId, waitUntil: null });
     const parsed = call.parsed;
 
     // 2) Learning sample + invoice image (best-effort — never blocks the draft).
