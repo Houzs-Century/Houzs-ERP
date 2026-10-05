@@ -93,6 +93,9 @@ export type DataGridCompatProps<T> = {
   sortForSessionOnly?: boolean;
   /** See DataTable `persistFilters`; absent = funnels kept for the visit only. */
   persistFilters?: boolean | "always";
+  /** See DataTable `resetFilters`: the page's own view state folded into the
+   *  toolbar Reset, which already clears the funnels and the search box. */
+  resetFilters?: { active: boolean; onReset: () => void; label?: string };
   /** Page seeds written in DataGrid's layout rules; converted here. */
   layoutPresets?: LayoutSeed[];
   overlayHidden?: readonly string[];
@@ -189,6 +192,7 @@ export function DataGridCompat<T>({
   defaultSort,
   sortForSessionOnly = false,
   persistFilters,
+  resetFilters,
   layoutPresets,
   overlayHidden,
   onUserAdjustColumns,
@@ -228,6 +232,7 @@ export function DataGridCompat<T>({
       defaultSort={defaultSort}
       persistSort={!sortForSessionOnly}
       persistFilters={persistFilters}
+      resetFilters={resetFilters}
       layoutSeeds={layoutSeeds}
       overlayHidden={overlayHidden}
       onUserAdjustColumns={onUserAdjustColumns}

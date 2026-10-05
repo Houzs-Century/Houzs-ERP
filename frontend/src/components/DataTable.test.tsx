@@ -1304,6 +1304,24 @@ describe("DataTable header filter + sort menu", () => {
     expect(screen.queryByTitle("Clear all filters and search")).toBeNull();
   });
 
+  /* Delivery Planning (owner 2026-10-05): a name typed in the search box
+     offered no Reset, while Sales Orders (page-controlled search) did. The
+     grid-owned search box now counts, and the one click clears it. */
+  it("offers the toolbar Reset for client search text, and clears it", async () => {
+    setViewport(1280);
+    const { container } = render(
+      <DataTable tableId="search-reset" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} clientSearch={{ placeholder: "Find" }} />,
+    );
+    expect(screen.queryByTitle("Clear all filters and search")).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText("Find"), { target: { value: "Order 2" } });
+    await waitFor(() => expect(rowCount(container)).toBe(1));
+
+    fireEvent.click(screen.getByTitle("Clear all filters and search"));
+    await waitFor(() => expect(rowCount(container)).toBe(6));
+    expect((screen.getByPlaceholderText("Find") as HTMLInputElement).value).toBe("");
+    expect(screen.queryByTitle("Clear all filters and search")).toBeNull();
+  });
+
   it("folds column filters into a page-owned Reset instead of shadowing it", () => {
     setViewport(1280);
     const onReset = vi.fn();

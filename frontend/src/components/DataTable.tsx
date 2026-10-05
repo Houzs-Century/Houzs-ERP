@@ -493,8 +493,10 @@ function DataTableInner<T, L>({
 
   // Sticky funnels count for the toolbar Reset — see ResetFiltersButton for why.
   const colFiltersActive = Object.values(colFilters).some((values) => values.length > 0);
+  const clientQueryActive = clientSearching && clientQuery.trim() !== "";
   function handleResetFilters() {
     if (colFiltersActive) setColFilters({});
+    if (clientQueryActive) setClientQuery("");
     resetFilters?.onReset();
   }
 
@@ -2151,7 +2153,7 @@ function DataTableInner<T, L>({
             </div>
           )}
           <ResetFiltersButton
-            active={colFiltersActive || (resetFilters?.active ?? false)}
+            active={colFiltersActive || clientQueryActive || (resetFilters?.active ?? false)}
             onReset={handleResetFilters}
             label={resetFilters?.label}
           />
