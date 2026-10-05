@@ -39,6 +39,8 @@ export type MrpLine = {
      NULL on stock / shortage lines. */
   poSupplierId: string | null;
   poSupplierName: string | null;
+  /* Sofa only — the batch (= PO number) the whole set is planned from. */
+  batchNo?: string | null;
 };
 
 export type MrpSku = {
@@ -94,6 +96,13 @@ export type SofaSet = {
   poEta: string | null;    // earliest PO-line delivery date (when goods arrive)
   poSupplierId: string | null;   // covering PO's supplier (read-only on covered sets)
   poSupplierName: string | null; // …resolved name; null for stock/shortage sets
+  /* On-hand units of the covering batch this line consumed (the stock slice of
+     orderedQty). Optional on the type so fixtures from before the field parse. */
+  stockQty?: number;
+  /* The batch (= PO number) the WHOLE set is planned from: the received dye lot
+     for a stock set, the covering PO otherwise; null when nothing covers it. A
+     sofa set is one batch or nothing (1 PO = 1 batch, never split). */
+  batchNo?: string | null;
   suppliers: Array<{ supplierId: string; code: string; name: string; isMain: boolean }>;
 };
 

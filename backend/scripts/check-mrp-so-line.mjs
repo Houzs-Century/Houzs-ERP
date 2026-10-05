@@ -223,7 +223,7 @@ async function main() {
     if (eff <= 0) why.push("nothing left to fulfil (fully delivered)");
     if (cat == null) why.push("no category — neither mfg_products nor item_group names one, so no tab claims it");
     if (why.length > 0) { notice(`  VERDICT: NOT in MRP demand — ${why.join("; ")}.`); continue; }
-    if (cat === "SOFA") notice("  NOTE: sofa runs the SET path (mrp.ts §8) — it appears on the Sofa tab, grouped by SO.");
+    if (cat === "SOFA") notice("  NOTE: sofa runs the SET path (mrp.ts §8) — planned per SO SET from ONE batch (= PO) or none; it appears on the Sofa tab, grouped by SO.");
 
     notice(`  VERDICT: IS MRP demand${dated ? "" : " (allocated, but hidden on the page while undated is off)"}`
       + ` — shows on the ${cat} tab.`);

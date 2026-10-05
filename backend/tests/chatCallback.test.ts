@@ -120,6 +120,28 @@ describe("one secret, one company", () => {
   });
 });
 
+describe("ref is the number the customer saw, not only our doc_no", () => {
+  test("the SO lookup matches doc_no OR linked_ac_docno, after an alphabet check", () => {
+    const src = route();
+    // delivery-messages sends COALESCE(linked_ac_docno, doc_no) as ref_1 and the
+    // flow echoes it back; an AutoCount-linked order would otherwise 404 on
+    // every tap. The value lands inside a PostgREST `or` filter, so the
+    // alphabet check must come BEFORE it.
+    expect(src).toMatch(/\.or\(`doc_no\.eq\.\$\{ref\},linked_ac_docno\.eq\.\$\{ref\}`\)/);
+    const check = src.indexOf("invalid_ref");
+    const query = src.indexOf("linked_ac_docno.eq.");
+    expect(check).toBeGreaterThan(-1);
+    expect(check).toBeLessThan(query);
+  });
+
+  test("the row is keyed by OUR doc_no, so the board finds it", () => {
+    const src = route();
+    // The hit's doc_no, not the inbound ref, is what gets written.
+    expect(src).toMatch(/const docNo = String\(soHit\.doc_no\)/);
+    expect(src).toMatch(/doc_no:\s*docNo,/);
+  });
+});
+
 describe("the guard is the same shape as the other intake keys", () => {
   test("constant-time compare, rate limit, and a failure delay", () => {
     const src = route();

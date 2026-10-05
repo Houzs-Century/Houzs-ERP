@@ -104,7 +104,11 @@ export function sofaSetsToSkus(sets: SofaSet[]): MrpSku[] {
       map.set(key, sku);
     }
     sku.qtyNeeded += s.qty;
-    sku.poOutstanding += s.orderedQty;
+    /* orderedQty is "covered by the set's batch" — its stock slice is on hand,
+       the rest is still on the PO. Split them so the SO header row reads the
+       same Stock / PO Outstanding the module chips do. */
+    sku.stock += s.stockQty ?? 0;
+    sku.poOutstanding += s.orderedQty - (s.stockQty ?? 0);
     sku.shortage += s.shortageQty;
     sku.lines.push({
       soItemId: s.soItemId, soDocNo: s.soDocNo,
@@ -121,6 +125,7 @@ export function sofaSetsToSkus(sets: SofaSet[]): MrpSku[] {
       source: allocSourceOf(s.shortageQty, s.poNumber), poNumber: s.poNumber, poEta: s.poEta,
       shortageQty: s.shortageQty,
       poSupplierId: s.poSupplierId, poSupplierName: s.poSupplierName,
+      batchNo: s.batchNo ?? null,
     });
   }
   return [...map.values()];

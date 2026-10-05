@@ -6,6 +6,12 @@ The return leg of the WhatsApp delivery conversation. `chat.houzscentury.com` po
 
 `POST /api/chat-callback` — `{callback_id, event: "confirm"|"amend", ref, phone, delivery_date?, reason?, note?}` (`event` and `ref` required; `delivery_date`/`reason` are the amend path's fields, recorded verbatim). Responds `{ok, id, event, ref, recorded, applied}` — `applied` is ALWAYS `false`.
 
+`ref` is the number the customer was shown. The outbound send puts `COALESCE(linked_ac_docno, doc_no)` in `ref_1`, so for an AutoCount-linked order it is the AutoCount number; the endpoint matches either column (company-scoped) and records the row under OUR `doc_no`, keeping the inbound value as `customer_ref` in the payload when the two differ. A `ref` with characters outside `[A-Za-z0-9_-/.]` is refused 400 before it can reach the filter.
+
+### What the outbound send tells Connect (the contract the flows depend on)
+
+Delivery Planning's Send Message (`POST /api/scm/delivery-messages/send`) posts ONE contact per customer phone with these attributes: `full_name`, `order_total`, `ref_1..3` / `delivery_date_1..3` / `brand_1..3`, `callback_url` (this endpoint's absolute URL, from `PUBLIC_APP_URL`), `amount` (the owed sum across every bundled order as `1,500.00`, from the SO list's `balance_sen_live` view column; empty when nothing is owed), and the per-company `company_signature` / `bank_block` / `disposal_block` from the `connect.company_profile` app_config key. It also RESETS `button_status`, `last_button`, `amount`, `amended_delivery_date`, `amend_date_reason`, `date_amended` to empty on every send — Connect merges attributes over the contact's existing ones, so without the reset the previous order's Confirm would lock the new order's Amend tap and a settled balance would print again. Connect's flow adds the `X-Chat-Key` header itself from its own `ERP_CALLBACK_KEY` secret; the key is never sent as an attribute.
+
 **It records; it does not schedule.** The endpoint never writes a delivery date onto the Sales Order — a tapped date is a request, not a plan. Delivery Planning owns delivery dates and MRP pools off them, so a write here could let a customer silently move a date a trip has already been planned around. The Sales Order is read only to prove `ref` exists and belongs to this company; applying a requested date is a human step (or a later, separate approval step), not this endpoint.
 
 ## Permissions
@@ -25,7 +31,8 @@ The return leg of the WhatsApp delivery conversation. `chat.houzscentury.com` po
 
 ## Gotchas
 
-- The endpoint 401s every request until the `CHAT_CALLBACK_KEY` Worker secret actually exists — deploying the route alone does not turn it on.
+- The endpoint 401s every request until the `CHAT_CALLBACK_KEY` Worker secret actually exists — deploying the route alone does not turn it on. The same value must be set on the Connect worker as `ERP_CALLBACK_KEY`, or every callback 401s and the tap is only visible in Connect's run log.
+- A failed read of the company profile or of the live balances makes the send answer 500 (`profile_load_failed` / `balance_load_failed`) rather than send a message with blank bank details or "nothing owed" — nothing has left at that point, so refusing is free.
 - Don't add a `.update(` on the Sales Order to this handler to "close the loop" on an amend — that is explicitly out of scope; a test fails the suite if an update is re-introduced.
 
 ## Where the code is
