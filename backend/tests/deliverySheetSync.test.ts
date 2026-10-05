@@ -838,6 +838,7 @@ const ASSR: AssrFeedRow = {
   customer_pickup_at: "2026-09-21",
   delivery_by: "own",
   do_date: "2026-09-25",
+  customer_country: null,
   last_modified_text: "2026-09-17 09:09:28.123456+00",
 };
 
@@ -873,6 +874,12 @@ describe("toAssrLegRecords — one own-team leg per set date, in the sheet's rec
 
   test("a Singapore address routes the legs to SG", () => {
     expect(toAssrLegRecords({ ...ASSR, addr3: "SINGAPORE 408600" })[0]!.Region).toBe("SG");
+  });
+
+  test("a leg whose linked order is in Singapore routes to SG even when address line 3 lacks the word", () => {
+    const legs = toAssrLegRecords({ ...ASSR, location: "KL", addr3: "600314 Jurong East", customer_country: "Singapore" });
+    expect(legs.map((l) => l.Region)).toEqual(["SG", "SG", "SG"]);
+    expect(toAssrLegRecords({ ...ASSR, location: "KL", addr3: "600314 Jurong East" })[0]!.Region).toBe("WEST");
   });
 });
 

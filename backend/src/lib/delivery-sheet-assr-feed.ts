@@ -63,6 +63,8 @@ export type AssrFeedRow = {
   customer_pickup_at: string | null;
   delivery_by: string | null;
   do_date: string | null;
+  /** The linked Sales Order's country — `assr_cases` has none of its own. */
+  customer_country: string | null;
   last_modified_text: string;
 };
 
@@ -109,6 +111,14 @@ SELECT assr_no,
        inspection_by, inspection_visit_at,
        pickup_by, customer_pickup_at,
        delivery_by, do_date,
+       -- A Singapore case's address line 3 often lacks the word (locality-master
+       -- addresses read "600314 Jurong East"), so the region needs the SO's country
+       -- (BUG-52's leg twin). Exact doc_no first, then the AutoCount number.
+       (SELECT so.customer_country
+          FROM scm.mfg_sales_orders so
+         WHERE so.doc_no = assr_cases.doc_no OR so.linked_ac_docno = assr_cases.doc_no
+         ORDER BY (so.doc_no = assr_cases.doc_no) DESC
+         LIMIT 1) AS customer_country,
        updated_at::text AS last_modified_text
   FROM assr_cases
  WHERE closed_at IS NULL
@@ -179,7 +189,7 @@ function legBase(row: AssrFeedRow): Omit<AssrLegRecord, "Kind" | "DocNo" | "Tran
     // Readiness is an SO concept; an ASSR leg's entry condition is the own-team
     // gate, already applied by the SQL — so it is never withheld for readiness.
     Ready: false,
-    Region: sheetRegion(salesLocation, addr3),
+    Region: sheetRegion(salesLocation, addr3, row.customer_country),
     LastModified: row.last_modified_text,
   };
 }

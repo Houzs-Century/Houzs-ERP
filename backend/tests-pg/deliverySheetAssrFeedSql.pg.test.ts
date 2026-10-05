@@ -34,6 +34,14 @@ async function resetFixture(s: Sql): Promise<void> {
   // Self-contained: assr_cases is a standalone PUBLIC table here, no FKs, so it
   // drops and rebuilds without touching the scm fixtures the other pg suite owns.
   await s.unsafe(`
+    -- The feed reads the linked order's country; only these columns are needed.
+    -- Every scm suite drops and rebuilds this table itself, so a minimal one is safe.
+    CREATE SCHEMA IF NOT EXISTS scm;
+    DROP TABLE IF EXISTS scm.mfg_sales_orders CASCADE;
+    CREATE TABLE scm.mfg_sales_orders (doc_no text PRIMARY KEY, linked_ac_docno text, customer_country text);
+    INSERT INTO scm.mfg_sales_orders (doc_no, linked_ac_docno, customer_country) VALUES
+      ('HC-SO-9010', 'SO-9010', 'Malaysia'),
+      ('HC-SO-9011', 'HC-SO-9011', 'Singapore');
     DROP TABLE IF EXISTS public.assr_cases CASCADE;
     CREATE TABLE public.assr_cases (
       id bigserial PRIMARY KEY, assr_no text NOT NULL, doc_no text, company_id bigint NOT NULL, status text,
@@ -126,6 +134,10 @@ describePg('HC Delivery sheet ASSR leg feed SQL — real Postgres', () => {
     // No-PO case: col AA blank, ref still gets the leg word.
     const pick11 = legs.find((l) => l.DocNo === 'HC-SO-9011-PICKUP')!;
     expect(pick11).toMatchObject({ Ref: 'REF011-PICKUP', SOUDF_ToPONo: null, DocDate: '2026-09-02' });
+    // 011's order is in Singapore (country, not address line 3) -> SG; 010 matches
+    // its order through the AutoCount number and stays WEST.
+    expect(pick11.Region).toBe('SG');
+    expect(rows.find((r) => r.assr_no === 'ASSR/2609-010')!.customer_country).toBe('Malaysia');
   });
 
   test('the cursor is strict — a page never re-sends its own last case', async () => {
