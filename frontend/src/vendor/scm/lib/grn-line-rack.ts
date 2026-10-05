@@ -5,9 +5,10 @@
 // A DRAFT line can be split over several racks (owner 2026-10-02); the split
 // rule itself is vendor/shared/rack-split.ts, byte-mirrored with the server.
 // useGrnLineRackSplit is the one logic layer both surfaces render.
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { sortByText } from './sort-options';
 import { useGrnItemRacks, useSetGrnLineRacks } from './grn-queries';
+import { useCrossCompanyRacks, useRacks } from './warehouse-queries';
 import {
   addToRackSplit, effectiveRackSplit, rackSplitError, rackSplitRemaining, rackSplitTotal,
   removeFromRackSplit, type RackSplit,
@@ -28,6 +29,77 @@ export function grnRackSplitEditable(status: string | null | undefined): boolean
 
 export function grnRackOptions(racks: ReadonlyArray<{ id: string; rack: string }>): { value: string; label: string }[] {
   return sortByText(racks.map((r) => ({ value: r.id, label: r.rack })));
+}
+
+/** A rack row of another company, as GET /warehouse/cross-company tags it. */
+export type SiblingRack = {
+  id: string;
+  rack: string;
+  warehouse_code: string | null;
+  company_code: string | null;
+  items: ReadonlyArray<{ qty: number }>;
+};
+
+const normKey = (s: string | null | undefined): string => String(s ?? '').trim().toUpperCase();
+
+/**
+ * The picker's options with what OTHER companies already have on the same
+ * shelf: "Rack L5.1 · HC 6 pcs". One building is one warehouse record per
+ * company and a shelf is one rack row per record, so a shelf that reads EMPTY
+ * on this company's board can be full of the other company's goods; the
+ * storekeeper picking a shelf for a receipt needs to know before walking there.
+ * Only shelves of the receipt's own warehouse code are matched, by label; this
+ * company's own rows (by id) never count as a sibling. Values are unchanged,
+ * so a pick saves exactly as before.
+ */
+export function grnRackOptionsWithSiblingStock(
+  racks: ReadonlyArray<{ id: string; rack: string }>,
+  ownWarehouseCode: string | null | undefined,
+  siblings: ReadonlyArray<SiblingRack>,
+): { value: string; label: string }[] {
+  const options = grnRackOptions(racks);
+  const code = normKey(ownWarehouseCode);
+  if (!code || siblings.length === 0) return options;
+  const ownIds = new Set(racks.map((r) => r.id));
+  const stockByLabel = new Map<string, Map<string, number>>();
+  for (const s of siblings) {
+    if (ownIds.has(s.id) || normKey(s.warehouse_code) !== code) continue;
+    const qty = s.items.reduce((sum, it) => sum + (Number(it.qty) || 0), 0);
+    if (qty <= 0) continue;
+    const byCompany = stockByLabel.get(normKey(s.rack)) ?? new Map<string, number>();
+    const company = s.company_code ?? '?';
+    byCompany.set(company, (byCompany.get(company) ?? 0) + qty);
+    stockByLabel.set(normKey(s.rack), byCompany);
+  }
+  if (stockByLabel.size === 0) return options;
+  return options.map((o) => {
+    const byCompany = stockByLabel.get(normKey(o.label));
+    if (!byCompany) return o;
+    const hint = [...byCompany.entries()].map(([company, qty]) => `${company} ${qty} pcs`).join(', ');
+    return { value: o.value, label: `${o.label} · ${hint}` };
+  });
+}
+
+/**
+ * The racks a GRN line may be placed on, for both surfaces: this company's
+ * racks of the receipt's warehouse (what a pick saves), their plain labels (how
+ * a saved pick reads back), and the picker options carrying the other
+ * companies' stock on the same shelf. The cross-company read is the same feed
+ * the All Companies tab shows; a miss there only drops the hint.
+ */
+export function useGrnRackOptions(warehouseId: string | undefined) {
+  const racksQ = useRacks({ warehouseId: warehouseId || undefined });
+  const crossQ = useCrossCompanyRacks();
+  const racks = useMemo(() => racksQ.data?.racks ?? [], [racksQ.data?.racks]);
+  const ownCode = (racksQ.data?.warehouses ?? []).find((w) => w.id === warehouseId)?.code ?? null;
+  const crossRacks = crossQ.data?.racks;
+  // Stable per data, so a caller's own useMemo keyed on these does not rerun every render.
+  const options = useMemo(
+    () => grnRackOptionsWithSiblingStock(racks, ownCode, crossRacks ?? []),
+    [racks, ownCode, crossRacks],
+  );
+  const labelById = useMemo(() => new Map<string, string>(racks.map((r) => [r.id, r.rack])), [racks]);
+  return { racks, options, labelById, isLoading: racksQ.isLoading };
 }
 
 /** How a line's racks read wherever they are shown — "L3.1 ×6, L3.2 ×4" — and

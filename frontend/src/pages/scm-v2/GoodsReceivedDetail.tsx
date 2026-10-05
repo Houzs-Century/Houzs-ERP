@@ -59,13 +59,12 @@ import {
   type SupplierRow,
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
-import { useRacks } from '../../vendor/scm/lib/warehouse-queries';
 import { useMaintenanceConfig, useSpecialAddons, useMfgProducts, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
-import { grnRackEditable, grnRackOptions, grnRackSplitEditable } from '../../vendor/scm/lib/grn-line-rack';
+import { grnRackEditable, grnRackSplitEditable, useGrnRackOptions } from '../../vendor/scm/lib/grn-line-rack';
 import { GrnRackSplitField } from './GrnRackSplitField';
 import { LinePoRefLink } from '../../vendor/scm/components/LinePoRefLink';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
@@ -248,16 +247,11 @@ export const GoodsReceivedDetail = () => {
   /* Commander 2026-06-04 — resolve each line's rack_id to its label. Racks are
      warehouse-scoped, so we load the racks of THIS GRN's receive-into warehouse
      (grn.warehouse_id) and build an id → label map for the Rack column below. */
-  const racksQ = useRacks({ warehouseId: grn?.warehouse_id ?? undefined });
-  const rackLabelById = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const r of racksQ.data?.racks ?? []) m.set(r.id, r.rack);
-    return m;
-  }, [racksQ.data?.racks]);
-  const rackOptions = useMemo(
-    () => grnRackOptions(racksQ.data?.racks ?? []),
-    [racksQ.data?.racks],
-  );
+  const racksQ = useGrnRackOptions(grn?.warehouse_id ?? undefined);
+  const rackLabelById = racksQ.labelById;
+  /* The picker's labels also carry the other companies' stock on the same
+     shelf ("Rack L5.1 · HC 6 pcs"); the id → label map above stays plain. */
+  const rackOptions = racksQ.options;
   /* A line split over several racks (owner 2026-10-02) reads as "L3.1 x6, L3.2 x4". */
   const splitQ = useGrnItemRacks(grn?.id);
   const splitTextByLine = useMemo(() => {

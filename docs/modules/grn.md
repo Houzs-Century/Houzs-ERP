@@ -139,7 +139,13 @@ go through `/api/scm/grns`.
   (`rack_already_moved`) rather than placing the goods twice. Both surfaces:
   desktop Edit mode (`GoodsReceivedDetail`) and the phone receipt detail
   (`MobileGrnLineRack`, saves on pick); who may change it and the option list
-  live in the shared `vendor/scm/lib/grn-line-rack.ts`. The phone's create
+  live in the shared `vendor/scm/lib/grn-line-rack.ts` (`useGrnRackOptions`:
+  this company's racks of the receipt's warehouse, plain labels for reading a
+  saved pick back, and picker labels carrying the OTHER companies' stock on the
+  same shelf — "Rack L5.1 · HC 6 pcs" — from `GET /warehouse/cross-company`,
+  because a shelf that reads EMPTY on this company's board may be full of the
+  other company's goods; see warehouses.md on one building, one record per
+  company). The phone's create
   forms still have no rack — set it on the detail after creating. Creating a GRN on
   the phone — the PO convert wizard or the manual form, draft or not — opens the
   new receipt's card (`MobileApp` on the GRN `id` the create returns), so the
