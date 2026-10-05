@@ -678,9 +678,20 @@ export type SendDeliveryMessagesResult = {
   failed: Array<{ phone: string; docNos: string[]; error: string }>;
   skipped: Array<{ docNo: string; reason: string }>;
 };
+/* Mirrors backend scm/lib/delivery-message-kinds.ts MESSAGE_KINDS. */
+export type SendMessageKind =
+  | 'delivery' | 'amend'
+  | 'reminder_1' | 'reminder_2' | 'reminder_3'
+  | 'driver_info' | 'delivery_completed' | 'balance_reminder' | 'postpone' | 'postage';
+export type SendDeliveryMessagesBody = {
+  docNos: string[];
+  kind?: SendMessageKind;
+  driverInfo?: { driverName: string; driverContact: string; driverIc: string; carPlate: string; deliveryTime: string };
+  postpone?: { reason: string; newDate: string };
+};
 export function useSendDeliveryMessages() {
   const qc = useQueryClient();
-  return useMutation<SendDeliveryMessagesResult, Error, { docNos: string[] }>({
+  return useMutation<SendDeliveryMessagesResult, Error, SendDeliveryMessagesBody>({
     mutationFn: (body) =>
       authedFetch<SendDeliveryMessagesResult>(`/delivery-messages/send`, {
         method: 'POST', body: JSON.stringify(body),

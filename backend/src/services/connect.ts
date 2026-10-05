@@ -44,6 +44,18 @@ export interface ConnectOrder {
 export interface ConnectSendContext {
   /** Absolute URL the flow's call_rest_api node posts the customer's tap to. */
   callbackUrl: string;
+  /** The Connect automation to fire, BY NAME. Defaults to the delivery
+   *  follow-up; scm/lib/delivery-message-kinds.ts maps the board's message
+   *  kinds onto the seeded names. */
+  automation?: string;
+  /** Per-kind template variables (driver fields, postpone fields, postage
+   *  address …) merged LAST, so a kind can set what it needs. */
+  extra?: Record<string, string>;
+  /** Reset the contact's conversation state (CONNECT_RESET_ATTRIBUTES).
+   *  Defaults to true — right for a message that OPENS a Confirm / Amend
+   *  conversation. A reminder or driver info sent to a customer who already
+   *  confirmed passes false, or it would unlock the Delivery Lock guard. */
+  resetConversation?: boolean;
 }
 
 /** Where the customer's tap comes back (routes/chatCallback.ts). */
@@ -165,7 +177,9 @@ export function buildDeliveryFollowUp(
     order_total: String(orders.length),
   };
   // Resets FIRST so a real value below (amount) wins over its reset.
-  for (const key of CONNECT_RESET_ATTRIBUTES) attributes[key] = '';
+  if (ctx.resetConversation ?? true) {
+    for (const key of CONNECT_RESET_ATTRIBUTES) attributes[key] = '';
+  }
   orders.slice(0, CONNECT_ORDER_LINES).forEach((o, i) => {
     const n = i + 1;
     attributes[`ref_${n}`] = o.ref;
@@ -184,7 +198,8 @@ export function buildDeliveryFollowUp(
     attributes.bank_block = profile.bankBlock;
     attributes.disposal_block = profile.disposalBlock;
   }
-  return { phone, name, automation: CONNECT_DELIVERY_AUTOMATION, attributes };
+  if (ctx.extra) Object.assign(attributes, ctx.extra);
+  return { phone, name, automation: ctx.automation || CONNECT_DELIVERY_AUTOMATION, attributes };
 }
 
 /** POST one contact event to Connect. Never throws — a network / non-2xx
