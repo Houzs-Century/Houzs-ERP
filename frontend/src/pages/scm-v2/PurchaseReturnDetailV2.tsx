@@ -3,7 +3,7 @@
 // BACK to the supplier and expects a credit (money-in framing). Aside hero =
 // Credit expected (synced/green because it's money coming back).
 
-import { useMemo, type ReactNode } from "react";
+import { lazy, Suspense, useMemo, type ReactNode } from "react";
 import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { scmListReturnTo } from "../../lib/scmListReturn";
@@ -239,7 +239,36 @@ function HeroLine({ k, v, strong }: { k: string; v: string; strong?: boolean }) 
   );
 }
 
+// ─── Legacy inline editor (lazy) ───────────────────────────────────────────
+// V2 is READ-ONLY by design. The draft editor (editable supplier / return date /
+// reason / credit-note ref / notes + inline Qty / Unit price per line, and the
+// T12 variant editor on non-GRN lines) lives in the legacy ./PurchaseReturnDetail
+// page — we forward to it whenever ?edit=1 lands on this route so the Edit
+// button actually opens editable fields. Mirrors how PurchaseInvoiceDetailV2 /
+// GoodsReceivedDetailV2 / PurchaseOrderDetailV2 forward ?edit=1 to their legacy
+// editor. Lazy-loaded so the editor bundle only ships when someone clicks Edit.
+const PurchaseReturnDetailInlineEditor = lazy(() =>
+  import("./PurchaseReturnDetail").then((m) => ({ default: m.PurchaseReturnDetail })),
+);
+
+/* Thin router — the only hook it calls is useSearchParams, so Rules of Hooks
+   are respected when the ?edit=1 flip swaps between the read-only body and the
+   lazy inline editor (the two children have different hook counts). */
 export function PurchaseReturnDetailV2() {
+  const [params] = useSearchParams();
+  if (params.get("edit") === "1") {
+    return (
+      <Suspense
+        fallback={<div className="p-8 text-[13px] text-ink-muted">Loading editor…</div>}
+      >
+        <PurchaseReturnDetailInlineEditor />
+      </Suspense>
+    );
+  }
+  return <PurchaseReturnDetailV2ReadOnly />;
+}
+
+function PurchaseReturnDetailV2ReadOnly() {
   const { id } = useParams<{ id: string }>();
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -276,6 +305,9 @@ export function PurchaseReturnDetailV2() {
   // browser history happens to point). The list restores its own sticky
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/purchase-returns"));
+  // Only a POSTED ("Confirmed") return is editable — the legacy editor locks
+  // COMPLETED / CANCELLED, so don't offer a button that opens a locked page.
+  const canEdit = eff === "posted";
   const goEdit = () => id && navigate(`/scm/purchase-returns/${id}?edit=1`);
   const goHistory = () => id && navigate(`/scm/purchase-returns/${id}?tab=history`);
   // Render + download the PR PDF via the shared jspdf generator (client-side),
@@ -498,7 +530,7 @@ export function PurchaseReturnDetailV2() {
             {canCancel && <Button variant="danger" icon={<XCircle size={14} />} onClick={doCancel}>Cancel return</Button>}
             {canPost && <Button variant="secondary" icon={<Send size={14} />} onClick={doPost}>Post</Button>}
             {canComplete && <Button variant="secondary" icon={<CheckCircle2 size={14} />} onClick={doComplete}>Complete</Button>}
-            <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>Edit</Button>
+            {canEdit && <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>Edit</Button>}
           </div>
         </div>
       </div>
@@ -632,11 +664,11 @@ export function PurchaseReturnDetailV2() {
             <button type="button" onClick={doComplete} className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink">
               <CheckCircle2 size={16} /> Complete
             </button>
-          ) : (
+          ) : canEdit ? (
             <button type="button" onClick={goEdit} className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink">
               <Edit3 size={16} /> Edit
             </button>
-          )}
+          ) : null}
           <button type="button" onClick={print.openPreview} className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft" aria-label="Print PDF">
             <Printer size={17} />
           </button>
