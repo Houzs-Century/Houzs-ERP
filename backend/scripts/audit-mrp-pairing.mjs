@@ -171,7 +171,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   /* ── 1. DEMAND — mrp.ts §1 (L545-576) ─────────────────────────────────── */
   const demandRaw = await sql`
     SELECT i.id, i.doc_no, i.item_code, i.item_group, i.variants, i.qty,
-           i.warehouse_id, i.line_delivery_date, i.line_no, i.stock_status,
+           i.warehouse_id, i.line_delivery_date, i.line_no, i.stock_status, i.allocated_batch_no,
            s.status::text AS so_status, s.customer_delivery_date,
            s.customer_state, s.sales_location
       FROM scm.mfg_sales_order_items i
@@ -443,7 +443,155 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
     }
   };
   allocate(generalBuckets, false);
-  allocate(sofaBuckets, true);
+
+  /* ── 8. SOFA SETS — mrp.ts §8, the SET WALK (owner 2026-10-05) ──────────────
+     「不能跨批次 1PO = 1batch 不能分开」: a sofa set (every sofa line of one SO at
+     one warehouse) is planned from ONE batch (= PO number) or none. Supply per
+     batch = open lots carrying that batch_no + units still open on that PO.
+       1. a batch whose received lots cover every module → stock (FIFO oldest);
+       2. else a batch whose lots + open PO cover every module → po (earliest ETA);
+       3. else a batch with units still ON ORDER covering part → that PO named,
+          rest short (complete THAT PO, never raise a second);
+       4. else the whole set is short.
+     Sets the allocator LOCKED (allocated_batch_no on every line, batch still
+     covering) keep their batch first. Replica of mrp.ts; keep in lockstep. */
+  const sofaLotRows = await sql`
+    SELECT warehouse_id, item_code, variant_key, batch_no, qty_remaining, received_at
+      FROM scm.v_inventory_lots_open
+     WHERE company_id = ${companyId} AND batch_no IS NOT NULL AND qty_remaining > 0`;
+  const lotKey = (wh, batch, code, vkey) => `${wh}|${batch}|${code}|${vkey}`;
+  const lotLeft = new Map();        // lotKey -> qty_remaining
+  const lotReceivedAt = new Map();  // batch -> earliest received_at
+  const lotBatches = new Set();
+  for (const r of sofaLotRows) {
+    const k = lotKey(r.warehouse_id, r.batch_no, r.item_code, r.variant_key ?? "");
+    lotLeft.set(k, (lotLeft.get(k) ?? 0) + num(r.qty_remaining));
+    lotBatches.add(r.batch_no);
+    const ra = r.received_at instanceof Date ? r.received_at.toISOString() : String(r.received_at ?? "");
+    const prev = lotReceivedAt.get(r.batch_no);
+    if (prev === undefined || (ra && ra < prev)) lotReceivedAt.set(r.batch_no, ra);
+  }
+  const sofaPoByBatch = new Map(); // po_number -> Map(bucketKey -> { qtyLeft, eta, items: [{poItemId, qtyLeft}] })
+  for (const [k] of sofaBuckets) {
+    for (const p of poByKey.get(k) ?? []) {
+      const perBucket = sofaPoByBatch.get(p.poNumber) ?? new Map();
+      const cur = perBucket.get(k) ?? { qtyLeft: 0, eta: null, items: [] };
+      cur.qtyLeft += p.qtyLeft;
+      if (cur.eta == null || (p.eta != null && p.eta > cur.eta)) cur.eta = p.eta;
+      cur.items.push({ poItemId: p.poItemId, qtyLeft: p.qtyLeft });
+      perBucket.set(k, cur);
+      sofaPoByBatch.set(p.poNumber, perBucket);
+    }
+  }
+  const sofaSetsByKey = new Map(); // `${wh}|${doc_no}` -> [{ row, bucketKey, whId, code, vkey, need }]
+  for (const [k, b] of sofaBuckets) {
+    for (const d of b.rows) {
+      const key = `${b.whId ?? WH_NONE}|${d.doc_no}`;
+      const arr = sofaSetsByKey.get(key) ?? [];
+      arr.push({ row: d, bucketKey: k, whId: b.whId, code: b.code, vkey: b.vkey, need: effQtyOf(d) });
+      sofaSetsByKey.set(key, arr);
+    }
+  }
+  const modulesOf = (lines) => {
+    const m = new Map();
+    for (const l of lines) {
+      const cur = m.get(l.bucketKey) ?? { bucketKey: l.bucketKey, whId: l.whId, code: l.code, vkey: l.vkey, need: 0 };
+      cur.need += l.need; m.set(l.bucketKey, cur);
+    }
+    return [...m.values()];
+  };
+  const lotQty = (batch, m) => (m.whId ? (lotLeft.get(lotKey(m.whId, batch, m.code, m.vkey)) ?? 0) : 0);
+  const poQty = (batch, m) => sofaPoByBatch.get(batch)?.get(m.bucketKey)?.qtyLeft ?? 0;
+  const fitOf = (batch, mods) => {
+    let stockOnly = true, full = true, covered = 0, onOrder = false, eta = null;
+    for (const m of mods) {
+      const lot = Math.min(lotQty(batch, m), m.need);
+      const po = Math.min(poQty(batch, m), m.need - lot);
+      if (lot < m.need) stockOnly = false;
+      if (lot + po < m.need) full = false;
+      covered += lot + po;
+      if (poQty(batch, m) > 0) onOrder = true;
+      if (po > 0) {
+        const e = sofaPoByBatch.get(batch)?.get(m.bucketKey);
+        if (e && (eta == null || (e.eta != null && e.eta > eta))) eta = e.eta;
+      }
+    }
+    return { batch, stockOnly, full, covered, onOrder, eta };
+  };
+  const chooseBatch = (mods) => {
+    const fits = [...new Set([...lotBatches, ...sofaPoByBatch.keys()])].map((b) => fitOf(b, mods)).filter((f) => f.covered > 0);
+    const stockOnly = fits.filter((f) => f.stockOnly);
+    if (stockOnly.length) return stockOnly.sort((a, b) => (lotReceivedAt.get(a.batch) ?? "").localeCompare(lotReceivedAt.get(b.batch) ?? "") || a.batch.localeCompare(b.batch))[0];
+    const full = fits.filter((f) => f.full);
+    if (full.length) return full.sort((a, b) => byDateAsc(a.eta, b.eta) || a.batch.localeCompare(b.batch))[0];
+    const partial = fits.filter((f) => f.onOrder);
+    if (partial.length) return partial.sort((a, b) => (b.covered - a.covered) || byDateAsc(a.eta, b.eta) || a.batch.localeCompare(b.batch))[0];
+    return null;
+  };
+  const sofaSetStats = { stock: 0, po: 0, partialOnPo: 0, short: 0, locked: 0 };
+  const planSofaSet = (lines, fit) => {
+    let anyShort = false;
+    for (const l of lines) {
+      let need = l.need;
+      let fromStock = 0;
+      const takenFrom = [];
+      if (fit) {
+        const lk = l.whId ? lotKey(l.whId, fit.batch, l.code, l.vkey) : null;
+        const have = lk ? (lotLeft.get(lk) ?? 0) : 0;
+        fromStock = Math.min(have, need);
+        if (lk && fromStock > 0) lotLeft.set(lk, have - fromStock);
+        need -= fromStock;
+        const po = sofaPoByBatch.get(fit.batch)?.get(l.bucketKey);
+        if (po && need > 0) {
+          let take = Math.min(po.qtyLeft, need);
+          po.qtyLeft -= take; need -= take;
+          for (const it of po.items) {
+            if (take <= 0) break;
+            const t = Math.min(it.qtyLeft, take);
+            if (t <= 0) continue;
+            it.qtyLeft -= t; take -= t;
+            takenFrom.push({ poNumber: fit.batch, poItemId: it.poItemId, qty: t });
+          }
+        }
+      }
+      if (need > 0) anyShort = true;
+      const poNumber = fit && !fit.stockOnly ? fit.batch : null;
+      const source = need > 0 ? "shortage" : poNumber != null ? "po" : "stock";
+      for (const t of takenFrom) {
+        const arr = poConsumedBy.get(t.poNumber) ?? [];
+        arr.push({ soItemId: l.row.id, soDocNo: l.row.doc_no, qty: t.qty, bucketKey: l.bucketKey });
+        poConsumedBy.set(t.poNumber, arr);
+        if (t.poItemId) claimedByPoItem.set(t.poItemId, (claimedByPoItem.get(t.poItemId) ?? 0) + t.qty);
+      }
+      results.push({
+        row: l.row, cat: catOf(l.row), isSofa: true, bucketKey: l.bucketKey,
+        eff: l.need, fromStock, source, poNumber, poEta: poNumber ? fit.eta : null, shortage: need,
+        coveringPos: takenFrom.length, batchNo: fit ? fit.batch : null,
+      });
+    }
+    if (!fit) sofaSetStats.short += 1;
+    else if (fit.stockOnly) sofaSetStats.stock += 1;
+    else if (!anyShort) sofaSetStats.po += 1;
+    else sofaSetStats.partialOnPo += 1;
+  };
+  const setDelivery = (lines) => lines.reduce((min, l) => {
+    const d = d2(l.row.line_delivery_date) ?? d2(l.row.customer_delivery_date);
+    return byDateAsc(d, min) < 0 ? d : min;
+  }, null);
+  const orderedSofaSets = [...sofaSetsByKey.entries()].sort(([, a], [, b]) =>
+    byDateAsc(setDelivery(a), setDelivery(b)) || (a[0]?.row.doc_no ?? "").localeCompare(b[0]?.row.doc_no ?? ""));
+  const sofaPlanned = new Set();
+  for (const [key, lines] of orderedSofaSets) {
+    const lock = lines[0]?.row.allocated_batch_no ?? null;
+    if (!lock || lines.some((l) => (l.row.allocated_batch_no ?? null) !== lock)) continue;
+    const fit = fitOf(lock, modulesOf(lines));
+    if (!fit.stockOnly) continue;
+    planSofaSet(lines, fit); sofaPlanned.add(key); sofaSetStats.locked += 1;
+  }
+  for (const [key, lines] of orderedSofaSets) {
+    if (sofaPlanned.has(key)) continue;
+    planSofaSet(lines, chooseBatch(modulesOf(lines)));
+  }
 
   for (const [gk, vkeys] of legacyUseByWhCode) {
     if (new Set(vkeys).size > 1) legacyShared.push({ gk, vkeys: [...new Set(vkeys)] });
@@ -799,11 +947,12 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   notice(`  sofa sets (warehouse|SO) in open demand      : ${sofaBySo.size}`);
   notice(`  sets whose modules soft-match >1 DIFFERENT PO: ${setsSplitAcrossPos}`);
   for (const s of splitExamples.slice(0, 20)) notice(`      ${pad(s.k, 46)} ${s.n} modules across ${s.pos.join(" + ")}`);
-  notice(`  sets with MIXED coverage (stock+PO+shortage) : ${setsMixedSource}`);
-  notice("  MRP allocates each sofa module independently from its own (wh, code, variant) pool");
-  notice("  (mrp.ts §8) — there is no set-level atomicity on the PLANNING side. Atomicity exists");
-  notice("  on the ALLOCATION side (so-stock-allocation.ts 7b: one covering batch or PENDING) and");
-  notice("  on the SHIP side (ship-commitment.ts planSofaSetPoConflicts refuses a 2-batch set).");
+  notice(`  sets with MIXED coverage (stock+PO+shortage) : ${setsMixedSource}  (only the partial-on-PO shape below may mix)`);
+  notice("  Since 2026-10-05 the PLANNING side is set-atomic too (mrp.ts §8 set walk): a set is");
+  notice("  planned from ONE batch (= PO number) or none, matching the ALLOCATION side");
+  notice("  (so-stock-allocation.ts 7b) and the SHIP side (ship-commitment.ts planSofaSetPoConflicts).");
+  notice(`  >1 DIFFERENT PO above must therefore read 0. Sets by plan: stock ${sofaSetStats.stock}, po ${sofaSetStats.po},`);
+  notice(`  partial-on-PO ${sofaSetStats.partialOnPo} (complete THAT PO, never a second), short ${sofaSetStats.short}; locked-first ${sofaSetStats.locked}`);
   const sofaWhSplit = await sql`
     SELECT i.doc_no, COUNT(DISTINCT COALESCE(i.warehouse_id::text,'NULL'))::int AS wh_variants
       FROM scm.mfg_sales_order_items i
