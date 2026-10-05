@@ -32,6 +32,7 @@ Admin-only diagnostic and manual-refresh surface for integrations that normally 
 ## Where the code is
 
 - `backend/src/routes/systemHealth.ts` — all diagnostic/refresh routes.
+- `backend/src/routes/systemHealthServices.ts` — `GET /services`, one row per outside service, read only from what is already recorded (`execution_logs`, `scm.autocount_outbox`, `email_log`, `scm.wa_message_log`, `push_devices`, `scm.venture_portal_outbox`, `ai_usage_events`); verdict rules in `services/serviceHealth.ts`. Mail-inbox sync and untimed APNs errors are not recorded, so they cannot be judged.
 - `backend/src/scm/lib/paginate-all.ts` — the `paginateAll` pagination helper `/rest-page-ceiling` measures.
 - `backend/src/db/supabase.ts` — PostgREST client used by the ceiling probe.
 - `backend/src/acc/stock-close.ts` — month-end stock close sweep + valuation replay.
