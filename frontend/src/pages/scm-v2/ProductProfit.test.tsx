@@ -52,35 +52,35 @@ describe('Product Profit', () => {
     render(<ProductProfitTab />);
     expect(modelsShown().map((t) => t.replace(/ ·.*$/, ''))).toEqual(['ULTIMATE', 'SOFFIO', 'JAGER']);
     const t = table();
-    expect(t.getByText('2 张')).toBeTruthy();
-    expect(t.getByText('1 套')).toBeTruthy();
+    expect(t.getByText('2 pcs')).toBeTruthy();
+    expect(t.getByText('1 set')).toBeTruthy();
     expect(t.getAllByText('8,100.00').length).toBeGreaterThan(0);
-    expect(t.getByText('1 张 · 900.00')).toBeTruthy();
-    expect(t.getByText(/成本不完整/)).toBeTruthy();
-    expect(screen.getByText(/免费送出的床架/)).toBeTruthy();
+    expect(t.getByText('1 pc · 900.00')).toBeTruthy();
+    expect(t.getByText(/Cost incomplete/)).toBeTruthy();
+    expect(within(screen.getByLabelText('Totals')).getByText('Free bedframes')).toBeTruthy();
     expect(screen.getByRole('img', { name: 'Gross profit by product, highest first' })).toBeTruthy();
     expect(screen.getByRole('img', { name: 'Share of gross profit' })).toBeTruthy();
     expect(screen.getByRole('img', { name: 'From sales to gross profit' })).toBeTruthy();
   });
 
-  test('categories tick any number at once; 全部 clears them', () => {
+  test('categories tick any number at once; All clears them', () => {
     render(<ProductProfitTab />);
-    fireEvent.click(screen.getByRole('button', { name: '床垫' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Mattress' }));
     expect(modelsShown().map((t) => t.replace(/ ·.*$/, ''))).toEqual(['ULTIMATE']);
-    fireEvent.click(screen.getByRole('button', { name: '床架' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Bedframe' }));
     expect(modelsShown().map((t) => t.replace(/ ·.*$/, ''))).toEqual(['ULTIMATE', 'JAGER']);
-    fireEvent.click(screen.getByRole('button', { name: '沙发' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sofa' }));
     expect(modelsShown().length).toBe(3);
-    fireEvent.click(screen.getByRole('button', { name: '全部' }));
-    expect(screen.getByRole('button', { name: '床垫' }).getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    expect(screen.getByRole('button', { name: 'Mattress' }).getAttribute('aria-pressed')).toBe('false');
   });
 
   test('the gifts switch moves gross profit and drops the gifts column', () => {
     render(<ProductProfitTab />);
-    expect(table().getByText('送的东西')).toBeTruthy();
+    expect(table().getByText('Gifts')).toBeTruthy();
     expect(table().getAllByText('8,100.00').length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('checkbox'));
-    expect(table().queryByText('送的东西')).toBeNull();
+    expect(table().queryByText('Gifts')).toBeNull();
     expect(table().getAllByText('9,000.00').length).toBeGreaterThan(0);
   });
 
@@ -93,7 +93,7 @@ describe('Product Profit', () => {
 
   test('Excel draws the rows as shown', () => {
     render(<ProductProfitTab />);
-    fireEvent.click(screen.getByRole('button', { name: '沙发' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sofa' }));
     fireEvent.click(screen.getByRole('button', { name: /Excel/ }));
     const [sheet, file] = xlsx.mock.calls[0] as [{ tables: Array<{ rows: Array<{ label: string }> }> }, string];
     expect(sheet.tables[0].rows.map((r) => r.label)).toEqual(['1. SOFFIO · ZANOTTI', 'Total']);

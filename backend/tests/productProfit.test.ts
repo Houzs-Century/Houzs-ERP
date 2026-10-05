@@ -29,20 +29,27 @@ function harness(perms: readonly string[] = [PERM]) {
       line('SO-1', 'bedframe', 'JAG-Q', 1, 0, 90_000),
       line('SO-2', 'sofa', 'SOF-1A', 1, 500_000, 120_000),
       line('SO-2', 'sofa', 'SOF-CNR', 1, 0, 80_000),
+      /* A code with a double quote in it — PostgREST's in-list cannot carry one. */
+      line('SO-2', 'mattress', 'DUNLOPILLO GENERASI 5" MATT (S)', 1, 138_800, 31_500),
       line('SO-8', 'mattress', 'ULT-Q', 1, 600_000, 150_000),
       line('SO-D', 'mattress', 'ULT-Q', 1, 600_000, 150_000),
       line('SO-O', 'mattress', 'ULT-Q', 1, 600_000, 150_000, 1),
     ],
     mfg_products: [
-      { company_id: CO, code: 'ULT-Q', model_id: 1, base_model: null, size_label: 'Queen' },
-      { company_id: CO, code: 'JAG-Q', model_id: 4, base_model: null, size_label: 'Queen' },
-      { company_id: CO, code: 'SOF-1A', model_id: 3, base_model: null, size_label: null },
-      { company_id: CO, code: 'SOF-CNR', model_id: 3, base_model: null, size_label: null },
+      { company_id: CO, code: 'ULT-Q', model_id: 'a1b2c3d4-0000-4000-8000-000000000001', base_model: null, size_label: 'Queen' },
+      { company_id: CO, code: 'JAG-Q', model_id: 'a1b2c3d4-0000-4000-8000-000000000004', base_model: null, size_label: 'Queen' },
+      { company_id: CO, code: 'SOF-1A', model_id: 'a1b2c3d4-0000-4000-8000-000000000003', base_model: null, size_label: null },
+      { company_id: CO, code: 'SOF-CNR', model_id: 'a1b2c3d4-0000-4000-8000-000000000003', base_model: null, size_label: null },
+      { company_id: CO, code: 'DUNLOPILLO GENERASI 5" MATT (S)', model_id: 'a1b2c3d4-0000-4000-8000-000000000005', base_model: null, size_label: 'Single' },
+      { company_id: CO, code: 'NOT-SOLD', model_id: 'a1b2c3d4-0000-4000-8000-000000000001', base_model: null, size_label: 'King' },
+      { company_id: 1, code: 'ULT-Q', model_id: 'a1b2c3d4-0000-4000-8000-000000000009', base_model: null, size_label: 'Queen' },
     ],
     product_models: [
-      { company_id: CO, id: 1, name: 'ULTIMATE', branding: 'AKEMI' },
-      { company_id: CO, id: 3, name: 'SOFFIO', branding: 'ZANOTTI' },
-      { company_id: CO, id: 4, name: 'JAGER', branding: null },
+      { company_id: CO, id: 'a1b2c3d4-0000-4000-8000-000000000001', name: 'ULTIMATE', branding: 'AKEMI' },
+      { company_id: CO, id: 'a1b2c3d4-0000-4000-8000-000000000003', name: 'SOFFIO', branding: 'ZANOTTI' },
+      { company_id: CO, id: 'a1b2c3d4-0000-4000-8000-000000000004', name: 'JAGER', branding: null },
+      { company_id: CO, id: 'a1b2c3d4-0000-4000-8000-000000000005', name: 'GENERASI 5"', branding: 'DUNLOPILLO' },
+      { company_id: 1, id: 'a1b2c3d4-0000-4000-8000-000000000009', name: 'OTHER COMPANY', branding: null },
     ],
   });
   const app = new Hono();
@@ -80,6 +87,7 @@ describe('GET /accounting/product-profit', () => {
     expect(r.body.rows.map((x: any) => [x.model, x.category, x.units, x.salesSen, x.costSen, x.giftSen])).toEqual([
       ['ULTIMATE', 'mattress', 1, 600_000, 150_000, 90_000],
       ['SOFFIO', 'sofa', 1, 500_000, 200_000, 0],
+      ['GENERASI 5"', 'mattress', 1, 138_800, 31_500, 0],
     ]);
     expect(r.body.rows[0]).toMatchObject({ brand: 'AKEMI', freeBedframes: 1, freeBedframeSen: 90_000 });
     expect(r.body.freeBedframes).toEqual({ pieces: 1, sen: 90_000, orders: 1 });

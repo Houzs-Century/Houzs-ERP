@@ -5,9 +5,9 @@
 // (「按套」); the month by SO date (「按开单月」); the gifts in or out by a switch
 // on the table; any number of categories at once (「别限制两个」), so mattresses
 // and bedframes read together (「床架和床垫一起」) with each mattress showing
-// the bedframes it gave away; the charts he kept — the ranking (①), a donut
-// and the waterfall (④). Excel and PDF draw the table as shown; "Charts PNG"
-// draws the three charts.
+// the bedframes it gave away; the charts he kept — the ranking, a donut and
+// the waterfall. Every word on the screen is English (字体要英文). Excel and
+// PDF draw the table as shown; "Charts PNG" draws the three charts.
 // ----------------------------------------------------------------------------
 
 import { Fragment, useMemo, useRef, useState } from 'react';
@@ -19,7 +19,7 @@ import { generateReportPdf } from '../../vendor/scm/lib/report-sheet-pdf';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { fmtSen, fmtSenPlain } from '../../vendor/shared/format';
 import {
-  CATEGORY_LABEL, CATEGORY_ORDER, donutOf, freeBedframesText, gpOf, gpPctOf, productProfitSheet, profitNotes,
+  CATEGORY_LABEL, CATEGORY_ORDER, donutOf, freeBedframesText, giftsLabel, gpOf, gpPctOf, productProfitSheet, profitNotes,
   showsFreeBedframes, totalsOf, unitsText, viewLabel, viewRows, waterfallOf, type ProfitView, type SortKey,
 } from './product-profit-view';
 import { ProfitWaterfall, RankingChart, ShareDonut, chartsPng, compact } from './ProductProfitCharts';
@@ -44,10 +44,10 @@ const tileValue: React.CSSProperties = { fontSize: 'var(--fs-18, 18px)', fontWei
 const money = (sen: number): string => (sen === 0 ? '—' : fmtSenPlain(sen));
 const pctText = (p: number | null): string => (p == null ? '—' : `${p.toFixed(1)}%`);
 const SORTS: Array<{ key: SortKey; label: string }> = [
-  { key: 'gp', label: '毛利 · Gross profit' },
-  { key: 'units', label: '卖了几 · Units' },
-  { key: 'sales', label: '营业额 · Sales' },
-  { key: 'gpPct', label: '毛利率 · Margin' },
+  { key: 'gp', label: 'Gross profit' },
+  { key: 'units', label: 'Units sold' },
+  { key: 'sales', label: 'Sales' },
+  { key: 'gpPct', label: 'Margin' },
 ];
 
 export const ProductProfitTab = () => {
@@ -79,25 +79,25 @@ export const ProductProfitTab = () => {
   const top = useMemo(() => [...rows].sort((a, b) => gpOf(b, gifts) - gpOf(a, gifts)).slice(0, 10), [rows, gifts]);
   const shownMonth = d?.month ?? month;
   const fileBase = `product-profit-${shownMonth}`;
-  const title = `Product Profit · ${shownMonth} · ${viewLabel(v)} · ${gifts ? '包括送的东西' : '不算送的东西'}`;
+  const title = `Product Profit · ${shownMonth} · ${viewLabel(v)} · ${giftsLabel(gifts)}`;
   const donutNote = donut.losers.count > 0
-    ? `另有 ${donut.losers.count} ${donut.byCategory ? '类' : '款'}亏钱或没赚（${compact(donut.losers.sen)}），不在圆饼里`
+    ? `${donut.losers.count} ${donut.byCategory ? (donut.losers.count === 1 ? 'category' : 'categories') : (donut.losers.count === 1 ? 'model' : 'models')} lost money (${compact(donut.losers.sen)}) — not in the donut`
     : undefined;
 
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)', alignItems: 'center' }}>
-        <span style={soft}>月份 · Month</span>
+        <span style={soft}>Month</span>
         <input type="month" value={month} onChange={(e) => { if (e.target.value) setMonth(e.target.value); }} aria-label="Month" style={{ padding: '4px 6px', fontSize: 'var(--fs-13)' }} />
-        <button type="button" style={chip(cats.size === 0)} aria-pressed={cats.size === 0} onClick={() => setCats(new Set())}>全部</button>
+        <button type="button" style={chip(cats.size === 0)} aria-pressed={cats.size === 0} onClick={() => setCats(new Set())}>All</button>
         {CATEGORY_ORDER.map((c) => (
           <button key={c} type="button" style={chip(cats.has(c))} aria-pressed={cats.has(c)} onClick={() => toggleCat(c)}>{CATEGORY_LABEL[c]}</button>
         ))}
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)' }}>
           <input type="checkbox" checked={gifts} onChange={(e) => setGifts(e.target.checked)} />
-          包括送的东西 · Include gifts
+          Include gifts
         </label>
-        <span style={soft}>排 · Rank by</span>
+        <span style={soft}>Rank by</span>
         <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} aria-label="Rank by" style={{ fontSize: 'var(--fs-13)' }}>
           {SORTS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
         </select>
@@ -119,36 +119,36 @@ export const ProductProfitTab = () => {
       {d && (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-2)' }} aria-label="Totals">
-            <div style={tile}><div style={tileLabel}>营业额 · Sales</div><div style={tileValue}>{fmtSen(totals.salesSen)}</div></div>
-            <div style={tile}><div style={tileLabel}>毛利 · Gross profit</div><div style={tileValue}>{fmtSen(totals.gpSen)}</div></div>
-            <div style={tile}><div style={tileLabel}>毛利率 · Margin</div><div style={tileValue}>{pctText(totals.gpPct)}</div></div>
+            <div style={tile}><div style={tileLabel}>Sales</div><div style={tileValue}>{fmtSen(totals.salesSen)}</div></div>
+            <div style={tile}><div style={tileLabel}>Gross profit</div><div style={tileValue}>{fmtSen(totals.gpSen)}</div></div>
+            <div style={tile}><div style={tileLabel}>Margin</div><div style={tileValue}>{pctText(totals.gpPct)}</div></div>
             <div style={tile}>
-              <div style={tileLabel}>{gifts ? '送的东西 · Gifts' : '送的东西（这次不算）'}</div>
+              <div style={tileLabel}>{gifts ? 'Gifts' : 'Gifts (not counted)'}</div>
               <div style={{ ...tileValue, color: gifts ? undefined : 'var(--fg-muted)' }}>{fmtSen(totals.giftSen)}</div>
             </div>
             {showsFreeBedframes(v) && (
               <div style={tile}>
-                <div style={tileLabel}>免费送出的床架 · Free bedframes</div>
-                <div style={tileValue}>{d.freeBedframes.pieces} 张 · {fmtSen(d.freeBedframes.sen)}</div>
+                <div style={tileLabel}>Free bedframes</div>
+                <div style={tileValue}>{d.freeBedframes.pieces} {d.freeBedframes.pieces === 1 ? 'pc' : 'pcs'} · {fmtSen(d.freeBedframes.sen)}</div>
               </div>
             )}
           </div>
 
           {rows.length === 0 ? (
-            <div style={soft}>{`${month} 没有卖出${cats.size === 0 ? '产品' : viewLabel(v)}。`}</div>
+            <div style={soft}>{`Nothing sold in ${shownMonth}${cats.size === 0 ? '' : ` (${viewLabel(v)})`}.`}</div>
           ) : (
             <>
               <div>
-                <div style={{ ...soft, marginBottom: 6 }}>① 毛利排名 · 前 {top.length} 款（条尾是毛利和毛利率）</div>
-                <RankingChart ref={rankRef} bars={top.map((r) => ({ label: r.model, valueSen: gpOf(r, gifts), note: `${compact(gpOf(r, gifts))} · ${r.noCostLines > 0 && r.costSen === 0 ? '没成本' : pctText(gpPctOf(r, gpOf(r, gifts)))}` }))} />
+                <div style={{ ...soft, marginBottom: 6 }}>Gross profit ranking · top {top.length} (bar end: gross profit · margin)</div>
+                <RankingChart ref={rankRef} bars={top.map((r) => ({ label: r.model, valueSen: gpOf(r, gifts), note: `${compact(gpOf(r, gifts))} · ${r.noCostLines > 0 && r.costSen === 0 ? 'no cost' : pctText(gpPctOf(r, gpOf(r, gifts)))}` }))} />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--space-3)' }}>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ ...soft, marginBottom: 6 }}>{donut.byCategory ? '毛利占比 · 按类别' : `毛利占比 · ${viewLabel(v)}前 6 款`}</div>
+                  <div style={{ ...soft, marginBottom: 6 }}>{donut.byCategory ? 'Share of gross profit · by category' : `Share of gross profit · top 6 ${viewLabel(v)}`}</div>
                   <ShareDonut ref={donutRef} slices={donut.slices} footnote={donutNote} />
                 </div>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ ...soft, marginBottom: 6 }}>④ 毛利瀑布 · 营业额怎样变成毛利</div>
+                  <div style={{ ...soft, marginBottom: 6 }}>From sales to gross profit</div>
                   <ProfitWaterfall ref={fallRef} steps={waterfallOf(totals, gifts)} />
                 </div>
               </div>
@@ -158,16 +158,16 @@ export const ProductProfitTab = () => {
                   <thead>
                     <tr>
                       <th style={th}>#</th>
-                      <th style={th}>款式 · Model</th>
-                      <th style={th}>类别</th>
-                      <th style={{ ...th, ...num }}>卖了几</th>
-                      <th style={{ ...th, ...num }}>平均售价</th>
-                      <th style={{ ...th, ...num }}>营业额</th>
-                      <th style={{ ...th, ...num }}>产品成本</th>
-                      {gifts && <th style={{ ...th, ...num }} title="Its share of the gifts on the orders that bought it">送的东西</th>}
-                      <th style={{ ...th, ...num }}>毛利</th>
-                      <th style={{ ...th, ...num }}>毛利率</th>
-                      <th style={{ ...th, ...num }} title="Bedframes given free on the orders that bought it">送的床架</th>
+                      <th style={th}>Model</th>
+                      <th style={th}>Category</th>
+                      <th style={{ ...th, ...num }}>Sold</th>
+                      <th style={{ ...th, ...num }}>Avg price</th>
+                      <th style={{ ...th, ...num }}>Sales</th>
+                      <th style={{ ...th, ...num }}>Product cost</th>
+                      {gifts && <th style={{ ...th, ...num }} title="Its share of the gifts on the orders that bought it">Gifts</th>}
+                      <th style={{ ...th, ...num }}>Gross profit</th>
+                      <th style={{ ...th, ...num }}>Margin</th>
+                      <th style={{ ...th, ...num }} title="Bedframes given free on the orders that bought it">Free bedframes</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -185,7 +185,7 @@ export const ProductProfitTab = () => {
                                 <span style={{ fontWeight: 600 }}>{r.model}</span>
                                 {r.brand ? <span style={soft}> · {r.brand}</span> : null}
                               </button>
-                              {r.noCostLines > 0 && <div style={{ fontSize: 'var(--fs-11)', color: 'var(--c-festive-b, #B8331F)' }}>成本不完整 · {r.noCostLines} 行没有成本</div>}
+                              {r.noCostLines > 0 && <div style={{ fontSize: 'var(--fs-11)', color: 'var(--c-festive-b, #B8331F)' }}>Cost incomplete · {r.noCostLines} {r.noCostLines === 1 ? 'line has' : 'lines have'} no cost</div>}
                             </td>
                             <td style={td}>{CATEGORY_LABEL[r.category]}</td>
                             <td style={{ ...td, ...num }}>{unitsText(r)}</td>
@@ -219,7 +219,7 @@ export const ProductProfitTab = () => {
                     })}
                     <tr style={{ fontWeight: 700, borderTop: '2px solid var(--c-ink, #221f20)' }}>
                       <td style={td} />
-                      <td style={td} colSpan={4}>Total · {rows.length} 款</td>
+                      <td style={td} colSpan={4}>Total · {rows.length} {rows.length === 1 ? 'model' : 'models'}</td>
                       <td style={{ ...td, ...num }}>{money(totals.salesSen)}</td>
                       <td style={{ ...td, ...num }}>{money(totals.costSen)}</td>
                       {gifts && <td style={{ ...td, ...num }}>{money(totals.giftSen)}</td>}

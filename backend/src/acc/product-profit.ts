@@ -29,8 +29,9 @@ export type PpLine = {
   doc_no: string; item_group: string | null; item_code: string | null; description: string | null;
   qty: number | null; total_sen: number | null; unit_cost_sen: number | null; line_cost_sen: number | null; cancelled: boolean | null;
 };
-export type PpProduct = { code: string; model_id: number | null; base_model: string | null; size_label: string | null };
-export type PpModel = { id: number; name: string | null; branding: string | null };
+/** A product and the model it belongs to — `model_id` is the model's uuid. */
+export type PpProduct = { code: string; model_id: string | null; base_model: string | null; size_label: string | null };
+export type PpModel = { id: string; name: string | null; branding: string | null };
 
 export type ProductProfitItem = { code: string; size: string | null; units: number; salesSen: number; costSen: number };
 export type ProductProfitRow = {
@@ -93,16 +94,17 @@ export function buildProductProfit(p: {
 }): ProductProfitReport {
   const live = new Set(p.orders.filter((o) => !SO_NOT_AN_ORDER.has(String(o.status))).map((o) => o.doc_no));
   const productByCode = new Map(p.products.map((x) => [String(x.code), x]));
-  const modelById = new Map(p.models.map((m) => [Number(m.id), m]));
+  const modelById = new Map(p.models.map((m) => [String(m.id), m]));
+  const text = (v: unknown): string => String(v ?? '').trim();
 
   const identify = (l: PpLine): Identity => {
     const code = String(l.item_code ?? '').trim();
     const prod = code ? productByCode.get(code) : undefined;
-    const size = prod?.size_label?.trim() || null;
-    const modelId = prod?.model_id != null ? Number(prod.model_id) : null;
-    const model = modelId != null ? modelById.get(modelId) : undefined;
-    const base = prod?.base_model?.trim() || '';
-    if (model) return { key: `m:${modelId}`, name: model.name?.trim() || base || code || '—', brand: model.branding?.trim() || null, size };
+    const size = text(prod?.size_label) || null;
+    const modelId = text(prod?.model_id);
+    const model = modelId ? modelById.get(modelId) : undefined;
+    const base = text(prod?.base_model);
+    if (model) return { key: `m:${modelId}`, name: text(model.name) || base || code || '—', brand: text(model.branding) || null, size };
     if (base) return { key: `b:${base}`, name: base, brand: null, size };
     const name = code || String(l.description ?? '').trim() || '—';
     return { key: `c:${name}`, name, brand: null, size };
