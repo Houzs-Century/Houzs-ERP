@@ -318,9 +318,16 @@ export const DeliveryPlanning = () => {
                     }}
                   >
                     {([
-                      ['delivery', 'Send Now', 'Delivery-date message'],
-                      ['amend', 'Amend Now', 'Amend / reschedule message'],
-                      ['onetime', 'One Time Send Now', 'Delivery time · driver info · balance …'],
+                      ['delivery', 'Send Now', 'Delivery-date message (Confirm / Amend)'],
+                      ['amend', 'Amend Now', 'Amend / reschedule message (Confirm / Amend)'],
+                      ['postpone', 'Postpone', 'We must move the date — reason + proposed date'],
+                      ['driver_info', 'Driver Info', 'Day-before: date · time · driver · lorry plate'],
+                      ['balance_reminder', 'Balance Reminder', 'Outstanding balance + bank details (owing orders only)'],
+                      ['reminder_1', 'Reminder 1', 'No reply yet — first nudge'],
+                      ['reminder_2', 'Reminder 2', 'No reply yet — second nudge'],
+                      ['reminder_3', 'Reminder 3', 'No reply yet — final nudge'],
+                      ['postage', 'Postage Confirm', 'Confirm the postage address'],
+                      ['delivery_completed', 'Delivery Completed', 'Thank-you after delivery'],
                     ] as const).map(([k, label, hint]) => (
                       <button
                         key={k}

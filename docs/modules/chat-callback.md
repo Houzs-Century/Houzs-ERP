@@ -8,6 +8,23 @@ The return leg of the WhatsApp delivery conversation. `chat.houzscentury.com` po
 
 `ref` is the number the customer was shown. The outbound send puts `COALESCE(linked_ac_docno, doc_no)` in `ref_1`, so for an AutoCount-linked order it is the AutoCount number; the endpoint matches either column (company-scoped) and records the row under OUR `doc_no`, keeping the inbound value as `customer_ref` in the payload when the two differ. A `ref` with characters outside `[A-Za-z0-9_-/.]` is refused 400 before it can reach the filter.
 
+### Message kinds the board can send
+
+`POST /api/scm/delivery-messages/send` takes `kind` (default `delivery`); each kind fires one Connect automation by exact name (`backend/src/scm/lib/delivery-message-kinds.ts`). Every kind carries the shared bundle below; the table lists what it adds and when an order is skipped instead of sent with a blank variable.
+
+| kind | Connect automation | adds | skipped when | resets conversation |
+|---|---|---|---|---|
+| `delivery` | New Delivery Follow-up | — | — | yes |
+| `amend` | New Amend | — | — | yes |
+| `postpone` | Postpone | `client_delivery_date`, `amend_date_reason_2`, `new_delivery_date` (operator: reason + date; 400 without) | — | yes |
+| `driver_info` | Driver Info | `client_delivery_date`, `delivery_time`, `drivers_name/contact/ic`, `car_plate` (operator picks driver / lorry / time; 400 without — the ERP's DOs carry no driver or time yet) | — | no |
+| `balance_reminder` | Balance Reminder | — (`amount` + `bank_block` from the bundle) | nothing owed (`no_balance`) | no |
+| `reminder_1/2/3` | Reminder 1/2/3 | — | — | no |
+| `postage` | Postage Confirm | `customer_phone`, `delivery_address` (delivery address, else customer address, + postcode/city/state) | no address (`no_address`) | no |
+| `delivery_completed` | Delivery Completed | — | — | no |
+
+"Resets conversation" = the six reset attributes below are sent as empty. Only the openers do it: a Driver Info or Balance Reminder to a customer who already confirmed must not clear `button_status`, or the Delivery Lock guard stops protecting the confirmed date.
+
 ### What the outbound send tells Connect (the contract the flows depend on)
 
 Delivery Planning's Send Message (`POST /api/scm/delivery-messages/send`) posts ONE contact per customer phone with these attributes: `full_name`, `order_total`, `ref_1..3` / `delivery_date_1..3` / `brand_1..3`, `callback_url` (this endpoint's absolute URL, from `PUBLIC_APP_URL`), `amount` (the owed sum across every bundled order as `1,500.00`, from the SO list's `balance_sen_live` view column; empty when nothing is owed), and the per-company `company_signature` / `bank_block` / `disposal_block` from the `connect.company_profile` app_config key. It also RESETS `button_status`, `last_button`, `amount`, `amended_delivery_date`, `amend_date_reason`, `date_amended` to empty on every send — Connect merges attributes over the contact's existing ones, so without the reset the previous order's Confirm would lock the new order's Amend tap and a settled balance would print again. Connect's flow adds the `X-Chat-Key` header itself from its own `ERP_CALLBACK_KEY` secret; the key is never sent as an attribute.

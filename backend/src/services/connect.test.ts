@@ -78,6 +78,25 @@ describe('buildDeliveryFollowUp', () => {
     expect(contact.attributes.amount).toBe('');
   });
 
+  it('a kind picks its automation by name and merges its extra variables last', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+    ], null, { ...CTX, automation: 'Driver Info', extra: { drivers_name: 'Ali', car_plate: 'WXY 1234' } });
+    expect(contact.automation).toBe('Driver Info');
+    expect(contact.attributes.drivers_name).toBe('Ali');
+    expect(contact.attributes.car_plate).toBe('WXY 1234');
+    expect(contact.attributes.ref_1).toBe('A1');
+  });
+
+  it('resetConversation:false leaves the conversation state alone (a reminder must not unlock Delivery Lock)', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05', balanceSen: 1000 },
+    ], null, { ...CTX, automation: 'Balance Reminder', resetConversation: false });
+    expect(contact.attributes.button_status).toBeUndefined();
+    expect(contact.attributes.last_button).toBeUndefined();
+    expect(contact.attributes.amount).toBe('10.00');
+  });
+
   it('callback_url is the send context, verbatim', () => {
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
       { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
