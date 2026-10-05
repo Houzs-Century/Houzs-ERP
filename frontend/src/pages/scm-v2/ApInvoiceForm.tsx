@@ -19,6 +19,8 @@ import {
   useExtractBills, fileToBase64, PV_FILE_ACCEPT, type BillExtraction, type ExtractedBill, type VendorMemory, type PvFilePayload,
 } from '../../vendor/scm/lib/payment-voucher-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
+import { BillMatchesNote } from '../../vendor/scm/components/RequestBill';
+import { useBillMatches } from '../../vendor/scm/lib/payment-request-queries';
 import { SupplierFinanceReminder } from '../../vendor/scm/components/SupplierFinanceReminder';
 import { EventSelect } from '../../vendor/scm/components/EventSelect';
 import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
@@ -151,10 +153,14 @@ const iconBtn: React.CSSProperties = { border: 'none', background: 'none', curso
 
 export const ApInvoiceForm = ({
   mode, initial, suppliers, suppliersLoading = false, lineAccounts, posted = false, paidSen = 0, saving, onSubmit, onCancel,
-  initialFiles, initialNote, initialEventSuggestions,
+  initialFiles, initialNote, initialEventSuggestions, selfId = null, requestId = null,
 }: {
   mode: ApFormMode;
   initial: ApFormValues;
+  /** The bill being edited, and the 申请付款 it answers — never their own
+      "same bill" (owner 2026-10-05: 提醒也加 — a warning, never a block). */
+  selfId?: string | null;
+  requestId?: string | null;
   suppliers: Array<{ id: string; code: string; name: string }>;
   suppliersLoading?: boolean;
   lineAccounts: Account[];
@@ -206,6 +212,10 @@ export const ApInvoiceForm = ({
     const next = v.lines.at(i + 1);
     if (next) setLandOn(next.rid); else addLine(true);
   };
+
+  /* The same bill — its printed number AND date — already asked for, vouchered
+     or entered (lib/bill-matches.ts). Said under the bill's own fields. */
+  const sameBill = useBillMatches(v.supplierRef, v.invoiceDate, requestId, selfId);
 
   const total = v.lines.reduce((s, l) => s + (l.amountSen > 0 ? l.amountSen : 0), 0);
   const belowPaid = posted && total < paidSen;
@@ -318,6 +328,7 @@ export const ApInvoiceForm = ({
           <DateField fullWidth className={styles.fieldInput} value={v.dueDate} onChange={(iso) => set({ dueDate: iso })} aria-label="AP invoice due date" />
         </label>
       </div>
+      <BillMatchesNote matches={sameBill.data?.matches} />
       <label className={styles.field}>
         <span className={styles.fieldLabel}>Description</span>
         <input className={styles.fieldInput} value={v.description} onChange={(e) => set({ description: e.target.value })} aria-label="AP invoice description"

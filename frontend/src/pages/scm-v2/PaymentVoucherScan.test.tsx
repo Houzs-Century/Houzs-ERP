@@ -5,22 +5,49 @@
      3. 多个supplier 多个单 — "pay each bill separately" splits the group.
    The reading itself (Claude vision, supplier matching) is pinned server-side
    in backend/src/acc/bill-extract.test.ts — here the mutateAsync is canned
-   and what is under test is the grouping arithmetic around it. */
+   and what is under test is the grouping arithmetic around it.
+   Since 2026-10-05 the pile sends ONE bill per request, three at a time (four
+   bills together outran the 30-second wait): the canned reader answers each
+   call by its bill's first file. */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import { describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type { ExtractedBill } from '../../vendor/scm/lib/payment-voucher-queries';
+import type { BillMatch } from '../../vendor/scm/lib/payment-request-queries';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 
-const extractAsync = vi.fn(async (_bills: Array<{ files: Array<{ name: string; mime: string; dataBase64: string }> }>) =>
-  ({ bills: [] as ExtractedBill[] }));
+type Bills = Array<{ files: Array<{ name: string; mime: string; dataBase64: string }> }>;
+const extractAsync = vi.fn(async (_bills: Bills) => ({ bills: [] as ExtractedBill[] }));
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useExtractBills: () => ({ mutateAsync: extractAsync, isPending: false }),
   fileToBase64: async (f: File) => `b64:${f.name}`,
 }));
+/* The same bill elsewhere (owner 2026-10-05: 提醒也加), answered by number|date. */
+let sameBills: Record<string, BillMatch[]> = {};
+vi.mock('../../vendor/scm/lib/payment-request-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/payment-request-queries')>()),
+  useBillMatches: (no: string, date: string) => ({ data: { matches: sameBills[`${no}|${date}`] ?? [] } }),
+}));
 
-import { PaymentVoucherScan } from './PaymentVoucherScan';
+import { MAX_PILE_FILES, PaymentVoucherScan } from './PaymentVoucherScan';
+
+/* The reader, one bill per call: each call's answer is looked up by the bill's
+   first file; the page puts it in that bill's place. */
+const answers = (byFile: Partial<Record<string, ExtractedBill>>) => {
+  extractAsync.mockImplementation(async (bills: Bills) => {
+    const a = byFile[bills[0]!.files[0]!.name];
+    return { bills: a ? [{ ...a, index: 0 }] : [] };
+  });
+};
+/* Every bill answered: the Read button is back. */
+const readDone = (n: number) => waitFor(() => expect(screen.getByText(`Read ${n} bill(s)`)).toBeTruthy());
+
+beforeEach(() => {
+  extractAsync.mockReset();
+  extractAsync.mockImplementation(async () => ({ bills: [] as ExtractedBill[] }));
+  sameBills = {};
+});
 
 /* The landing probe: what /new would receive in location.state. */
 let landedState: unknown = null;
@@ -76,15 +103,16 @@ describe('the pile for AP invoices', () => {
   );
 
   test('same-supplier bills stay one AP invoice each; the one opened carries its reading and stashes its pages', async () => {
-    extractAsync.mockClear(); apLanded = null;
-    extractAsync.mockResolvedValueOnce({ bills: [
-      readBill(0, { invoiceNumber: 'INV-1', totalSen: 100000 }, { id: 'sup-1', name: 'Foshan Chairs' }, { payeeName: 'Foshan Chairs', debitAccountCode: '900-F002' }),
-      readBill(1, { invoiceNumber: 'INV-2', totalSen: 50000 }, { id: 'sup-1', name: 'Foshan Chairs' }, { payeeName: 'Foshan Chairs', debitAccountCode: '900-F002' }),
-    ] });
+    apLanded = null;
+    answers({
+      'a.pdf': readBill(0, { invoiceNumber: 'INV-1', totalSen: 100000 }, { id: 'sup-1', name: 'Foshan Chairs' }, { payeeName: 'Foshan Chairs', debitAccountCode: '900-F002' }),
+      'b.pdf': readBill(1, { invoiceNumber: 'INV-2', totalSen: 50000 }, { id: 'sup-1', name: 'Foshan Chairs' }, { payeeName: 'Foshan Chairs', debitAccountCode: '900-F002' }),
+    });
     drawAp();
     expect(screen.getByText('Scan bills — AP invoices')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('a.pdf'), pdf('b.pdf')] } });
     fireEvent.click(screen.getByText('Read 2 bill(s)'));
+    await readDone(2);
 
     await waitFor(() => expect(screen.getAllByText('Open as AP invoice')).toHaveLength(2));
     expect(screen.queryByText(/Open as ONE voucher/)).toBeNull();
@@ -106,7 +134,6 @@ describe('the pile for AP invoices', () => {
 
 describe('the bill pile', () => {
   test('case 1: ticked pages merge into ONE bill in the payload sent for reading', async () => {
-    extractAsync.mockClear();
     draw();
     const input = screen.getByLabelText('Add bill files');
     fireEvent.change(input, { target: { files: [pdf('page-1.pdf'), pdf('page-2.pdf'), pdf('other.pdf')] } });
@@ -119,27 +146,31 @@ describe('the bill pile', () => {
        pressed it to put three receipts on one voucher (2026-09-08). */
     fireEvent.click(screen.getByText('These 2 files are pages of ONE bill — merge'));
     fireEvent.click(screen.getByText('Read 2 bill(s)'));
+    await readDone(2);
 
-    await waitFor(() => expect(extractAsync).toHaveBeenCalled());
-    const bills = extractAsync.mock.calls[0]![0];
-    expect(bills.map((b) => b.files.map((f) => f.name))).toEqual([
+    /* One request per bill — the merged pages travel together as ONE. */
+    expect(extractAsync).toHaveBeenCalledTimes(2);
+    const sent = extractAsync.mock.calls.map(([bills]) => bills);
+    expect(sent.every((bills) => bills.length === 1)).toBe(true);
+    expect(sent.map((bills) => bills[0]!.files.map((f) => f.name)).sort()).toEqual([
       ['other.pdf'],
       ['page-1.pdf', 'page-2.pdf'],
     ]);
-    expect(bills[1]!.files[0]!.mime).toBe('application/pdf');
-    expect(bills[1]!.files[0]!.dataBase64).toBe('b64:page-1.pdf');
+    const merged = sent.find((bills) => bills[0]!.files.length === 2)![0]!;
+    expect(merged.files[0]!.mime).toBe('application/pdf');
+    expect(merged.files[0]!.dataBase64).toBe('b64:page-1.pdf');
   });
 
   test('case 2: same-supplier bills group and open as ONE voucher, one line per bill', async () => {
-    extractAsync.mockClear();
     landedState = null;
-    extractAsync.mockResolvedValueOnce({ bills: [
-      readBill(0, { invoiceNumber: 'INV-1', totalSen: 100000 }, { id: 'sup-1', name: 'Foshan Chairs' }, { payeeName: 'Foshan Chairs', debitAccountCode: '900-F002' }),
-      readBill(1, { invoiceNumber: 'INV-2', totalSen: 50000 }, { id: 'sup-1', name: 'Foshan Chairs' }, { payeeName: 'Foshan Chairs', debitAccountCode: '900-F002' }),
-    ] });
+    answers({
+      'a.pdf': readBill(0, { invoiceNumber: 'INV-1', totalSen: 100000 }, { id: 'sup-1', name: 'Foshan Chairs' }, { payeeName: 'Foshan Chairs', debitAccountCode: '900-F002' }),
+      'b.pdf': readBill(1, { invoiceNumber: 'INV-2', totalSen: 50000 }, { id: 'sup-1', name: 'Foshan Chairs' }, { payeeName: 'Foshan Chairs', debitAccountCode: '900-F002' }),
+    });
     draw();
     fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('a.pdf'), pdf('b.pdf')] } });
     fireEvent.click(screen.getByText('Read 2 bill(s)'));
+    await readDone(2);
 
     await waitFor(() => expect(screen.getByText('Foshan Chairs')).toBeTruthy());
     expect(screen.getByText(/2 bill\(s\) · RM 1,500\.00 · matched supplier · account remembered \(900-F002\)/)).toBeTruthy();
@@ -161,13 +192,12 @@ describe('the bill pile', () => {
   });
 
   test('a read bill shows its own line items, and dropped files join the pile', async () => {
-    extractAsync.mockClear();
-    extractAsync.mockResolvedValueOnce({ bills: [
-      readBill(0, { invoiceNumber: 'INV-9', totalSen: 30000, lines: [
+    answers({
+      'dropped.pdf': readBill(0, { invoiceNumber: 'INV-9', totalSen: 30000, lines: [
         { description: 'Design retainer — August', amountSen: 20000 },
         { description: 'Extra artwork', amountSen: 10000 },
       ] }, null),
-    ] });
+    });
     draw();
     /* Files arrive by DROP, not the picker (owner: 我无法从我的folder 拖动进来). */
     fireEvent.drop(screen.getByText('The pile').closest('section')!, {
@@ -175,6 +205,7 @@ describe('the bill pile', () => {
     });
     expect(screen.getByText('dropped.pdf')).toBeTruthy();
     fireEvent.click(screen.getByText('Read 1 bill(s)'));
+    await readDone(1);
     await waitFor(() => expect(screen.getByText('INV-9')).toBeTruthy());
     expect(screen.getByText('Design retainer — August')).toBeTruthy();
     expect(screen.getByText('Extra artwork')).toBeTruthy();
@@ -182,22 +213,22 @@ describe('the bill pile', () => {
   });
 
   test('case 4: DIFFERENT receipts tick across groups and open as ONE voucher — one line each, no payee, every page attached', async () => {
-    extractAsync.mockClear();
     landedState = null;
-    extractAsync.mockResolvedValueOnce({ bills: [
+    answers({
       /* Two goods on one receipt: the line says what was bought, joined. */
-      readBill(0, { vendorName: '99 SPEEDMART S/B', invoiceNumber: 'T0012', totalSen: 1910, lines: [
+      'a.pdf': readBill(0, { vendorName: '99 SPEEDMART S/B', invoiceNumber: 'T0012', totalSen: 1910, lines: [
         { description: '4475 3M SCOTCH BRITE SPAN P', amountSen: 1040 },
         { description: '1953 FEBREZE FABRIK ANTI BA', amountSen: 870 },
       ] }, null),
       /* Shell has a remembered payee and account — NOT borrowed for the lot. */
-      readBill(1, { vendorName: 'SHELL MALAYSIA', invoiceNumber: 'S-99', totalSen: 5000 }, null, { payeeName: 'Shell', debitAccountCode: '900-M001' }),
+      'b.pdf': readBill(1, { vendorName: 'SHELL MALAYSIA', invoiceNumber: 'S-99', totalSen: 5000 }, null, { payeeName: 'Shell', debitAccountCode: '900-M001' }),
       /* No readable item: the shop + number stands in. */
-      readBill(2, { vendorName: 'WATSONS', invoiceNumber: 'W-1', totalSen: 1200 }, null),
-    ] });
+      'c.pdf': readBill(2, { vendorName: 'WATSONS', invoiceNumber: 'W-1', totalSen: 1200 }, null),
+    });
     draw();
     fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('a.pdf'), pdf('b.pdf'), pdf('c.pdf')] } });
     fireEvent.click(screen.getByText('Read 3 bill(s)'));
+    await readDone(3);
 
     /* Three shops = three groups, each its own voucher — until ticked together. */
     await waitFor(() => expect(screen.getByText('Open ticked as ONE voucher (0 lines)')).toBeTruthy());
@@ -225,15 +256,15 @@ describe('the bill pile', () => {
   });
 
   test('case 3: "pay each bill separately" splits the group; unreadable totals and failures are named', async () => {
-    extractAsync.mockClear();
-    extractAsync.mockResolvedValueOnce({ bills: [
-      readBill(0, { invoiceNumber: 'INV-1', totalSen: 100000 }, { id: 'sup-1', name: 'Foshan Chairs' }),
-      readBill(1, { invoiceNumber: 'INV-2', totalSen: null }, { id: 'sup-1', name: 'Foshan Chairs' }),
-      { index: 2, ok: false, reason: 'The reader answered with something other than JSON.' },
-    ] });
+    answers({
+      'a.pdf': readBill(0, { invoiceNumber: 'INV-1', totalSen: 100000 }, { id: 'sup-1', name: 'Foshan Chairs' }),
+      'b.pdf': readBill(1, { invoiceNumber: 'INV-2', totalSen: null }, { id: 'sup-1', name: 'Foshan Chairs' }),
+      'c.pdf': { index: 2, ok: false, reason: 'The reader answered with something other than JSON.' },
+    });
     draw();
     fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('a.pdf'), pdf('b.pdf'), pdf('c.pdf')] } });
     fireEvent.click(screen.getByText('Read 3 bill(s)'));
+    await readDone(3);
 
     /* Grouped by default — no per-bill buttons until the human splits. */
     await waitFor(() => expect(screen.getByText('Open as ONE voucher (2 lines)')).toBeTruthy());
@@ -244,7 +275,7 @@ describe('the bill pile', () => {
 
     /* The honest edges: a null total is flagged, a failed bill keeps its reason. */
     expect(screen.getByText('total unreadable — will need typing')).toBeTruthy();
-    expect(screen.getByText(/Bill 3 could not be read: The reader answered/)).toBeTruthy();
+    expect(screen.getByText(/Bill 3 \(c\.pdf\) could not be read: The reader answered/)).toBeTruthy();
     expect(screen.getByText(/1 bill\(s\) could not be read/)).toBeTruthy();
 
     /* A SPLIT bill stashes only ITS OWN file — never a sibling's. */
@@ -256,15 +287,15 @@ describe('the bill pile', () => {
 
 describe('扫 → bill (owner 2026-09-03: 他是扫 bill, 然后帮我录入 bill)', () => {
   test('a grouped pair opens as ONE bill — matched supplier, joined numbers, one line per bill', async () => {
-    extractAsync.mockClear();
     piLandedState = null;
-    extractAsync.mockResolvedValueOnce({ bills: [
-      readBill(0, { invoiceNumber: 'ZJM-88', totalSen: 1644000 }, { id: 'sup-405', name: 'Zhejiang Ju Miao' }),
-      readBill(1, { invoiceNumber: 'ZJM-89', totalSen: 100000 }, { id: 'sup-405', name: 'Zhejiang Ju Miao' }),
-    ] });
+    answers({
+      'a.pdf': readBill(0, { invoiceNumber: 'ZJM-88', totalSen: 1644000 }, { id: 'sup-405', name: 'Zhejiang Ju Miao' }),
+      'b.pdf': readBill(1, { invoiceNumber: 'ZJM-89', totalSen: 100000 }, { id: 'sup-405', name: 'Zhejiang Ju Miao' }),
+    });
     draw();
     fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('a.pdf'), pdf('b.pdf')] } });
     fireEvent.click(screen.getByText('Read 2 bill(s)'));
+    await readDone(2);
 
     await waitFor(() => expect(screen.getByText('Open as ONE bill')).toBeTruthy());
     fireEvent.click(screen.getByText('Open as ONE bill'));
@@ -279,14 +310,14 @@ describe('扫 → bill (owner 2026-09-03: 他是扫 bill, 然后帮我录入 bil
   });
 
   test('a split (or single) bill offers its own Open as bill, carrying the extraction alone', async () => {
-    extractAsync.mockClear();
     piLandedState = null;
-    extractAsync.mockResolvedValueOnce({ bills: [
-      readBill(0, { invoiceNumber: 'ZJM-90', totalSen: 50000 }, { id: 'sup-405', name: 'Zhejiang Ju Miao' }),
-    ] });
+    answers({
+      'c.pdf': readBill(0, { invoiceNumber: 'ZJM-90', totalSen: 50000 }, { id: 'sup-405', name: 'Zhejiang Ju Miao' }),
+    });
     draw();
     fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('c.pdf')] } });
     fireEvent.click(screen.getByText('Read 1 bill(s)'));
+    await readDone(1);
 
     await waitFor(() => expect(screen.getByText('Open as bill')).toBeTruthy());
     fireEvent.click(screen.getByText('Open as bill'));
@@ -295,5 +326,113 @@ describe('扫 → bill (owner 2026-09-03: 他是扫 bill, 然后帮我录入 bil
     expect(state.scanBill.supplierId).toBe('sup-405');
     expect(state.scanBill.extraction.invoiceNumber).toBe('ZJM-90');
     expect(state.scanBill.lines).toBeUndefined();
+  });
+});
+
+/* 同时 upload 多 (owner 2026-10-05): four bills sent as ONE request outran the
+   30-second wait and the page said it could not confirm a save. Now each bill
+   is its own request, three with the reader at a time; each lands in its place
+   as it is read; one that fails is read again alone; a pile holds at most
+   MAX_PILE_FILES files; and a bill already entered says so beside it. */
+describe('many bills at once', () => {
+  const drawApPile = () => render(
+    <MemoryRouter initialEntries={['/scm/ap-invoices/scan']}>
+      <Routes>
+        <Route path="/scm/ap-invoices/scan" element={<PaymentVoucherScan target="ap" />} />
+        <Route path="/scm/ap-invoices" element={<div>AP LIST</div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  const add = (...names: string[]) => fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: names.map(pdf) } });
+
+  test('one bill per request, three with the reader at a time; each shows as it is read, and opening waits for the last', async () => {
+    const waiting: Array<() => void> = [];
+    let live = 0;
+    let most = 0;
+    extractAsync.mockImplementation((bills: Bills) => new Promise<{ bills: ExtractedBill[] }>((resolve) => {
+      live += 1;
+      most = Math.max(most, live);
+      const no = bills[0]!.files[0]!.name.replace('.pdf', '').toUpperCase();
+      waiting.push(() => { live -= 1; resolve({ bills: [{ ...readBill(0, { invoiceNumber: no, totalSen: 10000 }, null), index: 0 }] }); });
+    }));
+    drawApPile();
+    add('inv-a.pdf', 'inv-b.pdf', 'inv-c.pdf', 'inv-d.pdf');
+    fireEvent.click(screen.getByText('Read 4 bill(s)'));
+
+    await waitFor(() => expect(waiting).toHaveLength(3));
+    expect(screen.getByText('Reading… 0 of 4 done')).toBeTruthy();
+    await act(async () => { waiting[0]!(); });
+    await waitFor(() => expect(screen.getByText('INV-A')).toBeTruthy());
+    /* The lane that came free took the fourth bill. */
+    await waitFor(() => expect(waiting).toHaveLength(4));
+    expect(screen.getByText('Reading… 1 of 4 done')).toBeTruthy();
+    /* Opening waits — leaving now would drop the bills still with the reader. */
+    expect(screen.getByText('Open as AP invoice').closest('button')!.disabled).toBe(true);
+
+    await act(async () => { waiting.slice(1).forEach((go) => { go(); }); });
+    await readDone(4);
+    expect(screen.getAllByText('Open as AP invoice').every((b) => !b.closest('button')!.disabled)).toBe(true);
+    expect(most).toBe(3);
+    expect(extractAsync).toHaveBeenCalledTimes(4);
+    expect(extractAsync.mock.calls.every(([bills]) => bills.length === 1)).toBe(true);
+    /* In pile order, whatever order they were answered in. */
+    expect(screen.getAllByText(/^INV-[A-D]$/).map((el) => el.textContent)).toEqual(['INV-A', 'INV-B', 'INV-C', 'INV-D']);
+  });
+
+  test('a bill that cannot be read names its file and is read again on its own; the rest stand', async () => {
+    let blurryTries = 0;
+    extractAsync.mockImplementation(async (bills: Bills) => {
+      const name = bills[0]!.files[0]!.name;
+      if (name === 'blurry.pdf' && blurryTries++ === 0) throw new Error('Reading took too long — nothing was saved. Please read it again.');
+      return { bills: [{ ...readBill(0, { invoiceNumber: name === 'blurry.pdf' ? 'INV-B' : 'INV-A', totalSen: 5000 }, null), index: 0 }] };
+    });
+    drawApPile();
+    add('good.pdf', 'blurry.pdf');
+    fireEvent.click(screen.getByText('Read 2 bill(s)'));
+    await readDone(2);
+    expect(screen.getByText(/Bill 2 \(blurry\.pdf\) could not be read: Reading took too long — nothing was saved/)).toBeTruthy();
+    expect(screen.getByText(/1 bill\(s\) could not be read/)).toBeTruthy();
+    expect(screen.getByText('INV-A')).toBeTruthy();
+
+    extractAsync.mockClear();
+    fireEvent.click(screen.getByText('Read again'));
+    await waitFor(() => expect(screen.getByText('INV-B')).toBeTruthy());
+    expect(extractAsync).toHaveBeenCalledTimes(1);
+    expect(extractAsync.mock.calls[0]![0].map((b) => b.files.map((f) => f.name))).toEqual([['blurry.pdf']]);
+    await waitFor(() => expect(screen.queryByText(/could not be read/)).toBeNull());
+    expect(screen.getByText('INV-A')).toBeTruthy();
+  });
+
+  test(`a pile holds at most ${MAX_PILE_FILES} files — the rest are left out, and said`, () => {
+    drawApPile();
+    add(...Array.from({ length: MAX_PILE_FILES + 2 }, (_, i) => `bill-${i + 1}.pdf`));
+    expect(screen.getByText(`Read ${MAX_PILE_FILES} bill(s)`)).toBeTruthy();
+    expect(screen.getByText(new RegExp(`at most ${MAX_PILE_FILES} files — 2 left out`))).toBeTruthy();
+    expect(screen.queryByText(`bill-${MAX_PILE_FILES + 1}.pdf`)).toBeNull();
+    /* Full: one more is left out too. */
+    add('one-more.pdf');
+    expect(screen.queryByText('one-more.pdf')).toBeNull();
+  });
+
+  test('a read bill already asked for, vouchered or entered says so beside it — a warning; it still opens', async () => {
+    sameBills = { 'INV-7|2026-09-01': [{ kind: 'API', id: 'api-7', number: 'HC-API-2610-004', amountSen: 189_000, status: 'DRAFT', answeredBy: null }] };
+    answers({
+      'a.pdf': readBill(0, { invoiceNumber: 'INV-7', totalSen: 189_000 }, null),
+      'b.pdf': readBill(1, { invoiceNumber: 'INV-8', totalSen: 34_000 }, null),
+    });
+    drawApPile();
+    add('a.pdf', 'b.pdf');
+    fireEvent.click(screen.getByText('Read 2 bill(s)'));
+    await readDone(2);
+    const notes = screen.getAllByRole('alert', { name: 'Same bill elsewhere' });
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!.textContent).toContain('AP invoice HC-API-2610-004 · RM 1,890.00 · draft');
+    /* Beside ITS bill, not the other one. */
+    const box = screen.getByText('INV-7').parentElement!.parentElement!;
+    expect(within(box).getByRole('alert', { name: 'Same bill elsewhere' })).toBe(notes[0]);
+    /* A warning, never a block. */
+    fireEvent.click(within(box).getByText('Open as AP invoice'));
+    await waitFor(() => expect(screen.getByText('AP LIST')).toBeTruthy());
+    expect(takePvFiles().map((f) => f.name)).toEqual(['a.pdf']);
   });
 });

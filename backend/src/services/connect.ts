@@ -202,6 +202,23 @@ export function buildDeliveryFollowUp(
   return { phone, name, automation: ctx.automation || CONNECT_DELIVERY_AUTOMATION, attributes };
 }
 
+/** Connect's /api/webhooks/erp answer when it fired nothing for the named
+ *  automation: a reason for the operator, or null when a run was triggered (or
+ *  the body does not say — an older Connect without `triggered` is trusted). */
+export function connectUntriggeredReason(bodyText: string, automation: string): string | null {
+  let body: unknown;
+  try {
+    body = JSON.parse(bodyText);
+  } catch {
+    return null;
+  }
+  if (!body || typeof body !== 'object') return null;
+  const triggered = (body as { triggered?: unknown }).triggered;
+  if (!Array.isArray(triggered)) return null;
+  if (triggered.length > 0) return null;
+  return `Connect has no enabled automation named "${automation}" — publish and enable it in chat.houzscentury.com, then send again.`;
+}
+
 /** POST one contact event to Connect. Never throws — a network / non-2xx
  *  failure comes back as { ok:false } so the caller logs it per doc the same way
  *  the Seampify path logged a failed send. Caller must check isConnectConfigured
@@ -220,8 +237,19 @@ export async function postConnectContact(
       },
       body: JSON.stringify(contact),
     });
-    if (res.ok) return { ok: true, httpCode: res.status, error: null };
-    const error = (await res.text().catch(() => '')).slice(0, 300) || `HTTP ${res.status}`;
+    const text = (await res.text().catch(() => '')).slice(0, 2000);
+    if (res.ok) {
+      // 200 means Connect ACCEPTED the event, not that a message went out: it
+      // upserts the contact and answers `triggered: [names]` — an EMPTY list
+      // when no enabled automation carries that name (still DRAFT, disabled,
+      // renamed). Reporting that as sent put "Done Balance Collection" on an
+      // order whose customer got nothing (2026-10-05). Treat it as a failure
+      // the operator can act on.
+      const untriggered = connectUntriggeredReason(text, contact.automation);
+      if (untriggered) return { ok: false, httpCode: res.status, error: untriggered };
+      return { ok: true, httpCode: res.status, error: null };
+    }
+    const error = text.slice(0, 300) || `HTTP ${res.status}`;
     return { ok: false, httpCode: res.status, error };
   } catch (e) {
     return { ok: false, httpCode: null, error: String((e as Error)?.message ?? e).slice(0, 300) };
