@@ -44,7 +44,7 @@ export const soMoneyHandler = async (c: Ctx): Promise<Response> => {
      beside this one. Only an order with money asks. */
   let others: Awaited<ReturnType<typeof convertSources>> = { ok: true, sources: [] };
   if (m.money.open) {
-    others = await convertSources(sb, co.companyId, { customerId: m.money.customer.customerId, debtorCode: m.money.customer.debtorCode, phone: m.money.customer.phone, exclude: m.money.docNo });
+    others = await convertSources(sb, co.companyId, { customerId: m.money.customer.customerId, debtorCode: m.money.customer.debtorCode, debtorName: m.money.customer.name, phone: m.money.customer.phone, exclude: m.money.docNo });
     if (!others.ok) return c.json({ error: 'load_failed', reason: others.reason }, 500);
   }
   return c.json({ money: m.money, others: others.sources });
@@ -79,12 +79,12 @@ export const soConvertSourcesHandler = async (c: Ctx): Promise<Response> => {
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
   const docNo = String(c.req.param('docNo') ?? '').trim();
-  const { data: so, error } = await sb.from('mfg_sales_orders').select('doc_no, company_id, customer_id, debtor_code, phone').eq('doc_no', docNo).maybeSingle();
+  const { data: so, error } = await sb.from('mfg_sales_orders').select('doc_no, company_id, customer_id, debtor_code, debtor_name, phone').eq('doc_no', docNo).maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const row = so as { company_id: number | null; customer_id: string | null; debtor_code: string | null; phone: string | null } | null;
+  const row = so as { company_id: number | null; customer_id: string | null; debtor_code: string | null; debtor_name: string | null; phone: string | null } | null;
   if (!row || Number(row.company_id) !== co.companyId) return c.json({ error: 'not_found' }, 404);
   const also = String(c.req.query('also') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  const r = await convertSources(sb, co.companyId, { customerId: row.customer_id, debtorCode: row.debtor_code, phone: row.phone, also, exclude: docNo });
+  const r = await convertSources(sb, co.companyId, { customerId: row.customer_id, debtorCode: row.debtor_code, debtorName: row.debtor_name, phone: row.phone, also, exclude: docNo });
   if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
   return c.json({ sources: r.sources });
 };

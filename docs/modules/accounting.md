@@ -77,6 +77,7 @@ Customer payments
 - A payment edit re-posts only if amount, paid date, method or merchant provider changed; the contra is dated on the original entry's day. A delete's contra is dated today.
 - A payment changes only as a draft, on its keyed day, or under the amend right with a reason. A reconciled payment (confirmed settlement line, bank match on its entry, locked bank month on its money leg) is locked for everyone; each check fails closed.
 - A converted payment row cannot be PATCHed; refunds plus conversions never exceed the pool (`orderMoney`, `scm/lib/so-money.ts`); converted rows are skipped by daily close, drift check and receipt healing.
+- The pool is the payments the ledger booked plus, on a Sales Order, the payments brought over from AutoCount (method `imported`; owner 2026-10-05) — the panel says how much came from AutoCount (`importedSen`), and a refund or conversion of it books Dr AR like any other (the AR Aging footnote for AutoCount deposits does not grow). The Customer Refund headroom (`lib/pv-refund.ts`) reads the same; a migrated Sales Invoice stays out. The "same customer" for Convert is customer id, else phone, else debtor code AND name — never a debtor code alone (Houzs cash debtor 300-C002 is on thousands of orders). Many orders are read in one batch (`ordersMoney`), never one by one.
 
 Deposit invoices, notes, receipts
 - A DI is issued only when the company switch is on, the payment is on/after the start day, the order is live (`order_not_live` for DRAFT/CANCELLED) and has no live sales invoice; one DI stands per payment.

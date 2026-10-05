@@ -370,23 +370,23 @@ Total: 1393 route registrations across 196 files.
 - L958  GET    /:id/linked
 - L1003  GET    /:id/revisions
 - L1333  POST   /
-- L2373  POST   /from-sos
-- L2453  PATCH  /:id
-- L2610  POST   /bulk-supplier-date
-- L2892  POST   /:id/items
-- L3015  PATCH  /:id/items/:itemId
-- L3198  DELETE /:id/items/:itemId
-- L3368  GET    /:id/items/:itemId/allocations
-- L3378  POST   /:id/items/:itemId/allocations
-- L3433  PATCH  /:id/items/:itemId/allocations/:allocationId
-- L3484  DELETE /:id/items/:itemId/allocations/:allocationId
-- L3575  GET    /:id/items/:itemId/photos/:photoKey/signed
-- L3633  GET    /:id/items/:itemId/photos/:photoKey
-- L3647  POST   /:id/convert-from-so
-- L3999  PATCH  /:id/confirm
-- L4020  POST   /:id/send-to-supplier
-- L4298  PATCH  /:id/cancel
-- L4310  PATCH  /:id/reopen
+- L2392  POST   /from-sos
+- L2472  PATCH  /:id
+- L2629  POST   /bulk-supplier-date
+- L2911  POST   /:id/items
+- L3034  PATCH  /:id/items/:itemId
+- L3217  DELETE /:id/items/:itemId
+- L3387  GET    /:id/items/:itemId/allocations
+- L3397  POST   /:id/items/:itemId/allocations
+- L3452  PATCH  /:id/items/:itemId/allocations/:allocationId
+- L3503  DELETE /:id/items/:itemId/allocations/:allocationId
+- L3594  GET    /:id/items/:itemId/photos/:photoKey/signed
+- L3652  GET    /:id/items/:itemId/photos/:photoKey
+- L3666  POST   /:id/convert-from-so
+- L4018  PATCH  /:id/confirm
+- L4039  POST   /:id/send-to-supplier
+- L4317  PATCH  /:id/cancel
+- L4329  PATCH  /:id/reopen
 
 ## backend/src/scm/routes/fleet-maintenance.ts  (23)
 - L569  GET    /dashboard
@@ -1566,8 +1566,8 @@ Total: 1393 route registrations across 196 files.
 - L198  GET    /bills/:billId
 
 ## backend/src/scm/routes/delivery-messages.ts  (2)
-- L60  POST   /send
-- L154  POST   /statuses
+- L64  POST   /send
+- L197  POST   /statuses
 
 ## backend/src/scm/routes/delivery-order-item-photos.ts  (2)
 - L118  GET    /:id/items/:itemId/photos/:photoKey/signed
@@ -1602,8 +1602,8 @@ Total: 1393 route registrations across 196 files.
 - L77  PUT    /
 
 ## backend/src/scm/routes/mrp.ts  (2)
-- L1838  GET    /
-- L1884  POST   /regenerate
+- L1857  GET    /
+- L1903  POST   /regenerate
 
 ## backend/src/scm/routes/official-docs.ts  (2)
 - L89  GET    /
@@ -1656,7 +1656,7 @@ Total: 1393 route registrations across 196 files.
 - L19  GET    /
 
 ## backend/src/routes/chatCallback.ts  (1)
-- L118  POST   /
+- L119  POST   /
 
 ## backend/src/routes/companies.ts  (1)
 - L24  GET    /
