@@ -4,6 +4,7 @@ import { ListSkeleton } from "../../components/Skeleton";
 import { useQuery } from "../../hooks/useQuery";
 import { api } from "../../api/client";
 import { cn } from "../../lib/utils";
+import { fmtDate, fmtDateTime } from "../../vendor/shared/format";
 
 // Database load for the IT System Health section (DEV-35). Backend:
 // backend/src/routes/systemHealthDatabase.ts. Each metric arrives with its
@@ -104,7 +105,7 @@ export function DatabasePanel() {
         <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
           <Database size={13} className="text-accent" /> Database load
         </div>
-        {d?.checkedAt && <span className="text-[10.5px] text-ink-muted">Checked {new Date(d.checkedAt).toLocaleTimeString()}</span>}
+        {d?.checkedAt && <span className="text-[10.5px] text-ink-muted">Checked {fmtDateTime(d.checkedAt)}</span>}
       </div>
 
       {q.loading && !d ? (
@@ -188,7 +189,7 @@ export function DatabasePanel() {
               d.tempFiles.ok && (
                 <div className="mt-1 text-[11px] text-ink-secondary">
                   {d.tempFiles.tempFiles.toLocaleString()} temp files
-                  {d.tempFiles.statsReset ? ` since ${new Date(d.tempFiles.statsReset).toLocaleDateString()}` : ""}
+                  {d.tempFiles.statsReset ? ` since ${fmtDate(d.tempFiles.statsReset)}` : ""}
                 </div>
               )
             }
