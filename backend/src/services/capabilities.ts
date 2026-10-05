@@ -49,6 +49,7 @@ import { canUseAssistant } from "./assistant-scope";
 import type { PositionPolicyRow } from "./positionPolicyRows";
 import type { AuthUser } from "./auth";
 import { hasPermission } from "./permissions";
+import { canViewItPages } from "./itAccess";
 import {
   isDirectorUser,
   isFinanceViewer,
@@ -277,6 +278,10 @@ const PREDICATES = {
    *  CLOSED. The FE mirrored this deny list twice (auth/assistantAccess.ts route
    *  guard + Sidebar hideForPositions); both now read this answer instead. */
   "org.assistant.use": (u: CapabilityCaller): boolean => canUseAssistant(asAuthUser(u)),
+
+  /** May this caller open the IT pages (System Health, AI usage). GATE:
+   *  itAccess.canViewItPages, the same check middleware/auth.requireItPages runs. */
+  "it.pages.view": (u: CapabilityCaller): boolean => canViewItPages(granted(u)),
 } as const satisfies Record<string, (u: CapabilityCaller) => boolean>;
 
 /** Every capability key, frozen in declaration order. The frontend pins its own

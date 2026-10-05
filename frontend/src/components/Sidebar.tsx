@@ -918,7 +918,7 @@ export const NAV_TABS: NavTab[] = [
     to: "/system-health",
     label: "System Health",
     icon: Activity,
-    pageAccess: "system_health",
+    requireCapability: "it.pages.view",
   },
   // Next to System Health because it answers the same shape of question — "is
   // the thing that runs in the background still working" — and because the

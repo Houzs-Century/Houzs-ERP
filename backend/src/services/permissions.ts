@@ -45,6 +45,10 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "service_cases.approve", resource: "Service Cases", verb: "manage", label: "Approve service cost", description: "Approve the quoted cost on an ASSR case (POST /api/assr/:id/approve)" },
   { key: "logs.read",     resource: "Activity Log", verb: "read", label: "View activity log", description: "See the system execution log" },
 
+  // IT pages (DEV-35): System Health, AI usage. While IT tests them the `*`
+  // wildcard does not confer this key; see services/itAccess.ts.
+  { key: "it.view", resource: "IT", verb: "read", label: "View IT pages", description: "See System Health and the other IT-only pages" },
+
   // Fleet Maintenance & Compliance (Phase 1) — the lorry master, compliance
   // vault and Fleet Health dashboard (/api/fleet-maintenance). Read is the
   // dashboard + reminders; write covers adding/editing vehicles and appending

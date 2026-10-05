@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
-import { requirePermission, requirePageAccess } from "../middleware/auth";
+import { requirePermission, requireItPages } from "../middleware/auth";
 import { isSupabaseConfigured, getSupabaseService } from "../db/supabase";
 import { reconcileLedger } from "../scm/lib/reconcile-ledger";
 import { PAGE as PAGINATE_ALL_PAGE } from "../scm/lib/paginate-all";
@@ -15,8 +15,9 @@ import { allowedCompanyIds } from "../scm/lib/companyScope";
 import { acServiceConfig, callAcService } from "../services/autocount-writeback";
 
 // ---------------------------------------------------------------------------
-// /api/admin/health — System Health, "real data" phase 1. Gated on the
-// `system_health` page (configurable per position; Owner / `*` always pass).
+// /api/admin/health — System Health, "real data" phase 1. Every route needs the
+// IT pages gate (`it.view`, services/itAccess.ts); the owner-only routes below
+// additionally need `*`.
 //
 // Ported from Hookka ERP's /admin/health, trimmed to what Houzs can show
 // WITHOUT Cloudflare Analytics Engine (Houzs has no AE binding). The
@@ -38,6 +39,7 @@ import { acServiceConfig, callAcService } from "../services/autocount-writeback"
 // thing it monitors is unhealthy.
 // ---------------------------------------------------------------------------
 const app = new Hono<{ Bindings: Env }>();
+app.use("*", requireItPages());
 
 // Sensitive-action matcher (SQL): security-relevant mutations worth a
 // dedicated eye. Kept in one place so /live counts and /audit-feed agree.
@@ -55,7 +57,7 @@ function cutoffIso(range: string | undefined): string {
   return new Date(Date.now() - ms).toISOString();
 }
 
-app.get("/live", requirePageAccess("system_health"), async (c) => {
+app.get("/live", async (c) => {
   // DB ping FIRST so it captures any cold-connection establishment cost —
   // this is the headline number the operator watches for the "Failed to
   // fetch" cold-start stall.
@@ -534,7 +536,7 @@ app.get("/rest-page-ceiling", requirePermission("*"), async (c) => {
   });
 });
 
-app.get("/audit-feed", requirePageAccess("system_health"), async (c) => {
+app.get("/audit-feed", async (c) => {
   const range = c.req.query("range") || "24h";
   const cutoff = cutoffIso(range);
   const limit = Math.min(parseInt(c.req.query("limit") || "100", 10) || 100, 200);

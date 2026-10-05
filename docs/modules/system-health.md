@@ -4,7 +4,9 @@ Admin-only diagnostic and manual-refresh surface for integrations that normally 
 
 ## Permissions
 
-- Every route under `/api/admin/health` requires the `*` permission (owner / IT Admin only) — including the read-only diagnostics, since several issue multi-thousand-row reads or reveal internal build/host details.
+- Every route under `/api/admin/health`, and the page and its menu row, require `it.view` (the IT pages gate, `services/itAccess.ts`, exposed to the client as the `it.pages.view` capability). While `IT_PAGES_WILDCARD_PASSES` is false the `*` wildcard does NOT pass, so Owner and Super Admin do not see it; flip it at launch.
+- The ledger, AutoCount reconcile/pull/snapshot, host-build and page-ceiling routes additionally require `*`, so while the switch is off nobody can call them.
+- The `system_health` page-access key no longer gates anything.
 
 ## Rules that must not break
 

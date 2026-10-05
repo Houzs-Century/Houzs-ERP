@@ -44,7 +44,7 @@ import type { AuthUser } from "../src/services/auth";
    positionless legacy user and the unidentifiable caller — because those are
    where fail-open bugs live. */
 
-const FLAT_KEYS_UNDER_TEST = ["scm.config.write", "scm.so.view_all"] as const;
+const FLAT_KEYS_UNDER_TEST = ["scm.config.write", "scm.so.view_all", "it.view"] as const;
 
 interface NamedCaller {
   label: string;
@@ -148,6 +148,10 @@ const GATES: Record<CapabilityKey, (u: CapabilityCaller) => boolean> = {
   "org.defect.reviewer": (u) => isDefectReviewerPosition(asAuthUser(u)),
   "org.crew.scoped": (u) => isCrewScopedUser(asAuthUser(u)),
   "org.assistant.use": (u) => canUseAssistant(asAuthUser(u)),
+
+  // Literal hold of it.view: during DEV-35 testing the wildcard does not pass.
+  "it.pages.view": (u) =>
+    Array.isArray(u.permissions) ? u.permissions.includes("it.view") : !!u.permissions_set?.has("it.view"),
 
   // The composed page-open tier — union of the write gate and the read tier.
   "scm.maintenance.open": (u) =>

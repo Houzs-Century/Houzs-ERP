@@ -3,6 +3,7 @@ import type { Env } from "../types";
 import { getUserBySession, timingSafeEqualStr, type AuthUser, mintSessionPass } from "../services/auth";
 import { tryPassAuth } from "../services/session-pass";
 import { hasPermission } from "../services/permissions";
+import { canViewItPages } from "../services/itAccess";
 import { isSalesDirectorUser, isSalesUser, isDirectorUser } from "../services/pmsAccess";
 import {
   fullAccessMap,
@@ -224,6 +225,18 @@ export function requirePermission(perm: string): MiddlewareHandler<{ Bindings: E
     // hydrateAuthUser (e.g. tests / scripts).
     const granted = user.permissions_set ?? user.permissions;
     if (!hasPermission(granted, perm)) {
+      return c.json({ error: "You don't have permission to do that." }, 403);
+    }
+    await next();
+  };
+}
+
+/** Gate for the IT pages (System Health, AI usage). See services/itAccess.ts. */
+export function requireItPages(): MiddlewareHandler<{ Bindings: Env }> {
+  return async (c, next) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
+    if (!canViewItPages(user.permissions_set ?? user.permissions)) {
       return c.json({ error: "You don't have permission to do that." }, 403);
     }
     await next();

@@ -76,7 +76,7 @@ async function ask(
 ) {
   CALLS = [];
   vi.stubGlobal('fetch', fetchImpl);
-  const res = await appWith(['*']).request('/autocount/host-build', undefined, env);
+  const res = await appWith(['*', 'it.view']).request('/autocount/host-build', undefined, env);
   return { res, body: (await res.json()) as HostBuildBody };
 }
 
