@@ -248,8 +248,10 @@ export const CONSIGNMENT_ORDER_PDF_OPTS = {
   docNoLabel: 'CO No',
   docNoun: 'consignment order',
   /* The customer's own order (the one being corrected) — always printed, so a
-     CO raised without it shows a dash instead of silently omitting the row. */
-  refLabel: 'Customer Ref',
+     CO raised without it shows a dash instead of silently omitting the row.
+     Captioned "Ref No." like every other screen (owner 2026-09-25, refNoLabel
+     gate). */
+  refLabel: 'Ref No.',
   get terms(): readonly string[] { return consignmentLoanTerms(); },
   money: false,
 } as const;

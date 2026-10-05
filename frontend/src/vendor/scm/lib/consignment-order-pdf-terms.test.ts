@@ -81,12 +81,12 @@ describe('consignment order PDF — temporary-provision terms', () => {
     expect(text).toContain('Customer Signature');
   });
 
-  test('the CO prints the customer ref row even when blank, and the contact line', async () => {
+  test('the CO prints the Ref No. row even when blank, and the contact line', async () => {
     const { CONSIGNMENT_ORDER_PDF_OPTS } = await import('./sales-order-pdf');
     const blank = await printedText(CONSIGNMENT_ORDER_PDF_OPTS);
-    expect(blank).toContain('Customer Ref');
+    expect(blank).toContain('Ref No.');
     const filled = await printedText(CONSIGNMENT_ORDER_PDF_OPTS, { ref: 'HC-SO-009191' });
-    expect(filled).toContain('Customer Ref');
+    expect(filled).toContain('Ref No.');
     expect(filled).toContain('HC-SO-009191');
     expect(filled).toContain('contact us at');
   });
