@@ -28,12 +28,59 @@ export interface ConnectConfig {
 }
 
 export interface ConnectOrder {
-  /** COALESCE(linked_ac_docno, doc_no) — the number the customer knows. */
+  /** COALESCE(linked_ac_docno, doc_no) — the number the customer knows.
+   *  /api/chat-callback resolves EITHER number back to the SO, so the flow can
+   *  echo this one straight into its callback body. */
   ref: string;
   branding: string;
   /** yyyy/mm/dd, already the effective (amended ?? original) date. */
   deliveryDate: string;
+  /** Outstanding balance in sen (local_total − Σpayments) from the SO list's
+   *  own view; null when the view had no row for the doc. Drives `amount`. */
+  balanceSen?: number | null;
 }
+
+/** Everything the ERP must tell Connect on EVERY send besides the order lines. */
+export interface ConnectSendContext {
+  /** Absolute URL the flow's call_rest_api node posts the customer's tap to. */
+  callbackUrl: string;
+}
+
+/** Where the customer's tap comes back (routes/chatCallback.ts). */
+export const CHAT_CALLBACK_PATH = '/api/chat-callback';
+/** wrangler.toml sets PUBLIC_APP_URL per environment; this is prod's value and
+ *  only a last resort for an environment that forgot to. */
+export const DEFAULT_PUBLIC_APP_URL = 'https://erp.houzscentury.com';
+
+export function chatCallbackUrl(env: { PUBLIC_APP_URL?: string }): string {
+  const base = String(env.PUBLIC_APP_URL || DEFAULT_PUBLIC_APP_URL).replace(/\/+$/, '');
+  return `${base}${CHAT_CALLBACK_PATH}`;
+}
+
+/** The figure the balance paragraph prints after "RM": sen → "1,500.00". */
+export function formatRm(sen: number): string {
+  return (Math.round(sen) / 100).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+/** Contact attributes the flows READ before they WRITE, reset to '' on every
+ *  send. Connect MERGES incoming attributes over the contact's existing ones,
+ *  so without this a value left by the customer's PREVIOUS order leaks into the
+ *  new conversation: a stale `button_status=Confirm` makes the Delivery Lock
+ *  guard refuse the new order's Amend tap, a stale `amount` prints a balance
+ *  that was settled months ago, a stale `amended_delivery_date` rides into the
+ *  amend callback when the date form is skipped. '' reads as "unset" to
+ *  Connect's criteria_router. */
+export const CONNECT_RESET_ATTRIBUTES = [
+  'button_status',
+  'last_button',
+  'amount',
+  'amended_delivery_date',
+  'amend_date_reason',
+  'date_amended',
+] as const;
 
 export interface ConnectContact {
   phone: string;
@@ -46,6 +93,49 @@ export interface ConnectResult {
   ok: boolean;
   httpCode: number | null;
   error: string | null;
+}
+
+/** Per-company message values the ERP fills so ONE template/flow serves both
+ *  companies (2990 delivers from the Houzs number but must show 2990's figures).
+ *  Each field maps to a flow variable the rebuilt flows reference:
+ *  {company_signature}, {bank_block}, {disposal_block}. */
+export interface ConnectCompanyProfile {
+  signature: string;
+  bankBlock: string;
+  disposalBlock: string;
+}
+
+/** app_config key holding a JSON map { "<company_id>": ConnectCompanyProfile }.
+ *  Lives in app_config, NOT in this (public) repo's source, because bank_block
+ *  carries a receiving account number. */
+export const CONNECT_COMPANY_PROFILE_KEY = 'connect.company_profile';
+
+/** Parse the app_config value into a company_id -> profile map. Never throws: a
+ *  missing value, bad JSON, or a non-string field yields {} or drops that row,
+ *  so a mis-edit cannot break a send and an unset key simply sends no
+ *  per-company attributes. */
+export function parseConnectCompanyProfiles(
+  raw: string | null,
+): Record<string, ConnectCompanyProfile> {
+  if (!raw) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (!parsed || typeof parsed !== 'object') return {};
+  const out: Record<string, ConnectCompanyProfile> = {};
+  for (const [id, v] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!v || typeof v !== 'object') continue;
+    const p = v as Record<string, unknown>;
+    const signature = typeof p.signature === 'string' ? p.signature : '';
+    const bankBlock = typeof p.bankBlock === 'string' ? p.bankBlock : '';
+    const disposalBlock = typeof p.disposalBlock === 'string' ? p.disposalBlock : '';
+    if (!signature && !bankBlock && !disposalBlock) continue;
+    out[id] = { signature, bankBlock, disposalBlock };
+  }
+  return out;
 }
 
 export function isConnectConfigured(env: ConnectConfig): boolean {
@@ -67,17 +157,33 @@ export function buildDeliveryFollowUp(
   phone: string,
   name: string,
   orders: ConnectOrder[],
+  profile: ConnectCompanyProfile | null,
+  ctx: ConnectSendContext,
 ): ConnectContact {
   const attributes: Record<string, string> = {
     full_name: name,
     order_total: String(orders.length),
   };
+  // Resets FIRST so a real value below (amount) wins over its reset.
+  for (const key of CONNECT_RESET_ATTRIBUTES) attributes[key] = '';
   orders.slice(0, CONNECT_ORDER_LINES).forEach((o, i) => {
     const n = i + 1;
     attributes[`ref_${n}`] = o.ref;
     attributes[`delivery_date_${n}`] = o.deliveryDate;
     attributes[`brand_${n}`] = o.branding;
   });
+  // ONE balance paragraph for the whole message, so the figure is the sum over
+  // EVERY bundled order (not only the 3 lines shown) and only of what is owed —
+  // an over-paid order must not shrink another's balance. Nothing owed leaves
+  // amount '' and the flow's has_balance branch stays quiet.
+  const owedSen = orders.reduce((sum, o) => sum + Math.max(0, Number(o.balanceSen ?? 0)), 0);
+  if (owedSen > 0) attributes.amount = formatRm(owedSen);
+  attributes.callback_url = ctx.callbackUrl;
+  if (profile) {
+    attributes.company_signature = profile.signature;
+    attributes.bank_block = profile.bankBlock;
+    attributes.disposal_block = profile.disposalBlock;
+  }
   return { phone, name, automation: CONNECT_DELIVERY_AUTOMATION, attributes };
 }
 

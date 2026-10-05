@@ -39,7 +39,8 @@
 // PAYLOAD (chat's `Call REST API` body):
 //   { callback_id?: string,          // idempotency; chat's own step id
 //     event: "confirm" | "amend",
-//     ref: string,                   // the SO doc_no the message was about
+//     ref: string,                   // the number the customer was shown: our
+//                                    // doc_no OR the AutoCount linked_ac_docno
 //     phone?: string,
 //     delivery_date?: string,        // amend only — what the customer asked for
 //     reason?: string,               // amend only — Renovation Delay / Date Unavailable
@@ -159,8 +160,8 @@ app.post("/", async (c) => {
   if (!EVENTS.has(event)) {
     return c.json({ error: "event must be 'confirm' or 'amend'" }, 400);
   }
-  const docNo = String(body.ref ?? "").trim().slice(0, 64);
-  if (!docNo) return c.json({ error: "ref (SO doc_no) is required" }, 400);
+  const ref = String(body.ref ?? "").trim().slice(0, 64);
+  if (!ref) return c.json({ error: "ref (SO doc_no) is required" }, 400);
 
   const callbackId = safeId(body.callback_id);
   const phone = normalizePhone(body.phone);
@@ -213,9 +214,21 @@ app.post("/", async (c) => {
     }
   }
 
-  let soQuery = sb.from("mfg_sales_orders").select("doc_no, company_id").eq("doc_no", docNo);
+  // `ref` is the number the CUSTOMER was shown — delivery-messages sends
+  // COALESCE(linked_ac_docno, doc_no), so for an AutoCount-linked order it is
+  // the AutoCount number, not ours. Match either column; the row is then keyed
+  // by OUR doc_no so the board finds it. The ref is interpolated into a
+  // PostgREST `or` filter, where `,` `(` `)` are syntax — anything outside the
+  // document-number alphabet is refused up front rather than escaped.
+  if (!/^[A-Za-z0-9_\-/.]+$/.test(ref)) {
+    return c.json({ error: "invalid_ref", reason: "ref has characters no document number carries" }, 400);
+  }
+  let soQuery = sb
+    .from("mfg_sales_orders")
+    .select("doc_no, company_id, linked_ac_docno")
+    .or(`doc_no.eq.${ref},linked_ac_docno.eq.${ref}`);
   if (company.id != null) soQuery = soQuery.eq("company_id", company.id);
-  const { data: soRows, error: soErr } = await soQuery.limit(1);
+  const { data: soRows, error: soErr } = await soQuery.limit(2);
   if (soErr) {
     return c.json({ error: "load_failed", reason: soErr.message }, 500);
   }
@@ -223,8 +236,12 @@ app.post("/", async (c) => {
     // Deliberately the same answer for "no such SO" and "not this company's
     // SO": the caller holds a Houzs credential and must not be able to probe
     // which doc numbers exist elsewhere.
-    return c.json({ error: "unknown_ref", reason: `no ${CHAT_KEY_COMPANY} order ${docNo}` }, 404);
+    return c.json({ error: "unknown_ref", reason: `no ${CHAT_KEY_COMPANY} order ${ref}` }, 404);
   }
+  // An exact doc_no hit wins over a linked_ac_docno hit, so a number that is
+  // somehow both is recorded against the order that literally carries it.
+  const soHit = (soRows as Array<{ doc_no: string }>).find((r) => r.doc_no === ref) ?? (soRows[0] as { doc_no: string });
+  const docNo = String(soHit.doc_no);
 
   // ── Record ──────────────────────────────────────────────────────────────
   // Reuses scm.wa_message_log rather than a new table: the board already reads
@@ -237,6 +254,9 @@ app.post("/", async (c) => {
     callback_id: callbackId,
     event,
     ref: docNo,
+    // What chat actually sent, kept when it differs (an AutoCount number) so
+    // a mismatch can be chased without guessing which number was matched.
+    ...(ref !== docNo ? { customer_ref: ref } : {}),
     phone,
     requested_delivery_date: requestedDate,
     reason,
