@@ -247,6 +247,14 @@ export const DeliveryPlanning = () => {
     if (r === 'ALL') next.delete('region'); else next.set('region', r);
     setParams(next, { replace: true });
   };
+  /* Toolbar "Reset layout": back to All / All. The grid clears its own funnels
+     and search box in the same click. */
+  const resetView = () => {
+    const next = new URLSearchParams(params);
+    next.delete('state');
+    next.delete('region');
+    setParams(next, { replace: true });
+  };
 
   const allOrders = useMemo<PlanningOrder[]>(() => data?.orders ?? [], [data]);
   const counts = data?.counts ?? { ALL: 0, PENDING_DELIVERY: 0, PENDING_SCHEDULE: 0, OVERDUE: 0, DELIVERED: 0 };
@@ -364,6 +372,7 @@ export const DeliveryPlanning = () => {
 
       <DeliveryPlanningBoard
         orders={allOrders}
+        resetFilters={{ active: activeState !== 'ALL' || activeRegion !== 'ALL', onReset: resetView }}
         layoutPresets={DELIVERY_PLANNING_LAYOUT_PRESETS}
         initialRowLimit={200}
         defaultSort={orderSort}
