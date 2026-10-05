@@ -25,6 +25,22 @@ to decide what to buy, and read by SO/PO/GRN/PI/Inventory screens as
   (`allocSourceCoveringPo`) — is advisory-only for the purchase-side screens
   and can legitimately disagree with `allocSourceOf` on a line that is short
   but still names a covering PO.
+- **A sofa set is one batch or nothing** (owner: 1 PO = 1 batch, never split).
+  On the pooled (company-2) sofa path a set — every sofa line of one SO at
+  one warehouse — is planned from ONE batch (= PO number): a received batch
+  whose open lots (`v_inventory_lots_open`, `batch_no`) hold every module
+  covers it from `stock` (FIFO-oldest); else one open PO whose lots + open
+  qty hold every module covers it as `po` (set ETA = its last module); else
+  a PO with units still on order that covers part of it is named and the
+  rest is `shortage` (complete that PO by amendment, never raise a second);
+  else every module is `shortage` and the whole set is ordered on one PO.
+  Sets the allocator locked (`allocated_batch_no` on every line, batch
+  still covering) keep their batch first. Unbatched on-hand never covers a
+  sofa set — the same rule the stored allocator applies. `SofaSet.batchNo`
+  names the batch. The Sofa tab's Proceed PO refuses a set whose modules
+  carry different suppliers or whose set already names a PO, and
+  `POST /from-sos` refuses a sofa set resolving to two suppliers
+  (`409 sofa_set_supplier_split`).
 - Company-1 hard-bound categories (bedframe, sofa, Sofa Accessory /
   `fabric_accessory`, `(SP)` mattress) cover **only** from their own
   dedicated PO line — never the pooled bucket, in either direction (a bound
@@ -120,6 +136,10 @@ to decide what to buy, and read by SO/PO/GRN/PI/Inventory screens as
 - Do not assume the stored MRP snapshot is a book of record — it is a cache
   only; an empty/missing snapshot row for a company falls back to live
   compute automatically.
+- Do not plan a sofa module from its own (warehouse, code, variant) pool —
+  the set is the unit; a half-set coverage reads "stock" on a unit the DO
+  gate will never release and steers purchasing into a one-module PO that
+  can never complete the set.
 - Do not add a new hard-bound category/group without updating both
   `isHardBoundLine` (`so-stock-allocation.ts`) and this engine's mirror —
   the two must agree on which lines are dedicated, or one screen reports a

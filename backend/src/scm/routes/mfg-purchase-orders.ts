@@ -2080,6 +2080,25 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       .filter((it) => (it.itemGroup ?? '').trim().toLowerCase() === 'sofa')
       .map((it) => it.soDocNo),
   );
+  /* 1 PO = 1 batch (owner 2026-10-05, 「不能跨批次 1PO = 1batch 不能分开」): one
+     order's sofa set must land in ONE purchase order. The grouping below keys
+     on supplier, so modules resolved to two suppliers would become two POs —
+     two dye lots that can never ship as one set. Refused before any write. */
+  const sofaSupplierBySo = new Map<string, Set<string>>();
+  for (const it of soItems) {
+    if ((it.itemGroup ?? '').trim().toLowerCase() !== 'sofa') continue;
+    const set = sofaSupplierBySo.get(it.soDocNo) ?? new Set<string>();
+    set.add(effectiveBindingFor(it)!.supplier_id);
+    sofaSupplierBySo.set(it.soDocNo, set);
+  }
+  const splitSofaSets = [...sofaSupplierBySo.entries()].filter(([, s]) => s.size > 1).map(([d]) => d);
+  if (splitSofaSets.length > 0) {
+    return c.json({
+      error: 'sofa_set_supplier_split',
+      reason: `A sofa set ships from one batch, so every module of one order goes on ONE purchase order. Pick one supplier for all modules of: ${splitSofaSets.join(', ')}.`,
+      soDocNos: splitSofaSets,
+    }, 409);
+  }
   for (const it of soItems) {
     const b = effectiveBindingFor(it)!;
     const effectiveSupplierId = b.supplier_id;
