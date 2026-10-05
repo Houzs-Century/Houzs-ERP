@@ -16,6 +16,7 @@ import { acServiceConfig, callAcService } from "../services/autocount-writeback"
 import systemHealthLogins from "./systemHealthLogins";
 import systemHealthServices from "./systemHealthServices";
 import systemHealthDatabase from "./systemHealthDatabase";
+import systemHealthJobs from "./systemHealthJobs";
 
 // ---------------------------------------------------------------------------
 // /api/admin/health — System Health, "real data" phase 1. Every route needs the
@@ -46,6 +47,7 @@ app.use("*", requireItPages());
 app.route("/", systemHealthLogins);
 app.route("/", systemHealthServices);
 app.route("/", systemHealthDatabase);
+app.route("/", systemHealthJobs);
 
 // Sensitive-action matcher (SQL): security-relevant mutations worth a
 // dedicated eye. Kept in one place so /live counts and /audit-feed agree.

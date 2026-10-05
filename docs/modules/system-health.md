@@ -7,6 +7,7 @@ Admin-only diagnostic and manual-refresh surface for integrations that normally 
 - Every route under `/api/admin/health`, and the page and its menu row, require `it.view` (the IT pages gate, `services/itAccess.ts`, exposed to the client as the `it.pages.view` capability). While `IT_PAGES_WILDCARD_PASSES` is false the `*` wildcard does NOT pass, so Owner and Super Admin do not see it; flip it at launch.
 - The ledger, AutoCount reconcile/pull/snapshot, host-build and page-ceiling routes additionally require `*`, so while the switch is off nobody can call them.
 - The `system_health` page-access key no longer gates anything.
+- `GET /jobs` (last run and verdict per cron job, from `public.job_runs`) and `GET /queues` (waiting / failed / oldest age per queue, plus failed slip scans in 7 days) need only `it.view`.
 
 ## Rules that must not break
 
@@ -34,8 +35,9 @@ Admin-only diagnostic and manual-refresh surface for integrations that normally 
 
 ## Where the code is
 
-- `backend/src/routes/systemHealth.ts` — all diagnostic/refresh routes; `systemHealthDatabase.ts` (database load) is mounted inside it.
+- `backend/src/routes/systemHealth.ts` — all diagnostic/refresh routes; database load (`systemHealthDatabase.ts`), `/jobs` and `/queues` (`systemHealthJobs.ts`), `/services` and `/logins` live in their own files mounted inside it.
 - `backend/src/routes/systemHealthServices.ts` — `GET /services`, one row per outside service, read only from what is already recorded (`execution_logs`, `scm.autocount_outbox`, `email_log`, `scm.wa_message_log`, `push_devices`, `scm.venture_portal_outbox`, `ai_usage_events`); verdict rules in `services/serviceHealth.ts`. Mail-inbox sync and untimed APNs errors are not recorded, so they cannot be judged.
+- `backend/src/services/jobRuns.ts` (`track()` wraps every job in `scheduled()`, 14-day retention) and `jobHealth.ts` (job catalogue and verdict rules). A new cron job needs a `track("name", ...)` and a catalogue entry, or its test fails.
 - `backend/src/scm/lib/paginate-all.ts` — the `paginateAll` pagination helper `/rest-page-ceiling` measures.
 - `backend/src/db/supabase.ts` — PostgREST client used by the ceiling probe.
 - `backend/src/acc/stock-close.ts` — month-end stock close sweep + valuation replay.

@@ -827,3 +827,14 @@ export const auth_failed_logins = pgTable("auth_failed_logins", {
   ip: text("ip"),
   reason: text("reason").notNull(),
 });
+
+// ── job_runs (mig 20261005T1000): one row per scheduled job run ──
+export const job_runs = pgTable("job_runs", {
+  id: uuid("id").primaryKey(),
+  job: text("job").notNull(),
+  started_at: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  finished_at: timestamp("finished_at", { withTimezone: true }),
+  status: text("status").notNull().default("running"),
+  error: text("error"),
+  duration_ms: integer("duration_ms"),
+});
