@@ -51,7 +51,7 @@ import { withSingleActive } from "./LayoutSection";
 import { showAllColumnPrefs, toggleColumnPrefs, type ColumnPrefs } from "./dataTableColumnPrefs";
 import { UdfCell } from "./UdfCell";
 import { useLocalStorage } from "../hooks/useLocalStorage";
-import { useInVisitColFilters } from "./dataTableColFilterMemory";
+import { useInVisitClientSearch, useInVisitColFilters, useKeptColFilters } from "./dataTableColFilterMemory";
 import { useFrozenTableHeader } from "./useFrozenTableHeader";
 import { useSmallViewport } from "../hooks/useSmallViewport";
 import { inferColumnGroup } from "../lib/columnGroups";
@@ -193,32 +193,11 @@ function DataTableInner<T, L>({
   onFilteredRowsChange,
 }: Props<T, L>) {
   const isSmallViewport = useSmallViewport();
-  /* `clientSearch`: the grid owns the box and filters the loaded rows itself
-     (SCM DataGrid parity). A page-controlled `search` always wins. */
-  const [clientQuery, setClientQuery] = useState("");
-  const clientSearching = !!clientSearch && !searchProp;
-  const search: Props<T, L>["search"] =
-    searchProp ??
-    (clientSearch
-      ? {
-          value: clientQuery,
-          onChange: setClientQuery,
-          placeholder: clientSearch.placeholder,
-          debounceMs: 150,
-          scope: "loaded",
-          loadedLimit: clientSearch.loadedLimit,
-        }
-      : undefined);
   const searchInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (focusSearchNonce != null) searchInputRef.current?.focus();
   }, [focusSearchNonce]);
   const [searchDraftPending, setSearchDraftPending] = useState(false);
-  const searchBusy = Boolean(
-    search?.searching || (search?.searching !== undefined && searchDraftPending),
-  );
-  const effectiveLoading = Boolean(loading || searchBusy);
-  const rowActionsDisabled = effectiveLoading || Boolean(error);
   /* Per-company column prefs (owner 2026-07-24 bug: "在 2990 sales order list
      点选 column 会影响我在 Houzs 的 column"). The table id alone keyed every
      company's columns to the SAME localStorage entry, so the 2990 window and the
@@ -255,6 +234,28 @@ function DataTableInner<T, L>({
     ? baseIdKey
     : (layoutFamily && tableId && layoutFamily !== tableId ? tableId : undefined);
   const legacyStorageKey = (part: string) => legacyIdKey ? `dt:${part}:${legacyIdKey}` : undefined;
+  /* `clientSearch`: the grid owns the box and filters the loaded rows itself; a
+     page-controlled `search` wins. Remembered for the visit like the funnels
+     (owner 2026-10-05), except on per-mount tables. */
+  const [clientQuery, setClientQuery] = useInVisitClientSearch(idKey, persistFilters !== false);
+  const clientSearching = !!clientSearch && !searchProp;
+  const search: Props<T, L>["search"] =
+    searchProp ??
+    (clientSearch
+      ? {
+          value: clientQuery,
+          onChange: setClientQuery,
+          placeholder: clientSearch.placeholder,
+          debounceMs: 150,
+          scope: "loaded",
+          loadedLimit: clientSearch.loadedLimit,
+        }
+      : undefined);
+  const searchBusy = Boolean(
+    search?.searching || (search?.searching !== undefined && searchDraftPending),
+  );
+  const effectiveLoading = Boolean(loading || searchBusy);
+  const rowActionsDisabled = effectiveLoading || Boolean(error);
   const [hiddenList, setHiddenList] = useLocalStorage<string[]>(
     `dt:hidden:${idKey}`,
     [],
@@ -400,19 +401,17 @@ function DataTableInner<T, L>({
      stays highlighted while a filter is set, and each column's popover Clear
      (or the page's reset control) drops its entry.
 
-     Three sources, by design (owner 2026-09-16, reconciling 2026-07-29 /
-     2026-08-19):
-     - default (`persistFilters` true): IN-VISIT memory (dataTableColFilterMemory).
-       A funnel survives drilling into a record and back, but a fresh page load /
-       new tab / F5 opens clean — it never reaches localStorage.
-     - `persistFilters={false}` (SKU Master, document line tables): per-mount
-       useState, clean on EVERY mount — a remembered funnel there hid a
-       just-renamed row.
-     There is no longer a localStorage-backed funnel path; the old dt:filters:*
-     keys are erased on mount below so a stale one cannot re-narrow a list. */
+     Three sources (dataTableColFilterMemory): default = IN-VISIT memory, a
+     funnel survives drilling into a record and back but a page load opens clean
+     (owner 2026-09-16); `false` = per mount, clean on EVERY mount (SKU Master, a
+     remembered funnel hid a just-renamed row); `"always"` = localStorage
+     `dt:funnels:`, the delivery boards reopen as narrowed as they were left
+     (owner 2026-10-05). The old dt:filters:* keys are erased on mount below. */
   const visitColFilters = useInVisitColFilters(idKey);
   const sessionColFilters = useState<Record<string, string[]>>({});
-  const [colFilters, setColFilters] = persistFilters ? visitColFilters : sessionColFilters;
+  const keptColFilters = useKeptColFilters(idKey, persistFilters === "always");
+  const [colFilters, setColFilters] =
+    persistFilters === "always" ? keptColFilters : persistFilters ? visitColFilters : sessionColFilters;
   /* Column filters ride in the address (owner 2026-09-25), so a filtered list
      can be sent as a link: one `cf.<tableId>` parameter holding the funnels.
      Read once on mount, where a link beats the in-visit memory; rewritten with

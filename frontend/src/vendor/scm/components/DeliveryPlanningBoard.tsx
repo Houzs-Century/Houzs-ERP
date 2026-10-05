@@ -1668,6 +1668,10 @@ export function DeliveryPlanningBoard({
         rows={rows}
         columns={columns}
         storageKey={storageKey}
+        /* The queue a planner narrows is the queue they come back to: funnels on
+           the four delivery boards survive a page load (owner 2026-10-05), unlike
+           every other list, which opens clean. */
+        persistFilters="always"
         layoutPresets={layoutPresets}
         initialRowLimit={initialRowLimit}
         onRowReorder={onRowReorder}

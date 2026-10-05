@@ -156,13 +156,15 @@ export interface DataTableProps<T, L = never> {
    */
   layoutFamily?: string;
   /**
-   * `false` keeps the column funnels for this visit only: the table opens with
-   * no filter every time, and any funnel an earlier version saved for it is
-   * erased. Absent = the saved-view behaviour every other table has had since
-   * 2026-07-29, so no existing table changes (SKU Master, owner 2026-09-15:
-   * "每一次打开应该默认都是全部展开的").
+   * Absent / `true`: the column funnels and the search text are kept for this
+   * visit (a record opened and closed keeps them; a page load opens clean).
+   * `false`: per mount, the table opens with no filter every time (SKU Master,
+   * owner 2026-09-15: "每一次打开应该默认都是全部展开的"); a funnel an earlier
+   * version saved for it is erased. `"always"`: the funnels are kept in
+   * localStorage as well, so the table reopens as narrowed as it was left,
+   * across page loads (the delivery planning boards, owner 2026-10-05).
    */
-  persistFilters?: boolean;
+  persistFilters?: boolean | "always";
   /**
    * `false` keeps a header sort for this visit only and erases one an earlier
    * version saved. For document LINE tables: their layout is shared by every
