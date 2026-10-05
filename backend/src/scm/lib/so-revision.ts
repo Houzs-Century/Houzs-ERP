@@ -45,7 +45,7 @@ import {
 } from './mfg-pricing-recompute';
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { deriveMfgPoUnitCost } from './po-pricing';
-import { readMfgProductBindings } from './supplier-bindings';
+import { pickAddLineBinding, readMfgProductBindings } from './supplier-bindings';
 import { rederivePoLineFromSoLine, type RevisedSoLine } from './po-line-rederive';
 import {
   rederiveDeliveryFee,
@@ -1116,7 +1116,7 @@ export async function snapshotPo(
      • ADD a missing line — when an amendment ADDs an SO line, no PO line exists
        for it (item sold but never ordered → stock shortfall). We insert one on
        the live bound PO whose supplier matches the added line's main-supplier
-       binding, priced with the SAME deriveMfgPoUnitCost and carrying the same
+       binding (else an alternate binding's, pickAddLineBinding), priced with the SAME deriveMfgPoUnitCost and carrying the same
        per-line warehouse/date the create path stamps. If no open bound PO belongs
        to that supplier (or the SKU has no supplier bound), we do NOT invent a new
        PO here — raising one is the create path's decision — and warn instead.
@@ -1361,8 +1361,9 @@ export async function reviseBoundPo(
   }
 
   /* (10) Resolve each newly ADDED line (one with no PO line yet) to its supplier
-     and its target bound PO. Supplier = the SKU's main-supplier binding, scoped
-     to the SO's company. Target PO = a live bound PO on this SO whose supplier
+     and its target bound PO. Supplier = the SKU's main-supplier binding, or —
+     when the main supplier has no PO here — an alternate bound supplier that
+     does (pickAddLineBinding), scoped to the SO's company. Target PO = a live bound PO on this SO whose supplier
      matches, preferring one whose warehouse matches the line's (mirrors the
      create path's (warehouse, supplier) bucket). No matching open PO, or no
      supplier bound at all, is NOT auto-resolved by inventing a PO here — it is
@@ -1374,7 +1375,7 @@ export async function reviseBoundPo(
     const codes = [...new Set(
       addedNeedingPo.map((id) => revisedById.get(id)?.item_code).filter((x): x is string => Boolean(x)),
     )];
-    const mainBindingByCode = new Map<string, { supplierId: string; supplierSku: string | null }>();
+    const bindingsByCode = new Map<string, Array<{ supplier_id: string; supplier_sku: string | null }>>();
     if (codes.length > 0) {
       /* Through the SHARED reader (lib/supplier-bindings.ts): chunked, paged and
          TOTALLY ordered. The order matters more than the size does here — the
@@ -1391,17 +1392,18 @@ export async function reviseBoundPo(
       if (bErr) throw new Error(`reviseBoundPo: added-line supplier binding load failed: ${bErr.message}`);
       // is_main_supplier DESC → the first row seen per code is its main supplier.
       for (const b of (bRows ?? []) as Array<{ item_code: string; supplier_id: string; supplier_sku: string | null }>) {
-        if (!mainBindingByCode.has(b.item_code)) {
-          mainBindingByCode.set(b.item_code, { supplierId: b.supplier_id, supplierSku: b.supplier_sku ?? null });
-        }
+        const arr = bindingsByCode.get(b.item_code) ?? [];
+        arr.push(b);
+        bindingsByCode.set(b.item_code, arr);
       }
     }
+    const boundSupplierIds = new Set(livePos.map((p) => p.supplier_id).filter((x): x is string => Boolean(x)));
     for (const soItemId of addedNeedingPo) {
       const line = revisedById.get(soItemId)!;
       const itemCode = line.item_code ?? '';
       const label = (line.description || itemCode || 'a new item').trim();
-      const binding = itemCode ? mainBindingByCode.get(itemCode) : undefined;
-      if (!binding) {
+      const codeBindings = itemCode ? (bindingsByCode.get(itemCode) ?? []) : [];
+      if (codeBindings.length === 0) {
         /* No supplier bound at all — this line can reach NO purchase order, so it
            warns regardless of how many bound POs the recompute scoped. The
            sibling-PO case (a line whose supplier owns a PO this confirm did not
@@ -1414,20 +1416,21 @@ export async function reviseBoundPo(
         warnings.push(`A newly added item (${label}) has no supplier set, so it could not be added to a purchase order. Set its main supplier, then raise a purchase order for it.`);
         continue;
       }
-      // Supplier match is resolved against the FULL bound set (livePos), so an
-      // empty `forSupplier` means no open PO on this SO carries this supplier —
+      // Supplier match is resolved against the FULL bound set (livePos), so no
+      // pick means no open PO on this SO carries any supplier bound for the code —
       // a genuine gap, not a scoping artefact — and warns regardless of scope.
-      const forSupplier = livePos.filter((p) => p.supplier_id === binding.supplierId);
-      const target = forSupplier.find((p) => p.purchase_location_id && p.purchase_location_id === line.warehouse_id)
-        ?? forSupplier[0];
-      if (!target) {
+      const binding = pickAddLineBinding(codeBindings, boundSupplierIds);
+      if (!binding) {
         warnings.push(`A newly added item (${label}) is from a supplier that has no open purchase order on this sales order, so a purchase order still needs to be raised for it.`);
         continue;
       }
+      const forSupplier = livePos.filter((p) => p.supplier_id === binding.supplier_id);
+      const target = forSupplier.find((p) => p.purchase_location_id && p.purchase_location_id === line.warehouse_id)
+        ?? forSupplier[0]!;
       // Out-of-scope target = a sibling PO's line; its own confirm inserts it.
       if (!livePoIds.has(target.id)) continue;
       const arr = addedByPo.get(target.id) ?? [];
-      arr.push({ soItemId, line, supplierSku: binding.supplierSku });
+      arr.push({ soItemId, line, supplierSku: binding.supplier_sku ?? null });
       addedByPo.set(target.id, arr);
     }
   }
