@@ -2,6 +2,11 @@
   "reviewed": [
     {
       "check": "D1",
+      "key": "BEDFRAME,MATTRESS,OTHER,SOFA|backend/src/acc/product-profit.ts frontend/src/lib/brandingTone.ts frontend/src/pages/scm-v2/product-profit-view.ts",
+      "why": "THE PRODUCT PROFIT REPORT'S FOUR CATEGORIES (owner 2026-10-05), one decision with one home: acc/product-profit.ts PRODUCT_CATEGORIES decides which category a product lands in (mattress / sofa / bedframe from the line's group, everything else other, service left out) and writes it on each row; product-profit-view.ts CATEGORY_ORDER is only the order the screen draws the chips and the donut in, over the category the server already wrote, so it cannot move a product. brandingTone.ts TONE_BY_BUCKET answers a different question (the tint a brand bucket is drawn in) with the same four words. Divergence costs a chip in another place, never a figure."
+    },
+    {
+      "check": "D1",
       "key": "ACCESSORY,BEDFRAME,MATTRESS,SERVICE,SOFA|backend/src/scm/lib/lead-time.ts backend/src/scm/routes/mrp-lead-times.ts backend/src/scm/routes/product-models.ts backend/src/scm/routes/pwp-rules.ts backend/src/scm/routes/scan-so.ts backend/src/scm/routes/special-addons.ts backend/src/services/assistant-tools.ts frontend/src/pages/scm-v2/products/VariantsTab.tsx frontend/src/vendor/scm/lib/mrp-queries.ts frontend/src/vendor/scm/lib/scan-prefill.ts frontend/src/vendor/scm/lib/supplier-categories.ts",
       "why": "THE PRODUCT-CATEGORY VOCABULARY, written out at 11 homes (LEAD_CATEGORIES, CATEGORIES, VARIANT_CATEGORIES, CATEGORY_TO_GROUP, DEFAULT_SUPPLIER_CATEGORIES) as zod enums, MRP lead-time buckets, supplier defaults and pickers. One question — what categories does this business sell — with 11 answers, and D2 already reports three of them disagreeing (MIXED, OTHERS, a missing SERVICE). Recorded and NOT collapsed here: it touches eleven modules and belongs in its own PR."
     },
