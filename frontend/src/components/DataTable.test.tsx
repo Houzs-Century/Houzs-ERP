@@ -1341,6 +1341,76 @@ describe("DataTable header filter + sort menu", () => {
     expect(rowCount(container)).toBe(6);
     expect(localStorage.getItem("dt:filters:filter-corrupt")).toBeNull();
   });
+
+  /* The delivery planning boards (owner 2026-10-05): the queue a planner
+     narrowed yesterday is still narrowed today. persistFilters="always" keeps
+     the funnel in localStorage (dt:funnels:*), so a fresh bundle evaluation
+     reads it back; clearing the funnel removes the key. */
+  it('persistFilters="always" keeps a funnel across a fresh page load and drops the key on Clear', () => {
+    setViewport(1280);
+    const first = render(
+      <DataTable tableId="filter-kept" persistFilters="always" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
+    );
+    openFunnel("Status");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Open/ }));
+    expect(rowCount(first.container)).toBe(3);
+    expect(JSON.parse(localStorage.getItem("dt:funnels:filter-kept") ?? "null")).toEqual({ status: ["Open"] });
+    first.unmount();
+
+    resetInVisitColFilters(); // simulate a fresh page load
+    const second = render(
+      <DataTable tableId="filter-kept" persistFilters="always" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
+    );
+    expect(rowCount(second.container)).toBe(3);
+    expect(screen.getByTitle("Filter & sort Status").className).toContain("text-accent");
+
+    openFunnel("Status");
+    fireEvent.click(screen.getByText("Clear"));
+    expect(rowCount(second.container)).toBe(6);
+    expect(localStorage.getItem("dt:funnels:filter-kept")).toBeNull();
+  });
+
+  /* A name typed in the search box above the delivery board was gone after
+     opening an order and coming back, while the funnel next to it stayed
+     (owner 2026-10-05). The text now rides the same in-visit memory. */
+  it("remembers the client search text across a remount this visit, and opens clean after a page load", async () => {
+    setViewport(1280);
+    const first = render(
+      <DataTable tableId="search-kept" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} clientSearch={{ placeholder: "Find" }} />,
+    );
+    fireEvent.change(screen.getByPlaceholderText("Find"), { target: { value: "Order 2" } });
+    await waitFor(() => expect(rowCount(first.container)).toBe(1));
+    first.unmount();
+
+    const second = render(
+      <DataTable tableId="search-kept" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} clientSearch={{ placeholder: "Find" }} />,
+    );
+    expect((screen.getByPlaceholderText("Find") as HTMLInputElement).value).toBe("Order 2");
+    await waitFor(() => expect(rowCount(second.container)).toBe(1));
+    second.unmount();
+
+    resetInVisitColFilters(); // simulate a fresh page load
+    const third = render(
+      <DataTable tableId="search-kept" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} clientSearch={{ placeholder: "Find" }} />,
+    );
+    expect((screen.getByPlaceholderText("Find") as HTMLInputElement).value).toBe("");
+    expect(rowCount(third.container)).toBe(6);
+  });
+
+  it("persistFilters={false} forgets the client search text on remount", async () => {
+    setViewport(1280);
+    const first = render(
+      <DataTable tableId="search-mount" persistFilters={false} rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} clientSearch={{ placeholder: "Find" }} />,
+    );
+    fireEvent.change(screen.getByPlaceholderText("Find"), { target: { value: "Order 2" } });
+    await waitFor(() => expect(rowCount(first.container)).toBe(1));
+    first.unmount();
+    const second = render(
+      <DataTable tableId="search-mount" persistFilters={false} rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} clientSearch={{ placeholder: "Find" }} />,
+    );
+    expect((screen.getByPlaceholderText("Find") as HTMLInputElement).value).toBe("");
+    expect(rowCount(second.container)).toBe(6);
+  });
 });
 
 /* An expandable table used to be disqualified from row windowing outright,

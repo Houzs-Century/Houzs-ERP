@@ -91,6 +91,8 @@ export type DataGridCompatProps<T> = {
   embedded?: boolean;
   defaultSort?: (a: T, b: T) => number;
   sortForSessionOnly?: boolean;
+  /** See DataTable `persistFilters`; absent = funnels kept for the visit only. */
+  persistFilters?: boolean | "always";
   /** Page seeds written in DataGrid's layout rules; converted here. */
   layoutPresets?: LayoutSeed[];
   overlayHidden?: readonly string[];
@@ -186,6 +188,7 @@ export function DataGridCompat<T>({
   embedded = false,
   defaultSort,
   sortForSessionOnly = false,
+  persistFilters,
   layoutPresets,
   overlayHidden,
   onUserAdjustColumns,
@@ -224,6 +227,7 @@ export function DataGridCompat<T>({
       embedded={embedded}
       defaultSort={defaultSort}
       persistSort={!sortForSessionOnly}
+      persistFilters={persistFilters}
       layoutSeeds={layoutSeeds}
       overlayHidden={overlayHidden}
       onUserAdjustColumns={onUserAdjustColumns}
