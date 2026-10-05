@@ -333,7 +333,7 @@ describe('the seed helpers', () => {
 
 describe('followerVariants directly', () => {
   test('fills a blank string, not only a missing key', () => {
-    expect(followerVariants({ seatHeight: '21' }, { seatHeight: '   ' }, { seatHeight: '21' }))
+    expect(followerVariants({ seatHeight: '21' }, { seatHeight: '   ' }, { seatHeight: '21' }, true))
       .toEqual({ seatHeight: '21' });
   });
 });
@@ -376,5 +376,49 @@ describe('sofa accessory follows the sofa colour/fabric only (owner 2026-09-22)'
     lines = [sofa({ fabricCode: 'AMOR-12' }), accessory({ fabricCode: 'CONTRAST-9' })];
     out = run(lines, out.masters, CASCADE_CATEGORIES);
     expect(out.variants[1]).toEqual({ fabricCode: 'CONTRAST-9' });
+  });
+});
+
+describe('BUG-53 — a SAVED line is never filled, only forced (HC-SO-011143)', () => {
+  /* Opening HC-SO-011143 to add a storage charge filled the sofa master's
+     colourLabel onto the untouched SQUARE PILLOW beside its own MODENZA-04, so
+     the amendment carried a phantom colour change and raised a Purchaser
+     approval nobody asked for. */
+  const saved = (category: string, variants: Record<string, unknown>): CascadeLine =>
+    ({ category, variants, persisted: true });
+
+  test('opening the order leaves a saved accessory exactly as stored (same ref)', () => {
+    const lines = [
+      saved('sofa', { fabricCode: 'MODENZA-04', colourLabel: 'NX005 AVOCADO' }),
+      saved('fabric_accessory', { fabricCode: 'MODENZA-04', specialLabels: ['MODENZA-04 (MUSTARD)'] }),
+    ];
+    const out = run(lines, {}, CASCADE_CATEGORIES);
+    expect(out.variants[1]).toBe(lines[1]!.variants);
+  });
+
+  test('opening the order leaves a saved sofa compartment with a blank axis blank', () => {
+    const lines = [saved('sofa', { fabricCode: 'AMOR-12', seatHeight: '21' }), saved('sofa', { fabricCode: 'AMOR-12' })];
+    const out = run(lines, {}, CASCADE_CATEGORIES);
+    expect(out.variants[1]).toBe(lines[1]!.variants);
+  });
+
+  test('a saved follower still follows the master the operator moves this session', () => {
+    let lines = [
+      saved('sofa', { fabricCode: 'MODENZA-04', colourLabel: 'NX005 AVOCADO' }),
+      saved('fabric_accessory', { fabricCode: 'MODENZA-04' }),
+    ];
+    let out = run(lines, {}, CASCADE_CATEGORIES);
+    lines = [saved('sofa', { fabricCode: 'COVE-13', colourLabel: 'SAND' }), saved('fabric_accessory', out.variants[1]!)];
+    out = run(lines, out.masters, CASCADE_CATEGORIES);
+    expect(out.variants[1]).toEqual({ fabricCode: 'COVE-13', colourLabel: 'SAND' });
+  });
+
+  test('a NEW line added beside saved ones still fills from the master', () => {
+    const lines = [
+      saved('sofa', { fabricCode: 'MODENZA-04', colourLabel: 'NX005 AVOCADO' }),
+      { category: 'fabric_accessory', variants: {} },
+    ];
+    const out = run(lines, {}, CASCADE_CATEGORIES);
+    expect(out.variants[1]).toEqual({ fabricCode: 'MODENZA-04', colourLabel: 'NX005 AVOCADO' });
   });
 });
