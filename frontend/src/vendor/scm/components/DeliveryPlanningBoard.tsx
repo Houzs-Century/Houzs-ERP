@@ -700,6 +700,10 @@ export type DeliveryPlanningBoardProps = {
      A clicked header still overrides as always. Omitted (the main Delivery
      Planning board), the rows render in the server's order exactly as before. */
   defaultSort?: (a: PlanningOrder, b: PlanningOrder) => number;
+  /* The host page's own view state (state tab, region chip) behind the toolbar
+     "Reset layout" button, which the grid shows whenever a funnel, the search
+     box or this is active (owner 2026-10-05: same button as Sales Orders). */
+  resetFilters?: { active: boolean; onReset: () => void };
 };
 
 /* Selection keys are prefixed (`so:<docNo>` / `assr:<id>` / `dp:<id>`). The bulk
@@ -740,6 +744,7 @@ export function DeliveryPlanningBoard({
   layoutPresets,
   initialRowLimit,
   onRowReorder,
+  resetFilters,
 }: DeliveryPlanningBoardProps) {
   const askConfirm = useConfirm();
   const notify = useNotify();
@@ -1672,6 +1677,11 @@ export function DeliveryPlanningBoard({
            the four delivery boards survive a page load (owner 2026-10-05), unlike
            every other list, which opens clean. */
         persistFilters="always"
+        resetFilters={{
+          active: resetFilters?.active ?? false,
+          onReset: resetFilters?.onReset ?? (() => undefined),
+          label: 'Reset layout',
+        }}
         layoutPresets={layoutPresets}
         initialRowLimit={initialRowLimit}
         onRowReorder={onRowReorder}

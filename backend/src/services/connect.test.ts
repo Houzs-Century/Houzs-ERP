@@ -7,6 +7,7 @@ import {
   CONNECT_DELIVERY_AUTOMATION,
   CONNECT_RESET_ATTRIBUTES,
   chatCallbackUrl,
+  connectUntriggeredReason,
   formatRm,
   type ConnectCompanyProfile,
 } from './connect';
@@ -224,6 +225,24 @@ describe('postConnectContact', () => {
     expect(url).toBe('https://chat.houzscentury.com/api/webhooks/erp');
     expect(init.method).toBe('POST');
     expect((init.headers as Record<string, string>)['x-connect-key']).toBe('secret48');
+  });
+
+  it('a 200 whose `triggered` list is empty is a FAILURE naming the automation (nothing was sent)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, contactId: 'c1', triggered: [], runs: [] }), { status: 200 })));
+    const r = await postConnectContact(env, { ...contact, automation: 'Balance Reminder' });
+    expect(r.ok).toBe(false);
+    expect(r.httpCode).toBe(200);
+    expect(r.error).toContain('Balance Reminder');
+    expect(r.error).toContain('enable');
+  });
+
+  it('a 200 that triggered a run is a success; a body without `triggered` is trusted', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, triggered: ['New Delivery Follow-up'] }), { status: 200 })));
+    expect((await postConnectContact(env, contact)).ok).toBe(true);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"ok":true}', { status: 200 })));
+    expect((await postConnectContact(env, contact)).ok).toBe(true);
+    expect(connectUntriggeredReason('not json', 'X')).toBeNull();
+    expect(connectUntriggeredReason('{"triggered":[]}', 'Driver Info')).toContain('Driver Info');
   });
 
   it('a non-2xx response is a failure carrying the body text', async () => {

@@ -200,13 +200,17 @@ export const useReadRequestBill = () => useMutation({
     authedFetch<ReadBillResult>('/payment-requests/read-bill', { method: 'POST', body: JSON.stringify(body) }),
 });
 
-/** Finance's voucher form asks the same question of a typed bill number and date. */
-export const useBillMatches = (no: string, date: string, excludeRequest: string | null = null) => {
+/** Finance's voucher form asks the same question of a typed bill number and date
+    — and so do the bill pile and the AP invoice form (owner 2026-10-05). An AP
+    invoice being edited is never its own match (excludeApInvoice). */
+export const useBillMatches = (no: string, date: string, excludeRequest: string | null = null, excludeApInvoice: string | null = null) => {
   const n = no.trim();
   const ok = n !== '' && /^\d{4}-\d{2}-\d{2}$/.test(date);
   return useQuery({
-    queryKey: ['payment-request-bill-matches', n, date, excludeRequest],
-    queryFn: () => authedFetch<{ matches: BillMatch[] }>(`/payment-requests/bill-matches?${new URLSearchParams({ no: n, date, ...(excludeRequest ? { excludeRequest } : {}) }).toString()}`),
+    queryKey: ['payment-request-bill-matches', n, date, excludeRequest, excludeApInvoice],
+    queryFn: () => authedFetch<{ matches: BillMatch[] }>(`/payment-requests/bill-matches?${new URLSearchParams({
+      no: n, date, ...(excludeRequest ? { excludeRequest } : {}), ...(excludeApInvoice ? { excludeApInvoice } : {}),
+    }).toString()}`),
     enabled: ok,
     staleTime: 30_000,
   });
