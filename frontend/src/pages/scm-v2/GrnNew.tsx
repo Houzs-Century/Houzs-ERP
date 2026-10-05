@@ -43,7 +43,7 @@ import { usePurchaseOrderDetail, usePurchaseOrders, useSuppliers, useSupplierDet
 import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
-import { useRacks } from '../../vendor/scm/lib/warehouse-queries';
+import { useGrnRackOptions } from '../../vendor/scm/lib/grn-line-rack';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { skuMapFromBindings, supplierCodeFor } from '../../vendor/scm/lib/supplier-doc-data';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
@@ -280,8 +280,8 @@ export const GrnNew = () => {
   /* Commander 2026-06-04 — racks of the chosen "Receive into" warehouse, for the
      optional per-line Rack picker. Racks are warehouse-scoped, so this re-queries
      whenever the header warehouse changes; gated until a warehouse is chosen. */
-  const racksQ = useRacks({ warehouseId: warehouseId || undefined });
-  const racks = useMemo(() => racksQ.data?.racks ?? [], [racksQ.data?.racks]);
+  const racksQ = useGrnRackOptions(warehouseId || undefined);
+  const racks = racksQ.racks;
   /* True once the on-mount From-PO picks restore has run (whether or not picks
      were found). The warehouse-default effect MUST wait for this — otherwise it
      races the async restore: on first render hasPicks is false simply because
@@ -1387,7 +1387,7 @@ export const GrnNew = () => {
                            clear option appears once a rack is picked. */
                         options={[
                           ...(l.rackId ? [{ value: '', label: '— No rack —' }] : []),
-                          ...sortByText(racks).map((r) => ({ value: r.id, label: r.rack })),
+                          ...racksQ.options,
                         ]}
                       />
                     </label>
