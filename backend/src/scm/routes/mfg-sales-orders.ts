@@ -35,6 +35,7 @@ import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../li
 import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
 import { soStatusAfterProcessingDateChange } from '../lib/so-proceed-status-change';
+import { exemptionExpirySeed } from '../lib/so-exemption-expiry';
 import { soIsMigrated, withSoMigratedReadonly } from '../lib/migrated-so-readonly';
 import { readSoLineFreeze, soLineWriteRefusal, soBuildLineIds, soLineFrozen, SO_FULLY_FROZEN_REFUSAL } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 /* Status-transition table + the discard guards — lifted out of this file, which
@@ -4147,6 +4148,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     customer_birthday: dateOrNull(body.customerBirthday),
     customer_gender: (body.customerGender as string) ?? null,
     customer_delivery_date: dateOrNull(body.customerDeliveryDate),
+    sales_exemption_expiry: exemptionExpirySeed(null, dateOrNull(body.customerDeliveryDate)),
     /* PR #144 — Commander: "当我已经 create 好了这个 sales order 的时候，
        为什么我点进去 edit processing 的 delivery date 时，怎么没看到呢".
        processing_date was wired on PATCH (update header) but missed
@@ -5915,7 +5917,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      follower side effect. `reserveLineWrites` is the one explicit exception:
      the desktop composite-save uses it to acquire a CAS token before lines. */
   const beforeCols = map.map(([, snake]) => snake)
-    .concat(['status', 'version', 'edit_lease_token', 'edit_lease_expires_at', 'edit_lease_user_id', 'project_id', 'fair_match'])
+    .concat(['status', 'version', 'edit_lease_token', 'edit_lease_expires_at', 'edit_lease_user_id', 'project_id', 'fair_match', 'sales_exemption_expiry'])
     .join(', ');
   const { data: before, error: beforeError } = await sb.from('mfg_sales_orders').select(beforeCols).eq('doc_no', docNo).maybeSingle();
   if (beforeError) return c.json({ error: 'load_failed', reason: beforeError.message }, 500);
@@ -5946,6 +5948,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     if (!(to in updates) || norm(updates[to]) !== norm(beforeRecord[to])) continue;
     delete updates[to];
     delete body[from];
+  }
+  if ('customer_delivery_date' in updates) {
+    /* A draft is not processed yet, so its date may still move. */
+    const stored = beforeRecord.status === 'DRAFT' ? null : beforeRecord.sales_exemption_expiry as string | null;
+    const seed = exemptionExpirySeed(stored, updates['customer_delivery_date'] as string | null);
+    if (seed) updates['sales_exemption_expiry'] = seed;
   }
 
   /* Token, flags, the end of a save and taking your own lock back: one rule in

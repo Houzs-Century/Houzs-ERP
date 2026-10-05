@@ -1,14 +1,12 @@
 /* ---------------------------------------------------------------------------
    so-exemption-expiry — the "Sales Exemption Expiry Date" cell of a sales order.
 
-   This book keeps the delivery date the salesperson entered in AutoCount's
-   SalesExemptionExpiryDate (owner 2026-08-16). `sales_exemption_expiry` is a
-   copy of that field and only the AutoCount importers write it, so an order
-   created in the ERP leaves it NULL even though the writeback sends AutoCount
-   `customer_delivery_date` for it (so-edit-header.ts, autocount-writeback.ts).
-   BUG-51: HC11494 / HC-SO-2609-081 showed a blank cell while AutoCount held
-   2026-10-03. `customer_delivery_date` is never overwritten by an amend, so it
-   is the original date the cell is meant to show.
+   It is the ORIGINAL delivery date: Syu (BUG-51, 2026-10-05) "should not change
+   once the bill has been processed ... we will refer to it for the original
+   delivery date". The backend now seeds `sales_exemption_expiry` once from the
+   first delivery date (backend/src/scm/lib/so-exemption-expiry.ts). Orders
+   created in the ERP before that fix never got it, and their original date was
+   not kept anywhere, so they fall back to the current `customer_delivery_date`.
    --------------------------------------------------------------------------- */
 
 export type SoExemptionExpiryHeader = {
