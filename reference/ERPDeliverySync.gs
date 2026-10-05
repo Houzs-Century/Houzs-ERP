@@ -650,7 +650,9 @@ function runErpAssrContactRefresh(triggerType) {
               want.forEach(function (w) {
                 const v = w[1] == null ? "" : String(w[1]).trim();
                 if (!v) return;
-                if (String(hit.values[w[0] - 1]).trim() === v) return;
+                // Phones compare stripped, so a "+60..." cell already holding the number is left alone.
+                const have = String(hit.values[w[0] - 1]).trim();
+                if ((w[0] === 8 ? have.replace(/[+&\- ]/g, "") : have) === v) return;
                 try { sheet.getRange(hit.row, w[0]).setValue(v); cells++; } catch (e) { Log.warn(rid, "[" + sConfig.name + "] R" + hit.row + " col " + w[0] + " hit protection."); }
               });
             });
