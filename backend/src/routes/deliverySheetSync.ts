@@ -26,7 +26,7 @@
  *   · Remark 4 (col P) = `remark4`, written back from col A — col A itself is
  *     never written by the ERP (the writer starts at col B, as it always did).
  */
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { Env } from "../types";
 import { timingSafeEqualStr } from "../services/auth";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
@@ -64,7 +64,9 @@ import {
   type PoHeadForSheet,
 } from "../lib/delivery-sheet-po-feed";
 import {
+  FEED_ASSR_CONTACTS_SQL,
   FEED_ASSR_LEGS_SQL,
+  toAssrContactRecord,
   toAssrLegRecords,
   type AssrFeedRow,
 } from "../lib/delivery-sheet-assr-feed";
@@ -374,7 +376,7 @@ app.post("/feed-by-docnos", async (c) => {
    board stays un-gated, so board and sheet intentionally differ. Incremental,
    same `since`/`limit` cursor as /so-since — but the LIMIT counts CASES, each
    expanding to up to three leg rows. */
-app.get("/assr-legs", async (c) => {
+async function assrCasePage<R>(c: Context<{ Bindings: Env; Variables: SheetUsageVars }>, sql: string, toRecords: (row: AssrFeedRow) => R[]) {
   const denied = await badSheetKey(c);
   if (denied) return denied;
   const since = parseSince(c.req.query("since"));
@@ -384,12 +386,12 @@ app.get("/assr-legs", async (c) => {
   let cases: AssrFeedRow[];
   try {
     // company-scope: none by owner ruling — Service Cases are not split by company (see FEED_ASSR_LEGS_SQL).
-    const res = (await c.env.DB.prepare(FEED_ASSR_LEGS_SQL).bind(since, limit).all()) as { results?: AssrFeedRow[] };
+    const res = (await c.env.DB.prepare(sql).bind(since, limit).all()) as { results?: AssrFeedRow[] };
     cases = res.results ?? [];
   } catch (e) {
     return c.json({ error: "feed_read_failed", message: e instanceof Error ? e.message : String(e) }, 502);
   }
-  const records = cases.flatMap(toAssrLegRecords);
+  const records = cases.flatMap(toRecords);
   c.set("usageRows", records.length);
   return c.json({
     count: records.length,
@@ -402,7 +404,14 @@ app.get("/assr-legs", async (c) => {
     has_more: cases.length >= limit,
     records,
   });
-});
+}
+
+app.get("/assr-legs", (c) => assrCasePage(c, FEED_ASSR_LEGS_SQL, toAssrLegRecords));
+
+/* BUG-54: every open case's name / phone / address, own-team gate or not, so a
+   contact corrected in the ERP reaches the leg rows the sheet already carries.
+   The Apps Script writes these onto existing rows only and never appends. */
+app.get("/assr-contacts", (c) => assrCasePage(c, FEED_ASSR_CONTACTS_SQL, (row) => [toAssrContactRecord(row)]));
 
 type SheetUpdate = { DocNo?: unknown; Remark4?: unknown; ExpiryDate?: unknown };
 

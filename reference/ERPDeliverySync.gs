@@ -31,6 +31,11 @@
 //        sheet's date write-back finds it). Own-team gated by the ERP; the leg
 //        rows are never pushed back (erpCollectUpdates_ skips '#' and the
 //        "-<KIND>" leg key).
+//   GET  {ERP_BASE_URL}/api/delivery-sheet/assr-contacts?since=<checkpoint>&limit=300
+//        BUG-54: every open case's name / phone / address. Written ONLY onto a
+//        leg row the tab already has (col B one of the case's keys AND col C its
+//        ASSR number); never appends, so the own-team gate above still decides
+//        which legs enter the sheet.
 //
 // 2990 ROWS (BUG-49): the 2990 pull (sync2990FromErp) appends "2990-SO-..."
 // rows onto the same tabs. SHEET_SYNC_KEY only opens HOUZS orders, so those
@@ -44,6 +49,9 @@ const ERP_CHECKPOINT_PROP = "ERP_SYNC_CHECKPOINT";
 // Service-Case legs ride their own cursor so a stuck ASSR page never holds up
 // the Sales-Order pull and vice-versa.
 const ERP_ASSR_CHECKPOINT_PROP = "ERP_ASSR_CHECKPOINT";
+// BUG-54: the contact refresh (name / phone / address onto existing leg rows)
+// rides a third cursor; empty on the first run, so it heals every open case once.
+const ERP_ASSR_CONTACT_CHECKPOINT_PROP = "ERP_ASSR_CONTACT_CHECKPOINT";
 const ERP_PAGE_LIMIT = 300;
 // Apps Script kills a run at 6 minutes; ~300 rows write in about a minute.
 // The checkpoint advances per page, so a run that stops early resumes.
@@ -587,6 +595,85 @@ function runErpAssrPull(triggerType) {
   }
 }
 
+/**
+ * BUG-54: a leg row made by the sheet's own ASSR linkage keeps the phone it was
+ * copied with, because /assr-legs only re-sends a case once its leg is own-team
+ * AND dated. Pull every open case's contact cells and write them onto the rows
+ * that already exist. A row is touched only when col B is one of the case's leg
+ * keys AND col C is its ASSR number (several cases can share an S/O). A blank
+ * ERP value never blanks a cell; a cell already equal is left alone.
+ */
+function runErpAssrContactRefresh(triggerType) {
+  const rid = Utilities.getUuid();
+  const startTime = new Date();
+  const props = PropertiesService.getScriptProperties();
+  const ss = getTargetSs();
+  const userEmail = Session.getActiveUser().getEmail();
+  let status = "PENDING";
+  let message = "";
+  let cells = 0;
+
+  try {
+    const cfg = erpConfig_();
+    for (let page = 0; page < ERP_MAX_PAGES_PER_RUN; page++) {
+      const since = props.getProperty(ERP_ASSR_CONTACT_CHECKPOINT_PROP) || "";
+      const res = erpFetch_(cfg, "/api/delivery-sheet/assr-contacts?since=" + encodeURIComponent(since) + "&limit=" + ERP_PAGE_LIMIT, null, rid);
+      if (res.getResponseCode() !== 200) throw new Error("ERP returned " + res.getResponseCode() + ": " + res.getContentText().slice(0, 200));
+      const data = JSON.parse(res.getContentText());
+      const records = data.records || [];
+      if (records.length === 0) break;
+
+      erpRegionalSheets_().forEach(function (sConfig) {
+        const sheet = ss.getSheetByName(sConfig.name);
+        if (!sheet) return;
+        const sc = getSheetConfig(sConfig.name);
+        const lastRow = sheet.getLastRow();
+        if (lastRow < sc.startRow) return;
+        const addrCol = sc.block2StartCol + (sc.includeRemark3 ? 3 : 2);
+        // One read per tab: col B key -> [{ row, assr, values }].
+        const byKey = {};
+        sheet.getRange(sc.startRow, 1, lastRow - sc.startRow + 1, addrCol + 3).getValues().forEach(function (r, i) {
+          const key = String(r[1] || "").trim();
+          if (!key) return;
+          (byKey[key] = byKey[key] || []).push({ row: sc.startRow + i, assr: String(r[2] || "").trim().toUpperCase(), values: r });
+        });
+        records.forEach(function (o) {
+          const assr = String(o.AssrNo || "").trim().toUpperCase();
+          const want = [
+            [7, o.DebtorName],
+            [8, o.Phone1 ? String(o.Phone1).replace(/[+&\- ]/g, "") : ""],
+            [addrCol, o.InvAddr1], [addrCol + 1, o.InvAddr2], [addrCol + 2, o.InvAddr3], [addrCol + 3, o.InvAddr4]
+          ];
+          (o.Keys || []).forEach(function (key) {
+            (byKey[key] || []).forEach(function (hit) {
+              if (hit.assr !== assr) return;
+              want.forEach(function (w) {
+                const v = w[1] == null ? "" : String(w[1]).trim();
+                if (!v) return;
+                if (String(hit.values[w[0] - 1]).trim() === v) return;
+                try { sheet.getRange(hit.row, w[0]).setValue(v); cells++; } catch (e) { Log.warn(rid, "[" + sConfig.name + "] R" + hit.row + " col " + w[0] + " hit protection."); }
+              });
+            });
+          });
+        });
+      });
+
+      if (data.next_since) props.setProperty(ERP_ASSR_CONTACT_CHECKPOINT_PROP, data.next_since);
+      if (!data.has_more) break;
+    }
+    status = cells ? "SYNCED" : "SKIPPED";
+    message = "Refreshed " + cells + " contact cell(s) on existing ASSR rows.";
+  } catch (e) {
+    status = "FAILED";
+    message = e.message;
+    Log.error(rid, "ERP ASSR contact refresh failed", e);
+  } finally {
+    Log.info(rid, "ERP ASSR contact refresh finished: " + status + " - " + message);
+    recordExecutionLog(ss, rid, triggerType === "MANUAL" ? "ERP_ASSR_CONTACTS_MANUAL" : "ERP_ASSR_CONTACTS", startTime, new Date(), status, message, userEmail);
+    if (triggerType === "MANUAL") SpreadsheetApp.getUi().alert("ERP ASSR contact refresh " + status + "\n" + message);
+  }
+}
+
 // A slow run (max seen ~5 min) can outlast the 5-minute interval; the pull has no
 // lock of its own, so two overlapping runs could both append the same new order.
 // Document lock, not the script lock pushUpdatesToErp takes inside.
@@ -597,6 +684,7 @@ function scheduledErpSync() {
     pushUpdatesToErp("SCHEDULED");
     runErpPullProcess("SCHEDULED");
     runErpAssrPull("SCHEDULED");
+    runErpAssrContactRefresh("SCHEDULED");
     // 2990 pull rides the same 5-minute cycle (owner 2026-10-02), after the
     // push so a PENDING 2990 edit is sent before the ERP's figures land. Its
     // own try: a 2990 failure must never stop the HOUZS legs above.
