@@ -67,8 +67,8 @@ just `completed`.
   switcher (owner 2026-10-05): `scmSoCompanyId` matches `doc_no` OR
   `linked_ac_docno`, else reads the number (`HC-SO-`/`SO-<digits>` = HOUZS,
   `2990-SO-` = 2990, via `docPrefixForCode`). Only a non-order doc (display
-  stock, free text) falls back to the switcher. Editing `doc_no` later does NOT
-  re-stamp.
+  stock, free text) falls back to the switcher. Editing `doc_no` re-stamps it
+  the same way (`patchAssrCase`); a non-order doc keeps the company.
 - `complained_date` is server-stamped at create and immutable after —
   deliberately absent from `PATCH_FIELDS`.
 - `items[]` is NOT required at create — a case need not be about a defective
