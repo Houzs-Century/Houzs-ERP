@@ -26,6 +26,8 @@ Admin-only diagnostic and manual-refresh surface for integrations that normally 
 - `/rest-page-ceiling` and `/autocount/host-build` both need Worker-only secrets (`SUPABASE_SERVICE_ROLE_KEY`, `AC_SYNC_URL`/`AC_SYNC_KEY`) — they cannot be probed from a GitHub Actions workflow, only by calling the deployed route as a signed-in owner.
 - The month-end stock-close sweep and the inventory valuation page (`GET /inventory/valuation`) share one replay engine (`stock-close.ts`) — don't add a second valuation calculation.
 - `/api/announcements` is served by three routers mounted on the same prefix in order (module, receipts, approval) — a route added to the wrong one can silently shadow or be shadowed.
+- Failed logins (`public.auth_failed_logins`, `GET /logins`): every failed branch of `/auth/login` and `/auth/totp/login` saves a row via `recordFailedLogin` AFTER the response (waitUntil, errors only logged); it must never change the login's status, body or timing, and never store the password or code. Kept 90 days (`pruneFailedLogins`, daily cron).
+- `/logins` verdict: one email >= 10 failures in 24 h or > 100 total = warning; one email >= 30 = critical. Rate-limited attempts count as failures.
 
 ## Where the code is
 

@@ -13,6 +13,7 @@ import {
 } from "../services/configCache";
 import { allowedCompanyIds } from "../scm/lib/companyScope";
 import { acServiceConfig, callAcService } from "../services/autocount-writeback";
+import systemHealthLogins from "./systemHealthLogins";
 
 // ---------------------------------------------------------------------------
 // /api/admin/health — System Health, "real data" phase 1. Every route needs the
@@ -40,6 +41,7 @@ import { acServiceConfig, callAcService } from "../services/autocount-writeback"
 // ---------------------------------------------------------------------------
 const app = new Hono<{ Bindings: Env }>();
 app.use("*", requireItPages());
+app.route("/", systemHealthLogins);
 
 // Sensitive-action matcher (SQL): security-relevant mutations worth a
 // dedicated eye. Kept in one place so /live counts and /audit-feed agree.

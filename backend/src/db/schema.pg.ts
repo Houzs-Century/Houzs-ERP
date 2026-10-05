@@ -816,3 +816,14 @@ export const companies = pgTable("companies", {
   is_active: integer("is_active").notNull().default(1),
   created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ── auth_failed_logins (mig 20261005T1100; DEV-35) ─────────
+// One row per failed sign-in. Never holds the attempted password or code.
+export const auth_failed_logins = pgTable("auth_failed_logins", {
+  id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  email: text("email"),
+  user_id: bigint("user_id", { mode: "number" }),
+  ip: text("ip"),
+  reason: text("reason").notNull(),
+});
