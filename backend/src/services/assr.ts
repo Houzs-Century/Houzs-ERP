@@ -5,6 +5,7 @@ import { slaHoursFor, slaHoursForPriority } from "./assrSla";
 import { listSupplierReturns } from "./assrSupplierReturns";
 export { slaHoursFor, slaHoursForPriority };
 import { todayMyt } from "../scm/lib/my-time";
+import { BASE_COMPANY_CODE, MIRRORED_COMPANY_CODE, docPrefixForCode } from "../scm/lib/companyScope";
 import { claimFromCounter, yymmFor } from "./documentRefs";
 import { assrOpenStageSql } from "./assrStages";
 import { isServiceLine } from "../scm/shared/service-sku";
@@ -253,8 +254,9 @@ export async function nextAssrNumber(env: Env, nowMs = Date.now()): Promise<stri
 // row (a case belongs to its order's company, whatever the creator's switcher
 // says) → the request's company (passed from the route via
 // assrCreateCompanyId(c): the caller's active switcher company) → the Houzs
-// default. AutoCount-keyed Houzs docs carry no local company_id, so for them
-// the route's value stays authoritative.
+// default. An AutoCount-keyed doc resolves through linked_ac_docno or, for an
+// order never imported, its number (scmSoCompanyId); only a doc that is not an
+// order number at all leaves the route's value authoritative.
 //
 // Returns null when nothing is resolvable (companies master absent
 // pre-migration, or a DB cold-start). The INSERT then omits the column,
@@ -340,6 +342,59 @@ async function fetchScmSoContext(
   }
 }
 
+// The owning company of the order a doc number names — by the ERP number OR
+// the AutoCount number. Go-live imported every Houzs order as HC-SO-xxxxxx with
+// its book number (SO-xxxxxx) in linked_ac_docno, and a case raised against the
+// book number missed fetchScmSoContext's doc_no match, so the creator's
+// switcher company won: ASSR/2608-016 (SO-012823) was stamped 2990 (owner
+// 2026-10-05: the case follows its SO's company). Company only — the context
+// path is unchanged.
+//
+// An order that never reached the ERP (delivered before go-live — SO-012823
+// itself) is identified by its NUMBER instead: every HOUZS order is HC-SO-… or
+// the book's SO-<digits>, every 2990 order 2990-SO-… (prod 2026-10-05: 3,293
+// HOUZS / 209 2990 orders, no exception either way). Anything else (display
+// stock, free text) is null and the switcher company still decides.
+function companyCodeFromSoNumber(docNo: string): string | null {
+  const d = docNo.trim().toUpperCase();
+  if (d.startsWith(`${docPrefixForCode(MIRRORED_COMPANY_CODE)}SO-`)) return MIRRORED_COMPANY_CODE;
+  if (d.startsWith(`${docPrefixForCode(BASE_COMPANY_CODE)}SO-`) || /^SO-\d/.test(d)) return BASE_COMPANY_CODE;
+  return null;
+}
+
+export async function scmSoCompanyId(env: Env, docNo: string): Promise<number | null> {
+  const fromOrder = await orderCompanyId(env, docNo);
+  if (fromOrder != null) return fromOrder;
+  const code = companyCodeFromSoNumber(docNo);
+  if (!code) return null;
+  try {
+    const row = await env.DB.prepare(`SELECT id FROM companies WHERE code = ? LIMIT 1`)
+      .bind(code)
+      .first<{ id: number | string }>();
+    return row?.id != null ? Number(row.id) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function orderCompanyId(env: Env, docNo: string): Promise<number | null> {
+  try {
+    const row = await env.DB.prepare(
+      `SELECT o.company_id
+         FROM scm."mfg_sales_orders" o
+        WHERE (LOWER(o.doc_no) = LOWER(?) OR LOWER(o.linked_ac_docno) = LOWER(?))
+          AND o.status <> 'DRAFT' AND o.status <> 'CANCELLED'
+        ORDER BY CASE WHEN LOWER(o.doc_no) = LOWER(?) THEN 0 ELSE 1 END
+        LIMIT 1`
+    )
+      .bind(docNo, docNo, docNo)
+      .first<{ company_id: number | string | null }>();
+    return row?.company_id != null ? Number(row.company_id) : null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Create case ───────────────────────────────────────────────
 
 export async function createAssrCase(
@@ -357,6 +412,7 @@ export async function createAssrCase(
     context = scmSo.context;
     soCompanyId = scmSo.company_id;
   } else {
+    soCompanyId = await scmSoCompanyId(env, input.doc_no);
     const client = new AutoCountClient(env);
     try {
       context = await client.getSingle(input.doc_no);
