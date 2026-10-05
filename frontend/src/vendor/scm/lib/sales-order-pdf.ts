@@ -211,6 +211,32 @@ const receiptTerms = (noun: string): readonly string[] => [
   'Once the delivery date has been confirmed, any subsequent request to change or extend the date will incur a rescheduling surcharge.',
 ];
 
+/* A Consignment Order is signed by the customer as the record of a TEMPORARY
+   PROVISION — goods lent while their own order is corrected or still in
+   production — and replaces the "Temporary provision" letter Operations used
+   to issue (HC-SL0047, owner 2026-10-05). The receipt terms above talk about
+   tax invoices, balances and surcharges; none of that applies to a loan, so the
+   CO prints these instead. The customer's signature box doubles as the
+   letter's "Client Acknowledgment". */
+export const CONSIGNMENT_LOAN_TERMS: readonly string[] = [
+  'This consignment order records a temporary provision: the items listed are lent to the customer as a courtesy until the order the customer placed is delivered. It is not a sale and no tax invoice is issued for it.',
+  'The items are provided in good condition. Please use them with normal, everyday care and return them in a similar condition.',
+  'Collection: once the order the customer placed has been delivered, our team will contact the customer to arrange a convenient time to collect the items. Please have them ready for pick-up.',
+  'Liability: normal wear and tear or minor stains during the loan period are not charged. The customer is responsible only for damage caused by misuse, negligence or intentional acts.',
+  'If anything comes up while the items are with you, let us know and we will be happy to help.',
+  'By signing below, the customer accepts this temporary provision and agrees to the terms above.',
+];
+
+/* The one place the Consignment Order's PDF framing lives — the detail page
+   and the list both print through it, so the title, label and terms cannot
+   drift apart. */
+export const CONSIGNMENT_ORDER_PDF_OPTS = {
+  docTitle: 'CONSIGNMENT ORDER',
+  docNoLabel: 'CO No',
+  docNoun: 'consignment order',
+  terms: CONSIGNMENT_LOAN_TERMS,
+} as const;
+
 /* The variant keys that can carry an internal fabric code, mirrored from
    supplier-doc-data's FABRIC_VARIANT_KEYS. The SO PDF maps each present code
    to "CODE — fabric_trackings.fabric_description" (customer-readable). */
@@ -334,7 +360,7 @@ export async function renderSalesOrderInto(
   /* PWP vouchers this SO's trigger items issued (GET /:docNo `pwpCodes`) —
      used to mark trigger lines. Optional so older callers stay valid. */
   pwpCodes: SoPwpCodeRow[] = [],
-  opts?: { docTitle?: string; docNoLabel?: string; docNoun?: string },
+  opts?: { docTitle?: string; docNoLabel?: string; docNoun?: string; terms?: readonly string[] },
 ): Promise<void> {
   /* A cancelled line must never reach a CUSTOMER document — not as a printed
      row and not inside a total. The gate lives HERE, in the one function both
@@ -823,7 +849,7 @@ export async function renderSalesOrderInto(
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
   doc.setTextColor(110);
-  receiptTerms(opts?.docNoun ?? 'sales order').forEach((t, i) => {
+  (opts?.terms ?? receiptTerms(opts?.docNoun ?? 'sales order')).forEach((t, i) => {
     const wrapped = doc.splitTextToSize(`${i + 1}. ${t}`, pageW - margin * 2) as string[];
     doc.text(wrapped, margin, ty);
     ty += wrapped.length * 3.2 + 0.8;
@@ -856,7 +882,7 @@ export async function generateSalesOrderPdf(
   /* PWP vouchers this SO's trigger items issued (GET /:docNo `pwpCodes`) —
      used to mark trigger lines. Optional so older callers stay valid. */
   pwpCodes: SoPwpCodeRow[] = [],
-  opts?: { docTitle?: string; docNoLabel?: string; docNoun?: string },
+  opts?: { docTitle?: string; docNoLabel?: string; docNoun?: string; terms?: readonly string[] },
 ): Promise<void> {
   // Dynamic import — code-split into a vendor chunk.
   const { jsPDF } = await import('jspdf');
@@ -874,7 +900,7 @@ export async function generateSalesOrderPdf(
    footer numbers its own pages; the whole file saves once. */
 export async function generateCombinedSalesOrderPdf(
   docs: Array<{ header: SoHeader; items: SoItem[]; payments?: SoPayment[]; pwpCodes?: SoPwpCodeRow[] }>,
-  opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; docNoun?: string; action?: PdfAction },
+  opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; docNoun?: string; terms?: readonly string[]; action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
