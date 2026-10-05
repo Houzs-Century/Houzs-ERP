@@ -49,6 +49,7 @@ export type FeedHeadRow = {
   postcode: string | null;
   city: string | null;
   customer_state: string | null;
+  customer_country: string | null;
   venue: string | null;
   status: string;
   do_numbers: string | null;
@@ -150,7 +151,7 @@ const FEED_BASE_SQL = `
          so.processing_date::text AS processing_date,
          so.customer_delivery_date::text AS customer_delivery_date,
          so.address1, so.address2, so.address3, so.address4,
-         so.postcode, so.city, so.customer_state, so.venue,
+         so.postcode, so.city, so.customer_state, so.customer_country, so.venue,
          so.status::text AS status,
          dos.do_numbers, pos.po_numbers,
          GREATEST(so.updated_at, pay.last_paid_at, dos.last_do_at) AS last_modified
@@ -341,8 +342,16 @@ const blankToNull = (v: string | null | undefined): string | null => {
 };
 
 /** Same rule as the Apps Script and services/autocount.ts routeRegion, plus
- *  HQ (the 2023-era Balakong code) on the West side. */
-export function sheetRegion(salesLocation: string | null, addr3: string | null): DeliverySheetRecord["Region"] {
+ *  HQ (the 2023-era Balakong code) on the West side. A native ERP order picks
+ *  Singapore from the locality master (state "West", city "Jurong East",
+ *  customer_country "Singapore") and is sold from KL, so the word never reaches
+ *  addr3 and the country decides (BUG-52, HC12842). */
+export function sheetRegion(
+  salesLocation: string | null,
+  addr3: string | null,
+  country: string | null = null,
+): DeliverySheetRecord["Region"] {
+  if ((country ?? "").trim().toUpperCase() === "SINGAPORE") return "SG";
   if ((addr3 ?? "").toUpperCase().includes("SINGAPORE")) return "SG";
   const loc = (salesLocation ?? "").toUpperCase();
   if (loc === "KL" || loc === "PG" || loc === "HQ") return "WEST";
@@ -427,7 +436,7 @@ export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow
     SOUDF_VENUE: blankToNull(row.venue),
     Status: row.status,
     Ready: isSheetReady(remark2),
-    Region: sheetRegion(salesLocation, addr3),
+    Region: sheetRegion(salesLocation, addr3, row.customer_country),
     LastModified: row.last_modified_text,
   };
 }
