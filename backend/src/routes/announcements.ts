@@ -34,6 +34,7 @@ import {
 } from "../services/configCache";
 import type { BannerScope } from "../services/configCache";
 import {
+  CLAUDE_MODEL as TRANSLATE_MODEL,
   translateAndStore,
   type AnnouncementTranslations,
   type TranslationSource,
@@ -833,7 +834,8 @@ function queueTranslation(
   id: string,
   src: TranslationSource,
 ): void {
-  const run = translateAndStore(c.env, id, src);
+  const run = translateAndStore(c.env, id, src,
+    { env: c.env, feature: "announcement_translate", model: TRANSLATE_MODEL, companyId: null, userId: null, waitUntil: null });
   try {
     c.executionCtx.waitUntil(run);
   } catch {

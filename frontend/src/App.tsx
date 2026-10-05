@@ -66,6 +66,7 @@ const Announcements = lazy(() => import("./pages/Announcements").then((m) => ({ 
 const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
 const Team = lazy(() => import("./pages/Team").then((m) => ({ default: m.Team })));
 const SystemHealth = lazy(() => import("./pages/SystemHealth").then((m) => ({ default: m.SystemHealth })));
+const AiUsage = lazy(() => import("./pages/AiUsage").then((m) => ({ default: m.AiUsage })));
 const AutoCountSync = lazy(() => import("./pages/AutoCountSync").then((m) => ({ default: m.AutoCountSync })));
 const VenturePortalFeed = lazy(() => import("./pages/VenturePortalFeed").then((m) => ({ default: m.VenturePortalFeed })));
 const ChangeLog = lazy(() => import("./pages/ChangeLog").then((m) => ({ default: m.ChangeLog })));
@@ -598,6 +599,14 @@ export default function App() {
           element={
             <ItPagesGuard>
               <SystemHealth />
+            </ItPagesGuard>
+          }
+        />
+        <Route
+          path="/ai-usage"
+          element={
+            <ItPagesGuard>
+              <AiUsage />
             </ItPagesGuard>
           }
         />

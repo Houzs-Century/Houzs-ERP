@@ -26,7 +26,7 @@ describe('askAgentBrainWithTools', () => {
     const fetchMock = vi.fn();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     const dispatch = vi.fn();
-    const out = await askAgentBrainWithTools(undefined, { system: 's', payload: {}, tools: [TOOL], dispatch });
+    const out = await askAgentBrainWithTools(undefined, { system: 's', payload: {}, tools: [TOOL], dispatch, aiUsage: null });
     expect(out).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();
@@ -38,7 +38,7 @@ describe('askAgentBrainWithTools', () => {
       .mockResolvedValueOnce(resp({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Hi.' }] }));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     const dispatch = vi.fn();
-    const out = await askAgentBrainWithTools('key', { system: 's', payload: {}, tools: [TOOL], dispatch });
+    const out = await askAgentBrainWithTools('key', { system: 's', payload: {}, tools: [TOOL], dispatch, aiUsage: null });
     expect(out).toBe('Hi.');
     expect(dispatch).not.toHaveBeenCalled();
   });
@@ -65,6 +65,7 @@ describe('askAgentBrainWithTools', () => {
     const sink = { tokensIn: 0, tokensOut: 0 };
 
     const out = await askAgentBrainWithTools('key', {
+      aiUsage: null,
       system: 's',
       payload: { q: 'SO-1' },
       tools: [TOOL],
@@ -93,6 +94,7 @@ describe('askAgentBrainWithTools', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const out = await askAgentBrainWithTools('key', {
+      aiUsage: null,
       system: 's',
       payload: {},
       tools: [TOOL],
@@ -109,6 +111,7 @@ describe('askAgentBrainWithTools', () => {
     const fetchMock = vi.fn().mockResolvedValueOnce({ ok: false, status: 529, json: async () => ({}) });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     const out = await askAgentBrainWithTools('key', {
+      aiUsage: null,
       system: 's',
       payload: {},
       tools: [TOOL],
@@ -127,6 +130,7 @@ describe('askAgentBrainWithTools', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const out = await askAgentBrainWithTools('key', {
+      aiUsage: null,
       system: 's',
       payload: {},
       tools: [TOOL],

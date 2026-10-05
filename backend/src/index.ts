@@ -20,6 +20,7 @@ import assr from "./routes/assr";
 import logs from "./routes/logs";
 import auditRoutes from "./routes/audit";
 import systemHealthRoutes from "./routes/systemHealth";
+import aiUsageRoutes from "./routes/aiUsage";
 // Self-hosted client error reporting (no Sentry): the SPA's global reporter
 // POSTs batched uncaught errors here; the daily 02:00 cron mails IT a digest.
 import clientErrors from "./routes/clientErrors";
@@ -135,6 +136,7 @@ import { runProjectDueReminders } from "./services/projectReminders";
 // slot gated to Sundays — no new cron trigger. getSupabaseService is the same
 // service client scan-so.ts uses internally (serviceClient(env)).
 import { distillAllSalespersonRules, warmCatalogCacheForCron, processScanQueueMessage } from "./scm/routes/scan-so";
+import { CLAUDE_MODEL } from "./scm/lib/scan-ocr";
 import { runAgentHeartbeat } from "./services/agent-scheduler";
 import { getSupabaseService } from "./db/supabase";
 import { sweepStockClose } from "./acc/stock-close";
@@ -418,6 +420,7 @@ app.route("/api/assr", assr);
 app.route("/api/logs", logs);
 app.route("/api/audit", auditRoutes);
 app.route("/api/admin/health", systemHealthRoutes);
+app.route("/api/admin/ai-usage", aiUsageRoutes);
 // Behind the /api/* auth gate: intake needs a session (identity is stamped from
 // it, never from the body); the /summary read is super-admin inside the router.
 app.route("/api/client-errors", clientErrors);
@@ -1038,6 +1041,7 @@ export default {
               getSupabaseService(env),
               env.ANTHROPIC_API_KEY,
               branding.companyName,
+              { env, feature: "scan_so_distill", model: CLAUDE_MODEL, companyId: null, userId: null, waitUntil: null },
             );
             console.log("[scan-so weekly distill]", JSON.stringify(summary));
           }).catch((e) => console.error("[scan-so weekly distill]", e)),

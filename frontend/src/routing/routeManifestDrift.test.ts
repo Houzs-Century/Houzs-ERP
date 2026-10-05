@@ -94,7 +94,8 @@ describe("executable route contract", () => {
     // proforma still owing the official invoice (payment-request item 3).
     // 168 since 2026-10-02: /scm/supplier-maintenance — Finance's own supplier
     // list in Money out (owed, bank, the ones Finance keeps to itself).
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(168);
+    // 169 since 2026-10-05: /ai-usage — IT-only monthly AI cost (DEV-35).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(169);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -140,7 +141,8 @@ describe("executable route contract", () => {
     // 175 since 2026-09-30 — /scm/payment-backdate-requests; same.
     // 176 since 2026-10-01 — /scm/official-docs; see the staff-route count above.
     // 177 since 2026-10-02 — /scm/supplier-maintenance; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(177);
+    // 178 since 2026-10-05 — /ai-usage; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(178);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
