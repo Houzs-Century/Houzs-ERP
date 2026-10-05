@@ -3474,7 +3474,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
               category: 'SOFA',
               modelCode: product.base_model,
               baseSkuCode: s.itemCode,
-              baseName: (brand ? `${String(brand).toUpperCase()} ` : '') + s.description,
+              // Brand stays in `branding`, not the name: "SOFA ADDA 1A(RHF)" (#4376).
+              baseName: s.description,
               modelId: (product as { model_id?: string | null }).model_id ?? null,
               branding: brand,
               compartment: s.moduleCode,
