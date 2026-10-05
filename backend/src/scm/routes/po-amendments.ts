@@ -177,7 +177,13 @@ poAmendments.get('/:id', async (c) => {
     .select('id, po_number, status, revision, supplier_id, expected_at')
     .eq('id', amendment.po_id).maybeSingle();
 
-  return c.json({ amendment, lines, purchaseOrder: poRow ?? null });
+  /* Whether the caller raised it — see the twin note on GET /so-amendments/:id.
+     Same identity rule PATCH /:id/withdraw enforces. */
+  const callerStaffId = await resolveCallerStaffId(sb, c.get('houzsUser')?.id);
+  const viewerIsRequester = callerStaffId != null && amendment.requested_by != null
+    && callerStaffId === amendment.requested_by;
+
+  return c.json({ amendment, lines, purchaseOrder: poRow ?? null, viewerIsRequester });
 });
 
 /* ── POST / — raise a PO amendment ─────────────────────────────────────────
