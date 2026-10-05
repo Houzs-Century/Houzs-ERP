@@ -37,6 +37,10 @@
 // never be handed this one.
 //
 // PAYLOAD (chat's `Call REST API` body):
+//   What it WRITES on the SO: only the request columns the board shows
+//   (amend_date_from_customer, amend_reason, delivery_message_status) via
+//   lib/chat-request-patch.ts — never the schedule. See that module.
+//
 //   { callback_id?: string,          // idempotency; chat's own step id
 //     event: "confirm" | "amend",
 //     ref: string,                   // the number the customer was shown: our
@@ -52,6 +56,9 @@ import type { Env } from "../types";
 import { timingSafeEqualStr } from "../services/auth";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
+import { advanceSoGeneration } from "../scm/lib/so-generation";
+import { recordSoAudit } from "../scm/lib/so-audit";
+import { chatRequestFieldChanges, chatRequestPatch, type ChatEvent } from "../lib/chat-request-patch";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -289,13 +296,67 @@ app.post("/", async (c) => {
     return c.json({ error: "log_failed", reason: insErr.message }, 500);
   }
 
+  // ── Mirror the REQUEST onto the SO ──────────────────────────────────────
+  // The board already has "Customer Request Date" / "Amend Reason" /
+  // "Delivery Message Status" columns reading amend_date_from_customer /
+  // amend_reason / delivery_message_status — the fields the HC Delivery sheet
+  // used to fill from Seampify. lib/chat-request-patch.ts decides the patch and
+  // pins that it never names the schedule (customer_delivery_date /
+  // amended_delivery_date) or the lifecycle. Written through
+  // advanceSoGeneration like every other SO header write, so the version moves
+  // and a stale SO editor save gets its 409 instead of silently putting the
+  // customer's answer back. Best-effort AFTER the log row: the row is the
+  // record; a lease / conflict here is reported, not retried, and never turns
+  // the recorded tap into an error for chat.
+  const requestPatch = chatRequestPatch(event as ChatEvent, requestedDate, reason);
+  let soRequest: { written: boolean; reason?: string } = { written: false, reason: "nothing_to_write" };
+  if (Object.keys(requestPatch).length > 0) {
+    try {
+      let beforeQuery = sb
+        .from("mfg_sales_orders")
+        .select("amend_date_from_customer, amend_reason, delivery_message_status, status")
+        .eq("doc_no", docNo);
+      if (company.id != null) beforeQuery = beforeQuery.eq("company_id", company.id);
+      const { data: beforeRow, error: beforeErr } = await beforeQuery.maybeSingle();
+      if (beforeErr) throw beforeErr;
+      const before = (beforeRow ?? {}) as Record<string, unknown>;
+      const gen = await advanceSoGeneration(sb, docNo, requestPatch);
+      if (!gen.applied) {
+        soRequest = { written: false, reason: gen.reason };
+      } else {
+        soRequest = { written: true };
+        const fieldChanges = chatRequestFieldChanges(requestPatch, before);
+        if (fieldChanges.length > 0) {
+          // The service client is typed for the scm schema; the audit helper's
+          // parameter type says "public" — same client, different generic.
+          await recordSoAudit(sb as unknown as Parameters<typeof recordSoAudit>[0], {
+            docNo,
+            action: "UPDATE_DETAILS",
+            actorId: null,
+            actorName: "Customer (WhatsApp)",
+            fieldChanges,
+            statusSnapshot: (before as { status?: string }).status ?? null,
+            source: "chat-callback",
+            note: `Customer tapped ${event} in WhatsApp${callbackId ? ` (${callbackId})` : ""}`,
+          });
+        }
+      }
+    } catch (e) {
+      soRequest = { written: false, reason: String((e as Error)?.message ?? e).slice(0, 160) };
+    }
+  }
+
   return c.json({
     ok: true,
     id: (inserted?.[0] as { id: string } | undefined)?.id ?? null,
     event,
     ref: docNo,
     recorded: true,
+    // The schedule is untouched — `applied` keeps meaning "delivery date
+    // applied", which this endpoint never does. `so_request` says whether the
+    // request columns the board shows were filled.
     applied: false,
+    so_request: soRequest,
   });
 });
 
