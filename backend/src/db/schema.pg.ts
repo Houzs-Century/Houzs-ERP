@@ -816,3 +816,14 @@ export const companies = pgTable("companies", {
   is_active: integer("is_active").notNull().default(1),
   created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ── job_runs (mig 20261005T1000): one row per scheduled job run ──
+export const job_runs = pgTable("job_runs", {
+  id: uuid("id").primaryKey(),
+  job: text("job").notNull(),
+  started_at: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  finished_at: timestamp("finished_at", { withTimezone: true }),
+  status: text("status").notNull().default("running"),
+  error: text("error"),
+  duration_ms: integer("duration_ms"),
+});

@@ -7,6 +7,7 @@ Admin-only diagnostic and manual-refresh surface for integrations that normally 
 - Every route under `/api/admin/health`, and the page and its menu row, require `it.view` (the IT pages gate, `services/itAccess.ts`, exposed to the client as the `it.pages.view` capability). While `IT_PAGES_WILDCARD_PASSES` is false the `*` wildcard does NOT pass, so Owner and Super Admin do not see it; flip it at launch.
 - The ledger, AutoCount reconcile/pull/snapshot, host-build and page-ceiling routes additionally require `*`, so while the switch is off nobody can call them.
 - The `system_health` page-access key no longer gates anything.
+- `GET /jobs` (last run and verdict per cron job, from `public.job_runs`) and `GET /queues` (waiting / failed / oldest age per queue, plus failed slip scans in 7 days) need only `it.view`.
 
 ## Rules that must not break
 
@@ -29,7 +30,8 @@ Admin-only diagnostic and manual-refresh surface for integrations that normally 
 
 ## Where the code is
 
-- `backend/src/routes/systemHealth.ts` — all diagnostic/refresh routes.
+- `backend/src/routes/systemHealth.ts` — all diagnostic/refresh routes; `/jobs` and `/queues` live in `systemHealthJobs.ts`.
+- `backend/src/services/jobRuns.ts` (`track()` wraps every job in `scheduled()`, 14-day retention) and `jobHealth.ts` (job catalogue and verdict rules). A new cron job needs a `track("name", ...)` and a catalogue entry, or its test fails.
 - `backend/src/scm/lib/paginate-all.ts` — the `paginateAll` pagination helper `/rest-page-ceiling` measures.
 - `backend/src/db/supabase.ts` — PostgREST client used by the ceiling probe.
 - `backend/src/acc/stock-close.ts` — month-end stock close sweep + valuation replay.
