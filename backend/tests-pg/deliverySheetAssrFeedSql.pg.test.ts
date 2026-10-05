@@ -16,7 +16,7 @@ import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { toPgPlaceholders } from '../src/db/d1-compat';
 import { FEED_EPOCH } from '../src/lib/delivery-sheet-feed';
-import { FEED_ASSR_LEGS_SQL, toAssrLegRecords, type AssrFeedRow } from '../src/lib/delivery-sheet-assr-feed';
+import { FEED_ASSR_CONTACTS_SQL, FEED_ASSR_LEGS_SQL, toAssrLegRecords, type AssrFeedRow } from '../src/lib/delivery-sheet-assr-feed';
 
 const url = process.env.TEST_DATABASE_URL ?? '';
 const describePg = url ? describe : describe.skip;
@@ -80,8 +80,8 @@ async function resetFixture(s: Sql): Promise<void> {
   `);
 }
 
-async function page(since: string, limit: number): Promise<AssrFeedRow[]> {
-  return (await sql.unsafe(toPgPlaceholders(FEED_ASSR_LEGS_SQL), [since, limit] as never[])) as unknown as AssrFeedRow[];
+async function page(since: string, limit: number, feed = FEED_ASSR_LEGS_SQL): Promise<AssrFeedRow[]> {
+  return (await sql.unsafe(toPgPlaceholders(feed), [since, limit] as never[])) as unknown as AssrFeedRow[];
 }
 
 describePg('HC Delivery sheet ASSR leg feed SQL — real Postgres', () => {
@@ -138,5 +138,13 @@ describePg('HC Delivery sheet ASSR leg feed SQL — real Postgres', () => {
 
   test('limit pages by case', async () => {
     expect((await page(FEED_EPOCH, 1)).map((r) => r.assr_no)).toEqual(['ASSR/2609-010']);
+  });
+
+  test('the contact feed (BUG-54) sends every open case, own-team gate or not', async () => {
+    // 012 (supplier legs) and 013 (own marks, no dates) are back; closed 014 and
+    // archived 015 stay out.
+    expect((await page(FEED_EPOCH, 10, FEED_ASSR_CONTACTS_SQL)).map((r) => r.assr_no)).toEqual([
+      'ASSR/2609-010', 'ASSR/2609-011', 'ASSR/2609-012', 'ASSR/2609-013', 'ASSR/2609-016',
+    ]);
   });
 });

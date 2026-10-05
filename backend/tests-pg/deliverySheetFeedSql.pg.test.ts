@@ -75,7 +75,7 @@ async function resetFixture(s: Sql): Promise<void> {
       local_total_sen integer NOT NULL DEFAULT 0,
       remark2 text, remark3 text, remark4 text, note text,
       processing_date date, customer_delivery_date date,
-      address1 text, address2 text, address3 text, address4 text, postcode text, city text, customer_state text,
+      address1 text, address2 text, address3 text, address4 text, postcode text, city text, customer_state text, customer_country text,
       venue text,
       status text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now()
     );

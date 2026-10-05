@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import app from "../src/routes/deliverySheetSync";
 import { isSheetReady, normSheetDate, parseFromDate, parseLimit, parseSince, sheetReadinessWording, toSheetRecord, type FeedHeadRow } from "../src/lib/delivery-sheet-feed";
 import { toOutstandingPoRecord, type PoFeedRow } from "../src/lib/delivery-sheet-po-feed";
-import { toAssrLegRecords, type AssrFeedRow } from "../src/lib/delivery-sheet-assr-feed";
+import { toAssrContactRecord, toAssrLegRecords, type AssrFeedRow } from "../src/lib/delivery-sheet-assr-feed";
 
 /* Phase 3's write leg goes through the PO editor's own writers (supplier-date
  * cascade, downstream lock, AutoCount enqueue), which need a Supabase client;
@@ -92,6 +92,7 @@ const HEAD: FeedHeadRow = {
   postcode: "43300",
   city: "Seri Kembangan",
   customer_state: "Selangor",
+  customer_country: "Malaysia",
   venue: "Balakong Showroom",
   status: "CONFIRMED",
   do_numbers: "HC-DO-2609-001",
@@ -159,6 +160,19 @@ describe("toSheetRecord — the AutoCount-named record the sheet writes", () => 
     expect(r.DocNo).toBe("HC-SO-2609-078");
     expect(r.Region).toBe("SG");
     expect(r.Remark2).toBe("READY (PARTIAL)");
+  });
+
+  test("BUG-52 HC12842: a native Singapore order sold from KL routes SG on its country", () => {
+    const r = toSheetRecord(
+      { ...HEAD, doc_no: "HC-SO-2609-110", linked_ac_docno: "HC-SO-2609-110",
+        address1: "blk 314 jurong east st32", address2: "#06-233", address3: null, address4: null,
+        postcode: "600314", city: "Jurong East", customer_state: "West", customer_country: "Singapore" },
+      [],
+    );
+    expect(r.SalesLocation).toBe("KL");
+    expect(r.InvAddr3).toBe("600314 Jurong East");
+    expect(r.Region).toBe("SG");
+    expect(toSheetRecord({ ...HEAD, customer_country: null }, []).Region).toBe("WEST");
   });
 
   test("East Malaysia branches route EAST", () => {
@@ -973,5 +987,46 @@ describe("scm.sheet_sync_usage — the endpoint counter", () => {
     const res = await app.request("/so-since?since=2026-09-15%2000:00:00", { headers: { "X-Intake-Key": KEY } }, env(db));
     expect(res.status).toBe(200);
     expect(((await res.json()) as any).count).toBe(1);
+  });
+});
+
+/* BUG-54: ASSR/2608-064 had inspection 'own' but no visit date, so /assr-legs
+ * never re-sent it and a phone corrected in the ERP stayed stale on the sheet
+ * row the sheet's own linkage had made. /assr-contacts carries every open case. */
+describe("GET /assr-contacts", () => {
+  const UNDATED: AssrFeedRow = { ...ASSR, phone: "+60 1111888517", inspection_visit_at: null, pickup_by: null, customer_pickup_at: null, delivery_by: null, do_date: null };
+
+  test("a case with no own-team dated leg still sends its contact cells, keyed for every leg row it could own", () => {
+    expect(toAssrLegRecords(UNDATED)).toEqual([]);
+    expect(toAssrContactRecord(UNDATED)).toEqual({
+      AssrNo: "ASSR/2609-012",
+      Keys: ["SO-2609-012-INSPECTION", "SO-2609-012-PICKUP", "SO-2609-012-SERVICE"],
+      DebtorName: "Wendy",
+      Phone1: "+60 1111888517",
+      InvAddr1: "12 Jalan Satu",
+      InvAddr2: "Taman Dua",
+      InvAddr3: null,
+      InvAddr4: "Selangor",
+      LastModified: ASSR.last_modified_text,
+    });
+  });
+
+  test("wrong key 401 before any read; the feed is open cases only, with no own-team gate", async () => {
+    const bad = fakeDb(() => []);
+    expect((await app.request("/assr-contacts", { headers: { "X-Intake-Key": "wrong" } }, env(bad.db))).status).toBe(401);
+    expect(bad.seen).toHaveLength(0);
+
+    const { db, seen } = fakeDb((sql) => (/FROM assr_cases/.test(sql) ? [UNDATED] : []));
+    const res = await app.request("/assr-contacts?since=2026-09-01%2000:00:00&limit=100", { headers: { "X-Intake-Key": KEY } }, env(db));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.cases).toBe(1);
+    expect(body.records.map((r: any) => r.Phone1)).toEqual(["+60 1111888517"]);
+    expect(body.next_since).toBe(ASSR.last_modified_text);
+    const feed = seen.find((s) => /FROM assr_cases/.test(s.sql))!;
+    expect(feed.binds).toEqual(["2026-09-01 00:00:00", 100]);
+    expect(feed.sql).toContain("closed_at IS NULL");
+    expect(feed.sql).toContain("archived_at IS NULL");
+    expect(feed.sql).not.toMatch(/inspection_by\s*=/);
   });
 });
