@@ -1460,7 +1460,11 @@ export function MobileNewSO({
   /* The lines as the shared cascade layer sees them. A line with no SKU picked
      has no category, so it neither drives nor follows. */
   const cascadeLines = useMemo(
-    () => lines.map((l) => ({ category: l.itemCode.trim() && l.itemGroup ? l.itemGroup : '', variants: l.variants })),
+    () => lines.map((l) => ({
+      category: l.itemCode.trim() && l.itemGroup ? l.itemGroup : '',
+      variants: l.variants,
+      persisted: Boolean(l.itemId),
+    })),
     [lines],
   );
 
