@@ -234,11 +234,9 @@ function DataTableInner<T, L>({
     ? baseIdKey
     : (layoutFamily && tableId && layoutFamily !== tableId ? tableId : undefined);
   const legacyStorageKey = (part: string) => legacyIdKey ? `dt:${part}:${legacyIdKey}` : undefined;
-  /* `clientSearch`: the grid owns the box and filters the loaded rows itself
-     (SCM DataGrid parity). A page-controlled `search` always wins. The text is
-     remembered for the visit like the funnels (owner 2026-10-05: the name typed
-     above the delivery board was gone after opening an order), except on
-     per-mount tables, which open clean every time. */
+  /* `clientSearch`: the grid owns the box and filters the loaded rows itself; a
+     page-controlled `search` wins. Remembered for the visit like the funnels
+     (owner 2026-10-05), except on per-mount tables. */
   const [clientQuery, setClientQuery] = useInVisitClientSearch(idKey, persistFilters !== false);
   const clientSearching = !!clientSearch && !searchProp;
   const search: Props<T, L>["search"] =
@@ -403,19 +401,12 @@ function DataTableInner<T, L>({
      stays highlighted while a filter is set, and each column's popover Clear
      (or the page's reset control) drops its entry.
 
-     Three sources, by design (owner 2026-09-16, reconciling 2026-07-29 /
-     2026-08-19):
-     - default (`persistFilters` true): IN-VISIT memory (dataTableColFilterMemory).
-       A funnel survives drilling into a record and back, but a fresh page load /
-       new tab / F5 opens clean — it never reaches localStorage.
-     - `persistFilters={false}` (SKU Master, document line tables): per-mount
-       useState, clean on EVERY mount — a remembered funnel there hid a
-       just-renamed row.
-     - `persistFilters="always"` (the delivery planning boards, owner
-       2026-10-05): kept in localStorage under `dt:funnels:` so the queue opens
-       as narrowed as it was left, across page loads and days.
-     The old dt:filters:* keys are erased on mount below so a stale one cannot
-     re-narrow a list. */
+     Three sources (dataTableColFilterMemory): default = IN-VISIT memory, a
+     funnel survives drilling into a record and back but a page load opens clean
+     (owner 2026-09-16); `false` = per mount, clean on EVERY mount (SKU Master, a
+     remembered funnel hid a just-renamed row); `"always"` = localStorage
+     `dt:funnels:`, the delivery boards reopen as narrowed as they were left
+     (owner 2026-10-05). The old dt:filters:* keys are erased on mount below. */
   const visitColFilters = useInVisitColFilters(idKey);
   const sessionColFilters = useState<Record<string, string[]>>({});
   const keptColFilters = useKeptColFilters(idKey, persistFilters === "always");
