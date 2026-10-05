@@ -477,6 +477,8 @@ export const ApInvoices = () => {
             lineAccounts={lineAccounts}
             posted={form.posted}
             paidSen={form.paidSen}
+            selfId={form.mode === 'edit' ? (form.invoiceId ?? null) : null}
+            requestId={form.request?.id ?? null}
             saving={create.isPending || update.isPending || uploadFile.isPending}
             onSubmit={submitForm}
             onCancel={() => setForm(null)}
