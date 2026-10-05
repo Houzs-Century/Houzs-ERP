@@ -27,6 +27,7 @@ const sources = import.meta.glob(
     "../src/routes/chatCallback.ts",
     "../src/index.ts",
     "../src/scm/routes/delivery-messages.ts",
+    "../src/lib/chat-request-patch.ts",
   ],
   { query: "?raw", import: "default", eager: true },
 ) as Record<string, string>;
@@ -77,14 +78,30 @@ describe("chat-callback is reachable at all", () => {
   });
 });
 
-describe("the callback records, it does not schedule", () => {
-  test("never writes to mfg_sales_orders", () => {
+describe("the callback records the request, it does not schedule", () => {
+  test("the only SO write is the request patch, through advanceSoGeneration", () => {
     const src = route();
     // A date a customer tapped is a REQUEST. The board owns delivery dates and
-    // MRP pools off them; a write here would let a customer move a date a trip
-    // has already been planned around.
+    // MRP pools off them. The route may fill the board's request columns —
+    // but only through chatRequestPatch (whose own test pins the column list)
+    // and only through the canonical SO header write, never a raw .update(.
     expect(src).not.toMatch(/\.update\s*\(/);
-    expect(src).not.toMatch(/mfg_sales_orders[\s\S]{0,200}\.update\s*\(/);
+    expect(src).toMatch(/advanceSoGeneration\(sb,\s*docNo,\s*requestPatch\)/);
+    expect(src).toMatch(/chatRequestPatch\(event as ChatEvent,\s*requestedDate,\s*reason\)/);
+    // The request write happens AFTER the log row insert — the row is the record.
+    expect(src.indexOf('from("wa_message_log")\n    .insert(') > -1 || src.indexOf('.insert({') > -1).toBe(true);
+    expect(src.indexOf("advanceSoGeneration(sb")).toBeGreaterThan(src.indexOf('source: "chat-callback"'));
+  });
+
+  test("the patch module never names a schedule column", () => {
+    const patchSrc = stripComments(source("lib/chat-request-patch.ts"));
+    // Comments stripped: the module's header NAMES these columns to say it
+    // never writes them; the code must not.
+    for (const col of ["customer_delivery_date", "amended_delivery_date", "delivery_state", "processing_date"]) {
+      const hits = patchSrc.match(new RegExp(`"${col}"`, "g")) ?? [];
+      // Exactly one hit each: the CHAT_FORBIDDEN_SO_COLUMNS list, nothing else.
+      expect(hits.length, `${col} appears outside the forbidden list`).toBe(1);
+    }
   });
 
   test("mfg_sales_orders is read-only — select only", () => {
