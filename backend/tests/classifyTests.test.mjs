@@ -273,6 +273,10 @@ const MUST_GATE_MERGE = [
      absence assertion would pass over handlers moved out of mfg-sales-orders.ts
      and nothing would turn red. */
   "tests/soRouterFamily.test.ts",
+  /* The Delivery sheet feeds reach Postgres only after toPgPlaceholders. An
+     apostrophe in a SQL comment left ?1 / ?2 unconverted and the ASSR feeds 502d
+     (#4447); the pg suite that saw it is not a required check. */
+  "tests/deliverySheetFeedPlaceholders.test.ts",
 ];
 
 test("every merge-gating suite is classified LIGHT, so a required job runs it", async () => {

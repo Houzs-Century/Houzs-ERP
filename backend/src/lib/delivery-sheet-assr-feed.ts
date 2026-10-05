@@ -94,6 +94,13 @@ export type AssrLegRecord = DeliverySheetRecord & { Kind: AssrLegKind };
  * (42883), and the route surfaced that as a 502 the first time the sheet
  * actually pulled this feed. The pg fixture mirrors the TEXT column so the cast
  * is under test.
+ *
+ * `customer_country` comes from the linked Sales Order: a Singapore case's
+ * address line 3 often lacks the word (locality-master addresses read "600314
+ * Jurong East"), so the region needs the SO's country (BUG-52's leg twin).
+ * Exact doc_no first, then the AutoCount number. This note lives HERE, not as a
+ * `--` comment in the SQL: toPgPlaceholders reads an apostrophe in a SQL comment
+ * as an open string and then leaves ?1 / ?2 unconverted.
  */
 const ASSR_FEED_SELECT = `
 SELECT assr_no,
@@ -111,9 +118,6 @@ SELECT assr_no,
        inspection_by, inspection_visit_at,
        pickup_by, customer_pickup_at,
        delivery_by, do_date,
-       -- A Singapore case's address line 3 often lacks the word (locality-master
-       -- addresses read "600314 Jurong East"), so the region needs the SO's country
-       -- (BUG-52's leg twin). Exact doc_no first, then the AutoCount number.
        (SELECT so.customer_country
           FROM scm.mfg_sales_orders so
          WHERE so.doc_no = assr_cases.doc_no OR so.linked_ac_docno = assr_cases.doc_no
