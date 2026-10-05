@@ -3802,6 +3802,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       if (typeof body.postcode !== 'string' || !body.postcode.trim()) missing.push('postcode');
       if (typeof body.customerState !== 'string' || !body.customerState.trim()) missing.push('state');
       if (missing.length > 0) {
+        await rollbackPwpClaims();
         return c.json({
           error: 'delivery_date_needs_address',
           message: `A delivery date can't be set until the customer's address is filled — missing ${missing.join(', ')}. Either add the address or take off the delivery date.`,
