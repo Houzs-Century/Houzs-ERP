@@ -15,6 +15,7 @@ import { allowedCompanyIds } from "../scm/lib/companyScope";
 import { acServiceConfig, callAcService } from "../services/autocount-writeback";
 import systemHealthLogins from "./systemHealthLogins";
 import systemHealthServices from "./systemHealthServices";
+import systemHealthDatabase from "./systemHealthDatabase";
 
 // ---------------------------------------------------------------------------
 // /api/admin/health — System Health, "real data" phase 1. Every route needs the
@@ -44,6 +45,7 @@ const app = new Hono<{ Bindings: Env }>();
 app.use("*", requireItPages());
 app.route("/", systemHealthLogins);
 app.route("/", systemHealthServices);
+app.route("/", systemHealthDatabase);
 
 // Sensitive-action matcher (SQL): security-relevant mutations worth a
 // dedicated eye. Kept in one place so /live counts and /audit-feed agree.

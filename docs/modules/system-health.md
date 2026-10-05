@@ -28,10 +28,13 @@ Admin-only diagnostic and manual-refresh surface for integrations that normally 
 - `/api/announcements` is served by three routers mounted on the same prefix in order (module, receipts, approval) — a route added to the wrong one can silently shadow or be shadowed.
 - Failed logins (`public.auth_failed_logins`, `GET /logins`): every failed branch of `/auth/login` and `/auth/totp/login` saves a row via `recordFailedLogin` AFTER the response (waitUntil, errors only logged); it must never change the login's status, body or timing, and never store the password or code. Kept 90 days (`pruneFailedLogins`, daily cron).
 - `/logins` verdict: one email >= 10 failures in 24 h or > 100 total = warning; one email >= 30 = critical. Rate-limited attempts count as failures.
+- `GET /database`: one catalog statement per metric, each in its own transaction with `SET LOCAL statement_timeout = '5s'`. Never plain `SET`: the Hyperdrive pooler is session mode, so it would leak.
+- Without `pg_read_all_stats`, other roles' sessions are hidden: long-transaction counts become a lower bound and `limitedVisibility` is set. Lock waits read `pg_locks` (any role can read it, and it has `waitstart`).
+- Connections are judged against the smaller of `max_connections` and the 60-connection cap noted in `wrangler.toml`.
 
 ## Where the code is
 
-- `backend/src/routes/systemHealth.ts` — all diagnostic/refresh routes.
+- `backend/src/routes/systemHealth.ts` — all diagnostic/refresh routes; `systemHealthDatabase.ts` (database load) is mounted inside it.
 - `backend/src/routes/systemHealthServices.ts` — `GET /services`, one row per outside service, read only from what is already recorded (`execution_logs`, `scm.autocount_outbox`, `email_log`, `scm.wa_message_log`, `push_devices`, `scm.venture_portal_outbox`, `ai_usage_events`); verdict rules in `services/serviceHealth.ts`. Mail-inbox sync and untimed APNs errors are not recorded, so they cannot be judged.
 - `backend/src/scm/lib/paginate-all.ts` — the `paginateAll` pagination helper `/rest-page-ceiling` measures.
 - `backend/src/db/supabase.ts` — PostgREST client used by the ceiling probe.
