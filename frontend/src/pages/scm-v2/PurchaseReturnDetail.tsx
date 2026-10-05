@@ -59,6 +59,7 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
+import { DateField } from '../../vendor/scm/components/DateField';
 import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipMapButton';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import styles from './SalesOrderDetail.module.css';
@@ -675,8 +676,8 @@ const SupplierCard = ({
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Return Date</span>
-            <input type="date" className={styles.fieldInput} value={draft.returnDate} disabled={locked}
-              onChange={(e) => onField('returnDate', e.target.value)} />
+            <DateField fullWidth className={styles.fieldInput} value={draft.returnDate} disabled={locked}
+              onChange={(iso) => onField('returnDate', iso)} />
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Credit Note Ref</span>
