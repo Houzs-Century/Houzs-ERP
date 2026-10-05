@@ -75,8 +75,17 @@ vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
   useDeleteApInvoiceFile: () => ({ mutateAsync: deleteAsync, isPending: false }),
   fetchApInvoiceFileBlobUrl: vi.fn(),
 }));
-vi.mock('../../vendor/scm/lib/payment-request-queries', () => ({
+/* The same bill elsewhere (owner 2026-10-05: 提醒也加) — answered by number|date;
+   every ask is kept with what it excluded. */
+let sameBill: Record<string, unknown[]> = {};
+const billMatchAsks: Array<[string, string, string | null, string | null]> = [];
+vi.mock('../../vendor/scm/lib/payment-request-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/payment-request-queries')>()),
   usePaymentRequest: (id: string | null) => ({ data: id && requestDetail ? { request: requestDetail, finance: true } : undefined, isLoading: false }),
+  useBillMatches: (no: string, date: string, excludeRequest: string | null = null, excludeApInvoice: string | null = null) => {
+    billMatchAsks.push([no, date, excludeRequest, excludeApInvoice]);
+    return { data: { matches: sameBill[`${no.trim()}|${date}`] ?? [] } };
+  },
 }));
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useExtractBills: () => ({ mutateAsync: extractAsync, isPending: false }),
@@ -457,5 +466,48 @@ describe('a payment request answered by a bill (?fromRequest=, owner 2026-09-30 
   test('?open= opens a bill\'s detail — the request\'s link to its invoice', () => {
     render(<MemoryRouter initialEntries={['/scm/ap-invoices?open=api-1']}><ApInvoices /></MemoryRouter>);
     expect(within(dialog()).getByText('Rent Sept')).toBeTruthy();
+  });
+});
+
+/* 提醒也加 (owner 2026-10-05): a bill whose printed number and date already sit
+   on another request, voucher or AP invoice is said under the bill's own
+   fields — a warning, never a block; an edited bill never finds itself. */
+describe('the same bill already entered', () => {
+  test('a pile bill already on the books is said under its number and date, and the save still goes', async () => {
+    createAsync.mockClear();
+    sameBill = { 'HVH-0913|2026-09-02': [{ kind: 'API', id: 'api-9', number: '2990-API-2609-009', amountSen: 150_000, status: 'POSTED', answeredBy: null }] };
+    try {
+      render(
+        <MemoryRouter initialEntries={[{ pathname: '/scm/ap-invoices', state: { apPrefill: {
+          extraction: {
+            vendorName: 'HOUZS VENTURE HOLDING SDN. BHD.', vendorRegNo: null, documentKind: 'invoice', invoiceNumber: 'hvh-0913',
+            invoiceDate: '2026-09-02', dueDate: null, currency: 'MYR', totalSen: 150_000, sstSen: null,
+            lines: [{ description: 'Rent Oct', amountSen: 150_000 }],
+          },
+          supplierMatch: { id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD', confidence: 'contains' },
+          memory: { payeeName: 'HOUZS VENTURE HOLDING SDN BHD', debitAccountCode: '900-A001', purpose: 'SUPPLIER_PAYMENT', timesSeen: 2 },
+        } } }]}><ApInvoices /></MemoryRouter>,
+      );
+      const d = dialog();
+      const note = within(d).getByRole('alert', { name: 'Same bill elsewhere' });
+      expect(note.textContent).toContain('这张单已经有了');
+      expect(note.textContent).toContain('AP invoice 2990-API-2609-009 · RM 1,500.00 · posted');
+      /* Only a warning: the bill still saves. */
+      fireEvent.click(within(d).getByText('Save as draft'));
+      await waitFor(() => expect(createAsync).toHaveBeenCalled());
+    } finally {
+      sameBill = {};
+    }
+  });
+
+  test('a bill with nothing else under its number shows no warning; an edited bill asks without itself', () => {
+    detailStatus = 'DRAFT';
+    billMatchAsks.length = 0;
+    draw();
+    fireEvent.click(screen.getByText('2990-API-2609-001'));
+    fireEvent.click(screen.getByText('Edit'));
+    const form = screen.getAllByRole('dialog')[1]!;
+    expect(within(form).queryByRole('alert', { name: 'Same bill elsewhere' })).toBeNull();
+    expect(billMatchAsks.at(-1)).toEqual(['HVH-0912', '2026-09-01', null, 'api-1']);
   });
 });
