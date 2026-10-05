@@ -19,9 +19,11 @@
 //      snapshotted (revision 2 -> 3) and the SO audit trail records it;
 //   3. refuse unless exactly one line was added, nothing was removed, no
 //      warning was raised, the new line is priced, and the four existing lines
-//      are unchanged;
-//   4. queue the AutoCount PO edit (enqueueEdit) naming the inserted row, as the
-//      PO line routes do, so PO-010084 in AutoCount gains the line too.
+//      are unchanged.
+//
+// ERP ONLY. Nothing is queued to AutoCount: a repair client does not push to
+// the account book (tests/acWritebackPushAllowlist.test.mjs). PO-010084 in
+// AutoCount gains the line by its own route, decided separately.
 //
 // DRY-RUN BY DEFAULT: plan runs all of it and ROLLS BACK. MODE=apply with the
 // CONFIRM phrase commits, then re-reads on a fresh connection.
@@ -36,7 +38,6 @@ import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { reviseBoundPo } from "../src/scm/lib/so-revision.ts";
 import { pgTransactionSupabase } from "../src/scm/lib/pg-supabase-transaction.ts";
-import { enqueueEdit } from "../src/scm/lib/autocount-outbox.ts";
 
 const APPLY = (process.env.MODE || "plan").toLowerCase() === "apply";
 const CONFIRM_PHRASE = "ADD 9028-1NA TO HC-PO-010084";
@@ -143,23 +144,6 @@ try {
     log(`after:  ${PO_NUMBER} rev ${poAfter.revision}, ${after.length} lines, subtotal ${rm(poAfter.subtotal_sen)}`);
     log(`  + line ${line.line_no}: ${line.item_code}  qty ${line.qty}  ${rm(line.unit_price_sen)}  ${line.supplier_sku}  ${line.description2 ?? ""}`);
     log(`  delivery ${line.delivery_date instanceof Date ? line.delivery_date.toISOString().slice(0, 10) : line.delivery_date}`);
-
-    // 4. AutoCount PO-010084 gets the line through the outbox, as a PO line insert does.
-    const queued = await enqueueEdit(sb, {
-      companyId: po.company_id ?? COMPANY_ID, docType: "PO", docId: PO_ID, docNo: PO_NUMBER, newLineIds: [line.id],
-    });
-    log(`AutoCount edit queued: ${queued}`);
-    if (!queued) {
-      // enqueueEdit is silent about WHY; these two reads say it.
-      const [flag] = await tx`SELECT value FROM scm.app_config WHERE key = 'scm.autocount_writeback'`;
-      const [poLink] = await tx`SELECT linked_ac_docno FROM scm.purchase_orders WHERE id = ${PO_ID}`;
-      const recent = await tx`
-        SELECT op, status, created_at, last_error AS why
-        FROM scm.autocount_outbox WHERE doc_type = 'PO' AND (doc_id = ${PO_ID} OR doc_no = ${PO_NUMBER})
-        ORDER BY created_at DESC LIMIT 5`;
-      log(`  write-back flag: ${JSON.stringify(flag?.value ?? null)}  linked_ac_docno: ${poLink?.linked_ac_docno ?? null}`);
-      for (const r of recent) log(`  outbox ${r.op} ${r.status} ${r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at} ${r.why ?? ""}`);
-    }
 
     if (!APPLY) throw new Error(DRY_RUN_ROLLBACK);
     outcome = "applied";
