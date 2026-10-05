@@ -47,7 +47,8 @@ const muted: React.CSSProperties = { color: 'var(--fg-muted)' };
 
 /** The figures line — pure, so a test reads it without the buttons. */
 export function moneySummary(m: OrderMoney): string {
-  const parts = [`Paid ${fmtRm(m.bookedSen)}`];
+  const fromAutoCount = m.importedSen ?? 0;
+  const parts = [`Paid ${fmtRm(m.bookedSen)}${fromAutoCount > 0 ? ` (incl. ${fmtRm(fromAutoCount)} from AutoCount)` : ''}`];
   if (m.refundedSen > 0) parts.push(`Refunded ${fmtRm(m.refundedSen)}`);
   if (m.convertedSen > 0) parts.push(`Moved ${fmtRm(m.convertedSen)}`);
   parts.push(`Remaining ${fmtRm(m.remainingSen)}`);

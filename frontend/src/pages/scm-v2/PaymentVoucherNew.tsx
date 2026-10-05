@@ -998,13 +998,13 @@ export const PaymentVoucherNew = () => {
                         <td style={{ padding: '6px 8px' }}>{p.method}</td>
                         <td style={{ padding: '6px 8px' }}>{p.provider ?? '—'}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(p.amountSen)}</td>
-                        <td style={{ padding: '6px 8px' }}>{p.booked ? '✓ booked' : p.method === 'imported' ? 'AutoCount era' : 'not booked'}</td>
+                        <td style={{ padding: '6px 8px' }}>{p.booked ? '✓ booked' : p.method === 'imported' ? (refundSrc.type === 'SO' ? 'from AutoCount — counts' : 'AutoCount era') : 'not booked'}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', fontSize: 'var(--fs-13)', borderTop: '1px solid var(--line)', paddingTop: 'var(--space-3)' }}>
-                  <span>Booked here <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.bookedSen)}</b></span>
+                  <span>Paid <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.bookedSen)}</b>{(refundSrc.importedSen ?? 0) > 0 ? <span style={{ color: 'var(--fg-muted)' }}> (incl. {fmtRm(refundSrc.importedSen ?? 0)} from AutoCount)</span> : null}</span>
                   <span>Already on refund vouchers <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.refundedSen)}</b>
                     {refundSrc.refunds.map((r) => <span key={r.id}> · <a href={`/scm/payment-vouchers/${r.id}`} style={{ color: 'var(--c-orange)' }}>{r.pvNumber}</a></span>)}
                   </span>
