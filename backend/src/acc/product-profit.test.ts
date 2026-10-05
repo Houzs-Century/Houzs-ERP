@@ -14,19 +14,19 @@ const ln = (doc: string, group: string, code: string, qty: number, sales: number
   doc_no: doc, item_group: group, item_code: code, description: null, qty, total_sen: sales, unit_cost_sen: null, line_cost_sen: cost, cancelled: false, ...over,
 });
 const PRODUCTS: PpProduct[] = [
-  { code: 'ULT-Q', model_id: 1, base_model: null, size_label: 'Queen' },
-  { code: 'ULT-K', model_id: 1, base_model: null, size_label: 'King' },
-  { code: 'GRD-Q', model_id: 2, base_model: null, size_label: 'Queen' },
-  { code: 'SOF-1A', model_id: 3, base_model: null, size_label: null },
-  { code: 'SOF-CNR', model_id: 3, base_model: null, size_label: null },
-  { code: 'JAG-Q', model_id: 4, base_model: null, size_label: 'Queen' },
+  { code: 'ULT-Q', model_id: 'a1b2c3d4-0000-4000-8000-000000000001', base_model: null, size_label: 'Queen' },
+  { code: 'ULT-K', model_id: 'a1b2c3d4-0000-4000-8000-000000000001', base_model: null, size_label: 'King' },
+  { code: 'GRD-Q', model_id: 'a1b2c3d4-0000-4000-8000-000000000002', base_model: null, size_label: 'Queen' },
+  { code: 'SOF-1A', model_id: 'a1b2c3d4-0000-4000-8000-000000000003', base_model: null, size_label: null },
+  { code: 'SOF-CNR', model_id: 'a1b2c3d4-0000-4000-8000-000000000003', base_model: null, size_label: null },
+  { code: 'JAG-Q', model_id: 'a1b2c3d4-0000-4000-8000-000000000004', base_model: null, size_label: 'Queen' },
   { code: 'PIL', model_id: null, base_model: 'PILLOW', size_label: null },
 ];
 const MODELS: PpModel[] = [
-  { id: 1, name: 'ULTIMATE', branding: 'AKEMI' },
-  { id: 2, name: 'GUARDIAN', branding: 'AKEMI' },
-  { id: 3, name: 'SOFFIO', branding: 'ZANOTTI' },
-  { id: 4, name: 'JAGER', branding: null },
+  { id: 'a1b2c3d4-0000-4000-8000-000000000001', name: 'ULTIMATE', branding: 'AKEMI' },
+  { id: 'a1b2c3d4-0000-4000-8000-000000000002', name: 'GUARDIAN', branding: 'AKEMI' },
+  { id: 'a1b2c3d4-0000-4000-8000-000000000003', name: 'SOFFIO', branding: 'ZANOTTI' },
+  { id: 'a1b2c3d4-0000-4000-8000-000000000004', name: 'JAGER', branding: null },
 ];
 const build = (orders: PpOrder[], lines: PpLine[]) =>
   buildProductProfit({ month: '2026-09', from: '2026-09-01', to: '2026-09-30', orders, lines, products: PRODUCTS, models: MODELS });

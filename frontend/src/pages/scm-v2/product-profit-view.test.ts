@@ -49,8 +49,8 @@ describe('product-profit-view', () => {
 
   test('the waterfall: sales, less own cost, less the gifts when they count, is gross profit', () => {
     const t = totalsOf(viewRows(DATA, view(['mattress'])), true);
-    expect(waterfallOf(t, true).map((s) => s.label)).toEqual(['营业额', '产品成本', '送的东西', '毛利']);
-    expect(waterfallOf(t, false).map((s) => s.label)).toEqual(['营业额', '产品成本', '毛利']);
+    expect(waterfallOf(t, true).map((s) => s.label)).toEqual(['Sales', 'Product cost', 'Gifts', 'Gross profit']);
+    expect(waterfallOf(t, false).map((s) => s.label)).toEqual(['Sales', 'Product cost', 'Gross profit']);
     const s = waterfallOf(t, true);
     expect(s[0].valueSen + s[1].valueSen + s[2].valueSen).toBe(s[3].valueSen);
   });
@@ -62,7 +62,7 @@ describe('product-profit-view', () => {
     expect(mat.slices.map((s) => s.label)).toEqual(['ULTIMATE', 'GUARDIAN']);
     const all = donutOf(viewRows(DATA, view([])), view([]));
     expect(all.byCategory).toBe(true);
-    expect(all.slices.map((s) => s.label)).toEqual(['床垫', '沙发', '床架']);
+    expect(all.slices.map((s) => s.label)).toEqual(['Mattress', 'Sofa', 'Bedframe']);
     expect(all.losers).toEqual({ count: 1, sen: -10_000 });
   });
 
@@ -76,13 +76,13 @@ describe('product-profit-view', () => {
   test('Excel and PDF draw the rows as shown, with the gifts column only when they count', () => {
     const rows = viewRows(DATA, view(['mattress']));
     const on = productProfitSheet(DATA, view(['mattress']), rows);
-    expect(on.tables[0].columns.map((c) => c.label)).toEqual(['类别', '卖了几', '平均售价', '营业额', '产品成本', '送的东西', '毛利', '毛利率', '送的床架']);
-    expect(on.tables[0].rows[0]).toMatchObject({ label: '1. ULTIMATE · AKEMI', cells: ['床垫', '89 张', 673_256, 59_919_800, 14_650_000, 11_200_300, 34_069_500, expect.any(Number), '87 张 · 54,038.00'] });
+    expect(on.tables[0].columns.map((c) => c.label)).toEqual(['Category', 'Sold', 'Avg price', 'Sales', 'Product cost', 'Gifts', 'Gross profit', 'Margin', 'Free bedframes']);
+    expect(on.tables[0].rows[0]).toMatchObject({ label: '1. ULTIMATE · AKEMI', cells: ['Mattress', '89 pcs', 673_256, 59_919_800, 14_650_000, 11_200_300, 34_069_500, expect.any(Number), '87 pcs · 54,038.00'] });
     expect(on.tables[0].rows.at(-1)).toMatchObject({ kind: 'total' });
-    expect(on.subtitle).toBe('2026-09 · 床垫 · 包括送的东西 · RM');
+    expect(on.subtitle).toBe('2026-09 · Mattress · gifts included · RM');
     const off = productProfitSheet(DATA, view(['mattress'], false), rows);
-    expect(off.tables[0].columns.map((c) => c.label)).not.toContain('送的东西');
-    expect(profitNotes(DATA, view([], false), rows).some((n) => n.startsWith('这次不算送的东西'))).toBe(true);
-    expect(profitNotes(DATA, view([]), rows).some((n) => n.includes('2 张单只有送的东西'))).toBe(true);
+    expect(off.tables[0].columns.map((c) => c.label)).not.toContain('Gifts');
+    expect(profitNotes(DATA, view([], false), rows).some((n) => n.startsWith('Gifts are not counted this time'))).toBe(true);
+    expect(profitNotes(DATA, view([]), rows).some((n) => n.includes('2 order(s) carry gifts but no paid product'))).toBe(true);
   });
 });

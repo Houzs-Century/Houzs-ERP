@@ -46,24 +46,25 @@ export async function loadProductProfit(sb: Db, companyId: number, range: { from
   if (its.error) return { ok: false, reason: failed(its.error) };
   const lines = its.data;
 
-  const codes = [...new Set(lines.map((l) => String(l.item_code ?? '').trim()).filter(Boolean))];
-  const prods = await chunkIn<PpProduct>(codes, (batch, f, t) =>
+  /* The company's product list and models, read whole (a few thousand short
+     rows), never by an `in` list of item codes: a code can carry a double
+     quote (DUNLOPILLO GENERASI 5" MATT) that PostgREST's in-list cannot hold,
+     and a model id is a uuid. The builder looks up only the codes it meets. */
+  const prods = await paginateAll<PpProduct>((f, t) =>
     sb.from('mfg_products')
       .select('code, model_id, base_model, size_label')
-      .eq('company_id', companyId).in('code', batch)
+      .eq('company_id', companyId)
       .order('code').range(f, t));
   if (prods.error) return { ok: false, reason: failed(prods.error) };
-  const products = prods.data;
 
-  const modelIds = [...new Set(products.map((x) => x.model_id).filter((v): v is number => v != null).map(Number))];
-  const mods = await chunkIn<PpModel, number>(modelIds, (batch, f, t) =>
+  const mods = await paginateAll<PpModel>((f, t) =>
     sb.from('product_models')
       .select('id, name, branding')
-      .eq('company_id', companyId).in('id', batch)
+      .eq('company_id', companyId)
       .order('id').range(f, t));
   if (mods.error) return { ok: false, reason: failed(mods.error) };
 
-  return { ok: true, orders, lines, products, models: mods.data };
+  return { ok: true, orders, lines, products: (prods.data ?? []) as PpProduct[], models: (mods.data ?? []) as PpModel[] };
 }
 
 export const productProfitHandler = async (c: Ctx): Promise<Response> => {

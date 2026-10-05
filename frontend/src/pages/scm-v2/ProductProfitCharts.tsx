@@ -90,13 +90,13 @@ export const ShareDonut = forwardRef<SVGSVGElement, { slices: Slice[]; footnote?
   return (
     <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: W, display: 'block' }} fontFamily={FONT} role="img" aria-label="Share of gross profit">
       <rect x={0} y={0} width={W} height={H} fill="#ffffff" />
-      {total <= 0 && <text x={cx} y={cy} fontSize={12} fill={MUTED} textAnchor="middle">没有赚钱的款</text>}
+      {total <= 0 && <text x={cx} y={cy} fontSize={12} fill={MUTED} textAnchor="middle">No product made money</text>}
       {total > 0 && arcs.map((a, i) => (a.whole
         ? <circle key={i} cx={cx} cy={cy} r={(R + r) / 2} fill="none" stroke={a.fill} strokeWidth={R - r} />
         : <path key={i} d={a.d} fill={a.fill} stroke="#ffffff" strokeWidth={1.5} />))}
       {total > 0 && (
         <>
-          <text x={cx} y={cy - 4} fontSize={11} fill={MUTED} textAnchor="middle">毛利</text>
+          <text x={cx} y={cy - 4} fontSize={11} fill={MUTED} textAnchor="middle">Gross profit</text>
           <text x={cx} y={cy + 13} fontSize={14} fontWeight={600} fill={INK} textAnchor="middle">{compact(total)}</text>
         </>
       )}
@@ -133,7 +133,7 @@ export const ProfitWaterfall = forwardRef<SVGSVGElement, { steps: Step[] }>(({ s
   const slot = (right - left) / Math.max(steps.length, 1);
   const barW = Math.min(64, slot * 0.58);
   const ticks = [0, 1, 2, 3, 4].map((k) => lo + ((hi - lo) * k) / 4);
-  const fill = (s: Step) => (s.kind === 'start' ? PETROL : s.kind === 'end' ? GREEN : s.label === '送的东西' ? BRASS : RED);
+  const fill = (s: Step) => (s.key === 'sales' ? PETROL : s.key === 'gp' ? GREEN : s.key === 'gifts' ? BRASS : RED);
   return (
     <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: W, display: 'block' }} fontFamily={FONT} role="img" aria-label="From sales to gross profit">
       <rect x={0} y={0} width={W} height={H} fill="#ffffff" />
@@ -149,7 +149,7 @@ export const ProfitWaterfall = forwardRef<SVGSVGElement, { steps: Step[] }>(({ s
         const yBot = yOf(Math.min(a, b));
         const cx = left + slot * i + slot / 2;
         return (
-          <g key={s.label}>
+          <g key={s.key}>
             <rect x={cx - barW / 2} y={yTop} width={barW} height={Math.max(1, yBot - yTop)} rx={3} fill={fill(s)} />
             <text x={cx} y={yTop - 6} fontSize={11} fill={INK2} textAnchor="middle">{compact(s.valueSen)}</text>
             <text x={cx} y={H - 14} fontSize={12} fill={INK} textAnchor="middle">{s.label}</text>
