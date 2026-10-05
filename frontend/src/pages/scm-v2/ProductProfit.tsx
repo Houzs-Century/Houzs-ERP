@@ -19,10 +19,10 @@ import { generateReportPdf } from '../../vendor/scm/lib/report-sheet-pdf';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { fmtSen, fmtSenPlain } from '../../vendor/shared/format';
 import {
-  CATEGORY_LABEL, CATEGORY_ORDER, donutOf, freeBedframesText, giftsLabel, gpOf, gpPctOf, productProfitSheet, profitNotes,
+  CATEGORY_LABEL, CATEGORY_ORDER, compact, donutOf, rankingOf, freeBedframesText, giftsLabel, gpOf, gpPctOf, productProfitSheet, profitNotes,
   showsFreeBedframes, totalsOf, unitsText, viewLabel, viewRows, waterfallOf, type ProfitView, type SortKey,
 } from './product-profit-view';
-import { ProfitWaterfall, RankingChart, ShareDonut, chartsPng, compact } from './ProductProfitCharts';
+import { ProfitWaterfall, RankingChart, ShareDonut, chartsPng } from './ProductProfitCharts';
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const num: React.CSSProperties = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
@@ -81,10 +81,10 @@ export const ProductProfitTab = () => {
     if (next.has(key)) next.delete(key); else next.add(key);
     return next;
   });
-  const top = useMemo(() => [...rows].sort((a, b) => gpOf(b, gifts) - gpOf(a, gifts)).slice(0, 10), [rows, gifts]);
+  const ranking = useMemo(() => rankingOf(rows, v), [rows, v]);
   const shownMonth = d?.month ?? month;
   const fileBase = `product-profit-${shownMonth}`;
-  const title = `Product Profit · ${shownMonth} · ${viewLabel(v)} · ${giftsLabel(gifts)}`;
+  const title = `Product Profit · ${shownMonth} · ${viewLabel(v)} · ${giftsLabel(gifts)} · ${ranking.title.toLowerCase()}`;
   const donutNote = donut.losers.count > 0
     ? `${donut.losers.count} ${donut.byCategory ? (donut.losers.count === 1 ? 'category' : 'categories') : (donut.losers.count === 1 ? 'model' : 'models')} lost money (${compact(donut.losers.sen)}) — not in the donut`
     : undefined;
@@ -147,8 +147,8 @@ export const ProductProfitTab = () => {
                   cards stacked on the right (lg and up); below that they stack. */}
               <div className="grid gap-3 lg:grid-cols-12" aria-label="Charts">
                 <div className="lg:col-span-7" style={{ ...card, display: 'flex', flexDirection: 'column' }}>
-                  <div style={cardTitle}>Gross profit ranking · top {top.length} <span style={{ ...soft, fontWeight: 400 }}>(bar end: gross profit · margin)</span></div>
-                  <RankingChart ref={rankRef} bars={top.map((r) => ({ label: r.model, valueSen: gpOf(r, gifts), note: `${compact(gpOf(r, gifts))} · ${r.noCostLines > 0 && r.costSen === 0 ? 'no cost' : pctText(gpPctOf(r, gpOf(r, gifts)))}` }))} />
+                  <div style={cardTitle}>{ranking.title} · top {ranking.bars.length} <span style={{ ...soft, fontWeight: 400 }}>(bar end: {ranking.end})</span></div>
+                  <RankingChart ref={rankRef} bars={ranking.bars} />
                 </div>
                 <div className="lg:col-span-5" style={{ display: 'grid', gap: 'var(--space-3)', alignContent: 'start', minWidth: 0 }}>
                   <div style={card}>

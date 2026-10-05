@@ -7,7 +7,7 @@
 import { describe, expect, test } from 'vitest';
 import type { ProductProfitData, ProductProfitRow } from '../../vendor/scm/lib/product-profit-queries';
 import {
-  donutOf, gpOf, productProfitSheet, profitNotes, showsFreeBedframes, totalsOf, viewRows, waterfallOf, type ProfitView,
+  donutOf, gpOf, productProfitSheet, profitNotes, rankingOf, showsFreeBedframes, totalsOf, viewRows, waterfallOf, type ProfitView,
 } from './product-profit-view';
 
 const row = (model: string, category: ProductProfitRow['category'], units: number, salesSen: number, costSen: number, giftSen: number, over: Partial<ProductProfitRow> = {}): ProductProfitRow => ({
@@ -64,6 +64,22 @@ describe('product-profit-view', () => {
     expect(all.byCategory).toBe(true);
     expect(all.slices.map((s) => s.label)).toEqual(['Mattress', 'Sofa', 'Bedframe']);
     expect(all.losers).toEqual({ count: 1, sen: -10_000 });
+  });
+
+  test('the ranking chart measures what the rows are ranked by', () => {
+    const gp = rankingOf(viewRows(DATA, view([])), view([]));
+    expect(gp.title).toBe('Gross profit ranking');
+    expect(gp.bars[0]).toMatchObject({ label: 'ULTIMATE', value: 34_069_500, note: '341k · 56.9%' });
+    const units = rankingOf(viewRows(DATA, view([], true, 'units')), view([], true, 'units'));
+    expect(units.title).toBe('Units sold ranking');
+    expect(units.bars.map((b) => [b.label, b.value])).toEqual([['ULTIMATE', 89], ['GUARDIAN', 54], ['SOFFIO', 41], ['PILLOW', 20], ['JAGER', 3]]);
+    expect(units.bars[2].note).toBe('41 sets · 117k');
+    const sales = rankingOf(viewRows(DATA, view(['mattress'], true, 'sales')), view(['mattress'], true, 'sales'));
+    expect(sales).toMatchObject({ title: 'Sales ranking', bars: [{ label: 'ULTIMATE', value: 59_919_800 }, { label: 'GUARDIAN', value: 27_495_000 }] });
+    const margin = rankingOf(viewRows(DATA, view(['sofa', 'other'], true, 'gpPct')), view(['sofa', 'other'], true, 'gpPct'));
+    expect(margin.title).toBe('Margin ranking');
+    expect(margin.bars.map((b) => b.label)).toEqual(['SOFFIO', 'PILLOW']);
+    expect(margin.bars[1].value).toBeLessThan(0);
   });
 
   test('the free-bedframe tile shows with mattresses or bedframes in view', () => {

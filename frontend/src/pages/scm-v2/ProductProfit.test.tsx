@@ -58,7 +58,7 @@ describe('Product Profit', () => {
     expect(t.getByText('1 pc · 900.00')).toBeTruthy();
     expect(t.getByText(/Cost incomplete/)).toBeTruthy();
     expect(within(screen.getByLabelText('Totals')).getByText('Free bedframes')).toBeTruthy();
-    expect(screen.getByRole('img', { name: 'Gross profit by product, highest first' })).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'Products ranked, highest first' })).toBeTruthy();
     expect(screen.getByRole('img', { name: 'Share of gross profit' })).toBeTruthy();
     expect(screen.getByRole('img', { name: 'From sales to gross profit' })).toBeTruthy();
   });
@@ -82,6 +82,15 @@ describe('Product Profit', () => {
     fireEvent.click(screen.getByRole('checkbox'));
     expect(table().queryByText('Gifts')).toBeNull();
     expect(table().getAllByText('9,000.00').length).toBeGreaterThan(0);
+  });
+
+  test('the ranking chart follows Rank by', () => {
+    render(<ProductProfitTab />);
+    const charts = within(screen.getByLabelText('Charts'));
+    expect(charts.getByText(/Gross profit ranking · top 3/)).toBeTruthy();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Rank by' }), { target: { value: 'units' } });
+    expect(charts.getByText(/Units sold ranking · top 3/)).toBeTruthy();
+    expect(modelsShown().map((t) => t.replace(/ ·.*$/, ''))).toEqual(['ULTIMATE', 'SOFFIO', 'JAGER']);
   });
 
   test('▸ opens a model\'s sizes', () => {

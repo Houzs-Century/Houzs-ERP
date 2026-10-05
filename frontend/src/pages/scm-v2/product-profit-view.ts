@@ -94,6 +94,34 @@ export const viewLabel = (v: ProfitView): string =>
   (v.cats.size === 0 ? 'All' : CATEGORY_ORDER.filter((c) => v.cats.has(c)).map((c) => CATEGORY_LABEL[c]).join(' + '));
 export const giftsLabel = (gifts: boolean): string => (gifts ? 'gifts included' : 'gifts not counted');
 
+/** A figure the way a chart can carry it: 1.50m, 341k, 950. */
+export const compact = (sen: number): string => {
+  const rm = Math.abs(sen) / 100;
+  const s = rm >= 1_000_000 ? `${(rm / 1_000_000).toFixed(2)}m` : rm >= 10_000 ? `${Math.round(rm / 1000).toLocaleString('en-US')}k` : rm >= 1000 ? `${(rm / 1000).toFixed(1)}k` : String(Math.round(rm));
+  return (sen < 0 ? '-' : '') + s;
+};
+
+/** One bar of the ranking chart: its length is `value` in whatever the ranking measures. */
+export type RankBar = { label: string; value: number; note: string };
+export type Ranking = { title: string; end: string; bars: RankBar[] };
+
+/** The ranking chart follows Rank by (owner 2026-10-05: 「rank by 选了只是下面的 table
+    换了是吗？」 → 做): the first ten rows as the table ranks them, the bar measuring
+    what they are ranked by, the bar end carrying that figure and one more. */
+export function rankingOf(rows: readonly ProductProfitRow[], v: ProfitView): Ranking {
+  const top = rows.slice(0, 10);
+  const gp = (r: ProductProfitRow) => gpOf(r, v.gifts);
+  const margin = (r: ProductProfitRow): string => {
+    if (r.noCostLines > 0 && r.costSen === 0) return 'no cost';
+    const p = gpPctOf(r, gp(r));
+    return p == null ? '—' : `${p.toFixed(1)}%`;
+  };
+  if (v.sort === 'units') return { title: 'Units sold ranking', end: 'units sold · gross profit', bars: top.map((r) => ({ label: r.model, value: r.units, note: `${unitsText(r)} · ${compact(gp(r))}` })) };
+  if (v.sort === 'sales') return { title: 'Sales ranking', end: 'sales · margin', bars: top.map((r) => ({ label: r.model, value: r.salesSen, note: `${compact(r.salesSen)} · ${margin(r)}` })) };
+  if (v.sort === 'gpPct') return { title: 'Margin ranking', end: 'margin · gross profit', bars: top.map((r) => ({ label: r.model, value: gpPctOf(r, gp(r)) ?? 0, note: `${margin(r)} · ${compact(gp(r))}` })) };
+  return { title: 'Gross profit ranking', end: 'gross profit · margin', bars: top.map((r) => ({ label: r.model, value: gp(r), note: `${compact(gp(r))} · ${margin(r)}` })) };
+}
+
 /** The foot: what the figures leave out, and what reads high. */
 export function profitNotes(d: ProductProfitData, v: ProfitView, rows: readonly ProductProfitRow[]): string[] {
   const notes = ['By SO date. Draft and cancelled orders, cancelled lines and service lines (delivery, installation) are left out.'];

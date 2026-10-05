@@ -11,7 +11,9 @@
 // ----------------------------------------------------------------------------
 
 import { forwardRef, useEffect, useRef, useState } from 'react';
-import type { Slice, Step } from './product-profit-view';
+import { compact, type RankBar, type Slice, type Step } from './product-profit-view';
+
+export { compact };
 
 const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
 const INK = '#11140f';
@@ -26,12 +28,6 @@ export const SLICE_COLOURS = ['#16695f', '#a16a2e', '#1f3a8a', '#2f8a5b', '#7a3e
 const REST_COLOUR = '#c2c6bd';
 const CATEGORY_COLOURS = { mattress: '#16695f', sofa: '#a16a2e', bedframe: '#1f3a8a', other: '#767b6e' } as const;
 
-/** A figure the way a chart can carry it: 1.50m, 341k, 950. */
-export const compact = (sen: number): string => {
-  const rm = Math.abs(sen) / 100;
-  const s = rm >= 1_000_000 ? `${(rm / 1_000_000).toFixed(2)}m` : rm >= 10_000 ? `${Math.round(rm / 1000).toLocaleString('en-US')}k` : rm >= 1000 ? `${(rm / 1000).toFixed(1)}k` : String(Math.round(rm));
-  return (sen < 0 ? '-' : '') + s;
-};
 const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
@@ -55,10 +51,8 @@ function useBox(defaults: { w: number; h: number }) {
   return [ref, box] as const;
 }
 
-export type RankBar = { label: string; valueSen: number; note: string };
-
-/** The gross-profit ranking: one bar per product, the figure and its margin at
-    the end. It fills its card's height — the rows grow to meet the cards
+/** The ranking: one bar per product, measuring what the rows are ranked by,
+    the figures at the end. It fills its card's height — the rows grow to meet the cards
     beside it — and never draws a row shorter than 24px. */
 export const RankingChart = forwardRef<SVGSVGElement, { bars: RankBar[] }>(({ bars }, ref) => {
   const n = Math.max(1, bars.length);
@@ -69,8 +63,8 @@ export const RankingChart = forwardRef<SVGSVGElement, { bars: RankBar[] }>(({ ba
   const rowH = clamp((H - 12) / n, 24, 44);
   const x0 = clamp(Math.round(W * 0.26), 120, 230);
   const x1 = W - 120;
-  const lo = Math.min(0, ...bars.map((b) => b.valueSen));
-  const hi = Math.max(0, ...bars.map((b) => b.valueSen));
+  const lo = Math.min(0, ...bars.map((b) => b.value));
+  const hi = Math.max(0, ...bars.map((b) => b.value));
   const span = hi - lo || 1;
   const xOf = (v: number) => x0 + ((v - lo) / span) * (x1 - x0);
   const zero = xOf(0);
@@ -78,13 +72,13 @@ export const RankingChart = forwardRef<SVGSVGElement, { bars: RankBar[] }>(({ ba
   return (
     <div ref={holder} style={{ position: 'relative', flex: 1, minHeight: minH }}>
       <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ position: 'absolute', left: 0, top: 0, display: 'block' }}
-        fontFamily={FONT} role="img" aria-label="Gross profit by product, highest first">
+        fontFamily={FONT} role="img" aria-label="Products ranked, highest first">
         <rect x={0} y={0} width={W} height={H} fill="#ffffff" />
         <line x1={zero} x2={zero} y1={4} y2={H - 4} stroke={GRID} />
         {bars.map((b, i) => {
           const mid = 6 + i * rowH + rowH / 2;
-          const xv = xOf(b.valueSen);
-          const neg = b.valueSen < 0;
+          const xv = xOf(b.value);
+          const neg = b.value < 0;
           return (
             <g key={`${b.label}-${i}`}>
               <text x={x0 - 10} y={mid + 4} fontSize={12} fill={INK} textAnchor="end">{clip(`${i + 1}. ${b.label}`, Math.max(12, Math.floor((x0 - 14) / 7)))}</text>
