@@ -92,6 +92,7 @@ const HEAD: FeedHeadRow = {
   postcode: "43300",
   city: "Seri Kembangan",
   customer_state: "Selangor",
+  customer_country: "Malaysia",
   venue: "Balakong Showroom",
   status: "CONFIRMED",
   do_numbers: "HC-DO-2609-001",
@@ -159,6 +160,19 @@ describe("toSheetRecord — the AutoCount-named record the sheet writes", () => 
     expect(r.DocNo).toBe("HC-SO-2609-078");
     expect(r.Region).toBe("SG");
     expect(r.Remark2).toBe("READY (PARTIAL)");
+  });
+
+  test("BUG-52 HC12842: a native Singapore order sold from KL routes SG on its country", () => {
+    const r = toSheetRecord(
+      { ...HEAD, doc_no: "HC-SO-2609-110", linked_ac_docno: "HC-SO-2609-110",
+        address1: "blk 314 jurong east st32", address2: "#06-233", address3: null, address4: null,
+        postcode: "600314", city: "Jurong East", customer_state: "West", customer_country: "Singapore" },
+      [],
+    );
+    expect(r.SalesLocation).toBe("KL");
+    expect(r.InvAddr3).toBe("600314 Jurong East");
+    expect(r.Region).toBe("SG");
+    expect(toSheetRecord({ ...HEAD, customer_country: null }, []).Region).toBe("WEST");
   });
 
   test("East Malaysia branches route EAST", () => {
