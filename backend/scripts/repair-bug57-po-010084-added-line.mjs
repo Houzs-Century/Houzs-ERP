@@ -149,6 +149,17 @@ try {
       companyId: po.company_id ?? COMPANY_ID, docType: "PO", docId: PO_ID, docNo: PO_NUMBER, newLineIds: [line.id],
     });
     log(`AutoCount edit queued: ${queued}`);
+    if (!queued) {
+      // enqueueEdit is silent about WHY; these two reads say it.
+      const [flag] = await tx`SELECT value FROM scm.app_config WHERE key = 'scm.autocount_writeback'`;
+      const [poLink] = await tx`SELECT linked_ac_docno FROM scm.purchase_orders WHERE id = ${PO_ID}`;
+      const recent = await tx`
+        SELECT op, status, created_at, last_error AS why
+        FROM scm.autocount_outbox WHERE doc_type = 'PO' AND (doc_id = ${PO_ID} OR doc_no = ${PO_NUMBER})
+        ORDER BY created_at DESC LIMIT 5`;
+      log(`  write-back flag: ${JSON.stringify(flag?.value ?? null)}  linked_ac_docno: ${poLink?.linked_ac_docno ?? null}`);
+      for (const r of recent) log(`  outbox ${r.op} ${r.status} ${r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at} ${r.why ?? ""}`);
+    }
 
     if (!APPLY) throw new Error(DRY_RUN_ROLLBACK);
     outcome = "applied";
