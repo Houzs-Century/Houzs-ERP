@@ -5,8 +5,13 @@ import {
   postConnectContact,
   parseConnectCompanyProfiles,
   CONNECT_DELIVERY_AUTOMATION,
+  CONNECT_RESET_ATTRIBUTES,
+  chatCallbackUrl,
+  formatRm,
   type ConnectCompanyProfile,
 } from './connect';
+
+const CTX = { callbackUrl: 'https://erp.houzscentury.com/api/chat-callback' };
 
 describe('isConnectConfigured', () => {
   it('needs BOTH url and key', () => {
@@ -21,7 +26,7 @@ describe('buildDeliveryFollowUp', () => {
   it('single order → ref_1 only, order_total 1, automation by name', () => {
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
       { ref: 'HC13234', branding: 'AKEMI', deliveryDate: '2026/10/05' },
-    ], null);
+    ], null, CTX);
     expect(contact).toEqual({
       phone: '+60123',
       name: 'Wong',
@@ -29,11 +34,55 @@ describe('buildDeliveryFollowUp', () => {
       attributes: {
         full_name: 'Wong',
         order_total: '1',
+        button_status: '',
+        last_button: '',
+        amount: '',
+        amended_delivery_date: '',
+        amend_date_reason: '',
+        date_amended: '',
         ref_1: 'HC13234',
         delivery_date_1: '2026/10/05',
         brand_1: 'AKEMI',
+        callback_url: 'https://erp.houzscentury.com/api/chat-callback',
       },
     });
+  });
+
+  it('resets every attribute the flows read before they write, on every send', () => {
+    // Connect MERGES attributes over the contact's existing ones: without the
+    // reset the previous order's Confirm would lock this order's Amend tap and
+    // a settled balance would print again.
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+    ], null, CTX);
+    for (const key of CONNECT_RESET_ATTRIBUTES) expect(contact.attributes[key]).toBe('');
+    expect(CONNECT_RESET_ATTRIBUTES).toContain('button_status');
+    expect(CONNECT_RESET_ATTRIBUTES).toContain('amount');
+  });
+
+  it('amount = the owed sum over EVERY bundled order, formatted RM, only when > 0', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05', balanceSen: 150000 },
+      { ref: 'B2', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06', balanceSen: -5000 }, // over-paid: ignored
+      { ref: 'C3', branding: 'GOODNITE', deliveryDate: '2026/10/07', balanceSen: null },
+      { ref: 'D4', branding: 'VONO', deliveryDate: '2026/10/08', balanceSen: 2550 }, // 4th order still counts
+    ], null, CTX);
+    expect(contact.attributes.amount).toBe('1,525.50');
+  });
+
+  it('nothing owed → amount is the empty reset, so has_balance stays quiet', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05', balanceSen: 0 },
+      { ref: 'B2', branding: 'AKEMI', deliveryDate: '2026/10/05', balanceSen: -100 },
+    ], null, CTX);
+    expect(contact.attributes.amount).toBe('');
+  });
+
+  it('callback_url is the send context, verbatim', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+    ], null, { callbackUrl: 'https://houzs-erp-staging.pages.dev/api/chat-callback' });
+    expect(contact.attributes.callback_url).toBe('https://houzs-erp-staging.pages.dev/api/chat-callback');
   });
 
   it('bundles multiple orders as 1-indexed ref_N / delivery_date_N / brand_N', () => {
@@ -41,7 +90,7 @@ describe('buildDeliveryFollowUp', () => {
       { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
       { ref: 'B2', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06' },
       { ref: 'C3', branding: 'GOODNITE', deliveryDate: '2026/10/07' },
-    ], null);
+    ], null, CTX);
     expect(contact.attributes.order_total).toBe('3');
     expect(contact.attributes.ref_1).toBe('A1');
     expect(contact.attributes.ref_2).toBe('B2');
@@ -57,7 +106,7 @@ describe('buildDeliveryFollowUp', () => {
       { ref: 'C3', branding: 'GOODNITE', deliveryDate: '2026/10/07' },
       { ref: 'D4', branding: 'VONO', deliveryDate: '2026/10/08' },
       { ref: 'E5', branding: 'DREAMLAND', deliveryDate: '2026/10/09' },
-    ], null);
+    ], null, CTX);
     expect(contact.attributes.order_total).toBe('5');
     expect(contact.attributes.ref_1).toBe('A1');
     expect(contact.attributes.ref_3).toBe('C3');
@@ -75,7 +124,7 @@ describe('buildDeliveryFollowUp', () => {
     };
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
       { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
-    ], profile);
+    ], profile, CTX);
     expect(contact.attributes.company_signature).toBe('2990s Home');
     expect(contact.attributes.bank_block).toBe('Bank: Test\nAcc: 000');
     expect(contact.attributes.disposal_block).toBe('Disposal: sample');
@@ -84,10 +133,24 @@ describe('buildDeliveryFollowUp', () => {
   it('a null profile adds no per-company attributes', () => {
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
       { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
-    ], null);
+    ], null, CTX);
     expect(contact.attributes.company_signature).toBeUndefined();
     expect(contact.attributes.bank_block).toBeUndefined();
     expect(contact.attributes.disposal_block).toBeUndefined();
+  });
+});
+
+describe('chatCallbackUrl / formatRm', () => {
+  it('builds the callback URL off PUBLIC_APP_URL, trimming a trailing slash, prod as last resort', () => {
+    expect(chatCallbackUrl({ PUBLIC_APP_URL: 'https://houzs-erp-staging.pages.dev/' }))
+      .toBe('https://houzs-erp-staging.pages.dev/api/chat-callback');
+    expect(chatCallbackUrl({})).toBe('https://erp.houzscentury.com/api/chat-callback');
+  });
+
+  it('formats sen as the RM figure the message prints', () => {
+    expect(formatRm(150000)).toBe('1,500.00');
+    expect(formatRm(2550)).toBe('25.50');
+    expect(formatRm(123456789)).toBe('1,234,567.89');
   });
 });
 
@@ -129,7 +192,7 @@ describe('postConnectContact', () => {
   const env = { CONNECT_WEBHOOK_URL: 'https://chat.houzscentury.com/', CONNECT_WEBHOOK_KEY: 'secret48' };
   const contact = buildDeliveryFollowUp('+60123', 'Wong', [
     { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
-  ], null);
+  ], null, CTX);
 
   it('posts to /api/webhooks/erp with the X-Connect-Key header, trimming a trailing slash', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));

@@ -30,6 +30,7 @@ import {
   buildDeliveryFollowUp,
   postConnectContact,
   parseConnectCompanyProfiles,
+  chatCallbackUrl,
   CONNECT_COMPANY_PROFILE_KEY,
   type ConnectOrder,
   type ConnectCompanyProfile,
@@ -109,12 +110,36 @@ deliveryMessages.post('/send', async (c) => {
   // data, so it is read by key and not company-scoped. Unset / malformed
   // app_config => null => no per-company attributes (the message still goes).
   // company-scope: app_config is a global key/value config table, not per-company data.
-  const { data: profileRow } = await sb.from('app_config')
+  const { data: profileRow, error: profileErr } = await sb.from('app_config')
     .select('value').eq('key', CONNECT_COMPANY_PROFILE_KEY).maybeSingle();
+  // A FAILED read is not "no profile": sending without it would hand the
+  // customer a balance paragraph with no bank details and no signature, and
+  // the staff would never know. Refuse; nothing has been sent yet.
+  if (profileErr) return c.json({ error: 'profile_load_failed', reason: profileErr.message }, 500);
   const companyProfile: ConnectCompanyProfile | null =
     parseConnectCompanyProfiles((profileRow as { value?: string | null } | null)?.value ?? null)[
       String(activeCompanyId(c) ?? '')
     ] ?? null;
+
+  // LIVE balance per SO — the SO list's own source of truth
+  // (mfg_sales_orders_with_payment_totals.balance_sen_live = local_total −
+  // Σpayments), NOT the base table's balance_sen, which nothing maintains.
+  // VIEW-TRAP (backend/docs/scm-view-trap-coe.md): only view-native columns
+  // here, never a base-table header column added after the view was recreated.
+  // Same fail-closed rule as the profile: a balance we could not read must not
+  // go out as "nothing owed".
+  const { data: balRaw, error: balErr } = await scopeToAllowedCompanies(
+    sb.from('mfg_sales_orders_with_payment_totals')
+      .select('doc_no, balance_sen_live')
+      .in('doc_no', docNos),
+    c,
+  );
+  if (balErr) return c.json({ error: 'balance_load_failed', reason: balErr.message }, 500);
+  const balanceByDoc = new Map<string, number>();
+  for (const b of (balRaw ?? []) as Array<{ doc_no: string | null; balance_sen_live: number | null }>) {
+    if (b.doc_no != null && b.balance_sen_live != null) balanceByDoc.set(String(b.doc_no), Number(b.balance_sen_live));
+  }
+  const sendCtx = { callbackUrl: chatCallbackUrl(c.env) };
 
   for (const [phone, group] of byPhone) {
     const groupDocs = group.map((r) => String(r.doc_no));
@@ -127,8 +152,11 @@ deliveryMessages.post('/send', async (c) => {
       ref: String(r.linked_ac_docno ?? r.doc_no ?? ''),
       branding: String(r.branding ?? ''),
       deliveryDate: payloadDate(effectiveSoDelivery(r as SoDeliveryDateRow)),
+      balanceSen: balanceByDoc.get(String(r.doc_no)) ?? null,
     }));
-    const contact = buildDeliveryFollowUp(phone, String(group[0]?.debtor_name ?? ''), orders, companyProfile);
+    const contact = buildDeliveryFollowUp(
+      phone, String(group[0]?.debtor_name ?? ''), orders, companyProfile, sendCtx,
+    );
 
     const result = await postConnectContact(c.env, contact);
 
