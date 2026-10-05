@@ -36,9 +36,14 @@ const chip = (on: boolean): React.CSSProperties => ({
   border: '1px solid var(--c-line, rgba(34,31,32,0.2))',
   background: on ? 'var(--c-ink)' : 'transparent', color: on ? 'var(--c-cream)' : 'var(--c-ink)',
 });
-const tile: React.CSSProperties = {
-  border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 'var(--radius-md, 8px)', padding: '10px 12px', minWidth: 0,
+/* One card look for the tiles, the charts and the table, so the page reads as one
+   block (owner 2026-10-05: 「分到太散了」). */
+const card: React.CSSProperties = {
+  background: 'var(--c-cream, #ffffff)', border: '1px solid var(--c-line, rgba(34,31,32,0.12))',
+  borderRadius: 'var(--radius-md, 8px)', padding: '12px 14px', minWidth: 0,
 };
+const cardTitle: React.CSSProperties = { fontSize: 'var(--fs-13)', fontWeight: 600, color: 'var(--c-ink, #11140f)', marginBottom: 8 };
+const tile: React.CSSProperties = { ...card, padding: '10px 12px' };
 const tileLabel: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const tileValue: React.CSSProperties = { fontSize: 'var(--fs-18, 18px)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' };
 const money = (sen: number): string => (sen === 0 ? '—' : fmtSenPlain(sen));
@@ -138,22 +143,26 @@ export const ProductProfitTab = () => {
             <div style={soft}>{`Nothing sold in ${shownMonth}${cats.size === 0 ? '' : ` (${viewLabel(v)})`}.`}</div>
           ) : (
             <>
-              <div>
-                <div style={{ ...soft, marginBottom: 6 }}>Gross profit ranking · top {top.length} (bar end: gross profit · margin)</div>
-                <RankingChart ref={rankRef} bars={top.map((r) => ({ label: r.model, valueSen: gpOf(r, gifts), note: `${compact(gpOf(r, gifts))} · ${r.noCostLines > 0 && r.costSen === 0 ? 'no cost' : pctText(gpPctOf(r, gpOf(r, gifts)))}` }))} />
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--space-3)' }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ ...soft, marginBottom: 6 }}>{donut.byCategory ? 'Share of gross profit · by category' : `Share of gross profit · top 6 ${viewLabel(v)}`}</div>
-                  <ShareDonut ref={donutRef} slices={donut.slices} footnote={donutNote} />
+              {/* One block: the ranking on the left fills the height of the two
+                  cards stacked on the right (lg and up); below that they stack. */}
+              <div className="grid gap-3 lg:grid-cols-12" aria-label="Charts">
+                <div className="lg:col-span-7" style={{ ...card, display: 'flex', flexDirection: 'column' }}>
+                  <div style={cardTitle}>Gross profit ranking · top {top.length} <span style={{ ...soft, fontWeight: 400 }}>(bar end: gross profit · margin)</span></div>
+                  <RankingChart ref={rankRef} bars={top.map((r) => ({ label: r.model, valueSen: gpOf(r, gifts), note: `${compact(gpOf(r, gifts))} · ${r.noCostLines > 0 && r.costSen === 0 ? 'no cost' : pctText(gpPctOf(r, gpOf(r, gifts)))}` }))} />
                 </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ ...soft, marginBottom: 6 }}>From sales to gross profit</div>
-                  <ProfitWaterfall ref={fallRef} steps={waterfallOf(totals, gifts)} />
+                <div className="lg:col-span-5" style={{ display: 'grid', gap: 'var(--space-3)', alignContent: 'start', minWidth: 0 }}>
+                  <div style={card}>
+                    <div style={cardTitle}>{donut.byCategory ? 'Share of gross profit · by category' : `Share of gross profit · top 6 ${viewLabel(v)}`}</div>
+                    <ShareDonut ref={donutRef} slices={donut.slices} footnote={donutNote} />
+                  </div>
+                  <div style={card}>
+                    <div style={cardTitle}>From sales to gross profit</div>
+                    <ProfitWaterfall ref={fallRef} steps={waterfallOf(totals, gifts)} />
+                  </div>
                 </div>
               </div>
 
-              <div style={{ overflowX: 'auto' }}>
+              <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
                 <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }} aria-label="Product profit">
                   <thead>
                     <tr>
