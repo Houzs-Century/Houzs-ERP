@@ -4148,7 +4148,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     customer_birthday: dateOrNull(body.customerBirthday),
     customer_gender: (body.customerGender as string) ?? null,
     customer_delivery_date: dateOrNull(body.customerDeliveryDate),
-    sales_exemption_expiry: exemptionExpirySeed(null, dateOrNull(body.customerDeliveryDate)),
+    /* BUG-51 — the original delivery date; see so-exemption-expiry.ts. */
+    sales_exemption_expiry: dateOrNull(body.customerDeliveryDate),
     /* PR #144 — Commander: "当我已经 create 好了这个 sales order 的时候，
        为什么我点进去 edit processing 的 delivery date 时，怎么没看到呢".
        processing_date was wired on PATCH (update header) but missed
