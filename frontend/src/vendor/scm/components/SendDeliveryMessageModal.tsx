@@ -31,6 +31,7 @@ import {
 import { useDrivers } from '../lib/drivers-queries';
 import { useLorries } from '../lib/lorries-queries';
 import { useNotify } from './NotifyDialog';
+import { DateField } from './DateField';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
 
 export type { SendMessageKind } from '../lib/delivery-planning-queries';
@@ -46,7 +47,7 @@ const phoneKey = (raw: string | null | undefined): string | null => {
 const effectiveDate = (o: PlanningOrder): string =>
   (o.amended_delivery_date ?? o.customer_delivery_date ?? '').slice(0, 10) || '—';
 
-const owedSen = (o: PlanningOrder): number => Math.max(0, o.balance_sen_live ?? o.balance_sen ?? 0);
+const owedSen = (o: PlanningOrder): number => Math.max(0, o.balance_sen_live ?? o.balance_sen);
 const rm = (sen: number): string => (sen / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const KIND_TITLE: Record<SendMessageKind, string> = {
@@ -112,7 +113,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
   const driverInfo = needsDriver && driver && deliveryTime.trim()
     ? {
         driverName: driver.name,
-        driverContact: driver.phone ?? '',
+        driverContact: driver.phone,
         driverIc: driver.ic_number ?? '',
         carPlate: lorry?.plate ?? driver.vehicle ?? '',
         deliveryTime: deliveryTime.trim(),
@@ -222,7 +223,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
               </label>
               <label style={fieldStyle}>
                 <span>Proposed new date</span>
-                <input type="date" value={postponeDate} onChange={(e) => setPostponeDate(e.target.value)} style={inputStyle} />
+                <DateField fullWidth value={postponeDate} onChange={(iso) => setPostponeDate(iso)} style={inputStyle} />
               </label>
             </div>
           )}
