@@ -12,7 +12,7 @@
 //      warehouse — money shows as MYR.
 //   3. Line items table: code + group + variants summary + qty(returned) + unit
 //      + total  (a return has NO discount / delivery — qty × unit price)
-//   4. Totals card: refund total (live from line items = Σ line_refund_centi)
+//   4. Totals card: refund total (live from line items = Σ line_refund_sen)
 //
 // Draft model (mirrors PO #194 / GRN / PI):
 //   • Edit  → snapshots header + lets you edit Qty(returned) / Unit INLINE per
@@ -43,6 +43,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { activeOptions, buildVariantSummary, fmtDateOrDash, maintPickerValues } from '@2990s/shared';
+import { isTotalHeightPart, totalHeightPatch } from '../../vendor/shared/total-height';
 import {
   usePurchaseReturnDetail,
   useUpdatePurchaseReturnHeader,
@@ -65,18 +66,11 @@ import styles from './SalesOrderDetail.module.css';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
-const fmtRm = (centi: number | null | undefined): string => {
-  const v = centi ?? 0;
+const fmtRm = (sen: number | null | undefined): string => {
+  const v = sen ?? 0;
   return `MYR ${(v / 100).toLocaleString('en-MY', {
     minimumFractionDigits: 2, maximumFractionDigits: 2,
   })}`;
-};
-
-/* T12 — bedframe Total Height is AUTO-COMPUTED = Divan + Leg + Gap. */
-const parseInches = (s: unknown): number => {
-  if (s == null) return 0;
-  const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-  return m && m[1] ? Number(m[1]) : 0;
 };
 
 /* T12 — existing PR lines whose product is a bedframe/sofa get the SAME
@@ -121,7 +115,7 @@ type HeaderDraft = {
 };
 type LineDraft = {
   qty: number;            // maps to qty_returned
-  unitPriceCenti: number;
+  unitPriceSen: number;
   materialName: string;
   itemGroup: string | null;
   variants: Record<string, unknown> | null;
@@ -129,11 +123,12 @@ type LineDraft = {
 
 type PrItemRow = Record<string, unknown> & {
   id: string;
-  material_code: string;
+  item_code: string;
   material_name: string;
   qty_returned: number;
-  unit_price_centi: number;
-  line_refund_centi?: number;
+  unit_price_sen: number;
+  line_refund_sen: number;
+  reason: string | null;
   item_group?: string | null;
   material_kind?: string | null;
   description?: string | null;
@@ -144,9 +139,20 @@ type PrItemRow = Record<string, unknown> & {
   grn_item_id?: string | null;
 };
 
-const headerSnapshot = (p: any): HeaderDraft => ({
+type PrHeaderRow = {
+  id: string;
+  return_number: string; status: string; return_date: string;
+  reason: string | null; refund_sen: number; credit_note_ref: string | null;
+  notes: string | null;
+  supplier_id?: string | null;
+  supplier?: { code: string; name: string };
+  purchase_order?: { id: string; po_number: string };
+  grn?: { id: string; grn_number: string };
+};
+
+const headerSnapshot = (p: PrHeaderRow): HeaderDraft => ({
   supplierId:    p.supplier_id ?? '',
-  returnDate:    (p.return_date ?? '').slice(0, 10),
+  returnDate:    p.return_date.slice(0, 10),
   reason:        p.reason ?? '',
   creditNoteRef: p.credit_note_ref ?? '',
   notes:         p.notes ?? '',
@@ -154,8 +160,8 @@ const headerSnapshot = (p: any): HeaderDraft => ({
 
 const lineSnapshot = (it: PrItemRow): LineDraft => ({
   qty:            it.qty_returned,
-  unitPriceCenti: it.unit_price_centi,
-  materialName:   it.description ?? it.material_name ?? '',
+  unitPriceSen: it.unit_price_sen,
+  materialName:   it.description ?? it.material_name,
   itemGroup:      it.item_group ?? null,
   variants:       (it.variants as Record<string, unknown> | null) ?? null,
 });
@@ -170,7 +176,7 @@ export const PurchaseReturnDetail = () => {
   const notify = useNotify();
   const cancel = useCancelPurchaseReturn();
 
-  const pr = detail.data?.purchaseReturn ?? null;
+  const pr = (detail.data?.purchaseReturn ?? null) as PrHeaderRow | null;
   const items = (detail.data?.items ?? []) as PrItemRow[];
 
   /* T12 — maintenance config + special-orders pools drive the per-category
@@ -183,7 +189,7 @@ export const PurchaseReturnDetail = () => {
     const rows = (specialAddonsQ.data ?? [])
       .filter((r) => r.active)
       .slice()
-      .sort((a, b) => a.sortOrder - b.sortOrder || (a.code ?? '').localeCompare(b.code ?? ''));
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.code.localeCompare(b.code));
     const pick = (cat: string) => rows.filter((r) => r.categories.includes(cat)).map((r) => ({ value: r.code, priceSen: 0 }));
     return { bedframe: pick('BEDFRAME'), sofa: pick('SOFA') };
   }, [specialAddonsQ.data]);
@@ -199,7 +205,7 @@ export const PurchaseReturnDetail = () => {
      id; any line without an entry shows its stored values. None of this persists
      until Save. */
   const [headerDraft, setHeaderDraft] = useState<HeaderDraft | null>(null);
-  const [lineDrafts, setLineDrafts] = useState<Record<string, LineDraft>>({});
+  const [lineDrafts, setLineDrafts] = useState<Record<string, LineDraft | undefined>>({});
   const [savingDraft, setSavingDraft] = useState(false);
 
   // POSTED ("Confirmed") is editable; COMPLETED / CANCELLED lock read-only
@@ -238,9 +244,9 @@ export const PurchaseReturnDetail = () => {
   const visibleItems = items;
   const lineOf = (it: PrItemRow): LineDraft => lineDrafts[it.id] ?? lineSnapshot(it);
   const lineTotalOf = (it: PrItemRow): number => {
-    if (!isEditing) return it.line_refund_centi ?? (it.qty_returned * it.unit_price_centi);
+    if (!isEditing) return it.line_refund_sen;
     const d = lineOf(it);
-    return d.qty * d.unitPriceCenti;
+    return d.qty * d.unitPriceSen;
   };
   const refundTotal = visibleItems.reduce((s, it) => s + lineTotalOf(it), 0);
 
@@ -259,11 +265,9 @@ export const PurchaseReturnDetail = () => {
     setLineDrafts((prev) => {
       const cur = prev[it.id] ?? lineSnapshot(it);
       const variants: Record<string, unknown> = { ...(cur.variants ?? {}), [key]: value };
-      if (cur.itemGroup === 'bedframe' && (key === 'divanHeight' || key === 'legHeight' || key === 'gap')) {
-        const d = parseInches(variants.divanHeight);
-        const lg = parseInches(variants.legHeight);
-        const g = parseInches(variants.gap);
-        variants.totalHeight = (d === 0 && lg === 0 && g === 0) ? '' : `${d + lg + g}"`;
+      if (isTotalHeightPart(key)) {
+        const patch = totalHeightPatch(cur.itemGroup, variants);
+        if (patch) variants.totalHeight = patch.totalHeight;
       }
       return { ...prev, [it.id]: { ...cur, variants } };
     });
@@ -299,12 +303,12 @@ export const PurchaseReturnDetail = () => {
         );
         const changed =
           d.qty !== it.qty_returned ||
-          d.unitPriceCenti !== it.unit_price_centi ||
+          d.unitPriceSen !== it.unit_price_sen ||
           identityChanged;
         if (changed) {
           await updateItem.mutateAsync({
             id: pr.id, itemId: it.id,
-            qty: d.qty, unitPriceCenti: d.unitPriceCenti,
+            qty: d.qty, unitPriceSen: d.unitPriceSen,
             /* T12 — only non-sourced lines send identity/variants; the server
                recomputes description2 + writes inventory with the new identity. */
             ...(editableIdentity ? {
@@ -320,7 +324,7 @@ export const PurchaseReturnDetail = () => {
       setHeaderDraft(null);
       setLineDrafts({});
     } catch (e) {
-      notify({ title: 'Save failed', body: `${e instanceof Error ? e.message : String(e)}`, tone: 'error' });
+      void notify({ title: 'Save failed', body: `${e instanceof Error ? e.message : String(e)}`, tone: 'error' });
     } finally {
       setSavingDraft(false);
     }
@@ -330,7 +334,7 @@ export const PurchaseReturnDetail = () => {
     // PR PDF (to send to the supplier for credit-note issuance) — mirrors
     // PO/GRN/PI's handlePrint wiring its own purchase-return-pdf helper.
     import('../../vendor/scm/lib/purchase-return-pdf').then(({ generatePurchaseReturnPdf }) =>
-      generatePurchaseReturnPdf(pr, items as any),
+      generatePurchaseReturnPdf(pr, items),
     ).catch((e) => notify({ title: 'PDF generation failed', body: `${e instanceof Error ? e.message : String(e)}`, tone: 'error' }));
   };
 
@@ -449,7 +453,7 @@ export const PurchaseReturnDetail = () => {
                   <Fragment key={it.id}>
                   <tr>
                     <td>
-                      <div className={styles.codeCell}>{it.material_code}</div>
+                      <div className={styles.codeCell}>{it.item_code}</div>
                       {(() => {
                         const summary = buildVariantSummary(it.item_group ?? null, it.variants as Record<string, unknown> | null)
                           || it.description
@@ -480,11 +484,11 @@ export const PurchaseReturnDetail = () => {
                         <td className={styles.tableRight}>
                           <MoneyInput bare selectOnFocus inputClassName={styles.fieldInput}
                             style={{ width: 110, textAlign: 'right' }}
-                            valueSen={d.unitPriceCenti}
+                            valueSen={d.unitPriceSen}
                             disabled={isLocked}
-                            onCommit={(sen) => setLine(it, { unitPriceCenti: sen ?? 0 })} />
+                            onCommit={(sen) => setLine(it, { unitPriceSen: sen ?? 0 })} />
                         </td>
-                        <td className={styles.priceCell}>{fmtRm(d.qty * d.unitPriceCenti)}</td>
+                        <td className={styles.priceCell}>{fmtRm(d.qty * d.unitPriceSen)}</td>
                         <td>
                           <span className={styles.actionsCell}>
                             <button type="button"
@@ -511,7 +515,7 @@ export const PurchaseReturnDetail = () => {
                     ) : (
                       <>
                         <td className={styles.tableRight}>{it.qty_returned}</td>
-                        <td className={styles.tableRight}>{fmtRm(it.unit_price_centi)}</td>
+                        <td className={styles.tableRight}>{fmtRm(it.unit_price_sen)}</td>
                         <td className={styles.priceCell}>{fmtRm(lineTotalOf(it))}</td>
                       </>
                     )}
@@ -608,7 +612,7 @@ export const PurchaseReturnDetail = () => {
 const SupplierCard = ({
   pr, draft, onField, locked, isEditing = true,
 }: {
-  pr: any;
+  pr: PrHeaderRow;
   /** Draft header values (page-owned). In View these mirror the saved PR. */
   draft: HeaderDraft;
   /** Update a single header field on the page draft. */
@@ -715,7 +719,7 @@ const SupplierCard = ({
             <InfoCell label="Email"         value={supplier.email} />
             <InfoCell label="TIN"           value={supplier.tin_number} />
             <InfoCell label="Country / state" value={[supplier.country, supplier.state].filter(Boolean).join(' / ') || null} />
-            <InfoCell label="Bindings count" value={String(supplierDetail.data?.bindings?.length ?? 0)} />
+            <InfoCell label="Bindings count" value={String(supplierDetail.data?.bindings.length ?? 0)} />
             <div style={{ gridColumn: '1 / -1', color: 'var(--fg-muted)' }}>
               <span style={{ fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                 Address ·

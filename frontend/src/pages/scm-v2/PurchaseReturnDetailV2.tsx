@@ -3,9 +3,10 @@
 // BACK to the supplier and expects a credit (money-in framing). Aside hero =
 // Credit expected (synced/green because it's money coming back).
 
-import { lazy, Suspense, useMemo, type ReactNode } from "react";
+import { lazy, useMemo, type ReactNode } from "react";
 import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
@@ -251,18 +252,24 @@ const PurchaseReturnDetailInlineEditor = lazy(() =>
   import("./PurchaseReturnDetail").then((m) => ({ default: m.PurchaseReturnDetail })),
 );
 
-/* Thin router — the only hook it calls is useSearchParams, so Rules of Hooks
-   are respected when the ?edit=1 flip swaps between the read-only body and the
-   lazy inline editor (the two children have different hook counts). */
+/* Thin router — the only hooks it calls are useSearchParams and useLocation
+   (both unconditional, at the top), so Rules of Hooks are respected when the
+   ?edit=1 flip swaps between the read-only body and the lazy inline editor
+   (the two children have different hook counts). */
 export function PurchaseReturnDetailV2() {
   const [params] = useSearchParams();
+  const location = useLocation();
   if (params.get("edit") === "1") {
+    /* Scoped, not bare: a boundary keyed on the document this slot is editing,
+       so a failed editor chunk shows the panel in place of the editor and
+       clears when the operator moves to another document (lazySlotAudit). */
     return (
-      <Suspense
+      <LazySlot
+        resetKey={`pr-editor:${location.pathname}`}
         fallback={<div className="p-8 text-[13px] text-ink-muted">Loading editor…</div>}
       >
         <PurchaseReturnDetailInlineEditor />
-      </Suspense>
+      </LazySlot>
     );
   }
   return <PurchaseReturnDetailV2ReadOnly />;
