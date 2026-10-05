@@ -84,7 +84,8 @@ import {
   type PoSupplyEntry,
 } from '../lib/ship-commitment';
 import { collectBatchClaims, openBucketStock, drawBucketStock } from '../lib/batch-claimed-stock';
-import { loadSofaBatchStock, sofaStockKey } from '../lib/sofa-set-coverage';
+import { loadSofaBatchStock } from '../lib/sofa-set-coverage';
+import { planSofaSets, type SofaPlan, type SofaSetLine, type SofaSetPoSupply } from '../lib/sofa-set-plan';
 import { WH_NONE, composite, loadCommittedShipments } from '../lib/committed-shipments';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { pgrestInList } from '../lib/pgrest-in-list';
@@ -1451,13 +1452,8 @@ export async function computeMrp(
   }
 
   const sofaSets: SofaSet[] = [];
-  /* What one module line is planned from. Each walk below writes one of these
-     per demand line; the emit loop after them turns it into the SofaSet row. */
-  type SofaPlan = {
-    fromStock: number; need: number;
-    poNumber: string | null; poEta: string | null; poSupplierId: string | null;
-    batchNo: string | null;
-  };
+  /* What one module line is planned from (lib/sofa-set-plan.ts). Each walk
+     below writes one per demand line; the emit loop turns it into the row. */
   const sofaPlanByLine = new Map<string, SofaPlan>();
   /* camelCase trap, same as section 4c: a repair script driving this through
      the postgres shim gets allocatedBatchNo — dual-read so the lock is seen. */
@@ -1494,184 +1490,29 @@ export async function computeMrp(
       }
     }
   } else if (sofaByKey.size > 0) {
-    /* THE SET WALK — company 2's pooled sofa model, planned the way it SHIPS.
-
-       Owner 2026-10-05, re-affirming the dye-lot rule on 2990-SO-2610-005:
-       「不能跨批次 1PO = 1batch 不能分开」. A sofa SET (every sofa module line of
-       one SO at one warehouse) leaves the warehouse from ONE batch, and one
-       batch IS one purchase order — the stored allocator only lights the set
-       READY when a single received batch holds every module
-       (so-stock-allocation.ts 7b / sofa-set-coverage.ts), and the DO gate
-       refuses a two-batch set (ship-commitment.ts). This walk used to plan
-       each module from its own (warehouse, code, variant) pool, so on that
-       order it handed the 2A(RHF) unit of batch 2990-PO-2607-018 to the set and
-       asked purchasing for the 1A(LHF) alone — a PO that could never complete
-       the set, because the new lot and the old one are two batches. The page
-       said "stock" where the SO said PENDING, and the suggested order was a
-       half-set nobody could ship.
-
-       Supply is therefore read per BATCH (= PO number): the open lots that
-       carry that batch_no (received units, the same view the allocator reads)
-       plus the outstanding quantity still on that PO. A set takes a batch
-       whole or names none:
-         1. a batch whose received lots already cover every module → `stock`,
-            FIFO-oldest first (the allocator's own tie-break);
-         2. else a batch whose lots + open PO cover every module → `po`, that
-            PO named on every line, earliest set ETA first;
-         3. else a batch with units still ON ORDER that covers part of it → the
-            PO is named and the rest is SHORT, so purchasing completes THAT PO
-            instead of raising a second one. A received batch cannot be topped
-            up — a second PO is a second dye lot — so stock-only partial
-            matches are not offered;
-         4. else every module is SHORT: order the whole set, on one PO.
-       Sets already LOCKED by the allocator (allocated_batch_no on every line,
-       batch still covering) keep their batch before anyone else walks — the
-       same carve section 4c gives section 7, in set form. */
-    type SetLine = { row: DemandRow; bucketKey: string; whId: string | null; code: string; vkey: string; need: number };
-    const setsByKey = new Map<string, SetLine[]>(); // `${wh}|${doc_no}` — the allocator's set key
+    /* THE SET WALK — company 2's pooled sofa model, planned the way it SHIPS:
+       one batch (= one PO) covers the whole set or nothing does. Owner
+       2026-10-05 on 2990-SO-2610-005: 「不能跨批次 1PO = 1batch 不能分开」. The
+       rule, its four arms and the lock carve live in lib/sofa-set-plan.ts;
+       this block only hands it the engine's lines, lots and PO supply. */
+    const setLines: SofaSetLine[] = [];
     for (const [k, bucket] of sofaByKey) {
       for (const d of bucket.rows) {
-        const key = `${bucket.whId ?? WH_NONE}|${d.doc_no}`;
-        const arr = setsByKey.get(key) ?? [];
-        arr.push({ row: d, bucketKey: k, whId: bucket.whId, code: bucket.code, vkey: bucket.vkey, need: effQtyOf(d) });
-        setsByKey.set(key, arr);
-      }
-    }
-    const lots = await loadSofaBatchStock(sb, [...new Set([...setsByKey.values()].flat().map((l) => l.code))]);
-    /* Open PO units per (PO number = batch, bucket). A bucket's OWN PO lines
-       only — the '' fallback was removed on both paths (owner 2026-08-16). */
-    type BatchPo = { qtyLeft: number; eta: string | null; supplierId: string | null };
-    const poOpenByBatch = new Map<string, Map<string, BatchPo>>();
-    for (const k of sofaByKey.keys()) {
-      for (const p of poByKey.get(k) ?? []) {
-        const perBucket = poOpenByBatch.get(p.poNumber) ?? new Map<string, BatchPo>();
-        const cur = perBucket.get(k) ?? { qtyLeft: 0, eta: null, supplierId: p.supplierId };
-        cur.qtyLeft += p.qtyLeft;
-        // The set is complete when its LAST unit lands: latest line date wins.
-        if (cur.eta == null || (p.eta != null && p.eta > cur.eta)) cur.eta = p.eta;
-        perBucket.set(k, cur);
-        poOpenByBatch.set(p.poNumber, perBucket);
-      }
-    }
-
-    type Module = { bucketKey: string; whId: string | null; code: string; vkey: string; need: number };
-    /* Two lines of the SAME module + variant (a symmetric sofa's two identical
-       arms) are summed before comparing to a batch — findCoveringBatch's own
-       audit fix (2026-06-03), kept here for the same reason. */
-    const modulesOf = (lines: SetLine[]): Module[] => {
-      const m = new Map<string, Module>();
-      for (const l of lines) {
-        const cur = m.get(l.bucketKey) ?? { bucketKey: l.bucketKey, whId: l.whId, code: l.code, vkey: l.vkey, need: 0 };
-        cur.need += l.need;
-        m.set(l.bucketKey, cur);
-      }
-      return [...m.values()];
-    };
-    const lotQty = (batch: string, m: Module): number =>
-      m.whId ? (lots.remaining.get(sofaStockKey(m.whId, batch, m.code, m.vkey)) ?? 0) : 0;
-    const poQty = (batch: string, m: Module): number => poOpenByBatch.get(batch)?.get(m.bucketKey)?.qtyLeft ?? 0;
-    type Fit = { batch: string; stockOnly: boolean; full: boolean; covered: number; onOrder: boolean; eta: string | null; supplierId: string | null };
-    const fitOf = (batch: string, mods: Module[]): Fit => {
-      let stockOnly = true;
-      let full = true;
-      let covered = 0;
-      let onOrder = false;
-      let eta: string | null = null;
-      let supplierId: string | null = null;
-      for (const m of mods) {
-        const lot = Math.min(lotQty(batch, m), m.need);
-        const po = Math.min(poQty(batch, m), m.need - lot);
-        if (lot < m.need) stockOnly = false;
-        if (lot + po < m.need) full = false;
-        covered += lot + po;
-        if (poQty(batch, m) > 0) onOrder = true;
-        if (po > 0) {
-          const e = poOpenByBatch.get(batch)?.get(m.bucketKey);
-          if (e) {
-            if (eta == null || (e.eta != null && e.eta > eta)) eta = e.eta;
-            supplierId ??= e.supplierId;
-          }
-        }
-      }
-      return { batch, stockOnly, full, covered, onOrder, eta, supplierId };
-    };
-    const receivedAt = (b: string): string => lots.receivedAt.get(b) ?? '';
-    const candidates = (): string[] => [...new Set([...lots.batches, ...poOpenByBatch.keys()])];
-    const chooseBatch = (mods: Module[]): Fit | null => {
-      const fits = candidates().map((b) => fitOf(b, mods)).filter((f) => f.covered > 0);
-      const stockOnly = fits.filter((f) => f.stockOnly);
-      if (stockOnly.length > 0) {
-        return stockOnly.sort((a, b) => receivedAt(a.batch).localeCompare(receivedAt(b.batch)) || a.batch.localeCompare(b.batch))[0]!;
-      }
-      const full = fits.filter((f) => f.full);
-      if (full.length > 0) {
-        return full.sort((a, b) => byDateAsc(a.eta, b.eta) || a.batch.localeCompare(b.batch))[0]!;
-      }
-      const partial = fits.filter((f) => f.onOrder);
-      if (partial.length > 0) {
-        return partial.sort((a, b) => (b.covered - a.covered) || byDateAsc(a.eta, b.eta) || a.batch.localeCompare(b.batch))[0]!;
-      }
-      return null;
-    };
-    /* Draw the set's units from `fit.batch` — received lots first, then the
-       open PO — and record the plan on every line. A set the batch only partly
-       covers still names it on EVERY line (allocSourceCoveringPo's question),
-       and each line's own remainder is its shortage. */
-    const planSet = (lines: SetLine[], fit: Fit | null): void => {
-      for (const l of lines) {
-        if (!fit) {
-          sofaPlanByLine.set(l.row.id, { fromStock: 0, need: l.need, poNumber: null, poEta: null, poSupplierId: null, batchNo: null });
-          continue;
-        }
-        let need = l.need;
-        const lotKey = l.whId ? sofaStockKey(l.whId, fit.batch, l.code, l.vkey) : null;
-        const lotHave = lotKey ? (lots.remaining.get(lotKey) ?? 0) : 0;
-        const fromStock = Math.min(lotHave, need);
-        if (lotKey && fromStock > 0) lots.remaining.set(lotKey, lotHave - fromStock);
-        need -= fromStock;
-        const po = poOpenByBatch.get(fit.batch)?.get(l.bucketKey);
-        if (po && need > 0) {
-          const take = Math.min(po.qtyLeft, need);
-          po.qtyLeft -= take;
-          need -= take;
-        }
-        sofaPlanByLine.set(l.row.id, {
-          fromStock, need,
-          poNumber: fit.stockOnly ? null : fit.batch,
-          poEta: fit.stockOnly ? null : fit.eta,
-          poSupplierId: fit.stockOnly ? null : fit.supplierId,
-          batchNo: fit.batch,
+        setLines.push({
+          soItemId: d.id, docNo: d.doc_no, bucketKey: k, whId: bucket.whId, code: bucket.code, vkey: bucket.vkey,
+          need: effQtyOf(d), lockedBatchNo: lockOf(d), delivery: deliveryOf(d),
         });
       }
-    };
-    const setDelivery = (lines: SetLine[]): string | null =>
-      lines.reduce<string | null>((min, l) => {
-        const d = deliveryOf(l.row);
-        return byDateAsc(d, min) < 0 ? d : min;
-      }, null);
-    // Same priority as the allocator and section 7: effective delivery date
-    // ascending (nulls last), then SO doc number — so a scarce batch goes to
-    // the earliest delivery and the walk never flips nondeterministically.
-    const orderedSets = [...setsByKey.entries()].sort(([, a], [, b]) => {
-      const byDate = byDateAsc(setDelivery(a), setDelivery(b));
-      if (byDate !== 0) return byDate;
-      return (a[0]?.row.doc_no ?? '').localeCompare(b[0]?.row.doc_no ?? '');
-    });
-    const planned = new Set<string>();
-    for (const [key, lines] of orderedSets) {
-      const lock = lockOf(lines[0]!.row);
-      if (!lock || lines.some((l) => lockOf(l.row) !== lock)) continue;
-      const fit = fitOf(lock, modulesOf(lines));
-      /* A stale lock (units transferred, stock-taken or oversold since the
-         allocator last ran) reserves nothing: the set competes like any other. */
-      if (!fit.stockOnly) continue;
-      planSet(lines, fit);
-      planned.add(key);
     }
-    for (const [key, lines] of orderedSets) {
-      if (planned.has(key)) continue;
-      planSet(lines, chooseBatch(modulesOf(lines)));
+    const lots = await loadSofaBatchStock(sb, [...new Set(setLines.map((l) => l.code))]);
+    /* A bucket's OWN PO lines only (no '' fallback — owner 2026-08-16), cloned
+       so the walk's decrements never touch the shared map. */
+    const poByBucket = new Map<string, SofaSetPoSupply[]>();
+    for (const k of sofaByKey.keys()) {
+      const own = poByKey.get(k);
+      if (own && own.length > 0) poByBucket.set(k, own.map((p) => ({ ...p })));
     }
+    for (const [id, plan] of planSofaSets(setLines, lots, poByBucket)) sofaPlanByLine.set(id, plan);
   }
 
   for (const [, bucket] of sofaByKey.entries()) {
