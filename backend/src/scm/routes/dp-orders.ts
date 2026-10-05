@@ -171,6 +171,18 @@ const createSchema = z.object({
   overrides: z.record(z.string(), z.string().nullable()).optional(),
 });
 
+/* Owner 2026-10-05: a job with no address cannot be saved. A street line is
+   the address; city / postcode / state alone do not tell a driver where to go.
+   Every job type is held to it — TRANSFER and LORRY_SERVICE get theirs from the
+   warehouse / workshop master, and the operator types it when that is blank. */
+const ADDRESS_LINES = ['address1', 'address2', 'address3', 'address4'] as const;
+const hasAddress = (row: Record<string, unknown>): boolean =>
+  ADDRESS_LINES.some((k) => String(row[k] ?? '').trim() !== '');
+const ADDRESS_REQUIRED = {
+  error: 'address_required',
+  message: 'A delivery job needs an address. Fill in the address before saving.',
+};
+
 /** Read the source master (if any) and map it to the party snapshot. Falls back
  *  to an empty snapshot of the right type for a manual order. */
 async function resolveSnapshot(
@@ -269,6 +281,7 @@ dpOrders.post('/', async (c) => {
   for (const [k, v] of Object.entries(p.overrides ?? {})) {
     if (k in merged) merged[k] = v;
   }
+  if (!hasAddress(merged)) return c.json(ADDRESS_REQUIRED, 400);
 
   const sb = c.get('supabase');
   const user = c.get('user') as { id?: string } | null;
@@ -436,6 +449,17 @@ dpOrders.patch('/:id', async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const denied = await denyIfNotOwnDpJob(c, sb, id);
   if (denied) return denied;
+  /* Only an edit that touches the address is checked, so an old job saved
+     before the rule can still have its date or remark fixed. */
+  if (ADDRESS_LINES.some((k) => updates[k] !== undefined)) {
+    const { data: cur } = await scopeToCompanyId(
+      sb.from('dp_orders').select('address1, address2, address3, address4').eq('id', id),
+      co.companyId,
+    ).maybeSingle();
+    if (cur && !hasAddress({ ...(cur as Record<string, unknown>), ...updates })) {
+      return c.json(ADDRESS_REQUIRED, 400);
+    }
+  }
   const { data, error } = await scopeToCompanyId(
     sb.from('dp_orders').update(updates).eq('id', id).eq('status', 'PENDING_SCHEDULE'),
     co.companyId,

@@ -39,6 +39,7 @@ import { useStockTransfers } from '../lib/stock-queries';
 import { useWarehouses } from '../lib/inventory-queries';
 import { SearchableSelect } from './SearchableSelect';
 import { useNotify } from './NotifyDialog';
+import { writeFailedAs } from '../lib/mutation-error';
 // App-level client for the PMS project list (/api/projects lives outside the
 // /api/scm mount that the vendored authed-fetch targets). Same app-import
 // precedent as DataGrid's activeCompany subscription.
@@ -402,7 +403,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
 
     create.mutate(body, {
       onSuccess: () => { notify({ title: 'DP Order created', body: 'It is now on the board as Pending Schedule.' }); onClose(); },
-      onError: (err) => notify({ title: 'Create failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
+      onError: writeFailedAs('Create failed'),
     });
   };
 
@@ -661,7 +662,9 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
           </div>
 
           <label style={fieldRow}>
-            <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Address line 1</div>
+            <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>
+              Address line 1 <span style={{ textTransform: 'none', color: 'var(--c-burnt)' }}>— required{form.source.trim() ? ', or auto-filled from the source' : ''}</span>
+            </div>
             <input className={styles.searchInput} style={inputStyle} value={form.address1} onChange={(e) => set('address1', e.target.value)} />
           </label>
           <label style={fieldRow}>
@@ -714,7 +717,11 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
             disabled={create.isPending || schedule.isPending
               || (isSchedule && (!docId || !jobDate))
               || (!isSchedule && form.jobType === 'LORRY_SERVICE' && !form.lorryId.trim())
-              || (!isSchedule && form.jobType === 'TRANSFER' && !form.warehouseId.trim())}>
+              || (!isSchedule && form.jobType === 'TRANSFER' && !form.warehouseId.trim())
+              /* No address typed and no source the server could fill it from.
+                 With a source picked the server decides and says why. */
+              || (!isSchedule && !form.source.trim()
+                && ![form.address1, form.address2, form.address3, form.address4].some((v) => v.trim()))}>
             {isSchedule
               ? (schedule.isPending ? 'Scheduling…' : 'Schedule job')
               : (create.isPending ? 'Creating…' : 'Create DP Order')}
