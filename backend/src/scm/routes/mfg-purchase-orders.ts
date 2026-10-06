@@ -2544,15 +2544,10 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
     }
   }
 
-  /* Owner 2026-10-06 — a header Delivery Date change moves every line's
-     delivery_date, except a hand-set line (line_delivery_date_overridden — the
-     user's date always wins; the flag is left as it is) and a
-     line already fully received on a GRN (it keeps the date it arrived on).
-     PostgREST cannot compare two columns, so filter in JS.
-     Keyed on the date CHANGING, not on the key being sent: the desktop editor
-     re-sends the whole header on every save, so a notes-only edit would
-     otherwise wipe every hand-set line date.
-     Best-effort, as above: the header has already committed. */
+  /* Owner 2026-10-06 — a header Delivery Date change moves every line except a
+     hand-set one (line_delivery_date_overridden) or a fully received one. JS
+     filter: PostgREST cannot compare two columns. Keyed on the date CHANGING:
+     the editor re-sends the whole header. Best-effort, as above. */
   if (updates['expected_at'] !== undefined && (updates['expected_at'] ?? null) !== prevExpectedAt) {
     const { data: lines, error: readErr } = await scopeToCompanyId(sb.from('purchase_order_items')
       .select('id, qty, received_qty, line_delivery_date_overridden').eq('purchase_order_id', id), co.companyId);
