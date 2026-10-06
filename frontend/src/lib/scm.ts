@@ -57,7 +57,23 @@ export function fmtSen(centi: number | null | undefined, currency = "MYR"): stri
  *  what counts as cancelled. */
 export function isCancelledDocStatus(status: string | null | undefined): boolean {
   const s = (status ?? "").trim().toUpperCase();
-  return s === "CANCELLED" || s === "CANCEL";
+  /* VOID / VOIDED is what the finance documents (receipts, credit notes) call a
+     cancelled bill; the owner's rule is one treatment for every cancelled
+     document number (2026-10-06, 「全系统 - Cancelled bill 我要有横线的」). */
+  return s === "CANCELLED" || s === "CANCEL" || s === "VOID" || s === "VOIDED";
+}
+
+/** Row class for a cancelled document's list row — index.css `dt-row-cancelled`
+ *  fades the row. Pass to DataTable / DataGridCompat `getRowClassName`. */
+export function cancelledRowClass(status: string | null | undefined): string | undefined {
+  return isCancelledDocStatus(status) ? "dt-row-cancelled" : undefined;
+}
+
+/** Class for the DOCUMENT NUMBER cell only — index.css `dt-cancel-strike`
+ *  strikes it through, thin, in whatever ink it already renders. Every list's
+ *  number cell adds this; cancelledDocStrike.test.ts enumerates them. */
+export function cancelledDocNoClass(status: string | null | undefined): string | undefined {
+  return isCancelledDocStatus(status) ? "dt-cancel-strike" : undefined;
 }
 
 /** SCM document/master statuses share a small colour vocabulary. Returns

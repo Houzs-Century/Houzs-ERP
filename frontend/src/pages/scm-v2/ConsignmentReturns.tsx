@@ -37,6 +37,7 @@ import { PageHeader } from '../../components/Layout';
 import { StatCard } from '../../components/StatCard';
 import { FilterPills } from '../../components/FilterPills';
 import soDetailStyles from './SalesOrderDetail.module.css';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 
 /* ── Row shape (CRN header — mirrors the DR header) ─────────────────────── */
 type CrnRow = {
@@ -483,6 +484,7 @@ export const ConsignmentReturns = () => {
         exportName="Consignment Returns"
         searchPlaceholder="Search return no, customer, reference…"
         rowKey={(r) => r.id}
+        getRowClassName={(r) => cancelledRowClass(r.status)}
         selectable={{
           selectedKeys: sel,
           onToggle: (k) => setSel((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; }),
@@ -545,7 +547,7 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Grid
   {
     key: 'return_number', label: 'Return No.', width: 150, sortable: true,
     accessor: (r) => (
-      <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.return_number}</span>
+      <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }} className={cancelledDocNoClass(r.status)}>{r.return_number}</span>
     ),
     searchValue: (r) => `${r.return_number} ${r.status ?? ''}`,
     filterValue: (r) => r.return_number,

@@ -33,6 +33,7 @@ import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
 import { transferFromColumnLabel } from "../../lib/convertScope";
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -64,7 +65,7 @@ type PrRow = Record<string, unknown> & {
 const buildColumns = (): GridColumn<PrRow>[] => [
   {
     key: 'return_number', label: 'Return No.', width: 150, sortable: true,
-    accessor: (r) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.return_number}</span>,
+    accessor: (r) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }} className={cancelledDocNoClass(r.status)}>{r.return_number}</span>,
     searchValue: (r) => r.return_number,
     /* Accessor is JSX → export the raw doc-no string or the cell exports blank. */
     exportValue: (r) => r.return_number,
@@ -310,6 +311,7 @@ export const PurchaseConsignmentReturns = () => {
         storageKey={PCT_LIST_STORAGE_KEY}
         exportName="Purchase Consignment Returns"
         rowKey={(r) => r.id}
+        getRowClassName={(r) => cancelledRowClass(r.status)}
         searchPlaceholder="Search return no, supplier…"
         loadedSearchLimit={300}
         groupBanner={false}

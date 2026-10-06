@@ -34,6 +34,7 @@ import { useAuth } from '../../auth/AuthContext';
 import { BrandingPill, badgeFor } from '../../vendor/scm/lib/category-badges';
 import styles from './MfgSalesOrdersList.module.css';
 import soDetailStyles from './SalesOrderDetail.module.css';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { PageHeader } from '../../components/Layout';
 import { StatCard } from '../../components/StatCard';
 import { FilterPills } from '../../components/FilterPills';
@@ -487,6 +488,7 @@ export const ConsignmentNotes = () => {
         exportName="Consignment Notes"
         searchPlaceholder="Search note no, customer, reference…"
         rowKey={(r) => r.id}
+        getRowClassName={(r) => cancelledRowClass(r.status)}
         selectable={{
           selectedKeys: sel,
           onToggle: (k) => setSel((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; }),
@@ -549,7 +551,7 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Grid
   {
     key: 'do_number', label: 'Note No.', width: 150, sortable: true,
     accessor: (r) => (
-      <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.do_number}</span>
+      <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }} className={cancelledDocNoClass(r.status)}>{r.do_number}</span>
     ),
     searchValue: (r) => `${r.do_number} ${r.status ?? ''}`,
     filterValue: (r) => r.do_number,
