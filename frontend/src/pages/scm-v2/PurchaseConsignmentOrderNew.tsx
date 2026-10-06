@@ -35,6 +35,7 @@ import {
   type MaterialKind,
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
+import { withMasterPickerPools } from '../../vendor/scm/lib/picker-maint';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { PcVariantEditor } from '../../vendor/scm/components/PcVariantEditor';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
@@ -125,11 +126,14 @@ export const PurchaseConsignmentOrderNew = () => {
     supplierId ? `supplier:${supplierId}` : '',
     { enabled: Boolean(supplierId) },
   );
-  const masterMaintQ = useMaintenanceConfig('master', {
-    enabled: !supplierId || !supplierMaintQ.data?.data,
-  });
+  const masterMaintQ = useMaintenanceConfig('master');
   const maint =
     supplierMaintQ.data?.data ?? masterMaintQ.data?.data ?? null;
+  /* Dropdown options follow master; the supplier overlay only prices them (BUG-60). */
+  const pickerMaint = useMemo(
+    () => withMasterPickerPools(maint, masterMaintQ.data?.data ?? null),
+    [maint, masterMaintQ.data?.data],
+  );
   const fabrics = useFabricTrackings().data ?? [];
 
   const categoryForCode = (code: string): string | undefined => {
@@ -554,7 +558,7 @@ export const PurchaseConsignmentOrderNew = () => {
             const showVariants  = showsVariantEditor(l.category) && maint;
 
             return (
-              <div
+              <div data-grid-row
                 key={l.rid}
                 style={{
                   background: 'var(--c-paper)',
@@ -727,7 +731,7 @@ export const PurchaseConsignmentOrderNew = () => {
                       variants={l.variants as Record<string, unknown>}
                       onChange={(k, v) => setVariant(l.rid, k, v)}
                       fabrics={fabrics}
-                      maint={maint!}
+                      maint={pickerMaint!}
                     />
                   </div>
                 )}

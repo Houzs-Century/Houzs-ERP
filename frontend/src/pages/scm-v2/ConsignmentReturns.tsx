@@ -13,10 +13,14 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { canViewScmCosting } from "../../auth/salesAccess";
-import type { JSX } from 'react';
+import type { JSX, ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, X, ExternalLink, Edit3, RotateCcw } from 'lucide-react';
 import { Button } from '@2990s/design-system';
+import { Button as DrawerButton } from '../../components/Button';
+import { Badge } from '../../components/Badge';
+import { ResizableDetailDrawer } from '../../components/ResizableDetailDrawer';
+import { cn } from '../../lib/utils';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -42,6 +46,8 @@ import soDetailStyles from './SalesOrderDetail.module.css';
 type CrnRow = {
   id: string;
   return_number: string;
+  /* Source Consignment Note number — on the list select (consignment-returns.ts). */
+  do_doc_no?: string | null;
   return_date: string;
   debtor_code: string | null;
   debtor_name: string;
@@ -299,6 +305,230 @@ const ExpandedCrnLines = ({ id, canFinance }: { id: string; canFinance: boolean 
   );
 };
 
+/* Status TONE for the drawer badge — the Delivery Return list's buckets
+   (same delivery_return_status enum): open loop = warning, closed happily =
+   success, closed unhappily = error. The LABEL is this page's STATUS_LABEL. */
+const STATUS_TONE: Record<string, 'success' | 'warning' | 'error' | 'neutral'> = {
+  PENDING: 'warning', RECEIVED: 'warning', INSPECTED: 'warning',
+  REFUNDED: 'success', CREDIT_NOTED: 'success',
+  REJECTED: 'error', CANCELLED: 'error',
+};
+
+/* ─── Quick-view drawer ────────────────────────────────────────────────────
+   Row click opens the same right slide-over the Sales Order / Delivery Order
+   lists have (ResizableDetailDrawer): header · meta · customer · returned
+   lines · value · actions, with "Open full page" for the editor. Lines come
+   from the SAME detail query the expand-chevron drill-down uses. */
+export function ConsignmentReturnDrawer({
+  row,
+  canFinance,
+  salespersonName,
+  onClose,
+  onOpenFull,
+  onEdit,
+  onCancel,
+  onReopen,
+}: {
+  row: CrnRow | null;
+  canFinance: boolean;
+  salespersonName: string;
+  onClose: () => void;
+  onOpenFull: () => void;
+  onEdit: () => void;
+  onCancel: () => void;
+  onReopen: () => void;
+}) {
+  const detailQ = useConsignmentReturnDetail(row?.id ?? null);
+  const items = (detailQ.data?.items as CrnItem[] | undefined) ?? [];
+  const open = Boolean(row);
+  const tone = row ? (STATUS_TONE[row.status] ?? 'neutral') : 'neutral';
+  const statusLabel = row ? (STATUS_LABEL[row.status] || row.status.replace(/_/g, ' ')) : '';
+  const status = row?.status ?? '';
+  const canCancel = !['CANCELLED', 'REFUNDED', 'CREDIT_NOTED'].includes(status);
+
+  const totalSen = items.length > 0
+    ? items.reduce((sum, l) => sum + crnLineTotalOf(l), 0)
+    : row?.local_total_sen ?? 0;
+  const brand = row ? deriveBranding(row) : '';
+
+  return (
+    <ResizableDetailDrawer
+      open={open}
+      onClose={onClose}
+      ariaLabel={row ? `Consignment return ${row.return_number}` : 'Consignment return details'}
+    >
+      {row && (
+        <>
+          <div className="flex h-[60px] shrink-0 items-center gap-3 bg-sidebar px-5 text-sidebar-ink">
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-sidebar-ink-muted hover:text-sidebar-ink"
+              aria-label="Close details"
+            >
+              <X size={18} />
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="font-mono text-[14px] font-bold tracking-wide">{row.return_number}</div>
+              <div className="mt-0.5 text-[11px] text-sidebar-ink-muted">Consignment Return</div>
+            </div>
+            <button
+              type="button"
+              onClick={onOpenFull}
+              className="inline-flex items-center gap-1.5 rounded-md border border-accent-bright/40 px-2.5 py-1.5 text-[11.5px] font-semibold text-accent-bright hover:bg-accent-bright/10"
+            >
+              Open full page <ExternalLink size={12} />
+            </button>
+            <Badge tone={tone} variant="solid" size="xs">{statusLabel}</Badge>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-5 py-5">
+            <div className="text-[19px] font-bold text-ink">{row.debtor_name || '—'}</div>
+            <div className="mt-1.5 flex items-center gap-2.5">
+              {brand ? <BrandingPill branding={brand} /> : null}
+              <span className="text-[12.5px] text-ink-muted">Returned {fmtDateOrDash(row.return_date)}</span>
+            </div>
+
+            <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
+              <DrawerMeta k="Consignment Note" v={row.do_doc_no || '—'} mono />
+              <DrawerMeta k="Ref No." v={row.customer_so_no ?? row.ref ?? '—'} mono />
+              <DrawerMeta k="Return date" v={fmtDateOrDash(row.return_date)} />
+              <DrawerMeta k="Location" v={row.sales_location || '—'} />
+              <DrawerMeta k="Salesperson" v={salespersonName} />
+              <DrawerMeta k="Venue" v={row.venue || '—'} />
+              <DrawerMeta k="Reason" v={row.reason || '—'} />
+            </dl>
+
+            <DrawerSection>Customer</DrawerSection>
+            <div className="overflow-hidden rounded-lg border border-border bg-surface">
+              <div className="flex items-center gap-3 border-b border-border-subtle px-4 py-3.5">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[13px] font-bold text-accent-ink">
+                  {(row.debtor_name || 'C').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join('') || 'C'}
+                </span>
+                <div className="min-w-0">
+                  <div className="text-[14px] font-bold text-ink">{row.debtor_name}</div>
+                  {row.debtor_code && (
+                    <div className="mt-0.5 font-mono text-[11.5px] text-ink-muted">{row.debtor_code}</div>
+                  )}
+                </div>
+              </div>
+              <DrawerKV k="Phone" v={formatPhone(row.phone) || '—'} />
+              <DrawerKV k="Email" v={row.email || '—'} />
+              <DrawerKV
+                k="Address"
+                v={[row.address1, row.address2, row.city, row.postcode, row.customer_state].filter(Boolean).join(', ') || '—'}
+              />
+              {row.note ? <DrawerKV k="Note" v={row.note} /> : null}
+            </div>
+
+            <DrawerSection>Returned lines</DrawerSection>
+            <div className="overflow-hidden rounded-lg border border-border">
+              <div className="grid grid-cols-[minmax(0,1fr)_40px_92px_80px] gap-2 border-b border-border-subtle bg-surface-2 px-4 py-2 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+                <span>Item</span>
+                <span className="text-right">Qty</span>
+                <span className="text-right">Amount</span>
+                <span>Condition</span>
+              </div>
+              {detailQ.isLoading && (
+                <div className="px-4 py-8 text-center text-[12px] text-ink-muted">Loading lines…</div>
+              )}
+              {detailQ.isError && (
+                <div className="px-4 py-8 text-center text-[12px] text-err">
+                  {detailQ.error instanceof Error ? detailQ.error.message : 'Failed to load lines'}
+                </div>
+              )}
+              {!detailQ.isLoading && !detailQ.isError && items.length === 0 && (
+                <div className="px-4 py-8 text-center text-[12px] text-ink-muted">No lines</div>
+              )}
+              {items.map((l) => {
+                const manual = (l.description ?? '').trim();
+                const summary = buildVariantSummary(l.item_group, l.variants);
+                return (
+                  <div
+                    key={l.id}
+                    className="grid grid-cols-[minmax(0,1fr)_40px_92px_80px] items-start gap-2 border-b border-border-subtle px-4 py-3 last:border-b-0"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <CategoryPill group={l.item_group} />
+                        <span className="text-[12.5px] font-medium leading-snug text-ink">{l.item_code || '—'}</span>
+                      </div>
+                      {(manual || summary) && (
+                        <div className="mt-0.5 text-[11.5px] leading-snug text-ink-secondary">{manual || summary}</div>
+                      )}
+                    </div>
+                    <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtQty(Number(l.qty_returned ?? 0))}</span>
+                    <span className="text-right font-money text-[12.5px] font-semibold text-ink">{fmtSen(crnLineTotalOf(l))}</span>
+                    <span className="text-[11px] font-semibold uppercase text-ink-secondary">{l.condition || '—'}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
+              <DrawerTotal k="Return value" v={fmtSen(totalSen)} strong />
+              {canFinance && row.total_cost_sen != null ? (
+                <DrawerTotal k="Cost" v={fmtSen(row.total_cost_sen)} />
+              ) : null}
+              {canFinance && row.total_margin_sen != null ? (
+                <DrawerTotal k="Margin" v={fmtSen(row.total_margin_sen)} tone={row.total_margin_sen < 0 ? 'error' : 'success'} />
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2 border-t border-border bg-surface px-5 py-3">
+            <DrawerButton variant="ghost" icon={<Edit3 size={14} />} onClick={onEdit}>Edit</DrawerButton>
+            <div className="flex-1" />
+            {status === 'CANCELLED' ? (
+              <DrawerButton variant="primary" icon={<RotateCcw size={14} />} onClick={onReopen}>Reopen</DrawerButton>
+            ) : canCancel ? (
+              <DrawerButton variant="ghost" className="text-err" onClick={onCancel}>Cancel Return</DrawerButton>
+            ) : null}
+          </div>
+        </>
+      )}
+    </ResizableDetailDrawer>
+  );
+}
+
+function DrawerMeta({ k, v, mono }: { k: string; v: ReactNode; mono?: boolean }) {
+  return (
+    <div>
+      <dt className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">{k}</dt>
+      <dd className={cn('mt-0.5 text-[13px] font-semibold text-ink', mono && 'font-mono')}>{v}</dd>
+    </div>
+  );
+}
+
+function DrawerSection({ children }: { children: ReactNode }) {
+  return (
+    <div className="mb-2.5 mt-6 font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">{children}</div>
+  );
+}
+
+function DrawerKV({ k, v }: { k: string; v: ReactNode }) {
+  return (
+    <div className="flex items-start gap-3 border-b border-border-subtle px-4 py-2.5 last:border-b-0">
+      <span className="w-20 shrink-0 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">{k}</span>
+      <span className="flex-1 text-[13px] font-semibold leading-relaxed text-ink">{v}</span>
+    </div>
+  );
+}
+
+function DrawerTotal({ k, v, strong, tone }: { k: string; v: string; strong?: boolean; tone?: 'success' | 'error' }) {
+  return (
+    <div className={cn('flex items-center justify-between py-1.5', strong && 'border-b border-border-subtle pb-2.5 mb-1')}>
+      <span className={cn('text-[12px] text-ink-muted', strong && 'text-[13px] font-semibold text-ink')}>{k}</span>
+      <span className={cn(
+        'font-money text-[13px] font-semibold',
+        strong && 'text-[15px] font-bold text-ink',
+        tone === 'success' && 'text-synced',
+        tone === 'error' && 'text-err',
+      )}>{v}</span>
+    </div>
+  );
+}
+
 const STORAGE_KEY = 'pr-g.crn-list.layout.v1';
 
 export const ConsignmentReturns = () => {
@@ -355,6 +585,8 @@ export const ConsignmentReturns = () => {
   // Row-click multi-select (mirrors the DR / GRN lists) — ticks the row; the
   // ▸ chevron still drills down via its own stopPropagation handler.
   const [sel, setSel] = useState<Set<string>>(new Set());
+  /* Row click → quick-view drawer (same as the Sales Order / DO lists). */
+  const [selected, setSelected] = useState<CrnRow | null>(null);
   /* Clear the selection whenever the visible row set shifts (page / status /
      search) — a lingering selection would act on rows no longer on screen. */
   useEffect(() => { setSel(new Set()); }, [page, statusChip, debouncedSearch]);
@@ -399,7 +631,24 @@ export const ConsignmentReturns = () => {
       danger: true,
     }))) return;
     updateStatus.mutate({ id: row.id, status: 'CANCELLED' },
-      { onError: (e) => notify({ title: 'Failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }) });
+      {
+        onSuccess: () => setSelected(null),
+        onError: (e) => notify({ title: 'Failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
+      });
+  };
+
+  /* Reopen — bring a cancelled return back to RECEIVED. Shared by the context
+     menu and the drawer CTA. */
+  const doReopen = async (row: CrnRow) => {
+    if (!(await askConfirm({
+      title: `Reopen ${row.return_number} back to RECEIVED?`,
+      confirmLabel: 'Reopen',
+    }))) return;
+    updateStatus.mutate({ id: row.id, status: 'RECEIVED' },
+      {
+        onSuccess: () => setSelected(null),
+        onError: (e) => notify({ title: 'Failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
+      });
   };
 
   /* KPI tiles are the shared <StatCard/> now (owner 2026-07-26). */
@@ -494,6 +743,7 @@ export const ConsignmentReturns = () => {
         }}
         hideSearch
         groupBanner={false}
+        onRowClick={(r) => setSelected(r)}
         onRowDoubleClick={(r) => openDetail(r)}
         rowStyle={(r) => ['CANCELLED', 'REJECTED'].includes(r.status) ? { opacity: 0.55, filter: 'grayscale(0.6)' } : undefined}
         isLoading={listLoading}
@@ -513,16 +763,7 @@ export const ConsignmentReturns = () => {
             items.push({ label: 'Cancel Return', danger: true, onClick: () => doCancel(row) });
           }
           if (status === 'CANCELLED') {
-            items.push({
-              label: 'Reopen Return',
-              onClick: async () => {
-                if (!(await askConfirm({
-                  title: `Reopen ${row.return_number} back to RECEIVED?`,
-                  confirmLabel: 'Reopen',
-                }))) return;
-                updateStatus.mutate({ id: row.id, status: 'RECEIVED' });
-              },
-            });
+            items.push({ label: 'Reopen Return', onClick: () => void doReopen(row) });
           }
           return items;
         }}
@@ -536,6 +777,17 @@ export const ConsignmentReturns = () => {
         onPageChange={setPage}
         onPageSizeChange={(n) => { setPageSize(n); setPage(0); }}
       />}
+
+      <ConsignmentReturnDrawer
+        row={selected}
+        canFinance={canFinance}
+        salespersonName={selected?.salesperson_id ? staffById.get(selected.salesperson_id) ?? '—' : '—'}
+        onClose={() => setSelected(null)}
+        onOpenFull={() => selected && openDetail(selected)}
+        onEdit={() => selected && openDetail(selected, true)}
+        onCancel={() => selected && void doCancel(selected)}
+        onReopen={() => selected && void doReopen(selected)}
+      />
     </div>
   );
 };

@@ -9,6 +9,11 @@ lists only what differs for GR.
 
 - A scan **only ever lands a DRAFT / unposted GRN.** Stock posts later, on the
   operator's DRAFT→POSTED (`PATCH /grns/:id/post`). No OCR read moves stock.
+  The core sets `status: 'DRAFT'` **explicitly**: the live `scm.grns.status`
+  default is `'POSTED'`. Until 2026-10-01 it relied on that default, so every
+  scanned GRN read "Submitted · inventory received" with no IN written and no PO
+  rollup, and Cancel was refused as `grn_consumed_downstream` (nothing on hand to
+  reverse). `tests/grnFromPoItemsCore.test.ts` fakes the live default to keep it so.
 - **Convert, never standalone.** The GRN is created from PO line(s) via
   `createDraftGrnFromPoItems` (`lib/grn-from-po-core.ts`), so PO outstanding
   clears. A standalone GRN is never fabricated.
@@ -32,7 +37,9 @@ lists only what differs for GR.
 `runGrnScanJob`: OCR → sample → match → convert.
 1. `callClaudeGrExtract` (`lib/grn-scan-extract.ts`) — delivery-order prompt;
    extracts supplier, `poNo`, `doNo`, `deliveryDate`, and lines (item code /
-   Article No / barcode, description, qty). Few-shot from prior GR samples.
+   Article No / barcode, description, qty, and the row's own `poNo`). `qty` is
+   SETS, never the piece total (Hookka prints `1 HB + 2 Divan` / Total Qty 3 for
+   one set). Few-shot from prior GR samples.
 2. `insertGrnScanSample` writes `so_scan_samples` `document_type='GR'`.
 3. `matchGrnScanToPoLines` (`lib/grn-scan-match.ts`, **pure**) over open PO lines
    + supplier bindings (`lib/grn-scan-load.ts`).
@@ -55,6 +62,12 @@ Match order: **supplier, then PO number, then item code / barcode.**
   and compared to our `po_number` (`HC-PO-…` / `2990-PO-…`). A hit **scopes**
   matching to that PO. Supplier-printed PO numbers usually differ from ours, so
   this often misses and matching falls to item code.
+- **A PO printed on the row** (a consolidated DO such as Hookka's, one of our
+  POs per line, no header P.O.) anchors that row to that PO only. A printed row
+  PO that is not one of our open POs (a fair/service ref like `ART-HOK-002`, a PO
+  already received) leaves the row unmatched `po_not_open` — never item-matched
+  onto another PO. When any row is anchored, a row that printed no PO is left
+  `no_po_number` instead of item-matched.
 - A scanned line resolves to our item code via: its own printed code (direct),
   or `supplier_material_bindings.supplier_sku` / `ac_item_code` → `item_code`, or
   a PO line's own `supplier_sku`. (Suppliers print `AMN-SF9050 SOFA 2B(RHF)`; we
@@ -63,10 +76,11 @@ Match order: **supplier, then PO number, then item code / barcode.**
   line.** Zero → `no_open_po_line`; many → `ambiguous`; both leave it unmatched
   (never guessed). Qty is clamped to the PO line's remaining.
 
-**Confidence gate (no PO-number hit):** the scan is refused (needs-review, no
-document) when the supplier is unresolved, when the picks span more than one PO,
-or when half or fewer of the scanned lines matched. One stray item-code hit must
-never link a delivery order to some other PO.
+**Confidence gate (no PO-number hit on the header or any row):** the scan is refused (needs-review, no
+document) when the supplier is unresolved or when the picks span more than one PO.
+When half or fewer of the scanned lines matched the one PO, the draft is still
+created but flagged `weakMatch`: "Check the PO" goes on the GRN note, the scan
+card and the notice. The draft never moves stock until someone posts it.
 
 **Outcomes:** ≥1 pick → DRAFT GRN(s) linked to the source PO(s), any unmatched
 lines noted for the operator to add. 0 picks (or convert refused, e.g. an

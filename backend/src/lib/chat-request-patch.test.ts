@@ -5,6 +5,8 @@ import {
   CHAT_WRITABLE_SO_COLUMNS,
   chatRequestFieldChanges,
   chatRequestPatch,
+  parseCallbackRefs,
+  MAX_CALLBACK_REFS,
 } from "./chat-request-patch";
 
 describe("chatRequestPatch — what a WhatsApp tap may write on the SO", () => {
@@ -25,6 +27,11 @@ describe("chatRequestPatch — what a WhatsApp tap may write on the SO", () => {
     expect(p.amend_date_from_customer).toBeUndefined();
     expect(p.amend_reason).toBe("Renovation Delay");
     expect(p.delivery_message_status).toBe("Pending Reschedule (D)");
+  });
+
+  it("postage events write nothing on the SO — the board has no column for them", () => {
+    expect(chatRequestPatch("postage_confirm", null, null)).toEqual({});
+    expect(chatRequestPatch("postage_amend", null, null)).toEqual({});
   });
 
   it("confirm: only the message status moves", () => {
@@ -67,5 +74,25 @@ describe("chatRequestFieldChanges — the audit trail entry", () => {
       { field: "deliveryMessageStatus", from: "To Send Delivery Date", to: "Pending Reschedule (D)" },
       { field: "amendDateFromCustomer", from: null, to: "2026-10-15" },
     ]);
+  });
+});
+
+describe("parseCallbackRefs — the orders one tap applies to", () => {
+  it("primary first, then the bundle, trimmed and de-duplicated", () => {
+    expect(parseCallbackRefs("HC-SO-1", "HC-SO-1, HC-SO-2 ,HC-SO-3")).toEqual(["HC-SO-1", "HC-SO-2", "HC-SO-3"]);
+    expect(parseCallbackRefs("A", undefined)).toEqual(["A"]);
+    expect(parseCallbackRefs("A", ["B", "A"])).toEqual(["A", "B"]);
+  });
+
+  it("drops an unresolved Connect placeholder and anything outside the doc-number alphabet", () => {
+    // An older ERP send has no refs_all, so Connect interpolates the literal
+    // "{refs_all}"; the primary still stands alone.
+    expect(parseCallbackRefs("HC-SO-1", "{refs_all}")).toEqual(["HC-SO-1"]);
+    expect(parseCallbackRefs("HC-SO-1", "HC-SO-2,x) or (1=1")).toEqual(["HC-SO-1", "HC-SO-2"]);
+  });
+
+  it("caps the bundle", () => {
+    const many = Array.from({ length: 40 }, (_, i) => `R${i}`).join(",");
+    expect(parseCallbackRefs("R0", many)).toHaveLength(MAX_CALLBACK_REFS);
   });
 });

@@ -190,6 +190,28 @@ async function confirmDropship(raw: string): Promise<boolean> {
   }
 }
 
+/* BUG-59 — some picked Sales Order lines have no stock set aside for them.
+   A warning, not a block (Azza 2026-10-06): the operator may go back or
+   deliver anyway. Returns true on confirm; replays with confirmNotReady:true. */
+async function confirmNotReady(raw: string): Promise<boolean> {
+  try {
+    const body = JSON.parse(raw.slice(raw.indexOf('{'))) as {
+      lines?: Array<{ docNo: string; itemCode: string; reason: string }>;
+    };
+    const lines = (body.lines ?? [])
+      .map((l) => `• ${l.itemCode} (${l.docNo})\n   ${l.reason}`)
+      .join('\n\n');
+    return await serviceConfirm({
+      title: 'Item Not Ready',
+      body: `${lines}\n\nGo back and untick these lines to deliver them on a later Delivery Order, or deliver them now anyway.`,
+      confirmLabel: 'Deliver anyway',
+      danger: true,
+    });
+  } catch {
+    return false;
+  }
+}
+
 /* Edge #J — render the shortage detail out of a 409 short_stock body and ask
    the operator whether to ship anyway (stock goes negative). Returns true on
    confirm; replays the request with confirmShortStock:true. */
@@ -340,7 +362,15 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
     try { mergedBody = JSON.parse(init.body) as Record<string, unknown>; } catch { mergedBody = null; }
     for (let guard = 0; mergedBody && guard < 4 && res.status === 409; guard++) {
       const text = await consumeCorrelated(res, () => res.clone().text());
-      if (text.includes('"short_stock"') && mergedBody.confirmShortStock !== true) {
+      if (text.includes('"items_not_ready"') && mergedBody.confirmNotReady !== true) {
+        if (!(await confirmNotReady(text))) {
+          throw correlateError(
+            new Error('Some lines are not ready, so the delivery order was not created. Untick them and deliver them on a later Delivery Order.'),
+            requestIdFromResponse(res),
+          );
+        }
+        mergedBody = { ...mergedBody, confirmNotReady: true };
+      } else if (text.includes('"short_stock"') && mergedBody.confirmShortStock !== true) {
         /* ASK ONCE (2026-07-31). "Ship as drop-ship?" and "Ship anyway?" are the
            same question — the goods are not here — and the operator has already
            answered it in the affirmative on this very request. Re-asking it in

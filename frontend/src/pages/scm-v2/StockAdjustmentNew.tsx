@@ -367,16 +367,18 @@ function AdjustmentLineRow({
           />
         </td>
 
-        <td className={styles.actionsCell}>
-          <button
-            type="button"
-            onClick={() => removeLine(line._key)}
-            className={`${styles.iconBtn} ${styles.iconBtnDanger}`}
-            disabled={!canRemove}
-            title="Remove line"
-          >
-            <Trash2 size={14} strokeWidth={1.75} />
-          </button>
+        <td>
+          <span className={styles.actionsCell}>
+            <button
+              type="button"
+              onClick={() => removeLine(line._key)}
+              className={`${styles.iconBtn} ${styles.iconBtnDanger}`}
+              disabled={!canRemove}
+              title="Remove line"
+            >
+              <Trash2 size={14} strokeWidth={1.75} />
+            </button>
+          </span>
         </td>
       </tr>
 
@@ -785,7 +787,7 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
             (found / recount up), a <strong style={{ color: 'var(--c-festive-b, #B8331F)' }}>negative</strong> number
             decreases it (write-off / damage / loss).
           </p>
-          <table className={styles.table}>
+          <table className={`${styles.table} ${styles.tableOwnWidths}`}>
             <thead>
               <tr>
                 <th style={{ width: '20%' }}>SKU *</th>

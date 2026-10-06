@@ -39,9 +39,14 @@ export const CHAT_FORBIDDEN_SO_COLUMNS = [
 export const CHAT_MESSAGE_STATUS = {
   confirm: "Done Scheduling",
   amend: "Pending Reschedule (D)",
+  // The postage conversation (Postage Confirm flow) is recorded in the log;
+  // the board has no column for it, so no status moves.
+  postage_confirm: null,
+  postage_amend: null,
 } as const;
 
 export type ChatEvent = keyof typeof CHAT_MESSAGE_STATUS;
+export const CHAT_EVENTS = Object.keys(CHAT_MESSAGE_STATUS) as ChatEvent[];
 
 export type ChatRequestPatch = Partial<
   Record<(typeof CHAT_WRITABLE_SO_COLUMNS)[number], string | null>
@@ -58,13 +63,42 @@ export function chatRequestPatch(
   requestedDate: string | null,
   reason: string | null,
 ): ChatRequestPatch {
-  const patch: ChatRequestPatch = { delivery_message_status: CHAT_MESSAGE_STATUS[event] };
+  const status = CHAT_MESSAGE_STATUS[event];
+  const patch: ChatRequestPatch = status ? { delivery_message_status: status } : {};
   if (event === "amend") {
     const iso = normDate(requestedDate);
     if (iso) patch.amend_date_from_customer = iso;
     if (reason) patch.amend_reason = reason;
   }
   return patch;
+}
+
+/** The document-number alphabet. A ref is interpolated into a PostgREST
+ *  filter where `,` `(` `)` are syntax, so anything else is refused, never
+ *  escaped. An unresolved Connect placeholder ("{refs_all}") fails this too. */
+export const DOC_REF_RE = /^[A-Za-z0-9_\-/.]+$/;
+
+/** At most this many orders in one tap — a WhatsApp bundle shows 3 and says
+ *  "you have N orders"; a longer list is a malformed caller, not a customer. */
+export const MAX_CALLBACK_REFS = 20;
+
+/**
+ * The orders one tap applies to: the primary `ref` plus the bundle's `refs`
+ * (comma-joined by the ERP's send as `refs_all`), trimmed, de-duplicated, in
+ * order, primary first. Entries outside the doc-number alphabet are dropped
+ * silently — the primary is validated by the caller, which answers 400.
+ */
+export function parseCallbackRefs(ref: string, refs: unknown): string[] {
+  const out: string[] = [];
+  const push = (v: unknown) => {
+    const s = String(v ?? "").trim().slice(0, 64);
+    if (!s || !DOC_REF_RE.test(s) || out.includes(s)) return;
+    if (out.length < MAX_CALLBACK_REFS) out.push(s);
+  };
+  push(ref);
+  if (typeof refs === "string") refs.split(",").forEach(push);
+  else if (Array.isArray(refs)) refs.forEach(push);
+  return out;
 }
 
 /** Audit field names (so-audit-labels.ts keys) for the columns a patch set. */

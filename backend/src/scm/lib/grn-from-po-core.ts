@@ -205,6 +205,14 @@ export async function createDraftGrnsFromPoItemsCore(
         ? `Received from ${[...bucket.poNumbers].join(', ')} · ${body.notes}`
         : `Received from ${[...bucket.poNumbers].join(', ')}`,
       created_by: user.id,
+      /* Explicit, never the column default: scm.grns.status defaults to
+         'POSTED' in production, so an insert that omits it lands a header that
+         reads "inventory received" while no IN was written and no PO
+         received_qty rolled up. The scan queue never posts, so its GRNs stayed
+         in that state and could not be cancelled (the reversal guard finds no
+         stock to take back). The HTTP convert posts right after this insert;
+         postGrnAndRollup flips DRAFT -> POSTED. */
+      status: 'DRAFT',
     };
     /* Audit (ported from 2990 b30f0bb1) — the GRN suffix is an in-memory counter
        off a non-locking COUNT snapshot, so a CONCURRENT multi-GRN receive can

@@ -64,6 +64,7 @@ import { loadCommittedShipments } from '../lib/committed-shipments';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
 import { findOverDeliveredSoItems, findOverDeliveredUnlinkedItems } from '../lib/do-over-delivery';
 import { findUnlinkedSoLines, unlinkedSoLinesResponse, itemCodeKey } from '../lib/do-unlinked-so-lines';
+import { findNotReadySoLines, itemsNotReadyResponse } from '../lib/do-not-ready-lines';
 import { unlinkedScanRefusal } from '../lib/unlinked-line-edit-guard';
 import { maybeSendDeliveryOrderEmail } from '../lib/do-email';
 import { warehouseLabel } from '../lib/warehouse-label';
@@ -2736,7 +2737,8 @@ deliveryOrdersMfg.get('/deliverable-so-lines', async (c) => {
   const lines = [...remainingMap.values()].filter((l) => l.remaining > 0);
   // The order's customer reference, for the picker's search (owner 2026-09-25).
   await stampSoRefsCamel(sb, lines, (l) => l.docNo, (q) => scopeToAllowedCompanies(q, c), 'deliverable-so-lines');
-  return c.json({ lines });
+  const notReady = new Map((await findNotReadySoLines(sb, lines.map((l) => l.soItemId), activeCompanyId(c) ?? null)).map((n) => [n.soItemId, n]));
+  return c.json({ lines: lines.map((l) => ({ ...l, notReady: notReady.get(l.soItemId) ?? null })) });
 });
 
 /* ── SO → DO conversion source ────────────────────────────────────────────────
@@ -3096,6 +3098,12 @@ deliveryOrdersMfg.post('/', async (c) => {
         }
       }
     }
+  }
+
+  // BUG-59: warn (never block) when a picked SO line is not READY.
+  if (!body.confirmNotReady) {
+    const notReady = await findNotReadySoLines(sb, items.map((it) => String(it.soItemId ?? '')), activeCompanyId(c) ?? null);
+    if (notReady.length > 0) { markIdempotencyNoWrite(c); return c.json(itemsNotReadyResponse(notReady), 409); }
   }
 
   /* Edge #1+#2 — soft stock check, gated by confirmShortStock.
@@ -3503,7 +3511,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
      handler just inserted; the insert stamps the SOURCE company, so the id is
      not caller-supplied. */
   const sb = c.get('supabase'); const user = c.get('user');
-  let body: { picks?: Array<{ soItemId?: string; qty?: number }>; confirmShortStock?: boolean; warehouseId?: string; asDraft?: boolean; dropShip?: boolean };
+  let body: { picks?: Array<{ soItemId?: string; qty?: number }>; confirmShortStock?: boolean; confirmNotReady?: boolean; warehouseId?: string; asDraft?: boolean; dropShip?: boolean };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
   // Collapse duplicate soItemIds (sum their qty) so a line can't appear twice.
@@ -3680,6 +3688,11 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
       markIdempotencyNoWrite(c);
       return c.json(sofaIncompleteSetResponse(partial), 409);
     }
+  }
+
+  if (!body.confirmNotReady) {
+    const notReady = await findNotReadySoLines(sb, sortedPicks.map((line) => line.soItemId), doCompanyId ?? null);
+    if (notReady.length > 0) { markIdempotencyNoWrite(c); return c.json(itemsNotReadyResponse(notReady), 409); }
   }
 
   // Edge #1+#2 — soft stock check at the target warehouse, gated by
