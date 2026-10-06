@@ -67,6 +67,7 @@ import {
 import { StatePicker } from "../vendor/scm/components/StatePicker";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { deferLineDateToHeader, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
+import { isHandSetLineDate } from "../vendor/scm/lib/line-delivery-date-cascade";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
@@ -410,7 +411,9 @@ function buildVariants(l: LineItem): Record<string, unknown> {
 /* Line-item body for POST /:docNo/items and the create body's items[]. Pure +
    module-level so BOTH the interactive save() and the headless
    createDraftFromPrefill() below shape a line identically (no copy-paste). */
-function buildItemBody(l: LineItem): Record<string, unknown> {
+/* `handSet` is sent explicitly: the server reads a sent date with no flag as
+   hand-set, and a hand-set line never follows the header Delivery Date. */
+function buildItemBody(l: LineItem, handSet: boolean): Record<string, unknown> {
   const variants = buildVariants(l);
   return {
     itemCode: l.itemCode,
@@ -429,6 +432,7 @@ function buildItemBody(l: LineItem): Record<string, unknown> {
     /* Create items[] AND POST /:docNo/items: a TYPED 0 is free, an untouched 0 is unpriced. */
     ...zeroPriceClaim(toSen(l.price), l.priceAuthored === true),
     lineDeliveryDate: l.ddate || null,
+    lineDeliveryDateOverridden: handSet,
     ...(Object.keys(variants).length ? { variants } : {}),
   };
 }
@@ -481,7 +485,7 @@ export async function createDraftFromPrefill(prefill: MobileScanPrefill, idempot
   // Same "named line" filter the interactive create uses — a line counts once it
   // has a name or a matched itemCode (drops blank rows).
   const namedLines = lines.filter((l) => l.name.trim() || l.itemCode.trim());
-  const items = namedLines.map((l) => buildItemBody(l));
+  const items = namedLines.map((l) => buildItemBody(l, false)); // no line date typed on a headless draft
 
   // Phone shaping mirrors save(): the prefill carries national digits, the +60
   // prefix is re-attached here (the form's prefix box owns it interactively).
@@ -1719,7 +1723,8 @@ export function MobileNewSO({
   /* Line-item body for POST /:docNo/items and the create body's items[].
      Delegates to the module-level buildItemBody (shared with the headless
      createDraftFromPrefill). */
-  const itemBody = buildItemBody;
+  const lineDateHandSet = (l: LineItem): boolean => isHandSetLineDate(ddateOverrides.has(l.key), l.ddate || null, delivDate || null);
+  const itemBody = (l: LineItem) => buildItemBody(l, lineDateHandSet(l));
 
   const itemPatchBody = (l: LineItem): Record<string, unknown> => ({
     itemCode: l.itemCode,
@@ -1729,7 +1734,7 @@ export function MobileNewSO({
     unitPriceSen: toSen(l.price),
     /* An EXISTING line: its 0 IS its persisted price (desktop's PATCH said so since #2425). */
     ...zeroPriceClaim(toSen(l.price), true),
-    ...(deferLineDateToHeader({ storedProcessingDate: origProcDate, overridden: ddateOverrides.has(l.key) }) ? {} : { lineDeliveryDate: l.ddate || null }),
+    ...(deferLineDateToHeader({ storedProcessingDate: origProcDate, overridden: ddateOverrides.has(l.key) }) ? {} : { lineDeliveryDate: l.ddate || null, lineDeliveryDateOverridden: lineDateHandSet(l) }),
     variants: buildVariants(l),
   });
 
