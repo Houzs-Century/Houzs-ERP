@@ -587,8 +587,8 @@ export const PurchaseOrderDetail = () => {
     // delivery date ("上面的 Expected Delivery Date 换了之后，下面 Item 的
     // Delivery Date 也要跟着跳").
     if (k === 'expectedAt') {
-      // A hand-set line date wins over the header (owner 2026-10-06).
-      setEditLines((prev) => prev.map((d) => (d.deliveryDateOverridden ? d : { ...d, deliveryDate: v || undefined })));
+      // Last edit wins (owner 2026-10-06): a hand-set line follows the header again.
+      setEditLines((prev) => prev.map((d) => ({ ...d, deliveryDate: v || undefined, deliveryDateOverridden: false })));
     }
     /* Mig 0026 — header supplier-revised dates fan down to every line that
        doesn't already carry its own value for that slot. Lines that DO carry
@@ -1338,7 +1338,7 @@ export const PurchaseOrderDetail = () => {
                     maint={pickerMaint}
                     fabrics={fabrics}
                     specialsPools={specialsPools}
-                    /* Typing a line date by hand marks it hand-set; the header cascade then skips it. */
+                    /* Typing a line date by hand marks it hand-set, until the next header date change. */
                     onChange={(patch) => patchLine(l.rid, 'deliveryDate' in patch ? { ...patch, deliveryDateOverridden: true } : patch)}
                     onPickBinding={(b) => pickBinding(l.rid, b)}
                     onSetVariant={(k, v) => setVariant(l.rid, k, v)}
