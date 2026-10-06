@@ -11,6 +11,8 @@
  * Ticket 20261005-01 (HC-SO-013411 CELENE (A)-(SP), HC-PO-010114,
  * HC-GRN-2609-098 / HC-GRN-2609-054) is the first use.
  *
+ * Also lists the purchase returns booked against those GRN lines.
+ *
  * Strictly SELECTs. RE-RUN: read-only and stateless, a second run reports
  * whatever is true then.
  *
@@ -57,6 +59,17 @@ try {
       if (gl.length === 0) log("    GRN lines: none point at this PO line");
       for (const g of gl) {
         log(`    GRN ${g.grn_number} status=${g.status} line=${g.id} received=${g.qty_received} accepted=${g.qty_accepted} returned=${g.returned_qty}  ${g.description2 ?? ""}`);
+        const prs = await db`
+          SELECT pr.return_number, pr.kind, pr.status, pr.return_date, pr.posted_at, pr.completed_at,
+                 pr.reason AS hdr_reason, pr.notes AS hdr_notes, pr.created_at, pr.created_by,
+                 pr.repair_warehouse_id, pri.qty_returned, pri.reason, pri.notes
+          FROM scm.purchase_return_items pri JOIN scm.purchase_returns pr ON pr.id = pri.purchase_return_id
+          WHERE pri.grn_item_id = ${g.id} ORDER BY pr.created_at`;
+        for (const r of prs) {
+          log(`      PR ${r.return_number} kind=${r.kind} status=${r.status} qty=${r.qty_returned} date=${r.return_date} created=${r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at} by=${r.created_by}`);
+          log(`        posted=${r.posted_at instanceof Date ? r.posted_at.toISOString() : r.posted_at} completed=${r.completed_at instanceof Date ? r.completed_at.toISOString() : r.completed_at} repair_wh=${r.repair_warehouse_id}`);
+          log(`        reason=${r.hdr_reason ?? ""} / ${r.reason ?? ""}  notes=${r.hdr_notes ?? ""} / ${r.notes ?? ""}`);
+        }
       }
     }
     log("");
