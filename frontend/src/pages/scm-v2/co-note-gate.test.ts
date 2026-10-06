@@ -10,7 +10,7 @@ describe('canCreateConsignmentNote', () => {
     expect(canCreateConsignmentNote({ status: 'CONFIRMED', has_undelivered: true })).toBe(true);
   });
 
-  it('blocks only an explicit "nothing left to deliver"', () => {
+  it('blocks only when has_undelivered is explicitly false', () => {
     expect(canCreateConsignmentNote({ status: 'CONFIRMED', has_undelivered: false })).toBe(false);
   });
 
