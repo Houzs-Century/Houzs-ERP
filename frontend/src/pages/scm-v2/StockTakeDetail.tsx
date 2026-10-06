@@ -96,6 +96,8 @@ type LineDraft = {
   /* Round 2: where the counter found the goods (moved there at post). */
   rackId: string | null;
   origRackId: string | null;
+  /* What was typed in the Rack box; null = untouched (the box shows rackId's label). */
+  rackInput: string | null;
 };
 
 const toDraft = (l: StockTakeLine): LineDraft => ({
@@ -114,7 +116,11 @@ const toDraft = (l: StockTakeLine): LineDraft => ({
   addedOnCount:     l.added_on_count === true,
   rackId:           l.rack_id ?? null,
   origRackId:       l.rack_id ?? null,
+  rackInput:        null,
 });
+
+/* "rack l5.1", "Rack L5.1", "L5.1 " are one rack (backend lib/stock-take-sheet.ts normRack). */
+const normRack = (s: string): string => s.toUpperCase().replace(/^\s*RACK\b/, '').replace(/\s+/g, '');
 
 const parseCounted = (s: string): number | null => {
   if (s.trim() === '') return null;
@@ -176,6 +182,20 @@ export const StockTakeDetail = () => {
     if (!rid) return '—';
     return (racksQ.data ?? []).find((r) => r.id === rid)?.rack ?? '—';
   }, [racksQ.data]);
+  /* Typed rack text → this warehouse's rack id. A text box, not a <select>:
+     a select per line put 704 x 77 = 54,208 <option>s on one sheet and froze
+     the page (owner's KL WAREHOUSE take, 2026-10-06). One shared datalist
+     would take the arrow keys from the grid, so it is plain text, checked. */
+  const rackIdByLabel = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of racksQ.data ?? []) m.set(normRack(r.rack), r.id);
+    return m;
+  }, [racksQ.data]);
+  const typeRack = (lineId: string, text: string) => {
+    const key = normRack(text);
+    setLine(lineId, { rackInput: text, rackId: key ? rackIdByLabel.get(key) ?? null : null });
+  };
+  const rackUnknown = (l: LineDraft) => l.rackInput != null && normRack(l.rackInput) !== '' && l.rackId == null;
   const [sheetOpen, setSheetOpen] = useState(false);
   const applySheet = (rows: SheetApply[]) => {
     const by = new Map(rows.map((r) => [r.lineId, r]));
@@ -186,6 +206,7 @@ export const StockTakeDetail = () => {
         ...l,
         countedQtyInput: r.counted == null ? l.countedQtyInput : String(r.counted),
         rackId: r.rackId ?? l.rackId,
+        rackInput: r.rackId ? null : l.rackInput,
       };
     }));
     setDirty(true);
@@ -359,6 +380,15 @@ export const StockTakeDetail = () => {
       const parsedCounted = parseCounted(l.countedQtyInput);
       return parsedCounted !== l.origCountedQty || l.notes !== l.origNotes || l.rackId !== l.origRackId;
     });
+    const unknownRacks = lines.filter(rackUnknown);
+    if (unknownRacks.length > 0) {
+      void notify({
+        title: `${unknownRacks.length} rack${unknownRacks.length === 1 ? '' : 's'} not found in this warehouse`,
+        body: `${unknownRacks.slice(0, 5).map((l) => `${l.itemCode}: "${l.rackInput ?? ''}"`).join('\n')}\n\nFix or clear them, then save.`,
+        tone: 'error',
+      });
+      return;
+    }
     if (changed.length === 0) { setDirty(false); return; }
     update.mutate(
       {
@@ -857,16 +887,20 @@ export const StockTakeDetail = () => {
                       {/* Round 2: where the goods actually sit — moved there at post. */}
                       <td>
                         {isDraft && (racksQ.data ?? []).length > 0 ? (
-                          <select
-                            className={styles.fieldSelect}
+                          <input
+                            type="text"
+                            className={styles.fieldInput}
                             aria-label={`Rack for ${ln.itemCode}`}
-                            value={ln.rackId ?? ''}
-                            onChange={(e) => setLine(ln.id, { rackId: e.target.value || null })}
-                            style={{ fontSize: 'var(--fs-12)' }}
-                          >
-                            <option value="">—</option>
-                            {(racksQ.data ?? []).map((r) => <option key={r.id} value={r.id}>{r.rack}</option>)}
-                          </select>
+                            placeholder="e.g. L5.1"
+                            value={ln.rackInput ?? (ln.rackId ? rackLabel(ln.rackId) : '')}
+                            onChange={(e) => typeRack(ln.id, e.target.value)}
+                            aria-invalid={rackUnknown(ln) || undefined}
+                            title={rackUnknown(ln) ? 'Not a rack of this warehouse' : undefined}
+                            style={{
+                              fontSize: 'var(--fs-12)', fontFamily: 'var(--font-mono)',
+                              ...(rackUnknown(ln) ? { borderColor: 'var(--c-festive-b, #B8331F)', color: 'var(--c-festive-b, #B8331F)' } : {}),
+                            }}
+                          />
                         ) : (
                           <span style={{ fontSize: 'var(--fs-12)' }}>{rackLabel(ln.rackId)}</span>
                         )}
