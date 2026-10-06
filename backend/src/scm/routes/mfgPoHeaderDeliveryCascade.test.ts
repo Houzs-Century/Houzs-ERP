@@ -1,7 +1,7 @@
 // Owner 2026-10-06: when the PO header Delivery Date (expected_at) changes, every
-// line's delivery_date follows, except (a) a hand-set line — PO lines have no
-// flag, so "hand-set" = a non-null date that differs from the OLD header date —
-// and (b) a line already fully received on a GRN (received_qty >= qty).
+// line's delivery_date follows, except (a) a hand-set line
+// (line_delivery_date_overridden, set when a user saves a line date by hand) and
+// (b) a line already fully received on a GRN (received_qty >= qty).
 // Drives the REAL header PATCH through the fake PostgREST client.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
@@ -21,7 +21,7 @@ const CALLER = {
 
 const { mfgPurchaseOrders } = await import('./mfg-purchase-orders');
 
-async function patch(body: Record<string, unknown>) {
+async function patch(body: Record<string, unknown>, path = '/po-1') {
   const app = new Hono<{ Bindings: Env; Variables: Variables }>();
   app.use('*', async (c, next) => {
     c.set('user', CALLER);
@@ -29,7 +29,7 @@ async function patch(body: Record<string, unknown>) {
     await next();
   });
   app.route('/', mfgPurchaseOrders);
-  return app.request('/po-1', {
+  return app.request(path, {
     method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
   });
 }
@@ -43,14 +43,20 @@ beforeEach(() => {
     supplier_id: 'sup-1', purchase_location_id: 'loc-1',
     supplier_delivery_date_2: null, supplier_delivery_date_3: null, supplier_delivery_date_4: null,
   }];
+  const l = (id: string, company_id: number, qty: number, received_qty: number, delivery_date: string | null, overridden = false) => ({
+    id, purchase_order_id: 'po-1', company_id, item_code: id, qty, received_qty, unit_price_sen: 0, discount_sen: 0,
+    delivery_date, line_delivery_date_overridden: overridden,
+  });
   sb.tables.purchase_order_items = [
-    { id: 'open', purchase_order_id: 'po-1', company_id: 1, qty: 2, received_qty: 0, delivery_date: '2026-10-10' },
-    { id: 'hand', purchase_order_id: 'po-1', company_id: 1, qty: 1, received_qty: 0, delivery_date: '2026-10-20' },
-    { id: 'blank', purchase_order_id: 'po-1', company_id: 1, qty: 1, received_qty: 0, delivery_date: null },
-    { id: 'part', purchase_order_id: 'po-1', company_id: 1, qty: 4, received_qty: 1, delivery_date: '2026-10-10' },
-    { id: 'done', purchase_order_id: 'po-1', company_id: 1, qty: 3, received_qty: 3, delivery_date: '2026-10-10' },
+    l('open', 1, 2, 0, '2026-10-10'),
+    l('hand', 1, 1, 0, '2026-10-20', true),
+    // A different date but NOT hand-set (e.g. built from SO lines with mixed dates): it follows.
+    l('mixed', 1, 1, 0, '2026-10-25'),
+    l('blank', 1, 1, 0, null),
+    l('part', 1, 4, 1, '2026-10-10'),
+    l('done', 1, 3, 3, '2026-10-10'),
     // Another company's line on the same PO id must never be touched.
-    { id: 'other', purchase_order_id: 'po-1', company_id: 2, qty: 1, received_qty: 0, delivery_date: '2026-10-10' },
+    l('other', 2, 1, 0, '2026-10-10'),
   ];
 });
 
@@ -62,9 +68,16 @@ describe('PATCH mfg purchase order header — Delivery Date cascades to lines', 
     expect(line('part').delivery_date).toBe('2026-11-05');
   });
 
-  it('a hand-set line (date differs from the old header date) keeps its date', async () => {
+  it('a hand-set line keeps its date and its flag', async () => {
     await patch({ expectedAt: '2026-11-05' });
     expect(line('hand').delivery_date).toBe('2026-10-20');
+    expect(line('hand').line_delivery_date_overridden).toBe(true);
+  });
+
+  it('a line with a different date but no hand-set flag moves', async () => {
+    await patch({ expectedAt: '2026-11-05' });
+    expect(line('mixed').delivery_date).toBe('2026-11-05');
+    expect(line('mixed').line_delivery_date_overridden).toBe(false);
   });
 
   it('a line with no date moves to the new header date', async () => {
@@ -88,5 +101,24 @@ describe('PATCH mfg purchase order header — Delivery Date cascades to lines', 
     // PurchaseOrderDetail.tsx sends the whole header snapshot on every save.
     await patch({ notes: 'just a remark', expectedAt: '2026-10-10', poDate: '2026-10-01' });
     expect(line('hand').delivery_date).toBe('2026-10-20');
+    expect(line('mixed').delivery_date).toBe('2026-10-25');
+  });
+});
+
+describe('PATCH mfg purchase order line — a user-saved date marks the line hand-set', () => {
+  it('a changed line date sets line_delivery_date_overridden', async () => {
+    expect((await patch({ deliveryDate: '2026-10-18' }, '/po-1/items/open')).status).toBe(200);
+    expect(line('open').delivery_date).toBe('2026-10-18');
+    expect(line('open').line_delivery_date_overridden).toBe(true);
+  });
+
+  it('a date copied from the header (explicit flag false) does not', async () => {
+    await patch({ deliveryDate: '2026-11-05', lineDeliveryDateOverridden: false }, '/po-1/items/open');
+    expect(line('open').line_delivery_date_overridden).toBe(false);
+  });
+
+  it('a qty edit that re-sends the same date does not', async () => {
+    await patch({ qty: 3, deliveryDate: '2026-10-10' }, '/po-1/items/open');
+    expect(line('open').line_delivery_date_overridden).toBe(false);
   });
 });
