@@ -130,7 +130,7 @@ export const ProductRequests = () => {
       confirmLabel: 'Approve',
     });
     if (!ok) return;
-    approve.mutate({ id: r.id }, { onSuccess: (res) => { if (res.needsModel) notify({ title: 'Approved', body: 'Build the Model and SKU next — the request has a button for it.' }); } });
+    approve.mutate({ id: r.id }, { onSuccess: (res) => { if (res.needsModel) void notify({ title: 'Approved', body: 'Build the Model and SKU next — the request has a button for it.' }); } });
   };
   const onReject = async (r: ProductRequest) => {
     const note = await askPrompt({
