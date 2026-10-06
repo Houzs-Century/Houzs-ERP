@@ -1,4 +1,4 @@
--- 20261006T1300_acc_performance_opex_also.sql
+-- 20261006T1600_acc_performance_opex_also.sql
 -- REVERSAL: ALTER TABLE scm.acc_company_settings DROP COLUMN IF EXISTS performance_opex_also;
 --   Revert the code first: acc/performance-pnl.ts loadPerformanceSettings selects
 --   the column and savePerformanceSettings writes it. Dropping it puts 2990's
