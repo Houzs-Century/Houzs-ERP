@@ -258,6 +258,16 @@
       "why": "Renders the WEEKDAY NAME only (the Daily Bank dark bar, owner 2026-09-29); the date beside it comes from fmtDate. A weekday is a word by design and carries no day/month ambiguity."
     },
     {
+      "file": "frontend/src/mobile/MobileNewSO.frozenLines.test.tsx",
+      "text": "const inputs = () => [...container.querySelectorAll<HTMLInputElement>('input[type=\"date\"]')];",
+      "why": "A TEST QUERY SELECTOR, not a rendered input: it finds the native date inputs DateField already renders on the phone SO editor, so the test can type a header and a line Delivery Date and assert which hand-set flag the save sends. Nothing here renders a date to an operator."
+    },
+    {
+      "file": "frontend/src/mobile/MobileNewSO.lineDateFlag.test.tsx",
+      "text": "const inputs = () => [...container.querySelectorAll<HTMLInputElement>('input[type=\"date\"]')];",
+      "why": "A TEST QUERY SELECTOR, not a rendered input: it finds the native date inputs DateField already renders on the phone SO editor, so the test can type a header and a line Delivery Date and assert which hand-set flag the save sends. Nothing here renders a date to an operator."
+    },
+    {
       "file": "frontend/src/vendor/scm/components/DateField.touch.test.tsx",
       "text": "const el = container.querySelector('input[type=\"date\"]');",
       "why": "A TEST QUERY SELECTOR, not a rendered input: it locates the ONE native date input DateField already owns, so the touch test can assert which geometry that input was given — a full-field tap overlay on a coarse pointer, a 20px strip behind the calendar button on a fine one. Nothing here renders a date and nothing here is read by an operator."
