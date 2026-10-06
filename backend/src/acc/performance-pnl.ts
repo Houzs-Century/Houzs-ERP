@@ -23,7 +23,12 @@
 //     sections, as booked, by journal date) — owner 2026-09-12: performance
 //     GL 要放 other income — so net = gross profit + other income − operating
 //     expense − other expenses.
-// The rate and the account live on scm.acc_company_settings; the figures are
+// The rate may ALSO cover other accounts the company names, each with every
+// account beneath it in the chart (owner 2026-10-06: 2990's transport is
+// already inside the 16% — counting it again double-counts): those are left
+// out of the expenses, show at nil, and the rate's line names them. Houzs
+// names none (its performance is figured differently — 不做先).
+// The rate and the accounts live on scm.acc_company_settings; the figures are
 // computed live on every read and stored nowhere. The building is pure
 // (buildPerformanceReport) so the contract test feeds it worlds directly.
 // ----------------------------------------------------------------------------
@@ -34,25 +39,49 @@ import { layOutBlock, type LaidLine, type LaidNode, type Layout, type LayoutItem
 
 type Db = any;
 
-export type PerformanceSettings = { rateBp: number; account: string };
+/** `also`: accounts the rate covers besides `account` — each with the accounts under it. */
+export type PerformanceSettings = { rateBp: number; account: string; also: string[] };
 /** 16% of sales excluding service, in place of 900-O001 — the owner's numbers (2026-09-12). */
-export const DEFAULT_PERFORMANCE_SETTINGS: PerformanceSettings = { rateBp: 1600, account: '900-O001' };
+export const DEFAULT_PERFORMANCE_SETTINGS: PerformanceSettings = { rateBp: 1600, account: '900-O001', also: [] };
+
+/** The covered accounts as the settings hold them: trimmed, upper case, each
+    once, never the rate's own account. A list or a comma/space-separated text. */
+export const normaliseAlso = (raw: unknown, account: string): string[] => {
+  const list: unknown[] = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(/[\s,]+/) : [];
+  return [...new Set(list.map((c) => String(c ?? '').trim().toUpperCase()).filter((c) => c !== '' && c !== account))];
+};
+
+/** Each named code and every account beneath it in the chart. */
+export function accountsUnder(codes: readonly string[], chart: ReadonlyArray<{ account_code: string; parent_code?: string | null }>): Set<string> {
+  const kids = new Map<string, string[]>();
+  for (const a of chart) if (a.parent_code) kids.set(a.parent_code, [...(kids.get(a.parent_code) ?? []), a.account_code]);
+  const out = new Set<string>();
+  const walk = (c: string): void => {
+    if (out.has(c)) return;
+    out.add(c);
+    for (const k of kids.get(c) ?? []) walk(k);
+  };
+  for (const c of codes) walk(c);
+  return out;
+}
 
 /** The company's rate and account, else the owner's defaults (a company with
     no settings row yet reads the same numbers the migration defaulted). */
 export async function loadPerformanceSettings(sb: Db, companyId: number): Promise<{ ok: true; settings: PerformanceSettings } | { ok: false; reason: string }> {
   const { data, error } = await sb.from('acc_company_settings')
-    .select('performance_opex_rate_bp, performance_opex_account')
+    .select('performance_opex_rate_bp, performance_opex_account, performance_opex_also')
     .eq('company_id', companyId)
     .maybeSingle();
   if (error) return { ok: false, reason: error.message };
-  const row = (data ?? null) as { performance_opex_rate_bp?: number | null; performance_opex_account?: string | null } | null;
+  const row = (data ?? null) as { performance_opex_rate_bp?: number | null; performance_opex_account?: string | null; performance_opex_also?: string[] | null } | null;
   const rate = Number(row?.performance_opex_rate_bp);
+  const account = String(row?.performance_opex_account ?? '').trim() || DEFAULT_PERFORMANCE_SETTINGS.account;
   return {
     ok: true,
     settings: {
       rateBp: row?.performance_opex_rate_bp != null && Number.isFinite(rate) ? rate : DEFAULT_PERFORMANCE_SETTINGS.rateBp,
-      account: String(row?.performance_opex_account ?? '').trim() || DEFAULT_PERFORMANCE_SETTINGS.account,
+      account,
+      also: normaliseAlso(row?.performance_opex_also ?? [], account),
     },
   };
 }
@@ -64,6 +93,7 @@ export async function savePerformanceSettings(sb: Db, companyId: number, s: Perf
     company_id: companyId,
     performance_opex_rate_bp: s.rateBp,
     performance_opex_account: s.account,
+    performance_opex_also: s.also,
     updated_at: new Date().toISOString(),
     updated_by: actor,
   }, { onConflict: 'company_id' });
@@ -127,7 +157,13 @@ export type PerformanceReport = {
     account: string; accountName: string | null; accountFound: boolean;
     /** What the ledger booked on that account in the period — shown, left out of the expenses. */
     bookedSen: number;
+    /** The other accounts the rate covers, as named (each with the accounts under it). */
+    also: Array<{ code: string; name: string | null }>;
+    /** What the ledger booked on those in the period — left out of the expenses too. */
+    alsoBookedSen: number;
   };
+  /** The covered accounts that booked something in the period — shown at nil. */
+  inRate: PerfExpense[];
   /** The ledger's OTHER INCOMES + EXTRA-ORDINARY INCOME accounts as booked, by code. */
   otherIncome: PerfExpense[];
   otherIncomeSen: number;
@@ -148,6 +184,10 @@ export function buildPerformanceReport(p: {
   settings: PerformanceSettings;
   /** The named account as the chart has it, or null when the chart does not. */
   account: { code: string; name: string } | null;
+  /** The accounts `settings.also` covers, expanded to every account under them (accountsUnder). */
+  alsoCodes?: ReadonlySet<string>;
+  /** `settings.also` as the chart names them. */
+  alsoNamed?: Array<{ code: string; name: string | null }>;
 }): PerformanceReport {
   const excludedDraft = p.orders.filter((o) => String(o.status) === 'DRAFT').length;
   const excludedCancelled = p.orders.filter((o) => String(o.status) === 'CANCELLED').length;
@@ -194,7 +234,12 @@ export function buildPerformanceReport(p: {
   /* Only the named account is replaced — and only when the chart carries
      it; a code the chart does not know replaces nothing, and the report
      says so rather than quietly dropping a booked expense. */
+  /* The other accounts the rate covers are inside it, not beside it. */
+  const alsoCodes = p.alsoCodes ?? new Set<string>();
+  const inRate = p.expenses.filter((e) => alsoCodes.has(e.code) && e.code !== code && e.amountSen !== 0)
+    .sort((a, b) => a.code.localeCompare(b.code));
   const otherExpenses = (accountFound ? p.expenses.filter((e) => e.code !== code) : p.expenses)
+    .filter((e) => !alsoCodes.has(e.code))
     .filter((e) => e.amountSen !== 0)
     .sort((a, b) => a.code.localeCompare(b.code));
   const otherExpensesSen = otherExpenses.reduce((s, e) => s + e.amountSen, 0);
@@ -215,7 +260,10 @@ export function buildPerformanceReport(p: {
       rateBp: p.settings.rateBp, baseSen: salesExServiceSen, amountSen: opexSen,
       account: code, accountName: p.account?.name ?? null, accountFound,
       bookedSen: accountFound ? (replaced?.amountSen ?? 0) : 0,
+      also: p.alsoNamed ?? [],
+      alsoBookedSen: inRate.reduce((s, e) => s + e.amountSen, 0),
     },
+    inRate,
     otherIncome, otherIncomeSen,
     otherExpenses, otherExpensesSen,
     netSen, netPct: pct(netSen, salesSen),
@@ -244,7 +292,10 @@ export const operatingExpenseLabel = (o: PerformanceReport['operatingExpense']):
   const standsFor = o.accountFound
     ? `in place of ${o.account}${o.accountName ? ` ${o.accountName}` : ''}`
     : `${o.account} not in the chart — nothing replaced`;
-  return `Operating expense — ${ratePct(o.rateBp)} of sales excluding service (${fmtRm2(o.baseSen)}), ${standsFor}`;
+  const also = o.also.length > 0
+    ? `; also covers ${o.also.map((a) => `${a.code}${a.name ? ` ${a.name}` : ''}`).join(', ')} (with the accounts under them)`
+    : '';
+  return `Operating expense — ${ratePct(o.rateBp)} of sales excluding service (${fmtRm2(o.baseSen)}), ${standsFor}${also}`;
 };
 
 /**
@@ -264,6 +315,8 @@ export function performanceLayout(r: PerformanceReport, layout: Layout, companyI
     stored,
     baseSen,
     otherIncome: layOutBlock(block('otherIncome'), r.otherIncome, companyId, baseSen),
-    expenses: layOutBlock(block('expenses'), [opex, ...r.otherExpenses], companyId, baseSen),
+    /* A covered account that booked something prints where it always sits,
+       at nil — the money is inside the rate's line. */
+    expenses: layOutBlock(block('expenses'), [opex, ...r.otherExpenses, ...r.inRate.map((e) => ({ code: e.code, name: e.name, amountSen: 0 }))], companyId, baseSen),
   };
 }
