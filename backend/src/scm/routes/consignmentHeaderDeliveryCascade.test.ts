@@ -1,7 +1,8 @@
 // Owner rule: the Consignment Order header delivery date behaves like the SO's.
 // A header Delivery Date CHANGE overwrites every line's date and clears the
 // per-line override flag; a save that leaves the date unchanged touches no line
-// (the CO page sends every header field on every save).
+// (the CO page sends every header field on every save). A line already on a live
+// Consignment Note keeps its date, as an SO line on a live DO does.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -42,6 +43,8 @@ beforeEach(() => {
     { id: 'auto', doc_no: 'CO-1', company_id: 1, line_delivery_date: '2027-01-10', line_delivery_date_overridden: false },
     { id: 'hand', doc_no: 'CO-1', company_id: 1, line_delivery_date: '2027-01-20', line_delivery_date_overridden: true },
   ];
+  sb.tables.consignment_delivery_orders = [];
+  sb.tables.consignment_delivery_order_items = [];
   sb.tables.entity_audit_log = [];
   sb.tables.app_config = [];
 });
@@ -54,6 +57,22 @@ describe('CO header delivery date cascade (same as SO)', () => {
       expect(line(id).line_delivery_date).toBe('2027-01-15');
       expect(line(id).line_delivery_date_overridden).toBe(false);
     }
+  });
+
+  it('a line already on a live Consignment Note keeps its date; the others follow', async () => {
+    sb.tables.consignment_delivery_orders = [
+      { id: 'n1', company_id: 1, consignment_so_doc_no: 'CO-1', status: 'DRAFT' },
+      { id: 'n0', company_id: 1, consignment_so_doc_no: 'CO-1', status: 'CANCELLED' },
+    ];
+    sb.tables.consignment_delivery_order_items = [
+      { id: 'n1-a', company_id: 1, consignment_delivery_order_id: 'n1', consignment_so_item_id: 'hand' },
+      { id: 'n0-a', company_id: 1, consignment_delivery_order_id: 'n0', consignment_so_item_id: 'auto' },
+    ];
+    const res = await patch({ customerDeliveryDate: '2027-01-15' });
+    expect(res.status).toBe(200);
+    expect(line('hand').line_delivery_date).toBe('2027-01-20');
+    expect(line('hand').line_delivery_date_overridden).toBe(true);
+    expect(line('auto').line_delivery_date).toBe('2027-01-15');
   });
 
   it('an unchanged header date (full-payload save) leaves a hand-set line alone', async () => {
