@@ -17,8 +17,13 @@
 
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { Plus, Edit3, PackageCheck } from 'lucide-react';
 import { Button } from '@2990s/design-system';
+import { Button as DrawerButton } from '../../components/Button';
+import {
+  QuickViewShell, DrawerMetaGrid, DrawerMeta, DrawerSection, DrawerKV, DrawerPartyCard,
+  DrawerLines, DrawerLineRow, DrawerLineItem, DrawerTotals, DrawerTotal, drawerErrorText, type DrawerTone,
+} from './QuickViewDrawerParts';
 import { buildVariantSummary, fmtDateOrDash, fmtMoneySen, fmtQty, fmtSen } from '@2990s/shared';
 import {
   usePurchaseConsignmentOrders,
@@ -170,8 +175,120 @@ const buildColumns = (): GridColumn<PoHeaderRow>[] => [
   },
 ];
 
+/* Status TONE for the drawer badge (po_status enum): open = warning, every
+   line received = success, cancelled = error. LABEL is poStatusLabel. */
+const PCO_TONE: Record<string, DrawerTone> = {
+  DRAFT: 'neutral', SUBMITTED: 'warning', PARTIALLY_RECEIVED: 'warning', RECEIVED: 'success', CANCELLED: 'error',
+};
+const PCO_LINE_COLS = 'grid-cols-[minmax(0,1fr)_44px_96px]';
+
+/* Quick-view drawer — row click opens the same right slide-over the Sales
+   Order / Purchase Order lists have. Lines ride the SAME detail query the
+   expand chevron uses. */
+export function PurchaseConsignmentOrderDrawer({
+  row, onClose, onOpenFull, onEdit, onReceive, onCancel,
+}: {
+  row: PoHeaderRow | null;
+  onClose: () => void;
+  onOpenFull: () => void;
+  onEdit: () => void;
+  onReceive: () => void;
+  onCancel: () => void;
+}) {
+  const detailQ = usePurchaseConsignmentOrderDetail(row?.id ?? null);
+  const items = detailQ.data?.items ?? [];
+  const status = row?.status ?? '';
+  const hasChildren = Boolean(row?.has_children);
+  const canReceive = status === 'SUBMITTED' || status === 'PARTIALLY_RECEIVED';
+  const canCancel = status !== 'CANCELLED' && status !== 'RECEIVED' && !hasChildren;
+  const currency: Currency = row?.currency ?? 'MYR';
+  const lineSum = items.reduce((sum, it) => sum + it.line_total_sen, 0);
+  const subtotalSen = items.length > 0 ? lineSum : row?.subtotal_sen ?? 0;
+
+  return (
+    <QuickViewShell
+      open={Boolean(row)}
+      onClose={onClose}
+      ariaLabel={row ? `Purchase consignment order ${pcNo(row)}` : 'Purchase consignment order details'}
+      docNo={row ? pcNo(row) : ''}
+      docLabel="Purchase Consignment Order"
+      statusLabel={poStatusLabel(status)}
+      statusTone={PCO_TONE[status] ?? 'neutral'}
+      onOpenFull={onOpenFull}
+      footer={row && (
+        <>
+          {!hasChildren && <DrawerButton variant="ghost" icon={<Edit3 size={14} />} onClick={onEdit}>Edit</DrawerButton>}
+          {canCancel && <DrawerButton variant="ghost" className="text-err" onClick={onCancel}>Cancel</DrawerButton>}
+          <div className="flex-1" />
+          {canReceive && (
+            <DrawerButton variant="primary" icon={<PackageCheck size={14} />} onClick={onReceive}>Receive Goods</DrawerButton>
+          )}
+        </>
+      )}
+    >
+      {row && (
+        <>
+          <div className="text-[19px] font-bold text-ink">{row.supplier?.name ?? '—'}</div>
+          <div className="mt-1.5 text-[12.5px] text-ink-muted">Ordered {fmtDateOrDash(row.po_date)}</div>
+
+          <DrawerMetaGrid>
+            <DrawerMeta k="Supplier code" v={row.supplier?.code ?? '—'} mono />
+            <DrawerMeta k="Order date" v={fmtDateOrDash(row.po_date)} />
+            <DrawerMeta k="Expected" v={fmtDateOrDash(row.expected_at)} />
+            <DrawerMeta k="Currency" v={row.currency} />
+            <DrawerMeta k="Purchase location" v={row.purchase_location?.name ?? '—'} />
+            <DrawerMeta k="Lines" v={String(items.length || row.items?.length || 0)} />
+          </DrawerMetaGrid>
+
+          <DrawerSection>Supplier</DrawerSection>
+          <DrawerPartyCard name={row.supplier?.name ?? '—'} code={row.supplier?.code}>
+            <DrawerKV k="Contact" v={row.supplier?.contact_person || '—'} />
+            <DrawerKV k="Phone" v={row.supplier?.phone || '—'} />
+            <DrawerKV k="Email" v={row.supplier?.email || '—'} />
+            <DrawerKV k="Address" v={row.supplier?.address || '—'} />
+            {row.notes ? <DrawerKV k="Notes" v={row.notes} /> : null}
+          </DrawerPartyCard>
+
+          <DrawerSection>Order lines</DrawerSection>
+          <DrawerLines
+            cols={PCO_LINE_COLS}
+            headings={[{ label: 'Item' }, { label: 'Qty', right: true }, { label: 'Amount', right: true }]}
+            loading={detailQ.isLoading}
+            error={drawerErrorText(detailQ)}
+            empty={items.length === 0}
+          >
+            {items.map((it) => {
+              const manual = (it.description ?? '').trim();
+              const summary = buildVariantSummary(it.item_group ?? null, it.variants ?? null);
+              return (
+                <DrawerLineRow key={it.id} cols={PCO_LINE_COLS}>
+                  <DrawerLineItem
+                    pill={<ItemGroupPill group={it.item_group ?? null} />}
+                    primary={it.item_code}
+                    secondary={manual || summary || it.material_name}
+                  />
+                  <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtQty(it.qty)}</span>
+                  <span className="text-right font-money text-[12.5px] font-semibold text-ink">{fmtMoney(it.line_total_sen, currency)}</span>
+                </DrawerLineRow>
+              );
+            })}
+          </DrawerLines>
+
+          <DrawerTotals>
+            <DrawerTotal k="Subtotal" v={fmtMoney(subtotalSen, currency)} />
+            {row.tax_sen ? <DrawerTotal k="Tax" v={fmtMoney(row.tax_sen, currency)} /> : null}
+            <DrawerTotal k="Total" v={fmtMoney(row.total_sen, currency)} strong />
+          </DrawerTotals>
+        </>
+      )}
+    </QuickViewShell>
+  );
+}
+
 export const PurchaseConsignmentOrders = () => {
   const [status, setStatus] = useState<StatusFilter>('outstanding');
+  /* Row click → quick-view drawer. */
+  const [selected, setSelected] = useState<PoHeaderRow | null>(null);
   const navigate = useNavigate();
   const cancelPo = useCancelPurchaseConsignmentOrder();
   const askConfirm = useConfirm();
@@ -194,6 +311,7 @@ export const PurchaseConsignmentOrders = () => {
       danger: true,
     }))) return;
     cancelPo.mutate(po.id, {
+      onSuccess: () => setSelected(null),
       onError: (e) => notify({ title: 'Cancel failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
     });
   };
@@ -241,6 +359,7 @@ export const PurchaseConsignmentOrders = () => {
         searchPlaceholder="Search P/CO no, supplier, code…"
         loadedSearchLimit={1000}
         groupBanner={false}
+        onRowClick={(po) => setSelected(po)}
         onRowDoubleClick={(po) => navigate(`/scm/purchase-consignment-orders/${po.id}`)}
         expandable={{
           renderExpansion: (po) => <ExpandedLines po={po} />,
@@ -265,6 +384,15 @@ export const PurchaseConsignmentOrders = () => {
         }}
         isLoading={isLoading}
         emptyMessage='No orders yet — click "New Purchase Consignment Order" to start.'
+      />
+
+      <PurchaseConsignmentOrderDrawer
+        row={selected}
+        onClose={() => setSelected(null)}
+        onOpenFull={() => selected && navigate(`/scm/purchase-consignment-orders/${selected.id}`)}
+        onEdit={() => selected && navigate(`/scm/purchase-consignment-orders/${selected.id}?edit=1`)}
+        onReceive={() => selected && navigate(`/scm/purchase-consignment-receives/new?fromPcOrder=${selected.id}`)}
+        onCancel={() => selected && void doCancelPo(selected)}
       />
     </div>
   );
