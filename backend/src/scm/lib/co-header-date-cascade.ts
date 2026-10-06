@@ -33,9 +33,10 @@ async function coFrozenLineFilter(sb: any, coDocNo: string, companyId: number): 
 export async function cascadeCoHeaderDelivery(sb: any, coDocNo: string, companyId: number, newDate: string | null): Promise<void> {
   const frozen = await coFrozenLineFilter(sb, coDocNo, companyId);
   if (frozen === null) return;
-  let q = scopeToCompanyId(sb.from('consignment_sales_order_items')
+  let q = sb.from('consignment_sales_order_items')
     .update({ line_delivery_date: newDate })
-    .eq('doc_no', coDocNo), companyId)
+    .eq('doc_no', coDocNo)
+    .eq('company_id', companyId)
     .eq('line_delivery_date_overridden', false);
   if (frozen.length > 0) q = q.not('id', 'in', pgrestInList(frozen));
   await q;
