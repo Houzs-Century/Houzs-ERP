@@ -52,6 +52,7 @@ import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { fmtDate } from '../../vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { BackToPile } from '../../vendor/scm/components/BackToPile';
 import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
 
 import { fmtMoneySen, fmtSen } from '../../vendor/shared/format';
@@ -776,6 +777,8 @@ export const PaymentVoucherNew = () => {
         title={isRefund ? 'New Customer Refund' : isAp ? 'New AP Payment' : 'New Payment Voucher'}
         actions={
           <div className={styles.actions}>
+            {/* The pile kept while this tab lives (owner 2026-10-06): the bills not yet opened. */}
+            <BackToPile target="pv" />
             <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{SAVE_HOTKEY_HINT}</span>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/payment-vouchers')}>
               <X {...ICON} /> Cancel

@@ -101,7 +101,11 @@ export const useCreatePaymentVoucher = () => {
     mutationFn: ({ idempotencyKey, ...body }: { idempotencyKey?: string } & Record<string, unknown>) =>
       authedFetch<{ id: string; pvNumber: string }>(`/payment-vouchers`,
         idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['payment-vouchers'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      /* A bill now vouchered is another's same bill (the pile says so on return). */
+      void qc.invalidateQueries({ queryKey: ['payment-request-bill-matches'] });
+    },
   });
 };
 
