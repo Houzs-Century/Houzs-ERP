@@ -898,9 +898,10 @@ export const stockTakeRacksHandler = async (c: any) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const { data: head } = await scopeToCompanyId(
+  const { data: head, error: headErr } = await scopeToCompanyId(
     sb.from('stock_takes').select('warehouse_id').eq('id', id), co.companyId,
   ).maybeSingle();
+  if (headErr) return c.json({ error: 'load_failed', reason: headErr.message }, 500);
   if (!head) return c.json(NOT_THIS_COMPANY, 404);
   const { data, error } = await scopeToCompanyId(
     sb.from('warehouse_racks').select('id, rack, zone')
