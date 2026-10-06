@@ -8,6 +8,7 @@ Canonical reference for every date/timestamp fact in the system: where each one 
 - Read supplier ETA on a PO through the shared `effectiveDelivery()` helper (`backend/src/scm/shared/effective-delivery.ts`), never recompute it per caller.
 - Keep `public.sales_entries.processing_date` (legacy native Sales module) and `public.sales_orders.ac_udf_pdate` (AutoCount's own field) separate from the SCM SO's `processing_date` — different documents, different write paths; renaming any of them breaks a stored-payload replay.
 - Consignment Order: a header delivery-date change moves every line except a hand-set one (`line_delivery_date_overridden` — the user's date always wins) and one already on a live (non-CANCELLED, DRAFT included) Consignment Note (`shared/so-line-freeze.ts`). Keyed on the date actually changing, since the CO page re-sends it on every save.
+- PO: a header Delivery Date (`expected_at`) change moves every line's `delivery_date` (header PATCH in `mfg-purchase-orders.ts`) except a hand-set line (`line_delivery_date_overridden`, set when a user saves a changed line date; a date copied from the header is not hand-set) and one fully received on a GRN (`received_qty >= qty`).
 - Find the date-coercion helper (`emptyDate` / `dateOrNull`) your own route already imports or declares — there is no shared date-coercion module.
 
 ## Gotchas
