@@ -25,14 +25,14 @@ import {
   canLaneTransition, LANE_APPROVE_KEY, LANE_LABEL, type AmendmentLane,
 } from '../shared';
 import { applySoAmendment, reviseBoundPo, ReceivedFloorError } from '../lib/so-revision';
-import { chunkIn } from '../lib/paginate-all';
+import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { raisePoFollowUps } from '../lib/amendment-po-followup';
 import { DESK, judgeLaneHandover, judgeLaneMove } from '../lib/amendment-lane-handover';
 import { countCancelRequestsAwaitingSigner } from '../lib/cancel-pending-count';
 import { approveKeysFor } from '../shared/document-cancel';
 import { CANCEL_REQUESTS_TABLE } from './document-cancel-routes';
 import { hasHouzsPerm, holdsHouzsPermLiterally, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
-import { resolveSalesScopeIds, applySoScope, soDocOutOfScope, resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
+import { resolveSalesScopeIds, soOwnedInScope, readSoOwnership, resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
 import {
   notifySoAmendmentResolved,
   notifySoAmendmentHandedOver,
@@ -288,36 +288,40 @@ async function dispatchMirroredCommand(
    .limit(500) bounds the result so PostgREST's default 1000-row cap can't
    silently truncate — matches the SO/DO/GRN list convention.
 
-   Row-level scope (Owner 2026-07-16) — a salesperson must see the amendments
-   for THEIR OWN Sales Orders (they raise them), so the area guard admits them
-   (scmAreaGuard scm.sales.orders has an isSalesStaff bypass). But an amendment
-   carries no salesperson_id of its own, so without scoping a rep would see
-   EVERY rep's amendments. Filter the loaded amendments down to those whose
-   bound SO falls in the caller's own+downline sales scope — the SAME
-   self+downline tiering the SO list/detail uses. View-all callers (directors /
-   office / `*`) are unrestricted (resolveSalesScopeIds → null). */
+   Row-level scope — a scoped caller sees what they or their downline raised,
+   and what was raised on an order they or their downline own or were shared
+   (salesScope.soOwnedInScope; an order open to all does NOT count, DEV-40). View-all
+   callers (directors / office / `*`) are unrestricted (resolveSalesScopeIds →
+   null). The scoped path reads the company's whole queue and caps AFTER the
+   filter: capping first hid a rep's older requests behind 500 newer ones they
+   could not see. */
+const AMENDMENT_LIST_COLS = 'id, so_doc_no, amendment_no, status, lane, reason, lane_flag_note, requested_by, created_at, updated_at';
+const AMENDMENT_LIST_CAP = 500;
+
 soAmendments.get('/', async (c) => {
   const sb = c.get('supabase');
+  const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
   // scopeToCompany: isolate the list to the active company (mig 0080 company_id);
   // no-op pre-activation so single-company Houzs is unchanged.
-  const { data, error } = await scopeToCompany(sb.from('so_amendments')
-    .select('id, so_doc_no, amendment_no, status, lane, reason, lane_flag_note, requested_by, created_at, updated_at'), c)
-    .order('created_at', { ascending: false })
-    .limit(500);
+  const { data, error } = scopeIds
+    ? await paginateAll((from, to) => scopeToCompany(sb.from('so_amendments').select(AMENDMENT_LIST_COLS), c)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: true })
+      .range(from, to))
+    : await scopeToCompany(sb.from('so_amendments').select(AMENDMENT_LIST_COLS), c)
+      .order('created_at', { ascending: false })
+      .limit(AMENDMENT_LIST_CAP);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
-  let rows = (data ?? []) as Array<{ so_doc_no?: string | null }>;
-  const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
+  let rows = (data ?? []) as Array<{ so_doc_no?: string | null; requested_by?: string | null }>;
   if (scopeIds && rows.length > 0) {
-    // Resolve which of the listed amendments' SOs the caller may see — a single
-    // bounded query over the ≤500 doc_nos on the page (access_staff_ids ∩ scope,
-    // so an order SHARED with the caller lists its amendments too).
     const docNos = [...new Set(rows.map((r) => r.so_doc_no).filter((x): x is string => !!x))];
-    const { data: soRows } = await scopeToCompany(applySoScope(sb.from('mfg_sales_orders')
-      .select('doc_no')
-      .in('doc_no', docNos), scopeIds), c);
-    const allowed = new Set(((soRows ?? []) as Array<{ doc_no: string }>).map((r) => r.doc_no));
-    rows = rows.filter((r) => r.so_doc_no != null && allowed.has(r.so_doc_no));
+    const owned = await readSoOwnership(sb, docNos, (q) => scopeToCompany(q, c));
+    if (owned.error) return c.json({ error: 'load_failed', reason: owned.error }, 500);
+    rows = rows
+      .filter((r) => (r.requested_by != null && scopeIds.includes(r.requested_by))
+        || (r.so_doc_no != null && soOwnedInScope(scopeIds, owned.byDoc.get(r.so_doc_no))))
+      .slice(0, AMENDMENT_LIST_CAP);
   }
 
   /* Bound-PO enrichment (owner 2026-07-27 — "这个应该出现在 PO Amendment"): each
@@ -562,22 +566,26 @@ soAmendments.get('/:id', async (c) => {
   ]);
   if (amdRes.error) return c.json({ error: 'load_failed', reason: amdRes.error.message }, 500);
   if (!amdRes.data) return c.json({ error: 'not_found' }, 404);
-  const amendment = amdRes.data as unknown as { so_doc_no: string } & Record<string, unknown>;
+  // company-scope: prove the parent amendment — its read above is scopeToCompany'd and 404s first; the lines, bound POs and PO follow-ups below are its children, keyed by that id or its SO.
+  const amendment = amdRes.data as unknown as { so_doc_no: string; requested_by?: string | null } & Record<string, unknown>;
   const lines = (lineRes.data ?? []) as unknown as Array<Record<string, unknown>>;
 
-  // SO header summary — doc_no, status, revision (+ salesperson_id for the scope
+  // SO header summary — doc_no, status, revision (+ ownership for the scope
   // check below).
-  const { data: soRow } = await sb.from('mfg_sales_orders')
-    .select('doc_no, status, revision, salesperson_id, access_staff_ids, open_to_all')
-    .eq('doc_no', amendment.so_doc_no).maybeSingle();
+  const { data: soRow } = await scopeToCompany(sb.from('mfg_sales_orders')
+    .select('doc_no, status, revision, salesperson_id, access_staff_ids')
+    .eq('doc_no', amendment.so_doc_no), c).maybeSingle();
   const salesOrder = (soRow ?? null) as
-    { doc_no: string; status: string; revision: number; salesperson_id?: number | string | null; access_staff_ids?: string[] | null; open_to_all?: boolean | null } | null;
+    { doc_no: string; status: string; revision: number; salesperson_id?: number | string | null; access_staff_ids?: string[] | null } | null;
 
-  /* Row-level scope (Owner 2026-07-16) — a scoped salesperson may open only an
-     amendment for a Sales Order in their own+downline scope; anything else 404s
-     (indistinguishable from a nonexistent id), mirroring the SO detail read.
-     View-all callers pass. */
-  if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: salesOrder?.salesperson_id, accessStaffIds: salesOrder?.access_staff_ids, openToAll: salesOrder?.open_to_all })) {
+  /* Row-level scope — the list's rule (GET / above): a scoped caller opens only
+     what they or their downline raised, or what sits on an order they or their
+     downline own or were shared. Anything else 404s, indistinguishable from a
+     nonexistent id. */
+  const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
+  if (scopeIds
+    && !(amendment.requested_by != null && scopeIds.includes(amendment.requested_by))
+    && !soOwnedInScope(scopeIds, salesOrder)) {
     return c.json({ error: 'not_found' }, 404);
   }
 

@@ -19,6 +19,7 @@ Money is integer sen; dates are stored UTC and shown DD/MM/YYYY.
 - List tabs: one per status from `DO_STATUS_BUCKETS` (`backend/src/scm/lib/do-status-buckets.ts`) plus On Hold. KPI "On the road" = DISPATCHED + IN_TRANSIT; "Delivered" = DELIVERED + INVOICED.
 - `delivery_substatus` is a separate whitelisted column (Pending Pickup, Done Shipout, Arrives EM Warehouse, Done Delivered, Confirm, House Not Ready, Request Hold), not the lifecycle.
 - An SO may raise a DO unless its status is in `SO_UNDELIVERABLE_STATUSES` (DRAFT, CANCELLED, ON_HOLD, CLOSED) or it is held (`soCanRaiseDo(status, onHold)`). Keep it a deny-list: every forward status is deliverable because orders ship in batches.
+- Item Not Ready (BUG-59): create (`POST /` and `/from-sos`, drafts included) answers 409 `items_not_ready` when a linked non-service SO line's stored stock verdict is not READY (`do-not-ready-lines.ts`); the client asks once and replays with `confirmNotReady`. A warning, never a block; a failed read flags nothing. The from-SO picker shows a Stock column and pre-ticks only READY lines (desktop and phone).
 
 ## Permissions
 

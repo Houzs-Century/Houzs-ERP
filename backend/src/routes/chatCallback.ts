@@ -42,7 +42,7 @@
 //   lib/chat-request-patch.ts — never the schedule. See that module.
 //
 //   { callback_id?: string,          // idempotency; chat's own step id
-//     event: "confirm" | "amend",
+//     event: "confirm" | "amend" | "postage_confirm" | "postage_amend",
 //     ref: string,                   // the number the customer was shown: our
 //                                    // doc_no OR the AutoCount linked_ac_docno
 //     refs?: string,                 // the whole bundle, comma-joined (refs_all)
@@ -57,7 +57,7 @@ import type { Env } from "../types";
 import { timingSafeEqualStr } from "../services/auth";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
-import { DOC_REF_RE, parseCallbackRefs, type ChatEvent } from "../lib/chat-request-patch";
+import { CHAT_EVENTS, DOC_REF_RE, parseCallbackRefs, type ChatEvent } from "../lib/chat-request-patch";
 import { ChatTapLogFailed, recordChatTap, type ChatTapResult } from "../lib/chat-callback-record";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -121,7 +121,7 @@ function safeId(raw: unknown): string | null {
   return s || null;
 }
 
-const EVENTS = new Set(["confirm", "amend"]);
+const EVENTS = new Set<string>(CHAT_EVENTS);
 
 app.post("/", async (c) => {
   // company-scope: every read below IS scoped — chatCompany() resolves HOUZS
@@ -153,6 +153,7 @@ app.post("/", async (c) => {
     phone?: string;
     delivery_date?: string;
     reason?: string;
+    address?: string;
     note?: string;
   } | null = null;
   try {
@@ -166,7 +167,7 @@ app.post("/", async (c) => {
 
   const event = String(body.event ?? "").trim().toLowerCase();
   if (!EVENTS.has(event)) {
-    return c.json({ error: "event must be 'confirm' or 'amend'" }, 400);
+    return c.json({ error: `event must be one of ${CHAT_EVENTS.join(", ")}` }, 400);
   }
   const ref = String(body.ref ?? "").trim().slice(0, 64);
   if (!ref) return c.json({ error: "ref (SO doc_no) is required" }, 400);
@@ -178,6 +179,10 @@ app.post("/", async (c) => {
   // and reformatting it here would quietly lose "2026-09-30" vs "2026/09/30"
   // information that helps when a mismatch is being chased.
   const requestedDate = String(body.delivery_date ?? "").trim().slice(0, 32) || null;
+  // postage_amend: the address the customer typed, recorded verbatim on the
+  // log row (never written to the order — the Sales Order's address is the
+  // staff's to change).
+  const requestedAddress = String(body.address ?? "").trim().slice(0, 300) || null;
   const reason = String(body.reason ?? "").trim().slice(0, 200) || null;
   const note = String(body.note ?? "").trim().slice(0, 500) || null;
 
@@ -256,7 +261,7 @@ app.post("/", async (c) => {
         phone,
         requestedDate,
         reason,
-        note,
+        note: requestedAddress ? `${note ?? ""}${note ? " | " : ""}address: ${requestedAddress}` : note,
       }));
     } catch (e) {
       if (e instanceof ChatTapLogFailed) {

@@ -341,8 +341,8 @@ export const ConsignmentOrderDetail = () => {
       let changed = false;
       const out: Record<string, SoLineDraft> = {};
       for (const [id, d] of Object.entries(prev)) {
-        if (!d.lineDeliveryDateOverridden && d.lineDeliveryDate !== next) {
-          out[id] = { ...d, lineDeliveryDate: next };
+        if (d.lineDeliveryDateOverridden || d.lineDeliveryDate !== next) {
+          out[id] = { ...d, lineDeliveryDate: next, lineDeliveryDateOverridden: false };
           changed = true;
         } else {
           out[id] = d;
@@ -351,8 +351,8 @@ export const ConsignmentOrderDetail = () => {
       return changed ? out : prev;
     });
     setAddingDraft((prev) =>
-      prev && !prev.lineDeliveryDateOverridden && prev.lineDeliveryDate !== next
-        ? { ...prev, lineDeliveryDate: next }
+      prev && (prev.lineDeliveryDateOverridden || prev.lineDeliveryDate !== next)
+        ? { ...prev, lineDeliveryDate: next, lineDeliveryDateOverridden: false }
         : prev,
     );
   }, []);

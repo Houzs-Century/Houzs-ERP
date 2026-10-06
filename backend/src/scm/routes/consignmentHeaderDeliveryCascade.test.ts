@@ -1,6 +1,6 @@
-// Owner rule (6 Oct 2026): a Consignment Order header Delivery Date CHANGE moves
-// every line's date, except (a) a line whose date a user set by hand (hand-set
-// always wins) and (b) a line already on a live Consignment Note. A save that
+// Owner rule (6 Oct 2026, last edit wins, same as SO): a Consignment Order header
+// Delivery Date CHANGE moves every line's date, hand-set ones included, except a
+// line already on a live Consignment Note. A save that
 // leaves the date unchanged touches no line (the CO page re-sends every field).
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
@@ -57,10 +57,10 @@ beforeEach(() => {
 });
 
 describe('CO header delivery date cascade', () => {
-  it('a hand-set line keeps its date and its override flag', async () => {
+  it('last edit wins: a hand-set line takes the new header date and follows it again', async () => {
     expect((await patch({ customerDeliveryDate: '2027-01-15' })).status).toBe(200);
-    expect(line('hand').line_delivery_date).toBe('2027-01-20');
-    expect(line('hand').line_delivery_date_overridden).toBe(true);
+    expect(line('hand').line_delivery_date).toBe('2027-01-15');
+    expect(line('hand').line_delivery_date_overridden).toBe(false);
   });
 
   it('a line on a live Consignment Note keeps its date', async () => {

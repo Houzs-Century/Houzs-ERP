@@ -319,7 +319,8 @@ export const readAssignees = async (
     return { ok: false, body: { error: 'assignee_required', message: 'Pick at least one assignee — who is counting.' } };
   }
   if (ids.length > 10) return { ok: false, body: { error: 'too_many_assignees', message: 'At most 10 assignees.' } };
-  const { data } = await sb.from('staff').select('id').in('id', ids);
+  const { data, error } = await sb.from('staff').select('id').in('id', ids);
+  if (error) return { ok: false, body: { error: 'load_failed', message: 'Could not check the staff list — try again.' } };
   const found = new Set(((data as Array<{ id: string }> | null) ?? []).map((r) => r.id));
   if (ids.some((x) => !found.has(x))) {
     return { ok: false, body: { error: 'invalid_assignee', message: 'One of the assignees does not exist. Pick people from the staff list.' } };
@@ -709,10 +710,11 @@ export const patchStockTakeHeaderHandler = async (c: any) => {
   try { body = (await c.req.json()) as Record<string, unknown>; }
   catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  const { data: prev } = await scopeToCompanyId(
+  const { data: prev, error: prevErr } = await scopeToCompanyId(
     sb.from('stock_takes').select('status, take_no, company_id, notes, assignee_staff_id, assignee_staff_ids').eq('id', id),
     co.companyId,
   ).maybeSingle();
+  if (prevErr) return c.json({ error: 'load_failed', reason: prevErr.message }, 500);
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
   const head = prev as {
     status: string; take_no: string; company_id: number | null; notes: string | null;
@@ -770,9 +772,10 @@ export const stockTakeBucketOptionsHandler = async (c: any) => {
   if (!itemCode) return c.json({ error: 'item_code_required' }, 400);
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const { data: head } = await scopeToCompanyId(
+  const { data: head, error: headErr } = await scopeToCompanyId(
     sb.from('stock_takes').select('warehouse_id').eq('id', id), co.companyId,
   ).maybeSingle();
+  if (headErr) return c.json({ error: 'load_failed', reason: headErr.message }, 500);
   if (!head) return c.json(NOT_THIS_COMPANY, 404);
   const warehouseId = (head as { warehouse_id: string }).warehouse_id;
 
@@ -819,10 +822,11 @@ export const addStockTakeLineHandler = async (c: any) => {
   }
   const countedQty = Math.floor(countedRaw);
 
-  const { data: prev } = await scopeToCompanyId(
+  const { data: prev, error: prevErr } = await scopeToCompanyId(
     sb.from('stock_takes').select('status, take_no, company_id, warehouse_id').eq('id', id),
     co.companyId,
   ).maybeSingle();
+  if (prevErr) return c.json({ error: 'load_failed', reason: prevErr.message }, 500);
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
   const head = prev as { status: string; take_no: string; company_id: number | null; warehouse_id: string };
   if (head.status !== 'OPEN') return c.json({ error: 'not_open' }, 409);
@@ -842,8 +846,9 @@ export const addStockTakeLineHandler = async (c: any) => {
     }, 400);
   }
 
-  const { data: dup } = await scopeToCompanyId(sb.from('stock_take_lines').select('id')
+  const { data: dup, error: dupErr } = await scopeToCompanyId(sb.from('stock_take_lines').select('id')
     .eq('stock_take_id', id).eq('item_code', itemCode).eq('variant_key', variantKey), co.companyId).maybeSingle();
+  if (dupErr) return c.json({ error: 'load_failed', reason: dupErr.message }, 500);
   if (dup) {
     return c.json({ error: 'line_exists', lineId: (dup as { id: string }).id, message: 'This SKU / variant is already on the sheet — type the count on its line.' }, 409);
   }
