@@ -136,7 +136,7 @@ export const PurchaseConsignmentOrderNew = () => {
         itemCode: sourceRequest.item_code,
         materialName: sourceRequest.model?.name ?? sourceRequest.proposed_model_name ?? sourceRequest.item_code,
         qty: sourceRequest.qty,
-        category: String(sourceRequest.category ?? '').toLowerCase() || undefined,
+        category: sourceRequest.category.toLowerCase() || undefined,
         variants,
         deliveryDate: sourceRequest.expected_delivery_date ?? undefined,
         warehouseId: sourceRequest.delivery_location_id ?? undefined,
