@@ -1039,7 +1039,7 @@ export const PurchaseOrderNew = () => {
             });
 
             return (
-              <div
+              <div data-grid-row
                 key={l.rid}
                 style={{
                   background: 'var(--c-paper)',
