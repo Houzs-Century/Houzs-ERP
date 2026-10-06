@@ -64,3 +64,20 @@ export function cascadeLineDeliveryDate<T extends CascadableLine>(
      same thing, and says it in a way the compiler can follow. */
   return next.some((l, i) => l !== lines[i]) ? next : null;
 }
+
+/**
+ * Whether a SAVED Sales Order line keeps its date when the header's Delivery
+ * Date changes. The server cascade (apply_so_header_cas, migration
+ * 20261006T0402) keeps a line only when it is flagged AND its date differs from
+ * the header's: the item routes set the flag whenever a date is sent, so a
+ * flagged line still sitting on the header date is following it, not hand-set.
+ * Seed the edit draft's `lineDeliveryDateOverridden` from this so the preview
+ * moves the same lines the save will.
+ */
+export function isHandSetLineDate(
+  overridden: boolean | null,
+  lineDate: string | null,
+  headerDate: string | null,
+): boolean {
+  return !!overridden && (lineDate ?? '').slice(0, 10) !== (headerDate ?? '').slice(0, 10);
+}

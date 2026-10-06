@@ -4,7 +4,7 @@
 // typed.
 import { describe, expect, it } from 'vitest';
 
-import { cascadeLineDeliveryDate } from './line-delivery-date-cascade';
+import { cascadeLineDeliveryDate, isHandSetLineDate } from './line-delivery-date-cascade';
 
 const follower = (d: string | null) => ({ lineDeliveryDate: d, lineDeliveryDateOverridden: false });
 const typed = (d: string | null) => ({ lineDeliveryDate: d, lineDeliveryDateOverridden: true });
@@ -70,5 +70,20 @@ describe('cascadeLineDeliveryDate', () => {
   it('treats a missing override flag as following', () => {
     const out = cascadeLineDeliveryDate([{ lineDeliveryDate: '2026-09-19' }], '2026-09-24');
     expect(out?.[0]?.lineDeliveryDate).toBe('2026-09-24');
+  });
+});
+
+// Mirrors apply_so_header_cas (20261006T0402): the SO edit view seeds its
+// override flag from this, so the preview moves the lines the save moves.
+describe('isHandSetLineDate', () => {
+  it('keeps a flagged line whose date differs from the header', () => {
+    expect(isHandSetLineDate(true, '2026-10-15', '2026-10-10')).toBe(true);
+  });
+  it('lets a flagged line sitting on the header date follow', () => {
+    expect(isHandSetLineDate(true, '2026-10-10', '2026-10-10T00:00:00Z')).toBe(false);
+  });
+  it('lets an unflagged line follow', () => {
+    expect(isHandSetLineDate(false, '2026-10-15', '2026-10-10')).toBe(false);
+    expect(isHandSetLineDate(null, '2026-10-15', '2026-10-10')).toBe(false);
   });
 });

@@ -1049,10 +1049,11 @@ export function MobileNewSO({
         const editable = liveItems.map(lineFromItem);
         const addRow = openAddLine ? newLine() : null; // detail's Add line: one new row, picker open
         setLines(addRow ? [...editable, addRow] : editable.length ? editable : [newLine()]); if (addRow) setPickerFor(addRow.key);
-        /* FIX D1(b) — a prefilled line already carries its persisted Item Delivery
-           Date; treat it as a manual override so the header→line cascade never
-           stomps a saved per-line date on load. */
-        setDdateOverrides(new Set(editable.filter((l) => l.ddate).map((l) => l.key)));
+        /* FIX D1(b) — a saved line whose date differs from the header is held, so
+           the header→line cascade never stomps it on load; one on the header date
+           follows a header change, as the server cascade does (20261006T0402). */
+        const hdrDeliv = (h.customer_delivery_date ?? "").slice(0, 10);
+        setDdateOverrides(new Set(editable.filter((l) => l.ddate && l.ddate !== hdrDeliv).map((l) => l.key)));
         setExistingPays(payResp.payments ?? []);
         // Pin the version this SO was loaded with (WO-8 optimistic locking).
         loadedVersionRef.current = detail.salesOrder.version;

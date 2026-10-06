@@ -5,7 +5,7 @@
  * order through authedFetch itself, so that one module is faked: the detail and
  * the payments ledger answer, every other request stays pending.
  */
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -84,5 +84,26 @@ describe("phone SO editor — a partly delivered order", () => {
     await waitFor(() => expect(screen.getByText(/line items can no longer be changed/i)).toBeTruthy());
     expect(screen.queryByRole("button", { name: /add line/i })).toBeNull();
     expect(container.querySelector('[data-frozen="true"]')).toBeNull();
+  });
+});
+
+/* Owner 2026-10-06: a hand-set line date survives a header Delivery Date change;
+   a line on the header date follows — the same lines the server cascade moves
+   (apply_so_header_cas, 20261006T0402). */
+describe("phone SO editor — header Delivery Date change", () => {
+  it("moves the line on the header date and keeps the hand-set one", async () => {
+    // Far-future dates: a passed Processing Date locks the lines.
+    const so = { ...header, processing_date: "2099-01-10", customer_delivery_date: "2099-01-20", has_children: false };
+    const { container } = mount(so, [
+      { ...item("line-follow", "MT-QUEEN", false), line_delivery_date: "2099-01-20" },
+      { ...item("line-hand", "BF-QUEEN", false), line_delivery_date: "2099-01-25", line_delivery_date_overridden: true },
+    ]);
+    const inputs = () => [...container.querySelectorAll<HTMLInputElement>('input[type="date"]')];
+    const dates = () => inputs().map((i) => i.value);
+    await waitFor(() => expect(dates()).toContain("2099-01-25"));
+    // Header Processing, header Delivery, then one per line, in page order.
+    expect(dates()).toEqual(["2099-01-10", "2099-01-20", "2099-01-20", "2099-01-25"]);
+    fireEvent.change(inputs()[1], { target: { value: "2099-01-28" } });
+    await waitFor(() => expect(dates()).toEqual(["2099-01-10", "2099-01-28", "2099-01-28", "2099-01-25"]));
   });
 });
