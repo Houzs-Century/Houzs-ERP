@@ -28,9 +28,10 @@ export interface ConnectConfig {
 }
 
 export interface ConnectOrder {
-  /** COALESCE(linked_ac_docno, doc_no) — the number the customer knows.
-   *  /api/chat-callback resolves EITHER number back to the SO, so the flow can
-   *  echo this one straight into its callback body. */
+  /** The ERP Sales Order number (doc_no) — the number the message prints as
+   *  "Sales Order No." (owner 2026-10-06; before that the AutoCount number when
+   *  linked). /api/chat-callback resolves either number back to the SO, so a
+   *  conversation opened under the old rule still records. */
   ref: string;
   branding: string;
   /** yyyy/mm/dd, already the effective (amended ?? original) date. */
@@ -186,6 +187,10 @@ export function buildDeliveryFollowUp(
     attributes[`delivery_date_${n}`] = o.deliveryDate;
     attributes[`brand_${n}`] = o.branding;
   });
+  // EVERY bundled order, not only the 3 lines shown: the flow's callback echoes
+  // this as `refs`, so one Confirm / Amend tap lands on all of them in the ERP
+  // (/api/chat-callback resolves each number, our doc_no or AutoCount's).
+  attributes.refs_all = orders.map((o) => o.ref).join(',');
   // ONE balance paragraph for the whole message, so the figure is the sum over
   // EVERY bundled order (not only the 3 lines shown) and only of what is owed —
   // an over-paid order must not shrink another's balance. Nothing owed leaves

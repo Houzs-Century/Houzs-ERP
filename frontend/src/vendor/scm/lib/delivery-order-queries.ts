@@ -51,6 +51,8 @@ export type DeliverableSoLine = {
   /** The order's raw reference pair (resolve with soRefOfCamelStamp). */
   soRef?: string | null;
   soCustomerSoNo?: string | null;
+  /** Null when the line's stock is READY (BUG-59). */
+  notReady: { status: 'PARTIAL' | 'PENDING'; reason: string } | null;
 };
 
 export const useDeliverableSoLines = () => useQuery({

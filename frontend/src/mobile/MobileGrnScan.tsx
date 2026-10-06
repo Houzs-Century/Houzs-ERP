@@ -165,6 +165,9 @@ export function MobileGrnScan({ onBack }: { onBack: () => void }) {
                       : j.status === "error"
                         ? (j.error || "Couldn't read the delivery order.")
                         : "Reading the delivery order…"}
+                    {done && j.linkedDocNo && j.error && (
+                      <div style={{ marginTop: 4, color: "#a16a2e" }}>{j.error}</div>
+                    )}
                   </div>
                   <span style={{ flex: "none", fontSize: 11, color: "#9aa093" }}>{jobTs(j.createdAt) ? hhmm(jobTs(j.createdAt)) : ""}</span>
                 </div>

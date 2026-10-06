@@ -21,8 +21,8 @@ describe('normalizeGrnExtract', () => {
     expect(out.doNo).toBe('DO-55231');
     expect(out.deliveryDate).toBe('2026-09-18');
     expect(out.lines).toEqual([
-      { itemCode: 'AMN-SF9050 SOFA 2B(RHF)', barcode: '123', description: 'Sofa', qty: 2 },
-      { itemCode: '9015-1S', barcode: null, description: 'Chair', qty: 3 },
+      { itemCode: 'AMN-SF9050 SOFA 2B(RHF)', barcode: '123', description: 'Sofa', qty: 2, poNo: null },
+      { itemCode: '9015-1S', barcode: null, description: 'Chair', qty: 3, poNo: null },
     ]);
   });
 
@@ -46,9 +46,23 @@ describe('normalizeGrnExtract', () => {
     });
     expect(out.supplierName).toBeNull();
     expect(out.poNo).toBeNull();
-    expect(out.lines[0]).toEqual({ itemCode: null, barcode: null, description: 'x', qty: 5 });
+    expect(out.lines[0]).toEqual({ itemCode: null, barcode: null, description: 'x', qty: 5, poNo: null });
     expect(out.lines[1].qty).toBe(0);
     expect(out.lines[2].qty).toBe(0); // negative clamps to 0
+  });
+
+  test('a PO number printed on a row is kept per line (consolidated delivery order)', () => {
+    const out = normalizeGrnExtract({
+      supplierName: 'HOOKKA INDUSTRIES SDN BHD',
+      poNo: null,
+      lines: [
+        { itemCode: '1013-(Q)', qty: 1, poNo: 'HC-PO-2609-148' },
+        { itemCode: '2003-(K)', qty: 1, poNo: '  ' },
+      ],
+    });
+    expect(out.poNo).toBeNull();
+    expect(out.lines[0].poNo).toBe('HC-PO-2609-148');
+    expect(out.lines[1].poNo).toBeNull();
   });
 
   test('non-ISO delivery date is dropped to null', () => {

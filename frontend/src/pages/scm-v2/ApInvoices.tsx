@@ -48,6 +48,7 @@ import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { generateApListingPdf } from '../../vendor/scm/lib/ap-invoice-listing-pdf';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { Modal } from '../../vendor/scm/components/Modal';
+import { BackToPile } from '../../vendor/scm/components/BackToPile';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -345,6 +346,8 @@ export const ApInvoices = () => {
             {/* The pile: many supplier bills at once, read and split one AP
                 invoice each (owner 2026-09-08: scan bill 的按钮可以直接做在
                 + new ap invoice 附近吗). */}
+            {/* The pile kept while this tab lives (owner 2026-10-06): the bills not yet opened. */}
+            <BackToPile target="ap" />
             <button type="button" onClick={() => navigate('/scm/ap-invoices/scan')} style={linkBtn}>
               <Camera {...ICON} /> Scan bills
             </button>

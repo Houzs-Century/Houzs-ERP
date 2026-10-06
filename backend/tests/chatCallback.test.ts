@@ -28,6 +28,7 @@ const sources = import.meta.glob(
     "../src/index.ts",
     "../src/scm/routes/delivery-messages.ts",
     "../src/lib/chat-request-patch.ts",
+    "../src/lib/chat-callback-record.ts",
   ],
   { query: "?raw", import: "default", eager: true },
 ) as Record<string, string>;
@@ -49,6 +50,7 @@ function stripComments(s: string): string {
 }
 
 const route = () => stripComments(source("routes/chatCallback.ts"));
+const record = () => stripComments(source("lib/chat-callback-record.ts"));
 const deliveryMessages = () => stripComments(source("routes/delivery-messages.ts"));
 
 // Line number of the first UNCOMMENTED line containing `needle`, or -1.
@@ -80,14 +82,17 @@ describe("chat-callback is reachable at all", () => {
 
 describe("the callback records the request, it does not schedule", () => {
   test("the only SO write is the request patch, through advanceSoGeneration", () => {
-    const src = route();
+    const src = record();
     // A date a customer tapped is a REQUEST. The board owns delivery dates and
     // MRP pools off them. The route may fill the board's request columns —
     // but only through chatRequestPatch (whose own test pins the column list)
     // and only through the canonical SO header write, never a raw .update(.
     expect(src).not.toMatch(/\.update\s*\(/);
     expect(src).toMatch(/advanceSoGeneration\(sb,\s*docNo,\s*requestPatch\)/);
-    expect(src).toMatch(/chatRequestPatch\(event as ChatEvent,\s*requestedDate,\s*reason\)/);
+    expect(src).toMatch(/chatRequestPatch\(event,\s*requestedDate,\s*reason\)/);
+    // The route itself never touches the SO: it resolves refs and delegates.
+    expect(route()).not.toMatch(/\.update\s*\(/);
+    expect(route()).not.toMatch(/advanceSoGeneration/);
     // The request write happens AFTER the log row insert — the row is the record.
     expect(src.indexOf('from("wa_message_log")\n    .insert(') > -1 || src.indexOf('.insert({') > -1).toBe(true);
     expect(src.indexOf("advanceSoGeneration(sb")).toBeGreaterThan(src.indexOf('source: "chat-callback"'));
@@ -105,7 +110,7 @@ describe("the callback records the request, it does not schedule", () => {
   });
 
   test("mfg_sales_orders is read-only — select only", () => {
-    const src = route();
+    const src = route() + record();
     const idx = src.indexOf('from("mfg_sales_orders")');
     expect(idx, "the SO existence check disappeared").toBeGreaterThan(-1);
     const stmt = src.slice(idx, idx + 200);
@@ -114,6 +119,8 @@ describe("the callback records the request, it does not schedule", () => {
 
   test("the response says applied:false, so no caller can assume otherwise", () => {
     expect(route()).toMatch(/applied:\s*false/);
+    // The per-order module answers so_request.written, never `applied`.
+    expect(record()).not.toMatch(/applied:\s*(true|false)/);
   });
 });
 
@@ -126,6 +133,7 @@ describe("one secret, one company", () => {
     // the day someone renames a company code.
     expect(src).toMatch(/company\.master\s*&&\s*company\.id\s*==\s*null/);
     expect(src).toMatch(/\.eq\("company_id",\s*company\.id\)/);
+    expect(record()).toMatch(/\.eq\("company_id",\s*companyId\)/);
   });
 
   test("an unknown ref and another company's ref answer identically", () => {
@@ -138,24 +146,25 @@ describe("one secret, one company", () => {
 });
 
 describe("ref is the number the customer saw, not only our doc_no", () => {
-  test("the SO lookup matches doc_no OR linked_ac_docno, after an alphabet check", () => {
+  test("the SO lookup matches doc_no OR linked_ac_docno for the whole bundle, after an alphabet check", () => {
     const src = route();
-    // delivery-messages sends COALESCE(linked_ac_docno, doc_no) as ref_1 and the
-    // flow echoes it back; an AutoCount-linked order would otherwise 404 on
-    // every tap. The value lands inside a PostgREST `or` filter, so the
-    // alphabet check must come BEFORE it.
-    expect(src).toMatch(/\.or\(`doc_no\.eq\.\$\{ref\},linked_ac_docno\.eq\.\$\{ref\}`\)/);
+    // delivery-messages sends COALESCE(linked_ac_docno, doc_no) as ref_1 (and
+    // the bundle as refs_all); the flow echoes them back. The values land
+    // inside a PostgREST `or` filter, so the alphabet check (DOC_REF_RE, also
+    // applied by parseCallbackRefs to every sibling) must come BEFORE it.
+    expect(src).toMatch(/\.or\(`doc_no\.in\.\(\$\{list\}\),linked_ac_docno\.in\.\(\$\{list\}\)`\)/);
+    expect(src).toMatch(/parseCallbackRefs\(ref,\s*body\.refs\)/);
     const check = src.indexOf("invalid_ref");
-    const query = src.indexOf("linked_ac_docno.eq.");
+    const query = src.indexOf("linked_ac_docno.in.");
     expect(check).toBeGreaterThan(-1);
     expect(check).toBeLessThan(query);
   });
 
-  test("the row is keyed by OUR doc_no, so the board finds it", () => {
+  test("each row is keyed by OUR doc_no, so the board finds it; the primary ref decides the 404", () => {
     const src = route();
-    // The hit's doc_no, not the inbound ref, is what gets written.
-    expect(src).toMatch(/const docNo = String\(soHit\.doc_no\)/);
-    expect(src).toMatch(/doc_no:\s*docNo,/);
+    expect(src).toMatch(/const primaryDoc = resolve\(ref\)/);
+    expect(src).toMatch(/if \(!primaryDoc\) \{[\s\S]{0,400}unknown_ref/);
+    expect(record()).toMatch(/doc_no:\s*docNo,/);
   });
 });
 
@@ -177,16 +186,19 @@ describe("the guard is the same shape as the other intake keys", () => {
 
 describe("idempotency cannot widen or collide", () => {
   test("callback_id is sanitised before it reaches the LIKE", () => {
-    const src = route();
-    expect(src).toMatch(/replace\(\/\[\^A-Za-z0-9_-\]\/g,\s*""\)/);
+    expect(route()).toMatch(/replace\(\/\[\^A-Za-z0-9_-\]\/g,\s*""\)/);
     // The id is interpolated into a LIKE; an unfiltered % or _ would silently
     // match rows it should not.
-    expect(src).toMatch(/callback_id":"\$\{callbackId\}/);
+    expect(record()).toMatch(/callback_id":"\$\{callbackId\}/);
   });
 
-  test("the duplicate probe only ever sees this route's own rows", () => {
-    const src = route();
+  test("the duplicate probe only ever sees this route's own rows, for THIS doc", () => {
+    const src = record();
     const idx = src.indexOf(".like(");
+    // One tap answers for a bundle of orders: without the doc predicate the
+    // second order of the bundle would read the first order's row as its own
+    // duplicate and never be written.
+    expect(src.slice(Math.max(0, idx - 300), idx)).toMatch(/\.eq\("doc_no",\s*docNo\)/);
     expect(idx, "the idempotency probe disappeared").toBeGreaterThan(-1);
     // A delivery-planning send must never be mistaken for a duplicate callback.
     expect(src.slice(Math.max(0, idx - 300), idx)).toMatch(
@@ -197,12 +209,12 @@ describe("idempotency cannot widen or collide", () => {
 
 describe("a lost answer is an error, not a 200", () => {
   test("the insert failure is returned, not swallowed", () => {
-    const src = route();
-    expect(src).toMatch(/insErr[\s\S]{0,160}log_failed/);
-    // The send path logs best-effort because the WhatsApp had already left.
-    // Here the row IS the delivery: answering 200 would stop chat retrying and
-    // the customer's answer would be gone for good.
-    expect(src).toMatch(/log_failed[\s\S]{0,80}500/);
+    // The record module THROWS on a failed insert; the route turns that into
+    // a 500 log_failed. The send path logs best-effort because the WhatsApp
+    // had already left. Here the row IS the delivery: answering 200 would stop
+    // chat retrying and the customer's answer would be gone for good.
+    expect(record()).toMatch(/insErr[\s\S]{0,160}throw new ChatTapLogFailed/);
+    expect(route()).toMatch(/ChatTapLogFailed[\s\S]{0,200}log_failed[\s\S]{0,120}500/);
   });
 });
 
@@ -219,6 +231,6 @@ describe("callback rows cannot masquerade as send status", () => {
   });
 
   test("the callback writes a source the filter excludes", () => {
-    expect(route()).toMatch(/source:\s*"chat-callback"/);
+    expect(record()).toMatch(/source:\s*"chat-callback"/);
   });
 });
