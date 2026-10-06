@@ -38,6 +38,7 @@ import {
 import { poStatusLabel } from '../../vendor/scm/lib/po-status';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
@@ -80,7 +81,7 @@ const buildColumns = (): GridColumn<PoHeaderRow>[] => [
     // Backend (purchase-consignment-orders list) returns pc_number, not the
     // PO's po_number — the PoHeaderRow type is shared with real POs, so read
     // pc_number with a po_number fallback.
-    accessor: (po) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{pcNo(po)}</span>,
+    accessor: (po) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }} className={cancelledDocNoClass(po.status)}>{pcNo(po)}</span>,
     searchValue: (po) => pcNo(po),
     /* Accessor is JSX → export the raw doc-no string or the cell exports blank. */
     exportValue: (po) => pcNo(po),
@@ -357,6 +358,7 @@ export const PurchaseConsignmentOrders = () => {
         storageKey={PC_ORDER_LIST_STORAGE_KEY}
         exportName="Purchase Consignment Orders"
         rowKey={(po) => po.id}
+        getRowClassName={(po) => cancelledRowClass(po.status)}
         searchPlaceholder="Search P/CO no, supplier, code…"
         loadedSearchLimit={1000}
         groupBanner={false}

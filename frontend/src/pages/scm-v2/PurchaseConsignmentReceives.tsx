@@ -40,6 +40,7 @@ import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
 import { transferFromColumnLabel } from "../../lib/convertScope";
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -67,7 +68,7 @@ type GrnRow = Record<string, unknown> & {
 const buildColumns = (): GridColumn<GrnRow>[] => [
   {
     key: 'receive_number', label: 'Receive No.', width: 150, sortable: true,
-    accessor: (g) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{g.receive_number}</span>,
+    accessor: (g) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }} className={cancelledDocNoClass(g.status)}>{g.receive_number}</span>,
     searchValue: (g) => g.receive_number,
     /* Accessor is JSX → export the raw doc-no string or the cell exports blank. */
     exportValue: (g) => g.receive_number,
@@ -434,6 +435,7 @@ export const PurchaseConsignmentReceives = () => {
         storageKey={PCR_LIST_STORAGE_KEY}
         exportName="Purchase Consignment Receives"
         rowKey={(g) => g.id}
+        getRowClassName={(g) => cancelledRowClass(g.status)}
         searchPlaceholder="Search receive no, supplier, DN ref…"
         loadedSearchLimit={1000}
         groupBanner={false}

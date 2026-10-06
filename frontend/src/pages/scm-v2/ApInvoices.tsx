@@ -58,6 +58,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { DataTable, type Column } from '../../components/DataTable';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { ApInvoiceForm, emptyApForm, formFromExtraction, formFromRequest, scanNoteFor, type ApFormMode, type ApFormSubmit, type ApFormValues } from './ApInvoiceForm';
 import { eventCellText } from '../../vendor/scm/components/EventSelect';
 import { useEventLabels, type EventSuggestion } from '../../vendor/scm/lib/event-queries';
@@ -307,8 +308,8 @@ export const ApInvoices = () => {
     {
       key: 'number', label: 'No.',
       render: (r) => r.kind === 'PI'
-        ? <Link to={`/scm/purchase-invoices/${r.id}`} style={{ color: 'inherit', ...mono }}>{r.invoiceNumber}</Link>
-        : <button type="button" onClick={() => setDetailId(r.id)} style={{ ...linkBtn, ...mono }}>{r.invoiceNumber}</button>,
+        ? <Link to={`/scm/purchase-invoices/${r.id}`} className={cancelledDocNoClass(r.status)} style={{ color: 'inherit', ...mono }}>{r.invoiceNumber}</Link>
+        : <button type="button" onClick={() => setDetailId(r.id)} className={cancelledDocNoClass(r.status)} style={{ ...linkBtn, ...mono }}>{r.invoiceNumber}</button>,
       getValue: (r) => r.invoiceNumber,
     },
     {
@@ -390,6 +391,7 @@ export const ApInvoices = () => {
               ? 'No supplier invoices match this filter — pick another supplier or kind.'
               : 'No supplier invoices here yet — purchase invoices show once posted on the Procurement side; raise an AP invoice for a non-stock bill.'}
             getRowKey={(r) => `${r.kind}-${r.id}`}
+            getRowClassName={(r) => cancelledRowClass(r.status)}
             getRowStyle={(r) => (r.status === 'CANCELLED' ? { opacity: 0.55 } : undefined)}
             onFilteredRowsChange={setShownRows}
           />

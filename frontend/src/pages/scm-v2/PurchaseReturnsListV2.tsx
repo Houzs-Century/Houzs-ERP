@@ -50,6 +50,7 @@ import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { cancelledDocNoClass, cancelledRowClass } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { transferFromColumnLabel } from "../../lib/convertScope";
 import { purchaseReturnRowMenu } from "./row-menus";
@@ -243,7 +244,7 @@ function CardsGrid({ rows, onOpen }: { rows: PrRow[]; onOpen: (r: PrRow) => void
             className="group relative overflow-hidden rounded-lg border border-border bg-surface px-4 py-4 text-left shadow-stone transition-all duration-200 hover:-translate-y-px hover:border-primary/40 hover:shadow-slab focus:outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-docno text-[12.5px] font-semibold text-ink">{r.return_number}</span>
+              <span className={cn("font-docno text-[12.5px] font-semibold text-ink", cancelledDocNoClass(r.status))}>{r.return_number}</span>
               <Badge tone={st.tone} size="xs">{st.label}</Badge>
             </div>
             <div className="mt-2 truncate text-[15px] font-semibold text-ink">{supplierNameOf(r)}</div>
@@ -731,7 +732,7 @@ export function PurchaseReturnsListV2() {
     doc_no: {
       doc: (r) => r.return_number,
       width: "156px",
-      render: (r) => <span className="font-docno text-[12.5px] font-semibold text-ink">{r.return_number}</span>,
+      render: (r) => <span className={cn("font-docno text-[12.5px] font-semibold text-ink", cancelledDocNoClass(r.status))}>{r.return_number}</span>,
     },
     doc_date: { doc: (r) => r.return_date ?? null, width: "108px" },
     creditor_code: { doc: (r) => r.supplier?.code || null, width: "120px", mono: true },
@@ -913,6 +914,7 @@ export function PurchaseReturnsListV2() {
                 error={error ? (error as Error).message ?? "Failed to load" : null}
                 columns={columns}
                 getRowKey={(r) => r.id}
+                getRowClassName={(r) => cancelledRowClass(r.status)}
                 onRowClick={(r) => setSelected(r)}
                 contextMenu={prContextMenu}
                 expandable={{

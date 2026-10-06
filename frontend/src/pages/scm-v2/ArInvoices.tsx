@@ -49,6 +49,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { DataTable, type Column } from '../../components/DataTable';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { DebtorBillForm, emptyBillForm, type BillFormMode, type BillFormSubmit, type BillFormValues } from './DebtorBillForm';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -293,7 +294,7 @@ export const ArInvoices = () => {
     {
       key: 'number', label: 'No.',
       /* Both kinds open the same way the row does — the number reads as the link it is. */
-      render: (r) => <button type="button" onClick={(e) => { e.stopPropagation(); openRow(r); }} style={{ ...linkBtn, ...mono }}>{r.invoiceNumber}</button>,
+      render: (r) => <button type="button" onClick={(e) => { e.stopPropagation(); openRow(r); }} className={cancelledDocNoClass(r.status)} style={{ ...linkBtn, ...mono }}>{r.invoiceNumber}</button>,
       getValue: (r) => r.invoiceNumber,
     },
     {
@@ -383,6 +384,7 @@ export const ArInvoices = () => {
               ? 'No customer invoices match this filter — pick another party or kind.'
               : 'No customer invoices here yet — sales invoices show once issued on the Sales side; raise a debtor bill for money owed by someone outside the trade.'}
             getRowKey={rowKey}
+            getRowClassName={(r) => cancelledRowClass(r.status)}
             getRowStyle={(r) => (r.status === 'CANCELLED' ? { opacity: 0.55 } : undefined)}
             onFilteredRowsChange={setShownRows}
             onRowClick={openRow}

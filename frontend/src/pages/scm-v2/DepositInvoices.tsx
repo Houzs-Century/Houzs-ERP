@@ -26,6 +26,7 @@ import {
   type DepositInvoice, type DepositInvoiceSheet, type DepositInvoiceStatus,
 } from '../../vendor/scm/lib/deposit-invoice-queries';
 import { DataTable, type Column } from '../../components/DataTable';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
 import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from '../../vendor/scm/lib/payment-methods';
@@ -52,7 +53,7 @@ const methodLabel = (m: string | null): string => {
   return code ? PAYMENT_METHOD_DEFAULT_LABELS[code] : m ? humaniseStatusKey(m) : '—';
 };
 const DEPOSIT_COLUMNS: Column<DepositInvoice>[] = [
-  { key: 'number', label: 'Number', render: (d) => <span style={mono}>{d.di_number}</span>, getValue: (d) => d.di_number },
+  { key: 'number', label: 'Number', render: (d) => <span className={cancelledDocNoClass(d.status)} style={mono}>{d.di_number}</span>, getValue: (d) => d.di_number },
   { key: 'date', label: 'Date', render: (d) => fmtDateOrDash(d.invoice_date), getValue: (d) => d.invoice_date, exportFormat: 'date' },
   { key: 'customer', label: 'Customer', render: (d) => d.party_name ?? d.party_code ?? '—', getValue: (d) => d.party_name ?? d.party_code ?? '' },
   { key: 'order', label: 'Order', render: (d) => <span style={mono}>{d.so_doc_no}</span>, getValue: (d) => d.so_doc_no },
@@ -135,6 +136,7 @@ export const DepositInvoices = () => {
         error={listQ.isError ? `The list did not load — ${errText(listQ.error)}` : null}
         emptyLabel="No deposit invoice matches this filter."
         getRowKey={(d) => d.id}
+        getRowClassName={(d) => cancelledRowClass(d.status)}
         onRowClick={(d) => setOpenId(d.id)}
         selection={{
           selectedIds: ticked,

@@ -63,6 +63,7 @@ import { StatCard } from '../../components/StatCard';
 import soDetailStyles from './SalesOrderDetail.module.css';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
 import { transferToColumnLabel } from "../../lib/convertScope";
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { customerRefOf } from '../../lib/customer-ref';
 
 /* Local payments hook — lazy-loaded per expanded SO row alongside the detail
@@ -1031,6 +1032,7 @@ export const ConsignmentOrders = () => {
         exportName="Consignment Orders"
         searchPlaceholder="Search doc no, customer, PO no, reference…"
         rowKey={(r) => r.doc_no}
+        getRowClassName={(r) => cancelledRowClass(r.status)}
         selectable={{
           selectedKeys: sel,
           onToggle: (k) => setSel((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; }),
@@ -1187,7 +1189,7 @@ const buildAllColumns = (
       <span style={{
         fontWeight: 700, color: '#16695f',
         fontVariantNumeric: 'tabular-nums',
-      }}>{r.doc_no}</span>
+      }} className={cancelledDocNoClass(r.status)}>{r.doc_no}</span>
     ),
     searchValue: (r) => `${r.doc_no} ${r.status ?? ''}`,
     filterValue: (r) => r.doc_no,
