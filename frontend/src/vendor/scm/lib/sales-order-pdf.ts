@@ -1,5 +1,6 @@
 import { formatPhone } from '@2990s/shared/phone';
 import { buildVariantSummary } from '@2990s/shared';
+import { customerRefOf } from '../../../lib/customer-ref';
 import type { RowInput } from 'jspdf-autotable';
 import {
   allocatePwpTriggerNotes,
@@ -94,6 +95,8 @@ type SoHeader = {
   branding: string | null;
   venue: string | null;
   ref: string | null;
+  /* The CO form writes the customer's reference here, not in `ref`. */
+  customer_so_no?: string | null;
   po_doc_no: string | null;
   phone: string | null;
   address1: string | null;
@@ -553,7 +556,11 @@ export async function renderSalesOrderInto(
       rows: [
         [opts?.docNoLabel ?? 'Doc No', header.doc_no],
         ['Customer PO', header.customer_po ?? header.po_doc_no],
-        [opts?.refLabel ?? 'Reference', opts?.refLabel ? (header.ref || '—') : header.ref],
+        /* The customer's own reference, resolved by the ONE rule (lib/customer-ref):
+           `ref` leads, `customer_so_no` is the transitional fallback. The CO form
+           writes customer_so_no, so reading header.ref alone printed a dash under
+           "Ref No." while the screen showed HC12457 (owner, 2026-10-06). */
+        [opts?.refLabel ?? 'Reference', opts?.refLabel ? (customerRefOf(header) || '—') : (customerRefOf(header) || null)],
         ['Agent', header.agent],
         ['Sales Location', header.sales_location],
         ['Venue', header.venue],
