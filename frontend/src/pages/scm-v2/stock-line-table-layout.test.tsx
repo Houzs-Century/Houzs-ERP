@@ -40,6 +40,10 @@ vi.mock('../../vendor/scm/lib/mfg-products-queries', async (importOriginal) => (
   useSpecialAddons: () => ({ data: [], isLoading: false }),
 }));
 
+vi.mock('../../vendor/scm/lib/fabric-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/fabric-queries')>()),
+  useFabricTrackingsLite: () => ({ data: [], isLoading: false }),
+}));
 vi.mock('../../vendor/scm/components/NotifyDialog', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/components/NotifyDialog')>()),
   useNotify: () => async () => undefined,

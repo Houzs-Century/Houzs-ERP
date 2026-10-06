@@ -27,6 +27,7 @@ import { PageSkeleton, RouteCrashBoundary } from "./components/RouteFallback";
 import { IosInstallGuide } from "./components/IosInstallGuide";
 import { AndroidInstallGuide } from "./components/AndroidInstallGuide";
 import { LazySlot } from "./components/LazySlot";
+import { LineGridNav } from "./components/LineGridNav";
 
 /* LAZY, and it costs nothing: this is a modal nobody sees until after the
    digest request answers, so it has no business in the chunk that has to arrive
@@ -452,6 +453,7 @@ export default function App() {
       <LazySlot resetKey="pending-reminder" fallback={null}><PendingTasksReminder /></LazySlot>
       <QuickActionsFAB />
       <BackToTopFAB />
+      <LineGridNav />
       <AssistantPanelProvider>
         <AssistantLauncher />
         <AssistantPanel />

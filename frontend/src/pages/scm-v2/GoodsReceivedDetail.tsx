@@ -761,7 +761,7 @@ export const GoodsReceivedDetail = () => {
                 || it.description
                 || it.material_name;
               return (
-                <div
+                <div data-grid-row
                   key={it.id}
                   style={{
                     background: 'var(--c-paper)',

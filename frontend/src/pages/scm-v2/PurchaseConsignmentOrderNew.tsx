@@ -558,7 +558,7 @@ export const PurchaseConsignmentOrderNew = () => {
             const showVariants  = showsVariantEditor(l.category) && maint;
 
             return (
-              <div
+              <div data-grid-row
                 key={l.rid}
                 style={{
                   background: 'var(--c-paper)',
