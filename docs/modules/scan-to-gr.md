@@ -64,9 +64,10 @@ Match order: **supplier, then PO number, then item code / barcode.**
   (never guessed). Qty is clamped to the PO line's remaining.
 
 **Confidence gate (no PO-number hit):** the scan is refused (needs-review, no
-document) when the supplier is unresolved, when the picks span more than one PO,
-or when half or fewer of the scanned lines matched. One stray item-code hit must
-never link a delivery order to some other PO.
+document) when the supplier is unresolved or when the picks span more than one PO.
+When half or fewer of the scanned lines matched the one PO, the draft is still
+created but flagged `weakMatch`: "Check the PO" goes on the GRN note, the scan
+card and the notice. The draft never moves stock until someone posts it.
 
 **Outcomes:** ≥1 pick → DRAFT GRN(s) linked to the source PO(s), any unmatched
 lines noted for the operator to add. 0 picks (or convert refused, e.g. an
