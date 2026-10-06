@@ -30,7 +30,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { History, Save, X, Trash2, Send, Ban, AlertTriangle, Search, Wand2, Undo2, ChevronRight, ChevronDown, EyeOff, Rows3, List, Printer, Pencil, Plus } from 'lucide-react';
+import { History, Save, X, Trash2, Send, Ban, AlertTriangle, Search, Wand2, Undo2, ChevronRight, ChevronDown, EyeOff, Rows3, List, Printer, Pencil, Plus, Camera } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -47,6 +47,7 @@ import {
   useUpdateStockTakeHeader,
   useAddStockTakeLine,
   useStockTakeBucketOptions,
+  useStockTakeRacks,
   stockTakeAssignees,
   type StockTakeStatus,
   type StockTakeLine,
@@ -54,6 +55,7 @@ import {
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { useMfgProducts } from '../../vendor/scm/lib/mfg-products-queries';
 import { StaffMultiPick } from '../../vendor/scm/components/StaffMultiPick';
+import { StockTakeSheetReader, type SheetApply } from '../../vendor/scm/components/StockTakeSheetReader';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
@@ -91,6 +93,9 @@ type LineDraft = {
   /* Round 1: unit cost (sen) the post would value a variance at; null = none. */
   estUnitCostSen: number | null;
   addedOnCount: boolean;
+  /* Round 2: where the counter found the goods (moved there at post). */
+  rackId: string | null;
+  origRackId: string | null;
 };
 
 const toDraft = (l: StockTakeLine): LineDraft => ({
@@ -107,6 +112,8 @@ const toDraft = (l: StockTakeLine): LineDraft => ({
   countedAt:        l.counted_at ?? null,
   estUnitCostSen:   l.est_unit_cost_sen ?? null,
   addedOnCount:     l.added_on_count === true,
+  rackId:           l.rack_id ?? null,
+  origRackId:       l.rack_id ?? null,
 });
 
 const parseCounted = (s: string): number | null => {
@@ -163,6 +170,27 @@ export const StockTakeDetail = () => {
   const [editingHeader, setEditingHeader] = useState(false);
   const [draftAssignees, setDraftAssignees] = useState<string[]>([]);
   const [draftNotes, setDraftNotes] = useState('');
+  /* Round 2: racks of this take's warehouse + the paper-sheet reader. */
+  const racksQ = useStockTakeRacks(id ?? null);
+  const rackLabel = useCallback((rid: string | null) => {
+    if (!rid) return '—';
+    return (racksQ.data ?? []).find((r) => r.id === rid)?.rack ?? '—';
+  }, [racksQ.data]);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const applySheet = (rows: SheetApply[]) => {
+    const by = new Map(rows.map((r) => [r.lineId, r]));
+    setLines((cur) => cur.map((l) => {
+      const r = by.get(l.id);
+      if (!r) return l;
+      return {
+        ...l,
+        countedQtyInput: r.counted == null ? l.countedQtyInput : String(r.counted),
+        rackId: r.rackId ?? l.rackId,
+      };
+    }));
+    setDirty(true);
+    void notify({ title: `${rows.length} line${rows.length === 1 ? '' : 's'} filled from the sheet`, body: 'Check them, then Save Counts.' });
+  };
 
   useEffect(() => {
     if (!detail.data) return;
@@ -329,7 +357,7 @@ export const StockTakeDetail = () => {
     // Build diff payload — only lines whose counted or notes changed.
     const changed = lines.filter((l) => {
       const parsedCounted = parseCounted(l.countedQtyInput);
-      return parsedCounted !== l.origCountedQty || l.notes !== l.origNotes;
+      return parsedCounted !== l.origCountedQty || l.notes !== l.origNotes || l.rackId !== l.origRackId;
     });
     if (changed.length === 0) { setDirty(false); return; }
     update.mutate(
@@ -339,6 +367,7 @@ export const StockTakeDetail = () => {
           id:         l.id,
           countedQty: parseCounted(l.countedQtyInput),
           notes:      l.notes.trim() ? l.notes.trim() : null,
+          ...(l.rackId !== l.origRackId ? { rackId: l.rackId } : {}),
         })),
       },
       {
@@ -376,7 +405,11 @@ export const StockTakeDetail = () => {
             tone: 'error',
           });
         } else {
-          notify({ title: 'Posted', body: `${res.movementsWritten} adjustment movement${res.movementsWritten === 1 ? '' : 's'} written.` });
+          const rackNote = res.rackError
+            ? `\nRacks were NOT updated: ${res.rackError} — move them on Racks & Bins.`
+            : `${res.racksMoved ? `\n${res.racksMoved} rack placement${res.racksMoved === 1 ? '' : 's'} updated.` : ''}` +
+              `${res.racksSkipped?.length ? `\nRacks left as they were (a counted line had no rack): ${res.racksSkipped.join(', ')}.` : ''}`;
+          notify({ title: 'Posted', body: `${res.movementsWritten} adjustment movement${res.movementsWritten === 1 ? '' : 's'} written.${rackNote}` });
         }
       },
       onError: (err) => notify({ title: 'Post failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
@@ -489,6 +522,9 @@ export const StockTakeDetail = () => {
                   </Button>
                   <Button variant="ghost" size="md" onClick={onCancel} disabled={cancel.isPending}>
                     <Ban {...ICON} /> Cancel
+                  </Button>
+                  <Button variant="ghost" size="md" onClick={() => setSheetOpen(true)}>
+                    <Camera {...ICON} /> Upload counted sheet
                   </Button>
                   <Button variant="ghost" size="md" onClick={onSave} disabled={!dirty || update.isPending}>
                     <Save {...ICON} /> {update.isPending ? 'Saving…' : 'Save Counts'}
@@ -733,6 +769,7 @@ export const StockTakeDetail = () => {
                     stripped them from the payload. */}
                 {!blindActive && <th style={{ width: 110, textAlign: 'right' }}>System Qty</th>}
                 <th style={{ width: 130, textAlign: 'right' }}>Counted Qty</th>
+                <th style={{ width: 120 }}>Rack</th>
                 {!blindActive && <th style={{ width: 110, textAlign: 'right' }}>Variance</th>}
                 {!blindActive && <th style={{ width: 110, textAlign: 'right' }}>Value (RM)</th>}
                 <th style={{ width: 130 }}>Counted By</th>
@@ -742,7 +779,7 @@ export const StockTakeDetail = () => {
             <tbody>
               {(() => {
                 /* SKU + Name + Variant + Counted + Counted By = 5 fixed. */
-                const colCount = 5 + (blindActive ? 0 : 3) + (isDraft ? 1 : 0);
+                const colCount = 6 + (blindActive ? 0 : 3) + (isDraft ? 1 : 0);
                 if (filteredLines.length === 0) {
                   return (
                     <tr><td colSpan={colCount} className={styles.emptyRow}>
@@ -815,6 +852,23 @@ export const StockTakeDetail = () => {
                             color: isUntouched ? 'var(--fg-muted)' : 'var(--c-ink)' }}>
                             {isUntouched ? '—' : fmtQty(Number(ln.countedQtyInput))}
                           </span>
+                        )}
+                      </td>
+                      {/* Round 2: where the goods actually sit — moved there at post. */}
+                      <td>
+                        {isDraft && (racksQ.data ?? []).length > 0 ? (
+                          <select
+                            className={styles.fieldSelect}
+                            aria-label={`Rack for ${ln.itemCode}`}
+                            value={ln.rackId ?? ''}
+                            onChange={(e) => setLine(ln.id, { rackId: e.target.value || null })}
+                            style={{ fontSize: 'var(--fs-12)' }}
+                          >
+                            <option value="">—</option>
+                            {(racksQ.data ?? []).map((r) => <option key={r.id} value={r.id}>{r.rack}</option>)}
+                          </select>
+                        ) : (
+                          <span style={{ fontSize: 'var(--fs-12)' }}>{rackLabel(ln.rackId)}</span>
                         )}
                       </td>
                       {!blindActive && (
@@ -917,6 +971,7 @@ export const StockTakeDetail = () => {
                           ? <span className={styles.muted}>0/{g.lines.length}</span>
                           : <>{fmtQty(g.countedTotal)} <span style={{ color: 'var(--fg-muted)' }}>({g.countedLines}/{g.lines.length})</span></>}
                       </td>
+                      <td><span className={styles.muted}>—</span></td>
                       {!blindActive && (
                         <td className={styles.tableRight}
                             style={{
@@ -990,6 +1045,17 @@ export const StockTakeDetail = () => {
           )}
         </div>
       </section>
+
+      {sheetOpen && (
+        <StockTakeSheetReader
+          takeId={t.id}
+          takeNo={t.take_no}
+          current={new Map(lines.map((l) => [l.id, { counted: l.countedQtyInput, rackId: l.rackId }]))}
+          rackLabel={rackLabel}
+          onApply={applySheet}
+          onClose={() => setSheetOpen(false)}
+        />
+      )}
 
       {/* History drawer — portals to <body>, so its position here is only
           about lifecycle, not layout. */}

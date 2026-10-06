@@ -455,6 +455,8 @@ export type StockTakeLine = {
   counted_at?: string | null;
   /* Round 1: added with Add line during the count (not in the snapshot). */
   added_on_count?: boolean;
+  /* Round 2: the rack the counter found the goods on (moved there at post). */
+  rack_id?: string | null;
   /* Best-known unit cost (sen) the post would value this variance at; null =
      no cost basis, or withheld on a blind take. */
   est_unit_cost_sen?: number | null;
@@ -548,6 +550,8 @@ export type StockTakeLineUpdate = {
   id: string;
   countedQty?: number | null;
   notes?: string | null;
+  /* Round 2: a rack of the take's warehouse; null clears. */
+  rackId?: string | null;
 };
 
 export function useUpdateStockTakeLines() {
@@ -573,6 +577,9 @@ export function usePostStockTake() {
         take: StockTakeRow;
         movementsWritten: number;
         movementErrors?: string[];
+        racksMoved?: number;
+        racksSkipped?: string[];
+        rackError?: string;
       }>(`/stock-takes/${id}/post`, { method: 'PATCH', body: '{}' }),
     onSuccess: (_data, id) => {
       qc.invalidateQueries({ queryKey: ['stock-takes'] });
@@ -673,3 +680,35 @@ export function useAddStockTakeLine() {
     },
   });
 }
+
+/* Round 2: the racks the Rack column can name (this company's racks of the take's warehouse). */
+export function useStockTakeRacks(takeId: string | null) {
+  return useQuery({
+    queryKey: ['stock-takes', takeId, 'racks'],
+    queryFn: () => authedFetch<{ racks: Array<{ id: string; rack: string; zone: string | null }> }>(
+      `/stock-takes/${encodeURIComponent(takeId ?? '')}/racks`,
+    ).then((r) => r.racks),
+    enabled: Boolean(takeId),
+    staleTime: 60_000,
+    retry: retryUnlessClientError,
+  });
+}
+
+export type SheetProposal = {
+  lineId: string; no: number | null; itemCode: string; variantLabel: string | null;
+  counted: number | null; rackText: string | null; rackId: string | null; unclear: boolean;
+};
+export type SheetUnmatched = {
+  no: number | null; itemCode: string | null; counted: number | null; rackText: string | null;
+  reason: 'not_on_sheet' | 'ambiguous_code' | 'duplicate_row' | 'no_code';
+};
+export type SheetRead = {
+  takeNoRead: string | null; takeNoMatches: boolean | null;
+  proposals: SheetProposal[]; unmatched: SheetUnmatched[];
+};
+
+/* Round 2: read ONE photographed page of the counted paper sheet. Writes nothing. */
+export const readStockTakeSheet = (takeId: string, file: { name: string; mime: string; dataBase64: string }) =>
+  authedFetch<SheetRead>(`/stock-takes/${encodeURIComponent(takeId)}/read-sheet`, {
+    method: 'POST', body: JSON.stringify({ files: [file] }),
+  });

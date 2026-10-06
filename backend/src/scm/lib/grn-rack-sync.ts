@@ -17,7 +17,7 @@ type AnySb = any;
 const deriveRackStatus = (itemCount: number, reserved: boolean): 'OCCUPIED' | 'EMPTY' | 'RESERVED' =>
   reserved ? 'RESERVED' : itemCount > 0 ? 'OCCUPIED' : 'EMPTY';
 
-async function refreshRackStatus(sb: AnySb, rackId: string): Promise<void> {
+export async function refreshRackStatus(sb: AnySb, rackId: string): Promise<void> {
   const { count } = await sb.from('warehouse_rack_items')
     .select('id', { head: true, count: 'exact' }).eq('rack_id', rackId);
   const { data: rack } = await sb.from('warehouse_racks')
