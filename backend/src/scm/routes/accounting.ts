@@ -28,7 +28,7 @@ import { safeRate, toMyrSen } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { postJournal, reverseJournal } from '../../acc/engine';
-import { backfillSoPayments, paymentEntryDisagreements, unbookedPayments } from '../../acc/payments';
+import { CONVERT_SOURCE, backfillSoPayments, paymentEntryDisagreements, unbookedPayments } from '../../acc/payments';
 import { computeDailyBank, type PendingVoucherRow } from '../../acc/daily-bank';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
@@ -1252,13 +1252,16 @@ export const controlCheckHandler = async (c: any) => {
     /* What LEGITIMATELY moves each control account: the document that books it
        plus everything that settles it. AR moves on invoices AND on customer
        payments (SOPAY/SIPAY, phase 2A), on the deposit invoice a payment
-       raises (DI, Dr AR), on the credit note a refund raises against it (CN)
-       and on the Customer Refund voucher itself (PV, Dr AR); AP moves on
-       purchase invoices AND on the payment vouchers that settle them.
-       Anything else on the account is the finding. */
+       raises (DI, Dr AR), on the credit note a refund raises against it (CN),
+       on the Customer Refund voucher itself (PV, Dr AR) and on a CONVERSION
+       (SOCONV — acc/payments.ts CONVERT_SOURCE: a customer's money moved from
+       one order to another, Dr and Cr AR for the same party, netting to nil;
+       owner 2026-10-06 saw its two lines as findings); AP moves on purchase
+       invoices AND on the payment vouchers that settle them. Anything else on
+       the account is the finding. */
     const family = role === 'AR'
       ? new Set(['SI', 'SI_REVERSAL', 'SOPAY', 'SOPAY_REVERSAL', 'SIPAY', 'SIPAY_REVERSAL',
-        'DI', 'DI_REVERSAL', 'CN', 'CN_REVERSAL', 'PV', 'PV_REVERSAL'])
+        'DI', 'DI_REVERSAL', 'CN', 'CN_REVERSAL', 'PV', 'PV_REVERSAL', CONVERT_SOURCE, `${CONVERT_SOURCE}_REVERSAL`])
       : role === 'AR_OTHER'
         ? new Set(['ODB', 'ODB_REVERSAL', 'ODR', 'ODR_REVERSAL'])
         /* API = the AP invoice (docs/bugs/0654): it credits 400 or 405 by the

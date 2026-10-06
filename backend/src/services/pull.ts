@@ -73,6 +73,8 @@ export async function runPull(
     let upserted = 0;
     let skipped = 0;
     let failed = 0;
+    // The checkpoint freezes on any failed row, so the log names them (worker console logs expire).
+    const failedRows: string[] = [];
 
     for (const o of data) {
       const region = routeRegion(o);
@@ -85,6 +87,7 @@ export async function runPull(
         upserted++;
       } catch (err) {
         failed++;
+        if (failedRows.length < 5) failedRows.push(`${o.DocNo}: ${(err as Error)?.message ?? String(err)}`.slice(0, 200));
         console.error(`[pull][${rid}] Upsert failed for ${o.DocNo}`, err);
       }
     }
@@ -115,7 +118,7 @@ export async function runPull(
       failed,
       checkpointAdvanced,
       newCheckpoint,
-      message: `[${mode}] Fetched ${data.length}, upserted ${upserted}, skipped ${skipped}, failed ${failed}.`,
+      message: `[${mode}] Fetched ${data.length}, upserted ${upserted}, skipped ${skipped}, failed ${failed}.${failedRows.length ? ` Failed rows: ${failedRows.join(" | ")}` : ""}`,
     };
 
     await writeLog(env, {

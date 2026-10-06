@@ -58,7 +58,7 @@ import { ListPager } from '../../components/ListPager';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useDebouncedSearchTerm, useSearchResultTransition } from '../../hooks/useServerSearch';
 import { useStaff } from '../../vendor/scm/lib/admin-queries';
-import { generateSalesOrderPdf } from '../../vendor/scm/lib/sales-order-pdf';
+import { CONSIGNMENT_ORDER_PDF_OPTS, generateSalesOrderPdf } from '../../vendor/scm/lib/sales-order-pdf';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { BrandingPill, badgeFor } from '../../vendor/scm/lib/category-badges';
 import { soStatusDisplay, type DeliveryState, type SoLifecycle } from '../../vendor/scm/lib/so-status';
@@ -1110,7 +1110,7 @@ export const ConsignmentOrders = () => {
     await generateSalesOrderPdf(
       json.salesOrder as never, json.items as never, payments as never, action,
       (json.pwpCodes ?? []) as never,
-      { docTitle: 'CONSIGNMENT ORDER', docNoLabel: 'CO No', docNoun: 'consignment order' },
+      CONSIGNMENT_ORDER_PDF_OPTS,
     );
   };
 

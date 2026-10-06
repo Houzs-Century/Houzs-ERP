@@ -113,7 +113,7 @@ deliveryMessages.post('/send', async (c) => {
   // Address columns feed the Postage kind only; the rest read nothing extra.
   const { data: rowsRaw, error: readErr } = await scopeToAllowedCompanies(
     sb.from('mfg_sales_orders')
-      .select('doc_no, linked_ac_docno, debtor_name, phone, branding, customer_delivery_date, amended_delivery_date, delivery_address1, delivery_address2, delivery_address3, delivery_address4, address1, address2, address3, address4, postcode, city, customer_state')
+      .select('doc_no, debtor_name, phone, branding, customer_delivery_date, amended_delivery_date, delivery_address1, delivery_address2, delivery_address3, delivery_address4, address1, address2, address3, address4, postcode, city, customer_state')
       .in('doc_no', docNos),
     c,
   );
@@ -193,11 +193,15 @@ deliveryMessages.post('/send', async (c) => {
     };
     // ONE message per customer phone. buildDeliveryFollowUp shows the first 3
     // orders and carries the TRUE count in order_total, so a customer with 4+
-    // orders gets a single "first 3 of N" message, not several sends. ref = the
-    // number the customer knows (AutoCount doc if linked, else ours); effective
-    // (amended ?? original) date as yyyy/mm/dd, same as the board.
+    // orders gets a single "first 3 of N" message, not several sends. ref = our
+    // Sales Order number; effective (amended ?? original) date as yyyy/mm/dd,
+    // same as the board.
     const orders: ConnectOrder[] = group.map((r) => ({
-      ref: String(r.linked_ac_docno ?? r.doc_no ?? ''),
+      // The ERP Sales Order number, always (owner 2026-10-06) — not the AutoCount
+      // number an older / imported order may also carry; the chat-callback still
+      // resolves either, so an in-flight conversation opened under the old rule
+      // is unaffected.
+      ref: String(r.doc_no ?? ''),
       branding: String(r.branding ?? ''),
       deliveryDate: payloadDate(effectiveSoDelivery(r as SoDeliveryDateRow)),
       balanceSen: balanceByDoc.get(String(r.doc_no)) ?? null,
