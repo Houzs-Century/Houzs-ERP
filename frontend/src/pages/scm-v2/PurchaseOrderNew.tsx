@@ -38,6 +38,7 @@ import { useIdempotencyKey } from '../../lib/idempotency';
 import { serviceConfirm } from '../../vendor/scm/lib/dialog-service';
 import { readScmHandoff, removeScmHandoff, writeScmHandoff } from '../../lib/scmHandoffStorage';
 import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
+import { withMasterPickerPools } from '../../vendor/scm/lib/picker-maint';
 import { activeOptions, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import { useFabricTrackings, fabricOptionLabel } from '../../vendor/scm/lib/fabric-queries';
 import { missingRequiredVariants } from '../../vendor/scm/components/SoLineCard';
@@ -190,11 +191,14 @@ export const PurchaseOrderNew = () => {
     supplierId ? `supplier:${supplierId}` : '',
     { enabled: Boolean(supplierId) },
   );
-  const masterMaintQ = useMaintenanceConfig('master', {
-    enabled: !supplierId || !supplierMaintQ.data?.data,
-  });
+  const masterMaintQ = useMaintenanceConfig('master');
   const maint =
     supplierMaintQ.data?.data ?? masterMaintQ.data?.data ?? null;
+  /* Dropdown options follow master; the supplier overlay only prices them (BUG-60). */
+  const pickerMaint = useMemo(
+    () => withMasterPickerPools(maint, masterMaintQ.data?.data ?? null),
+    [maint, masterMaintQ.data?.data],
+  );
   const fabrics = useFabricTrackings().data ?? [];
 
   // Special Orders pool from special_addons (Backend↔POS parity, Loo
@@ -1279,7 +1283,7 @@ export const PurchaseOrderNew = () => {
                               onChange={(e) => setVariant(l.rid, 'gap', e.target.value)}
                             >
                               <option value="" disabled>Select…</option>
-                              {sortByNumeric(maintPickerValues(maint!.gaps, String(l.variants.gap ?? ''))).map((g) => (<option key={g} value={g}>{g}</option>))}
+                              {sortByNumeric(maintPickerValues(pickerMaint!.gaps, String(l.variants.gap ?? ''))).map((g) => (<option key={g} value={g}>{g}</option>))}
                             </select>
                           </label>
                           <label className={styles.field}>
@@ -1290,7 +1294,7 @@ export const PurchaseOrderNew = () => {
                               onChange={(e) => setVariant(l.rid, 'divanHeight', e.target.value)}
                             >
                               <option value="" disabled>Select…</option>
-                              {sortByNumeric(activeOptions(maint!.divanHeights, String(l.variants.divanHeight ?? ''))).map((o) => (<option key={o.value} value={o.value}>{o.value}</option>))}
+                              {sortByNumeric(activeOptions(pickerMaint!.divanHeights, String(l.variants.divanHeight ?? ''))).map((o) => (<option key={o.value} value={o.value}>{o.value}</option>))}
                             </select>
                           </label>
                           <label className={styles.field}>
@@ -1301,7 +1305,7 @@ export const PurchaseOrderNew = () => {
                               onChange={(e) => setVariant(l.rid, 'legHeight', e.target.value)}
                             >
                               <option value="" disabled>Select…</option>
-                              {sortByNumeric(activeOptions(maint!.legHeights, String(l.variants.legHeight ?? ''))).map((o) => (<option key={o.value} value={o.value}>{o.value}</option>))}
+                              {sortByNumeric(activeOptions(pickerMaint!.legHeights, String(l.variants.legHeight ?? ''))).map((o) => (<option key={o.value} value={o.value}>{o.value}</option>))}
                             </select>
                           </label>
                           {/* Total Heights — Commander 2026-05-29: removed the
@@ -1367,7 +1371,7 @@ export const PurchaseOrderNew = () => {
                               onChange={(e) => setVariant(l.rid, 'seatHeight', e.target.value)}
                             >
                               <option value="" disabled>Select…</option>
-                              {sortByNumeric(maintPickerValues(maint!.sofaSizes, String(l.variants.seatHeight ?? ''))).map((s) => (<option key={s} value={s}>{s}</option>))}
+                              {sortByNumeric(maintPickerValues(pickerMaint!.sofaSizes, String(l.variants.seatHeight ?? ''))).map((s) => (<option key={s} value={s}>{s}</option>))}
                             </select>
                           </label>
                           <label className={styles.field}>
@@ -1378,7 +1382,7 @@ export const PurchaseOrderNew = () => {
                               onChange={(e) => setVariant(l.rid, 'legHeight', e.target.value)}
                             >
                               <option value="" disabled>Select…</option>
-                              {sortByNumeric(activeOptions(maint!.sofaLegHeights, String(l.variants.legHeight ?? ''))).map((o) => (<option key={o.value} value={o.value}>{o.value}</option>))}
+                              {sortByNumeric(activeOptions(pickerMaint!.sofaLegHeights, String(l.variants.legHeight ?? ''))).map((o) => (<option key={o.value} value={o.value}>{o.value}</option>))}
                             </select>
                           </label>
                           <span />

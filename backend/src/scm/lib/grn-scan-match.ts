@@ -69,9 +69,9 @@ export type SupplierRef = { id: string; code: string | null; name: string | null
 //   supplier_unknown — no PO-number hit and the printed supplier did not
 //                      resolve to exactly one of our suppliers.
 //   multiple_pos     — no PO-number hit and the hits spread over several POs.
-//   too_few_lines    — no PO-number hit and half or fewer of the scanned lines
-//                      matched, so the one PO they hit is not trustworthy.
-export type GrnMatchRefusal = 'supplier_unknown' | 'multiple_pos' | 'too_few_lines';
+// Half or fewer lines hitting the one PO is not a refusal: the picks still
+// become a DRAFT, flagged by weakMatch so the operator checks the PO.
+export type GrnMatchRefusal = 'supplier_unknown' | 'multiple_pos';
 
 export type UnmatchedScanLine = {
   line: ScannedGrnLine;
@@ -100,6 +100,9 @@ export type GrnMatchResult = {
   matchedPoNumberValue: string | null;
   // Set when the confidence gate threw every pick away; picks is then [].
   refused: GrnMatchRefusal | null;
+  // Set when no PO number was recognised and half or fewer of the scanned lines
+  // hit the one PO: the draft may be against the wrong PO.
+  weakMatch: { matched: number; scanned: number } | null;
 };
 
 // Normalise a code/number for comparison: uppercase, drop every non-alnum char.
@@ -300,6 +303,7 @@ export function matchGrnScanToPoLines(
 
   let picks: MatchedPick[];
   let refused: GrnMatchRefusal | null = null;
+  let weakMatch: GrnMatchResult['weakMatch'] = null;
   if (anchoredQty.size > 0) {
     // At least one row named its PO: only rows that did are received. An
     // item-only hit beside them is how DO-2609-097's fair item (printed PO
@@ -315,7 +319,7 @@ export function matchGrnScanToPoLines(
     if (picks.length > 0) {
       if (supplierId === null) refused = 'supplier_unknown';
       else if (itemOnlyPoNumbers.size > 1) refused = 'multiple_pos';
-      else if (itemOnlyMatchedCount * 2 <= scannedCount) refused = 'too_few_lines';
+      else if (itemOnlyMatchedCount * 2 <= scannedCount) weakMatch = { matched: itemOnlyMatchedCount, scanned: scannedCount };
     }
   }
   const matchedPoNumbers = [...new Set(picks.map((p) => poNumberOf.get(p.poItemId) ?? ''))].filter(Boolean);
@@ -327,5 +331,6 @@ export function matchGrnScanToPoLines(
     poNumberMatched,
     matchedPoNumberValue,
     refused,
+    weakMatch,
   };
 }

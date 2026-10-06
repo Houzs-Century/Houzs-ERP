@@ -93,6 +93,13 @@ accounting staff. Money is integer sen.
 - A failed deposit-stamp read must render as `null`, read by every
   consumer as "no deposit" (the larger, safer figure) — never as zero
   deposit collected, which would be the smaller, wrong direction.
+- The printed invoice lists every sum received under "Payments received"
+  (owner 2026-10-06: it called all of the order's money "Deposit", even a
+  full payment): `GET /sales-invoices/:id` stamps `receipts` (the order's
+  rows + the invoice's own, `lib/si-receipts.ts`) on the header, and
+  `paymentsReceivedLines` prints one line per sum — day · method · "on
+  order …" / "on this invoice" — when the rows add up to what settles the
+  invoice, else one line per document. The word "Deposit" is not printed.
 - `recomputePaid` and `recomputeTotals` fail **closed**: a failed read
   aborts (logs) rather than writing `paid_sen = 0` or a zeroed total — a
   transient blip must never silently revert a PAID invoice to unpaid or
@@ -151,7 +158,7 @@ accounting staff. Money is integer sen.
   `/api/scm/sales-invoices`), `sales-invoice-exports.ts`, `outstanding.ts`,
   `reports.ts` (detail-listing report).
 - Backend libs: `backend/src/scm/lib/si-order-deposit.ts` (deposit
-  read-through + `recomputeSiPaid`), `si-from-do.ts` (from-DO conversion
+  read-through + `recomputeSiPaid`), `si-receipts.ts` (the print's rows), `si-from-do.ts` (from-DO conversion
   core), `si-outstanding-summary.ts`, `si-list-read.ts`,
   `si-status-buckets.ts`, `si-list-stamps.ts`, `si-autocount-source.ts`,
   `si-export-rows.ts`, `customer-credits.ts`, `recost.ts`
