@@ -212,7 +212,7 @@ export function PurchaseConsignmentOrderDrawer({
       ariaLabel={row ? `Purchase consignment order ${pcNo(row)}` : 'Purchase consignment order details'}
       docNo={row ? pcNo(row) : ''}
       docLabel="Purchase Consignment Order"
-      statusLabel={poStatusLabel(status)}
+      statusLabel={row ? poStatusLabel(row.status) : ''}
       statusTone={PCO_TONE[status] ?? 'neutral'}
       onOpenFull={onOpenFull}
       footer={row && (
