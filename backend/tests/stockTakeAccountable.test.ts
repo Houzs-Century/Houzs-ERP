@@ -16,7 +16,7 @@
 // mounting the EXPORTED handlers — the supabaseAuth bridge cannot run here.
 // Same approach (and FakeQuery shape) as tests/companyScopeHardening.test.ts.
 import { Hono } from 'hono';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
   addStockTakeLineHandler,
   createStockTakeHandler,
@@ -25,6 +25,7 @@ import {
   patchStockTakeLinesHandler,
   postStockTakeHandler,
 } from '../src/scm/routes/stock-takes';
+import { readStockTakeSheetHandler } from '../src/scm/routes/stock-take-sheet-read';
 
 const CO = 1;
 /* The caller's REAL staff row (mig-0066 bridge) and a second person's. */
@@ -118,6 +119,7 @@ function harness(tables: Record<string, Row[]>, opts?: { perms?: string[] }) {
   app.patch('/stock-takes/:id/lines', patchStockTakeLinesHandler as never);
   app.patch('/stock-takes/:id', patchStockTakeHeaderHandler as never);
   app.post('/stock-takes/:id/lines', addStockTakeLineHandler as never);
+  app.post('/stock-takes/:id/read-sheet', readStockTakeSheetHandler as never);
   return { app, log };
 }
 
@@ -454,5 +456,69 @@ describe('round 1 (owner 2026-10-06)', () => {
     const blind = takeFixture({ blind: true });
     const hidden = await (await harness(blind).app.request('/stock-takes/st-1')).json() as Row;
     expect(hidden.lines[0].est_unit_cost_sen).toBeNull();
+  });
+});
+
+describe('round 2 — racks and the paper sheet (owner 2026-10-06)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+  const withRacks = (t: Record<string, Row[]>) => {
+    t.warehouse_racks = [
+      { id: 'r1', rack: 'Rack L5.1', warehouse_id: 'w1', company_id: CO, reserved: false },
+      { id: 'r-other', rack: 'Rack L5.1', warehouse_id: 'w2', company_id: CO, reserved: false },
+    ];
+    t.warehouse_rack_items = [{ id: 'old-1', rack_id: 'r1x', item_code: 'CODY', qty: 10, company_id: CO }];
+    t.warehouse_rack_movements = [];
+    return t;
+  };
+
+  test('a line can name a rack of the take\'s warehouse, never another warehouse\'s', async () => {
+    const t = withRacks(takeFixture());
+    const { app } = harness(t);
+    const ok = await jsonReq(app, '/stock-takes/st-1/lines', 'PATCH', { lines: [{ id: 'ln-1', rackId: 'r1' }] });
+    expect(ok.status).toBe(200);
+    expect(t.stock_take_lines[0].rack_id).toBe('r1');
+    const bad = await jsonReq(app, '/stock-takes/st-1/lines', 'PATCH', { lines: [{ id: 'ln-1', rackId: 'r-other' }] });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as Row).error).toBe('rack_not_in_warehouse');
+    expect(t.stock_take_lines[0].rack_id).toBe('r1');
+  });
+
+  test('posting moves the counted goods onto the written rack and logs it', async () => {
+    const t = withRacks(takeFixture());
+    t.warehouse_racks.push({ id: 'r1x', rack: 'Rack L1.1', warehouse_id: 'w1', company_id: CO, reserved: false });
+    t.stock_take_lines[0].rack_id = 'r1';
+    t.stock_take_lines[0].company_id = CO;
+    const res = await jsonReq(harness(t).app, '/stock-takes/st-1/post', 'PATCH');
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Row).racksMoved).toBe(1);
+    expect(t.warehouse_rack_items).toEqual([expect.objectContaining({ rack_id: 'r1', item_code: 'CODY', qty: 12, source_doc_no: 'STK-2608-001' })]);
+    expect(t.warehouse_rack_movements.map((m) => `${m.movement_type}:${m.rack_label}:${m.quantity}`))
+      .toEqual(['STOCK_OUT:Rack L1.1:10', 'STOCK_IN:Rack L5.1:12']);
+  });
+
+  test('reading a sheet proposes counts and racks, writes nothing, and refuses another take\'s page', async () => {
+    const t = withRacks(takeFixture());
+    t.stock_take_lines[0].counted_qty = null;
+    t.stock_take_lines[0].company_id = CO;
+    const model = (takeNo: string) => ({
+      ok: true, status: 200,
+      json: async () => ({ content: [{ type: 'text', text: JSON.stringify({ takeNo, rows: [{ no: 1, itemCode: 'CODY', counted: 9, rack: 'l5.1' }] }) }] }),
+      clone() { return this; }, text: async () => '',
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => model('STK-2608-001')));
+    const { app } = harness(t);
+    const body = JSON.stringify({ files: [{ name: 'p1.jpg', mime: 'image/jpeg', dataBase64: 'AAAA' }] });
+    const req = () => app.request('/stock-takes/st-1/read-sheet', { method: 'POST', headers: { 'content-type': 'application/json' }, body }, { ANTHROPIC_API_KEY: 'k' });
+    const res = await req();
+    expect(res.status).toBe(200);
+    const out = await res.json() as Row;
+    expect(out.takeNoMatches).toBe(true);
+    expect(out.proposals).toEqual([expect.objectContaining({ lineId: 'ln-1', counted: 9, rackId: 'r1' })]);
+    expect(t.stock_take_lines[0].counted_qty).toBeNull(); // nothing written
+
+    vi.stubGlobal('fetch', vi.fn(async () => model('STK-2608-999')));
+    const other = await (await req()).json() as Row;
+    expect(other.takeNoMatches).toBe(false);
+    expect(other.proposals).toEqual([]);
   });
 });

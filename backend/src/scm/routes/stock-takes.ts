@@ -59,6 +59,8 @@ import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { resolveCallerStaffId } from '../lib/salesScope';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { pgrestIn } from '../lib/pgrest-in-list';
+import { readStockTakeSheetHandler } from './stock-take-sheet-read';
+import { applyStockTakeRacks } from '../lib/stock-take-racks';
 
 export const stockTakes = new Hono<{ Bindings: Env; Variables: Variables }>();
 stockTakes.use('*', supabaseAuth);
@@ -72,7 +74,7 @@ const HEADER =
   'assignee_staff_ids, nonzero_only';
 const LINE =
   'id, stock_take_id, item_code, product_name, variant_key, variant_label, ' +
-  'system_qty, counted_qty, variance, notes, created_at, counted_by, counted_at, added_on_count';
+  'system_qty, counted_qty, variance, notes, created_at, counted_by, counted_at, added_on_count, rack_id';
 
 const VALID_STATUS = new Set(['OPEN', 'POSTED', 'CANCELLED']);
 const VALID_SCOPE  = new Set(['ALL', 'CATEGORY', 'CODE_PREFIX', 'NONZERO']);
@@ -371,7 +373,11 @@ export const getStockTakeDetailHandler = async (c: any) => {
     scopeToCompany(sb.from('stock_takes')
       .select(`${HEADER}, warehouse:warehouses(id, code, name)`)
       .eq('id', id), c).maybeSingle(),
-    sb.from('stock_take_lines').select(LINE).eq('stock_take_id', id).order('item_code'),
+    /* PRINT ORDER: the PDF numbers rows in this order and the sheet reader
+       (stock-take-sheet-read.ts) matches a row's # against it — a tie on
+       item_code must not be left to the planner. */
+    sb.from('stock_take_lines').select(LINE).eq('stock_take_id', id)
+      .order('item_code').order('variant_key').order('id'),
   ]);
 
   if (headerRes.error) return c.json({ error: 'load_failed', reason: headerRes.error.message }, 500);
@@ -567,18 +573,34 @@ export const patchStockTakeLinesHandler = async (c: any) => {
   catch { return c.json({ error: 'invalid_json' }, 400); }
 
   const { data: prev } = await scopeToCompanyId(
-    sb.from('stock_takes').select('status, take_no, company_id').eq('id', id),
+    sb.from('stock_takes').select('status, take_no, company_id, warehouse_id').eq('id', id),
     co.companyId,
   ).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
-  const head = prev as { status: string; take_no: string; company_id: number | null };
+  const head = prev as { status: string; take_no: string; company_id: number | null; warehouse_id: string };
   if (head.status !== 'OPEN') return c.json({ error: 'not_open' }, 409);
 
   const lines = body.lines as Array<{
-    id: string; countedQty?: number | null; notes?: string | null;
+    id: string; countedQty?: number | null; notes?: string | null; rackId?: string | null;
   }> | undefined;
   if (!Array.isArray(lines) || lines.length === 0) {
     return c.json({ error: 'lines_required' }, 400);
+  }
+
+  /* A line's rack (round 2) must be a rack of THIS take's warehouse — a rack
+     row is per warehouse record, so per company; any other id is refused
+     before anything is written. */
+  const rackIds = [...new Set(lines.map((l) => l.rackId).filter((x): x is string => typeof x === 'string' && x !== ''))];
+  if (rackIds.length > 0) {
+    const { data: okRacks, error: rkErr } = await scopeToCompanyId(
+      sb.from('warehouse_racks').select('id').eq('warehouse_id', head.warehouse_id).in('id', rackIds),
+      co.companyId,
+    );
+    if (rkErr) return c.json({ error: 'load_failed', reason: rkErr.message }, 500);
+    const ok = new Set(((okRacks as Array<{ id: string }> | null) ?? []).map((r) => r.id));
+    if (rackIds.some((r) => !ok.has(r))) {
+      return c.json({ error: 'rack_not_in_warehouse', message: 'A rack picked is not a rack of this warehouse.' }, 400);
+    }
   }
 
   /* AUDIT PRE-FLIGHT. recordEntityAudit runs after the counts are already
@@ -629,6 +651,7 @@ export const patchStockTakeLinesHandler = async (c: any) => {
       patch.counted_at = patch.counted_qty == null ? null : new Date().toISOString();
     }
     if ('notes' in l) patch.notes = l.notes ?? null;
+    if ('rackId' in l) patch.rack_id = l.rackId ? l.rackId : null;
     if (Object.keys(patch).length === 0) continue;
 
     const { error } = await sb.from('stock_take_lines')
@@ -860,6 +883,32 @@ export const addStockTakeLineHandler = async (c: any) => {
   return c.json({ line: inserted }, 201);
 };
 stockTakes.post('/:id/lines', addStockTakeLineHandler);
+
+// ── Racks of the take's warehouse (round 2) ──────────────────────────
+/* What the Rack column can name: this company's racks of the take's own
+   warehouse (a shared building is one record per company — warehouses.md). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client / Hono context without generated types; same as every handler in this file
+export const stockTakeRacksHandler = async (c: any) => {
+  const sb = c.get('supabase');
+  const id = c.req.param('id');
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const { data: head } = await scopeToCompanyId(
+    sb.from('stock_takes').select('warehouse_id').eq('id', id), co.companyId,
+  ).maybeSingle();
+  if (!head) return c.json(NOT_THIS_COMPANY, 404);
+  const { data, error } = await scopeToCompanyId(
+    sb.from('warehouse_racks').select('id, rack, zone')
+      .eq('warehouse_id', (head as { warehouse_id: string }).warehouse_id).order('rack'),
+    co.companyId,
+  );
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  return c.json({ racks: data ?? [] });
+};
+stockTakes.get('/:id/racks', stockTakeRacksHandler);
+
+/* Read a photographed, counted paper sheet back (round 2). Writes nothing. */
+stockTakes.post('/:id/read-sheet', readStockTakeSheetHandler);
 
 // ── Cancel OPEN ───────────────────────────────────────────────────────
 stockTakes.patch('/:id/cancel', async (c) => {
@@ -1365,6 +1414,14 @@ export const postStockTakeHandler = async (c: any) => {
     ]),
   });
 
+  /* Round 2 (owner 2026-10-06): the goods go on the racks the counter wrote.
+     Placement only (the rack ledger is separate from stock), best-effort —
+     reported, never a reason to undo the post. */
+  const racks = await applyStockTakeRacks(sb, {
+    takeId: header.id, takeNo: header.take_no, warehouseId: header.warehouse_id,
+    companyId: co.companyId, performedBy: callerStaffId ?? user.id,
+  });
+
   /* B2C SO auto-allocation — variance changed stock, re-walk SO lines. */
   try {
     const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
@@ -1375,6 +1432,9 @@ export const postStockTakeHandler = async (c: any) => {
     take: posted,
     movementsWritten: movementErrors.length ? 0 : adjustmentRows.length,
     movementErrors: movementErrors.length ? movementErrors : undefined,
+    racksMoved: racks.moved,
+    racksSkipped: racks.skippedCodes.length ? racks.skippedCodes : undefined,
+    rackError: racks.error ?? undefined,
   });
 };
 stockTakes.patch('/:id/post', postStockTakeHandler);

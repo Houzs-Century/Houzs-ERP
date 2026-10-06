@@ -76,7 +76,7 @@ export const API_URL =
    30 s on a long bill (owner 2026-10-05: the pile's "That took too long").
    They get the scan wait, and since they WRITE NOTHING a timeout says so
    instead of warning of a duplicate save. */
-export const BILL_READER_PATH = /\/payment-vouchers\/extract$|\/credit-notes\/scan$|\/payment-requests\/read-bill$/;
+export const BILL_READER_PATH = /\/payment-vouchers\/extract$|\/credit-notes\/scan$|\/payment-requests\/read-bill$|\/stock-takes\/[^/]+\/read-sheet$/;
 function timeoutSignal(path: string): AbortSignal | undefined {
   const ms = /\/scan-/.test(path) || BILL_READER_PATH.test(path) ? 120_000 : 30_000;
   try { return AbortSignal.timeout(ms); } catch { return undefined; } // pre-2022 browsers

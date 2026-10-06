@@ -10,6 +10,9 @@ The cycle-count document — `scm.stock_takes` + `scm.stock_take_lines`. OPEN (c
 - A take names one or more ASSIGNEES (`assignee_staff_ids`; `assignee_staff_id` = the first, for single-column readers). They are a RECORD of who counted (owner 2026-10-06) and are editable with the notes while OPEN (`PATCH /:id`); warehouse / scope / date are not.
 - Add line (`POST /:id/lines`, OPEN only): stock found that the sheet does not list. `system_qty` = the bucket's live on-hand at the warehouse, the line lands counted and is marked `added_on_count`. A sofa / bedframe must name a variant the company already holds (`GET /:id/bucket-options`); a brand-new variant goes through Stock Adjustment. A SKU / variant already on the sheet is refused (`line_exists`).
 - The detail shows the gain / loss in RM (owner 2026-10-06: to everyone): `GET /:id` returns `est_unit_cost_sen` per line, from the same cost ladder the post uses; null = no cost basis (counted as "uncosted", never RM0). Withheld with the variance on a blind OPEN take. It is an estimate until posted (the post re-reads live stock).
+- Paper count (owner 2026-10-06): print the OPEN sheet, count on paper (Counted + Rack), then "Upload counted sheet" — each page goes to `POST /:id/read-sheet`, which WRITES NOTHING: it returns proposals (line, count, rack) and unmatched rows. Matching never guesses (`lib/stock-take-sheet.ts`): the printed # names the line only if its item code agrees, else a code carried by exactly one line, else unmatched with the reason. A page whose STK No is another take's offers nothing. The counter ticks proposals, applies them to the on-screen sheet, then Save Counts as usual.
+- Rack per line (`stock_take_lines.rack_id`, a rack of the take's own warehouse — `rack_not_in_warehouse` otherwise). At POST the goods go on that rack (`lib/stock-take-racks.ts`): for an item code whose every counted line names a rack, its old placements in this warehouse come off (STOCK_OUT) and the counted qty goes on per (rack, variant) (STOCK_IN); a code with a counted line lacking a rack is left alone and named (`racksSkipped`). Best-effort placement — reported (`rackError`), never undoes the post.
+- Line order is `item_code, variant_key, id` everywhere the sheet is numbered (GET /:id, the PDF, the reader) — the # on paper must name the same line the reader picks.
 - Splitting one warehouse's count across several people is done with multiple takes, each scoped by CATEGORY or CODE_PREFIX and its own assignees — there is no separate sub-sheet table.
 
 ## Permissions
@@ -49,4 +52,6 @@ The cycle-count document — `scm.stock_takes` + `scm.stock_take_lines`. OPEN (c
 - `frontend/src/vendor/scm/lib/stock-take-pdf.ts` — printed count sheet.
 - `frontend/src/vendor/scm/lib/stock-queries.ts` — query hooks (`stockTakeAssignees` mirrors the backend's `assigneesOf`).
 - `frontend/src/vendor/scm/components/StaffMultiPick.tsx` — the assignee chips.
-- `backend/src/db/migrations-pg/20261006T1500_scm_stock_take_round1.sql` — `assignee_staff_ids`, `nonzero_only`, `added_on_count`.
+- `backend/src/db/migrations-pg/20261006T1500_scm_stock_take_round1.sql` — `assignee_staff_ids`, `nonzero_only`, `added_on_count`; `20261006T1700_scm_stock_take_line_rack.sql` — `rack_id`.
+- `backend/src/scm/routes/stock-take-sheet-read.ts`, `lib/stock-take-sheet.ts` — reading the paper sheet; `lib/stock-take-racks.ts` — racks at post.
+- `frontend/src/vendor/scm/components/StockTakeSheetReader.tsx` — the upload / review dialog.
