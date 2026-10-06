@@ -4,7 +4,7 @@ The return leg of the WhatsApp delivery conversation. `chat.houzscentury.com` po
 
 ## Statuses and flow
 
-`POST /api/chat-callback` — `{callback_id, event: "confirm"|"amend", ref, phone, delivery_date?, reason?, note?}` (`event` and `ref` required; `delivery_date`/`reason` are the amend path's fields, recorded verbatim). Responds `{ok, id, event, ref, recorded, applied}` — `applied` is ALWAYS `false`.
+`POST /api/chat-callback` — `{callback_id, event: "confirm"|"amend"|"postage_confirm"|"postage_amend", ref, refs?, phone, delivery_date?, reason?, address?, note?}` (the postage events are recorded only — the typed address rides in the row's `note`, nothing on the order moves) (`event` and `ref` required; `delivery_date`/`reason` are the amend path's fields, recorded verbatim). Responds `{ok, id, event, ref, recorded, applied}` — `applied` is ALWAYS `false`.
 
 `refs` (optional, comma-joined — the send's `refs_all`) is the whole bundle a multi-order message covered; the tap is recorded against every order in it (each resolved like `ref`, primary first, siblings that do not resolve reported as `unknown`, never fatal). Idempotency is per `(callback_id, doc_no)`, so the second order of a bundle is not mistaken for the first's duplicate. The per-order work lives in `backend/src/lib/chat-callback-record.ts`.
 
