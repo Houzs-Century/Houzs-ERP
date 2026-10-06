@@ -1,6 +1,11 @@
 {
   "reviewed": [
     {
+      "check": "D2",
+      "key": "CANCELLED,CREDIT_NOTED,REFUNDED ~ CANCELLED,CREDIT_NOTED,REFUNDED,REJECTED",
+      "why": "TWO DIFFERENT DOCUMENTS, each deciding when ITS OWN return is closed to editing: ConsignmentReturnDetail / ConsignmentReturns lock a consignment return at CANCELLED / CREDIT_NOTED / REFUNDED; DeliveryReturnDetail (the Delivery Return editor, BUG-62) also treats REJECTED as closed, matching DeliveryReturnDetailV2's isTerminal, which hides the Edit button for the same four. Different enums that share words, not one rule with two homes. Divergence costs an editor that opens or refuses, never money or stock."
+    },
+    {
       "check": "D1",
       "key": "BEDFRAME,MATTRESS,OTHER,SOFA|backend/src/acc/product-profit.ts frontend/src/lib/brandingTone.ts frontend/src/pages/scm-v2/product-profit-view.ts",
       "why": "THE PRODUCT PROFIT REPORT'S FOUR CATEGORIES (owner 2026-10-05), one decision with one home: acc/product-profit.ts PRODUCT_CATEGORIES decides which category a product lands in (mattress / sofa / bedframe from the line's group, everything else other, service left out) and writes it on each row; product-profit-view.ts CATEGORY_ORDER is only the order the screen draws the chips and the donut in, over the category the server already wrote, so it cannot move a product. brandingTone.ts TONE_BY_BUCKET answers a different question (the tint a brand bucket is drawn in) with the same four words. Divergence costs a chip in another place, never a figure."
