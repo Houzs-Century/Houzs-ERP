@@ -473,6 +473,15 @@
   width: auto;
   min-width: 0;
 }
+/* A long line table whose column header stays on screen while the page
+   scrolls (Stock Take count sheet). The page scrolls in <main>, so top: 0 is
+   the top of the content area; the card around it must not be overflow:hidden
+   (that makes the card the scroll box and the header never moves). */
+.stickyHead thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
 /* The picked variant bucket, in full, under its select (Stock Transfer). */
 .bucketPicked {
   margin-top: 4px;
