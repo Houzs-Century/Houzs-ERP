@@ -6037,6 +6037,22 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   const vFix = await venueNameForHalfWrittenPair(sb, body['venue'], body['venueId']);
   if (vFix.kind === 'resolved') { body['venue'] = vFix.name; updates['venue'] = vFix.name; }
   if (vFix.kind === 'unresolved') { delete body['venue']; delete updates['venue']; }
+  /* VENUE IS COMPULSORY ON A LIVE ORDER (owner 2026-10-05: "either sales from
+     showroom or sales from any project"). Confirm already demands one
+     (so-confirm-gate.ts rule 3); this stops an edit taking it away again. Only
+     when THIS patch touches the venue, so a legacy venue-less order stays
+     editable, and a DRAFT may still clear it. */
+  if (('venue' in updates || 'venue_id' in updates)
+    && beforeRecord.status !== 'DRAFT' && beforeRecord.status !== 'CANCELLED') {
+    const after = (k: string) => String((k in updates ? updates[k] : beforeRecord[k]) ?? '').trim();
+    if (!after('venue') && !after('venue_id')) {
+      return c.json(validationFailedBody([{
+        code: 'venue_required',
+        message: 'A venue is required: pick the showroom or the project this sale was made at.',
+        field: 'Venue',
+      }]), 422);
+    }
+  }
   if (body['venue'] !== undefined) {
     updates['venue_source'] = 'MANUAL' satisfies VenueSource;
     /* FAIR LINK (owner 2026-09-13) — the venue just moved, so whatever fair this
