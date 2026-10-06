@@ -1075,7 +1075,7 @@ export const PaymentVoucherNew = () => {
           <EventSuggestions suggestions={eventSuggestions} current={defaultEvent}
             onUse={(id) => { setDefaultEvent(id); setLines((prev) => prev.map((x) => ({ ...x, projectId: id }))); }} />
           {lines.map((l, idx) => (
-            <div key={l.rid} data-line={l.rid}
+            <div data-grid-row key={l.rid} data-line={l.rid}
               onKeyDown={(e) => { if (e.key === 'Insert') { e.preventDefault(); addLineAndLand(); } }}
               style={{
                 background: 'var(--c-paper)', border: '1px solid var(--line)',

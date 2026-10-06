@@ -254,7 +254,7 @@ export const PoLineCard = ({
   const identityLocked = disabled || identityReadOnly;
 
   return (
-    <div
+    <div data-grid-row
       style={{
         background: 'var(--c-paper)',
         border: '1px solid var(--line)',

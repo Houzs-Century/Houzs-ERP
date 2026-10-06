@@ -203,7 +203,7 @@ export const NewJournalForm = ({ onDone, initial, editing }: { onDone: () => voi
       </div>
 
       {lines.map((l, i) => (
-        <div key={i} style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
+        <div data-grid-row key={i} style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
           {/* The account fills its column, and the column is the widest on the line
               (owner 2026-09-18: JE 显示 hide 掉名字了 — the box clipped the name). */}
           <span style={{ minWidth: 300, flex: 2 }}>

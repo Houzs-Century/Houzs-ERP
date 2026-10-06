@@ -438,7 +438,7 @@ export const PurchaseConsignmentReceiveDetail = () => {
                 isEditing && isManualLine && !isLocked &&
                 (d.itemGroup === 'bedframe' || d.itemGroup === 'sofa') && !!maint;
               return (
-                <div
+                <div data-grid-row
                   key={it.id}
                   style={{
                     background: 'var(--c-paper)',
