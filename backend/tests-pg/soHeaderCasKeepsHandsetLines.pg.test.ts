@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest'
 
 /*
  * Owner 2026-10-06: a line delivery date a user set by hand survives a later
- * header Delivery Date change (migration 20261006T0402). Lines still following
+ * header Delivery Date change (migration 20261006T1300). Lines still following
  * the header move; frozen lines (on a live DO) never move.
  */
 
@@ -64,7 +64,7 @@ async function resetFixture(sql: Sql): Promise<void> {
       END IF;
     END $$;
   `);
-  await sql.unsafe(await migration('20261006T0402_scm_so_header_cas_keeps_handset_lines.sql'));
+  await sql.unsafe(await migration('20261006T1300_scm_so_header_cas_keeps_handset_lines.sql'));
 }
 
 async function line(code: string): Promise<{ d: string | null; o: boolean }> {

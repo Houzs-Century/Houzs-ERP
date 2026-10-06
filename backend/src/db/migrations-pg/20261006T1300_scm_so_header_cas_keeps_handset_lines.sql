@@ -1,4 +1,4 @@
--- 20261006T0402_scm_so_header_cas_keeps_handset_lines.sql (Postgres)
+-- 20261006T1300_scm_so_header_cas_keeps_handset_lines.sql (Postgres)
 -- A Sales Order header Delivery Date change no longer overwrites a line date
 -- somebody set by hand.
 --

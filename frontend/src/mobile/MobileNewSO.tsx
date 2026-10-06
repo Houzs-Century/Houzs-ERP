@@ -67,7 +67,6 @@ import {
 import { StatePicker } from "../vendor/scm/components/StatePicker";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { deferLineDateToHeader, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
-import { isHandSetLineDate } from "../vendor/scm/lib/line-delivery-date-cascade";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
@@ -251,6 +250,7 @@ type SoItem = {
   unit_price_sen: number | null;
   discount_sen: number | null;
   line_delivery_date: string | null;
+  line_delivery_date_overridden?: boolean | null;
   remark: string | null;
   variants: Record<string, unknown> | null;
   /* Saved per-line photo R2 object keys — dual-read camelCase / snake_case
@@ -1053,11 +1053,9 @@ export function MobileNewSO({
         const editable = liveItems.map(lineFromItem);
         const addRow = openAddLine ? newLine() : null; // detail's Add line: one new row, picker open
         setLines(addRow ? [...editable, addRow] : editable.length ? editable : [newLine()]); if (addRow) setPickerFor(addRow.key);
-        /* FIX D1(b) — a saved line whose date differs from the header is held, so
-           the header→line cascade never stomps it on load; one on the header date
-           follows a header change, as the server cascade does (20261006T0402). */
-        const hdrDeliv = (h.customer_delivery_date ?? "").slice(0, 10);
-        setDdateOverrides(new Set(editable.filter((l) => l.ddate && l.ddate !== hdrDeliv).map((l) => l.key)));
+        /* FIX D1(b) — a line the server holds as hand-set is held here too, so the
+           preview moves the same lines a header change moves on save. */
+        setDdateOverrides(new Set(editable.filter((_, i) => liveItems[i]?.line_delivery_date_overridden === true).map((l) => l.key)));
         setExistingPays(payResp.payments ?? []);
         // Pin the version this SO was loaded with (WO-8 optimistic locking).
         loadedVersionRef.current = detail.salesOrder.version;
@@ -1723,7 +1721,7 @@ export function MobileNewSO({
   /* Line-item body for POST /:docNo/items and the create body's items[].
      Delegates to the module-level buildItemBody (shared with the headless
      createDraftFromPrefill). */
-  const lineDateHandSet = (l: LineItem): boolean => isHandSetLineDate(ddateOverrides.has(l.key), l.ddate || null, delivDate || null);
+  const lineDateHandSet = (l: LineItem): boolean => ddateOverrides.has(l.key);
   const itemBody = (l: LineItem) => buildItemBody(l, lineDateHandSet(l));
 
   const itemPatchBody = (l: LineItem): Record<string, unknown> => ({

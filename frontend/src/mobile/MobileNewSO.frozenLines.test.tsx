@@ -89,7 +89,7 @@ describe("phone SO editor — a partly delivered order", () => {
 
 /* Owner 2026-10-06: a hand-set line date survives a header Delivery Date change;
    a line on the header date follows — the same lines the server cascade moves
-   (apply_so_header_cas, 20261006T0402). */
+   (apply_so_header_cas, 20261006T1300). */
 describe("phone SO editor — header Delivery Date change", () => {
   it("moves the line on the header date and keeps the hand-set one", async () => {
     // Far-future dates: a passed Processing Date locks the lines.

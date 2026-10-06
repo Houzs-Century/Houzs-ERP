@@ -4,7 +4,7 @@
 
    WHY. Owner 2026-10-06 (Weisiang): on a header Delivery Date change a line the
    user hand-set keeps its date, every other line follows. apply_so_header_cas
-   now keeps every line whose flag is true (20261006T0402). Until the same PR,
+   now keeps every line whose flag is true (20261006T1300). Until the same PR,
    the item routes flagged any line a caller sent a date for (the phone editor
    sends every line's date) and an approved delivery-date amendment flagged every
    line, so many lines carry true while sitting on the header date. Left alone,

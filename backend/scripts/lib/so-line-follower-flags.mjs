@@ -1,7 +1,7 @@
 // The SO lines reset-so-line-follower-flags.mjs clears: hand-set flag TRUE while
 // the line date EQUALS its order's header Delivery Date. Until 2026-10-06 the
 // item routes and the amendment cascade set the flag on lines nobody hand-set;
-// since apply_so_header_cas keeps every flagged line (20261006T0402), those
+// since apply_so_header_cas keeps every flagged line (20261006T1300), those
 // lines would stay behind on a header change. A line on the header date reads
 // the same date with the flag true or false (effective-delivery.ts), so
 // clearing it changes no visible date and only lets the line follow again.

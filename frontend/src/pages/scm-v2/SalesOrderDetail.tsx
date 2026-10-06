@@ -150,7 +150,6 @@ import { generateSalesOrderPdf } from '../../vendor/scm/lib/sales-order-pdf';
 import { newIdempotencyKey } from '../../lib/idempotency';
 import { deferLineDateToHeader } from '../../vendor/scm/lib/so-line-date-defer';
 import { useSoVariantCascade, useSoLineDeliveryDateCascade } from './use-so-variant-cascade';
-import { isHandSetLineDate } from '../../vendor/scm/lib/line-delivery-date-cascade';
 import {
   dropStagedAdd, firstBlankStagedAdd, namedStagedAdds,
   patchStagedAdd, runSoLineWrites, stagedAddDrafts, stagedAddLabel, visibleLineCounts,
@@ -450,7 +449,7 @@ type SoItem = {
    Hoisted to module scope so the edit-mode seed effect can map every line
    without re-allocating the function each render. Mirrors the snake_case →
    camelCase field mapping the per-row editor used before. */
-const draftFromItem = (it: SoItem, headerDate: string | null): SoLineDraft => ({
+const draftFromItem = (it: SoItem): SoLineDraft => ({
   itemCode:       it.item_code ?? '',
   itemGroup:      it.item_group ?? 'others',
   description:    it.description ?? '',
@@ -472,7 +471,7 @@ const draftFromItem = (it: SoItem, headerDate: string | null): SoLineDraft => ({
      mapped it (MobileNewSO photoKeys); this closes the desktop seam. */
   photoUrls:      it.photo_urls ?? [],
   lineDeliveryDate:           it.line_delivery_date ?? null,
-  lineDeliveryDateOverridden: isHandSetLineDate(it.line_delivery_date_overridden, it.line_delivery_date, headerDate),
+  lineDeliveryDateOverridden: it.line_delivery_date_overridden ?? false,
 });
 
 /* Serialised signature of exactly the fields a line PATCH persists. Two drafts
@@ -1054,7 +1053,7 @@ export const SalesOrderDetail = () => {
       if (!draft) continue; // dropped → handled as REMOVE below
       /* Fall back to the item's own pristine draft when the seed is missing, so a
          line can never be recorded just because its snapshot went absent. */
-      const orig = originalDraftsRef.current[it.id] ?? draftFromItem(it, header?.customer_delivery_date ?? null);
+      const orig = originalDraftsRef.current[it.id] ?? draftFromItem(it);
       if (amendmentLineSig(draft) === amendmentLineSig(orig)) continue; // nothing amendable moved
       /* QTY vs SPEC — compared against the same pristine draft the signature
          used, so both sides are canonicalised alike (an `it`-derived fallback
@@ -1376,13 +1375,13 @@ export const SalesOrderDetail = () => {
     // MERGE — keep the user's in-flight drafts, seed only new lines, drop
     // gone ones. A naive re-seed used to wipe unsaved picks (docs/bugs/).
     const orig: Record<string, SoLineDraft> = {};
-    for (const it of items) orig[it.id] = draftFromItem(it, header?.customer_delivery_date ?? null);
+    for (const it of items) orig[it.id] = draftFromItem(it);
     originalDraftsRef.current = orig;
     setEditingDrafts((prev) => {
       const alive = new Set(items.map((it) => it.id));
       const next: Record<string, SoLineDraft> = {};
       for (const id of Object.keys(prev)) if (alive.has(id)) next[id] = prev[id];
-      for (const it of items) if (!(it.id in next)) next[it.id] = draftFromItem(it, header?.customer_delivery_date ?? null);
+      for (const it of items) if (!(it.id in next)) next[it.id] = draftFromItem(it);
       return next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
