@@ -98,6 +98,7 @@ const SCM_SEGMENT_LABELS: Record<string, [string, string]> = {
   "consignment-returns": ["Consignment Returns", "Consignment Return"],
   // Consignment (purchase side)
   "purchase-consignment-orders": ["Purchase Consignment Orders", "Purchase Consignment Order"],
+  "product-requests": ["Product Requests", "Product Request"],
   "purchase-consignment-receives": ["Purchase Consignment Receives", "Purchase Consignment Receive"],
   "purchase-consignment-returns": ["Purchase Consignment Returns", "Purchase Consignment Return"],
   // Section hubs — the Level-2 sub-group landing pages (ScmSubgroupHub). Their

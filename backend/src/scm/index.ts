@@ -57,6 +57,7 @@ import { accEvents } from "./routes/acc-events";
 import { officialDocs } from "./routes/official-docs";
 import { supplierMaintenance } from "./routes/supplier-maintenance";
 import { paymentRequests } from "./routes/payment-requests";
+import { productRequests } from "./routes/product-requests";
 import { receipts } from "./routes/receipts";
 import { entityAuditLog } from "./routes/entity-audit-log";
 import { changeLog } from "./routes/change-log";
@@ -733,6 +734,12 @@ scm.route("/currencies", currencies);
 // which requireScmAccess admits for this prefix alone. Each handler checks that
 // key or Finance's scm.payment_voucher.create, and a requester sees their own.
 scm.route("/payment-requests", paymentRequests);
+// Product request (owner 2026-10-06) — NO area guard, for the same reason: a
+// salesperson (Sales 都能提) holds no consignment or procurement area and the
+// Purchaser holds no sales area. requireScmAccess admits a Sales caller and the
+// two flat scm.product_request.* keys for this prefix alone; each handler checks
+// the caller, and a requester sees their own requests only.
+scm.route("/product-requests", productRequests);
 // HR / Commission (port of 2990 apps/api routes/hr.ts + migration 0123). The
 // only place commission is calculated — the last thing keeping 2990's apps/api
 // alive. NO scmAreaGuard: an L2 area key is a PAGE key, and there is no HR page
