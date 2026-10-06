@@ -137,6 +137,7 @@ const toScanned = (l: GrnExtracted['lines'][number]): ScannedGrnLine => ({
   barcode: l.barcode,
   description: l.description,
   qty: l.qty,
+  poNo: l.poNo,
 });
 
 // A plain-language note for a NEEDS-REVIEW job (no GRN created): tell the
@@ -291,7 +292,7 @@ async function runGrnScanJob(
     // Unmatched scanned lines the operator must add manually on the draft.
     const unmatchedCount = match.unmatched.length;
     const unmatchedNote = unmatchedCount > 0
-      ? `${unmatchedCount} scanned ${unmatchedCount === 1 ? 'line' : 'lines'} could not be matched to this PO and ${unmatchedCount === 1 ? 'was' : 'were'} left off — please add ${unmatchedCount === 1 ? 'it' : 'them'} on the draft.`
+      ? `${unmatchedCount} scanned ${unmatchedCount === 1 ? 'line' : 'lines'} could not be matched to an open PO line and ${unmatchedCount === 1 ? 'was' : 'were'} left off — please add ${unmatchedCount === 1 ? 'it' : 'them'} on the draft.`
       : null;
 
     await touch({ status: 'done', linked_doc_no: primary, ...(unmatchedNote ? { error: unmatchedNote } : {}) });
