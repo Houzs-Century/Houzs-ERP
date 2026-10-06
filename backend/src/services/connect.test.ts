@@ -44,9 +44,21 @@ describe('buildDeliveryFollowUp', () => {
         ref_1: 'HC13234',
         delivery_date_1: '2026/10/05',
         brand_1: 'AKEMI',
+        refs_all: 'HC13234',
         callback_url: 'https://erp.houzscentury.com/api/chat-callback',
       },
     });
+  });
+
+  it('refs_all carries EVERY bundled order, including the 4th+ the lines do not show', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+      { ref: 'B2', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06' },
+      { ref: 'C3', branding: 'GOODNITE', deliveryDate: '2026/10/07' },
+      { ref: 'D4', branding: 'VONO', deliveryDate: '2026/10/08' },
+    ], null, CTX);
+    expect(contact.attributes.refs_all).toBe('A1,B2,C3,D4');
+    expect(contact.attributes.ref_4).toBeUndefined();
   });
 
   it('resets every attribute the flows read before they write, on every send', () => {

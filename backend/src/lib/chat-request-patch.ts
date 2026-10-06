@@ -67,6 +67,34 @@ export function chatRequestPatch(
   return patch;
 }
 
+/** The document-number alphabet. A ref is interpolated into a PostgREST
+ *  filter where `,` `(` `)` are syntax, so anything else is refused, never
+ *  escaped. An unresolved Connect placeholder ("{refs_all}") fails this too. */
+export const DOC_REF_RE = /^[A-Za-z0-9_\-/.]+$/;
+
+/** At most this many orders in one tap — a WhatsApp bundle shows 3 and says
+ *  "you have N orders"; a longer list is a malformed caller, not a customer. */
+export const MAX_CALLBACK_REFS = 20;
+
+/**
+ * The orders one tap applies to: the primary `ref` plus the bundle's `refs`
+ * (comma-joined by the ERP's send as `refs_all`), trimmed, de-duplicated, in
+ * order, primary first. Entries outside the doc-number alphabet are dropped
+ * silently — the primary is validated by the caller, which answers 400.
+ */
+export function parseCallbackRefs(ref: string, refs: unknown): string[] {
+  const out: string[] = [];
+  const push = (v: unknown) => {
+    const s = String(v ?? "").trim().slice(0, 64);
+    if (!s || !DOC_REF_RE.test(s) || out.includes(s)) return;
+    if (out.length < MAX_CALLBACK_REFS) out.push(s);
+  };
+  push(ref);
+  if (typeof refs === "string") refs.split(",").forEach(push);
+  else if (Array.isArray(refs)) refs.forEach(push);
+  return out;
+}
+
 /** Audit field names (so-audit-labels.ts keys) for the columns a patch set. */
 export function chatRequestFieldChanges(
   patch: ChatRequestPatch,
