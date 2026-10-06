@@ -28,9 +28,10 @@ export interface ConnectConfig {
 }
 
 export interface ConnectOrder {
-  /** COALESCE(linked_ac_docno, doc_no) — the number the customer knows.
-   *  /api/chat-callback resolves EITHER number back to the SO, so the flow can
-   *  echo this one straight into its callback body. */
+  /** The ERP Sales Order number (doc_no) — the number the message prints as
+   *  "Sales Order No." (owner 2026-10-06; before that the AutoCount number when
+   *  linked). /api/chat-callback resolves either number back to the SO, so a
+   *  conversation opened under the old rule still records. */
   ref: string;
   branding: string;
   /** yyyy/mm/dd, already the effective (amended ?? original) date. */
