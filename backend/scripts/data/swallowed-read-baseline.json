@@ -398,7 +398,7 @@
       "catches": 1
     },
     "backend/src/scm/routes/so-amendments.ts": {
-      "reads": 9,
+      "reads": 8,
       "catches": 0
     },
     "backend/src/scm/routes/so-dropdown-options.ts": {
