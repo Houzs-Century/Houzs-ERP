@@ -1,7 +1,6 @@
 // Owner 2026-10-06: when the PO header Delivery Date (expected_at) changes, every
-// line's delivery_date follows, except (a) a hand-set line
-// (line_delivery_date_overridden, set when a user saves a line date by hand) and
-// (b) a line already fully received on a GRN (received_qty >= qty).
+// line's delivery_date follows, hand-set lines included (last edit wins, same as
+// SO), except a line already fully received on a GRN (received_qty >= qty).
 // Drives the REAL header PATCH through the fake PostgREST client.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
@@ -68,10 +67,10 @@ describe('PATCH mfg purchase order header — Delivery Date cascades to lines', 
     expect(line('part').delivery_date).toBe('2026-11-05');
   });
 
-  it('a hand-set line keeps its date and its flag', async () => {
+  it('last edit wins: a hand-set line takes the new header date and follows it again', async () => {
     await patch({ expectedAt: '2026-11-05' });
-    expect(line('hand').delivery_date).toBe('2026-10-20');
-    expect(line('hand').line_delivery_date_overridden).toBe(true);
+    expect(line('hand').delivery_date).toBe('2026-11-05');
+    expect(line('hand').line_delivery_date_overridden).toBe(false);
   });
 
   it('a line with a different date but no hand-set flag moves', async () => {

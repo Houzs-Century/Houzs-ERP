@@ -2544,19 +2544,19 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
     }
   }
 
-  /* Owner 2026-10-06 — a header Delivery Date change moves every line except a
-     hand-set one (line_delivery_date_overridden) or a fully received one. JS
+  /* Owner 2026-10-06, last edit wins (as SO) — a header Delivery Date change moves
+     every line, hand-set ones included (flag resets), except a fully received one. JS
      filter: PostgREST cannot compare two columns. Keyed on the date CHANGING:
      the editor re-sends the whole header. Best-effort, as above. */
   if (updates['expected_at'] !== undefined && (updates['expected_at'] ?? null) !== prevExpectedAt) {
     const { data: lines, error: readErr } = await scopeToCompanyId(sb.from('purchase_order_items')
-      .select('id, qty, received_qty, line_delivery_date_overridden').eq('purchase_order_id', id), co.companyId);
-    const openIds = ((lines ?? []) as Array<{ id: string; qty: number; received_qty: number | null; line_delivery_date_overridden: boolean | null }>)
-      .filter((l) => (l.received_qty ?? 0) < l.qty && l.line_delivery_date_overridden !== true)
+      .select('id, qty, received_qty').eq('purchase_order_id', id), co.companyId);
+    const openIds = ((lines ?? []) as Array<{ id: string; qty: number; received_qty: number | null }>)
+      .filter((l) => (l.received_qty ?? 0) < l.qty)
       .map((l) => l.id);
     const { error: lineErr } = readErr ? { error: readErr } : openIds.length === 0 ? { error: null }
       : await scopeToCompanyId(sb.from('purchase_order_items')
-        .update({ delivery_date: updates['expected_at'] }).in('id', openIds), co.companyId);
+        .update({ delivery_date: updates['expected_at'], line_delivery_date_overridden: false }).in('id', openIds), co.companyId);
     if (lineErr) console.error('[mfg-po PATCH] delivery date line cascade failed', { id, error: lineErr });
   }
   await queueAcPoEdit(c, id);
