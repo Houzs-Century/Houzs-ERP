@@ -117,6 +117,9 @@ jobs:
         run: |
           set -euo pipefail
           psql "$LOCAL/snap" -v ON_ERROR_STOP=1 -At <<'SQL'
+          -- Append-only audit tables (e.g. scm.pos_sofa_combo_audit) refuse UPDATE
+          -- via trigger; this throwaway copy must still be masked, so skip triggers.
+          set session_replication_role = replica;
           do $$
           declare r record; n bigint; total bigint := 0;
           begin
