@@ -685,7 +685,7 @@ function MonthGrid({ weeks, byDay, expand, onExpandAll, onOpenDay, empty, onOpen
                 their tinted box into that row's empty columns (owner
                 2026-07-30, so long names read on one line) — this clips the
                 spill at the week's right edge so no text escapes the grid. */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", rowGap: 2, padding: "2px 0", overflow: "hidden" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))", rowGap: 2, padding: "2px 0", overflow: "hidden" }}>
               {bars.slice(0, cap).map(({ e, startIdx, endIdx }, i) => {
                 const focused = focusProjectId != null && e.kind === "project" && e.projectId === focusProjectId;
                 const isTask = e.kind === "task";
