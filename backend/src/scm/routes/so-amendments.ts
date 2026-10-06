@@ -566,14 +566,15 @@ soAmendments.get('/:id', async (c) => {
   ]);
   if (amdRes.error) return c.json({ error: 'load_failed', reason: amdRes.error.message }, 500);
   if (!amdRes.data) return c.json({ error: 'not_found' }, 404);
+  // company-scope: prove the parent amendment — its read above is scopeToCompany'd and 404s first; the lines, bound POs and PO follow-ups below are its children, keyed by that id or its SO.
   const amendment = amdRes.data as unknown as { so_doc_no: string; requested_by?: string | null } & Record<string, unknown>;
   const lines = (lineRes.data ?? []) as unknown as Array<Record<string, unknown>>;
 
   // SO header summary — doc_no, status, revision (+ ownership for the scope
   // check below).
-  const { data: soRow } = await sb.from('mfg_sales_orders')
+  const { data: soRow } = await scopeToCompany(sb.from('mfg_sales_orders')
     .select('doc_no, status, revision, salesperson_id, access_staff_ids')
-    .eq('doc_no', amendment.so_doc_no).maybeSingle();
+    .eq('doc_no', amendment.so_doc_no), c).maybeSingle();
   const salesOrder = (soRow ?? null) as
     { doc_no: string; status: string; revision: number; salesperson_id?: number | string | null; access_staff_ids?: string[] | null } | null;
 
