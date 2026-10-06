@@ -2485,6 +2485,7 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
     .select(PO_AUDIT_SELECT).eq('id', id), co.companyId).maybeSingle();
   if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
+  const prevExpectedAt = before.expected_at ?? null;
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   for (const [from, to] of PO_AUDIT_FIELDS) {
@@ -2541,6 +2542,26 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
     } catch (e) {
       console.error('[mfg-po PATCH] header date cascade failed', { id, col, error: e });
     }
+  }
+
+  /* Owner 2026-10-05 — PO dates follow the SO rule: a header Delivery Date
+     change moves every line's delivery_date. PO lines carry no "set by hand"
+     flag, so a hand-set line is overwritten too. Frozen, like the SO's
+     delivered lines: a line already fully received on a GRN keeps the date it
+     arrived on. PostgREST cannot compare two columns, so filter in JS.
+     Keyed on the date CHANGING, not on the key being sent: the desktop editor
+     re-sends the whole header on every save, so a notes-only edit would
+     otherwise wipe every hand-set line date.
+     Best-effort, as above: the header has already committed. */
+  if (updates['expected_at'] !== undefined && (updates['expected_at'] ?? null) !== prevExpectedAt) {
+    const { data: lines, error: readErr } = await scopeToCompanyId(sb.from('purchase_order_items')
+      .select('id, qty, received_qty').eq('purchase_order_id', id), co.companyId);
+    const openIds = ((lines ?? []) as Array<{ id: string; qty: number; received_qty: number | null }>)
+      .filter((l) => (l.received_qty ?? 0) < l.qty).map((l) => l.id);
+    const { error: lineErr } = readErr ? { error: readErr } : openIds.length === 0 ? { error: null }
+      : await scopeToCompanyId(sb.from('purchase_order_items')
+        .update({ delivery_date: updates['expected_at'] }).in('id', openIds), co.companyId);
+    if (lineErr) console.error('[mfg-po PATCH] delivery date line cascade failed', { id, error: lineErr });
   }
   await queueAcPoEdit(c, id);
 
