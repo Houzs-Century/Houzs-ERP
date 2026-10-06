@@ -24,7 +24,7 @@ import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
    docs/modules/document-status-vocabulary.md §1. */
 import { statusLabel } from './status-pill';
 
-type SiHeader = {
+export type SiHeader = {
   invoice_number: string; status: string;
   so_doc_no: string | null; debtor_code: string | null; debtor_name: string;
   invoice_date: string; due_date: string | null; currency: string;
@@ -59,7 +59,7 @@ type SiHeader = {
      copy shows. Optional + drawInfoColumns skips it if null. */
   customer_delivery_date?: string | null;
 };
-type SiItem = {
+export type SiItem = {
   item_code: string; description: string | null;
   qty: number; unit_price_sen: number;
   // Older items table rows in 2990s may omit these — keep optional so the
@@ -244,6 +244,16 @@ export async function generateSalesInvoicePdf(
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   await renderSalesInvoiceInto(doc, autoTable, header, items);
   deliverPdf(doc, `${header.invoice_number}-${safeName(header.debtor_name)}.pdf`, opts?.action);
+}
+
+/** The same pages as bytes — what a sales invoice opened from the AR Invoices
+    list shows before anyone prints (owner 2026-10-06: ar invoice 点不开). */
+export async function salesInvoicePdfBlob(header: SiHeader, items: SiItem[]): Promise<Blob> {
+  const { jsPDF } = await import('jspdf');
+  const autoTable = (await import('jspdf-autotable')).default;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  await renderSalesInvoiceInto(doc, autoTable, header, items);
+  return doc.output('blob');
 }
 
 /* Several SIs → ONE combined file, each invoice starting on a new page. For the
