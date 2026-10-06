@@ -6,14 +6,11 @@
 -- follow the users, this is highest rules". Confirmed for Sales Orders too.
 --
 -- WHAT CHANGES. One UPDATE at the end of apply_so_header_cas (the
--- p_apply_delivery_date cascade). A line is now skipped, keeping its date AND
--- its line_delivery_date_overridden flag, when it is HAND-SET:
---   line_delivery_date_overridden = true AND its date differs from the header's
---   date BEFORE this save.
--- The "differs" half is there because the flag is set by more than a hand edit:
--- the item POST/PATCH routes flip it to true whenever a lineDeliveryDate is sent
--- without the flag (the phone editor sends every line's date that way), so many
--- lines carry true while simply sitting on the header's date. Those still follow.
+-- p_apply_delivery_date cascade). A line with line_delivery_date_overridden =
+-- true is HAND-SET and is skipped, keeping its date AND its flag. The item
+-- routes set the flag only for a date that differs from the header's
+-- (soLineDateOverridden), and backend/scripts/reset-so-line-follower-flags.mjs
+-- clears it on lines that were flagged while sitting on the header date.
 -- Every other non-frozen line follows exactly as before (date set, flag false).
 -- Frozen lines (20260915T1200) are still skipped. Clearing the header date
 -- (p_delivery_date NULL, only reachable through Remove Processing Date) still
@@ -59,7 +56,6 @@ DECLARE
   v_sql text;
   v_unlinked boolean;
   v_frozen uuid[];
-  v_old_delivery date;
 BEGIN
   SELECT * INTO v_row
   FROM mfg_sales_orders
@@ -178,16 +174,12 @@ BEGIN
            OR (p_rebind_line_ids IS NOT NULL AND id = ANY(p_rebind_line_ids)));
   END IF;
   IF p_apply_delivery_date AND NOT v_unlinked THEN
-    -- Read through text so the compare holds whatever the header column's type.
-    v_old_delivery := NULLIF(left(v_row.customer_delivery_date::text, 10), '')::date;
     UPDATE mfg_sales_order_items
     SET line_delivery_date = p_delivery_date,
         line_delivery_date_overridden = false
     WHERE doc_no = p_doc_no
       AND NOT (id = ANY(v_frozen))
-      AND (p_delivery_date IS NULL
-           OR line_delivery_date_overridden IS NOT TRUE
-           OR line_delivery_date IS NOT DISTINCT FROM v_old_delivery);
+      AND (p_delivery_date IS NULL OR line_delivery_date_overridden IS NOT TRUE);
   END IF;
 
   RETURN QUERY SELECT true, v_saved_version, v_customer_id, NULL::text;

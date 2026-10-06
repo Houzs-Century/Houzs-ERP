@@ -44,6 +44,19 @@ describe('planDeliveryDateSweep — lines', () => {
     expect(lines).toEqual([]);
   });
 
+  /* An approved delivery-date amendment moves the following lines with the flag
+     CLEARED (owner 2026-10-06: only hand-set lines keep their date), so the
+     flag no longer protects them; the header's amendment must. HC-SO-011177. */
+  it('leaves every line of an AMENDED order, flagged or not', () => {
+    const { lines } = planDeliveryDateSweep(
+      book([['HC-SO-1', 1, '2026-09-19'], ['HC-SO-1', 2, '2026-09-19']]),
+      [line({ id: 'a', linked_ac_dtlkey: 1, line_delivery_date: '2026-10-01' }),
+        line({ id: 'b', linked_ac_dtlkey: 2, line_delivery_date: '2026-10-07', line_delivery_date_overridden: true })],
+      headers({ 'HC-SO-1': { date: '2026-10-01', amended: '2026-10-01' } }),
+    );
+    expect(lines).toEqual([]);
+  });
+
   it('leaves a BLANK line — a blank is not a change, and MRP gates on this field', () => {
     const { lines } = planDeliveryDateSweep(
       book([['HC-SO-1', 1, '2026-09-19']]),

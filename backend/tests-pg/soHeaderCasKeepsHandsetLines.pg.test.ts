@@ -111,9 +111,9 @@ describePg('SO header Delivery Date change keeps hand-set line dates', () => {
     expect(await line('FROZEN')).toEqual({ d: OLD, o: false });
   });
 
-  test('a flagged line still sitting on the old header date follows (flag set by a route, not a hand edit)', async () => {
+  test('the flag alone decides: a flagged line on the old header date keeps its date and flag', async () => {
     await changeHeaderDate(NEW);
-    expect(await line('FLAGGED-ON-HEADER')).toEqual({ d: NEW, o: false });
+    expect(await line('FLAGGED-ON-HEADER')).toEqual({ d: OLD, o: true });
   });
 
   test('clearing the header date (Remove Processing Date) still clears every non-frozen line', async () => {

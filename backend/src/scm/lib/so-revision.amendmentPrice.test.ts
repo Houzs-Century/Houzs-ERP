@@ -38,7 +38,7 @@ type SoAmendmentApproval = { approvedByUserId: string; approvalPermission: strin
    at the end of the apply reads its own write back and throws when it is empty. */
 class Query {
   private op: 'select' | 'update' | 'delete' | 'insert' | 'upsert' = 'select';
-  private filters: Array<{ kind: 'eq' | 'in'; col: string; val: unknown }> = [];
+  private filters: Array<{ kind: 'eq' | 'in' | 'notIs'; col: string; val: unknown }> = [];
   private orders: Array<{ col: string; asc: boolean }> = [];
   private payload: Row | Row[] | null = null;
   private upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } | null = null;
@@ -57,9 +57,13 @@ class Query {
   lte() { return this; }
   /* The frozen-line read (downstream-lock.readSoLineFreeze) pages with range and
      the header cascades exclude frozen ids with not(); these stores carry no
-     delivery order, so neither changes a result. */
+     delivery order, so `not('id', 'in', …)` changes no result; `not(col, 'is', v)`
+     is honoured (the delivery-date cascade skips hand-set lines with it). */
   range() { return this; }
-  not() { return this; }
+  not(col: string, op: string, val: unknown) {
+    if (op === 'is') this.filters.push({ kind: 'notIs', col, val });
+    return this;
+  }
   order(col: string, opts?: { ascending?: boolean }) { this.orders.push({ col, asc: opts?.ascending !== false }); return this; }
   limit(n: number) { this.limitN = n; return this; }
   maybeSingle() { this.wantSingle = true; return this; }
@@ -73,7 +77,9 @@ class Query {
 
   private rows() { return (this.store[this.table] ??= []); }
   private match = (r: Row) => this.filters.every((f) =>
-    f.kind === 'eq' ? r[f.col] === f.val : Array.isArray(f.val) && f.val.includes(r[f.col]));
+    f.kind === 'eq' ? r[f.col] === f.val
+      : f.kind === 'notIs' ? (r[f.col] ?? null) !== f.val
+        : Array.isArray(f.val) && f.val.includes(r[f.col]));
 
   private exec(): PgrstResult {
     if (this.done) return this.result!;
@@ -613,13 +619,32 @@ describe('applySoAmendment — an approved delivery-date amendment is both SEEN 
     expect(header.amended_delivery_date).toBe('2026-10-19');
   });
 
-  it('cascades to the lines with the override flag SET, so a book re-sync cannot revert them', async () => {
+  /* Owner 2026-10-06 (Weisiang): a hand-set line date is the highest rule. The
+     amendment cascade follows apply_so_header_cas: following lines move with the
+     flag cleared, a hand-set line keeps its date and flag. The book re-sync is
+     kept off them by amended_delivery_date (autocount-delivery-date-sweep). */
+  it('moves a following line with the flag cleared and leaves a hand-set line alone', async () => {
     const store = seedDeliveryAmendment();
+    store.mfg_sales_order_items.push(soLine({
+      id: 'L2', line_no: 2, line_delivery_date: '2026-11-09', line_delivery_date_overridden: true,
+    }));
 
     await apply(store, APPROVE_DELIVERY);
 
-    const line = lineOf(store);
-    expect(line.line_delivery_date).toBe('2026-10-19');
-    expect(line.line_delivery_date_overridden).toBe(true);
+    expect(lineOf(store)).toMatchObject({ line_delivery_date: '2026-10-19', line_delivery_date_overridden: false });
+    expect(lineOf(store, 'L2')).toMatchObject({ line_delivery_date: '2026-11-09', line_delivery_date_overridden: true });
+  });
+
+  it('clearing the date clears every line, hand-set or not', async () => {
+    const store = seedDeliveryAmendment();
+    (store.so_amendments[0] as Row).header_changes = { customerDeliveryDate: null };
+    store.mfg_sales_order_items.push(soLine({
+      id: 'L2', line_no: 2, line_delivery_date: '2026-11-09', line_delivery_date_overridden: true,
+    }));
+
+    await apply(store, APPROVE_DELIVERY);
+
+    expect(lineOf(store)).toMatchObject({ line_delivery_date: null, line_delivery_date_overridden: false });
+    expect(lineOf(store, 'L2')).toMatchObject({ line_delivery_date: null, line_delivery_date_overridden: false });
   });
 });

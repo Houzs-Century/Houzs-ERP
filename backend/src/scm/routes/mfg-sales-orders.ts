@@ -242,6 +242,7 @@ import {
   soDatePairCascadeColumns,
   soDatePairRefusal,
   soDateYmd,
+  soLineDateOverridden,
   soLineDateRefusal,
   withProcessingRemovalCascade,
   isProcessingRemovalOnlyRequest,
@@ -3286,15 +3287,18 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     /* Task 5 — the per-line declared extra add-on (whole RM), only honoured when
        the auto-SKU flag is ON. Drives whether this line mints a one-shot SKU. */
     const extraRM = autoSkuEnabled ? extraRMof(it) : 0;
-    /* PR-E — a sent lineDeliveryDate wins (overridden=true unless explicitly
-       false), else inherit the header date. "" is stored as NULL, not "". */
+    /* PR-E — a sent lineDeliveryDate wins, else inherit the header date. It is
+       hand-set (flagged) only when it differs from the header, unless the
+       client says otherwise (soLineDateOverridden). "" is stored as NULL. */
     const hasExplicitLineDate = it.lineDeliveryDate !== undefined && it.lineDeliveryDate !== null;
     const lineDeliveryDate = hasExplicitLineDate
       ? (it.lineDeliveryDate as string | null)
       : headerDeliveryDate;
-    const lineDeliveryDateOverridden = hasExplicitLineDate
-      ? (it.lineDeliveryDateOverridden === undefined ? true : Boolean(it.lineDeliveryDateOverridden))
-      : Boolean(it.lineDeliveryDateOverridden ?? false);
+    const lineDeliveryDateOverridden = soLineDateOverridden({
+      sentDate: hasExplicitLineDate ? it.lineDeliveryDate : undefined,
+      explicitFlag: it.lineDeliveryDateOverridden,
+      headerDate: headerDeliveryDate,
+    });
     const baseRow = {
       line_date: dateOrNull(it.lineDate) ?? todayMyt(),
       debtor_code: (body.debtorCode as string) ?? null,
@@ -7226,16 +7230,18 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      must not be able to smuggle in another size's SKU name either. */
   const sizeSkuMap = await loadSizeSkuMap(sb, [itemCodeStr], c);
   /* PR-E — same inheritance rule as POST /. Explicit per-line value wins
-     (and flips overridden=true unless the client says otherwise);
-     otherwise fall back to header.customer_delivery_date with
+     (flagged only when it differs from the header, unless the client says
+     otherwise); otherwise fall back to header.customer_delivery_date with
      overridden=false so the line tracks future header changes. */
   const hasExplicitLineDate = it.lineDeliveryDate !== undefined && it.lineDeliveryDate !== null;
   const lineDeliveryDate = hasExplicitLineDate
     ? (it.lineDeliveryDate as string | null)
     : (header.processing_date ? (header.customer_delivery_date as string | null) ?? null : null);
-  const lineDeliveryDateOverridden = hasExplicitLineDate
-    ? (it.lineDeliveryDateOverridden === undefined ? true : Boolean(it.lineDeliveryDateOverridden))
-    : Boolean(it.lineDeliveryDateOverridden ?? false);
+  const lineDeliveryDateOverridden = soLineDateOverridden({
+    sentDate: hasExplicitLineDate ? it.lineDeliveryDate : undefined,
+    explicitFlag: it.lineDeliveryDateOverridden,
+    headerDate: header.customer_delivery_date,
+  });
   /* 0165 — continue the doc's line numbering; a pre-0165 doc (max NULL)
      stays un-numbered so its lines keep one consistent ordering regime. */
   const { data: maxNoRow } = await sb
@@ -7897,13 +7903,10 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
   }
 
-  /* PR-E — Per-item delivery date PATCH. If the caller sends
-     lineDeliveryDate (including null to clear it), we ALSO server-side
-     flip line_delivery_date_overridden to true. This is defensive — the
-     UI should already mark the line as overridden when the user types
-     into the field, but enforcing it here protects against clients that
-     forget. A separate lineDeliveryDateOverridden=false reset path lets
-     the UI deliberately rejoin the header cascade. */
+  /* PR-E — Per-item delivery date PATCH. A caller that sends
+     lineDeliveryDate without the flag gets the flag from soLineDateOverridden:
+     hand-set only when the date differs from the header's. An explicit
+     lineDeliveryDateOverridden always wins. */
   if (it.lineDeliveryDate !== undefined) {
     /* Only a date that CHANGES is judged: the detail screen resends every
        field of an edited line, so an untouched legacy date must not block a
@@ -7924,7 +7927,16 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       if (patchLineDateRefusal) return c.json(patchLineDateRefusal, 400);
     }
     updates['line_delivery_date'] = dateOrNull(it.lineDeliveryDate);
-    updates['line_delivery_date_overridden'] = true;
+    if (it.lineDeliveryDateOverridden === undefined) {
+      const { data: delivHdr, error: delivErr } = await scopeToCompany(sb.from('mfg_sales_orders')
+        .select('customer_delivery_date').eq('doc_no', docNo), c).maybeSingle();
+      if (delivErr) return c.json({ error: 'so_read_failed', reason: delivErr.message }, 500);
+      updates['line_delivery_date_overridden'] = soLineDateOverridden({
+        sentDate: it.lineDeliveryDate,
+        explicitFlag: undefined,
+        headerDate: (delivHdr as { customer_delivery_date?: string | null } | null)?.customer_delivery_date ?? null,
+      });
+    }
   }
   if (it.lineDeliveryDateOverridden !== undefined) {
     updates['line_delivery_date_overridden'] = Boolean(it.lineDeliveryDateOverridden);

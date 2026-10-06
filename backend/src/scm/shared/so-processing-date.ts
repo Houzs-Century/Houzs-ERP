@@ -509,6 +509,27 @@ export function soLineDateRefusal(i: {
 }
 
 /**
+ * The `line_delivery_date_overridden` an SO line write stores. The flag means
+ * "hand-set: keep this date when the header's Delivery Date changes"
+ * (apply_so_header_cas, owner 2026-10-06). A caller that says so explicitly
+ * wins. A caller that sends only a date (the phone editor resends every line's
+ * date) is hand-setting it only if the date differs from the header's: a line
+ * sitting on the header date is following it.
+ */
+export function soLineDateOverridden(i: {
+  /** The line date this write sends; undefined when it sends none. */
+  sentDate: unknown;
+  /** The caller's own flag; undefined when it sends none. */
+  explicitFlag: unknown;
+  /** The SO header's Delivery Date as it stands after this write. */
+  headerDate: unknown;
+}): boolean {
+  if (i.explicitFlag !== undefined) return Boolean(i.explicitFlag);
+  if (i.sentDate === undefined) return false;
+  return soDateYmd(i.sentDate) !== soDateYmd(i.headerDate);
+}
+
+/**
  * CLEARING ONE CLEARS BOTH — the other half of the owner's rule, for the one
  * shape where refusing would be wrong.
  *

@@ -118,6 +118,20 @@ describe('every SO line write path calls the line-date predicate (BUG-39)', () =
   });
 });
 
+/* Owner 2026-10-06: the flag means hand-set, and every SO line write decides it
+   through one predicate. Before, create / add-line / PATCH each flagged a line
+   whenever a date was sent without the flag, so a header change left lines that
+   were only following the header stuck on the old date. */
+describe('every SO line write path decides the hand-set flag through soLineDateOverridden', () => {
+  test('no route flags a line just because a date was sent', () => {
+    expect(SO).not.toContain('it.lineDeliveryDateOverridden === undefined ? true');
+    expect(SO).not.toContain("updates['line_delivery_date_overridden'] = true;");
+  });
+  test('SO create, add line and line PATCH each call it', () => {
+    expect(SO.match(/soLineDateOverridden\(\{/g)?.length).toBe(3);
+  });
+});
+
 describe('the deliberate exclusions say why they are excluded', () => {
   /* CLAUDE.md: a route that is deliberately outside a sweep says so in a
      comment naming why, so the next sweep does not "fix" it — and so removing

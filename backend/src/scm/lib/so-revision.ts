@@ -898,15 +898,15 @@ export async function applySoAmendment(
       if (hUpdErr) throw new Error(`applySoAmendment: header change apply failed: ${hUpdErr.message}`);
     }
 
-    /* Delivery-date master-follower cascade — every line takes the new date so the
-       SO detail's per-line date matches the header, and the override flag is set
-       TRUE (not cleared): an approved amendment IS a deliberate date, and marking it
-       stops the book LINE re-sync (which reverts non-overridden lines to the
-       AutoCount value) from re-opening the header/line split — the line-level twin
-       of `amended_delivery_date` protecting the header. See BUG-HISTORY 2026-09-22
-       (HC-SO-011177). */
+    /* Delivery-date master-follower cascade — the same rule as the header
+       cascade (apply_so_header_cas): a hand-set line (flag true) keeps its date
+       and flag (owner 2026-10-06), every other line takes the new date with the
+       flag cleared; clearing the date clears every line. The AutoCount line
+       sweep skips every line of a header carrying `amended_delivery_date`, so
+       the book cannot revert these (HC-SO-011177). */
     if ('customerDeliveryDate' in headerChanges && frozenLineFilter !== null) {
-      const { error: cascErr } = await skipFrozen(sb.from('mfg_sales_order_items')
+      const newDelivery = dateOrNull(headerChanges['customerDeliveryDate']);
+      const followers = sb.from('mfg_sales_order_items')
         .update({
           /* Coerced, not `?? null`: the header loop twenty lines up already
              assumes a stored change can be blank (`value === '' ? null : value`),
@@ -914,10 +914,13 @@ export async function applySoAmendment(
              the same asymmetry fixed at consignment-orders.ts:1299. This cascade
              is non-fatal outside atomic mode, so a 500 here would commit the
              header amendment and silently leave every line on its OLD date. */
-          line_delivery_date: dateOrNull(headerChanges['customerDeliveryDate']),
-          line_delivery_date_overridden: true,
+          line_delivery_date: newDelivery,
+          line_delivery_date_overridden: false,
         })
-        .eq('doc_no', docNo));
+        .eq('doc_no', docNo);
+      const { error: cascErr } = await skipFrozen(newDelivery === null
+        ? followers
+        : followers.not('line_delivery_date_overridden', 'is', true));
       if (cascErr) {
         if ((sb as unknown as { __atomicCommand?: boolean }).__atomicCommand === true) {
           throw new Error(`applySoAmendment: delivery-date cascade failed: ${cascErr.message}`);

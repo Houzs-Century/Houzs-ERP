@@ -51,9 +51,12 @@
 //     thousands of orders and is the owner's call, behind the repair script's
 //     INCLUDE_BLANKS. A sweep that ran on its own must never widen its own
 //     blast radius.
-//   * a header carrying `amended_delivery_date` — a deliberate ERP amendment. If
-//     that disagrees with the book the fault is the write-back, not the pull,
-//     and silently overwriting it would hide a different bug.
+//   * a header carrying `amended_delivery_date`, nor ANY of its lines — a
+//     deliberate ERP amendment. If that disagrees with the book the fault is the
+//     write-back, not the pull, and silently overwriting it would hide a
+//     different bug. The lines need this as well as the flag: an approved
+//     amendment moves the following lines with the flag cleared, so the flag
+//     alone would let the book revert them (HC-SO-011177).
 //   * a document whose book lines disagree among themselves: no single value can
 //     be the header date, so only the LINES move.
 // ----------------------------------------------------------------------------
@@ -236,6 +239,7 @@ export function planDeliveryDateSweep(
     }
     if (l.line_delivery_date === want) continue;      // already in step
     if (l.line_delivery_date_overridden === true) continue;
+    if (l.parent != null && headerNow.get(l.parent)?.amended != null) continue;
     if (l.line_delivery_date == null) continue;       // a blank is not a change
     lines.push({ id: l.id, from: l.line_delivery_date, to: want, parent: l.parent });
   }
@@ -325,13 +329,18 @@ export async function deliveryDateSweep(
           .not('linked_ac_docno', 'is', null)
           .order(spec.headerKeyCol)
           .range(from, to)));
-      if (!hdrErr) {
-        for (const h of hdrRows ?? []) {
-          headerNow.set(String(h[spec.headerKeyCol]), {
-            date: ymd(h[spec.headerDateCols[0]!]),
-            amended: ymd(h.amended_delivery_date),
-          });
-        }
+      /* Fail closed: without the headers the planner cannot see which lines
+         belong to an amended order, and would revert them. */
+      if (hdrErr) {
+        out.hostError = out.hostError ?? `could not read ${spec.headerTable}: ${hdrErr.message}`;
+        out.perType[spec.type] = { bookRows: bookRows.length, truncated: body.truncated === true, erpLines: erpLines.length, lineDiffs: 0, headerDiffs: 0 };
+        continue;
+      }
+      for (const h of hdrRows ?? []) {
+        headerNow.set(String(h[spec.headerKeyCol]), {
+          date: ymd(h[spec.headerDateCols[0]!]),
+          amended: ymd(h.amended_delivery_date),
+        });
       }
     }
 

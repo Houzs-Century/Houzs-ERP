@@ -18,6 +18,7 @@ import {
   SO_DATE_PAIR_REFUSAL,
   soDatePairCascadeColumns,
   soDatePairRefusal,
+  soLineDateOverridden,
   soLineDateRefusal,
   SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL,
   soDateDay,
@@ -250,5 +251,26 @@ describe('soLineDateRefusal — no Processing Date, no line delivery date (BUG-3
   it('never refuses clearing or leaving the line date empty', () => {
     expect(soLineDateRefusal({ processingDate: null, lineDeliveryDates: [null, undefined, ''] })).toBeNull();
     expect(soLineDateRefusal({ processingDate: null, lineDeliveryDates: [] })).toBeNull();
+  });
+});
+
+/* Owner 2026-10-06 (Weisiang): a hand-set line date survives a header Delivery
+   Date change, and "hand-set" is the flag. The routes used to flag every line a
+   caller sent a date for, so the phone editor (which resends every line's date)
+   flagged lines that were only following the header. */
+describe('soLineDateOverridden — the flag a line write stores', () => {
+  it('a sent date on the header date is following, not hand-set', () => {
+    expect(soLineDateOverridden({ sentDate: '2026-10-10', explicitFlag: undefined, headerDate: '2026-10-10T00:00:00+00:00' })).toBe(false);
+  });
+  it('a sent date off the header date is hand-set', () => {
+    expect(soLineDateOverridden({ sentDate: '2026-10-15', explicitFlag: undefined, headerDate: '2026-10-10' })).toBe(true);
+    expect(soLineDateOverridden({ sentDate: '2026-10-15', explicitFlag: undefined, headerDate: null })).toBe(true);
+  });
+  it('no date sent: the line inherits the header, so it is following', () => {
+    expect(soLineDateOverridden({ sentDate: undefined, explicitFlag: undefined, headerDate: '2026-10-10' })).toBe(false);
+  });
+  it('an explicit flag always wins', () => {
+    expect(soLineDateOverridden({ sentDate: '2026-10-10', explicitFlag: true, headerDate: '2026-10-10' })).toBe(true);
+    expect(soLineDateOverridden({ sentDate: '2026-10-15', explicitFlag: false, headerDate: '2026-10-10' })).toBe(false);
   });
 });
