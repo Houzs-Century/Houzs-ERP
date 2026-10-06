@@ -356,6 +356,34 @@ describe('a venue id with no name is not a request to blank the venue', () => {
     expect(row.venue).toBe('');
     expect(row.venue_id).toBeNull();
   });
+
+  /* Owner 2026-10-05 (Weisiang): "venue is a compulsory, either sales from
+     showroom or sales from any project". Confirm already demands a venue; an
+     edit must not take it away again. Drafts above still may. */
+  test('a confirmed order cannot have its venue cleared', async () => {
+    const { app, row } = withVenue();
+    row.status = 'CONFIRMED';
+
+    const res = await patchHeader(app, { venue: '', venueId: '', version: 1 });
+
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({
+      error: 'validation_failed',
+      problems: [expect.objectContaining({ code: 'venue_required', field: 'Venue' })],
+    });
+    expect(row).toMatchObject({ venue: '2990s PJ', version: 1 });
+  });
+
+  test('a legacy confirmed order with no venue can still be edited elsewhere', async () => {
+    const { app, row } = withVenue();
+    row.status = 'CONFIRMED';
+    row.venue = null;
+
+    const res = await patchHeader(app, { note: 'still editable', version: 1 });
+
+    expect(res.status).toBe(200);
+    expect(row.note).toBe('still editable');
+  });
 });
 
 /* Owner 2026-08-31, HC-SO-013393: "我要 remove 掉我的 processing date 跟 delivery

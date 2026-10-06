@@ -7,12 +7,14 @@ Canonical reference for every date/timestamp fact in the system: where each one 
 - Read/write the Processing Date through `SO_PROCESSING_DATE_COLUMN` / `SO_PROCESSING_DATE_PAYLOAD_KEY` (`backend/src/scm/shared/so-processing-date.ts`), never a hand-typed literal — a `.mjs` script must use the mirror `backend/scripts/lib/so-processing-date.mjs`, it cannot import the `.ts`.
 - Read supplier ETA on a PO through the shared `effectiveDelivery()` helper (`backend/src/scm/shared/effective-delivery.ts`), never recompute it per caller.
 - Keep `public.sales_entries.processing_date` (legacy native Sales module) and `public.sales_orders.ac_udf_pdate` (AutoCount's own field) separate from the SCM SO's `processing_date` — different documents, different write paths; renaming any of them breaks a stored-payload replay.
-- A header delivery-date change cascades to the lines, and a hand-set line date wins (owner: user-set line dates are the highest rule). On the SO (`scm.apply_so_header_cas`) a line keeps its date and flag when `line_delivery_date_overridden` is true AND its date differs from the old header date (item routes set the flag whenever a date is sent, so a flagged line on the header date is still following); every other non-frozen line moves and its flag resets. Clearing the header date (Remove Processing Date) still clears every non-frozen line. The edit views mirror this (`isHandSetLineDate`). The Consignment Order skips every overridden line.
+- Sales Order: a header Delivery Date change (`scm.apply_so_header_cas`, and an approved delivery-date amendment in `so-revision.ts`) moves every line and resets its flag, except a hand-set line (`line_delivery_date_overridden` true keeps its date and flag) and a frozen one (on a live DO / invoice). A line write sets the flag only for a date that differs from the header's, unless the caller sends the flag (`soLineDateOverridden`). Clearing the header date clears every non-frozen line. The AutoCount line sweep skips every line of an SO carrying `amended_delivery_date`.
+- Consignment Order: a header delivery-date change moves every line except a hand-set one (`line_delivery_date_overridden` — the user's date always wins) and one already on a live (non-CANCELLED, DRAFT included) Consignment Note (`shared/so-line-freeze.ts`). Keyed on the date actually changing, since the CO page re-sends it on every save.
+- PO: a header Delivery Date (`expected_at`) change moves every line's `delivery_date` (header PATCH in `mfg-purchase-orders.ts`) except a hand-set line (`line_delivery_date_overridden`, set when a user saves a changed line date; a date copied from the header is not hand-set) and one fully received on a GRN (`received_qty >= qty`).
 - Find the date-coercion helper (`emptyDate` / `dateOrNull`) your own route already imports or declares — there is no shared date-coercion module.
 
 ## Gotchas
 
-- The stock allocator (`backend/src/scm/lib/so-stock-allocation.ts`) gates on `proceeded_at`, not `processing_date`. Setting the Processing Date from the normal SO detail screen only writes `processing_date`, so the order is locked, boarded, and pushed to AutoCount but silently skipped by allocation — if an order won't reach READY_TO_SHIP with stock on hand, check `proceeded_at`.
+- The stock allocator (`backend/src/scm/lib/so-stock-allocation.ts`) gates on `processing_date` alone: an SO with no Processing Date claims no stock and stays PENDING. `proceeded_at` is not read for this — don't add it back as a second gate.
 - `amended_delivery_date` (the board's reschedule date) has no CONTROLLED lock, no approval, and no cascade — it can be changed from the delivery-planning board in one click even on a processing-locked, already-PO'd order. Treat any board reschedule as unvalidated.
 - Logistics/planning reads `amended_delivery_date ?? customer_delivery_date`; MRP and the stock allocator read `line_delivery_date ?? customer_delivery_date` (or `customer_delivery_date` alone) — a board reschedule does not reach production planning, don't assume MRP saw it.
 - `delivery_orders` writes `expected_delivery_at` and `customer_delivery_date` from the same source value but both stay independently editable — they can disagree; don't trust one without checking the other.
@@ -27,7 +29,7 @@ Canonical reference for every date/timestamp fact in the system: where each one 
 - `backend/src/scm/shared/so-processing-date.ts` — Processing Date naming/alias authority.
 - `backend/src/scm/shared/effective-delivery.ts` — shared PO effective-delivery reader.
 - `backend/scripts/lib/so-processing-date.mjs` — `.mjs`-safe mirror of the above.
-- `backend/src/scm/lib/so-stock-allocation.ts` — stock allocation gate (reads `proceeded_at`).
+- `backend/src/scm/lib/so-stock-allocation.ts` — stock allocation gate (reads `processing_date`).
 - `backend/src/scm/shared/so-field-policy.ts` — CONTROLLED header field policy/lock.
 - `backend/src/scm/routes/delivery-planning.ts` — board reads/writes `amended_delivery_date`, synthetic row date fan-out.
 - `backend/src/scm/routes/mrp.ts` — supply-side effective-date formula.
