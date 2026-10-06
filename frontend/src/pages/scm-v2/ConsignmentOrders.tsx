@@ -38,6 +38,7 @@ import { Button as DrawerButton } from '../../components/Button';
 import { Badge } from '../../components/Badge';
 import { ResizableDetailDrawer } from '../../components/ResizableDetailDrawer';
 import { statusFor } from './so-list-status';
+import { canCreateConsignmentNote } from './co-note-gate';
 import { cn } from '../../lib/utils';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { ListingPickerDialog, type ListingChoice } from '../../vendor/scm/components/ListingPickerDialog';
@@ -748,7 +749,7 @@ function ConsignmentOrderDrawer({
 
   const status = row?.status ?? '';
   const hasChildren = Boolean(row?.has_children);
-  const canCreateNote = Boolean(row?.has_undelivered) && !['CANCELLED', 'CLOSED', 'ON_HOLD'].includes(status);
+  const canCreateNote = row ? canCreateConsignmentNote(row) : false;
   const brand = row ? deriveBranding(row) : '';
 
   return (
@@ -1139,7 +1140,7 @@ export const ConsignmentOrders = () => {
     // Commander 2026-05-30 — "Issue Delivery Order" is ALWAYS shown in the menu
     // (so the operator never thinks the feature vanished). When there's nothing
     // left to deliver, tell them plainly instead of silently doing nothing.
-    if (!row.has_undelivered || ['CANCELLED', 'CLOSED', 'ON_HOLD'].includes(row.status)) {
+    if (!canCreateConsignmentNote(row)) {
       notify({
         title: 'Nothing to be converted',
         body: 'Every line on this Consignment Order is already on a note (or the order is closed / cancelled / on hold).',
