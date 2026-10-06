@@ -186,6 +186,10 @@ export function buildDeliveryFollowUp(
     attributes[`delivery_date_${n}`] = o.deliveryDate;
     attributes[`brand_${n}`] = o.branding;
   });
+  // EVERY bundled order, not only the 3 lines shown: the flow's callback echoes
+  // this as `refs`, so one Confirm / Amend tap lands on all of them in the ERP
+  // (/api/chat-callback resolves each number, our doc_no or AutoCount's).
+  attributes.refs_all = orders.map((o) => o.ref).join(',');
   // ONE balance paragraph for the whole message, so the figure is the sum over
   // EVERY bundled order (not only the 3 lines shown) and only of what is owed —
   // an over-paid order must not shrink another's balance. Nothing owed leaves
