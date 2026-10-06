@@ -1,8 +1,7 @@
-// Owner rule: the Consignment Order header delivery date behaves like the SO's.
-// A header Delivery Date CHANGE overwrites every line's date and clears the
-// per-line override flag; a save that leaves the date unchanged touches no line
-// (the CO page sends every header field on every save). A line already on a live
-// Consignment Note keeps its date, as an SO line on a live DO does.
+// Owner rule (6 Oct 2026): a Consignment Order header Delivery Date CHANGE moves
+// every line's date, except (a) a line whose date a user set by hand (hand-set
+// always wins) and (b) a line already on a live Consignment Note. A save that
+// leaves the date unchanged touches no line (the CO page re-sends every field).
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -42,42 +41,45 @@ beforeEach(() => {
   sb.tables.consignment_sales_order_items = [
     { id: 'auto', doc_no: 'CO-1', company_id: 1, line_delivery_date: '2027-01-10', line_delivery_date_overridden: false },
     { id: 'hand', doc_no: 'CO-1', company_id: 1, line_delivery_date: '2027-01-20', line_delivery_date_overridden: true },
+    { id: 'noted', doc_no: 'CO-1', company_id: 1, line_delivery_date: '2027-01-10', line_delivery_date_overridden: false },
+    { id: 'voided', doc_no: 'CO-1', company_id: 1, line_delivery_date: '2027-01-10', line_delivery_date_overridden: false },
   ];
-  sb.tables.consignment_delivery_orders = [];
-  sb.tables.consignment_delivery_order_items = [];
+  sb.tables.consignment_delivery_orders = [
+    { id: 'n1', company_id: 1, consignment_so_doc_no: 'CO-1', status: 'DRAFT' },
+    { id: 'n0', company_id: 1, consignment_so_doc_no: 'CO-1', status: 'CANCELLED' },
+  ];
+  sb.tables.consignment_delivery_order_items = [
+    { id: 'n1-a', company_id: 1, consignment_delivery_order_id: 'n1', consignment_so_item_id: 'noted' },
+    { id: 'n0-a', company_id: 1, consignment_delivery_order_id: 'n0', consignment_so_item_id: 'voided' },
+  ];
   sb.tables.entity_audit_log = [];
   sb.tables.app_config = [];
 });
 
-describe('CO header delivery date cascade (same as SO)', () => {
-  it('a changed header date overwrites every line, overridden ones included, and clears the flag', async () => {
-    const res = await patch({ customerDeliveryDate: '2027-01-15' });
-    expect(res.status).toBe(200);
-    for (const id of ['auto', 'hand']) {
-      expect(line(id).line_delivery_date).toBe('2027-01-15');
-      expect(line(id).line_delivery_date_overridden).toBe(false);
-    }
-  });
-
-  it('a line already on a live Consignment Note keeps its date; the others follow', async () => {
-    sb.tables.consignment_delivery_orders = [
-      { id: 'n1', company_id: 1, consignment_so_doc_no: 'CO-1', status: 'DRAFT' },
-      { id: 'n0', company_id: 1, consignment_so_doc_no: 'CO-1', status: 'CANCELLED' },
-    ];
-    sb.tables.consignment_delivery_order_items = [
-      { id: 'n1-a', company_id: 1, consignment_delivery_order_id: 'n1', consignment_so_item_id: 'hand' },
-      { id: 'n0-a', company_id: 1, consignment_delivery_order_id: 'n0', consignment_so_item_id: 'auto' },
-    ];
-    const res = await patch({ customerDeliveryDate: '2027-01-15' });
-    expect(res.status).toBe(200);
+describe('CO header delivery date cascade', () => {
+  it('a hand-set line keeps its date and its override flag', async () => {
+    expect((await patch({ customerDeliveryDate: '2027-01-15' })).status).toBe(200);
     expect(line('hand').line_delivery_date).toBe('2027-01-20');
     expect(line('hand').line_delivery_date_overridden).toBe(true);
-    expect(line('auto').line_delivery_date).toBe('2027-01-15');
   });
 
-  it('an unchanged header date (full-payload save) leaves a hand-set line alone', async () => {
-    const res = await patch({ note: 'edited', customerDeliveryDate: '2027-01-10' });
-    expect(res.status).toBe(200);
+  it('a line on a live Consignment Note keeps its date', async () => {
+    expect((await patch({ customerDeliveryDate: '2027-01-15' })).status).toBe(200);
+    expect(line('noted').line_delivery_date).toBe('2027-01-10');
+  });
+
+  it('a plain line and a line only on a cancelled note follow the header', async () => {
+    expect((await patch({ customerDeliveryDate: '2027-01-15' })).status).toBe(200);
+    expect(line('auto').line_delivery_date).toBe('2027-01-15');
+    expect(line('voided').line_delivery_date).toBe('2027-01-15');
+  });
+
+  it('a remark-only save (header date re-sent unchanged) moves no line', async () => {
+    sb.tables.consignment_delivery_orders = [];
+    sb.tables.consignment_delivery_order_items = [];
+    sb.tables.consignment_sales_order_items.find((r: Row) => r.id === 'auto')!.line_delivery_date = '2027-01-12';
+    expect((await patch({ note: 'edited', customerDeliveryDate: '2027-01-10' })).status).toBe(200);
+    expect(line('auto').line_delivery_date).toBe('2027-01-12');
     expect(line('hand').line_delivery_date).toBe('2027-01-20');
     expect(line('hand').line_delivery_date_overridden).toBe(true);
   });

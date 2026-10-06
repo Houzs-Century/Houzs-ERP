@@ -1293,12 +1293,12 @@ consignmentOrders.patch('/:docNo', async (c) => {
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
 
-  /* Master-follower cascade, same as the SO: a header delivery date change
-     overwrites every line and clears its override flag, EXCEPT a line already on
-     a live Consignment Note, which keeps its date (so-line-freeze rules 1 and 3,
-     as apply_so_header_cas does for the SO). Keyed on change, not presence —
-     this page sends every header field on every save, so a presence key would
-     wipe hand-set line dates on a note-only edit. Best-effort. */
+  /* Master-follower cascade (owner 2026-10-06): a header delivery date change
+     moves every line EXCEPT a hand-set one (line_delivery_date_overridden — the
+     user's date always wins) and one already on a live Consignment Note
+     (so-line-freeze rules 1 and 3, as apply_so_header_cas does for the SO).
+     Keyed on change, not presence — this page sends every header field on every
+     save, so a remark-only edit must move nothing. Best-effort. */
   if (coDeliveryChanged) {
     const frozen = await coFrozenLineFilter(sb, docNo, co.companyId);
     if (frozen !== null) {
@@ -1307,8 +1307,9 @@ consignmentOrders.patch('/:docNo', async (c) => {
          date the header no longer holds. */
       const newDate = coCascadedDeliveryClear ? null : dateOrNull(body['customerDeliveryDate']); // header coerced, lines did not: the cascade 500'd after the header committed
       let q = scopeToCompanyId(sb.from('consignment_sales_order_items')
-        .update({ line_delivery_date: newDate, line_delivery_date_overridden: false })
-        .eq('doc_no', docNo), co.companyId);
+        .update({ line_delivery_date: newDate })
+        .eq('doc_no', docNo), co.companyId)
+        .eq('line_delivery_date_overridden', false);
       if (frozen.length > 0) q = q.not('id', 'in', pgrestInList(frozen));
       await q;
     }
