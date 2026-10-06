@@ -1,0 +1,13 @@
+{
+  "DEV-41": {
+    "ruling": "DEV-41 (Sim, 2026-10-06): the code and description of one mattress must match across sizes. BUG-38 kept HAPPI SLEEP for Q/S/SK/SP; K and SS still carried the AKEMI name under a second Model. AutoCount AK-SOLITUDE MATT (K/SS) is the same book item, only its ERP code changes.",
+    "category": "MATTRESS",
+    "fromModel": "SOLITUDE",
+    "toModel": "HAPPI SLEEP SOLITUDE",
+    "retireFromModel": true,
+    "renames": [
+      { "from": "AKEMI SOLITUDE MATT (SS)", "to": "HAPPI SLEEP SOLITUDE MATT (SS)", "name": "HAPPI SLEEP SOLITUDE MATTRESS (107x190x30CM)" },
+      { "from": "AKEMI SOLITUDE MATT (K)",  "to": "HAPPI SLEEP SOLITUDE MATT (K)",  "name": "HAPPI SLEEP SOLITUDE MATTRESS (183x190x30CM)" }
+    ]
+  }
+}
