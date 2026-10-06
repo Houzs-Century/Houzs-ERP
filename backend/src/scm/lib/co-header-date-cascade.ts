@@ -24,20 +24,19 @@ async function coFrozenLineFilter(sb: any, coDocNo: string, companyId: number): 
   return freeze.unlinked ? null : [...freeze.frozenLineIds];
 }
 
-/* Master-follower cascade (owner 2026-10-06): a header delivery date change
-   moves every line EXCEPT a hand-set one (line_delivery_date_overridden — the
-   user's date always wins) and one already on a live Consignment Note
-   (so-line-freeze rules 1 and 3, as apply_so_header_cas does for the SO).
+/* Master-follower cascade (owner 2026-10-06, last edit wins, as the SO's
+   apply_so_header_cas): a header delivery date change moves every line, a
+   hand-set one included (its flag resets so it follows again), except one
+   already on a live Consignment Note (so-line-freeze rules 1 and 3).
    Best-effort: the header has already committed. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same untyped client as the consignment-orders route
 export async function cascadeCoHeaderDelivery(sb: any, coDocNo: string, companyId: number, newDate: string | null): Promise<void> {
   const frozen = await coFrozenLineFilter(sb, coDocNo, companyId);
   if (frozen === null) return;
   let q = sb.from('consignment_sales_order_items')
-    .update({ line_delivery_date: newDate })
+    .update({ line_delivery_date: newDate, line_delivery_date_overridden: false })
     .eq('doc_no', coDocNo)
-    .eq('company_id', companyId)
-    .eq('line_delivery_date_overridden', false);
+    .eq('company_id', companyId);
   if (frozen.length > 0) q = q.not('id', 'in', pgrestInList(frozen));
   await q;
 }
