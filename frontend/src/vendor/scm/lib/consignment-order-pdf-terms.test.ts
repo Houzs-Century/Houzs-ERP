@@ -46,7 +46,7 @@ const ITEMS = [{
 
 async function printedText(
   opts: Parameters<typeof import('./sales-order-pdf').renderSalesOrderInto>[6],
-  header: Partial<typeof HEADER> & { ref?: string | null } = {},
+  header: Partial<typeof HEADER> & { ref?: string | null; customer_so_no?: string | null } = {},
 ): Promise<string> {
   setBrandingCache({ ...DEFAULT_BRANDING, logoR2Key: '' }, 'HOUZS');
   const [{ jsPDF }, { default: autoTable }, { renderSalesOrderInto }] = await Promise.all([
@@ -89,6 +89,13 @@ describe('consignment order PDF — temporary-provision terms', () => {
     expect(filled).toContain('Ref No.');
     expect(filled).toContain('HC-SO-009191');
     expect(filled).toContain('contact us at');
+  });
+
+  test('the Ref No. the CO form writes (customer_so_no) prints too — HC-CS-2610-001 showed a dash for HC12457', async () => {
+    const { CONSIGNMENT_ORDER_PDF_OPTS } = await import('./sales-order-pdf');
+    const text = await printedText(CONSIGNMENT_ORDER_PDF_OPTS, { ref: null, customer_so_no: 'HC12457' });
+    expect(text).toContain('HC12457');
+    expect(text).not.toMatch(/Ref No\.\s*:\s*—/);
   });
 
   test('the sales order keeps the receipt terms', async () => {
