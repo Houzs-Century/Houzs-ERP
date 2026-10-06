@@ -8,7 +8,7 @@ The return leg of the WhatsApp delivery conversation. `chat.houzscentury.com` po
 
 `refs` (optional, comma-joined — the send's `refs_all`) is the whole bundle a multi-order message covered; the tap is recorded against every order in it (each resolved like `ref`, primary first, siblings that do not resolve reported as `unknown`, never fatal). Idempotency is per `(callback_id, doc_no)`, so the second order of a bundle is not mistaken for the first's duplicate. The per-order work lives in `backend/src/lib/chat-callback-record.ts`.
 
-`ref` is the number the customer was shown. The outbound send puts `COALESCE(linked_ac_docno, doc_no)` in `ref_1`, so for an AutoCount-linked order it is the AutoCount number; the endpoint matches either column (company-scoped) and records the row under OUR `doc_no`, keeping the inbound value as `customer_ref` in the payload when the two differ. A `ref` with characters outside `[A-Za-z0-9_-/.]` is refused 400 before it can reach the filter.
+`ref` is the number the customer was shown. Since 2026-10-06 the outbound send puts OUR `doc_no` (the Sales Order number) in `ref_1` / `refs_all`; before that it was `COALESCE(linked_ac_docno, doc_no)`, so the endpoint still matches either column (company-scoped) and records the row under `doc_no`, keeping the inbound value as `customer_ref` in the payload when the two differ. A `ref` with characters outside `[A-Za-z0-9_-/.]` is refused 400 before it can reach the filter.
 
 ### Message kinds the board can send
 
