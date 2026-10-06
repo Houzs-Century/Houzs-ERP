@@ -68,10 +68,11 @@ const SUPERVISE_PERM = 'scm.stock_take.supervise';
 
 const HEADER =
   'id, take_no, status, warehouse_id, scope_type, scope_value, take_date, ' +
-  'notes, posted_at, cancelled_at, created_at, created_by, assignee_staff_id, blind';
+  'notes, posted_at, cancelled_at, created_at, created_by, assignee_staff_id, blind, ' +
+  'assignee_staff_ids, nonzero_only';
 const LINE =
   'id, stock_take_id, item_code, product_name, variant_key, variant_label, ' +
-  'system_qty, counted_qty, variance, notes, created_at, counted_by, counted_at';
+  'system_qty, counted_qty, variance, notes, created_at, counted_by, counted_at, added_on_count';
 
 const VALID_STATUS = new Set(['OPEN', 'POSTED', 'CANCELLED']);
 const VALID_SCOPE  = new Set(['ALL', 'CATEGORY', 'CODE_PREFIX', 'NONZERO']);
@@ -134,8 +135,10 @@ const fetchScopedSkus = async (
   warehouseId: string,
   scopeType: 'ALL' | 'CATEGORY' | 'CODE_PREFIX' | 'NONZERO',
   scopeValue: string | null,
+  nonzeroOnly: boolean,
   c: any,
 ): Promise<{ rows: ScopedSku[]; error?: string }> => {
+  const dropZero = scopeType === 'NONZERO' || nonzeroOnly;
   // 1) Scope → the set of item_codes (+ names) at this warehouse.
   /* ⚠️ CORRECTED 2026-08-18. This read used to carry: "v_inventory_all_skus
      intentionally aggregates across companies and has NO company_id column (see
@@ -154,15 +157,19 @@ const fetchScopedSkus = async (
      The warehouse is now proved to be the active company's at the call site, so
      this is belt-and-braces rather than the only boundary — but it is one line
      and the view was rebuilt to accept it. */
-  let q = scopeToCompany(sb.from('v_inventory_all_skus')
-    .select('item_code, product_name, category')
-    .eq('warehouse_id', warehouseId), c);
-  if (scopeType === 'CATEGORY' && scopeValue) {
-    q = q.eq('category', scopeValue);
-  } else if (scopeType === 'CODE_PREFIX' && scopeValue) {
-    q = q.ilike('item_code', `${scopeValue}%`);
-  }
-  const { data: skuData, error: skuErr } = await q.order('item_code');
+  /* Paged: a whole warehouse is 2,000+ SKUs, past PostgREST's row cap, and an
+     unpaged read silently dropped the tail of the alphabet from the sheet. */
+  const { data: skuData, error: skuErr } = await paginateAll((pFrom, pTo) => {
+    let q = scopeToCompany(sb.from('v_inventory_all_skus')
+      .select('item_code, product_name, category')
+      .eq('warehouse_id', warehouseId), c);
+    if (scopeType === 'CATEGORY' && scopeValue) {
+      q = q.eq('category', scopeValue);
+    } else if (scopeType === 'CODE_PREFIX' && scopeValue) {
+      q = q.ilike('item_code', `${scopeValue}%`);
+    }
+    return q.order('item_code').range(pFrom, pTo);
+  });
   if (skuErr) return { rows: [], error: skuErr.message };
   const skus = ((skuData as Array<{ item_code: string; product_name: string | null }>) ?? []);
   if (skus.length === 0) return { rows: [] };
@@ -199,7 +206,7 @@ const fetchScopedSkus = async (
     const buckets = balByCode.get(code);
     if (buckets && buckets.length > 0) {
       for (const b of buckets) {
-        if (scopeType === 'NONZERO' && b.qty === 0) continue;
+        if (dropZero && b.qty === 0) continue;
         rows.push({
           item_code: code,
           product_name: b.product_name ?? name,
@@ -208,7 +215,7 @@ const fetchScopedSkus = async (
           qty: b.qty,
         });
       }
-    } else if (scopeType !== 'NONZERO') {
+    } else if (!dropZero) {
       rows.push({ item_code: code, product_name: name, variant_key: '', variant_label: null, qty: 0 });
     }
   }
@@ -288,6 +295,70 @@ stockTakes.get('/', async (c) => {
   return c.json({ takes });
 });
 
+/* Every counter on a take. assignee_staff_ids is the list (mig 20261006T1500);
+   a row written before it, or by a reader that only knows the single column,
+   falls back to assignee_staff_id. */
+const assigneesOf = (t: { assignee_staff_id?: string | null; assignee_staff_ids?: string[] | null }): string[] =>
+  t.assignee_staff_ids && t.assignee_staff_ids.length > 0
+    ? t.assignee_staff_ids
+    : t.assignee_staff_id ? [t.assignee_staff_id] : [];
+
+/* Validates a requested assignee list: 1..10 distinct scm.staff ids. The staff
+   check is deliberately NOT company-filtered (see createStockTakeHandler). */
+export const readAssignees = async (
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client / Hono context without generated types; same as every handler in this file
+  sb: any, body: Record<string, unknown>,
+): Promise<{ ok: true; ids: string[] } | { ok: false; body: Record<string, unknown> }> => {
+  const raw: unknown[] = Array.isArray(body.assigneeStaffIds)
+    ? body.assigneeStaffIds
+    : typeof body.assigneeStaffId === 'string' ? [body.assigneeStaffId] : [];
+  const ids = [...new Set(raw.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean))];
+  if (ids.length === 0) {
+    return { ok: false, body: { error: 'assignee_required', message: 'Pick at least one assignee — who is counting.' } };
+  }
+  if (ids.length > 10) return { ok: false, body: { error: 'too_many_assignees', message: 'At most 10 assignees.' } };
+  const { data } = await sb.from('staff').select('id').in('id', ids);
+  const found = new Set(((data as Array<{ id: string }> | null) ?? []).map((r) => r.id));
+  if (ids.some((x) => !found.has(x))) {
+    return { ok: false, body: { error: 'invalid_assignee', message: 'One of the assignees does not exist. Pick people from the staff list.' } };
+  }
+  return { ok: true, ids };
+};
+
+/* Best-known unit cost per (item_code, variant_key) at a warehouse — the ladder
+   the post itself uses. A read failure leaves every estimate null (shown "—"),
+   never 0: an RM0 estimate would read as "this variance costs nothing". */
+const estimateUnitCosts = async (
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client / Hono context without generated types; same as every handler in this file
+  sb: any, c: any, warehouseId: string,
+  lines: Array<{ item_code: string; variant_key: string | null }>,
+): Promise<Map<string, number | null>> => {
+  const lotsByKey = new Map<string, LotCostRow[]>();
+  const codes = [...new Set(lines.map((l) => l.item_code))];
+  for (let i = 0; i < codes.length; i += 200) {
+    const chunk = codes.slice(i, i + 200);
+    const { data: lots, error } = await paginateAll((pFrom, pTo) => scopeToCompany(
+      pgrestIn(sb.from('inventory_lots')
+        .select('item_code, variant_key, unit_cost_sen, qty_remaining, source_doc_type, received_at')
+        .eq('warehouse_id', warehouseId), 'item_code', chunk),
+      c,
+    ).range(pFrom, pTo));
+    if (error) return new Map();
+    for (const l of (lots as Array<{ item_code: string; variant_key: string | null } & LotCostRow> | null) ?? []) {
+      const key = `${l.item_code} ${l.variant_key ?? ''}`;
+      (lotsByKey.get(key) ?? lotsByKey.set(key, []).get(key)!).push(l);
+    }
+  }
+  const out = new Map<string, number | null>();
+  for (const l of lines) {
+    const key = `${l.item_code} ${l.variant_key ?? ''}`;
+    if (out.has(key)) continue;
+    const r = resolveForcedUnitCostSen({ lots: lotsByKey.get(key) ?? [] });
+    out.set(key, r.ok ? r.unitCostSen : null);
+  }
+  return out;
+};
+
 // ── Detail ────────────────────────────────────────────────────────────
 /* Exported for the vitest harness (precedent: postStockTakeHandler below —
    the supabaseAuth bridge cannot run there, so tests mount the handler on a
@@ -308,6 +379,7 @@ export const getStockTakeDetailHandler = async (c: any) => {
 
   const take = headerRes.data as unknown as {
     status: string; blind: boolean | null; assignee_staff_id: string | null;
+    assignee_staff_ids: string[] | null; warehouse_id: string;
   };
 
   /* Viewer facts, decided ONCE here so desktop (and any later mobile surface)
@@ -322,15 +394,26 @@ export const getStockTakeDetailHandler = async (c: any) => {
      the payload would un-blind the count via devtools. Post-POSTED (or
      CANCELLED) reads reveal everything — the count is settled. */
   const rawLines = (linesRes.data ?? []) as Array<Record<string, unknown>>;
+  /* The RM a variance is worth (owner 2026-10-06: shown to everyone). The same
+     best-known unit cost the post uses to value a variance and to cost a found
+     lot (resolveForcedUnitCostSen over the bucket's lots at this warehouse);
+     null when the SKU has no cost basis. Withheld with the variance on a blind
+     take — RM x qty would give the hidden variance straight back. */
+  const costByKey = blindActive
+    ? new Map<string, number | null>()
+    : await estimateUnitCosts(sb, c, take.warehouse_id, rawLines as Array<{ item_code: string; variant_key: string | null }>);
   const lines = blindActive
-    ? rawLines.map((l) => ({ ...l, system_qty: null, variance: null }))
-    : rawLines;
+    ? rawLines.map((l) => ({ ...l, system_qty: null, variance: null, est_unit_cost_sen: null }))
+    : rawLines.map((l) => ({
+        ...l,
+        est_unit_cost_sen: costByKey.get(`${String(l.item_code)} ${String(l.variant_key ?? '')}`) ?? null,
+      }));
 
   return c.json({
     take: headerRes.data,
     lines,
     viewer: {
-      isAssignee: callerStaffId != null && callerStaffId === take.assignee_staff_id,
+      isAssignee: callerStaffId != null && assigneesOf(take).includes(callerStaffId),
       canSupervise,
       blindActive,
     },
@@ -377,22 +460,11 @@ export const createStockTakeHandler = async (c: any) => {
      Required — an unowned count sheet is exactly the accountability gap this
      phase closes. Validated against scm.staff so a typo'd uuid answers 400
      here rather than an FK 500 at insert. */
-  const assigneeRaw = (body.assigneeStaffId as string | undefined) ?? '';
-  const assigneeStaffId = assigneeRaw.trim();
-  if (!assigneeStaffId) {
-    return c.json({
-      error: 'assignee_required',
-      message: 'Pick an assignee — the person responsible for this count.',
-    }, 400);
-  }
-  const { data: assigneeRow } = await sb.from('staff')
-    .select('id').eq('id', assigneeStaffId).maybeSingle();
-  if (!assigneeRow) {
-    return c.json({
-      error: 'invalid_assignee',
-      message: 'That assignee does not exist. Pick a person from the staff list.',
-    }, 400);
-  }
+  /* Two or three people count together (owner 2026-10-06): a LIST of
+     assignees, kept as a record of who counted. assigneeStaffId (one) is still
+     accepted from an older client. */
+  const assignees = await readAssignees(sb, body);
+  if (!assignees.ok) return c.json(assignees.body, 400);
 
   const scopeType = (body.scopeType as string | undefined) ?? 'ALL';
   if (!VALID_SCOPE.has(scopeType)) return c.json({ error: 'invalid_scope_type' }, 400);
@@ -404,10 +476,14 @@ export const createStockTakeHandler = async (c: any) => {
   }
 
   // 1) Snapshot SKUs in scope.
+  /* "Only SKUs with stock" combines with Category / Prefix (owner 2026-10-06:
+     a Category take listed 704 lines, nearly all zero). */
+  const nonzeroOnly = body.nonzeroOnly === true || scopeType === 'NONZERO';
   const scoped = await fetchScopedSkus(
     sb, warehouseId,
     scopeType as 'ALL' | 'CATEGORY' | 'CODE_PREFIX' | 'NONZERO',
     scopeValue,
+    nonzeroOnly,
     c,
   );
   if (scoped.error) return c.json({ error: 'scope_load_failed', reason: scoped.error }, 500);
@@ -423,7 +499,9 @@ export const createStockTakeHandler = async (c: any) => {
     scope_value:  scopeValue,
     notes:        (body.notes as string | undefined) ?? null,
     created_by:   user.id,
-    assignee_staff_id: assigneeStaffId,
+    assignee_staff_id: assignees.ids[0],
+    assignee_staff_ids: assignees.ids,
+    nonzero_only: nonzeroOnly,
     /* Strict === true: only an explicit request counts blind. */
     blind:        body.blind === true,
   };
@@ -591,6 +669,197 @@ export const patchStockTakeLinesHandler = async (c: any) => {
   return c.json({ ok: true, updated: lines.length });
 };
 stockTakes.patch('/:id/lines', patchStockTakeLinesHandler);
+
+// ── Edit the header of an OPEN take (assignees, notes) ───────────────
+// body: { assigneeStaffIds?: string[], notes?: string | null }
+/* Owner 2026-10-06: "上面没有写名字，而且我也不能 save、不能 edit" — who counted
+   is often known only after the count, so the list stays editable until the
+   take is posted. Warehouse / scope / date are NOT editable: they decide which
+   lines the snapshot holds. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client / Hono context without generated types; same as every handler in this file
+export const patchStockTakeHeaderHandler = async (c: any) => {
+  const sb = c.get('supabase');
+  const id = c.req.param('id');
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; }
+  catch { return c.json({ error: 'invalid_json' }, 400); }
+
+  const { data: prev } = await scopeToCompanyId(
+    sb.from('stock_takes').select('status, take_no, company_id, notes, assignee_staff_id, assignee_staff_ids').eq('id', id),
+    co.companyId,
+  ).maybeSingle();
+  if (!prev) return c.json(NOT_THIS_COMPANY, 404);
+  const head = prev as {
+    status: string; take_no: string; company_id: number | null; notes: string | null;
+    assignee_staff_id: string | null; assignee_staff_ids: string[] | null;
+  };
+  if (head.status !== 'OPEN') return c.json({ error: 'not_open', message: 'Only an OPEN stock take can be edited.' }, 409);
+
+  const patch: Record<string, unknown> = {};
+  const changes: Array<FieldChange | null> = [];
+  if ('assigneeStaffIds' in body) {
+    const a = await readAssignees(sb, body);
+    if (!a.ok) return c.json(a.body, 400);
+    patch.assignee_staff_ids = a.ids;
+    patch.assignee_staff_id = a.ids[0];
+    changes.push(fieldChange('assignees', assigneesOf(head).join(', '), a.ids.join(', ')));
+  }
+  if ('notes' in body) {
+    const notes = typeof body.notes === 'string' && body.notes.trim() ? body.notes.trim() : null;
+    patch.notes = notes;
+    changes.push(fieldChange('notes', head.notes, notes));
+  }
+  if (Object.keys(patch).length === 0) return c.json({ error: 'nothing_to_update' }, 400);
+
+  const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TAKE', entityId: id, action: 'UPDATE', companyId: head.company_id });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+
+  const { data, error } = await scopeToCompanyId(
+    sb.from('stock_takes').update(patch).eq('id', id), co.companyId,
+  ).eq('status', 'OPEN').select(HEADER).maybeSingle();
+  if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+  if (!data) { const r = await notOpenOrNotOurs(sb, id, co.companyId, 'OPEN'); return c.json(r.body, r.status); }
+
+  const changed = compactChanges(changes);
+  if (changed.length > 0) {
+    await recordEntityAudit(sb, {
+      entityType: 'STOCK_TAKE', entityId: id, entityDocNo: head.take_no, action: 'UPDATE',
+      actor: c.get('houzsUser'), companyId: head.company_id, statusSnapshot: 'OPEN',
+      note: 'Header edited', fieldChanges: changed,
+    });
+  }
+  return c.json({ take: data });
+};
+stockTakes.patch('/:id', patchStockTakeHeaderHandler);
+
+// ── Variant buckets a SKU is known in (for Add line) ─────────────────
+/* Every variant_key this SKU has ever held in the active company, with its
+   on-hand at the take's warehouse (0 when it has none there). A found sofa /
+   bedframe is matched to a variant the business already knows; a brand-new
+   variant goes through Stock Adjustment, which has the full variant editor. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client / Hono context without generated types; same as every handler in this file
+export const stockTakeBucketOptionsHandler = async (c: any) => {
+  const sb = c.get('supabase');
+  const id = c.req.param('id');
+  const itemCode = (c.req.query('itemCode') ?? '').trim();
+  if (!itemCode) return c.json({ error: 'item_code_required' }, 400);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const { data: head } = await scopeToCompanyId(
+    sb.from('stock_takes').select('warehouse_id').eq('id', id), co.companyId,
+  ).maybeSingle();
+  if (!head) return c.json(NOT_THIS_COMPANY, 404);
+  const warehouseId = (head as { warehouse_id: string }).warehouse_id;
+
+  const { data: bal, error } = await paginateAll((pFrom, pTo) => scopeToCompany(
+    sb.from('inventory_balances').select('warehouse_id, variant_key, qty').eq('item_code', itemCode),
+    c,
+  ).range(pFrom, pTo));
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const here = new Map<string, number>();
+  const known = new Set<string>();
+  for (const b of (bal as Array<{ warehouse_id: string; variant_key: string | null; qty: number | null }> | null) ?? []) {
+    const vk = b.variant_key ?? '';
+    known.add(vk);
+    if (b.warehouse_id === warehouseId) here.set(vk, (here.get(vk) ?? 0) + Number(b.qty ?? 0));
+  }
+  const options = [...known]
+    .map((vk) => ({ variantKey: vk, variantLabel: labelFromVariantKey(vk), qtyHere: here.get(vk) ?? 0 }))
+    .sort((a, b) => a.variantKey.localeCompare(b.variantKey));
+  return c.json({ options });
+};
+stockTakes.get('/:id/bucket-options', stockTakeBucketOptionsHandler);
+
+// ── Add a line found during the count ────────────────────────────────
+// body: { itemCode, variantKey?, countedQty }
+/* Owner 2026-10-06: stock the system does not list but the shelf holds. The
+   line's system_qty is the LIVE on-hand of that bucket here (usually 0), so the
+   variance is exactly what was found; the post re-reads live on-hand anyway. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client / Hono context without generated types; same as every handler in this file
+export const addStockTakeLineHandler = async (c: any) => {
+  const sb = c.get('supabase');
+  const id = c.req.param('id');
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; }
+  catch { return c.json({ error: 'invalid_json' }, 400); }
+
+  const itemCode = typeof body.itemCode === 'string' ? body.itemCode.trim() : '';
+  if (!itemCode) return c.json({ error: 'item_code_required', message: 'Pick a SKU.' }, 400);
+  const variantKey = typeof body.variantKey === 'string' ? body.variantKey : '';
+  const countedRaw = Number(body.countedQty);
+  if (!Number.isFinite(countedRaw) || countedRaw < 0) {
+    return c.json({ error: 'counted_qty_invalid', message: 'Enter the counted quantity (0 or more).' }, 400);
+  }
+  const countedQty = Math.floor(countedRaw);
+
+  const { data: prev } = await scopeToCompanyId(
+    sb.from('stock_takes').select('status, take_no, company_id, warehouse_id').eq('id', id),
+    co.companyId,
+  ).maybeSingle();
+  if (!prev) return c.json(NOT_THIS_COMPANY, 404);
+  const head = prev as { status: string; take_no: string; company_id: number | null; warehouse_id: string };
+  if (head.status !== 'OPEN') return c.json({ error: 'not_open' }, 409);
+
+  const { data: product, error: pErr } = await sb.from('mfg_products')
+    .select('code, name, category').eq('code', itemCode).eq('company_id', co.companyId).maybeSingle();
+  if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
+  if (!product) return c.json({ error: 'unknown_sku', message: `${itemCode} is not a product of this company.` }, 404);
+  const prod = product as { code: string; name: string | null; category: string | null };
+  const cat = (prod.category ?? '').trim().toLowerCase();
+  /* A sofa / bedframe always lives in a variant bucket — the '' bucket for one
+     is the "unclassified" stock no order can match. */
+  if (!variantKey && (cat === 'sofa' || cat === 'bedframe')) {
+    return c.json({
+      error: 'variant_required',
+      message: `${itemCode} is a ${cat}: pick its variant (fabric / size). A variant the system has never held goes through Stock Adjustment.`,
+    }, 400);
+  }
+
+  const { data: dup } = await scopeToCompanyId(sb.from('stock_take_lines').select('id')
+    .eq('stock_take_id', id).eq('item_code', itemCode).eq('variant_key', variantKey), co.companyId).maybeSingle();
+  if (dup) {
+    return c.json({ error: 'line_exists', lineId: (dup as { id: string }).id, message: 'This SKU / variant is already on the sheet — type the count on its line.' }, 409);
+  }
+
+  const { data: bal, error: bErr } = await scopeToCompany(
+    sb.from('inventory_balances').select('qty')
+      .eq('warehouse_id', head.warehouse_id).eq('item_code', itemCode).eq('variant_key', variantKey),
+    c,
+  );
+  if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
+  const systemQty = ((bal as Array<{ qty: number | null }> | null) ?? []).reduce((sum, b) => sum + Number(b.qty ?? 0), 0);
+
+  const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TAKE', entityId: id, action: 'UPDATE', companyId: head.company_id });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+
+  const counterStaffId = await callerStaffIdOf(sb, c);
+  const { data: inserted, error: iErr } = await sb.from('stock_take_lines').insert(stampCompany([{
+    stock_take_id:  id,
+    item_code:      itemCode,
+    product_name:   prod.name,
+    variant_key:    variantKey,
+    variant_label:  labelFromVariantKey(variantKey),
+    system_qty:     systemQty,
+    counted_qty:    countedQty,
+    counted_by:     counterStaffId,
+    counted_at:     new Date().toISOString(),
+    added_on_count: true,
+  }], c)).select(LINE).single();
+  if (iErr) return c.json({ error: 'insert_failed', reason: iErr.message }, 500);
+
+  await recordEntityAudit(sb, {
+    entityType: 'STOCK_TAKE', entityId: id, entityDocNo: head.take_no, action: 'UPDATE',
+    actor: c.get('houzsUser'), companyId: head.company_id, statusSnapshot: 'OPEN',
+    note: 'Line added during the count',
+    fieldChanges: compactChanges([fieldChange(itemCode, null, countedQty)]),
+  });
+  return c.json({ line: inserted }, 201);
+};
+stockTakes.post('/:id/lines', addStockTakeLineHandler);
 
 // ── Cancel OPEN ───────────────────────────────────────────────────────
 stockTakes.patch('/:id/cancel', async (c) => {
@@ -859,25 +1128,11 @@ export const postStockTakeHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  /* ── ACCOUNTABILITY GATE (phase 1) — ahead of the audit pre-flight, with the
-     other cheap guards. Posting turns a count sheet into stock movements, so
-     it belongs to the take's ASSIGNEE or a supervisor. The load is company-
-     scoped like every sibling read; a cross-company id answers the same 404
-     the flip's zero-rows path would. Legacy takes (assignee NULL, pre-0270)
-     keep the old any-area-access behaviour so history stays operable. */
-  const { data: gateRow } = await scopeToCompanyId(
-    sb.from('stock_takes').select('assignee_staff_id').eq('id', id), co.companyId,
-  ).maybeSingle();
-  if (!gateRow) return c.json(NOT_THIS_COMPANY, 404);
+  /* WHO MAY POST (owner 2026-10-06): the assignees are a RECORD of who
+     counted, not a gate — anyone with stock-take access may post. What still
+     needs a supervisor is a variance over the threshold (below). */
   const isSupervisor = hasHouzsPerm(c, SUPERVISE_PERM);
   const callerStaffId = await callerStaffIdOf(sb, c);
-  const assignee = (gateRow as { assignee_staff_id: string | null }).assignee_staff_id ?? null;
-  if (assignee != null && !isSupervisor && callerStaffId !== assignee) {
-    return c.json({
-      error: 'not_assignee',
-      message: 'Only the assigned counter or a stock-take supervisor can post this stock take.',
-    }, 403);
-  }
 
   const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TAKE', entityId: id, action: 'POST', companyId: co.companyId });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
