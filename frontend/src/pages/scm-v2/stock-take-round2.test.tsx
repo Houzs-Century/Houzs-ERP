@@ -94,14 +94,31 @@ const draw = () => render(
 );
 
 describe('Stock Take detail — round 2', () => {
-  test('a rack picked on a line is saved with the counts', () => {
+  test('a rack typed on a line is matched to this warehouse rack and saved with the counts', () => {
     draw();
-    fireEvent.change(screen.getByLabelText('Rack for MATT-A'), { target: { value: 'r2' } });
+    fireEvent.change(screen.getByLabelText('Rack for MATT-A'), { target: { value: 'r1.1' } });
     fireEvent.click(screen.getByRole('button', { name: /Save Counts/ }));
     expect(updateLines).toHaveBeenCalledWith(
       { id: 'st-1', lines: [expect.objectContaining({ id: 'l1', rackId: 'r2' })] },
       expect.anything(),
     );
+  });
+
+  test('a rack that is not in this warehouse blocks the save', () => {
+    updateLines.mockClear();
+    draw();
+    const box = screen.getByLabelText('Rack for MATT-A') as HTMLInputElement;
+    fireEvent.change(box, { target: { value: 'Z9.9' } });
+    expect(box.getAttribute('aria-invalid')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: /Save Counts/ }));
+    expect(updateLines).not.toHaveBeenCalled();
+  });
+
+  /* Owner's KL WAREHOUSE take froze: a <select> per line put 704 x 77 options
+     on the sheet. The rack box must add no options per line. */
+  test('the rack column puts no dropdown options on the sheet', () => {
+    draw();
+    expect(document.querySelectorAll('[aria-label^="Rack for"] option').length).toBe(0);
   });
 
   test('the counted sheet is read, the readings are applied to the screen, then saved', async () => {
