@@ -76,8 +76,8 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
 import { SO_ITEM_FINANCE_KEYS, stripAuditFinance } from '../lib/finance-keys';
 import type { Env, Variables } from '../env';
 import { skuCategoryResolver } from '../lib/sku-category';
-import { pgrestIn, pgrestInList } from '../lib/pgrest-in-list';
-import { soLineFreezeFrom } from '../shared/so-line-freeze';
+import { pgrestIn } from '../lib/pgrest-in-list';
+import { cascadeCoHeaderDelivery } from '../lib/co-header-date-cascade';
 
 export const consignmentOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
 consignmentOrders.use('*', supabaseAuth);
@@ -108,28 +108,6 @@ async function coHasDownstream(sb: any, coDocNo: string): Promise<{ error: strin
     return { error: 'co_has_downstream', message: 'Consignment Order has a Consignment Note — cancel it first to edit' };
   }
   return null;
-}
-
-/* Line ids the header date cascade must skip: lines a live Consignment Note
-   carries (so-line-freeze rules 1 and 3, the SO's rule). `null` = skip every line:
-   a live note line names no CO line, or the read failed — fail closed. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- same untyped client as coHasDownstream
-async function coFrozenLineFilter(sb: any, coDocNo: string, companyId: number): Promise<string[] | null> {
-  const { data: notes, error: noteErr } = await scopeToCompanyId(sb.from('consignment_delivery_orders')
-    .select('id, status').eq('consignment_so_doc_no', coDocNo), companyId);
-  if (noteErr) return null;
-  const status = new Map(((notes ?? []) as Array<{ id: string; status: string | null }>).map((n) => [n.id, n.status]));
-  if (status.size === 0) return [];
-  const { data: noteLines, error: lineErr } = await scopeToCompanyId(sb.from('consignment_delivery_order_items')
-    .select('consignment_so_item_id, consignment_delivery_order_id')
-    .in('consignment_delivery_order_id', [...status.keys()]), companyId);
-  if (lineErr) return null;
-  const freeze = soLineFreezeFrom(
-    ((noteLines ?? []) as Array<{ consignment_so_item_id: string | null; consignment_delivery_order_id: string }>)
-      .map((l) => ({ kind: 'DO' as const, so_item_id: l.consignment_so_item_id, status: status.get(l.consignment_delivery_order_id) ?? null })),
-    0,
-  );
-  return freeze.unlinked ? null : [...freeze.frozenLineIds];
 }
 
 /* ── Write-side own/downline guard (owner 2026-08-13: "要,和销售订单一致") ──────
@@ -1293,26 +1271,12 @@ consignmentOrders.patch('/:docNo', async (c) => {
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
 
-  /* Master-follower cascade (owner 2026-10-06): a header delivery date change
-     moves every line EXCEPT a hand-set one (line_delivery_date_overridden — the
-     user's date always wins) and one already on a live Consignment Note
-     (so-line-freeze rules 1 and 3, as apply_so_header_cas does for the SO).
-     Keyed on change, not presence — this page sends every header field on every
-     save, so a remark-only edit must move nothing. Best-effort. */
+  /* Keyed on change, not presence: this page sends every header field on every
+     save, so a remark-only edit must move nothing. A cascaded clear has no body
+     value: the header was nulled above, so the lines follow it to null. */
   if (coDeliveryChanged) {
-    const frozen = await coFrozenLineFilter(sb, docNo, co.companyId);
-    if (frozen !== null) {
-      /* A cascaded clear has no body value to read — the header column was set to
-         null above, so the lines must follow it, or MRP keeps ordering by a line
-         date the header no longer holds. */
-      const newDate = coCascadedDeliveryClear ? null : dateOrNull(body['customerDeliveryDate']); // header coerced, lines did not: the cascade 500'd after the header committed
-      let q = scopeToCompanyId(sb.from('consignment_sales_order_items')
-        .update({ line_delivery_date: newDate })
-        .eq('doc_no', docNo), co.companyId)
-        .eq('line_delivery_date_overridden', false);
-      if (frozen.length > 0) q = q.not('id', 'in', pgrestInList(frozen));
-      await q;
-    }
+    await cascadeCoHeaderDelivery(sb, docNo, co.companyId,
+      coCascadedDeliveryClear ? null : dateOrNull(body['customerDeliveryDate']));
   }
 
   /* Audit log row capturing field-level from→to diff. */
