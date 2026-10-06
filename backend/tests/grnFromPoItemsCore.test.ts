@@ -30,8 +30,10 @@ type Row = Record<string, any>;
    statement being asserted (doc-no mint, fx, audit probe, over-receipt re-sum,
    header-total recompute), so every builder method chains and an unknown table
    reads as empty. Two things beyond the companyScope harness: grns inserts get a
-   generated id (the real column is DB-default) and default status DRAFT (the
-   core never sets status — it relies on that default). */
+   generated id (the real column is DB-default) and the status default the LIVE
+   column has, which is 'POSTED' (verified against production 2026-10-01). This
+   fake used to default to DRAFT, which is why it passed while every scanned GRN
+   landed POSTED with no stock behind it: the core must set DRAFT itself. */
 let grnSeq = 0;
 class FakeQuery {
   private preds: Array<(r: Row) => boolean> = [];
@@ -52,7 +54,7 @@ class FakeQuery {
     this.inserted = rows.map((r) => {
       if (this.table === 'grns') {
         grnSeq += 1;
-        return { id: r.id ?? `grn_${grnSeq}`, status: r.status ?? 'DRAFT', ...r };
+        return { id: r.id ?? `grn_${grnSeq}`, status: r.status ?? 'POSTED', ...r };
       }
       return { ...r };
     });

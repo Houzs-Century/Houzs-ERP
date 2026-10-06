@@ -137,6 +137,7 @@ const toScanned = (l: GrnExtracted['lines'][number]): ScannedGrnLine => ({
   barcode: l.barcode,
   description: l.description,
   qty: l.qty,
+  poNo: l.poNo,
 });
 
 // A plain-language note for a NEEDS-REVIEW job (no GRN created): tell the
@@ -152,9 +153,6 @@ function buildNeedsReviewNote(parsed: GrnExtracted, match: GrnMatchResult): stri
   }
   if (match.refused === 'multiple_pos') {
     return `We read ${po}${doRef} but its items point to more than one PO (${match.matchedPoNumbers.join(', ')}), so no receipt was created. ${tail}`;
-  }
-  if (match.refused === 'too_few_lines') {
-    return `We read ${po}${doRef} but only a few of its lines match PO ${match.matchedPoNumbers.join(', ')}, so it may be the wrong PO and no receipt was created. ${tail}`;
   }
   if (poMatched) {
     return `We read ${po}${doRef} but could not line its items up to open PO ${poMatched} automatically. Please open that PO and receive against it.`;
@@ -253,13 +251,16 @@ async function runGrnScanJob(
 
     // CONVERT the confident picks into a DRAFT GRN, linked to the source PO(s).
     const doRef = parsed.doNo ? `D.O. ${parsed.doNo}` : 'scanned delivery order';
+    const weakNote = match.weakMatch
+      ? `Check the PO: only ${match.weakMatch.matched} of ${match.weakMatch.scanned} scanned lines matched ${match.matchedPoNumbers.join(', ')}, so it may be the wrong PO.`
+      : null;
     const res = await createDraftGrnFromPoItems(env, {
       userId: job.uploaderStaffId,
       houzsUserId: job.houzsUserId,
       companyId: job.companyId,
       companyCode,
       picks: match.picks,
-      notes: doRef,
+      notes: weakNote ? `${doRef} · ${weakNote}` : doRef,
       receivedDate: parsed.deliveryDate ?? undefined,
     });
 
@@ -291,17 +292,18 @@ async function runGrnScanJob(
     // Unmatched scanned lines the operator must add manually on the draft.
     const unmatchedCount = match.unmatched.length;
     const unmatchedNote = unmatchedCount > 0
-      ? `${unmatchedCount} scanned ${unmatchedCount === 1 ? 'line' : 'lines'} could not be matched to this PO and ${unmatchedCount === 1 ? 'was' : 'were'} left off — please add ${unmatchedCount === 1 ? 'it' : 'them'} on the draft.`
+      ? `${unmatchedCount} scanned ${unmatchedCount === 1 ? 'line' : 'lines'} could not be matched to an open PO line and ${unmatchedCount === 1 ? 'was' : 'were'} left off — please add ${unmatchedCount === 1 ? 'it' : 'them'} on the draft.`
       : null;
 
-    await touch({ status: 'done', linked_doc_no: primary, ...(unmatchedNote ? { error: unmatchedNote } : {}) });
+    const jobNote = [weakNote, unmatchedNote].filter(Boolean).join(' ') || null;
+    await touch({ status: 'done', linked_doc_no: primary, ...(jobNote ? { error: jobNote } : {}) });
     const bodyParts = [
       `Your scanned delivery order was saved as a DRAFT goods receipt (${grnNumbers.join(', ')}) from ${poNumbers.join(', ')}. Open it to review and post.`,
     ];
-    if (unmatchedNote) bodyParts.push(unmatchedNote);
+    if (jobNote) bodyParts.push(jobNote);
     await postGrScanNotice(env, {
       houzsUserId: job.houzsUserId,
-      category: unmatchedNote ? 'WARNING' : 'GENERAL',
+      category: jobNote ? 'WARNING' : 'GENERAL',
       title: `Goods receipt draft saved — ${grnNumbers.join(', ')}`,
       body: bodyParts.join(' '),
     });
