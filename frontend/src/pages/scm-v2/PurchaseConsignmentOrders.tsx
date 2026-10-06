@@ -175,11 +175,12 @@ const buildColumns = (): GridColumn<PoHeaderRow>[] => [
   },
 ];
 
-/* Status TONE for the drawer badge (po_status enum): open = warning, every
-   line received = success, cancelled = error. LABEL is poStatusLabel. */
-const PCO_TONE: Record<string, DrawerTone> = {
-  DRAFT: 'neutral', SUBMITTED: 'warning', PARTIALLY_RECEIVED: 'warning', RECEIVED: 'success', CANCELLED: 'error',
-};
+/* Status TONE for the drawer badge: every line received = success, cancelled
+   = error, draft = neutral, anything still open = warning. A function, not a
+   status map, so the po_status vocabulary keeps its one home (po-status.ts).
+   LABEL is poStatusLabel. */
+const pcoTone = (s: string): DrawerTone =>
+  s === 'RECEIVED' ? 'success' : s === 'CANCELLED' ? 'error' : s === 'DRAFT' ? 'neutral' : 'warning';
 const PCO_LINE_COLS = 'grid-cols-[minmax(0,1fr)_44px_96px]';
 
 /* Quick-view drawer — row click opens the same right slide-over the Sales
@@ -213,7 +214,7 @@ export function PurchaseConsignmentOrderDrawer({
       docNo={row ? pcNo(row) : ''}
       docLabel="Purchase Consignment Order"
       statusLabel={row ? poStatusLabel(row.status) : ''}
-      statusTone={PCO_TONE[status] ?? 'neutral'}
+      statusTone={pcoTone(status)}
       onOpenFull={onOpenFull}
       footer={row && (
         <>

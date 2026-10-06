@@ -258,10 +258,12 @@ const ExpandedLines = ({ grn }: { grn: GrnRow }) => {
   );
 };
 
-/* Status TONE for the drawer badge (grn_status enum): POSTED is the live
-   receipt = warning, CLOSED = success, CANCELLED = error. LABEL is the
+/* Status TONE for the drawer badge: CLOSED = success, CANCELLED = error,
+   DRAFT = neutral, the live receipt (POSTED) = warning. A function, not a
+   status map, so the grn_status vocabulary keeps its one home. LABEL is the
    shared statusLabel('grn'). */
-const PCR_TONE: Record<string, DrawerTone> = { DRAFT: 'neutral', POSTED: 'warning', CLOSED: 'success', CANCELLED: 'error' };
+const pcrTone = (s: string): DrawerTone =>
+  s === 'CLOSED' ? 'success' : s === 'CANCELLED' ? 'error' : s === 'DRAFT' ? 'neutral' : 'warning';
 const PCR_LINE_COLS = 'grid-cols-[minmax(0,1fr)_44px_96px]';
 
 /* Quick-view drawer — row click opens the same right slide-over the Sales
@@ -294,7 +296,7 @@ export function PurchaseConsignmentReceiveDrawer({
       docNo={row?.receive_number ?? ''}
       docLabel="Purchase Consignment Receive"
       statusLabel={statusLabel('grn', status)}
-      statusTone={PCR_TONE[status] ?? 'neutral'}
+      statusTone={pcrTone(status)}
       onOpenFull={onOpenFull}
       footer={row && (
         <>
