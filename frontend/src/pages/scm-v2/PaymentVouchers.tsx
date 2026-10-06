@@ -29,6 +29,7 @@ import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { fmtDateOrDash, fmtMoneySen } from '@2990s/shared';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
+import { BackToPile } from '../../vendor/scm/components/BackToPile';
 import { FilterPills } from '../../components/FilterPills';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -334,7 +335,9 @@ export const PaymentVouchers = () => {
         eyebrow="Finance"
         title="Payment Vouchers"
         actions={
-          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+          <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+            {/* The pile kept while this tab lives (owner 2026-10-06): the bills not yet opened. */}
+            {canCreate && <BackToPile target="pv" />}
             {canCreate && (
               <>
                 {/* Two documents, AutoCount-style (owner 2026-08-30): the AP

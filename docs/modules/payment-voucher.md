@@ -105,6 +105,11 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   `/credit-notes/scan`, `/payment-requests/read-bill` — `BILL_READER_PATH` in
   `authed-fetch.ts`) get the 120 s scan wait, and their timeout says nothing
   was saved instead of the duplicate-save warning.
+- The pile lives in `bill-pile-store.ts` (one per company and per kind) while
+  the tab lives (owner 2026-10-06): opening a bill and coming back finds the
+  rest as read, each opened bill says so, and `BackToPile` on the AP Invoices,
+  Payment Vouchers and New voucher pages offers "Back to Scan bills (N left)".
+  A read stamped with an ended run (Clear the pile, a re-read) is dropped.
 - A bill whose printed number **and** date sit on another live request,
   voucher or AP invoice (`lib/bill-matches.ts`, `GET
   /payment-requests/bill-matches`) is said on the voucher form, beside each
