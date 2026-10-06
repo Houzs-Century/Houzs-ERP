@@ -29,6 +29,11 @@ describe("chatRequestPatch — what a WhatsApp tap may write on the SO", () => {
     expect(p.delivery_message_status).toBe("Pending Reschedule (D)");
   });
 
+  it("postage events write nothing on the SO — the board has no column for them", () => {
+    expect(chatRequestPatch("postage_confirm", null, null)).toEqual({});
+    expect(chatRequestPatch("postage_amend", null, null)).toEqual({});
+  });
+
   it("confirm: only the message status moves", () => {
     expect(chatRequestPatch("confirm", null, null)).toEqual({ delivery_message_status: "Done Scheduling" });
   });

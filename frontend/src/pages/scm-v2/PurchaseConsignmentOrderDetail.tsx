@@ -49,6 +49,7 @@ import {
   type SupplierRow,
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useMfgProducts, useMaintenanceConfig } from '../../vendor/scm/lib/mfg-products-queries';
+import { withMasterPickerPools } from '../../vendor/scm/lib/picker-maint';
 import { useFabricTrackingsLite } from '../../vendor/scm/lib/fabric-queries';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import {
@@ -158,10 +159,13 @@ export const PurchaseConsignmentOrderDetail = () => {
     poSupplierId ? `supplier:${poSupplierId}` : '',
     { enabled: Boolean(poSupplierId) },
   );
-  const masterMaintQ = useMaintenanceConfig('master', {
-    enabled: !poSupplierId || !supplierMaintQ.data?.data,
-  });
+  const masterMaintQ = useMaintenanceConfig('master');
   const maint = supplierMaintQ.data?.data ?? masterMaintQ.data?.data ?? null;
+  /* Dropdown options follow master; the supplier overlay only prices them (BUG-60). */
+  const pickerMaint = useMemo(
+    () => withMasterPickerPools(maint, masterMaintQ.data?.data ?? null),
+    [maint, masterMaintQ.data?.data],
+  );
   const fabrics = useFabricTrackingsLite().data ?? [];
 
   const categoryForCode = (code: string): string | undefined =>
@@ -612,7 +616,7 @@ export const PurchaseConsignmentOrderDetail = () => {
                 bindings={bindings}
                 allSkus={allSkus}
                 warehouses={warehousesForLines}
-                maint={maint}
+                maint={pickerMaint}
                 fabrics={fabrics}
                 onChange={(patch) => patchLine(l.rid, patch)}
                 onPickBinding={(b) => pickBinding(l.rid, b)}
