@@ -67,6 +67,23 @@ describe('the AR control check knows every source that legitimately moves AR', (
     /* Balance counts every line, findings or not: 100,000 - 100,000 - 40,000 + 40,000 - 100,000 + 500. */
     expect(ar.glBalanceSen).toBe(-99_500);
   });
+
+  /* A conversion moves a customer's money from one order to another: Dr and Cr
+     AR for the same party, netting to nil (acc/payments.ts CONVERT_SOURCE). The
+     owner saw 2990-JE-2609-0108's two lines listed as findings (2026-10-06). */
+  test('a conversion and its reversal are not findings, and leave the balance where it was', async () => {
+    const app = harness({
+      v_gl_entries: [
+        arLine('JE-7', 'SOCONV', 336_500, 0), { ...arLine('JE-7', 'SOCONV', 0, 336_500), line_id: 'JE-7-2' },
+        arLine('JE-8', 'SOCONV_REVERSAL', 0, 336_500), { ...arLine('JE-8', 'SOCONV_REVERSAL', 336_500, 0), line_id: 'JE-8-2' },
+        arLine('JE-9', 'MANUAL', 500, 0),
+      ],
+    });
+    const body = await (await app.request('/control-check')).json() as any;
+    const ar = body.checks.find((x: any) => x.role === 'AR');
+    expect(ar.foreignLines.map((f: any) => `${f.jeNo} ${f.sourceType}`)).toEqual(['JE-9 MANUAL']);
+    expect(ar.glBalanceSen).toBe(500);
+  });
 });
 
 describe('the self-check reports payments that never reached the ledger', () => {

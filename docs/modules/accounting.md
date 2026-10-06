@@ -142,7 +142,7 @@ Process and UI
 - Payment inserts that skipped the hook never reached the books — use `bookSoPaymentBestEffort`; run the Self-check dry run (`POST /accounting/backfill/customer-payments {dryRun: true}`) before backfilling.
 - Selecting columns `mfg_sales_orders` lacks passes the fake client — use `debtor_name` / `phone`; `soPaymentOrderColumns.test.ts` pins the selects.
 - A route's response shaping dropped a computed field — assert the route reply, not only the library.
-- A source type the control check does not know shows as foreign lines — add every new source type to its control's family.
+- A source type the control check does not know shows as foreign lines — add every new source type to its control's family (`SOCONV` was missed until 2026-10-06 and its two AR lines read as findings).
 - `CREATE TABLE IF NOT EXISTS` on a taken name is a silent no-op — choose a new name.
 - Writing an enum column from a CASE of text literals fails (42804) — type each branch as the enum.
 - Backfill contras dated on the run day overstated earlier months — pass the original entry's date.
