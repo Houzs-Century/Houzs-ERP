@@ -16,6 +16,9 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type { ExtractedBill } from '../../vendor/scm/lib/payment-voucher-queries';
 import type { BillMatch } from '../../vendor/scm/lib/payment-request-queries';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
+import { clearAllPiles } from '../../vendor/scm/lib/bill-pile-store';
+import { setActiveCompanyId } from '../../lib/activeCompany';
+import { BackToPile } from '../../vendor/scm/components/BackToPile';
 
 type Bills = Array<{ files: Array<{ name: string; mime: string; dataBase64: string }> }>;
 const extractAsync = vi.fn(async (_bills: Bills) => ({ bills: [] as ExtractedBill[] }));
@@ -44,6 +47,8 @@ const answers = (byFile: Partial<Record<string, ExtractedBill>>) => {
 const readDone = (n: number) => waitFor(() => expect(screen.getByText(`Read ${n} bill(s)`)).toBeTruthy());
 
 beforeEach(() => {
+  /* The pile outlives the page (bill-pile-store) — every test starts on an empty one. */
+  clearAllPiles();
   extractAsync.mockReset();
   extractAsync.mockImplementation(async () => ({ bills: [] as ExtractedBill[] }));
   sameBills = {};
@@ -434,5 +439,76 @@ describe('many bills at once', () => {
     fireEvent.click(within(box).getByText('Open as AP invoice'));
     await waitFor(() => expect(screen.getByText('AP LIST')).toBeTruthy());
     expect(takePvFiles().map((f) => f.name)).toEqual(['a.pdf']);
+  });
+});
+
+/* 开了一张 AP invoice 回来，剩下的单要重新读 → 回来时还在 (owner 2026-10-06). */
+describe('the pile stays while the tab lives', () => {
+  const drawAp = () => render(
+    <MemoryRouter initialEntries={['/scm/ap-invoices/scan']}>
+      <Routes>
+        <Route path="/scm/ap-invoices/scan" element={<PaymentVoucherScan target="ap" />} />
+        <Route path="/scm/ap-invoices" element={<div>AP LIST <BackToPile target="ap" /></div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  const add = (...names: string[]) => fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: names.map(pdf) } });
+  const twoBills = () => answers({
+    'a.pdf': readBill(0, { invoiceNumber: 'INV-1', totalSen: 100000 }, null),
+    'b.pdf': readBill(1, { invoiceNumber: 'INV-2', totalSen: 50000 }, null),
+  });
+
+  test('open one bill, come back: the others are still read — nothing read twice — and the opened one says so', async () => {
+    twoBills();
+    const first = drawAp();
+    add('a.pdf', 'b.pdf');
+    fireEvent.click(screen.getByText('Read 2 bill(s)'));
+    await readDone(2);
+    fireEvent.click(screen.getAllByText('Open as AP invoice')[0]!);
+    await waitFor(() => expect(screen.getByText(/AP LIST/)).toBeTruthy());
+    /* The AP page offers the way back, counting what is left. */
+    fireEvent.click(screen.getByText('← Back to Scan bills (1 left)'));
+    await waitFor(() => expect(screen.getByText('INV-2')).toBeTruthy());
+    expect(screen.getByText('INV-1')).toBeTruthy();
+    expect(within(screen.getByText('INV-1').closest('span')!).getByText('· opened')).toBeTruthy();
+    expect(extractAsync).toHaveBeenCalledTimes(2);
+    first.unmount();
+    /* A page drawn afresh — a later visit — finds the same pile. */
+    drawAp();
+    expect(screen.getByText('INV-2')).toBeTruthy();
+    expect(screen.getByText('a.pdf')).toBeTruthy();
+    expect(extractAsync).toHaveBeenCalledTimes(2);
+  });
+
+  test('Clear the pile empties it; a read still out when it was cleared is dropped', async () => {
+    let release: () => void = () => {};
+    extractAsync.mockImplementation((bills: Bills) => new Promise<{ bills: ExtractedBill[] }>((resolve) => {
+      release = () => resolve({ bills: [{ ...readBill(0, { invoiceNumber: bills[0]!.files[0]!.name === 'a.pdf' ? 'INV-1' : 'INV-X', totalSen: 1 }, null), index: 0 }] });
+    }));
+    drawAp();
+    add('a.pdf');
+    fireEvent.click(screen.getByText('Read 1 bill(s)'));
+    await waitFor(() => expect(extractAsync).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByText('Clear the pile'));
+    expect(screen.queryByText('a.pdf')).toBeNull();
+    await act(async () => { release(); });
+    expect(screen.queryByText('INV-1')).toBeNull();
+    expect(screen.queryByText('Clear the pile')).toBeNull();
+  });
+
+  test("each company keeps its own pile — a 2990 pile never shows in Houzs", async () => {
+    twoBills();
+    try {
+      act(() => { setActiveCompanyId(2); });
+      drawAp();
+      add('a.pdf');
+      expect(screen.getByText('a.pdf')).toBeTruthy();
+      act(() => { setActiveCompanyId(1); });
+      expect(screen.queryByText('a.pdf')).toBeNull();
+      act(() => { setActiveCompanyId(2); });
+      expect(screen.getByText('a.pdf')).toBeTruthy();
+    } finally {
+      act(() => { setActiveCompanyId(null); });
+    }
   });
 });

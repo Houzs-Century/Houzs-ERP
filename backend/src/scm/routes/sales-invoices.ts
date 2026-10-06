@@ -49,6 +49,7 @@ import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { postUnpostedSiPayments, reverseSiPayment } from '../../acc/payments';
 import { insertSiPaymentRow } from '../lib/si-payment-row';
 import { recomputeSiPaid as recomputePaid, readOrderDepositForInvoice } from '../lib/si-order-deposit';
+import { invoiceReceipts } from '../lib/si-receipts';
 import { stampSoDates, stampDoNumber, stampOrderDeposit } from '../lib/si-list-stamps';
 import { SI_HEADER_COLS, SI_LIST_SELECT, filterSiList, orderSiList, readSiListFilters } from '../lib/si-list-read';
 import { attachSiLines } from '../lib/si-export-rows';
@@ -612,6 +613,19 @@ salesInvoices.get('/:id', async (c) => {
      deposit, which renders the LARGER outstanding. */
   (h.data as unknown as Record<string, unknown>).so_deposit_applied_sen =
     dep.ok ? (dep.deposit?.applied_sen ?? 0) : null;
+  /* Every sum received towards this invoice — the order's rows and its own —
+     for the printed "Payments received" list (lib/si-receipts; owner
+     2026-10-06: the print called all of it "Deposit"). Stamped on the header
+     so every print path that fetched this detail carries it. A read that
+     fails leaves it null and the print says one line per document. */
+  {
+    const { data: own, error: ownErr } = await scopeToCompany(
+      sb.from('sales_invoice_payments').select('paid_at, method, amount_sen, created_at').eq('sales_invoice_id', id), c,
+    ).order('paid_at', { ascending: true }).order('created_at', { ascending: true });
+    (h.data as unknown as Record<string, unknown>).receipts = ownErr || !dep.ok
+      ? null
+      : invoiceReceipts(dep.deposit, (own ?? []) as Array<{ paid_at: string | null; method: string | null; amount_sen: number }>);
+  }
   return c.json({
     salesInvoice: h.data,
     items,
