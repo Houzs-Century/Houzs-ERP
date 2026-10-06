@@ -6,10 +6,13 @@
    Consignment Note" always answered "Nothing to be converted". A missing flag
    means "not known", not "nothing left" — only an explicit false, or a status
    that cannot proceed, blocks the note. The New Note page re-derives the
-   deliverable balance from the lines, so letting an unknown through is safe. */
-const CO_NOTE_BLOCKED_STATUSES = new Set(['CANCELLED', 'CLOSED', 'ON_HOLD']);
+   deliverable balance from the lines, so letting an unknown through is safe.
+
+   The blocking statuses are so-status.ts's TERMINAL set (cancelled / closed /
+   on hold) — read from its one home, not re-listed here. */
+import { TERMINAL as SO_TERMINAL_STATUSES } from '../../vendor/scm/lib/so-status';
 
 export function canCreateConsignmentNote(row: { status: string; has_undelivered?: boolean }): boolean {
-  if (CO_NOTE_BLOCKED_STATUSES.has(row.status)) return false;
+  if (SO_TERMINAL_STATUSES.has(row.status)) return false;
   return row.has_undelivered !== false;
 }
