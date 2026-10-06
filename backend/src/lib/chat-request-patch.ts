@@ -39,9 +39,14 @@ export const CHAT_FORBIDDEN_SO_COLUMNS = [
 export const CHAT_MESSAGE_STATUS = {
   confirm: "Done Scheduling",
   amend: "Pending Reschedule (D)",
+  // The postage conversation (Postage Confirm flow) is recorded in the log;
+  // the board has no column for it, so no status moves.
+  postage_confirm: null,
+  postage_amend: null,
 } as const;
 
 export type ChatEvent = keyof typeof CHAT_MESSAGE_STATUS;
+export const CHAT_EVENTS = Object.keys(CHAT_MESSAGE_STATUS) as ChatEvent[];
 
 export type ChatRequestPatch = Partial<
   Record<(typeof CHAT_WRITABLE_SO_COLUMNS)[number], string | null>
@@ -58,7 +63,8 @@ export function chatRequestPatch(
   requestedDate: string | null,
   reason: string | null,
 ): ChatRequestPatch {
-  const patch: ChatRequestPatch = { delivery_message_status: CHAT_MESSAGE_STATUS[event] };
+  const status = CHAT_MESSAGE_STATUS[event];
+  const patch: ChatRequestPatch = status ? { delivery_message_status: status } : {};
   if (event === "amend") {
     const iso = normDate(requestedDate);
     if (iso) patch.amend_date_from_customer = iso;

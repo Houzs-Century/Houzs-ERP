@@ -16,10 +16,15 @@
 // relabelled to the source Purchase Consignment Order.
 // ----------------------------------------------------------------------------
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { Plus, Edit3, Undo2 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
+import { Button as DrawerButton } from '../../components/Button';
+import {
+  QuickViewShell, DrawerMetaGrid, DrawerMeta, DrawerSection, DrawerKV, DrawerPartyCard,
+  DrawerLines, DrawerLineRow, DrawerLineItem, DrawerTotals, DrawerTotal, drawerErrorText, type DrawerTone,
+} from './QuickViewDrawerParts';
 import {
   usePurchaseConsignmentReceives,
   useCancelPurchaseConsignmentReceive,
@@ -253,8 +258,110 @@ const ExpandedLines = ({ grn }: { grn: GrnRow }) => {
   );
 };
 
+/* Status TONE for the drawer badge: CLOSED = success, CANCELLED = error,
+   DRAFT = neutral, the live receipt (POSTED) = warning. A function, not a
+   status map, so the grn_status vocabulary keeps its one home. LABEL is the
+   shared statusLabel('grn'). */
+const pcrTone = (s: string): DrawerTone =>
+  s === 'CLOSED' ? 'success' : s === 'CANCELLED' ? 'error' : s === 'DRAFT' ? 'neutral' : 'warning';
+const PCR_LINE_COLS = 'grid-cols-[minmax(0,1fr)_44px_96px]';
+
+/* Quick-view drawer — row click opens the same right slide-over the Sales
+   Order / Goods Received lists have. Lines ride the SAME detail query the
+   expand chevron uses. */
+export function PurchaseConsignmentReceiveDrawer({
+  row, onClose, onOpenFull, onEdit, onCreateReturn, onCancel,
+}: {
+  row: GrnRow | null;
+  onClose: () => void;
+  onOpenFull: () => void;
+  onEdit: () => void;
+  onCreateReturn: () => void;
+  onCancel: () => void;
+}) {
+  const detailQ = usePurchaseConsignmentReceiveDetail(row?.id ?? null);
+  const items = (detailQ.data?.items ?? []) as GrnItem[];
+  const status = row?.status ?? '';
+  const isPosted = status === 'POSTED';
+  const hasChildren = Boolean(row?.has_children);
+  const currency = row?.currency ?? 'MYR';
+  const lineSum = items.reduce((sum, it) => sum + Number(it.line_total_sen ?? 0), 0);
+  const totalSen = items.length > 0 ? lineSum : Number(row?.total_sen ?? 0);
+
+  return (
+    <QuickViewShell
+      open={Boolean(row)}
+      onClose={onClose}
+      ariaLabel={row ? `Purchase consignment receive ${row.receive_number}` : 'Purchase consignment receive details'}
+      docNo={row?.receive_number ?? ''}
+      docLabel="Purchase Consignment Receive"
+      statusLabel={statusLabel('grn', status)}
+      statusTone={pcrTone(status)}
+      onOpenFull={onOpenFull}
+      footer={row && (
+        <>
+          {isPosted && !hasChildren && <DrawerButton variant="ghost" icon={<Edit3 size={14} />} onClick={onEdit}>Edit</DrawerButton>}
+          {isPosted && !hasChildren && <DrawerButton variant="ghost" className="text-err" onClick={onCancel}>Cancel</DrawerButton>}
+          <div className="flex-1" />
+          {isPosted && (
+            <DrawerButton variant="primary" icon={<Undo2 size={14} />} onClick={onCreateReturn}>Create Return</DrawerButton>
+          )}
+        </>
+      )}
+    >
+      {row && (
+        <>
+          <div className="text-[19px] font-bold text-ink">{row.supplier?.name ?? '—'}</div>
+          <div className="mt-1.5 text-[12.5px] text-ink-muted">Received {fmtDateOrDash(row.received_at)}</div>
+
+          <DrawerMetaGrid>
+            <DrawerMeta k={transferFromColumnLabel('pco')} v={row.purchase_consignment_order?.pc_number ?? '—'} mono />
+            <DrawerMeta k="DN ref" v={row.delivery_note_ref || '—'} mono />
+            <DrawerMeta k="Received date" v={fmtDateOrDash(row.received_at)} />
+            <DrawerMeta k="Currency" v={currency} />
+            <DrawerMeta k="Supplier code" v={row.supplier?.code ?? '—'} mono />
+            <DrawerMeta k="Lines" v={String(items.length)} />
+          </DrawerMetaGrid>
+
+          <DrawerSection>Supplier</DrawerSection>
+          <DrawerPartyCard name={row.supplier?.name ?? '—'} code={row.supplier?.code}>
+            <DrawerKV k="Code" v={row.supplier?.code ?? '—'} />
+          </DrawerPartyCard>
+
+          <DrawerSection>Received lines</DrawerSection>
+          <DrawerLines
+            cols={PCR_LINE_COLS}
+            headings={[{ label: 'Item' }, { label: 'Qty', right: true }, { label: 'Amount', right: true }]}
+            loading={detailQ.isLoading}
+            error={drawerErrorText(detailQ)}
+            empty={items.length === 0}
+          >
+            {items.map((it) => {
+              const manual = (it.description ?? '').trim();
+              const summary = buildVariantSummary(it.item_group, it.variants);
+              return (
+                <DrawerLineRow key={it.id} cols={PCR_LINE_COLS}>
+                  <DrawerLineItem primary={it.item_code ?? '—'} secondary={manual || summary || it.material_name} />
+                  <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtQty(it.qty_received ?? it.qty ?? 0)}</span>
+                  <span className="text-right font-money text-[12.5px] font-semibold text-ink">{fmtMoney(Number(it.line_total_sen ?? 0), currency)}</span>
+                </DrawerLineRow>
+              );
+            })}
+          </DrawerLines>
+
+          <DrawerTotals>
+            <DrawerTotal k="Total" v={fmtMoney(totalSen, currency)} strong />
+          </DrawerTotals>
+        </>
+      )}
+    </QuickViewShell>
+  );
+}
+
 export const PurchaseConsignmentReceives = () => {
   const navigate = useNavigate();
+  /* Row click → quick-view drawer. */
+  const [selected, setSelected] = useState<GrnRow | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const statusChip = searchParams.get('status') ?? 'all';
   const setStatusChip = (s: string) => {
@@ -283,6 +390,7 @@ export const PurchaseConsignmentReceives = () => {
       danger: true,
     }))) return;
     cancelReceive.mutate(g.id, {
+      onSuccess: () => setSelected(null),
       onError: (e) => notify({ title: 'Cancel failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
     });
   };
@@ -329,6 +437,7 @@ export const PurchaseConsignmentReceives = () => {
         searchPlaceholder="Search receive no, supplier, DN ref…"
         loadedSearchLimit={1000}
         groupBanner={false}
+        onRowClick={(g) => setSelected(g)}
         onRowDoubleClick={(g) => navigate(`/scm/purchase-consignment-receives/${g.id}`)}
         rowStyle={(g) => (g.status === 'CANCELLED' || g.status === 'CLOSED')
           ? { opacity: 0.55, filter: 'grayscale(0.6)' }
@@ -352,6 +461,15 @@ export const PurchaseConsignmentReceives = () => {
         }}
         isLoading={isLoading}
         emptyMessage='No receives yet — click "New Purchase Consignment Receive" to receive goods.'
+      />
+
+      <PurchaseConsignmentReceiveDrawer
+        row={selected}
+        onClose={() => setSelected(null)}
+        onOpenFull={() => selected && navigate(`/scm/purchase-consignment-receives/${selected.id}`)}
+        onEdit={() => selected && navigate(`/scm/purchase-consignment-receives/${selected.id}?edit=1`)}
+        onCreateReturn={() => selected && navigate(`/scm/purchase-consignment-returns/new?fromPcReceive=${selected.id}`)}
+        onCancel={() => selected && void doCancel(selected)}
       />
     </div>
   );
