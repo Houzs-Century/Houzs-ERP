@@ -1479,6 +1479,11 @@
       "check": "D1",
       "key": "AMEND,BALANCE_REMINDER,DELIVERY,DELIVERY_COMPLETED,DRIVER_INFO,POSTAGE,POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3|backend/src/scm/lib/delivery-message-kinds.ts frontend/src/vendor/scm/components/SendDeliveryMessageModal.tsx",
       "why": "THE BOARD'S WHATSAPP MESSAGE KINDS (2026-10-05), one decision with one home: scm/lib/delivery-message-kinds.ts MESSAGE_KINDS decides which kinds exist and KIND_AUTOMATION which Connect automation each fires (the zod enum on /delivery-messages/send is built from that array). SendDeliveryMessageModal's KIND_TITLE and KIND_AFTER_STATUS are PRESENTATION of the same vocabulary — the drawer heading and the workflow status the board shows after a successful send — keyed by the frontend SendMessageKind type that mirrors the backend list; a kind added on one side without the other is a compile error on the frontend (Record<SendMessageKind, ...>) and a 400 invalid_body from the server, never a wrong message. Cost of divergence is a missing menu entry, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "#,AMOUNT,DESCRIPTION|frontend/src/vendor/scm/lib/debtor-bill-pdf.ts frontend/src/vendor/scm/lib/deposit-invoice-pdf.ts",
+      "why": "TWO PRINTED TABLES' COLUMN HEADINGS that happen to match (owner 2026-10-06, the Deposit Invoice reprinted in the Sales Invoice layout): a debtor bill's lines and a deposit invoice's one deposit line each print # / Description / Amount. A heading row is how one document lays out its own table, not a business rule with two homes; divergence costs a differently titled column, never a figure."
     }
   ]
 }
