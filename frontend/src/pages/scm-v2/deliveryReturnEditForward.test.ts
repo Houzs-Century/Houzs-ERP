@@ -28,6 +28,13 @@ describe("DeliveryReturnDetailV2 ?edit=1 forward", () => {
     expect(editor).not.toMatch(/_centi|Centi/);
   });
 
+  test("Cancel and Save sit at the end of the form, after the items", () => {
+    const items = editor.indexOf("Returned Items (");
+    const save = editor.indexOf("onClick={saveEdit}");
+    expect(items).toBeGreaterThan(0);
+    expect(save).toBeGreaterThan(items);
+  });
+
   test("Edit is hidden on a closed return", () => {
     expect(v2).toContain("{!isTerminal && (");
     expect(v2).toContain(") : !isTerminal ? (");

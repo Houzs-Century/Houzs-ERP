@@ -16,8 +16,9 @@
 import {
   forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState,
 } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Save, Undo2, ChevronDown } from 'lucide-react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { Save, ChevronDown } from 'lucide-react';
+import { PageHeader } from '../../components/Layout';
 import { Button } from '@2990s/design-system';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { DateField } from '../../vendor/scm/components/DateField';
@@ -178,10 +179,8 @@ export const DeliveryReturnDetail = () => {
   if (detail.isPending) return <SkeletonDetailPage />;
   if (detail.isError || !header) {
     return (
-      <div className={styles.page}>
-        <Link to="/scm/delivery-returns" className={styles.backBtn}>
-          <ArrowLeft {...ICON} /><span>Back</span>
-        </Link>
+      <div className="space-y-4">
+        <PageHeader back="/scm/delivery-returns" eyebrow="Supply Chain" title="Delivery Return" />
         <div className={styles.bannerWarn}>
           <strong>Delivery return not found.</strong>
           {detail.error instanceof Error ? ` ${detail.error.message}` : null}
@@ -192,10 +191,8 @@ export const DeliveryReturnDetail = () => {
 
   if (LOCKED_STATUSES.includes(header.status.toUpperCase())) {
     return (
-      <div className={styles.page}>
-        <Link to={readPath} className={styles.backBtn}>
-          <ArrowLeft {...ICON} /><span>Back</span>
-        </Link>
+      <div className="space-y-4">
+        <PageHeader back={readPath} eyebrow="Supply Chain" title={header.return_number} />
         <div className={styles.bannerWarn}>
           <strong>{header.return_number} is closed ({header.status}) and cannot be edited.</strong>
         </div>
@@ -232,40 +229,13 @@ export const DeliveryReturnDetail = () => {
   };
 
   return (
-    <div className={styles.page}>
-      <div className={styles.headerRow}>
-        <div className={styles.titleBlock}>
-          <Link to={readPath} className={styles.backBtn}>
-            <ArrowLeft {...ICON} /><span>Back</span>
-          </Link>
-          <div>
-            <h1 className={styles.title}>
-              <Undo2 size={16} strokeWidth={1.75} style={{ color: 'var(--c-burnt)' }} />
-              Edit {header.return_number} — {header.debtor_name}
-            </h1>
-            <p className={styles.subtitle}>
-              Return date {fmtDateOrDash(header.return_date)} · {header.line_count} {header.line_count === 1 ? 'line' : 'lines'}
-              {header.do_doc_no && ` · Transfer From ${header.do_doc_no}`}
-            </p>
-          </div>
-        </div>
-        <div className={styles.actions}>
-          <Button variant="ghost" size="md" onClick={exitEditor} disabled={saving}>
-            <span>Cancel</span>
-          </Button>
-          <Button variant="primary" size="md" onClick={saveEdit} disabled={saving}>
-            <Save {...ICON} />
-            <span>{saving ? 'Saving…' : 'Save'}</span>
-          </Button>
-        </div>
-      </div>
-
-      {saveError && (
-        <div className={styles.bannerWarn}>
-          <strong>Save failed.</strong>
-          <span>{saveError}</span>
-        </div>
-      )}
+    <div className="space-y-4">
+      <PageHeader
+        back={readPath}
+        eyebrow="Supply Chain"
+        title={`Edit ${header.return_number} — ${header.debtor_name}`}
+        description={`Return date ${fmtDateOrDash(header.return_date)} · ${header.line_count} ${header.line_count === 1 ? 'line' : 'lines'}${header.do_doc_no ? ` · Transfer From ${header.do_doc_no}` : ''}`}
+      />
 
       <CustomerCard
         ref={customerCardRef}
@@ -304,6 +274,26 @@ export const DeliveryReturnDetail = () => {
           {items.length === 0 && <p className={styles.emptyRow}>No items on this return.</p>}
         </div>
       </section>
+
+      {/* Actions sit at the end of the form (owner 2026-10-06): you review,
+          then save. Sticky so a long return does not need a scroll back. */}
+      <div className="sticky bottom-0 z-10 space-y-2 border-t border-border bg-surface/95 px-4 pb-4 pt-3 backdrop-blur-sm">
+        {saveError && (
+          <div className={styles.bannerWarn}>
+            <strong>Save failed.</strong>
+            <span>{saveError}</span>
+          </div>
+        )}
+        <div className="flex justify-end gap-3">
+          <Button variant="secondary" size="md" onClick={exitEditor} disabled={saving}>
+            <span>Cancel</span>
+          </Button>
+          <Button variant="primary" size="md" onClick={saveEdit} disabled={saving}>
+            <Save {...ICON} />
+            <span>{saving ? 'Saving…' : 'Save'}</span>
+          </Button>
+        </div>
+      </div>
     </div>
   );
 };
