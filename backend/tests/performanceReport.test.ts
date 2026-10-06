@@ -265,9 +265,12 @@ describe('the Performance P&L', () => {
 });
 
 /* 2990's transport is inside the 16% (owner 2026-10-06: 已经算在 operating
-   expense 16% 了); Houzs figures its performance differently and names none. */
+   expense 16% 了): 900-T004 and the logistics accounts under it. 900-T008
+   TRANSPORTATION FEES - OTHERS (decoration / gift-box freight) is not — it
+   stays as booked (「900-T008 … 不包含」). Houzs figures its performance
+   differently and names none. */
 describe('the rate also covers other accounts', () => {
-  const ALSO = { company_id: CO, performance_opex_rate_bp: 1600, performance_opex_account: '900-O001', performance_opex_also: ['900-T004', '900-T008'] };
+  const ALSO = { company_id: CO, performance_opex_rate_bp: 1600, performance_opex_account: '900-O001', performance_opex_also: ['900-T004'] };
   const transport = (sb: ReturnType<typeof harness>['sb']) => {
     (sb.tables.accounts as Row[]).push(
       { ...acct('900-T004', 'TRANSPORTATION FEE', 'EXPENSE', 'EXPENSES'), parent_code: '900-0000' },
@@ -281,23 +284,23 @@ describe('the rate also covers other accounts', () => {
   };
   const flat = (nodes: any[]): any[] => nodes.flatMap((n) => [n, ...flat(n.children ?? [])]);
 
-  test('the covered accounts — and the ones under them — leave the expenses, print at nil, and the rate names them', async () => {
+  test('the covered account — and the ones under it — leave the expenses, print at nil, and the rate names it; 900-T008 stays as booked', async () => {
     const { app, sb } = harness([GL_PERM], [ALSO]);
     transport(sb);
     const { body } = await read(app, 'from=2026-07-01&to=2026-07-31');
     expect(body.operatingExpense).toMatchObject({
       amountSen: 80000,
-      also: [{ code: '900-T004', name: 'TRANSPORTATION FEE' }, { code: '900-T008', name: 'TRANSPORTATION FEES - OTHERS' }],
-      alsoBookedSen: 1279810,
+      also: [{ code: '900-T004', name: 'TRANSPORTATION FEE' }],
+      alsoBookedSen: 1260720,
     });
-    expect(body.inRate.map((e: any) => [e.code, e.amountSen])).toEqual([['900-T006', 1260720], ['900-T008', 19090]]);
-    expect(body.otherExpenses.map((e: any) => e.code)).toEqual(['900-A014', '900-R048']);
-    expect(body.netSen).toBe(222000 + 50000 - 80000 - 4600000);
+    expect(body.inRate.map((e: any) => [e.code, e.amountSen])).toEqual([['900-T006', 1260720]]);
+    expect(body.otherExpenses.map((e: any) => e.code)).toEqual(['900-A014', '900-R048', '900-T008']);
+    expect(body.netSen).toBe(222000 + 50000 - 80000 - 4600000 - 19090);
     const lines = flat(body.layout.expenses);
     expect(lines.find((n) => n.code === '900-T006')?.amountSen).toBe(0);
-    expect(lines.find((n) => n.code === '900-T008')?.amountSen).toBe(0);
+    expect(lines.find((n) => n.code === '900-T008')?.amountSen).toBe(19090);
     expect(lines.find((n) => n.code === '900-O001')?.label)
-      .toContain('also covers 900-T004 TRANSPORTATION FEE, 900-T008 TRANSPORTATION FEES - OTHERS (with the accounts under them)');
+      .toContain('also covers 900-T004 TRANSPORTATION FEE (with the accounts under them)');
   });
 
   test('a company that names none keeps its transport as booked', async () => {

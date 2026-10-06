@@ -11,8 +11,11 @@
 --   Performance P&L's operating-expense rate covers besides
 --   performance_opex_account (each with every account under it in the chart).
 --   Every existing row reads '{}' (nothing more covered). Then ONE row is set:
---   2990's (company code '2990') covers 900-T004 TRANSPORTATION FEE (and the
---   transport accounts under it) and 900-T008 TRANSPORTATION FEES - OTHERS.
+--   2990's (company code '2990') covers 900-T004 TRANSPORTATION FEE and the
+--   transport accounts under it (the monthly logistics / operation bills post
+--   to 900-T006). 900-T008 TRANSPORTATION FEES - OTHERS — freight on
+--   decoration items, gift boxes, canvas bags — is NOT covered and stays as
+--   booked (owner: 「900-T008 TRANSPORTATION FEES - OTHERS 不包含」).
 --   The UPDATE touches only a row still at '{}', so a value set from the page
 --   before this runs is never overwritten. Houzs has no settings row and gets
 --   none: its performance is figured differently (owner: 不做先).
@@ -28,7 +31,7 @@ ALTER TABLE scm.acc_company_settings
   ADD COLUMN IF NOT EXISTS performance_opex_also text[] NOT NULL DEFAULT '{}';
 
 UPDATE scm.acc_company_settings s
-   SET performance_opex_also = ARRAY['900-T004', '900-T008']
+   SET performance_opex_also = ARRAY['900-T004']
   FROM public.companies co
  WHERE co.id = s.company_id
    AND co.code = '2990'

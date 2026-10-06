@@ -149,23 +149,23 @@ describe('the Performance P&L tab', () => {
     saveMutate.mockClear();
     served.report = {
       ...report,
-      settings: { rateBp: 1600, account: '900-O001', also: ['900-T004', '900-T008', '900-Z999'] },
+      settings: { rateBp: 1600, account: '900-O001', also: ['900-T004', '900-Z999'] },
       operatingExpense: {
         ...report.operatingExpense,
-        also: [{ code: '900-T004', name: 'TRANSPORTATION FEE' }, { code: '900-T008', name: 'TRANSPORTATION FEES - OTHERS' }, { code: '900-Z999', name: null }],
-        alsoBookedSen: 1279810,
+        also: [{ code: '900-T004', name: 'TRANSPORTATION FEE' }, { code: '900-Z999', name: null }],
+        alsoBookedSen: 1260720,
       },
-      inRate: [{ code: '900-T006', name: 'TRANSPORT (KL, SLG, MLK, JHR, OTHERS)', amountSen: 1260720 }, { code: '900-T008', name: 'TRANSPORTATION FEES - OTHERS', amountSen: 19090 }],
+      inRate: [{ code: '900-T006', name: 'TRANSPORT (KL, SLG, MLK, JHR, OTHERS)', amountSen: 1260720 }],
     };
     try {
       render(<PerformanceTab />);
       const strip = screen.getByLabelText('Performance settings');
       const also = within(strip).getByLabelText('Accounts the rate also covers') as HTMLInputElement;
-      expect(also.value).toBe('900-T004, 900-T008, 900-Z999');
+      expect(also.value).toBe('900-T004, 900-Z999');
       const named = within(strip).getByLabelText('Covered accounts');
-      expect(named.textContent).toBe("TRANSPORTATION FEE, TRANSPORTATION FEES - OTHERS, 900-Z999 not in this company's chart");
+      expect(named.textContent).toBe("TRANSPORTATION FEE, 900-Z999 not in this company's chart");
       expect(screen.getByLabelText('Performance notes').textContent)
-        .toContain('The rate also covers 900-T004 TRANSPORTATION FEE, 900-T008 TRANSPORTATION FEES - OTHERS, 900-Z999 (with the accounts under them): the 12,798.10 booked on those in the period is left out of the expenses too — they print at nil.');
+        .toContain('The rate also covers 900-T004 TRANSPORTATION FEE, 900-Z999 (with the accounts under them): the 12,607.20 booked on those in the period is left out of the expenses too — they print at nil.');
       fireEvent.change(also, { target: { value: '900-t004 900-T008,, 900-T004' } });
       fireEvent.click(within(strip).getByText('Save'));
       expect(saveMutate.mock.calls[0]?.[0]).toEqual({ rateBp: 1600, account: '900-O001', also: ['900-T004', '900-T008'] });
