@@ -47,6 +47,8 @@ import {
   useGrnDetail,
   useUpdateGrnHeader,
   useUpdateGrnItem,
+  useSetGrnLineRack,
+  useGrnItemRacks,
   useDeleteGrnItem,
   useAddGrnItem,
   useCancelGrn,
@@ -57,11 +59,13 @@ import {
   type SupplierRow,
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
-import { useRacks } from '../../vendor/scm/lib/warehouse-queries';
 import { useMaintenanceConfig, useSpecialAddons, useMfgProducts, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
+import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
+import { grnRackEditable, grnRackSplitEditable, useGrnRackOptions } from '../../vendor/scm/lib/grn-line-rack';
+import { GrnRackSplitField } from './GrnRackSplitField';
 import { LinePoRefLink } from '../../vendor/scm/components/LinePoRefLink';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
@@ -145,6 +149,7 @@ type LineDraft = {
      has to be reachable from the same screen the refusal is read on. */
   zeroCostAck: boolean;
   zeroCostReason: string;
+  rackId: string;
 };
 
 type GrnItemRow = Record<string, unknown> & {
@@ -166,6 +171,7 @@ type GrnItemRow = Record<string, unknown> & {
   /* Commander 2026-06-04 — destination rack chosen at receiving time (nullable).
      Resolved to its label via the GRN's warehouse racks for display. */
   rack_id?: string | null;
+  qty_accepted?: number | null;
   /* migration 0280 — zero-cost receipt acknowledgement + who set it. */
   zero_cost_ack?: boolean | null;
   zero_cost_reason?: string | null;
@@ -198,6 +204,7 @@ const lineSnapshot = (it: GrnItemRow): LineDraft => ({
   variants:       (it.variants as Record<string, unknown> | null) ?? null,
   zeroCostAck:    it.zero_cost_ack === true,
   zeroCostReason: it.zero_cost_reason ?? '',
+  rackId:         it.rack_id ?? '',
 });
 
 /* Manual "extra item" add-row draft — a genuinely-free receipt (an item the
@@ -227,6 +234,7 @@ export const GoodsReceivedDetail = () => {
   const detail = useGrnDetail(id ?? null);
   const updateHeader = useUpdateGrnHeader();
   const updateItem = useUpdateGrnItem();
+  const setLineRack = useSetGrnLineRack();
   const deleteItem = useDeleteGrnItem();
   const askConfirm = useConfirm();
   const notify = useNotify();
@@ -239,12 +247,20 @@ export const GoodsReceivedDetail = () => {
   /* Commander 2026-06-04 — resolve each line's rack_id to its label. Racks are
      warehouse-scoped, so we load the racks of THIS GRN's receive-into warehouse
      (grn.warehouse_id) and build an id → label map for the Rack column below. */
-  const racksQ = useRacks({ warehouseId: grn?.warehouse_id ?? undefined });
-  const rackLabelById = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const r of racksQ.data?.racks ?? []) m.set(r.id, r.rack);
+  const racksQ = useGrnRackOptions(grn?.warehouse_id ?? undefined);
+  const rackLabelById = racksQ.labelById;
+  /* The picker's labels also carry the other companies' stock on the same
+     shelf ("Rack L5.1 · HC 6 pcs"); the id → label map above stays plain. */
+  const rackOptions = racksQ.options;
+  /* A line split over several racks (owner 2026-10-02) reads as "L3.1 x6, L3.2 x4". */
+  const splitQ = useGrnItemRacks(grn?.id);
+  const splitTextByLine = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const r of splitQ.data ?? []) {
+      m.set(r.grnItemId, [...(m.get(r.grnItemId) ?? []), `${rackLabelById.get(r.rackId) ?? '?'} x${r.qty}`]);
+    }
     return m;
-  }, [racksQ.data?.racks]);
+  }, [splitQ.data, rackLabelById]);
 
   /* T12 — maintenance config + special-orders pools drive the per-category
      variant editor on EXISTING bedframe/sofa lines in Edit mode (same dropdown
@@ -541,6 +557,9 @@ export const GoodsReceivedDetail = () => {
             zeroCostAck:    d.zeroCostAck,
             zeroCostReason: d.zeroCostReason.trim() || null,
           });
+        }
+        if (d.rackId !== snap.rackId) {
+          await setLineRack.mutateAsync({ grnId: grn.id, itemId: it.id, rackId: d.rackId || null });
         }
       }
       setIsEditing(false);
@@ -1060,18 +1079,47 @@ export const GoodsReceivedDetail = () => {
                         />
                       )}
                     </label>
-                    {/* Commander 2026-06-04 — destination Rack this line went to.
-                        Read-only: rack_id is set at receiving time (New GRN form).
-                        Resolved to its label via the GRN warehouse's racks; "—"
-                        when the line has no rack. */}
+                    {/* Destination rack. Editable in Edit mode even when a PI/PR
+                        locks the lines — it is placement only, saved through its
+                        own endpoint, which also moves a posted line on the rack
+                        board. Options = racks of this GRN's warehouse. */}
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Rack</span>
-                      <input
-                        type="text" readOnly
-                        value={it.rack_id ? (rackLabelById.get(it.rack_id) ?? '—') : '—'}
-                        className={styles.fieldInput}
-                        style={{ background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
-                      />
+                      {isEditing && grnRackSplitEditable(grn.status) ? (
+                        <GrnRackSplitField
+                          grnId={grn.id}
+                          itemId={it.id}
+                          lineRackId={it.rack_id ?? null}
+                          qtyAccepted={Number(it.qty_accepted ?? 0)}
+                          rackOptions={rackOptions}
+                          rackLabelById={rackLabelById}
+                          inputClassName={styles.fieldInput}
+                        />
+                      ) : isEditing && grnRackEditable(grn.status) && !((splitTextByLine.get(it.id)?.length ?? 0) > 1) ? (
+                        <SearchableSelect
+                          className={styles.fieldInput}
+                          value={d.rackId}
+                          onChange={(v) => setLine(it, { rackId: v })}
+                          disabled={racksQ.isLoading || rackOptions.length === 0}
+                          ariaLabel={`Rack for line ${idx + 1}`}
+                          placeholder={racksQ.isLoading ? 'Loading racks…'
+                            : rackOptions.length === 0 ? 'No racks in this warehouse'
+                            : '— No rack — (type to search)'}
+                          options={[
+                            ...(d.rackId ? [{ value: '', label: '— No rack —' }] : []),
+                            ...rackOptions,
+                          ]}
+                        />
+                      ) : (
+                        <input
+                          type="text" readOnly
+                          value={(splitTextByLine.get(it.id)?.length ?? 0) > 1
+                            ? splitTextByLine.get(it.id)!.join(', ')
+                            : it.rack_id ? (rackLabelById.get(it.rack_id) ?? '—') : '—'}
+                          className={styles.fieldInput}
+                          style={{ background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
+                        />
+                      )}
                     </label>
                   </div>
                 </div>

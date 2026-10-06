@@ -16,7 +16,10 @@ import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
 export type MoneyPayment = {
   id: string; paidOn: string; method: string; provider: string | null; amountSen: number;
-  booked: boolean; collectedBy: string | null; convertedFrom: string | null;
+  booked: boolean;
+  /** Brought over from AutoCount — the order's money all the same (owner 2026-10-05). Optional for the minute a newer screen reads an older server. */
+  imported?: boolean;
+  collectedBy: string | null; convertedFrom: string | null;
 };
 export type MoneyRefund = { id: string; pvNumber: string; status: string; voucherDate: string; totalSen: number };
 export type MoneyConversion = { paymentId: string; toDocNo: string; amountSen: number; paidOn: string; convertedOn: string };
@@ -26,7 +29,10 @@ export type OrderMoney = {
   cancelled: boolean;
   customer: { name: string | null; phone: string | null; customerId: string | null; debtorCode: string | null };
   payments: MoneyPayment[];
+  /** The money in the pool: booked here plus brought over from AutoCount. */
   bookedSen: number;
+  /** The part of it brought over from AutoCount (optional against an older server). */
+  importedSen?: number;
   refunds: MoneyRefund[];
   refundedSen: number;
   conversions: MoneyConversion[];

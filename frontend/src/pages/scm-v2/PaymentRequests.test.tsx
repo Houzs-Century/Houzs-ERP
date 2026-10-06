@@ -117,7 +117,7 @@ describe('the requester', () => {
     expect(createAsync.mock.calls[0]![0]).toEqual({
       payeeName: 'MLE EVENTS SDN BHD', amountSen: 850_000, dueDate: null, purpose: 'Booth F1 rental', projectId: 348,
       bankName: 'Maybank', bankAccountNo: '5123', bankAccountName: null,
-      billNo: 'MLE-0925', billDate: '2026-09-01', billTotalSen: 850_000, eventBill: false, noEventReason: null, payPct: null,
+      billNo: 'MLE-0925', billDate: '2026-09-01', billTotalSen: 850_000, eventBill: false, note: null, noEventReason: null, payPct: null,
     });
     await waitFor(() => expect(uploadAsync).toHaveBeenCalledWith({ id: 'r-new', file: { name: 'mle-invoice.pdf', mime: 'application/pdf', dataBase64: 'b64:mle-invoice.pdf' } }));
     /* The requester's picker reads the requests' own event list, not Finance's. */
@@ -241,9 +241,14 @@ describe('the requester', () => {
     fireEvent.click(within(d).getByText('Request the balance · 申请付余额'));
     const b = screen.getByRole('dialog', { name: 'Request the balance' });
     expect(within(b).getByText(/Left to ask on this bill: RM 5,000\.00 of RM 10,000\.00\./)).toBeTruthy();
+    /* 漏洞 3: the official invoice attached here goes up AS the official invoice, on the new balance. */
+    fireEvent.change(within(b).getByLabelText('Official invoice files'), { target: { files: [new File(['x'], 'official.pdf', { type: 'application/pdf' })] } });
+    uploadOfficialAsync.mockClear(); uploadAsync.mockClear();
     fireEvent.click(within(b).getByText('Send to Finance'));
     await waitFor(() => expect(balanceAsync).toHaveBeenCalledTimes(1));
     expect(balanceAsync.mock.calls[0]![0]).toEqual({ id: 'r1', amountSen: 500_000, dueDate: null, purpose: 'Balance — Booth F1 rental', payPct: null });
+    await waitFor(() => expect(uploadOfficialAsync).toHaveBeenCalledWith({ requestId: 'r-bal', file: { name: 'official.pdf', mime: 'application/pdf', dataBase64: 'b64:official.pdf' } }));
+    expect(uploadAsync).not.toHaveBeenCalled();
   });
 
   /* Item 3 (owner 2026-10-01): paid on a proforma — the official invoice is owed. */
@@ -354,5 +359,112 @@ describe('Finance', () => {
     fireEvent.click(within(screen.getByRole('dialog')).getByText('Return…'));
     await waitFor(() => expect(returnAsync).toHaveBeenCalledWith({ id: 'r1', note: 'Attach the organiser invoice' }));
     expect(JSON.stringify(promptFn.mock.calls[0]![0])).toContain('"required":true');
+  });
+});
+
+/* Owner 2026-10-02: upload 后很多资料都没有填 — and 自动填了资料还能手动改. */
+describe('the form filled from the bill', () => {
+  test('fills what is still empty; what was typed stays, and every field stays theirs to change', async () => {
+    requests = []; isFinance = false; hasEvents = undefined; createAsync.mockClear(); readAsync.mockClear();
+    readResult = plainRead({ bill: { billNo: 'HV-INV-202608-0051', billDate: '2026-08-31', totalSen: 808_233, vendorName: 'HOUZS VENTURE HOLDINGS SDN BHD', dueDate: '2026-09-30', summary: "Payroll cost share — Aug'26 · adjustment", bankName: 'Hong Leong Bank Berhad', bankAccountNo: '123-4567-8901', bankAccountName: 'Houzs Venture Holding Sdn Bhd' } });
+    draw();
+    fireEvent.click(screen.getByText('New request'));
+    const d = screen.getByRole('dialog');
+    /* Typed before the bill is read — it stays. */
+    fireEvent.change(within(d).getByLabelText('What is it for'), { target: { value: 'HC share of Aug payroll' } });
+    fireEvent.change(within(d).getByLabelText('Bill files'), { target: { files: [new File(['%PDF'], 'invoice-HV-INV-202608-0051.pdf', { type: 'application/pdf' })] } });
+    const note = await within(d).findByLabelText('Filled in from the bill');
+    expect(note.textContent).toContain("Pay to · Amount · Pay by · Payee's bank · Account no. · Account name");
+    expect(note.textContent).toContain('都可以自己改');
+    expect((within(d).getByLabelText('Pay to') as HTMLInputElement).value).toBe('HOUZS VENTURE HOLDINGS SDN BHD');
+    expect((within(d).getByLabelText('What is it for') as HTMLTextAreaElement).value).toBe('HC share of Aug payroll');
+    expect((within(d).getByLabelText('Account no.') as HTMLInputElement).value).toBe('123-4567-8901');
+    /* Still theirs to change: a changed field leaves the note and goes as typed. */
+    fireEvent.change(within(d).getByLabelText('Pay to'), { target: { value: 'Houzs Venture Holding Sdn Bhd' } });
+    expect(within(d).getByLabelText('Filled in from the bill').textContent).not.toContain('Pay to');
+    fireEvent.click(within(d).getByText('Send to Finance'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+    expect(createAsync.mock.calls[0]![0]).toMatchObject({
+      payeeName: 'Houzs Venture Holding Sdn Bhd', amountSen: 808_233, dueDate: '2026-09-30', purpose: 'HC share of Aug payroll',
+      bankName: 'Hong Leong Bank Berhad', bankAccountNo: '123-4567-8901', bankAccountName: 'Houzs Venture Holding Sdn Bhd',
+      billNo: 'HV-INV-202608-0051', billDate: '2026-08-31', billTotalSen: 808_233,
+    });
+  });
+});
+
+/* Owner 2026-10-02: 看了有点乱，整齐一点 — the form in the order it is filled: the
+   bill (it fills the rest), who is paid with their bank, how much, what for. */
+describe('the form in the order it is filled', () => {
+  const STEPS = ['单据 · The bill', '付给谁 · Pay to', '付多少 · Amount', '用途 · What for'];
+  const pdf = (name: string) => new File(['%PDF'], name, { type: 'application/pdf' });
+
+  test('four steps; the bank sits with who is paid; a second file adds to the first and ✕ takes one off', async () => {
+    requests = []; isFinance = false; hasEvents = undefined; readResult = plainRead(); readAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('New request'));
+    const d = screen.getByRole('dialog');
+    expect(within(d).getAllByRole('region').map((r) => r.getAttribute('aria-label')).filter((l) => STEPS.includes(l ?? ''))).toEqual(STEPS);
+    const payTo = within(d).getByRole('region', { name: '付给谁 · Pay to' });
+    expect(within(payTo).getByLabelText("Payee's bank")).toBeTruthy();
+    expect(within(payTo).getByLabelText('Account no.')).toBeTruthy();
+    const amount = within(d).getByRole('region', { name: '付多少 · Amount' });
+    expect(['Bill total', 'Amount', 'Percent of the bill', 'Pay by'].every((l) => within(amount).queryByLabelText(l) != null)).toBe(true);
+
+    fireEvent.change(within(d).getByLabelText('Bill files'), { target: { files: [pdf('page-1.pdf')] } });
+    await waitFor(() => expect(readAsync).toHaveBeenCalledTimes(1));
+    fireEvent.change(within(d).getByLabelText('Bill files'), { target: { files: [pdf('page-2.pdf')] } });
+    await waitFor(() => expect(readAsync).toHaveBeenCalledTimes(2));
+    expect(readAsync.mock.calls[1]![0]).toEqual({ files: [
+      { name: 'page-1.pdf', mime: 'application/pdf', dataBase64: 'b64:page-1.pdf' },
+      { name: 'page-2.pdf', mime: 'application/pdf', dataBase64: 'b64:page-2.pdf' },
+    ] });
+    expect(within(d).getByText('page-1.pdf')).toBeTruthy();
+    fireEvent.click(within(d).getByLabelText('Remove page-1.pdf'));
+    await waitFor(() => expect(readAsync).toHaveBeenCalledTimes(3));
+    expect(readAsync.mock.calls[2]![0]).toEqual({ files: [{ name: 'page-2.pdf', mime: 'application/pdf', dataBase64: 'b64:page-2.pdf' }] });
+    expect(within(d).queryByText('page-1.pdf')).toBeNull();
+    /* What was read is said once, under the bill. */
+    const bill = within(d).getByRole('region', { name: '单据 · The bill' });
+    await waitFor(() => expect(within(bill).getByText(/Read from the bill: No\. MLE-0925/)).toBeTruthy());
+  });
+
+  test('an edit has no bill step — its files are on the request; it opens on who is paid', () => {
+    requests = [base({ id: 'r1' })]; isFinance = false;
+    draw();
+    fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
+    fireEvent.click(within(screen.getByRole('dialog')).getByText('Edit'));
+    expect(screen.queryByRole('region', { name: '单据 · The bill' })).toBeNull();
+    const payTo = screen.getByRole('region', { name: '付给谁 · Pay to' });
+    expect(within(payTo).getByText('1')).toBeTruthy();
+    expect((within(payTo).getByLabelText('Pay to') as HTMLInputElement).value).toBe('MLE EVENTS SDN BHD');
+  });
+});
+
+/* Owner 2026-10-02 (我希望多一个第五给他们写note): ⑤ the requester's note to Finance. */
+describe('⑤ the note to Finance', () => {
+  test('the fifth step takes a note, sent trimmed; the request shows it to Finance', async () => {
+    requests = []; isFinance = false; hasEvents = undefined; readResult = plainRead(); createAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('New request'));
+    const d = screen.getByRole('dialog');
+    const step = within(d).getByRole('region', { name: '备注 · Note' });
+    expect(within(step).getByText('5')).toBeTruthy();
+    fireEvent.change(within(step).getByLabelText('Note'), { target: { value: '  Please pay before the fair starts.  ' } });
+    fireEvent.change(within(d).getByLabelText('Pay to'), { target: { value: 'MLE EVENTS SDN BHD' } });
+    const amount = within(d).getByLabelText('Amount');
+    fireEvent.focus(amount); fireEvent.change(amount, { target: { value: '8500' } }); fireEvent.blur(amount);
+    fireEvent.change(within(d).getByLabelText('What is it for'), { target: { value: 'Booth F1 rental' } });
+    fireEvent.change(within(d).getByLabelText('Bill files'), { target: { files: [new File(['%PDF'], 'mle.pdf', { type: 'application/pdf' })] } });
+    await waitFor(() => expect(within(d).getByText(/Read from the bill/)).toBeTruthy());
+    fireEvent.click(within(d).getByText('Send to Finance'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+    expect(createAsync.mock.calls[0]![0]).toMatchObject({ note: 'Please pay before the fair starts.' });
+  });
+
+  test('the request\'s detail shows the note', () => {
+    requests = [base({ id: 'r1', note: 'Two instalments agreed with the organiser.' })]; isFinance = true;
+    draw();
+    fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
+    expect(within(screen.getByRole('dialog')).getByText('Two instalments agreed with the organiser.')).toBeTruthy();
   });
 });

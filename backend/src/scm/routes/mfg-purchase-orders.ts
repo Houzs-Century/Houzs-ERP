@@ -365,7 +365,7 @@ const ITEM_COLS =
   'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
   'custom_specials, line_suffix, special_order_price_sen, variants, ' +
   /* PR #77 — per-line delivery date + ship-to warehouse */
-  'delivery_date, warehouse_id, ' +
+  'delivery_date, line_delivery_date_overridden, warehouse_id, ' +
   /* Migration 0180 — supplier-revised per-line delivery dates. Effective line
      date = MAX over non-null of [delivery_date, _2, _3, _4]. */
   'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, ' +
@@ -2080,6 +2080,25 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       .filter((it) => (it.itemGroup ?? '').trim().toLowerCase() === 'sofa')
       .map((it) => it.soDocNo),
   );
+  /* 1 PO = 1 batch (owner 2026-10-05, 「不能跨批次 1PO = 1batch 不能分开」): one
+     order's sofa set must land in ONE purchase order. The grouping below keys
+     on supplier, so modules resolved to two suppliers would become two POs —
+     two dye lots that can never ship as one set. Refused before any write. */
+  const sofaSupplierBySo = new Map<string, Set<string>>();
+  for (const it of soItems) {
+    if ((it.itemGroup ?? '').trim().toLowerCase() !== 'sofa') continue;
+    const set = sofaSupplierBySo.get(it.soDocNo) ?? new Set<string>();
+    set.add(effectiveBindingFor(it)!.supplier_id);
+    sofaSupplierBySo.set(it.soDocNo, set);
+  }
+  const splitSofaSets = [...sofaSupplierBySo.entries()].filter(([, s]) => s.size > 1).map(([d]) => d);
+  if (splitSofaSets.length > 0) {
+    return c.json({
+      error: 'sofa_set_supplier_split',
+      reason: `A sofa set ships from one batch, so every module of one order goes on ONE purchase order. Pick one supplier for all modules of: ${splitSofaSets.join(', ')}.`,
+      soDocNos: splitSofaSets,
+    }, 409);
+  }
   for (const it of soItems) {
     const b = effectiveBindingFor(it)!;
     const effectiveSupplierId = b.supplier_id;
@@ -2466,6 +2485,7 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
     .select(PO_AUDIT_SELECT).eq('id', id), co.companyId).maybeSingle();
   if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
+  const prevExpectedAt = before.expected_at ?? null;
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   for (const [from, to] of PO_AUDIT_FIELDS) {
@@ -2522,6 +2542,22 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
     } catch (e) {
       console.error('[mfg-po PATCH] header date cascade failed', { id, col, error: e });
     }
+  }
+
+  /* Owner 2026-10-06 — a header Delivery Date change moves every line except a
+     hand-set one (line_delivery_date_overridden) or a fully received one. JS
+     filter: PostgREST cannot compare two columns. Keyed on the date CHANGING:
+     the editor re-sends the whole header. Best-effort, as above. */
+  if (updates['expected_at'] !== undefined && (updates['expected_at'] ?? null) !== prevExpectedAt) {
+    const { data: lines, error: readErr } = await scopeToCompanyId(sb.from('purchase_order_items')
+      .select('id, qty, received_qty, line_delivery_date_overridden').eq('purchase_order_id', id), co.companyId);
+    const openIds = ((lines ?? []) as Array<{ id: string; qty: number; received_qty: number | null; line_delivery_date_overridden: boolean | null }>)
+      .filter((l) => (l.received_qty ?? 0) < l.qty && l.line_delivery_date_overridden !== true)
+      .map((l) => l.id);
+    const { error: lineErr } = readErr ? { error: readErr } : openIds.length === 0 ? { error: null }
+      : await scopeToCompanyId(sb.from('purchase_order_items')
+        .update({ delivery_date: updates['expected_at'] }).in('id', openIds), co.companyId);
+    if (lineErr) console.error('[mfg-po PATCH] delivery date line cascade failed', { id, error: lineErr });
   }
   await queueAcPoEdit(c, id);
 
@@ -2968,6 +3004,8 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
     unit_cost_sen: Number(it.unitCostSen ?? 0),
     // PR #77 — per-line ship-to. Both nullable; empty = inherit from header.
     delivery_date: dateOrNull(it.deliveryDate),
+    /* Hand-set only when the editor says so: a new line seeded from the header date follows it. */
+    line_delivery_date_overridden: it.lineDeliveryDateOverridden === true,
     // Migration 0180 — per-line supplier-revised dates (nullable, default NULL).
     supplier_delivery_date_2: dateOrNull(it.supplierDeliveryDate2),
     supplier_delivery_date_3: dateOrNull(it.supplierDeliveryDate3),
@@ -3101,6 +3139,15 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
     ['supplierDeliveryDate4', 'supplier_delivery_date_4'],
   ] as const) {
     if (it[from] !== undefined) updates[to] = it[from];
+  }
+  /* Owner 2026-10-06 — a user-saved line date is hand-set, and the header
+     cascade then leaves it alone. Only a CHANGED date counts: the editor
+     re-sends every field of a changed line. An explicit flag (the editor sends
+     false for a date it copied from the header) wins. */
+  if (it.lineDeliveryDateOverridden !== undefined) {
+    updates['line_delivery_date_overridden'] = it.lineDeliveryDateOverridden === true;
+  } else if (it.deliveryDate !== undefined && dateOrNull(it.deliveryDate) !== (prev.delivery_date ?? null)) {
+    updates['line_delivery_date_overridden'] = true;
   }
   /* Commander 2026-05-28 — Description 2 is server-owned: recompute from the
      effective itemGroup + variants, but ONLY when one of them moves

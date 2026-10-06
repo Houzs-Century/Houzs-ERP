@@ -116,13 +116,18 @@ function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
 
 const SUPPLIER_ID = 'sup-1';
 const DOC = 'SO-2608-001';
+/* The filler catalogue rides on a SECOND order: a sofa set must leave in ONE
+   purchase order (one supplier per set, owner 2026-10-05, refused as
+   sofa_set_supplier_split), and the fillers stay on the main supplier while
+   the three modules under test are picked onto an alternate. */
+const FILLER_DOC = 'SO-2608-002';
 
 /* The three modules of one sofa, the shape the owner reported: same SO, same
    fabric/seat/leg, one code each. */
 const MODULES = ['9028-1A(LHF)', '9028-1A(RHF)', '9028-1NA'] as const;
 
-const soLine = (id: string, itemCode: string): Row => ({
-  id, doc_no: DOC, item_code: itemCode, description: itemCode,
+const soLine = (id: string, itemCode: string, docNo: string = DOC): Row => ({
+  id, doc_no: docNo, item_code: itemCode, description: itemCode,
   item_group: 'SOFA', variants: {}, qty: 1, po_qty_picked: 0,
   unit_price_sen: 100000, line_delivery_date: '2026-09-30', warehouse_id: 'wh-kl',
   photo_urls: [],
@@ -157,12 +162,12 @@ async function convertWithCatalogue(filler: number, pickSupplierId?: string) {
   const captured: Row[] = [];
   const fillerCodes = Array.from({ length: filler }, (_, i) => `FILL-${String(i).padStart(5, '0')}`);
   const soLines = [
-    ...fillerCodes.map((code, i) => soLine(`si-f-${String(i).padStart(5, '0')}`, code)),
+    ...fillerCodes.map((code, i) => soLine(`si-f-${String(i).padStart(5, '0')}`, code, FILLER_DOC)),
     ...MODULES.map((code, i) => soLine(`si-${i}`, code)),
   ];
   const sb = fakeSb({
     mfg_sales_order_items: soLines,
-    mfg_sales_orders: [{ doc_no: DOC, status: 'CONFIRMED' }],
+    mfg_sales_orders: [{ doc_no: DOC, status: 'CONFIRMED' }, { doc_no: FILLER_DOC, status: 'CONFIRMED' }],
     warehouses: [{ id: 'wh-kl', code: 'KL', name: 'KL' }],
     suppliers: [
       { id: SUPPLIER_ID, code: '400-H004', name: 'HOOKKA INDUSTRIES' },

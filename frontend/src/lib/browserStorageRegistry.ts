@@ -142,6 +142,9 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "components/AssistantPanel.tsx",
   "components/assistantLauncherPosition.ts",
   "components/DataTable.tsx",
+  // `dt:funnels:<idKey>` — funnels a persistFilters="always" table keeps (the
+  // delivery boards, owner 2026-10-05); the dt: device-pref family above.
+  "components/dataTableColFilterMemory.ts",
   "components/IosInstallGuide.tsx",
   "components/PwaBanners.tsx",
   "components/pwaDismissal.ts",

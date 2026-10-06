@@ -531,6 +531,47 @@ export const Mrp = () => {
     const orderedCodes = new Set(base.orderedCodes);
     let units = base.units;
 
+    /* 1 PO = 1 batch (owner 2026-10-05): a sofa set ships from ONE dye lot, so
+       every module of one SO must leave in ONE purchase order. Two refusals
+       before anything is sent:
+         · the set's modules were given different suppliers — the server would
+           split them into two POs (po-grouping keys on supplier), i.e. two
+           batches that can never ship together;
+         · the set already has units ON ORDER (the plan names its PO) — a
+           second PO for the missing module is a second batch. Complete THAT PO
+           instead (PO amendment), which is what the chip is pointing at. */
+    const lineByItem = new Map<string, { line: MrpLine; suppliers: MrpSku['suppliers'] }>();
+    for (const s of skus) for (const l of s.lines) lineByItem.set(l.soItemId, { line: l, suppliers: s.suppliers });
+    const supplierBySo = new Map<string, Set<string>>();
+    const onOrderBySo = new Map<string, string>();
+    for (const p of picks) {
+      const hit = lineByItem.get(p.soItemId);
+      if (!hit) continue;
+      const sup = supplierBySo.get(hit.line.soDocNo) ?? new Set<string>();
+      sup.add(p.supplierId ?? '');
+      supplierBySo.set(hit.line.soDocNo, sup);
+      if (hit.line.poNumber) onOrderBySo.set(hit.line.soDocNo, hit.line.poNumber);
+    }
+    const splitDocs = [...supplierBySo.entries()].filter(([, s]) => s.size > 1).map(([d]) => d);
+    if (splitDocs.length > 0) {
+      return {
+        picks: [], orderedCodes, units: 0,
+        blocked: {
+          title: 'One supplier per sofa set',
+          body: `A sofa set is one dye lot, so every module of an order goes on ONE purchase order. Pick the same supplier for all modules of:\n${splitDocs.map((d) => `• ${d}`).join('\n')}`,
+        },
+      };
+    }
+    if (onOrderBySo.size > 0) {
+      return {
+        picks: [], orderedCodes, units: 0,
+        blocked: {
+          title: 'Set already on a purchase order',
+          body: `These orders already have part of their sofa set on order. A second PO would be a second batch, and the set must ship from one. Amend the named PO to add the missing module instead:\n${[...onOrderBySo.entries()].map(([d, po]) => `• ${d} → ${po}`).join('\n')}`,
+        },
+      };
+    }
+
     /* Commander 2026-05-29 — "pillow 开在 sofa 里面就要跟 sofa 的 PO 一起". For
        every SO we're proceeding a sofa set on, ALSO pull that SO's accessory
        (pillow / 皮套) shortage lines into the same /from-sos batch. The server
@@ -564,7 +605,7 @@ export const Mrp = () => {
       orderedCodes.add(itemCode);
       units += line.shortageQty;
     }
-    return { picks, orderedCodes, units };
+    return { picks, orderedCodes, units, blocked: undefined };
   };
 
   /* Commander 2026-05-31 — selection is now per SO ORDER-LINE (soItemId). Every
@@ -666,9 +707,13 @@ export const Mrp = () => {
      OPTIONALLY pick one Expected Delivery date for the whole batch. */
   const onProceed = () => {
     const onlySelected = selectedShortCount > 0;
-    const { picks, orderedCodes, units } = view === 'sofa'
+    const { picks, orderedCodes, units, blocked } = view === 'sofa'
       ? gatherSofa(shortageSkus, onlySelected)
-      : gatherShortages(shortageSkus, onlySelected);
+      : { ...gatherShortages(shortageSkus, onlySelected), blocked: undefined };
+    if (blocked) {
+      setDialog({ kind: 'info', title: blocked.title, body: blocked.body });
+      return;
+    }
     if (picks.length === 0) {
       setDialog({ kind: 'info', title: 'Nothing to order', body: 'No uncovered (shortage) lines in the current selection / window.' });
       return;
@@ -1494,7 +1539,9 @@ const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSuppli
             <DeliveryCell iso={ln.deliveryDate} />
             <td className={styles.num}>{ln.qty}</td>
             <td>
-              {ln.source === 'stock' && <span className={`${styles.tag} ${styles.tagStock}`}>stock</span>}
+              {ln.source === 'stock' && (
+                <span className={`${styles.tag} ${styles.tagStock}`} title={ln.batchNo ? `Whole set from batch ${ln.batchNo}` : undefined}>stock</span>
+              )}
               {/* Same rule as the desktop table above: no number, no chip. */}
               {ln.source === 'po' && ln.poNumber && (
                 <span className={`${styles.tag} ${styles.tagPo}`}>

@@ -81,6 +81,14 @@ export type SupplierRow = {
   nature_of_business: string | null;
   exemption_no?: string | null;
   phone2: string | null;
+  /* Supplier Maintenance (owner 2026-10-02) — also the Finance part, so also
+     optional: the bank a payment carries, and whether purchasing shares the
+     supplier (false = Finance's alone). Base-table reads only (detail / create /
+     patch); the list view predates them. */
+  bank_name?: string | null;
+  bank_account_no?: string | null;
+  bank_account_name?: string | null;
+  for_purchasing?: boolean;
   created_at: string;
   updated_at: string;
   /* PR — Commander 2026-05-27: auto-derived from the supplier's assigned
@@ -275,6 +283,7 @@ export type PoItemRow = {
   /** PR #77 — per-line delivery date + ship-to warehouse (both inherit from
       PO header when null). */
   delivery_date?: string | null;
+  line_delivery_date_overridden?: boolean | null;
   warehouse_id?: string | null;
   /** Mig 0026 — supplier-revised per-line delivery dates. All optional; the
       supplier pushes the date back. Effective line date = MAX over non-null of
@@ -828,6 +837,8 @@ export type NewPoItem = {
   variants?: Record<string, unknown>;
   /* PR #77 — per-line ship-to overrides; both null = inherit from PO header */
   deliveryDate?: string | null;
+  /** true = the user set this line's date by hand; the header date cascade leaves it alone. */
+  lineDeliveryDateOverridden?: boolean;
   warehouseId?: string | null;
   /* Mig 0026 — supplier-revised per-line delivery dates (optional). */
   supplierDeliveryDate2?: string | null;

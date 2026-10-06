@@ -82,7 +82,7 @@ test("scale contract remains attached to current production route surfaces", asy
   assert.match(soRoute, /q = q\.range\(page \* pageSize, page \* pageSize \+ pageSize - 1\)/);
   assert.match(soRoute + (await readRoute("../src/scm/lib/so-list-rows.ts")), /\.from\('mfg_sales_order_items'\)/);
   assert.match(productRoute, /\.from\('mfg_products'\)/);
-  assert.match(productRoute, /model:product_models\(allowed_options\)/);
+  assert.match(productRoute, /model:product_models\(allowed_options, active\)/);
   assert.match(productRoute, /return q\.range\(from, to\)/);
   assert.match(usersRoute, /search \? built\.limit\(50\) : built/);
   assert.match(usersRoute, /SELECT string_agg\(ub\.brand, chr\(31\)\)/);

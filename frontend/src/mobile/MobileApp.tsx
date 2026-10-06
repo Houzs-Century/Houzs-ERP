@@ -935,7 +935,9 @@ function MobileAppInner() {
     overlay = <MobilePurchaseDocNew
       kind={screen.kind}
       onBack={backToList}
-      onCreated={backToList}
+      onCreated={(created) => (screen.kind === "grn" && created.id
+        ? setScreen({ t: "module-detail", key, row: { id: created.id }, title })
+        : backToList())}
       onConvertInstead={alt ? { label: alt.label, open: () => setScreen({ t: "convert", key, title, target: alt.target }) } : null} />;
   }
   else if (screen.t === "convert") {
@@ -946,7 +948,13 @@ function MobileAppInner() {
     const backToConvertHome = fromSo
       ? () => setScreen({ t: "so-detail", docNo: screen.initialSourceId! })
       : () => setScreen({ t: "module", key: screen.key, title: screen.title });
-    overlay = <MobileConvertWizard target={screen.target} initialSourceId={screen.initialSourceId} onBack={backToConvertHome} onCreated={backToConvertHome} />;
+    /* A new GRN opens on its card: receiving continues there (scan each line's
+       rack), so landing on the list would make the storekeeper find it again. */
+    const { key: convertKey, title: convertTitle } = screen;
+    const onConverted = (_docNo: string, docId?: string) => (screen.target === "grn" && docId
+      ? setScreen({ t: "module-detail", key: convertKey, row: { id: docId }, title: convertTitle })
+      : backToConvertHome());
+    overlay = <MobileConvertWizard target={screen.target} initialSourceId={screen.initialSourceId} onBack={backToConvertHome} onCreated={onConverted} />;
   }
   else if (screen.t === "module-detail" && screen.key === "inventory") {
     // Inventory row → the richer per-SKU stock card (replaces the generic detail).

@@ -54,6 +54,8 @@ describe('moneySummary', () => {
   it('names only the figures that are there', () => {
     expect(moneySummary(money())).toBe('Paid RM 700.00 · Remaining RM 700.00');
     expect(moneySummary(money({ refundedSen: 40_000, convertedSen: 30_000, remainingSen: 0 }))).toBe('Paid RM 700.00 · Refunded RM 400.00 · Moved RM 300.00 · Remaining RM 0.00');
+    /* The AutoCount money counts and is named (owner 2026-10-05). */
+    expect(moneySummary(money({ importedSen: 20_000 }))).toBe('Paid RM 700.00 (incl. RM 200.00 from AutoCount) · Remaining RM 700.00');
   });
 });
 

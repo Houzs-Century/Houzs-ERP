@@ -477,6 +477,7 @@ export const ConsignmentNoteDetail = () => {
                               variantsRequired={false}
                               lineDateLocked={false}
                               seedSofaLegDefault={false}
+                              attachOptions={null}
                               />
                               );
                               })}
@@ -490,6 +491,7 @@ export const ConsignmentNoteDetail = () => {
                               variantsRequired={false}
                               lineDateLocked={false}
                               seedSofaLegDefault={false}
+                              attachOptions={null}
               />
             )}
             {items.length === 0 && !addingDraft && (

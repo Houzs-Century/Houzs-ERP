@@ -75,10 +75,15 @@ export const FABRIC_IDENTITY_KEYS: readonly string[] = [
  *  ruling is that a sofa SET's compartments SHARE their special orders, so those
  *  DO travel — but scoped to ONE physical sofa (buildKey), exactly like fabric,
  *  so two different sofa sets on one order never leak specials into each other,
- *  which is the same failure mode as the bedframe note above. */
+ *  which is the same failure mode as the bedframe note above.
+ *
+ *  `attachTo` — the module ONE Console line is joined to (CONSOLE_ATTACH_KEY,
+ *  read by the PO layout). Copied onto a sibling it would join every sofa line
+ *  of the model to that module. */
 export const NEVER_INHERITED_KEYS: readonly string[] = [
   'remark', 'buildKey',
   'extraAddonNote', 'extraAddonAmountRM',
+  'attachTo',
 ];
 
 /** The structured SPECIAL ORDER payload — the ticked add-on codes, their labels
@@ -133,6 +138,15 @@ export const FABRIC_FOLLOWER_CATEGORIES: ReadonlySet<string> = new Set(['fabric_
 export type CascadeLine = {
   category: string;
   variants: Record<string, unknown>;
+  /** The line is already SAVED on the order (the edit views). A saved line is
+   *  only ever FORCED by a master that moves during this session, never FILLED:
+   *  its blank key is what the order actually holds, and filling it on open
+   *  rewrote a line nobody touched. BUG-53 (HC-SO-011143, 2026-10-03): opening
+   *  the order to add a storage charge filled the sofa's colourLabel onto the
+   *  untouched SQUARE PILLOW beside its own MODENZA-04, and the amendment raised
+   *  a Purchaser approval for a colour change the rep never made. Absent = a
+   *  new line, which fills as before. */
+  persisted?: boolean;
 };
 
 /** category -> that category's master variants at the last cascade. */
@@ -229,7 +243,8 @@ export function seedFollowerVariants(
  * Three outcomes per key, and the order is the whole rule:
  *  1. the master moved this key since `previousMaster` -> FORCE it (owner's
  *     latest-change-wins ruling; a hand-typed follower value loses here);
- *  2. otherwise the follower's own value is blank        -> FILL it (inherit);
+ *  2. otherwise the follower's own value is blank        -> FILL it (inherit),
+ *     unless `fillBlanks` is false (a saved line, see CascadeLine.persisted);
  *  3. otherwise                                          -> LEAVE it, so an
  *     edit made after the master's last change stands until the master moves
  *     again.
@@ -240,6 +255,7 @@ export function followerVariants(
   master: Record<string, unknown>,
   follower: Record<string, unknown>,
   previousMaster: Record<string, unknown> | undefined,
+  fillBlanks: boolean,
 ): Record<string, unknown> {
   /* Fabric COLOUR is scoped to one physical sofa. When the master and this
      follower each carry a buildKey and they DIFFER, they are two different
@@ -259,7 +275,7 @@ export function followerVariants(
     if (differentSofa && (FABRIC_IDENTITY_KEYS.includes(k) || SPECIAL_ORDER_KEYS.includes(k))) continue;
     if (isBlank(masterVal)) continue;
     const masterMoved = previousMaster !== undefined && previousMaster[k] !== masterVal;
-    if (!masterMoved && !isBlank(follower[k])) continue;
+    if (!masterMoved && (!fillBlanks || !isBlank(follower[k]))) continue;
     if (follower[k] === masterVal) continue;
     patch[k] = masterVal;
     changed = true;
@@ -278,6 +294,7 @@ export function fabricFollowerVariants(
   sofaMaster: Record<string, unknown>,
   follower: Record<string, unknown>,
   previousSofaMaster: Record<string, unknown> | undefined,
+  fillBlanks: boolean,
 ): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   let changed = false;
@@ -285,7 +302,7 @@ export function fabricFollowerVariants(
     const masterVal = sofaMaster[k];
     if (isBlank(masterVal)) continue;
     const masterMoved = previousSofaMaster !== undefined && previousSofaMaster[k] !== masterVal;
-    if (!masterMoved && !isBlank(follower[k])) continue;
+    if (!masterMoved && (!fillBlanks || !isBlank(follower[k]))) continue;
     if (follower[k] === masterVal) continue;
     patch[k] = masterVal;
     changed = true;
@@ -329,12 +346,12 @@ export function cascadeMasterVariants(
     if (FABRIC_FOLLOWER_CATEGORIES.has(l.category)) {
       if (!sofaCascading || !(SOFA_CATEGORY in masterIdx)) return l.variants;
       const sofaIdx = masterIdx[SOFA_CATEGORY]!;
-      return fabricFollowerVariants(lines[sofaIdx]!.variants, l.variants, previousMasters[SOFA_CATEGORY]);
+      return fabricFollowerVariants(lines[sofaIdx]!.variants, l.variants, previousMasters[SOFA_CATEGORY], !l.persisted);
     }
     if (cascadeCategories !== null && !cascadeCategories.has(l.category)) return l.variants;
     if (masterIdx[l.category] === idx) return l.variants;
     const master = lines[masterIdx[l.category]!]!.variants;
-    return followerVariants(master, l.variants, previousMasters[l.category]);
+    return followerVariants(master, l.variants, previousMasters[l.category], !l.persisted);
   });
 
   const masters: Record<string, Record<string, unknown>> = {};

@@ -27,6 +27,8 @@ export type PaymentRequest = {
   amount_sen: number;
   due_date: string | null;
   purpose: string;
+  /** The requester's note to Finance (2026-10-02) — absent before then. */
+  note?: string | null;
   project_id: number | null;
   bank_name: string | null;
   bank_account_no: string | null;
@@ -155,6 +157,8 @@ export type PaymentRequestInput = {
   noEventReason?: string | null;
   /** The percent of the bill this payment is, when typed as one (item 2). */
   payPct?: number | null;
+  /** The requester's note to Finance (owner 2026-10-02: 多一个第五给他们写note). */
+  note?: string | null;
 };
 
 
@@ -174,7 +178,13 @@ export type ReadBillResult =
   | { ok: false; reason: string }
   | {
     ok: true;
-    bill: { billNo: string | null; billDate: string | null; totalSen: number | null; vendorName: string | null };
+    bill: {
+      billNo: string | null; billDate: string | null; totalSen: number | null; vendorName: string | null;
+      /* What the form fills where empty (owner 2026-10-02) — absent from a
+         server older than that, so optional. */
+      dueDate?: string | null; summary?: string | null;
+      bankName?: string | null; bankAccountNo?: string | null; bankAccountName?: string | null;
+    };
     hasEvents: boolean;
     /** The bill is for an event — it goes with its Event, or a reason. */
     eventBill: boolean;
@@ -190,13 +200,17 @@ export const useReadRequestBill = () => useMutation({
     authedFetch<ReadBillResult>('/payment-requests/read-bill', { method: 'POST', body: JSON.stringify(body) }),
 });
 
-/** Finance's voucher form asks the same question of a typed bill number and date. */
-export const useBillMatches = (no: string, date: string, excludeRequest: string | null = null) => {
+/** Finance's voucher form asks the same question of a typed bill number and date
+    — and so do the bill pile and the AP invoice form (owner 2026-10-05). An AP
+    invoice being edited is never its own match (excludeApInvoice). */
+export const useBillMatches = (no: string, date: string, excludeRequest: string | null = null, excludeApInvoice: string | null = null) => {
   const n = no.trim();
   const ok = n !== '' && /^\d{4}-\d{2}-\d{2}$/.test(date);
   return useQuery({
-    queryKey: ['payment-request-bill-matches', n, date, excludeRequest],
-    queryFn: () => authedFetch<{ matches: BillMatch[] }>(`/payment-requests/bill-matches?${new URLSearchParams({ no: n, date, ...(excludeRequest ? { excludeRequest } : {}) }).toString()}`),
+    queryKey: ['payment-request-bill-matches', n, date, excludeRequest, excludeApInvoice],
+    queryFn: () => authedFetch<{ matches: BillMatch[] }>(`/payment-requests/bill-matches?${new URLSearchParams({
+      no: n, date, ...(excludeRequest ? { excludeRequest } : {}), ...(excludeApInvoice ? { excludeApInvoice } : {}),
+    }).toString()}`),
     enabled: ok,
     staleTime: 30_000,
   });

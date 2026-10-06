@@ -18,9 +18,15 @@ function onOpen() {
     .addItem('Sync Selected PO Dates TO Houzs ERP', 'erpSyncSelectedPoDates')
     .addItem('Push All PO Dates TO Houzs ERP', 'manualErpPoPush')
     .addSeparator()
-    .addItem('Preview 2990 Sync (no write)', 'preview2990Sync')
-    .addItem('Sync 2990 FROM ERP', 'sync2990FromErp')
+    .addItem('Pull Latest FROM 2990 ERP', 'sync2990FromErp')
+    .addItem('Push Changes TO 2990 ERP', 'manualErp2990Push')
+    .addItem('Preview 2990 Pull (no write)', 'preview2990Sync')
     .addToUi();
+  // Also build the HC Dashboard menu (Nico 2026-08-08): both menus
+  // come from this single simple-trigger onOpen so neither depends on
+  // the other account's installable trigger. onOpenHC_ lives in the live
+  // project's HC_Dashboard.gs (not mirrored here).
+  try { onOpenHC_(); } catch (e) { console.log('[onOpen] HC menu ' + e); }
 }
 
 /**

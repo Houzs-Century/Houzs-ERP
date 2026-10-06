@@ -28,13 +28,22 @@
 // pages attached. Not the Merge — Merge makes PAGES of one bill; this makes
 // LINES of one voucher. He pressed Merge for it and the reader, told those
 // three receipts were one document, read one.
+//
+// ONE BILL PER REQUEST (owner 2026-10-05: four bills sent together took past
+// the 30-second wait and the page said "couldn't confirm whether it saved" —
+// 同时 upload 多 must work). Each bill goes to the reader on its own, three at
+// a time; each lands as it is read, a slow or bad bill holds up only itself
+// and can be read again alone, and a bill printed on something already
+// entered says so (lib/bill-matches.ts — a warning, never a block).
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Camera, FileText, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useExtractBills, fileToBase64, type ExtractedBill, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useBillMatches } from '../../vendor/scm/lib/payment-request-queries';
+import { BillMatchesNote } from '../../vendor/scm/components/RequestBill';
 import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
 import { stashPvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { fmtDate } from '../../vendor/shared/format';
@@ -45,10 +54,21 @@ import { fmtSen } from '../../vendor/shared/format';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const ACCEPT_MIMES = 'image/jpeg,image/png,image/webp,application/pdf';
+/* How many bills are with the reader at once — the rest wait their turn. */
+export const READ_AT_ONCE = 3;
+/* A pile, not a dropped folder (owner 2026-10-05: 一次最多 50 张). */
+export const MAX_PILE_FILES = 50;
 
 const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
 type PickedFile = { rid: string; file: File; merged: boolean };
+
+/* Another live request, voucher or AP invoice printed with this bill's number
+   and date — said beside the bill before it is opened. */
+const PileBillMatches = ({ no, date }: { no: string | null; date: string | null }) => {
+  const q = useBillMatches(no ?? '', date ?? '');
+  return <BillMatchesNote matches={q.data?.matches} />;
+};
 
 export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } = {}) => {
   const ap = target === 'ap';
@@ -68,6 +88,13 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
   /* Case 4: the read bills (by index) ticked for ONE voucher across groups. */
   const [tickedForOne, setTickedForOne] = useState<Set<number>>(new Set());
   const [note, setNote] = useState<string | null>(null);
+  /* The read under way: how many bills are answered of how many sent. */
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  /* Failed bills being read again, one at a time each. */
+  const [rereading, setRereading] = useState<Set<number>>(new Set());
+  /* While the reader has bills the pile holds still — an answer lands by its
+     place in the pile, so the pile may not shift under it. */
+  const busy = progress != null || rereading.size > 0;
 
   /* The same allowlist the server enforces — a dropped .docx is refused at the
      door with a sentence, not uploaded to fail later. ONE home: the string
@@ -75,10 +102,18 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
   const accepted = (f: File) => ACCEPT_MIMES.split(',').includes(f.type) || /\.pdf$/i.test(f.name);
 
   const addFileArray = (files: File[]) => {
+    if (busy) return;
     const usable = files.filter(accepted);
-    if (usable.length < files.length) setNote('Some files were skipped — JPEG / PNG / WebP / PDF only.');
-    if (usable.length === 0) return;
-    const next = usable.map((f) => ({ rid: `f${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, file: f, merged: false }));
+    const taken = usable.slice(0, Math.max(0, MAX_PILE_FILES - picked.length));
+    const said = [
+      usable.length < files.length ? 'Some files were skipped — JPEG / PNG / WebP / PDF only.' : null,
+      taken.length < usable.length
+        ? `A pile holds at most ${MAX_PILE_FILES} files — ${usable.length - taken.length} left out. Read these first, then add the rest.`
+        : null,
+    ].filter(Boolean).join(' ');
+    if (said) setNote(said);
+    if (taken.length === 0) return;
+    const next = taken.map((f) => ({ rid: `f${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, file: f, merged: false }));
     setPicked((prev) => [...prev, ...next]);
     setBillGroups((prev) => [...prev, ...next.map((p) => [p.rid])]);
     setResults(null);
@@ -86,21 +121,23 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
   const addFiles = (list: FileList | null) => { if (list) addFileArray([...list]); };
 
   /* 拖进来就收 (the owner, 2026-09-02: 我无法从我的folder 拖动进来upload) —
-     and Ctrl+V for a screenshot of a bill. */
+     and Ctrl+V for a screenshot of a bill. The listener is set once and calls
+     the latest adder, so it sees the pile (and its cap) as it is now. */
   const [dragOver, setDragOver] = useState(false);
+  const addLatest = useRef(addFileArray);
+  useEffect(() => { addLatest.current = addFileArray; });
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const files = [...(e.clipboardData?.files ?? [])];
-      if (files.length > 0) addFileArray(files);
+      if (files.length > 0) addLatest.current(files);
     };
     window.addEventListener('paste', onPaste);
     return () => { window.removeEventListener('paste', onPaste); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* 合并所选 — the ticked files become ONE bill (case 1). */
   const mergeTicked = () => {
-    if (ticked.size < 2) return;
+    if (ticked.size < 2 || busy) return;
     setBillGroups((prev) => {
       const kept = prev.filter((g) => !g.some((rid) => ticked.has(rid)));
       const mergedRids = prev.flat().filter((rid) => ticked.has(rid));
@@ -112,30 +149,72 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
   };
 
   const removeFile = (rid: string) => {
+    if (busy) return;
     setPicked((prev) => prev.filter((p) => p.rid !== rid));
     setBillGroups((prev) => prev.map((g) => g.filter((r) => r !== rid)).filter((g) => g.length > 0));
     setResults(null);
   };
 
-  const run = async () => {
-    setNote('Reading…');
+  /* A bill's answer, put in its place in the pile (a read-again replaces the old one). */
+  const land = (b: ExtractedBill) =>
+    setResults((prev) => [...(prev ?? []).filter((r) => r.index !== b.index), b].sort((x, y) => x.index - y.index));
+
+  /* ONE bill to the reader — its own request, its own wait. A bill that cannot
+     be read (or a reader that took too long) is that bill's answer, never the
+     pile's. */
+  const readBill = async (index: number, rids: string[], byRid: Map<string, File>): Promise<void> => {
+    let files: PvFilePayload[];
     try {
-      const byRid = new Map(picked.map((p) => [p.rid, p.file]));
-      const bills = await Promise.all(billGroups.map(async (g) => ({
-        files: await Promise.all(g.map(async (rid) => {
-          const f = byRid.get(rid)!;
-          return { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) };
-        })),
-      })));
-      setBillFiles(bills.map((b) => b.files));
-      const res = await extract.mutateAsync(bills);
-      setResults(res.bills);
-      setTickedForOne(new Set());
-      const failed = res.bills.filter((b) => !b.ok).length;
-      setNote(failed > 0 ? `${failed} bill(s) could not be read — they are listed below with the reason.` : null);
+      files = await Promise.all(rids.map(async (rid) => {
+        const f = byRid.get(rid)!;
+        return { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) };
+      }));
     } catch (e) {
-      setNote(e instanceof Error ? e.message : 'The pile could not be read.');
+      land({ index, ok: false, reason: e instanceof Error ? e.message : 'The file could not be read from disk.' });
+      return;
     }
+    setBillFiles((prev) => { const n = [...prev]; n[index] = files; return n; });
+    try {
+      const got = (await extract.mutateAsync([{ files }])).bills.at(0);
+      land(got ? { ...got, index } : { index, ok: false, reason: 'The reader sent nothing back — read it again.' });
+    } catch (e) {
+      land({ index, ok: false, reason: e instanceof Error ? e.message : 'The bill could not be read.' });
+    }
+  };
+
+  const run = async () => {
+    if (busy || billGroups.length === 0) return;
+    const pile = billGroups;
+    const byRid = new Map(picked.map((p) => [p.rid, p.file]));
+    setResults([]);
+    setBillFiles([]);
+    setTickedForOne(new Set());
+    setNote(null);
+    setProgress({ done: 0, total: pile.length });
+    let next = 0;
+    /* READ_AT_ONCE lanes, each taking the next bill as its last one lands. */
+    const lane = async () => {
+      while (next < pile.length) {
+        const i = next++;
+        await readBill(i, pile[i]!, byRid);
+        setProgress((p) => (p ? { ...p, done: p.done + 1 } : p));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(READ_AT_ONCE, pile.length) }, lane));
+    setProgress(null);
+  };
+
+  const readAgain = async (index: number) => {
+    const rids = billGroups.at(index);
+    if (!rids || busy) return;
+    setRereading((prev) => new Set(prev).add(index));
+    await readBill(index, rids, new Map(picked.map((p) => [p.rid, p.file])));
+    setRereading((prev) => { const n = new Set(prev); n.delete(index); return n; });
+  };
+  /* The files a bill was made of, by name — how a failed bill is told apart. */
+  const namesOf = (index: number): string => {
+    const byRid = new Map(picked.map((p) => [p.rid, p.file.name]));
+    return (billGroups[index] ?? []).map((rid) => byRid.get(rid) ?? '').filter(Boolean).join(' + ');
   };
 
   /* Group the READ bills by matched supplier; unmatched ones group by the
@@ -188,6 +267,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
 
   /* Case 4 — the ticked receipts, whatever shop each came from, as ONE voucher. */
   const okBills = useMemo(() => (results ?? []).filter((b): b is Extract<ExtractedBill, { ok: true }> => b.ok), [results]);
+  const failedCount = (results ?? []).length - okBills.length;
   const labelOf = (b: Extract<ExtractedBill, { ok: true }>) => b.supplierMatch?.name ?? b.extraction.vendorName ?? `Unnamed bill ${b.index + 1}`;
   const tickedBills = okBills.filter((b) => tickedForOne.has(b.index));
   const tickedCurrencies = new Set(tickedBills.map((b) => b.extraction.currency));
@@ -270,17 +350,22 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)' }}>
               <Camera {...ICON} /> Add bills
               <input type="file" multiple accept={ACCEPT_MIMES}
-                aria-label="Add bill files" style={{ display: 'none' }}
+                aria-label="Add bill files" style={{ display: 'none' }} disabled={busy}
                 onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
             </label>
-            <Button variant="secondary" size="sm" onClick={mergeTicked} disabled={ticked.size < 2}>
+            <Button variant="secondary" size="sm" onClick={mergeTicked} disabled={ticked.size < 2 || busy}>
               {ticked.size > 1 ? `These ${ticked.size} files are pages of ONE bill — merge` : 'Pages of one bill — merge'}
             </Button>
             <span style={{ flex: 1 }} />
-            <Button variant="primary" size="sm" onClick={() => void run()} disabled={picked.length === 0 || extract.isPending}>
-              {extract.isPending ? 'Reading…' : `Read ${billGroups.length} bill(s)`}
+            <Button variant="primary" size="sm" onClick={() => void run()} disabled={picked.length === 0 || busy}>
+              {progress ? `Reading… ${progress.done} of ${progress.total} done` : `Read ${billGroups.length} bill(s)`}
             </Button>
           </div>
+          {progress && (
+            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+              {READ_AT_ONCE} bills with the reader at a time — each shows below as it is read. Opening waits until every bill is read.
+            </div>
+          )}
 
           {picked.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -293,8 +378,8 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                   <FileText {...ICON} />
                   <span>{p.file.name}</span>
                   {p.merged && <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>(merged page)</span>}
-                  <button type="button" aria-label={`Remove ${p.file.name}`} onClick={() => removeFile(p.rid)}
-                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--fg-muted)' }}>
+                  <button type="button" aria-label={`Remove ${p.file.name}`} onClick={() => removeFile(p.rid)} disabled={busy}
+                    style={{ border: 'none', background: 'none', cursor: busy ? 'default' : 'pointer', color: 'var(--fg-muted)' }}>
                     <X size={14} strokeWidth={1.75} />
                   </button>
                 </div>
@@ -302,6 +387,11 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
             </div>
           )}
           {note && <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)' }}>{note}</div>}
+          {!progress && failedCount > 0 && (
+            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)' }}>
+              {failedCount} bill(s) could not be read — each says why below; Read again tries just that one.
+            </div>
+          )}
         </div>
       </section>
 
@@ -311,7 +401,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
             <section className={styles.card}>
               <div className={styles.cardBody} style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--fs-13)' }}>
                 <span style={{ color: 'var(--fg-muted)' }}>Different receipts on ONE voucher (petty cash): tick them below, then</span>
-                <Button variant="primary" size="sm" onClick={openTickedAsOne} disabled={tickedBills.length < 2 || tickedCurrencies.size > 1}>
+                <Button variant="primary" size="sm" onClick={openTickedAsOne} disabled={busy || tickedBills.length < 2 || tickedCurrencies.size > 1}>
                   Open ticked as ONE voucher ({tickedBills.length} lines)
                 </Button>
                 {tickedCurrencies.size > 1
@@ -351,15 +441,15 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                         <span style={{ color: 'var(--fg-muted)' }}>{b.extraction.dueDate ? `due ${fmtDate(b.extraction.dueDate)}` : ''}</span>
                         <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(b.extraction.totalSen)}</span>
                         {ap ? (
-                          <Button variant="primary" size="sm" onClick={() => openApInvoice(b)}>
+                          <Button variant="primary" size="sm" onClick={() => openApInvoice(b)} disabled={busy}>
                             Open as AP invoice
                           </Button>
                         ) : split ? (
                           <span style={{ display: 'inline-flex', gap: 6 }}>
-                            <Button variant="secondary" size="sm" onClick={() => openVoucher(b.extraction, { memory: b.memory, files: billFiles[b.index] ?? [], eventSuggestions: b.eventSuggestions ?? [] })}>
+                            <Button variant="secondary" size="sm" disabled={busy} onClick={() => openVoucher(b.extraction, { memory: b.memory, files: billFiles[b.index] ?? [], eventSuggestions: b.eventSuggestions ?? [] })}>
                               Open as voucher
                             </Button>
-                            <Button variant="ghost" size="sm" onClick={() => openBill(b.extraction, g.supplierId)}>
+                            <Button variant="ghost" size="sm" onClick={() => openBill(b.extraction, g.supplierId)} disabled={busy}>
                               Open as bill
                             </Button>
                           </span>
@@ -382,6 +472,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                           ))}
                         </div>
                       )}
+                      <PileBillMatches no={b.extraction.invoiceNumber} date={b.extraction.invoiceDate} />
                     </div>
                   ))}
                   {!ap && g.bills.length > 1 && (
@@ -394,10 +485,10 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                         pay each bill separately
                       </label>
                       {!split && (<>
-                        <Button variant="primary" size="sm" onClick={() => openGroupAsOne(g)}>
+                        <Button variant="primary" size="sm" onClick={() => openGroupAsOne(g)} disabled={busy}>
                           Open as ONE voucher ({g.bills.length} lines)
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => {
+                        <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
                           const first = g.bills[0]!;
                           openBill(
                             { ...first.extraction, invoiceNumber: g.bills.map((b) => b.extraction.invoiceNumber).filter(Boolean).join(', ') || null },
@@ -419,8 +510,13 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
           })}
           {results.filter((b) => !b.ok).map((b) => (
             <section key={`fail-${b.index}`} className={styles.card}>
-              <div className={styles.cardBody} style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-13)' }}>
-                Bill {b.index + 1} could not be read: {(b as { reason: string }).reason}
+              <div className={styles.cardBody} style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--fs-13)' }}>
+                <span style={{ color: 'var(--c-festive-b, #B8331F)', flex: 1, minWidth: 0 }}>
+                  Bill {b.index + 1}{namesOf(b.index) ? ` (${namesOf(b.index)})` : ''} could not be read: {(b as { reason: string }).reason}
+                </span>
+                <Button variant="secondary" size="sm" onClick={() => void readAgain(b.index)} disabled={busy}>
+                  {rereading.has(b.index) ? 'Reading…' : 'Read again'}
+                </Button>
               </div>
             </section>
           ))}

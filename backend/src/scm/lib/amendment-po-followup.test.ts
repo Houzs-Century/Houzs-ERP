@@ -284,6 +284,37 @@ describe('raisePoFollowUps — only the PO that hosts a changed line', () => {
     expect(res.warnings.some((w) => w.includes('AKEMI EQUINOX MATT (Q)') && w.includes('separate PO'))).toBe(true);
   });
 
+  it('an ADD whose MAIN supplier has no PO here joins the PO of an alternate bound supplier', async () => {
+    // HC-SO-013385/A1 (BUG-57): 9028-1NA's main supplier (HOOKKA INDUSTRIES) had
+    // no PO on the order; DORSETTLOFT, bound as an alternate, owns its only PO.
+    const store = baseStore();
+    store.supplier_material_bindings = [
+      binding('TRION-(Q)', 'sup-main-elsewhere'),
+      { ...binding('TRION-(Q)', SUP_A), is_main_supplier: false },
+    ];
+    store.so_amendment_lines = [amendLine({ change_type: 'ADD', new_item_code: 'TRION-(Q)', new_qty: 1 })];
+
+    const res = await run(store);
+
+    expect(res.followUps.map((f) => f.poNumber)).toEqual([PO_A_NO]);
+    expect(res.warnings).toEqual([]);
+    expect(store.po_amendment_lines).toHaveLength(1);
+    expect(store.po_amendment_lines![0]).toMatchObject({ change_type: 'ADD', new_item_code: 'TRION-(Q)' });
+  });
+
+  it('an ADD stays with its MAIN supplier when both it and an alternate have a PO here', async () => {
+    const store = baseStore();
+    store.supplier_material_bindings = [
+      binding('TRION-(Q)', SUP_B),
+      { ...binding('TRION-(Q)', SUP_A), is_main_supplier: false },
+    ];
+    store.so_amendment_lines = [amendLine({ change_type: 'ADD', new_item_code: 'TRION-(Q)', new_qty: 1 })];
+
+    const res = await run(store);
+
+    expect(res.followUps.map((f) => f.poNumber)).toEqual([PO_B_NO]);
+  });
+
   it('a mixed amendment escalates only the touched PO, carrying only the goods change', async () => {
     const store = baseStore();
     store.so_amendment_lines = [

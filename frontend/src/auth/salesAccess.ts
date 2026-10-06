@@ -319,6 +319,17 @@ export function canOperateGoodsReceipts(
   return canOperateScmProcurement(can, pageAccess, "scm.procurement.grn");
 }
 
+/**
+ * May this user POST a goods receipt (stock IN)? Separate from operate: the
+ * storekeeper drafts and sets racks, the purchaser posts (owner 2026-10-01).
+ * Mirrors the server gate (scm/lib/grn-post-capability.ts) — `*` callers carry
+ * no capability rows, so the wildcard is checked here as on the server.
+ */
+export function canPostGoodsReceipts(user: AuthUser | null | undefined): boolean {
+  if (user?.permissions.includes("*")) return true;
+  return (user?.position_capabilities ?? []).includes("scm.grn.post");
+}
+
 /** May this user raise or change a PURCHASE INVOICE? The backend guard is
  *  `scmAreaGuard("scm.procurement.pi")` on `/purchase-invoices/*`
  *  (backend/src/scm/index.ts). Added with the phone's direct PI create

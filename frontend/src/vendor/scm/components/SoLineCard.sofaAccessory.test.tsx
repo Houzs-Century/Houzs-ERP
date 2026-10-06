@@ -64,6 +64,7 @@ function renderArmRest(isEditing: boolean, lineDateLocked = false) {
       variantsRequired
       lineDateLocked={lineDateLocked}
       seedSofaLegDefault
+      attachOptions={null}
     />,
   );
 }

@@ -113,6 +113,26 @@ handler: the duplicate probe refusals, and a rename that flips the added columns
 while `supplier_sku`, `ac_item_code`, the delete audit, a fabric row and another
 company's line stay.
 
+## 5a. Sofa compartment code rename (Maintenance)
+
+Editing a code in place in Maintenance -> Sofa Compartments (master scope) calls
+`POST /api/scm/maintenance-config/sofa-compartments/rename` `{ from, to, apply }`
+(gate: `canWriteScmConfig` + resolved active company), backed by
+`scm.rename_sofa_compartment(company_id, from, to, apply)`.
+
+- Active company only. `apply` must be `true` to write; anything else is a preview.
+  The screen always previews, shows the counts, then confirms.
+- Refused (409 `in_use`, with counts) while ANY SKU, doc line, stock row, price
+  override, binding, PWP code, legacy per-model compartment, POS combo or personal
+  quick pick of the company uses the code: it is the suffix of every SKU code
+  (`<MODEL>-<code>`). Owner 2026-10-02: only an unused code (a typo) is renamed; the
+  wording staff see changes through the SKU name or the compartment description.
+- Rewrites only exact JSON values: the company's compartment pools (every scope)
+  and its meta entry, Model `allowed_options.compartments`, combos, quick picks. An
+  uploaded photo is filed under the old code and is dropped (re-upload).
+- The new code has no spaces (the sofa canvas cannot parse one) and keeps
+  `<longest SOFA model code>-<code>` within 30 characters.
+
 ## 6. Open
 
 - **UNKNOWN:** whether documents carrying a renamed SKU still post to AutoCount

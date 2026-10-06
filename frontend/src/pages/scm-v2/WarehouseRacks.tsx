@@ -20,17 +20,18 @@
 //
 // URL is state: ?warehouseId=… and ?tab=… (shareable / reload-stable).
 //
-// DEFERRED to a later phase (NOT built here): rack-QR / item-QR generation +
-// download-all, and the public camera-scan stock-in flow.
+// Print labels renders one QR sticker per rack (vendor/scm/lib/rack-label-pdf).
+// DEFERRED: item-QR, and the storekeeper's scan-the-shelf put-away on the GRN.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, ChevronDown, Plus, Layers,
+  ArrowLeft, ChevronDown, Plus, Layers, Printer,
   ArrowDownToLine, ArrowUpFromLine, History,
 } from 'lucide-react';
 import { Button } from '../../components/Button';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
@@ -46,6 +47,7 @@ import {
   type Rack,
   type RackMovement,
   type RackMovementType,
+  type RackScope,
 } from '../../vendor/scm/lib/warehouse-queries';
 import { itemDescription, itemMeta, rackKeyOf, ZONE_LABELS } from '../../vendor/scm/lib/warehouse-floorplan';
 import { WarehouseFloorPlan } from './WarehouseFloorPlan';
@@ -86,20 +88,21 @@ type WarehouseLite = { id: string; code: string; name: string };
 
 /* Translate the picker state into the create-body scope keys. */
 function scopeBody(
-  mode: ScopeMode, currentWarehouseId: string, chosen: string[],
-): { warehouseId: string } | { warehouseIds: string[] } | { allWarehouses: true } {
-  if (mode === 'all') return { allWarehouses: true };
+  mode: ScopeMode, currentWarehouseId: string, chosen: string[], siblings: boolean,
+): RackScope {
+  const also = siblings ? { alsoSiblingCompanies: true as const } : {};
+  if (mode === 'all') return { allWarehouses: true, ...also };
   if (mode === 'choose') {
     // Always include the current warehouse so "choose" never ships an empty set.
     const set = new Set(chosen.length > 0 ? chosen : [currentWarehouseId]);
     set.add(currentWarehouseId);
-    return { warehouseIds: [...set] };
+    return { warehouseIds: [...set], ...also };
   }
-  return { warehouseId: currentWarehouseId };
+  return { warehouseId: currentWarehouseId, ...also };
 }
 
 function RackScopeField({
-  warehouses, currentWarehouseId, mode, setMode, chosen, setChosen,
+  warehouses, currentWarehouseId, mode, setMode, chosen, setChosen, siblings, setSiblings,
 }: {
   warehouses: WarehouseLite[];
   currentWarehouseId: string;
@@ -107,6 +110,11 @@ function RackScopeField({
   setMode: (m: ScopeMode) => void;
   chosen: string[];
   setChosen: (ids: string[]) => void;
+  /* The other companies' records of the same building (same warehouse code)
+     get the label too — the owner's KL WAREHOUSE is one shed under HOUZS and
+     under 2990, and a shelf created for one is a shelf the other receives on. */
+  siblings: boolean;
+  setSiblings: (v: boolean) => void;
 }) {
   const toggle = (id: string) => {
     setChosen(chosen.includes(id) ? chosen.filter((x) => x !== id) : [...chosen, id]);
@@ -139,6 +147,16 @@ function RackScopeField({
           ))}
         </div>
       )}
+      <span style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 13, marginTop: 8 }}>
+        <input type="checkbox" checked={siblings} onChange={(e) => setSiblings(e.target.checked)}
+          aria-label="Also create in other companies' warehouses with the same code" style={{ marginTop: 3 }} />
+        <span>
+          Also create in other companies' warehouses with the same code
+          <span style={{ display: 'block', fontSize: 12, opacity: 0.7 }}>
+            One building is one warehouse record per company; the label goes under each, stamped with that company.
+          </span>
+        </span>
+      </span>
     </label>
   );
 }
@@ -196,6 +214,19 @@ export const WarehouseRacks = () => {
   // Preselect a rack when jumping from the detail popup into the stock-in form.
   const [stockInRackId, setStockInRackId] = useState<string>('');
 
+  const warehouseCode = warehouses.data?.find((w) => w.id === warehouseId)?.code ?? '';
+  /* null = every rack of the warehouse; a list = just those (reprinting a
+     damaged sticker from the slot drawer or the batch bar, owner 2026-10-02). */
+  const [labelSet, setLabelSet] = useState<string[] | null>(null);
+  const printing = labelSet ?? rackList.map((r) => r.rack);
+  const printLabels = usePrintPreview((action) =>
+    import('../../vendor/scm/lib/rack-label-pdf').then(({ generateRackLabelsPdf }) =>
+      generateRackLabelsPdf(printing, { warehouseCode, action })));
+  const openPrint = (labels: string[] | null) => {
+    setLabelSet(labels);
+    printLabels.openPreview();
+  };
+
   return (
     <div>
       <PageHeader back
@@ -218,6 +249,14 @@ export const WarehouseRacks = () => {
               </Link>
               <Button
                 variant="secondary"
+                icon={<Printer size={14} />}
+                onClick={() => openPrint(null)}
+                disabled={!warehouseId || rackList.length === 0}
+              >
+                Print labels
+              </Button>
+              <Button
+                variant="secondary"
                 icon={<Layers size={14} />}
                 onClick={() => { setEditing(null); setCreatingMode('seed'); }}
                 disabled={!warehouseId}
@@ -236,6 +275,19 @@ export const WarehouseRacks = () => {
             <HeaderStatStrip summary={summary} />
           </div>
         }
+      />
+      <PrintPreviewModal
+        open={printLabels.open}
+        onClose={printLabels.close}
+        docTitle="Rack Labels"
+        docNo={warehouseCode}
+        rows={[
+          { label: 'Warehouse', value: warehouseCode || '—' },
+          ...(labelSet ? [{ label: 'Racks', value: labelSet.join(', ') }] : []),
+          { label: 'Labels', value: String(printing.length) },
+          { label: 'Sheets', value: `${Math.ceil(printing.length / 10)} x A4` },
+        ]}
+        {...printLabels.handlers}
       />
 
       <div className="space-y-4">
@@ -312,6 +364,7 @@ export const WarehouseRacks = () => {
             view={view}
             onEditRack={(r) => { setEditing(r); setCreatingMode(null); }}
             onStockInHere={(rackId) => { setStockInRackId(rackId); selectTab('stockio'); }}
+            onPrintLabels={openPrint}
           />
         )}
 
@@ -687,6 +740,7 @@ function RackFormDrawer({
   // Scope — create only. Editing touches a single warehouse's rack row.
   const [scopeMode, setScopeMode] = useState<ScopeMode>('this');
   const [scopeChosen, setScopeChosen] = useState<string[]>([]);
+  const [scopeSiblings, setScopeSiblings] = useState(false);
 
   const submit = () => {
     if (!form.rack.trim()) {
@@ -712,7 +766,7 @@ function RackFormDrawer({
     } else {
       create.mutate(
         {
-          ...scopeBody(scopeMode, warehouseId, scopeChosen),
+          ...scopeBody(scopeMode, warehouseId, scopeChosen, scopeSiblings),
           rack: form.rack.trim(),
           position: form.position || undefined,
           zone: form.zone || undefined,
@@ -778,6 +832,8 @@ function RackFormDrawer({
               setMode={setScopeMode}
               chosen={scopeChosen}
               setChosen={setScopeChosen}
+              siblings={scopeSiblings}
+              setSiblings={setScopeSiblings}
             />
           )}
         </div>
@@ -808,6 +864,7 @@ function SeedRacksModal({
   const [levels, setLevels] = useState(1);
   const [scopeMode, setScopeMode] = useState<ScopeMode>('this');
   const [scopeChosen, setScopeChosen] = useState<string[]>([]);
+  const [scopeSiblings, setScopeSiblings] = useState(false);
 
   /* The labels the server WILL write, from the shared generator — the preview
      must not be a second guess at the rule (shared/rack-labels.ts). */
@@ -823,7 +880,7 @@ function SeedRacksModal({
     }
     create.mutate(
       {
-        ...scopeBody(scopeMode, warehouseId, scopeChosen),
+        ...scopeBody(scopeMode, warehouseId, scopeChosen, scopeSiblings),
         count: n,
         prefix: prefix.trim() || 'Rack',
         series: series.trim(),
@@ -882,6 +939,8 @@ function SeedRacksModal({
             setMode={setScopeMode}
             chosen={scopeChosen}
             setChosen={setScopeChosen}
+            siblings={scopeSiblings}
+            setSiblings={setScopeSiblings}
           />
         </div>
         <div className={formStyles.drawerFooter}>

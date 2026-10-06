@@ -187,4 +187,41 @@ describe("MobileConvertWizard — PO → GRN", () => {
 
     expect(await screen.findByText(SOFA_SUMMARY)).toBeTruthy();
   });
+
+  /* Owner 2026-10-02: receiving continues on the new draft (scan each line's
+     rack), so the wizard hands back the GRN's id for the app to open it. */
+  it("hands back the new draft GRN's id, not only its number", async () => {
+    authedFetch.mockImplementation(async (url: string, init?: { method?: string }) => {
+      if (url === "/grns" && init?.method === "POST") return { id: "grn-9", grnNumber: "HC-GRN-2610-009" };
+      if (url.startsWith("/mfg-purchase-orders?limit=200")) {
+        return {
+          purchaseOrders: [{
+            id: "po-1", po_number: "HC-PO-2608-001", status: "SUBMITTED",
+            po_date: "2026-08-17", total_sen: 0,
+            supplier: { id: "sup-1", code: "400-H004", name: "HOOKKA INDUSTRIES SDN. BHD." },
+          }],
+        };
+      }
+      if (url.startsWith("/grns/outstanding-po-items")) {
+        return {
+          items: [{
+            poItemId: "poi-1", poId: "po-1", poDocNo: "HC-PO-2608-001", supplierId: "sup-1",
+            itemCode: "9028-1NA", supplierSku: null, description: "9028 SOFA",
+            itemGroup: "sofa", variants: SOFA,
+            qty: 3, receivedQty: 0, remainingQty: 3, unitPriceSen: 100,
+            deliveryDate: null, warehouseLocationId: "wh-1",
+          }],
+        };
+      }
+      return {};
+    });
+    const onCreated = vi.fn();
+    wrap(<MobileConvertWizard target="grn" onBack={() => {}} onCreated={onCreated} />);
+
+    await userEvent.click(await screen.findByText("HC-PO-2608-001"));
+    await screen.findByText(SOFA_SUMMARY);
+    await userEvent.click(screen.getByRole("button", { name: "Create draft Goods Receipt" }));
+
+    await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith("HC-GRN-2610-009", "grn-9"));
+  });
 });

@@ -75,6 +75,7 @@ import {
   useUploadSofaCompartmentPhoto,
   useDeleteSofaCompartmentPhoto,
   type MfgCategory,
+  type SofaCompartmentRenameResult,
   type MfgProductRow,
   type BatchImportRow,
   type BatchImportResult,
@@ -116,6 +117,7 @@ import { formatSizeRich, formatSizeRichWithCfg, resolveSizeInfo } from '../../ve
 import { formatPhone } from '../../vendor/shared/phone';
 import { ProductModels, NewModelDialog } from './ProductModels';
 import { VariantsTab } from './products/VariantsTab';
+import { describeRenameCounts } from './products/compartmentRename';
 import { Categories } from './Categories';
 import { useBrandingPool, useProductModel } from '../../vendor/scm/lib/product-models-queries';
 import { useQueryClient } from '@tanstack/react-query';
@@ -123,6 +125,7 @@ import { parseMoneyToSen } from '../../lib/money';
 import styles from './Products.module.css';
 import { normalizeImportHeader, looksLikeGridExport, mapGridHeaders, isGridNoPrice, importFailureMessage } from './products-import-headers';
 import { ProductRow, fmtRm, fmtUnit, priceForHeightTier, useSkuGridOrder, saveStagedEdits, stageRowEdit, type ProductEditPatch } from './products/SkuEditRow';
+import { renameCompartmentMeta } from './compartmentRename';
 
 const ICON_PROPS = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -1405,21 +1408,48 @@ export const MaintenanceTab = ({
         }
       }
       if (renames.length > 0) {
-        const summary = renames.map((r) => `${r.from} → ${r.to}`).join('\n');
+        /* Preview first (no write), one company only. A code any SKU, document
+           or stock row still uses is refused: it is part of every SKU code
+           (<MODEL>-<code>), so only an unused code (a typo) may be renamed. */
+        const previews: SofaCompartmentRenameResult[] = [];
+        for (const r of renames) {
+          try {
+            const res = await renameCompartment.mutateAsync({ ...r, apply: false });
+            previews.push(res.result);
+          } catch (e) {
+            void notify({
+              title: `Cannot rename ${r.from} → ${r.to}`,
+              body: e instanceof Error ? e.message : 'Something went wrong.',
+              tone: 'error',
+            });
+            return;
+          }
+        }
+        const blocked = previews.filter((p) => p.inUseTotal > 0);
+        if (blocked.length > 0) {
+          void notify({
+            title: `${blocked.map((p) => p.from).join(', ')} is in use and cannot be renamed`,
+            body: blocked.map((p) => `${p.from}: ${describeRenameCounts(p.inUse)}`).join('\n') +
+              '\nTo change the wording staff see, edit the SKU name or the compartment description instead. Nothing was saved.',
+            tone: 'error',
+          });
+          return;
+        }
         const ok = await askConfirm({
           title: `Rename compartment code${renames.length > 1 ? 's' : ''}?`,
-          body: `${summary}\n\n` +
-            `This cascades EVERYWHERE: SKU codes + names, sales orders (incl. history), ` +
-            `delivery orders, invoices, GRN/PO lines, Modular ticks, Combos and Quick Picks.`,
+          body: previews.map((p) =>
+            `${p.from} → ${p.to}: ${describeRenameCounts(p.changes) || 'no other records'}` +
+            (p.photoCleared ? ' (its uploaded photo must be uploaded again)' : ''),
+          ).join('\n') + '\n\nThis company only. SKUs, documents and stock are not touched.',
           confirmLabel: 'Rename',
           danger: true,
         });
         if (!ok) return;
         for (const r of renames) {
           try {
-            await renameCompartment.mutateAsync(r);
+            await renameCompartment.mutateAsync({ ...r, apply: true });
           } catch (e) {
-            notify({
+            void notify({
               title: `Rename ${r.from} → ${r.to} failed`,
               body: `${e instanceof Error ? e.message : 'Something went wrong.'}\nNothing was partially renamed for this pair; fix and retry.`,
               tone: 'error',
@@ -1901,15 +1931,10 @@ const SofaCompartmentsList = ({
     const old  = arr[idx] != null ? maintEntryValue(arr[idx]!) : undefined;
     if (arr[idx] != null) arr[idx] = maintEntryWithValue(arr[idx]!, newVal);
     next.sofaCompartments = arr;
-    // Migrate the meta key alongside the code rename so the override
-    // doesn't get orphaned. If the new code already has meta, leave it.
-    if (old && old !== newVal) {
-      const m = next.sofaCompartmentMeta ?? {};
-      if (m[old] && !m[newVal]) {
-        m[newVal] = m[old]!;
-        delete m[old];
-        next.sofaCompartmentMeta = m;
-      }
+    if (old) {
+      next.sofaCompartmentMeta = renameCompartmentMeta(
+        next.sofaCompartmentMeta ?? {}, old, newVal, seedCompartmentMeta,
+      );
     }
     onChange(next);
   };

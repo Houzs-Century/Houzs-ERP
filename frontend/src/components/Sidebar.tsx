@@ -256,14 +256,15 @@ export const NAV_TABS: NavTab[] = [
   },
   // 申请付款 (owner 2026-09-30): whoever holds scm.payment_request.create — a PIC
   // paying an event's rental — asks Finance to pay a bill here. Finance works
-  // the same page from Money out.
+  // the same page from Money out. The key alone shows it: the sales team was
+  // left out of the grant (owner 2026-10-01, 除了 sales team), so a sales rep
+  // without it no longer sees an entry the route and the server refuse.
   {
     section: "workspace",
     to: "/scm/payment-requests",
     label: "Payment Requests",
     icon: HandCoins,
     anyPerm: ["*", "scm.payment_request.create"],
-    showForSalesRep: true,
   },
   // Sales Entries — Nico 2026-07-09: "sales entries 我不要了". Sidebar
   // entry removed. The /sales route + Sales.tsx page + backend endpoints
@@ -716,6 +717,9 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/payment-requests", label: "Payment Requests", icon: HandCoins, anyPerm: ["*", "scm.payment_voucher.create"] },
           // 欠正式单 (owner 2026-10-01) — payments made on a proforma, still owing the official invoice.
           { to: "/scm/official-docs", label: "Official Invoices Owed", icon: FileText, anyPerm: ["*", "scm.payment_voucher.create"] },
+          // Supplier Maintenance (owner 2026-10-02: 放在 money out 的 sidebar) — Finance's own
+          // supplier list: what each is owed, its bank, and the ones Finance keeps to itself.
+          { to: "/scm/supplier-maintenance", label: "Supplier Maintenance", icon: Truck, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
         ],
       },
       {
@@ -763,6 +767,8 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/accounting?tab=charges", label: "Merchant charges", icon: CreditCard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
           // The month's orders per group against a budgeted operating expense (owner 2026-09-12; docs/bugs/0835).
           { to: "/scm/accounting?tab=performance", label: "Performance P&L", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          // Every product the month sold, ranked by gross profit after its share of the gifts (owner 2026-10-05).
+          { to: "/scm/accounting?tab=products", label: "Product Profit", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
           // What each event cost, from the ledger — voucher and AP invoice lines tagged with it (owner 2026-09-30, 5a).
           { to: "/scm/accounting?tab=events", label: "Event costs", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
           { to: "/reports/fair-report", label: "Sales Report", icon: BarChart3, requireFairReport: true, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance", "scm.finance.accounting", "scm.finance.outstanding", "projects.finances"] },

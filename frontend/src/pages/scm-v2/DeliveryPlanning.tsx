@@ -247,6 +247,14 @@ export const DeliveryPlanning = () => {
     if (r === 'ALL') next.delete('region'); else next.set('region', r);
     setParams(next, { replace: true });
   };
+  /* Toolbar "Reset layout": back to All / All. The grid clears its own funnels
+     and search box in the same click. */
+  const resetView = () => {
+    const next = new URLSearchParams(params);
+    next.delete('state');
+    next.delete('region');
+    setParams(next, { replace: true });
+  };
 
   const allOrders = useMemo<PlanningOrder[]>(() => data?.orders ?? [], [data]);
   const counts = data?.counts ?? { ALL: 0, PENDING_DELIVERY: 0, PENDING_SCHEDULE: 0, OVERDUE: 0, DELIVERED: 0 };
@@ -318,9 +326,16 @@ export const DeliveryPlanning = () => {
                     }}
                   >
                     {([
-                      ['delivery', 'Send Now', 'Delivery-date message'],
-                      ['amend', 'Amend Now', 'Amend / reschedule message'],
-                      ['onetime', 'One Time Send Now', 'Delivery time · driver info · balance …'],
+                      ['delivery', 'Send Now', 'Delivery-date message (Confirm / Amend)'],
+                      ['amend', 'Amend Now', 'Amend / reschedule message (Confirm / Amend)'],
+                      ['postpone', 'Postpone', 'We must move the date — reason + proposed date'],
+                      ['driver_info', 'Driver Info', 'Day-before: date · time · driver · lorry plate'],
+                      ['balance_reminder', 'Balance Reminder', 'Outstanding balance + bank details (owing orders only)'],
+                      ['reminder_1', 'Reminder 1', 'No reply yet — first nudge'],
+                      ['reminder_2', 'Reminder 2', 'No reply yet — second nudge'],
+                      ['reminder_3', 'Reminder 3', 'No reply yet — final nudge'],
+                      ['postage', 'Postage Confirm', 'Confirm the postage address'],
+                      ['delivery_completed', 'Delivery Completed', 'Thank-you after delivery'],
                     ] as const).map(([k, label, hint]) => (
                       <button
                         key={k}
@@ -357,6 +372,7 @@ export const DeliveryPlanning = () => {
 
       <DeliveryPlanningBoard
         orders={allOrders}
+        resetFilters={{ active: activeState !== 'ALL' || activeRegion !== 'ALL', onReset: resetView }}
         layoutPresets={DELIVERY_PLANNING_LAYOUT_PRESETS}
         initialRowLimit={200}
         defaultSort={orderSort}

@@ -61,6 +61,8 @@ function fixture(): DataSet {
       { id: 'x2', code: 'X-BED-1', name: '2990 Bed', category: 'BEDFRAME', status: 'ACTIVE', company_id: 2, model_id: null },
       // A discontinued Houzs SKU — must never appear (status gate), regardless of company.
       { id: 'h3', code: 'H-OLD-1', name: 'Houzs Old', category: 'SOFA', status: 'DISCONTINUED', company_id: 1, model_id: null },
+      // BUG-50: an ACTIVE SKU under a deactivated Model (the join arrives embedded).
+      { id: 'h4', code: 'H-PROTECTOR-K', name: 'Houzs Protector', category: 'ACCESSORY', status: 'ACTIVE', company_id: 1, model_id: 'hm2', model: { allowed_options: null, active: false } },
     ],
     product_models: [
       { id: 'hm1', model_code: 'HM1', category: 'SOFA', company_id: 1, allowed_options: { seat: ['a'] } },
@@ -110,6 +112,11 @@ describe('GET /mfg-products — the SKU picker isolates by active company', () =
     const { codes } = await mfgCodes(2);
     expect(codes).toEqual(['X-BED-1', 'X-SOFA-1']);
     expect(codes.some((c) => c.startsWith('H-'))).toBe(false);
+  });
+
+  test('BUG-50: a SKU whose Model was deactivated is not offered, even with its own status ACTIVE', async () => {
+    const { codes } = await mfgCodes(1);
+    expect(codes).not.toContain('H-PROTECTOR-K');
   });
 
   test('the response Varies on X-Company-Id so the private cache cannot leak across a switch', async () => {

@@ -2,11 +2,14 @@
    backlog button, the list with its filters, one invoice with its payment,
    cancel behind a reason, post again; Print in the detail prints the one
    invoice and ticked rows print as one document in list order
-   (docs/bugs/0834). The server half is backend/tests/depositInvoices.test.ts. */
+   (docs/bugs/0834). Since 2026-10-06 a row opens THE INVOICE — the page as it
+   prints, A4 with its order's address and figures — and every print reads
+   the sheets (GET /deposit-invoices/sheets). The server half is
+   backend/tests/depositInvoices.test.ts. */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, test, vi } from 'vitest';
+import { beforeAll, describe, expect, test, vi } from 'vitest';
 import type { DepositInvoice } from '../../vendor/scm/lib/deposit-invoice-queries';
 
 const ROWS: DepositInvoice[] = [
@@ -41,7 +44,15 @@ const postMutate = vi.fn();
 const lastList = { value: '' };
 const pdfSingle = vi.fn(async (..._args: unknown[]) => {});
 const pdfBatch = vi.fn(async (..._args: unknown[]) => {});
-vi.mock('../../vendor/scm/lib/deposit-invoice-pdf', () => ({ generateDepositInvoicePdf: pdfSingle, generateDepositInvoicesPdf: pdfBatch }));
+const pdfBlob = vi.fn(async (..._args: unknown[]) => new Blob(['%PDF-1.4'], { type: 'application/pdf' }));
+vi.mock('../../vendor/scm/lib/deposit-invoice-pdf', () => ({ generateDepositInvoicePdf: pdfSingle, generateDepositInvoicesPdf: pdfBatch, depositInvoicePdfBlob: pdfBlob }));
+/* The order behind an invoice, as the sheets serve it. */
+const ORDER = { address1: '12 Jalan Satu', phone: '0123456789', email: null, total_sen: 336500, paid_to_date_sen: 100000 };
+const sheetsAsked: string[][] = [];
+beforeAll(() => {
+  /* jsdom has no object URLs; the pop-out's page is a blob in an iframe. */
+  Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:di'), revokeObjectURL: vi.fn() });
+});
 
 vi.mock('../../vendor/scm/lib/deposit-invoice-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
@@ -56,6 +67,11 @@ vi.mock('../../vendor/scm/lib/deposit-invoice-queries', async (importOriginal) =
   useInvoiceDeliveredOrders: () => ({ mutate: invoiceDeliveredMutate, isPending: false, isSuccess: false, data: undefined }),
   useCancelDepositInvoice: () => ({ mutate: cancelMutate, isPending: false, isError: false, isSuccess: false, error: null, data: undefined }),
   usePostDepositInvoice: () => ({ mutate: postMutate, isPending: false, isError: false, isSuccess: false, error: null, data: undefined }),
+  useDepositInvoiceSheet: (id: string | null) => ({ data: id ? { ...ROWS.find((r) => r.id === id)!, order: ORDER } : undefined, isError: false, error: null }),
+  fetchDepositInvoiceSheets: async (ids: string[]) => {
+    sheetsAsked.push(ids);
+    return ids.map((id) => ({ ...ROWS.find((r) => r.id === id)!, order: ORDER }));
+  },
 }));
 
 const { DepositInvoices } = await import('./DepositInvoices');
@@ -141,20 +157,42 @@ describe('the Deposit Invoices page', () => {
     render(<MemoryRouter><DepositInvoices /></MemoryRouter>);
     fireEvent.click(screen.getByText('2990-DI-2609-002'));
     const dialog = screen.getByLabelText('Deposit invoice');
+    /* The page is drawn first — what Print prints is what the pop-out shows. */
+    await waitFor(() => expect(within(dialog).getByTitle('Deposit invoice 2990-DI-2609-002 as printed')).toBeTruthy());
     fireEvent.click(within(dialog).getByText('Print'));
     await waitFor(() => expect(pdfSingle).toHaveBeenCalled());
-    expect(pdfSingle.mock.calls[0]?.[0]).toMatchObject({ di_number: '2990-DI-2609-002', status: 'CANCELLED', so_doc_no: '2990-SO-2609-002', method: 'merchant' });
+    /* The sheet prints — the row with its order's address and figures. */
+    expect(pdfSingle.mock.calls[0]?.[0]).toMatchObject({ di_number: '2990-DI-2609-002', status: 'CANCELLED', so_doc_no: '2990-SO-2609-002', method: 'merchant', order: ORDER });
     expect(pdfSingle.mock.calls[0]?.[1]).toEqual({ action: 'print' });
+  });
 
+  test('ticked rows print as ONE document in list order, each sheet with its order (docs/bugs/0834)', async () => {
+    pdfBatch.mockClear();
+    render(<MemoryRouter><DepositInvoices /></MemoryRouter>);
     /* Ticked in the other order; printed in LIST order. */
     fireEvent.click(screen.getByLabelText('Tick 2990-DI-2609-002'));
     fireEvent.click(screen.getByLabelText('Tick 2990-DI-2609-001'));
     expect(screen.getByText('2 ticked')).toBeTruthy();
     fireEvent.click(screen.getByText('Print 2'));
     await waitFor(() => expect(pdfBatch).toHaveBeenCalled());
-    const list = pdfBatch.mock.calls[0]?.[0] as Array<{ di_number: string }>;
+    const list = pdfBatch.mock.calls[0]?.[0] as Array<{ di_number: string; order: unknown }>;
     expect(list.map((d) => d.di_number)).toEqual(['2990-DI-2609-001', '2990-DI-2609-002']);
+    expect(list[0]?.order).toEqual(ORDER);
+    expect(sheetsAsked.at(-1)).toEqual(['d1', 'd2']);
     expect(pdfBatch.mock.calls[0]?.[1]).toEqual({ action: 'print' });
+  });
+
+  /* 点一行就直接打开这张单 (owner 2026-10-06): the pop-out IS the invoice. */
+  test('a row opens the invoice as it prints — the A4 page in the pop-out — and Save PDF keeps it', async () => {
+    pdfBlob.mockClear(); pdfSingle.mockClear();
+    render(<MemoryRouter><DepositInvoices /></MemoryRouter>);
+    fireEvent.click(screen.getByText('Ah Seng'));
+    const dialog = screen.getByLabelText('Deposit invoice');
+    await waitFor(() => expect(within(dialog).getByTitle('Deposit invoice 2990-DI-2609-003 as printed').getAttribute('src')).toBe('blob:di'));
+    expect(pdfBlob.mock.calls[0]?.[0]).toMatchObject({ di_number: '2990-DI-2609-003', order: ORDER });
+    fireEvent.click(within(dialog).getByText('Save PDF'));
+    await waitFor(() => expect(pdfSingle).toHaveBeenCalled());
+    expect(pdfSingle.mock.calls[0]?.[1]).toEqual({ action: 'save' });
   });
 });
 

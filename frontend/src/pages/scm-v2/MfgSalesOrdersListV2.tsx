@@ -106,6 +106,7 @@ import { capability } from "../../auth/capabilities";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { customerRefOf } from '../../lib/customer-ref';
+import { soExemptionExpiryOf } from '../../lib/so-exemption-expiry';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Minimal row shape the listing needs. The full SoRow (in MfgSalesOrdersList
@@ -1476,8 +1477,8 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "sales_exemption_expiry", group: "Basic", label: SO_LABELS.salesExemptionExpiryDate, width: "150px", defaultHidden: true, disableSort: true, exportFormat: "date",
-      getValue: (r) => r.sales_exemption_expiry ?? "",
-      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.sales_exemption_expiry)}</span>,
+      getValue: (r) => soExemptionExpiryOf(r) ?? "",
+      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(soExemptionExpiryOf(r))}</span>,
     },
     {
       key: "sales_location",

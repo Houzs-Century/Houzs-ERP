@@ -590,6 +590,20 @@ describe('answering a payment request (?fromRequest=, 申请付款)', () => {
     requestDetail = undefined;
   });
 
+  /* Owner 2026-10-02 (多一个第五给他们写note): the requester's note comes along. */
+  test('the requester\'s note comes along into the voucher\'s notes', async () => {
+    mutateAsync.mockClear();
+    requestDetail = { id: 'prq-1', request_no: 'HC-PRQ-2609-004', requested_by_name: 'James Seow', payee_name: 'MLE EVENTS SDN BHD', amount_sen: 850000, purpose: 'Booth F1 rental', project_id: 348, bank_name: 'Maybank', bank_account_no: '5123', bank_account_name: 'MLE EVENTS SDN BHD', status: 'SUBMITTED', stage: 'SUBMITTED', voucher: null, note: 'Pay before 25/09' };
+    draw('/scm/payment-vouchers/new?fromRequest=prq-1');
+    const account = screen.getByLabelText('line 1 amount').closest('[data-line]')!.querySelector('[role="combobox"]') as HTMLInputElement;
+    fireEvent.focus(account);
+    fireEvent.mouseDown(screen.getByText('900-A002 · Advertisement'));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3', cancelable: true, bubbles: true }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0]![0].notes).toBe('Payment request HC-PRQ-2609-004 — Booth F1 rental · pay to Maybank 5123 MLE EVENTS SDN BHD · Note: Pay before 25/09');
+    requestDetail = undefined;
+  });
+
   /* 6.2 (owner 2026-09-30): the requester's bill is READ on opening — its lines
      replace the one asked for, on the request's event, under the account this
      vendor was last paid from; its number and date join the notes; a total that
@@ -705,9 +719,10 @@ describe('the Customer Refund (?type=refund, §14)', () => {
     await waitFor(() => expect((screen.getByLabelText('Customer') as HTMLInputElement).value).toBe('Ah Meng · 0123'));
     /* The deposit-invoice half is said before the voucher is raised (docs/bugs/0860). */
     expect(screen.getByText(/2 deposit invoices standing for/)).toBeTruthy();
-    /* Payments with their ledger flag; the AutoCount-era row says so. */
+    /* Payments with their ledger flag; on an order the AutoCount row counts
+       too (owner 2026-10-05) and says so. */
     expect(screen.getByText('✓ booked')).toBeTruthy();
-    expect(screen.getByText('AutoCount era')).toBeTruthy();
+    expect(screen.getByText('from AutoCount — counts')).toBeTruthy();
     expect(screen.getByText('RM 300.00 refundable')).toBeTruthy();
     expect(screen.getByText('2990-MRF-2607-001').closest('a')!.getAttribute('href')).toBe('/scm/payment-vouchers/pv-old');
     /* The amount opened at the headroom; type a partial. */

@@ -27,6 +27,7 @@ export * from './variant-key';
 // ambiguous). The two symbols only sofa-combo-pricing carries that consumers
 // need — SofaPriceTier (type) + buildComboLabel — are re-exported by name.
 export * from './sofa-build';
+export * from './sofa-default-layout';
 export * from './sofa-quick-presets';
 export * from './sofa-tier';
 export { buildComboLabel, type SofaPriceTier } from './sofa-combo-pricing';

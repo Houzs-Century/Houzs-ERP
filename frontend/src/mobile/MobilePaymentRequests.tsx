@@ -27,8 +27,8 @@ import {
   useUploadPaymentRequestFile, useWithdrawPaymentRequest,
   type PaymentRequest, type PaymentRequestInput,
 } from "../vendor/scm/lib/payment-request-queries";
-import { billFactsOf, needsEvent, useRequestBillRead } from "../vendor/scm/lib/request-bill-read";
-import { BillInstalments, BillMatchesNote, BillReadNote, billFactsLine } from "../vendor/scm/components/RequestBill";
+import { BILL_FILL_LABEL, billFactsOf, billOffer, fillFromBill, filledFromBill, needsEvent, useRequestBillRead, type BillOffer } from "../vendor/scm/lib/request-bill-read";
+import { BillInstalments, BillMatchesNote, BillReadPanel, billFactsLine } from "../vendor/scm/components/RequestBill";
 import { OfficialDocChip } from "../vendor/scm/components/OfficialDoc";
 import { useUploadOfficialDoc } from "../vendor/scm/lib/official-doc-queries";
 import { EventSuggestions } from "../vendor/scm/components/EventSuggestions";
@@ -229,6 +229,7 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
       {row("Pay by", fmtDateOrDash(r.due_date))}
       {row("Event", eventCellText(labels.data, r.project_id))}
       {row("For", r.purpose)}
+      {r.note && row("Note · 备注", r.note)}
       {row("The bill", r.bill_no || r.bill_date || r.bill_total_sen != null ? billFactsLine({ billNo: r.bill_no, billDate: r.bill_date, totalSen: r.bill_total_sen }) : "— not read")}
       {r.project_id == null && r.no_event_reason && row("No event — why", r.no_event_reason)}
       {hasInstalments(r.family) && <BillInstalments family={r.family} currentId={r.id} />}
@@ -304,9 +305,12 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
     bankName: initial?.bank_name ?? null,
     bankAccountNo: initial?.bank_account_no ?? null,
     bankAccountName: initial?.bank_account_name ?? null,
+    note: initial?.note ?? null,
   }));
   /* The bill is READ as it is attached (owner 2026-10-01, item 1). */
   const billRead = useRequestBillRead();
+  /* What the last read offered each field — page by page, a later read may say more. */
+  const lastOffer = useRef<BillOffer>({});
   const [noEvent, setNoEvent] = useState(() => !!initial?.no_event_reason);
   const [noEventReason, setNoEventReason] = useState(initial?.no_event_reason ?? "");
   const set = (patch: Partial<PaymentRequestInput>) => setV((prev) => ({ ...prev, ...patch }));
@@ -323,6 +327,13 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
   const takeFiles = async (list: File[]) => {
     setFiles(list);
     const read = await billRead.run(list);
+    /* Owner 2026-10-02: fill what is still empty from the paper — all of it stays editable. */
+    if (read) {
+      const offer = billOffer(read.bill);
+      const before = lastOffer.current;
+      lastOffer.current = offer;
+      setV((prev) => fillFromBill(prev, offer, before));
+    }
     const readTotal = read?.bill.totalSen ?? null;
     if (readTotal != null && readTotal > 0) setBillTotal((prev) => prev ?? readTotal);
     const top = read?.eventBill ? read.eventSuggestions[0] : undefined;
@@ -331,6 +342,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
   const eventNeeded = hasEvents && (needsEvent(billRead.state) || !!initial?.event_bill);
   const eventOk = !eventNeeded || v.projectId != null || (noEvent && noEventReason.trim().length >= NO_EVENT_REASON_MIN);
   const reading = billRead.state.status === "reading";
+  const filledFields = filledFromBill(v, billRead.state.status === "done" ? billOffer(billRead.state.result.bill) : {}).map((k) => BILL_FILL_LABEL[k]);
   const missing = [
     v.payeeName.trim() === "" ? "who to pay" : null,
     v.amountSen > 0 ? null : "the amount",
@@ -348,6 +360,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
     const body: PaymentRequestInput = {
       ...v,
       ...billFactsOf(billRead.state),
+      note: v.note?.trim() || null,
       noEventReason: v.projectId == null && noEvent ? noEventReason.trim() : null,
       ...(isBalance ? {} : { billTotalSen: billTotal }),
       payPct: pctValue != null && billTotal != null && pctOf(billTotal, pctValue) === v.amountSen ? pctValue : null,
@@ -382,9 +395,12 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
       </button>}>
       {initial?.status === "REJECTED" && initial.finance_note && <div className="st-warn" role="status">Finance returned it: {initial.finance_note}</div>}
       {error && <div className="st-warn" role="alert">{error}</div>}
+      {/* The order it is filled in (owner 2026-10-02: 整齐一点 — the desktop form's
+         four steps): the bill, who is paid and into which account, how much,
+         what for. */}
       {!initial && (
         <>
-          <div className="sc-sl"><span className="t">The bill *</span><span className="ln" /></div>
+          <div className="sc-sl"><span className="t">① 单据 · The bill *</span><span className="ln" /></div>
           <input ref={camRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} aria-label="Take a photo of the bill"
             onChange={(e) => { void takeFiles([...files, ...(e.target.files ?? [])]); e.target.value = ""; }} />
           <input ref={libRef} type="file" accept={PV_FILE_ACCEPT} multiple style={{ display: "none" }} aria-label="Pick bill files"
@@ -399,15 +415,22 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
             <button type="button" className="btn" style={{ flex: 1 }} onClick={() => camRef.current?.click()}>📷 Photo</button>
             <button type="button" className="btn" style={{ flex: 1, background: "var(--bg)", color: "var(--ink)" }} onClick={() => libRef.current?.click()}>Pick file</button>
           </div>
-          <BillReadNote state={billRead.state} />
+          <BillReadPanel state={billRead.state} filled={filledFields} />
         </>
       )}
+      <div className="sc-sl"><span className="t">{initial ? "付给谁 · Pay to" : "② 付给谁 · Pay to"}</span><span className="ln" /></div>
       {field("Pay to *", <input className="cal-sel" aria-label="Pay to" value={v.payeeName} onChange={(e) => set({ payeeName: e.target.value })} placeholder="e.g. MLE EVENTS SDN BHD" />)}
-      {!isBalance && field("The bill's total (MYR)", <MoneyInput bare valueSen={billTotal ?? 0} inputClassName="cal-sel" selectOnFocus aria-label="Bill total"
+      {field("Payee's bank", <input className="cal-sel" aria-label="Payee's bank" value={v.bankName ?? ""} onChange={(e) => set({ bankName: e.target.value || null })} placeholder="e.g. Maybank" />)}
+      {field("Account no.", <input className="cal-sel" aria-label="Account no." inputMode="numeric" value={v.bankAccountNo ?? ""} onChange={(e) => set({ bankAccountNo: e.target.value || null })} />)}
+      {field("Account name", <input className="cal-sel" aria-label="Account name" value={v.bankAccountName ?? ""} onChange={(e) => set({ bankAccountName: e.target.value || null })} />)}
+      <div className="sc-sl"><span className="t">{initial ? "付多少 · Amount" : "③ 付多少 · Amount"}</span><span className="ln" /></div>
+      {!isBalance && field("Bill total (MYR)", <MoneyInput bare valueSen={billTotal ?? 0} inputClassName="cal-sel" selectOnFocus aria-label="Bill total"
         onCommit={(sen) => { const t = sen != null && sen > 0 ? sen : null; setBillTotal(t); if (pct) applyPct(pct, t); }} />)}
-      {field("Amount to pay now (MYR) *", <MoneyInput bare valueSen={v.amountSen} onCommit={(sen) => set({ amountSen: sen ?? 0 })} inputClassName="cal-sel" selectOnFocus aria-label="Amount" />)}
+      {field("Pay now (MYR) *", <MoneyInput bare valueSen={v.amountSen} onCommit={(sen) => set({ amountSen: sen ?? 0 })} inputClassName="cal-sel" selectOnFocus aria-label="Amount" />)}
       {billTotal != null && field("…or a percent of the bill", <input className="cal-sel" inputMode="decimal" aria-label="Percent of the bill" value={pct} placeholder="e.g. 50" onChange={(e) => applyPct(e.target.value, billTotal)} />)}
       {field("Pay by", <DateField fullWidth className="cal-sel" aria-label="Pay by" value={v.dueDate ?? ""} onChange={(iso) => set({ dueDate: iso || null })} />)}
+      <div className="sc-sl"><span className="t">{initial ? "用途 · What for" : "④ 用途 · What for"}</span><span className="ln" /></div>
+      {field("What is it for *", <textarea className="cal-sel" rows={2} aria-label="What is it for" value={v.purpose} onChange={(e) => set({ purpose: e.target.value })} placeholder="e.g. Booth F1 rental, balance 50%" />)}
       {hasEvents && field(eventNeeded ? "Event * — this bill is for an event" : "Event", <EventSelect value={v.projectId} around={v.dueDate || today} optionsPath={EVENTS_PATH} className="cal-sel" aria-label="Event" onChange={(id) => set({ projectId: id })} />)}
       {eventNeeded && billRead.state.status === "done" && (
         <EventSuggestions suggestions={billRead.state.result.eventSuggestions} current={v.projectId} onUse={(id) => set({ projectId: id })} />
@@ -421,11 +444,8 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
           {noEvent && field("Why there is no event *", <input className="cal-sel" aria-label="Why there is no event" value={noEventReason} onChange={(e) => setNoEventReason(e.target.value)} placeholder="e.g. the fair is not in PMS yet" />)}
         </>
       )}
-      {field("What is it for *", <textarea className="cal-sel" rows={2} aria-label="What is it for" value={v.purpose} onChange={(e) => set({ purpose: e.target.value })} placeholder="e.g. Booth F1 rental, balance 50%" />)}
-      <div className="sc-sl"><span className="t">Payee's bank</span><span className="ln" /></div>
-      {field("Bank", <input className="cal-sel" aria-label="Payee's bank" value={v.bankName ?? ""} onChange={(e) => set({ bankName: e.target.value || null })} placeholder="e.g. Maybank" />)}
-      {field("Account no.", <input className="cal-sel" aria-label="Account no." inputMode="numeric" value={v.bankAccountNo ?? ""} onChange={(e) => set({ bankAccountNo: e.target.value || null })} />)}
-      {field("Account name", <input className="cal-sel" aria-label="Account name" value={v.bankAccountName ?? ""} onChange={(e) => set({ bankAccountName: e.target.value || null })} />)}
+      <div className="sc-sl"><span className="t">{initial ? "备注 · Note" : "⑤ 备注 · Note"}</span><span className="ln" /></div>
+      {field("Note to Finance (optional)", <textarea className="cal-sel" rows={3} aria-label="Note" maxLength={2000} value={v.note ?? ""} onChange={(e) => set({ note: e.target.value })} placeholder="e.g. Please pay before the fair starts" />)}
     </Shell>
   );
 }
@@ -435,7 +455,8 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
    is left to ask; the official invoice may come along. */
 function BalanceScreen({ request, onBack, onDone }: { request: PaymentRequest; onBack: () => void; onDone: (id: string) => void }) {
   const balance = useRequestBalance();
-  const upload = useUploadPaymentRequestFile();
+  /* Uploaded AS the official invoice (漏洞 3) — the desktop balance form's rule. */
+  const official = useUploadOfficialDoc();
   const camRef = useRef<HTMLInputElement>(null);
   const fam = request.family;
   const total = fam?.totalSen ?? null;
@@ -446,7 +467,7 @@ function BalanceScreen({ request, onBack, onDone }: { request: PaymentRequest; o
   const [purpose, setPurpose] = useState(`Balance — ${request.purpose.replace(/^Balance — /, "")}`);
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const busy = balance.isPending || upload.isPending;
+  const busy = balance.isPending || official.isPending;
   const pctValue = (() => { const n = Number(pct); return pct.trim() !== "" && Number.isFinite(n) && n > 0 && n <= 100 ? n : null; })();
 
   const save = async () => {
@@ -459,7 +480,7 @@ function BalanceScreen({ request, onBack, onDone }: { request: PaymentRequest; o
       });
       for (const f of files) {
         try {
-          await upload.mutateAsync({ id: res.request.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+          await official.mutateAsync({ requestId: res.request.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
         } catch { break; }
       }
       onDone(res.request.id);

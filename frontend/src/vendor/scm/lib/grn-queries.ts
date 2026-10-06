@@ -306,6 +306,51 @@ export const useUpdateGrnItem = () => {
   });
 };
 
+/* Rack is physical placement only — its own endpoint, so it stays settable on a
+   line the PI/PR child-lock freezes. Posted lines also move on the rack board. */
+export const useSetGrnLineRack = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ grnId, itemId, rackId }: { grnId: string; itemId: string; rackId: string | null }) =>
+      authedFetch<{ ok: true }>(`/grns/${grnId}/items/${itemId}/rack`, {
+        method: 'PATCH', body: JSON.stringify({ rackId }),
+      }),
+    onSuccess: (_, vars) => {
+      void qc.invalidateQueries({ queryKey: ['grn-detail', vars.grnId] });
+      void qc.invalidateQueries({ queryKey: ['grn-racks', vars.grnId] });
+      void qc.invalidateQueries({ queryKey: ['warehouse'] });
+    },
+  });
+};
+
+export type GrnItemRackRow = { grnItemId: string; rackId: string; qty: number };
+
+/* A line split over several racks (scm.grn_item_racks) — every split row of one
+   GRN, read once and shared by all its line cards. */
+export const useGrnItemRacks = (grnId: string | undefined) =>
+  useQuery({
+    queryKey: ['grn-racks', grnId],
+    enabled: !!grnId,
+    queryFn: () => authedFetch<{ racks: GrnItemRackRow[] }>(`/grns/${grnId}/racks`).then((r) => r.racks),
+    retry: retryUnlessClientError,
+  });
+
+/* Replace one DRAFT line's split. The server refuses a split that holds more
+   than was accepted; posting refuses one that holds less. */
+export const useSetGrnLineRacks = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ grnId, itemId, racks }: { grnId: string; itemId: string; racks: { rackId: string; qty: number }[] }) =>
+      authedFetch<{ ok: true }>(`/grns/${grnId}/items/${itemId}/racks`, {
+        method: 'PUT', body: JSON.stringify({ racks }),
+      }),
+    onSuccess: (_, vars) => {
+      void qc.invalidateQueries({ queryKey: ['grn-racks', vars.grnId] });
+      void qc.invalidateQueries({ queryKey: ['grn-detail', vars.grnId] });
+    },
+  });
+};
+
 export const useDeleteGrnItem = () => {
   const qc = useQueryClient();
   return useMutation({

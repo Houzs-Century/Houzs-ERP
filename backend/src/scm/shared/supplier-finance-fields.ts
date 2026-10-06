@@ -12,18 +12,25 @@
 // supplier's currency and prints its terms. The CODE is neither side's alone:
 // everyone reads it (it names the supplier on every purchase document and
 // AutoCount export) and only Finance changes it.
+//
+// Supplier Maintenance (owner 2026-10-02) added two things to the Finance part:
+// the supplier's bank, which a payment carries (A3a), and the purchasing tick —
+// for_purchasing false is a supplier Finance keeps to itself, one purchasing
+// never sees (A2a).
 // ----------------------------------------------------------------------------
 
 /** The Finance part, as scm.suppliers names the columns. */
 export const SUPPLIER_FINANCE_COLUMNS = [
   'credit_limit_sen', 'tin_number', 'business_reg_no', 'registration_no',
   'exemption_no', 'statement_type', 'aging_basis',
+  'bank_name', 'bank_account_no', 'bank_account_name', 'for_purchasing',
 ] as const;
 
 /** The same fields as a create or update body names them. */
 export const SUPPLIER_FINANCE_BODY_KEYS = [
   'creditLimitSen', 'tinNumber', 'businessRegNo', 'registrationNo',
   'exemptionNo', 'statementType', 'agingBasis',
+  'bankName', 'bankAccountNo', 'bankAccountName', 'forPurchasing',
 ] as const;
 
 export type SupplierFinanceColumn = (typeof SUPPLIER_FINANCE_COLUMNS)[number];

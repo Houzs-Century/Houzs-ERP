@@ -37,7 +37,7 @@ import { missingVariantAxes } from '@2990s/shared/so-variant-rule';
 import { computeTotalHeight, totalHeightPatch } from '../../shared/total-height';
 import { restrictPricedToPool, restrictStringsToPool } from '../../shared/maintenance-pools';
 import { fabricAllowedByPool } from '../../shared/fabric-pool';
-import { activeOptions, isColourKiv, isDeliveryFeeServiceCode, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
+import { activeOptions, CONSOLE_ATTACH_KEY, isColourKiv, isDeliveryFeeServiceCode, isServiceCategory, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import {
   useMfgProducts,
   matchesProductQuery,
@@ -197,6 +197,8 @@ const SoLineCardInner = ({
   lineDateLocked,
   seedSofaLegDefault,
   searchHint,
+  attachOptions,
+  chargeOnly = false,
 }: {
   index:     number;
   draft:     SoLineDraft;
@@ -274,6 +276,14 @@ const SoLineCardInner = ({
      they pick a real SKU. It is a HINT ONLY — never committed as the product
      value (a no-match line must be filled from the dropdown, not free-typed). */
   searchHint?: string;
+  /* Console lines: the sofa modules on this order it can be joined to
+     (`consoleAttachOptions`); stored as variants.attachTo so the PO layout puts
+     the Console beside that module instead of guessing from line order. Null
+     on documents that do not feed a PO layout, and on non-Console lines. */
+  attachOptions: string[] | null;
+  /* DEV-32 — an SO line after its DO: the picker offers charge (SERVICE) SKUs
+     only, and the amount is typed: a transport or storage charge is priced per order. */
+  chargeOnly?: boolean;
 }) => {
   const notify = useNotify();
   const maintQ   = useMaintenanceConfig('master');
@@ -299,7 +309,7 @@ const SoLineCardInner = ({
      lines. The server still enforces the catalog price on lines it CAN price
      (isHatchSales in lib/auth.tsx — remove with the hatch). */
   const { staff } = useAuth();
-  const canEditPrice = isAdminLevel(staff?.role) || isHatchSales(staff?.role);
+  const canEditPrice = chargeOnly || isAdminLevel(staff?.role) || isHatchSales(staff?.role);
   /* DELIVERY FEE — the amount cell edits the LINE AMOUNT, not the unit price.
      The fee is derived (owner 2026-08-07, "every ringgit is a LINE"), so a
      typed unit price never survived: the next rebuild re-derived 250 over it
@@ -378,9 +388,9 @@ const SoLineCardInner = ({
   const allProducts = productsQuery.data ?? [];
   const candidates = useMemo(
     () => (trimmedSearch.length >= 2
-      ? allProducts.filter((p) => matchesProductQuery(p, trimmedSearch))
+      ? allProducts.filter((p) => matchesProductQuery(p, trimmedSearch) && (!chargeOnly || isServiceCategory(p.category)))
       : []),
-    [allProducts, trimmedSearch],
+    [allProducts, trimmedSearch, chargeOnly],
   );
   /* Owner 2026-08-08 ("square pillow", HC-SO-2607-013) — typed text the
      catalog does not match must read as an ERROR, not sit quietly in the box:
@@ -1211,8 +1221,18 @@ const SoLineCardInner = ({
               options={sortByNumeric(restrictP(activeOptions(maint!.sofaLegHeights, String(draft.variants.legHeight ?? '')), allowOpts?.leg_heights))}
               onChange={(v) => setVariant('legHeight', v)}
             />
-            {/* Empty cell so the 4-col grid stays balanced */}
-            <span />
+            {attachOptions ? (
+              <VariantSelect
+                label="Attached to"
+                value={String(draft.variants[CONSOLE_ATTACH_KEY] ?? '')}
+                disabled={!isEditing}
+                options={attachOptions.map((id) => ({ value: id, priceSen: 0 }))}
+                onChange={(v) => setVariant(CONSOLE_ATTACH_KEY, v)}
+              />
+            ) : (
+              /* Empty cell so the 4-col grid stays balanced */
+              <span />
+            )}
           </div>
           {colourKiv && (
             <div style={{ fontSize: 'var(--fs-11)', fontWeight: 600, color: 'var(--c-festive-b, #B8331F)' }}>

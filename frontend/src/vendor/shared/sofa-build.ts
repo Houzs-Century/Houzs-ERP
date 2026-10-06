@@ -211,8 +211,9 @@ const MODULE_BY_ID = new Map<string, SofaModuleSpec>(SOFA_MODULES.map((m) => [m.
 
 /* ─── Structural fallback (Maintenance-is-master, Loo 2026-06-04) ───────
  *
- * A compartment code RENAMED on the Maintenance master pool cascades through
- * every stored copy (rename_sofa_compartment, migration 0149) — but the
+ * A compartment code RENAMED on the Maintenance master pool follows into the
+ * Model ticks, combos and quick picks (rename_sofa_compartment; only a code no
+ * SKU uses) — but the
  * canvas still needs to know the shape. As long as the rename keeps the
  * STRUCTURE tokens — base family (1A/1B/2A/2B/1NA/2NA/1S/2S/3S/CNR/L/
  * Console/STOOL), optional (LHF)/(RHF) orientation, optional (P)/(R)/(L)
@@ -981,131 +982,6 @@ export const centerCellsWithin = (cells: Cell[], depth: Depth, w: number, h: num
   const dx = w / 2 - bb.w / 2 - bb.x;
   const dy = h / 2 - bb.h / 2 - bb.y;
   return cells.map((c) => ({ ...c, x: c.x + dx, y: c.y + dy }));
-};
-
-/* ─── Default layout from a bare module list (PO PDF fallback, 2026-06-24) ───
- *
- * A sofa created in the BACKEND (SO New / Maintenance, NOT the POS
- * CustomBuilder) stores each module only as a per-line SKU — fabric/seat/leg
- * variants but NO x/y/rot geometry. There was never a real arrangement to
- * lose: the operator just picked modules as a LIST. This synthesizes a
- * sensible default plan-view from that list so the PO PDF's `drawSofaLayout`
- * has cells to render (geometry-less sofas previously drew nothing).
- *
- * Convention (matches apps/pos CustomBuilder / cellsFromComboModules EXACTLY):
- *   - x increases RIGHTWARD, y increases DOWNWARD, the FRONT faces +y (the TV).
- *   - modules tile LEFT→RIGHT in the GIVEN order, each at its `moduleFootprint`
- *     width, all rot=0, sharing the BACK edge (y=0 baseline). A taller chaise
- *     (L, d=165) therefore extends forward (+y) of the seating line — correct.
- *   - the L/chaise module's own LHF/RHF identity (and the order it appears in
- *     the list) carries handedness: a left-listed L(LHF) ends up the left
- *     chaise, a right-listed L(RHF) the right chaise — the configurator's
- *     decomposition convention (2+L → "2A(LHF) + L(RHF)", 3+L →
- *     "2A(LHF) + 1NA + L(RHF)"). `drawSofaLayout` then derives the arm sides
- *     from the laid-out positions, so LHF/RHF reads correctly with no extra
- *     rotation math.
- *
- * CORNERS TURN THE RUN (owner 2026-09-28, HC-SO-2609-221). A CNR is where the
- * sofa turns 90 degrees, so a list with one or two CNRs is an L or a U, never a
- * straight row: the back row runs left→right with each CNR at an end of it,
- * and the pieces beyond a CNR come FORWARD (toward the TV) as a side leg, their
- * backs to the outside. The list is read walking the seats from the left leg's
- * front, round the back, to the right leg's front — so "1A(LHF), CNR, 2NA, 1NA,
- * CNR, 1A(RHF)" is a U. An order whose two CNRs are adjacent (a "CNR x2" line
- * expanded, which kept no position) falls back to: each end piece is a leg,
- * everything between is the back row. One CNR with pieces on both sides puts
- * the longer side along the back. Three or more CNRs keep the straight row.
- *
- * Fail-soft: an unknown / unmeasurable module is SKIPPED (never throws); an
- * empty or all-unknown list returns []. The result is exactly the `Cell[]`
- * shape `drawSofaLayout` consumes (it reads cell.x/y/rot + moduleFootprint),
- * with `cellIndex` set to the placement order. */
-export const buildDefaultSofaCells = (
-  modules: ReadonlyArray<{ moduleId: string }>,
-  depth: Depth,
-): Array<Cell & { cellIndex: number }> => {
-  if (!Array.isArray(modules) || modules.length === 0) return [];
-  const known: Array<{ moduleId: string; m: SofaModuleSpec }> = [];
-  for (const mod of modules) {
-    const moduleId = (mod?.moduleId ?? '').trim();
-    if (!moduleId) continue;
-    const m = findModule(moduleId);
-    if (!m) continue; // unknown module → skip (fail-soft, never throws)
-    const fp = moduleFootprint(m, 0, depth);
-    if (!(fp.w > 0) || !(fp.h > 0)) continue;
-    known.push({ moduleId, m });
-  }
-  const run = arrangeCornerRun(known);
-  const out: Array<Cell & { cellIndex: number }> = [];
-  const place = (moduleId: string, x: number, y: number, rot: Rot) =>
-    out.push({ moduleId, x, y, rot, cellIndex: out.length });
-  const cornerFp = (k: { m: SofaModuleSpec } | null) => (k ? moduleFootprint(k.m, 0, depth) : { w: 0, h: 0 });
-  const left = cornerFp(run.leftCorner);
-  const right = cornerFp(run.rightCorner);
-  // Left leg: listed front→corner, so it stacks upward to meet the corner.
-  let y = left.h;
-  const leftCells: Array<{ moduleId: string; y: number }> = [];
-  for (const k of [...run.left].reverse()) {
-    leftCells.unshift({ moduleId: k.moduleId, y });
-    y += moduleFootprint(k.m, 270, depth).h;
-  }
-  for (const c of leftCells) place(c.moduleId, 0, c.y, 270);
-  if (run.leftCorner) place(run.leftCorner.moduleId, 0, 0, 0);
-  let x = left.w;
-  for (const k of run.back) {
-    place(k.moduleId, x, 0, 0);
-    x += moduleFootprint(k.m, 0, depth).w;
-  }
-  if (run.rightCorner) {
-    place(run.rightCorner.moduleId, x, 0, 90);
-    // Right leg: corner→front, backs flush with the corner's outer edge.
-    y = right.h;
-    for (const k of run.right) {
-      const fp = moduleFootprint(k.m, 90, depth);
-      place(k.moduleId, x + right.w - fp.w, y, 90);
-      y += fp.h;
-    }
-  }
-  return out;
-};
-
-type RunPiece = { moduleId: string; m: SofaModuleSpec };
-
-/** Split a walked module list into left leg / back row / right leg around its
- *  corners (see buildDefaultSofaCells). No legs and no corners = straight row. */
-const arrangeCornerRun = (pieces: RunPiece[]): {
-  left: RunPiece[]; leftCorner: RunPiece | null; back: RunPiece[]; rightCorner: RunPiece | null; right: RunPiece[];
-} => {
-  const straight = { left: [], leftCorner: null, back: pieces, rightCorner: null, right: [] };
-  const corners = pieces.flatMap((p, i) => (p.m.group === 'Corner' ? [i] : []));
-  const runW = (ps: RunPiece[]) => ps.reduce((n, p) => n + p.m.w, 0);
-  if (corners.length === 1) {
-    const i = corners[0]!;
-    const before = pieces.slice(0, i);
-    const after = pieces.slice(i + 1);
-    const corner = pieces[i]!;
-    if (after.length === 0) return { left: [], leftCorner: null, back: before, rightCorner: corner, right: [] };
-    if (before.length === 0 || runW(after) >= runW(before)) {
-      return { left: before, leftCorner: corner, back: after, rightCorner: null, right: [] };
-    }
-    return { left: [], leftCorner: null, back: before, rightCorner: corner, right: after };
-  }
-  if (corners.length === 2) {
-    const [i, j] = corners as [number, number];
-    if (j > i + 1) {
-      return { left: pieces.slice(0, i), leftCorner: pieces[i]!, back: pieces.slice(i + 1, j), rightCorner: pieces[j]!, right: pieces.slice(j + 1) };
-    }
-    const rest = pieces.filter((_, k) => k !== i && k !== j);
-    const legs = rest.length >= 3;
-    return {
-      left: legs ? rest.slice(0, 1) : [],
-      leftCorner: pieces[i]!,
-      back: legs ? rest.slice(1, -1) : rest,
-      rightCorner: pieces[j]!,
-      right: legs ? rest.slice(-1) : [],
-    };
-  }
-  return straight;
 };
 
 /* ─── Adjacency + grouping ─────────────────────────────────────────── */

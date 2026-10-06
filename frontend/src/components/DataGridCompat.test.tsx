@@ -58,6 +58,17 @@ describe("gridColumnToTableColumn keeps DataGrid's value rules", () => {
 });
 
 describe("DataGridCompat", () => {
+  it("forwards the page's resetFilters as the toolbar Reset", () => {
+    const onReset = vi.fn();
+    const cols: GridColumn<Row>[] = [{ key: "code", label: "Doc", accessor: (r) => r.code }];
+    render(
+      <DataGridCompat rows={rows} columns={cols} storageKey="dg-reset" rowKey={(r) => r.id} groupBanner={false}
+        resetFilters={{ active: true, onReset, label: "Reset layout" }} />,
+    );
+    fireEvent.click(screen.getByText("Reset layout"));
+    expect(onReset).toHaveBeenCalledTimes(1);
+  });
+
   it("exports the on-screen rows as xlsx with money formats kept", () => {
     const columns: GridColumn<Row>[] = [
       { key: "code", label: "Doc", accessor: (r) => r.code },

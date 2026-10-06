@@ -24,6 +24,7 @@ export const ACCOUNTING_TAB_TITLES = {
   charges: 'Merchant charges',
   performance: 'Performance P&L',
   events: 'Event costs',
+  products: 'Product Profit',
 } as const;
 
 export type AccountingTab = keyof typeof ACCOUNTING_TAB_TITLES;

@@ -10,13 +10,14 @@ import { STAGE, billMatchText, type BillFamily, type BillMatch } from '../lib/pa
 import type { BillReadState } from '../lib/request-bill-read';
 import { fmtDateOrDash, fmtSen } from '../../shared/format';
 
-const box = (tone: 'note' | 'warn'): React.CSSProperties => ({
+const box = (tone: 'note' | 'warn' | 'read'): React.CSSProperties => ({
   padding: '8px 10px',
   borderRadius: 8,
   fontSize: 'var(--fs-12, 12.5px)',
-  border: tone === 'warn' ? '1px solid var(--c-festive-b, #B8331F)' : '1px dashed var(--line, #d8d4cc)',
-  color: tone === 'warn' ? 'var(--c-festive-b, #B8331F)' : 'inherit',
-  background: tone === 'warn' ? 'var(--c-cream, #faf8f3)' : 'transparent',
+  lineHeight: 1.6,
+  border: tone === 'warn' ? '1px solid var(--c-festive-b, #B8331F)' : tone === 'read' ? 'none' : '1px dashed var(--line, #d8d4cc)',
+  color: tone === 'warn' ? 'var(--c-festive-b, #B8331F)' : tone === 'read' ? 'var(--c-secondary-a, #2F5D4F)' : 'inherit',
+  background: tone === 'warn' ? 'var(--c-cream, #faf8f3)' : tone === 'read' ? 'var(--c-secondary-a-soft, #EAF3EE)' : 'transparent',
 });
 
 /** "No. MLE-0925 · 2026/09/01 · total RM 8,500.00" — a dash where nothing was read. */
@@ -57,8 +58,10 @@ export function BillInstalments({ family, currentId }: { family: BillFamily; cur
   );
 }
 
-/** While the bill is read; what was read; or why it could not be. */
-export function BillReadNote({ state }: { state: BillReadState }) {
+/** The bill read, said once under it (owner 2026-10-02: 整齐一点): while it is
+    read; why it could not be; or what it read and the fields it filled in —
+    every one still the requester's to change (自动填了资料还能手动改). */
+export function BillReadPanel({ state, filled }: { state: BillReadState; filled: string[] }) {
   if (state.status === 'idle') return null;
   if (state.status === 'reading') return <div role="status" style={box('note')}>Reading the bill…</div>;
   if (state.status === 'failed') {
@@ -66,7 +69,12 @@ export function BillReadNote({ state }: { state: BillReadState }) {
   }
   return (
     <>
-      <div role="status" style={box('note')}>Read from the bill: {billFactsLine(state.result.bill)}</div>
+      <div role="status" style={box('read')}>
+        <div>✓ Read from the bill: {billFactsLine(state.result.bill)}</div>
+        {filled.length > 0 && (
+          <div aria-label="Filled in from the bill">Filled in below: {filled.join(' · ')} — 都可以自己改</div>
+        )}
+      </div>
       <BillMatchesNote matches={state.result.matches} />
     </>
   );

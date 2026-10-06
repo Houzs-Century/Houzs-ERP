@@ -31,11 +31,27 @@
 //        sheet's date write-back finds it). Own-team gated by the ERP; the leg
 //        rows are never pushed back (erpCollectUpdates_ skips '#' and the
 //        "-<KIND>" leg key).
+//   GET  {ERP_BASE_URL}/api/delivery-sheet/assr-contacts?since=<checkpoint>&limit=300
+//        BUG-54: every open case's name / phone / address. Written ONLY onto a
+//        leg row the tab already has (col B one of the case's keys AND col C its
+//        ASSR number); never appends, so the own-team gate above still decides
+//        which legs enter the sheet.
+//
+// 2990 ROWS (BUG-49): the 2990 pull (sync2990FromErp) appends "2990-SO-..."
+// rows onto the same tabs. SHEET_SYNC_KEY only opens HOUZS orders, so those
+// rows push with Script property SHEET_SYNC_KEY_2990 (the 2990 pull's key);
+// without it they stay PENDING and are logged, never sent under the HOUZS key.
+// Menu: "Push Changes TO Houzs ERP" sends HOUZS rows only, "Push Changes TO
+// 2990 ERP" sends 2990 rows only; the 5-minute scheduledErpSync sends both and
+// then runs the 2990 pull (Sync2990.gs, so2990SyncAll_).
 
 const ERP_CHECKPOINT_PROP = "ERP_SYNC_CHECKPOINT";
 // Service-Case legs ride their own cursor so a stuck ASSR page never holds up
 // the Sales-Order pull and vice-versa.
 const ERP_ASSR_CHECKPOINT_PROP = "ERP_ASSR_CHECKPOINT";
+// BUG-54: the contact refresh (name / phone / address onto existing leg rows)
+// rides a third cursor; empty on the first run, so it heals every open case once.
+const ERP_ASSR_CONTACT_CHECKPOINT_PROP = "ERP_ASSR_CONTACT_CHECKPOINT";
 const ERP_PAGE_LIMIT = 300;
 // Apps Script kills a run at 6 minutes; ~300 rows write in about a minute.
 // The checkpoint advances per page, so a run that stops early resumes.
@@ -52,7 +68,11 @@ function erpConfig_() {
   const base = (props.getProperty("ERP_BASE_URL") || ERP_DEFAULT_BASE_URL).replace(/\/+$/, "");
   const key = props.getProperty("SHEET_SYNC_KEY") || (typeof ASSR_SYNC_KEY !== "undefined" ? ASSR_SYNC_KEY : "");
   if (!base || !key) throw new Error("Set Script property SHEET_SYNC_KEY (or keep ASSR_SYNC_KEY in ERPMain.gs).");
-  return { base: base, key: key };
+  return { base: base, key: key, key2990: props.getProperty("SHEET_SYNC_KEY_2990") || "" };
+}
+
+function erpIs2990Doc_(docNo) {
+  return /^2990-/i.test(String(docNo || "").trim());
 }
 
 function erpFetch_(cfg, path, options, rid) {
@@ -411,8 +431,12 @@ function erpRegionalSheets_() {
   ];
 }
 
-/** Push PENDING rows (col A → remark4, col O → delivery date) to the ERP. */
-function pushUpdatesToErp(triggerType) {
+/**
+ * Push PENDING rows (col A → remark4, col O → delivery date) to the ERP.
+ * scope "HOUZS" = HOUZS rows only, "2990" = 2990 rows only, omitted = both.
+ */
+function pushUpdatesToErp(triggerType, scope) {
+  const label = scope === "2990" ? "2990 ERP push" : "ERP push";
   const rid = Utilities.getUuid();
   const start = new Date();
   const ss = getTargetSs();
@@ -432,22 +456,31 @@ function pushUpdatesToErp(triggerType) {
       if (!sheet) { Log.warn(rid, "Sheet [" + sConfig.name + "] not found. Skipping."); return; }
       const updates = erpCollectUpdates_(sheet, sConfig, false);
       if (!updates.length) return;
-      const r = erpPushRows_(cfg, sheet, sConfig, updates, rid, true);
-      pushCount += r.ok;
-      errorCount += r.err;
+      const houzs = scope === "2990" ? [] : updates.filter(function (u) { return !erpIs2990Doc_(u.DocNo); });
+      const rows2990 = scope === "HOUZS" ? [] : updates.filter(function (u) { return erpIs2990Doc_(u.DocNo); });
+      [[houzs, cfg], [rows2990, { base: cfg.base, key: cfg.key2990 }]].forEach(function (leg) {
+        if (!leg[0].length) return;
+        if (!leg[1].key) {
+          Log.warn(rid, "[" + sConfig.name + "] " + leg[0].length + " 2990 row(s) left PENDING: Script property SHEET_SYNC_KEY_2990 is not set.");
+          return;
+        }
+        const r = erpPushRows_(leg[1], sheet, sConfig, leg[0], rid, true);
+        pushCount += r.ok;
+        errorCount += r.err;
+      });
     });
     let status = "SYNCED";
     let message = "Pushed " + pushCount + " row(s) to the ERP.";
     if (errorCount > 0 && pushCount > 0) { status = "PARTIAL"; message = "Pushed " + pushCount + " row(s). " + errorCount + " failed."; }
     else if (errorCount > 0) { status = "FAILED"; message = "All " + errorCount + " push attempts failed."; }
     else if (pushCount === 0) { status = "SKIPPED"; message = "No PENDING rows."; }
-    Log.info(rid, "ERP push finished: " + status + " - " + message);
-    recordExecutionLog(ss, rid, "ERP_PUSH", start, new Date(), status, message, user);
-    if (triggerType === "MANUAL") SpreadsheetApp.getUi().alert("ERP push: " + status + "\n\n" + message);
+    Log.info(rid, label + " finished: " + status + " - " + message);
+    recordExecutionLog(ss, rid, scope === "2990" ? "ERP_PUSH_2990" : "ERP_PUSH", start, new Date(), status, message, user);
+    if (triggerType === "MANUAL") SpreadsheetApp.getUi().alert(label + ": " + status + "\n\n" + message);
   } catch (e) {
-    Log.error(rid, "ERP push failed", e);
-    recordExecutionLog(ss, rid, "ERP_PUSH", start, new Date(), "FAILED", e.message, user);
-    if (triggerType === "MANUAL") SpreadsheetApp.getUi().alert("ERP push FAILED\n" + e.message);
+    Log.error(rid, label + " failed", e);
+    recordExecutionLog(ss, rid, scope === "2990" ? "ERP_PUSH_2990" : "ERP_PUSH", start, new Date(), "FAILED", e.message, user);
+    if (triggerType === "MANUAL") SpreadsheetApp.getUi().alert(label + " FAILED\n" + e.message);
   } finally {
     lock.releaseLock();
   }
@@ -562,6 +595,87 @@ function runErpAssrPull(triggerType) {
   }
 }
 
+/**
+ * BUG-54: a leg row made by the sheet's own ASSR linkage keeps the phone it was
+ * copied with, because /assr-legs only re-sends a case once its leg is own-team
+ * AND dated. Pull every open case's contact cells and write them onto the rows
+ * that already exist. A row is touched only when col B is one of the case's leg
+ * keys AND col C is its ASSR number (several cases can share an S/O). A blank
+ * ERP value never blanks a cell; a cell already equal is left alone.
+ */
+function runErpAssrContactRefresh(triggerType) {
+  const rid = Utilities.getUuid();
+  const startTime = new Date();
+  const props = PropertiesService.getScriptProperties();
+  const ss = getTargetSs();
+  const userEmail = Session.getActiveUser().getEmail();
+  let status = "PENDING";
+  let message = "";
+  let cells = 0;
+
+  try {
+    const cfg = erpConfig_();
+    for (let page = 0; page < ERP_MAX_PAGES_PER_RUN; page++) {
+      const since = props.getProperty(ERP_ASSR_CONTACT_CHECKPOINT_PROP) || "";
+      const res = erpFetch_(cfg, "/api/delivery-sheet/assr-contacts?since=" + encodeURIComponent(since) + "&limit=" + ERP_PAGE_LIMIT, null, rid);
+      if (res.getResponseCode() !== 200) throw new Error("ERP returned " + res.getResponseCode() + ": " + res.getContentText().slice(0, 200));
+      const data = JSON.parse(res.getContentText());
+      const records = data.records || [];
+      if (records.length === 0) break;
+
+      erpRegionalSheets_().forEach(function (sConfig) {
+        const sheet = ss.getSheetByName(sConfig.name);
+        if (!sheet) return;
+        const sc = getSheetConfig(sConfig.name);
+        const lastRow = sheet.getLastRow();
+        if (lastRow < sc.startRow) return;
+        const addrCol = sc.block2StartCol + (sc.includeRemark3 ? 3 : 2);
+        // One read per tab: col B key -> [{ row, assr, values }].
+        const byKey = {};
+        sheet.getRange(sc.startRow, 1, lastRow - sc.startRow + 1, addrCol + 3).getValues().forEach(function (r, i) {
+          const key = String(r[1] || "").trim();
+          if (!key) return;
+          (byKey[key] = byKey[key] || []).push({ row: sc.startRow + i, assr: String(r[2] || "").trim().toUpperCase(), values: r });
+        });
+        records.forEach(function (o) {
+          const assr = String(o.AssrNo || "").trim().toUpperCase();
+          const want = [
+            [7, o.DebtorName],
+            [8, o.Phone1 ? String(o.Phone1).replace(/[+&\- ]/g, "") : ""],
+            [addrCol, o.InvAddr1], [addrCol + 1, o.InvAddr2], [addrCol + 2, o.InvAddr3], [addrCol + 3, o.InvAddr4]
+          ];
+          (o.Keys || []).forEach(function (key) {
+            (byKey[key] || []).forEach(function (hit) {
+              if (hit.assr !== assr) return;
+              want.forEach(function (w) {
+                const v = w[1] == null ? "" : String(w[1]).trim();
+                if (!v) return;
+                // Phones compare stripped, so a "+60..." cell already holding the number is left alone.
+                const have = String(hit.values[w[0] - 1]).trim();
+                if ((w[0] === 8 ? have.replace(/[+&\- ]/g, "") : have) === v) return;
+                try { sheet.getRange(hit.row, w[0]).setValue(v); cells++; } catch (e) { Log.warn(rid, "[" + sConfig.name + "] R" + hit.row + " col " + w[0] + " hit protection."); }
+              });
+            });
+          });
+        });
+      });
+
+      if (data.next_since) props.setProperty(ERP_ASSR_CONTACT_CHECKPOINT_PROP, data.next_since);
+      if (!data.has_more) break;
+    }
+    status = cells ? "SYNCED" : "SKIPPED";
+    message = "Refreshed " + cells + " contact cell(s) on existing ASSR rows.";
+  } catch (e) {
+    status = "FAILED";
+    message = e.message;
+    Log.error(rid, "ERP ASSR contact refresh failed", e);
+  } finally {
+    Log.info(rid, "ERP ASSR contact refresh finished: " + status + " - " + message);
+    recordExecutionLog(ss, rid, triggerType === "MANUAL" ? "ERP_ASSR_CONTACTS_MANUAL" : "ERP_ASSR_CONTACTS", startTime, new Date(), status, message, userEmail);
+    if (triggerType === "MANUAL") SpreadsheetApp.getUi().alert("ERP ASSR contact refresh " + status + "\n" + message);
+  }
+}
+
 // A slow run (max seen ~5 min) can outlast the 5-minute interval; the pull has no
 // lock of its own, so two overlapping runs could both append the same new order.
 // Document lock, not the script lock pushUpdatesToErp takes inside.
@@ -572,12 +686,38 @@ function scheduledErpSync() {
     pushUpdatesToErp("SCHEDULED");
     runErpPullProcess("SCHEDULED");
     runErpAssrPull("SCHEDULED");
+    runErpAssrContactRefresh("SCHEDULED");
+    // 2990 pull rides the same 5-minute cycle (owner 2026-10-02), after the
+    // push so a PENDING 2990 edit is sent before the ERP's figures land. Its
+    // own try: a 2990 failure must never stop the HOUZS legs above.
+    try { so2990SyncAll_(false); } catch (e) { Log.error("scheduled", "2990 pull failed", e); }
   } finally {
     lock.releaseLock();
   }
 }
 function manualErpPull() { runErpPullProcess("MANUAL"); }
-function manualErpPush() { pushUpdatesToErp("MANUAL"); }
+
+/** One-off after BUG-49 deploys: the 2990 rows an earlier push marked
+ *  "ERR: ..." go back to PENDING so the next push sends their dates. */
+function erpRetry2990Rows() {
+  const ss = getTargetSs();
+  erpRegionalSheets_().forEach(function (sConfig) {
+    const sheet = ss.getSheetByName(sConfig.name);
+    if (!sheet) return;
+    const data = sheet.getDataRange().getValues();
+    let n = 0;
+    for (let i = sConfig.start - 1; i < data.length; i++) {
+      // Any ERR: status - "ERR: NO ORDER" from the HOUZS-key push, "ERR: CONN"
+      // from the 401s while SHEET_SYNC_KEY_2990 was being set up (2026-10-02).
+      if (!erpIs2990Doc_(data[i][1]) || String(data[i][sConfig.statusCol - 1]).indexOf("ERR:") !== 0) continue;
+      sheet.getRange(i + 1, sConfig.statusCol).setValue("PENDING").setBackground("#fff2cc");
+      n++;
+    }
+    Log.info("retry2990", sConfig.name + ": " + n + " row(s) back to PENDING");
+  });
+}
+function manualErpPush() { pushUpdatesToErp("MANUAL", "HOUZS"); }
+function manualErp2990Push() { pushUpdatesToErp("MANUAL", "2990"); }
 function manualErpAssrPull() { runErpAssrPull("MANUAL"); }
 
 /** Clears the ERP checkpoint so the next pull re-reads every order. */
@@ -593,7 +733,8 @@ function resetErpCheckpoint() {
  * sync. Overdue, Balance Collection and PO triggers are left as they are.
  */
 function setupErpTriggers() {
-  const stop = ["scheduledPull", "scheduledPush", "scheduledErpSync"];
+  // sync2990FromErp: the old nightly 2990 timer — scheduledErpSync pulls 2990 now.
+  const stop = ["scheduledPull", "scheduledPush", "scheduledErpSync", "sync2990FromErp"];
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (stop.indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t);
   });

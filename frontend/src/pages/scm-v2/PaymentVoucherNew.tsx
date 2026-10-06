@@ -41,7 +41,8 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
-import { SupplierFinanceReminder } from '../../vendor/scm/components/SupplierFinanceReminder';
+import { SupplierFinanceReminder, SupplierPayTo } from '../../vendor/scm/components/SupplierFinanceReminder';
+import { supplierBankLine } from '../../vendor/scm/lib/supplier-maintenance-queries';
 import { EventSelect } from '../../vendor/scm/components/EventSelect';
 import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
 import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
@@ -376,7 +377,8 @@ export const PaymentVoucherNew = () => {
     requestApplied.current = true;
     setPayeeName(r.payee_name);
     const bank = [r.bank_name, r.bank_account_no, r.bank_account_name].filter(Boolean).join(' ');
-    setNotes(`Payment request ${r.request_no} — ${r.purpose}${bank ? ` · pay to ${bank}` : ''}`);
+    /* The requester's note comes along (owner 2026-10-02: 多一个第五给他们写note). */
+    setNotes(`Payment request ${r.request_no} — ${r.purpose}${bank ? ` · pay to ${bank}` : ''}${r.note ? ` · Note: ${r.note}` : ''}`);
     /* An AP Payment answering a balance (item 2) pays the bill's AP invoice:
        its lines come from the tick below, not from the request. */
     if (isAp) {
@@ -444,6 +446,17 @@ export const PaymentVoucherNew = () => {
     if (!supplierRow) return;
     setPayeeName((prev) => prev.trim() ? prev : supplierRow.name);
   }, [supplierRow]);
+  /* The supplier's bank rides into the Notes, which the voucher prints under PAY
+     TO (owner 2026-10-02, A3a: 付款时自动带出来). Only into empty Notes, or Notes
+     still holding the last supplier's bank line — what Finance typed stays. */
+  const lastBankNote = useRef('');
+  useEffect(() => {
+    if (!isAp) return;
+    const line = supplierBankLine(supplierDetail);
+    const next = line ? `Pay to ${line}` : '';
+    setNotes((prev) => (!prev.trim() || prev === lastBankNote.current ? next : prev));
+    lastBankNote.current = next;
+  }, [isAp, supplierDetail]);
 
   /* Multi-currency (Phase 1-A) — the PV's currency defaults to the linked
      supplier's currency; MYR when unset (strict no-op, no rate field). The
@@ -830,6 +843,7 @@ export const PaymentVoucherNew = () => {
                   placeholder={suppliersQ.isLoading ? 'Loading suppliers…' : 'Type to find the supplier this pays'}
                 />
                 <SupplierFinanceReminder supplierId={supplierId} />
+                <SupplierPayTo supplierId={supplierId} />
               </label>
             )}
             <label className={styles.field}>
@@ -984,13 +998,13 @@ export const PaymentVoucherNew = () => {
                         <td style={{ padding: '6px 8px' }}>{p.method}</td>
                         <td style={{ padding: '6px 8px' }}>{p.provider ?? '—'}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(p.amountSen)}</td>
-                        <td style={{ padding: '6px 8px' }}>{p.booked ? '✓ booked' : p.method === 'imported' ? 'AutoCount era' : 'not booked'}</td>
+                        <td style={{ padding: '6px 8px' }}>{p.booked ? '✓ booked' : p.method === 'imported' ? (refundSrc.type === 'SO' ? 'from AutoCount — counts' : 'AutoCount era') : 'not booked'}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', fontSize: 'var(--fs-13)', borderTop: '1px solid var(--line)', paddingTop: 'var(--space-3)' }}>
-                  <span>Booked here <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.bookedSen)}</b></span>
+                  <span>Paid <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.bookedSen)}</b>{(refundSrc.importedSen ?? 0) > 0 ? <span style={{ color: 'var(--fg-muted)' }}> (incl. {fmtRm(refundSrc.importedSen ?? 0)} from AutoCount)</span> : null}</span>
                   <span>Already on refund vouchers <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.refundedSen)}</b>
                     {refundSrc.refunds.map((r) => <span key={r.id}> · <a href={`/scm/payment-vouchers/${r.id}`} style={{ color: 'var(--c-orange)' }}>{r.pvNumber}</a></span>)}
                   </span>

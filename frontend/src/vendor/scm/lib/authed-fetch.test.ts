@@ -143,3 +143,56 @@ describe("authedFetch rides out a transient 502/504", () => {
     vi.useRealTimers();
   });
 });
+
+/* The bill readers (owner 2026-10-05): ONE paper to the AI reader can take past
+   30 s, so they get the scan wait; they write nothing, so a timeout says so
+   instead of warning of a duplicate save — and is not replayed by itself. */
+describe("the bill readers", () => {
+  const withDeadline = async (run: (deadline: AbortController, asked: number[]) => Promise<void>) => {
+    const original = Object.getOwnPropertyDescriptor(AbortSignal, "timeout");
+    const deadline = new AbortController();
+    const asked: number[] = [];
+    Object.defineProperty(AbortSignal, "timeout", {
+      configurable: true,
+      value: vi.fn((ms: number) => { asked.push(ms); return deadline.signal; }),
+    });
+    try {
+      await run(deadline, asked);
+    } finally {
+      if (original) Object.defineProperty(AbortSignal, "timeout", original);
+      else delete (AbortSignal as { timeout?: typeof AbortSignal.timeout }).timeout;
+    }
+  };
+  const hangUntilAborted = () => vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) =>
+    new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal ?? undefined;
+      const fail = () => reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+      if (signal?.aborted) fail();
+      else signal?.addEventListener("abort", fail, { once: true });
+    }));
+
+  test.each(["/payment-vouchers/extract", "/credit-notes/scan", "/payment-requests/read-bill"])(
+    "%s waits two minutes, and a timeout says nothing was saved", async (path) => {
+      await withDeadline(async (deadline, asked) => {
+        const fetchMock = hangUntilAborted();
+        const pending = authedFetch(path, { method: "POST", body: "{}" });
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+        expect(asked).toEqual([120_000]);
+        deadline.abort(new DOMException("Timed out", "TimeoutError"));
+        await expect(pending).rejects.toThrow("Reading took too long — nothing was saved. Please read it again.");
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+    },
+  );
+
+  test("a save keeps the 30-second wait and its duplicate warning", async () => {
+    await withDeadline(async (deadline, asked) => {
+      const fetchMock = hangUntilAborted();
+      const pending = authedFetch("/ap-invoices", { method: "POST", body: "{}" });
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      expect(asked).toEqual([30_000]);
+      deadline.abort(new DOMException("Timed out", "TimeoutError"));
+      await expect(pending).rejects.toThrow(/couldn't confirm whether it saved/);
+    });
+  });
+});

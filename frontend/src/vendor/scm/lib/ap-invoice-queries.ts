@@ -59,6 +59,8 @@ const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['ap-invoices'] });
   void qc.invalidateQueries({ queryKey: ['ap-invoice'] });
   void qc.invalidateQueries({ queryKey: ['ap-aging'] });
+  /* A bill entered, changed or cancelled is (or stops being) another's same bill. */
+  void qc.invalidateQueries({ queryKey: ['payment-request-bill-matches'] });
 };
 
 export type ApInvoiceLineInput = { description?: string; debitAccountCode: string; amountSen: number; projectId?: number };

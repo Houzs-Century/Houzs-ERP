@@ -2766,11 +2766,27 @@ export async function syncFinanceRollup(env: Env, projectId: number) {
   // record sets — a project can have both during the migration window.
   out.total_sales += entriesTotal;
 
+  // A project whose sales were only ever keyed as the quick lump-sum Total
+  // Sales has no sales source to roll up, so the sum above is 0 and adding a
+  // rental line wiped the typed figure (owner 2026-10-05, projects 2246/2257).
+  // Keep the lump sum unless some sales source has EVER existed — archived
+  // rows count, so removing the last real sales line still resets to 0.
+  const src = await env.DB.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM project_finance_lines
+         WHERE project_id = ? AND kind = 'income' AND category <> 'deposit_refund') AS lines,
+       (SELECT COUNT(*) FROM project_sales_reports WHERE project_id = ?) AS reports,
+       (SELECT COUNT(*) FROM sales_entries WHERE project_id = ?) AS entries`
+  )
+    .bind(projectId, projectId, projectId)
+    .first<{ lines: number; reports: number; entries: number }>();
+  const keepLumpSales = !Number(src?.lines) && !Number(src?.reports) && !Number(src?.entries);
+
   await env.DB.prepare(
     `UPDATE project_finance
         SET rental = ?, contractor_cost = ?, license_fee = ?,
             deposit_paid = ?, deposit_refund = ?, misc_cost = ?,
-            total_sales = ?, updated_at = datetime('now')
+            total_sales = ${keepLumpSales ? "total_sales" : "?"}, updated_at = datetime('now')
       WHERE project_id = ?`
   )
     .bind(
@@ -2780,7 +2796,7 @@ export async function syncFinanceRollup(env: Env, projectId: number) {
       out.deposit_paid,
       out.deposit_refund,
       out.misc_cost,
-      out.total_sales,
+      ...(keepLumpSales ? [] : [out.total_sales]),
       projectId
     )
     .run();

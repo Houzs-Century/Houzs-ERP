@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { siDepositAppliedSen, siOutstandingSen } from "../vendor/scm/lib/si-outstanding";
 import { offersRecordPayment, piPaymentHint } from "./doc-payment";
-import { visibleFields, canOperateDeliveryOrders, canOperateSalesInvoices } from "../auth/salesAccess";
+import { visibleFields, canOperateDeliveryOrders, canOperateSalesInvoices, canPostGoodsReceipts } from "../auth/salesAccess";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lineIdentity, orderLineIdentity } from "@2990s/shared";
 import { buildVariantSummary } from "../vendor/shared/variant-summary";
@@ -11,7 +11,7 @@ import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliv
 import { CommittedBatchRowMobile, PairedSoRowsMobile, SourcePosRowMobile, SubstitutedRowMobile } from "./source-chips"; import { MobileLinePoFacts, mobilePiPoPriceNotice } from "./MobileLinePoRef";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
 import { MobileLineRemark } from "./MobileLineRemark";
-import { useGrnZeroCostRemedy } from "./MobileGrnZeroCost";
+import { useGrnZeroCostRemedy } from "./MobileGrnZeroCost"; import { MobileGrnLineRack } from "./MobileGrnLineRack";
 import { flowAnchorForModule, type FlowNav } from "./relationship-map-model";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { api } from "../api/client";
@@ -971,7 +971,14 @@ function useMayOperateDoc(moduleKey: string): boolean {
 /** Build the valid status actions for a doc from its CURRENT status. Empty when
  *  the doc is terminal, the module has no status route, or the caller may only
  *  view it (`mayOperate` false → the footer renders nothing at all). */
-function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate: boolean): DocAction[] {
+/* Posting a GRN is its own permission (owner 2026-10-01): a storekeeper with
+   Goods Receipt edit drafts and sets racks, the purchaser posts. Same helper as
+   desktop; the server gate is scm/lib/grn-post-capability.ts. */
+function useMayPostGrn(): boolean {
+  return canPostGoodsReceipts(useAuth().user);
+}
+
+function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate: boolean, mayPostGrn: boolean): DocAction[] {
   if (!mayOperate) return [];
   const st = s(header?.status).toUpperCase();
   const enc = encodeURIComponent(id);
@@ -1054,7 +1061,7 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
     // GRN — /post (DRAFT→POSTED), /cancel. CANCELLED / CLOSED are terminal.
     case "grns": {
       if (st === "CANCELLED" || st === "CLOSED") return out;
-      if (st === "DRAFT") {
+      if (st === "DRAFT" && mayPostGrn) {
         out.push({ key: "post", label: "Post", variant: "solid", request: { path: `/grns/${enc}/post`, method: "PATCH" } });
       }
       out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/grns/${enc}/cancel`, method: "PATCH" }, confirm: { title: "Cancel this goods receipt?", body: "This voids the GRN and reverses any posted stock.", confirmLabel: "Cancel GRN" } });
@@ -1242,13 +1249,14 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
   const [runningKey, setRunningKey] = useState<string | null>(null);
 
   const mayOperate = useMayOperateDoc(moduleKey);
+  const mayPostGrn = useMayPostGrn();
   /* POD confirms a delivery (stock + SO sync) → an operate action, gated on the
      SAME helper as the status actions (mirrors DeliveryOrderDetailV2's
      canWriteDo). MobileApp already withholds onPOD for a view-only user; this is
      defence-in-depth so the button, the early-return, the error offset and the
      scroll padding all agree. */
   const podEnabled = !!onPOD && mayOperate;
-  const statusActions = useMemo(() => statusActionsFor(moduleKey, id, header, mayOperate), [moduleKey, id, header, mayOperate]);
+  const statusActions = useMemo(() => statusActionsFor(moduleKey, id, header, mayOperate, mayPostGrn), [moduleKey, id, header, mayOperate, mayPostGrn]);
   const canPay = offersRecordPayment(moduleKey, header);
 
   const refresh = () => {
@@ -1483,10 +1491,11 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
   // Whether a sticky footer will render — used to reserve scroll padding so it
   // never covers the last line item. A POD button (delivery orders) also counts.
   const mayOperate = useMayOperateDoc(moduleKey);
+  const mayPostGrn = useMayPostGrn();
   // POD entry is gated on the operate helper (same as DocActionFooter) so a
   // view-only user gets no POD button — and the footer/scroll padding agree.
   const podEnabled = !!onPOD && mayOperate;
-  const hasStatusActions = !!id && (statusActionsFor(moduleKey, id, header, mayOperate).length > 0 || offersRecordPayment(moduleKey, header) || piPaymentHint(moduleKey, header) !== null);
+  const hasStatusActions = !!id && (statusActionsFor(moduleKey, id, header, mayOperate, mayPostGrn).length > 0 || offersRecordPayment(moduleKey, header) || piPaymentHint(moduleKey, header) !== null);
   const hasFooter = hasStatusActions || podEnabled;
   const invalidate = () => { void qc.invalidateQueries({ queryKey: ["mobile-module-detail", map.path, id] }); };
 
@@ -1593,7 +1602,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
                   : null;
                 const delivered = coverageType ? (deliveredMap.get(code) ?? []) : undefined;
                 const provenance = coverageType ? (provByCode.get(code) ?? []) : undefined;
-                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} remark={l.remark} qty={l.qty} unitSen={l.unitSen} amountSen={l.amountSen} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} substituted={moduleKey === "delivery-orders-mfg" && Boolean(it?.ac_substituted)} poRef={<MobileLinePoFacts moduleKey={moduleKey} line={it ?? {}} nav={flowNav} />} />;
+                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} remark={l.remark} qty={l.qty} unitSen={l.unitSen} amountSen={l.amountSen} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} substituted={moduleKey === "delivery-orders-mfg" && Boolean(it?.ac_substituted)} poRef={<><MobileLinePoFacts moduleKey={moduleKey} line={it ?? {}} nav={flowNav} />{id && <MobileGrnLineRack moduleKey={moduleKey} grnId={id} header={header} line={it ?? {}} onSaved={invalidate} />}</>} />;
               }) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "9px 0" }}>No line items.</div>)}
             </div>
             {!isLoading && !error && id && <MobileAddLine moduleKey={moduleKey} docId={id} header={header} onAdded={invalidate} />}
@@ -1884,7 +1893,8 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
   const actionRow = row ?? {};
   const actionId = s(row?.id);
   const mayOperate = useMayOperateDoc(moduleKey);
-  const hasFooter = !!actionId && (statusActionsFor(moduleKey, actionId, actionRow, mayOperate).length > 0 || offersRecordPayment(moduleKey, actionRow) || piPaymentHint(moduleKey, actionRow) !== null);
+  const mayPostGrn = useMayPostGrn();
+  const hasFooter = !!actionId && (statusActionsFor(moduleKey, actionId, actionRow, mayOperate, mayPostGrn).length > 0 || offersRecordPayment(moduleKey, actionRow) || piPaymentHint(moduleKey, actionRow) !== null);
   const invalidate = () => { void qc.invalidateQueries({ queryKey: ["mobile-module"] }); };
 
   return (

@@ -38,7 +38,7 @@
 // autotable didDrawPage hook + jsPDF putTotalPages.
 // ----------------------------------------------------------------------------
 
-import { buildDefaultSofaCells, effectiveDelivery, findModule, fmtMoneySen, SOFA_MODULES, type Cell, type Depth } from '@2990s/shared';
+import { buildDefaultSofaCells, CONSOLE_ATTACH_KEY, effectiveDelivery, findModule, fmtMoneySen, SOFA_MODULES, type Cell, type Depth } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
 import { parseProvenanceNote } from '../../shared/transfer-vocabulary';
 import {
@@ -57,6 +57,7 @@ import {
   type SupplierRecord,
 } from './supplier-doc-data';
 import { loadSofaCompartmentArtForPrint } from './sales-order-queries';
+import { splitBackendSofa } from './sofa-walk-order';
 import {
   blobToSquarePdfImage,
   buildPhotoGroups,
@@ -242,6 +243,33 @@ function sofaModuleFromLine(
   return null;
 }
 
+/* A geometry-less backend sofa line, keyed to its build (SO no + base model). */
+function backendSofaKey(it: PoItem): { key: string; moduleId: string } | null {
+  if ((it.item_group ?? '').toLowerCase() !== 'sofa') return null;
+  if (sofaCellFromLine(it.variants, it.item_code)) return null;
+  const mod = sofaModuleFromLine(it.item_code, it.material_name || it.description);
+  if (!mod) return null;
+  return { key: `${(it.so_doc_no ?? '').trim()}|${mod.baseModel.toUpperCase()}`, moduleId: mod.moduleId };
+}
+
+/* Rows of each geometry-less build re-ordered into walking order
+   (splitBackendSofa) within the slots the build already holds, so the table
+   reads in the same order the layout draws. Other rows do not move. */
+function walkBackendSofaRows<T extends PoItem>(rows: T[]): T[] {
+  const byKey = new Map<string, number[]>();
+  rows.forEach((it, i) => {
+    const k = backendSofaKey(it);
+    if (!k) return;
+    byKey.set(k.key, [...(byKey.get(k.key) ?? []), i]);
+  });
+  const out = [...rows];
+  for (const positions of byKey.values()) {
+    const walked = splitBackendSofa(positions.map((i) => rows[i]!), (it) => backendSofaKey(it)!.moduleId).flat();
+    positions.forEach((pos, k) => { out[pos] = walked[k]!; });
+  }
+  return out;
+}
+
 type JsPdf = import('jspdf').jsPDF;
 type AutoTableFn = (typeof import('jspdf-autotable'))['default'];
 
@@ -284,10 +312,10 @@ async function renderPurchaseOrderInto(
      applied here as well as in the detail route's SQL because a caller may have
      fetched the items from somewhere with no ORDER BY. */
   const orderedItems = orderSofaModuleRowsWithinBuilds(
-    sortSoLinesByGroupRank(
+    walkBackendSofaRows(sortSoLinesByGroupRank(
       sortLinesByStoredLineNo(items.map((it) => ({ ...it, item_code: it.item_code, __row: it }))),
       (r) => r.item_group as string | null | undefined,
-    ),
+    )),
   ).map((r) => r.__row);
 
   /* Owner spec 2026-08 — photos follow the line onto the supplier PO. The
@@ -625,14 +653,14 @@ async function renderPurchaseOrderInto(
      kept in line (= display) order for a deterministic left→right layout. */
   const fallbackGroups = new Map<
     string,
-    { modules: Array<{ moduleId: string }>; depth: Depth; model: string; soNo: string }
+    { modules: Array<{ moduleId: string; attachTo: string | null }>; depth: Depth; model: string; soNo: string }
   >();
   /* (SO, base model) keys that already produced a geometry-based sofa — used to
      suppress any reconstructed group that would double-draw the same build. */
   const geometryKeys = new Set<string>();
   const baseModelKey = (soNo: string, baseModel: string): string => `${soNo}|${baseModel.toUpperCase()}`;
 
-  for (const it of items) {
+  for (const it of orderedItems) {
     const soNo = (it.so_doc_no ?? '').trim();
     const part = sofaCellFromLine(it.variants, it.item_code);
     if (part) {
@@ -670,7 +698,9 @@ async function renderPurchaseOrderInto(
     /* One module per PIECE: an old "CNR x2" line is two corners, not one
        (HC-SO-2609-221 drew a U as a five-piece straight row). */
     const pieces = Math.max(1, Math.min(20, Math.round(Number(it.qty) || 1)));
-    for (let i = 0; i < pieces; i++) fg.modules.push({ moduleId: mod.moduleId });
+    const attachRaw = (it.variants as Record<string, unknown> | null)?.[CONSOLE_ATTACH_KEY];
+    const attachTo = typeof attachRaw === 'string' ? attachRaw : null;
+    for (let i = 0; i < pieces; i++) fg.modules.push({ moduleId: mod.moduleId, attachTo });
   }
 
   const distinctSofas: DistinctSofa[] = [];
@@ -688,11 +718,13 @@ async function renderPurchaseOrderInto(
   }
   for (const [fk, g] of fallbackGroups) {
     if (geometryKeys.has(fk)) continue; // already drawn from real geometry
-    const cells = buildDefaultSofaCells(g.modules, g.depth);
-    if (cells.length === 0) continue;
-    // Caption from the module list ("L(LHF) + 2A(RHF)"), else the per-line name.
-    const caption = cells.map((c) => c.moduleId).join(' + ') || g.model;
-    distinctSofas.push({ cells, depth: g.depth, model: caption, soNo: g.soNo });
+    for (const pieces of splitBackendSofa(g.modules, (m) => m.moduleId)) {
+      const cells = buildDefaultSofaCells(pieces, g.depth);
+      if (cells.length === 0) continue;
+      // Caption from the module list ("L(LHF) + 2A(RHF)"), else the per-line name.
+      const caption = cells.map((c) => c.moduleId).join(' + ') || g.model;
+      distinctSofas.push({ cells, depth: g.depth, model: caption, soNo: g.soNo });
+    }
   }
 
   /* Where the last sofa-diagram row leaves usable width, the ITEM PHOTOS
@@ -738,11 +770,18 @@ async function renderPurchaseOrderInto(
        Keyed by module code because the code IS the artwork's name: the stored
        config carries no imageKey for the defaults (Products.tsx seeds those
        client-side), so a config lookup alone found nothing and drew schematics.
-       See docs/bugs/0561. */
-    const sofaArt = opts?.sofaPhotos
-      ?? await loadSofaCompartmentArtForPrint(
+       See docs/bugs/0561.
+
+       A supplied map only OVERRIDES per code, never replaces the lookup: the
+       PO detail page passed the codes that had a stored imageKey, so once
+       Maintenance stored "Console Fabric" every 1A/Console/2S on HC-PO-2610-007
+       printed as a bare box (owner 2026-10-03: 为什么没有cupholder?). */
+    const sofaArt = {
+      ...await loadSofaCompartmentArtForPrint(
         distinctSofas.flatMap((s2) => s2.cells.map((c) => c.moduleId)),
-      );
+      ),
+      ...opts?.sofaPhotos,
+    };
     for (const sofa of distinctSofas) {
       // New row when the current row is full.
       if (col >= perRow) {

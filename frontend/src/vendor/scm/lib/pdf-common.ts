@@ -721,49 +721,22 @@ export const safeName = (s: string, maxLen = 32): string => {
 //
 //   'save'    → download it (the historical default; keep it the fallback so an
 //               un-migrated caller behaves exactly as before)
-//   'print'   → blob → a new tab showing the document full-size, and the
-//               browser's print dialog opened on it once the viewer has loaded.
-//               A 0×0 hidden iframe's contentWindow.print() is answered by
-//               Chrome's PDF viewer with nothing at all (no dialog, no error)
-//               often enough that it is now only the popup-blocked fallback.
-//               A tab of our OWN pages is never the answer: the global @media
-//               print block (index.css) hides `body *` and shows only
-//               `.org-print-area`, so window.print() on a detail page prints a
-//               BLANK sheet.
-//   'preview' → blob → new tab, i.e. the "View full PDF" escape hatch from the
-//               summary card when the operator wants to see every line first.
+//   'print'   → blob → the in-app viewer below, with the browser's print
+//               dialog opened on it once the PDF has laid out. The PDF must sit
+//               in a VISIBLE iframe: a 0×0 hidden iframe's contentWindow.print()
+//               is answered by Chrome's PDF viewer with nothing at all often
+//               enough to be useless. Never window.print() on our own pages: the
+//               global @media print block (index.css) hides `body *` and shows
+//               only `.org-print-area`, so a detail page prints a BLANK sheet.
+//   'preview' → blob → the same viewer without the auto-print, i.e. the "View
+//               full PDF" escape hatch from the summary card.
+//
+// Both used to open a NEW TAB. That window.open runs only after the
+// generator's jspdf render has been awaited, so the click's user gesture is
+// gone and Chrome blocks it as a popup (owner 2026-10-02: "Print 不能在 ERP
+// 里面…会跳去新的 window"). The viewer's "New tab" button is a fresh click, so
+// that route still exists and is never blocked.
 export type PdfAction = 'save' | 'print' | 'preview';
-
-/* Mount a blob URL in a hidden iframe and (optionally) trigger print.
-   Cleanup is deferred 60 s so the OS print dialog can hold the iframe
-   document until the user closes it. */
-const renderViaIframe = (blobUrl: string, andPrint: boolean): void => {
-  const iframe = document.createElement('iframe');
-  iframe.style.position = 'fixed';
-  iframe.style.right = '0';
-  iframe.style.bottom = '0';
-  iframe.style.width = '0';
-  iframe.style.height = '0';
-  iframe.style.border = '0';
-  iframe.src = blobUrl;
-  document.body.appendChild(iframe);
-  if (andPrint) {
-    iframe.onload = () => {
-      try {
-        iframe.contentWindow?.focus();
-        iframe.contentWindow?.print();
-      } catch {
-        /* Some browsers throw if the PDF viewer hasn't fully hydrated.
-           Worst case the user sees the iframe content briefly; we still
-           clean up below. */
-      }
-    };
-  }
-  window.setTimeout(() => {
-    try { document.body.removeChild(iframe); } catch { /* already detached */ }
-    URL.revokeObjectURL(blobUrl);
-  }, 60_000);
-};
 
 /** Deliver a rendered doc by the requested route. Defaults to a download. */
 export function deliverPdf(
@@ -798,25 +771,102 @@ export function deliverPdfBlob(
     window.setTimeout(() => { URL.revokeObjectURL(url); }, 60_000);
     return;
   }
-  const blobUrl = URL.createObjectURL(blob);
-  if (action === 'preview') {
-    openPdfPreviewTab(blob, blobUrl, filename);
-    return;
-  }
-  openPdfPrintTab(blobUrl, filename);
+  openPdfViewerOverlay(blob, filename, { print: action === 'print' });
 }
 
-/* 'print' — the named wrapper page (route 2), never the service-worker path:
-   the viewer sits in a VISIBLE iframe there, the shape Chrome prints reliably,
-   and the page carries a Print button for a second go. Opened synchronously
-   for the same reason the preview's tab is. */
-function openPdfPrintTab(blobUrl: string, filename: string): void {
-  const tab = window.open('', '_blank');
-  if (!tab) {
-    renderViaIframe(blobUrl, true);
-    return;
+/* ── The in-app viewer ───────────────────────────────────────────────────────
+ *
+ * Plain DOM rather than React: deliverPdf is called from vendor generators with
+ * no component tree to mount into. The PDF sits in a VISIBLE iframe (the
+ * browser's own PDF viewer), so Print here prints the real document — not the
+ * page, which index.css's @media print would blank. Esc / backdrop / Close all
+ * tear it down and release the blob. */
+function openPdfViewerOverlay(blob: Blob, filename: string, opts: { print?: boolean } = {}): void {
+  const blobUrl = URL.createObjectURL(blob);
+  const title = filename.replace(/\.pdf$/i, '');
+  const prevOverflow = document.body.style.overflow;
+
+  const backdrop = document.createElement('div');
+  backdrop.setAttribute('role', 'dialog');
+  backdrop.setAttribute('aria-modal', 'true');
+  backdrop.setAttribute('aria-label', title);
+  /* Above the Print preview modal it was opened from. */
+  backdrop.style.cssText =
+    'position:fixed;inset:0;z-index:2147483000;background:rgba(15,23,42,.6);' +
+    'display:flex;align-items:center;justify-content:center;padding:16px';
+
+  const panel = document.createElement('div');
+  panel.style.cssText =
+    'display:flex;flex-direction:column;width:min(1100px,100%);height:100%;' +
+    'background:#3a3a3a;border-radius:10px;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.4)';
+
+  const bar = document.createElement('div');
+  bar.style.cssText =
+    'display:flex;align-items:center;gap:8px;padding:8px 12px;background:#1f2937;color:#fff;' +
+    'font:600 13px/1.2 system-ui,sans-serif';
+
+  const name = document.createElement('div');
+  name.textContent = title;
+  name.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+  bar.appendChild(name);
+
+  const iframe = document.createElement('iframe');
+  iframe.src = blobUrl;
+  iframe.title = title;
+  iframe.style.cssText = 'flex:1;width:100%;border:0;display:block;background:#525659';
+
+  const button = (label: string, primary: boolean, onClick: () => void) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.style.cssText =
+      'border:0;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px/1 system-ui,sans-serif;' +
+      (primary ? 'background:#0f766e;color:#fff' : 'background:rgba(255,255,255,.12);color:#fff');
+    b.addEventListener('click', onClick);
+    bar.appendChild(b);
+    return b;
+  };
+
+  const printFrame = () => {
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } catch {
+      /* Viewer not hydrated yet — its own toolbar print button still works. */
+    }
+  };
+  button('Print', true, printFrame);
+  button('Download', false, () => deliverPdfBlob(blob, filename, 'save'));
+  /* A fresh click, so this window.open keeps its user gesture. */
+  button('New tab', false, () => openPdfPreviewTab(blob, URL.createObjectURL(blob), filename));
+  button('Close', false, () => close());
+
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key !== 'Escape') return;
+    // Capture + stop, so Esc closes only the viewer, not the Print preview under it.
+    e.stopPropagation();
+    close();
+  };
+  function close() {
+    document.removeEventListener('keydown', onKey, true);
+    backdrop.remove();
+    document.body.style.overflow = prevOverflow;
+    URL.revokeObjectURL(blobUrl);
   }
-  writeNamedPdfTab(tab, blobUrl, filename, { print: true });
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) close();
+  });
+  document.addEventListener('keydown', onKey, true);
+
+  if (opts.print) {
+    iframe.addEventListener('load', () => { window.setTimeout(printFrame, PRINT_SETTLE_MS); });
+  }
+
+  panel.appendChild(bar);
+  panel.appendChild(iframe);
+  backdrop.appendChild(panel);
+  document.body.appendChild(backdrop);
+  document.body.style.overflow = 'hidden';
 }
 
 /* ── The preview tab ──────────────────────────────────────────────────────────
@@ -909,7 +959,7 @@ async function putPrintPreview(
     asked for too early prints a blank sheet. */
 const PRINT_SETTLE_MS = 400;
 
-function writeNamedPdfTab(tab: Window, blobUrl: string, filename: string, opts: { print?: boolean } = {}): void {
+function writeNamedPdfTab(tab: Window, blobUrl: string, filename: string): void {
   const title = filename.replace(/\.pdf$/i, '');
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -939,9 +989,6 @@ function writeNamedPdfTab(tab: Window, blobUrl: string, filename: string, opts: 
     }
   };
   tab.document.querySelector('[data-print]')?.addEventListener('click', printFrame);
-  if (opts.print && frame) {
-    frame.addEventListener('load', () => { tab.setTimeout(printFrame, PRINT_SETTLE_MS); });
-  }
   /* No revoke timer. The old code revoked after 60 s, which was safe when the
      tab was the blob itself (already loaded) but would quietly break this page's
      Download link the moment the operator took longer than a minute to decide.
