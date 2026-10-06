@@ -410,7 +410,7 @@
       "catches": 3
     },
     "backend/src/scm/routes/stock-takes.ts": {
-      "reads": 8,
+      "reads": 6,
       "catches": 0
     },
     "backend/src/scm/routes/stock-transfers.ts": {
