@@ -744,6 +744,7 @@ POST,/api/scm/deposit-invoices/invoice-delivered,AUTHENTICATED_MIDDLEWARE,COMPAN
 POST,/api/scm/deposit-invoices/issue-missing,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/deposit-invoices.ts
 GET,/api/scm/deposit-invoices/settings,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/deposit-invoices.ts
 POST,/api/scm/deposit-invoices/settings,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/deposit-invoices.ts
+GET,/api/scm/deposit-invoices/sheets,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/deposit-invoices.ts
 GET,/api/scm/document-flow/:type/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/document-flow.ts
 GET,/api/scm/document-flow/candidate-pos/:soDocNo,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/document-flow.ts
 GET,/api/scm/dp-orders,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/dp-orders.ts

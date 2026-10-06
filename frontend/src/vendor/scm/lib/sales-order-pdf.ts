@@ -23,6 +23,7 @@ import {
   type PdfAction,
 } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
+import { orderAddressLines } from './order-address';
 import { mfgCategoryLabel } from '../../shared/product-categories';
 import { loadFabricDescriptionMap, loadFabricSupplierMap } from './supplier-doc-data';
 import { composeSoLineDescription } from './so-line-description';
@@ -501,32 +502,10 @@ export async function renderSalesOrderInto(
      the postcode/city/state INSIDE the address lines, so the old code printed
      them twice (and city == state on KL doubled again). Each locality part is
      appended ONLY when it doesn't already appear in the lines above, locality
-     parts are deduped against each other, and exact-duplicate lines drop. */
-  const baseAddressLines = (header.ship_to_address ?? '').trim()
-    ? (header.ship_to_address as string).split('\n').map((s) => s.trim()).filter(Boolean)
-    : [header.address1, header.address2]
-        .map((s) => (typeof s === 'string' ? s.trim() : ''))
-        .filter(Boolean);
-  const addressHaystack = baseAddressLines.join(' ').toLowerCase();
-  const localityParts: string[] = [];
-  for (const part of [
-    (header.postcode ?? header.address4 ?? '').trim(),
-    (header.city ?? header.address3 ?? '').trim(),
-    (header.customer_state ?? '').trim(),
-  ]) {
-    if (!part) continue;
-    if (addressHaystack.includes(part.toLowerCase())) continue;   // already inside an address line
-    if (localityParts.some((p) => p.toLowerCase() === part.toLowerCase())) continue; // e.g. city == state (KL)
-    localityParts.push(part);
-  }
-  const seenAddressLines = new Set<string>();
-  const addressLines = [...baseAddressLines, localityParts.join(' ')].filter((l) => {
-    if (!l) return false;
-    const k = l.toLowerCase();
-    if (seenAddressLines.has(k)) return false;
-    seenAddressLines.add(k);
-    return true;
-  });
+     parts are deduped against each other, and exact-duplicate lines drop.
+     The rule lives in order-address.ts — the Deposit Invoice prints the same
+     lines off the same order. */
+  const addressLines = orderAddressLines(header);
   /* Family / second contact = the emergency_contact_* trio (POS handover
      "Emergency" phase). The SO schema has NO phone2/contact-person column —
      this is the only second-contact field family, so it prints here. */
