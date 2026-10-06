@@ -177,7 +177,7 @@ describe('matchGrnScanToPoLines', () => {
   // Regression: a Hookka delivery order with 6 lines where only 1 item code hit
   // any open PO line company-wide became a GRN against the wrong PO, and once
   // posted it flipped that PO's sales order to READY.
-  test('one stray hit out of six lines is refused, never a draft', () => {
+  test('one stray hit out of six lines becomes a draft flagged as a weak match', () => {
     const res = matchGrnScanToPoLines(
       'PO-010070',
       [
@@ -190,8 +190,9 @@ describe('matchGrnScanToPoLines', () => {
       [],
       'sup-1',
     );
-    expect(res.picks).toEqual([]);
-    expect(res.refused).toBe('too_few_lines');
+    expect(res.picks).toEqual([{ poItemId: 'pi-1', qty: 1 }]);
+    expect(res.refused).toBeNull();
+    expect(res.weakMatch).toEqual({ matched: 1, scanned: 6 });
     expect(res.unmatched).toHaveLength(5);
   });
 
