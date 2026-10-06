@@ -1,7 +1,7 @@
-// Owner 2026-10-05: PO dates follow the SO rule — when the PO header Delivery
-// Date (expected_at) changes, every line's delivery_date follows. PO lines have
-// no "set by hand" flag, so every line moves except a FROZEN one: a line already
-// fully received on a GRN (received_qty >= qty) keeps the date it arrived on.
+// Owner 2026-10-06: when the PO header Delivery Date (expected_at) changes, every
+// line's delivery_date follows, except (a) a hand-set line — PO lines have no
+// flag, so "hand-set" = a non-null date that differs from the OLD header date —
+// and (b) a line already fully received on a GRN (received_qty >= qty).
 // Drives the REAL header PATCH through the fake PostgREST client.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
@@ -46,6 +46,7 @@ beforeEach(() => {
   sb.tables.purchase_order_items = [
     { id: 'open', purchase_order_id: 'po-1', company_id: 1, qty: 2, received_qty: 0, delivery_date: '2026-10-10' },
     { id: 'hand', purchase_order_id: 'po-1', company_id: 1, qty: 1, received_qty: 0, delivery_date: '2026-10-20' },
+    { id: 'blank', purchase_order_id: 'po-1', company_id: 1, qty: 1, received_qty: 0, delivery_date: null },
     { id: 'part', purchase_order_id: 'po-1', company_id: 1, qty: 4, received_qty: 1, delivery_date: '2026-10-10' },
     { id: 'done', purchase_order_id: 'po-1', company_id: 1, qty: 3, received_qty: 3, delivery_date: '2026-10-10' },
     // Another company's line on the same PO id must never be touched.
@@ -54,12 +55,21 @@ beforeEach(() => {
 });
 
 describe('PATCH mfg purchase order header — Delivery Date cascades to lines', () => {
-  it('moves every line that is not fully received, including a hand-set one', async () => {
+  it('moves every line that follows the old header date and is not fully received', async () => {
     const res = await patch({ expectedAt: '2026-11-05' });
     expect(res.status).toBe(200);
     expect(line('open').delivery_date).toBe('2026-11-05');
-    expect(line('hand').delivery_date).toBe('2026-11-05');
     expect(line('part').delivery_date).toBe('2026-11-05');
+  });
+
+  it('a hand-set line (date differs from the old header date) keeps its date', async () => {
+    await patch({ expectedAt: '2026-11-05' });
+    expect(line('hand').delivery_date).toBe('2026-10-20');
+  });
+
+  it('a line with no date moves to the new header date', async () => {
+    await patch({ expectedAt: '2026-11-05' });
+    expect(line('blank').delivery_date).toBe('2026-11-05');
   });
 
   it('leaves a fully received line and another company\'s line alone', async () => {
