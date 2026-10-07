@@ -20,7 +20,13 @@ lists only what differs for GR.
 - **Never a wrong link.** If the matcher cannot confidently resolve the PO
   line(s), **nothing is created** — the job lands *needs-review* (status `done`,
   `linked_doc_no` null, slip retained, a plain note) and the operator receives
-  from the PO by hand.
+  from the PO by hand. The note lists each scanned line and why, including a
+  refused PO's live status ("HC-PO-2609-223 is marked Received").
+- **Known PO, unknown items.** When the rows (or header) name exactly ONE open PO
+  of the resolved supplier and no row lines up by item, the draft carries every
+  line still owed on that PO at its remaining qty (`poFallback`), with "Check
+  every line" and the delivery order as read on the note. Never with an
+  unresolved supplier, never across two POs.
 
 ## Endpoints (`/scan-gr/*`, gated `scm.procurement.grn`, writeLevel `view`)
 
@@ -58,10 +64,11 @@ Match order: **supplier, then PO number, then item code / barcode.**
 - The printed supplier name resolves to ONE of our suppliers
   (`resolveScannedSupplier`: normalised name / code, else a unique containment
   match). When resolved, only that supplier's PO lines are candidates.
-- The scanned `poNo` (e.g. `PO-010070`) is normalised (uppercase, strip non-alnum)
-  and compared to our `po_number` (`HC-PO-…` / `2990-PO-…`). A hit **scopes**
-  matching to that PO. Supplier-printed PO numbers usually differ from ours, so
-  this often misses and matching falls to item code.
+- The scanned `poNo` is normalised (uppercase, strip non-alnum) and resolved to
+  our `po_number` (`HC-PO-…` / `2990-PO-…`) by `resolvePrintedPo`: exact, else a
+  unique tail of 6+ digits, because suppliers print ours without the prefix
+  (`PO-010080`, `PO: 2609-251`). A hit **scopes** matching to that PO. Their
+  own refs (`S/O1791`) resolve to nothing and matching falls to item code.
 - **A PO printed on the row** (a consolidated DO such as Hookka's, one of our
   POs per line, no header P.O.) anchors that row to that PO only. A printed row
   PO that is not one of our open POs (a fair/service ref like `ART-HOK-002`, a PO

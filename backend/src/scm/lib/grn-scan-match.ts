@@ -62,6 +62,9 @@ export type ScannedGrnLine = {
 
 export type MatchedPick = { poItemId: string; qty: number };
 
+// Any PO in the company, open or not, for saying why a printed PO was refused.
+export type PoStatusRef = { poNumber: string; status: string };
+
 // A suppliers row, narrowed to what resolveScannedSupplier compares against.
 export type SupplierRef = { id: string; code: string | null; name: string | null };
 
@@ -103,6 +106,10 @@ export type GrnMatchResult = {
   // Set when no PO number was recognised and half or fewer of the scanned lines
   // hit the one PO: the draft may be against the wrong PO.
   weakMatch: { matched: number; scanned: number } | null;
+  // Set when the delivery order named exactly one open PO of the resolved
+  // supplier but no row lined up with it by item: picks are then every line
+  // still owed on that PO, at its remaining qty, for the operator to correct.
+  poFallback: string | null;
 };
 
 // Normalise a code/number for comparison: uppercase, drop every non-alnum char.
@@ -117,6 +124,30 @@ export function normalizeCode(v: string | null | undefined): string {
 export function normalizeSupplierName(v: string | null | undefined): string {
   return normalizeCode((v ?? '').replace(/\(M\)/gi, ''))
     .replace(/(SENDIRIANBERHAD|SDNBHD|BERHAD|BHD|PLT|LLP)$/, '');
+}
+
+/**
+ * Resolve a printed PO number to ONE of `pos`, or null. Exact (normalised)
+ * first. Suppliers also print our number without the company prefix
+ * ("PO-2609-223", "2609-251", "PO-010080" for HC-PO-...), so a unique tail match
+ * counts too when `allowTail`, and only with at least 6 digits: a bare "251"
+ * never matches. More than one candidate is null, never guessed.
+ */
+export function resolvePrintedPo<T extends { poNumber: string }>(
+  printed: string | null | undefined,
+  pos: T[],
+  allowTail: boolean,
+): T | null {
+  const p = normalizeCode(printed);
+  if (!p) return null;
+  const unique = (hits: T[]): T | null => {
+    const byNumber = new Map(hits.map((h) => [h.poNumber, h]));
+    return byNumber.size === 1 ? [...byNumber.values()][0] : null;
+  };
+  const exact = pos.filter((r) => normalizeCode(r.poNumber) === p);
+  if (exact.length > 0) return unique(exact);
+  if (!allowTail || (p.match(/\d/g)?.length ?? 0) < 6) return null;
+  return unique(pos.filter((r) => normalizeCode(r.poNumber).endsWith(p)));
 }
 
 /**
@@ -195,12 +226,14 @@ export function matchGrnScanToPoLines(
     ? openLines.filter((l) => l.supplierId === supplierId)
     : openLines;
 
-  // Our open PO numbers, normalised -> as stored.
-  const poNumberByNorm = new Map<string, string>();
-  for (const l of supplierLines) poNumberByNorm.set(normalizeCode(l.poNumber), l.poNumber);
+  const openPos = [...new Set(supplierLines.map((l) => l.poNumber))].map((poNumber) => ({ poNumber }));
+  // A tail match only inside one known supplier's POs: without a supplier, a
+  // foreign ref could tail-match another supplier's PO.
+  const resolveOpenPo = (printed: string | null | undefined): string | null =>
+    resolvePrintedPo(printed, openPos, supplierId !== null)?.poNumber ?? null;
 
-  // PO-number scoping — does the scanned header P.O. No equal one of our open POs?
-  const matchedPoNumberValue = poNumberByNorm.get(normalizeCode(scannedPoNo)) ?? null;
+  // PO-number scoping — does the scanned header P.O. No name one of our open POs?
+  const matchedPoNumberValue = resolveOpenPo(scannedPoNo);
   const poNumberMatched = matchedPoNumberValue !== null;
 
   // Index the open lines by their item code AND their own supplier SKU, both
@@ -229,6 +262,7 @@ export function matchGrnScanToPoLines(
   const itemOnlyLines: Array<{ line: ScannedGrnLine; poItemId: string }> = [];
   const poNumberOf = new Map<string, string>(); // poItemId -> po_number
   const unmatched: UnmatchedScanLine[] = [];
+  const anchoredPos = new Set<string>();
   let scannedCount = 0;
   let itemOnlyMatchedCount = 0;
 
@@ -239,7 +273,7 @@ export function matchGrnScanToPoLines(
     let anchorPo: string | null = null;
     const linePoNorm = normalizeCode(sl.poNo);
     if (linePoNorm) {
-      anchorPo = poNumberByNorm.get(linePoNorm) ?? null;
+      anchorPo = resolveOpenPo(sl.poNo);
       if (anchorPo === null) {
         unmatched.push({ line: sl, reason: 'po_not_open', candidatePoItemIds: [] });
         continue;
@@ -247,6 +281,7 @@ export function matchGrnScanToPoLines(
     } else if (poNumberMatched) {
       anchorPo = matchedPoNumberValue;
     }
+    if (anchorPo !== null) anchoredPos.add(anchorPo);
 
     // Candidate item-code keys this scanned line could resolve to, in priority:
     // its own printed code (direct), then the supplier-SKU / barcode bindings.
@@ -322,6 +357,22 @@ export function matchGrnScanToPoLines(
       else if (itemOnlyMatchedCount * 2 <= scannedCount) weakMatch = { matched: itemOnlyMatchedCount, scanned: scannedCount };
     }
   }
+  // The delivery order named one open PO of a known supplier, yet no row lined
+  // up by item (the supplier describes a set differently from our PO lines).
+  // The PO is certain, so draft everything still owed on it for the operator to
+  // correct, rather than nothing. Never without a resolved supplier: a printed
+  // number alone could name another supplier's PO.
+  let poFallback: string | null = null;
+  if (picks.length === 0 && refused === null && supplierId !== null && anchoredPos.size === 1) {
+    const po = [...anchoredPos][0];
+    for (const l of supplierLines) {
+      if (l.poNumber !== po || l.remaining <= 0) continue;
+      picks.push({ poItemId: l.poItemId, qty: l.remaining });
+      poNumberOf.set(l.poItemId, l.poNumber);
+    }
+    if (picks.length > 0) poFallback = po;
+  }
+
   const matchedPoNumbers = [...new Set(picks.map((p) => poNumberOf.get(p.poItemId) ?? ''))].filter(Boolean);
 
   return {
@@ -332,28 +383,49 @@ export function matchGrnScanToPoLines(
     matchedPoNumberValue,
     refused,
     weakMatch,
+    poFallback,
   };
 }
 
-const UNMATCHED_WHY: Record<UnmatchedScanLine['reason'], (l: ScannedGrnLine) => string> = {
+const PO_STATUS_WHY: Record<string, string> = {
+  RECEIVED: 'is marked Received',
+  CANCELLED: 'is marked Cancelled',
+  DRAFT: 'is marked Draft',
+};
+
+// Why a printed PO is not one we can receive against, from its live status.
+function poNotOpenWhy(l: ScannedGrnLine, allPos: PoStatusRef[]): string {
+  const po = resolvePrintedPo(l.poNo, allPos, true);
+  if (!po) return `PO ${l.poNo ?? '?'} is not one of our POs`;
+  return `PO ${po.poNumber} ${PO_STATUS_WHY[po.status] ?? `is marked ${po.status}, but is on hold or under another supplier`}`;
+}
+
+const UNMATCHED_WHY: Record<UnmatchedScanLine['reason'], (l: ScannedGrnLine, allPos: PoStatusRef[]) => string> = {
   no_open_po_line: () => 'no open PO line',
   ambiguous: () => 'more than one PO line fits',
   nothing_remaining: () => 'its PO line shows 0 qty remaining',
-  po_not_open: (l) => `PO ${l.poNo ?? '?'} is not open`,
+  po_not_open: poNotOpenWhy,
   no_po_number: () => 'no PO printed on the row',
 };
 
+const scanLineLabel = (l: ScannedGrnLine): string =>
+  [l.itemCode, l.description].map((v) => (v ?? '').trim()).filter(Boolean).join(' ') || l.barcode || 'unreadable item';
+
+const capped = (parts: string[], max: number): string =>
+  `${parts.slice(0, max).join('; ')}${parts.length > max ? `; and ${parts.length - max} more` : ''}.`;
+
 /**
- * The scanned lines left off the draft, written out so the operator knows what
- * to add (a count alone told them nothing). Null when every line matched. Capped
- * so a long delivery order cannot flood the GRN note.
+ * Each unmatched scanned line with its qty and why, so the operator knows what
+ * to add, or why nothing was created (a count alone told them nothing). Null
+ * when every line matched. Capped so a long delivery order cannot flood the
+ * note. `allPos` (every company PO, any status) says why a printed PO was refused.
  */
-export function describeUnmatchedScanLines(unmatched: UnmatchedScanLine[], max = 10): string | null {
+export function describeUnmatchedScanLines(unmatched: UnmatchedScanLine[], allPos: PoStatusRef[], max = 10): string | null {
   if (unmatched.length === 0) return null;
-  const parts = unmatched.slice(0, max).map(({ line: l, reason }) => {
-    const what = [l.itemCode, l.description].map((v) => (v ?? '').trim()).filter(Boolean).join(' ') || l.barcode || 'unreadable item';
-    return `${what} x${l.qty} (${UNMATCHED_WHY[reason](l)})`;
-  });
-  const more = unmatched.length > max ? `; and ${unmatched.length - max} more` : '';
-  return `Not added, please add on the draft: ${parts.join('; ')}${more}.`;
+  return capped(unmatched.map(({ line: l, reason }) => `${scanLineLabel(l)} x${l.qty} (${UNMATCHED_WHY[reason](l, allPos)})`), max);
+}
+
+/** The scanned lines as read, for a draft built from the whole PO. */
+export function listScanLines(lines: ScannedGrnLine[], max = 10): string {
+  return capped(lines.map((l) => `${scanLineLabel(l)} x${l.qty}`), max);
 }

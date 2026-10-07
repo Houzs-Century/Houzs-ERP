@@ -11,8 +11,9 @@
 
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { isDocumentHeld } from './document-hold';
+import { paginateAll } from './paginate-all';
 import { RECEIVABLE_PO_STATUSES } from './source-document-gates';
-import type { OpenPoLine, SupplierRef, SupplierSkuBinding } from './grn-scan-match';
+import type { OpenPoLine, PoStatusRef, SupplierRef, SupplierSkuBinding } from './grn-scan-match';
 
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
@@ -23,15 +24,17 @@ export async function loadOpenPoLines(
   svc: SupabaseClient,
   companyId: number | null,
 ): Promise<OpenPoLine[]> {
-  let q = svc
-    .from('purchase_order_items')
-    .select(`
-      id, purchase_order_id, item_code, material_name, supplier_sku, qty, received_qty,
-      po:purchase_orders!inner ( id, po_number, supplier_id, status, on_hold, company_id )
-    `)
-    .in('purchase_orders.status', RECEIVABLE_PO_STATUSES as unknown as string[]);
-  if (companyId != null) q = q.eq('company_id', companyId);
-  const { data, error } = await q.limit(5000);
+  const { data, error } = await paginateAll((from, to) => {
+    let q = svc
+      .from('purchase_order_items')
+      .select(`
+        id, purchase_order_id, item_code, material_name, supplier_sku, qty, received_qty,
+        po:purchase_orders!inner ( id, po_number, supplier_id, status, on_hold, company_id )
+      `)
+      .in('purchase_orders.status', RECEIVABLE_PO_STATUSES as unknown as string[]);
+    if (companyId != null) q = q.eq('company_id', companyId);
+    return q.order('id').range(from, to);
+  });
   if (error) throw new Error(`load open PO lines failed: ${error.message}`);
 
   type Row = {
@@ -65,11 +68,13 @@ export async function loadSupplierBindings(
   svc: SupabaseClient,
   companyId: number | null,
 ): Promise<SupplierSkuBinding[]> {
-  let q = svc
-    .from('supplier_material_bindings')
-    .select('supplier_sku, ac_item_code, item_code');
-  if (companyId != null) q = q.eq('company_id', companyId);
-  const { data, error } = await q.limit(20000);
+  const { data, error } = await paginateAll((from, to) => {
+    let q = svc
+      .from('supplier_material_bindings')
+      .select('supplier_sku, ac_item_code, item_code');
+    if (companyId != null) q = q.eq('company_id', companyId);
+    return q.order('id').range(from, to);
+  });
   if (error) throw new Error(`load supplier bindings failed: ${error.message}`);
   type Row = { supplier_sku: string | null; ac_item_code: string | null; item_code: string | null };
   const out: SupplierSkuBinding[] = [];
@@ -87,10 +92,30 @@ export async function loadSuppliers(
   svc: SupabaseClient,
   companyId: number | null,
 ): Promise<SupplierRef[]> {
-  let q = svc.from('suppliers').select('id, code, name');
-  if (companyId != null) q = q.eq('company_id', companyId);
-  const { data, error } = await q.limit(5000);
+  const { data, error } = await paginateAll((from, to) => {
+    let q = svc.from('suppliers').select('id, code, name');
+    if (companyId != null) q = q.eq('company_id', companyId);
+    return q.order('id').range(from, to);
+  });
   if (error) throw new Error(`load suppliers failed: ${error.message}`);
   type Row = { id: string; code: string | null; name: string | null };
-  return (data as unknown as Row[]).map((r) => ({ id: r.id, code: r.code, name: r.name }));
+  return ((data ?? []) as unknown as Row[]).map((r) => ({ id: r.id, code: r.code, name: r.name }));
+}
+
+// Every PO number in the company with its status, open or not, so a delivery
+// order row whose PO is not open can say why ("already fully received").
+export async function loadPoStatuses(
+  svc: SupabaseClient,
+  companyId: number | null,
+): Promise<PoStatusRef[]> {
+  const { data, error } = await paginateAll((from, to) => {
+    let q = svc.from('purchase_orders').select('po_number, status');
+    if (companyId != null) q = q.eq('company_id', companyId);
+    return q.order('id').range(from, to);
+  });
+  if (error) throw new Error(`load PO statuses failed: ${error.message}`);
+  type Row = { po_number: string | null; status: string | null };
+  return ((data ?? []) as unknown as Row[])
+    .filter((r) => r.po_number)
+    .map((r) => ({ poNumber: r.po_number as string, status: r.status ?? '' }));
 }
