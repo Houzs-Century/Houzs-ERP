@@ -2755,7 +2755,7 @@ export function MobileNewSO({
             name: (sku.name ?? "").trim() || code,
             cat: nextCat,
             price: fromSen(sku.unitPriceSen),
-            variants: seededVariants,
+            variants: { ...sku.defaultVariants, ...seededVariants },
             overriddenKeys: [],
           };
         };

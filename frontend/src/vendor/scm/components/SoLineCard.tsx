@@ -63,6 +63,7 @@ import { CATEGORY_BADGE } from '../lib/category-badges';
 import { sortByNumeric } from '../lib/sort-options';
 import { posRemarkSpecialOf } from '../lib/pos-remark-special';
 import { seedFollowerVariants } from '../lib/so-variant-cascade';
+import { pickDefaultVariants } from '../../shared/model-default-variants';
 import { useAnchoredPanel, anchoredPanelStyle } from '../../../lib/anchoredPanel';
 import { useNotify } from './NotifyDialog';
 import { SpecialOrders } from './SpecialOrders';
@@ -492,6 +493,11 @@ const SoLineCardInner = ({
        lib/so-variant-cascade so the never-inherited keys are stripped in one
        place. PR #147 — reset overriddenKeys on a fresh pick. */
     const seedVariants = seedFollowerVariants(inheritVariantsByCategory?.[category]);
+    /* Model / SKU default variants pre-fill under the inherited ones, only where
+       this document specifies the build (same gate as the sofa Leg default). */
+    const defaults = seedSofaLegDefault
+      ? pickDefaultVariants(p.category, p.model_default_variants, p.default_variants, p.allowed_options)
+      : {};
     onChange({
       itemCode:       p.code,
       itemGroup:      category,
@@ -503,7 +509,7 @@ const SoLineCardInner = ({
          never auto-populates). The server recompute stays authoritative at
          save; sofa module / seat-height pools land their exact figure there. */
       unitPriceSen: p.sell_price_sen ?? 0,
-      variants:       seedVariants,
+      variants:       { ...defaults, ...seedVariants },
       overriddenKeys: [],
     });
     setSearch(p.name);

@@ -35,6 +35,7 @@ import { baseKeyOf, deleteThumbFor, putOptionalThumb } from '../../services/phot
 import type { Env, Variables } from '../env';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { categorySwapAllowed } from '../shared/category-swap';
+import { invalidModelDefault } from '../shared/model-default-variants';
 import { moveModelCategory } from '../lib/model-category-move';
 import { MFG_PRODUCT_CATEGORIES } from './mfg-products';
 
@@ -176,10 +177,12 @@ const PatchBody = z.object({
   description:    z.string().trim().max(500).nullable().optional(),
   photoUrl:       z.string().trim().url().nullable().optional(),
   allowedOptions: z.record(z.unknown()).optional(),
+  // Keyed like a line's variants; checked against allowed_options below.
+  defaultVariants: z.record(z.string().trim().min(1)).optional(),
   active:         z.boolean().optional(),
 });
 
-const COLS = 'id, branding, model_code, name, category, description, photo_url, allowed_options, active, created_at, updated_at';
+const COLS = 'id, branding, model_code, name, category, description, photo_url, allowed_options, default_variants, active, created_at, updated_at';
 
 // ── GET / ──────────────────────────────────────────────────────────────────
 export const listProductModelsHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
@@ -490,6 +493,7 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
   if (parsed.data.description !== undefined)    u.description     = parsed.data.description;
   if (parsed.data.photoUrl !== undefined)       u.photo_url       = parsed.data.photoUrl;
   if (parsed.data.allowedOptions !== undefined) u.allowed_options = parsed.data.allowedOptions;
+  if (parsed.data.defaultVariants !== undefined) u.default_variants = parsed.data.defaultVariants;
   if (parsed.data.active !== undefined)         u.active          = parsed.data.active;
   if (parsed.data.category !== undefined)       u.category        = parsed.data.category;
 
@@ -518,6 +522,16 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
     }, 409);
   }
   if (Object.keys(u).length === 0) return c.json({ error: 'empty_patch' }, 400);
+  if (parsed.data.defaultVariants !== undefined) {
+    const bad = invalidModelDefault(
+      String(u.category ?? beforeCategory ?? ''),
+      parsed.data.defaultVariants,
+      parsed.data.allowedOptions ?? (before as { allowed_options?: unknown } | null)?.allowed_options ?? null,
+    );
+    if (bad) {
+      return c.json({ error: 'default_not_allowed', message: `The default for ${bad} is not one of this Model's allowed options.` }, 400);
+    }
+  }
   // The category moves through the helper Import SKUs also uses, so the model's SKUs always follow it.
   const newCategory = u.category === undefined ? undefined : String(u.category);
   delete u.category;

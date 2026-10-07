@@ -108,6 +108,7 @@ import {
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { SoLineCard, emptySoLine, missingRequiredVariants, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
+import { pickDefaultVariants } from '../../vendor/shared/model-default-variants';
 /* FIX (d) scan fabric seed — resolve a scanned fabric code (e.g. "BO315-22")
    to the SAME fabric_colours / fabric_library rows SoLineCard's pickFabricColour
    uses, so the matched colour rides onto the seeded line's variants instead of
@@ -734,7 +735,10 @@ export const SalesOrderNew = () => {
           itemGroup:      category,
           description:    p.name,
           unitPriceSen: p.sell_price_sen ?? 0,
-          variants:       seedFollowerVariants(inheritVariantsByCategory[category]),
+          variants: {
+            ...pickDefaultVariants(p.category, p.model_default_variants, p.default_variants, p.allowed_options),
+            ...seedFollowerVariants(inheritVariantsByCategory[category]),
+          },
           overriddenKeys: [],
         };
       });
