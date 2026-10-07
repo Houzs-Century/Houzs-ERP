@@ -450,8 +450,10 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
      batch = open lots carrying that batch_no + units still open on that PO.
        1. a batch whose received lots cover every module → stock (FIFO oldest);
        2. else a batch whose lots + open PO cover every module → po (earliest ETA);
-       3. else a batch with units still ON ORDER covering part → that PO named,
-          rest short (complete THAT PO, never raise a second);
+       3. else a batch with units still ON ORDER covering part, AND raised for
+          this set (a line of that PO carries one of the set's so_item_ids) →
+          that PO named, rest short (complete THAT PO, never raise a second).
+          Another order's PO is never named here (BUG-65);
        4. else the whole set is short.
      Sets the allocator LOCKED (allocated_batch_no on every line, batch still
      covering) keep their batch first. Replica of mrp.ts; keep in lockstep. */
@@ -482,6 +484,13 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
       perBucket.set(k, cur);
       sofaPoByBatch.set(p.poNumber, perBucket);
     }
+  }
+  const poRaisedFor = new Map(); // po_number -> Set(so_item_id) its lines were raised from
+  for (const r of poAll) {
+    if (!r.so_item_id) continue;
+    const ids = poRaisedFor.get(r.po_number) ?? new Set();
+    ids.add(String(r.so_item_id));
+    poRaisedFor.set(r.po_number, ids);
   }
   const sofaSetsByKey = new Map(); // `${wh}|${doc_no}` -> [{ row, bucketKey, whId, code, vkey, need }]
   for (const [k, b] of sofaBuckets) {
@@ -518,13 +527,18 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
     }
     return { batch, stockOnly, full, covered, onOrder, eta };
   };
-  const chooseBatch = (mods) => {
+  const raisedForSet = (batch, lines) => {
+    const ids = poRaisedFor.get(batch);
+    return !!ids && lines.some((l) => ids.has(String(l.row.id)));
+  };
+  const chooseBatch = (lines) => {
+    const mods = modulesOf(lines);
     const fits = [...new Set([...lotBatches, ...sofaPoByBatch.keys()])].map((b) => fitOf(b, mods)).filter((f) => f.covered > 0);
     const stockOnly = fits.filter((f) => f.stockOnly);
     if (stockOnly.length) return stockOnly.sort((a, b) => (lotReceivedAt.get(a.batch) ?? "").localeCompare(lotReceivedAt.get(b.batch) ?? "") || a.batch.localeCompare(b.batch))[0];
     const full = fits.filter((f) => f.full);
     if (full.length) return full.sort((a, b) => byDateAsc(a.eta, b.eta) || a.batch.localeCompare(b.batch))[0];
-    const partial = fits.filter((f) => f.onOrder);
+    const partial = fits.filter((f) => f.onOrder && raisedForSet(f.batch, lines));
     if (partial.length) return partial.sort((a, b) => (b.covered - a.covered) || byDateAsc(a.eta, b.eta) || a.batch.localeCompare(b.batch))[0];
     return null;
   };
@@ -590,7 +604,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   }
   for (const [key, lines] of orderedSofaSets) {
     if (sofaPlanned.has(key)) continue;
-    planSofaSet(lines, chooseBatch(modulesOf(lines)));
+    planSofaSet(lines, chooseBatch(lines));
   }
 
   for (const [gk, vkeys] of legacyUseByWhCode) {

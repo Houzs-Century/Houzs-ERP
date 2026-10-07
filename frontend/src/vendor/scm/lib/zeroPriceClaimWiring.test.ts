@@ -62,11 +62,20 @@ describe("SO CREATE now states the intent — desktop and mobile", () => {
     expect(mobileNewSo()).toMatch(/\.\.\.zeroPriceClaim\(toSen\(l\.price\), l\.priceAuthored === true\)/);
   });
 
-  it("mobile's line PATCH states it unconditionally, like desktop's", () => {
-    // An existing line's 0 IS its persisted price; a qty-only edit re-sends the
-    // price, so withholding the claim there would re-price a free line.
-    expect(mobileNewSo()).toMatch(/\.\.\.zeroPriceClaim\(toSen\(l\.price\), true\)/);
-    expect(soDetail().match(/\.\.\.zeroPriceClaim\(d\.unitPriceSen, true\)/g) ?? []).toHaveLength(2);
+  it("the line PATCH claims only an authored 0, on both surfaces (BUG-63)", () => {
+    // A persisted 0 is authored (the seed says so), so a qty-only edit keeps a
+    // free line free. A product re-pick seeds an UNauthored price: claiming its
+    // 0 wrote RM 0 over the line's real price on 34 orders.
+    expect(mobileNewSo()).not.toMatch(/\.\.\.zeroPriceClaim\(toSen\(l\.price\), true\)/);
+    expect(soDetail()).toMatch(/\.\.\.zeroPriceClaim\(d\.unitPriceSen, d\.priceAuthored === true\)/);
+    // The staged ADD is unchanged and still claims every 0.
+    expect(soDetail().match(/\.\.\.zeroPriceClaim\(d\.unitPriceSen, true\)/g) ?? []).toHaveLength(1);
+  });
+
+  it("a product re-pick clears the authored flag, on both surfaces (BUG-63)", () => {
+    expect(lineCard()).toMatch(/unitPriceSen: p\.sell_price_sen \?\? 0,[\s\S]{0,120}?priceAuthored:\s*false/);
+    expect(mobileNewSo()).toMatch(/price: fromSen\(sku\.unitPriceSen\),\s*priceAuthored: false/);
+    expect(soDetail()).toMatch(/unitPriceSen: it\.unit_price_sen \?\? 0,[\s\S]{0,120}?priceAuthored: true/);
   });
 });
 

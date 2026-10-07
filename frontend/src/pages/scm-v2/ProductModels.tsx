@@ -443,7 +443,8 @@ export const ProductModels = () => {
         />
       )}
 
-      {/* PR #119 — embedded Model detail drawer */}
+      {/* PR #119 — embedded Model detail drawer. Its px matches Layout's page
+          gutter, which PageHeader's -mx expects to cancel. */}
       {openModelId && (
         <div
           onClick={() => setOpenModelId(null)}
@@ -451,7 +452,7 @@ export const ProductModels = () => {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="h-full w-[min(1100px,92vw)] overflow-y-auto bg-surface shadow-slab"
+            className="h-full w-[min(1100px,92vw)] overflow-y-auto bg-surface px-3 shadow-slab sm:px-4"
           >
             <ProductModelDetail modelId={openModelId} onClose={() => setOpenModelId(null)} />
           </div>

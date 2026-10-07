@@ -2220,10 +2220,35 @@ export const cancelGrnCommand = async (
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: id, action: 'CANCEL', companyId: activeCompanyId(c) });
   if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
-  /* LEAK GUARD (CRITICAL): a DRAFT GRN committed NOTHING (no inventory IN, no
-     PO received-rollup), so cancelling one must NOT reverse anything — the
-     inventory OUT + PO recount below would over-reverse (drive stock negative /
-     wrongly re-open a PO). Short-circuit: just flip DRAFT → CANCELLED. */
+  /* Both exits run this. The recount counts only POSTED/CLOSED lines, so it can
+     never over-reverse; it is what un-receives a PO line, and received_qty is
+     what lights a bound SO line (bedframe/sofa), so the re-walk follows it even
+     when no stock moved. */
+  const recountPoAndRewalk = async (poItemIds: Array<string | null>) => {
+    /* recomputePoReceived RETURNS its outcome and never throws, so discarding the
+       result — and relying on the catch — left POs holding received goods with
+       received_qty untouched, traced only by a console line nobody keeps. */
+    try {
+      const recount = await recomputePoReceived(sb, poItemIds);
+      if (!recount.ok) {
+        cancelErrors.push(
+          `PO recount FAILED: ${recount.reason ?? 'unknown'}. The GRN is cancelled but its PO lines ` +
+          'still show the goods as received — reopen and re-save the PO, or run the recount.',
+        );
+      }
+    } catch (e) {
+      cancelErrors.push(`PO recount threw: ${(e as Error)?.message ?? 'unknown'}`);
+    }
+    /* DURABLE and outside the catch: a failed enqueue must fail the cancel,
+       because "PO un-received, allocation never re-walked" is the exact state
+       this transaction exists to make unreachable. grn.md 7c. */
+    await scheduleStockAllocationAfterCommand(c, sb, `grn-cancel:${id}`);
+  };
+
+  /* LEAK GUARD (CRITICAL): a DRAFT GRN wrote no inventory IN, so the stock OUT
+     below would drive on-hand negative. Flip DRAFT → CANCELLED without it. The
+     PO recount still runs (BUG-64): a GRN put back to DRAFT by hand after it
+     was POSTED leaves a stale received_qty that only the recount clears. */
   if (head.status === 'DRAFT') {
     const { data } = await scopeToCompanyId(sb.from('grns')
       .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
@@ -2241,7 +2266,15 @@ export const cancelGrnCommand = async (
       note: 'Draft GRN — nothing was received, so nothing was reversed',
       fieldChanges: statusChange('DRAFT', 'CANCELLED'),
     });
-    return c.json({ grn: data ?? { id, status: 'CANCELLED' } });
+    const { data: draftLines, error: draftLinesErr } = await sb.from('grn_items')
+      .select('purchase_order_item_id').eq('grn_id', id);
+    if (draftLinesErr) {
+      cancelErrors.push(`PO recount skipped: could not read the GRN lines (${draftLinesErr.message}).`);
+    } else {
+      await recountPoAndRewalk(((draftLines ?? []) as Array<{ purchase_order_item_id: string | null }>)
+        .map((l) => l.purchase_order_item_id));
+    }
+    return c.json({ grn: data ?? { id, status: 'CANCELLED' }, ...(cancelErrors.length ? { cancelErrors } : {}) });
   }
 
   // GRN child-lock: can't cancel a GRN that has a downstream PI/PR — the child
@@ -2312,10 +2345,6 @@ export const cancelGrnCommand = async (
   });
 
   // (a) Inventory OUT per line — negate the original GRN IN. Best-effort.
-  /* Set only where the reversal was actually attempted, so the DURABLE enqueue
-     below can sit OUTSIDE this best-effort catch and still fire on exactly the
-     condition the old inline recompute did. */
-  let stockReversed = false;
   try {
     // MIGRATED: nothing was posted, so nothing un-posts.
     const warehouseId = migratedNoStock
@@ -2338,16 +2367,9 @@ export const cancelGrnCommand = async (
             'The GRN is cancelled but its received stock is still on hand — run /inventory/reconcile.',
           );
         }
-        stockReversed = true;
       }
     }
   } catch { /* best-effort: never un-cancel on a movement failure */ }
-  /* DURABLE: GRN cancel pulled stock back out, so other READY SOs that relied
-     on it may need to regress. The request commits with the OUT above, and it
-     is NOT inside that best-effort catch — a failed enqueue must fail the
-     cancel, because "stock pulled back, allocation never re-walked" is the
-     exact state this transaction exists to make unreachable. grn.md 7c. */
-  if (stockReversed) await scheduleStockAllocationAfterCommand(c, sb, `grn-cancel:${id}`);
 
   // (a2) Physical rack reversal — pull every rack item this GRN placed +
   //      log a STOCK_OUT, mirroring the inventory OUT above. Best-effort.
@@ -2363,21 +2385,8 @@ export const cancelGrnCommand = async (
 
   // (b) Recount received_qty on each linked PO item from live GRN lines — this
   //     cancelled GRN's lines now drop out, auto-releasing the PO + re-evaluating
-  //     its status.
-  /* recomputePoReceived RETURNS its outcome and never throws, so discarding the
-     result — and relying on the catch — left POs holding received goods with
-     received_qty untouched, traced only by a console line nobody keeps. */
-  try {
-    const recount = await recomputePoReceived(sb, lineList.map((it) => it.purchase_order_item_id));
-    if (!recount.ok) {
-      cancelErrors.push(
-        `PO recount FAILED: ${recount.reason ?? 'unknown'}. The GRN is cancelled but its PO lines ` +
-        'still show the goods as received — reopen and re-save the PO, or run the recount.',
-      );
-    }
-  } catch (e) {
-    cancelErrors.push(`PO recount threw: ${(e as Error)?.message ?? 'unknown'}`);
-  }
+  //     its status, then re-walk SO allocation.
+  await recountPoAndRewalk(lineList.map((it) => it.purchase_order_item_id));
 
   const { data } = await sb.from('grns').select(HEADER).eq('id', id).maybeSingle();
 

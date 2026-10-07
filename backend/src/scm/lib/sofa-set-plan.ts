@@ -23,11 +23,17 @@
 //      FIFO-oldest first (the allocator's own tie-break);
 //   2. else a batch whose lots + open PO cover every module → `po`, that PO
 //      named on every line, earliest set ETA first (= its last module);
-//   3. else a batch with units still ON ORDER that covers part of it → the PO
-//      is named and the rest is SHORT, so purchasing completes THAT PO instead
-//      of raising a second one. A received batch cannot be topped up — a
-//      second PO is a second dye lot — so stock-only partial matches are not
-//      offered;
+//   3. else a batch with units still ON ORDER that covers part of it AND was
+//      raised for this set (a line of that PO carries one of the set's own
+//      so_item_ids) → the PO is named and the rest is SHORT, so purchasing
+//      completes THAT PO instead of raising a second one. A received batch
+//      cannot be topped up — a second PO is a second dye lot — so stock-only
+//      partial matches are not offered. Neither is another order's PO: BUG-65
+//      (Nico/Sim 2026-10-07) — 2990-PO-2607-018 (L(LHF) + 2A(RHF), raised for
+//      the cancelled 2990-SO-2607-024) shares only the 2A(RHF) with
+//      2990-SO-2610-005 (1A(LHF) + 2A(RHF)), and naming it blocked Proceed PO
+//      with "amend 2990-PO-2607-018" — a PO carrying a module this customer
+//      never ordered;
 //   4. else every module is SHORT: order the whole set, on one PO.
 // Sets already LOCKED by the allocator (allocated_batch_no on every line,
 // batch still covering) keep their batch before anyone else walks — the same
@@ -60,6 +66,9 @@ export type SofaSetLine = {
 /** One open PO line's supply in a bucket — mrp.ts's PoSupply shape. */
 export type SofaSetPoSupply = { poNumber: string; eta: string | null; qtyLeft: number; supplierId: string | null };
 
+/** PO number → the SO line ids its lines were raised from (purchase_order_items.so_item_id). */
+export type SofaPoRaisedFor = ReadonlyMap<string, ReadonlySet<string>>;
+
 /** What one module line is planned from. */
 export type SofaPlan = {
   fromStock: number;
@@ -91,6 +100,7 @@ export function planSofaSets(
   lines: SofaSetLine[],
   lots: SofaBatchStock,
   poByBucket: Map<string, SofaSetPoSupply[]>,
+  poRaisedFor: SofaPoRaisedFor,
 ): Map<string, SofaPlan> {
   const planByLine = new Map<string, SofaPlan>();
   const setsByKey = new Map<string, SofaSetLine[]>(); // `${wh}|${doc_no}` — the allocator's set key
@@ -156,7 +166,12 @@ export function planSofaSets(
   };
   const receivedAt = (b: string): string => lots.receivedAt.get(b) ?? '';
   const candidates = (): string[] => [...new Set([...lots.batches, ...poOpenByBatch.keys()])];
-  const chooseBatch = (mods: Module[]): Fit | null => {
+  const raisedForSet = (batch: string, set: SofaSetLine[]): boolean => {
+    const ids = poRaisedFor.get(batch);
+    return !!ids && set.some((l) => ids.has(l.soItemId));
+  };
+  const chooseBatch = (set: SofaSetLine[]): Fit | null => {
+    const mods = modulesOf(set);
     const fits = candidates().map((b) => fitOf(b, mods)).filter((f) => f.covered > 0);
     const stockOnly = fits.filter((f) => f.stockOnly);
     if (stockOnly.length > 0) {
@@ -166,7 +181,7 @@ export function planSofaSets(
     if (full.length > 0) {
       return full.sort((a, b) => byDateAsc(a.eta, b.eta) || a.batch.localeCompare(b.batch))[0]!;
     }
-    const partial = fits.filter((f) => f.onOrder);
+    const partial = fits.filter((f) => f.onOrder && raisedForSet(f.batch, set));
     if (partial.length > 0) {
       return partial.sort((a, b) => (b.covered - a.covered) || byDateAsc(a.eta, b.eta) || a.batch.localeCompare(b.batch))[0]!;
     }
@@ -227,7 +242,7 @@ export function planSofaSets(
   }
   for (const [key, set] of orderedSets) {
     if (planned.has(key)) continue;
-    planSet(set, chooseBatch(modulesOf(set)));
+    planSet(set, chooseBatch(set));
   }
   return planByLine;
 }

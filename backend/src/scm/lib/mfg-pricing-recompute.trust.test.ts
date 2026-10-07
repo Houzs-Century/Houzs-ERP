@@ -92,7 +92,7 @@ function stubSb(rowsByTable: Record<string, StubRow | StubRow[]>) {
     const row = rowsByTable[table];
     const chain: Record<string, unknown> = {
       select: () => chain, eq: () => chain, in: () => chain, is: () => chain,
-      not: () => chain, gt: () => chain, order: () => chain, limit: () => chain,
+      not: () => chain, gt: () => chain, lte: () => chain, order: () => chain, limit: () => chain,
       maybeSingle: async () => ({ data: Array.isArray(row) ? (row[0] ?? null) : (row ?? null), error: null }),
       // Awaiting the builder itself (the list-returning loaders).
       then: (resolve: (v: unknown) => unknown) =>

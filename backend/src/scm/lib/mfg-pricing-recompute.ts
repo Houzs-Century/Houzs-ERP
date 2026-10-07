@@ -36,6 +36,7 @@ import { chunkIn } from './paginate-all';
 import { pgrestInList } from './pgrest-in-list';
 import { autoDeriveEnabled } from './auto-derive-cost';
 import { resolveMfgProductCostAsOf } from './supplier-price-history';
+import { todayMyt } from './my-time';
 import {
   computeSofaSellingSen,
   comboChargedPrices,
@@ -306,6 +307,15 @@ export const erpLineTrust = (
   if (soIsMigrated) return 'including-zero';
   return unitPriceSen === 0 && zeroPriceIntended === true ? 'operator-zero' : true;
 };
+
+/** BUG-63 — the unit price a line PATCH persists. A 0 nobody claimed means "no
+ *  price could be found" (a swap to a sofa module or an unpriced SKU), so the
+ *  line keeps the price it already carries instead of dropping to RM 0. Only an
+ *  operator's claimed 0 or a migrated line's own 0 may replace a stored price. */
+export const unitAfterLineEdit = (resolvedSen: number, storedSen: number | null, trust: TrustSelling): number =>
+  resolvedSen === 0 && trust !== 'operator-zero' && trust !== 'including-zero' && (storedSen ?? 0) > 0
+    ? (storedSen as number)
+    : resolvedSen;
 
 /** Pure mapper from a (product, fabric, variants) snapshot to the
  *  breakdown + DB column values. Used by tests + the route helpers below
@@ -993,13 +1003,17 @@ export async function loadFabricsByCodes(sb: any, codes: Array<string | null | u
   return new Map((((data as FabricRowLite[]) ?? [])).map((r) => [r.fabric_code, r]));
 }
 
-/** Load the most-recent master maintenance config row's `config` JSON. */
+/** Load the master maintenance config in effect today (MYT): newest
+ *  effective_from <= today, latest save wins a same-day tie. Same pick as
+ *  GET /maintenance-config/resolved, so a future-dated change can't price early. */
 export async function loadMaintenanceConfig(sb: any): Promise<MaintenanceConfig | null> {
   const { data } = await sb
     .from('maintenance_config_history')
     .select('config')
     .eq('scope', 'master')
+    .lte('effective_from', todayMyt())
     .order('effective_from', { ascending: false })
+    .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
   const cfg = (data as { config?: unknown } | null)?.config;

@@ -204,6 +204,7 @@ type SoItem = {
   stock_state?: "stock" | "po" | "shortage" | null;
   coverage_po?: string | null; coverage_eta?: string | null;
   bound_source_pos?: string[];
+  bound_source_po_etas?: Record<string, string>;
   shipped_source_pos?: string[];
   shipped_source_adj?: boolean;
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
@@ -1124,6 +1125,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                     <SourcePosRowMobile
                       pos={(it.bound_source_pos && it.bound_source_pos.length > 0) ? it.bound_source_pos : (it.shipped_source_pos ?? [])}
                       adj={it.shipped_source_adj}
+                      etas={it.bound_source_pos && it.bound_source_pos.length > 0 ? Object.fromEntries(Object.entries(it.bound_source_po_etas ?? {}).map(([po, d]) => [po, dl(d)])) : undefined}
                       ready={(it.bound_source_pos && it.bound_source_pos.length > 0) ? [] : ((it.delivered_qty ?? 0) > 0 && (it.remaining_qty ?? null) === 0 ? [] : (it.ready_source_pos ?? []))}
                       incoming={(it.bound_source_pos && it.bound_source_pos.length > 0) ? null : (it.stock_state === "po" && it.coverage_po ? { po: it.coverage_po, eta: it.coverage_eta ? dl(it.coverage_eta) : null } : null)}
                     />

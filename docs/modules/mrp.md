@@ -31,8 +31,13 @@ to decide what to buy, and read by SO/PO/GRN/PI/Inventory screens as
   whose open lots (`v_inventory_lots_open`, `batch_no`) hold every module
   covers it from `stock` (FIFO-oldest); else one open PO whose lots + open
   qty hold every module covers it as `po` (set ETA = its last module); else
-  a PO with units still on order that covers part of it is named and the
-  rest is `shortage` (complete that PO by amendment, never raise a second);
+  a PO with units still on order that covers part of it AND was raised for
+  this set (one of its lines carries one of the set's `so_item_id`s) is named
+  and the rest is `shortage` (complete that PO by amendment, never raise a
+  second) — another order's PO, or a hand-raised one, is never named for a
+  partial match, so the set stays wholly short and orderable on one new PO
+  (BUG-65: 2990-PO-2607-018, raised for the cancelled 2990-SO-2607-024,
+  blocked Proceed PO on 2990-SO-2610-005);
   else every module is `shortage` and the whole set is ordered on one PO.
   Sets the allocator locked (`allocated_batch_no` on every line, batch
   still covering) keep their batch first. Unbatched on-hand never covers a

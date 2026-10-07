@@ -191,6 +191,7 @@ import {
   loadSpecialAddons,
   recomputeFromSnapshot,
   erpLineTrust,
+  unitAfterLineEdit,
   loadProductByCode,
   loadProductsByCodes,
   loadFabricByCode,
@@ -1907,7 +1908,8 @@ mfgSalesOrders.get('/:docNo', async (c) => {
       ready_source_pos: [],
       /* The line's OWN incoming PO (raised against this so_item). The SO
          "Incoming PO" chip prefers this over the shipped-batch trace. */
-      bound_source_pos: boundPoMap.get(it.id) ?? [],
+      bound_source_pos: boundPoMap.get(it.id)?.pos ?? [],
+      bound_source_po_etas: boundPoMap.get(it.id)?.etas ?? {},
     };
   });
   const totalDelivered = items.reduce((s, it) => s + Number(it.delivered_qty ?? 0), 0);
@@ -2053,7 +2055,8 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
       shipped_source_pos: shippedPos,
       shipped_source_adj: (shippedTrace?.adjQty ?? 0) > 0,
       ready_source_pos: readyPosMap.get(it.id) ?? [],
-      bound_source_pos: boundPoMap.get(it.id) ?? [],
+      bound_source_pos: boundPoMap.get(it.id)?.pos ?? [],
+      bound_source_po_etas: boundPoMap.get(it.id)?.etas ?? {},
     };
   });
   gateSoFinance(c, null, items);
@@ -7633,6 +7636,8 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     }, 422);
   }
   const clientUnit = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : prev.unit_price_sen;
+  // owner ruling — non-POS author prices freely; see erpLineTrust.
+  const patchTrust = erpLineTrust(posTablet, clientUnit, it.zeroPriceIntended, patchSoIsMigrated);
   const discount = it.discountSen !== undefined ? Number(it.discountSen) : prev.discount_sen;
 
   /* MFG-PRICING-ENGINE — Server-side recompute on PATCH. Triggered when
@@ -7776,8 +7781,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       sofaModuleCostRowsPatch,
       modelOverridesPatch, // migration 0175 — per-Model Δ
       compartmentOverridesPatch, // migration 0025 — per-compartment Δ
-      // owner ruling — non-POS author prices freely; see erpLineTrust.
-      erpLineTrust(posTablet, clientUnit, it.zeroPriceIntended, patchSoIsMigrated),
+      patchTrust,
     );
     /* Task 6 — grandfathering: a line already carrying variants.freeItem was
        made free at create time and must STAY at RM 0 on edit recompute, even
@@ -7812,7 +7816,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
        RM490 加购 into RM990 with no warning (Loo 2026-06-28). */
     : prevIsReward
     ? prev.unit_price_sen
-    : (recomputedPatch ? recomputedPatch.unit_price_sen : clientUnit);
+    : unitAfterLineEdit(recomputedPatch ? recomputedPatch.unit_price_sen : clientUnit, prev.unit_price_sen, patchTrust);
   /* Audit 2026-06-11 C-2 — same discount gate as POST /: the effective
      (patch-else-stored) discount must sit in [0, qty × unit] against the
      effective unit price (422, reject-don't-normalize). */

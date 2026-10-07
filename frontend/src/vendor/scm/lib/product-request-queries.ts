@@ -17,7 +17,7 @@ import { authedFetch } from './authed-fetch';
 import { writeFailedAs } from './mutation-error';
 
 export type ProductRequestType = 'NEW_PRODUCT' | 'REPACK';
-export type ProductRequestApplication = 'SHOWROOM' | 'CUSTOMER_ORDER' | 'SAMPLE';
+export type ProductRequestApplication = 'SHOWROOM' | 'CUSTOMER_ORDER' | 'SAMPLE' | 'FAIR_EXHIBITION';
 export type ProductRequestStatus = 'REQUESTED' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN' | 'PCO_ISSUED' | 'CLOSED';
 
 export type ProductRequest = {
@@ -72,15 +72,16 @@ export type ProductRequestInput = {
 
 /** Each status in words, and the colour it reads in — one home for desktop and phone. */
 export const REQUEST_STATUS: Record<ProductRequestStatus, { label: string; tone: string }> = {
-  REQUESTED: { label: 'Requested · 待审批', tone: 'var(--c-orange)' },
-  APPROVED: { label: 'Approved · 已批准', tone: 'var(--c-green, #2f7d32)' },
-  REJECTED: { label: 'Rejected · 已退回', tone: 'var(--c-festive-b, #B8331F)' },
-  WITHDRAWN: { label: 'Withdrawn · 已撤回', tone: 'var(--fg-muted)' },
-  PCO_ISSUED: { label: 'PC Order raised · 已下单', tone: 'var(--c-secondary-a, #2F5D4F)' },
-  CLOSED: { label: 'Closed · 已完成', tone: 'var(--fg-muted)' },
+  REQUESTED: { label: 'Requested', tone: 'var(--c-orange)' },
+  APPROVED: { label: 'Approved', tone: 'var(--c-green, #2f7d32)' },
+  REJECTED: { label: 'Rejected', tone: 'var(--c-festive-b, #B8331F)' },
+  WITHDRAWN: { label: 'Withdrawn', tone: 'var(--fg-muted)' },
+  PCO_ISSUED: { label: 'PC Order raised', tone: 'var(--c-secondary-a, #2F5D4F)' },
+  CLOSED: { label: 'Closed', tone: 'var(--fg-muted)' },
 };
 export const REQUEST_TYPE_LABEL: Record<ProductRequestType, string> = { NEW_PRODUCT: 'New product', REPACK: 'Repack' };
-export const APPLICATION_LABEL: Record<ProductRequestApplication, string> = { SHOWROOM: 'Showroom · 展厅', CUSTOMER_ORDER: 'Customer order · 客户订单', SAMPLE: 'Sample · 样品' };
+/* English only on screen (owner 2026-10-07: 只要英文); Fair Exhibition added the same day. */
+export const APPLICATION_LABEL: Record<ProductRequestApplication, string> = { SHOWROOM: 'Showroom', CUSTOMER_ORDER: 'Customer order', SAMPLE: 'Sample', FAIR_EXHIBITION: 'Fair exhibition' };
 
 /** The requester may still change it: nobody has decided, or it came back. */
 export const requesterMayChange = (r: Pick<ProductRequest, 'status'>): boolean => r.status === 'REQUESTED' || r.status === 'REJECTED';

@@ -113,6 +113,8 @@ describe('product request — raising one', () => {
     expect((await amy('/product-requests', 'POST', { ...NEW_SOFA, fabricCode: 'ZZZ' })).body.error).toBe('unknown_fabric');
     expect((await amy('/product-requests', 'POST', { ...NEW_SOFA, deliveryLocationId: 'wh-other' })).body.error).toBe('unknown_location');
     expect((await amy('/product-requests', 'POST', { ...NEW_SOFA, application: 'PARTY' })).body.error).toBe('application_invalid');
+    /* A fair booth is the fourth use (owner 2026-10-07). */
+    expect((await amy('/product-requests', 'POST', { ...NEW_SOFA, application: 'FAIR_EXHIBITION' })).status).toBe(201);
     expect((await amy('/product-requests', 'POST', { ...NEW_SOFA, qty: 0 })).body.error).toBe('qty_invalid');
   });
 });

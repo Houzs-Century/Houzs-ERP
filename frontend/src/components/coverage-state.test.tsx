@@ -76,6 +76,17 @@ describe("the SO Incoming PO chip prefers the line's OWN purchase order (owner 2
     expect(screen.queryByText('HC-PO-010095')).toBeNull();
   });
 
+  test('BUG-72: a bound PO still on the way shows its ETA; a received one does not', () => {
+    const { container } = render(
+      <SoSourceChips
+        line={{ bound_source_pos: ['PO-A', 'PO-B'], bound_source_po_etas: { 'PO-A': '2026-10-20' } }}
+        coverage="ready"
+      />,
+    );
+    expect(container.textContent).toMatch(/PO-A · ETA \S+/);
+    expect(container.textContent).not.toMatch(/PO-B · ETA/);
+  });
+
   test('with no bound PO, it falls back to the shipped-batch trace', () => {
     render(
       <SoSourceChips
