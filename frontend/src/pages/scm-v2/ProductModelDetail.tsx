@@ -281,7 +281,7 @@ export const ProductModelDetail = ({
       description: description.trim() || null,
       allowedOptions: allowed,
       // Drops a default whose option was just unticked, so the save is not refused.
-      defaultVariants: pickDefaultVariants(model.category, defaults, null, allowed),
+      defaultVariants: pickDefaultVariants(model.category, defaults, allowed),
     }, {
       onSuccess: (res) => {
         const made = res.autoCreatedSkus ?? [];

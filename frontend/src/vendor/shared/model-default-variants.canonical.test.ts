@@ -15,26 +15,25 @@ describe('model-default-variants', () => {
 
   const ALLOWED = { divan_heights: ['10"', '12"'], gaps: ['4"'], leg_heights: [] };
 
-  test('the SKU default beats the Model default; the Model fills the rest', () => {
-    expect(pickDefaultVariants('BEDFRAME', { divanHeight: '10"', gap: '4"' }, { divanHeight: '12"' }, ALLOWED))
-      .toEqual({ divanHeight: '12"', gap: '4"' });
+  test('the Model default fills each axis it sets', () => {
+    expect(pickDefaultVariants('BEDFRAME', { divanHeight: '10"', gap: '4"' }, ALLOWED))
+      .toEqual({ divanHeight: '10"', gap: '4"' });
   });
 
-  test('a default the Model no longer allows is skipped, falling back to the other one', () => {
-    expect(pickDefaultVariants('BEDFRAME', { divanHeight: '10"' }, { divanHeight: '14"' }, ALLOWED))
-      .toEqual({ divanHeight: '10"' });
-    expect(pickDefaultVariants('BEDFRAME', { gap: '6"' }, null, ALLOWED)).toEqual({});
+  test('a default the Model no longer allows is skipped', () => {
+    expect(pickDefaultVariants('BEDFRAME', { divanHeight: '14"', gap: '4"' }, ALLOWED)).toEqual({ gap: '4"' });
+    expect(pickDefaultVariants('BEDFRAME', { gap: '6"' }, ALLOWED)).toEqual({});
   });
 
   test('an empty pool restricts nothing, and quote glyphs fold', () => {
-    expect(pickDefaultVariants('bedframe', { legHeight: '2”', divanHeight: '10“' }, null, ALLOWED))
+    expect(pickDefaultVariants('bedframe', { legHeight: '2”', divanHeight: '10“' }, ALLOWED))
       .toEqual({ legHeight: '2”', divanHeight: '10“' });
   });
 
   test('only the category\'s own axes default (no fabric, no specials)', () => {
-    expect(pickDefaultVariants('SOFA', { seatHeight: '24', fabricCode: 'BO315-23', gap: '4"' }, null, {}))
+    expect(pickDefaultVariants('SOFA', { seatHeight: '24', fabricCode: 'BO315-23', gap: '4"' }, {}))
       .toEqual({ seatHeight: '24' });
-    expect(pickDefaultVariants('ACCESSORY', { seatHeight: '24' }, null, {})).toEqual({});
+    expect(pickDefaultVariants('ACCESSORY', { seatHeight: '24' }, {})).toEqual({});
   });
 
   test('the save gate names the first bad key', () => {

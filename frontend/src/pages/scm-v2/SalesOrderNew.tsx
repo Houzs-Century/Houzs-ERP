@@ -719,7 +719,7 @@ export const SalesOrderNew = () => {
   /* Desktop sofa multi-add (MobileSkuPicker.onPickMany parity). SoLineCard's
      multi-select commits the FIRST tick to the current line and hands the REST
      here — each seeded exactly like a single pick: real itemGroup, SKU sell
-     price, Model/SKU default variants under the same category inherit (a second
+     price, Model default variants under the same category inherit (a second
      sofa in the same shot follows LINE 1's seat/leg like a manually-added
      follower; the per-sofa colour sync stays scoped to real split builds). */
   const addProducts = (rows: MfgProductRow[]) => {
@@ -734,7 +734,7 @@ export const SalesOrderNew = () => {
           itemGroup:      category,
           description:    p.name,
           unitPriceSen: p.sell_price_sen ?? 0,
-          variants: { ...pickDefaultVariants(p.category, p.model_default_variants, p.default_variants, p.allowed_options), ...seedFollowerVariants(inheritVariantsByCategory[category]) },
+          variants: { ...pickDefaultVariants(p.category, p.model_default_variants, p.allowed_options), ...seedFollowerVariants(inheritVariantsByCategory[category]) },
           overriddenKeys: [],
         };
       });

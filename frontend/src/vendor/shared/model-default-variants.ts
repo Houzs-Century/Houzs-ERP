@@ -10,7 +10,6 @@
 // Defaults are keyed like a line's variants. Only single-value axes a person
 // picks from the Model's own pool can default; fabric (a set of identity keys),
 // specials (multi-pick, priced) and computed / SKU-level axes cannot.
-// PRECEDENCE: a SKU's own default_variants beats the Model's for the same key.
 // ----------------------------------------------------------------------------
 
 import { normaliseTypographicQuotes } from './mfg-pricing';
@@ -44,21 +43,17 @@ export function invalidModelDefault(
   return null;
 }
 
-/** What a freshly picked line's variants start from: per axis the SKU default,
- *  else the Model default, skipping any value the Model no longer allows. */
+/** What a freshly picked line's variants start from: the Model default per
+ *  axis, skipping any value the Model no longer allows. */
 export function pickDefaultVariants(
   category: string,
   modelDefaults: unknown,
-  skuDefaults: unknown,
   allowedOptions: unknown,
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [key, poolKey] of Object.entries(axesFor(category))) {
-    const pool = keyOf(allowedOptions, poolKey);
-    const value = [keyOf(skuDefaults, key), keyOf(modelDefaults, key)]
-      .map(str)
-      .find((v): v is string => v !== null && inPool(pool, v));
-    if (value) out[key] = value;
+    const value = str(keyOf(modelDefaults, key));
+    if (value && inPool(keyOf(allowedOptions, poolKey), value)) out[key] = value;
   }
   return out;
 }

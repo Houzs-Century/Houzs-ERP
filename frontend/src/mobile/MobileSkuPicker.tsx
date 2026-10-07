@@ -49,7 +49,7 @@ export type PickedSku = {
   name: string;
   unitPriceSen: number;
   category: MfgCategory;
-  /** Model / SKU default variants (vendor/shared/model-default-variants); only a
+  /** Model default variants (vendor/shared/model-default-variants); only a
    *  document that specifies the build applies them. */
   defaultVariants: Record<string, string>;
 };
@@ -172,7 +172,7 @@ export function MobileSkuPicker({
                 name: p.name,
                 unitPriceSen: p.sell_price_sen ?? 0,
                 category: p.category,
-                defaultVariants: pickDefaultVariants(p.category, p.model_default_variants, p.default_variants, p.allowed_options),
+                defaultVariants: pickDefaultVariants(p.category, p.model_default_variants, p.allowed_options),
               });
               /* A sofa piece can be tapped again (two CNRs of a U are two
                  lines, never one line x2) — sofa-piece-lines.ts. */

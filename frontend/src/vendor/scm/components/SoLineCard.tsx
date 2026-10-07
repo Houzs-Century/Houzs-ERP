@@ -493,10 +493,10 @@ const SoLineCardInner = ({
        lib/so-variant-cascade so the never-inherited keys are stripped in one
        place. PR #147 — reset overriddenKeys on a fresh pick. */
     const seedVariants = seedFollowerVariants(inheritVariantsByCategory?.[category]);
-    /* Model / SKU default variants pre-fill under the inherited ones, only where
+    /* Model default variants pre-fill under the inherited ones, only where
        this document specifies the build (same gate as the sofa Leg default). */
     const defaults = seedSofaLegDefault
-      ? pickDefaultVariants(p.category, p.model_default_variants, p.default_variants, p.allowed_options)
+      ? pickDefaultVariants(p.category, p.model_default_variants, p.allowed_options)
       : {};
     onChange({
       itemCode:       p.code,
