@@ -103,6 +103,8 @@ export type AmendmentDetail = {
   lines: AmendmentLine[];
   salesOrder: { doc_no: string; status: string; revision: number } | null;
   purchaseOrders: Array<{ id: string; po_number: string; status: string }>;
+  /** The caller raised this amendment (server-resolved staff identity). */
+  viewerIsRequester?: boolean;
 };
 
 /* SO revision snapshot row — one per approved SO revision (so_revisions).
