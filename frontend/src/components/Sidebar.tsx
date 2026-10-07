@@ -449,6 +449,15 @@ export const NAV_TABS: NavTab[] = [
         icon: History,
         salesRepOnly: true,
       },
+      // Rep-only Product Request leaf (owner 2026-10-06: Sales 都能提). Same shape
+      // and same reasoning as the Amendments leaf above: the office path sits in
+      // the Consignment subgroup, which a rep never sees.
+      {
+        to: "/scm/product-requests",
+        label: "Product Request",
+        icon: Sofa,
+        salesRepOnly: true,
+      },
       // Rep-only Delivery Orders + Sales Invoices leaves (owner rule 2026-07-16):
       // a salesperson must be able to find the DO / invoice generated from their
       // OWN Sales Orders (e.g. to resend a customer's invoice). The routes carry
@@ -519,6 +528,10 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/consignment-notes", label: "Consignment Note", icon: FileText, anyPerm: ["*", "scm.access"], anyAccess: ["scm.consignment.notes"] },
           { to: "/scm/consignment-returns", label: "Consignment Return", icon: CornerUpLeft, anyPerm: ["*", "scm.access"], anyAccess: ["scm.consignment.returns"] },
           { to: "/scm/purchase-consignment-orders", label: "Purchase Consignment Order", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.consignment.po_orders"] },
+          // Product request (owner 2026-10-06): what a Purchase Consignment Order
+          // is raised from. The office / Purchaser path; a rep reaches it via the
+          // rep-only leaf above. Either flat key shows it too, like PO Amendments.
+          { to: "/scm/product-requests", label: "Product Request", icon: Sofa, anyPerm: ["*", "scm.access", "scm.product_request.create", "scm.product_request.approve"], anyAccess: ["scm.consignment.po_orders", "scm.procurement.po", "scm.procurement.products"], hideForSalesRep: true },
           { to: "/scm/purchase-consignment-receives", label: "Purchase Consignment Receive", icon: PackageOpen, anyPerm: ["*", "scm.access"], anyAccess: ["scm.consignment.po_receives"] },
           { to: "/scm/purchase-consignment-returns", label: "Purchase Consignment Return", icon: Reply, anyPerm: ["*", "scm.access"], anyAccess: ["scm.consignment.po_returns"] },
         ],

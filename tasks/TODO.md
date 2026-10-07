@@ -3,6 +3,7 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
+- Product request (新品 / 重新包装申请): after the PR deploys, grant `scm.product_request.approve` to the Procurement/Purchasing role in Team > Roles & Permissions — until then only the Owner / IT Admin (`*`) can approve; every Sales caller can already raise one — 2026-10-06
 - 2990 price-lane amendments: after this PR deploys, assign Kris (only) to the new "Sales Director (Price Approver)" role in Team > Roles — his login e-mail is PII, so the migration creates the role but does not reassign the user. Until then a 2990 price-only SO amendment stays on the Purchaser's queue — 2026-09-21
 - Outsourced transport in Members: remove the 3 invited accounts (JAN #94, SHAKTI #93, Cheah #92) in Team, then dedupe their Fleet driver rows under a 3PL company (all 0 trips, safe). Going forward the invite/profile Title picker now warns to build outsourced drivers in Fleet, not Members — 2026-09-17
 - Roles & Permissions part B follow-ups: `crewScope.ts` keeps a position-name FALLBACK behind `org.crew.scoped` ON PURPOSE (owner 2026-09-17: it only styles the Projects filter bar, the real scope is server-side, and it is the fixture for the FE==BE referee test) — not to be removed. Phone Titles editor DONE (`mobile/MobileTitles.tsx`). Actions matrix stays desktop-only. — 2026-09-17
@@ -26,6 +27,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - BUG-54 service case phone on the delivery sheet: paste `reference/ERPDeliverySync.gs` into the live "Delivery & Amend Updated" project and run `runErpAssrContactRefresh` once, then check Delivery Details R4124 col H — sheet trigger owner — 2026-10-05
 
 ## Dev
+- Product request: after `scm.product_requests` is on production, re-run `probe-product-code-columns.mjs` so the hand-added `product_requests.item_code` line in `tests/fixtures/product-code-columns.snapshot.json` is read back from production (it was written from the migration) — 2026-10-07
 - AutoCount PO Doc No. repair: verify batch 3, then the last 243 rows, out of office hours — 2026-09-15
 - AutoCount: an edit composed before a rebuild is refused "line not found"; recompose once — 2026-09-15
 - AutoCount: size changes on 6 carried-over lines (4 orders) never reached the book; trace, then repair — 2026-09-15

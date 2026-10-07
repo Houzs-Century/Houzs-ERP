@@ -52,6 +52,8 @@ import { recordSoAudit } from '../lib/so-audit';
 import { paymentMethodFieldRefusal } from '../lib/payment-method-fields';
 import { SO_PAYMENT_BACKDATE } from '../../acc/payment-reconciled';
 import { selfScopedSalesBlocked } from '../lib/so-self-scope';
+import { slipBindings } from '../lib/slip';
+import { mimeFromKey } from '../lib/r2';
 import { notifyBackdateRequest } from '../../services/backdateRequestNotify';
 
 export const BACKDATE_REQUESTS_TABLE = 'so_payment_backdate_requests';
@@ -246,6 +248,31 @@ paymentBackdateInbox.get('/', async (c: AnyCtx) => {
   const { data, error } = await scopeToCompany(q, c).order('requested_at', { ascending: false }).limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ requests: data ?? [] });
+});
+
+/* The request's slip, for the inbox drawer (owner 2026-10-07: the row opens on
+   the right, and the admin reads the slip before approving). The same
+   binding-served proxy as /:docNo/payments/:id/slip-url: the key is read from
+   the row the caller may see, never from the query string. Admin only, like the
+   inbox itself — a slip is a bank record. */
+paymentBackdateInbox.get('/:id/slip-url', async (c: AnyCtx) => {
+  if (!isAdmin(c)) return c.json(ADMIN_ONLY, 403);
+  const loaded = await loadRequest(c);
+  if (!loaded.ok) return loaded.res;
+  const key = loaded.row.slip_key;
+  if (!key) return c.json({ error: 'no_slip_attached' }, 400);
+  let bindings;
+  try { bindings = slipBindings(c.env); }
+  catch (e) { return c.json({ error: 'r2_not_configured', reason: (e as Error).message }, 500); }
+  const obj = await bindings.bucket.get(key);
+  if (!obj) return c.json({ error: 'file_not_in_r2' }, 404);
+  return new Response(obj.body as unknown as BodyInit, {
+    headers: {
+      'content-type': obj.httpMetadata?.contentType ?? mimeFromKey(key),
+      'content-disposition': 'inline',
+      'cache-control': 'private, max-age=300',
+    },
+  });
 });
 
 type RequestRow = {

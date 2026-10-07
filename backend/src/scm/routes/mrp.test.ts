@@ -453,8 +453,8 @@ describe('computeMrp — sofa supply matches on the full variant key too', () =>
       ...BASE_TABLES,
       mfg_sales_order_items: [sofaDemand('si-sofa', 'SO-9', 8, '2026-12-01')],
       purchase_order_items: [
-        sofaPoLine('PO-RED-SOFA', 5, { fabricCode: 'RED' }, '2026-11-01'),
-        sofaPoLine('PO-LEGACY-SOFA', 5, null, '2026-10-01'),
+        { ...sofaPoLine('PO-RED-SOFA', 5, { fabricCode: 'RED' }, '2026-11-01'), so_item_id: 'si-sofa' },
+        { ...sofaPoLine('PO-LEGACY-SOFA', 5, null, '2026-10-01'), so_item_id: 'si-sofa' },
       ],
     });
 
@@ -473,7 +473,7 @@ describe('computeMrp — sofa supply matches on the full variant key too', () =>
     const sb = fakeSb({
       ...BASE_TABLES,
       mfg_sales_order_items: [{ ...sofaDemand('si-sofa', 'SO-9', 8, '2026-12-01'), variants: {} }],
-      purchase_order_items: [sofaPoLine('PO-LEGACY-SOFA', 5, null, '2026-10-01')],
+      purchase_order_items: [{ ...sofaPoLine('PO-LEGACY-SOFA', 5, null, '2026-10-01'), so_item_id: 'si-sofa' }],
     });
 
     const res = await computeMrp(asSb(sb), opts);
@@ -1693,8 +1693,8 @@ describe('company 2: a sofa set is planned whole — one batch (= one PO) or not
   const lot = (code: string, batch: string, qty = 1, receivedAt = '2026-08-12T00:00:00Z'): Row => ({
     warehouse_id: 'W1', item_code: code, variant_key: VKEY, batch_no: batch, qty_remaining: qty, received_at: receivedAt,
   });
-  const po = (poNumber: string, code: string, qty: number, eta: string): Row => ({
-    ...sofaPoLine(poNumber, qty, EZ, eta), item_code: code,
+  const po = (poNumber: string, code: string, qty: number, eta: string, soItemId: string | null = null): Row => ({
+    ...sofaPoLine(poNumber, qty, EZ, eta), item_code: code, so_item_id: soItemId,
   });
   const run = async (tables: Record<string, Row[]>) => {
     const res = await computeMrp(asSb(fakeSb({ ...BASE_TABLES, ...tables })), opts);
@@ -1779,7 +1779,7 @@ describe('company 2: a sofa set is planned whole — one batch (= one PO) or not
   test('modules on two different open POs: the set names ONE of them and the other module is short — complete that PO, do not raise a third', async () => {
     const sets = await run({
       mfg_sales_order_items: SET(),
-      purchase_order_items: [po('PO-A', LHF, 1, '2026-10-20'), po('PO-B', RHF, 1, '2026-10-22')],
+      purchase_order_items: [po('PO-A', LHF, 1, '2026-10-20', 'SO-005-lhf'), po('PO-B', RHF, 1, '2026-10-22', 'SO-005-rhf')],
     });
     const lhf = sets.get('SO-005-lhf')!;
     const rhf = sets.get('SO-005-rhf')!;
@@ -1788,6 +1788,40 @@ describe('company 2: a sofa set is planned whole — one batch (= one PO) or not
     expect(rhf.poNumber).toBe('PO-A');   // the covering PO is named on the short line too
     expect(rhf.shortageQty).toBe(1);
     expect(rhf.batchNo).toBe('PO-A');
+  });
+
+  test("BUG-65: another order's open PO covering only part of the set is not named — the whole set is short, ready for one new PO", async () => {
+    const sets = await run({
+      mfg_sales_order_items: SET('2990-SO-2610-005'),
+      purchase_order_items: [
+        po('2990-PO-2607-018', 'XAMMAR-L(LHF)', 1, '2026-08-19', 'so-2607-024-l'),
+        po('2990-PO-2607-018', RHF, 1, '2026-08-19', 'so-2607-024-rhf'),
+      ],
+    });
+    for (const id of ['2990-SO-2610-005-lhf', '2990-SO-2610-005-rhf']) {
+      const s = sets.get(id)!;
+      expect(s.shortageQty).toBe(1);
+      expect(s.poNumber).toBeNull();   // was: 2990-PO-2607-018, and Proceed PO refused the set
+      expect(s.batchNo).toBeNull();
+    }
+  });
+
+  test('BUG-65: a partial PO with no SO provenance (hand-raised) is not named either', async () => {
+    const sets = await run({
+      mfg_sales_order_items: SET(),
+      purchase_order_items: [po('PO-M', RHF, 1, '2026-10-20')],
+    });
+    expect(sets.get('SO-005-lhf')!.poNumber).toBeNull();
+    expect(sets.get('SO-005-rhf')!.shortageQty).toBe(1);
+  });
+
+  test("BUG-65: another order's open PO still covers a set it holds WHOLE", async () => {
+    const sets = await run({
+      mfg_sales_order_items: SET(),
+      purchase_order_items: [po('PO-Z', LHF, 1, '2026-10-20', 'other-lhf'), po('PO-Z', RHF, 1, '2026-10-20', 'other-rhf')],
+    });
+    expect(sets.get('SO-005-lhf')!.poNumber).toBe('PO-Z');
+    expect(sets.get('SO-005-rhf')!.shortageQty).toBe(0);
   });
 
   test('two sets, one received batch: the earlier delivery takes it whole, the later one is wholly short', async () => {

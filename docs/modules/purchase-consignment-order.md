@@ -30,6 +30,7 @@ The lock in front of edits is a downstream lock, not a status lock: once ANY non
 - The field-level edit lock's column set must be read from the one shared rulebook (`document-policy.ts`'s `PCO_LOCK_COLS`) — don't hand-maintain a second list that can drift from sibling documents.
 - To retire a PC Order that already has receipts against it, cancel the PC Receive(s) first (itself cancel-only, no delete), then the PC Order — there is no other way in, since neither document can be deleted.
 - The create-time rollback delete (cleaning up a headerless orphan when a line insert fails mid-create, since there's no cross-statement transaction) is NOT the removed document-delete feature — it must stay; it only ever removes a document that never successfully existed.
+- Raised from a product request (`POST /` with `productRequestId`, PC Order New `?fromProductRequest=`): the request must be `APPROVED` and name a SKU, else 409 (`request_not_approved` / `request_already_issued` / `model_not_created`); once the order stands the request reads `PCO_ISSUED` and the header carries `source_product_request_id`. Rules in `docs/modules/product-request.md`.
 
 ## Gotchas
 

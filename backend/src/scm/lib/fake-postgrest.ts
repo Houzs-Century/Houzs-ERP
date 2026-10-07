@@ -300,6 +300,10 @@ export function fakeSb(
          written as gte(first) + lt(next-first) — the only correct shape for a
          timestamptz — returned an empty report against this fake while the
          real database returned the rows (docs/bugs/0785). */
+      gt(col: string, val: unknown) {
+        filters.push((r) => r[col] != null && (typeof r[col] === 'number' ? Number(r[col]) > Number(val) : String(r[col]) > String(val)));
+        return builder;
+      },
       lt(col: string, val: unknown) {
         filters.push((r) => r[col] != null && (typeof r[col] === 'number' ? Number(r[col]) < Number(val) : String(r[col]) < String(val)));
         return builder;

@@ -173,6 +173,11 @@ export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
      Finance to pay a bill. Authorization is the flat scm.payment_request.create
      key (own requests) or scm.payment_voucher.create (Finance) inside the route. */
   "/payment-requests",
+  /* Product request (2026-10-06): a salesperson holds no consignment or
+     procurement area and the Purchaser no sales area. Authorization is a Sales
+     caller or the flat scm.product_request.create key (own requests) and
+     scm.product_request.approve (the Purchaser) inside the route. */
+  "/product-requests",
   "/hr",
   "/localities",
   // SG postcode -> address via OneMap (2026-09-11): a shared reference lookup

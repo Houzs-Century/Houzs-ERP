@@ -1726,8 +1726,8 @@ export function MobileNewSO({
     description: l.name.trim(),
     qty: num(l.qty) || 1,
     unitPriceSen: toSen(l.price),
-    /* An EXISTING line: its 0 IS its persisted price (desktop's PATCH said so since #2425). */
-    ...zeroPriceClaim(toSen(l.price), true),
+    /* A persisted or typed 0 is claimed; a re-pick's seeded 0 is not, so the server keeps the stored price (BUG-63). */
+    ...zeroPriceClaim(toSen(l.price), l.priceAuthored === true),
     ...(deferLineDateToHeader({ storedProcessingDate: origProcDate, overridden: ddateOverrides.has(l.key) }) ? {} : { lineDeliveryDate: l.ddate || null }),
     variants: buildVariants(l),
   });
@@ -2755,6 +2755,7 @@ export function MobileNewSO({
             name: (sku.name ?? "").trim() || code,
             cat: nextCat,
             price: fromSen(sku.unitPriceSen),
+            priceAuthored: false, // seeded, not typed (BUG-63)
             variants: { ...sku.defaultVariants, ...seededVariants },
             overriddenKeys: [],
           };

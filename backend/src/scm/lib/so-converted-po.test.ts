@@ -141,8 +141,8 @@ describe('soConvertedPoNumbers', () => {
       ],
     });
     const out = await soLineBoundPoNumbers(sb, ['si-1', 'si-2'], null);
-    expect(out.get('si-1')).toEqual(['HC-PO-009863', 'HC-PO-010200']);
-    expect(out.get('si-2')).toEqual(['HC-PO-009863']);
+    expect(out.get('si-1')?.pos).toEqual(['HC-PO-009863', 'HC-PO-010200']);
+    expect(out.get('si-2')?.pos).toEqual(['HC-PO-009863']);
   });
 
   test("the owner's case: a line resolves to its OWN PO, never another line's PO", async () => {
@@ -159,8 +159,29 @@ describe('soConvertedPoNumbers', () => {
       ],
     });
     const out = await soLineBoundPoNumbers(sb, ['hilton-013160'], null);
-    expect(out.get('hilton-013160')).toEqual(['HC-PO-009863']);
+    expect(out.get('hilton-013160')?.pos).toEqual(['HC-PO-009863']);
     expect(out.has('hilton-002558')).toBe(false);
+  });
+
+  test('BUG-72: bound PO carries the MRP ETA rule — line revised date, else header; none once received', async () => {
+    const sb = fakeSb({
+      purchase_order_items: [
+        // line date revised later than the original -> the revision wins
+        { so_item_id: 'si-1', purchase_order_id: 'po-1', qty: 2, received_qty: 0, delivery_date: '2026-10-10', supplier_delivery_date_2: '2026-10-20' },
+        // no line date -> the header's expected_at (and its revision)
+        { so_item_id: 'si-2', purchase_order_id: 'po-2', qty: 1, received_qty: 0, delivery_date: null },
+        // fully received -> PO still shown, no ETA
+        { so_item_id: 'si-3', purchase_order_id: 'po-1', qty: 1, received_qty: 1, delivery_date: '2026-10-10' },
+      ],
+      purchase_orders: [
+        { id: 'po-1', po_number: 'PO-A', status: 'SUBMITTED', expected_at: '2026-10-01' },
+        { id: 'po-2', po_number: 'PO-B', status: 'SUBMITTED', expected_at: '2026-10-05', supplier_delivery_date_2: '2026-10-08' },
+      ],
+    });
+    const out = await soLineBoundPoNumbers(sb, ['si-1', 'si-2', 'si-3'], null);
+    expect(out.get('si-1')?.etas).toEqual({ 'PO-A': '2026-10-20' });
+    expect(out.get('si-2')?.etas).toEqual({ 'PO-B': '2026-10-08' });
+    expect(out.get('si-3')).toEqual({ pos: ['PO-A'], etas: {} });
   });
 
   test('soLineBoundPoNumbers: empty input short-circuits without a query', async () => {

@@ -19,7 +19,8 @@
 
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useProductRequest } from '../../vendor/scm/lib/product-request-queries';
 import { Save, Trash2, X } from 'lucide-react';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
@@ -110,6 +111,40 @@ export const PurchaseConsignmentOrderNew = () => {
   const [lines, setLines] = useState<DraftLine[]>([newLine()]);
 
   const [dialog, setDialog] = useState<{ title: string; body: string } | null>(null);
+
+  /* Raised from a product request (owner 2026-10-06, ?fromProductRequest=): the
+     header's Purchase Location + Expected Delivery and ONE line — the request's
+     SKU, qty, fabric / seat / leg as the variant bag, its remarks as the line
+     note — are seeded once when the request arrives. The Purchaser picks the
+     supplier and the price; on save the order claims the request (PCO_ISSUED). */
+  const [searchParams] = useSearchParams();
+  const fromProductRequest = searchParams.get('fromProductRequest');
+  const requestQ = useProductRequest(fromProductRequest);
+  const sourceRequest = requestQ.data?.request ?? null;
+  const [requestSeeded, setRequestSeeded] = useState(false);
+  useEffect(() => {
+    if (!fromProductRequest || requestSeeded || !sourceRequest) return;
+    if (sourceRequest.delivery_location_id) setPurchaseLocationId(sourceRequest.delivery_location_id);
+    if (sourceRequest.expected_delivery_date) setExpectedAt(sourceRequest.expected_delivery_date);
+    setNotes((prev) => prev || [`From Product Request ${sourceRequest.request_no}`, sourceRequest.special_remarks].filter(Boolean).join(' · '));
+    if (sourceRequest.item_code) {
+      const variants: Record<string, unknown> = {};
+      if (sourceRequest.fabric_code) variants.fabricCode = sourceRequest.fabric_code;
+      if (sourceRequest.seat_size) variants.seatHeight = sourceRequest.seat_size;
+      if (sourceRequest.leg_size) variants.legHeight = sourceRequest.leg_size;
+      setLines([{
+        ...newLine(),
+        itemCode: sourceRequest.item_code,
+        materialName: sourceRequest.model?.name ?? sourceRequest.proposed_model_name ?? sourceRequest.item_code,
+        qty: sourceRequest.qty,
+        category: sourceRequest.category.toLowerCase() || undefined,
+        variants,
+        deliveryDate: sourceRequest.expected_delivery_date ?? undefined,
+        warehouseId: sourceRequest.delivery_location_id ?? undefined,
+      }]);
+    }
+    setRequestSeeded(true);
+  }, [fromProductRequest, requestSeeded, sourceRequest]);
 
   // ── Data ────────────────────────────────────────────────────────────
   const suppliers       = useSuppliers({ status: 'ACTIVE' });
@@ -332,9 +367,16 @@ export const PurchaseConsignmentOrderNew = () => {
         notes: notes || undefined,
         purchaseLocationId,
         items,
+        productRequestId: fromProductRequest ?? undefined,
       },
       {
-        onSuccess: (res) => navigate(`/scm/purchase-consignment-orders/${res.id}`),
+        onSuccess: (res) => {
+          if (fromProductRequest && res.requestClaimed === false) {
+            setDialog({ title: 'Order saved, request not linked', body: `${res.pcNumber} was created, but the product request was claimed by another order a moment ago — open the request to check.` });
+            return;
+          }
+          navigate(`/scm/purchase-consignment-orders/${res.id}`);
+        },
         onError:   (err) => setDialog({ title: 'Save failed', body: err instanceof Error ? err.message : 'Something went wrong.' }),
       },
     );

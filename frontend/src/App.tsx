@@ -124,6 +124,7 @@ const ScmOfficialReceiptsV2 = lazy(() => import("./pages/scm-v2/OfficialReceipts
 const ScmApInvoicesV2 = lazy(() => import("./pages/scm-v2/ApInvoices").then((m) => ({ default: m.ApInvoices })));
 const ScmArInvoicesV2 = lazy(() => import("./pages/scm-v2/ArInvoices").then((m) => ({ default: m.ArInvoices })));
 const ScmPaymentRequestsV2 = lazy(() => import("./pages/scm-v2/PaymentRequests").then((m) => ({ default: m.PaymentRequests })));
+const ScmProductRequestsV2 = lazy(() => import("./pages/scm-v2/ProductRequests").then((m) => ({ default: m.ProductRequests })));
 const ScmOfficialDocsV2 = lazy(() => import("./pages/scm-v2/OfficialDocs").then((m) => ({ default: m.OfficialDocs })));
 const ScmSupplierMaintenanceV2 = lazy(() => import("./pages/scm-v2/SupplierMaintenance").then((m) => ({ default: m.SupplierMaintenance })));
 const ScmCreditNotesV2 = lazy(() => import("./pages/scm-v2/CreditNotes").then((m) => ({ default: m.CreditNotes })));
@@ -762,6 +763,10 @@ export default function App() {
             asking Finance to pay a bill holds no Finance area; Finance comes in on
             the voucher key. The server shows a requester their own requests only. */}
         <Route path="/scm/payment-requests" element={<Guard anyPerm={["*", "scm.payment_request.create", "scm.payment_voucher.create"]}><Scm2990Shell><ScmPaymentRequestsV2 /></Scm2990Shell></Guard>} />
+        {/* Product request (owner 2026-10-06): Sales 都能提 (allowSales), the Purchaser
+            批 (any scm.* grant, like the cancel-requests inbox) — the router shows a
+            requester their own requests only. */}
+        <Route path="/scm/product-requests" element={<ScmGuard area="scm" allowSales><Scm2990Shell><ScmProductRequestsV2 /></Scm2990Shell></ScmGuard>} />
         {/* 欠正式单 (owner 2026-10-01, item 3) — Finance's list of payments still owing the official invoice. */}
         <Route path="/scm/official-docs" element={<Guard anyPerm={["*", "scm.payment_voucher.create"]}><Scm2990Shell><ScmOfficialDocsV2 /></Scm2990Shell></Guard>} />
         {/* Supplier Maintenance (owner 2026-10-02) — Finance's own supplier list; same area as the AP Invoices it sits beside. */}

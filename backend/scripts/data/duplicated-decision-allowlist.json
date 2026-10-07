@@ -2,6 +2,11 @@
   "reviewed": [
     {
       "check": "D2",
+      "key": "APPROVED,REJECTED,REQUESTED ~ APPROVED,REJECTED,REQUESTED,WITHDRAWN",
+      "why": "TWO DIFFERENT ENUMS that share three words: scm.so_payment_backdate_requests.status (mig 20260930T1500) has WITHDRAWN as its own fourth terminal state, and BackdateRequestQuickView STATUS_TONE draws each of the four in its own tone; the amendment bucket (status-pill.ts BUCKET_ENTRY / PO_AMENDMENT / AMENDMENT_BUCKET_ORDER) folds a withdrawal INTO Rejected on purpose, so it has three. Not one rule with two homes. Divergence costs a pill colour, never money or stock."
+    },
+    {
+      "check": "D2",
       "key": "CANCELLED,CREDIT_NOTED,REFUNDED ~ CANCELLED,CREDIT_NOTED,REFUNDED,REJECTED",
       "why": "TWO DIFFERENT DOCUMENTS, each deciding when ITS OWN return is closed to editing: ConsignmentReturnDetail / ConsignmentReturns lock a consignment return at CANCELLED / CREDIT_NOTED / REFUNDED; DeliveryReturnDetail (the Delivery Return editor, BUG-62) also treats REJECTED as closed, matching DeliveryReturnDetailV2's isTerminal, which hides the Edit button for the same four. Different enums that share words, not one rule with two homes. Divergence costs an editor that opens or refuses, never money or stock."
     },
@@ -1292,7 +1297,7 @@
     },
     {
       "check": "D1",
-      "key": "DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,PAYMENT_REQUEST,PAYMENT_VOUCHER,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
+      "key": "DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,PAYMENT_REQUEST,PAYMENT_VOUCHER,PRODUCT_REQUEST,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
       "why": "PINNED BY A TEST, which is this checker's own prescribed remedy for a pair that must stay two. The list cannot be imported across the app boundary (the frontend does not build backend sources), so frontend/src/vendor/scm/lib/entity-audit-queries.test.ts READS backend/src/scm/lib/entity-audit.ts and asserts the two are equal, with a second assertion that the read found more than five names so a dead matcher cannot report a pass. Recorded rather than collapsed because this pair already cost four documents their change log while the comment said 'must stay in step' and nothing made it - docs/bugs/0847-four-documents-kept-a-change-log-nobody-could-read.md."
     },
     {
@@ -1489,6 +1494,11 @@
       "check": "D1",
       "key": "#,AMOUNT,DESCRIPTION|frontend/src/vendor/scm/lib/debtor-bill-pdf.ts frontend/src/vendor/scm/lib/deposit-invoice-pdf.ts",
       "why": "TWO PRINTED TABLES' COLUMN HEADINGS that happen to match (owner 2026-10-06, the Deposit Invoice reprinted in the Sales Invoice layout): a debtor bill's lines and a deposit invoice's one deposit line each print # / Description / Amount. A heading row is how one document lays out its own table, not a business rule with two homes; divergence costs a differently titled column, never a figure."
+    },
+    {
+      "check": "D1",
+      "key": "CUSTOMER_ORDER,FAIR_EXHIBITION,SAMPLE,SHOWROOM|backend/src/scm/shared/product-request.ts frontend/src/vendor/scm/lib/product-request-queries.ts",
+      "why": "A PRODUCT REQUEST'S APPLICATION (owner 2026-10-06: 用途 — 展厅 / 客户订单 / 样品; Fair Exhibition added 2026-10-07), one decision with one home: scm/shared/product-request.ts PRODUCT_REQUEST_APPLICATIONS is what POST /product-requests accepts (400 application_invalid otherwise). product-request-queries.ts APPLICATION_LABEL is PRESENTATION of the same vocabulary — the words the picker and the list show — keyed by the frontend ProductRequestApplication type that mirrors the backend list; a value added on one side without the other is a compile error on the frontend (Record<ProductRequestApplication, string>) and a 400 from the server, never a wrong request. Cost of divergence is a missing picker entry, not money or stock."
     },
     {
       "check": "D2",

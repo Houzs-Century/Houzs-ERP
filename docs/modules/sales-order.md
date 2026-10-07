@@ -93,7 +93,7 @@ Validation
 
 Pricing
 - Line price trust depends on the session. A POS PIN session (`origin='pos'`) is rejected (400) if its price drifts from catalog. Every other session (desktop, phone, SSO from the tablet) keeps the typed price. Cost is always a server snapshot.
-- `erpLineTrust`: a price of 0 persists only with `zeroPriceIntended`, sent via client `zeroPriceClaim(unit, authored)`. `authored` is required and is false for unpriced SKUs and sofa builds. Imported orders use `'including-zero'`. ADD lines pass `soIsMigrated=false`.
+- `erpLineTrust`: a price of 0 persists only with `zeroPriceIntended`, sent via client `zeroPriceClaim(unit, authored)`. `authored` is required and is false for unpriced SKUs and sofa builds, and a product re-pick clears it (`priceAuthored: false`). A line PATCH that resolves an unclaimed 0 keeps the stored price (`unitAfterLineEdit`). Imported orders use `'including-zero'`. ADD lines pass `soIsMigrated=false`.
 - "Migrated" means the order came FROM AutoCount: `soIsMigratedShape(doc_no, linked_ac_docno)` (`lib/so-is-migrated.ts`; select both columns; fails closed). A set `linked_ac_docno` alone does not make an order migrated.
 - Surcharges never change a typed or imported price. On catalog-priced lines, priced add-ons are charged, sofas included. `specialAddonsSurchargeSen` is not wired yet but POS clients that submit prices will need it; keep it.
 - An approved amendment price persists only with the approval receipt (`SoAmendmentApproval`, a required argument of `applySoAmendment`). An edited line keeps RM 0; an ADD line at 0 takes the catalog price; a migrated line keeps its stored price. Amendment lines carry `new_discount_sen`.

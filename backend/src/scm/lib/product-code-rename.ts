@@ -37,6 +37,10 @@ export const PRODUCT_CODE_CASCADE: readonly CascadeColumn[] = [
      left on the old code would write a code that no longer exists. */
   { table: 'so_amendment_lines',         col: 'new_item_code' },
   { table: 'po_amendment_lines',         col: 'new_item_code' },
+  /* A product request names the SKU its Purchase Consignment Order will be
+     raised with; left on the old code, the order door would refuse a request
+     for a SKU that no longer exists. */
+  { table: 'product_requests',           col: 'item_code' },
   { table: 'pwp_codes',                  col: 'trigger_item_code' },
   { table: 'pwp_codes',                  col: 'redeemed_item_code' },
   /* A service add-on names the SVC-* SKU the order line is booked under. */

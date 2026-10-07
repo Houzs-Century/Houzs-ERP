@@ -374,7 +374,11 @@ export const ProductModelDetail = ({
   return (
     <div className="space-y-4">
       {/* Header --------------------------------------------------------- */}
-      <PageHeader back
+      {/* Bare `back` is history-back, which from the list's drawer (no URL
+          change on open) left Product Models entirely. */}
+      <PageHeader
+        back="/scm/product-models"
+        beforeBack={onClose ? () => { onClose(); return false; } : undefined}
         eyebrow="Product Model"
         title={model.model_code}
         description={model.name}

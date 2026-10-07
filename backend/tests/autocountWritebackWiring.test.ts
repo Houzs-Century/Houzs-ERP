@@ -159,7 +159,7 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
        an anchor pinned to the whole statement failed on the wording while the
        wiring it exists to protect was untouched. The window still ends at the
        response, so an enqueue that slipped past the 200 would still be caught. */
-    const tail = between(grnSource, 'await recomputePoReceived(sb, lineList.map', "return c.json({ grn: data ?? { id, status: 'CANCELLED' }");
+    const tail = between(grnSource, 'await recountPoAndRewalk(lineList.map', "return c.json({ grn: data ?? { id, status: 'CANCELLED' }");
     expect(tail).toContain('enqueueCancel(sb, {');
     expect(tail).toContain("docType: 'GR'");
   });

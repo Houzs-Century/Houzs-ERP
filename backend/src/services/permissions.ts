@@ -190,6 +190,15 @@ export const PERMISSIONS: PermissionDef[] = [
   // such a person has: requireScmAccess admits it for /payment-requests alone.
   { key: "scm.payment_request.create", resource: "Supply Chain", verb: "create", label: "Request a payment (申请付款)", description: "Ask Finance to pay a bill — payee, amount, due date, the event it is for, the payee's bank details and the bill itself; see your own requests move from Submitted to Paid and Bank confirmed" },
 
+  // Product request (owner 2026-10-06: to request new product / repack product;
+  // Sales 都能提, Purchaser 批). Every Sales caller may raise one without this
+  // key (position / department, like the SO amendment); the create key is for a
+  // non-Sales person who should also raise them. The approve key is the
+  // Purchaser's: approve, reject, build the Model + SKU, raise the PC Order,
+  // close. Owner + IT Admin cover both via "*".
+  { key: "scm.product_request.create",  resource: "Supply Chain", verb: "create", label: "Raise a product request", description: "Ask the Purchaser for a new product or a repack — existing SKU or a new Model, fabric, seat and leg size, what it is for, where and when to deliver; see your own requests move from Requested to Approved and the Purchase Consignment Order raised from them" },
+  { key: "scm.product_request.approve", resource: "Supply Chain", verb: "manage", label: "Approve/reject product requests", description: "The Purchaser's decision on a product request: approve or reject it (with the why), build the new Model and SKU from it, raise the Purchase Consignment Order from it, close it" },
+
   // Correcting a customer payment after the day it was keyed (owner +
   // management, 2026-09-10: 让权限在finance 这里更改). Sales records the money
   // and may fix it the same day; from the next day only a holder of this key

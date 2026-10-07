@@ -509,6 +509,8 @@ const SoLineCardInner = ({
          never auto-populates). The server recompute stays authoritative at
          save; sofa module / seat-height pools land their exact figure there. */
       unitPriceSen: p.sell_price_sen ?? 0,
+      // A seeded price is not a typed one: its 0 must not be claimed as free (BUG-63).
+      priceAuthored:  false,
       variants:       { ...defaults, ...seedVariants },
       overriddenKeys: [],
     });
