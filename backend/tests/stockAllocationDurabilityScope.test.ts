@@ -104,7 +104,10 @@ const LEDGER: Array<{
      and the create paths), with postGrnHandler deliberately last.
      docs/ALLOCATION-DURABILITY-PLAN.md. */
   { module: 'routes/grns.ts', source: grns, inline: 4, durable: 2, deferred: 0 },
-  { module: 'routes/inventory-adjustments.ts', source: inventoryAdjustments, inline: 1, durable: 0, deferred: 0 },
+  /* inventory-adjustments.ts went 1 -> 2 inline on 2026-10-07 (BUG-66): the
+     adjustment became an editable document, and an edit that changes a
+     bucket's net moves stock, so it re-walks the allocation like the create. */
+  { module: 'routes/inventory-adjustments.ts', source: inventoryAdjustments, inline: 2, durable: 0, deferred: 0 },
   /* mfg-sales-orders.ts moved 7 -> 3 inline and 1 -> 5 deferred on 2026-09-11:
      the SO line ADD (sofa + non-sofa branches), EDIT and DELETE routes now defer
      the global sweep under ctx.waitUntil instead of awaiting it. Each had blocked
@@ -139,13 +142,14 @@ describe('durable allocation coverage is stated honestly', () => {
     const inline = LEDGER.reduce((sum, entry) => sum + entry.inline, 0);
     const deferred = LEDGER.reduce((sum, entry) => sum + entry.deferred, 0);
     expect(durable).toBe(6);
-    expect(inline).toBe(27);
+    expect(inline).toBe(28);
     expect(deferred).toBe(5);
     /* The trigger count is unchanged: deferring the four SO line routes
        (2026-09-11) moved them between columns, it did not remove them. 32 are
-       still best-effort (27 inline + 5 deferred). */
-    expect(inline + deferred).toBe(32);
-    expect(durable + inline + deferred).toBe(38);
+       still best-effort (27 inline + 5 deferred). The stock-adjustment edit
+       (2026-10-07) added one inline trigger: 33 best-effort, 39 in all. */
+    expect(inline + deferred).toBe(33);
+    expect(durable + inline + deferred).toBe(39);
   });
 
   test('the code says out loud that the other triggers are still best-effort', () => {

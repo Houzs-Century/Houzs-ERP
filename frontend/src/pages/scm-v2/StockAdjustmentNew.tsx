@@ -21,20 +21,25 @@
 // detail row under a line (shown once its warehouse + SKU are set) so the main
 // table keeps the five columns above.
 //
-// Save posts each row through the SAME single-row POST /inventory/adjustments
-// this form always used, one at a time — a failure stops the run and reports
-// exactly how many rows before it already moved stock, so nothing is
-// double-submitted or silently half-done.
+// Save posts the whole form as ONE document (BUG-66): one POST, one number
+// (`HC-SA-YYMM-NNN`), and the backend writes every line's movement in a single
+// statement, so a failure moves nothing.
+//
+// EDIT (BUG-66, Sim chose "edit everything"): /scm/stock-adjustments/:id/edit
+// mounts this same form seeded from the saved document. Save sends the full
+// line list; the backend moves only the difference per bucket. Each loaded line
+// remembers its saved qty + bucket so the balance hint and the "Take from" cap
+// count the stock this document already took as available again. The
+// warehouse is fixed once saved.
 //
 // HOUZS VENDOR chrome: PageHeader back + Cancel/Save, header card, items card
-// with the shared `styles.table`. Back/Cancel → the parallel
-// /scm/stock-adjustments list. Save → a result dialog: open the list, or "New
-// stock adjustment", which REMOUNTS the form (FreshMount) so nothing from the
-// saved one carries over (staff request 2026-09-14).
+// with the shared `styles.table`. Save → a result dialog: open the saved
+// adjustment, or "New stock adjustment", which REMOUNTS the form (FreshMount) so
+// nothing from the saved one carries over (staff request 2026-09-14).
 // ----------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Save, X, Plus, AlertTriangle, ChevronDown, Trash2 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
@@ -44,8 +49,13 @@ import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { bucketKey, NO_BUCKET_PICKED } from '../../vendor/scm/lib/stock-adjustment-buckets';
 import {
   useStockAdjustment,
+  useStockAdjustmentDoc,
+  useUpdateStockAdjustment,
   useInventoryProductBreakdown,
   useInventoryBuckets,
+  type StockAdjustmentDoc,
+  type StockAdjustmentLine,
+  type StockAdjustmentLineInput,
 } from '../../vendor/scm/lib/stock-queries';
 import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, mfgCategoryLabel, type MaintenanceConfig, type SpecialAddonRow } from '../../vendor/scm/lib/mfg-products-queries';
 import { sortByText, byText } from '../../vendor/scm/lib/sort-options';
@@ -55,6 +65,7 @@ import { PageHeader } from '../../components/Layout';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
+import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { FreshMount } from '../../lib/freshMount';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
@@ -92,6 +103,14 @@ type LineDraft = {
   // both empty: without this, picking it read as picking nothing and that lot
   // could never be decreased. NO_BUCKET_PICKED ('') = nothing chosen.
   pickedKey: string;
+  // EDIT only — what this line already moved when the form opened (0 / no
+  // bucket on a line added now). The stock it took is available to it again.
+  origQty: number;
+  origBucketKey: string;
+  // EDIT only — variantKey is the key the saved line is stored under, sent back
+  // as-is so an untouched legacy line never reads as a different bucket.
+  // Cleared the moment its SKU or variants change.
+  storedKey: boolean;
 };
 
 const blankLine = (): LineDraft => ({
@@ -106,7 +125,48 @@ const blankLine = (): LineDraft => ({
   batchNo: '',
   variantKey: '',
   pickedKey: NO_BUCKET_PICKED,
+  origQty: 0,
+  origBucketKey: NO_BUCKET_PICKED,
+  storedKey: false,
 });
+
+const lineFromDoc = (l: StockAdjustmentLine): LineDraft => {
+  const key = bucketKey({ variant_key: l.variant_key, batch_no: l.batch_no });
+  return {
+    _key: newKey(),
+    itemCode: l.item_code,
+    productName: l.product_name ?? '',
+    qty: l.qty,
+    reasonCode: l.reason_code ?? '',
+    notes: l.notes ?? '',
+    itemGroup: l.item_group ?? '',
+    variants: l.variants ?? {},
+    batchNo: l.batch_no ?? '',
+    variantKey: l.variant_key,
+    pickedKey: l.qty < 0 ? key : NO_BUCKET_PICKED,
+    origQty: l.qty,
+    origBucketKey: key,
+    storedKey: true,
+  };
+};
+
+const lineInput = (it: LineDraft): StockAdjustmentLineInput => {
+  const hasVariantGroup = it.itemGroup === 'sofa' || it.itemGroup === 'bedframe';
+  const isDecrease = directionOf(it.qty) === 'decrease';
+  return {
+    itemCode: it.itemCode.trim(),
+    productName: it.productName.trim() || undefined,
+    // SIGNED — the sign IS the direction (see header).
+    qty: it.qty,
+    reasonCode: it.reasonCode,
+    notes: it.notes.trim() || undefined,
+    itemGroup: hasVariantGroup || it.storedKey ? it.itemGroup || undefined : undefined,
+    variants: !isDecrease && (hasVariantGroup || it.storedKey) ? it.variants : undefined,
+    batchNo: it.batchNo.trim() || undefined,
+    // DECREASE: the picked bucket. INCREASE: only a saved line's own key.
+    variantKey: isDecrease ? (it.variantKey || undefined) : (it.storedKey ? it.variantKey : undefined),
+  };
+};
 
 type LineState = { willGoNegative: boolean; needsBucketPick: boolean };
 
@@ -198,7 +258,19 @@ function AdjustmentLineRow({
   // Open stock buckets for the DECREASE "Take from" picker — only fires once
   // both warehouse + SKU are set (enabled guard inside the hook).
   const bucketsQ = useInventoryBuckets(line.itemCode || null, warehouseId || null);
-  const buckets  = bucketsQ.data ?? [];
+  // EDIT: the bucket a saved write-off took from is pickable again even when it
+  // is now empty, and offers back what this line took out of it.
+  const credit = line.origQty < 0 ? -line.origQty : 0;
+  const buckets = useMemo(() => {
+    const open = (bucketsQ.data ?? []).map((b) => (
+      credit && bucketKey(b) === line.origBucketKey ? { ...b, qty: b.qty + credit } : b
+    ));
+    if (credit && !open.some((b) => bucketKey(b) === line.origBucketKey)) {
+      const [variant_key, batch_no] = JSON.parse(line.origBucketKey) as [string, string | null];
+      open.push({ warehouse_id: warehouseId, variant_key, batch_no, product_name: line.productName || null, qty: credit });
+    }
+    return open;
+  }, [bucketsQ.data, credit, line.origBucketKey, line.productName, warehouseId]);
   // Drive the breakdown lookup off the picked code. The hook only fires when
   // itemCode is non-empty (enabled guard inside the hook).
   const breakdown  = useInventoryProductBreakdown(line.itemCode || null);
@@ -216,8 +288,9 @@ function AdjustmentLineRow({
     return row.qty ?? 0;
   }, [warehouseId, line.itemCode, breakdown.data, breakdown.isLoading]);
 
-  // qty is already signed, so the resulting balance is a straight add.
-  const resultingBalance: number | null = currentBalance == null ? null : currentBalance + line.qty;
+  // qty is already signed, so the resulting balance is a straight add — less
+  // what this line already moved when it was saved (0 on a new line).
+  const resultingBalance: number | null = currentBalance == null ? null : currentBalance + line.qty - line.origQty;
   const willGoNegative = resultingBalance != null && resultingBalance < 0;
   // DECREASE gate — when there are open lots, the operator must say which one
   // the stock comes out of (so the right variant/batch is reduced). Mirrors the
@@ -243,12 +316,18 @@ function AdjustmentLineRow({
       batchNo: '',
       variantKey: '',
       pickedKey: NO_BUCKET_PICKED,
+      // A different SKU: whatever the saved line moved goes back to ITS item,
+      // not this one, and the stored key no longer applies.
+      origQty: 0,
+      origBucketKey: NO_BUCKET_PICKED,
+      storedKey: false,
     });
   };
 
   // Set one variant value; auto-compute bedframe Total Height = Divan + Leg + Gap.
   const setVariant = (key: string, value: string) =>
     setLine(line._key, {
+      storedKey: false,
       variants: (() => {
         const next: Record<string, unknown> = { ...line.variants, [key]: value };
         if (isTotalHeightCategory(line.itemGroup) && isTotalHeightPart(key)) {
@@ -414,6 +493,7 @@ function AdjustmentLineRow({
                     fontFamily: 'var(--font-mono)',
                   }}>
                     {(currentBalance ?? 0).toLocaleString('en-MY')}
+                    {line.origQty !== 0 && <>{' '}{line.origQty > 0 ? '−' : '+'}{' '}{Math.abs(line.origQty).toLocaleString('en-MY')} saved</>}
                     {' '}{line.qty >= 0 ? '+' : '−'}{' '}{magnitude.toLocaleString('en-MY')}
                     {' = '}{resultingBalance.toLocaleString('en-MY')} PCS
                   </strong>
@@ -474,7 +554,7 @@ function AdjustmentLineRow({
                   <SpecialOrders
                     options={line.itemGroup === 'bedframe' ? specialsPools.bedframe : specialsPools.sofa}
                     variants={line.variants}
-                    onPatch={(patch) => setLine(line._key, { variants: { ...line.variants, ...patch } })}
+                    onPatch={(patch) => setLine(line._key, { storedKey: false, variants: { ...line.variants, ...patch } })}
                     showPrices={false}
                   />
                 </div>
@@ -555,31 +635,46 @@ function AdjustmentLineRow({
 }
 
 export const StockAdjustmentNew = () => (
-  <FreshMount>{(startNew) => <StockAdjustmentForm onStartNew={startNew} />}</FreshMount>
+  <FreshMount>{(startNew) => <StockAdjustmentForm onStartNew={startNew} existing={null} />}</FreshMount>
 );
 
-/* One mount = one batch of adjustments. Once it saves the form LOCKS (no Save
-   button), and another batch is a remount via onStartNew — the same shape as
-   StockTransferNew, which needs it for its idempotency key. */
-const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
+/* /scm/stock-adjustments/:id/edit — the same form, seeded from the saved
+   document. Keyed on updated_at so a reload after another save re-seeds. */
+export const StockAdjustmentEdit = () => {
+  const { id = '' } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const adjust   = useStockAdjustment();
+  const docQ = useStockAdjustmentDoc(id || null);
+  if (docQ.isLoading) return <SkeletonDetailPage />;
+  if (!docQ.data) {
+    return (
+      <div className="space-y-4">
+        <PageHeader back eyebrow="Inventory" title="Stock adjustment not found" />
+        <Button variant="ghost" size="md" onClick={() => navigate('/scm/stock-adjustments')}>Back to stock adjustments</Button>
+      </div>
+    );
+  }
+  return <StockAdjustmentForm key={docQ.data.updated_at} onStartNew={() => navigate('/scm/stock-adjustments/new')} existing={docQ.data} />;
+};
+
+/* One mount = one document. Once it saves the form LOCKS (no Save button), and
+   another one is a remount via onStartNew — the same shape as StockTransferNew. */
+const StockAdjustmentForm = ({ onStartNew, existing }: { onStartNew: () => void; existing: StockAdjustmentDoc | null }) => {
+  const navigate = useNavigate();
+  const create = useStockAdjustment();
+  const update = useUpdateStockAdjustment(existing?.id ?? '');
   /* Off native browser dialogs onto the house dialog system — this screen
      writes stock, so its warnings must look like the rest of the ERP rather
      than like OS chrome the operator has learned to dismiss. */
   const askConfirm = useConfirm();
   const notify = useNotify();
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState<{ id: string; adjustmentNo: string } | null>(null);
   const [resultOpen, setResultOpen] = useState(false);
-  const [savedCount, setSavedCount] = useState(0);
-  // Own submit-in-progress flag — adjust.isPending flickers between each
-  // sequential mutateAsync call in the Save loop, which would let a
-  // double-click slip a second run in between two rows.
   const [submitting, setSubmitting] = useState(false);
 
   // ── Form state ─────────────────────────────────────────────────────
-  const [warehouseId, setWarehouseId] = useState<string>('');
-  const [lines, setLines] = useState<LineDraft[]>([blankLine()]);
+  const [warehouseId, setWarehouseId] = useState<string>(existing?.warehouse_id ?? '');
+  const [notes, setNotes] = useState<string>(existing?.notes ?? '');
+  const [lines, setLines] = useState<LineDraft[]>(() => (existing?.lines.length ? existing.lines.map(lineFromDoc) : [blankLine()]));
 
   // ── Data ───────────────────────────────────────────────────────────
   const warehouses = useWarehouses();
@@ -645,10 +740,13 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
     }
     // INCREASE gate — sofa / bedframe must carry their variant attributes (and
     // sofa a batch number) before the found stock can be saved. Same check the
-    // backend runs, walked across every line before anything is sent.
+    // backend runs, walked across every line before anything is sent. A saved
+    // line that is unchanged is left to the backend, which only gates a bucket
+    // the edit actually moves.
     for (const it of validLines) {
       const hasVariantGroup = it.itemGroup === 'sofa' || it.itemGroup === 'bedframe';
-      if (directionOf(it.qty) === 'increase' && hasVariantGroup) {
+      const unchanged = it.storedKey && it.qty === it.origQty;
+      if (directionOf(it.qty) === 'increase' && hasVariantGroup && !unchanged) {
         const errs = adjustmentIncreaseErrors(it.itemGroup, it.variants, it.batchNo, it.itemCode);
         if (errs.length > 0) {
           void notify({ title: `"${it.itemCode}" can't be saved yet`, body: errs.join('\n'), tone: 'error' });
@@ -678,73 +776,55 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
     }
 
     setSubmitting(true);
-    let succeeded = 0;
-    for (const it of validLines) {
-      const hasVariantGroup = it.itemGroup === 'sofa' || it.itemGroup === 'bedframe';
-      const isDecrease = directionOf(it.qty) === 'decrease';
-      const trimmedBatch = it.batchNo.trim();
-      try {
-        // eslint-disable-next-line no-await-in-loop -- deliberately sequential: each POST is its own audited stock_adjustments row, and a failure must stop the run exactly where it happened (see header comment) rather than fire the rest concurrently.
-        await adjust.mutateAsync({
-          warehouseId,
-          itemCode: it.itemCode.trim(),
-          productName: it.productName.trim() || undefined,
-          // SIGNED delta — the sign IS the direction (see header). The POST
-          // takes qtyDelta signed and has since this form was written.
-          qtyDelta: it.qty,
-          reasonCode: it.reasonCode,
-          notes: it.notes.trim() || undefined,
-          // Variant + batch. On INCREASE the backend computes variant_key from
-          // `variants`; on DECREASE the picker supplies the exact bucket.
-          itemGroup: hasVariantGroup ? it.itemGroup : undefined,
-          variants:  !isDecrease && hasVariantGroup ? it.variants : undefined,
-          batchNo:   trimmedBatch || undefined,
-          variantKey: isDecrease ? (it.variantKey || undefined) : undefined,
-        });
-        succeeded += 1;
-      } catch (err) {
-        setSubmitting(false);
-        /* authedFetch already ran the response through humanApiError, so this
-           arrives as a plain sentence. What the operator needs added is that
-           anything already saved moved real stock, so re-running the whole
-           batch would double it. */
-        void notify({
-          title: succeeded > 0 ? `Saved ${succeeded} of ${validLines.length} lines — stopped at "${it.itemCode}"` : "Couldn't save this stock adjustment",
-          body: `${err instanceof Error ? err.message : 'Something went wrong.'}${succeeded > 0 ? ` The ${succeeded} line(s) before this one already moved stock; this line and the rest were not saved. Remove the completed lines and retry the rest.` : ' No stock was moved and your entries are still on this screen — please try again.'}`,
-          tone: 'error',
-        });
-        return;
+    try {
+      const body = { notes: notes.trim() || undefined, lines: validLines.map(lineInput) };
+      if (existing) {
+        await update.mutateAsync({ ...body, notes: notes.trim() || null });
+        setSaved({ id: existing.id, adjustmentNo: existing.adjustment_no });
+      } else {
+        const r = await create.mutateAsync({ warehouseId, ...body });
+        setSaved({ id: r.id, adjustmentNo: r.adjustmentNo });
       }
+      setResultOpen(true);
+    } catch (err) {
+      /* authedFetch already ran the response through humanApiError. The whole
+         document is written in one statement, so a failure moved nothing. */
+      void notify({
+        title: existing ? `Couldn't save ${existing.adjustment_no}` : "Couldn't save this stock adjustment",
+        body: `${err instanceof Error ? err.message : 'Something went wrong.'} No stock was moved and your entries are still on this screen — please try again.`,
+        tone: 'error',
+      });
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
-    setSavedCount(succeeded);
-    setSaved(true);
-    setResultOpen(true);
   };
+
+  const openSaved = () => (saved ? navigate(`/scm/stock-adjustments/${saved.id}`) : navigate('/scm/stock-adjustments'));
+  const cancelTo = existing ? `/scm/stock-adjustments/${existing.id}` : '/scm/stock-adjustments';
 
   return (
     <div className="space-y-4">
       <PageHeader back
         eyebrow="Inventory"
-        title="New Stock Adjustment"
+        title={existing ? `Edit ${existing.adjustment_no}` : 'New Stock Adjustment'}
         actions={
           saved ? (
             <div className={styles.actions}>
               <Button variant="ghost" size="md" onClick={onStartNew}>
                 <Plus {...ICON} /> New stock adjustment
               </Button>
-              <Button variant="primary" size="md" onClick={() => navigate('/scm/stock-adjustments')}>
-                Open stock adjustments
+              <Button variant="primary" size="md" onClick={openSaved}>
+                Open {saved.adjustmentNo}
               </Button>
             </div>
           ) : (
             <div className={styles.actions}>
-              <Button variant="ghost" size="md" onClick={() => navigate('/scm/stock-adjustments')}>
+              <Button variant="ghost" size="md" onClick={() => navigate(cancelTo)}>
                 <X {...ICON} /> Cancel
               </Button>
               <Button variant="primary" size="md" onClick={onSave} disabled={!canSave || submitting}>
                 <Save {...ICON} />
-                {submitting ? 'Saving…' : `Save Adjustment${validLines.length > 1 ? `s (${validLines.length})` : ''}`}
+                {submitting ? 'Saving…' : existing ? 'Save Changes' : 'Save Adjustment'}
               </Button>
             </div>
           )
@@ -752,26 +832,41 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
       />
 
       {/* Saved: readable, not editable — there is no Save left to press. */}
-      <fieldset disabled={saved} className="space-y-4" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+      <fieldset disabled={Boolean(saved)} className="space-y-4" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
 
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Warehouse</h2>
         </div>
         <div className={styles.cardBody}>
-          <label className={styles.field} style={{ maxWidth: 320 }}>
-            <span className={styles.fieldLabel}>Warehouse *</span>
-            <select
-              value={warehouseId}
-              onChange={(e) => setWarehouseId(e.target.value)}
-              className={styles.fieldInput}
-            >
-              <option value="">— Pick a warehouse —</option>
-              {sortByText(warehouses.data ?? []).map((w) => (
-                <option key={w.id} value={w.id}>{w.code}</option>
-              ))}
-            </select>
-          </label>
+          <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap' }}>
+            <label className={styles.field} style={{ width: 320, maxWidth: '100%' }}>
+              <span className={styles.fieldLabel}>Warehouse *</span>
+              {/* Fixed once saved: every line's stock moved in THIS warehouse. */}
+              <select
+                value={warehouseId}
+                onChange={(e) => setWarehouseId(e.target.value)}
+                className={styles.fieldInput}
+                disabled={Boolean(existing)}
+                title={existing ? 'The warehouse of a saved adjustment cannot change' : undefined}
+              >
+                <option value="">— Pick a warehouse —</option>
+                {sortByText(warehouses.data ?? []).map((w) => (
+                  <option key={w.id} value={w.id}>{w.code}</option>
+                ))}
+              </select>
+            </label>
+            <label className={styles.field} style={{ flex: 1, minWidth: 240 }}>
+              <span className={styles.fieldLabel}>Notes</span>
+              <input
+                type="text"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="(optional) — what this adjustment is for"
+                className={styles.fieldInput}
+              />
+            </label>
+          </div>
         </div>
       </section>
 
@@ -786,6 +881,7 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
             Qty is signed: a <strong style={{ color: 'var(--c-ink)' }}>positive</strong> number increases stock
             (found / recount up), a <strong style={{ color: 'var(--c-festive-b, #B8331F)' }}>negative</strong> number
             decreases it (write-off / damage / loss).
+            {existing && ' Saving moves only the difference from what this adjustment already moved.'}
           </p>
           <table className={`${styles.table} ${styles.tableOwnWidths}`}>
             <thead>
@@ -826,10 +922,10 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
 
       {saved && resultOpen && (
         <ActionResultDialog
-          title={`${savedCount} stock ${savedCount === 1 ? 'adjustment' : 'adjustments'} saved`}
-          body="The stock balance is updated. Open the adjustments list, or start the next one."
-          primaryLabel="Open stock adjustments"
-          onPrimary={() => navigate('/scm/stock-adjustments')}
+          title={existing ? `${saved.adjustmentNo} updated` : `${saved.adjustmentNo} saved`}
+          body="The stock balance is updated. Open the adjustment, or start the next one."
+          primaryLabel={`Open ${saved.adjustmentNo}`}
+          onPrimary={openSaved}
           secondaryLabel="New stock adjustment"
           onSecondary={onStartNew}
           onClose={() => setResultOpen(false)}

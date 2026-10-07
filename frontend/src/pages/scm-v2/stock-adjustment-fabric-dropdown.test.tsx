@@ -10,7 +10,8 @@ vi.mock('../../vendor/scm/lib/stock-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/stock-queries')>()),
   useInventoryBuckets: () => ({ data: [], isLoading: false }),
   useInventoryProductBreakdown: () => ({ data: { balances: [] }, isLoading: false }),
-  useStockAdjustment: () => ({ isPending: false, mutateAsync: async () => ({ movement: { id: 'mv-1' } }) }),
+  useStockAdjustment: () => ({ isPending: false, mutateAsync: async () => ({ id: 'sa-1', adjustmentNo: 'HC-SA-2610-001' }) }),
+  useUpdateStockAdjustment: () => ({ isPending: false, mutateAsync: async () => ({}) }),
 }));
 vi.mock('../../vendor/scm/lib/inventory-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/inventory-queries')>()),

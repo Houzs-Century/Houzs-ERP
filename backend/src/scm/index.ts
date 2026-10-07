@@ -572,7 +572,10 @@ scm.route("/purchase-consignment-returns", purchaseConsignmentReturns);
 // fire BOTH and re-couple the two, defeating the split.) The reads the
 // adjustment form needs (warehouses, buckets, movements) stay under /inventory
 // on `scm.warehouse.inventory`.
-scm.use("/inventory/adjustments", scmAreaGuard("scm.warehouse.adjustments"));
+// Wildcard since BUG-66 (2026-10-07): the router now serves /:id too, and an
+// exact-path guard would leave those paths behind supabaseAuth alone, because
+// this router answers before the broad /inventory/* guard is reached.
+scm.use("/inventory/adjustments/*", scmAreaGuard("scm.warehouse.adjustments"));
 scm.route("/inventory/adjustments", inventoryAdjustments);
 // openReadPaths /inventory/warehouses (2026-07-19, fix/so-maintenance-403) —
 // GET /inventory/warehouses is the warehouse PICKLIST (id / code / name /

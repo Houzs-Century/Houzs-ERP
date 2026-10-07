@@ -20,7 +20,10 @@ type AdjustCall = {
   batchNo?: string;
   variantKey?: string;
 };
+// One entry per LINE of the posted document, flattened with its warehouse so
+// the per-sign assertions read the same as before the form posted documents.
 const adjustCalls: AdjustCall[] = [];
+const postCalls: Array<{ warehouseId: string; lines: Array<Omit<AdjustCall, 'warehouseId' | 'qtyDelta'> & { qty: number }> }> = [];
 
 vi.mock('../../vendor/scm/lib/stock-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/stock-queries')>()),
@@ -36,11 +39,13 @@ vi.mock('../../vendor/scm/lib/stock-queries', async (importOriginal) => ({
   }),
   useStockAdjustment: () => ({
     isPending: false,
-    mutateAsync: async (vars: AdjustCall) => {
-      adjustCalls.push(vars);
-      return { movement: { id: `mv-${adjustCalls.length}` } };
+    mutateAsync: async (vars: (typeof postCalls)[number]) => {
+      postCalls.push(vars);
+      for (const l of vars.lines) adjustCalls.push({ ...l, warehouseId: vars.warehouseId, qtyDelta: l.qty });
+      return { id: 'doc-1', adjustmentNo: 'HC-SA-2610-001' };
     },
   }),
+  useUpdateStockAdjustment: () => ({ isPending: false, mutateAsync: async () => ({}) }),
 }));
 vi.mock('../../vendor/scm/lib/inventory-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/inventory-queries')>()),
@@ -70,6 +75,7 @@ import { StockAdjustmentNew } from './StockAdjustmentNew';
 
 afterEach(() => {
   adjustCalls.length = 0;
+  postCalls.length = 0;
   notify.mockClear();
 });
 
@@ -186,7 +192,7 @@ describe('New Stock Adjustment — signed qty encodes the direction', () => {
     expect(adjustCalls[0]!.qtyDelta).toBe(-5);
   });
 
-  test('mixed lines: a +3 increase and a −2 decrease post one row each, signs intact', async () => {
+  test('mixed lines: a +3 increase and a −2 decrease post as ONE document, signs intact', async () => {
     draw();
     setWarehouse();
     // Line 1 — increase +3.
@@ -205,8 +211,9 @@ describe('New Stock Adjustment — signed qty encodes the direction', () => {
     save();
     await screen.findByRole('dialog');
 
+    // BUG-66: one POST carrying both lines, so they share one document number.
+    expect(postCalls).toHaveLength(1);
     expect(adjustCalls.map((c) => c.qtyDelta)).toEqual([3, -2]);
-    // Confirm the dialog reports both saved.
-    expect(within(screen.getByRole('dialog')).getByText(/2 stock adjustments saved/)).toBeTruthy();
+    expect(within(screen.getByRole('dialog')).getByText(/HC-SA-2610-001 saved/)).toBeTruthy();
   });
 });

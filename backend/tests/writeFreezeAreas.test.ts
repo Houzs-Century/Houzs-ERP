@@ -130,9 +130,11 @@ describe('areaForPath', () => {
   });
 
   it('picks the MOST SPECIFIC mount, mirroring Hono', () => {
-    // scm/index.ts registers the exact /inventory/adjustments guard before the
-    // broad /inventory/* one precisely so adjustments is its own permission.
+    // scm/index.ts registers the /inventory/adjustments/* guard before the
+    // broad /inventory/* one precisely so adjustments is its own permission —
+    // the document's own /:id paths included (BUG-66).
     expect(areaForPath('/api/scm/inventory/adjustments')).toBe('scm.warehouse.adjustments');
+    expect(areaForPath('/api/scm/inventory/adjustments/9')).toBe('scm.warehouse.adjustments');
     expect(areaForPath('/api/scm/inventory/buckets')).toBe('scm.warehouse.inventory');
     expect(areaForPath('/api/scm/maintenance-config/sofa-compartments/4'))
       .toBe('scm.procurement.products');

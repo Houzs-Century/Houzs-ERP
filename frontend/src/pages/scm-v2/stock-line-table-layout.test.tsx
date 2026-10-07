@@ -28,6 +28,7 @@ vi.mock('../../vendor/scm/lib/stock-queries', async (importOriginal) => ({
   useInventoryProductBreakdown: () => ({ data: { balances: [] }, isLoading: false }),
   useCreateStockTransfer: () => ({ isPending: false, mutate: () => undefined }),
   useStockAdjustment: () => ({ isPending: false, mutate: () => undefined, mutateAsync: async () => ({}) }),
+  useUpdateStockAdjustment: () => ({ isPending: false, mutateAsync: async () => ({}) }),
 }));
 vi.mock('../../vendor/scm/lib/inventory-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/inventory-queries')>()),
