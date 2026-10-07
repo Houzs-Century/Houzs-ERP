@@ -99,8 +99,8 @@ describePg('stock adjustment document backfill', () => {
       SELECT stock_adjustment_id::text AS doc, item_code, qty, batch_no, reason_code, notes
         FROM scm.stock_adjustment_lines ORDER BY item_code, qty`;
     expect(lines).toEqual([
-      { doc: id(3), item_code: 'CH-1', qty: -1, batch_no: null, reason_code: 'LOSS', notes: null },
       { doc: id(1), item_code: 'CH-1', qty: -2, batch_no: null, reason_code: 'DAMAGE', notes: 'water' },
+      { doc: id(3), item_code: 'CH-1', qty: -1, batch_no: null, reason_code: 'LOSS', notes: null },
       { doc: id(2), item_code: 'CH-2', qty: 5, batch_no: 'B1', reason_code: 'FOUND', notes: null },
       { doc: id(4), item_code: 'CH-9', qty: 1, batch_no: null, reason_code: 'FOUND', notes: null },
     ]);
