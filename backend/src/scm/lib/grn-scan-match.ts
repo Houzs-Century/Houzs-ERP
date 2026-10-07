@@ -338,7 +338,7 @@ export function matchGrnScanToPoLines(
 const UNMATCHED_WHY: Record<UnmatchedScanLine['reason'], (l: ScannedGrnLine) => string> = {
   no_open_po_line: () => 'no open PO line',
   ambiguous: () => 'more than one PO line fits',
-  nothing_remaining: () => 'PO line already fully received',
+  nothing_remaining: () => 'its PO line shows 0 qty remaining',
   po_not_open: (l) => `PO ${l.poNo ?? '?'} is not open`,
   no_po_number: () => 'no PO printed on the row',
 };
