@@ -416,6 +416,15 @@ export const requireScmAccess: MiddlewareHandler<{ Bindings: Env }> = async (c, 
     await next();
     return;
   }
+  // Additive (owner 2026-10-06, product request: Sales 都能提, Purchaser 批): a
+  // Sales caller by stable org field, or a holder of either flat product-request
+  // key, reaches the product-request router and nothing else. The router shows
+  // a requester their own requests only; the Purchaser's key sees all.
+  if (/\/scm\/product-requests(\/|$)/.test(c.req.path)
+    && (isSalesUser(user) || hasPermission(granted, "scm.product_request.create") || hasPermission(granted, "scm.product_request.approve"))) {
+    await next();
+    return;
+  }
   // Additive (owner 2026-07-16): a code-keyed Sales rep must be able to READ the
   // Delivery Orders / Sales Invoices generated from their OWN Sales Orders (e.g.
   // to find + resend a customer's invoice) and the relationship-map graph that

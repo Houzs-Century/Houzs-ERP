@@ -87,8 +87,12 @@ export function useCreatePurchaseConsignmentOrder() {
       notes?: string;
       items?: NewPoItem[];
       purchaseLocationId?: string | null;
+      /** The product request this order is raised from (owner 2026-10-06); the
+          server refuses one not APPROVED or without a SKU, and marks it
+          PCO_ISSUED once the order stands (requestClaimed on the answer). */
+      productRequestId?: string;
     }) =>
-      authedFetch<{ id: string; poNumber: string }>(`/purchase-consignment-orders`,
+      authedFetch<{ id: string; pcNumber: string; poNumber?: string; productRequestId?: string; requestClaimed?: boolean | null }>(`/purchase-consignment-orders`,
         idempotentInit(idempotencyKey, {
           method: 'POST',
           body: JSON.stringify(body),
