@@ -27,6 +27,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - BUG-54 service case phone on the delivery sheet: paste `reference/ERPDeliverySync.gs` into the live "Delivery & Amend Updated" project and run `runErpAssrContactRefresh` once, then check Delivery Details R4124 col H — sheet trigger owner — 2026-10-05
 
 ## Dev
+- Product request: after `scm.product_requests` is on production, re-run `probe-product-code-columns.mjs` so the hand-added `product_requests.item_code` line in `tests/fixtures/product-code-columns.snapshot.json` is read back from production (it was written from the migration) — 2026-10-07
 - AutoCount PO Doc No. repair: verify batch 3, then the last 243 rows, out of office hours — 2026-09-15
 - AutoCount: an edit composed before a rebuild is refused "line not found"; recompose once — 2026-09-15
 - AutoCount: size changes on 6 carried-over lines (4 orders) never reached the book; trace, then repair — 2026-09-15
