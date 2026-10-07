@@ -334,3 +334,26 @@ export function matchGrnScanToPoLines(
     weakMatch,
   };
 }
+
+const UNMATCHED_WHY: Record<UnmatchedScanLine['reason'], (l: ScannedGrnLine) => string> = {
+  no_open_po_line: () => 'no open PO line',
+  ambiguous: () => 'more than one PO line fits',
+  nothing_remaining: () => 'PO line already fully received',
+  po_not_open: (l) => `PO ${l.poNo ?? '?'} is not open`,
+  no_po_number: () => 'no PO printed on the row',
+};
+
+/**
+ * The scanned lines left off the draft, written out so the operator knows what
+ * to add (a count alone told them nothing). Null when every line matched. Capped
+ * so a long delivery order cannot flood the GRN note.
+ */
+export function describeUnmatchedScanLines(unmatched: UnmatchedScanLine[], max = 10): string | null {
+  if (unmatched.length === 0) return null;
+  const parts = unmatched.slice(0, max).map(({ line: l, reason }) => {
+    const what = [l.itemCode, l.description].map((v) => (v ?? '').trim()).filter(Boolean).join(' ') || l.barcode || 'unreadable item';
+    return `${what} x${l.qty} (${UNMATCHED_WHY[reason](l)})`;
+  });
+  const more = unmatched.length > max ? `; and ${unmatched.length - max} more` : '';
+  return `Not added, please add on the draft: ${parts.join('; ')}${more}.`;
+}
