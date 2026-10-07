@@ -109,9 +109,12 @@ export function SourcePosRowMobile({
   label = "Source PO",
   incoming = null,
   showEmpty = false,
+  etas,
 }: {
   pos: string[];
   adj?: boolean;
+  /* SO bound PO (BUG-72): PO number -> formatted ETA, appended to that chip. */
+  etas?: Record<string, string>;
   ready?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
   /* SO list card (2026-08-11): the purchase orders this SO's lines were raised
      INTO (`converted_po_nos`). Procurement provenance, NOT a goods source — so
@@ -146,6 +149,7 @@ export function SourcePosRowMobile({
       {pos.map((po) => (
         <span key={`s-${po}`} style={solidChip} title="The shipped goods physically came from this purchase order's batch.">
           {po}
+          {etas?.[po] ? ` · ETA ${etas[po]}` : ""}
         </span>
       ))}
       {readyPo.map((r) => (

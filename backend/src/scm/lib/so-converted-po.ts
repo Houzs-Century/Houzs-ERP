@@ -32,6 +32,8 @@
 // it has to say why.
 // ----------------------------------------------------------------------------
 
+import { effectiveDelivery } from '../shared/effective-delivery';
+
 /** PostgREST `.in()` caps out on URL length, and the un-paginated SO list can
  *  hand us 500 docs → well over a thousand line ids. Chunk every `.in()` set so
  *  a wide list can't blow the query-string limit. */
@@ -69,60 +71,85 @@ export async function soConvertedPoNumbers(
  * order's PO — correct for costing, misleading as "this line's PO"). CANCELLED
  * POs are dropped. Best-effort: any read error yields an empty map, never a throw.
  *
+ * `etas` (BUG-72): per PO number, when the still-open goods arrive — the same
+ * rule MRP's coverage ETA uses (mrp.ts, migration 0180): the PO line's latest
+ * revised delivery date, else the PO header's. Earliest across the line's open
+ * rows on that PO; a fully received PO has no ETA, so no key.
+ *
  * `companyId` is REQUIRED (number | null); when a number it scopes every read,
  * the only boundary under the service-role client.
  */
+export type SoLineBoundPos = { pos: string[]; etas: Record<string, string> };
+
+type DateCols = {
+  supplier_delivery_date_2: string | null;
+  supplier_delivery_date_3: string | null;
+  supplier_delivery_date_4: string | null;
+};
+const REVISED = 'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4';
+
 export async function soLineBoundPoNumbers(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   soItemIds: Array<string | null | undefined>,
   companyId: number | null,
-): Promise<Map<string, string[]>> {
-  const out = new Map<string, string[]>();
+): Promise<Map<string, SoLineBoundPos>> {
+  const out = new Map<string, SoLineBoundPos>();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const scoped = (q: any) => (companyId == null ? q : q.eq('company_id', companyId));
   const ids = [...new Set(soItemIds.filter((d): d is string => !!d))];
   if (ids.length === 0) return out;
   try {
-    const links: Array<{ so_item_id: string; purchase_order_id: string }> = [];
+    type Link = DateCols & {
+      so_item_id: string; purchase_order_id: string;
+      delivery_date: string | null; qty: number | null; received_qty: number | null;
+    };
+    const links: Link[] = [];
     const poIds = new Set<string>();
     for (const part of chunk(ids, IN_CHUNK)) {
       const { data, error } = await scoped(sb
         .from('purchase_order_items')
-        .select('so_item_id, purchase_order_id'))
+        .select(`so_item_id, purchase_order_id, qty, received_qty, delivery_date, ${REVISED}`))
         .in('so_item_id', part)
         .not('purchase_order_id', 'is', null);
       if (error) return out;
-      for (const r of (data ?? []) as Array<{ so_item_id: string | null; purchase_order_id: string | null }>) {
+      for (const r of (data ?? []) as Link[]) {
         if (r.so_item_id && r.purchase_order_id) {
-          links.push({ so_item_id: r.so_item_id, purchase_order_id: r.purchase_order_id });
+          links.push(r);
           poIds.add(r.purchase_order_id);
         }
       }
     }
     if (links.length === 0) return out;
-    const numById = new Map<string, string>();
+    type Head = DateCols & { id: string; po_number: string | null; status: string | null; expected_at: string | null };
+    const headById = new Map<string, Head>();
     for (const part of chunk([...poIds], IN_CHUNK)) {
       const { data, error } = await scoped(sb
         .from('purchase_orders')
-        .select('id, po_number, status'))
+        .select(`id, po_number, status, expected_at, ${REVISED}`))
         .in('id', part);
       if (error) return out;
-      for (const p of (data ?? []) as Array<{ id: string; po_number: string | null; status: string | null }>) {
+      for (const p of (data ?? []) as Head[]) {
         if ((p.status ?? '').toUpperCase() === 'CANCELLED') continue;
-        if (p.po_number) numById.set(p.id, p.po_number);
+        if (p.po_number) headById.set(p.id, p);
       }
     }
-    const bySoItem = new Map<string, Set<string>>();
+    const bySoItem = new Map<string, { pos: Set<string>; etas: Record<string, string> }>();
     for (const l of links) {
-      const num = numById.get(l.purchase_order_id);
-      if (!num) continue;
-      let s = bySoItem.get(l.so_item_id);
-      if (!s) { s = new Set(); bySoItem.set(l.so_item_id, s); }
-      s.add(num);
+      const head = headById.get(l.purchase_order_id);
+      if (!head?.po_number) continue;
+      const num = head.po_number;
+      let e = bySoItem.get(l.so_item_id);
+      if (!e) { e = { pos: new Set(), etas: {} }; bySoItem.set(l.so_item_id, e); }
+      e.pos.add(num);
+      const open = (l.qty ?? 0) - (l.received_qty ?? 0) > 0 && (head.status ?? '').toUpperCase() !== 'RECEIVED';
+      if (!open) continue;
+      const eta = effectiveDelivery(l.delivery_date, l.supplier_delivery_date_2, l.supplier_delivery_date_3, l.supplier_delivery_date_4)
+        ?? effectiveDelivery(head.expected_at, head.supplier_delivery_date_2, head.supplier_delivery_date_3, head.supplier_delivery_date_4);
+      if (eta && (!e.etas[num] || eta < e.etas[num])) e.etas[num] = eta;
     }
-    for (const [itemId, s] of bySoItem) {
-      out.set(itemId, [...s].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })));
+    for (const [itemId, e] of bySoItem) {
+      out.set(itemId, { pos: [...e.pos].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), etas: e.etas });
     }
     return out;
   } catch {

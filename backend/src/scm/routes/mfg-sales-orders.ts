@@ -1907,7 +1907,8 @@ mfgSalesOrders.get('/:docNo', async (c) => {
       ready_source_pos: [],
       /* The line's OWN incoming PO (raised against this so_item). The SO
          "Incoming PO" chip prefers this over the shipped-batch trace. */
-      bound_source_pos: boundPoMap.get(it.id) ?? [],
+      bound_source_pos: boundPoMap.get(it.id)?.pos ?? [],
+      bound_source_po_etas: boundPoMap.get(it.id)?.etas ?? {},
     };
   });
   const totalDelivered = items.reduce((s, it) => s + Number(it.delivered_qty ?? 0), 0);
@@ -2053,7 +2054,8 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
       shipped_source_pos: shippedPos,
       shipped_source_adj: (shippedTrace?.adjQty ?? 0) > 0,
       ready_source_pos: readyPosMap.get(it.id) ?? [],
-      bound_source_pos: boundPoMap.get(it.id) ?? [],
+      bound_source_pos: boundPoMap.get(it.id)?.pos ?? [],
+      bound_source_po_etas: boundPoMap.get(it.id)?.etas ?? {},
     };
   });
   gateSoFinance(c, null, items);
