@@ -5314,9 +5314,10 @@ export const patchDeliveryOrderArrivalHandler = async (c: any) => {
   }
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const { data: cur } = await scopeToCompanyId(
+  const { data: cur, error: readErr } = await scopeToCompanyId(
     sb.from('delivery_orders').select('status, arrival_at').eq('id', id), co.companyId,
   ).maybeSingle();
+  if (readErr) return c.json({ error: 'load_failed', reason: readErr.message }, 500);
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const row = cur as { status: string | null; arrival_at: string | null };
   const status = (row.status ?? '').toUpperCase();
