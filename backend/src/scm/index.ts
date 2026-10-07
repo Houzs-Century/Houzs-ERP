@@ -497,6 +497,11 @@ scm.use(
           hasPositionCapability(u, "scm.do.dispatch")
         );
       }
+      // Driver "Arrived" — PATCH .../arrival only; the handler re-checks the
+      // verb, the caller's own job and that the DO is on the road.
+      if (c.req.method === "PATCH" && c.req.path.endsWith("/arrival")) {
+        return hasPositionCapability(u, "scm.do.dispatch");
+      }
       // Ops-lead revert — POST .../revert only, on the editable scm.do.revert
       // capability. The handler re-checks the verb and reverses stock itself.
       if (c.req.method === "POST" && c.req.path.endsWith("/revert")) {
@@ -989,7 +994,22 @@ scm.route("/scan-payment", scanPayment);
 // the SLIPS R2 binding, now bound in wrangler.toml (prod + staging).
 // writeLevel view: staging an upload only produces the caller's own pending
 // slip row — a view-level sales rep can attach slips to their own draft.
-scm.use("/slips/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
+// writeBypass — the driver's POD photo rides this same upload pipeline (MobilePOD
+// → uploadSlipFull), and a driver holds scm.do.dispatch, not scm.sales.orders.
+// An upload session only stores an image under the caller's own staff id; it
+// attaches to nothing until a route that checks its own access consumes the key.
+scm.use(
+  "/slips/*",
+  scmAreaGuard("scm.sales.orders", {
+    writeLevel: "view",
+    writeBypass: (c) =>
+      c.req.method === "POST" &&
+      hasPositionCapability(
+        c.get("user") as unknown as Parameters<typeof hasPositionCapability>[0],
+        "scm.do.dispatch",
+      ),
+  }),
+);
 scm.route("/slips", slips);
 
 export default scm;

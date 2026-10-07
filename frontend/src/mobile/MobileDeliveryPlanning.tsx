@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { orderLineIdentity } from "@2990s/shared";
 import { invalidateDoShared, invalidateInventoryShared, invalidateSoShared } from "./sharedInvalidate";
@@ -75,6 +75,10 @@ type BoardRow = {
   amended_delivery_date: string | null;
   effective_delivery_date: string | null;
   processing_date: string | null;
+  // The lorry run this stop is on (Time Arrangement) — the day it is actually
+  // driven and its place in the run.
+  trip_date?: string | null;
+  trip_stop_no?: number | null;
   /* Server-computed: a live (non-cancelled) PO already claims one of this SO's
      lines (2990 only). NOT derivable here — the feed carries no PO linkage —
      and it is the second road into the same soft lock, so procLockActive needs
@@ -166,6 +170,15 @@ const effDateOf = (o: BoardRow): string | null =>
   o.processing_date ||
   null;
 
+/* The day the stop is actually DRIVEN: its trip's date once Time Arrangement has
+   put it on a lorry run, else the order's own delivery date. Bucketing on the
+   order date alone put a stop under the wrong day whenever the run was moved. */
+const runDateOf = (o: BoardRow): string | null => o.trip_date || effDateOf(o);
+
+/* How far back History reaches. It used to hold every delivered order ever
+   (one driver's read 603 / 1303), which is a ledger, not a run-sheet. */
+const HISTORY_DAYS = 30;
+
 // House type — HC raw-data field, falling back to the SO building_type.
 const houseTypeOf = (o: BoardRow): string | null =>
   (o.house_type && o.house_type.trim()) ||
@@ -188,12 +201,15 @@ type TrackState = "sched" | "otw" | "arrived" | "done" | "late";
 const stopFlags = (
   o: BoardRow,
 ): { started: boolean; arrived: boolean; done: boolean } => {
-  const st = (latestDo(o)?.status ?? "").toUpperCase();
-  const done =
-    st === "DELIVERED" ||
-    st === "INVOICED" ||
-    o.delivery_state === "DELIVERED" ||
-    !!o.customer_delivered_date;
+  const doRef = latestDo(o);
+  const st = (doRef?.status ?? "").toUpperCase();
+  /* With a DO, the DO decides. The board's delivery_state reads DELIVERED as
+     soon as every unit has SHIPPED (stock out at dispatch), so a stop still on
+     the lorry showed as done and the driver could not act on it. Without a DO
+     there is nothing else to go on. */
+  const done = doRef
+    ? st === "DELIVERED" || st === "INVOICED" || st === "SIGNED" || !!o.customer_delivered_date
+    : o.delivery_state === "DELIVERED" || !!o.customer_delivered_date;
   const arrived = done || !!o.arrival_at;
   const started =
     done ||
@@ -264,11 +280,16 @@ export function MobileDeliveryPlanning({
   onBack,
   onOpen,
   onPod,
+  completedDoNumber,
 }: {
   onBack: () => void;
   onOpen?: (docNo: string) => void;
   /* Open the Proof-of-Delivery screen for a DO NUMBER — see onComplete. */
   onPod?: (doNumber: string) => void;
+  /* The DO whose POD was just confirmed (null when the sheet is opened normally).
+     The sheet then opens the NEXT open stop of today's run, so a driver goes
+     stop 1 -> stop 2 -> ... without returning to the list in between. */
+  completedDoNumber: string | null;
 }) {
   const [day, setDay] = useState<Day>("today");
   // The stop currently open in the detail view (its SO doc_no).
@@ -301,25 +322,35 @@ export function MobileDeliveryPlanning({
     const today: BoardRow[] = [];
     const tomorrow: BoardRow[] = [];
     const history: BoardRow[] = [];
+    const historyFloor = (() => {
+      const d = new Date(todayKey + "T00:00:00");
+      d.setDate(d.getDate() - HISTORY_DAYS);
+      return dayKey(d.toISOString());
+    })();
     for (const o of allOrders) {
       const { done } = stopFlags(o);
-      const k = dayKey(effDateOf(o));
-      if (done) {
-        history.push(o);
-      } else if (k && k === todayKey) {
+      const k = dayKey(runDateOf(o));
+      /* A finished stop STAYS on its day, so Today reads "3 / 8 delivered"
+         instead of always 0 / n — it used to be moved to History on completion. */
+      if (k && k === todayKey) {
         today.push(o);
       } else if (k && k === tomorrowKey) {
         tomorrow.push(o);
-      } else if (k && k < todayKey) {
-        // past-due, still not delivered → keep on the driver's radar as History.
+      } else if (k && k < todayKey && (!done || k >= historyFloor)) {
+        // past-due and still open (always), or delivered within HISTORY_DAYS.
         history.push(o);
       }
       // else: further-out / undated → left off the run-sheet (desktop owns it).
     }
+    // Day, then the stop's place in its lorry run (Time Arrangement's sequence),
+    // then document number for stops not yet on a run.
     const bySeq = (a: BoardRow, b: BoardRow) => {
-      const ak = dayKey(effDateOf(a));
-      const bk = dayKey(effDateOf(b));
+      const ak = dayKey(runDateOf(a));
+      const bk = dayKey(runDateOf(b));
       if (ak !== bk) return ak < bk ? -1 : 1;
+      const as = a.trip_stop_no ?? Number.MAX_SAFE_INTEGER;
+      const bs = b.trip_stop_no ?? Number.MAX_SAFE_INTEGER;
+      if (as !== bs) return as - bs;
       return (a.so_doc_no || "").localeCompare(b.so_doc_no || "");
     };
     today.sort(bySeq);
@@ -328,6 +359,18 @@ export function MobileDeliveryPlanning({
     history.sort((a, b) => -bySeq(a, b));
     return { today, tomorrow, history };
   }, [allOrders, todayKey, tomorrowKey]);
+
+  const advancedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!completedDoNumber || !data || advancedFor.current === completedDoNumber) return;
+    advancedFor.current = completedDoNumber;
+    const run = buckets.today;
+    const at = run.findIndex((o) => latestDo(o)?.do_number === completedDoNumber);
+    const next = run.slice(at + 1).find((o) => !stopFlags(o).done) ?? run.find((o) => !stopFlags(o).done);
+    setDay("today");
+    // Nothing left to run: back to the list, not the stop just finished.
+    setOpenStop(next ? next.so_doc_no : null);
+  }, [completedDoNumber, data, buckets]);
 
   const list = buckets[day];
   const isToday = day === "today";
@@ -1315,8 +1358,10 @@ function StopDetail({
     mutationFn: () => {
       if (!doId) throw new Error("no_do");
       return authedFetch<{ deliveryOrder: unknown }>(
-        `/delivery-orders-mfg/${encodeURIComponent(doId)}`,
-        { method: "PATCH", body: JSON.stringify({ arrivalAt: new Date().toISOString() }) },
+        // Server stamps its own time; this route is open to the crew on the job
+        // (the general PATCH /:id needs office access and refused drivers).
+        `/delivery-orders-mfg/${encodeURIComponent(doId)}/arrival`,
+        { method: "PATCH" },
       );
     },
     onSuccess: async () => {

@@ -857,6 +857,7 @@ export function MfgDeliveryOrdersListV2() {
   const apiStatus = status === "all" ? undefined : status;
 
   const { data, isLoading, isFetching, isPlaceholderData, error } = useMfgDeliveryOrdersPaged({
+    enabled: true,
     page,
     pageSize,
     status: apiStatus,

@@ -1887,6 +1887,52 @@ deliveryPlanning.get('/:docNo/lines', async (c) => {
   return c.json({ items: items ?? [] });
 });
 
+/* GET /delivery-planning/do/:doId/pod — the proof-of-delivery screen's read for a
+   field-crew caller. The DO list/detail routes sit behind scm.sales.delivery,
+   which a driver does not hold, so the phone's POD screen could not even load
+   the delivery it was standing in front of. This returns only what that screen
+   renders, and only for a DO the caller is crewed on (scope 'all' sees any DO
+   of the active companies). */
+export const doPodContextHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
+  const sb = c.get('supabase');
+  // The phone opens POD by DO NUMBER (that is what a stop card carries); a UUID
+  // is accepted too.
+  const doRef = c.req.param('doRef') ?? '';
+  const byId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(doRef);
+  const { data: header, error } = await scopeToAllowedCompanies(
+    sb.from('delivery_orders')
+      .select('id, do_number, so_doc_no, debtor_name, status, phone, city, state, customer_state, arrival_at, departure_at, pod_r2_key')
+      .eq(byId ? 'id' : 'do_number', doRef),
+    c,
+  ).maybeSingle();
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (!header) return c.json({ error: 'not_found', reason: 'This delivery order could not be found.' }, 404);
+  const doId = (header as { id: string }).id;
+  const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
+  if (scope.mode !== 'all' && !scopeMatchesAssignment(scope, await fetchDoCrewAssignment(sb, doId)))
+    return c.json({ error: 'not_your_job', reason: NOT_YOUR_JOB }, 403);
+  const { data: items, error: itemsErr } = await sb.from('delivery_order_items')
+    .select('id, so_item_id, description, description2, item_code, qty')
+    .eq('delivery_order_id', doId)
+    .order('line_no', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: true });
+  if (itemsErr) return c.json({ error: 'load_failed', reason: itemsErr.message }, 500);
+  // A line cancelled on its Sales Order is not on the driver's checklist.
+  const soItemIds = (items ?? []).map((i: { so_item_id: string | null }) => i.so_item_id).filter(Boolean) as string[];
+  const cancelledSoItems = new Set<string>();
+  if (soItemIds.length) {
+    const { data: soItems, error: soErr } = await sb.from('mfg_sales_order_items')
+      .select('id').in('id', soItemIds).eq('cancelled', true);
+    if (soErr) return c.json({ error: 'load_failed', reason: soErr.message }, 500);
+    for (const s of soItems ?? []) cancelledSoItems.add((s as { id: string }).id);
+  }
+  return c.json({
+    deliveryOrder: header,
+    items: (items ?? []).map((i: { so_item_id: string | null }) => ({ ...i, cancelled: !!i.so_item_id && cancelledSoItems.has(i.so_item_id) })),
+  });
+};
+deliveryPlanning.get('/do/:doRef/pod', doPodContextHandler);
+
 /* Region match: ALL → everything; else a configured region code → orders whose
    region set (customer-state buckets) includes it. validCodes is the active
    region master from the config; an unknown param is a defensive no-op (so an
