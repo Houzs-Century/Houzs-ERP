@@ -31,6 +31,8 @@ export type ProductModelRow = {
   description: string | null;
   photo_url: string | null;
   allowed_options: AllowedOptions;
+  /** Default variant per option, keyed like a line's variants (vendor/shared/model-default-variants). */
+  default_variants: Record<string, string> | null;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -218,6 +220,7 @@ export function useUpdateProductModel() {
       description?: string | null;
       photoUrl?: string | null;
       allowedOptions?: AllowedOptions;
+      defaultVariants?: Record<string, string>;
       active?: boolean;
     }) => {
       const { id, ...body } = args;

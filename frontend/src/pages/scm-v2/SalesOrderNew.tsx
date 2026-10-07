@@ -108,6 +108,7 @@ import {
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { SoLineCard, emptySoLine, missingRequiredVariants, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
+import { pickDefaultVariants } from '../../vendor/shared/model-default-variants';
 /* FIX (d) scan fabric seed — resolve a scanned fabric code (e.g. "BO315-22")
    to the SAME fabric_colours / fabric_library rows SoLineCard's pickFabricColour
    uses, so the matched colour rides onto the seeded line's variants instead of
@@ -717,11 +718,10 @@ export const SalesOrderNew = () => {
 
   /* Desktop sofa multi-add (MobileSkuPicker.onPickMany parity). SoLineCard's
      multi-select commits the FIRST tick to the current line and hands the REST
-     here — each becomes a fresh line seeded exactly like a single pick: real
-     itemGroup, SKU sell price, and the same category variant inherit (so a
-     second, third… sofa in the same shot follows LINE 1's seat/leg the way a
-     manually-added follower line would; the per-sofa colour sync stays scoped
-     to real split builds). */
+     here — each seeded exactly like a single pick: real itemGroup, SKU sell
+     price, Model default variants under the same category inherit (a second
+     sofa in the same shot follows LINE 1's seat/leg like a manually-added
+     follower; the per-sofa colour sync stays scoped to real split builds). */
   const addProducts = (rows: MfgProductRow[]) => {
     if (rows.length === 0) return;
     setLines((prev) => {
@@ -734,7 +734,7 @@ export const SalesOrderNew = () => {
           itemGroup:      category,
           description:    p.name,
           unitPriceSen: p.sell_price_sen ?? 0,
-          variants:       seedFollowerVariants(inheritVariantsByCategory[category]),
+          variants: { ...pickDefaultVariants(p.category, p.model_default_variants, p.allowed_options), ...seedFollowerVariants(inheritVariantsByCategory[category]) },
           overriddenKeys: [],
         };
       });

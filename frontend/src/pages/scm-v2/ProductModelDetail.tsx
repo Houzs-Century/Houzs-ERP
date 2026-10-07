@@ -45,6 +45,7 @@ import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
+import { MODEL_DEFAULT_AXES, pickDefaultVariants } from '../../vendor/shared/model-default-variants';
 import { PhotoGallery as ProductModelPhotoGallery } from '../../components/scm-v2/PhotoGallery';
 
 // Staff #5 — reuse the proven multi-supplier assign dialog from the Models list,
@@ -175,6 +176,7 @@ export const ProductModelDetail = ({
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [allowed, setAllowed] = useState<AllowedOptions>({});
+  const [defaults, setDefaults] = useState<Record<string, string>>({});
   const [addCodesOpen, setAddCodesOpen] = useState(false);
 
   // PR #97 — Commander 2026-05-26: "可以放照片的啊，为什么不能放呢". Photo
@@ -199,6 +201,7 @@ export const ProductModelDetail = ({
     setModelCode(data.model.model_code);
     setName(data.model.name);
     setDescription(data.model.description ?? '');
+    setDefaults(data.model.default_variants ?? {});
 
     const saved = data.model.allowed_options ?? {};
     const next: AllowedOptions = { ...saved };
@@ -277,6 +280,8 @@ export const ProductModelDetail = ({
       name,
       description: description.trim() || null,
       allowedOptions: allowed,
+      // Drops a default whose option was just unticked, so the save is not refused.
+      defaultVariants: pickDefaultVariants(model.category, defaults, allowed),
     }, {
       onSuccess: (res) => {
         const made = res.autoCreatedSkus ?? [];
@@ -674,6 +679,8 @@ export const ProductModelDetail = ({
             />
           </div>
         )}
+
+        <ModelDefaultVariants category={model.category} allowed={allowed} value={defaults} onChange={setDefaults} />
 
         {(model.category === 'ACCESSORY' || model.category === 'SERVICE') && (
           <p className={styles.cardSub}>
@@ -1144,6 +1151,51 @@ function AddCodesModal({
 }
 
 /* ────────────────────────── Per-category allowed-option panels ────── */
+
+const DEFAULT_LABELS: Record<string, string> = {
+  seatHeight: 'Seat size', legHeight: 'Leg height', divanHeight: 'Divan height', gap: 'Gap',
+};
+
+/** Default variant per option: what a new SO line starts with when this
+    Model's SKU is picked. Choices are the ticked allowed options only. */
+function ModelDefaultVariants({
+  category, allowed, value, onChange,
+}: {
+  category: string; allowed: AllowedOptions;
+  value: Record<string, string>; onChange: (next: Record<string, string>) => void;
+}) {
+  const axes = Object.entries(MODEL_DEFAULT_AXES[category] ?? {})
+    .map(([key, poolKey]) => ({ key, options: ((allowed as Record<string, unknown>)[poolKey] as string[] | undefined) ?? [] }))
+    .filter((a) => a.options.length > 0);
+  if (axes.length === 0) return null;
+  return (
+    <div className={styles.optGroup}>
+      <div className={styles.optHead}>
+        <span className="t-eyebrow">Default variants (pre-filled on a new SO line)</span>
+      </div>
+      <div className="flex flex-wrap gap-3">
+        {axes.map(({ key, options }) => (
+          <label key={key} className="flex flex-col gap-1 text-[12px] text-ink-secondary">
+            {DEFAULT_LABELS[key] ?? key}
+            <select
+              className="rounded border border-border-subtle bg-surface px-2 py-1 text-[13px] text-ink"
+              value={value[key] ?? ''}
+              onChange={(e) => {
+                const next = { ...value };
+                if (e.target.value) next[key] = e.target.value;
+                else delete next[key];
+                onChange(next);
+              }}
+            >
+              <option value="">No default</option>
+              {options.map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function ChipToggle({
   options, selected, onChange,

@@ -2756,7 +2756,7 @@ export function MobileNewSO({
             cat: nextCat,
             price: fromSen(sku.unitPriceSen),
             priceAuthored: false, // seeded, not typed (BUG-63)
-            variants: seededVariants,
+            variants: { ...sku.defaultVariants, ...seededVariants },
             overriddenKeys: [],
           };
         };

@@ -194,7 +194,7 @@ export const listMfgProductsHandler = async (c: AppContext) => {
           // leg + gap with no input on the form, and `size_code` /
           // `compartment` are read off the product row, so those refuse on save
           // no matter what this select returns (2026-08-18).
-          'model:product_models(allowed_options, active)',
+          'model:product_models(allowed_options, default_variants, active)',
       )
       .eq('status', 'ACTIVE')
       .order('code', { ascending: true });
@@ -207,14 +207,14 @@ export const listMfgProductsHandler = async (c: AppContext) => {
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   // Flatten the joined model → a plain allowed_options field on each product.
-  type ModelJoin = { allowed_options: unknown; active?: boolean | null };
+  type ModelJoin = { allowed_options: unknown; default_variants?: unknown; active?: boolean | null };
   /* BUG-50: a Model's Deactivate flips only product_models.active, so its SKUs
      kept status ACTIVE and stayed on the SO picker. A SKU under an inactive Model
      is treated as inactive here and in validateItemCodes. */
   const products: Array<Record<string, unknown>> = ((data ?? []) as unknown as Array<Record<string, unknown> & { model?: ModelJoin | ModelJoin[] | null }>)
     .map(({ model, ...p }) => ({ p, m: Array.isArray(model) ? model[0] : model }))
     .filter(({ m }) => m?.active !== false)
-    .map(({ p, m }) => ({ ...p, allowed_options: m?.allowed_options ?? null }));
+    .map(({ p, m }) => ({ ...p, allowed_options: m?.allowed_options ?? null, model_default_variants: m?.default_variants ?? null }));
 
   /* B1 — per-row cost-anchor STATE for the SKU Master cost column (teal ok /
      amber suppliers-differ / red gap / service). One BULK binding read over the

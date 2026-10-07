@@ -175,6 +175,8 @@ export type MfgProductRow = {
   sell_price_sen?: number | null;
   seat_height_prices?: SeatHeightPrice[] | null;
   allowed_options?: ModelAllowedOptions | null;
+  /** The Model's default_variants, flattened like allowed_options. */
+  model_default_variants?: Record<string, string> | null;
   // HOUZS VENDOR — Products wave (SkuMasterTab). The SKU Master grid + New SKU
   // drawer + CSV round-trip read the rest of the source row. unit_m3_milli is
   // required in the source (the grid sorts on it); the rest are optional.

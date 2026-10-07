@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMfgProducts, matchesProductQuery, type MfgCategory, type MfgProductRow } from "../vendor/scm/lib/mfg-products-queries";
 import { dropOneMultiPick, isSofaGroup, multiPickCount, tapMultiPick } from "../vendor/scm/lib/sofa-piece-lines";
+import { pickDefaultVariants } from "../vendor/shared/model-default-variants";
 import "./mobile.css";
 
 /* Perf cap (parity with SalesOrderNewFromProducts, PR #342) — never render more
@@ -48,6 +49,9 @@ export type PickedSku = {
   name: string;
   unitPriceSen: number;
   category: MfgCategory;
+  /** Model default variants (vendor/shared/model-default-variants); only a
+   *  document that specifies the build applies them. */
+  defaultVariants: Record<string, string>;
 };
 
 export function MobileSkuPicker({
@@ -168,6 +172,7 @@ export function MobileSkuPicker({
                 name: p.name,
                 unitPriceSen: p.sell_price_sen ?? 0,
                 category: p.category,
+                defaultVariants: pickDefaultVariants(p.category, p.model_default_variants, p.allowed_options),
               });
               /* A sofa piece can be tapped again (two CNRs of a U are two
                  lines, never one line x2) — sofa-piece-lines.ts. */
