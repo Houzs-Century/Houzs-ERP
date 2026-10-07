@@ -153,6 +153,41 @@ describe('who sees the requests', () => {
   });
 });
 
+describe('the slip behind a request (inbox drawer)', () => {
+  /* The R2 binding the route serves from: one object under the key the
+     request carries, nothing else. */
+  const bucket = { get: vi.fn(async (key: string) => (key === 'slips/x.jpg'
+    ? { body: 'JPEG-BYTES', httpMetadata: { contentType: 'image/jpeg' } }
+    : null)) };
+  const envWithSlips = { SLIPS: bucket } as unknown as Env;
+  const slip = (who: Who, id: string) => app(who).request(`/payment-backdate-requests/${id}/slip-url`, undefined, envWithSlips);
+
+  it('an admin gets the bytes inline; a non-admin is refused like the inbox', async () => {
+    await post(SALES, '/mfg-sales-orders/SO-1/payment-backdate-requests', payment({ uploadSessionId: 'sess-1' }));
+    const id = String(rows()[0]!.id);
+    expect((await slip(SALES, id)).status).toBe(403);
+    const res = await slip(ADMIN, id);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/jpeg');
+    expect(res.headers.get('content-disposition')).toBe('inline');
+    expect(await res.text()).toBe('JPEG-BYTES');
+    expect(bucket.get).toHaveBeenCalledWith('slips/x.jpg');
+  });
+
+  it('a request sent without a slip says so instead of 404-ing', async () => {
+    await post(SALES, '/mfg-sales-orders/SO-1/payment-backdate-requests', payment());
+    const res = await slip(ADMIN, String(rows()[0]!.id));
+    expect(res.status).toBe(400);
+    expect((await res.json() as J).error).toBe('no_slip_attached');
+  });
+
+  it('a request of another company is not found', async () => {
+    await post(SALES, '/mfg-sales-orders/SO-1/payment-backdate-requests', payment({ uploadSessionId: 'sess-1' }));
+    rows()[0]!.company_id = 2;
+    expect((await slip(ADMIN, String(rows()[0]!.id))).status).toBe(404);
+  });
+});
+
 describe('deciding', () => {
   let id: string;
   beforeEach(async () => {

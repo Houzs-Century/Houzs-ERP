@@ -5,10 +5,11 @@
 // Only a holder of `scm.payment.backdate` or the approve-only
 // `scm.payment.backdate.approve` (Logistic) reaches it (route, sidebar and the
 // server all ask those keys). Nobody decides their own request. Approve books the payment; Reject records nothing.
-// Double-clicking a row opens the Sales Order.
+// A click on a row opens it on the right (BackdateRequestQuickView — owner
+// 2026-10-07: 「需要右侧打开」); double-clicking a row opens the Sales Order.
 // ----------------------------------------------------------------------------
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fmtDate, fmtDateTime, fmtMoneySen } from '../../vendor/shared/format';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
@@ -18,6 +19,7 @@ import { PAYMENT_METHOD_CODE_TO_VALUE } from '../../vendor/scm/lib/payment-metho
 import { useBackdateDecisions } from '../../vendor/scm/components/BackdateRequestsPanel';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { backdateStatusLabel, useBackdateInbox, type BackdateRequestRow } from '../../vendor/scm/lib/payment-backdate-queries';
+import { BackdateRequestQuickView, backdateMethodLine, backdateRequestOrderPath } from './BackdateRequestQuickView';
 
 const STORAGE_KEY = 'payment-backdate-requests.layout.v1';
 
@@ -48,6 +50,10 @@ export const PaymentBackdateRequests = () => {
   const q = useBackdateInbox(scope);
   const { run, busy } = useBackdateDecisions();
   const myId = Number(useHouzsAuth().user?.id);
+  /* The row the drawer shows, by id: the drawer reads the row as the inbox
+     currently has it, so a decision taken from the Actions column shows in the
+     open drawer rather than a copy taken at click time. */
+  const [quickId, setQuickId] = useState<string | null>(null);
 
   const columns = useMemo<GridColumn<BackdateRequestRow>[]>(() => [
     {
@@ -73,7 +79,7 @@ export const PaymentBackdateRequests = () => {
     },
     {
       key: 'method', label: 'Method', width: 150, sortable: true, groupable: true,
-      accessor: (r) => [methodLabel(r.method), r.merchant_provider ?? r.online_type].filter(Boolean).join(' · '),
+      accessor: (r) => backdateMethodLine(r),
       searchValue: (r) => `${methodLabel(r.method)} ${r.merchant_provider ?? ''} ${r.online_type ?? ''}`,
       groupValue: (r) => methodLabel(r.method),
     },
@@ -108,7 +114,7 @@ export const PaymentBackdateRequests = () => {
     {
       key: 'actions', label: 'Actions', width: 170,
       accessor: (r) => (r.status !== 'REQUESTED' || Number(r.requested_by) === myId ? null : (
-        <span style={{ display: 'inline-flex', gap: 6 }} onDoubleClick={(e) => e.stopPropagation()}>
+        <span style={{ display: 'inline-flex', gap: 6 }} onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
           <button type="button" style={actionBtn} disabled={busy} onClick={() => void run(r, 'approve')}>Approve</button>
           <button type="button" style={actionBtn} disabled={busy} onClick={() => void run(r, 'reject')}>Reject</button>
         </span>
@@ -120,6 +126,7 @@ export const PaymentBackdateRequests = () => {
 
   const rows = q.data?.requests ?? [];
   const openCount = rows.filter((r) => r.status === 'REQUESTED').length;
+  const quick = quickId ? (rows.find((r) => r.id === quickId) ?? null) : null;
 
   return (
     <div>
@@ -156,12 +163,15 @@ export const PaymentBackdateRequests = () => {
           searchPlaceholder="Search SO no, requested by, reason…"
           loadedSearchLimit={500}
           groupBanner={false}
-          onRowDoubleClick={(r) => navigate(`/scm/sales-orders/${encodeURIComponent(r.so_doc_no)}`)}
+          onRowClick={(r) => setQuickId(r.id)}
+          onRowDoubleClick={(r) => navigate(backdateRequestOrderPath(r))}
           rowStyle={(r) => (r.status === 'REQUESTED' ? undefined : { opacity: 0.6, filter: 'grayscale(0.4)' })}
           isLoading={q.isLoading}
           emptyMessage={scope === 'open' ? 'Nothing is waiting for approval.' : 'No backdate requests yet.'}
         />
       </div>
+
+      <BackdateRequestQuickView row={quick} onClose={() => setQuickId(null)} />
     </div>
   );
 };
