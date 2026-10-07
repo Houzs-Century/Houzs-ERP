@@ -37,8 +37,11 @@ import {
   type UploadedImage,
 } from '../lib/scan-ocr';
 import { callClaudeGrExtract, loadGrnFewShot, type GrnExtracted } from '../lib/grn-scan-extract';
-import { loadOpenPoLines, loadSupplierBindings, loadSuppliers } from '../lib/grn-scan-load';
-import { describeUnmatchedScanLines, matchGrnScanToPoLines, resolveScannedSupplier, type GrnMatchResult, type ScannedGrnLine } from '../lib/grn-scan-match';
+import { loadOpenPoLines, loadPoStatuses, loadSupplierBindings, loadSuppliers } from '../lib/grn-scan-load';
+import {
+  describeUnmatchedScanLines, listScanLines, matchGrnScanToPoLines, resolveScannedSupplier,
+  type GrnMatchResult, type PoStatusRef, type ScannedGrnLine,
+} from '../lib/grn-scan-match';
 import { createDraftGrnFromPoItems } from '../lib/grn-from-po-core';
 
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
@@ -141,8 +144,14 @@ const toScanned = (l: GrnExtracted['lines'][number]): ScannedGrnLine => ({
 });
 
 // A plain-language note for a NEEDS-REVIEW job (no GRN created): tell the
-// operator what we saw so they can receive from the PO by hand.
-function buildNeedsReviewNote(parsed: GrnExtracted, match: GrnMatchResult): string {
+// operator what we saw, line by line, so they can receive from the PO by hand.
+function buildNeedsReviewNote(parsed: GrnExtracted, match: GrnMatchResult, allPos: PoStatusRef[]): string {
+  const lines = describeUnmatchedScanLines(match.unmatched, allPos);
+  const head = buildNeedsReviewHead(parsed, match);
+  return lines ? `${head} What we read: ${lines}` : head;
+}
+
+function buildNeedsReviewHead(parsed: GrnExtracted, match: GrnMatchResult): string {
   const po = parsed.poNo ? `P.O. ${parsed.poNo}` : 'this delivery order';
   const doRef = parsed.doNo ? ` (D.O. ${parsed.doNo})` : '';
   const poMatched = match.matchedPoNumberValue;
@@ -236,17 +245,18 @@ async function runGrnScanJob(
     const companyCode = await companyCodeById(svc, job.companyId);
 
     // Candidate open PO lines + supplier-SKU bindings, then the pure match.
-    const [openLines, bindings, suppliers] = await Promise.all([
+    const [openLines, bindings, suppliers, allPos] = await Promise.all([
       loadOpenPoLines(svc, job.companyId),
       loadSupplierBindings(svc, job.companyId),
       loadSuppliers(svc, job.companyId),
+      loadPoStatuses(svc, job.companyId),
     ]);
     const supplierId = resolveScannedSupplier(parsed.supplierName, suppliers);
     const match = matchGrnScanToPoLines(parsed.poNo, parsed.lines.map(toScanned), openLines, bindings, supplierId);
 
     if (match.picks.length === 0) {
       // No confident PO line — never fabricate a standalone GRN or a wrong link.
-      return await needsReview(buildNeedsReviewNote(parsed, match));
+      return await needsReview(buildNeedsReviewNote(parsed, match, allPos));
     }
 
     // CONVERT the confident picks into a DRAFT GRN, linked to the source PO(s).
@@ -255,8 +265,12 @@ async function runGrnScanJob(
       ? `Check the PO: only ${match.weakMatch.matched} of ${match.weakMatch.scanned} scanned lines matched ${match.matchedPoNumbers.join(', ')}, so it may be the wrong PO.`
       : null;
     // Scanned lines the operator must add by hand, by name, so the draft itself
-    // says what is missing.
-    const unmatchedNote = describeUnmatchedScanLines(match.unmatched);
+    // says what is missing. A draft built from the whole PO lists what the
+    // delivery order says instead, since every PO line is already on it.
+    const unmatchedLines = describeUnmatchedScanLines(match.unmatched, allPos);
+    const unmatchedNote = match.poFallback
+      ? `Check every line: no scanned line matched ${match.poFallback} by item, so this draft lists everything still owed on that PO at the PO quantity. Change it to what was delivered before posting. The delivery order lists: ${listScanLines(parsed.lines.map(toScanned).filter((l) => l.qty > 0))}`
+      : unmatchedLines ? `Not added, please add on the draft: ${unmatchedLines}` : null;
     const res = await createDraftGrnFromPoItems(env, {
       userId: job.uploaderStaffId,
       houzsUserId: job.houzsUserId,
