@@ -27,6 +27,7 @@ import { Button } from '@2990s/design-system';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { PageHeader } from '../../components/Layout';
 import { DataTable, type Column } from '../../components/DataTable';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { DateField } from '../../vendor/scm/components/DateField';
@@ -220,6 +221,7 @@ export const CreditNotes = () => {
         error={listQ.isError ? `The list did not load — ${errText(listQ.error)}` : null}
         emptyLabel="No note yet. New note raises one."
         getRowKey={(n) => n.id}
+        getRowClassName={(n) => cancelledRowClass(n.status)}
         onRowClick={(n) => setOpenId(n.id)}
         selection={{
           selectedIds: ticked,
@@ -251,7 +253,7 @@ export const CreditNotes = () => {
 };
 
 const NOTE_COLUMNS: Column<CreditNote>[] = [
-  { key: 'number', label: 'Number', render: (n) => <span style={{ fontFamily: 'var(--font-mono)' }}>{n.note_number}</span>, getValue: (n) => n.note_number },
+  { key: 'number', label: 'Number', render: (n) => <span className={cancelledDocNoClass(n.status)} style={{ fontFamily: 'var(--font-mono)' }}>{n.note_number}</span>, getValue: (n) => n.note_number },
   { key: 'kind', label: 'Kind', render: (n) => n.kind, getValue: (n) => n.kind },
   { key: 'date', label: 'Date', render: (n) => fmtDateOrDash(n.note_date), getValue: (n) => n.note_date, exportFormat: 'date' },
   { key: 'party', label: 'Party', render: (n) => n.party_name ?? n.party_code ?? '—', getValue: (n) => n.party_name ?? n.party_code ?? '' },

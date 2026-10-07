@@ -20,7 +20,13 @@ lists only what differs for GR.
 - **Never a wrong link.** If the matcher cannot confidently resolve the PO
   line(s), **nothing is created** — the job lands *needs-review* (status `done`,
   `linked_doc_no` null, slip retained, a plain note) and the operator receives
-  from the PO by hand.
+  from the PO by hand. The note lists each scanned line and why, including a
+  refused PO's live status ("HC-PO-2609-223 is marked Received").
+- **Known PO, unknown items.** When the rows (or header) name exactly ONE open PO
+  of the resolved supplier and no row lines up by item, the draft carries every
+  line still owed on that PO at its remaining qty (`poFallback`), with "Check
+  every line" and the delivery order as read on the note. Never with an
+  unresolved supplier, never across two POs.
 
 ## Endpoints (`/scan-gr/*`, gated `scm.procurement.grn`, writeLevel `view`)
 
@@ -58,10 +64,11 @@ Match order: **supplier, then PO number, then item code / barcode.**
 - The printed supplier name resolves to ONE of our suppliers
   (`resolveScannedSupplier`: normalised name / code, else a unique containment
   match). When resolved, only that supplier's PO lines are candidates.
-- The scanned `poNo` (e.g. `PO-010070`) is normalised (uppercase, strip non-alnum)
-  and compared to our `po_number` (`HC-PO-…` / `2990-PO-…`). A hit **scopes**
-  matching to that PO. Supplier-printed PO numbers usually differ from ours, so
-  this often misses and matching falls to item code.
+- The scanned `poNo` is normalised (uppercase, strip non-alnum) and resolved to
+  our `po_number` (`HC-PO-…` / `2990-PO-…`) by `resolvePrintedPo`: exact, else a
+  unique tail of 6+ digits, because suppliers print ours without the prefix
+  (`PO-010080`, `PO: 2609-251`). A hit **scopes** matching to that PO. Their
+  own refs (`S/O1791`) resolve to nothing and matching falls to item code.
 - **A PO printed on the row** (a consolidated DO such as Hookka's, one of our
   POs per line, no header P.O.) anchors that row to that PO only. A printed row
   PO that is not one of our open POs (a fair/service ref like `ART-HOK-002`, a PO
@@ -77,12 +84,14 @@ Match order: **supplier, then PO number, then item code / barcode.**
   (never guessed). Qty is clamped to the PO line's remaining.
 
 **Confidence gate (no PO-number hit on the header or any row):** the scan is refused (needs-review, no
-document) when the supplier is unresolved, when the picks span more than one PO,
-or when half or fewer of the scanned lines matched. One stray item-code hit must
-never link a delivery order to some other PO.
+document) when the supplier is unresolved or when the picks span more than one PO.
+When half or fewer of the scanned lines matched the one PO, the draft is still
+created but flagged `weakMatch`: "Check the PO" goes on the GRN note, the scan
+card and the notice. The draft never moves stock until someone posts it.
 
-**Outcomes:** ≥1 pick → DRAFT GRN(s) linked to the source PO(s), any unmatched
-lines noted for the operator to add. 0 picks (or convert refused, e.g. an
+**Outcomes:** ≥1 pick → DRAFT GRN(s) linked to the source PO(s). Each unmatched
+line is written by name, qty and reason (`describeUnmatchedScanLines`) onto the
+GRN note and the scan card, so the operator knows what to add. 0 picks (or convert refused, e.g. an
 over-receipt race) → needs-review, no document.
 
 ## Learning (`lib/grn-scan-review.ts`)
@@ -108,4 +117,10 @@ jobs write `linked_doc_no` only (never `so_doc_no`).
   `ScanGrnModal` (`vendor/scm/components/ScanGrnModal.tsx`).
 - Mobile: `MobileModuleList` scan icon (wired for `grns` in `MobileApp.tsx`) →
   `MobileGrnScan` (`mobile/MobileGrnScan.tsx`).
-- Both reuse `vendor/scm/lib/scan-jobs.ts` (+ `linkedDocNo`) and `authedFetch`.
+- Both reuse `vendor/scm/lib/scan-jobs.ts` (+ `linkedDocNo`, `linkedDocId`) and `authedFetch`.
+  The job endpoints resolve `linkedDocId` (company-scoped), so the scan card's
+  GRN number opens the draft directly.
+- Correcting a scanned draft happens on the DRAFT, not on a pre-save review
+  screen (it moves no stock): add from PO / add manual / delete / qty / racks on
+  desktop; racks and add-manual on the phone. The phone shows a DRAFT's note as
+  the amber notice.

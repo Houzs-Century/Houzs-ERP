@@ -56,3 +56,4 @@ No dedicated mobile screen — the generic `MobileModuleList` / `MobileModuleDet
 - `backend/src/scm/lib/delivery-return-list-read.ts` — list read shape.
 - `backend/src/scm/lib/source-cost.ts` — company-scoped source cost lookup.
 - `frontend/src/pages/scm-v2/DeliveryReturnsListV2.tsx`, `DeliveryReturnDetailV2.tsx`, `DeliveryReturnNew.tsx`, `DeliveryReturnFromDo.tsx` — desktop surfaces.
+- `frontend/src/pages/scm-v2/DeliveryReturnDetail.tsx` — the Edit page. No route of its own: `DeliveryReturnDetailV2` lazy-loads it on `?edit=1`. Do not delete it as "unrouted".

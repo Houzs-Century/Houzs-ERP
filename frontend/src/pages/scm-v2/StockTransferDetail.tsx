@@ -136,6 +136,7 @@ function EditableTransferLineRow({
           })}
           className={styles.fieldInput}
           disabled={!ready}
+          title={line.variantKey === undefined ? undefined : humanizeVariantKey(line.variantKey)}
           style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}
         >
           <option value={UNPICKED} disabled>
@@ -151,6 +152,12 @@ function EditableTransferLineRow({
             </option>
           ))}
         </select>
+        {/* The picked bucket in full, wrapped: two buckets often differ only at
+            the END of the label ("... special hb fully covered"), which is the
+            part a closed select cuts off (owner 2026-10-06). */}
+        {line.variantKey !== undefined && (
+          <div className={styles.bucketPicked}>{humanizeVariantKey(line.variantKey)}</div>
+        )}
       </td>
       <td className={styles.tableRight}
           style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)' }}>
@@ -184,16 +191,18 @@ function EditableTransferLineRow({
           className={styles.fieldInput}
         />
       </td>
-      <td className={styles.actionsCell}>
-        <button
-          type="button"
-          onClick={() => removeLine(line._key)}
-          className={`${styles.iconBtn} ${styles.iconBtnDanger}`}
-          disabled={!canRemove}
-          title="Remove line"
-        >
-          <Trash2 size={14} strokeWidth={1.75} />
-        </button>
+      <td>
+        <span className={styles.actionsCell}>
+          <button
+            type="button"
+            onClick={() => removeLine(line._key)}
+            className={`${styles.iconBtn} ${styles.iconBtnDanger}`}
+            disabled={!canRemove}
+            title="Remove line"
+          >
+            <Trash2 size={14} strokeWidth={1.75} />
+          </button>
+        </span>
       </td>
     </tr>
   );
@@ -540,7 +549,7 @@ export const StockTransferDetail = () => {
               This transfer is {status} — only Notes can be changed here. SKU/qty edits need a POSTED transfer.
             </p>
           )}
-          <table className={styles.table}>
+          <table className={`${styles.table} ${styles.tableOwnWidths}`}>
             <thead>
               <tr>
                 <th style={{ width: '18%' }}>SKU</th>

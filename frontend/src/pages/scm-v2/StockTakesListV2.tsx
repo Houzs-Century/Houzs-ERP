@@ -27,6 +27,7 @@ import {
 } from "../../vendor/scm/lib/stock-queries";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { cancelledDocNoClass, cancelledRowClass } from "../../lib/scm";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { fmtDate } from "../../vendor/shared/format";
@@ -109,7 +110,7 @@ function CardsGrid({ rows, onOpen }: { rows: StockTakeRow[]; onOpen: (r: StockTa
             className="group relative overflow-hidden rounded-lg border border-border bg-surface px-4 py-4 text-left shadow-stone transition-all duration-200 hover:-translate-y-px hover:border-primary/40 hover:shadow-slab focus:outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-mono text-[12.5px] font-semibold text-ink">{r.take_no}</span>
+              <span className={cn("font-mono text-[12.5px] font-semibold text-ink", cancelledDocNoClass(r.status))}>{r.take_no}</span>
               <Badge tone={st.tone} size="xs">{st.label}</Badge>
             </div>
             <div className="mt-2 flex items-center gap-2 text-[13.5px] font-semibold text-ink">
@@ -254,7 +255,7 @@ export function StockTakesListV2() {
       width: "140px",
       alwaysVisible: true,
       getValue: (r) => r.take_no,
-      render: (r) => <span className="font-mono text-[12.5px] font-semibold text-ink">{r.take_no}</span>,
+      render: (r) => <span className={cn("font-mono text-[12.5px] font-semibold text-ink", cancelledDocNoClass(r.status))}>{r.take_no}</span>,
     },
     {
       key: "take_date",
@@ -413,6 +414,7 @@ export function StockTakesListV2() {
             error={error ? (error as Error).message ?? "Failed to load" : null}
             columns={columns}
             getRowKey={(r) => r.id}
+            getRowClassName={(r) => cancelledRowClass(r.status)}
             onRowClick={goDetail}
             contextMenu={takeContextMenu}
             exportName="stock-takes"

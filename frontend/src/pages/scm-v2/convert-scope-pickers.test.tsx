@@ -166,6 +166,17 @@ describe('SO → DO: "Deliver" lands on the order you came from', () => {
     expect(screen.getByText(/Continue with 1 line/)).toBeTruthy();
   });
 
+  it("leaves a line that is not READY unticked and says why (BUG-59)", () => {
+    deliverableSoLines.mockReturnValue(loaded([
+      soLine({ soItemId: "s-1", notReady: null }),
+      soLine({ soItemId: "s-3", itemCode: "AERO-MP", notReady: { status: "PENDING", reason: "No stock has been set aside for this line yet." } }),
+    ]));
+    at(convertToLink("soToDo", "HC-SO-0001"), <DeliveryOrderFromSo />);
+    expect(screen.getByText(/Continue with 1 line/)).toBeTruthy();
+    expect(screen.getByText("PENDING")).toBeTruthy();
+    expect(screen.getByTitle("No stock has been set aside for this line yet.")).toBeTruthy();
+  });
+
   it("no parameter still opens the FULL picker", () => {
     deliverableSoLines.mockReturnValue(loaded(TWO_SOS));
     at("/scm/delivery-orders/from-so", <DeliveryOrderFromSo />);

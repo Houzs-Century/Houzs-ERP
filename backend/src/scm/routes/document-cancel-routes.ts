@@ -79,7 +79,8 @@ import type { Context, MiddlewareHandler, Next } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { hasHouzsPerm, canViewAllSales } from '../lib/houzs-perms';
-import { salesDocOutOfScope } from '../lib/salesScope';
+import { salesDocOutOfScope, resolveSalesScopeIds, readSoOwnership, soOwnedInScope } from '../lib/salesScope';
+import { subtreeUserIds } from '../../services/orgScope';
 import {
   NOT_THIS_COMPANY,
   activeCompanyId,
@@ -494,7 +495,23 @@ export const listCancelRequestsHandler = async (c: AnyCtx) => {
   if (scope !== 'all') q = q.in('status', [...OPEN_CANCEL_STATUSES]);
   const { data, error } = await scopeToCompany(q, c).order('requested_at', { ascending: false }).limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const rows = (data ?? []) as Array<{ doc_type: string; doc_key: string }>;
+  let rows = (data ?? []) as Array<{ doc_type: string; doc_key: string; requested_by?: number | null }>;
+  /* An SO cancellation follows the SO amendment queue's rule (DEV-40,
+     salesScope.soOwnedInScope): a scoped caller sees what they or their downline
+     raised, or what sits on an order they or their downline own or were shared.
+     These rows list beside the amendments on that queue, so a looser rule here
+     would show a rep every other rep's cancellations. DO / PO rows are not on
+     that queue and keep their reach. */
+  const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
+  if (scopeIds && rows.some((r) => r.doc_type === 'SO')) {
+    const hu = c.get('houzsUser')?.id;
+    const userIds = new Set(hu == null ? [] : await subtreeUserIds(c.env, Number(hu)));
+    const owned = await readSoOwnership(sb, [...new Set(rows.filter((r) => r.doc_type === 'SO').map((r) => r.doc_key))], (sq) => scopeToCompany(sq, c));
+    if (owned.error) return c.json({ error: 'load_failed', reason: owned.error }, 500);
+    rows = rows.filter((r) => r.doc_type !== 'SO'
+      || (r.requested_by != null && userIds.has(Number(r.requested_by)))
+      || soOwnedInScope(scopeIds, owned.byDoc.get(r.doc_key)));
+  }
   /* The Sales Order's own customer reference (owner 2026-09-24: 「为什么 ref 不会
      出现?每个 SO 都会有的」). A cancellation request shows in the SO Amendment
      queue beside the amendments, and that queue's Reference column was blank on

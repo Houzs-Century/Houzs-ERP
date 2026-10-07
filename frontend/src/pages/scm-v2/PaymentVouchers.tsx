@@ -21,6 +21,7 @@ import { usePaymentVouchers, useCancelPaymentVoucher, useSubmitPaymentVoucher, u
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { deliverPdfBlob, type PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -29,6 +30,7 @@ import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { fmtDateOrDash, fmtMoneySen } from '@2990s/shared';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
+import { BackToPile } from '../../vendor/scm/components/BackToPile';
 import { FilterPills } from '../../components/FilterPills';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -67,7 +69,7 @@ const PV_LIST_STORAGE_KEY = 'pv-list.layout.v1';
 const buildPvColumns = (): GridColumn<PaymentVoucherRow>[] => [
   {
     key: 'pv_number', label: 'Voucher No.', width: 150, sortable: true,
-    accessor: (r) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.pv_number}</span>,
+    accessor: (r) => <span className={cancelledDocNoClass(r.status)} style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.pv_number}</span>,
     searchValue: (r) => r.pv_number,
     exportValue: (r) => r.pv_number,
     sortFn: (a, b) => a.pv_number.localeCompare(b.pv_number),
@@ -334,7 +336,9 @@ export const PaymentVouchers = () => {
         eyebrow="Finance"
         title="Payment Vouchers"
         actions={
-          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+          <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+            {/* The pile kept while this tab lives (owner 2026-10-06): the bills not yet opened. */}
+            {canCreate && <BackToPile target="pv" />}
             {canCreate && (
               <>
                 {/* Two documents, AutoCount-style (owner 2026-08-30): the AP
@@ -456,6 +460,7 @@ export const PaymentVouchers = () => {
         loadedSearchLimit={500}
         groupBanner={false}
         onRowDoubleClick={(r) => navigate(`/scm/payment-vouchers/${r.id}`)}
+        getRowClassName={(r) => cancelledRowClass(r.status)}
         rowStyle={(r) => r.status === 'CANCELLED'
           ? { opacity: 0.6, filter: 'grayscale(0.4)' }
           : advanceOpenSen(r) > 0 ? { color: ADVANCE_BLUE } : undefined}

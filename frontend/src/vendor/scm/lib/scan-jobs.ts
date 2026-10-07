@@ -18,6 +18,8 @@ export type ScanJob = {
   // The generic produced-doc link (migration 20260919T1000): == soDocNo for an
   // SO scan, the GRN number for a GR scan. null while pending / needs-review.
   linkedDocNo: string | null;
+  // The produced doc's id, so the card can open it. GR scans only; null otherwise.
+  linkedDocId: string | null;
   error: string | null;
   duplicateOf: string | null;
   createdAt: string | null;
@@ -36,6 +38,7 @@ export function normalizeJobs(resp: ScanJobsResp | undefined): ScanJob[] {
       status: String(j.status ?? ""),
       soDocNo: (j.soDocNo ?? j.so_doc_no ?? null) as string | null,
       linkedDocNo: (j.linkedDocNo ?? j.linked_doc_no ?? j.soDocNo ?? j.so_doc_no ?? null) as string | null,
+      linkedDocId: (j.linkedDocId ?? j.linked_doc_id ?? null) as string | null,
       error: (j.error ?? null) as string | null,
       duplicateOf: (j.duplicateOf ?? j.duplicate_of ?? null) as string | null,
       createdAt: (j.createdAt ?? j.created_at ?? null) as string | null,

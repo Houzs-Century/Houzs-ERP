@@ -811,7 +811,7 @@ export const PaymentVoucherDetail = () => {
                   onChange={(v) => setEditLines((prev) => prev.map((x) => ({ ...x, projectId: v })))} />
               </label>
               {editLines.map((l, idx) => (
-                <div key={l.rid} style={{
+                <div data-grid-row key={l.rid} style={{
                   background: 'var(--c-paper)', border: '1px solid var(--line)',
                   borderRadius: 'var(--radius-lg)', padding: 'var(--space-4)',
                   display: 'flex', flexDirection: 'column', gap: 'var(--space-3)',

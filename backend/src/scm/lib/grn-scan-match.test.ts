@@ -4,9 +4,12 @@
 // open PO line; zero or many leave it UNMATCHED, and nothing is ever guessed.
 import { describe, expect, test } from 'vitest';
 import {
+  describeUnmatchedScanLines,
+  listScanLines,
   matchGrnScanToPoLines,
   normalizeCode,
   normalizeSupplierName,
+  resolvePrintedPo,
   resolveScannedSupplier,
   type OpenPoLine,
   type SupplierSkuBinding,
@@ -177,7 +180,7 @@ describe('matchGrnScanToPoLines', () => {
   // Regression: a Hookka delivery order with 6 lines where only 1 item code hit
   // any open PO line company-wide became a GRN against the wrong PO, and once
   // posted it flipped that PO's sales order to READY.
-  test('one stray hit out of six lines is refused, never a draft', () => {
+  test('one stray hit out of six lines becomes a draft flagged as a weak match', () => {
     const res = matchGrnScanToPoLines(
       'PO-010070',
       [
@@ -190,8 +193,9 @@ describe('matchGrnScanToPoLines', () => {
       [],
       'sup-1',
     );
-    expect(res.picks).toEqual([]);
-    expect(res.refused).toBe('too_few_lines');
+    expect(res.picks).toEqual([{ poItemId: 'pi-1', qty: 1 }]);
+    expect(res.refused).toBeNull();
+    expect(res.weakMatch).toEqual({ matched: 1, scanned: 6 });
     expect(res.unmatched).toHaveLength(5);
   });
 
@@ -353,5 +357,133 @@ describe('resolveScannedSupplier', () => {
     expect(resolveScannedSupplier('SOMEONE ELSE SDN BHD', suppliers)).toBeNull();
     expect(resolveScannedSupplier(null, suppliers)).toBeNull();
     expect(resolveScannedSupplier('HOME LIVING', suppliers)).toBeNull();
+  });
+});
+
+describe('describeUnmatchedScanLines (BUG-61: the draft says what to add)', () => {
+  test('null when every scanned line matched', () => {
+    expect(describeUnmatchedScanLines([], [])).toBeNull();
+  });
+
+  test('names each left-off line with its qty and why', () => {
+    const note = describeUnmatchedScanLines([
+      { line: scan({ itemCode: 'AMN-SF9050', description: 'SOFA 2B(RHF)', qty: 2 }), reason: 'no_open_po_line', candidatePoItemIds: [] },
+      { line: scan({ itemCode: 'HB-01', qty: 1, poNo: 'ART-HOK-002' }), reason: 'po_not_open', candidatePoItemIds: [] },
+      { line: scan({ barcode: '955000111', qty: 3 }), reason: 'ambiguous', candidatePoItemIds: ['a', 'b'] },
+    ], []);
+    expect(note).toBe(
+      'AMN-SF9050 SOFA 2B(RHF) x2 (no open PO line); '
+      + 'HB-01 x1 (PO ART-HOK-002 is not one of our POs); 955000111 x3 (more than one PO line fits).',
+    );
+  });
+
+  test('caps a long list', () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({
+      line: scan({ itemCode: `X${i}`, qty: 1 }), reason: 'no_open_po_line' as const, candidatePoItemIds: [],
+    }));
+    expect(describeUnmatchedScanLines(many, [], 10)).toMatch(/X9 x1 \(no open PO line\); and 2 more\.$/);
+  });
+});
+
+describe('resolvePrintedPo: suppliers print our PO without the company prefix', () => {
+  const pos = [{ poNumber: 'HC-PO-2609-223' }, { poNumber: 'HC-PO-010080' }, { poNumber: 'HC-PO-2609-251' }];
+
+  test('exact, and a unique tail of 6+ digits', () => {
+    expect(resolvePrintedPo('hc po 2609 223', pos, true)?.poNumber).toBe('HC-PO-2609-223');
+    expect(resolvePrintedPo('PO-2609-223', pos, true)?.poNumber).toBe('HC-PO-2609-223');
+    expect(resolvePrintedPo('PO: 2609-251', pos, true)?.poNumber).toBe('HC-PO-2609-251');
+    expect(resolvePrintedPo('PO-010080', pos, true)?.poNumber).toBe('HC-PO-010080');
+  });
+
+  test('short, foreign or ambiguous numbers resolve to nothing', () => {
+    expect(resolvePrintedPo('251', pos, true)).toBeNull();
+    expect(resolvePrintedPo('S/O1791', pos, true)).toBeNull();
+    expect(resolvePrintedPo('KLPO10138-HC5324', pos, true)).toBeNull();
+    expect(resolvePrintedPo(null, pos, true)).toBeNull();
+    const twoCompanies = [{ poNumber: 'HC-PO-2609-223' }, { poNumber: 'XX-PO-2609-223' }];
+    expect(resolvePrintedPo('PO-2609-223', twoCompanies, true)).toBeNull();
+  });
+
+  test('without allowTail only the exact number resolves', () => {
+    expect(resolvePrintedPo('PO-2609-223', pos, false)).toBeNull();
+    expect(resolvePrintedPo('HC-PO-2609-223', pos, false)?.poNumber).toBe('HC-PO-2609-223');
+  });
+});
+
+describe('a delivery order that names its PO but describes the items differently', () => {
+  // Dorsettloft DO-2610-009: rows print "PO-010080" (our HC-PO-010080) and
+  // describe sets ("3SEATER (2+1)") that are not our PO line codes.
+  const po010080: OpenPoLine[] = [
+    line({ poItemId: 'pi-2A', poNumber: 'HC-PO-010080', itemCode: '9058-2A(LHF)', supplierSku: 'DSL-9058 SOFA 2A(LHF)', remaining: 1 }),
+    line({ poItemId: 'pi-1A', poNumber: 'HC-PO-010080', itemCode: '9058-1A(RHF)', supplierSku: 'DSL-9058 SOFA 1A(RHF)', remaining: 1 }),
+    line({ poItemId: 'pi-2S', poNumber: 'HC-PO-010080', itemCode: '9058-2S', supplierSku: 'DSL-9058 SOFA 2S', remaining: 1 }),
+    line({ poItemId: 'pi-done', poNumber: 'HC-PO-010080', itemCode: '8051-1S', remaining: 0 }),
+    line({ poItemId: 'pi-other', poNumber: 'HC-PO-2610-001', itemCode: 'X', remaining: 4 }),
+  ];
+  const do009 = [
+    scan({ itemCode: 'DSL9058(30")-3SEATER (2+1)', qty: 1, poNo: 'PO-010080' }),
+    scan({ itemCode: 'DSL9058(30")-1EFL+1B', qty: 1, poNo: 'PO-010080' }),
+    scan({ itemCode: 'DSL8051(30")-1 SEATER', qty: 1, poNo: 'PO-010080' }),
+  ];
+
+  test('drafts every line still owed on that PO, flagged for the operator', () => {
+    const res = matchGrnScanToPoLines('S/O1791', do009, po010080, [], 'sup-1');
+    expect(res.poFallback).toBe('HC-PO-010080');
+    expect(res.picks).toEqual([
+      { poItemId: 'pi-2A', qty: 1 },
+      { poItemId: 'pi-1A', qty: 1 },
+      { poItemId: 'pi-2S', qty: 1 },
+    ]);
+    expect(res.matchedPoNumbers).toEqual(['HC-PO-010080']);
+  });
+
+  test('no draft from the PO number alone when the supplier is unknown', () => {
+    const res = matchGrnScanToPoLines('S/O1791', do009, po010080, [], null);
+    expect(res.poFallback).toBeNull();
+    expect(res.picks).toEqual([]);
+  });
+
+  test('no draft when the rows name two different open POs', () => {
+    const lines = [do009[0], scan({ itemCode: 'Y', qty: 1, poNo: 'PO-2610-001' })];
+    const res = matchGrnScanToPoLines(null, lines, po010080, [], 'sup-1');
+    expect(res.poFallback).toBeNull();
+    expect(res.picks).toEqual([]);
+  });
+
+  test('an item hit on the named PO is a normal draft, not the whole PO', () => {
+    const lines = [...do009, scan({ itemCode: 'DSL-9058 SOFA 2S', qty: 1, poNo: 'PO-010080' })];
+    const res = matchGrnScanToPoLines(null, lines, po010080, [], 'sup-1');
+    expect(res.poFallback).toBeNull();
+    expect(res.picks).toEqual([{ poItemId: 'pi-2S', qty: 1 }]);
+  });
+
+  test('the draft note lists the delivery order as read', () => {
+    expect(listScanLines(do009)).toBe('DSL9058(30")-3SEATER (2+1) x1; DSL9058(30")-1EFL+1B x1; DSL8051(30")-1 SEATER x1.');
+  });
+});
+
+describe('a delivery order whose POs are marked Received says so', () => {
+  // NB Furniture NBF2610-095: received by hand on HC-GRN-2610-011, so its POs
+  // are no longer open. Nothing is drafted; each row says why.
+  const allPos = [
+    { poNumber: 'HC-PO-2609-223', status: 'RECEIVED' },
+    { poNumber: 'HC-PO-2609-251', status: 'RECEIVED' },
+    { poNumber: 'HC-PO-2610-009', status: 'SUBMITTED' },
+  ];
+
+  test('rows on received POs are refused with the PO and its status', () => {
+    const lines = [
+      scan({ itemCode: 'SB10-KHB(H)(9MM)(L-4")-LSD013', qty: 2, poNo: 'PO-2609-223' }),
+      scan({ itemCode: 'SB10-KHB(H)(9MM)-LSD013', qty: 2, poNo: '2609-251' }),
+      scan({ itemCode: 'SB10-B11EC', qty: 1, poNo: 'KLPO10138-HC5324' }),
+    ];
+    const res = matchGrnScanToPoLines(null, lines, [line({ poNumber: 'HC-PO-2610-009' })], [], 'sup-1');
+    expect(res.picks).toEqual([]);
+    expect(res.poFallback).toBeNull();
+    expect(describeUnmatchedScanLines(res.unmatched, allPos)).toBe(
+      'SB10-KHB(H)(9MM)(L-4")-LSD013 x2 (PO HC-PO-2609-223 is marked Received); '
+      + 'SB10-KHB(H)(9MM)-LSD013 x2 (PO HC-PO-2609-251 is marked Received); '
+      + 'SB10-B11EC x1 (PO KLPO10138-HC5324 is not one of our POs).',
+    );
   });
 });

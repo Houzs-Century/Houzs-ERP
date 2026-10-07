@@ -1,6 +1,11 @@
 {
   "reviewed": [
     {
+      "check": "D2",
+      "key": "CANCELLED,CREDIT_NOTED,REFUNDED ~ CANCELLED,CREDIT_NOTED,REFUNDED,REJECTED",
+      "why": "TWO DIFFERENT DOCUMENTS, each deciding when ITS OWN return is closed to editing: ConsignmentReturnDetail / ConsignmentReturns lock a consignment return at CANCELLED / CREDIT_NOTED / REFUNDED; DeliveryReturnDetail (the Delivery Return editor, BUG-62) also treats REJECTED as closed, matching DeliveryReturnDetailV2's isTerminal, which hides the Edit button for the same four. Different enums that share words, not one rule with two homes. Divergence costs an editor that opens or refuses, never money or stock."
+    },
+    {
       "check": "D1",
       "key": "BEDFRAME,MATTRESS,OTHER,SOFA|backend/src/acc/product-profit.ts frontend/src/lib/brandingTone.ts frontend/src/pages/scm-v2/product-profit-view.ts",
       "why": "THE PRODUCT PROFIT REPORT'S FOUR CATEGORIES (owner 2026-10-05), one decision with one home: acc/product-profit.ts PRODUCT_CATEGORIES decides which category a product lands in (mattress / sofa / bedframe from the line's group, everything else other, service left out) and writes it on each row; product-profit-view.ts CATEGORY_ORDER is only the order the screen draws the chips and the donut in, over the category the server already wrote, so it cannot move a product. brandingTone.ts TONE_BY_BUCKET answers a different question (the tint a brand bucket is drawn in) with the same four words. Divergence costs a chip in another place, never a figure."
@@ -1489,6 +1494,11 @@
       "check": "D1",
       "key": "CUSTOMER_ORDER,SAMPLE,SHOWROOM|backend/src/scm/shared/product-request.ts frontend/src/vendor/scm/lib/product-request-queries.ts",
       "why": "A PRODUCT REQUEST'S APPLICATION (owner 2026-10-06: 用途 — 展厅 / 客户订单 / 样品), one decision with one home: scm/shared/product-request.ts PRODUCT_REQUEST_APPLICATIONS is what POST /product-requests accepts (400 application_invalid otherwise). product-request-queries.ts APPLICATION_LABEL is PRESENTATION of the same vocabulary — the words the picker and the list show — keyed by the frontend ProductRequestApplication type that mirrors the backend list; a value added on one side without the other is a compile error on the frontend (Record<ProductRequestApplication, string>) and a 400 from the server, never a wrong request. Cost of divergence is a missing picker entry, not money or stock."
+    },
+    {
+      "check": "D2",
+      "key": "DIVANHEIGHTS,GAPS,LEGHEIGHTS,SOFALEGHEIGHTS,SOFASIZES ~ DIVANHEIGHTS,GAPS,LEGHEIGHTS,SOFALEGHEIGHTS,SOFASIZES,TOTALHEIGHTS",
+      "why": "TWO QUESTIONS ABOUT THE MAINTENANCE POOLS, not one rule at N-1 places (BUG-60, 2026-10-06). INCH_POOLS (scm/shared/maintenance-pools.ts) is which pools hold inch-bearing values whose quotes are normalised on SAVE, and Total Height is one of them. PICKER_POOLS (vendor/scm/lib/picker-maint.ts) is which pools a purchasing document's variant DROPDOWNS read, so master's options can replace a supplier cost overlay's stale list. No PO / PI / Purchase Consignment editor has a Total Height dropdown: it is derived from divan + leg + gap and only priced, so adding it to the picker list would change nothing on screen and removing it from INCH_POOLS would stop normalising stored heights."
     }
   ]
 }

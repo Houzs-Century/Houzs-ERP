@@ -15,10 +15,15 @@
 // (GRN) column is relabelled to the source Purchase Consignment Receive.
 // ----------------------------------------------------------------------------
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { Plus, Edit3 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
+import { Button as DrawerButton } from '../../components/Button';
+import {
+  QuickViewShell, DrawerMetaGrid, DrawerMeta, DrawerSection, DrawerKV, DrawerPartyCard,
+  DrawerLines, DrawerLineRow, DrawerLineItem, DrawerTotals, DrawerTotal, drawerErrorText, type DrawerTone,
+} from './QuickViewDrawerParts';
 import {
   usePurchaseConsignmentReturns,
   useCancelPurchaseConsignmentReturn,
@@ -33,6 +38,7 @@ import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
 import { transferFromColumnLabel } from "../../lib/convertScope";
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -64,7 +70,7 @@ type PrRow = Record<string, unknown> & {
 const buildColumns = (): GridColumn<PrRow>[] => [
   {
     key: 'return_number', label: 'Return No.', width: 150, sortable: true,
-    accessor: (r) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.return_number}</span>,
+    accessor: (r) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }} className={cancelledDocNoClass(r.status)}>{r.return_number}</span>,
     searchValue: (r) => r.return_number,
     /* Accessor is JSX → export the raw doc-no string or the cell exports blank. */
     exportValue: (r) => r.return_number,
@@ -237,8 +243,99 @@ const ExpandedLines = ({ pr }: { pr: PrRow }) => {
   );
 };
 
+/* Status TONE for the drawer badge (purchase_return_status enum): POSTED is
+   the live return = warning, COMPLETED = success, CANCELLED = error. */
+const PCT_TONE: Record<string, DrawerTone> = { POSTED: 'warning', COMPLETED: 'success', CANCELLED: 'error' };
+const PCT_LINE_COLS = 'grid-cols-[minmax(0,1fr)_44px_96px]';
+
+/* Quick-view drawer — row click opens the same right slide-over the Sales
+   Order / Purchase Return lists have. Lines ride the SAME detail query the
+   expand chevron uses. */
+export function PurchaseConsignmentReturnDrawer({
+  row, onClose, onOpenFull, onEdit, onCancel,
+}: {
+  row: PrRow | null;
+  onClose: () => void;
+  onOpenFull: () => void;
+  onEdit: () => void;
+  onCancel: () => void;
+}) {
+  const detailQ = usePurchaseConsignmentReturnDetail(row?.id ?? null);
+  const items = (detailQ.data?.items ?? []) as PrItem[];
+  const status = row?.status ?? '';
+  const canCancel = status !== 'CANCELLED' && status !== 'COMPLETED';
+  const lineSum = items.reduce((sum, it) => sum + Number(it.line_refund_sen ?? 0), 0);
+  const refundSen = items.length > 0 ? lineSum : Number(row?.refund_sen ?? 0);
+
+  return (
+    <QuickViewShell
+      open={Boolean(row)}
+      onClose={onClose}
+      ariaLabel={row ? `Purchase consignment return ${row.return_number}` : 'Purchase consignment return details'}
+      docNo={row?.return_number ?? ''}
+      docLabel="Purchase Consignment Return"
+      statusLabel={statusLabel('pr', status)}
+      statusTone={PCT_TONE[status] ?? 'neutral'}
+      onOpenFull={onOpenFull}
+      footer={row && (
+        <>
+          <DrawerButton variant="ghost" icon={<Edit3 size={14} />} onClick={onEdit}>Edit</DrawerButton>
+          <div className="flex-1" />
+          {canCancel && <DrawerButton variant="ghost" className="text-err" onClick={onCancel}>Cancel Return</DrawerButton>}
+        </>
+      )}
+    >
+      {row && (
+        <>
+          <div className="text-[19px] font-bold text-ink">{row.supplier?.name ?? '—'}</div>
+          <div className="mt-1.5 text-[12.5px] text-ink-muted">Returned {fmtDateOrDash(row.return_date)}</div>
+
+          <DrawerMetaGrid>
+            <DrawerMeta k={transferFromColumnLabel('pcr')} v={row.pc_receive?.receive_number ?? '—'} mono />
+            <DrawerMeta k="Return date" v={fmtDateOrDash(row.return_date)} />
+            <DrawerMeta k="Supplier code" v={row.supplier?.code ?? '—'} mono />
+            <DrawerMeta k="Lines" v={String(items.length)} />
+          </DrawerMetaGrid>
+
+          <DrawerSection>Supplier</DrawerSection>
+          <DrawerPartyCard name={row.supplier?.name ?? '—'} code={row.supplier?.code}>
+            <DrawerKV k="Code" v={row.supplier?.code ?? '—'} />
+          </DrawerPartyCard>
+
+          <DrawerSection>Returned lines</DrawerSection>
+          <DrawerLines
+            cols={PCT_LINE_COLS}
+            headings={[{ label: 'Item' }, { label: 'Qty', right: true }, { label: 'Refund', right: true }]}
+            loading={detailQ.isLoading}
+            error={drawerErrorText(detailQ)}
+            empty={items.length === 0}
+          >
+            {items.map((it) => {
+              const manual = (it.description ?? '').trim();
+              const summary = buildVariantSummary(it.item_group, it.variants);
+              return (
+                <DrawerLineRow key={it.id} cols={PCT_LINE_COLS}>
+                  <DrawerLineItem primary={it.item_code ?? '—'} secondary={manual || summary || it.material_name} />
+                  <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtQty(it.qty_returned ?? 0)}</span>
+                  <span className="text-right font-money text-[12.5px] font-semibold text-ink">{fmtSen(Number(it.line_refund_sen ?? 0))}</span>
+                </DrawerLineRow>
+              );
+            })}
+          </DrawerLines>
+
+          <DrawerTotals>
+            <DrawerTotal k="Refund" v={fmtSen(refundSen)} strong />
+          </DrawerTotals>
+        </>
+      )}
+    </QuickViewShell>
+  );
+}
+
 export const PurchaseConsignmentReturns = () => {
   const navigate = useNavigate();
+  /* Row click → quick-view drawer. */
+  const [selected, setSelected] = useState<PrRow | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const statusChip = searchParams.get('status') ?? 'all';
   const setStatusChip = (s: string) => {
@@ -267,6 +364,7 @@ export const PurchaseConsignmentReturns = () => {
       danger: true,
     }))) return;
     cancelPr.mutate(r.id, {
+      onSuccess: () => setSelected(null),
       onError: (e) => notify({ title: 'Cancel failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
     });
   };
@@ -310,9 +408,11 @@ export const PurchaseConsignmentReturns = () => {
         storageKey={PCT_LIST_STORAGE_KEY}
         exportName="Purchase Consignment Returns"
         rowKey={(r) => r.id}
+        getRowClassName={(r) => cancelledRowClass(r.status)}
         searchPlaceholder="Search return no, supplier…"
         loadedSearchLimit={300}
         groupBanner={false}
+        onRowClick={(r) => setSelected(r)}
         onRowDoubleClick={(r) => navigate(`/scm/purchase-consignment-returns/${r.id}`)}
         rowStyle={(r) => r.status === 'COMPLETED' || r.status === 'CANCELLED'
           ? { opacity: 0.6, filter: 'grayscale(0.4)' }
@@ -334,6 +434,14 @@ export const PurchaseConsignmentReturns = () => {
         }}
         isLoading={isLoading}
         emptyMessage='No returns yet — click "New Purchase Consignment Return" to raise one.'
+      />
+
+      <PurchaseConsignmentReturnDrawer
+        row={selected}
+        onClose={() => setSelected(null)}
+        onOpenFull={() => selected && navigate(`/scm/purchase-consignment-returns/${selected.id}`)}
+        onEdit={() => selected && navigate(`/scm/purchase-consignment-returns/${selected.id}?edit=1`)}
+        onCancel={() => selected && void doCancelPr(selected)}
       />
     </div>
   );
