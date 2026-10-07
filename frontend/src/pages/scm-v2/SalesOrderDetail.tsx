@@ -456,6 +456,8 @@ const draftFromItem = (it: SoItem): SoLineDraft => ({
   uom:            it.uom ?? 'UNIT',
   qty:            it.qty ?? 1,
   unitPriceSen: it.unit_price_sen ?? 0,
+  // The persisted price IS this line's price, 0 included; a product re-pick clears it.
+  priceAuthored: true,
   discountSen:  it.discount_sen ?? 0,
   unitCostSen:  it.unit_cost_sen ?? 0,
   // 2026-06-08 (Loo) — canonicalise POS-vocabulary sofa keys (depth →
@@ -1492,9 +1494,9 @@ export const SalesOrderDetail = () => {
       uom:            d.uom,
       qty:            d.qty,
       unitPriceSen: d.unitPriceSen,
-      /* This line ALREADY EXISTS: its 0 is the price it carries, so re-sending
-         it must not silently re-price it (a qty-only edit sends the price too). */
-      ...zeroPriceClaim(d.unitPriceSen, true),
+      /* A persisted 0 or a typed 0 is claimed; the 0 a product re-pick seeds
+         (no sell price) is not, so the server keeps the stored price (BUG-63). */
+      ...zeroPriceClaim(d.unitPriceSen, d.priceAuthored === true),
       discountSen:  d.discountSen,
       unitCostSen:  d.unitCostSen,
       variants:       d.variants,
