@@ -273,9 +273,11 @@ export const PurchaseConsignmentOrderDetail = () => {
      exist until the record has loaded. */
   const deliverPrintPdf = (action: PdfAction) => {
     if (!po) return;
+    /* The PO generator prints po_number, which a PCO record does not carry (DEV-57). */
+    const pdfHeader = { ...po, po_number: pcNo };
     return import('../../vendor/scm/lib/purchase-order-pdf')
       .then(({ generatePurchaseOrderPdf }) =>
-        generatePurchaseOrderPdf(po as never, items as never, { docTitle: 'PURCHASE CONSIGNMENT ORDER', action }))
+        generatePurchaseOrderPdf(pdfHeader as never, items as never, { docTitle: 'PURCHASE CONSIGNMENT ORDER', action }))
       .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
   };
   const print = usePrintPreview(deliverPrintPdf);
