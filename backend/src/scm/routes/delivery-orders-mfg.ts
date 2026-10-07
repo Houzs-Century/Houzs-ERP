@@ -27,7 +27,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { statusCapabilityRefusal, POD_STATES } from '../lib/do-status-capability';
 import { resolveDeliveryScope, scopeMatchesAssignment } from '../lib/deliveryScope';
 import { resolveCrewSeats } from '../lib/crew-seats';
-import { fetchDoCrewAssignment } from './delivery-planning';
+import { fetchDoCrewAssignment } from './delivery-pod-context';
 import { revertDeliveryOrderHandler } from './delivery-order-revert';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';

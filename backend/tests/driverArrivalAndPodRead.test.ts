@@ -9,7 +9,7 @@
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { patchDeliveryOrderArrivalHandler } from '../src/scm/routes/delivery-orders-mfg';
-import { doPodContextHandler } from '../src/scm/routes/delivery-planning';
+import { doPodContextHandler } from '../src/scm/routes/delivery-pod-context';
 
 type Row = Record<string, any>;
 
