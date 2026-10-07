@@ -961,8 +961,14 @@ export async function computeMrp(
     boundCompany
     && !!r.so_item_id
     && (isHardBoundLine(r.item_group, r.item_code) || demandBoundById.has(String(r.so_item_id)));
+  const poRaisedFor = new Map<string, Set<string>>();
   for (const r of (poRaw ?? []) as unknown as PoLineRow[]) {
     if (!r.po || PO_DEAD.has(r.po.status)) continue;
+    if (r.so_item_id) {
+      const ids = poRaisedFor.get(r.po.po_number) ?? new Set<string>();
+      ids.add(String(r.so_item_id));
+      poRaisedFor.set(r.po.po_number, ids);
+    }
     /* Migration 0180 — ETA is the EFFECTIVE (latest revised) delivery date: the
        line's own effective date (MAX over its delivery_date + revisions), else
        the header's effective date (MAX over expected_at + revisions). camelCase
@@ -1512,7 +1518,7 @@ export async function computeMrp(
       const own = poByKey.get(k);
       if (own && own.length > 0) poByBucket.set(k, own.map((p) => ({ ...p })));
     }
-    for (const [id, plan] of planSofaSets(setLines, lots, poByBucket)) sofaPlanByLine.set(id, plan);
+    for (const [id, plan] of planSofaSets(setLines, lots, poByBucket, poRaisedFor)) sofaPlanByLine.set(id, plan);
   }
 
   for (const [, bucket] of sofaByKey.entries()) {
