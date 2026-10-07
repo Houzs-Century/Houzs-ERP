@@ -226,12 +226,13 @@ purchaseConsignmentOrders.get('/:id', async (c) => {
     .eq('purchase_consignment_order_id', id)
     .neq('status', 'CANCELLED');
   /* The product request this order was raised from (owner 2026-10-06), as a
-     link the detail page shows — read best-effort, never a reason to 500 the
-     order itself. */
+     link the detail page shows. A failed read is said, not shown as "no
+     request": the detail would otherwise hide a link that exists. */
   const sourceRequestId = (headerRes.data as Record<string, unknown>).source_product_request_id as string | null | undefined;
   let productRequest: { id: string; requestNo: string; status: string } | null = null;
   if (sourceRequestId) {
-    const { data: pr } = await scopeToCompany(supabase.from('product_requests').select('id, request_no, status').eq('id', sourceRequestId), c).maybeSingle();
+    const { data: pr, error: prErr } = await scopeToCompany(supabase.from('product_requests').select('id, request_no, status').eq('id', sourceRequestId), c).maybeSingle();
+    if (prErr) return c.json({ error: 'load_failed', reason: prErr.message }, 500);
     if (pr) productRequest = { id: String((pr as Record<string, unknown>).id), requestNo: String((pr as Record<string, unknown>).request_no), status: String((pr as Record<string, unknown>).status) };
   }
   const purchaseConsignmentOrder = {
