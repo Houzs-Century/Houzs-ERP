@@ -301,18 +301,18 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
       {initial?.status === "REJECTED" && initial.decision_note && (
         <div style={{ fontSize: 12.5, color: "var(--red)" }}>The Purchaser rejected it: {initial.decision_note}</div>
       )}
-      <div className="sc-sl"><span className="t">① 申请类型 · What kind</span><span className="ln" /></div>
+      <div className="sc-sl"><span className="t">① What kind of request</span><span className="ln" /></div>
       {field("Request", (
         <select className="cal-sel" aria-label="Request type" value={v.requestType} onChange={(e) => { const t = e.target.value as ProductRequestType; set({ requestType: t }); if (t === "REPACK") setNewModel(false); }}>
           {(Object.keys(REQUEST_TYPE_LABEL) as ProductRequestType[]).map((t) => <option key={t} value={t}>{REQUEST_TYPE_LABEL[t]}</option>)}
         </select>
       ))}
-      {field("Application · 用途", (
+      {field("Application", (
         <select className="cal-sel" aria-label="Application" value={v.application} onChange={(e) => set({ application: e.target.value as ProductRequestApplication })}>
           {(Object.keys(APPLICATION_LABEL) as ProductRequestApplication[]).map((a) => <option key={a} value={a}>{APPLICATION_LABEL[a]}</option>)}
         </select>
       ))}
-      <div className="sc-sl"><span className="t">② 型号 · Model</span><span className="ln" /></div>
+      <div className="sc-sl"><span className="t">② Model</span><span className="ln" /></div>
       {!isRepack && field("Product", (
         <select className="cal-sel" aria-label="Existing SKU or new Model" value={newModel ? "new" : "existing"} onChange={(e) => { const n = e.target.value === "new"; setNewModel(n); if (n) set({ itemCode: null }); }}>
           <option value="existing">Existing SKU</option>
@@ -331,7 +331,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
         </select>
       ))}
       {isSofa && listInput("Compartment", "compartment", compartments, "e.g. 3S, LHF, Console")}
-      <div className="sc-sl"><span className="t">③ 规格 · Spec</span><span className="ln" /></div>
+      <div className="sc-sl"><span className="t">③ Spec</span><span className="ln" /></div>
       {field("Fabric", <>
         <input className="cal-sel" list="mpr-fabrics" aria-label="Fabric" value={v.fabricCode ?? ""} placeholder="Type or pick a fabric code…" onChange={(e) => set({ fabricCode: e.target.value || null })} />
         <datalist id="mpr-fabrics">{pickableFabrics.map((f) => <option key={f.id} value={f.fabric_code}>{f.name}</option>)}</datalist>
@@ -339,8 +339,8 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
       {listInput(isSofa ? "Sofa size (seat)" : "Size", "seatSize", seatSizes, isSofa ? "e.g. 22" : "e.g. Queen")}
       {listInput("Leg size", "legSize", legSizes, "e.g. 4")}
       {field("Qty *", <input className="cal-sel" type="number" inputMode="numeric" min={1} aria-label="Qty" value={v.qty || ""} onChange={(e) => set({ qty: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />)}
-      {field("Special remarks · 特别要求", <textarea className="cal-sel" rows={2} aria-label="Special remarks" maxLength={2000} value={v.specialRemarks ?? ""} onChange={(e) => set({ specialRemarks: e.target.value || null })} placeholder="e.g. deeper seat, no piping" />)}
-      <div className="sc-sl"><span className="t">④ 交货 · Delivery</span><span className="ln" /></div>
+      {field("Special remarks", <textarea className="cal-sel" rows={2} aria-label="Special remarks" maxLength={2000} value={v.specialRemarks ?? ""} onChange={(e) => set({ specialRemarks: e.target.value || null })} placeholder="e.g. deeper seat, no piping" />)}
+      <div className="sc-sl"><span className="t">④ Delivery</span><span className="ln" /></div>
       {field("Delivery location", (
         <select className="cal-sel" aria-label="Delivery location" value={v.deliveryLocationId ?? ""} onChange={(e) => set({ deliveryLocationId: e.target.value || null })}>
           <option value="">— pick a warehouse / showroom —</option>

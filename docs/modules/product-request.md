@@ -1,6 +1,6 @@
 # Product Request
 
-A salesperson's request for a new product or a repack: an existing SKU, or a Model the catalogue does not have yet, in a fabric, seat size and leg size, for a use (showroom / customer order / sample), delivered where and by when. The Purchaser answers it — approve or reject, build the new Model + SKU from it, raise the Purchase Consignment Order from it, close it. Numbered `{co}PDR-YYMM-NNN`. Owner 2026-10-06.
+A salesperson's request for a new product or a repack: an existing SKU, or a Model the catalogue does not have yet, in a fabric, seat size and leg size, for a use (showroom / customer order / sample / fair exhibition), delivered where and by when. Screen text is English only. The Purchaser answers it — approve or reject, build the new Model + SKU from it, raise the Purchase Consignment Order from it, close it. Numbered `{co}PDR-YYMM-NNN`. Owner 2026-10-06.
 
 ## Statuses and flow
 

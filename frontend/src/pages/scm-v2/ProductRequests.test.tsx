@@ -117,7 +117,7 @@ describe('Product Requests — the requester', () => {
     draw();
     openDetail('HC-PDR-2610-001');
     const dialog = screen.getByRole('dialog', { name: 'Product request HC-PDR-2610-001' });
-    expect(within(dialog).getByText('Requested · 待审批')).toBeTruthy();
+    expect(within(dialog).getByText('Requested')).toBeTruthy();
     expect(within(dialog).getAllByText('Aurora (new)', { exact: false }).length).toBeGreaterThan(0);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Withdraw' }));
     await waitFor(() => expect(withdrawMutate).toHaveBeenCalledWith('r1'));
