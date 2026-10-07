@@ -65,17 +65,6 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "stock_in.approve", resource: "Projects", verb: "manage", label: "Approve stock IN transfers", description: "Approve the Stock In Transfer Record checklist step (owner rule 2026-07-21: HQ + Peter only)" },
   { key: "agreement.approve", resource: "Projects", verb: "manage", label: "Approve agreements", description: "Tick the Agreement / Quotation checklist step (director approval gate)" },
   { key: "projects.manage",  resource: "Projects", verb: "manage", label: "Manage projects",   description: "Archive, change stage, edit templates, backfill CSV" },
-  // Owner 2026-09-30 — the Projects › Reminder view. Compiles every INCOMPLETE
-  // checklist task across ALL events into per-organizer / per-owner / per-PIC
-  // groups the admin can copy as a ready-to-paste WhatsApp reminder, so nobody
-  // opens 20 projects and screenshots one by one to chase people. It exposes
-  // OTHER people's outstanding work, so it is admin-only by default: Owner +
-  // Super Admin hold it via "*", and every other role must be granted it
-  // explicitly under Team > Positions. This is deliberately NARROWER than
-  // projects.manage (which BD Exec / IT Admin also carry) — a manager can be
-  // handed the chase-list without full project admin. Regular users keep only
-  // their own row-scoped "My Pending" filter and can never trace others here.
-  { key: "projects.reminders", resource: "Projects", verb: "manage", label: "Compile task reminders", description: "See Projects › Reminder — filter every event's incomplete checklist tasks by task / month / organizer and copy a ready-made reminder to paste into a WhatsApp group (does not by itself grant editing projects)" },
   // Granular finance-view (owner 2026-07-23): grants a non-director role the
   // money figures (rental / sales / profit) + the Finances page, WITHOUT the
   // full DIRECTOR tier. Read by pmsAccess.isFinanceViewer. Given to the BD role.

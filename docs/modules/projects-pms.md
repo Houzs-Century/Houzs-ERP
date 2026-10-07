@@ -57,12 +57,12 @@ Access is layered on **four independent axes** — do not conflate them:
    every project, regardless of PIC or brand.
 3. **Write authority** is the flat role permission matrix
    (`backend/src/services/permissions.ts`): `projects.read`, `.chat`,
-   `.checklist.tick`, `.write`, `.approve`, `.manage`, `.reminders`, plus
+   `.checklist.tick`, `.write`, `.approve`, `.manage`, plus
    `stock_transfer.approve`, `agreement.approve`, `projects.finance.view`,
-   `stock_in.approve`. `projects.reminders` gates only the **Reminder view**
-   (see below) — it is deliberately narrower than `.manage` (which BD Exec /
-   IT Admin also carry) so a manager can be handed the cross-event chase-list
-   without full project admin; Owner + Super Admin cover it via `*`. A bare
+   `stock_in.approve`. The **Reminder view** (see below) is NOT a role
+   permission: it is the named BD / Owner / weisiang tier
+   (`backend/src/routes/lib/named-tier.ts`, the same three who may create an
+   event), so a Super Admin wildcard does not open it. A bare
    `*` does **not** confer the four
    `EXPLICIT_APPROVAL_KEYS` (`projects.approve`, `stock_transfer.approve`,
    `agreement.approve`, and the stock-in equivalent) — those gate checklist
@@ -201,8 +201,9 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   ContractorCalendar.tsx`, `ShareCalendar.tsx`.
 - **Reminder view** (owner/admin chase-list, owner 2026-09-30):
   `frontend/src/pages/projects/OutstandingReminders.tsx` — the third mode of
-  the Project List `Cards | Table | Reminder` toggle, shown only to
-  `projects.reminders` holders. Pulls every incomplete checklist task from
+  the Project List `Cards | Table | Reminder` toggle, shown only to the BD /
+  Owner / weisiang tier (`auth/salesAccess.canCompileReminders`; the backend
+  re-checks). Pulls every incomplete checklist task from
   `GET /api/projects/outstanding-tasks` (one payload) and slices it
   client-side by task / status / month / organizer / group-by (Organizer · Owner · Sales
   PIC), then copies a paste-ready WhatsApp reminder per group or for all
@@ -220,7 +221,8 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
 - Backend routes: `backend/src/routes/projects.ts` (~90 routes — see
   `docs/generated/route-capability-matrix.csv` for the full inventory),
   `projectsOutstanding.ts` (the Reminder view feed
-  `GET /api/projects/outstanding-tasks`, gated `projects.reminders`; its own
+  `GET /api/projects/outstanding-tasks`, gated on the named tier in
+  `routes/lib/named-tier.ts` — not a role permission; its own
   file, mounted before the projects router so `/:id` cannot swallow it),
   `projects_print.ts`, `finance.ts`, `notifications.ts`,
   `publicContractorCalendar.ts`, `publicBrandCalendar.ts`, `brandShare.ts`,

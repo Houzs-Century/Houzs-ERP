@@ -11,7 +11,7 @@ import { cn } from "../../lib/utils";
  * The owner used to open every project one by one and screenshot the pending
  * checklist tasks to compile a reminder for the WhatsApp group. This view pulls
  * every INCOMPLETE checklist task across all events in one request (server-side
- * gate: projects.reminders) and lets her:
+ * gate: the BD / Owner / weisiang tier, routes/lib/named-tier.ts) and lets her:
  *   • drill to ONE task (e.g. "Filled Floorplan" only), not a whole section,
  *   • flip status Incomplete ↔ Overdue-only,
  *   • pick a month,

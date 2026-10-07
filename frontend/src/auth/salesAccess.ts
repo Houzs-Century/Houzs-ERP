@@ -111,6 +111,19 @@ export function canSeeSoloOrganizer(user: AuthUser | null | undefined): boolean 
 }
 
 /**
+ * May this user see Projects › Reminder — EVERY person's incomplete checklist
+ * tasks across all events, compiled for a WhatsApp chase? Owner 2026-10-07:
+ * "full access for this only ummu, owner, weisiang". The same three as
+ * canCreateEvent (Ummu is the only BD-role user); a role wildcard is not the
+ * tier, so the other Super Admins stay out. Mirrored server-side in
+ * backend/src/routes/lib/named-tier.ts on the outstanding-tasks feed (the
+ * authority); this only shows or hides the toggle.
+ */
+export function canCompileReminders(user: AuthUser | null | undefined): boolean {
+  return canCreateEvent(user);
+}
+
+/**
  * Non-director sales user — the restricted cohort of the Sales access model
  * (Delivery Returns hidden, Projects Finances hidden, etc.). Directors in the
  * Sales department are explicitly NOT restricted.
