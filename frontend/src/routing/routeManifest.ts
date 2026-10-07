@@ -90,6 +90,8 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/payment-vouchers/:id",
   "/scm/stock-adjustments",
   "/scm/stock-adjustments/new",
+  "/scm/stock-adjustments/:id",
+  "/scm/stock-adjustments/:id/edit",
   "/scm/stock-transfers",
   "/scm/stock-transfers/new",
   "/scm/stock-transfers/:id",

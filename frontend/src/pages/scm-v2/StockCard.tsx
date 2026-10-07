@@ -32,6 +32,7 @@ import {
   type InventoryMovement,
   type InventoryLot,
 } from '../../vendor/scm/lib/inventory-queries';
+import { stockAdjustmentHref } from '../../vendor/scm/lib/stock-adjustment-link';
 import { adjustmentReasonLabel, fmtSen, fmtDate, fmtDateTime, fmtQty } from '@2990s/shared';
 import { DataTable, type Column } from '../../components/DataTable';
 import { DateField } from '../../vendor/scm/components/DateField';
@@ -56,8 +57,8 @@ const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
 /** Best-effort route for a source doc on the ledger row. Inventory writes
  *  carry source_doc_id (the UUID of the originating GRN/DO/etc) — when
- *  present we can deep-link straight to the detail page. ADJUSTMENT has no
- *  per-document detail page, only a list — link there. */
+ *  present we can deep-link straight to the detail page. ADJUSTMENT links to its
+ *  document when it has one, else to the list. */
 const docHrefFor = (m: InventoryMovement): string | null => {
   switch (m.source_doc_type) {
     case 'GRN':              return m.source_doc_id ? `/scm/grns/${m.source_doc_id}` : null;
@@ -66,7 +67,7 @@ const docHrefFor = (m: InventoryMovement): string | null => {
     case 'PURCHASE_RETURN':  return m.source_doc_id ? `/scm/purchase-returns/${m.source_doc_id}` : null;
     case 'STOCK_TRANSFER':   return m.source_doc_id ? `/scm/stock-transfers/${m.source_doc_id}` : null;
     case 'STOCK_TAKE':       return m.source_doc_id ? `/scm/stock-takes/${m.source_doc_id}` : null;
-    case 'ADJUSTMENT':       return '/scm/stock-adjustments';
+    case 'ADJUSTMENT':       return stockAdjustmentHref(m);
     default:                 return null;
   }
 };

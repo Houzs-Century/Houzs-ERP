@@ -132,28 +132,99 @@ export function useInventoryMovements(opts?: {
   });
 }
 
+/* ── Stock Adjustment DOCUMENT (BUG-66) ──────────────────────────────────
+   A numbered header (`HC-SA-YYMM-NNN`) with its current lines. qty is SIGNED:
+   + found / recount up, - write-off. */
+export type StockAdjustmentLine = {
+  id: string;
+  line_no: number;
+  item_code: string;
+  product_name: string | null;
+  item_group: string | null;
+  variants: Record<string, unknown> | null;
+  description2: string | null;
+  variant_key: string;
+  batch_no: string | null;
+  qty: number;
+  reason_code: string | null;
+  notes: string | null;
+};
+
+export type StockAdjustmentDoc = {
+  id: string;
+  adjustment_no: string;
+  warehouse_id: string;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  lines: StockAdjustmentLine[];
+};
+
+/** One line as the create / edit body carries it. On an INCREASE the backend
+    derives variant_key from `variants` unless `variantKey` is sent (an edited
+    line that kept its variants sends the key it is stored under); on a
+    DECREASE `variantKey` + `batchNo` name the bucket the stock comes out of. */
+export type StockAdjustmentLineInput = {
+  itemCode: string;
+  productName?: string;
+  qty: number;
+  reasonCode: string;
+  notes?: string;
+  itemGroup?: string | null;
+  variants?: Record<string, unknown> | null;
+  batchNo?: string | null;
+  variantKey?: string | null;
+};
+
+export function useStockAdjustments(opts?: { warehouseId?: string; dateFrom?: string; dateTo?: string }) {
+  return useQuery({
+    queryKey: ['inventory', 'adjustments', opts ?? {}],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (opts?.warehouseId) params.set('warehouseId', opts.warehouseId);
+      if (opts?.dateFrom) params.set('dateFrom', opts.dateFrom);
+      if (opts?.dateTo) params.set('dateTo', opts.dateTo);
+      return authedFetch<{ adjustments: StockAdjustmentDoc[] }>(
+        `/inventory/adjustments${params.toString() ? `?${params.toString()}` : ''}`,
+      ).then((r) => r.adjustments);
+    },
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
+  });
+}
+
+export function useStockAdjustmentDoc(id: string | null) {
+  return useQuery({
+    queryKey: ['inventory', 'adjustments', 'one', id],
+    queryFn: () => authedFetch<{ adjustment: StockAdjustmentDoc }>(`/inventory/adjustments/${id}`).then((r) => r.adjustment),
+    enabled: Boolean(id),
+    retry: retryUnlessClientError,
+  });
+}
+
 export function useStockAdjustment() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: {
-      warehouseId: string;
-      itemCode: string;
-      productName?: string;
-      qtyDelta: number;
-      reasonCode: string;
-      notes?: string;
-      // Variant + batch (sofa/bedframe). On INCREASE the backend computes the
-      // variant_key from `variants`; on DECREASE the picker supplies the exact
-      // existing bucket via `variantKey` + `batchNo`.
-      itemGroup?: string | null;
-      variants?: Record<string, unknown> | null;
-      batchNo?: string | null;
-      variantKey?: string | null;
-    }) => authedFetch<{ movement: { id: string } }>(`/inventory/adjustments`, {
-      method: 'POST', body: JSON.stringify(body),
-    }),
+    mutationFn: (body: { warehouseId: string; notes?: string; lines: StockAdjustmentLineInput[] }) =>
+      authedFetch<{ id: string; adjustmentNo: string }>(`/inventory/adjustments`, {
+        method: 'POST', body: JSON.stringify(body),
+      }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['inventory'] });
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
+    },
+  });
+}
+
+export function useUpdateStockAdjustment(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { notes?: string | null; lines?: StockAdjustmentLineInput[] }) =>
+      authedFetch<{ adjustment: Omit<StockAdjustmentDoc, 'lines'>; movedBuckets: number }>(`/inventory/adjustments/${id}`, {
+        method: 'PATCH', body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
     },
   });
 }

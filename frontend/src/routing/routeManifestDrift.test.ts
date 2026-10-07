@@ -96,7 +96,9 @@ describe("executable route contract", () => {
     // list in Money out (owed, bank, the ones Finance keeps to itself).
     // 169 since 2026-10-06: /scm/product-requests — a salesperson asks for a new
     // product or a repack; the Purchaser approves and raises the PC Order from it.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(169);
+    // 171 since 2026-10-07: /scm/stock-adjustments/:id and /:id/edit — a stock
+    // adjustment became a numbered document you can open and edit (BUG-66).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(171);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -143,7 +145,8 @@ describe("executable route contract", () => {
     // 176 since 2026-10-01 — /scm/official-docs; see the staff-route count above.
     // 177 since 2026-10-02 — /scm/supplier-maintenance; see the staff-route count above.
     // 178 since 2026-10-06 — /scm/product-requests; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(178);
+    // 180 since 2026-10-07 — /scm/stock-adjustments/:id and /:id/edit (BUG-66).
+    expect(ROUTE_CONTRACT).toHaveLength(180);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

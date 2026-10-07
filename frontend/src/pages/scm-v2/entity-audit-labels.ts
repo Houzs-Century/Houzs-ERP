@@ -130,3 +130,25 @@ export const STOCK_TRANSFER_AUDIT_LABELS: AuditLabelDictionary = {
   actions: STOCK_TRANSFER_ACTIONS,
   fields: STOCK_TRANSFER_FIELDS,
 };
+
+/* ── Stock Adjustment — routes/inventory-adjustments.ts ───────────────────── */
+
+const STOCK_ADJUSTMENT_ACTIONS: Record<string, string> = {
+  CREATE: 'Created adjustment',
+  UPDATE: 'Edited adjustment',
+};
+
+/* The single-line keys (itemCode, qtyDelta ...) are what adjustments recorded
+   before they became documents (BUG-66); their history still renders. */
+const STOCK_ADJUSTMENT_FIELDS: Record<string, string> = {
+  warehouseId: 'Warehouse', lines: 'Lines', lineCount: 'Line count', netQty: 'Net qty',
+  notes: 'Notes', itemCode: 'SKU', variantKey: 'Variant', batchNo: 'Batch',
+  qtyDelta: 'Qty', reasonCode: 'Reason',
+};
+
+/* unitCostSen is money; the panel strips it for callers without finance. */
+export const STOCK_ADJUSTMENT_AUDIT_LABELS: AuditLabelDictionary = {
+  actions: STOCK_ADJUSTMENT_ACTIONS,
+  fields: { ...STOCK_ADJUSTMENT_FIELDS, unitCostSen: 'Unit cost' },
+  moneyFields: new Set(['unitCostSen']),
+};

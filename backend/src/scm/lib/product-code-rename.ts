@@ -58,6 +58,7 @@ export const PRODUCT_CODE_CASCADE: readonly CascadeColumn[] = [
   { table: 'inventory_lots',             col: 'item_code' },
   { table: 'inventory_lot_consumptions', col: 'item_code' },
   { table: 'stock_transfer_lines',       col: 'item_code' },
+  { table: 'stock_adjustment_lines',     col: 'item_code' },
   { table: 'stock_take_lines',           col: 'item_code' },
   { table: 'warehouse_rack_items',       col: 'item_code' },
   { table: 'warehouse_rack_movements',   col: 'item_code' },

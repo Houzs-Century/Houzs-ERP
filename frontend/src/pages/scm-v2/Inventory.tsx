@@ -58,8 +58,8 @@ import {
 
 /** Best-effort route for a movement's source doc. Mirrors StockCard's
  *  docHrefFor so every IN/OUT/ADJUSTMENT row on the Movements ledger can be
- *  clicked through to the document that drove it. ADJUSTMENT has no per-doc
- *  detail page — link to the list. */
+ *  clicked through to the document that drove it. ADJUSTMENT links to its document
+ *  when it has one, else to the list. */
 const docHrefFor = (m: InventoryMovement): string | null => {
   switch (m.source_doc_type) {
     case 'GRN':              return m.source_doc_id ? `/scm/grns/${m.source_doc_id}` : null;
@@ -68,11 +68,12 @@ const docHrefFor = (m: InventoryMovement): string | null => {
     case 'PURCHASE_RETURN':  return m.source_doc_id ? `/scm/purchase-returns/${m.source_doc_id}` : null;
     case 'STOCK_TRANSFER':   return m.source_doc_id ? `/scm/stock-transfers/${m.source_doc_id}` : null;
     case 'STOCK_TAKE':       return m.source_doc_id ? `/scm/stock-takes/${m.source_doc_id}` : null;
-    case 'ADJUSTMENT':       return '/scm/stock-adjustments';
+    case 'ADJUSTMENT':       return stockAdjustmentHref(m);
     default:                 return null;
   }
 };
 import styles from './Inventory.module.css';
+import { stockAdjustmentHref } from '../../vendor/scm/lib/stock-adjustment-link';
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
 const ICON_MD = { size: 16, strokeWidth: 1.75 } as const;

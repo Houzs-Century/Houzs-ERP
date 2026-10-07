@@ -1,24 +1,25 @@
 // ----------------------------------------------------------------------------
-// StockAdjustments — list of past manual stock adjustments (write-offs,
-// found stock, damage, recount fixes). Read-only ledger at
-// /scm/stock-adjustments. + New Adjustment routes to /scm/stock-adjustments/new.
+// StockAdjustments — list of manual stock adjustment DOCUMENTS (write-offs,
+// found stock, damage, recount fixes) at /scm/stock-adjustments, one row per
+// numbered document (BUG-66 — it used to list raw movement rows with no number
+// and nothing to open). A row opens /scm/stock-adjustments/:id.
+// + New Adjustment routes to /scm/stock-adjustments/new.
 //
 // 2026-07-09 REDESIGN per Nick's design_handoff_stock_adjustments handoff —
 // Theme C "Ink & Petrol" with real DS components (PageHeader, StatCard,
-// DataTable, Badge, Button). Wire preserved: useInventoryMovements(docType:
-// 'ADJUSTMENT') + useWarehouses; warehouse pill filter replaces the ugly
-// oval strip; StatStrip surfaces at-a-glance metrics (Adjustments · 30d,
-// Net qty delta, Damage/loss, Supplier returns).
+// DataTable, Badge, Button). Reads useStockAdjustments + useWarehouses;
+// warehouse pill filter; StatStrip surfaces at-a-glance metrics (Adjustments
+// · 30d, Net qty delta, Damage/loss, Supplier returns).
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, X } from "lucide-react";
-import { adjustmentReasonLabel, fmtDate, fmtDateTime, fmtQty } from "@2990s/shared";
+import { adjustmentReasonLabel, fmtDateTime, fmtQty } from "@2990s/shared";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import {
-  useInventoryMovements,
-  type InventoryMovement,
+  useStockAdjustments,
+  type StockAdjustmentDoc,
 } from "../../vendor/scm/lib/stock-queries";
 import { Button } from "../../components/Button";
 import { PageHeader } from "../../components/Layout";
@@ -54,6 +55,17 @@ function reasonTone(reasonCode: string | null): "warning" | "neutral" | "success
   return "accent";
 }
 
+type AdjustmentRow = StockAdjustmentDoc & { netQty: number; reasons: string[]; notesText: string };
+
+/* Per-document figures the table shows: net of the signed line qtys, the
+   distinct reasons, and the header notes (else the line notes). */
+const toRow = (d: StockAdjustmentDoc): AdjustmentRow => ({
+  ...d,
+  netQty: d.lines.reduce((s, l) => s + l.qty, 0),
+  reasons: [...new Set(d.lines.map((l) => l.reason_code).filter((r): r is string => Boolean(r)))],
+  notesText: d.notes || d.lines.map((l) => l.notes).filter(Boolean).join("; "),
+});
+
 export function StockAdjustments() {
   const navigate = useNavigate();
   const [warehouseId, setWarehouseId] = useState<string | null>(null);
@@ -69,8 +81,7 @@ export function StockAdjustments() {
   const warehouses = useWarehouses();
   // performed_by is a scm.staff uuid — resolve it, never print the id.
   const { actorNameOf } = useStaffLookup();
-  const { data, isLoading, error } = useInventoryMovements({
-    docType: "ADJUSTMENT",
+  const { data, isLoading, error } = useStockAdjustments({
     warehouseId: warehouseId ?? undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
@@ -82,15 +93,18 @@ export function StockAdjustments() {
   );
 
   /* Row filter — server already applied warehouse + date, so we only
-     need to whittle by the SKU search query client-side. */
-  const rows: InventoryMovement[] = useMemo(() => {
-    const all = data ?? [];
+     need to whittle by the search query client-side: the document number, or
+     any of its lines' SKU / product name. */
+  const rows: AdjustmentRow[] = useMemo(() => {
+    const all = (data ?? []).map(toRow);
     const q = search.trim().toLowerCase();
     if (!q) return all;
     return all.filter(
-      (m) =>
-        m.item_code.toLowerCase().includes(q) ||
-        (m.product_name ?? "").toLowerCase().includes(q),
+      (d) =>
+        d.adjustment_no.toLowerCase().includes(q) ||
+        d.lines.some((l) =>
+          l.item_code.toLowerCase().includes(q) ||
+          (l.product_name ?? "").toLowerCase().includes(q)),
     );
   }, [data, search]);
 
@@ -123,35 +137,44 @@ export function StockAdjustments() {
     for (const r of all) {
       const created = new Date(r.created_at);
       if (created >= cutoff) count30d += 1;
-      netDelta += r.qty;
-      const rc = (r.reason_code ?? "").toLowerCase();
-      if (/damag|loss|give|expir|writ/.test(rc)) damage += 1;
-      if (/return/.test(rc)) returns += 1;
+      for (const l of r.lines) {
+        netDelta += l.qty;
+        const rc = (l.reason_code ?? "").toLowerCase();
+        if (/damag|loss|give|expir|writ/.test(rc)) damage += 1;
+        if (/return/.test(rc)) returns += 1;
+      }
     }
     return { count30d, netDelta, damage, returns };
   }, [data]);
 
-  const columns: Column<InventoryMovement>[] = [
+  const columns: Column<AdjustmentRow>[] = [
+    {
+      key: "docNo",
+      label: "Adjustment No",
+      alwaysVisible: true,
+      getValue: (d) => d.adjustment_no,
+      render: (d) => (
+        <span className="font-mono text-[12px] font-semibold text-primary-ink whitespace-nowrap">
+          {d.adjustment_no}
+        </span>
+      ),
+    },
     {
       key: "date",
       label: "Date",
-      alwaysVisible: true,
-      getValue: (m) => m.created_at,
-      render: (m) => (
+      getValue: (d) => d.created_at,
+      render: (d) => (
         <span className="font-mono text-[12px] text-ink-secondary whitespace-nowrap">
-          {fmtDateTime(m.created_at)}
+          {fmtDateTime(d.created_at)}
         </span>
       ),
     },
     {
       key: "warehouse",
       label: "Warehouse",
-      getValue: (m) => {
-        const w = wmap.get(m.warehouse_id);
-        return w ? w.code : "—";
-      },
-      render: (m) => {
-        const w = wmap.get(m.warehouse_id);
+      getValue: (d) => wmap.get(d.warehouse_id)?.code ?? "—",
+      render: (d) => {
+        const w = wmap.get(d.warehouse_id);
         if (!w) return <span className="text-ink-muted">—</span>;
         const tone = warehouseToneOf(w);
         return (
@@ -166,72 +189,75 @@ export function StockAdjustments() {
       },
     },
     {
-      key: "sku",
-      label: "SKU",
+      key: "items",
+      label: "Items",
       alwaysVisible: true,
-      getValue: (m) => m.item_code,
-      render: (m) => (
-        <span className="font-mono text-[12px] font-semibold text-primary-ink">
-          {m.item_code}
-        </span>
-      ),
-    },
-    {
-      key: "product",
-      label: "Product Name",
-      alwaysVisible: true,
-      getValue: (m) => m.product_name ?? "",
-      render: (m) => (
-        <span className="text-[13px] font-medium text-ink">
-          {m.product_name ?? "—"}
-        </span>
-      ),
+      getValue: (d) => d.lines.map((l) => l.item_code).join(", "),
+      render: (d) => {
+        if (d.lines.length === 0) return <span className="text-ink-muted">—</span>;
+        const first = d.lines[0];
+        return (
+          <span className="text-[13px] text-ink">
+            <span className="font-mono text-[12px] font-semibold">{first.item_code}</span>
+            {first.product_name ? <span className="text-ink-secondary"> · {first.product_name}</span> : null}
+            {d.lines.length > 1 && (
+              <span className="ml-1.5 rounded-full bg-surface-2 px-1.5 font-mono text-[10.5px] text-ink-muted">
+                +{d.lines.length - 1} more
+              </span>
+            )}
+          </span>
+        );
+      },
     },
     {
       key: "qty",
-      label: "Qty Delta",
+      label: "Net Qty",
       align: "right",
-      getValue: (m) => m.qty,
-      render: (m) => (
+      getValue: (d) => d.netQty,
+      render: (d) => (
         <span
           className={cn(
             "font-money text-[13px] font-bold whitespace-nowrap",
-            m.qty > 0 ? "text-synced" : m.qty < 0 ? "text-err" : "text-ink-muted",
+            d.netQty > 0 ? "text-synced" : d.netQty < 0 ? "text-err" : "text-ink-muted",
           )}
         >
-          {m.qty > 0 ? "+" : ""}
-          {fmtQty(m.qty)}
+          {d.netQty > 0 ? "+" : ""}
+          {fmtQty(d.netQty)}
         </span>
       ),
     },
     {
       key: "reason",
       label: "Reason",
-      getValue: (m) => (m.reason_code ? adjustmentReasonLabel(m.reason_code) : ""),
-      render: (m) => {
-        if (!m.reason_code) return <span className="text-ink-muted">—</span>;
+      getValue: (d) => d.reasons.map((r) => adjustmentReasonLabel(r)).join(", "),
+      render: (d) => {
+        if (d.reasons.length === 0) return <span className="text-ink-muted">—</span>;
         return (
-          <Badge tone={reasonTone(m.reason_code)} variant="soft" caseless>
-            {adjustmentReasonLabel(m.reason_code)}
-          </Badge>
+          <span className="inline-flex flex-wrap gap-1">
+            {d.reasons.map((r) => (
+              <Badge key={r} tone={reasonTone(r)} variant="soft" caseless>
+                {adjustmentReasonLabel(r)}
+              </Badge>
+            ))}
+          </span>
         );
       },
     },
     {
       key: "notes",
       label: "Notes",
-      getValue: (m) => m.notes ?? "",
-      render: (m) => (
-        <span className="text-[12px] text-ink-muted">{m.notes ?? "—"}</span>
+      getValue: (d) => d.notesText,
+      render: (d) => (
+        <span className="text-[12px] text-ink-muted">{d.notesText || "—"}</span>
       ),
     },
     {
       key: "performedBy",
       label: "Performed By",
-      getValue: (m) => actorNameOf(m.performed_by, ""),
-      render: (m) => (
+      getValue: (d) => actorNameOf(d.created_by, ""),
+      render: (d) => (
         <span className="text-[11px] text-ink-secondary">
-          {actorNameOf(m.performed_by)}
+          {actorNameOf(d.created_by)}
         </span>
       ),
     },
@@ -375,7 +401,7 @@ export function StockAdjustments() {
           <input
             type="search"
             className="flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-muted"
-            placeholder="Search SKU code / description…"
+            placeholder="Search adjustment no / SKU / description…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -430,13 +456,14 @@ export function StockAdjustments() {
 
       {/* Table — DS DataTable with column chooser, CSV export, per-column
           filters and search built-in. */}
-      <DataTable<InventoryMovement>
-        tableId="stock-adjustments"
+      <DataTable<AdjustmentRow>
+        tableId="stock-adjustment-docs"
         exportName="stock-adjustments"
         columns={columns}
         rows={rows}
         loading={isLoading}
-        getRowKey={(m) => m.id}
+        getRowKey={(d) => d.id}
+        onRowClick={(d) => navigate(`/scm/stock-adjustments/${d.id}`)}
         emptyLabel='No stock adjustments yet — click "+ New Adjustment" to create one.'
       />
     </div>
