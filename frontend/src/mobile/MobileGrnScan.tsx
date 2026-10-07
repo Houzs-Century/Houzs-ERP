@@ -26,7 +26,7 @@ const isAcceptedFile = (f: File): boolean =>
 
 type EnqueueResp = { job_id: string; status: string };
 
-export function MobileGrnScan({ onBack }: { onBack: () => void }) {
+export function MobileGrnScan({ onBack, onOpenGrn }: { onBack: () => void; onOpenGrn: (grnId: string) => void }) {
   const [files, setFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -160,7 +160,11 @@ export function MobileGrnScan({ onBack }: { onBack: () => void }) {
                   <div style={{ flex: 1, fontSize: 12.5, color: "#11140f", lineHeight: 1.45 }}>
                     {done
                       ? (j.linkedDocNo
-                          ? `Draft goods receipt ${j.linkedDocNo} — open it from Goods Receipts to review and post.`
+                          ? (j.linkedDocId
+                              ? <>Draft goods receipt{" "}
+                                  <button type="button" onClick={() => onOpenGrn(j.linkedDocId as string)} style={{ padding: 0, border: "none", background: "none", font: "inherit", fontWeight: 700, color: "#16695f", textDecoration: "underline" }}>{j.linkedDocNo}</button>
+                                  {" "}— tap to check the lines, set racks and post.</>
+                              : `Draft goods receipt ${j.linkedDocNo} — open it from Goods Receipts to review and post.`)
                           : (j.error || "Needs review — open the PO and receive by hand."))
                       : j.status === "error"
                         ? (j.error || "Couldn't read the delivery order.")

@@ -82,8 +82,9 @@ When half or fewer of the scanned lines matched the one PO, the draft is still
 created but flagged `weakMatch`: "Check the PO" goes on the GRN note, the scan
 card and the notice. The draft never moves stock until someone posts it.
 
-**Outcomes:** ≥1 pick → DRAFT GRN(s) linked to the source PO(s), any unmatched
-lines noted for the operator to add. 0 picks (or convert refused, e.g. an
+**Outcomes:** ≥1 pick → DRAFT GRN(s) linked to the source PO(s). Each unmatched
+line is written by name, qty and reason (`describeUnmatchedScanLines`) onto the
+GRN note and the scan card, so the operator knows what to add. 0 picks (or convert refused, e.g. an
 over-receipt race) → needs-review, no document.
 
 ## Learning (`lib/grn-scan-review.ts`)
@@ -109,4 +110,10 @@ jobs write `linked_doc_no` only (never `so_doc_no`).
   `ScanGrnModal` (`vendor/scm/components/ScanGrnModal.tsx`).
 - Mobile: `MobileModuleList` scan icon (wired for `grns` in `MobileApp.tsx`) →
   `MobileGrnScan` (`mobile/MobileGrnScan.tsx`).
-- Both reuse `vendor/scm/lib/scan-jobs.ts` (+ `linkedDocNo`) and `authedFetch`.
+- Both reuse `vendor/scm/lib/scan-jobs.ts` (+ `linkedDocNo`, `linkedDocId`) and `authedFetch`.
+  The job endpoints resolve `linkedDocId` (company-scoped), so the scan card's
+  GRN number opens the draft directly.
+- Correcting a scanned draft happens on the DRAFT, not on a pre-save review
+  screen (it moves no stock): add from PO / add manual / delete / qty / racks on
+  desktop; racks and add-manual on the phone. The phone shows a DRAFT's note as
+  the amber notice.

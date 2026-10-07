@@ -163,7 +163,8 @@ go through `/api/scm/grns`.
   replaces one line's split (DRAFT only, `409 grn_not_draft` otherwise; racks
   must be in the GRN's warehouse; total may be LESS than `qty_accepted` while
   scanning, never more). `PATCH /:id/post` refuses `409 rack_split_incomplete`
-  until every split line's racks add up to `qty_accepted`; posting then places
+  until every split line's racks add up to `qty_accepted` (a line with no rack at
+  all is fine: racks are optional at Post, owner decision); posting then places
   one rack row per share (`planGrnPlacements` in `lib/grn-line-racks.ts`, read
   by `grn-rack-sync.ts`). `grn_items.rack_id` = the one rack when a split uses
   one, NULL when several — a reader that only knows `rack_id` never names one

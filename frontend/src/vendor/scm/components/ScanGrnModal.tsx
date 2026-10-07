@@ -209,7 +209,11 @@ export function ScanGrnModal({ onClose }: { onClose: () => void }) {
                       <div className={styles.resultMain}>
                         {done
                           ? (j.linkedDocNo
-                              ? `Draft goods receipt ${j.linkedDocNo} — open it to review and post.`
+                              ? (j.linkedDocId
+                                  ? <>Draft goods receipt{' '}
+                                      <button type="button" className={styles.docLink} onClick={() => { onClose(); navigate(`/scm/grns/${j.linkedDocId}`); }}>{j.linkedDocNo}</button>
+                                      {' '}— open it to check the lines, add what is missing, set racks and post.</>
+                                  : `Draft goods receipt ${j.linkedDocNo} — open it to review and post.`)
                               : (j.error || 'Needs review — open the PO and receive by hand.'))
                           : failed
                             ? (j.error || "Couldn't read the delivery order.")

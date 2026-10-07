@@ -4,6 +4,7 @@
 // open PO line; zero or many leave it UNMATCHED, and nothing is ever guessed.
 import { describe, expect, test } from 'vitest';
 import {
+  describeUnmatchedScanLines,
   matchGrnScanToPoLines,
   normalizeCode,
   normalizeSupplierName,
@@ -354,5 +355,30 @@ describe('resolveScannedSupplier', () => {
     expect(resolveScannedSupplier('SOMEONE ELSE SDN BHD', suppliers)).toBeNull();
     expect(resolveScannedSupplier(null, suppliers)).toBeNull();
     expect(resolveScannedSupplier('HOME LIVING', suppliers)).toBeNull();
+  });
+});
+
+describe('describeUnmatchedScanLines (BUG-61: the draft says what to add)', () => {
+  test('null when every scanned line matched', () => {
+    expect(describeUnmatchedScanLines([])).toBeNull();
+  });
+
+  test('names each left-off line with its qty and why', () => {
+    const note = describeUnmatchedScanLines([
+      { line: scan({ itemCode: 'AMN-SF9050', description: 'SOFA 2B(RHF)', qty: 2 }), reason: 'no_open_po_line', candidatePoItemIds: [] },
+      { line: scan({ itemCode: 'HB-01', qty: 1, poNo: 'ART-HOK-002' }), reason: 'po_not_open', candidatePoItemIds: [] },
+      { line: scan({ barcode: '955000111', qty: 3 }), reason: 'ambiguous', candidatePoItemIds: ['a', 'b'] },
+    ]);
+    expect(note).toBe(
+      'Not added, please add on the draft: AMN-SF9050 SOFA 2B(RHF) x2 (no open PO line); '
+      + 'HB-01 x1 (PO ART-HOK-002 is not open); 955000111 x3 (more than one PO line fits).',
+    );
+  });
+
+  test('caps a long list', () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({
+      line: scan({ itemCode: `X${i}`, qty: 1 }), reason: 'no_open_po_line' as const, candidatePoItemIds: [],
+    }));
+    expect(describeUnmatchedScanLines(many, 10)).toMatch(/X9 x1 \(no open PO line\); and 2 more\.$/);
   });
 });
