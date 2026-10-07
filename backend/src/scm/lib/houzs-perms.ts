@@ -96,10 +96,12 @@ export function canViewAllSales(c: HouzsUserSource): boolean {
   if (hasHouzsPerm(c, 'scm.so.view_all')) return true;
   const hu = c.get('houzsUser');
   if (!hu) return false;
-  // isDirectorUser only reads position_name + permissions_set; feed it a
-  // minimal AuthUser-shaped object built from the stashed real caller.
+  // isDirectorUser reads the Title's policy row first, then position_name +
+  // permissions_set; feed it the stashed real caller (policy row included, as
+  // isSalesCaller below).
   return isDirectorUser({
     position_name: hu.position_name ?? null,
+    position_policy: hu.position_policy ?? null,
     permissions_set: hu.permissions_set,
   } as AuthUser);
 }
@@ -121,11 +123,16 @@ export function canViewAllSales(c: HouzsUserSource): boolean {
 export function isSalesCaller(c: HouzsUserSource): boolean {
   const hu = c.get('houzsUser');
   if (!hu) return false;
-  // isSalesUser reads position_name + department_name; feed it a minimal
-  // AuthUser-shaped object built from the stashed real caller.
+  // isSalesUser reads the Title's policy row FIRST (cohort === 'sales'), then
+  // position_name + department_name; feed it the stashed real caller. The
+  // policy row was left out until 2026-10-07, so a Sales title whose name does
+  // not start with "Sales" (the product-request owner report: only the Sales
+  // Director could raise one) read as not-Sales here while the login umbrella,
+  // which passes the full user, let the same person in.
   return isSalesUser({
     position_name: hu.position_name ?? null,
     department_name: hu.department_name ?? null,
+    position_policy: hu.position_policy ?? null,
     permissions_set: hu.permissions_set,
   } as AuthUser);
 }
