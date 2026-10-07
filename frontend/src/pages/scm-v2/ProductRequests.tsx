@@ -150,7 +150,7 @@ export const ProductRequests = () => {
 
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Products" title="Product Requests · 新品 / 重新包装申请" />
+      <PageHeader eyebrow="Products" title="Product Requests" />
       <section className={styles.card}>
         <div className={styles.cardHeader} style={{ flexWrap: 'wrap', gap: 'var(--space-3)' }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -392,7 +392,7 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
         <div style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-13)' }}>The Purchaser rejected it: {initial.decision_note}</div>
       )}
 
-      <FormSection n={1} title="申请类型 · What kind of request" first>
+      <FormSection n={1} title="What kind of request" first>
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 'var(--fs-13)' }}>
           {(['NEW_PRODUCT', 'REPACK'] as ProductRequestType[]).map((t) => (
             <label key={t} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -402,14 +402,14 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
           ))}
         </div>
         <label className={styles.field}>
-          <span className={styles.fieldLabel}>Application · 用途 *</span>
+          <span className={styles.fieldLabel}>Application *</span>
           <select className={styles.fieldInput} value={v.application} onChange={(e) => set({ application: e.target.value as ProductRequestApplication })} aria-label="Application">
             {(Object.keys(APPLICATION_LABEL) as ProductRequestApplication[]).map((a) => <option key={a} value={a}>{APPLICATION_LABEL[a]}</option>)}
           </select>
         </label>
       </FormSection>
 
-      <FormSection n={2} title="型号 · Model" required>
+      <FormSection n={2} title="Model" required>
         {!isRepack && (
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 'var(--fs-13)' }}>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -443,7 +443,7 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
         </div>
       </FormSection>
 
-      <FormSection n={3} title="规格 · Spec">
+      <FormSection n={3} title="Spec">
         <div style={grid(180)}>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Fabric</span>
@@ -458,12 +458,12 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
           </label>
         </div>
         <label className={styles.field}>
-          <span className={styles.fieldLabel}>Special remarks · 特别要求</span>
+          <span className={styles.fieldLabel}>Special remarks</span>
           <textarea className={styles.fieldInput} rows={2} value={v.specialRemarks ?? ''} onChange={(e) => set({ specialRemarks: e.target.value || null })} aria-label="Special remarks" maxLength={2000} placeholder="e.g. deeper seat, no piping, firm cushion" />
         </label>
       </FormSection>
 
-      <FormSection n={4} title="交货 · Delivery">
+      <FormSection n={4} title="Delivery">
         <div style={grid(200)}>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Delivery location</span>

@@ -1497,8 +1497,8 @@
     },
     {
       "check": "D1",
-      "key": "CUSTOMER_ORDER,SAMPLE,SHOWROOM|backend/src/scm/shared/product-request.ts frontend/src/vendor/scm/lib/product-request-queries.ts",
-      "why": "A PRODUCT REQUEST'S APPLICATION (owner 2026-10-06: 用途 — 展厅 / 客户订单 / 样品), one decision with one home: scm/shared/product-request.ts PRODUCT_REQUEST_APPLICATIONS is what POST /product-requests accepts (400 application_invalid otherwise). product-request-queries.ts APPLICATION_LABEL is PRESENTATION of the same vocabulary — the words the picker and the list show — keyed by the frontend ProductRequestApplication type that mirrors the backend list; a value added on one side without the other is a compile error on the frontend (Record<ProductRequestApplication, string>) and a 400 from the server, never a wrong request. Cost of divergence is a missing picker entry, not money or stock."
+      "key": "CUSTOMER_ORDER,FAIR_EXHIBITION,SAMPLE,SHOWROOM|backend/src/scm/shared/product-request.ts frontend/src/vendor/scm/lib/product-request-queries.ts",
+      "why": "A PRODUCT REQUEST'S APPLICATION (owner 2026-10-06: 用途 — 展厅 / 客户订单 / 样品; Fair Exhibition added 2026-10-07), one decision with one home: scm/shared/product-request.ts PRODUCT_REQUEST_APPLICATIONS is what POST /product-requests accepts (400 application_invalid otherwise). product-request-queries.ts APPLICATION_LABEL is PRESENTATION of the same vocabulary — the words the picker and the list show — keyed by the frontend ProductRequestApplication type that mirrors the backend list; a value added on one side without the other is a compile error on the frontend (Record<ProductRequestApplication, string>) and a 400 from the server, never a wrong request. Cost of divergence is a missing picker entry, not money or stock."
     },
     {
       "check": "D2",

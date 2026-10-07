@@ -12,7 +12,7 @@
 export const PRODUCT_REQUEST_TYPES = ['NEW_PRODUCT', 'REPACK'] as const;
 export type ProductRequestType = (typeof PRODUCT_REQUEST_TYPES)[number];
 
-export const PRODUCT_REQUEST_APPLICATIONS = ['SHOWROOM', 'CUSTOMER_ORDER', 'SAMPLE'] as const;
+export const PRODUCT_REQUEST_APPLICATIONS = ['SHOWROOM', 'CUSTOMER_ORDER', 'SAMPLE', 'FAIR_EXHIBITION'] as const;
 export type ProductRequestApplication = (typeof PRODUCT_REQUEST_APPLICATIONS)[number];
 
 export const PRODUCT_REQUEST_STATUSES = ['REQUESTED', 'APPROVED', 'REJECTED', 'WITHDRAWN', 'PCO_ISSUED', 'CLOSED'] as const;
