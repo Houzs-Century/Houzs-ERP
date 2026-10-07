@@ -29,7 +29,10 @@ export function useBackdateDecisions() {
   const decide = useDecideBackdateRequest();
   const prompt = usePrompt();
   const notify = useNotify();
-  const run = async (row: BackdateRequestRow, action: 'approve' | 'reject' | 'withdraw') => {
+  /** Resolves true once the decision is recorded, false when the admin backed
+   *  out of the prompt or the server refused — so a caller that opened the row
+   *  somewhere (the inbox drawer) knows whether to close it. */
+  const run = async (row: BackdateRequestRow, action: 'approve' | 'reject' | 'withdraw'): Promise<boolean> => {
     let note: string | undefined;
     if (action === 'approve') {
       const answer = await prompt({
@@ -38,7 +41,7 @@ export function useBackdateDecisions() {
         input: { label: 'Remarks (optional)', placeholder: 'Checked against the bank statement' },
         confirmLabel: 'Approve & record',
       });
-      if (answer === null) return;
+      if (answer === null) return false;
       note = answer || undefined;
     } else if (action === 'reject') {
       const answer = await prompt({
@@ -48,13 +51,15 @@ export function useBackdateDecisions() {
         confirmLabel: 'Reject',
         danger: true,
       });
-      if (answer === null) return;
+      if (answer === null) return false;
       note = answer;
     }
     try {
       await decide.mutateAsync({ row, action, ...(note ? { note } : {}) });
+      return true;
     } catch (e) {
       void notify({ title: 'Not done', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+      return false;
     }
   };
   return { run, busy: decide.isPending };
