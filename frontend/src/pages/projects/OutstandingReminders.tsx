@@ -15,6 +15,7 @@ import { cn } from "../../lib/utils";
  *   • drill to ONE task (e.g. "Filled Floorplan" only), not a whole section,
  *   • flip status Incomplete ↔ Overdue-only,
  *   • pick a month,
+ *   • narrow to ONE organizer (so a per-organizer chase stays on one screen),
  *   • group by Organizer / Owner / Sales PIC,
  * then copy a clean, ready-to-paste reminder per group or for everything.
  *
@@ -61,6 +62,7 @@ export interface ReminderGroup {
 }
 
 const ALL_TASKS = "__all__";
+export const ALL_ORGANIZERS = "__all__";
 const NO_ORGANIZER = "— No organizer —";
 const NO_OWNER = "— Unassigned —";
 const NO_PIC = "— No PIC —";
@@ -84,17 +86,49 @@ export function distinctTasks(rows: readonly OutstandingRow[]): string[] {
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 
-/** Narrow by selected task + status (overdue-only vs all incomplete). */
-export function filterRows(
-  rows: readonly OutstandingRow[],
-  task: string,
-  status: StatusFilter,
-): OutstandingRow[] {
+/** Distinct organizers present in the data, alphabetically — feeds the Organizer dropdown. */
+export function distinctOrganizers(rows: readonly OutstandingRow[]): string[] {
+  const set = new Set<string>();
+  for (const r of rows) {
+    const o = r.organizer?.trim();
+    if (o) set.add(o);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+export interface RowFilter {
+  task: string;
+  status: StatusFilter;
+  organizer: string;
+}
+
+/** Narrow by selected task + status (overdue-only vs all incomplete) + organizer. */
+export function filterRows(rows: readonly OutstandingRow[], f: RowFilter): OutstandingRow[] {
   return rows.filter((r) => {
-    if (task !== ALL_TASKS && r.title !== task) return false;
-    if (status === "overdue" && r.overdue_days <= 0) return false;
+    if (f.task !== ALL_TASKS && r.title !== f.task) return false;
+    if (f.status === "overdue" && r.overdue_days <= 0) return false;
+    if (f.organizer !== ALL_ORGANIZERS && (r.organizer?.trim() ?? "") !== f.organizer) return false;
     return true;
   });
+}
+
+const DAY_MONTH: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", timeZone: "UTC" };
+
+/**
+ * "31 Oct – 2 Nov" / "2 Oct – 4 Oct" / "5 Oct" — the event dates as the owner
+ * reads them on a card. Dates are calendar days (no time), so UTC keeps the day
+ * stable whatever the browser's zone.
+ */
+export function dateRange(start: string | null, end: string | null): string {
+  const s = start ? new Date(`${start.slice(0, 10)}T00:00:00Z`) : null;
+  const e = end ? new Date(`${end.slice(0, 10)}T00:00:00Z`) : null;
+  const fmt = (d: Date) => d.toLocaleDateString("en-GB", DAY_MONTH);
+  if (s && !Number.isNaN(s.getTime()) && e && !Number.isNaN(e.getTime())) {
+    if (s.getTime() === e.getTime()) return fmt(s);
+    return `${fmt(s)} – ${fmt(e)}`;
+  }
+  if (s && !Number.isNaN(s.getTime())) return fmt(s);
+  return "";
 }
 
 /** Sort rows within a group: overdue first (most overdue first), then by due date, then title. */
@@ -152,11 +186,14 @@ export function buildGroupMessage(group: ReminderGroup): string {
  */
 export function buildAllMessage(
   groups: readonly ReminderGroup[],
-  ctx: { task: string; monthLabel: string; status: StatusFilter },
+  ctx: { task: string; monthLabel: string; status: StatusFilter; organizer: string },
 ): string {
   const taskLabel = ctx.task === ALL_TASKS ? "All tasks" : ctx.task;
   const statusLabel = ctx.status === "overdue" ? "Overdue only" : "Incomplete";
-  const header = `📋 Outstanding — ${taskLabel} · ${ctx.monthLabel} · ${statusLabel}`;
+  const parts = [taskLabel];
+  if (ctx.organizer !== ALL_ORGANIZERS) parts.push(ctx.organizer);
+  parts.push(ctx.monthLabel, statusLabel);
+  const header = `📋 Outstanding — ${parts.join(" · ")}`;
   const blocks = groups.map(buildGroupMessage);
   const total = groups.reduce((n, g) => n + g.rows.length, 0);
   const footer = `Total: ${total} task${total === 1 ? "" : "s"} across ${groups.length} ${
@@ -201,6 +238,7 @@ export default function OutstandingReminders() {
   const [month, setMonth] = useState<string>(() => currentMonthMyt());
   const [task, setTask] = useState<string>(ALL_TASKS);
   const [status, setStatus] = useState<StatusFilter>("incomplete");
+  const [organizer, setOrganizer] = useState<string>(ALL_ORGANIZERS);
   const [groupBy, setGroupBy] = useState<GroupBy>("organizer");
 
   const q = useQuery<OutstandingResponse>(
@@ -213,7 +251,11 @@ export default function OutstandingReminders() {
 
   const allRows = useMemo(() => q.data?.rows ?? [], [q.data]);
   const tasks = useMemo(() => distinctTasks(allRows), [allRows]);
-  const filtered = useMemo(() => filterRows(allRows, task, status), [allRows, task, status]);
+  const organizers = useMemo(() => distinctOrganizers(allRows), [allRows]);
+  const filtered = useMemo(
+    () => filterRows(allRows, { task, status, organizer }),
+    [allRows, task, status, organizer],
+  );
   const groups = useMemo(() => groupRows(filtered, groupBy), [filtered, groupBy]);
 
   const months = useMemo(() => monthOptions(), []);
@@ -262,6 +304,13 @@ export default function OutstandingReminders() {
           options={[{ value: "", label: "All months" }, ...months]}
         />
         <FilterSelect
+          label="Organizer"
+          value={organizer}
+          onChange={setOrganizer}
+          options={[{ value: ALL_ORGANIZERS, label: "All" }, ...organizers.map((o) => ({ value: o, label: o }))]}
+          highlight={organizer !== ALL_ORGANIZERS}
+        />
+        <FilterSelect
           label="Group by"
           value={groupBy}
           onChange={(v) => setGroupBy(v as GroupBy)}
@@ -274,12 +323,14 @@ export default function OutstandingReminders() {
         <div className="ml-auto flex items-center gap-2">
           {q.fetching && <span className="text-[11px] text-ink-muted">Loading…</span>}
           <button
-            onClick={() => void copyText(buildAllMessage(groups, { task, monthLabel, status }), "all groups")}
+            onClick={() =>
+              void copyText(buildAllMessage(groups, { task, monthLabel, status, organizer }), "all groups")
+            }
             disabled={groups.length === 0}
             className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[11px] font-semibold uppercase tracking-wider text-white transition-colors hover:bg-primary/90 disabled:opacity-40"
             title="Copy the whole compiled reminder (all groups) to paste into one WhatsApp group"
           >
-            <ClipboardList size={13} /> Copy all
+            <ClipboardList size={13} /> Copy all for group
           </button>
         </div>
       </div>
@@ -308,6 +359,7 @@ export default function OutstandingReminders() {
             <GroupCard
               key={g.key}
               group={g}
+              groupBy={groupBy}
               narrowedTask={narrowedTask}
               onCopy={() => void copyText(buildGroupMessage(g), g.label)}
             />
@@ -354,47 +406,86 @@ function FilterSelect({
   );
 }
 
+const AXIS_LABEL: Record<GroupBy, string> = { organizer: "Organizer", owner: "Owner", pic: "Sales PIC" };
+
+// Avatar tint cycles by first letter so the same person keeps the same colour
+// across reloads — recognisable at a glance, no per-user config.
+const AVATAR_TINTS = ["bg-primary", "bg-synced", "bg-accent", "bg-err", "bg-warning-text"];
+function avatarTint(label: string): string {
+  const code = label.trim().toUpperCase().charCodeAt(0) || 0;
+  return AVATAR_TINTS[code % AVATAR_TINTS.length];
+}
+
 function GroupCard({
   group,
+  groupBy,
   narrowedTask,
   onCopy,
 }: {
   group: ReminderGroup;
+  groupBy: GroupBy;
   narrowedTask: string | null;
   onCopy: () => void;
 }) {
+  const initial = group.label.trim().charAt(0).toUpperCase() || "?";
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-stone">
-      <div className="flex items-center justify-between gap-2 bg-ink px-4 py-2.5 text-white">
-        <div className="min-w-0">
-          <div className="truncate font-display text-[14px] font-bold">{group.label}</div>
-          <div className="text-[11px] text-white/60">
-            {group.rows.length} pending
-            {narrowedTask ? ` · ${narrowedTask} not done` : ""}
+      <div className="flex items-center justify-between gap-3 bg-ink px-4 py-2.5 text-white">
+        <div className="flex min-w-0 items-center gap-3">
+          <span
+            className={cn(
+              "flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-display text-[13px] font-bold text-white",
+              avatarTint(group.label),
+            )}
+            aria-hidden
+          >
+            {initial}
+          </span>
+          <div className="min-w-0">
+            <div className="truncate font-display text-[14px] font-bold">{group.label}</div>
+            <div className="truncate text-[11px] text-white/60">
+              {AXIS_LABEL[groupBy]} · {group.rows.length} pending
+            </div>
           </div>
         </div>
-        <button
-          onClick={onCopy}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-white/25 px-2.5 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-white/10"
-          title={`Copy ${group.label}'s list only`}
-        >
-          <Copy size={12} /> Copy {group.label}
-        </button>
+        <div className="flex shrink-0 items-center gap-3">
+          {narrowedTask && (
+            <span className="hidden text-[11px] text-white/60 sm:inline">{narrowedTask} not done</span>
+          )}
+          <button
+            onClick={onCopy}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-white/25 px-2.5 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-white/10"
+            title={`Copy ${group.label}'s list only`}
+          >
+            <Copy size={12} /> Copy {group.label}
+          </button>
+        </div>
       </div>
       <div className="divide-y divide-border">
-        {group.rows.map((r) => (
-          <div key={r.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
-            <div className="min-w-0">
-              <div className="truncate text-[13px] font-semibold text-ink">{r.title}</div>
-              <div className="truncate text-[11.5px] text-ink-muted">
-                {r.name}
-                {r.booth_no?.trim() ? ` · Booth ${r.booth_no.trim()}` : ""}
-                {r.review_status === "pending_review" ? " · in review" : ""}
+        {group.rows.map((r) => {
+          const when = dateRange(r.start_date, r.end_date);
+          const meta = [when, r.booth_no?.trim() ? `Booth ${r.booth_no.trim()}` : null]
+            .filter(Boolean)
+            .join(" · ");
+          return (
+            <div key={r.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+              <div className="min-w-0">
+                <div className="truncate font-mono text-[10px] font-bold text-accent">{r.code}</div>
+                <div className="truncate text-[13px] font-semibold text-ink">
+                  {r.title}
+                  {r.review_status === "pending_review" && (
+                    <span className="ml-1.5 text-[11px] font-normal text-ink-muted">· in review</span>
+                  )}
+                </div>
+                <div className="truncate text-[11.5px] text-ink-muted">
+                  {r.name}
+                  {meta ? ` · ${meta}` : ""}
+                </div>
               </div>
+              <StatusBadge row={r} />
             </div>
-            <StatusBadge row={r} />
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

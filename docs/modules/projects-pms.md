@@ -204,7 +204,7 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   the Project List `Cards | Table | Reminder` toggle, shown only to
   `projects.reminders` holders. Pulls every incomplete checklist task from
   `GET /api/projects/outstanding-tasks` (one payload) and slices it
-  client-side by task / status / month / group-by (Organizer · Owner · Sales
+  client-side by task / status / month / organizer / group-by (Organizer · Owner · Sales
   PIC), then copies a paste-ready WhatsApp reminder per group or for all
   groups — clipboard only, no `wa.me` / personal numbers. Grouping + message
   formatting are pure functions unit-tested in `OutstandingReminders.test.ts`.
