@@ -17,9 +17,10 @@ go through `/api/scm/grns`.
   all funnel through the one chokepoint `postGrnAndRollup` (`grns.ts`), which flips
   status first (atomic CAS on the observed status) and only then recounts the PO's
   `received_qty`, so this GRN's own lines are included.
-- `CANCELLED`: `PATCH /:id/cancel`. A DRAFT short-circuits (flip only, nothing to
-  reverse). A POSTED GRN reverses the IN per line and is blocked if the stock was
-  already consumed downstream.
+- `CANCELLED`: `PATCH /:id/cancel`. A DRAFT writes no stock OUT. A POSTED GRN
+  reverses the IN per line and is blocked if the stock was already consumed
+  downstream. Both recount the PO's `received_qty` and queue the SO allocation
+  re-walk (a bound SO line is lit by its PO's `received_qty`).
 - `CLOSED`: nothing in the backend writes this anymore; it is a read-only legacy
   terminal that still blocks a re-post.
 - `ON_HOLD` is a marker beside the status, not a status overwrite (`PATCH /:id/hold`).
