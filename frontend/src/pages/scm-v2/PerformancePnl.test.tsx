@@ -2,7 +2,8 @@
    group with sales, cost, gross profit and %; the summary from gross profit
    through the computed operating expense (named for the account it stands
    in for) and the booked expenses to net; the notes; the rate and account
-   saved from the strip; Excel and PDF off the same lines. The server half is
+   saved from the strip, with the accounts the rate also covers (2990's
+   transport, owner 2026-10-06); Excel and PDF off the same lines. The server half is
    backend/tests/performanceReport.test.ts. */
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
@@ -51,6 +52,8 @@ const report: PerformanceReport = {
     ],
   },
 };
+/* What the page is served — the test that names covered accounts swaps it. */
+const served = { report };
 const lastPath = { value: '' };
 const saveMutate = vi.fn();
 const pdfMock = vi.fn(async (..._args: unknown[]) => {});
@@ -58,7 +61,7 @@ const xlsxMock = vi.fn(async (..._args: unknown[]) => {});
 
 vi.mock('../../vendor/scm/lib/performance-report-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
-  usePerformanceReport: (from: string, to: string) => { lastPath.value = `${from}|${to}`; return { data: report, isLoading: false, isError: false, error: null }; },
+  usePerformanceReport: (from: string, to: string) => { lastPath.value = `${from}|${to}`; return { data: served.report, isLoading: false, isError: false, error: null }; },
   useSavePerformanceSettings: () => ({ mutate: saveMutate, isPending: false }),
 }));
 vi.mock('../../vendor/scm/lib/performance-pnl-pdf', () => ({ generatePerformancePdf: pdfMock, downloadPerformanceXlsx: xlsxMock }));
@@ -134,9 +137,41 @@ describe('the Performance P&L tab', () => {
     expect(saveBtn.disabled).toBe(true);
     fireEvent.change(rate, { target: { value: '18' } });
     fireEvent.click(within(strip).getByText('Save'));
-    expect(saveMutate.mock.calls[0]?.[0]).toEqual({ rateBp: 1800, account: '900-O001' });
+    expect(saveMutate.mock.calls[0]?.[0]).toEqual({ rateBp: 1800, account: '900-O001', also: [] });
+    /* Houzs names no covered account: the box is empty, nothing named beside it. */
+    expect((within(strip).getByLabelText('Accounts the rate also covers') as HTMLInputElement).value).toBe('');
+    expect(within(strip).queryByLabelText('Covered accounts')).toBeNull();
     fireEvent.click(screen.getByText('PDF'));
     expect(pdfMock).toHaveBeenCalledWith(report, { level: 'all', open: {} });
+  });
+
+  test('the rate also covers transport (2990): the box holds the codes, the names stand beside it, the notes say so, save sends the list', () => {
+    saveMutate.mockClear();
+    served.report = {
+      ...report,
+      settings: { rateBp: 1600, account: '900-O001', also: ['900-T004', '900-Z999'] },
+      operatingExpense: {
+        ...report.operatingExpense,
+        also: [{ code: '900-T004', name: 'TRANSPORTATION FEE' }, { code: '900-Z999', name: null }],
+        alsoBookedSen: 1260720,
+      },
+      inRate: [{ code: '900-T006', name: 'TRANSPORT (KL, SLG, MLK, JHR, OTHERS)', amountSen: 1260720 }],
+    };
+    try {
+      render(<PerformanceTab />);
+      const strip = screen.getByLabelText('Performance settings');
+      const also = within(strip).getByLabelText('Accounts the rate also covers') as HTMLInputElement;
+      expect(also.value).toBe('900-T004, 900-Z999');
+      const named = within(strip).getByLabelText('Covered accounts');
+      expect(named.textContent).toBe("TRANSPORTATION FEE, 900-Z999 not in this company's chart");
+      expect(screen.getByLabelText('Performance notes').textContent)
+        .toContain('The rate also covers 900-T004 TRANSPORTATION FEE, 900-Z999 (with the accounts under them): the 12,607.20 booked on those in the period is left out of the expenses too — they print at nil.');
+      fireEvent.change(also, { target: { value: '900-t004 900-T008,, 900-T004' } });
+      fireEvent.click(within(strip).getByText('Save'));
+      expect(saveMutate.mock.calls[0]?.[0]).toEqual({ rateBp: 1600, account: '900-O001', also: ['900-T004', '900-T008'] });
+    } finally {
+      served.report = report;
+    }
   });
 
   test('L1 folds the account part to its categories, All opens it; the Layout button opens the editor', () => {

@@ -33,6 +33,7 @@ vi.mock("../auth/salesAccess", () => ({
 }));
 vi.mock("../vendor/scm/lib/warehouse-queries", () => ({
   useRacks: () => ({ data: { racks: [{ id: "R2", rack: "L2.1" }, { id: "R1", rack: "L1.1" }] }, isLoading: false }),
+  useCrossCompanyRacks: () => ({ data: undefined }),
 }));
 vi.mock("../vendor/scm/lib/grn-queries", () => ({
   useSetGrnLineRack: () => ({ mutate: h.mutate, isPending: false }),

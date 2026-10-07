@@ -719,9 +719,10 @@ describe('the Customer Refund (?type=refund, §14)', () => {
     await waitFor(() => expect((screen.getByLabelText('Customer') as HTMLInputElement).value).toBe('Ah Meng · 0123'));
     /* The deposit-invoice half is said before the voucher is raised (docs/bugs/0860). */
     expect(screen.getByText(/2 deposit invoices standing for/)).toBeTruthy();
-    /* Payments with their ledger flag; the AutoCount-era row says so. */
+    /* Payments with their ledger flag; on an order the AutoCount row counts
+       too (owner 2026-10-05) and says so. */
     expect(screen.getByText('✓ booked')).toBeTruthy();
-    expect(screen.getByText('AutoCount era')).toBeTruthy();
+    expect(screen.getByText('from AutoCount — counts')).toBeTruthy();
     expect(screen.getByText('RM 300.00 refundable')).toBeTruthy();
     expect(screen.getByText('2990-MRF-2607-001').closest('a')!.getAttribute('href')).toBe('/scm/payment-vouchers/pv-old');
     /* The amount opened at the headroom; type a partial. */

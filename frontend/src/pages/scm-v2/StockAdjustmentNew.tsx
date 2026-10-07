@@ -48,7 +48,8 @@ import {
   useInventoryBuckets,
 } from '../../vendor/scm/lib/stock-queries';
 import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, mfgCategoryLabel, type MaintenanceConfig, type SpecialAddonRow } from '../../vendor/scm/lib/mfg-products-queries';
-import { sortByText } from '../../vendor/scm/lib/sort-options';
+import { sortByText, byText } from '../../vendor/scm/lib/sort-options';
+import { useFabricTrackingsLite, fabricOptionLabel, type FabricLite } from '../../vendor/scm/lib/fabric-queries';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -133,6 +134,39 @@ const VariantSelect = ({
   </label>
 );
 
+/* Fabric / Colour — a dropdown of the fabric master, the same list and label
+   the PO / GRN forms offer (owner 2026-10-06: it was free text, unlike SO).
+   Stored as fabricCode, the key the variant bucket and the required-axis gate
+   read, so a typo here used to open stock in a bucket no order could match.
+   A stored code missing from the list still renders, so it never blanks. */
+const FabricSelect = ({
+  fabrics, value, onChange,
+}: {
+  fabrics: FabricLite[];
+  value: string;
+  onChange: (v: string) => void;
+}) => {
+  const options = fabrics
+    .filter((f) => f.is_active !== false || f.fabric_code === value)
+    .sort((a, b) => byText(fabricOptionLabel(a), fabricOptionLabel(b)));
+  const known = !value || options.some((f) => f.fabric_code === value);
+  return (
+    <label className={styles.field}>
+      <span className={styles.fieldLabel}>Fabric / Colour</span>
+      <span className={styles.selectWrap}>
+        <select className={styles.fieldSelect} value={value} onChange={(e) => onChange(e.target.value)}>
+          <option value="">Select…</option>
+          {!known && <option value={value}>{value}</option>}
+          {options.map((f) => (
+            <option key={f.id} value={f.fabric_code}>{fabricOptionLabel(f)}</option>
+          ))}
+        </select>
+        <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
+      </span>
+    </label>
+  );
+};
+
 // One adjustment line — the main <tr> holds the five requested columns; a
 // full-width detail <tr> below it holds everything a correct stock write still
 // needs (current/resulting balance, the sofa/bedframe variant editor on an
@@ -141,12 +175,13 @@ const VariantSelect = ({
 // rules of hooks forbid a variable-length loop of hook calls, so each repeated
 // row has to be its own component.
 function AdjustmentLineRow({
-  line, warehouseId, allSkus, maint, specialsPools, setLine, removeLine, canRemove, reportState,
+  line, warehouseId, allSkus, maint, fabrics, specialsPools, setLine, removeLine, canRemove, reportState,
 }: {
   line: LineDraft;
   warehouseId: string;
   allSkus: Array<{ id: string | number; code: string; name: string; category?: string }>;
   maint: MaintenanceConfig | null;
+  fabrics: FabricLite[];
   specialsPools: { bedframe: SpecialAddonRow[]; sofa: SpecialAddonRow[] };
   setLine: (key: string, patch: Partial<LineDraft>) => void;
   removeLine: (key: string) => void;
@@ -332,16 +367,18 @@ function AdjustmentLineRow({
           />
         </td>
 
-        <td className={styles.actionsCell}>
-          <button
-            type="button"
-            onClick={() => removeLine(line._key)}
-            className={`${styles.iconBtn} ${styles.iconBtnDanger}`}
-            disabled={!canRemove}
-            title="Remove line"
-          >
-            <Trash2 size={14} strokeWidth={1.75} />
-          </button>
+        <td>
+          <span className={styles.actionsCell}>
+            <button
+              type="button"
+              onClick={() => removeLine(line._key)}
+              className={`${styles.iconBtn} ${styles.iconBtnDanger}`}
+              disabled={!canRemove}
+              title="Remove line"
+            >
+              <Trash2 size={14} strokeWidth={1.75} />
+            </button>
+          </span>
         </td>
       </tr>
 
@@ -412,14 +449,9 @@ function AdjustmentLineRow({
                     <VariantSelect label="Leg Height" options={activeOptions(maint.legHeights, String(line.variants.legHeight ?? ''))}
                       value={String(line.variants.legHeight ?? '')}
                       onChange={(v) => setVariant('legHeight', v)} />
-                    {/* Fabric / Colour — stored as fabricCode (the key the variant
-                        bucket + the required-axis gate read). Free text. */}
-                    <label className={styles.field}>
-                      <span className={styles.fieldLabel}>Fabric / Colour</span>
-                      <input className={styles.fieldInput}
-                        value={String(line.variants.fabricCode ?? '')}
-                        onChange={(e) => setVariant('fabricCode', e.target.value)} />
-                    </label>
+                    <FabricSelect fabrics={fabrics}
+                      value={String(line.variants.fabricCode ?? '')}
+                      onChange={(v) => setVariant('fabricCode', v)} />
                   </div>
                 ) : (
                   <div className={styles.formGrid4}>
@@ -430,14 +462,9 @@ function AdjustmentLineRow({
                     <VariantSelect label="Leg Height" options={activeOptions(maint.sofaLegHeights, String(line.variants.legHeight ?? ''))}
                       value={String(line.variants.legHeight ?? '')}
                       onChange={(v) => setVariant('legHeight', v)} />
-                    {/* Fabric — stored as fabricCode (the key the variant bucket +
-                        the required-axis gate read). Free text. */}
-                    <label className={styles.field}>
-                      <span className={styles.fieldLabel}>Fabric / Colour</span>
-                      <input className={styles.fieldInput}
-                        value={String(line.variants.fabricCode ?? '')}
-                        onChange={(e) => setVariant('fabricCode', e.target.value)} />
-                    </label>
+                    <FabricSelect fabrics={fabrics}
+                      value={String(line.variants.fabricCode ?? '')}
+                      onChange={(v) => setVariant('fabricCode', v)} />
                   </div>
                 )}
                 {/* Special Orders — shared editor (owner 2026-07-20). A standalone
@@ -562,6 +589,8 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
   // GRN / PO forms use (divan/leg height, gap, seat size; specials by category).
   const maintQ = useMaintenanceConfig('master');
   const maint  = maintQ.data?.data ?? null;
+  const fabricsQ = useFabricTrackingsLite();
+  const fabrics  = useMemo(() => fabricsQ.data ?? [], [fabricsQ.data]);
   const specialAddonsQ = useSpecialAddons();
   const specialsPools = useMemo(() => {
     const rows = (specialAddonsQ.data ?? [])
@@ -758,7 +787,7 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
             (found / recount up), a <strong style={{ color: 'var(--c-festive-b, #B8331F)' }}>negative</strong> number
             decreases it (write-off / damage / loss).
           </p>
-          <table className={styles.table}>
+          <table className={`${styles.table} ${styles.tableOwnWidths}`}>
             <thead>
               <tr>
                 <th style={{ width: '20%' }}>SKU *</th>
@@ -777,6 +806,7 @@ const StockAdjustmentForm = ({ onStartNew }: { onStartNew: () => void }) => {
                   warehouseId={warehouseId}
                   allSkus={allSkus.data ?? []}
                   maint={maint}
+                  fabrics={fabrics}
                   specialsPools={specialsPools}
                   setLine={setLine}
                   removeLine={removeLine}

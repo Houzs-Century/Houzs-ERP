@@ -139,7 +139,13 @@ go through `/api/scm/grns`.
   (`rack_already_moved`) rather than placing the goods twice. Both surfaces:
   desktop Edit mode (`GoodsReceivedDetail`) and the phone receipt detail
   (`MobileGrnLineRack`, saves on pick); who may change it and the option list
-  live in the shared `vendor/scm/lib/grn-line-rack.ts`. The phone's create
+  live in the shared `vendor/scm/lib/grn-line-rack.ts` (`useGrnRackOptions`:
+  this company's racks of the receipt's warehouse, plain labels for reading a
+  saved pick back, and picker labels carrying the OTHER companies' stock on the
+  same shelf — "Rack L5.1 · HC 6 pcs" — from `GET /warehouse/cross-company`,
+  because a shelf that reads EMPTY on this company's board may be full of the
+  other company's goods; see warehouses.md on one building, one record per
+  company). The phone's create
   forms still have no rack — set it on the detail after creating. Creating a GRN on
   the phone — the PO convert wizard or the manual form, draft or not — opens the
   new receipt's card (`MobileApp` on the GRN `id` the create returns), so the
@@ -157,7 +163,8 @@ go through `/api/scm/grns`.
   replaces one line's split (DRAFT only, `409 grn_not_draft` otherwise; racks
   must be in the GRN's warehouse; total may be LESS than `qty_accepted` while
   scanning, never more). `PATCH /:id/post` refuses `409 rack_split_incomplete`
-  until every split line's racks add up to `qty_accepted`; posting then places
+  until every split line's racks add up to `qty_accepted` (a line with no rack at
+  all is fine: racks are optional at Post, owner decision); posting then places
   one rack row per share (`planGrnPlacements` in `lib/grn-line-racks.ts`, read
   by `grn-rack-sync.ts`). `grn_items.rack_id` = the one rack when a split uses
   one, NULL when several — a reader that only knows `rack_id` never names one

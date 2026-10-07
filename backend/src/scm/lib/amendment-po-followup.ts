@@ -31,7 +31,7 @@ import type { Context } from 'hono';
 import { isServiceLine } from '../shared/service-sku';
 import { activeCompanyId, stampCompany } from './companyScope';
 import { catalogCategoriesByCode } from './validate-item-codes';
-import { readMfgProductBindings } from './supplier-bindings';
+import { pickAddLineBinding, readMfgProductBindings } from './supplier-bindings';
 
 type Sb = any;
 
@@ -211,7 +211,7 @@ export async function raisePoFollowUps(
      each untouched PO as well.
 
      Plus, for a brand-new ADD, the bound PO(s) whose supplier can actually MAKE
-     it — the SAME main-supplier match reviseBoundPo applies at confirm
+     it — the SAME supplier pick reviseBoundPo applies at confirm
      (so-revision.ts (10)), pulled forward. Owner 2026-09-20: a sales-side "swap 1
      mattress to Equinox" added the mattress (supplier DIGLANT) as a revision onto
      a bedframe PO (supplier OHANA); confirming it would bump that PO's printed _R
@@ -269,32 +269,42 @@ export async function raisePoFollowUps(
       ?? '').trim();
   const homelessLines = soLines.filter(isHomeless);
   const supplierByCode = new Map<string, string>();
+  const bindingsByCode = new Map<string, Array<{ item_code: string; supplier_id: string }>>();
   const homelessCodes = [...new Set(homelessLines.map(codeOf).filter((code) => code.length > 0))];
   if (homelessCodes.length > 0) {
     const { data: bRows, error: bErr } = await readMfgProductBindings<{ item_code: string; supplier_id: string }>(
       sb, { codes: homelessCodes, companyId: activeCompanyId(c), select: 'item_code, supplier_id, is_main_supplier' });
     if (bErr) throw new Error(`raisePoFollowUps: added-line supplier binding load failed: ${bErr.message}`);
     // is_main_supplier DESC (the reader's order) → first row seen per code is main.
-    for (const b of bRows) if (!supplierByCode.has(b.item_code)) supplierByCode.set(b.item_code, b.supplier_id);
+    for (const b of bRows) {
+      if (!supplierByCode.has(b.item_code)) supplierByCode.set(b.item_code, b.supplier_id);
+      const arr = bindingsByCode.get(b.item_code) ?? [];
+      arr.push(b);
+      bindingsByCode.set(b.item_code, arr);
+    }
   }
 
-  /* (5c) An ADD escalates only the bound PO(s) whose supplier can make it. A
-     matched supplier folds the new line into that open PO; an unmatched one warns
-     to raise a fresh PO rather than revise a PO the supplier does not serve. */
-  const addSupplierIds = new Set(soLines.filter(isAdd)
-    .map((l) => supplierByCode.get(codeOf(l))).filter((x): x is string => Boolean(x)));
-  const supplierMatchedPoIds = new Set(boundPos
-    .filter((p) => p.supplier_id && addSupplierIds.has(p.supplier_id)).map((p) => p.id));
-
+  /* (5c) An ADD escalates only the bound PO(s) whose supplier can make it — its
+     main supplier, else an alternate bound supplier that already has a PO here
+     (pickAddLineBinding, the same pick reviseBoundPo makes at confirm). An ADD no
+     bound supplier serves warns to raise a fresh PO rather than revise a PO the
+     supplier does not serve. */
+  const boundSupplierIds = new Set(boundPos.map((p) => p.supplier_id).filter((x): x is string => Boolean(x)));
+  const addSupplierByCode = new Map<string, string>();
   for (const l of soLines.filter(isAdd)) {
     const code = codeOf(l);
-    const supplierId = supplierByCode.get(code);
-    if (!supplierId) {
+    const picked = pickAddLineBinding(bindingsByCode.get(code) ?? [], boundSupplierIds);
+    if (picked) {
+      addSupplierByCode.set(code, picked.supplier_id);
+    } else if (!supplierByCode.get(code)) {
       warnings.push(`${code || 'A new line'} has no main supplier set, so it cannot join a purchase order — set its supplier, then raise a PO for it.`);
-    } else if (!boundPos.some((p) => p.supplier_id === supplierId)) {
+    } else {
       warnings.push(`${code} is from a supplier with no open purchase order on this Sales Order — raise a separate PO for it.`);
     }
   }
+  const addSupplierIds = new Set(addSupplierByCode.values());
+  const supplierMatchedPoIds = new Set(boundPos
+    .filter((p) => p.supplier_id && addSupplierIds.has(p.supplier_id)).map((p) => p.id));
   /* A changed EXISTING line with no PO home and a real supplier is new goods the
      confirm cannot place — warn so purchasing raises a PO; a homeless line with no
      binding is a stock/non-purchased line, left silent. */
@@ -390,9 +400,9 @@ export async function raisePoFollowUps(
       const t = String(l.change_type).toUpperCase();
       if (t === 'ADD') {
         // Attach the ADD preview only on a PO whose supplier can make it — the
-        // same main-supplier match reviseBoundPo applies at confirm. A supplier
-        // that serves no bound PO was warned above and escalates nothing.
-        const addSupplier = supplierByCode.get((l.new_item_code ?? '').trim());
+        // same supplier pick reviseBoundPo applies at confirm. A line no bound
+        // supplier serves was warned above and escalates nothing.
+        const addSupplier = addSupplierByCode.get(codeOf(l));
         if (addSupplier && po.supplier_id === addSupplier) {
           previewRows.push({
             amendment_id: amendmentId,

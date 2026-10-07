@@ -28,15 +28,32 @@
 // pages attached. Not the Merge — Merge makes PAGES of one bill; this makes
 // LINES of one voucher. He pressed Merge for it and the reader, told those
 // three receipts were one document, read one.
+//
+// ONE BILL PER REQUEST (owner 2026-10-05: four bills sent together took past
+// the 30-second wait and the page said "couldn't confirm whether it saved" —
+// 同时 upload 多 must work). Each bill goes to the reader on its own, three at
+// a time; each lands as it is read, a slow or bad bill holds up only itself
+// and can be read again alone, and a bill printed on something already
+// entered says so (lib/bill-matches.ts — a warning, never a block).
+//
+// THE PILE STAYS (owner 2026-10-06: 开了一张 AP invoice 回来，剩下的单要重新读):
+// it lives in bill-pile-store, one per company and per kind, so opening a bill
+// and coming back finds every other bill as read — each bill opened says so,
+// and the AP / voucher pages offer "Back to Scan bills (N left)". A refresh or
+// a closed tab empties it; Clear the pile empties it on purpose.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Camera, FileText, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useExtractBills, fileToBase64, type ExtractedBill, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useBillMatches } from '../../vendor/scm/lib/payment-request-queries';
+import { BillMatchesNote } from '../../vendor/scm/components/RequestBill';
 import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
 import { stashPvFiles } from '../../vendor/scm/lib/pv-file-handoff';
+import { clearPile, getPile, pileKey, updatePile, usePile, type PileState } from '../../vendor/scm/lib/bill-pile-store';
+import { getActiveCompanySnapshot, subscribeActiveCompany } from '../../lib/activeCompany';
 import { fmtDate } from '../../vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
 import styles from './SalesOrderDetail.module.css';
@@ -45,29 +62,44 @@ import { fmtSen } from '../../vendor/shared/format';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const ACCEPT_MIMES = 'image/jpeg,image/png,image/webp,application/pdf';
+/* How many bills are with the reader at once — the rest wait their turn. */
+export const READ_AT_ONCE = 3;
+/* A pile, not a dropped folder (owner 2026-10-05: 一次最多 50 张). */
+export const MAX_PILE_FILES = 50;
 
 const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
-type PickedFile = { rid: string; file: File; merged: boolean };
+/* Another live request, voucher or AP invoice printed with this bill's number
+   and date — said beside the bill before it is opened. */
+const PileBillMatches = ({ no, date }: { no: string | null; date: string | null }) => {
+  const q = useBillMatches(no ?? '', date ?? '');
+  return <BillMatchesNote matches={q.data?.matches} />;
+};
 
 export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } = {}) => {
   const ap = target === 'ap';
   const navigate = useNavigate();
   const extract = useExtractBills();
 
-  const [picked, setPicked] = useState<PickedFile[]>([]);
+  /* The pile — its files, its bills, the reader's answers, the read payload
+     the opened document carries (owner 2026-09-03: print pv include ocr 的
+     文件一起) — lives in bill-pile-store, keyed by company and kind. */
+  const companyId = useSyncExternalStore(subscribeActiveCompany, getActiveCompanySnapshot, getActiveCompanySnapshot);
+  const key = pileKey(companyId, target);
+  const pile = usePile(key);
+  const { picked, billGroups, results, billFiles, opened, progress, rereading } = pile;
+  const set = (change: (p: PileState) => PileState) => updatePile(key, change);
+  /* A changed pile is a new pile: the old answers go, and any read still out is ended. */
+  const pileChanged = (change: (p: PileState) => Partial<PileState>) =>
+    set((p) => ({ ...p, ...change(p), results: null, billFiles: [], opened: [], run: p.run + 1 }));
   const [ticked, setTicked] = useState<Set<string>>(new Set());
-  /* bills[i] = the rids that form bill i (merged pages share an entry). */
-  const [billGroups, setBillGroups] = useState<string[][]>([]);
-  const [results, setResults] = useState<ExtractedBill[] | null>(null);
-  /* The read payload, kept by bill index — the voucher created from a bill
-     carries these as attachments (owner 2026-09-03: print pv include ocr 的
-     文件一起 — nothing to print if nothing was kept). */
-  const [billFiles, setBillFiles] = useState<PvFilePayload[][]>([]);
   const [splitGroups, setSplitGroups] = useState<Set<string>>(new Set());
   /* Case 4: the read bills (by index) ticked for ONE voucher across groups. */
   const [tickedForOne, setTickedForOne] = useState<Set<number>>(new Set());
   const [note, setNote] = useState<string | null>(null);
+  /* While the reader has bills the pile holds still — an answer lands by its
+     place in the pile, so the pile may not shift under it. */
+  const busy = progress != null || rereading.length > 0;
 
   /* The same allowlist the server enforces — a dropped .docx is refused at the
      door with a sentence, not uploaded to fail later. ONE home: the string
@@ -75,67 +107,127 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
   const accepted = (f: File) => ACCEPT_MIMES.split(',').includes(f.type) || /\.pdf$/i.test(f.name);
 
   const addFileArray = (files: File[]) => {
+    if (busy) return;
     const usable = files.filter(accepted);
-    if (usable.length < files.length) setNote('Some files were skipped — JPEG / PNG / WebP / PDF only.');
-    if (usable.length === 0) return;
-    const next = usable.map((f) => ({ rid: `f${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, file: f, merged: false }));
-    setPicked((prev) => [...prev, ...next]);
-    setBillGroups((prev) => [...prev, ...next.map((p) => [p.rid])]);
-    setResults(null);
+    const taken = usable.slice(0, Math.max(0, MAX_PILE_FILES - picked.length));
+    const said = [
+      usable.length < files.length ? 'Some files were skipped — JPEG / PNG / WebP / PDF only.' : null,
+      taken.length < usable.length
+        ? `A pile holds at most ${MAX_PILE_FILES} files — ${usable.length - taken.length} left out. Read these first, then add the rest.`
+        : null,
+    ].filter(Boolean).join(' ');
+    if (said) setNote(said);
+    if (taken.length === 0) return;
+    const next = taken.map((f) => ({ rid: `f${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, file: f, merged: false }));
+    pileChanged((p) => ({ picked: [...p.picked, ...next], billGroups: [...p.billGroups, ...next.map((n) => [n.rid])] }));
   };
   const addFiles = (list: FileList | null) => { if (list) addFileArray([...list]); };
 
   /* 拖进来就收 (the owner, 2026-09-02: 我无法从我的folder 拖动进来upload) —
-     and Ctrl+V for a screenshot of a bill. */
+     and Ctrl+V for a screenshot of a bill. The listener is set once and calls
+     the latest adder, so it sees the pile (and its cap) as it is now. */
   const [dragOver, setDragOver] = useState(false);
+  const addLatest = useRef(addFileArray);
+  useEffect(() => { addLatest.current = addFileArray; });
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const files = [...(e.clipboardData?.files ?? [])];
-      if (files.length > 0) addFileArray(files);
+      if (files.length > 0) addLatest.current(files);
     };
     window.addEventListener('paste', onPaste);
     return () => { window.removeEventListener('paste', onPaste); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* 合并所选 — the ticked files become ONE bill (case 1). */
   const mergeTicked = () => {
-    if (ticked.size < 2) return;
-    setBillGroups((prev) => {
-      const kept = prev.filter((g) => !g.some((rid) => ticked.has(rid)));
-      const mergedRids = prev.flat().filter((rid) => ticked.has(rid));
-      return [...kept, [mergedRids].flat().length > 0 ? mergedRids : []].filter((g) => g.length > 0);
+    if (ticked.size < 2 || busy) return;
+    pileChanged((p) => {
+      const kept = p.billGroups.filter((g) => !g.some((rid) => ticked.has(rid)));
+      const mergedRids = p.billGroups.flat().filter((rid) => ticked.has(rid));
+      return {
+        billGroups: [...kept, [mergedRids].flat().length > 0 ? mergedRids : []].filter((g) => g.length > 0),
+        picked: p.picked.map((f) => (ticked.has(f.rid) ? { ...f, merged: true } : f)),
+      };
     });
-    setPicked((prev) => prev.map((p) => (ticked.has(p.rid) ? { ...p, merged: true } : p)));
     setTicked(new Set());
-    setResults(null);
   };
 
   const removeFile = (rid: string) => {
-    setPicked((prev) => prev.filter((p) => p.rid !== rid));
-    setBillGroups((prev) => prev.map((g) => g.filter((r) => r !== rid)).filter((g) => g.length > 0));
-    setResults(null);
+    if (busy) return;
+    pileChanged((p) => ({
+      picked: p.picked.filter((f) => f.rid !== rid),
+      billGroups: p.billGroups.map((g) => g.filter((r) => r !== rid)).filter((g) => g.length > 0),
+    }));
+  };
+
+  /* Only the run that sent a bill may land its answer — a cleared or re-read
+     pile drops a late one. The pile is read from the store, never from this
+     render: the page may have been left and come back meanwhile. */
+  const forRun = (runId: number, change: (p: PileState) => PileState) =>
+    updatePile(key, (p) => (p.run === runId ? change(p) : p));
+  /* A bill's answer, put in its place in the pile (a read-again replaces the old one). */
+  const land = (runId: number, b: ExtractedBill) => forRun(runId, (p) => ({
+    ...p, results: [...(p.results ?? []).filter((r) => r.index !== b.index), b].sort((x, y) => x.index - y.index),
+  }));
+
+  /* ONE bill to the reader — its own request, its own wait. A bill that cannot
+     be read (or a reader that took too long) is that bill's answer, never the
+     pile's. */
+  const readBill = async (runId: number, index: number, rids: string[], byRid: Map<string, File>): Promise<void> => {
+    let files: PvFilePayload[];
+    try {
+      files = await Promise.all(rids.map(async (rid) => {
+        const f = byRid.get(rid)!;
+        return { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) };
+      }));
+    } catch (e) {
+      land(runId, { index, ok: false, reason: e instanceof Error ? e.message : 'The file could not be read from disk.' });
+      return;
+    }
+    forRun(runId, (p) => { const n = [...p.billFiles]; n[index] = files; return { ...p, billFiles: n }; });
+    try {
+      const got = (await extract.mutateAsync([{ files }])).bills.at(0);
+      land(runId, got ? { ...got, index } : { index, ok: false, reason: 'The reader sent nothing back — read it again.' });
+    } catch (e) {
+      land(runId, { index, ok: false, reason: e instanceof Error ? e.message : 'The bill could not be read.' });
+    }
   };
 
   const run = async () => {
-    setNote('Reading…');
-    try {
-      const byRid = new Map(picked.map((p) => [p.rid, p.file]));
-      const bills = await Promise.all(billGroups.map(async (g) => ({
-        files: await Promise.all(g.map(async (rid) => {
-          const f = byRid.get(rid)!;
-          return { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) };
-        })),
-      })));
-      setBillFiles(bills.map((b) => b.files));
-      const res = await extract.mutateAsync(bills);
-      setResults(res.bills);
-      setTickedForOne(new Set());
-      const failed = res.bills.filter((b) => !b.ok).length;
-      setNote(failed > 0 ? `${failed} bill(s) could not be read — they are listed below with the reason.` : null);
-    } catch (e) {
-      setNote(e instanceof Error ? e.message : 'The pile could not be read.');
-    }
+    if (busy || billGroups.length === 0) return;
+    const bills = billGroups;
+    const byRid = new Map(picked.map((p) => [p.rid, p.file]));
+    const runId = getPile(key).run + 1;
+    set((p) => ({ ...p, run: runId, results: [], billFiles: [], opened: [], progress: { done: 0, total: bills.length } }));
+    setTickedForOne(new Set());
+    setNote(null);
+    let next = 0;
+    /* READ_AT_ONCE lanes, each taking the next bill as its last one lands. */
+    const lane = async () => {
+      while (next < bills.length && getPile(key).run === runId) {
+        const i = next++;
+        await readBill(runId, i, bills[i]!, byRid);
+        forRun(runId, (p) => ({ ...p, progress: p.progress ? { ...p.progress, done: p.progress.done + 1 } : p.progress }));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(READ_AT_ONCE, bills.length) }, lane));
+    forRun(runId, (p) => ({ ...p, progress: null }));
+  };
+
+  const readAgain = async (index: number) => {
+    const rids = billGroups.at(index);
+    if (!rids || busy) return;
+    const runId = getPile(key).run;
+    forRun(runId, (p) => ({ ...p, rereading: [...p.rereading, index] }));
+    await readBill(runId, index, rids, new Map(picked.map((p) => [p.rid, p.file])));
+    forRun(runId, (p) => ({ ...p, rereading: p.rereading.filter((i) => i !== index) }));
+  };
+  /* A bill opened as a document — the pile says so when you come back. */
+  const markOpened = (indices: number[]) => set((p) => ({ ...p, opened: [...new Set([...p.opened, ...indices])] }));
+  /* The files a bill was made of, by name — how a failed bill is told apart. */
+  const namesOf = (index: number): string => {
+    const byRid = new Map(picked.map((p) => [p.rid, p.file.name]));
+    return (billGroups[index] ?? []).map((rid) => byRid.get(rid) ?? '').filter(Boolean).join(' + ');
   };
 
   /* Group the READ bills by matched supplier; unmatched ones group by the
@@ -182,12 +274,14 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
      pre-filled from this bill, the pages riding the same stash the voucher
      uses, attached on save. */
   const openApInvoice = (b: Extract<ExtractedBill, { ok: true }>) => {
+    markOpened([b.index]);
     stashPvFiles(billFiles[b.index] ?? []);
     navigate('/scm/ap-invoices', { state: { apPrefill: { extraction: b.extraction, supplierMatch: b.supplierMatch, memory: b.memory, eventSuggestions: b.eventSuggestions ?? [] } } });
   };
 
   /* Case 4 — the ticked receipts, whatever shop each came from, as ONE voucher. */
   const okBills = useMemo(() => (results ?? []).filter((b): b is Extract<ExtractedBill, { ok: true }> => b.ok), [results]);
+  const failedCount = (results ?? []).length - okBills.length;
   const labelOf = (b: Extract<ExtractedBill, { ok: true }>) => b.supplierMatch?.name ?? b.extraction.vendorName ?? `Unnamed bill ${b.index + 1}`;
   const tickedBills = okBills.filter((b) => tickedForOne.has(b.index));
   const tickedCurrencies = new Set(tickedBills.map((b) => b.extraction.currency));
@@ -210,6 +304,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
     });
     const first = tickedBills[0]!;
     const dates = tickedBills.map((b) => b.extraction.invoiceDate).filter((d): d is string => !!d).sort();
+    markOpened(tickedBills.map((b) => b.index));
     openVoucher(
       {
         ...first.extraction,
@@ -237,6 +332,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
     }));
     /* One vendor per group by construction, so the first bill's memory IS the
        group's. */
+    markOpened(g.bills.map((b) => b.index));
     openVoucher(
       { ...first.extraction, invoiceNumber: g.bills.map((b) => b.extraction.invoiceNumber).filter(Boolean).join(', ') || null },
       /* Every member bill's pages, in bill order — the ONE voucher carries the
@@ -270,17 +366,27 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)' }}>
               <Camera {...ICON} /> Add bills
               <input type="file" multiple accept={ACCEPT_MIMES}
-                aria-label="Add bill files" style={{ display: 'none' }}
+                aria-label="Add bill files" style={{ display: 'none' }} disabled={busy}
                 onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
             </label>
-            <Button variant="secondary" size="sm" onClick={mergeTicked} disabled={ticked.size < 2}>
+            <Button variant="secondary" size="sm" onClick={mergeTicked} disabled={ticked.size < 2 || busy}>
               {ticked.size > 1 ? `These ${ticked.size} files are pages of ONE bill — merge` : 'Pages of one bill — merge'}
             </Button>
             <span style={{ flex: 1 }} />
-            <Button variant="primary" size="sm" onClick={() => void run()} disabled={picked.length === 0 || extract.isPending}>
-              {extract.isPending ? 'Reading…' : `Read ${billGroups.length} bill(s)`}
+            {picked.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={() => { clearPile(key); setTicked(new Set()); setTickedForOne(new Set()); setNote(null); }}>
+                Clear the pile
+              </Button>
+            )}
+            <Button variant="primary" size="sm" onClick={() => void run()} disabled={picked.length === 0 || busy}>
+              {progress ? `Reading… ${progress.done} of ${progress.total} done` : `Read ${billGroups.length} bill(s)`}
             </Button>
           </div>
+          {progress && (
+            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+              {READ_AT_ONCE} bills with the reader at a time — each shows below as it is read. Opening waits until every bill is read.
+            </div>
+          )}
 
           {picked.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -293,8 +399,8 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                   <FileText {...ICON} />
                   <span>{p.file.name}</span>
                   {p.merged && <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>(merged page)</span>}
-                  <button type="button" aria-label={`Remove ${p.file.name}`} onClick={() => removeFile(p.rid)}
-                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--fg-muted)' }}>
+                  <button type="button" aria-label={`Remove ${p.file.name}`} onClick={() => removeFile(p.rid)} disabled={busy}
+                    style={{ border: 'none', background: 'none', cursor: busy ? 'default' : 'pointer', color: 'var(--fg-muted)' }}>
                     <X size={14} strokeWidth={1.75} />
                   </button>
                 </div>
@@ -302,6 +408,11 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
             </div>
           )}
           {note && <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)' }}>{note}</div>}
+          {!progress && failedCount > 0 && (
+            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)' }}>
+              {failedCount} bill(s) could not be read — each says why below; Read again tries just that one.
+            </div>
+          )}
         </div>
       </section>
 
@@ -311,7 +422,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
             <section className={styles.card}>
               <div className={styles.cardBody} style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--fs-13)' }}>
                 <span style={{ color: 'var(--fg-muted)' }}>Different receipts on ONE voucher (petty cash): tick them below, then</span>
-                <Button variant="primary" size="sm" onClick={openTickedAsOne} disabled={tickedBills.length < 2 || tickedCurrencies.size > 1}>
+                <Button variant="primary" size="sm" onClick={openTickedAsOne} disabled={busy || tickedBills.length < 2 || tickedCurrencies.size > 1}>
                   Open ticked as ONE voucher ({tickedBills.length} lines)
                 </Button>
                 {tickedCurrencies.size > 1
@@ -346,20 +457,23 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                             onChange={(e) => setTickedForOne((prev) => { const n = new Set(prev); if (e.target.checked) n.add(b.index); else n.delete(b.index); return n; })}
                             style={{ width: 15, height: 15, accentColor: 'var(--c-orange)' }} />
                         )}
-                        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{b.extraction.invoiceNumber ?? '(no number)'}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>
+                          {b.extraction.invoiceNumber ?? '(no number)'}
+                          {opened.includes(b.index) && <span style={{ fontFamily: 'inherit', fontWeight: 400, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginLeft: 6 }}>· opened</span>}
+                        </span>
                         <span style={{ color: 'var(--fg-muted)' }}>{fmtDate(b.extraction.invoiceDate)}</span>
                         <span style={{ color: 'var(--fg-muted)' }}>{b.extraction.dueDate ? `due ${fmtDate(b.extraction.dueDate)}` : ''}</span>
                         <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(b.extraction.totalSen)}</span>
                         {ap ? (
-                          <Button variant="primary" size="sm" onClick={() => openApInvoice(b)}>
+                          <Button variant="primary" size="sm" onClick={() => openApInvoice(b)} disabled={busy}>
                             Open as AP invoice
                           </Button>
                         ) : split ? (
                           <span style={{ display: 'inline-flex', gap: 6 }}>
-                            <Button variant="secondary" size="sm" onClick={() => openVoucher(b.extraction, { memory: b.memory, files: billFiles[b.index] ?? [], eventSuggestions: b.eventSuggestions ?? [] })}>
+                            <Button variant="secondary" size="sm" disabled={busy} onClick={() => { markOpened([b.index]); openVoucher(b.extraction, { memory: b.memory, files: billFiles[b.index] ?? [], eventSuggestions: b.eventSuggestions ?? [] }); }}>
                               Open as voucher
                             </Button>
-                            <Button variant="ghost" size="sm" onClick={() => openBill(b.extraction, g.supplierId)}>
+                            <Button variant="ghost" size="sm" onClick={() => { markOpened([b.index]); openBill(b.extraction, g.supplierId); }} disabled={busy}>
                               Open as bill
                             </Button>
                           </span>
@@ -382,6 +496,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                           ))}
                         </div>
                       )}
+                      <PileBillMatches no={b.extraction.invoiceNumber} date={b.extraction.invoiceDate} />
                     </div>
                   ))}
                   {!ap && g.bills.length > 1 && (
@@ -394,10 +509,11 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                         pay each bill separately
                       </label>
                       {!split && (<>
-                        <Button variant="primary" size="sm" onClick={() => openGroupAsOne(g)}>
+                        <Button variant="primary" size="sm" onClick={() => openGroupAsOne(g)} disabled={busy}>
                           Open as ONE voucher ({g.bills.length} lines)
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => {
+                        <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
+                          markOpened(g.bills.map((b) => b.index));
                           const first = g.bills[0]!;
                           openBill(
                             { ...first.extraction, invoiceNumber: g.bills.map((b) => b.extraction.invoiceNumber).filter(Boolean).join(', ') || null },
@@ -419,8 +535,13 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
           })}
           {results.filter((b) => !b.ok).map((b) => (
             <section key={`fail-${b.index}`} className={styles.card}>
-              <div className={styles.cardBody} style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-13)' }}>
-                Bill {b.index + 1} could not be read: {(b as { reason: string }).reason}
+              <div className={styles.cardBody} style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--fs-13)' }}>
+                <span style={{ color: 'var(--c-festive-b, #B8331F)', flex: 1, minWidth: 0 }}>
+                  Bill {b.index + 1}{namesOf(b.index) ? ` (${namesOf(b.index)})` : ''} could not be read: {(b as { reason: string }).reason}
+                </span>
+                <Button variant="secondary" size="sm" onClick={() => void readAgain(b.index)} disabled={busy}>
+                  {rereading.includes(b.index) ? 'Reading…' : 'Read again'}
+                </Button>
               </div>
             </section>
           ))}

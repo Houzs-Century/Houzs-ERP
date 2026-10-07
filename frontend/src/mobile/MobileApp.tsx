@@ -861,7 +861,7 @@ function MobileAppInner() {
   else if (screen.t === "new-so") overlay = <MobileNewSO mode={screen.mode} docNo={screen.docNo} scanPrefill={screen.scanPrefill} convertFrom={screen.convertFrom} openAddLine={screen.addLine === true} onBack={back} onSaved={(d) => setScreen({ t: "so-detail", docNo: d })} />;
   else if (screen.t === "scan") overlay = <MobileScan onBack={back} onDrafted={onScanDrafted} onOpenSo={(docNo) => setScreen({ t: "so-detail", docNo })} />;
   else if (screen.t === "scan-pi") overlay = <MobileScanInvoice onBack={back} onOpenPi={() => setScreen({ t: "module", key: "purchase-invoices", title: "Purchase Invoices" })} />;
-  else if (screen.t === "grn-scan") overlay = <MobileGrnScan onBack={() => setScreen({ t: "module", key: screen.key, title: screen.title })} />;
+  else if (screen.t === "grn-scan") overlay = <MobileGrnScan onBack={() => setScreen({ t: "module", key: screen.key, title: screen.title })} onOpenGrn={(id) => setScreen({ t: "module-detail", key: screen.key, row: { id }, title: screen.title })} />;
   else if (screen.t === "module") {
     const k = screen.key;
     const convertTarget = MODULE_TO_CONVERT[k];

@@ -86,4 +86,5 @@ The code is stored in the EXISTING `reason` column — no migration, no rewrite.
 - `backend/src/scm/shared/purchase-return-reasons.ts` (+ the `frontend/src/vendor/shared/` mirror) — the reason catalogue, the two kinds, and the pairing rule.
 - `backend/src/db/migrations-pg/20260928T0800_scm_purchase_return_repair_kind.sql` — `kind` + `repair_warehouse_id`.
 - `frontend/src/pages/scm-v2/PurchaseReturnsListV2.tsx`, `PurchaseReturnDetailV2.tsx`, `PurchaseReturnNew.tsx` — desktop surfaces.
+- `frontend/src/pages/scm-v2/PurchaseReturnDetail.tsx` — the `?edit=1` editor, lazy-loaded by `PurchaseReturnDetailV2` (same pattern as PO / GRN / PI). It has no route of its own: do not delete it as "unrouted" — #794 did, and Edit silently stopped working. Only a POSTED return is editable.
 - `frontend/src/pages/scm-v2/PurchaseOrderDetailV2.tsx` — the **Raise Return** button (RECEIVED / PARTIALLY_RECEIVED, gated on `scm.procurement.pr` page access). It lived only on the legacy PO detail, which no route renders, so a received PO had no way into a return at all until 2026-09-28.

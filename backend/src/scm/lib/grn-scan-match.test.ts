@@ -4,6 +4,7 @@
 // open PO line; zero or many leave it UNMATCHED, and nothing is ever guessed.
 import { describe, expect, test } from 'vitest';
 import {
+  describeUnmatchedScanLines,
   matchGrnScanToPoLines,
   normalizeCode,
   normalizeSupplierName,
@@ -177,7 +178,7 @@ describe('matchGrnScanToPoLines', () => {
   // Regression: a Hookka delivery order with 6 lines where only 1 item code hit
   // any open PO line company-wide became a GRN against the wrong PO, and once
   // posted it flipped that PO's sales order to READY.
-  test('one stray hit out of six lines is refused, never a draft', () => {
+  test('one stray hit out of six lines becomes a draft flagged as a weak match', () => {
     const res = matchGrnScanToPoLines(
       'PO-010070',
       [
@@ -190,8 +191,9 @@ describe('matchGrnScanToPoLines', () => {
       [],
       'sup-1',
     );
-    expect(res.picks).toEqual([]);
-    expect(res.refused).toBe('too_few_lines');
+    expect(res.picks).toEqual([{ poItemId: 'pi-1', qty: 1 }]);
+    expect(res.refused).toBeNull();
+    expect(res.weakMatch).toEqual({ matched: 1, scanned: 6 });
     expect(res.unmatched).toHaveLength(5);
   });
 
@@ -260,6 +262,77 @@ describe('matchGrnScanToPoLines', () => {
   });
 });
 
+// DO-2609-097 (Hookka, 2026-09-30): one delivery order, no header P.O., each row
+// printing its own PO. Row 1 is a fair/service item whose PO (ART-HOK-002) is not
+// ours. The old read dropped the per-row POs, item-matched row 1 onto a
+// customer's ELEPHANE line on HC-PO-2609-263, and received none of the five
+// JAGER rows. Shapes copied from production.
+describe('matchGrnScanToPoLines — a PO number printed per row', () => {
+  const hookkaOpen: OpenPoLine[] = [
+    line({ poItemId: 'pi-263-K', poNumber: 'HC-PO-2609-263', itemCode: 'ELEPHANE-(K)', supplierSku: 'HOK-2003-(K)', remaining: 1 }),
+    line({ poItemId: 'pi-263-Q', poNumber: 'HC-PO-2609-263', itemCode: 'ELEPHANE-(Q)', supplierSku: 'HOK-2003-(Q)', remaining: 2 }),
+    line({ poItemId: 'pi-148', poNumber: 'HC-PO-2609-148', itemCode: 'JAGER-(Q)', supplierSku: '1013-(Q)', remaining: 1 }),
+    line({ poItemId: 'pi-150', poNumber: 'HC-PO-2609-150', itemCode: 'JAGER-(Q)', supplierSku: '1013-(Q)', remaining: 1 }),
+    line({ poItemId: 'pi-152', poNumber: 'HC-PO-2609-152', itemCode: 'JAGER-(Q)', supplierSku: '1013-(Q)', remaining: 1 }),
+    line({ poItemId: 'pi-192', poNumber: 'HC-PO-2609-192', itemCode: 'JAGER-(K)', supplierSku: '1013-(K)', remaining: 1 }),
+    line({ poItemId: 'pi-193', poNumber: 'HC-PO-2609-193', itemCode: 'JAGER-(SS)', supplierSku: '1013-(SS)', remaining: 1 }),
+  ];
+  const hookkaBindings: SupplierSkuBinding[] = [{ supplierSku: '2003-(K)', acItemCode: null, itemCode: 'ELEPHANE-(K)' }];
+  const do097 = (withRowPo: boolean): ScannedGrnLine[] => [
+    ['2003-(K)', 'ART-HOK-002'],
+    ['1013-(Q)', 'HC-PO-2609-148'],
+    ['1013-(Q)', 'HC-PO-2609-150'],
+    ['1013-(Q)', 'HC-PO-2609-152'],
+    ['1013-(K)', 'HC-PO-2609-192'],
+    ['1013-(SS)', 'HC-PO-2609-193'],
+  ].map(([itemCode, poNo]) => scan({ itemCode, qty: 1, poNo: withRowPo ? poNo : null }));
+
+  test('each row lands on its own PO; the fair item is never put on a customer PO', () => {
+    const res = matchGrnScanToPoLines(null, do097(true), hookkaOpen, hookkaBindings, 'sup-1');
+    expect(res.refused).toBeNull();
+    expect(res.picks).toEqual([
+      { poItemId: 'pi-148', qty: 1 },
+      { poItemId: 'pi-150', qty: 1 },
+      { poItemId: 'pi-152', qty: 1 },
+      { poItemId: 'pi-192', qty: 1 },
+      { poItemId: 'pi-193', qty: 1 },
+    ]);
+    expect(res.picks.map((p) => p.poItemId)).not.toContain('pi-263-K');
+    expect(res.unmatched).toEqual([
+      { line: do097(true)[0], reason: 'po_not_open', candidatePoItemIds: [] },
+    ]);
+    expect(res.matchedPoNumbers).toEqual([
+      'HC-PO-2609-148', 'HC-PO-2609-150', 'HC-PO-2609-152', 'HC-PO-2609-192', 'HC-PO-2609-193',
+    ]);
+  });
+
+  test('the same document read without the row POs is refused, not half-received', () => {
+    const res = matchGrnScanToPoLines(null, do097(false), hookkaOpen, hookkaBindings, 'sup-1');
+    expect(res.picks).toEqual([]);
+    expect(res.refused).not.toBeNull();
+  });
+
+  test('a row with no PO beside rows that name theirs is left for the operator', () => {
+    const lines = [...do097(true).slice(1), scan({ itemCode: '2003-(K)', qty: 1 })];
+    const res = matchGrnScanToPoLines(null, lines, hookkaOpen, hookkaBindings, 'sup-1');
+    expect(res.picks).toHaveLength(5);
+    expect(res.picks.map((p) => p.poItemId)).not.toContain('pi-263-K');
+    expect(res.unmatched).toEqual([{ line: lines[5], reason: 'no_po_number', candidatePoItemIds: [] }]);
+  });
+
+  test('a printed PO that is not open (already received) is never item-matched elsewhere', () => {
+    const open = hookkaOpen.filter((l) => l.poNumber !== 'HC-PO-2609-148');
+    const res = matchGrnScanToPoLines(null, [scan({ itemCode: '1013-(Q)', qty: 1, poNo: 'HC-PO-2609-148' })], open, [], 'sup-1');
+    expect(res.picks).toEqual([]);
+    expect(res.unmatched[0].reason).toBe('po_not_open');
+  });
+
+  test('a row PO narrows an otherwise ambiguous item code to that PO', () => {
+    const res = matchGrnScanToPoLines(null, [scan({ itemCode: '1013-(Q)', qty: 1, poNo: 'hc po 2609 150' })], hookkaOpen, [], 'sup-1');
+    expect(res.picks).toEqual([{ poItemId: 'pi-150', qty: 1 }]);
+  });
+});
+
 describe('resolveScannedSupplier', () => {
   const suppliers = [
     { id: 'hookka', code: '400-H004', name: 'HOOKKA INDUSTRIES SDN. BHD.' },
@@ -282,5 +355,30 @@ describe('resolveScannedSupplier', () => {
     expect(resolveScannedSupplier('SOMEONE ELSE SDN BHD', suppliers)).toBeNull();
     expect(resolveScannedSupplier(null, suppliers)).toBeNull();
     expect(resolveScannedSupplier('HOME LIVING', suppliers)).toBeNull();
+  });
+});
+
+describe('describeUnmatchedScanLines (BUG-61: the draft says what to add)', () => {
+  test('null when every scanned line matched', () => {
+    expect(describeUnmatchedScanLines([])).toBeNull();
+  });
+
+  test('names each left-off line with its qty and why', () => {
+    const note = describeUnmatchedScanLines([
+      { line: scan({ itemCode: 'AMN-SF9050', description: 'SOFA 2B(RHF)', qty: 2 }), reason: 'no_open_po_line', candidatePoItemIds: [] },
+      { line: scan({ itemCode: 'HB-01', qty: 1, poNo: 'ART-HOK-002' }), reason: 'po_not_open', candidatePoItemIds: [] },
+      { line: scan({ barcode: '955000111', qty: 3 }), reason: 'ambiguous', candidatePoItemIds: ['a', 'b'] },
+    ]);
+    expect(note).toBe(
+      'Not added, please add on the draft: AMN-SF9050 SOFA 2B(RHF) x2 (no open PO line); '
+      + 'HB-01 x1 (PO ART-HOK-002 is not open); 955000111 x3 (more than one PO line fits).',
+    );
+  });
+
+  test('caps a long list', () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({
+      line: scan({ itemCode: `X${i}`, qty: 1 }), reason: 'no_open_po_line' as const, candidatePoItemIds: [],
+    }));
+    expect(describeUnmatchedScanLines(many, 10)).toMatch(/X9 x1 \(no open PO line\); and 2 more\.$/);
   });
 });

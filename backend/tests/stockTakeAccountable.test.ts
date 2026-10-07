@@ -1,7 +1,6 @@
 // Stock take phase 1 (owner-approved 2026-08-08) — the ACCOUNTABILITY gates:
-//   • posting is allowed only for the take's ASSIGNEE or a holder of
-//     scm.stock_take.supervise (legacy assignee-less takes keep the old
-//     behaviour so history stays operable);
+//   • the assignees are a RECORD of who counted (owner 2026-10-06) — anyone
+//     with stock-take access may post; a take may name several assignees;
 //   • variances beyond the threshold (shared/stock-take-threshold.ts) need the
 //     supervise permission, refusal reverts the POSTED flip — same posture as
 //     the R3 cost_required path;
@@ -17,13 +16,16 @@
 // mounting the EXPORTED handlers — the supabaseAuth bridge cannot run here.
 // Same approach (and FakeQuery shape) as tests/companyScopeHardening.test.ts.
 import { Hono } from 'hono';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
+  addStockTakeLineHandler,
   createStockTakeHandler,
   getStockTakeDetailHandler,
+  patchStockTakeHeaderHandler,
   patchStockTakeLinesHandler,
   postStockTakeHandler,
 } from '../src/scm/routes/stock-takes';
+import { readStockTakeSheetHandler } from '../src/scm/routes/stock-take-sheet-read';
 
 const CO = 1;
 /* The caller's REAL staff row (mig-0066 bridge) and a second person's. */
@@ -115,6 +117,9 @@ function harness(tables: Record<string, Row[]>, opts?: { perms?: string[] }) {
   app.get('/stock-takes/:id', getStockTakeDetailHandler as never);
   app.patch('/stock-takes/:id/post', postStockTakeHandler as never);
   app.patch('/stock-takes/:id/lines', patchStockTakeLinesHandler as never);
+  app.patch('/stock-takes/:id', patchStockTakeHeaderHandler as never);
+  app.post('/stock-takes/:id/lines', addStockTakeLineHandler as never);
+  app.post('/stock-takes/:id/read-sheet', readStockTakeSheetHandler as never);
   return { app, log };
 }
 
@@ -148,7 +153,7 @@ const takeFixture = (over?: Partial<Row>): Record<string, Row[]> => ({
   inventory_movements: [],
 });
 
-describe('post gate — assignee or supervisor', () => {
+describe('post gate — assignees are a record, not a gate', () => {
   test('the assignee may post, and the movement stamps THEIR staff uuid (Unknown-user fix)', async () => {
     const t = takeFixture();
     const res = await jsonReq(harness(t).app, '/stock-takes/st-1/post', 'PATCH');
@@ -160,15 +165,12 @@ describe('post gate — assignee or supervisor', () => {
     expect(t.inventory_movements[0].performed_by).not.toBe('system-staff-uuid');
   });
 
-  test('a non-assignee without the permission is refused and nothing changes', async () => {
-    const t = takeFixture({ assignee_staff_id: OTHER_STAFF });
+  test('a non-assignee may post (owner 2026-10-06: assignee is only a record)', async () => {
+    const t = takeFixture({ assignee_staff_id: OTHER_STAFF, assignee_staff_ids: [OTHER_STAFF] });
     const res = await jsonReq(harness(t).app, '/stock-takes/st-1/post', 'PATCH');
-    expect(res.status).toBe(403);
-    const body = await res.json() as Row;
-    expect(body.error).toBe('not_assignee');
-    expect(String(body.message).length).toBeLessThan(200);
-    expect(t.stock_takes[0].status).toBe('OPEN');
-    expect(t.inventory_movements).toHaveLength(0);
+    expect(res.status).toBe(200);
+    expect(t.stock_takes[0].status).toBe('POSTED');
+    expect(t.inventory_movements[0].performed_by).toBe(CALLER_STAFF);
   });
 
   test('a supervisor who is NOT the assignee may post', async () => {
@@ -367,5 +369,156 @@ describe('counted cells record WHO and WHEN', () => {
     expect(t.stock_take_lines[0].counted_qty).toBeNull();
     expect(t.stock_take_lines[0].counted_by).toBeNull();
     expect(t.stock_take_lines[0].counted_at).toBeNull();
+  });
+});
+
+describe('round 1 (owner 2026-10-06)', () => {
+  const createTables = (): Record<string, Row[]> => ({
+    v_inventory_all_skus: [
+      { company_id: CO, warehouse_id: 'w1', item_code: 'MATT-A', product_name: 'Mattress A', category: 'MATTRESS' },
+      { company_id: CO, warehouse_id: 'w1', item_code: 'MATT-B', product_name: 'Mattress B', category: 'MATTRESS' },
+    ],
+    inventory_balances: [
+      { company_id: CO, warehouse_id: 'w1', item_code: 'MATT-A', variant_key: '', product_name: 'Mattress A', qty: 4 },
+      { company_id: CO, warehouse_id: 'w1', item_code: 'MATT-B', variant_key: '', product_name: 'Mattress B', qty: 0 },
+    ],
+    stock_takes: [],
+    stock_take_lines: [],
+  });
+
+  test('create takes several assignees; the first also fills the single column', async () => {
+    const t = createTables();
+    const res = await jsonReq(harness(t).app, '/stock-takes', 'POST', {
+      warehouseId: 'w1', scopeType: 'ALL', assigneeStaffIds: [OTHER_STAFF, CALLER_STAFF, OTHER_STAFF],
+    });
+    expect(res.status).toBe(201);
+    expect(t.stock_takes[0].assignee_staff_ids).toEqual([OTHER_STAFF, CALLER_STAFF]);
+    expect(t.stock_takes[0].assignee_staff_id).toBe(OTHER_STAFF);
+  });
+
+  test('"only SKUs with stock" combines with a Category scope', async () => {
+    const t = createTables();
+    const res = await jsonReq(harness(t).app, '/stock-takes', 'POST', {
+      warehouseId: 'w1', scopeType: 'CATEGORY', scopeValue: 'MATTRESS', nonzeroOnly: true,
+      assigneeStaffIds: [CALLER_STAFF],
+    });
+    expect(res.status).toBe(201);
+    expect(t.stock_take_lines.map((l) => l.item_code)).toEqual(['MATT-A']);
+    expect(t.stock_takes[0].nonzero_only).toBe(true);
+    expect(t.stock_takes[0].scope_type).toBe('CATEGORY');
+  });
+
+  test('an OPEN take\'s assignees and notes can be edited; a POSTED one cannot', async () => {
+    const t = takeFixture();
+    const { app } = harness(t);
+    const res = await jsonReq(app, '/stock-takes/st-1', 'PATCH', { assigneeStaffIds: [CALLER_STAFF, OTHER_STAFF], notes: ' Row A ' });
+    expect(res.status).toBe(200);
+    expect(t.stock_takes[0].assignee_staff_ids).toEqual([CALLER_STAFF, OTHER_STAFF]);
+    expect(t.stock_takes[0].notes).toBe('Row A');
+    expect((await jsonReq(app, '/stock-takes/st-1', 'PATCH', { assigneeStaffIds: [] })).status).toBe(400);
+    t.stock_takes[0].status = 'POSTED';
+    expect((await jsonReq(app, '/stock-takes/st-1', 'PATCH', { notes: 'x' })).status).toBe(409);
+  });
+
+  test('Add line: a found SKU lands counted, with live system qty; a duplicate is refused', async () => {
+    const t = takeFixture();
+    t.mfg_products = [{ code: 'PILLOW', name: 'Pillow', category: 'ACCESSORY', company_id: CO }];
+    const { app } = harness(t);
+    const res = await jsonReq(app, '/stock-takes/st-1/lines', 'POST', { itemCode: 'PILLOW', countedQty: 3 });
+    expect(res.status).toBe(201);
+    const added = t.stock_take_lines.find((l) => l.item_code === 'PILLOW')!;
+    expect(added.counted_qty).toBe(3);
+    expect(added.system_qty).toBe(0);
+    expect(added.added_on_count).toBe(true);
+    expect(added.counted_by).toBe(CALLER_STAFF);
+    const again = await jsonReq(app, '/stock-takes/st-1/lines', 'POST', { itemCode: 'PILLOW', countedQty: 1 });
+    expect(again.status).toBe(409);
+    expect(((await again.json()) as Row).error).toBe('line_exists');
+  });
+
+  test('Add line: a sofa needs a variant; another company\'s SKU is unknown', async () => {
+    const t = takeFixture();
+    t.mfg_products = [
+      { code: 'SOFA-1', name: 'Sofa', category: 'SOFA', company_id: CO },
+      { code: 'THEIRS', name: 'Other co', category: 'ACCESSORY', company_id: 2 },
+    ];
+    const { app } = harness(t);
+    const sofa = await jsonReq(app, '/stock-takes/st-1/lines', 'POST', { itemCode: 'SOFA-1', countedQty: 1 });
+    expect(((await sofa.json()) as Row).error).toBe('variant_required');
+    const theirs = await jsonReq(app, '/stock-takes/st-1/lines', 'POST', { itemCode: 'THEIRS', countedQty: 1 });
+    expect(theirs.status).toBe(404);
+  });
+
+  test('detail carries the RM estimate per line; a blind OPEN take withholds it', async () => {
+    const open = takeFixture();
+    const body = await (await harness(open).app.request('/stock-takes/st-1')).json() as Row;
+    expect(body.lines[0].est_unit_cost_sen).toBe(1000);
+    const blind = takeFixture({ blind: true });
+    const hidden = await (await harness(blind).app.request('/stock-takes/st-1')).json() as Row;
+    expect(hidden.lines[0].est_unit_cost_sen).toBeNull();
+  });
+});
+
+describe('round 2 — racks and the paper sheet (owner 2026-10-06)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+  const withRacks = (t: Record<string, Row[]>) => {
+    t.warehouse_racks = [
+      { id: 'r1', rack: 'Rack L5.1', warehouse_id: 'w1', company_id: CO, reserved: false },
+      { id: 'r-other', rack: 'Rack L5.1', warehouse_id: 'w2', company_id: CO, reserved: false },
+    ];
+    t.warehouse_rack_items = [{ id: 'old-1', rack_id: 'r1x', item_code: 'CODY', qty: 10, company_id: CO }];
+    t.warehouse_rack_movements = [];
+    return t;
+  };
+
+  test('a line can name a rack of the take\'s warehouse, never another warehouse\'s', async () => {
+    const t = withRacks(takeFixture());
+    const { app } = harness(t);
+    const ok = await jsonReq(app, '/stock-takes/st-1/lines', 'PATCH', { lines: [{ id: 'ln-1', rackId: 'r1' }] });
+    expect(ok.status).toBe(200);
+    expect(t.stock_take_lines[0].rack_id).toBe('r1');
+    const bad = await jsonReq(app, '/stock-takes/st-1/lines', 'PATCH', { lines: [{ id: 'ln-1', rackId: 'r-other' }] });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as Row).error).toBe('rack_not_in_warehouse');
+    expect(t.stock_take_lines[0].rack_id).toBe('r1');
+  });
+
+  test('posting moves the counted goods onto the written rack and logs it', async () => {
+    const t = withRacks(takeFixture());
+    t.warehouse_racks.push({ id: 'r1x', rack: 'Rack L1.1', warehouse_id: 'w1', company_id: CO, reserved: false });
+    t.stock_take_lines[0].rack_id = 'r1';
+    t.stock_take_lines[0].company_id = CO;
+    const res = await jsonReq(harness(t).app, '/stock-takes/st-1/post', 'PATCH');
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Row).racksMoved).toBe(1);
+    expect(t.warehouse_rack_items).toEqual([expect.objectContaining({ rack_id: 'r1', item_code: 'CODY', qty: 12, source_doc_no: 'STK-2608-001' })]);
+    expect(t.warehouse_rack_movements.map((m) => `${m.movement_type}:${m.rack_label}:${m.quantity}`))
+      .toEqual(['STOCK_OUT:Rack L1.1:10', 'STOCK_IN:Rack L5.1:12']);
+  });
+
+  test('reading a sheet proposes counts and racks, writes nothing, and refuses another take\'s page', async () => {
+    const t = withRacks(takeFixture());
+    t.stock_take_lines[0].counted_qty = null;
+    t.stock_take_lines[0].company_id = CO;
+    const model = (takeNo: string) => ({
+      ok: true, status: 200,
+      json: async () => ({ content: [{ type: 'text', text: JSON.stringify({ takeNo, rows: [{ no: 1, itemCode: 'CODY', counted: 9, rack: 'l5.1' }] }) }] }),
+      clone() { return this; }, text: async () => '',
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => model('STK-2608-001')));
+    const { app } = harness(t);
+    const body = JSON.stringify({ files: [{ name: 'p1.jpg', mime: 'image/jpeg', dataBase64: 'AAAA' }] });
+    const req = () => app.request('/stock-takes/st-1/read-sheet', { method: 'POST', headers: { 'content-type': 'application/json' }, body }, { ANTHROPIC_API_KEY: 'k' });
+    const res = await req();
+    expect(res.status).toBe(200);
+    const out = await res.json() as Row;
+    expect(out.takeNoMatches).toBe(true);
+    expect(out.proposals).toEqual([expect.objectContaining({ lineId: 'ln-1', counted: 9, rackId: 'r1' })]);
+    expect(t.stock_take_lines[0].counted_qty).toBeNull(); // nothing written
+
+    vi.stubGlobal('fetch', vi.fn(async () => model('STK-2608-999')));
+    const other = await (await req()).json() as Row;
+    expect(other.takeNoMatches).toBe(false);
+    expect(other.proposals).toEqual([]);
   });
 });

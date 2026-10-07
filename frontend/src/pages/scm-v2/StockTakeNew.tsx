@@ -6,10 +6,10 @@
 // an OPEN stock take. We navigate to the detail page where commander enters
 // counts. (PR-DRAFT-removal 2026-05-27: renamed DRAFT→OPEN per mig 0078.)
 //
-// Phase 1 (owner-approved 2026-08-08, mig 0270): the ASSIGNEE — the person
-// responsible for the count — is REQUIRED; only they (or a stock-take
-// supervisor) can post. Scope gains "SKUs with stock" (NONZERO). The BLIND
-// toggle hides system qty / variance from the counter until posted. To split
+// Round 1 (owner 2026-10-06): ASSIGNEES — everyone counting, at least one — are
+// a record, not a post gate. "Only SKUs with stock" is a tick box (on by
+// default) that combines with Category / Prefix. The BLIND toggle hides system
+// qty / variance from the counter until posted. To split
 // one warehouse count across people, create several takes with a CATEGORY /
 // prefix scope, each with its own assignee — the scope mechanism IS the
 // sub-sheet mechanism, no extra data model needed.
@@ -40,6 +40,7 @@ import {
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { StaffMultiPick } from '../../vendor/scm/components/StaffMultiPick';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -69,12 +70,15 @@ export const StockTakeNew = () => {
   const notify = useNotify();
 
   const [warehouseId, setWarehouseId] = useState<string>('');
-  const [assigneeId,  setAssigneeId]  = useState<string>('');
+  const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
   const [takeDate,    setTakeDate]    = useState<string>(todayISO());
   const [scopeType,   setScopeType]   = useState<StockTakeScopeType>('ALL');
   const [scopeValue,  setScopeValue]  = useState<string>('');
   const [notes,       setNotes]       = useState<string>('');
   const [blind,       setBlind]       = useState<boolean>(false);
+  /* Owner 2026-10-06: a zero-qty line is not worth a row — on by default, and
+     it combines with Category / Prefix (it used to be a scope of its own). */
+  const [nonzeroOnly, setNonzeroOnly] = useState<boolean>(true);
 
   const warehouses = useWarehouses();
   const allSkus    = useMfgProducts();
@@ -94,19 +98,16 @@ export const StockTakeNew = () => {
   const previewCount = useMemo(() => {
     if (!warehouseId) return 0;
     const list = balances.data?.balances ?? [];
-    if (scopeType === 'CODE_PREFIX') {
-      const p = scopeValue.trim().toUpperCase();
-      if (!p) return list.length;
-      return list.filter((b) => b.item_code.toUpperCase().startsWith(p)).length;
-    }
-    /* NONZERO (phase 1): same approximation the other scopes use — the server
-       resolves per-variant buckets; here we count SKUs whose balance ≠ 0 so
-       the commander sees the sheet shrink before clicking Create. */
-    if (scopeType === 'NONZERO') {
-      return list.filter((b) => Number(b.qty ?? 0) !== 0).length;
-    }
-    return list.length;
-  }, [balances.data, scopeType, scopeValue, warehouseId]);
+    /* Same approximation for "only SKUs with stock": the server resolves
+       per-variant buckets; here we count SKUs whose balance ≠ 0 so the sheet
+       visibly shrinks before Create. */
+    const inScope = scopeType === 'CODE_PREFIX' && scopeValue.trim()
+      ? list.filter((b) => b.item_code.toUpperCase().startsWith(scopeValue.trim().toUpperCase()))
+      : list;
+    return nonzeroOnly || scopeType === 'NONZERO'
+      ? inScope.filter((b) => Number(b.qty ?? 0) !== 0).length
+      : inScope.length;
+  }, [balances.data, scopeType, scopeValue, warehouseId, nonzeroOnly]);
 
   // Suggested prefixes from the actual SKU master so the commander doesn't
   // have to remember every code shape. Top-3 most common 2-3 letter prefixes.
@@ -127,7 +128,7 @@ export const StockTakeNew = () => {
   const needsScopeValue = scopeType === 'CATEGORY' || scopeType === 'CODE_PREFIX';
   const canCreate = Boolean(
     warehouseId &&
-    assigneeId &&
+    assigneeIds.length > 0 &&
     takeDate &&
     (!needsScopeValue || scopeValue.trim()),
   );
@@ -149,7 +150,8 @@ export const StockTakeNew = () => {
       {
         idempotencyKey: idemKey,
         warehouseId,
-        assigneeStaffId: assigneeId,
+        assigneeStaffIds: assigneeIds,
+        nonzeroOnly,
         takeDate,
         scopeType,
         scopeValue: needsScopeValue ? scopeValue.trim() : null,
@@ -203,21 +205,22 @@ export const StockTakeNew = () => {
               </select>
             </label>
 
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>Assignee *</span>
-              {/* Phase 1 — the person responsible for this count. Only they
-                  (or a stock-take supervisor) can post it. */}
-              <select
-                value={assigneeId}
-                onChange={(e) => setAssigneeId(e.target.value)}
-                className={styles.fieldSelect}
-              >
-                <option value="">— Pick assignee —</option>
-                {sortByText(pickableStaff.data ?? []).map((s) => (
-                  <option key={s.id} value={s.id}>{s.name || s.staffCode}</option>
-                ))}
-              </select>
-            </label>
+            <div className={styles.field}>
+              <span className={styles.fieldLabel}>Assignees *</span>
+              {/* Who is counting — often two or three people (owner
+                  2026-10-06). A record; it does not decide who may post. */}
+              <StaffMultiPick
+                label="Add assignee"
+                options={pickableStaff.data ?? []}
+                value={assigneeIds}
+                onChange={setAssigneeIds}
+                nameOf={(id) => {
+                  const s = (pickableStaff.data ?? []).find((x) => x.id === id);
+                  return s?.name || s?.staffCode || id;
+                }}
+                disabled={false}
+              />
+            </div>
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Take Date *</span>
@@ -235,7 +238,6 @@ export const StockTakeNew = () => {
                 className={styles.fieldSelect}
               >
                 <option value="ALL">All SKUs in warehouse</option>
-                <option value="NONZERO">SKUs with stock (system qty ≠ 0)</option>
                 <option value="CATEGORY">By category</option>
                 <option value="CODE_PREFIX">By code prefix</option>
               </select>
@@ -295,6 +297,24 @@ export const StockTakeNew = () => {
                 placeholder="e.g. Monthly cycle count · KL warehouse"
                 className={styles.fieldInput}
               />
+            </label>
+          </div>
+
+          <div style={{ marginTop: 'var(--space-3)' }}>
+            <label style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              fontSize: 'var(--fs-13)', color: 'var(--c-ink)', cursor: 'pointer',
+            }}>
+              <input
+                type="checkbox"
+                checked={nonzeroOnly}
+                onChange={(e) => setNonzeroOnly(e.target.checked)}
+              />
+              <span>
+                <strong>Only SKUs with stock</strong>
+                {' '}— leave lines whose system qty is 0 off the sheet (stock found that the system
+                does not list goes in with Add line)
+              </span>
             </label>
           </div>
 

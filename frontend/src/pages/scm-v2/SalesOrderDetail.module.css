@@ -464,6 +464,34 @@
 .table thead th:nth-child(10),
 .table tbody td:nth-child(10) { width: 96px; min-width: 96px; }
 
+/* A table that is NOT the SO line layout opts out of the column widths above
+   (they are keyed by position: SO col 2 = Qty at 56px). Stock Transfer's col 2
+   is the variant bucket and Stock Adjustment's is the product name; both were
+   squeezed to 56px and cut their text. Widths come from the page's own <th>. */
+.table.tableOwnWidths thead th:nth-child(n),
+.table.tableOwnWidths tbody td:nth-child(n) {
+  width: auto;
+  min-width: 0;
+}
+/* A long line table whose column header stays on screen while the page
+   scrolls (Stock Take count sheet). The page scrolls in <main>, so top: 0 is
+   the top of the content area; the card around it must not be overflow:hidden
+   (that makes the card the scroll box and the header never moves). */
+.stickyHead thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+/* The picked variant bucket, in full, under its select (Stock Transfer). */
+.bucketPicked {
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  color: var(--fg-muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .table tbody td {
   padding: 6px var(--space-2);
   border-bottom: 1px solid #d6d9d2;

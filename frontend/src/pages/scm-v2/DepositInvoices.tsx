@@ -7,9 +7,14 @@
 // left behind (and the button that issues them), the list, one invoice with
 // its payment, cancel with a reason, post again. The server decides; this
 // page shows its reasons.
+//
+// A row opens THE INVOICE (owner 2026-10-06: 点一行就直接打开这张单): the
+// pop-out shows the page exactly as it prints — the Sales Invoice's A4 layout
+// with the order's address and figures (GET /deposit-invoices/sheets) — with
+// Print and Save PDF beside the Finance facts and actions.
 // ----------------------------------------------------------------------------
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@2990s/design-system';
 import { PageHeader } from '../../components/Layout';
 import { Modal } from '../../vendor/scm/components/Modal';
@@ -17,9 +22,11 @@ import { DateField } from '../../vendor/scm/components/DateField';
 import {
   useDepositInvoices, useDepositInvoiceDetail, useDepositInvoiceSettings, useSaveDepositInvoiceSettings,
   useIssueMissingDepositInvoices, useInvoiceDeliveredOrders, useCancelDepositInvoice, usePostDepositInvoice,
-  type DepositInvoice, type DepositInvoiceStatus,
+  useDepositInvoiceSheet, fetchDepositInvoiceSheets,
+  type DepositInvoice, type DepositInvoiceSheet, type DepositInvoiceStatus,
 } from '../../vendor/scm/lib/deposit-invoice-queries';
 import { DataTable, type Column } from '../../components/DataTable';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
 import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from '../../vendor/scm/lib/payment-methods';
@@ -46,7 +53,7 @@ const methodLabel = (m: string | null): string => {
   return code ? PAYMENT_METHOD_DEFAULT_LABELS[code] : m ? humaniseStatusKey(m) : '—';
 };
 const DEPOSIT_COLUMNS: Column<DepositInvoice>[] = [
-  { key: 'number', label: 'Number', render: (d) => <span style={mono}>{d.di_number}</span>, getValue: (d) => d.di_number },
+  { key: 'number', label: 'Number', render: (d) => <span className={cancelledDocNoClass(d.status)} style={mono}>{d.di_number}</span>, getValue: (d) => d.di_number },
   { key: 'date', label: 'Date', render: (d) => fmtDateOrDash(d.invoice_date), getValue: (d) => d.invoice_date, exportFormat: 'date' },
   { key: 'customer', label: 'Customer', render: (d) => d.party_name ?? d.party_code ?? '—', getValue: (d) => d.party_name ?? d.party_code ?? '' },
   { key: 'order', label: 'Order', render: (d) => <span style={mono}>{d.so_doc_no}</span>, getValue: (d) => d.so_doc_no },
@@ -81,14 +88,16 @@ export const DepositInvoices = () => {
   const toggle = (id: string) => setTicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   /* The ticked invoices as ONE document in LIST order, a page each (owner
-     2026-09-12: 要批量打印; docs/bugs/0834). The row carries all the sheet needs. */
+     2026-09-12: 要批量打印; docs/bugs/0834) — each sheet with its order's
+     address and figures, the A4 layout's (owner 2026-10-06). */
   const printTicked = async (action: PdfAction) => {
     const targets = rows.filter((d) => ticked.has(d.id));
     if (targets.length === 0 || printing) return;
     setPrinting(true); setPrintError(null);
     try {
+      const sheets = await fetchDepositInvoiceSheets(targets.map((d) => d.id));
       const { generateDepositInvoicesPdf } = await import('../../vendor/scm/lib/deposit-invoice-pdf');
-      await generateDepositInvoicesPdf(targets, { action });
+      await generateDepositInvoicesPdf(sheets, { action });
     } catch (e) { setPrintError(errText(e)); } finally { setPrinting(false); }
   };
 
@@ -127,6 +136,7 @@ export const DepositInvoices = () => {
         error={listQ.isError ? `The list did not load — ${errText(listQ.error)}` : null}
         emptyLabel="No deposit invoice matches this filter."
         getRowKey={(d) => d.id}
+        getRowClassName={(d) => cancelledRowClass(d.status)}
         onRowClick={(d) => setOpenId(d.id)}
         selection={{
           selectedIds: ticked,
@@ -217,8 +227,33 @@ const SwitchCard = () => {
   );
 };
 
+/* The invoice itself, as it prints — the browser's own PDF viewer in the
+   pop-out, drawn from the same sheet Print sends. */
+const InvoicePaper = ({ sheet }: { sheet: DepositInvoiceSheet }) => {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    let made: string | null = null;
+    setFailed(null);
+    void import('../../vendor/scm/lib/deposit-invoice-pdf')
+      .then(({ depositInvoicePdfBlob }) => depositInvoicePdfBlob(sheet))
+      .then((blob) => { if (!live) return; made = URL.createObjectURL(blob); setUrl(made); })
+      .catch((e: unknown) => { if (live) setFailed(errText(e)); });
+    return () => { live = false; if (made) URL.revokeObjectURL(made); };
+  }, [sheet]);
+  if (failed) return <div style={{ fontSize: 'var(--fs-13)', color: danger }}>The invoice could not be drawn — {failed}</div>;
+  if (!url) return <div style={soft}>Drawing the invoice…</div>;
+  return (
+    <iframe title={`Deposit invoice ${sheet.di_number} as printed`} src={url}
+      style={{ width: '100%', height: '72vh', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 6, background: '#fff' }} />
+  );
+};
+
 const InvoiceDetail = ({ id, onClose }: { id: string; onClose: () => void }) => {
   const q = useDepositInvoiceDetail(id);
+  const sheetQ = useDepositInvoiceSheet(id);
+  const sheet = sheetQ.data ?? null;
   const cancel = useCancelDepositInvoice();
   const post = usePostDepositInvoice();
   const [reason, setReason] = useState('');
@@ -232,20 +267,23 @@ const InvoiceDetail = ({ id, onClose }: { id: string; onClose: () => void }) => 
   const noted = inv ? Boolean(inv.credit_note_id) || (inv.refund_notes ?? []).some((n) => n.status !== 'CANCELLED') : false;
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
-  /* A cancelled invoice prints too — as void, with its reason (docs/bugs/0834). */
-  const printOne = async () => {
+  /* A cancelled invoice prints too — as void, with its reason (docs/bugs/0834).
+     The sheet carries the order's address and figures; until it is here the
+     row alone prints. */
+  const printOne = async (action: PdfAction) => {
     if (!inv || printing) return;
     setPrinting(true); setPrintError(null);
     try {
       const { generateDepositInvoicePdf } = await import('../../vendor/scm/lib/deposit-invoice-pdf');
-      await generateDepositInvoicePdf(inv, { action: 'print' });
+      await generateDepositInvoicePdf(sheet ?? inv, { action });
     } catch (e) { setPrintError(errText(e)); } finally { setPrinting(false); }
   };
   return (
-    <Modal title={inv ? `Deposit invoice ${inv.di_number}` : 'Deposit invoice'} onClose={onClose} width="min(760px, 100%)" ariaLabel="Deposit invoice"
+    <Modal title={inv ? `Deposit invoice ${inv.di_number}` : 'Deposit invoice'} onClose={onClose} width="min(980px, 100%)" ariaLabel="Deposit invoice"
       actions={inv && (
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-          <Button variant="ghost" size="sm" onClick={() => void printOne()} disabled={busy || printing}>{printing ? 'Preparing…' : 'Print'}</Button>
+          <Button size="sm" onClick={() => void printOne('print')} disabled={busy || printing}>{printing ? 'Preparing…' : 'Print'}</Button>
+          <Button variant="ghost" size="sm" onClick={() => void printOne('save')} disabled={busy || printing}>Save PDF</Button>
           {inv.status === 'ISSUED' && !inv.je_no && <Button size="sm" onClick={() => post.mutate(inv.id)} disabled={busy}>{post.isPending ? 'Posting…' : 'Post to ledger'}</Button>}
           {inv.status === 'ISSUED' && !noted && (
             <>
@@ -295,6 +333,9 @@ const InvoiceDetail = ({ id, onClose }: { id: string; onClose: () => void }) => 
           {printError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{printError}</div>}
           {cancel.isSuccess && <div style={{ fontSize: 'var(--fs-13)', color: good }}>Cancelled{cancel.data.contraJeNo ? ` — contra ${cancel.data.contraJeNo}` : ''}.</div>}
           {failed != null && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{errText(failed)}</div>}
+          {sheet ? <InvoicePaper sheet={sheet} />
+            : sheetQ.isError ? <div style={{ fontSize: 'var(--fs-13)', color: danger }}>The invoice page did not load — {errText(sheetQ.error)}</div>
+              : <div style={soft}>Drawing the invoice…</div>}
         </div>
       )}
     </Modal>

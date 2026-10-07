@@ -465,6 +465,9 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Tax", money(h.tax_sen), "#767b6e"],
       ["Total", money(h.total_sen), "var(--ink)"],
     ],
+    // A scanned draft's note says which PO it may be wrong about and which
+    // delivery-order lines were left off; the phone must see it before posting.
+    notice: (h) => (h.status === "DRAFT" && s(h.notes).trim() ? s(h.notes).trim() : null),
     line: (it) => ({
       name: firstOf(it.material_name, it.description, it.item_code),
       sub: join(it.item_code, s(it.qty_accepted).trim() ? `Accepted ${s(it.qty_accepted)}` : ""),

@@ -797,7 +797,7 @@ const SoLineCardInner = ({
   const menuPos = useAnchoredPanel(pickerWrapRef, showPicker && isEditing, SUGGEST_LIST_MAX_H);
 
   return (
-    <div className={styles.card}>
+    <div data-grid-row className={styles.card}>
       {/* ── Main single row ────────────────────────────────────────── */}
       <div className={styles.row}>
         {/* 1. No # */}

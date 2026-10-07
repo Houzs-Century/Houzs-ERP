@@ -146,6 +146,18 @@ describe("Sales Orders list: the ONE Export", () => {
     expect(h.written[0]).toMatch(/\.xlsx$/);
   });
 
+  /* BUG-51: an order created in the ERP has no copied exemption date; the cell is
+     the delivery date the writeback sends AutoCount for it. */
+  it("Sales Exemption Expiry Date falls back to the delivery date when nothing was copied from AutoCount", async () => {
+    h.authed.mockImplementation(async () => ({
+      salesOrders: [so("HC-SO-013001"), so("HC-SO-013002", { sales_exemption_expiry: "2026-09-20" })],
+      total: 2, lineCount: 4, next: null,
+    }));
+    const { body, cell } = await exportNow("/scm/sales-orders");
+    expect(cell(body[0]!, "Sales Exemption Expiry Date")).toBe("2026-09-30");
+    expect(cell(body[2]!, "Sales Exemption Expiry Date")).toBe("2026-09-20");
+  });
+
   it("asks the server with the list's tab, search and sort, and no page", async () => {
     await exportNow("/scm/sales-orders?status=confirmed&q=TAN&page=3");
     const path = h.authed.mock.calls.map((c) => String(c[0])).find((p) => p.startsWith("/mfg-sales-orders/export/rows"));

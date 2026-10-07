@@ -1,6 +1,8 @@
 // The Customer Refund voucher (payment-voucher.md §14, owner 2026-09-07). Pinned:
-//   • refund-source names the document's customer and payments, counts only
-//     the money THIS ledger booked, and reserves every non-cancelled refund;
+//   • refund-source names the document's customer and payments, counts the
+//     money this ledger booked and — on a Sales Order — the payments brought
+//     over from AutoCount (owner 2026-10-05), and reserves every non-cancelled
+//     refund;
 //   • a Sales Order refunds any time; a Sales Invoice only when CANCELLED, a
 //     migrated one never — with the reason;
 //   • create composes the ONE Dr AR line itself, stamps the source and the
@@ -30,7 +32,8 @@ const CHART: Row[] = [
 ];
 
 /* The order: three payments — a transfer this ledger booked, an AutoCount-era
-   import, and a cash row whose hook never ran. Only the first counts. */
+   import, and a cash row whose hook never ran. The first two count (owner
+   2026-10-05: the AutoCount money is the order's money all the same). */
 const ORDER: Row = { doc_no: SO, company_id: CO, status: 'CANCELLED', debtor_name: 'Ah Meng', debtor_code: null, phone: '0123', customer_id: 'cust-1' };
 const PAYMENTS: Row[] = [
   { id: 'p1', so_doc_no: SO, paid_at: '2026-07-01', method: 'transfer', merchant_provider: null, amount_sen: 50000, company_id: CO },
@@ -95,7 +98,7 @@ const REFUND = {
 };
 
 describe('refund-source — 认单为主', () => {
-  test('a Sales Order: customer, every payment with its booked flag, and the headroom this ledger allows', async () => {
+  test('a Sales Order: customer, every payment with its booked and imported flags, and the headroom', async () => {
     const { app } = harness();
     const res = await app.request(`/payment-vouchers/refund-source?type=so&docNo=${SO}`);
     expect(res.status).toBe(200);
@@ -103,9 +106,9 @@ describe('refund-source — 认单为主', () => {
     expect(source).toMatchObject({
       type: 'SO', docNo: SO, status: 'CANCELLED',
       customer: { name: 'Ah Meng', phone: '0123', customerId: 'cust-1', debtorCode: null },
-      bookedSen: 50000, refundedSen: 0, refundableSen: 50000, eligible: true, reason: null,
+      bookedSen: 80000, importedSen: 30000, refundedSen: 0, refundableSen: 80000, eligible: true, reason: null,
     });
-    expect(source.payments.map((p: Row) => [p.id, p.booked])).toEqual([['p1', true], ['p2', false], ['p3', false]]);
+    expect(source.payments.map((p: Row) => [p.id, p.booked, p.imported])).toEqual([['p1', true, false], ['p2', false, true], ['p3', false, false]]);
   });
 
   test('a draft refund already on the order is spoken for', async () => {
@@ -113,7 +116,7 @@ describe('refund-source — 认单为主', () => {
       payment_vouchers: [{ id: 'pv-d', pv_number: `2990-Draft-${yymm}-001`, company_id: CO, purpose: 'CUSTOMER_REFUND', refund_source_doc_no: SO, status: 'DRAFT', voucher_date: '2026-07-05', total_sen: 20000 }],
     });
     const { source } = await (await app.request(`/payment-vouchers/refund-source?type=SO&docNo=${SO}`)).json() as { source: Record<string, any> };
-    expect(source).toMatchObject({ refundedSen: 20000, refundableSen: 30000, eligible: true });
+    expect(source).toMatchObject({ refundedSen: 20000, refundableSen: 60000, eligible: true });
     expect(source.refunds).toEqual([{ id: 'pv-d', pvNumber: `2990-Draft-${yymm}-001`, status: 'DRAFT', voucherDate: '2026-07-05', totalSen: 20000 }]);
   });
 
@@ -161,14 +164,18 @@ describe('create — the one line is the system\'s', () => {
   test('past the headroom is refused with the three figures — a draft already on the order counts', async () => {
     const { app, sb } = harness();
     expect((await app.request('/payment-vouchers', json(REFUND))).status).toBe(201);
-    const res = await app.request('/payment-vouchers', json({ ...REFUND, refundAmountSen: 30000 }));
+    const res = await app.request('/payment-vouchers', json({ ...REFUND, refundAmountSen: 60000 }));
     expect(res.status).toBe(409);
-    expect(await res.json()).toMatchObject({ error: 'refund_exceeds_booked', bookedSen: 50000, refundedSen: 30000, refundableSen: 20000 });
+    expect(await res.json()).toMatchObject({ error: 'refund_exceeds_booked', bookedSen: 80000, refundedSen: 30000, refundableSen: 50000 });
     expect(sb.tables.payment_vouchers).toHaveLength(1);
   });
 
   test('an ineligible document, a missing amount, a non-money Paid From — each refused before anything is written', async () => {
-    const { app, sb } = harness({ mfg_sales_orders: [{ ...ORDER, status: 'CONFIRMED' }], journal_entries: [] });
+    /* Nothing booked and nothing from AutoCount: the cash row never booked. */
+    const { app, sb } = harness({
+      mfg_sales_orders: [{ ...ORDER, status: 'CONFIRMED' }], journal_entries: [],
+      mfg_sales_order_payments: PAYMENTS.filter((r) => r.method !== 'imported').map((r) => ({ ...r })),
+    });
     const r1 = await app.request('/payment-vouchers', json(REFUND));
     expect(r1.status).toBe(409);
     expect(((await r1.json()) as { error: string }).error).toBe('refund_not_allowed');

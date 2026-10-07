@@ -116,11 +116,15 @@ export function useCrossCompanyRacks() {
 /* Scope — which warehouse RECORD(s) the rack(s) are created into. A rack shared
    across warehouses is materialised as one row per target (fan-out on create),
    so pass a single warehouseId (back-compat), a chosen set (warehouseIds), or
-   allWarehouses:true. Exactly one of the three is used, resolved server-side. */
+   allWarehouses:true. Exactly one of the three is used, resolved server-side.
+   alsoSiblingCompanies widens the fan-out to the other companies' warehouse
+   records carrying the same code (one building, one record per company), each
+   row stamped with its own company. */
 export type RackScope =
-  | { warehouseId: string }
-  | { warehouseIds: string[] }
-  | { allWarehouses: true };
+  (| { warehouseId: string }
+   | { warehouseIds: string[] }
+   | { allWarehouses: true })
+  & { alsoSiblingCompanies?: true };
 
 export type CreateRackBody =
   | (RackScope & { rack: string; position?: string; zone?: string; reserved?: boolean; notes?: string })

@@ -101,7 +101,11 @@ export const useCreatePaymentVoucher = () => {
     mutationFn: ({ idempotencyKey, ...body }: { idempotencyKey?: string } & Record<string, unknown>) =>
       authedFetch<{ id: string; pvNumber: string }>(`/payment-vouchers`,
         idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['payment-vouchers'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      /* A bill now vouchered is another's same bill (the pile says so on return). */
+      void qc.invalidateQueries({ queryKey: ['payment-request-bill-matches'] });
+    },
   });
 };
 
@@ -401,8 +405,9 @@ export const usePvReservations = (supplierId: string | null, excludePvId: string
    The document a refund refunds — 认单为主: the operator names the Sales
    Order (any status) or the Sales Invoice (CANCELLED only), and the server
    answers with the customer, every payment it collected (booked = reached
-   this ledger), the refunds already on it and the headroom. */
-export type RefundPayment = { id: string; paidOn: string; method: string; provider: string | null; amountSen: number; booked: boolean };
+   this ledger; imported = brought over from AutoCount, which counts on an
+   order too — owner 2026-10-05), the refunds already on it and the headroom. */
+export type RefundPayment = { id: string; paidOn: string; method: string; provider: string | null; amountSen: number; booked: boolean; imported?: boolean };
 export type RefundVoucherRow = { id: string; pvNumber: string; status: string; voucherDate: string; totalSen: number };
 export type RefundSource = {
   type: 'SO' | 'SI';
@@ -410,7 +415,10 @@ export type RefundSource = {
   status: string | null;
   customer: { name: string | null; phone: string | null; customerId: string | null; debtorCode: string | null };
   payments: RefundPayment[];
+  /** What the document was paid: booked here plus, on an order, brought over from AutoCount. */
   bookedSen: number;
+  /** The part of it brought over from AutoCount (optional against an older server). */
+  importedSen?: number;
   refunds: RefundVoucherRow[];
   refundedSen: number;
   refundableSen: number;

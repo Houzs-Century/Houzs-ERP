@@ -67,6 +67,7 @@ import {
   type SupplierRow,
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useMfgProducts, useMaintenanceConfig, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
+import { withMasterPickerPools } from '../../vendor/scm/lib/picker-maint';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -130,7 +131,7 @@ type HeaderDraft = {
    line, the SAME rich editor as Create. EditLine = the shared PoLineDraft +
    the persisted item id (absent on a freshly-added blank card). The page diffs
    each draft against the server row on Save and calls add / update / delete. */
-type EditLine = PoLineDraft & { itemId?: string };
+type EditLine = PoLineDraft & { itemId?: string; deliveryDateOverridden?: boolean };
 
 /* The three supplier-revised date slots (mig 0026). Both the header draft and
    every line draft key them identically, which is what lets "Apply to all"
@@ -189,6 +190,7 @@ const draftFromItem = (it: PoItemRow): EditLine => ({
   unitPriceSen: it.unit_price_sen,
   discountSen:  it.discount_sen ?? 0,
   deliveryDate:   it.delivery_date ?? undefined,
+  deliveryDateOverridden: it.line_delivery_date_overridden ?? false,
   supplierDeliveryDate2: it.supplier_delivery_date_2 ?? undefined,
   supplierDeliveryDate3: it.supplier_delivery_date_3 ?? undefined,
   supplierDeliveryDate4: it.supplier_delivery_date_4 ?? undefined,
@@ -297,10 +299,13 @@ export const PurchaseOrderDetail = () => {
     poSupplierId ? `supplier:${poSupplierId}` : '',
     { enabled: Boolean(poSupplierId) },
   );
-  const masterMaintQ = useMaintenanceConfig('master', {
-    enabled: !poSupplierId || !supplierMaintQ.data?.data,
-  });
+  const masterMaintQ = useMaintenanceConfig('master');
   const maint = supplierMaintQ.data?.data ?? masterMaintQ.data?.data ?? null;
+  /* Dropdown options follow master; the supplier overlay only prices them (BUG-60). */
+  const pickerMaint = useMemo(
+    () => withMasterPickerPools(maint, masterMaintQ.data?.data ?? null),
+    [maint, masterMaintQ.data?.data],
+  );
   const fabrics = useFabricTrackings().data ?? [];
   const specialAddonsQ = useSpecialAddons();
   const specialsPools = useMemo(() => {
@@ -582,7 +587,8 @@ export const PurchaseOrderDetail = () => {
     // delivery date ("上面的 Expected Delivery Date 换了之后，下面 Item 的
     // Delivery Date 也要跟着跳").
     if (k === 'expectedAt') {
-      setEditLines((prev) => prev.map((d) => ({ ...d, deliveryDate: v || undefined })));
+      // Last edit wins (owner 2026-10-06): a hand-set line follows the header again.
+      setEditLines((prev) => prev.map((d) => ({ ...d, deliveryDate: v || undefined, deliveryDateOverridden: false })));
     }
     /* Mig 0026 — header supplier-revised dates fan down to every line that
        doesn't already carry its own value for that slot. Lines that DO carry
@@ -727,6 +733,7 @@ export const PurchaseOrderDetail = () => {
             bindingId:      d.bindingId,
             discountSen:  d.discountSen,
             deliveryDate:   d.deliveryDate || undefined,
+            lineDeliveryDateOverridden: d.deliveryDateOverridden ?? false,
             /* Mig 0026 — per-line supplier-revised delivery dates. */
             supplierDeliveryDate2: d.supplierDeliveryDate2 || undefined,
             supplierDeliveryDate3: d.supplierDeliveryDate3 || undefined,
@@ -750,6 +757,7 @@ export const PurchaseOrderDetail = () => {
           d.unitPriceSen !== it.unit_price_sen ||
           (d.discountSen ?? 0) !== (it.discount_sen ?? 0) ||
           (d.deliveryDate ?? null) !== (it.delivery_date ?? null) ||
+          (d.deliveryDateOverridden ?? false) !== (it.line_delivery_date_overridden ?? false) ||
           (d.supplierDeliveryDate2 ?? null) !== (it.supplier_delivery_date_2 ?? null) ||
           (d.supplierDeliveryDate3 ?? null) !== (it.supplier_delivery_date_3 ?? null) ||
           (d.supplierDeliveryDate4 ?? null) !== (it.supplier_delivery_date_4 ?? null) ||
@@ -768,6 +776,7 @@ export const PurchaseOrderDetail = () => {
           unitPriceSen: d.unitPriceSen,
           discountSen:  d.discountSen ?? 0,
           deliveryDate:   blankDateToNull(d.deliveryDate),
+          lineDeliveryDateOverridden: d.deliveryDateOverridden ?? false,
           /* Mig 0026 — per-line supplier-revised delivery dates. */
           supplierDeliveryDate2: blankDateToNull(d.supplierDeliveryDate2),
           supplierDeliveryDate3: blankDateToNull(d.supplierDeliveryDate3),
@@ -1326,10 +1335,11 @@ export const PurchaseOrderDetail = () => {
                     bindings={bindings}
                     allSkus={allSkus}
                     warehouses={warehousesForLines}
-                    maint={maint}
+                    maint={pickerMaint}
                     fabrics={fabrics}
                     specialsPools={specialsPools}
-                    onChange={(patch) => patchLine(l.rid, patch)}
+                    /* Typing a line date by hand marks it hand-set, until the next header date change. */
+                    onChange={(patch) => patchLine(l.rid, 'deliveryDate' in patch ? { ...patch, deliveryDateOverridden: true } : patch)}
                     onPickBinding={(b) => pickBinding(l.rid, b)}
                     onSetVariant={(k, v) => setVariant(l.rid, k, v)}
                     /* Item-first reverse lookup is a Create-only affordance (no

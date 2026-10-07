@@ -4,7 +4,8 @@
 export type DeliveryState = 'none' | 'partial' | 'full';
 export type SoLifecycle = 'none' | 'delivered' | 'invoiced' | 'returned';
 
-const TERMINAL = new Set(['CANCELLED', 'CLOSED', 'ON_HOLD']);
+/* Exported so the CO note gate (co-note-gate.ts) reads this ONE set instead of re-listing it. */
+export const TERMINAL: ReadonlySet<string> = new Set(['CANCELLED', 'CLOSED', 'ON_HOLD']);
 
 export type SoStatusDisplay = {
   label: string | null;

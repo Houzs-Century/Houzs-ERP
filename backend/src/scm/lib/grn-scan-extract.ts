@@ -27,6 +27,10 @@ export type GrnExtractedLine = {
   barcode: string | null;
   description: string | null;
   qty: number;
+  // A purchase order number printed ON THIS ROW. A consolidated delivery order
+  // (Hookka's DO-2609-097) carries one of our POs per line and no header P.O.,
+  // so without this every line fell back to item matching.
+  poNo: string | null;
 };
 
 export type GrnExtracted = {
@@ -53,6 +57,7 @@ const GR_SYSTEM_PROMPT = `You extract structured data from photos or PDFs of sup
 A delivery order has:
 - A header: the SUPPLIER's name, a "P.O. No" (the purchase order number this delivery fulfils, e.g. "PO-010070" or "HC-PO-2609-166"), a "D.O. No" (the delivery order's own number), and a delivery/document date.
 - A line-item table: each row has an item code / Article No / Barcode / product code, a description, and a quantity delivered. Some documents show BOTH an internal code column and a supplier Article No / Barcode column.
+- Some delivery orders combine several purchase orders: there is no single header P.O. No, and each row prints its own references under the order column (e.g. "PO: HC-PO-2609-148", "SO: HC-SO-2609-085", "REF: ...").
 
 OUTPUT: valid JSON only, this exact shape:
 {
@@ -65,7 +70,8 @@ OUTPUT: valid JSON only, this exact shape:
       "itemCode": string | null,   // the item/product/Article No code as printed; prefer a code that looks like a SKU (letters+digits) over a free-text name
       "barcode": string | null,    // a separate barcode/EAN number if the row shows one distinct from itemCode
       "description": string | null,
-      "qty": number                // the quantity delivered for this line; a positive number
+      "qty": number,               // the number of SETS / UNITS delivered for this line; a positive number
+      "poNo": string | null        // the purchase order number printed on THIS row (e.g. "HC-PO-2609-148"), else null
     }
   ]
 }
@@ -74,6 +80,8 @@ RULES:
 - Transcribe codes EXACTLY as printed, including punctuation, spaces and letter case. Do NOT normalise, expand or "correct" a code.
 - If a row shows only a description and no code, set itemCode to null and put the text in description.
 - qty is the delivered quantity as a number (strip any unit like "PCS"/"UNIT"). If a row has no readable quantity, use 0.
+- qty counts SETS / UNITS, never component pieces or cartons. Furniture delivery orders often print a "Set" (or "Unit") column AND a piece breakdown such as "1 HB + 2 Divan" with a "Total Qty" of 3. That row delivered ONE set: use the Set column (1), never the piece total (3).
+- A row's poNo is ONLY a purchase order number printed on that row, labelled "PO" / "P.O.". Never put an SO / sales order / REF / Our SO number there, and never copy the header P.O. No into a row. Transcribe it exactly as printed. No PO on the row -> null.
 - Ignore sub-total / total / remarks / signature rows — only real product lines go in "lines".
 - Never invent a P.O. No, D.O. No or code you cannot read; use null.`;
 
@@ -103,6 +111,7 @@ export function normalizeGrnExtract(raw: unknown): GrnExtracted {
       barcode: str(o.barcode),
       description: str(o.description),
       qty: Math.max(0, num(o.qty)),
+      poNo: str(o.poNo),
     };
   });
   const isoDate = ((): string | null => {

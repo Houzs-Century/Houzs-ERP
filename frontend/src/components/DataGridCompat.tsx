@@ -64,6 +64,8 @@ export type DataGridCompatProps<T> = {
   onRowClick?: (row: T) => void;
   onRowDoubleClick?: (row: T) => void;
   rowStyle?: (row: T) => CSSProperties | undefined;
+  /** Row class, e.g. `dt-row-cancelled` for a cancelled document (lib/scm cancelledRowClass). */
+  getRowClassName?: (row: T) => string | undefined;
   /** Show the first N rows with a "Load more" affordance instead of the whole
    *  set (search / filters / sort still run over everything). */
   initialRowLimit?: number;
@@ -91,6 +93,11 @@ export type DataGridCompatProps<T> = {
   embedded?: boolean;
   defaultSort?: (a: T, b: T) => number;
   sortForSessionOnly?: boolean;
+  /** See DataTable `persistFilters`; absent = funnels kept for the visit only. */
+  persistFilters?: boolean | "always";
+  /** See DataTable `resetFilters`: the page's own view state folded into the
+   *  toolbar Reset, which already clears the funnels and the search box. */
+  resetFilters?: { active: boolean; onReset: () => void; label?: string };
   /** Page seeds written in DataGrid's layout rules; converted here. */
   layoutPresets?: LayoutSeed[];
   overlayHidden?: readonly string[];
@@ -174,6 +181,7 @@ export function DataGridCompat<T>({
   onRowClick,
   onRowDoubleClick,
   rowStyle,
+  getRowClassName,
   onFilteredRowsChange,
   toolbar,
   focusSearchNonce,
@@ -186,6 +194,8 @@ export function DataGridCompat<T>({
   embedded = false,
   defaultSort,
   sortForSessionOnly = false,
+  persistFilters,
+  resetFilters,
   layoutPresets,
   overlayHidden,
   onUserAdjustColumns,
@@ -210,6 +220,7 @@ export function DataGridCompat<T>({
       onRowClick={onRowClick}
       onRowDoubleClick={onRowDoubleClick}
       getRowStyle={rowStyle}
+      getRowClassName={getRowClassName}
       initialRowLimit={initialRowLimit}
       onRowReorder={onRowReorder}
       onFilteredRowsChange={onFilteredRowsChange}
@@ -224,6 +235,8 @@ export function DataGridCompat<T>({
       embedded={embedded}
       defaultSort={defaultSort}
       persistSort={!sortForSessionOnly}
+      persistFilters={persistFilters}
+      resetFilters={resetFilters}
       layoutSeeds={layoutSeeds}
       overlayHidden={overlayHidden}
       onUserAdjustColumns={onUserAdjustColumns}

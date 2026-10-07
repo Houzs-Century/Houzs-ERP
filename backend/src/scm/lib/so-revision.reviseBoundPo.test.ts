@@ -335,6 +335,27 @@ describe('reviseBoundPo — ADD reconciles the missing PO line', () => {
     expect(res.warnings).toHaveLength(1);
     expect(res.warnings[0].toLowerCase()).toContain('purchase order');
   });
+
+  it('joins the open PO of an ALTERNATE bound supplier when the main supplier has none here', async () => {
+    // HC-SO-013385/A1 (BUG-57): 9028-1NA's main supplier is HOOKKA INDUSTRIES, the
+    // order's only PO is DORSETTLOFT, bound for 9028-1NA as an alternate.
+    const store = addStore();
+    store.supplier_material_bindings = [
+      binding('BF-1', 'S1', 1000),
+      binding('BF-3', 'S2', 1500),
+      { ...binding('BF-3', 'S1', 1200, 'S1-BF-3'), is_main_supplier: false },
+    ];
+    const c3 = await cost(store, 'BF-3');
+
+    const res = await reviseBoundPo(fakeSb(store), AMD, 'user-1');
+
+    const added = store.purchase_order_items.find((i) => i.so_item_id === 'L3');
+    expect(added).toMatchObject({ purchase_order_id: 'POX', item_code: 'BF-3', supplier_sku: 'S1-BF-3', qty: 2 });
+    expect(added!.unit_price_sen).toBe(c3);
+    expect(c3).toBe(1200);                               // S1's own price, not the main supplier's
+    expect(res.perPo[0].linesAdded).toBe(1);
+    expect(res.warnings).toEqual([]);
+  });
 });
 
 describe('reviseBoundPo — a scoped confirm on a MULTI-PO sales order still surfaces an uncovered added line', () => {

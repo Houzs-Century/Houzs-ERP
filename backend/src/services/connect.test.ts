@@ -7,6 +7,7 @@ import {
   CONNECT_DELIVERY_AUTOMATION,
   CONNECT_RESET_ATTRIBUTES,
   chatCallbackUrl,
+  connectUntriggeredReason,
   formatRm,
   type ConnectCompanyProfile,
 } from './connect';
@@ -43,9 +44,21 @@ describe('buildDeliveryFollowUp', () => {
         ref_1: 'HC13234',
         delivery_date_1: '2026/10/05',
         brand_1: 'AKEMI',
+        refs_all: 'HC13234',
         callback_url: 'https://erp.houzscentury.com/api/chat-callback',
       },
     });
+  });
+
+  it('refs_all carries EVERY bundled order, including the 4th+ the lines do not show', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+      { ref: 'B2', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06' },
+      { ref: 'C3', branding: 'GOODNITE', deliveryDate: '2026/10/07' },
+      { ref: 'D4', branding: 'VONO', deliveryDate: '2026/10/08' },
+    ], null, CTX);
+    expect(contact.attributes.refs_all).toBe('A1,B2,C3,D4');
+    expect(contact.attributes.ref_4).toBeUndefined();
   });
 
   it('resets every attribute the flows read before they write, on every send', () => {
@@ -76,6 +89,25 @@ describe('buildDeliveryFollowUp', () => {
       { ref: 'B2', branding: 'AKEMI', deliveryDate: '2026/10/05', balanceSen: -100 },
     ], null, CTX);
     expect(contact.attributes.amount).toBe('');
+  });
+
+  it('a kind picks its automation by name and merges its extra variables last', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+    ], null, { ...CTX, automation: 'Driver Info', extra: { drivers_name: 'Ali', car_plate: 'WXY 1234' } });
+    expect(contact.automation).toBe('Driver Info');
+    expect(contact.attributes.drivers_name).toBe('Ali');
+    expect(contact.attributes.car_plate).toBe('WXY 1234');
+    expect(contact.attributes.ref_1).toBe('A1');
+  });
+
+  it('resetConversation:false leaves the conversation state alone (a reminder must not unlock Delivery Lock)', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05', balanceSen: 1000 },
+    ], null, { ...CTX, automation: 'Balance Reminder', resetConversation: false });
+    expect(contact.attributes.button_status).toBeUndefined();
+    expect(contact.attributes.last_button).toBeUndefined();
+    expect(contact.attributes.amount).toBe('10.00');
   });
 
   it('callback_url is the send context, verbatim', () => {
@@ -205,6 +237,24 @@ describe('postConnectContact', () => {
     expect(url).toBe('https://chat.houzscentury.com/api/webhooks/erp');
     expect(init.method).toBe('POST');
     expect((init.headers as Record<string, string>)['x-connect-key']).toBe('secret48');
+  });
+
+  it('a 200 whose `triggered` list is empty is a FAILURE naming the automation (nothing was sent)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, contactId: 'c1', triggered: [], runs: [] }), { status: 200 })));
+    const r = await postConnectContact(env, { ...contact, automation: 'Balance Reminder' });
+    expect(r.ok).toBe(false);
+    expect(r.httpCode).toBe(200);
+    expect(r.error).toContain('Balance Reminder');
+    expect(r.error).toContain('enable');
+  });
+
+  it('a 200 that triggered a run is a success; a body without `triggered` is trusted', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, triggered: ['New Delivery Follow-up'] }), { status: 200 })));
+    expect((await postConnectContact(env, contact)).ok).toBe(true);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"ok":true}', { status: 200 })));
+    expect((await postConnectContact(env, contact)).ok).toBe(true);
+    expect(connectUntriggeredReason('not json', 'X')).toBeNull();
+    expect(connectUntriggeredReason('{"triggered":[]}', 'Driver Info')).toContain('Driver Info');
   });
 
   it('a non-2xx response is a failure carrying the body text', async () => {

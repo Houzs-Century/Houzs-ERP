@@ -17,9 +17,16 @@
 // kind chips and Print listing print exactly what the list shows.
 // `?debtor=<id>` opens the page filtered to one debtor — the registry and
 // the Receipts page link here that way.
+//
+// Every row OPENS (owner 2026-10-06: ar invoice 点不开、没有办法 print — only a
+// sales invoice's number was a link, drawn as plain text, and nothing here
+// printed one): a click anywhere on a row opens it over the list — a debtor
+// bill in its pop-out, a sales invoice as the page it prints, with Print,
+// Save PDF and its full page a link away. Ticked rows print as ONE document,
+// each as its own print, in list order (ar-invoice-print.ts).
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Plus, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
@@ -30,6 +37,8 @@ import {
 import { useArInvoices, useArBillDetail, type ArBillDetail, type ArListKind, type ArListRow } from '../../vendor/scm/lib/ar-invoice-queries';
 import { generateArListingPdf } from '../../vendor/scm/lib/ar-invoice-listing-pdf';
 import { generateDebtorBillPdf } from '../../vendor/scm/lib/debtor-bill-pdf';
+import { useSalesInvoiceDetail } from '../../vendor/scm/lib/sales-invoice-queries';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
@@ -40,6 +49,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { DataTable, type Column } from '../../components/DataTable';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { DebtorBillForm, emptyBillForm, type BillFormMode, type BillFormSubmit, type BillFormValues } from './DebtorBillForm';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -61,6 +71,67 @@ const td: React.CSSProperties = { padding: '6px 8px', verticalAlign: 'middle' };
 const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)' };
 const right: React.CSSProperties = { textAlign: 'right', ...mono };
 const linkBtn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)', background: 'none', border: 'none', padding: 0 };
+
+const danger = 'var(--c-festive-b, #B8331F)';
+const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'Something went wrong.');
+
+/* A sales invoice opened from the list: the page as it prints (the browser's
+   own PDF viewer), Print and Save PDF, and its full page a link away. */
+const SalesInvoicePopOut = ({ id, onClose }: { id: string; onClose: () => void }) => {
+  const q = useSalesInvoiceDetail(id);
+  const notify = useNotify();
+  const header = q.data?.salesInvoice;
+  const items = q.data?.items;
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!header || !items) return;
+    let live = true;
+    let made: string | null = null;
+    setFailed(null);
+    void import('../../vendor/scm/lib/sales-invoice-pdf')
+      .then(({ salesInvoicePdfBlob }) => salesInvoicePdfBlob(header, items))
+      .then((blob) => { if (!live) return; made = URL.createObjectURL(blob); setUrl(made); })
+      .catch((e: unknown) => { if (live) setFailed(errText(e)); });
+    return () => { live = false; if (made) URL.revokeObjectURL(made); };
+  }, [header, items]);
+  const deliver = async (action: PdfAction) => {
+    if (!header || !items || busy) return;
+    setBusy(true);
+    try {
+      const { generateSalesInvoicePdf } = await import('../../vendor/scm/lib/sales-invoice-pdf');
+      await generateSalesInvoicePdf(header, items, { action });
+    } catch (e) {
+      void notify({ title: 'Invoice not printed', body: errText(e), tone: 'error' });
+    } finally { setBusy(false); }
+  };
+  const number = header ? String(header.invoice_number ?? '') : '';
+  return (
+    <Modal
+      title={header ? `${number} · ${String(header.debtor_name ?? '—')}` : 'Sales invoice'}
+      onClose={onClose}
+      width="min(980px, 100%)"
+      ariaLabel={number ? `Sales invoice ${number}` : 'Sales invoice'}
+      actions={header ? (
+        <>
+          <span style={soft}>{humaniseStatusKey(String(header.status ?? ''))}</span>
+          <Button size="sm" onClick={() => void deliver('print')} disabled={busy}><Printer {...ICON} /> {busy ? 'Preparing…' : 'Print'}</Button>
+          <Button variant="ghost" size="sm" onClick={() => void deliver('save')} disabled={busy}>Save PDF</Button>
+          <Link to={`/scm/sales-invoices/${id}`} style={linkBtn}>Open full page</Link>
+        </>
+      ) : undefined}
+    >
+      {q.isLoading && <div style={soft}>Loading…</div>}
+      {q.isError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>The invoice did not load — {errText(q.error)}</div>}
+      {failed && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>The invoice could not be drawn — {failed}</div>}
+      {header && !failed && (url
+        ? <iframe title={`Sales invoice ${number} as printed`} src={url}
+            style={{ width: '100%', height: '72vh', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 6, background: '#fff' }} />
+        : <div style={soft}>Drawing the invoice…</div>)}
+    </Modal>
+  );
+};
 
 const Meta = ({ label, value }: { label: string; value: React.ReactNode }) => (
   <div>
@@ -99,6 +170,13 @@ export const ArInvoices = () => {
   const [detailId, setDetailId] = useState<string | null>(null);
   const detailQ = useArBillDetail(detailId);
   const detail = detailQ.data;
+  /* A sales invoice opened over the list. */
+  const [siId, setSiId] = useState<string | null>(null);
+  const openRow = (r: ArListRow) => { if (r.kind === 'SI') setSiId(r.id); else setDetailId(r.id); };
+  /* Ticked rows, by the table's row key. */
+  const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [printing, setPrinting] = useState(false);
+  const rowKey = (r: ArListRow) => `${r.kind}-${r.id}`;
 
   const debtorsQ = useOtherDebtors();
   const debtors = debtorsQ.data?.debtors ?? [];
@@ -191,6 +269,20 @@ export const ArInvoices = () => {
       void notify({ title: 'Listing not printed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
     });
   };
+  /* The ticked rows the table shows, in its order, as ONE document. */
+  const tickedRows = (shownRows ?? visibleRows).filter((r) => ticked.has(rowKey(r)));
+  const printTicked = async (action: PdfAction) => {
+    if (tickedRows.length === 0 || printing) return;
+    setPrinting(true);
+    try {
+      const [{ arInvoicesPdfBlob }, { deliverPdfBlob }] = await Promise.all([
+        import('../../vendor/scm/lib/ar-invoice-print'), import('../../vendor/scm/lib/pdf-common'),
+      ]);
+      deliverPdfBlob(await arInvoicesPdfBlob(tickedRows, accountNameOf), `ar-invoices-${myt()}.pdf`, action);
+    } catch (e) {
+      void notify({ title: 'Invoices not printed', body: errText(e), tone: 'error' });
+    } finally { setPrinting(false); }
+  };
   const printBill = (d: ArBillDetail) => {
     void generateDebtorBillPdf({ bill: d.bill, debtor: d.debtor ?? { name: '(debtor)', phone: null }, accountName: accountNameOf }, { action: 'print' }).catch((e: unknown) => {
       void notify({ title: 'Bill not printed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
@@ -201,9 +293,8 @@ export const ArInvoices = () => {
     { key: 'kind', label: 'Kind', render: (r) => <span style={{ fontSize: 'var(--fs-11)', fontWeight: 600 }}>{KIND_LABEL[r.kind]}</span>, getValue: (r) => KIND_LABEL[r.kind] },
     {
       key: 'number', label: 'No.',
-      render: (r) => r.kind === 'SI'
-        ? <Link to={`/scm/sales-invoices/${r.id}`} style={{ color: 'inherit', ...mono }}>{r.invoiceNumber}</Link>
-        : <button type="button" onClick={() => setDetailId(r.id)} style={{ ...linkBtn, ...mono }}>{r.invoiceNumber}</button>,
+      /* Both kinds open the same way the row does — the number reads as the link it is. */
+      render: (r) => <button type="button" onClick={(e) => { e.stopPropagation(); openRow(r); }} className={cancelledDocNoClass(r.status)} style={{ ...linkBtn, ...mono }}>{r.invoiceNumber}</button>,
       getValue: (r) => r.invoiceNumber,
     },
     {
@@ -271,6 +362,14 @@ export const ArInvoices = () => {
           </div>
         </div>
         <div className={styles.cardBody} style={{ overflowX: 'auto' }}>
+          {tickedRows.length > 0 && (
+            <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--fs-13)', marginBottom: 'var(--space-2)' }} aria-label="Ticked invoices">
+              <span>{tickedRows.length} ticked</span>
+              <Button size="sm" onClick={() => void printTicked('print')} disabled={printing}>{printing ? 'Preparing…' : `Print ${tickedRows.length}`}</Button>
+              <Button variant="ghost" size="sm" onClick={() => void printTicked('save')} disabled={printing}>Save PDF</Button>
+              <Button variant="ghost" size="sm" onClick={() => setTicked(new Set())} disabled={printing}>Clear</Button>
+            </div>
+          )}
           {/* A refused or failed read says so — an empty sentence over a 403 hid
              docs/bugs/0648 for an afternoon. */}
           <DataTable<ArListRow>
@@ -284,9 +383,17 @@ export const ArInvoices = () => {
             emptyLabel={rows.length > 0
               ? 'No customer invoices match this filter — pick another party or kind.'
               : 'No customer invoices here yet — sales invoices show once issued on the Sales side; raise a debtor bill for money owed by someone outside the trade.'}
-            getRowKey={(r) => `${r.kind}-${r.id}`}
+            getRowKey={rowKey}
+            getRowClassName={(r) => cancelledRowClass(r.status)}
             getRowStyle={(r) => (r.status === 'CANCELLED' ? { opacity: 0.55 } : undefined)}
             onFilteredRowsChange={setShownRows}
+            onRowClick={openRow}
+            selection={{
+              selectedIds: ticked,
+              onToggle: (key) => setTicked((p) => { const n = new Set(p); if (n.has(key)) n.delete(key); else n.add(key); return n; }),
+              onToggleAll: (keys, all) => setTicked(all ? new Set() : new Set(keys)),
+              rowLabel: (r) => `Tick ${r.invoiceNumber}`,
+            }}
           />
         </div>
       </section>
@@ -351,6 +458,8 @@ export const ArInvoices = () => {
           </table>
         </Modal>
       )}
+
+      {siId && <SalesInvoicePopOut id={siId} onClose={() => setSiId(null)} />}
 
       {form && (
         <Modal title={formTitle} onClose={() => setForm(null)} ariaLabel={formTitle}>

@@ -30,6 +30,7 @@ import { scopeToCompany, activeCompanyId,
   scopeToAllowedCompanies, companyCodeMap } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { buildSeedRackLabels } from '../shared/rack-labels';
+import { siblingWarehouses, type WarehouseRef } from '../lib/rack-sibling-warehouses';
 
 export const warehouse = new Hono<{ Bindings: Env; Variables: Variables }>();
 warehouse.use('*', supabaseAuth);
@@ -302,6 +303,36 @@ async function resolveRackTargets(
   return requested.filter((id) => inCompany.has(id));
 }
 
+// A rack row and the company it is stamped with. The active company's own
+// targets carry the active id; a sibling (another company's record of the same
+// building, see rack-sibling-warehouses.ts) carries THAT company's id, or the
+// row would read as ours while sitting in their warehouse.
+type RackTarget = { warehouseId: string; companyId: number | undefined };
+
+//   body.alsoSiblingCompanies === true → ALSO every other allowed company's
+//   active warehouse whose code matches a chosen target (KL WAREHOUSE under
+//   both HOUZS and 2990 is one building; the label goes under each record).
+async function resolveSiblingTargets(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any, c: Parameters<typeof activeCompanyId>[0], ownIds: string[],
+): Promise<{ targets: RackTarget[] } | { error: string }> {
+  const active = activeCompanyId(c);
+  if (active == null || ownIds.length === 0) return { targets: [] };
+  // A failed read must NOT quietly become "no siblings": the caller asked for
+  // the fan-out, and creating the label under one record only is the drift
+  // this flag exists to prevent.
+  const { data: own, error: ownErr } = await scopeToCompany(sb.from('warehouses').select('id, code, company_id'), c)
+    .in('id', ownIds);
+  if (ownErr) return { error: ownErr.message };
+  const { data: pool, error: poolErr } = await scopeToAllowedCompanies(sb.from('warehouses').select('id, code, company_id'), c)
+    .eq('is_active', true);
+  if (poolErr) return { error: poolErr.message };
+  return {
+    targets: siblingWarehouses((own ?? []) as WarehouseRef[], (pool ?? []) as WarehouseRef[], active)
+      .map((w) => ({ warehouseId: w.id, companyId: w.company_id ?? undefined })),
+  };
+}
+
 // ── POST /warehouse/racks — create one rack, or seed `count` racks ─────────
 // Scope may be a single warehouse (back-compat), a chosen set (warehouseIds),
 // or every warehouse (allWarehouses). Fan-out inserts the label into each
@@ -313,8 +344,15 @@ export const createWarehouseRacksHandler = async (c: any) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  const targets = await resolveRackTargets(sb, c, body);
-  if (targets.length === 0) return c.json({ error: 'warehouse_required' }, 400);
+  const ownIds = await resolveRackTargets(sb, c, body);
+  if (ownIds.length === 0) return c.json({ error: 'warehouse_required' }, 400);
+  const targets: RackTarget[] = ownIds.map((warehouseId) => ({ warehouseId, companyId: activeCompanyId(c) }));
+  if (body.alsoSiblingCompanies === true) {
+    const siblings = await resolveSiblingTargets(sb, c, ownIds);
+    if ('error' in siblings) return c.json({ error: 'lookup_failed', reason: siblings.error }, 500);
+    targets.push(...siblings.targets);
+  }
+  const targetIds = targets.map((t) => t.warehouseId);
   const multi = targets.length > 1;
 
   /* Seed mode: { count, prefix } creates "Rack 1".."Rack N" in every target,
@@ -336,13 +374,13 @@ export const createWarehouseRacksHandler = async (c: any) => {
       levels: body.levels == null ? 1 : Number(body.levels),
     });
     const rows: Array<Record<string, unknown>> = [];
-    for (const warehouseId of targets) {
+    for (const { warehouseId, companyId } of targets) {
       const { data: existing } = await sb
         .from('warehouse_racks').select('rack').eq('warehouse_id', warehouseId);
       const taken = new Set((existing ?? []).map((r: { rack: string }) => r.rack));
       for (const label of labels) {
-        // multi-company: stamp the active company on every seeded rack
-        if (!taken.has(label)) rows.push({ company_id: activeCompanyId(c), warehouse_id: warehouseId, rack: label, status: 'EMPTY' });
+        // multi-company: stamp the target's company on every seeded rack
+        if (!taken.has(label)) rows.push({ company_id: companyId, warehouse_id: warehouseId, rack: label, status: 'EMPTY' });
       }
     }
     if (rows.length === 0) return c.json({ racks: [], created: 0 });
@@ -358,12 +396,12 @@ export const createWarehouseRacksHandler = async (c: any) => {
   // Skip targets that already carry this label so a partial collision doesn't
   // 23505 the whole fan-out — only genuinely-new (warehouse, label) pairs insert.
   const { data: existing } = await sb
-    .from('warehouse_racks').select('warehouse_id').eq('rack', rack).in('warehouse_id', targets);
+    .from('warehouse_racks').select('warehouse_id').eq('rack', rack).in('warehouse_id', targetIds);
   const alreadyHas = new Set((existing ?? []).map((r: { warehouse_id: string }) => r.warehouse_id));
   const rows = targets
-    .filter((warehouseId) => !alreadyHas.has(warehouseId))
-    .map((warehouseId) => ({
-      company_id: activeCompanyId(c), // multi-company: stamp the active company
+    .filter(({ warehouseId }) => !alreadyHas.has(warehouseId))
+    .map(({ warehouseId, companyId }) => ({
+      company_id: companyId, // multi-company: stamp the target's company
       warehouse_id: warehouseId,
       rack,
       position: (body.position as string) ?? null,

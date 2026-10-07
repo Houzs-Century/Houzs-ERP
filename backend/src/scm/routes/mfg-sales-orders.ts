@@ -35,6 +35,7 @@ import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../li
 import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
 import { soStatusAfterProcessingDateChange } from '../lib/so-proceed-status-change';
+import { exemptionExpirySeed } from '../lib/so-exemption-expiry';
 import { soIsMigrated, withSoMigratedReadonly } from '../lib/migrated-so-readonly';
 import { readSoLineFreeze, soLineWriteRefusal, soBuildLineIds, soLineFrozen, SO_FULLY_FROZEN_REFUSAL } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 /* Status-transition table + the discard guards — lifted out of this file, which
@@ -3802,6 +3803,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       if (typeof body.postcode !== 'string' || !body.postcode.trim()) missing.push('postcode');
       if (typeof body.customerState !== 'string' || !body.customerState.trim()) missing.push('state');
       if (missing.length > 0) {
+        await rollbackPwpClaims();
         return c.json({
           error: 'delivery_date_needs_address',
           message: `A delivery date can't be set until the customer's address is filled — missing ${missing.join(', ')}. Either add the address or take off the delivery date.`,
@@ -4147,6 +4149,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     customer_birthday: dateOrNull(body.customerBirthday),
     customer_gender: (body.customerGender as string) ?? null,
     customer_delivery_date: dateOrNull(body.customerDeliveryDate),
+    /* BUG-51 — the original delivery date; see so-exemption-expiry.ts. */
+    sales_exemption_expiry: dateOrNull(body.customerDeliveryDate),
     /* PR #144 — Commander: "当我已经 create 好了这个 sales order 的时候，
        为什么我点进去 edit processing 的 delivery date 时，怎么没看到呢".
        processing_date was wired on PATCH (update header) but missed
@@ -5915,7 +5919,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      follower side effect. `reserveLineWrites` is the one explicit exception:
      the desktop composite-save uses it to acquire a CAS token before lines. */
   const beforeCols = map.map(([, snake]) => snake)
-    .concat(['status', 'version', 'edit_lease_token', 'edit_lease_expires_at', 'edit_lease_user_id', 'project_id', 'fair_match'])
+    .concat(['status', 'version', 'edit_lease_token', 'edit_lease_expires_at', 'edit_lease_user_id', 'project_id', 'fair_match', 'sales_exemption_expiry'])
     .join(', ');
   const { data: before, error: beforeError } = await sb.from('mfg_sales_orders').select(beforeCols).eq('doc_no', docNo).maybeSingle();
   if (beforeError) return c.json({ error: 'load_failed', reason: beforeError.message }, 500);
@@ -5946,6 +5950,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     if (!(to in updates) || norm(updates[to]) !== norm(beforeRecord[to])) continue;
     delete updates[to];
     delete body[from];
+  }
+  if ('customer_delivery_date' in updates) {
+    /* A draft is not processed yet, so its date may still move. */
+    const stored = beforeRecord.status === 'DRAFT' ? null : beforeRecord.sales_exemption_expiry as string | null;
+    const seed = exemptionExpirySeed(stored, updates['customer_delivery_date'] as string | null);
+    if (seed) updates['sales_exemption_expiry'] = seed;
   }
 
   /* Token, flags, the end of a save and taking your own lock back: one rule in
@@ -6027,6 +6037,22 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   const vFix = await venueNameForHalfWrittenPair(sb, body['venue'], body['venueId']);
   if (vFix.kind === 'resolved') { body['venue'] = vFix.name; updates['venue'] = vFix.name; }
   if (vFix.kind === 'unresolved') { delete body['venue']; delete updates['venue']; }
+  /* VENUE IS COMPULSORY ON A LIVE ORDER (owner 2026-10-05: "either sales from
+     showroom or sales from any project"). Confirm already demands one
+     (so-confirm-gate.ts rule 3); this stops an edit taking it away again. Only
+     when THIS patch touches the venue, so a legacy venue-less order stays
+     editable, and a DRAFT may still clear it. */
+  if (('venue' in updates || 'venue_id' in updates)
+    && beforeRecord.status !== 'DRAFT' && beforeRecord.status !== 'CANCELLED') {
+    const after = (k: string) => String((k in updates ? updates[k] : beforeRecord[k]) ?? '').trim();
+    if (!after('venue') && !after('venue_id')) {
+      return c.json(validationFailedBody([{
+        code: 'venue_required',
+        message: 'A venue is required: pick the showroom or the project this sale was made at.',
+        field: 'Venue',
+      }]), 422);
+    }
+  }
   if (body['venue'] !== undefined) {
     updates['venue_source'] = 'MANUAL' satisfies VenueSource;
     /* FAIR LINK (owner 2026-09-13) — the venue just moved, so whatever fair this

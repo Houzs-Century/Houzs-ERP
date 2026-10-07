@@ -65,6 +65,7 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { cancelledDocNoClass, cancelledRowClass } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
 import { deliveryReturnRowMenu } from "./row-menus";
@@ -340,7 +341,7 @@ function CardsGrid({ rows, onOpen }: { rows: DrRow[]; onOpen: (r: DrRow) => void
             className="group relative overflow-hidden rounded-lg border border-border bg-surface px-4 py-4 text-left shadow-stone transition-all duration-200 hover:-translate-y-px hover:border-primary/40 hover:shadow-slab focus:outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-docno text-[12.5px] font-semibold text-ink">
+              <span className={cn("font-docno text-[12.5px] font-semibold text-ink", cancelledDocNoClass(r.status))}>
                 {r.return_number}
               </span>
               <Badge tone={st.tone} size="xs">{st.label}</Badge>
@@ -1078,7 +1079,7 @@ export function DeliveryReturnsListV2() {
     doc_no: {
       doc: (r) => r.return_number,
       width: "156px",
-      render: (r) => <span className="font-docno text-[12.5px] font-semibold text-ink">{r.return_number}</span>,
+      render: (r) => <span className={cn("font-docno text-[12.5px] font-semibold text-ink", cancelledDocNoClass(r.status))}>{r.return_number}</span>,
     },
     doc_date: { doc: (r) => r.return_date || null, width: "108px" },
     debtor_code: { doc: (r) => r.debtor_code || null, width: "120px", mono: true },
@@ -1648,6 +1649,7 @@ export function DeliveryReturnsListV2() {
               error={error ? (error as Error).message ?? "Failed to load" : null}
               columns={columns}
               getRowKey={(r) => r.id}
+              getRowClassName={(r) => cancelledRowClass(r.status)}
               onRowClick={(r) => setSelected(r)}
               contextMenu={drContextMenu}
               expandable={{

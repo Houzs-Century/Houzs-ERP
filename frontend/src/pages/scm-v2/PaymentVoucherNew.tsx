@@ -52,6 +52,7 @@ import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { fmtDate } from '../../vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { BackToPile } from '../../vendor/scm/components/BackToPile';
 import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
 
 import { fmtMoneySen, fmtSen } from '../../vendor/shared/format';
@@ -776,6 +777,8 @@ export const PaymentVoucherNew = () => {
         title={isRefund ? 'New Customer Refund' : isAp ? 'New AP Payment' : 'New Payment Voucher'}
         actions={
           <div className={styles.actions}>
+            {/* The pile kept while this tab lives (owner 2026-10-06): the bills not yet opened. */}
+            <BackToPile target="pv" />
             <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{SAVE_HOTKEY_HINT}</span>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/payment-vouchers')}>
               <X {...ICON} /> Cancel
@@ -998,13 +1001,13 @@ export const PaymentVoucherNew = () => {
                         <td style={{ padding: '6px 8px' }}>{p.method}</td>
                         <td style={{ padding: '6px 8px' }}>{p.provider ?? '—'}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(p.amountSen)}</td>
-                        <td style={{ padding: '6px 8px' }}>{p.booked ? '✓ booked' : p.method === 'imported' ? 'AutoCount era' : 'not booked'}</td>
+                        <td style={{ padding: '6px 8px' }}>{p.booked ? '✓ booked' : p.method === 'imported' ? (refundSrc.type === 'SO' ? 'from AutoCount — counts' : 'AutoCount era') : 'not booked'}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', fontSize: 'var(--fs-13)', borderTop: '1px solid var(--line)', paddingTop: 'var(--space-3)' }}>
-                  <span>Booked here <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.bookedSen)}</b></span>
+                  <span>Paid <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.bookedSen)}</b>{(refundSrc.importedSen ?? 0) > 0 ? <span style={{ color: 'var(--fg-muted)' }}> (incl. {fmtRm(refundSrc.importedSen ?? 0)} from AutoCount)</span> : null}</span>
                   <span>Already on refund vouchers <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.refundedSen)}</b>
                     {refundSrc.refunds.map((r) => <span key={r.id}> · <a href={`/scm/payment-vouchers/${r.id}`} style={{ color: 'var(--c-orange)' }}>{r.pvNumber}</a></span>)}
                   </span>
@@ -1075,7 +1078,7 @@ export const PaymentVoucherNew = () => {
           <EventSuggestions suggestions={eventSuggestions} current={defaultEvent}
             onUse={(id) => { setDefaultEvent(id); setLines((prev) => prev.map((x) => ({ ...x, projectId: id }))); }} />
           {lines.map((l, idx) => (
-            <div key={l.rid} data-line={l.rid}
+            <div data-grid-row key={l.rid} data-line={l.rid}
               onKeyDown={(e) => { if (e.key === 'Insert') { e.preventDefault(); addLineAndLand(); } }}
               style={{
                 background: 'var(--c-paper)', border: '1px solid var(--line)',

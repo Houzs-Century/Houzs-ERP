@@ -24,6 +24,7 @@ import {
 } from '../../acc/deposit-invoices';
 import { refundedByInvoice } from '../../acc/deposit-refunds';
 import { deliveredUninvoiced, invoiceDeliveredOrders } from '../lib/auto-final-invoice';
+import { chunkIn } from '../lib/paginate-all';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 type Row = Record<string, unknown>;
@@ -112,6 +113,67 @@ export const depositInvoiceDetailHandler = async (c: Ctx): Promise<Response> => 
   const numbered = await withNoteNumbers(c, [found.di as unknown as Row]);
   if ('resp' in numbered) return numbered.resp;
   return c.json({ invoice: numbered.rows[0], payment: (payment as Row | null) ?? null });
+};
+
+/** At most this many invoices per print request — a page of the list, ticked. */
+export const MAX_SHEETS = 200;
+const ORDER_SHEET_COLS = 'doc_no, ship_to_address, address1, address2, address3, address4, postcode, city, customer_state, phone, email, local_total_sen';
+
+/** GET /sheets?ids=a,b — what the printed invoice needs beyond its row (owner
+    2026-10-06: print 出来不好看 → the Sales Invoice's A4 layout): the order's
+    customer address, phone and e-mail, the order's total, and what had been
+    received on it up to and including this deposit (paid_at, then entry
+    order) — so a reprint next month reads as the day it was issued. Sheets
+    come back in the order asked, for a single invoice or a ticked batch. */
+export const depositInvoiceSheetsHandler = async (c: Ctx): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const ids = [...new Set(String(c.req.query('ids') ?? '').split(',').map((s) => s.trim()).filter(Boolean))];
+  if (ids.length === 0) return c.json({ sheets: [] });
+  if (ids.length > MAX_SHEETS) return c.json({ error: 'too_many', message: `At most ${MAX_SHEETS} deposit invoices per print — tick fewer.` }, 400);
+  const sb = c.get('supabase');
+  const failed = (e: { message: string }) => c.json({ error: 'load_failed', reason: e.message }, 500);
+
+  const dis = await chunkIn<Row>(ids, (batch, f, t) =>
+    sb.from('acc_deposit_invoices').select(DI_COLS).eq('company_id', co.companyId).in('id', batch).order('id').range(f, t));
+  if (dis.error) return failed(dis.error);
+  const numbered = await withNoteNumbers(c, dis.data);
+  if ('resp' in numbered) return numbered.resp;
+
+  const soNos = [...new Set(numbered.rows.map((r) => String(r.so_doc_no ?? '')).filter(Boolean))];
+  const orders = await chunkIn<Row>(soNos, (batch, f, t) =>
+    sb.from('mfg_sales_orders').select(ORDER_SHEET_COLS).eq('company_id', co.companyId).in('doc_no', batch).order('doc_no').range(f, t));
+  if (orders.error) return failed(orders.error);
+  const pays = await chunkIn<Row>(soNos, (batch, f, t) =>
+    sb.from('mfg_sales_order_payments').select('id, so_doc_no, paid_at, created_at, amount_sen')
+      .eq('company_id', co.companyId).in('so_doc_no', batch).order('id').range(f, t));
+  if (pays.error) return failed(pays.error);
+
+  const orderOf = new Map(orders.data.map((o) => [String(o.doc_no), o]));
+  const payOf = new Map(pays.data.map((p) => [String(p.id), p]));
+  /* A payment's place on its order: its day, then when it was keyed, then its id. */
+  const place = (p: Row): string => `${String(p.paid_at ?? '').slice(0, 10)}|${String(p.created_at ?? '')}|${String(p.id)}`;
+  const byId = new Map(numbered.rows.map((r) => [String(r.id), r]));
+  const sheets = ids.flatMap((id) => {
+    const r = byId.get(id);
+    if (!r) return [];
+    const so = orderOf.get(String(r.so_doc_no ?? ''));
+    const mine = r.payment_source === 'SOPAY' ? payOf.get(String(r.payment_id ?? '')) : undefined;
+    const paidToDate = mine
+      ? pays.data.filter((p) => p.so_doc_no === r.so_doc_no && place(p) <= place(mine)).reduce((s, p) => s + Number(p.amount_sen ?? 0), 0)
+      : null;
+    return [{
+      ...r,
+      order: so ? {
+        ship_to_address: so.ship_to_address ?? null, address1: so.address1 ?? null, address2: so.address2 ?? null,
+        address3: so.address3 ?? null, address4: so.address4 ?? null, postcode: so.postcode ?? null, city: so.city ?? null,
+        customer_state: so.customer_state ?? null, phone: so.phone ?? null, email: so.email ?? null,
+        total_sen: so.local_total_sen == null ? null : Number(so.local_total_sen),
+        paid_to_date_sen: paidToDate,
+      } : null,
+    }];
+  });
+  return c.json({ sheets });
 };
 
 /** The switch, how many payments since the start still have no deposit
@@ -214,6 +276,8 @@ depositInvoices.get('/settings', depositInvoiceSettingsHandler);
 depositInvoices.post('/settings', saveDepositInvoiceSettingsHandler);
 depositInvoices.post('/issue-missing', issueMissingDepositInvoicesHandler);
 depositInvoices.post('/invoice-delivered', invoiceDeliveredOrdersHandler);
+/* Before '/:id', or 'sheets' reads as an invoice id. */
+depositInvoices.get('/sheets', depositInvoiceSheetsHandler);
 depositInvoices.get('/:id', depositInvoiceDetailHandler);
 depositInvoices.post('/:id/cancel', cancelDepositInvoiceHandler);
 depositInvoices.post('/:id/post', postDepositInvoiceHandler);

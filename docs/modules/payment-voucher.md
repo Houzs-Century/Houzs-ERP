@@ -97,6 +97,24 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
 - The OCR bill reader (`/payment-vouchers/extract`) **writes nothing** — every
   scan lands on the New page for a human to confirm before save; supplier
   matching falls back to NO match rather than guess wrong.
+- The bill pile (`PaymentVoucherScan.tsx`, PV and AP alike) sends **one bill
+  per request, three at a time** (`READ_AT_ONCE`), at most 50 files a pile
+  (`MAX_PILE_FILES`): one request for the whole pile read the bills one after
+  another and outran the browser's wait (owner 2026-10-05). A bill that fails
+  is read again alone. The bill readers (`/payment-vouchers/extract`,
+  `/credit-notes/scan`, `/payment-requests/read-bill` — `BILL_READER_PATH` in
+  `authed-fetch.ts`) get the 120 s scan wait, and their timeout says nothing
+  was saved instead of the duplicate-save warning.
+- The pile lives in `bill-pile-store.ts` (one per company and per kind) while
+  the tab lives (owner 2026-10-06): opening a bill and coming back finds the
+  rest as read, each opened bill says so, and `BackToPile` on the AP Invoices,
+  Payment Vouchers and New voucher pages offers "Back to Scan bills (N left)".
+  A read stamped with an ended run (Clear the pile, a re-read) is dropped.
+- A bill whose printed number **and** date sit on another live request,
+  voucher or AP invoice (`lib/bill-matches.ts`, `GET
+  /payment-requests/bill-matches`) is said on the voucher form, beside each
+  read bill in the pile, and on the AP invoice form — a warning, never a block;
+  an AP invoice being edited is never its own match (`excludeApInvoice`).
 - Vendor memory (`scm.acc_vendor_memory`) only learns from what the operator
   actually **saved**, never from a model guess; AP payments teach nothing
   (their one line is fixed by role).
