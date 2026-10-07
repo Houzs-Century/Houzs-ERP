@@ -457,7 +457,7 @@ describe('a delivery order that names its PO but describes the items differently
   });
 });
 
-describe('a delivery order that was already received says so', () => {
+describe('a delivery order whose POs are marked Received says so', () => {
   // NB Furniture NBF2610-095: received by hand on HC-GRN-2610-011, so its POs
   // are no longer open. Nothing is drafted; each row says why.
   const allPos = [
@@ -476,8 +476,8 @@ describe('a delivery order that was already received says so', () => {
     expect(res.picks).toEqual([]);
     expect(res.poFallback).toBeNull();
     expect(describeUnmatchedScanLines(res.unmatched, allPos)).toBe(
-      'SB10-KHB(H)(9MM)(L-4")-LSD013 x2 (PO HC-PO-2609-223 is already fully received); '
-      + 'SB10-KHB(H)(9MM)-LSD013 x2 (PO HC-PO-2609-251 is already fully received); '
+      'SB10-KHB(H)(9MM)(L-4")-LSD013 x2 (PO HC-PO-2609-223 is marked Received); '
+      + 'SB10-KHB(H)(9MM)-LSD013 x2 (PO HC-PO-2609-251 is marked Received); '
       + 'SB10-B11EC x1 (PO KLPO10138-HC5324 is not one of our POs).',
     );
   });

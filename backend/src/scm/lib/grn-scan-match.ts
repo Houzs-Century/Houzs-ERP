@@ -382,16 +382,16 @@ export function matchGrnScanToPoLines(
 }
 
 const PO_STATUS_WHY: Record<string, string> = {
-  RECEIVED: 'is already fully received',
-  CANCELLED: 'is cancelled',
-  DRAFT: 'is not submitted yet',
+  RECEIVED: 'is marked Received',
+  CANCELLED: 'is marked Cancelled',
+  DRAFT: 'is marked Draft',
 };
 
 // Why a printed PO is not one we can receive against, from its live status.
 function poNotOpenWhy(l: ScannedGrnLine, allPos: PoStatusRef[]): string {
   const po = resolvePrintedPo(l.poNo, allPos);
   if (!po) return `PO ${l.poNo ?? '?'} is not one of our POs`;
-  return `PO ${po.poNumber} ${PO_STATUS_WHY[po.status] ?? "is on hold, has nothing left to receive, or is another supplier's"}`;
+  return `PO ${po.poNumber} ${PO_STATUS_WHY[po.status] ?? `is marked ${po.status}, but is on hold or under another supplier`}`;
 }
 
 const UNMATCHED_WHY: Record<UnmatchedScanLine['reason'], (l: ScannedGrnLine, allPos: PoStatusRef[]) => string> = {

@@ -21,7 +21,7 @@ lists only what differs for GR.
   line(s), **nothing is created** — the job lands *needs-review* (status `done`,
   `linked_doc_no` null, slip retained, a plain note) and the operator receives
   from the PO by hand. The note lists each scanned line and why, including a
-  refused PO's live status ("HC-PO-2609-223 is already fully received").
+  refused PO's live status ("HC-PO-2609-223 is marked Received").
 - **Known PO, unknown items.** When the rows (or header) name exactly ONE open PO
   of the resolved supplier and no row lines up by item, the draft carries every
   line still owed on that PO at its remaining qty (`poFallback`), with "Check
