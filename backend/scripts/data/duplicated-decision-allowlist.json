@@ -2,6 +2,11 @@
   "reviewed": [
     {
       "check": "D2",
+      "key": "APPROVED,REJECTED,REQUESTED ~ APPROVED,REJECTED,REQUESTED,WITHDRAWN",
+      "why": "TWO DIFFERENT ENUMS that share three words: scm.so_payment_backdate_requests.status (mig 20260930T1500) has WITHDRAWN as its own fourth terminal state, and BackdateRequestQuickView STATUS_TONE draws each of the four in its own tone; the amendment bucket (status-pill.ts BUCKET_ENTRY / PO_AMENDMENT / AMENDMENT_BUCKET_ORDER) folds a withdrawal INTO Rejected on purpose, so it has three. Not one rule with two homes. Divergence costs a pill colour, never money or stock."
+    },
+    {
+      "check": "D2",
       "key": "CANCELLED,CREDIT_NOTED,REFUNDED ~ CANCELLED,CREDIT_NOTED,REFUNDED,REJECTED",
       "why": "TWO DIFFERENT DOCUMENTS, each deciding when ITS OWN return is closed to editing: ConsignmentReturnDetail / ConsignmentReturns lock a consignment return at CANCELLED / CREDIT_NOTED / REFUNDED; DeliveryReturnDetail (the Delivery Return editor, BUG-62) also treats REJECTED as closed, matching DeliveryReturnDetailV2's isTerminal, which hides the Edit button for the same four. Different enums that share words, not one rule with two homes. Divergence costs an editor that opens or refuses, never money or stock."
     },
