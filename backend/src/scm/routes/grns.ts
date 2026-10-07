@@ -2266,10 +2266,14 @@ export const cancelGrnCommand = async (
       note: 'Draft GRN — nothing was received, so nothing was reversed',
       fieldChanges: statusChange('DRAFT', 'CANCELLED'),
     });
-    const { data: draftLines } = await sb.from('grn_items')
+    const { data: draftLines, error: draftLinesErr } = await sb.from('grn_items')
       .select('purchase_order_item_id').eq('grn_id', id);
-    await recountPoAndRewalk(((draftLines ?? []) as Array<{ purchase_order_item_id: string | null }>)
-      .map((l) => l.purchase_order_item_id));
+    if (draftLinesErr) {
+      cancelErrors.push(`PO recount skipped: could not read the GRN lines (${draftLinesErr.message}).`);
+    } else {
+      await recountPoAndRewalk(((draftLines ?? []) as Array<{ purchase_order_item_id: string | null }>)
+        .map((l) => l.purchase_order_item_id));
+    }
     return c.json({ grn: data ?? { id, status: 'CANCELLED' }, ...(cancelErrors.length ? { cancelErrors } : {}) });
   }
 
