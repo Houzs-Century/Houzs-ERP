@@ -308,6 +308,15 @@ export const erpLineTrust = (
   return unitPriceSen === 0 && zeroPriceIntended === true ? 'operator-zero' : true;
 };
 
+/** BUG-63 — the unit price a line PATCH persists. A 0 nobody claimed means "no
+ *  price could be found" (a swap to a sofa module or an unpriced SKU), so the
+ *  line keeps the price it already carries instead of dropping to RM 0. Only an
+ *  operator's claimed 0 or a migrated line's own 0 may replace a stored price. */
+export const unitAfterLineEdit = (resolvedSen: number, storedSen: number | null, trust: TrustSelling): number =>
+  resolvedSen === 0 && trust !== 'operator-zero' && trust !== 'including-zero' && (storedSen ?? 0) > 0
+    ? (storedSen as number)
+    : resolvedSen;
+
 /** Pure mapper from a (product, fabric, variants) snapshot to the
  *  breakdown + DB column values. Used by tests + the route helpers below
  *  so the math path is verifiable without Supabase. */
