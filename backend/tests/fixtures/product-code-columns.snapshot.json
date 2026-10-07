@@ -1,7 +1,7 @@
 {
   "source": "production information_schema via backend/scripts/probe-product-code-columns.mjs, read-only run 34970682915",
   "capturedAt": "2026-09-15",
-  "amendedSince": "2026-09-20: scm.retail_price_guard_log.item_code added by hand (20260920T1300 applied to production ahead of its file landing), read back from production information_schema before writing it here — text, company_id present, no material_kind. A full re-probe supersedes this line.",
+  "amendedSince": "2026-09-20: scm.retail_price_guard_log.item_code added by hand (20260920T1300 applied to production ahead of its file landing), read back from production information_schema before writing it here — text, company_id present, no material_kind. A full re-probe supersedes this line. 2026-10-07: scm.product_requests.item_code added by hand from its migration (20261006T0741, in PR #4494, NOT yet on production when written) — text, company_id present, no material_kind; the first re-probe after that deploy must read it back and supersedes this line too.",
   "newestMigrationAtCapture": "20260915T1800_so_payment_conversions.sql",
   "columns": [
     {"schema":"public","table":"addons","column":"service_sku","companyId":false,"materialKind":false},
@@ -90,6 +90,7 @@
     {"schema":"scm","table":"supplier_material_bindings","column":"item_code","companyId":true,"materialKind":true},
     {"schema":"scm","table":"supplier_material_bindings","column":"supplier_sku","companyId":true,"materialKind":true},
     {"schema":"scm","table":"warehouse_rack_items","column":"item_code","companyId":true,"materialKind":false},
-    {"schema":"scm","table":"warehouse_rack_movements","column":"item_code","companyId":true,"materialKind":false}
+    {"schema":"scm","table":"warehouse_rack_movements","column":"item_code","companyId":true,"materialKind":false},
+    {"schema":"scm","table":"product_requests","column":"item_code","companyId":true,"materialKind":false}
   ]
 }

@@ -63,6 +63,7 @@ const ROUTE_CHUNKS: Record<string, () => Promise<unknown>> = {
   "/scm/consignment-notes": () => import("../pages/scm-v2/ConsignmentNotes"),
   "/scm/consignment-returns": () => import("../pages/scm-v2/ConsignmentReturns"),
   "/scm/purchase-consignment-orders": () => import("../pages/scm-v2/PurchaseConsignmentOrders"),
+  "/scm/product-requests": () => import("../pages/scm-v2/ProductRequests"),
   "/scm/purchase-consignment-receives": () => import("../pages/scm-v2/PurchaseConsignmentReceives"),
   "/scm/purchase-consignment-returns": () => import("../pages/scm-v2/PurchaseConsignmentReturns"),
   // Procurement.

@@ -778,6 +778,16 @@ const SupplierCard = ({
             <div style={{ gridColumn: 'span 2' }}>
               <InfoCell label="Notes" value={po.notes || null} />
             </div>
+            {/* Raised from a product request (owner 2026-10-06) — the request it answers. */}
+            {(() => {
+              const pr = (po as { productRequest?: { id: string; requestNo: string; status: string } | null }).productRequest;
+              return pr ? (
+                <div>
+                  <div style={{ fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--fg-muted)' }}>From Product Request</div>
+                  <Link to="/scm/product-requests" style={{ fontFamily: 'var(--font-mono)', color: 'var(--c-orange)' }}>{pr.requestNo}</Link>
+                </div>
+              ) : null;
+            })()}
           </div>
         ) : (
         <div className={styles.formGrid4}>
