@@ -141,6 +141,9 @@ export const PurchaseConsignmentReceiveDetail = () => {
   const cancel = useCancelPurchaseConsignmentReceive();
 
   const grn = detail.data?.grn ?? null;
+  /* The PC Receive record stores its number as receive_number; grn_number is
+     the GRN field this page was cloned from and is never returned (DEV-57). */
+  const recvNo: string = grn?.receive_number ?? grn?.grn_number ?? '';
   const items = (detail.data?.items ?? []) as GrnItemRow[];
 
   /* T12 — maintenance config + fabrics drive the per-category variant editor on
@@ -185,7 +188,7 @@ export const PurchaseConsignmentReceiveDetail = () => {
     if (!grn) return;
     // A consignment receive has no QC accept/reject — accepted = received.
     const pdfHeader = {
-      grn_number: grn.grn_number,
+      grn_number: recvNo,
       status: String(grn.status),
       received_at: grn.received_at ?? '',
       delivery_note_ref: grn.delivery_note_ref ?? null,
@@ -333,7 +336,7 @@ export const PurchaseConsignmentReceiveDetail = () => {
       {/* ── Header ──────────────────────────────────────────────── */}
       <PageHeader back
         eyebrow="Procurement"
-        title={`${grn.grn_number} — ${grn.supplier?.name ?? grn.supplier?.code ?? '—'}`}
+        title={`${recvNo} — ${grn.supplier?.name ?? grn.supplier?.code ?? '—'}`}
         actions={
           <div className={styles.actions}>
             <div className={styles.totalRail}>
@@ -349,7 +352,7 @@ export const PurchaseConsignmentReceiveDetail = () => {
               open={print.open}
               onClose={print.close}
               docTitle="Consignment Receive"
-              docNo={grn.grn_number}
+              docNo={recvNo}
               rows={[
                 { label: 'Supplier', value: grn.supplier?.name ?? grn.supplier?.code ?? '—' },
                 { label: 'Received', value: grn.received_at ? fmtDateOrDash(grn.received_at) : '—' },
@@ -369,7 +372,7 @@ export const PurchaseConsignmentReceiveDetail = () => {
               <Button variant="ghost" size="md"
                 onClick={async () => {
                   if (!(await askConfirm({
-                    title: `Cancel ${grn.grn_number}?`,
+                    title: `Cancel ${recvNo}?`,
                     body: 'This reverses the receipt. Line items stay for audit.',
                     confirmLabel: 'Cancel Receive',
                     danger: true,
