@@ -389,19 +389,24 @@ describe('resolvePrintedPo: suppliers print our PO without the company prefix', 
   const pos = [{ poNumber: 'HC-PO-2609-223' }, { poNumber: 'HC-PO-010080' }, { poNumber: 'HC-PO-2609-251' }];
 
   test('exact, and a unique tail of 6+ digits', () => {
-    expect(resolvePrintedPo('hc po 2609 223', pos)?.poNumber).toBe('HC-PO-2609-223');
-    expect(resolvePrintedPo('PO-2609-223', pos)?.poNumber).toBe('HC-PO-2609-223');
-    expect(resolvePrintedPo('PO: 2609-251', pos)?.poNumber).toBe('HC-PO-2609-251');
-    expect(resolvePrintedPo('PO-010080', pos)?.poNumber).toBe('HC-PO-010080');
+    expect(resolvePrintedPo('hc po 2609 223', pos, true)?.poNumber).toBe('HC-PO-2609-223');
+    expect(resolvePrintedPo('PO-2609-223', pos, true)?.poNumber).toBe('HC-PO-2609-223');
+    expect(resolvePrintedPo('PO: 2609-251', pos, true)?.poNumber).toBe('HC-PO-2609-251');
+    expect(resolvePrintedPo('PO-010080', pos, true)?.poNumber).toBe('HC-PO-010080');
   });
 
   test('short, foreign or ambiguous numbers resolve to nothing', () => {
-    expect(resolvePrintedPo('251', pos)).toBeNull();
-    expect(resolvePrintedPo('S/O1791', pos)).toBeNull();
-    expect(resolvePrintedPo('KLPO10138-HC5324', pos)).toBeNull();
-    expect(resolvePrintedPo(null, pos)).toBeNull();
+    expect(resolvePrintedPo('251', pos, true)).toBeNull();
+    expect(resolvePrintedPo('S/O1791', pos, true)).toBeNull();
+    expect(resolvePrintedPo('KLPO10138-HC5324', pos, true)).toBeNull();
+    expect(resolvePrintedPo(null, pos, true)).toBeNull();
     const twoCompanies = [{ poNumber: 'HC-PO-2609-223' }, { poNumber: 'XX-PO-2609-223' }];
-    expect(resolvePrintedPo('PO-2609-223', twoCompanies)).toBeNull();
+    expect(resolvePrintedPo('PO-2609-223', twoCompanies, true)).toBeNull();
+  });
+
+  test('without allowTail only the exact number resolves', () => {
+    expect(resolvePrintedPo('PO-2609-223', pos, false)).toBeNull();
+    expect(resolvePrintedPo('HC-PO-2609-223', pos, false)?.poNumber).toBe('HC-PO-2609-223');
   });
 });
 

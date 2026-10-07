@@ -130,10 +130,14 @@ export function normalizeSupplierName(v: string | null | undefined): string {
  * Resolve a printed PO number to ONE of `pos`, or null. Exact (normalised)
  * first. Suppliers also print our number without the company prefix
  * ("PO-2609-223", "2609-251", "PO-010080" for HC-PO-...), so a unique tail match
- * counts too, but only when it carries at least 6 digits: a bare "251" never
- * matches. More than one candidate is null, never guessed.
+ * counts too when `allowTail`, and only with at least 6 digits: a bare "251"
+ * never matches. More than one candidate is null, never guessed.
  */
-export function resolvePrintedPo<T extends { poNumber: string }>(printed: string | null | undefined, pos: T[]): T | null {
+export function resolvePrintedPo<T extends { poNumber: string }>(
+  printed: string | null | undefined,
+  pos: T[],
+  allowTail: boolean,
+): T | null {
   const p = normalizeCode(printed);
   if (!p) return null;
   const unique = (hits: T[]): T | null => {
@@ -142,7 +146,7 @@ export function resolvePrintedPo<T extends { poNumber: string }>(printed: string
   };
   const exact = pos.filter((r) => normalizeCode(r.poNumber) === p);
   if (exact.length > 0) return unique(exact);
-  if ((p.match(/\d/g)?.length ?? 0) < 6) return null;
+  if (!allowTail || (p.match(/\d/g)?.length ?? 0) < 6) return null;
   return unique(pos.filter((r) => normalizeCode(r.poNumber).endsWith(p)));
 }
 
@@ -223,8 +227,10 @@ export function matchGrnScanToPoLines(
     : openLines;
 
   const openPos = [...new Set(supplierLines.map((l) => l.poNumber))].map((poNumber) => ({ poNumber }));
+  // A tail match only inside one known supplier's POs: without a supplier, a
+  // foreign ref could tail-match another supplier's PO.
   const resolveOpenPo = (printed: string | null | undefined): string | null =>
-    resolvePrintedPo(printed, openPos)?.poNumber ?? null;
+    resolvePrintedPo(printed, openPos, supplierId !== null)?.poNumber ?? null;
 
   // PO-number scoping — does the scanned header P.O. No name one of our open POs?
   const matchedPoNumberValue = resolveOpenPo(scannedPoNo);
@@ -389,7 +395,7 @@ const PO_STATUS_WHY: Record<string, string> = {
 
 // Why a printed PO is not one we can receive against, from its live status.
 function poNotOpenWhy(l: ScannedGrnLine, allPos: PoStatusRef[]): string {
-  const po = resolvePrintedPo(l.poNo, allPos);
+  const po = resolvePrintedPo(l.poNo, allPos, true);
   if (!po) return `PO ${l.poNo ?? '?'} is not one of our POs`;
   return `PO ${po.poNumber} ${PO_STATUS_WHY[po.status] ?? `is marked ${po.status}, but is on hold or under another supplier`}`;
 }
