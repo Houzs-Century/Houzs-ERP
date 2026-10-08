@@ -1,4 +1,5 @@
 import { PodPhotoAlbum } from "../../components/scm-v2/PodPhotoAlbum";
+import { DO_DELIVERED_STATUSES } from "../../vendor/scm/lib/delivery-stop-status";
 
 /* The delivery run as the crew recorded it, on the DO itself (owner,
    2026-10-08: what the driver does on the phone must be visible on the DO):
@@ -26,7 +27,7 @@ const when = (iso: string | null | undefined): string | null =>
 
 /** True once the customer has the goods (the run-sheet's POD flips DELIVERED). */
 export const doIsDelivered = (h: DoPodFields): boolean =>
-  ["DELIVERED", "SIGNED", "INVOICED"].includes((h.status ?? "").toUpperCase()) || !!h.delivered_at;
+  DO_DELIVERED_STATUSES.includes((h.status ?? "").toUpperCase()) || !!h.delivered_at;
 
 export function DoProofOfDeliveryCard({ h }: { h: DoPodFields }) {
   // Every photo the POD carries; a DO closed before multi-photo has just pod_r2_key.

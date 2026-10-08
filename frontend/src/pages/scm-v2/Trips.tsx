@@ -65,6 +65,7 @@ import {
 import {
   useDeliveryPlanning,
   useScheduleDelivery,
+  useUpdateDeliveryFields,
   timeArrangementOf,
   ARRANGEMENT_STAGE_LABEL,
   type TimeArrangement,
@@ -161,6 +162,7 @@ export function Trips() {
   /* Shared write path + option lists for the board's inline cells + bulk bar
      (the manual crew path stays on the board everywhere). */
   const sched = useScheduleDelivery();
+  const updateFields = useUpdateDeliveryFields();
   const { data: drivers = [] } = useDrivers();
   const { data: lorries = [] } = useLorries();
 
@@ -331,6 +333,12 @@ export function Trips() {
           legDistanceM: s.legDistanceM ?? undefined,
           legDurationS: s.legDurationS ?? undefined,
         });
+        /* The estimated window becomes the order's Time Slot (what Delivery Planning
+           and the driver's phone show) unless someone already typed one. */
+        const est = estWindowOf(s);
+        if (est && !pendingOrders.find((o) => o.so_doc_no === s.ref)?.time_range) {
+          await updateFields.mutateAsync({ type: 'so', id: s.ref, timeRange: est });
+        }
         ok += 1;
       } catch { failed += 1; }
     }

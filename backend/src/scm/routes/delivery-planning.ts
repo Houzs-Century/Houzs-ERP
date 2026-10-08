@@ -102,6 +102,8 @@ import { zoneForAddress } from '../lib/zone-classify';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress, geocodeAddressCached, normalizeAddress } from '../lib/geocode';
 import { dateOrNull } from '../lib/date-coerce';
+import { echoTripCrew } from '../lib/trip-crew-echo';
+import { latestLiveDoIdForSo, applyScheduleCrew, assignSoCrew, setAssrLegCrew, staleRunOfSo, hasSeatPatch } from '../lib/trip-crew-sync';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { planningPoNosByDoc } from '../lib/planning-po-nos';
 
@@ -1345,6 +1347,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   } catch (e) {
     console.warn(`[delivery-planning] DP-order union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
+  await echoTripCrew(sb, dpBoardRows).catch((e: Error) => console.warn(`[delivery-planning] DP crew echo skipped: ${e.message.slice(0, 120)}`));
 
   /* ── PMS project SETUP / DISMANTLE union (READ-ONLY mirror) ───────────────────
      The fleet (drivers / lorries) is SHARED across deliveries, service cases AND
@@ -2242,7 +2245,8 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
      trip_stops are scm → the supabase client. */
   if (type === 'assr') {
     const assrWantsTrip = p.tripId != null || p.lorryId != null;
-    if (p.scheduleDate === undefined && !assrWantsTrip) return c.json({ error: 'no_changes' }, 400);
+    const assrCrewOnly = !assrWantsTrip && hasSeatPatch(p);
+    if (p.scheduleDate === undefined && !assrWantsTrip && !assrCrewOnly) return c.json({ error: 'no_changes' }, 400);
     const caseId = Number(id);
     if (!Number.isFinite(caseId)) return c.json({ error: 'bad_id', reason: 'assr id must be numeric' }, 400);
     const jobKind: 'customer_pickup' | 'delivery' | 'inspection' =
@@ -2283,6 +2287,11 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
     // P3: wire the leg onto a trip when a lorry/trip was chosen. Best-effort +
     // REPORTED — the date write already committed (same rule as the SO/DO path).
     const sb = c.get('supabase');
+    if (assrCrewOnly) {
+      const legTrip = await setAssrLegCrew(sb, caseId, jobKind, p).catch((e: Error) => ({ error: e.message }));
+      if (legTrip && typeof legTrip === 'object') return c.json({ error: 'crew_save_failed', reason: legTrip.error }, 500);
+      if (!legTrip && p.scheduleDate === undefined) return c.json({ error: 'no_trip', reason: 'Pick a lorry for this job first; the driver rides with the lorry run.' }, 409);
+    }
     const wiring: TripWiring = assrWantsTrip
       ? await scheduleAssrOntoTrip(c, sb, caseId, jobKind, p)
       : { state: 'NOT_REQUESTED' };
@@ -2303,6 +2312,12 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
   if (p.deliveryState !== undefined) updates.delivery_state = p.deliveryState;
   // A trip-only schedule (no date/state) is still a valid change — only 400 when
   // there's NOTHING to do at all.
+  const coId = activeCompanyId(c) ?? null;
+  const crew = type === 'so' && !wantsTrip && hasSeatPatch(p) && coId != null
+    ? await assignSoCrew(c.get('supabase'), coId, id, p, (c.get('user') as { id?: string } | null)?.id ?? null).catch((e: Error) => ({ error: e.message })) : undefined;
+  if (crew === null) return c.json({ error: 'no_delivery_order', reason: 'Create a delivery order first, then assign the crew.' }, 409);
+  if (crew && 'error' in crew) return c.json({ error: 'crew_save_failed', reason: crew.error }, 500);
+  if (Object.keys(updates).length === 1 && crew) return c.json({ ok: true, crew });
   if (Object.keys(updates).length === 1 && !wantsTrip) return c.json({ error: 'no_changes' }, 400);
 
   const sb = c.get('supabase');
@@ -2374,8 +2389,9 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
   if (!data) return c.json({ error: 'not_found' }, 404);
 
   // ── Trip wiring — find-or-create a trip, append a stop.
-  const wiring: TripWiring = wantsTrip
-    ? await scheduleOntoTrip(c, sb, type, id, p)
+  const carry = type === 'so' && !wantsTrip && p.scheduleDate ? await staleRunOfSo(sb, coId, id, p.scheduleDate) : null;
+  const wiring: TripWiring = wantsTrip || carry
+    ? await scheduleOntoTrip(c, sb, type, id, { ...p, ...carry })
     : { state: 'NOT_REQUESTED' };
 
   /* `trip` keeps its exact wire shape — the board reads it, and a failure still
@@ -2496,6 +2512,7 @@ async function scheduleOntoTrip(
     let customerName: string | null = null;
     let address: string | null = null;
     let tripWarehouseId: string | null = p.warehouseId ?? null;
+    let orderDate: string | null = null;
 
     if (type === 'do') {
       doId = id;
@@ -2516,10 +2533,12 @@ async function scheduleOntoTrip(
          schedule. An SO therefore has no UUID to put in trip_stops.so_id — it stays
          null, and the stop reaches its SO through the DO (do_id) instead. */
       const { data: soRow } = await sb.from('mfg_sales_orders')
-        .select('local_total_sen, debtor_name, address1, address2').eq('doc_no', id).maybeSingle();
+        .select('local_total_sen, debtor_name, address1, address2, amended_delivery_date, customer_delivery_date').eq('doc_no', id).maybeSingle();
       if (soRow) {
         const r = soRow as Record<string, unknown>;
         soId = null;
+        doId = await latestLiveDoIdForSo(sb, activeCompanyId(c) ?? null, id);
+        orderDate = dateOrNull((r.amended_delivery_date ?? r.customer_delivery_date ?? null) as string | null);
         revenueSen = Number((r.localTotalSen ?? r.local_total_sen) ?? 0);
         customerName = (r.debtorName ?? r.debtor_name ?? null) as string | null;
         address = [r.address1, r.address2].filter(Boolean).join(', ') || null;
@@ -2531,7 +2550,7 @@ async function scheduleOntoTrip(
        PLANNED trip for (lorry, date) or create one. */
     /* `??` is nullish: a blank tripDate/scheduleDate walked into trips.trip_date
        (`DATE NOT NULL`, mig 0053). Blank now falls to today like an absent key. */
-    const tripDate = dateOrNull(p.tripDate) ?? dateOrNull(p.scheduleDate) ?? todayMyt();
+    const tripDate = dateOrNull(p.tripDate) ?? dateOrNull(p.scheduleDate) ?? orderDate ?? todayMyt();
     let tripId = p.tripId ?? null;
     if (!tripId && p.lorryId) {
       const { data: found } = await sb.from('trips').select('id, trip_no')
@@ -2692,8 +2711,7 @@ async function scheduleOntoTrip(
       }
     }
 
-    /* (removed) delivery_leg trip-linking — the leg feature was removed; the
-       order surfaces on the trip via its trip_stops row above. */
+    await applyScheduleCrew(sb, tripIdStr, p, user?.id ?? null);
 
     /* Echo the trip_no for the response. */
     const { data: tNo } = await sb.from('trips').select('id, trip_no').eq('id', tripIdStr).maybeSingle();
@@ -2702,20 +2720,8 @@ async function scheduleOntoTrip(
        the echo read came back empty, so this stays WIRED — the wiring is what is
        being reported, not the label. */
 
-    /* SAY WHEN NO STOP WAS WRITTEN. The insert above is guarded by
-       `!already && (doId || soId)`, and on the SO-DIRECT path BOTH are null —
-       doId because there is no DO, soId because it is set to null right above
-       (scm.mfg_sales_orders has a TEXT doc_no PK and no uuid, while
-       trip_stops.so_id is a uuid). So scheduling an SO straight from the board
-       creates no stop at all, and this returned WIRED anyway: the dispatcher
-       saw success, the driver's sheet stayed empty, and lorry capacity counted
-       nothing.
-
-       The stop is NOT invented — there is genuinely no key to file it under,
-       and guessing one would put a job on a route that cannot be traced back
-       to its order. What changes is that the answer stops lying. The existing
-       fields are untouched so no caller breaks; a caller that reads
-       stopCreated can now tell the operator the job still needs its DO. */
+    /* SAY WHEN NO STOP WAS WRITTEN: an SO with no live DO has no key to file a
+       stop under, so the caller is told the job still needs its DO. */
     const stopCreated = Boolean(already) || Boolean(doId || soId);
     return {
       state: 'WIRED',

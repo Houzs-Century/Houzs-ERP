@@ -6,6 +6,7 @@ import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { scopeToAllowedCompanies } from '../lib/companyScope';
 import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } from '../lib/deliveryScope';
+import { ASSR_LEG_BY_STOP } from '../lib/assr-board-scope';
 
 const NOT_YOUR_JOB = "You can only update a delivery job assigned to you.";
 
@@ -84,9 +85,7 @@ export const doPodContextHandler = async (c: Context<{ Bindings: Env; Variables:
               (trip_stops.assr_case_id + stop_type -> leg)
      project  the caller is that leg's driver / helper on the project
               (public user ids — projects keep their own crew) */
-export const ASSR_LEG_BY_STOP: Record<string, string> = {
-  PICKUP: 'customer_pickup', INSPECTION: 'inspection', DELIVERY: 'delivery', SERVICE: 'delivery',
-};
+export { ASSR_LEG_BY_STOP };
 export async function ownServiceAndProjectRowKeys(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,

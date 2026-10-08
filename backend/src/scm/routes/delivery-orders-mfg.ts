@@ -11,6 +11,7 @@
 // Mounted at '/delivery-orders-mfg' in apps/api/src/index.ts.
 
 import { Hono } from 'hono';
+import { propagateDoCrewToTrip } from '../lib/trip-crew-sync';
 import type { Context } from 'hono';
 import { normalizePhone } from '../shared/phone';
 import { firstUndeliverableSo, soNotDeliverableResponse } from '../lib/source-document-gates';
@@ -4141,7 +4142,11 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
     }
   }
 
-  return c.json({ crew });
+  /* One crew per lorry run: the run this DO rides, and its other DOs, follow
+     (Last Mile and the drivers' phones read them). Reported, not swallowed. */
+  const tripSync = await propagateDoCrewToTrip(sb, id, { driver1Id, driver2Id, helper1Id, helper2Id, lorryId }, user.id)
+    .then(() => null, (e: Error) => String(e.message).slice(0, 160));
+  return c.json({ crew, ...(tripSync ? { tripSyncError: tripSync } : {}) });
 });
 
 // ── Header PATCH (editable SO-style fields) ───────────────────────────────
