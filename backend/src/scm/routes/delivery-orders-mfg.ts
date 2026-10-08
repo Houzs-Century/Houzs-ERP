@@ -28,6 +28,7 @@ import { statusCapabilityRefusal, POD_STATES } from '../lib/do-status-capability
 import { resolveDeliveryScope, scopeMatchesAssignment } from '../lib/deliveryScope';
 import { resolveCrewSeats } from '../lib/crew-seats';
 import { fetchDoCrewAssignment } from './delivery-pod-context';
+import { startTripIfPlanned } from './delivery-job-progress';
 import { revertDeliveryOrderHandler } from './delivery-order-revert';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
@@ -5110,6 +5111,15 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   // into the same update below.
   const tsNum: Record<string, number> = {};
   if (toStatus === 'DISPATCHED') ts.dispatched_at = now;
+  /* "On the way" is the IN_TRANSIT flip: it stamped nothing, so the board's
+     Departure and the phone's timeline never had a time. The first flip stamps
+     it and starts the DO's trip, so the phone's live location is accepted. */
+  if (toStatus === 'IN_TRANSIT' && (prevStatus ?? '').toUpperCase() !== 'IN_TRANSIT') {
+    ts.departure_at = now;
+    const { data: stop, error: stopErr } = await sb.from('trip_stops').select('trip_id').eq('do_id', id).limit(1).maybeSingle();
+    if (stopErr) return c.json({ error: 'load_failed', reason: stopErr.message }, 500);
+    await startTripIfPlanned(sb, (stop as { trip_id: string | null } | null)?.trip_id ?? null);
+  }
   if (toStatus === 'SIGNED')     ts.signed_at = now;
   if (toStatus === 'DELIVERED')  ts.delivered_at = now;
   /* POD capture — the mobile app posts the proof-of-delivery signature +

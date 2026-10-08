@@ -91,7 +91,7 @@ import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
 import { mintDpNoForLorry } from '../lib/dp-no-mint';
 import { resolveDeliveryScope, scopeMatchesAssignment, type DeliveryScope, type CrewAssignment } from '../lib/deliveryScope';
-import { fetchDoCrewAssignment, doPodContextHandler } from './delivery-pod-context';
+import { fetchDoCrewAssignment, doPodContextHandler, ownServiceAndProjectRowKeys } from './delivery-pod-context';
 import { deriveArrangementStage } from '../lib/arrangement-stage';
 /* Option B side map (/geo): zone derivation + set counting + cache-first
    geocoding reuse the EXISTING single-owner modules — the zone map + fallback
@@ -1496,10 +1496,14 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         is skipped and their board is byte-identical to before. A row's assignment:
           · SO row  → the latest DO's header driver_id + crew driver/helper ids.
           · DP row  → its trip's driver_id / helper_1_id / helper_2_id.
-          · ASSR / DO-less SO → no assignment (empty) → never matches a self scope. */
-  const scopedOrders = await applyDeliveryRowScope(sb, scope, allOrders, {
+          · ASSR leg → its stop's trip crew; project leg → the project's crew users
+            (ownServiceAndProjectRowKeys). DO-less SO → never matches a self scope. */
+  const scopedBase = new Set(await applyDeliveryRowScope(sb, scope, allOrders, {
     doByDoc, doDriverById, crewIdsByDo, dpTripIdByKey,
-  });
+  }));
+  const ownExtra = scope.mode === 'all' ? null
+    : await ownServiceAndProjectRowKeys(sb, c.env, scope, Number(c.get('houzsUser')?.id), allOrders);
+  const scopedOrders = allOrders.filter((o) => scopedBase.has(o) || !!ownExtra?.has(o.so_doc_no));
 
   /* 8. Counts per state — computed over the REGION-filtered set so the state
         tab badges reflect the active region. The state filter is applied AFTER

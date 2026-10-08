@@ -114,6 +114,7 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   canonical-venue TS module, its PG migration function, the D1 parity file,
   and the backfill script — a DB trigger also re-applies it on any direct
   write, so a route bypass cannot reintroduce the alias.
+- A crew POD for a Setup/Dismantle leg on the delivery run files its photos as phase photos and ticks the open "Setup Image" / "Dismantle Image" row; it never changes `stage` (scm/routes/delivery-job-progress.ts).
 - A checklist item counts as **complete** for progress and the stage tracker
   when `status` is `done`/`na` **OR** `review_status = approved` — a gated
   document (3D Design, Display Floor Plan, Stock In/Out) is finished by approval

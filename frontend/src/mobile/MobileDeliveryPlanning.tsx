@@ -28,6 +28,7 @@ import { useAuth } from "../auth/AuthContext";
 import { canOperateDeliveryOrders, canDriverCompleteDelivery } from "../auth/salesAccess";
 import { MobileTrackingBanner } from "./MobileTrackingBanner";
 import "./mobile.css";
+import { MobileJobStop, jobRefOf, jobKey, jobLabelOf, useJobProgressMap } from "./MobileJobStop";
 
 /* ------------------------------------------------------------------ *
  * Mobile Delivery Planning — driver run-sheet screen (v2 job card).
@@ -107,6 +108,11 @@ type BoardRow = {
   time_confirmed?: boolean | null;
   arrival_at?: string | null;
   departure_at?: string | null;
+  // Non-DO stops (Setup/Dismantle, Service Case legs, manual DP jobs) — see MobileJobStop.
+  row_type?: string | null;
+  dp_job_type?: string | null;
+  assr_id?: number | null;
+  job_kind?: string | null;
   // Cross-border (EM/SG) DO-execution dates — provided by /delivery-planning
   // from the latest DO. Needed so an EM/SG stop's shipout + arriving-port can be
   // entered on mobile (desktop parity with DeliveryFieldsDrawer).
@@ -303,7 +309,16 @@ export function MobileDeliveryPlanning({
     staleTime: 30_000,
   });
 
-  const allOrders = data?.orders ?? [];
+  /* A non-DO stop's On the way / Arrived / Done live in job_progress, not on a
+     DO; fold them onto the row's own timestamps so stopFlags reads every stop
+     the same way. */
+  const progressMap = useJobProgressMap();
+  const allOrders = useMemo(() => (data?.orders ?? []).map((o) => {
+    const ref = jobRefOf(o);
+    const p = ref ? progressMap.get(jobKey(ref)) : undefined;
+    return p ? { ...o, departure_at: p.departed_at ?? o.departure_at, arrival_at: p.arrived_at ?? o.arrival_at,
+      customer_delivered_date: p.completed_at ?? o.customer_delivered_date } : o;
+  }), [data, progressMap]);
 
   // today / tomorrow local day keys.
   const { todayKey, tomorrowKey } = useMemo(() => {
@@ -372,6 +387,18 @@ export function MobileDeliveryPlanning({
     setOpenStop(next ? next.so_doc_no : null);
   }, [completedDoNumber, data, buckets]);
 
+  // Same hand-off for a non-DO job: once its completion shows on the sheet, open the next open stop.
+  const [advanceAfter, setAdvanceAfter] = useState<string | null>(null);
+  useEffect(() => {
+    if (!advanceAfter) return;
+    const run = buckets.today;
+    const at = run.findIndex((o) => o.so_doc_no === advanceAfter);
+    if (at >= 0 && !stopFlags(run[at]!).done) return; // wait for the refreshed progress
+    setAdvanceAfter(null);
+    const next = run.slice(at + 1).find((o) => !stopFlags(o).done) ?? run.find((o) => !stopFlags(o).done);
+    setOpenStop(next ? next.so_doc_no : null);
+  }, [advanceAfter, buckets]);
+
   const list = buckets[day];
   const isToday = day === "today";
   const doneCount = useMemo(
@@ -420,6 +447,14 @@ export function MobileDeliveryPlanning({
     return null;
   }, [day]);
 
+  const detailJob = detailOrder ? jobRefOf(detailOrder) : null;
+  if (detailOrder && detailJob) {
+    return (
+      // Keyed per job: moving to the next stop must not carry the last stop's photos.
+      <MobileJobStop key={jobKey(detailJob)} jobRef={detailJob} seq={detailSeq} onBack={() => setOpenStop(null)}
+        onDone={() => setAdvanceAfter(detailOrder.so_doc_no)} />
+    );
+  }
   if (detailOrder) {
     return (
       <StopDetail
@@ -798,7 +833,7 @@ function StopCard({
   const bal = o.balance_sen_live ?? o.balance_sen ?? 0;
   const fullyPaid = bal <= 0;
   const cust = o.debtor_name || o.so_doc_no || EM;
-  const subId = latestDo(o)?.do_number || o.so_doc_no || EM;
+  const subId = latestDo(o)?.do_number || jobLabelOf(o) || o.so_doc_no || EM;
   const htype = houseTypeOf(o);
   const hasDisposal = !!(o.replacement_disposal && o.replacement_disposal.trim());
   const timeWindow = (o.time_range && o.time_range.trim()) || "";
