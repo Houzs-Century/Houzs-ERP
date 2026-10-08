@@ -105,6 +105,8 @@ export const useCreatePaymentVoucher = () => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
       /* A bill now vouchered is another's same bill (the pile says so on return). */
       void qc.invalidateQueries({ queryKey: ['payment-request-bill-matches'] });
+      /* A voucher answering a request takes it off Finance's waiting count. */
+      void qc.invalidateQueries({ queryKey: ['payment-requests'] });
     },
   });
 };
@@ -178,6 +180,8 @@ export const useCancelPaymentVoucher = () => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
       void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
+      /* A cancelled voucher puts its request back on Finance's waiting count. */
+      void qc.invalidateQueries({ queryKey: ['payment-requests'] });
     },
   });
 };

@@ -1044,6 +1044,7 @@ GET,/api/scm/payment-requests/bill-matches,AUTHENTICATED_MIDDLEWARE,COMPANY_CONT
 GET,/api/scm/payment-requests/event-options,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
 GET,/api/scm/payment-requests/from-checklist,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
 POST,/api/scm/payment-requests/read-bill,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
+GET,/api/scm/payment-requests/waiting-count,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
 GET,/api/scm/payment-vouchers,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/payment-vouchers.ts
 POST,/api/scm/payment-vouchers,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/payment-vouchers.ts
 GET,/api/scm/payment-vouchers/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/payment-vouchers.ts
@@ -1217,6 +1218,7 @@ GET,/api/scm/reports/fair-report/:docNo,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT
 GET,/api/scm/reports/sales-invoice-detail-listing,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/reports.ts
 GET,/api/scm/reports/sales-order-detail-listing,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/reports.ts
 GET,/api/scm/sales-analysis,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/sales-analysis.ts
+GET,/api/scm/sales-analysis/lines,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/sales-analysis.ts
 PUT,/api/scm/sales-analysis/targets,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/sales-analysis.ts
 GET,/api/scm/sales-invoices,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.invoices"", { readInheritsFrom: ""scm.sales.orders"" })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/sales-invoices.ts
 POST,/api/scm/sales-invoices,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.invoices"", { readInheritsFrom: ""scm.sales.orders"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/sales-invoices.ts
