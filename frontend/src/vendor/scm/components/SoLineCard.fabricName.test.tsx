@@ -53,6 +53,7 @@ function renderLine(variants: Record<string, unknown>, onChange = vi.fn()) {
       canRemove
       isEditing
       variantsRequired
+      lineDateLocked={false}
       seedSofaLegDefault
       attachOptions={null}
     />,
