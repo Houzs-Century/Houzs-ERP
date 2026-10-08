@@ -28,17 +28,20 @@ class FakeQuery {
   private preds: Array<(r: Row) => boolean> = [];
   private op: 'select' | 'update' | 'upsert' = 'select';
   private patch: Row = {};
+  private ignoreDup = false;
   constructor(private rows: Row[]) {}
   select() { return this; }
   update(v: Row) { this.op = 'update'; this.patch = v; return this; }
-  upsert(v: Row) { this.op = 'upsert'; this.patch = v; return this; }
+  upsert(v: Row, o?: { ignoreDuplicates?: boolean }) { this.op = 'upsert'; this.patch = v; this.ignoreDup = !!o?.ignoreDuplicates; return this; }
+  is(col: string, val: unknown) { this.preds.push((r) => (val === null ? r[col] == null : r[col] === val)); return this; }
+  or() { return this; }
   eq(col: string, val: unknown) { this.preds.push((r) => r[col] === val); return this; }
   in(col: string, vals: unknown[]) { this.preds.push((r) => vals.includes(r[col])); return this; }
   gte() { return this; } limit() { return this; } order() { return this; }
   private run(): Row[] {
     if (this.op === 'upsert') {
       const hit = this.rows.find((r) => r.source_type === this.patch.source_type && r.source_id === this.patch.source_id && r.leg === this.patch.leg);
-      if (hit) { Object.assign(hit, this.patch); return [hit]; }
+      if (hit) { if (!this.ignoreDup) Object.assign(hit, this.patch); return [hit]; }
       const row = { ...this.patch }; this.rows.push(row); return [row];
     }
     const hit = this.rows.filter((r) => this.preds.every((p) => p(r)));
@@ -59,6 +62,7 @@ function fakeDb(state: { project?: Row; assr?: Row; checklist?: Row[] }, ran: st
       const stmt = {
         bind(...a: unknown[]) { args = a; return stmt; },
         async first() {
+          ran.push(`FIRST ${sql.replace(/\s+/g, " ").trim()}`);
           if (/FROM projects/.test(sql)) return state.project ?? null;
           if (/FROM assr_cases/.test(sql)) return state.assr ?? null;
           return null;
@@ -74,7 +78,8 @@ function fakeDb(state: { project?: Row; assr?: Row; checklist?: Row[] }, ran: st
   };
 }
 
-function app(opts: { caps?: string[]; tripDriver?: string; project?: Row; assr?: Row; checklist?: Row[] } = {}) {
+const SESSION_KEYS = ['slips/2026/10/a.jpg', 'slips/2026/10/b.jpg', 'slips/2026/10/c.jpg'];
+function app(opts: { caps?: string[]; tripDriver?: string; project?: Row; assr?: Row; checklist?: Row[]; staff?: string } = {}) {
   const tables: Record<string, Row[]> = {
     drivers: [{ id: 'drv-7', user_id: 7 }],
     helpers: [],
@@ -86,12 +91,18 @@ function app(opts: { caps?: string[]; tripDriver?: string; project?: Row; assr?:
     ],
     lorry_work_orders: [{ id: 'wo-1', photo_refs: ['old.jpg'] }],
     job_progress: [],
+    // The driver's own uploads (staff 'stf-7'); one key belongs to someone else.
+    pending_slip_uploads: [
+      ...SESSION_KEYS.map((k, i) => ({ id: `s${i}`, r2_key: k, staff_id: 'stf-7', status: 'uploaded', promoted_to_order_id: null, company_id: 1 })),
+      { id: 'sx', r2_key: 'slips/2026/10/other.jpg', staff_id: 'stf-OTHER', status: 'uploaded', promoted_to_order_id: null, company_id: 1 },
+    ],
   };
   const ran: string[] = [];
   const a = new Hono();
   a.use('*', async (c, next) => {
     c.set('supabase' as never, { from: (t: string) => new FakeQuery((tables[t] ||= [])) } as never);
     c.set('allowedCompanyIds' as never, [1] as never);
+    c.set('user' as never, { id: opts.staff ?? 'stf-7' } as never);
     c.set('houzsUser' as never, {
       id: 7, name: 'Faslie', position_name: 'Driver', department_name: 'Operation',
       permissions_set: new Set<string>(), position_capabilities: opts.caps ?? ['scm.do.dispatch'],
@@ -221,5 +232,62 @@ describe('after completion: more photos, viewing them, the Stock Transfer record
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('IMG:slips/2026/10/b.jpg');
     expect((await a.request('/dp/dp-1/SUPPLIER_PICKUP/photo/5', {}, env)).status).toBe(404);
+  });
+});
+
+describe('review fixes (2026-10-08)', () => {
+  test('claiming the POD photos marks their upload sessions promoted, so the slip reaper keeps them', async () => {
+    const { a, tables } = app();
+    expect((await post(a, '/dp/dp-1/SUPPLIER_PICKUP/complete', PHOTO)).status).toBe(200);
+    expect(tables.pending_slip_uploads!.find((r) => r.r2_key === PHOTO.photoKeys[0])!.status).toBe('promoted');
+  });
+
+  test("another user's upload (or any other key) is refused and nothing completes", async () => {
+    const { a, tables } = app();
+    const res = await post(a, '/dp/dp-1/SUPPLIER_PICKUP/complete', { photoKeys: ['slips/2026/10/other.jpg'] });
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toBe('photo_not_accepted');
+    expect(tables.job_progress.filter((r) => r.completed_at)).toHaveLength(0);
+    expect(tables.dp_orders[0]!.status).toBe('SCHEDULED');
+  });
+
+  test('a second complete runs no side effect twice (one survey for one close)', async () => {
+    const { a, tables } = app({ assr: { id: 31, stage: 'pending_delivery_service', sub_status: null } });
+    tables.trip_stops![0]!.stop_type = 'DELIVERY';
+    expect((await post(a, '/assr/31/delivery/complete', PHOTO)).status).toBe(200);
+    expect((await post(a, '/assr/31/delivery/complete', PHOTO)).status).toBe(409);
+    expect(surveySvc.sendCompletionSurvey).toHaveBeenCalledTimes(1);
+  });
+
+  test("a Service Case leg is closed only by the crew of THAT leg's stop", async () => {
+    // The driver's trip carries the PICKUP stop; the delivery-back leg is not theirs.
+    const { a } = app({ assr: { id: 31, stage: 'pending_delivery_service', sub_status: null } });
+    const res = await post(a, '/assr/31/delivery/complete', PHOTO);
+    expect(res.status).toBe(403);
+    expect(assrSvc.transitionStage).not.toHaveBeenCalled();
+  });
+
+  test('a cancelled DP job cannot be completed', async () => {
+    const { a, tables } = app();
+    tables.dp_orders[0]!.status = 'CANCELLED';
+    expect((await json(await post(a, '/dp/dp-1/SUPPLIER_PICKUP/complete', PHOTO))).error).toBe('job_cancelled');
+  });
+
+  test('a failed follow-up un-completes the job so a retry works', async () => {
+    const assr = { id: 31, stage: 'pending_supplier_pickup', sub_status: 'pending_customer_pickup' };
+    const { a, tables } = app({ assr });
+    assrSvc.saveAttachment.mockRejectedValueOnce(new Error('storage down'));
+    const first = await post(a, '/assr/31/customer_pickup/complete', PHOTO);
+    expect(first.status).toBe(500);
+    expect(tables.job_progress[0]!.completed_at).toBeNull();
+    expect((await post(a, '/assr/31/customer_pickup/complete', PHOTO)).status).toBe(200);
+  });
+
+  test('project and Service Case reads carry the caller company predicate', async () => {
+    const { a, ran } = app({ project: { id: 9, setup_driver_user_id: 7 }, assr: { id: 31, stage: 'x', sub_status: null } });
+    await a.request('/project/9/SETUP');
+    await a.request('/assr/31/customer_pickup');
+    expect(ran.filter((q) => q.startsWith('FIRST') && /FROM projects/.test(q))[0]).toContain('p.company_id IN (1)');
+    expect(ran.filter((q) => q.startsWith('FIRST') && /FROM assr_cases/.test(q))[0]).toContain('company_id IN (1)');
   });
 });

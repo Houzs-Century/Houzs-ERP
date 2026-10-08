@@ -29,6 +29,7 @@ import { resolveDeliveryScope, scopeMatchesAssignment } from '../lib/deliverySco
 import { resolveCrewSeats } from '../lib/crew-seats';
 import { fetchDoCrewAssignment, doPodPhotoHandler } from './delivery-pod-context';
 import { startTripIfPlanned } from './delivery-job-progress';
+import { claimPodPhotos } from '../lib/pod-photo-claim';
 import { revertDeliveryOrderHandler } from './delivery-order-revert';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
@@ -5114,12 +5115,8 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   /* "On the way" is the IN_TRANSIT flip: it stamped nothing, so the board's
      Departure and the phone's timeline never had a time. The first flip stamps
      it and starts the DO's trip, so the phone's live location is accepted. */
-  if (toStatus === 'IN_TRANSIT' && (prevStatus ?? '').toUpperCase() !== 'IN_TRANSIT') {
-    ts.departure_at = now;
-    const { data: stop, error: stopErr } = await sb.from('trip_stops').select('trip_id').eq('do_id', id).limit(1).maybeSingle();
-    if (stopErr) return c.json({ error: 'load_failed', reason: stopErr.message }, 500);
-    await startTripIfPlanned(sb, (stop as { trip_id: string | null } | null)?.trip_id ?? null);
-  }
+  const startsRun = toStatus === 'IN_TRANSIT' && (prevStatus ?? '').toUpperCase() !== 'IN_TRANSIT';
+  if (startsRun) ts.departure_at = now;
   if (toStatus === 'SIGNED')     ts.signed_at = now;
   if (toStatus === 'DELIVERED')  ts.delivered_at = now;
   /* POD capture — the mobile app posts the proof-of-delivery signature +
@@ -5128,10 +5125,17 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      photo. Only write when present so a plain status change never blanks
      an existing POD. */
   if (typeof body.signatureData === 'string' && body.signatureData) ts.signature_data = body.signatureData;
-  if (typeof body.podKey === 'string' && body.podKey) ts.pod_r2_key = body.podKey;
-  // Every photo of the POD (the first also stays in pod_r2_key above).
-  const podKeys = Array.isArray(body.podKeys) ? body.podKeys.filter((k): k is string => typeof k === 'string' && /^slips\//.test(k)).slice(0, 20) : [];
-  if (podKeys.length && !ts.pod_r2_key) ts.pod_r2_key = podKeys[0]!;
+  /* Every photo of the POD; the first also stays in pod_r2_key. Only the caller's
+     own uploads are accepted, and claiming them stops the slip reaper deleting
+     them an hour later (lib/pod-photo-claim.ts). */
+  const podRaw = [body.podKey, ...(Array.isArray(body.podKeys) ? body.podKeys : [])].filter((k) => typeof k === 'string' && k);
+  let podKeys: string[] = [];
+  if (podRaw.length) {
+    const claim = await claimPodPhotos(sb, c, user?.id ? String(user.id) : null, podRaw);
+    if (!claim.ok) return c.json({ error: 'photo_not_accepted', reason: claim.reason }, 400);
+    podKeys = claim.keys;
+  }
+  if (podKeys.length) ts.pod_r2_key = podKeys[0]!;
   const tsJson: Record<string, string[]> = podKeys.length ? { pod_photo_keys: podKeys } : {};
 
   /* WHERE the delivery happened (mig 0249). The phone has been taking this
@@ -5304,6 +5308,17 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
       self: { table: 'delivery_orders', keyCol: 'id', key: id },
       createdBy: c.get('houzsUser')?.id ?? null,
     });
+  }
+
+  /* The DO's first On the way starts its lorry run (so the phone's live location
+     is accepted) — only once the DO itself saved, and never failing the save. */
+  if (startsRun) {
+    try {
+      const { data: stop, error: stopErr } = await sb.from('trip_stops').select('trip_id').eq('do_id', id)
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (stopErr) throw new Error(stopErr.message);
+      await startTripIfPlanned(sb, (stop as { trip_id: string | null } | null)?.trip_id ?? null);
+    } catch (e) { console.error('[do-status] could not start the trip:', e); }
   }
 
   return c.json({

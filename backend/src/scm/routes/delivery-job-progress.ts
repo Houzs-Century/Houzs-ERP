@@ -20,7 +20,9 @@
 import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
-import { scopeToAllowedCompanies } from '../lib/companyScope';
+import { scopeToAllowedCompanies, allowedCompaniesSql, allowedCompanyIds } from '../lib/companyScope';
+import { claimPodPhotos } from '../lib/pod-photo-claim';
+import { ASSR_LEG_BY_STOP } from './delivery-pod-context';
 import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } from '../lib/deliveryScope';
 import { ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
 import { saveAttachment, logActivity, patchAssrCase, transitionStage } from '../../services/assr';
@@ -47,6 +49,12 @@ function parseJob(c: Ctx): { sourceType: SourceType; sourceId: string; leg: stri
   if (sourceType !== 'dp' && !/^\d+$/.test(sourceId)) return { error: 'Invalid job id.' };
   return { sourceType, sourceId, leg };
 }
+
+/* The id the /slips upload sessions are keyed on (slips.ts: c.get('user').id). */
+const staffIdOf = (c: Ctx): string | null => {
+  const id = (c.get('user') as { id?: unknown } | undefined)?.id;
+  return id == null ? null : String(id);
+};
 
 const tripCrew = (t: Record<string, unknown> | null | undefined): CrewAssignment => ({
   driverIds: [(t?.driver_id as string | null) ?? null],
@@ -87,7 +95,7 @@ async function loadJob(c: Ctx, sourceType: SourceType, sourceId: string, leg: st
               p.dismantle_driver_user_id, p.dismantle_helper_1_id, p.dismantle_helper_2_id,
               pic.name AS pic_name, pic.phone AS pic_phone
          FROM projects p LEFT JOIN users pic ON pic.id = p.pic_id
-        WHERE p.id = ?`,
+        WHERE p.id = ?${allowedCompaniesSql(c, 'p.company_id')}`,
     ).bind(Number(sourceId)).first<Record<string, unknown>>();
     if (!row) return { ok: false, status: 404, error: 'not_found', reason: 'This project could not be found.' };
     if (scope.mode !== 'all') {
@@ -104,13 +112,15 @@ async function loadJob(c: Ctx, sourceType: SourceType, sourceId: string, leg: st
     `SELECT id, assr_no, customer_name, phone, addr1, addr2, addr3, addr4, location, item_code,
             complaint_issue, issue_category, doc_no, stage, sub_status, company_id,
             customer_pickup_at, inspection_visit_at, do_date
-       FROM assr_cases WHERE id = ?`,
+       FROM assr_cases WHERE id = ?${allowedCompaniesSql(c)}`,
   ).bind(Number(sourceId)).first<Record<string, unknown>>();
   if (!row) return { ok: false, status: 404, error: 'not_found', reason: 'This service case could not be found.' };
   // The case's leg rides the trip its stop was put on by Time Arrangement.
-  const { data: stops, error: sErr } = await sb.from('trip_stops').select('trip_id').eq('assr_case_id', Number(sourceId));
+  const { data: stops, error: sErr } = await sb.from('trip_stops').select('trip_id, stop_type').eq('assr_case_id', Number(sourceId));
   if (sErr) return { ok: false, status: 500, error: 'load_failed', reason: sErr.message };
-  const tripIds = [...new Set(((stops ?? []) as Array<{ trip_id: string | null }>).map((s) => s.trip_id).filter(Boolean))] as string[];
+  // Only THIS leg's stops: a helper on the pickup run must not be able to close the delivery-back leg.
+  const tripIds = [...new Set(((stops ?? []) as Array<{ trip_id: string | null; stop_type: string }>)
+    .filter((s) => ASSR_LEG_BY_STOP[s.stop_type] === leg).map((s) => s.trip_id).filter(Boolean))] as string[];
   if (scope.mode !== 'all') {
     if (!tripIds.length) return notYours;
     const { data: trips, error: tErr } = await sb.from('trips').select('driver_id, helper_1_id, helper_2_id').in('id', tripIds);
@@ -206,12 +216,13 @@ deliveryJobProgress.get('/progress', async (c) => {
   const since = c.req.query('since') ?? '';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(since)) return c.json({ error: 'invalid_since', reason: 'since must be YYYY-MM-DD.' }, 400);
   const floor = new Date(Date.now() - 62 * 86400_000).toISOString().slice(0, 10);
-  const { data, error } = await scopeToAllowedCompanies(
-    c.get('supabase').from('job_progress')
+  let q = c.get('supabase').from('job_progress')
       .select('source_type, source_id, leg, departed_at, arrived_at, completed_at, pod_photo_keys')
-      .gte('updated_at', since < floor ? floor : since),
-    c,
-  ).limit(5000);
+      .gte('updated_at', since < floor ? floor : since);
+  // The allowed companies, plus legs whose project / case carries no company (still the caller's run-sheet).
+  const ids = allowedCompanyIds(c);
+  if (ids !== undefined) q = ids.length ? q.or(`company_id.in.(${ids.join(',')}),company_id.is.null`) : q.is('company_id', null);
+  const { data, error } = await q.limit(5000);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ progress: data ?? [] });
 });
@@ -275,11 +286,13 @@ deliveryJobProgress.post('/:sourceType/:sourceId/:leg/complete', async (c) => {
   if ('error' in job) return c.json({ error: 'invalid_job', reason: job.error }, 400);
   let body: { photoKeys?: unknown; notes?: unknown; lat?: unknown; lng?: unknown; accuracyM?: unknown; locatedAt?: unknown };
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const photoKeys = Array.isArray(body.photoKeys) ? body.photoKeys.filter((k): k is string => typeof k === 'string' && /^slips\//.test(k)) : [];
-  if (!photoKeys.length) return c.json({ error: 'photo_required', reason: 'Take at least one POD photo before completing the job.' }, 400);
-  if (photoKeys.length > MAX_PHOTOS) return c.json({ error: 'too_many_photos', reason: `At most ${MAX_PHOTOS} photos per job.` }, 400);
+  const rawKeys = Array.isArray(body.photoKeys) ? body.photoKeys : [];
+  if (!rawKeys.length) return c.json({ error: 'photo_required', reason: 'Take at least one POD photo before completing the job.' }, 400);
+  if (rawKeys.length > MAX_PHOTOS) return c.json({ error: 'too_many_photos', reason: `At most ${MAX_PHOTOS} photos per job.` }, 400);
   const loaded = await loadJob(c, job.sourceType, job.sourceId, job.leg);
   if (!loaded.ok) return c.json({ error: loaded.error, reason: loaded.reason }, loaded.status);
+  if (job.sourceType === 'dp' && String(loaded.row.status ?? '').toUpperCase() === 'CANCELLED')
+    return c.json({ error: 'job_cancelled', reason: 'This job was cancelled; it cannot be completed.' }, 409);
 
   const sb = c.get('supabase');
   const me = Number(c.get('houzsUser')?.id) || null;
@@ -292,30 +305,50 @@ deliveryJobProgress.post('/:sourceType/:sourceId/:leg/complete', async (c) => {
   try {
     const cur = await readProgress(c, job.sourceType, job.sourceId, job.leg);
     if (cur?.completed_at) return c.json({ error: 'already_completed', reason: 'This job is already completed.' }, 409);
-    const { data: progress, error } = await sb.from('job_progress').upsert({
-      source_type: job.sourceType, source_id: job.sourceId, leg: job.leg,
-      company_id: loaded.companyId, trip_id: loaded.tripId,
+    // The photos must be this caller's uploads; claiming them also stops the slip reaper deleting them.
+    const claim = await claimPodPhotos(sb, c, staffIdOf(c), rawKeys);
+    if (!claim.ok) return c.json({ error: 'photo_not_accepted', reason: claim.reason }, 400);
+    const photoKeys = claim.keys;
+    if (!photoKeys.length) return c.json({ error: 'photo_required', reason: 'Take at least one POD photo before completing the job.' }, 400);
+    const key = { source_type: job.sourceType, source_id: job.sourceId, leg: job.leg };
+    if (!cur) {
+      const { error: insErr } = await sb.from('job_progress')
+        .upsert({ ...key, company_id: loaded.companyId, trip_id: loaded.tripId, updated_at: now }, { onConflict: 'source_type,source_id,leg', ignoreDuplicates: true });
+      if (insErr) return c.json({ error: 'update_failed', reason: insErr.message }, 500);
+    }
+    // ONE request wins: the flip from completed_at IS NULL. A double tap or the
+    // helper completing at the same moment gets 409 and runs no side effect.
+    const { data: won, error } = await sb.from('job_progress').update({
       // Completing implies the crew got there; keep any earlier taps.
       departed_at: cur?.departed_at ?? now, departed_by: cur?.departed_by ?? me,
       arrived_at: cur?.arrived_at ?? now, arrived_by: cur?.arrived_by ?? me,
       completed_at: now, completed_by: me, pod_photo_keys: photoKeys,
       pod_notes: typeof body.notes === 'string' && body.notes.trim() ? body.notes.trim().slice(0, 2000) : null,
       ...gps, updated_at: now,
-    }, { onConflict: 'source_type,source_id,leg' }).select('*').single();
+    }).eq('source_type', key.source_type).eq('source_id', key.source_id).eq('leg', key.leg).is('completed_at', null).select('*');
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+    if (!won?.length) return c.json({ error: 'already_completed', reason: 'This job is already completed.' }, 409);
 
-    await fileJobPhotos(c, job, loaded.row, photoKeys, me, 'completed by the crew');
-    if (job.sourceType === 'project') {
-      await tickProjectImageRow(c, Number(job.sourceId), job.leg, me);
-    } else if (job.sourceType === 'assr') {
-      await advanceServiceCase(c, Number(job.sourceId), job.leg, loaded.row, me);
-    } else {
-      const { error: dpErr } = await scopeToAllowedCompanies(
-        sb.from('dp_orders').update({ status: 'COMPLETED', updated_at: now }).eq('id', job.sourceId), c,
-      );
-      if (dpErr) return c.json({ error: 'update_failed', reason: dpErr.message }, 500);
+    try {
+      await fileJobPhotos(c, job, loaded.row, photoKeys, me, 'completed by the crew');
+      if (job.sourceType === 'project') {
+        await tickProjectImageRow(c, Number(job.sourceId), job.leg, me);
+      } else if (job.sourceType === 'assr') {
+        await advanceServiceCase(c, Number(job.sourceId), job.leg, me);
+      } else {
+        const { error: dpErr } = await scopeToAllowedCompanies(
+          sb.from('dp_orders').update({ status: 'COMPLETED', updated_at: now }).eq('id', job.sourceId), c,
+        );
+        if (dpErr) throw new Error(dpErr.message);
+      }
+    } catch (e) {
+      // A follow-up failed: un-complete so the crew can simply retry (photo filing
+      // is idempotent and the moves only act from their own step).
+      await sb.from('job_progress').update({ completed_at: null, completed_by: null, updated_at: new Date().toISOString() })
+        .eq('source_type', key.source_type).eq('source_id', key.source_id).eq('leg', key.leg);
+      return c.json({ error: 'update_failed', reason: `The job was not completed: ${(e as Error).message}. Try again.` }, 500);
     }
-    return c.json({ progress });
+    return c.json({ progress: won[0] });
   } catch (e) {
     return c.json({ error: 'update_failed', reason: (e as Error).message }, 500);
   }
@@ -327,9 +360,13 @@ deliveryJobProgress.post('/:sourceType/:sourceId/:leg/complete', async (c) => {
      customer_pickup  Pickup/Return: pending_customer_pickup -> pending_supplier_pickup
      inspection       Verify:        pending_inspection     -> qc_issue_result (staff record the result)
      delivery         Delivery stage -> completed (closing sends the CSAT survey, as a manual close does) */
-async function advanceServiceCase(c: Ctx, caseId: number, leg: string, row: Record<string, unknown>, me: number | null) {
-  const stage = String(row.stage ?? '');
-  const sub = String(row.sub_status ?? '');
+async function advanceServiceCase(c: Ctx, caseId: number, leg: string, me: number | null) {
+  // Read NOW, not the row loadJob read before the photos were filed.
+  // company-scope: the case loadJob already admitted under the caller's company predicate
+  const fresh = await c.env.DB.prepare(`SELECT stage, sub_status FROM assr_cases WHERE id = ?`).bind(caseId)
+    .first<{ stage: string | null; sub_status: string | null }>();
+  const stage = String(fresh?.stage ?? '');
+  const sub = String(fresh?.sub_status ?? '');
   const by = me ?? 0;
   if (leg === 'customer_pickup' && stage === 'pending_supplier_pickup' && sub === 'pending_customer_pickup') {
     await patchAssrCase(c.env, caseId, { sub_status: 'pending_supplier_pickup' }, by);
@@ -361,16 +398,26 @@ async function fileJobPhotos(c: Ctx, job: { sourceType: SourceType; sourceId: st
   row: Record<string, unknown>, photoKeys: string[], me: number | null, what: string) {
   if (job.sourceType === 'project') {
     const phase = job.leg === 'SETUP' ? 'setup' : 'dismantle';
-    for (const key of photoKeys) {
+    const have = await c.env.DB.prepare(
+      `SELECT r2_key FROM project_phase_photos WHERE project_id = ? AND r2_key IN (${photoKeys.map(() => '?').join(',')})`,
+    ).bind(Number(job.sourceId), ...photoKeys).all<{ r2_key: string }>();
+    const filed = new Set((have.results ?? []).map((r) => r.r2_key));
+    for (const key of photoKeys.filter((k) => !filed.has(k))) {
       await c.env.DB.prepare(
         `INSERT INTO project_phase_photos (project_id, phase, r2_key, content_type, caption, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)`,
       ).bind(Number(job.sourceId), phase, key, 'image/jpeg', 'POD', me).run();
     }
   } else if (job.sourceType === 'assr') {
     const legWord = job.leg === 'customer_pickup' ? 'Pickup' : job.leg === 'inspection' ? 'Inspection' : 'Delivery / service';
-    for (const key of photoKeys) await saveAttachment(c.env, Number(job.sourceId), key, null, 'image/jpeg', 'completion', me);
+    const have = await c.env.DB.prepare(
+      `SELECT r2_key FROM assr_attachments WHERE assr_id = ? AND r2_key IN (${photoKeys.map(() => '?').join(',')})`,
+    ).bind(Number(job.sourceId), ...photoKeys).all<{ r2_key: string }>();
+    const filed = new Set((have.results ?? []).map((r) => r.r2_key));
+    const fresh = photoKeys.filter((k) => !filed.has(k));
+    if (!fresh.length) return;
+    for (const key of fresh) await saveAttachment(c.env, Number(job.sourceId), key, null, 'image/jpeg', 'completion', me);
     await logActivity(c.env, Number(job.sourceId), 'attachment_added', null, `${legWord} POD`,
-      `${legWord} ${what} (${photoKeys.length} POD photo${photoKeys.length === 1 ? '' : 's'})`,
+      `${legWord} ${what} (${fresh.length} POD photo${fresh.length === 1 ? '' : 's'})`,
       me, { category: 'service', source_channel: 'app' });
   } else if (job.leg === 'LORRY_SERVICE' && row.work_order_id) {
     const sb = c.get('supabase');
@@ -392,14 +439,19 @@ deliveryJobProgress.post('/:sourceType/:sourceId/:leg/add-photos', async (c) => 
   if ('error' in job) return c.json({ error: 'invalid_job', reason: job.error }, 400);
   let body: { photoKeys?: unknown };
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const photoKeys = Array.isArray(body.photoKeys) ? body.photoKeys.filter((k): k is string => typeof k === 'string' && /^slips\//.test(k)) : [];
-  if (!photoKeys.length) return c.json({ error: 'photo_required', reason: 'Choose at least one photo.' }, 400);
+  const rawKeys = Array.isArray(body.photoKeys) ? body.photoKeys : [];
+  if (!rawKeys.length) return c.json({ error: 'photo_required', reason: 'Choose at least one photo.' }, 400);
   const loaded = await loadJob(c, job.sourceType, job.sourceId, job.leg);
   if (!loaded.ok) return c.json({ error: loaded.error, reason: loaded.reason }, loaded.status);
   try {
+    const claim = await claimPodPhotos(c.get('supabase'), c, staffIdOf(c), rawKeys);
+    if (!claim.ok) return c.json({ error: 'photo_not_accepted', reason: claim.reason }, 400);
+    const photoKeys = claim.keys;
+    if (!photoKeys.length) return c.json({ error: 'photo_required', reason: 'Choose at least one photo.' }, 400);
     const cur = await readProgress(c, job.sourceType, job.sourceId, job.leg);
     if (!cur?.completed_at) return c.json({ error: 'not_completed', reason: 'Complete the job first; its first photos are part of completing it.' }, 409);
-    const keys = [...((cur.pod_photo_keys as string[] | null) ?? []), ...photoKeys];
+    const had = (cur.pod_photo_keys as string[] | null) ?? [];
+    const keys = [...had, ...photoKeys.filter((k) => !had.includes(k))];
     if (keys.length > MAX_PHOTOS * 2) return c.json({ error: 'too_many_photos', reason: `At most ${MAX_PHOTOS * 2} photos per job.` }, 400);
     const { data: progress, error } = await c.get('supabase').from('job_progress')
       .update({ pod_photo_keys: keys, updated_at: new Date().toISOString() })

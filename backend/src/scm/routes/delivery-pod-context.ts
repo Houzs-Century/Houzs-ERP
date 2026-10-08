@@ -84,7 +84,7 @@ export const doPodContextHandler = async (c: Context<{ Bindings: Env; Variables:
               (trip_stops.assr_case_id + stop_type -> leg)
      project  the caller is that leg's driver / helper on the project
               (public user ids — projects keep their own crew) */
-const ASSR_LEG_BY_STOP: Record<string, string> = {
+export const ASSR_LEG_BY_STOP: Record<string, string> = {
   PICKUP: 'customer_pickup', INSPECTION: 'inspection', DELIVERY: 'delivery', SERVICE: 'delivery',
 };
 export async function ownServiceAndProjectRowKeys(
