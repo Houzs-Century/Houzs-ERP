@@ -27,7 +27,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { statusCapabilityRefusal, POD_STATES } from '../lib/do-status-capability';
 import { resolveDeliveryScope, scopeMatchesAssignment } from '../lib/deliveryScope';
 import { resolveCrewSeats } from '../lib/crew-seats';
-import { fetchDoCrewAssignment } from './delivery-pod-context';
+import { fetchDoCrewAssignment, doPodPhotoHandler } from './delivery-pod-context';
 import { startTripIfPlanned } from './delivery-job-progress';
 import { revertDeliveryOrderHandler } from './delivery-order-revert';
 import type { Env, Variables } from '../env';
@@ -321,7 +321,7 @@ const HEADER =
      the Delivery Planning board's /fields PATCH; the DO Detail GET / POST /
      PATCH must carry it too so the DO drawer can show + save it. */
   'arrives_em_warehouse_date, ' +
-  'pod_r2_key, signature_data, status, notes, created_at, created_by, updated_at, ' +
+  'pod_r2_key, signature_data, departure_at, arrival_at, pod_lat, pod_lng, status, notes, created_at, created_by, updated_at, ' +
   /* Mig 0324 — the HOLD MARKER, the DO's first hold ever and the one that
      needed no enum change. docs/modules/delivery-order.md. */
   HOLD_COLUMNS;
@@ -5348,6 +5348,7 @@ export const patchDeliveryOrderArrivalHandler = async (c: any) => {
   return c.json({ deliveryOrder: { id, arrival_at: now } });
 };
 deliveryOrdersMfg.patch('/:id/arrival', patchDeliveryOrderArrivalHandler);
+deliveryOrdersMfg.get('/:id/pod-photo', doPodPhotoHandler);
 deliveryOrdersMfg.post('/:id/revert', revertDeliveryOrderHandler); // Ops-lead exception power (scm.do.revert) — routes/delivery-order-revert.ts
 
 /* PATCH .../hold — the mig-0324 MARKER, never `status`. routes/document-hold-routes.ts. */

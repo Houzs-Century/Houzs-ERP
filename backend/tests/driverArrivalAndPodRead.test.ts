@@ -9,7 +9,7 @@
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { patchDeliveryOrderArrivalHandler } from '../src/scm/routes/delivery-orders-mfg';
-import { doPodContextHandler } from '../src/scm/routes/delivery-pod-context';
+import { doPodContextHandler, doPodPhotoHandler } from '../src/scm/routes/delivery-pod-context';
 
 type Row = Record<string, any>;
 
@@ -145,5 +145,33 @@ describe('GET /delivery-planning/do/:ref/pod — the POD screen read', () => {
   test('answers 404 for a DO that does not exist', async () => {
     const { a } = app({ doStatus: 'DISPATCHED', doDriverId: 'drv-7' });
     expect((await a.request('/delivery-planning/do/DO-404/pod')).status).toBe(404);
+  });
+});
+
+describe('GET /delivery-orders-mfg/:id/pod-photo — the POD photo on the DO page', () => {
+  const photoApp = (podKey: string | null, stored: boolean, companyId = 1) => {
+    const tables: Record<string, Row[]> = { delivery_orders: [{ id: 'do-1', company_id: companyId, pod_r2_key: podKey }] };
+    const a = new Hono();
+    a.use('*', async (c, next) => {
+      c.set('supabase' as never, { from: (t: string) => new FakeQuery((tables[t] ||= [])) } as never);
+      c.set('allowedCompanyIds' as never, [1] as never);
+      (c.env as Row) = { POD_BUCKET: { get: async (k: string) => (stored && k === podKey ? { body: 'JPEG', httpMetadata: { contentType: 'image/jpeg' } } : null) } };
+      await next();
+    });
+    a.get('/delivery-orders/:id/pod-photo', doPodPhotoHandler as never);
+    return a;
+  };
+
+  test('streams the stored photo with its type', async () => {
+    const res = await photoApp('slips/2026/10/a.jpg', true).request('/delivery-orders/do-1/pod-photo');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/jpeg');
+    expect(await res.text()).toBe('JPEG');
+  });
+
+  test('404 when the DO has no POD, the file is gone, or the DO is another company', async () => {
+    expect((await photoApp(null, true).request('/delivery-orders/do-1/pod-photo')).status).toBe(404);
+    expect((await photoApp('slips/x.jpg', false).request('/delivery-orders/do-1/pod-photo')).status).toBe(404);
+    expect((await photoApp('slips/x.jpg', true, 2).request('/delivery-orders/do-1/pod-photo')).status).toBe(404);
   });
 });
