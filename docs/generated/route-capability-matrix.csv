@@ -1217,6 +1217,7 @@ GET,/api/scm/reports/fair-report/:docNo,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT
 GET,/api/scm/reports/sales-invoice-detail-listing,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/reports.ts
 GET,/api/scm/reports/sales-order-detail-listing,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/reports.ts
 GET,/api/scm/sales-analysis,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/sales-analysis.ts
+GET,/api/scm/sales-analysis/lines,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/sales-analysis.ts
 PUT,/api/scm/sales-analysis/targets,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/sales-analysis.ts
 GET,/api/scm/sales-invoices,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.invoices"", { readInheritsFrom: ""scm.sales.orders"" })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/sales-invoices.ts
 POST,/api/scm/sales-invoices,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.sales.invoices"", { readInheritsFrom: ""scm.sales.orders"" })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/sales-invoices.ts
