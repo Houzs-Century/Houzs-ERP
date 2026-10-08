@@ -122,6 +122,13 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   stays when the request is edited (`checklist_event_locked`), and 申请付余额
   keeps the row. The row reads its requests back through
   `GET /payment-requests/from-checklist?items=` — a requester's own, Finance's all.
+- Requests waiting for Finance (owner 2026-10-08) are counted, never listed, by
+  `GET /payment-requests/waiting-count` — the page's 「Waiting for Finance」: SUBMITTED,
+  plus an answered one whose AP invoice (or, without one, voucher) is cancelled
+  or gone; 0 for anyone but Finance. It feeds the Payment Vouchers page's reminder
+  (`PaymentRequestsWaiting.tsx` → `/scm/payment-requests?filter=waiting`) and the
+  red count on Money out › Payment Requests; Finance sees that entry only — the
+  Workspace one is the requester's (`hidePerm`).
 - Finance's 欠正式单 remark (what to follow up) rides the mark: written with the
   tick on PV New / the AP invoice form (`officialDocNote`) or on the detail
   (`POST /official-docs/:kind/:id` with `note`), at most 500 characters; a

@@ -82,8 +82,8 @@ vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => vi
 
 import { PaymentRequests } from './PaymentRequests';
 
-const draw = () => render(
-  <MemoryRouter initialEntries={['/scm/payment-requests']}>
+const draw = (path = '/scm/payment-requests') => render(
+  <MemoryRouter initialEntries={[path]}>
     <Routes>
       <Route path="/scm/payment-requests" element={<PaymentRequests />} />
       <Route path="/scm/payment-vouchers/new" element={<div>PV New opened</div>} />
@@ -91,6 +91,28 @@ const draw = () => render(
     </Routes>
   </MemoryRouter>,
 );
+
+/* Links into the page (owner 2026-10-08): the Payment Vouchers reminder lands on
+   「Waiting for Finance」; a PMS row's request number opens that request. */
+describe('links into the page', () => {
+  test('?filter=waiting opens on 「Waiting for Finance」; ?open= opens one request; anything else is All', () => {
+    isFinance = true; hasEvents = undefined;
+    requests = [
+      base({}),
+      base({ id: 'r2', request_no: 'HC-PRQ-2609-002', status: 'VOUCHERED', stage: 'PAID', voucher: { id: 'pv-9', pvNumber: 'HC-PV-2609-014', status: 'POSTED', approvedAt: '2026-09-12T03:00:00Z', postedAt: '2026-09-12T03:00:00Z', bankConfirmed: false } }),
+    ];
+    const first = draw('/scm/payment-requests?filter=waiting');
+    expect(screen.getByRole('button', { name: /^Waiting for Finance/ }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByText('HC-PRQ-2609-001')).toBeTruthy();
+    expect(screen.queryByText('HC-PRQ-2609-002')).toBeNull();
+    first.unmount();
+    const second = draw('/scm/payment-requests?open=r2');
+    expect(screen.getByRole('dialog', { name: 'Payment request HC-PRQ-2609-002' })).toBeTruthy();
+    second.unmount();
+    draw('/scm/payment-requests?filter=nonsense');
+    expect(screen.getByRole('button', { name: 'All' }).getAttribute('aria-pressed')).toBe('true');
+  });
+});
 
 describe('the requester', () => {
   test('raises a request with the event and the payee\'s bank; the bill is read, and attaches after it is sent', async () => {

@@ -85,15 +85,19 @@ export const PaymentRequests = () => {
   const askConfirm = useConfirm();
   const askPrompt = usePrompt();
   const [mineOnly, setMineOnly] = useState(false);
+  const [searchParams] = useSearchParams();
   const listQ = usePaymentRequests(mineOnly);
   const finance = listQ.data?.finance ?? false;
-  const [filter, setFilter] = useState<StageFilter>('all');
+  /* ?filter=waiting — the Payment Vouchers page's reminder lands here (owner 2026-10-08). */
+  const [filter, setFilter] = useState<StageFilter>(() => {
+    const asked = searchParams.get('filter');
+    return FILTERS.some(([key]) => key === asked) ? (asked as StageFilter) : 'all';
+  });
   const rows = useMemo(() => listQ.data?.requests ?? [], [listQ.data]);
   const visible = useMemo(() => rows.filter((r) => inFilter(r, filter)), [rows, filter]);
   const labelsQ = useEventLabels(rows.map((r) => r.project_id), EVENTS_PATH);
 
   /* ?open=<id> opens one request — a PMS row's request number links here (owner 2026-10-08). */
-  const [searchParams] = useSearchParams();
   const [openId, setOpenId] = useState<string | null>(() => searchParams.get('open'));
   const detailQ = usePaymentRequest(openId);
   const detail = detailQ.data?.request ?? null;
