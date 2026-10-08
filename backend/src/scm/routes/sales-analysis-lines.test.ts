@@ -1,8 +1,9 @@
 /* GET /sales-analysis/lines — the 2990 POS Marketing > Sales analysis feed.
  * Pinned: who may read it (the all-sales tier and the POS marketing account,
  * not an ordinary salesperson); the company boundary; which orders and lines
- * count; that the payload carries the customer's age but never the birthday, and
- * never a cost; and that only a finance caller gets the margin, and only while
+ * count; that the payload carries the customer's age but never the birthday,
+ * the name on the order and its city but never the phone, and never a cost;
+ * and that only a finance caller gets the margin, and only while
  * the cost display switch is on. The caller goes through the real SCM auth bridge, so the
  * Title fields reach the gate the way production stashes them. */
 import { describe, expect, it, vi } from 'vitest';
@@ -13,8 +14,9 @@ import type { Env, Variables } from '../env';
 
 const order = (doc_no: string, company_id: number, extra: Record<string, unknown> = {}) => ({
   doc_no, company_id, so_date: '2026-10-03', status: 'CONFIRMED', on_hold: false, venue: '2990s PJ',
-  customer_id: 'cust-1', customer_race: 'Chinese', customer_birthday: '1990-10-05', customer_gender: 'Female',
-  customer_state: 'Selangor', total_margin_sen: 99999, ...extra,
+  customer_id: 'cust-1', debtor_name: 'Tan Mei Ling', phone: '012-3456789', customer_race: 'Chinese',
+  customer_birthday: '1990-10-05', customer_gender: 'Female', customer_state: 'Selangor', city: 'Petaling Jaya',
+  total_margin_sen: 99999, ...extra,
 });
 const line = (id: string, doc_no: string, item_code: string, extra: Record<string, unknown> = {}) => ({
   id, doc_no, company_id: 2, line_no: 0, item_code, item_group: 'mattress', qty: 1, total_sen: 149000,
@@ -91,6 +93,7 @@ describe('GET /sales-analysis/lines', () => {
     expect(body.lines).toContainEqual(expect.objectContaining({
       docNo: '2990-SO-1', category: 'MATTRESS', model: 'AKKA-FIRM', sizeCode: 'K', sizeLabel: '6FT', totalSen: 149000,
       venue: '2990s PJ', race: 'Chinese', gender: 'Female', state: 'Selangor', age: 35,
+      customerName: 'Tan Mei Ling', city: 'Petaling Jaya',
     }));
   });
 
@@ -103,10 +106,11 @@ describe('GET /sales-analysis/lines', () => {
     expect([...new Set(body.lines.map((l) => l.docNo))]).toEqual(['2990-SO-1']);
   });
 
-  it('carries the age, never the birthday, and no cost or margin', async () => {
+  it('carries the age, never the birthday, the phone, a cost or a margin', async () => {
     const text = await (await get(member('Sales Marketing'))).text();
     expect(text).not.toContain('1990-10-05');
-    expect(text).not.toMatch(/birthday|margin|cost/i);
+    expect(text).not.toContain('012-3456789');
+    expect(text).not.toMatch(/birthday|phone|margin|cost/i);
   });
 
   it('gives a director the margin — revenue minus cost, not the stored line margin', async () => {
