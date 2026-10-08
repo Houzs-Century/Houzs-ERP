@@ -92,6 +92,8 @@ const PRODUCT_CATEGORIES = [
   { id: 3, slug: "sofa", name: "Sofa", sort_order: 3, active: 1 },
 ];
 
+let detailExtra: Record<string, unknown> = {};
+
 function mount(startNew: boolean) {
   apiGet.mockImplementation(async (url: string) => {
     if (url.startsWith("/api/assr/lookups/product-categories")) return { data: PRODUCT_CATEGORIES };
@@ -114,6 +116,7 @@ function mount(startNew: boolean) {
         related_pos: [],
         stage_history: [],
         service_categories: ["Bedframe"],
+        ...detailExtra,
       };
     }
     if (url.startsWith("/api/assr?")) {
@@ -137,6 +140,7 @@ beforeEach(() => {
   apiDel.mockReset();
   apiPost.mockResolvedValue({ id: 99, assr_no: "ASSR-2608-005" });
   apiPatch.mockResolvedValue({ ok: true });
+  detailExtra = {};
 });
 afterEach(cleanup);
 
@@ -256,5 +260,30 @@ describe("MobileServiceCase product category is the maintained list, not free te
     const sent = body(call).service_category;
     expect(Array.isArray(sent)).toBe(true);
     expect(sent).toEqual(["Bedframe", "Mattress"]);
+  });
+});
+
+async function openCase() {
+  mount(false);
+  await waitFor(() => expect(screen.getByText("ASSR-2608-004")).toBeTruthy());
+  fireEvent.click(screen.getByText("ASSR-2608-004"));
+  await waitFor(() => expect(screen.getAllByText("Product info").length).toBeGreaterThan(0));
+}
+
+describe("MobileServiceCase points a repeat service at a new return (BUG-92)", () => {
+  const ITEM = { id: 7, item_code: "BF-01", item_description: "Bedframe", qty: 1, qty_carton: 1, supplier_remark: "Joint cracked" };
+  const TRIP = { id: 3, round_no: 1, ref_no: "SVC-RTN-2610-0001", pickup_at: null, returned_at: null, qc_result: null, creditor_code: null, reason: "Joint cracked", note: null };
+
+  it("shows the hint once the case has a supplier return", async () => {
+    detailExtra = { items: [ITEM], supplier_returns: [TRIP] };
+    await openCase();
+    await waitFor(() => expect(screen.getByText(/Add Supplier Return so the paper gets a new Return No/)).toBeTruthy());
+  });
+
+  it("stays quiet before the first return", async () => {
+    detailExtra = { items: [ITEM], supplier_returns: [] };
+    await openCase();
+    await waitFor(() => expect(screen.getByDisplayValue("Joint cracked")).toBeTruthy());
+    expect(screen.queryByText(/Add Supplier Return so the paper gets a new Return No/)).toBeNull();
   });
 });

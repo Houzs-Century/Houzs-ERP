@@ -28,7 +28,7 @@ import {
   assrSubStatus,
   ASSR_SUB_STATUSES,
 } from "../vendor/scm/lib/assr/stages";
-import type { SupplierReturn } from "../vendor/scm/lib/assr/returns";
+import { ANOTHER_RETURN_HINT, type SupplierReturn } from "../vendor/scm/lib/assr/returns";
 import { MobileFactoryTrips } from "./MobileFactoryTrips";
 import { MobileReopenControl } from "./MobileReopenControl";
 import { splitCategories } from "../lib/assrProductCategories";
@@ -1355,6 +1355,9 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                     </div>
                   )) : (
                     <div style={{ fontSize: 12, color: GREY, padding: "2px 0" }}>No items recorded.</div>
+                  )}
+                  {(data?.supplier_returns ?? []).length > 0 && items.length > 0 && !isArchived && (
+                    <div style={{ fontSize: 11, color: GREY, lineHeight: 1.4, margin: "6px 0 2px" }}>{ANOTHER_RETURN_HINT}</div>
                   )}
                   <KV label="Order PO" value={assrOrderPoText(c) || "—"} mono />
                   <KV label="PO No" value={(poNo ? [String(poNo)] : []).concat(relatedPOs.map((p) => String(get(p, "docNo", "doc_no") ?? "")).filter(Boolean)).join(", ") || "—"} mono />

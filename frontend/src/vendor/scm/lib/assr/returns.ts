@@ -60,6 +60,12 @@ export function roundLabel(roundNo: number): string {
   return `Return to Supplier #${roundNo}`;
 }
 
+/** Shown beside the per-item Supplier remark once a case has a return (BUG-92,
+ *  Farra 2026-10-08): editing the remark and reprinting keeps the old Return
+ *  No., so a second service has to be a new return to get its own number. */
+export const ANOTHER_RETURN_HINT =
+  "Sending it to the supplier again? Use + Add Supplier Return so the paper gets a new Return No. Editing this remark keeps the old one.";
+
 /** The trip's printable Supplier Return Note (supplier copy, this trip only). */
 export function returnNotePath(caseId: number, roundId: number): string {
   return `/api/assr-print/${caseId}?variant=supplier&round=${roundId}`;
