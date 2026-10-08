@@ -5,6 +5,7 @@ import {
   canOperateDeliveryOrders,
   canOperateSalesInvoices,
   canSeeSoloOrganizer,
+  canCompileReminders,
 } from "./salesAccess";
 import type { AuthUser } from "../types";
 
@@ -168,5 +169,24 @@ describe("canSeeSoloOrganizer", () => {
     expect(canSeeSoloOrganizer(u({ role_name: "Sales Director", position_name: "Sales Director" }))).toBe(false);
     expect(canSeeSoloOrganizer(u({ role_name: "Super Admin", position_name: "Super Admin", permissions: ["*"] }))).toBe(false);
     expect(canSeeSoloOrganizer(null)).toBe(false);
+  });
+});
+
+/**
+ * Owner 2026-10-07: Projects › Reminder (everyone's outstanding tasks) is for
+ * "only ummu, owner, weisiang". A wildcard role is not the tier.
+ */
+describe("canCompileReminders", () => {
+  it("passes the BD role (Ummu), the Owner position and weisiang", () => {
+    expect(canCompileReminders(u({ role_name: "BD Exec", position_name: "Operation Executive" }))).toBe(true);
+    expect(canCompileReminders(u({ role_name: "Owner", position_name: "Owner", permissions: ["*"] }))).toBe(true);
+    expect(canCompileReminders(u({ email: "WeiSiang329@gmail.com", role_name: "Super Admin", position_name: "Managing Director" }))).toBe(true);
+  });
+
+  it("refuses the other super admins and regular staff", () => {
+    expect(canCompileReminders(u({ role_name: "Super Admin", position_name: "Managing Director", permissions: ["*"] }))).toBe(false);
+    expect(canCompileReminders(u({ role_name: "Sales Person", position_name: "Sales Executive", department_name: "Sales Department" }))).toBe(false);
+    expect(canCompileReminders(u({ role_name: "Logistic", position_name: "Driver" }))).toBe(false);
+    expect(canCompileReminders(null)).toBe(false);
   });
 });

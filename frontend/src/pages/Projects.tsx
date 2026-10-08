@@ -83,7 +83,7 @@ import { useFocusFromUrl } from "../hooks/useFocusFromUrl";
 import { useStickyFilters } from "../hooks/useStickyFilters";
 import { useAuth } from "../auth/AuthContext";
 import { usePageAccess } from "../auth/PageGuard";
-import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent, canSeeSoloOrganizer, canLogSalesEntry, canWriteProjectFinance } from "../auth/salesAccess";
+import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent, canSeeSoloOrganizer, canCompileReminders, canLogSalesEntry, canWriteProjectFinance } from "../auth/salesAccess";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
 import { roleLabelAdmitsRole } from "../auth/roleLabelAdmits";
 import { isCrewScopedUser } from "../auth/crewScope";
@@ -617,11 +617,12 @@ function ProjectsListView() {
   const [perPage, setPerPage] = useIdentityPreference("pp:projects", 50, pageSizePreference([10, 25, 50, 100, 200]));
   // List render mode — cards (P2 design) vs the full data table. Default cards.
   const [listMode, setListMode] = useIdentityPreference("projects:listMode", "cards", enumPreference(["cards", "table", "reminder"] as const));
-  // Reminder = the owner/admin chase list (Projects › Reminder). Only holders of
-  // projects.reminders (Owner + Super Admin via "*") see the toggle; if someone
-  // lands on a stored "reminder" pref without the grant, snap them back to cards
-  // so they never sit on a view whose data endpoint 403s.
-  const canReminders = can("projects.reminders");
+  // Reminder = the chase list (Projects › Reminder). Only the BD / Owner /
+  // weisiang tier sees the toggle (owner 2026-10-07: "only ummu, owner,
+  // weisiang" — a Super Admin wildcard is not enough); if someone lands on a
+  // stored "reminder" pref outside the tier, snap them back to cards so they
+  // never sit on a view whose data endpoint 403s.
+  const canReminders = canCompileReminders(user);
   useEffect(() => {
     if (listMode === "reminder" && !canReminders) setListMode("cards");
   }, [listMode, canReminders, setListMode]);
