@@ -22,7 +22,7 @@ import type { Env, Variables } from '../env';
 import { requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
 import { isRequestFinance } from '../lib/payment-request';
 import { assertAuditWritable, auditUnavailableBody, compactChanges, fieldChange, recordEntityAudit } from '../lib/entity-audit';
-import { OFFICIAL_DOC_TABLES, OFFICIAL_STATES, isOfficialDocKind, isOfficialState, officialActor } from '../lib/official-doc';
+import { OFFICIAL_DOC_TABLES, OFFICIAL_STATES, isOfficialDocKind, isOfficialState, officialActor, officialNoteOf } from '../lib/official-doc';
 
 type Row = Record<string, any>;
 const NO_PERM = { error: "You don't have permission to do that." };
@@ -112,7 +112,7 @@ export const markOfficialDocHandler = async (c: any): Promise<Response> => {
   if (state === 'CHECKED' && !doc.official_doc) {
     return c.json({ error: 'nothing_owed', message: `${number} was never marked as owing its official invoice.` }, 409);
   }
-  const note = typeof body.note === 'string' && body.note.trim() ? body.note.trim().slice(0, 500) : null;
+  const note = officialNoteOf(body.note);
   if (t.entityType) {
     const pf = await assertAuditWritable(sb, { entityType: t.entityType, entityId: String(doc.id), action: 'UPDATE', companyId: co.companyId });
     if (!pf.ok) return c.json(auditUnavailableBody(), 409);

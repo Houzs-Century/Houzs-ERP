@@ -94,6 +94,8 @@ import { paymentPillOptions } from "../vendor/scm/lib/pms-project-status";
 import { Forbidden } from "./Forbidden";
 import { useNotifications } from "../hooks/useNotifications";
 import { api, buildQuery } from "../api/client";
+import { useChecklistPaymentRequests, type PaymentRequest } from "../vendor/scm/lib/payment-request-queries";
+import { PAYMENT_REQUEST_PERMS, RequestPaymentButton, RowRequests, isPayableSectionName, requestsByRow } from "./projects/PmsRequestPayment";
 import OutstandingReminders from "./projects/OutstandingReminders";
 import { formatPhone } from "../vendor/shared/phone";
 import { MediaLightbox } from "../components/MediaLightbox";
@@ -3635,6 +3637,7 @@ function ProjectDetailContent({
 
               <TasklistSections
                 projectId={id}
+                projectName={p.name}
                 projectStartDate={p.start_date}
                 projectEndDate={p.end_date}
                 checklist={checklist}
@@ -4947,6 +4950,7 @@ function ProjectStageStepper({
 // bucket pinned at the bottom.
 function TasklistSections({
   projectId,
+  projectName,
   projectStartDate,
   projectEndDate,
   checklist,
@@ -4965,6 +4969,8 @@ function TasklistSections({
   toast,
 }: {
   projectId: number;
+  /** The event's name — what a payment request raised from its CONTRACT row says it is for. */
+  projectName: string;
   projectStartDate: string | null;
   projectEndDate: string | null;
   checklist: ChecklistItem[];
@@ -5449,6 +5455,10 @@ function TasklistSections({
               </div>
               {section?.display_mode === "documents" ? (
                 <DocumentTable
+                  /* 「Request payment」 on the event's CONTRACT row (owner 2026-10-08). */
+                  payable={isPayableSectionName(section.name)}
+                  projectId={projectId}
+                  eventLabel={projectName}
                   items={items}
                   comments={comments}
                   canManage={!!canManage}
@@ -5578,6 +5588,9 @@ const REVIEW_BADGES: Record<string, { label: string; cls: string }> = {
 // NOTE: roleChipClass is NOT defined here — it lives in the crew-editor
 // block (single authoritative definition shared by both features).
 function DocumentTable({
+  payable = false,
+  projectId,
+  eventLabel,
   items,
   comments,
   canManage,
@@ -5588,6 +5601,10 @@ function DocumentTable({
   onReload,
   toast,
 }: {
+  /** A section a payment may be asked from — the event's CONTRACT (owner 2026-10-08). */
+  payable?: boolean;
+  projectId?: number;
+  eventLabel?: string;
   items: ChecklistItem[];
   comments: ChecklistComment[];
   canManage: boolean;
@@ -5616,6 +5633,13 @@ function DocumentTable({
   // the button; only this desktop table demanded projects.write, so the
   // Purchaser saw an empty Actions column on her own Stock Out Transfer Record.
   const canTick = can("projects.checklist.tick");
+  /* 「Request payment」 (owner 2026-10-08: 就在这里加request payment): a
+     requester or Finance, on the event's CONTRACT row; the row then shows its
+     requests — a requester's own, Finance's all — with their 欠正式单 state. */
+  const mayRequestPayment = payable && projectId != null && PAYMENT_REQUEST_PERMS.some((k) => can(k));
+  const rowRequestsQ = useChecklistPaymentRequests(mayRequestPayment ? items.map((it) => it.id) : [], mayRequestPayment);
+  const rowRequests = requestsByRow(rowRequestsQ.data?.requests);
+  const meId = user?.id != null ? Number(user.id) : null;
   const mayAttach = (it: ChecklistItem) =>
     canManage ||
     (isSalesDirectorPos && /^filled floor\s*plan/i.test((it.title || "").trim())) ||
@@ -5642,6 +5666,9 @@ function DocumentTable({
               attachments={attachmentsByItem.get(it.id) ?? []}
               canManage={mayAttach(it)}
               canApprove={canApproveFor(it)}
+              payment={mayRequestPayment
+                ? { projectId, eventLabel: eventLabel ?? `Event #${projectId}`, requests: rowRequests.get(it.id) ?? [], finance: rowRequestsQ.data?.finance ?? false, meId }
+                : null}
               onStatus={onStatus}
               onReview={onReview}
               onReload={onReload}
@@ -5667,6 +5694,7 @@ function DocRow({
   attachments,
   canManage,
   canApprove,
+  payment = null,
   onStatus,
   onReview,
   onReload,
@@ -5677,6 +5705,8 @@ function DocRow({
   attachments: TaskAttachment[];
   canManage: boolean;
   canApprove: boolean;
+  /** The CONTRACT row's 「Request payment」 and its requests (owner 2026-10-08) — null elsewhere. */
+  payment?: { projectId: number; eventLabel: string; requests: PaymentRequest[]; finance: boolean; meId: number | null } | null;
   onStatus: (it: ChecklistItem, s: ChecklistStatus) => void;
   onReview: (
     it: ChecklistItem,
@@ -5970,6 +6000,17 @@ function DocRow({
               }}
             />
             {/* View button removed (owner 2026-07-16): the FILES paperclip already opens the gallery. */}
+            {payment && !naActive && (
+              <RequestPaymentButton
+                itemId={item.id}
+                itemTitle={item.title}
+                attachments={attachments}
+                projectId={payment.projectId}
+                eventLabel={payment.eventLabel}
+                className={ACTION_BTN_BASE + " border-accent/40 bg-accent/5 text-accent hover:bg-accent/10"}
+                onNoFiles={() => toast?.error("Attach the bill to this row first — Request payment sends the row's file to Finance.")}
+              />
+            )}
             {canManage && (
               <button
                 onClick={() => fileRef.current?.click()}
@@ -6015,6 +6056,14 @@ function DocRow({
           </div>
         </td>
       </tr>
+      {/* The requests raised from this row, with their 欠正式单 state (owner 2026-10-08). */}
+      {payment && payment.requests.length > 0 && (
+        <tr>
+          <td colSpan={6} className="px-3 pb-2">
+            <RowRequests requests={payment.requests} attachments={attachments} finance={payment.finance} meId={payment.meId} />
+          </td>
+        </tr>
+      )}
       {remarkOpen && (
         <tr>
           <td colSpan={6} className="px-3 pb-2">
