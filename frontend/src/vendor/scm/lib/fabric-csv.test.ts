@@ -50,7 +50,7 @@ describe('parseWorkbook — Excel imports the same shape as CSV', () => {
     const { rows, errors } = await parseWorkbook(buf);
 
     expect(rows).toEqual([]);
-    expect(errors).toEqual(['Header must include a fabric_code column']);
+    expect(errors).toEqual(['Header must include a fabric_code (or Code) column']);
   });
 
   test('unknown columns are warned, not rejected', async () => {
@@ -62,6 +62,34 @@ describe('parseWorkbook — Excel imports the same shape as CSV', () => {
 
     expect(rows).toEqual([{ fabricCode: 'XZ-1' }]);
     expect(warnings).toEqual(['Ignoring unknown columns: colour_of_the_month']);
+  });
+});
+
+describe('the table toolbar export imports back (BUG-88)', () => {
+  // Verbatim header + rows from the 2990 file that imported 0 rows.
+  const TABLE_EXPORT =
+    'Code,Series,Description,Supplier Code,Sofa Tier,Bedframe Tier,Active,actions\r\n' +
+    'KN06,ALTA,ALTA-01 Cream,ALTA-01,Price 2,Price 2,Yes,\r\n' +
+    'ONTARIO-00,ONTARIO,ONTARIO-00,ONTARIO-00,Price 2,Price 2,Yes,\r\n' +
+    'MONS-144,MONS,MONS-144,MONS-144,Price 1,—,Yes,\r\n';
+
+  test('labels map to the import keys and "Price 2" becomes PRICE_2', () => {
+    const { rows, errors, warnings } = parseCsv(TABLE_EXPORT);
+
+    expect(errors).toEqual([]);
+    expect(warnings).toEqual(['Ignoring unknown columns: active, actions']);
+    expect(rows).toEqual([
+      { fabricCode: 'KN06', series: 'ALTA', fabricDescription: 'ALTA-01 Cream', supplierCode: 'ALTA-01', sofaPriceTier: 'PRICE_2', bedframePriceTier: 'PRICE_2' },
+      { fabricCode: 'ONTARIO-00', series: 'ONTARIO', fabricDescription: 'ONTARIO-00', supplierCode: 'ONTARIO-00', sofaPriceTier: 'PRICE_2', bedframePriceTier: 'PRICE_2' },
+      { fabricCode: 'MONS-144', series: 'MONS', fabricDescription: 'MONS-144', supplierCode: 'MONS-144', sofaPriceTier: 'PRICE_1', bedframePriceTier: null },
+    ]);
+  });
+
+  test('a tier that is not Price 1/2/3 refuses that row with the reason', () => {
+    const { rows, errors } = parseCsv('fabric_code,sofa_price_tier\r\nBF-01,PRICE_2\r\nBF-02,Gold\r\n');
+
+    expect(rows).toEqual([{ fabricCode: 'BF-01', sofaPriceTier: 'PRICE_2' }]);
+    expect(errors).toEqual(['Row 3: sofa_price_tier must be Price 1, Price 2 or Price 3 ("Gold")']);
   });
 });
 
