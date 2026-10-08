@@ -270,20 +270,29 @@ async function openCase() {
   await waitFor(() => expect(screen.getAllByText("Product info").length).toBeGreaterThan(0));
 }
 
-describe("MobileServiceCase points a repeat service at a new return (BUG-92)", () => {
-  const ITEM = { id: 7, item_code: "BF-01", item_description: "Bedframe", qty: 1, qty_carton: 1, supplier_remark: "Joint cracked" };
-  const TRIP = { id: 3, round_no: 1, ref_no: "SVC-RTN-2610-0001", pickup_at: null, returned_at: null, qc_result: null, creditor_code: null, reason: "Joint cracked", note: null };
+describe("MobileServiceCase: one place for the supplier's instruction (BUG-92)", () => {
+  const ITEM = { id: 7, item_code: "BF-01", item_description: "Bedframe", qty: 1, qty_carton: 1, supplier_remark: "Trip 1 note" };
+  const trip = (reason: string | null) => ({ id: 3, round_no: 2, ref_no: "SVC-RTN-2610-0002", pickup_at: null, returned_at: null, qc_result: null, creditor_code: null, reason, note: null });
+  const HINT = /Use \+ Add Supplier Return and type the new Reason there/;
 
-  it("shows the hint once the case has a supplier return", async () => {
-    detailExtra = { items: [ITEM], supplier_returns: [TRIP] };
+  it("drops the item Supplier remark once the current return has a Reason", async () => {
+    detailExtra = { items: [ITEM], supplier_returns: [trip("Leg loose")] };
     await openCase();
-    await waitFor(() => expect(screen.getByText(/Add Supplier Return so the paper gets a new Return No/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(HINT)).toBeTruthy());
+    expect(screen.queryByDisplayValue("Trip 1 note")).toBeNull();
+  });
+
+  it("keeps the remark while the return has no Reason yet", async () => {
+    detailExtra = { items: [ITEM], supplier_returns: [trip(null)] };
+    await openCase();
+    await waitFor(() => expect(screen.getByDisplayValue("Trip 1 note")).toBeTruthy());
+    expect(screen.getByText(HINT)).toBeTruthy();
   });
 
   it("stays quiet before the first return", async () => {
     detailExtra = { items: [ITEM], supplier_returns: [] };
     await openCase();
-    await waitFor(() => expect(screen.getByDisplayValue("Joint cracked")).toBeTruthy());
-    expect(screen.queryByText(/Add Supplier Return so the paper gets a new Return No/)).toBeNull();
+    await waitFor(() => expect(screen.getByDisplayValue("Trip 1 note")).toBeTruthy());
+    expect(screen.queryByText(HINT)).toBeNull();
   });
 });

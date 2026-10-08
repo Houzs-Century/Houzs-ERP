@@ -60,11 +60,16 @@ export function roundLabel(roundNo: number): string {
   return `Return to Supplier #${roundNo}`;
 }
 
-/** Shown beside the per-item Supplier remark once a case has a return (BUG-92,
- *  Farra 2026-10-08): editing the remark and reprinting keeps the old Return
+/** BUG-92 (Farra 2026-10-08): once a return has a Reason, the supplier paper
+ *  prints that Reason as the item remark, so the per-item Supplier remark is
+ *  no longer asked for. Editing a remark and reprinting keeps the old Return
  *  No., so a second service has to be a new return to get its own number. */
+export function currentReturnReason(rows: readonly { round_no: number; reason: string | null; archived_at?: string | null }[]): string {
+  return (currentRound(rows)?.reason ?? "").trim();
+}
+
 export const ANOTHER_RETURN_HINT =
-  "Sending it to the supplier again? Use + Add Supplier Return so the paper gets a new Return No. Editing this remark keeps the old one.";
+  "The supplier copy prints this return's Reason as the remark. Sending it to the supplier again? Use + Add Supplier Return and type the new Reason there; it gets a new Return No.";
 
 /** The trip's printable Supplier Return Note (supplier copy, this trip only). */
 export function returnNotePath(caseId: number, roundId: number): string {

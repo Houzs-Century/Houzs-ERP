@@ -28,7 +28,7 @@ import {
   assrSubStatus,
   ASSR_SUB_STATUSES,
 } from "../vendor/scm/lib/assr/stages";
-import { ANOTHER_RETURN_HINT, type SupplierReturn } from "../vendor/scm/lib/assr/returns";
+import { ANOTHER_RETURN_HINT, currentReturnReason, type SupplierReturn } from "../vendor/scm/lib/assr/returns";
 import { MobileFactoryTrips } from "./MobileFactoryTrips";
 import { MobileReopenControl } from "./MobileReopenControl";
 import { splitCategories } from "../lib/assrProductCategories";
@@ -1351,7 +1351,9 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                         </span>
                       </div>
                       <MobileItemRemark c={c} it={it} busy={busy} onChanged={refetch} notify={notify} field="remark" placeholder="Customer remark — prints on customer copy" />
-                      <MobileItemRemark c={c} it={it} busy={busy} onChanged={refetch} notify={notify} field="supplier_remark" placeholder="Supplier remark — prints on supplier copy" />
+                      {!currentReturnReason((data?.supplier_returns ?? []) as SupplierReturn[]) && (
+                        <MobileItemRemark c={c} it={it} busy={busy} onChanged={refetch} notify={notify} field="supplier_remark" placeholder="Supplier remark — prints on supplier copy" />
+                      )}
                     </div>
                   )) : (
                     <div style={{ fontSize: 12, color: GREY, padding: "2px 0" }}>No items recorded.</div>
