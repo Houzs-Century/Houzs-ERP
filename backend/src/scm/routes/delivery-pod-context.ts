@@ -138,17 +138,19 @@ export async function ownServiceAndProjectRowKeys(
   return own;
 }
 
-/* GET /delivery-orders-mfg/:id/pod-photo — the proof-of-delivery photo of one DO,
+/* GET /delivery-orders-mfg/:id/pod-photo/:n — the n-th proof-of-delivery photo of one DO,
    for anyone who may read that DO (the route's area guard) in its company. The
    photo sits in the shared houzs-erp bucket under the key the POD stored; no
    page could show it before, so a delivered DO read as if it had no evidence. */
 export const doPodPhotoHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const sb = c.get('supabase');
   const { data, error } = await scopeToAllowedCompanies(
-    sb.from('delivery_orders').select('pod_r2_key').eq('id', c.req.param('id') ?? ''), c,
+    sb.from('delivery_orders').select('pod_r2_key, pod_photo_keys').eq('id', c.req.param('id') ?? ''), c,
   ).maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const key = (data as { pod_r2_key: string | null } | null)?.pod_r2_key;
+  const row = data as { pod_r2_key: string | null; pod_photo_keys: string[] | null } | null;
+  const keys = row?.pod_photo_keys?.length ? row.pod_photo_keys : row?.pod_r2_key ? [row.pod_r2_key] : [];
+  const key = keys[Number(c.req.param('n') ?? 0)];
   if (!key) return c.json({ error: 'not_found', reason: 'This delivery order has no POD photo.' }, 404);
   const obj = await c.env.POD_BUCKET.get(key);
   if (!obj) return c.json({ error: 'not_found', reason: 'The POD photo file is missing from storage.' }, 404);

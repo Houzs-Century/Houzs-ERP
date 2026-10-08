@@ -96,7 +96,7 @@ function app(opts: { caps?: string[]; tripDriver?: string; project?: Row; assr?:
       id: 7, name: 'Faslie', position_name: 'Driver', department_name: 'Operation',
       permissions_set: new Set<string>(), position_capabilities: opts.caps ?? ['scm.do.dispatch'],
     } as never);
-    (c.env as Row) = { DB: fakeDb({ project: opts.project, assr: opts.assr, checklist: opts.checklist }, ran) };
+    (c.env as Row) = { ...(c.env as Row | undefined), DB: fakeDb({ project: opts.project, assr: opts.assr, checklist: opts.checklist }, ran) };
     await next();
   });
   a.route('/', deliveryJobProgress);
@@ -196,5 +196,30 @@ describe('a service case advances only from the step the leg belongs to', () => 
     expect((await post(a, '/assr/31/delivery/complete', PHOTO)).status).toBe(200);
     expect(assrSvc.transitionStage).toHaveBeenCalledWith(expect.anything(), 31, 'completed', 7, 'Delivered by the crew (POD)');
     expect(surveySvc.sendCompletionSurvey).toHaveBeenCalledWith(expect.anything(), 31);
+  });
+});
+
+describe('after completion: more photos, viewing them, the Stock Transfer record', () => {
+  test('add-photos needs a completed job, appends, files them, and moves nothing', async () => {
+    const assr = { id: 31, stage: 'pending_supplier_pickup', sub_status: 'pending_customer_pickup' };
+    const { a, tables } = app({ assr });
+    expect((await json(await post(a, '/assr/31/customer_pickup/add-photos', PHOTO))).error).toBe('not_completed');
+    await post(a, '/assr/31/customer_pickup/complete', PHOTO);
+    assrSvc.patchAssrCase.mockClear(); assrSvc.saveAttachment.mockClear();
+    const res = await post(a, '/assr/31/customer_pickup/add-photos', { photoKeys: ['slips/2026/10/b.jpg', 'slips/2026/10/c.jpg'] });
+    expect(res.status).toBe(200);
+    expect(tables.job_progress[0]!.pod_photo_keys).toEqual(['slips/2026/10/a.jpg', 'slips/2026/10/b.jpg', 'slips/2026/10/c.jpg']);
+    expect(assrSvc.saveAttachment).toHaveBeenCalledTimes(2);
+    expect(assrSvc.patchAssrCase).not.toHaveBeenCalled();
+  });
+
+  test('photo/:n streams the n-th POD photo of a job the caller may see', async () => {
+    const { a } = app();
+    await post(a, '/dp/dp-1/SUPPLIER_PICKUP/complete', { photoKeys: ['slips/2026/10/a.jpg', 'slips/2026/10/b.jpg'] });
+    const env = { DB: fakeDb({}, []), POD_BUCKET: { get: async (k: string) => ({ body: `IMG:${k}`, httpMetadata: { contentType: 'image/jpeg' } }) } };
+    const res = await a.request('/dp/dp-1/SUPPLIER_PICKUP/photo/1', {}, env);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('IMG:slips/2026/10/b.jpg');
+    expect((await a.request('/dp/dp-1/SUPPLIER_PICKUP/photo/5', {}, env)).status).toBe(404);
   });
 });

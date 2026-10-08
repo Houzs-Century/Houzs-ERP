@@ -308,6 +308,8 @@ export type DoDeliveryEvidence = {
   signatureData?: string;
   /** R2 key of the delivery photo → `delivery_orders.pod_r2_key`. */
   podKey?: string;
+  /** Every POD photo (the first is also podKey) → `delivery_orders.pod_photo_keys`. */
+  podKeys?: string[];
   /** Where it was signed (mig 0249). Written server-side as a PAIR or not at all. */
   podLat?: number;
   podLng?: number;

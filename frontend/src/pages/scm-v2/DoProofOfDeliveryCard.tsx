@@ -1,5 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
-import { api } from "../../api/client";
+import { PodPhotoAlbum } from "../../components/scm-v2/PodPhotoAlbum";
 
 /* The delivery run as the crew recorded it, on the DO itself (owner,
    2026-10-08: what the driver does on the phone must be visible on the DO):
@@ -14,6 +13,7 @@ export type DoPodFields = {
   arrival_at?: string | null;
   delivered_at?: string | null;
   pod_r2_key?: string | null;
+  pod_photo_keys?: string[] | null;
   signature_data?: string | null;
   pod_lat?: number | null;
   pod_lng?: number | null;
@@ -29,18 +29,15 @@ export const doIsDelivered = (h: DoPodFields): boolean =>
   ["DELIVERED", "SIGNED", "INVOICED"].includes((h.status ?? "").toUpperCase()) || !!h.delivered_at;
 
 export function DoProofOfDeliveryCard({ h }: { h: DoPodFields }) {
-  const photo = useQuery({
-    queryKey: ["do-pod-photo", h.id, h.pod_r2_key],
-    queryFn: () => api.fetchBlobUrl(`/api/scm/delivery-orders-mfg/${encodeURIComponent(h.id)}/pod-photo`),
-    enabled: !!h.pod_r2_key,
-    staleTime: 5 * 60_000,
-  });
+  // Every photo the POD carries; a DO closed before multi-photo has just pod_r2_key.
+  const count = h.pod_photo_keys?.length ? h.pod_photo_keys.length : h.pod_r2_key ? 1 : 0;
+  const paths = Array.from({ length: count }, (_, n) => `/api/scm/delivery-orders-mfg/${encodeURIComponent(h.id)}/pod-photo/${n}`);
   const rows: Array<[string, string | null]> = [
     ["On the way", when(h.departure_at)],
     ["Arrived", when(h.arrival_at)],
     ["Delivered", when(h.delivered_at) ?? (doIsDelivered(h) ? "Delivered" : null)],
   ];
-  const hasAny = rows.some(([, v]) => v) || !!h.pod_r2_key || !!h.signature_data;
+  const hasAny = rows.some(([, v]) => v) || count > 0 || !!h.signature_data;
 
   return (
     <div className="rounded-lg border border-border bg-surface p-4 shadow-stone">
@@ -54,15 +51,9 @@ export function DoProofOfDeliveryCard({ h }: { h: DoPodFields }) {
               <span className={v ? "text-[13px] font-semibold tabular-nums text-ink" : "text-[13px] font-semibold text-ink-muted"}>{v ?? "—"}</span>
             </div>
           ))}
-          {h.pod_r2_key && (
-            <div className="mt-2">
-              {photo.data && (
-                <a href={photo.data} target="_blank" rel="noreferrer">
-                  <img src={photo.data} alt="Proof of delivery photo" className="max-h-56 w-full rounded border border-border object-contain" />
-                </a>
-              )}
-              {photo.isPending && <div className="text-[12.5px] text-ink-muted">Loading photo…</div>}
-              {photo.error && <div className="text-[12.5px] text-red-600">Could not load the POD photo: {(photo.error as Error).message}</div>}
+          {count > 0 && (
+            <div className="mt-3">
+              <PodPhotoAlbum paths={paths} fileStem={`POD-${h.id.slice(0, 8)}`} />
             </div>
           )}
           {h.signature_data && (

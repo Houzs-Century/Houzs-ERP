@@ -20,15 +20,17 @@ const wrap = (h: Parameters<typeof DoProofOfDeliveryCard>[0]["h"]) =>
 afterEach(() => { cleanup(); fetchBlobUrl.mockClear(); });
 
 describe("DoProofOfDeliveryCard", () => {
-  it("shows the run times and loads the POD photo through the DO's own endpoint", async () => {
+  it("shows the run times and every POD photo through the DO's own endpoint", async () => {
     wrap({
-      id: "do-1", status: "DELIVERED", pod_r2_key: "slips/2026/10/a.jpg",
+      id: "do-1", status: "DELIVERED", pod_r2_key: "slips/2026/10/a.jpg", pod_photo_keys: ["slips/2026/10/a.jpg", "slips/2026/10/b.jpg"],
       departure_at: "2026-10-08T02:00:00Z", arrival_at: "2026-10-08T02:30:00Z", delivered_at: "2026-10-08T02:45:00Z",
     });
     expect(screen.getByText("On the way")).toBeTruthy();
     expect(screen.getByText("Arrived")).toBeTruthy();
-    await waitFor(() => expect(screen.getByAltText("Proof of delivery photo")).toBeTruthy());
-    expect(fetchBlobUrl).toHaveBeenCalledWith("/api/scm/delivery-orders-mfg/do-1/pod-photo");
+    await waitFor(() => expect(screen.getByAltText("POD photo 2")).toBeTruthy());
+    expect(screen.getByText("2 photos")).toBeTruthy();
+    expect(fetchBlobUrl).toHaveBeenCalledWith("/api/scm/delivery-orders-mfg/do-1/pod-photo/0");
+    expect(fetchBlobUrl).toHaveBeenCalledWith("/api/scm/delivery-orders-mfg/do-1/pod-photo/1");
   });
 
   it("says nothing is recorded yet, and asks for no photo, before the crew starts", () => {

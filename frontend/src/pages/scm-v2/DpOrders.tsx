@@ -15,6 +15,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
+import { JobDetailPanel, type JobPanelTarget } from '../../components/scm-v2/JobDetailPanel';
 import { CalendarClock, Plus, XCircle } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { DataTable, type Column } from '../../components/DataTable';
@@ -65,7 +66,11 @@ const asScheduleTarget = (r: DpOrderRow): ScheduleDpOrderTarget => ({
   customer_delivery_date: null,
 });
 
+/* A DP order is always a job on the run: its panel shows the timeline and POD. */
+const dpPanel = (r: DpOrderRow): JobPanelTarget => ({ kind: 'job', ref: { sourceType: 'dp', sourceId: r.id, leg: r.job_type }, title: r.party_name });
+
 export const DpOrders = () => {
+  const [jobPanel, setJobPanel] = useState<JobPanelTarget | null>(null);
   const list = useDpOrders();
   const cancelDp = useCancelDpOrder();
   const notify = useNotify();
@@ -262,7 +267,10 @@ export const DpOrders = () => {
         )}
       />
 
+      <JobDetailPanel target={jobPanel} onClose={() => setJobPanel(null)} />
       <DataTable<DpOrderRow>
+        onRowClick={(r) => setJobPanel(dpPanel(r))}
+        onRowDoubleClick={(r) => setJobPanel(dpPanel(r))}
         tableId="scm-dp-orders"
         exportName="dp-orders"
         rows={list.isLoading ? null : rows}

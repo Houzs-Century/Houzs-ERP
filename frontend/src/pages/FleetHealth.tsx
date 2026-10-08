@@ -3,6 +3,7 @@ import { useSearchParams, Link, useNavigate } from "react-router-dom";
 import { Truck, RefreshCw, X, AlertTriangle, ChevronRight, FileUp } from "lucide-react";
 import { PageHeader } from "../components/Layout";
 import { DataTable, type Column } from "../components/DataTable";
+import { PodPhotoAlbum } from "../components/scm-v2/PodPhotoAlbum";
 import { Button } from "../components/Button";
 import { StatCard } from "../components/StatCard";
 import { ResizableDetailDrawer } from "../components/ResizableDetailDrawer";
@@ -167,6 +168,8 @@ const WORK_ORDER_STATE_LABEL: Record<WorkOrderState, string> = {
 type PartView = { id: string; name: string; partNo: string | null; qty: number; unitPriceSen: number; lineSen: number; serial: string | null };
 export type WorkOrderView = {
   id: string;
+  /** R2 keys of the work order's photos (reporter photos + a Lorry service POD). */
+  photoRefs?: string[];
   /** WO-#### (mig 0248) — OURS. quotationNo is the workshop's own number, off
    *  their document; it is not unique across vendors and is often absent. */
   woNo?: string | null;
@@ -1708,6 +1711,11 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
         {wo.warrantyUntil && <span>Warranty to {wo.warrantyUntil}</span>}
       </div>
       {/* Parts table */}
+      {(wo.photoRefs?.length ?? 0) > 0 && (
+        <div className="mt-3">
+          <PodPhotoAlbum paths={(wo.photoRefs ?? []).map((_, n) => `/api/fleet-maintenance/work-orders/${wo.id}/photo/${n}`)} fileStem={`WO-${wo.woNo ?? wo.id}`} />
+        </div>
+      )}
       {wo.parts.length > 0 && (
         <table className="mt-2 w-full border-collapse text-[11px]">
           <thead>

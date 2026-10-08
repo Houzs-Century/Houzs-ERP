@@ -40,6 +40,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
+import { JobDetailPanel, panelTargetOf, rowDocumentPath, type JobPanelTarget } from '../../components/scm-v2/JobDetailPanel';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Printer, Truck, Users, Wand2, CalendarCheck, Map as MapIcon } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
@@ -114,6 +115,8 @@ type CrewPick = {
 
 export function FleetDay() {
   const navigate = useNavigate();
+  // Single click opens the job panel; double click goes to the document.
+  const [jobPanel, setJobPanel] = useState<JobPanelTarget | null>(null);
   const [params, setParams] = useSearchParams();
 
   // URL is state (repo rule): date + depot warehouse + focused trip live in the URL.
@@ -604,6 +607,7 @@ export function FleetDay() {
         )}
       </div>
 
+      <JobDetailPanel target={jobPanel} onClose={() => setJobPanel(null)} />
       <DeliveryPlanningBoard
         orders={boardRowsShown}
         counts={board.data?.counts ?? {}}
@@ -635,11 +639,11 @@ export function FleetDay() {
            Columns-panel choice turns it off) + two-way linkage (Option B). */
         visibleColumnsOverride={mapOpen && mapCompact ? MAP_ESSENTIAL_COLUMNS_LAST_MILE : null}
         onUserAdjustColumns={() => { if (mapOpen && mapCompact) setMapCompact(false); }}
-        onRowClick={(o) => { if (mapOpen && o.row_type === 'so') setSelectedPin(o.so_doc_no); }}
+        onRowClick={(o) => { if (mapOpen && o.row_type === 'so') setSelectedPin(o.so_doc_no); setJobPanel(panelTargetOf(o)); }}
         scrollToRow={scrollTo}
         defaultSort={arrangementQueueCompare}
         emptyMessage="No time-arranged orders for this day — arrange times in Delivery Time Arrangement."
-        onRowDoubleClick={(o) => { if (o.row_type === 'so') navigate('/scm/sales-orders/' + o.so_doc_no); }}
+        onRowDoubleClick={(o) => { const to = rowDocumentPath(o); if (to) navigate(to); else setJobPanel(panelTargetOf(o)); }}
         contextMenu={(row) => (row.row_type === 'so'
           ? [{ label: 'Open Sales Order', onClick: () => navigate('/scm/sales-orders/' + row.so_doc_no) }]
           : [])}

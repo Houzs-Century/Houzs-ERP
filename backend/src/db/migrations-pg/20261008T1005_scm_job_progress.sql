@@ -1,11 +1,14 @@
 -- 20261008T1005_scm_job_progress.sql
 -- REVERSAL: DROP TABLE IF EXISTS scm.job_progress;
+--           ALTER TABLE scm.delivery_orders DROP COLUMN IF EXISTS pod_photo_keys;
 --   Revert the code first (routes/delivery-job-progress.ts reads and writes it).
 --   GRANTS: none to re-apply — the table rides the scm schema's default
 --   privileges (service_role), like scm.trip_locations.
 --
 -- WHAT THIS CHANGES, and why it is safe to run against production: one new
--- empty table and its indexes; no existing row is written or altered.
+-- empty table and its indexes, and one nullable-free JSONB column with a
+-- constant default on scm.delivery_orders (metadata-only in PG 11+); no
+-- existing value is rewritten.
 -- Verified against: the local restore of production (houzs_local, 2026-10-08).
 --
 -- WHY (owner, 2026-10-07: every job needs On the way -> Arrived -> POD, and
@@ -51,3 +54,8 @@ CREATE TABLE IF NOT EXISTS scm.job_progress (
 
 CREATE INDEX IF NOT EXISTS idx_job_progress_trip ON scm.job_progress (trip_id);
 CREATE INDEX IF NOT EXISTS idx_job_progress_completed ON scm.job_progress (completed_at);
+
+-- A delivery takes more than one photo (goods unloaded, installed, the signed
+-- note). pod_r2_key keeps the first for every reader that already uses it;
+-- pod_photo_keys holds them all.
+ALTER TABLE scm.delivery_orders ADD COLUMN IF NOT EXISTS pod_photo_keys JSONB NOT NULL DEFAULT '[]'::jsonb;

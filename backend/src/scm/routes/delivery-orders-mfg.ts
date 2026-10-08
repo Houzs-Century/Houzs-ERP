@@ -321,7 +321,7 @@ const HEADER =
      the Delivery Planning board's /fields PATCH; the DO Detail GET / POST /
      PATCH must carry it too so the DO drawer can show + save it. */
   'arrives_em_warehouse_date, ' +
-  'pod_r2_key, signature_data, departure_at, arrival_at, pod_lat, pod_lng, status, notes, created_at, created_by, updated_at, ' +
+  'pod_r2_key, pod_photo_keys, signature_data, departure_at, arrival_at, pod_lat, pod_lng, status, notes, created_at, created_by, updated_at, ' +
   /* Mig 0324 — the HOLD MARKER, the DO's first hold ever and the one that
      needed no enum change. docs/modules/delivery-order.md. */
   HOLD_COLUMNS;
@@ -4997,7 +4997,7 @@ deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
 export const patchDeliveryOrderStatusHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
   let body: {
-    status?: string; signatureData?: string; podKey?: string;
+    status?: string; signatureData?: string; podKey?: string; podKeys?: unknown;
     podLat?: number; podLng?: number; podAccuracyM?: number; podLocatedAt?: string;
   }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
@@ -5129,6 +5129,10 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      an existing POD. */
   if (typeof body.signatureData === 'string' && body.signatureData) ts.signature_data = body.signatureData;
   if (typeof body.podKey === 'string' && body.podKey) ts.pod_r2_key = body.podKey;
+  // Every photo of the POD (the first also stays in pod_r2_key above).
+  const podKeys = Array.isArray(body.podKeys) ? body.podKeys.filter((k): k is string => typeof k === 'string' && /^slips\//.test(k)).slice(0, 20) : [];
+  if (podKeys.length && !ts.pod_r2_key) ts.pod_r2_key = podKeys[0]!;
+  const tsJson: Record<string, string[]> = podKeys.length ? { pod_photo_keys: podKeys } : {};
 
   /* WHERE the delivery happened (mig 0249). The phone has been taking this
      reading and discarding it since the POD screen shipped — MobilePOD's own
@@ -5214,7 +5218,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   let data: { id: string; status: string } | null;
   if (toStatus === 'CANCELLED') {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
-      .update({ status: toStatus, ...ts, ...tsNum })
+      .update({ status: toStatus, ...ts, ...tsNum, ...tsJson })
       .eq('id', id), co.companyId).neq('status', 'CANCELLED')
       .select('id, status').maybeSingle();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
@@ -5226,7 +5230,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     data = updated as { id: string; status: string };
   } else {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
-      .update({ status: toStatus, ...ts, ...tsNum }).eq('id', id), co.companyId).select('id, status').single();
+      .update({ status: toStatus, ...ts, ...tsNum, ...tsJson }).eq('id', id), co.companyId).select('id, status').single();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     data = updated as { id: string; status: string };
   }
@@ -5348,7 +5352,7 @@ export const patchDeliveryOrderArrivalHandler = async (c: any) => {
   return c.json({ deliveryOrder: { id, arrival_at: now } });
 };
 deliveryOrdersMfg.patch('/:id/arrival', patchDeliveryOrderArrivalHandler);
-deliveryOrdersMfg.get('/:id/pod-photo', doPodPhotoHandler);
+deliveryOrdersMfg.get('/:id/pod-photo/:n', doPodPhotoHandler);
 deliveryOrdersMfg.post('/:id/revert', revertDeliveryOrderHandler); // Ops-lead exception power (scm.do.revert) — routes/delivery-order-revert.ts
 
 /* PATCH .../hold — the mig-0324 MARKER, never `status`. routes/document-hold-routes.ts. */
