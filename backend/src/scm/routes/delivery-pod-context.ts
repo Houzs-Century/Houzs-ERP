@@ -118,6 +118,7 @@ export async function ownServiceAndProjectRowKeys(
   const projectRows = rows.filter((r) => r.row_type === 'project' && r.so_doc_no.startsWith('PRJ:'));
   if (projectRows.length && Number.isFinite(userId)) {
     const ids = [...new Set(projectRows.map((r) => Number(r.so_doc_no.slice(4).split('#')[0])))].filter(Number.isFinite);
+    // company-scope: crew lookup for project ids already on the caller's board, which reads projects across companies on purpose (delivery-planning.ts project rows)
     const res = await env.DB.prepare(
       `SELECT id, setup_driver_user_id, setup_helper_1_id, setup_helper_2_id,
               dismantle_driver_user_id, dismantle_helper_1_id, dismantle_helper_2_id

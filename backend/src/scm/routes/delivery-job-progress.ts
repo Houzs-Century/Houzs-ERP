@@ -22,6 +22,7 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { scopeToAllowedCompanies } from '../lib/companyScope';
 import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } from '../lib/deliveryScope';
+import { ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
 import { saveAttachment, logActivity, patchAssrCase, transitionStage } from '../../services/assr';
 import { setChecklistStatus } from '../../services/projects';
 import { sendCompletionSurvey } from '../../services/assrCompletionSurvey';
@@ -30,7 +31,6 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 type SourceType = 'dp' | 'project' | 'assr';
 
 const PROJECT_LEGS = ['SETUP', 'DISMANTLE'] as const;
-const ASSR_LEGS = ['customer_pickup', 'inspection', 'delivery'] as const;
 const MAX_PHOTOS = 10;
 
 export const deliveryJobProgress = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -43,7 +43,7 @@ function parseJob(c: Ctx): { sourceType: SourceType; sourceId: string; leg: stri
   if (!['dp', 'project', 'assr'].includes(sourceType)) return { error: 'Unknown job type.' };
   if (!sourceId) return { error: 'Missing job id.' };
   if (sourceType === 'project' && !(PROJECT_LEGS as readonly string[]).includes(leg)) return { error: 'A project job is SETUP or DISMANTLE.' };
-  if (sourceType === 'assr' && !(ASSR_LEGS as readonly string[]).includes(leg)) return { error: 'A service case job is customer_pickup, inspection or delivery.' };
+  if (sourceType === 'assr' && !(ASSR_BOARD_LEGS as readonly string[]).includes(leg)) return { error: 'A service case job is customer_pickup, inspection or delivery.' };
   if (sourceType !== 'dp' && !/^\d+$/.test(sourceId)) return { error: 'Invalid job id.' };
   return { sourceType, sourceId, leg };
 }
@@ -363,6 +363,7 @@ async function advanceServiceCase(c: Ctx, caseId: number, leg: string, row: Reco
    it and the P&L "completed" view reads it. */
 async function tickProjectImageRow(c: Ctx, projectId: number, leg: string, me: number | null) {
   const like = leg === 'SETUP' ? 'Setup Image%' : 'Dismantle Image%';
+  // company-scope: rows of the one project the crew-checked job just completed (loadJob)
   const rows = await c.env.DB.prepare(
     `SELECT id FROM project_checklist WHERE project_id = ? AND title LIKE ? AND status <> 'done' ORDER BY id`,
   ).bind(projectId, like).all<{ id: number }>();
