@@ -69,6 +69,9 @@ export type PaymentRequest = {
   officialDoc?: { state: 'OWED' | 'RECEIVED' | 'CHECKED'; note: string | null } | null;
   /** The first request's AP invoice, when Finance booked the bill — a balance is paid ON it. */
   familyInvoice?: { id: string; invoiceNumber: string | null; status: string | null; supplierId: string | null; totalSen: number; paidSen: number } | null;
+  /** The PMS row it was raised from (owner 2026-10-08) — an event's CONTRACT
+      row; null when raised on this page. Its event is fixed. */
+  checklist_item_id?: number | null;
 };
 
 /** A bill's instalments and its figures (server: lib/payment-request.ts familyFigures). */
@@ -159,6 +162,8 @@ export type PaymentRequestInput = {
   payPct?: number | null;
   /** The requester's note to Finance (owner 2026-10-02: 多一个第五给他们写note). */
   note?: string | null;
+  /** Raised from a PMS row (owner 2026-10-08): the event's CONTRACT row whose files are the bill. */
+  checklistItemId?: number | null;
 };
 
 
@@ -213,6 +218,20 @@ export const useBillMatches = (no: string, date: string, excludeRequest: string 
     }).toString()}`),
     enabled: ok,
     staleTime: 30_000,
+  });
+};
+
+/** The requests raised from PMS rows (GET /payment-requests/from-checklist,
+    owner 2026-10-08) — the row shows each with its stage and 欠正式单 state; a
+    requester's own, Finance's all. Under the list's key, so every write that
+    refreshes the list refreshes the rows too. */
+export const useChecklistPaymentRequests = (itemIds: ReadonlyArray<number>, enabled = true) => {
+  const ids = [...new Set(itemIds.filter((n) => Number.isInteger(n) && n > 0))].sort((a, b) => a - b);
+  return useQuery({
+    queryKey: ['payment-requests', 'from-checklist', ids.join(',')],
+    queryFn: () => authedFetch<{ requests: PaymentRequest[]; finance: boolean }>(`/payment-requests/from-checklist?items=${ids.join(',')}`),
+    enabled: enabled && ids.length > 0,
+    staleTime: 15_000,
   });
 };
 

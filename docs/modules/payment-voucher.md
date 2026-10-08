@@ -115,6 +115,17 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   /payment-requests/bill-matches`) is said on the voucher form, beside each
   read bill in the pile, and on the AP invoice form — a warning, never a block;
   an AP invoice being edited is never its own match (`excludeApInvoice`).
+- A payment request raised from a PMS row (owner 2026-10-08) keeps the row
+  (`acc_payment_requests.checklist_item_id`,
+  `backend/src/scm/lib/pms-checklist-source.ts`): only an event's CONTRACT row,
+  not N/A, of the request's own event (none named = the row's); the event
+  stays when the request is edited (`checklist_event_locked`), and 申请付余额
+  keeps the row. The row reads its requests back through
+  `GET /payment-requests/from-checklist?items=` — a requester's own, Finance's all.
+- Finance's 欠正式单 remark (what to follow up) rides the mark: written with the
+  tick on PV New / the AP invoice form (`officialDocNote`) or on the detail
+  (`POST /official-docs/:kind/:id` with `note`), at most 500 characters; a
+  blank re-mark keeps the remark that is there.
 - Vendor memory (`scm.acc_vendor_memory`) only learns from what the operator
   actually **saved**, never from a model guess; AP payments teach nothing
   (their one line is fixed by role).
@@ -144,6 +155,9 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   `backend/src/scm/lib/doc-no.ts`, `backend/src/scm/lib/pv-refund.ts` —
   settlement, costing cascade, FX helpers, numbering, refund rules.
 - `backend/src/acc/bill-extract.ts` — OCR extraction.
+- `frontend/src/pages/scm-v2/PaymentRequests.tsx` (申请付款; `?open=<id>` opens
+  one) over `PaymentRequestForm.tsx` (the request form — also opened from a
+  PMS CONTRACT row with the row's files as the bill).
 - `frontend/src/pages/scm-v2/PaymentVouchers.tsx` (list),
   `PaymentVoucherNew.tsx` (create/AP Payment/refund/transfer),
   `PaymentVoucherScan.tsx` (bill pile), `PaymentVoucherDetail.tsx`

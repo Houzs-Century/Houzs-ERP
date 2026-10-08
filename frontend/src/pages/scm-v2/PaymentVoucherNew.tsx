@@ -165,6 +165,8 @@ export const PaymentVoucherNew = () => {
   /* 欠正式单 (item 3): paid on a proforma or quotation — the official invoice is
      still owed. Finance's tick, pre-ticked when the reader read either word. */
   const [officialOwed, setOfficialOwed]           = useState<boolean>(false);
+  /* Finance's remark on what to follow up (owner 2026-10-08) — sent with the tick. */
+  const [officialNote, setOfficialNote]           = useState<string>('');
   const takeProvisional = (kind: BillExtraction['documentKind']) => { if (kind === 'proforma' || kind === 'quotation') setOfficialOwed(true); };
   /* One bill's pair: a voucher paying several bills ("A, B") keeps none. */
   const takeBillPair = (no: string | null | undefined, date: string | null | undefined) => {
@@ -732,7 +734,7 @@ export const PaymentVoucherNew = () => {
         ...(sendAllocations.length > 0 ? { allocations: sendAllocations } : {}),
         ...(fromRequest ? { paymentRequestId: fromRequest } : {}),
         ...(showBill ? { billRef: billRef.trim() || null, billDate: billDate || null } : {}),
-        ...(showBill && officialOwed ? { officialDocOwed: true } : {}),
+        ...(showBill && officialOwed ? { officialDocOwed: true, ...(officialNote.trim() ? { officialDocNote: officialNote.trim() } : {}) } : {}),
       });
       /* Attach the scanned bill AFTER the voucher exists — sequentially, so
          sort_no (= print order) is the scan order. A failed upload never
@@ -885,6 +887,13 @@ export const PaymentVoucherNew = () => {
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', alignSelf: 'end' }}>
                 <input type="checkbox" checked={officialOwed} onChange={(e) => setOfficialOwed(e.target.checked)} aria-label="Official invoice owed" />
                 Proforma / quotation — official invoice owed · 欠正式单
+              </label>
+            )}
+            {showBill && officialOwed && (
+              <label className={styles.field} style={{ gridColumn: '1 / -1' }}>
+                <span className={styles.fieldLabel}>Remark — what to follow up (optional)</span>
+                <input className={styles.fieldInput} value={officialNote} onChange={(e) => setOfficialNote(e.target.value)} maxLength={500}
+                  aria-label="Official invoice remark" placeholder="e.g. Proforma only — ask MITEC for the tax invoice" />
               </label>
             )}
             {showBill && (billMatchesQ.data?.matches.length ?? 0) > 0 && (
