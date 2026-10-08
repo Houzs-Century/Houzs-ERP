@@ -13,8 +13,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import type { TaskAttachment } from './types';
 
-const fetchBlobUrl = vi.fn(async (_path: string, _type?: string | null) => 'blob:pms-file');
-vi.mock('../../api/client', () => ({ api: { fetchBlobUrl: (p: string, t?: string | null) => fetchBlobUrl(p, t) } }));
+const fetchBlob = vi.fn(async (_path: string, _type?: string | null) => new Blob(['%PDF-1.4 bytes'], { type: 'application/octet-stream' }));
+vi.mock('../../api/client', () => ({ api: { fetchBlob: (p: string, t?: string | null) => fetchBlob(p, t) } }));
 /* The shell's providers stand in the app; the dialogs only need the notifier, stubbed below. */
 vi.mock('../scm-v2/Scm2990Shell', () => ({ Scm2990Shell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 type Seed = { files: File[]; projectId: number; checklistItemId: number; eventLabel: string };
@@ -45,11 +45,9 @@ const ROW = [
 ];
 
 beforeEach(() => {
-  fetchBlobUrl.mockClear();
+  fetchBlob.mockClear();
   notifyFn.mockClear();
   uploadOfficial.mockClear();
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(new Blob(['%PDF-1.4 bytes'], { type: 'application/octet-stream' }))));
-  URL.revokeObjectURL = vi.fn();
 });
 
 describe('which files can be a bill', () => {
@@ -72,7 +70,7 @@ describe('Request payment', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Quotation.JPG' }));
     fireEvent.click(screen.getByRole('button', { name: 'Next — fill the request' }));
     const form = await screen.findByLabelText('request form');
-    expect(fetchBlobUrl.mock.calls).toEqual([
+    expect(fetchBlob.mock.calls).toEqual([
       ['/api/projects/attachments/projects/348/checklist/11', 'application/pdf'],
       ['/api/projects/attachments/projects/348/checklist/9', 'image/jpeg'],
     ]);
@@ -83,7 +81,7 @@ describe('Request payment', () => {
   });
 
   test('a file that cannot be fetched is said, and the form does not open', async () => {
-    fetchBlobUrl.mockRejectedValueOnce(new Error('403 Forbidden'));
+    fetchBlob.mockRejectedValueOnce(new Error('403 Forbidden'));
     render(<PmsRequestModals mode="request" itemId={5001} itemTitle="Agreement / Quotation" attachments={ROW} projectId={348} eventLabel="E" onClose={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Next — fill the request' }));
     expect((await screen.findByRole('alert')).textContent).toContain("The row's file could not be fetched — 403 Forbidden");

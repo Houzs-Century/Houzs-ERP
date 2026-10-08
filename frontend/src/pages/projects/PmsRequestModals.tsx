@@ -46,13 +46,8 @@ export function billMimeOf(a: Pick<TaskAttachment, 'file_name' | 'content_type'>
 /** The row file's bytes, as a File the request form reads like one picked here. */
 async function attachmentAsFile(a: TaskAttachment): Promise<File> {
   const mime = billMimeOf(a) ?? 'application/pdf';
-  const url = await api.fetchBlobUrl(`/api/projects/attachments/${a.r2_key}`, mime);
-  try {
-    const blob = await (await fetch(url)).blob();
-    return new File([blob], a.file_name, { type: mime });
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  const blob = await api.fetchBlob(`/api/projects/attachments/${a.r2_key}`, mime);
+  return new File([blob], a.file_name, { type: mime });
 }
 
 /** The row's files with a tick each — the newest usable one ticked to start. */

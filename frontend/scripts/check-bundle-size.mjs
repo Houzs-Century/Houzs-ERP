@@ -231,7 +231,13 @@ const CEILINGS = {
   // 2026-09-28: that diet is done — the bell popover body is its own lazy
   // chunk (components/NotificationBellPopover.tsx), 170.0 -> 168.5 KB on the
   // entry. The ceiling stays at 170: the room is for the next shell change.
-  INITIAL_JS_GZIP: 170 * KB,
+  // 170 -> 171 on 2026-10-08: main sat AT 170.0 and the PMS CONTRACT row's
+  // 「Request payment」 (PR #4529) added NO eager module — the entry's lazy-chunk
+  // map gained names for the shared PaymentRequestForm chunk (the Payment
+  // Requests page and the PMS dialogs import it) and the lazy PmsRequestModals
+  // chunk, and api/client.ts gained fetchBlob (fetchBlobUrl now reads through
+  // it). Same shared-lazy-chunk mechanism as the 09-14 / 09-16 notes.
+  INITIAL_JS_GZIP: 171 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT

@@ -16,12 +16,13 @@
 // (checklistItemId, GET /from-checklist), lib/pms-checklist-source.ts.
 // ----------------------------------------------------------------------------
 
-import { Suspense, lazy, useState } from 'react';
+import { lazy, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { HandCoins } from 'lucide-react';
 import { STAGE, answerText, type PaymentRequest } from '../../vendor/scm/lib/payment-request-queries';
 import { OfficialDocChip } from '../../vendor/scm/components/OfficialDoc';
 import { fmtSen } from '../../vendor/shared/format';
+import { LazySlot } from '../../components/LazySlot';
 import type { TaskAttachment } from './types';
 
 const PmsRequestModals = lazy(() => import('./PmsRequestModals'));
@@ -73,9 +74,9 @@ export function RequestPaymentButton({ itemId, itemTitle, attachments, projectId
         Request payment
       </button>
       {open && (
-        <Suspense fallback={null}>
+        <LazySlot resetKey={`pms-request-${itemId}`} fallback={null}>
           <PmsRequestModals mode="request" itemId={itemId} itemTitle={itemTitle} attachments={files} projectId={projectId} eventLabel={eventLabel} onClose={() => setOpen(false)} />
-        </Suspense>
+        </LazySlot>
       )}
     </>
   );
@@ -121,9 +122,9 @@ export function RowRequests({ requests, attachments, finance, meId }: {
         );
       })}
       {officialFor && (
-        <Suspense fallback={null}>
+        <LazySlot resetKey={`pms-official-${officialFor.id}`} fallback={null}>
           <PmsRequestModals mode="official" requestId={officialFor.id} requestNo={officialFor.request_no} attachments={rowFiles(attachments)} onClose={() => setOfficialFor(null)} />
-        </Suspense>
+        </LazySlot>
       )}
     </div>
   );
