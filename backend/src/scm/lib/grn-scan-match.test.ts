@@ -25,6 +25,7 @@ const line = (over: Partial<OpenPoLine> = {}): OpenPoLine => ({
   materialName: 'Sofa 2B',
   supplierSku: null,
   remaining: 5,
+  locationCode: null,
   ...over,
 });
 
@@ -443,7 +444,8 @@ describe('a delivery order that names its PO but describes the items differently
     expect(res.picks).toEqual([]);
   });
 
-  test('no draft when the rows name two different open POs', () => {
+  test('no draft from two named POs when the delivery order qty is not what they owe', () => {
+    // 1 listed against HC-PO-010080 (owes 3), 1 against HC-PO-2610-001 (owes 4).
     const lines = [do009[0], scan({ itemCode: 'Y', qty: 1, poNo: 'PO-2610-001' })];
     const res = matchGrnScanToPoLines(null, lines, po010080, [], 'sup-1');
     expect(res.poFallback).toBeNull();
@@ -485,5 +487,57 @@ describe('a delivery order whose POs are marked Received says so', () => {
       + 'SB10-KHB(H)(9MM)-LSD013 x2 (PO HC-PO-2609-251 is marked Received); '
       + 'SB10-B11EC x1 (PO KLPO10138-HC5324 is not one of our POs).',
     );
+  });
+});
+
+// NB Furniture NBF2610-256 (2026-10-07) printed our POs with the ship-to
+// location in place of "HC-PO": SRW-2610-021 is HC-PO-2610-021 into SRW
+// WAREHOUSE, KL-2609-352 is HC-PO-2609-352 into KL WAREHOUSE. Every row was
+// refused as "not one of our POs" although supplier, items and qty all agreed.
+describe('a PO printed with the ship-to location in front (NBF2610-256)', () => {
+  const open: OpenPoLine[] = [
+    line({ poItemId: 'pi-cody', poNumber: 'HC-PO-2610-021', itemCode: 'CODY-(Q)', supplierSku: 'NB-KHJ57(Q)', remaining: 1, locationCode: 'SRW WAREHOUSE' }),
+    line({ poItemId: 'pi-jager', poNumber: 'HC-PO-2609-352', itemCode: 'JAGER-(K)', remaining: 1, locationCode: 'KL WAREHOUSE' }),
+    line({ poItemId: 'pi-nb01', poNumber: 'HC-PO-2609-352', itemCode: 'NB01-(K)', remaining: 1, locationCode: 'KL WAREHOUSE' }),
+  ];
+  const do256 = [
+    scan({ itemCode: 'SB10-KHL(L)(D)(L-2")-KHJ57(MH-10")', qty: 1, poNo: 'SRW-2610-021' }),
+    scan({ itemCode: 'SB12-KHB(C)-NB01(MH-12")', qty: 1, poNo: 'KL-2609-352' }),
+    scan({ itemCode: 'SB12-KHB(H)(9MM)-LSD013', qty: 1, poNo: 'KL-2609-352' }),
+  ];
+
+  test('resolves both POs and drafts what they owe, since the quantities agree', () => {
+    const res = matchGrnScanToPoLines(null, do256, open, [], 'sup-1');
+    expect(res.poFallback).toBe('HC-PO-2610-021, HC-PO-2609-352');
+    expect(res.picks).toEqual([
+      { poItemId: 'pi-cody', qty: 1 },
+      { poItemId: 'pi-jager', qty: 1 },
+      { poItemId: 'pi-nb01', qty: 1 },
+    ]);
+  });
+
+  test('a location that is not where the PO ships is still not our PO', () => {
+    const res = matchGrnScanToPoLines(null, [scan({ itemCode: 'X', qty: 1, poNo: 'KL-2610-021' })], open, [], 'sup-1');
+    expect(res.picks).toEqual([]);
+    expect(res.unmatched.map((u) => u.reason)).toEqual(['po_not_open']);
+  });
+
+  test('never for an unknown supplier', () => {
+    const res = matchGrnScanToPoLines(null, do256, open, [], null);
+    expect(res.picks).toEqual([]);
+    expect(res.unmatched.map((u) => u.reason)).toEqual(['po_not_open', 'po_not_open', 'po_not_open']);
+  });
+
+  test('a part delivery across two POs is left to the operator', () => {
+    const res = matchGrnScanToPoLines(null, do256.slice(0, 2), open, [], 'sup-1');
+    expect(res.poFallback).toBeNull();
+    expect(res.picks).toEqual([]);
+  });
+
+  test('an item hit still drafts only the matched row', () => {
+    const lines = [scan({ itemCode: 'NB-KHJ57(Q)', qty: 1, poNo: 'SRW-2610-021' }), do256[1]];
+    const res = matchGrnScanToPoLines(null, lines, open, [], 'sup-1');
+    expect(res.poFallback).toBeNull();
+    expect(res.picks).toEqual([{ poItemId: 'pi-cody', qty: 1 }]);
   });
 });

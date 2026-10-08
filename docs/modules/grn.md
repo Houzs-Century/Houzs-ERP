@@ -66,6 +66,12 @@ go through `/api/scm/grns`.
 
 - All stock/status mutation goes through `postGrnAndRollup`; the flip is a CAS on
   the *observed* status, never a blind `.neq('status', 'CLOSED')` update.
+- A from-PO convert makes one GRN per supplier AND PO ship-to warehouse: posting
+  books every line into the header warehouse, so two warehouses never share a GRN.
+- Delivery-order scan: a PO printed with its location in place of `HC-PO`
+  (`SRW-2610-021`) counts only when that PO ships to a warehouse whose code starts
+  with that location. With no item match it drafts everything the named POs still
+  owe; for 2+ POs only when the delivery order's qty per PO equals what each owes.
 - `PATCH /:id` (header) and all three create paths must scope by company on both
   the read and the write — the service-role client bypasses RLS, so the app-level
   predicate is the only isolation; use `maybeSingle()` on the scoped update, not
