@@ -126,6 +126,9 @@ export const PurchaseConsignmentOrderNew = () => {
     if (!fromProductRequest || requestSeeded || !sourceRequest) return;
     if (sourceRequest.delivery_location_id) setPurchaseLocationId(sourceRequest.delivery_location_id);
     if (sourceRequest.expected_delivery_date) setExpectedAt(sourceRequest.expected_delivery_date);
+    /* 方案 C (owner 2026-10-08): the supplier and the agreed price the requester
+       named seed the Creditor and the line price; the Purchaser may still change them. */
+    if (sourceRequest.supplier_id) setSupplierId(sourceRequest.supplier_id);
     setNotes((prev) => prev || [`From Product Request ${sourceRequest.request_no}`, sourceRequest.special_remarks].filter(Boolean).join(' · '));
     if (sourceRequest.item_code) {
       const variants: Record<string, unknown> = {};
@@ -141,6 +144,11 @@ export const PurchaseConsignmentOrderNew = () => {
         variants,
         deliveryDate: sourceRequest.expected_delivery_date ?? undefined,
         warehouseId: sourceRequest.delivery_location_id ?? undefined,
+        /* An agreed price is the requester's figure, kept over the binding's
+           default (priceTouched), exactly as a hand-typed price would be. */
+        ...(sourceRequest.unit_price_sen != null && sourceRequest.unit_price_sen > 0
+          ? { unitPriceSen: sourceRequest.unit_price_sen, priceTouched: true }
+          : {}),
       }]);
     }
     setRequestSeeded(true);

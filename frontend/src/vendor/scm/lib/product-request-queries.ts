@@ -41,6 +41,10 @@ export type ProductRequest = {
   special_remarks: string | null;
   delivery_location_id: string | null;
   expected_delivery_date: string | null;
+  /** The supplier and agreed unit price the requester named (owner 2026-10-08,
+      方案 C); the PC Order is seeded from them. Optional. */
+  supplier_id: string | null;
+  unit_price_sen: number | null;
   status: ProductRequestStatus;
   decision_note: string | null;
   decided_by: string | null;
@@ -52,6 +56,7 @@ export type ProductRequest = {
   pco: { id: string; pcNumber: string; status: string; expectedAt: string | null } | null;
   deliveryLocation: { id: string; code: string; name: string } | null;
   model: { id: string; modelCode: string; name: string } | null;
+  supplier: { id: string; code: string; name: string } | null;
 };
 
 export type ProductRequestInput = {
@@ -68,7 +73,17 @@ export type ProductRequestInput = {
   specialRemarks: string | null;
   deliveryLocationId: string | null;
   expectedDeliveryDate: string | null;
+  supplierId: string | null;
+  unitPriceSen: number | null;
 };
+
+/** The supplier picker for a requester (a salesperson holds no procurement
+    area, so /suppliers is closed to them): ACTIVE suppliers, id / code / name. */
+export const useProductRequestSupplierOptions = () => useQuery({
+  queryKey: ['product-request-supplier-options'],
+  queryFn: () => authedFetch<{ suppliers: Array<{ id: string; code: string; name: string }> }>('/product-requests/supplier-options'),
+  staleTime: 60_000,
+});
 
 /** Each status in words, and the colour it reads in — one home for desktop and phone. */
 export const REQUEST_STATUS: Record<ProductRequestStatus, { label: string; tone: string }> = {

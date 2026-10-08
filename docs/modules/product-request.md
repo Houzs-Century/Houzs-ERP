@@ -8,7 +8,8 @@ A salesperson's request for a new product or a repack: an existing SKU, or a Mod
 
 | Method | Path | Who | Effect |
 |---|---|---|---|
-| GET | `/product-requests`, `/:id` | requester (own only), Purchaser (all; `?mine=1` for own) | list / detail, with the linked PC Order, delivery location and Model |
+| GET | `/product-requests`, `/:id` | requester (own only), Purchaser (all; `?mine=1` for own) | list / detail, with the linked PC Order, delivery location, Model and supplier |
+| GET | `/product-requests/supplier-options` | anyone who may open requests | ACTIVE suppliers of the company as id / code / name only — the requester's picker (a salesperson holds no `scm.procurement.suppliers`) |
 | POST | `/product-requests` | any Sales caller, or `scm.product_request.create` | raise, lands `REQUESTED` |
 | PATCH | `/:id` | the requester | change while `REQUESTED` or `REJECTED`; a `REJECTED` one goes back to `REQUESTED`, decision cleared |
 | POST | `/:id/withdraw` | the requester | `REQUESTED` / `REJECTED` -> `WITHDRAWN` |
@@ -29,7 +30,8 @@ The PC Order is raised on PC Order New (`?fromProductRequest=<id>`), which seeds
 ## Rules that must not break
 
 - A `REPACK` always names an existing SKU (`item_code_required`). A `NEW_PRODUCT` names an existing SKU or a Model by name (`product_required`); never neither (DB check `product_requests_names_product`).
-- A SKU, fabric or delivery location not in the active company is refused by name (`unknown_item` / `unknown_fabric` / `unknown_location`); a picked SKU fixes the request's category and Model.
+- A SKU, fabric, delivery location or supplier not in the active company is refused by name (`unknown_item` / `unknown_fabric` / `unknown_location` / `unknown_supplier`); a picked SKU fixes the request's category and Model.
+- `supplier_id` and `unit_price_sen` are the requester's named supplier and agreed price (方案 C, owner 2026-10-08), both optional; PC Order New seeds the Creditor and the line price from them (`priceTouched`, so the binding's default does not overwrite the agreed figure). The Purchaser may still change both on the order.
 - An approved new-Model request cannot raise a PC Order until `create-model` has run: a PC Receive books stock by item code, and a code the catalogue has not got would be stock nothing can sell.
 - `create-model` goes through `ensureModelForSku` (the one find-or-create every SKU-create path shares); the SKU lands `status ACTIVE`, `pos_active false`. A SKU code already in the company is refused (`duplicate_code`), never overwritten. SKU code defaults to `<MODEL>-<compartment>` for a sofa with a compartment, else the model code; 30 characters at most.
 - Every status move is guarded on the status the row was read in (`request_moved` 409 on a race); the PC Order link claims the request only while `APPROVED`, so two orders raised at once cannot both claim it — the loser's order stays, unlinked, and the create answer says `requestClaimed: false`.

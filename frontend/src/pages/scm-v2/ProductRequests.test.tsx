@@ -20,6 +20,7 @@ const base = (over: Req): Req => ({
   qty: 2, special_remarks: 'Deeper seat', delivery_location_id: 'wh-kl', expected_delivery_date: '2026-10-25', status: 'REQUESTED',
   decision_note: null, decided_by: null, decided_at: null, pco_id: null, created_at: '2026-10-06T02:00:00Z', updated_at: '2026-10-06T02:00:00Z',
   pco: null, deliveryLocation: { id: 'wh-kl', code: 'KL', name: 'KL Showroom' }, model: null,
+  supplier_id: null, unit_price_sen: null, supplier: null,
   ...over,
 });
 let requests: Req[] = [];
@@ -35,6 +36,7 @@ const closeMutate = vi.fn();
 vi.mock('../../vendor/scm/lib/product-request-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/product-request-queries')>()),
   useProductRequests: () => ({ data: { requests, approver, mayRequest: true }, isLoading: false, isError: false, error: null }),
+  useProductRequestSupplierOptions: () => ({ data: { suppliers: [{ id: 'sup-1', code: '400-D001', name: 'DIGLANT FURNITURE' }] }, isLoading: false }),
   useProductRequest: (id: string | null) => ({ data: id ? { request: requests.find((r) => r.id === id), approver, mayRequest: true } : undefined, isLoading: false }),
   useCreateProductRequest: () => ({ mutateAsync: createAsync, isPending: false }),
   useUpdateProductRequest: () => ({ mutateAsync: updateAsync, isPending: false }),
@@ -90,11 +92,14 @@ describe('Product Requests — the requester', () => {
     fireEvent.change(within(dialog).getByLabelText('Application'), { target: { value: 'SAMPLE' } });
     fireEvent.change(within(dialog).getByLabelText('Delivery location'), { target: { value: 'wh-kl' } });
     fireEvent.change(within(dialog).getByLabelText('Special remarks'), { target: { value: 'Deeper seat' } });
+    /* 方案 C: the supplier the requester agreed with rides the request. */
+    fireEvent.change(within(dialog).getByLabelText('Supplier'), { target: { value: 'sup-1' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Send to the Purchaser' }));
     await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
     expect(createAsync.mock.calls[0][0]).toMatchObject({
       requestType: 'NEW_PRODUCT', application: 'SAMPLE', itemCode: null, proposedModelName: 'Aurora 2-seater', category: 'SOFA',
       compartment: '2S', fabricCode: 'LIN-01', seatSize: '22', legSize: '4', qty: 1, specialRemarks: 'Deeper seat', deliveryLocationId: 'wh-kl',
+      supplierId: 'sup-1', unitPriceSen: null,
     });
   });
 
