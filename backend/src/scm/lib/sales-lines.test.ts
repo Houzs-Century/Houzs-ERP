@@ -13,7 +13,7 @@ const order = (docNo: string, extra: Partial<SalesLinesOrder> = {}): SalesLinesO
 });
 
 const item = (docNo: string, itemCode: string, extra: Partial<SalesLinesItem> = {}): SalesLinesItem => ({
-  docNo, lineNo: null, itemCode, itemGroup: null, qty: 1, totalSen: 0, buildKey: null, cellIndex: null, ...extra,
+  docNo, lineNo: null, itemCode, itemGroup: null, qty: 1, totalSen: 0, buildKey: null, cellIndex: null, costSen: null, ...extra,
 });
 
 const products = new Map<string, SalesLinesProduct>([
@@ -37,7 +37,7 @@ describe('foldSalesLines', () => {
         item('SO-1', 'XAMMAR-2A(RHF)', { lineNo: 1, cellIndex: 1, buildKey: 'build-1', totalSen: 157111 }),
         item('SO-1', 'XAMMAR-1A(LHF)', { lineNo: 0, cellIndex: 0, buildKey: 'build-1', totalSen: 104389 }),
       ],
-      products, models,
+      products, models, false,
     );
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
@@ -53,7 +53,7 @@ describe('foldSalesLines', () => {
         item('SO-2607-003', 'TRRBU-2A(RHF)', { lineNo: 0, totalSen: 299000 }),
         item('SO-2607-003', 'TRRBU-L(LHF)', { lineNo: 1, totalSen: 0 }),
       ],
-      products, models,
+      products, models, false,
     );
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ model: 'Trrbu', modules: ['L(LHF)', '2A(RHF)'], totalSen: 299000 });
@@ -66,7 +66,7 @@ describe('foldSalesLines', () => {
         item('SO-2608-064', 'ANNSA-2S', { lineNo: 0, cellIndex: 0, buildKey: 'build-1', totalSen: 306500 }),
         item('SO-2608-064', 'ANNSA-HEADREST', { lineNo: 2, cellIndex: 0, qty: 2 }),
       ],
-      products, models,
+      products, models, false,
     );
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ model: 'ANNSA', modules: ['2S', 'HEADREST'], qty: 1, totalSen: 306500 });
@@ -79,7 +79,7 @@ describe('foldSalesLines', () => {
         item('SO-3', 'ANNSA-2S', { lineNo: 0, cellIndex: 0, buildKey: 'build-1', totalSen: 100 }),
         item('SO-3', 'ANNSA-2S', { lineNo: 1, cellIndex: 0, buildKey: 'build-2', totalSen: 200 }),
       ],
-      products, models,
+      products, models, false,
     );
     expect(rows.map((r) => r.totalSen).sort()).toEqual([100, 200]);
   });
@@ -91,13 +91,13 @@ describe('foldSalesLines', () => {
         item('SO-4', 'XAMMAR-1A(LHF)', { lineNo: 0, qty: 2, totalSen: 1 }),
         item('SO-4', 'XAMMAR-2A(RHF)', { lineNo: 1, qty: 1, totalSen: 1 }),
       ],
-      products, models,
+      products, models, false,
     );
     expect(rows[0]!.qty).toBe(1);
   });
 
   it('reads the compartment after a base model that itself contains a dash', () => {
-    const rows = foldSalesLines([order('SO-5')], [item('SO-5', 'AM-9036-2A(LHF)', { lineNo: 0 })], products, models);
+    const rows = foldSalesLines([order('SO-5')], [item('SO-5', 'AM-9036-2A(LHF)', { lineNo: 0 })], products, models, false);
     expect(rows[0]!.modules).toEqual(['2A(LHF)']);
   });
 
@@ -105,7 +105,7 @@ describe('foldSalesLines', () => {
     const rows = foldSalesLines(
       [order('SO-6', { venue: ' 2990s PJ ', state: '', race: null })],
       [item('SO-6', 'AKKA-FIRM-(K)', { lineNo: 0, qty: 2, totalSen: 298000 })],
-      products, models,
+      products, models, false,
     );
     expect(rows).toEqual([{
       docNo: 'SO-6', soDate: '2026-10-04', venue: '2990s PJ', category: 'MATTRESS', model: 'AKKA-FIRM',
@@ -117,27 +117,73 @@ describe('foldSalesLines', () => {
   it('sends the age on the order date and never the birthday', () => {
     const [before] = foldSalesLines(
       [order('SO-7', { soDate: '2026-10-04', birthday: '1990-10-05' })],
-      [item('SO-7', 'AKKA-FIRM-(K)')], products, models,
+      [item('SO-7', 'AKKA-FIRM-(K)')], products, models, false,
     );
     const [onBirthday] = foldSalesLines(
       [order('SO-8', { soDate: '2026-10-05', birthday: '1990-10-05' })],
-      [item('SO-8', 'AKKA-FIRM-(K)')], products, models,
+      [item('SO-8', 'AKKA-FIRM-(K)')], products, models, false,
     );
     expect(before!.age).toBe(35);
     expect(onBirthday!.age).toBe(36);
     expect(JSON.stringify(before)).not.toContain('1990');
     for (const birthday of ['not-a-date', '2027-01-01', null]) {
-      const [row] = foldSalesLines([order('SO-9', { birthday })], [item('SO-9', 'AKKA-FIRM-(K)')], products, models);
+      const [row] = foldSalesLines([order('SO-9', { birthday })], [item('SO-9', 'AKKA-FIRM-(K)')], products, models, false);
       expect(row!.age, String(birthday)).toBeNull();
     }
   });
 
   it('drops lines whose order is not in the loaded set (cancelled, draft, on hold)', () => {
-    expect(foldSalesLines([order('SO-10')], [item('SO-11', 'AKKA-FIRM-(K)')], products, models)).toEqual([]);
+    expect(foldSalesLines([order('SO-10')], [item('SO-11', 'AKKA-FIRM-(K)')], products, models, false)).toEqual([]);
   });
 
   it('names a line with no product row by its item code', () => {
-    const [row] = foldSalesLines([order('SO-12')], [item('SO-12', 'LATEX-PILLOW', { itemGroup: 'accessory' })], products, models);
+    const [row] = foldSalesLines([order('SO-12')], [item('SO-12', 'LATEX-PILLOW', { itemGroup: 'accessory' })], products, models, false);
     expect(row).toMatchObject({ category: 'ACCESSORY', model: 'LATEX-PILLOW', modules: [] });
+  });
+});
+
+/* Margin is the finance tier's (the route passes canViewScmFinance). Shapes off
+ * 2990-SO-2608-023: ANNSA-2S RM 3,065 at cost RM 1,386, whose stored
+ * line_margin_sen still reads the full price. */
+describe('foldSalesLines — margin', () => {
+  const annsa = item('SO-2608-023', 'ANNSA-2S', { lineNo: 0, cellIndex: 0, buildKey: 'build-1', totalSen: 306500, costSen: 138600 });
+
+  it('leaves the key off every row for a caller who may not see it — never a zero', () => {
+    const rows = foldSalesLines([order('SO-2608-023')], [annsa, item('SO-2608-023', 'AKKA-FIRM-(K)', { lineNo: 1, totalSen: 149000, costSen: 70000 })], products, models, false);
+    for (const r of rows) expect('marginSen' in r).toBe(false);
+  });
+
+  it('is revenue minus cost, per line and summed over a build', () => {
+    const rows = foldSalesLines(
+      [order('SO-1')],
+      [
+        item('SO-1', 'XAMMAR-1A(LHF)', { lineNo: 0, cellIndex: 0, buildKey: 'build-1', totalSen: 104389, costSen: 60000 }),
+        item('SO-1', 'XAMMAR-2A(RHF)', { lineNo: 1, cellIndex: 1, buildKey: 'build-1', totalSen: 157111, costSen: 90000 }),
+        item('SO-1', 'AKKA-FIRM-(K)', { lineNo: 2, totalSen: 149000, costSen: 70000 }),
+      ],
+      products, models, true,
+    );
+    expect(rows.find((r) => r.category === 'SOFA')!.marginSen).toBe(111500);
+    expect(rows.find((r) => r.category === 'MATTRESS')!.marginSen).toBe(79000);
+    expect(foldSalesLines([order('SO-2608-023')], [annsa], products, models, true)[0]!.marginSen).toBe(167900);
+  });
+
+  it('counts what a free line costs', () => {
+    const [row] = foldSalesLines([order('SO-2')], [item('SO-2', 'AKKA-FIRM-(K)', { totalSen: 0, costSen: 12000 })], products, models, true);
+    expect(row!.marginSen).toBe(-12000);
+  });
+
+  it('says unknown, not 100%, for a priced line with no cost — and for the whole sofa it belongs to', () => {
+    const [line] = foldSalesLines([order('SO-3')], [item('SO-3', 'AKKA-FIRM-(K)', { totalSen: 149000, costSen: null })], products, models, true);
+    expect(line!.marginSen).toBeNull();
+    const [sofa] = foldSalesLines(
+      [order('SO-4')],
+      [
+        item('SO-4', 'XAMMAR-1A(LHF)', { lineNo: 0, buildKey: 'build-1', totalSen: 104389, costSen: 60000 }),
+        item('SO-4', 'XAMMAR-2A(RHF)', { lineNo: 1, buildKey: 'build-1', totalSen: 157111, costSen: 0 }),
+      ],
+      products, models, true,
+    );
+    expect(sofa!.marginSen).toBeNull();
   });
 });

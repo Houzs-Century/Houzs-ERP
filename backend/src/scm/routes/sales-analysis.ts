@@ -516,8 +516,9 @@ salesAnalysis.get('/', async (c) => {
    which filters by day, showroom and customer profile on the tablet. The
    customer's race / gender / age come off the ORDER header (mig 0162: captured
    at the POS handover, never shown on the SO); the age is sent, not the
-   birthday. No cost, no margin. Admits the all-sales tier and the POS marketing
-   account. */
+   birthday. Admits the all-sales tier and the POS marketing account. MARGIN
+   rides canViewScmFinance, as on GET / (gateSaFinance): a finance caller gets
+   `marginSen` per row, everyone else gets no such key — never a zero. */
 salesAnalysis.get('/lines', async (c) => {
   const sb = c.get('supabase');
   if (!canViewAllSales(c) && !isPosMarketingCaller(c)) {
@@ -548,11 +549,11 @@ salesAnalysis.get('/lines', async (c) => {
 
   const { data: itemRows, error: itemErr } = await chunkIn<{
     doc_no: string; line_no: number | null; item_code: string | null; item_group: string | null;
-    qty: number | null; total_sen: number | null; variants: Record<string, unknown> | null;
+    qty: number | null; total_sen: number | null; line_cost_sen: number | null; variants: Record<string, unknown> | null;
   }>(orders.map((o) => o.docNo), (batch, from, to) => {
     let q = sb
       .from('mfg_sales_order_items')
-      .select('doc_no, line_no, item_code, item_group, qty, total_sen, variants')
+      .select('doc_no, line_no, item_code, item_group, qty, total_sen, line_cost_sen, variants')
       // `neq` alone would also drop a line with no group (NULL <> 'service' is NULL).
       .or('item_group.is.null,item_group.neq.service')
       .not('item_code', 'like', 'SVC-%')
@@ -572,6 +573,7 @@ salesAnalysis.get('/lines', async (c) => {
       qty: Number(r.qty) || 0, totalSen: Number(r.total_sen) || 0,
       buildKey: typeof v.buildKey === 'string' && v.buildKey ? v.buildKey : null,
       cellIndex: v.cellIndex != null && Number.isFinite(cell) ? cell : null,
+      costSen: r.line_cost_sen == null ? null : Number(r.line_cost_sen),
     };
   });
 
@@ -613,7 +615,7 @@ salesAnalysis.get('/lines', async (c) => {
     for (const m of modelRows) if (m.name) modelNameById.set(m.id, m.name);
   }
 
-  return c.json({ includeTest, lines: foldSalesLines(orders, items, productByCode, modelNameById) });
+  return c.json({ includeTest, lines: foldSalesLines(orders, items, productByCode, modelNameById, canViewScmFinance(c)) });
 });
 
 salesAnalysis.put('/targets', async (c) => {
