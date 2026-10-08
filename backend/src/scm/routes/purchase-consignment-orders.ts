@@ -132,7 +132,7 @@ purchaseConsignmentOrders.get('/', async (c) => {
   let q = supabase
     .from('purchase_consignment_orders')
     .select(
-      `${HEADER_COLS}, supplier:suppliers(id, code, name), items:purchase_consignment_order_items(item_code, material_name, qty)`,
+      `${HEADER_COLS}, supplier:suppliers(id, code, name), items:purchase_consignment_order_items(item_code, material_name, qty), purchase_location:warehouses!purchase_location_id(id, code, name)`,
     )
     .order('po_date', { ascending: false })
     .order('created_at', { ascending: false });
