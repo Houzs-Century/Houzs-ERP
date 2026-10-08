@@ -3,6 +3,7 @@
 // payment，慢慢接下来全部 payment 都会需要).
 //
 //   GET    /                    requests: a requester's own; Finance's all
+//   GET    /from-checklist      the requests raised from PMS rows (?items=1,2,…)
 //   GET    /event-options       the event picker, for a requester too
 //   GET    /:id                 one request, its voucher and where it stands
 //   POST   /                    raise a request (SUBMITTED)
@@ -33,6 +34,12 @@
 // alone. Every handler checks the key or Finance's own (scm.payment_voucher.create)
 // against the real caller, and a requester sees their own requests only.
 //
+// From a PMS row (owner 2026-10-08: 我的bd 会upload rental invoice 在这里，可以让他
+// 连过来for request payment … 就在这里加request payment): an event's CONTRACT row
+// raises a request with its own files as the bill; the request keeps the row
+// (checklist_item_id, lib/pms-checklist-source.ts), takes the row's event, and
+// the row reads its requests back — stage and 欠正式单 — through /from-checklist.
+//
 // The requester's note (owner 2026-10-02: 我希望多一个第五给他们写note): free
 // words to Finance, the form's fifth step — kept on the request (note), carried
 // into the voucher's or AP invoice's Notes when Finance answers. Finance's own
@@ -50,6 +57,7 @@ import { assertAuditWritable, auditUnavailableBody, compactChanges, fieldChange,
 import { makeDocFileHandlers, type DocFilesSpec } from '../lib/doc-files';
 import { companyHasEvents, parseEventId, unknownEventRefusal } from '../lib/event-tags';
 import { eventBillRefusal, findBillMatches, readBillFacts, type BillMatch, type RequestBillFacts } from '../lib/bill-matches';
+import { checklistSourceCheck, parseChecklistItemId } from '../lib/pms-checklist-source';
 import { eventOptionsHandler } from './acc-events';
 import { billMatchesHandler, readRequestBillHandler, uploadOfficialDocHandler } from './payment-request-bill';
 import {
@@ -62,7 +70,7 @@ type Row = Record<string, any>;
 export const paymentRequests = new Hono<{ Bindings: Env; Variables: Variables }>();
 paymentRequests.use('*', supabaseAuth);
 
-const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee_name, amount_sen, due_date, purpose, project_id, bank_name, bank_account_no, bank_account_name, status, pv_id, ap_invoice_id, finance_note, decided_by, decided_at, created_at, updated_at, bill_no, bill_date, bill_total_sen, event_bill, no_event_reason, parent_request_id, installment_no, pay_pct, note';
+const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee_name, amount_sen, due_date, purpose, project_id, bank_name, bank_account_no, bank_account_name, status, pv_id, ap_invoice_id, finance_note, decided_by, decided_at, created_at, updated_at, bill_no, bill_date, bill_total_sen, event_bill, no_event_reason, parent_request_id, installment_no, pay_pct, note, checklist_item_id';
 const NO_PERM = { error: "You don't have permission to do that." };
 
 const mayRequest = (c: any): boolean => hasHouzsPerm(c, PAYMENT_REQUEST_KEY);
@@ -255,6 +263,34 @@ export const listPaymentRequestsHandler = async (c: any): Promise<Response> => {
 };
 paymentRequests.get('/', listPaymentRequestsHandler);
 
+/* ── GET /from-checklist?items=1,2,… — the requests raised from PMS rows ──────
+   (owner 2026-10-08). The PMS page reads its CONTRACT rows' requests back: each
+   with its stage and its 欠正式单 state, the same as the list — a requester's
+   own, Finance's all. At most 200 rows a read; a bad id is refused. */
+export const CHECKLIST_READ_MAX = 200;
+export const checklistRequestsHandler = async (c: any): Promise<Response> => {
+  if (!mayOpen(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const raw = String(c.req.query('items') ?? '').split(',').map((s) => s.trim()).filter((s) => s !== '');
+  const ids = raw.map(parseChecklistItemId);
+  if (ids.some((n) => n === 'invalid' || n == null)) return c.json({ error: 'bad_items', message: 'items must be PMS checklist row ids, comma-separated.' }, 400);
+  const wanted = [...new Set(ids as number[])];
+  if (wanted.length > CHECKLIST_READ_MAX) return c.json({ error: 'too_many_items', message: `Ask for at most ${CHECKLIST_READ_MAX} rows at a time.` }, 400);
+  const finance = isRequestFinance(c);
+  if (wanted.length === 0) return c.json({ requests: [], finance });
+  const me = callerUserId(c);
+  if (!finance && me == null) return c.json(NO_PERM, 403);
+  let q = scopeToCompany(c.get('supabase').from('acc_payment_requests').select(COLS).in('checklist_item_id', wanted), c);
+  if (!finance) q = q.eq('requested_by', me);
+  const { data, error } = await q.order('created_at', { ascending: true }).limit(500);
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const staged = await withStages(c, co.companyId, (data ?? []) as Row[]);
+  if ('resp' in staged) return staged.resp;
+  return c.json({ requests: staged.rows, finance });
+};
+paymentRequests.get('/from-checklist', checklistRequestsHandler);
+
 /* ── GET /event-options — the picker for a requester, who has no Finance area ── */
 paymentRequests.get('/event-options', async (c) => {
   if (!mayOpen(c)) return c.json(NO_PERM, 403);
@@ -377,6 +413,20 @@ export const createPaymentRequestHandler = async (c: any): Promise<Response> => 
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const read = readFields(body);
   if ('error' in read) return c.json(read, 400);
+  /* Raised from a PMS row (owner 2026-10-08): the row must be the event's own
+     CONTRACT row, and the request goes with the row's event. */
+  const source = parseChecklistItemId(body.checklistItemId);
+  if (source === 'invalid') return c.json({ error: 'bad_checklist_item', message: 'checklistItemId must be a PMS checklist row id.' }, 400);
+  let checklistItemId: number | null = null;
+  if (source != null) {
+    const chk = await checklistSourceCheck(c, source, read.fields.project_id);
+    if (!chk.ok) return chk.resp;
+    checklistItemId = chk.item.id;
+    if (read.fields.project_id == null) {
+      read.fields.project_id = chk.item.projectId;
+      read.fields.no_event_reason = null;
+    }
+  }
   const eventErr = await unknownEventRefusal(c, [read.fields.project_id]);
   if (eventErr) return eventErr;
   const billErr = await eventBillCheck(c, read.fields);
@@ -393,13 +443,17 @@ export const createPaymentRequestHandler = async (c: any): Promise<Response> => 
     requested_by: me,
     requested_by_name: houzsUser?.name ?? houzsUser?.email ?? null,
     ...read.fields,
+    checklist_item_id: checklistItemId,
     status: 'SUBMITTED',
   }).select(COLS).single();
   if (error || !row) return c.json({ error: 'save_failed', reason: error?.message ?? 'insert returned nothing' }, 500);
   await recordEntityAudit(sb, {
     entityType: 'PAYMENT_REQUEST', entityId: String(row.id), entityDocNo: requestNo, action: 'CREATE',
     actor: c.get('houzsUser'), companyId: co.companyId, statusSnapshot: 'SUBMITTED',
-    fieldChanges: compactChanges([fieldChange('payeeName', null, read.fields.payee_name), fieldChange('amountSen', null, read.fields.amount_sen), fieldChange('projectId', null, read.fields.project_id), fieldChange('billNo', null, read.fields.bill_no)]),
+    fieldChanges: compactChanges([
+      fieldChange('payeeName', null, read.fields.payee_name), fieldChange('amountSen', null, read.fields.amount_sen), fieldChange('projectId', null, read.fields.project_id), fieldChange('billNo', null, read.fields.bill_no),
+      ...(checklistItemId != null ? [fieldChange('checklistItemId', null, checklistItemId)] : []),
+    ]),
   });
   return c.json({ ok: true, request: { ...row, stage: 'SUBMITTED', voucher: null } }, 201);
 };
@@ -437,6 +491,10 @@ export const updatePaymentRequestHandler = async (c: any): Promise<Response> => 
     note: body.note !== undefined ? body.note : before.note,
   });
   if ('error' in read) return c.json(read, 400);
+  /* Raised from a PMS row (owner 2026-10-08): it stays that row's event's. */
+  if (before.checklist_item_id != null && read.fields.project_id !== (before.project_id == null ? null : Number(before.project_id))) {
+    return c.json({ error: 'checklist_event_locked', message: `${before.request_no} was raised from the event's PMS row — its event stays.` }, 409);
+  }
   const eventErr = await unknownEventRefusal(c, [read.fields.project_id]);
   if (eventErr) return eventErr;
   const billErr = await eventBillCheck(c, read.fields);
@@ -531,6 +589,8 @@ export const requestBalanceHandler = async (c: any): Promise<Response> => {
     parent_request_id: rootId,
     installment_no: next,
     pay_pct: pct,
+    /* The PMS row the bill came from (owner 2026-10-08) shows every instalment. */
+    checklist_item_id: root.checklist_item_id ?? null,
   }).select(COLS).single();
   if (error || !row) {
     const taken = String(error?.code ?? '') === '23505' || /duplicate key/i.test(String(error?.message ?? ''));

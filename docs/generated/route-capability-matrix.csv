@@ -1042,6 +1042,7 @@ POST,/api/scm/payment-requests/:id/return,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTE
 POST,/api/scm/payment-requests/:id/withdraw,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
 GET,/api/scm/payment-requests/bill-matches,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
 GET,/api/scm/payment-requests/event-options,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
+GET,/api/scm/payment-requests/from-checklist,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
 POST,/api/scm/payment-requests/read-bill,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/payment-requests.ts
 GET,/api/scm/payment-vouchers,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/payment-vouchers.ts
 POST,/api/scm/payment-vouchers,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/payment-vouchers.ts

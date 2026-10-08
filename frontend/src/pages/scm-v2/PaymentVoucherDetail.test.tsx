@@ -80,7 +80,8 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   useAccountRoles: () => ({ data: { roles: { AP: '400-0000', AP_OTHER: '405-0000', AR: '300-0000', BANK_DEFAULT: '310-0020' }, overridden: {} }, isLoading: false }),
 }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
-vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => vi.fn(async () => true) }));
+/* usePrompt: the 欠正式单 remark is asked in the in-app prompt (OfficialDocActions, 2026-10-08). */
+vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => vi.fn(async () => true), usePrompt: () => vi.fn(async () => null) }));
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => vi.fn() }));
 vi.mock('./EntityHistoryPanel', () => ({ EntityHistoryPanel: () => null }));
 vi.mock('../../components/scm-v2/PrintPreviewModal', () => ({

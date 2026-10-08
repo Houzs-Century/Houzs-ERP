@@ -82,6 +82,14 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
 
 ## Rules that must not break
 
+- The CONTRACT row's 「Request payment」 (owner 2026-10-08) sends the row's own
+  files as the payment request's bill — a PDF or an image only — with the
+  event fixed; the row then lists its requests and their 欠正式单 state, and
+  「补正式单」 sends a row file as the official invoice. The payable sections are
+  one list on each side (`PAYABLE_SECTIONS` in
+  `backend/src/scm/lib/pms-checklist-source.ts`, `PAYABLE_SECTION_NAMES` in
+  `frontend/src/pages/projects/PmsRequestPayment.tsx`) — keep them equal.
+
 - Venue resolution (`backend/src/scm/lib/venue-binding.ts`) has exactly
   three outcomes in order — PIC/attending PMS project whose period contains
   the order date, then showroom parking, then **nothing** — never a company
@@ -208,6 +216,9 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   PIC), then copies a paste-ready WhatsApp reminder per group or for all
   groups — clipboard only, no `wa.me` / personal numbers. Grouping + message
   formatting are pure functions unit-tested in `OutstandingReminders.test.ts`.
+- CONTRACT row 「Request payment」: `frontend/src/pages/projects/PmsRequestPayment.tsx`
+  (button, the row's requests) and `PmsRequestModals.tsx` (the pick-the-bill
+  and 补正式单 dialogs, loaded on first use, in the SCM shell's providers).
 - PMS agent pages: `frontend/src/pages/SetupInvoiceFill.tsx`,
   `ScheduleReconcile.tsx`, `FairReportFill.tsx`,
   `frontend/src/pages/scm-v2/FairReport.tsx`.
