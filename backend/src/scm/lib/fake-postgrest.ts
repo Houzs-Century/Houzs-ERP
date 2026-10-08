@@ -276,6 +276,14 @@ export function fakeSb(
           filters.push((r) => !vals.includes(String(r[col])));
           return builder;
         }
+        /* `.not(col, 'like', 'SVC-%')` — the SO line readers leaving the service
+           lines out. A NULL column passes neither `like` nor its negation, as in
+           SQL (`NOT (NULL LIKE …)` is NULL). */
+        if (op === 'like') {
+          const rx = new RegExp(`^${String(val).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`);
+          filters.push((r) => r[col] != null && !rx.test(String(r[col])));
+          return builder;
+        }
         if (op !== 'is') throw new Error(`fake-postgrest: not(${op}) is not implemented`);
         filters.push((r) => !(val === null ? r[col] === null || r[col] === undefined : r[col] === val));
         return builder;
@@ -343,8 +351,9 @@ export function fakeSb(
       },
       /* PostgREST `or=(a.op.v,b.op.v)`: the row passes when ANY term does. Only
          the term shapes the list readers send are understood — `ilike` (the
-         search box), `eq` and `is.true|false|null` (the hold marker); anything
-         else THROWS, for the reason `not()` above gives. */
+         search box), `eq` and `is.true|false|null` (the hold marker), `neq`
+         (the sales lines' item group); anything else THROWS, for the reason
+         `not()` above gives. */
       or(expr: string) {
         const terms = String(expr).split(',').map((t) => {
           const [col, op, ...rest] = t.split('.');
@@ -354,6 +363,8 @@ export function fakeSb(
             return (r: Row) => rx.test(String(r[col!] ?? ''));
           }
           if (op === 'eq') return (r: Row) => String(r[col!]) === val;
+          // NULL is unequal to nothing in SQL; a reader asks for it with `is.null`.
+          if (op === 'neq') return (r: Row) => r[col!] != null && String(r[col!]) !== val;
           if (op === 'is' && (val === 'true' || val === 'false')) return (r: Row) => r[col!] === (val === 'true');
           if (op === 'is' && val === 'null') return (r: Row) => r[col!] === null || r[col!] === undefined;
           throw new Error(`fake-postgrest: or(${t}) is not implemented`);

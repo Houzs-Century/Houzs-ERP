@@ -52,6 +52,7 @@ import { hasPermission } from "./permissions";
 import {
   isDirectorUser,
   isFinanceViewer,
+  isPosMarketingAccount,
   isProductCostViewer,
   isSalesDirectorUser,
   isSalesUser,
@@ -271,6 +272,14 @@ const PREDICATES = {
    *  crewed on: helpers, storekeepers, the warehouse crew). GATE:
    *  projectGates.isCrewScopedUser — the Title's row, then its name. */
   "org.crew.scoped": (u: CapabilityCaller): boolean => isCrewScopedUser(asAuthUser(u)),
+
+  /** Is this caller the 2990 POS MARKETING account — the tablet shows it the
+   *  Marketing section and refuses it "Complete order". Read by that POS
+   *  (repo wenwei4046/2990s, @2990s/shared/marketing-access), not by this
+   *  frontend. GATE: pmsAccess.isPosMarketingAccount, the same function
+   *  scm/routes/sales-analysis.ts GET /lines admits through
+   *  (houzs-perms.isPosMarketingCaller). */
+  "pos.marketing": (u: CapabilityCaller): boolean => isPosMarketingAccount(asAuthUser(u)),
 
   /** May this caller open the Assistant at all. GATE: assistant-scope.canUseAssistant
    *  — wildcard yes, field crew + Sales denied, an unrecognised position fails

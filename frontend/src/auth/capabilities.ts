@@ -69,6 +69,7 @@ export const CAPABILITY_KEYS = [
   "org.director",
   "org.sales.staff",
   "org.salesDirector",
+  "pos.marketing",
   "scm.config.write",
   "scm.finance.view",
   "scm.maintenance.open",
