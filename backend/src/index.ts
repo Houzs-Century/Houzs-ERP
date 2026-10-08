@@ -59,6 +59,7 @@ import fleet from "./routes/fleet";
 // fleet.read/fleet.write permission alone; it uses the SCM supabase client via
 // supabaseAuth. Distinct from routes/fleet.ts (the crew picker).
 import fleetMaintenance from "./scm/routes/fleet-maintenance";
+import { fleetWorkOrderPhotos } from "./scm/routes/fleet-work-order-photos";
 // `routes/lorries.ts` removed 2026-06-28 — old Houzs Fleet lorries CRUD retired
 // in favour of scm.lorries (mounted at /api/scm/lorries). public.lorries data
 // was migrated by mig 0055 then the dead table dropped. /api/fleet/staff stays
@@ -451,6 +452,7 @@ app.route("/api/sales", sales);
 app.route("/api/finance", finance);
 app.route("/api/stockitems", stockItems);
 app.route("/api/fleet", fleet);
+app.route("/api/fleet-maintenance", fleetWorkOrderPhotos);
 app.route("/api/fleet-maintenance", fleetMaintenance);
 app.route("/api/settings", settings);
 app.route("/api/branding", branding);

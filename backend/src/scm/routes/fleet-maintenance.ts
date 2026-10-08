@@ -22,7 +22,6 @@
 import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
 import { requireHouzsPerm } from "../lib/houzs-perms";
-import { streamPhoto } from "./delivery-job-progress";
 import { nextCode, CODE_PREFIX } from "../lib/fleet-code-mint";
 import { activeCompanyId, scopeToCompany, scopeToCompanyIdOrOpen } from "../lib/companyScope";
 import { todayMyt } from "../lib/my-time";
@@ -1642,16 +1641,6 @@ fleetMaintenance.post("/vehicles/:id/work-orders", requireHouzsPerm("fleet.write
 });
 
 // ── PATCH /work-orders/:id — edit fields (NOT status — use /transition) ───────
-/* GET /work-orders/:woId/photo/:n — the n-th photo on a work order (photo_refs:
-   the reporter's photos and a Lorry service job's POD). Nothing showed them. */
-fleetMaintenance.get("/work-orders/:woId/photo/:n", requireHouzsPerm("fleet.read"), async (c) => {
-  // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
-  const { data, error } = await c.get("supabase").from("lorry_work_orders").select("photo_refs").eq("id", c.req.param("woId")).maybeSingle();
-  if (error) return c.json({ error: "load_failed", reason: error.message }, 500);
-  const refs = (data as { photo_refs: string[] | null } | null)?.photo_refs ?? [];
-  return streamPhoto(c, refs[Number(c.req.param("n"))]);
-});
-
 fleetMaintenance.patch("/work-orders/:woId", requireHouzsPerm("fleet.write"), async (c) => {
   // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const woId = c.req.param("woId");

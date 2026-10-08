@@ -232,7 +232,7 @@ POST,/api/fleet-maintenance/vehicles/:id/work-orders,AUTHENTICATED_MIDDLEWARE,CO
 PATCH,/api/fleet-maintenance/work-orders/:woId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 POST,/api/fleet-maintenance/work-orders/:woId/parts,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 DELETE,/api/fleet-maintenance/work-orders/:woId/parts/:partId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
-GET,/api/fleet-maintenance/work-orders/:woId/photo/:n,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.read"")",,NO,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
+GET,/api/fleet-maintenance/work-orders/:woId/photo/:n,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"supabaseAuth + requireHouzsPerm(""fleet.read"")",,NO,DECLARED_GATE,backend/src/scm/routes/fleet-work-order-photos.ts
 POST,/api/fleet-maintenance/work-orders/:woId/transition,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 GET,/api/fleet-maintenance/workshops,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.read"")",,NO,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 POST,/api/fleet-maintenance/workshops,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
