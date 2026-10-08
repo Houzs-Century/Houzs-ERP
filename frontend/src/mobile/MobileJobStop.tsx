@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { uploadSlipFull, ALLOWED_SLIP_MIMES } from "../vendor/scm/lib/slip";
 import "./mobile.css";
+import { PodPhotoAlbum } from "../components/scm-v2/PodPhotoAlbum";
 import {
   jobKey, LEG_LABEL, detailRows, str, hm,
   type JobRef, type JobProgress, type JobResponse,
@@ -150,6 +151,13 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
                 </div>
               ))}
             </div>
+
+            {(progress?.pod_photo_keys?.length ?? 0) > 0 && (
+              <div className="card" style={{ padding: 12, marginBottom: 12 }}>
+                <div className="fld-l" style={{ marginBottom: 6 }}>POD photos</div>
+                <PodPhotoAlbum paths={(progress?.pod_photo_keys ?? []).map((_, n) => `/api/scm${base}/photo/${n}`)} fileStem={`POD-${str(ctx.ref) ?? jobRef.leg}`} />
+              </div>
+            )}
 
             {step === "arrived" && (
               <div className="card" style={{ padding: 12 }}>
