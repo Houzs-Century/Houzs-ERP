@@ -4,6 +4,7 @@
 //
 //   GET    /                    requests: a requester's own; Finance's all
 //   GET    /from-checklist      the requests raised from PMS rows (?items=1,2,…)
+//   GET    /waiting-count       how many wait for Finance — the PV page's reminder and the badge
 //   GET    /event-options       the event picker, for a requester too
 //   GET    /:id                 one request, its voucher and where it stands
 //   POST   /                    raise a request (SUBMITTED)
@@ -290,6 +291,32 @@ export const checklistRequestsHandler = async (c: any): Promise<Response> => {
   return c.json({ requests: staged.rows, finance });
 };
 paymentRequests.get('/from-checklist', checklistRequestsHandler);
+
+/* ── GET /waiting-count — how many requests wait for Finance ──────────────────
+   (owner 2026-10-08: 在payment voucher 会有一个接口 … 提醒我有几个payment request
+   还没proceed). The page's own 「Waiting for Finance」 (lib/payment-request.ts
+   requestStage): a SUBMITTED request, and an answered one whose answer is gone —
+   its AP invoice cancelled, or (no AP invoice) its voucher cancelled or none at
+   all. Counted, never listed: the PV page's reminder and the sidebar badge poll
+   it. Finance's alone — anyone else reads 0, so the badge never shows a number
+   its reader cannot clear. */
+export const waitingCountHandler = async (c: any): Promise<Response> => {
+  if (!isRequestFinance(c)) return c.json({ count: 0 });
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json({ count: 0 });
+  const sb = c.get('supabase');
+  const requests = (cols: string) => scopeToCompany(sb.from('acc_payment_requests').select(cols, { count: 'exact', head: true }), c);
+  const [submitted, invoiceGone, voucherGone, nothing] = await Promise.all([
+    requests('id').eq('status', 'SUBMITTED'),
+    requests('id, inv:ap_invoices!inner(status)').eq('status', 'VOUCHERED').eq('inv.status', 'CANCELLED'),
+    requests('id, pv:payment_vouchers!inner(status)').eq('status', 'VOUCHERED').is('ap_invoice_id', null).eq('pv.status', 'CANCELLED'),
+    requests('id').eq('status', 'VOUCHERED').is('ap_invoice_id', null).is('pv_id', null),
+  ]);
+  const failed = [submitted, invoiceGone, voucherGone, nothing].find((r) => r.error);
+  if (failed) return c.json({ error: 'load_failed', reason: failed.error.message }, 500);
+  return c.json({ count: [submitted, invoiceGone, voucherGone, nothing].reduce((n, r) => n + Number(r.count ?? 0), 0) });
+};
+paymentRequests.get('/waiting-count', waitingCountHandler);
 
 /* ── GET /event-options — the picker for a requester, who has no Finance area ── */
 paymentRequests.get('/event-options', async (c) => {
