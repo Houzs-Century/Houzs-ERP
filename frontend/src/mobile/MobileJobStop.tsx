@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { JOB_PROGRESS_KEY } from "../vendor/scm/lib/job-progress-queries";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { uploadSlipFull, ALLOWED_SLIP_MIMES } from "../vendor/scm/lib/slip";
 import "./mobile.css";
@@ -8,6 +9,7 @@ import {
   jobKey, LEG_LABEL, detailRows, str, hm,
   type JobRef, type JobProgress, type JobResponse,
 } from "../vendor/scm/lib/delivery-job";
+export { useJobProgressMap } from "../vendor/scm/lib/job-progress-queries";
 export { jobRefOf, jobKey, jobLabelOf, type JobRef, type JobProgress } from "../vendor/scm/lib/delivery-job";
 
 /* A run-sheet stop that is NOT a delivery order: Setup / Dismantle (a project),
@@ -15,24 +17,6 @@ export { jobRefOf, jobKey, jobLabelOf, type JobRef, type JobProgress } from "../
    service). Same chain as a DO — On the way -> Arrived -> photos -> Complete —
    through /delivery-jobs (backend scm/routes/delivery-job-progress.ts), which
    also files the photos on the job's own document. */
-
-const JOB_PROGRESS_KEY = ["delivery-job-progress"];
-
-/** Every job's On the way / Arrived / Done in the last 45 days, keyed by jobKey. */
-export function useJobProgressMap(): Map<string, JobProgress> {
-  const since = useMemo(() => new Date(Date.now() - 45 * 86400_000).toISOString().slice(0, 10), []);
-  const q = useQuery({
-    queryKey: [...JOB_PROGRESS_KEY, since],
-    queryFn: () => authedFetch<{ progress: JobProgress[] }>(`/delivery-jobs/progress?since=${since}`),
-    staleTime: 30_000,
-    refetchInterval: 30_000,
-  });
-  return useMemo(() => {
-    const m = new Map<string, JobProgress>();
-    for (const p of q.data?.progress ?? []) m.set(`${p.source_type}:${p.source_id}:${p.leg}`, p);
-    return m;
-  }, [q.data]);
-}
 
 export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
   jobRef: JobRef; seq: number | null; onBack: () => void; onDone: () => void;
