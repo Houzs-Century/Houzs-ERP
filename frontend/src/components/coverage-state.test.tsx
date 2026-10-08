@@ -83,8 +83,8 @@ describe("the SO Incoming PO chip prefers the line's OWN purchase order (owner 2
         coverage="ready"
       />,
     );
-    expect(container.textContent).toMatch(/PO-A · ETA \S+/);
-    expect(container.textContent).not.toMatch(/PO-B · ETA/);
+    expect(container.textContent).toMatch(/PO-A\s*ETA \S+/);
+    expect(container.textContent).not.toMatch(/PO-B\s*ETA/);
   });
 
   test('with no bound PO, it falls back to the shipped-batch trace', () => {
