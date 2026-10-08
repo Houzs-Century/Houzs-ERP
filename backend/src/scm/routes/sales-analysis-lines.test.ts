@@ -1,8 +1,9 @@
 /* GET /sales-analysis/lines — the 2990 POS Marketing > Sales analysis feed.
  * Pinned: who may read it (the all-sales tier and the POS marketing account,
  * not an ordinary salesperson); the company boundary; which orders and lines
- * count; and that the payload carries the customer's age but never the birthday,
- * and no cost or margin. The caller goes through the real SCM auth bridge, so the
+ * count; that the payload carries the customer's age but never the birthday, and
+ * never a cost; and that only a finance caller gets the margin, and only while
+ * the cost display switch is on. The caller goes through the real SCM auth bridge, so the
  * Title fields reach the gate the way production stashes them. */
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
@@ -60,7 +61,7 @@ const member = (position_name: string, permissions: string[] = []) => ({
   permissions, permissions_set: new Set(permissions), position_policy: null,
 });
 
-function get(user: ReturnType<typeof member>) {
+function get(user: ReturnType<typeof member>, env: Record<string, string> = {}) {
   const a = new Hono<{ Bindings: Env; Variables: Variables }>();
   a.use('*', async (c, next) => {
     c.set('user', user as never);
@@ -68,7 +69,7 @@ function get(user: ReturnType<typeof member>) {
     await next();
   });
   a.route('/', salesAnalysis);
-  return a.request('/lines');
+  return a.request('/lines', {}, env as never);
 }
 
 describe('GET /sales-analysis/lines', () => {
@@ -106,5 +107,16 @@ describe('GET /sales-analysis/lines', () => {
     const text = await (await get(member('Sales Marketing'))).text();
     expect(text).not.toContain('1990-10-05');
     expect(text).not.toMatch(/birthday|margin|cost/i);
+  });
+
+  it('gives a director the margin — revenue minus cost, not the stored line margin', async () => {
+    const body = await (await get(member('Sales Director'))).json() as { lines: Array<{ category: string; marginSen?: number | null }> };
+    expect(body.lines.find((l) => l.category === 'SOFA')!.marginSen).toBe((157111 - 70000) + (104389 - 70000));
+    expect(body.lines.find((l) => l.category === 'MATTRESS')!.marginSen).toBe(149000 - 70000);
+  });
+
+  it('hides the margin from a director too while the cost display switch is off', async () => {
+    const text = await (await get(member('Sales Director'), { COSTING_DISPLAY_ENABLED: 'false' })).text();
+    expect(text).not.toMatch(/margin/i);
   });
 });

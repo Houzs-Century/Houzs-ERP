@@ -36,6 +36,8 @@ export interface SalesLinesItem {
   buildKey: string | null;
   /** variants.cellIndex — the compartment's place along its build. */
   cellIndex: number | null;
+  /** line_cost_sen; null when the line has none. */
+  costSen: number | null;
 }
 
 export interface SalesLinesProduct {
@@ -65,12 +67,22 @@ export interface SalesLine {
   age: number | null;
   gender: string | null;
   state: string | null;
+  /** Revenue minus cost, integer sen — present only for a finance caller, and
+   *  null where a priced line has no cost yet (unknown, not 100% margin). */
+  marginSen?: number | null;
 }
 
 const clean = (v: string | null | undefined): string | null => {
   const t = (v ?? '').trim();
   return t ? t : null;
 };
+
+/** A line's margin from its own revenue and cost. A priced line with no cost
+ *  yet has no margin to state; a free line still costs what it costs. Not the
+ *  stored line_margin_sen: on many lines that still equals the price, written
+ *  before the cost was filled in. */
+const lineMargin = (i: SalesLinesItem): number | null =>
+  i.totalSen > 0 && !(i.costSen != null && i.costSen > 0) ? null : i.totalSen - (i.costSen ?? 0);
 
 /** Age on the order date, or null for a missing or implausible birthday. */
 const ageOn = (birthday: string | null, soDate: string): number | null => {
@@ -98,11 +110,14 @@ function leftToRight(parts: BuildPart[]): BuildPart[] {
       : armRank(a.module) - armRank(b.module) || byLine(a.item, b.item));
 }
 
+/** `withMargin` is the caller's finance answer: false leaves `marginSen` off
+ *  every row rather than zeroing it. */
 export function foldSalesLines(
   orders: readonly SalesLinesOrder[],
   items: readonly SalesLinesItem[],
   productByCode: ReadonlyMap<string, SalesLinesProduct>,
   modelNameById: ReadonlyMap<string, string>,
+  withMargin: boolean,
 ): SalesLine[] {
   const orderByDoc = new Map(orders.map((o) => [o.docNo, o]));
   const modelOf = (code: string, p: SalesLinesProduct | undefined): string =>
@@ -139,6 +154,7 @@ export function foldSalesLines(
         sizeLabel: clean(p?.sizeLabel),
         qty: item.qty,
         totalSen: item.totalSen,
+        ...(withMargin ? { marginSen: lineMargin(item) } : {}),
       });
       continue;
     }
@@ -167,6 +183,7 @@ export function foldSalesLines(
   for (const parts of builds.values()) {
     const ordered = leftToRight(parts);
     const lead = ordered[0]!.item;
+    const margins = ordered.map((p) => lineMargin(p.item));
     out.push({
       ...header(orderByDoc.get(lead.docNo)!),
       category: 'SOFA',
@@ -177,6 +194,10 @@ export function foldSalesLines(
       // Sets: every compartment appears once per set.
       qty: Math.min(...ordered.map((p) => p.item.qty)),
       totalSen: ordered.reduce((s, p) => s + p.item.totalSen, 0),
+      // One compartment without a cost leaves the whole sofa's margin unknown.
+      ...(withMargin
+        ? { marginSen: margins.some((m) => m == null) ? null : margins.reduce((s: number, m) => s + m!, 0) }
+        : {}),
     });
   }
   return out.sort((a, b) => a.soDate.localeCompare(b.soDate) || a.docNo.localeCompare(b.docNo));
