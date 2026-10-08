@@ -516,7 +516,9 @@ salesAnalysis.get('/', async (c) => {
    which filters by day, showroom and customer profile on the tablet. The
    customer's race / gender / age come off the ORDER header (mig 0162: captured
    at the POS handover, never shown on the SO); the age is sent, not the
-   birthday. Admits the all-sales tier and the POS marketing account. MARGIN
+   birthday. So do the name on the order and its city, for the tablet's
+   customer list — never the phone or the address. Admits the all-sales tier
+   and the POS marketing account. MARGIN
    rides canViewScmFinance, as on GET / (gateSaFinance): a finance caller gets
    `marginSen` per row, everyone else gets no such key — never a zero. */
 salesAnalysis.get('/lines', async (c) => {
@@ -527,13 +529,14 @@ salesAnalysis.get('/lines', async (c) => {
   const includeTest = c.req.query('includeTest') === 'true'; // no-op in Houzs (no is_test column)
 
   type OrderRow = {
-    doc_no: string; so_date: string; venue: string | null; customer_id: string | null;
-    customer_race: string | null; customer_birthday: string | null; customer_gender: string | null; customer_state: string | null;
+    doc_no: string; so_date: string; venue: string | null; customer_id: string | null; debtor_name: string | null;
+    customer_race: string | null; customer_birthday: string | null; customer_gender: string | null;
+    customer_state: string | null; city: string | null;
   };
   const { data: orderRows, error: ordErr } = await paginateAll<OrderRow>((from, to) => {
     let q = sb
       .from('mfg_sales_orders')
-      .select('doc_no, so_date, venue, customer_id, customer_race, customer_birthday, customer_gender, customer_state')
+      .select('doc_no, so_date, venue, customer_id, debtor_name, customer_race, customer_birthday, customer_gender, customer_state, city')
       .eq('on_hold', false)
       .not('status', 'in', '("DRAFT","ON_HOLD","CANCELLED")')
       .order('doc_no')
@@ -543,8 +546,8 @@ salesAnalysis.get('/lines', async (c) => {
   });
   if (ordErr) return c.json({ error: 'load_failed', reason: ordErr.message }, 500);
   const orders: SalesLinesOrder[] = (orderRows ?? []).map((r) => ({
-    docNo: r.doc_no, soDate: r.so_date, venue: r.venue, customerId: r.customer_id,
-    race: r.customer_race, birthday: r.customer_birthday, gender: r.customer_gender, state: r.customer_state,
+    docNo: r.doc_no, soDate: r.so_date, venue: r.venue, customerId: r.customer_id, customerName: r.debtor_name,
+    race: r.customer_race, birthday: r.customer_birthday, gender: r.customer_gender, state: r.customer_state, city: r.city,
   }));
 
   const { data: itemRows, error: itemErr } = await chunkIn<{

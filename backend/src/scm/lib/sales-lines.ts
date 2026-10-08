@@ -6,7 +6,9 @@
 // A sofa build is several SO lines, one per compartment; it folds into ONE row
 // whose `modules` run left to right, so the tablet can count sets, draw the
 // build and name it. Every other line maps 1:1. Labels, filters and aggregates
-// are the POS's: this sends facts.
+// are the POS's: this sends facts — including the name on the order and its
+// city, for the tablet's customer list (owner 2026-10-09: the marketing account
+// may see it). No phone, no address.
 // ----------------------------------------------------------------------------
 
 import { ageFromBirthday } from '../shared/customer-demographics';
@@ -18,11 +20,14 @@ export interface SalesLinesOrder {
   soDate: string;
   venue: string | null;
   customerId: string | null;
+  /** The name on the order (debtor_name). */
+  customerName: string | null;
   race: string | null;
   /** ISO date, as the POS handover captured it (mig 0162). */
   birthday: string | null;
   gender: string | null;
   state: string | null;
+  city: string | null;
 }
 
 export interface SalesLinesItem {
@@ -62,11 +67,13 @@ export interface SalesLine {
   /** Revenue after discount, integer sen. A build sums its lines. */
   totalSen: number;
   customerId: string | null;
+  customerName: string | null;
   race: string | null;
   /** The customer's age on the order date. The birthday itself is not sent. */
   age: number | null;
   gender: string | null;
   state: string | null;
+  city: string | null;
   /** Revenue minus cost, integer sen — present only for a finance caller, and
    *  null where a priced line has no cost yet (unknown, not 100% margin). */
   marginSen?: number | null;
@@ -127,10 +134,12 @@ export function foldSalesLines(
     soDate: o.soDate,
     venue: clean(o.venue),
     customerId: clean(o.customerId),
+    customerName: clean(o.customerName),
     race: clean(o.race),
     age: ageOn(clean(o.birthday), o.soDate),
     gender: clean(o.gender),
     state: clean(o.state),
+    city: clean(o.city),
   });
 
   const out: SalesLine[] = [];

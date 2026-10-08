@@ -8,8 +8,8 @@ import { describe, expect, it } from 'vitest';
 import { foldSalesLines, type SalesLinesItem, type SalesLinesOrder, type SalesLinesProduct } from './sales-lines';
 
 const order = (docNo: string, extra: Partial<SalesLinesOrder> = {}): SalesLinesOrder => ({
-  docNo, soDate: '2026-10-04', venue: '2990s PJ', customerId: 'cust-1',
-  race: 'Chinese', birthday: '1990-10-05', gender: 'Female', state: 'Selangor', ...extra,
+  docNo, soDate: '2026-10-04', venue: '2990s PJ', customerId: 'cust-1', customerName: 'Tan Mei Ling',
+  race: 'Chinese', birthday: '1990-10-05', gender: 'Female', state: 'Selangor', city: 'Petaling Jaya', ...extra,
 });
 
 const item = (docNo: string, itemCode: string, extra: Partial<SalesLinesItem> = {}): SalesLinesItem => ({
@@ -103,14 +103,14 @@ describe('foldSalesLines', () => {
 
   it('maps every other line 1:1 with its size and the order\'s customer facts', () => {
     const rows = foldSalesLines(
-      [order('SO-6', { venue: ' 2990s PJ ', state: '', race: null })],
+      [order('SO-6', { venue: ' 2990s PJ ', state: '', race: null, customerName: ' Tan Mei Ling ', city: '' })],
       [item('SO-6', 'AKKA-FIRM-(K)', { lineNo: 0, qty: 2, totalSen: 298000 })],
       products, models, false,
     );
     expect(rows).toEqual([{
       docNo: 'SO-6', soDate: '2026-10-04', venue: '2990s PJ', category: 'MATTRESS', model: 'AKKA-FIRM',
       modules: [], sizeCode: 'K', sizeLabel: '6FT', qty: 2, totalSen: 298000,
-      customerId: 'cust-1', race: null, age: 35, gender: 'Female', state: null,
+      customerId: 'cust-1', customerName: 'Tan Mei Ling', race: null, age: 35, gender: 'Female', state: null, city: null,
     }]);
   });
 
