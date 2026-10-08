@@ -1805,7 +1805,7 @@ export function ModularAssignSupplierDialog({
   // PR — pull every active SKU once and group by model_id client-side; same
   // pattern as ModelSkuPickerDialog. 2990s' catalogue is small enough that
   // the alternative (one query per Model) is wasteful.
-  const productsQ  = useMfgProducts();
+  const productsQ  = useMfgProducts({ fresh: true });
   const batchMut   = useCreateBindingsBatch();
   const notify     = useNotify();
 
