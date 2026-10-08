@@ -36,6 +36,7 @@ import {
   type Currency,
 } from '../../vendor/scm/lib/suppliers-queries';
 import { poStatusLabel } from '../../vendor/scm/lib/po-status';
+import { warehouseLabel } from '../../vendor/scm/lib/warehouse-label';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
@@ -72,6 +73,8 @@ const summarizeItems = (items: PoHeaderRow['items']): string | null => {
   const extra = items.length - HEAD;
   return extra > 0 ? `${shown} · +${extra} more` : shown;
 };
+
+const locationOf = (po: PoHeaderRow): string => warehouseLabel(po.purchase_location) ?? '';
 
 const PC_ORDER_LIST_STORAGE_KEY = 'pc-order-list.layout.v1';
 
@@ -144,6 +147,14 @@ const buildColumns = (): GridColumn<PoHeaderRow>[] => [
     searchValue: (po) => po.expected_at ?? '',
     sortFn: (a, b) => (a.expected_at ?? '').localeCompare(b.expected_at ?? ''),
     filterType: 'date', dateValue: (po) => po.expected_at,
+  },
+  {
+    key: 'purchase_location', label: 'Purchase Location', width: 170, sortable: true, groupable: true,
+    accessor: (po) => locationOf(po) || '—',
+    searchValue: (po) => locationOf(po),
+    filterValue: (po) => locationOf(po) || '—',
+    groupValue: (po) => locationOf(po) || '(none)',
+    sortFn: (a, b) => locationOf(a).localeCompare(locationOf(b)),
   },
   {
     key: 'currency', label: 'Currency', width: 90, sortable: true, groupable: true,
@@ -238,7 +249,7 @@ export function PurchaseConsignmentOrderDrawer({
             <DrawerMeta k="Order date" v={fmtDateOrDash(row.po_date)} />
             <DrawerMeta k="Expected" v={fmtDateOrDash(row.expected_at)} />
             <DrawerMeta k="Currency" v={row.currency} />
-            <DrawerMeta k="Purchase location" v={row.purchase_location?.name ?? '—'} />
+            <DrawerMeta k="Purchase location" v={locationOf(row) || '—'} />
             <DrawerMeta k="Lines" v={String(items.length || row.items?.length || 0)} />
           </DrawerMetaGrid>
 
