@@ -52,7 +52,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { APIProvider, Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
 import { X, MapPin as MapPinIcon } from 'lucide-react';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen, fmtTime } from '../../vendor/shared/format';
 import {
   clusterPins,
   legendFromRoutes,
@@ -207,7 +207,7 @@ function PanelOverlay({
     /* Lorries — where each run is now. Not part of the fit: the view frames the
        day's stops, and a lorry still at the depot must not zoom the map out. */
     for (const v of vehicles) {
-      const at = new Date(v.recordedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const at = fmtTime(v.recordedAt);
       const marker = new google.maps.Marker({
         position: { lat: v.lat, lng: v.lng },
         map,
