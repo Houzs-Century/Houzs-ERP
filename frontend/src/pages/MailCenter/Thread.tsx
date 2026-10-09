@@ -25,6 +25,7 @@ import { useDialog } from "../../hooks/useDialog";
 import { useBranding } from "../../hooks/useBranding";
 import { cn } from "../../lib/utils";
 import { pickDefaultFromAddress } from "./mail-from-default";
+import { deliveryLabel, sentToast, type DeliveryStatus } from "./mail-delivery";
 import {
   MAIL_ATTACH_MAX_COUNT,
   MAIL_ATTACH_MAX_TOTAL_BYTES,
@@ -104,6 +105,7 @@ type MailMessage = {
   sentAt: string;
   receivedAt: string;
   createdAt: string;
+  deliveryStatus?: DeliveryStatus;
   attachments?: MailAttachment[];
 };
 
@@ -381,7 +383,7 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
     if (!text) return;
     setSending(true);
     try {
-      await api.post(`${url}/reply`, {
+      const res = await api.post<{ queued?: boolean }>(`${url}/reply`, {
         text,
         ...(replyAll ? { replyAll: true } : {}),
         ...(replyFrom ? { fromAddress: replyFrom } : {}),
@@ -391,7 +393,7 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
       setReplyAll(false);
       setFiles([]);
       setAttachError(null);
-      toast.success("Reply sent.");
+      toast.success(sentToast(res.queued, "Reply sent."));
       reload();
     } catch (e: any) {
       toast.error(
@@ -679,6 +681,16 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                               <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-accent" />
                             ) : (
                               <ArrowDownLeft className="h-3.5 w-3.5 shrink-0 text-ink-muted" />
+                            )}
+                            {deliveryLabel(m.deliveryStatus) && (
+                              <span
+                                className={cn(
+                                  "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold",
+                                  m.deliveryStatus === "failed" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800",
+                                )}
+                              >
+                                {deliveryLabel(m.deliveryStatus)}
+                              </span>
                             )}
                           </div>
                           <p className="truncate text-xs text-ink-muted">&lt;{m.fromAddress}&gt;</p>

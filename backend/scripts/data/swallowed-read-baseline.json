@@ -33,10 +33,6 @@
       "reads": 0,
       "catches": 3
     },
-    "backend/src/routes/mail-inbound.ts": {
-      "reads": 0,
-      "catches": 1
-    },
     "backend/src/routes/projects.ts": {
       "reads": 0,
       "catches": 2
