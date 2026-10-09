@@ -823,6 +823,7 @@ const ASSR: AssrFeedRow = {
   ref_no: "REF012",
   po_no: "PO-012",
   status: "In Progress",
+  stage: "pending_supplier_pickup",
   customer_name: "Wendy",
   phone: "60127712155",
   location: "KL WAREHOUSE",
@@ -873,6 +874,16 @@ describe("toAssrLegRecords — one own-team leg per set date, in the sheet's rec
     expect(toAssrLegRecords({ ...ASSR, inspection_visit_at: null, pickup_by: null, delivery_by: null })).toEqual([]);
     // Only own-team pickup set → exactly the PICKUP leg.
     expect(toAssrLegRecords({ ...ASSR, inspection_by: null, delivery_by: null }).map((l) => l.Kind)).toEqual(["PICKUP"]);
+  });
+
+  test("BUG-95: once the item is back (Item Ready / Pending Delivery/Service), only the delivery-back leg is sent", () => {
+    for (const stage of ["pending_item_ready", "pending_delivery_service"]) {
+      expect(toAssrLegRecords({ ...ASSR, stage }).map((l) => l.DocNo)).toEqual(["SO-2609-012-SERVICE"]);
+    }
+    expect(toAssrLegRecords({ ...ASSR, stage: "pending_delivery_service", delivery_by: null })).toEqual([]);
+    for (const stage of ["under_verification", "pending_solution", "pending_supplier_pickup", null]) {
+      expect(toAssrLegRecords({ ...ASSR, stage }).map((l) => l.Kind)).toEqual(["INSPECT", "PICKUP", "DELIVERY"]);
+    }
   });
 
   test("a Singapore address routes the legs to SG", () => {

@@ -45,7 +45,7 @@ async function resetFixture(s: Sql): Promise<void> {
       ('HC-SO-9011', 'HC-SO-9011', 'Singapore', '600314', 'Jurong East', 'West');
     DROP TABLE IF EXISTS public.assr_cases CASCADE;
     CREATE TABLE public.assr_cases (
-      id bigserial PRIMARY KEY, assr_no text NOT NULL, doc_no text, company_id bigint NOT NULL, status text,
+      id bigserial PRIMARY KEY, assr_no text NOT NULL, doc_no text, company_id bigint NOT NULL, status text, stage text,
       customer_name text, phone text, location text, sales_agent text, delivery_order text,
       addr1 text, addr2 text, addr3 text, addr4 text,
       inspection_by text, inspection_visit_at text,
