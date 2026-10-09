@@ -128,6 +128,7 @@ import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, a
 import { ASSR_ISSUE_CATEGORIES, ASSR_NOTE_AUDIENCES, assrNoteIsCustomerVisible, assrMergedPoText, type AssrNoteAudience } from "../vendor/scm/lib/assr/case-fields";
 import { AssrOrderPoLine } from "../components/AssrOrderPoLine";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
+import { ANOTHER_RETURN_HINT } from "../vendor/scm/lib/assr/returns";
 import type {
   Paginated,
   AssrCase,
@@ -3873,19 +3874,24 @@ function DetailContent({
                       onSaved={() => detail.reload()}
                       toast={toast}
                     />
-                    <ItemRemarkInput
-                      caseId={id}
-                      item={item}
-                      field="supplier_remark"
-                      label="Supplier"
-                      placeholder="Supplier remark — prints on the supplier copy"
-                      disabled={c.stage === "completed" || !!c.archived_at}
-                      onSaved={() => detail.reload()}
-                      toast={toast}
-                    />
+                    {supplierReturns.length === 0 && (
+                      <ItemRemarkInput
+                        caseId={id}
+                        item={item}
+                        field="supplier_remark"
+                        label="Supplier"
+                        placeholder="Supplier remark — prints on the supplier copy"
+                        disabled={c.stage === "completed" || !!c.archived_at}
+                        onSaved={() => detail.reload()}
+                        toast={toast}
+                      />
+                    )}
                   </div>
                 ))}
               </div>
+            )}
+            {supplierReturns.length > 0 && items.length > 0 && !c.archived_at && (
+              <div className="mt-1.5 text-[10.5px] leading-snug text-ink-muted">{ANOTHER_RETURN_HINT}</div>
             )}
             {c.stage !== "completed" && !showAddItem && (
               <button

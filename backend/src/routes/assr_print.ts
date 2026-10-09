@@ -1193,13 +1193,23 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
 
     ${isSupplier ? (() => {
       // ── Supplier Service Order (design handoff). ──
+      /* BUG-92 (Farra 2026-10-08): the per-item Supplier remark is one note for
+         the whole case, so on a 2nd/3rd return it still said trip 1's problem
+         while the Reason row said this trip's. Once the trip has a Reason, that
+         is the only instruction the supplier sees. A trip without one keeps the
+         old remark so papers already in flight do not go blank. */
+      const tripReason = String((trip || currentReturn)?.reason ?? "").trim();
+      const supRemark = (it: any, i: number): string =>
+        tripReason ? (i === 0 ? tripReason : "")
+        : it.supplier_remark ? it.supplier_remark
+        : i === 0 && cs.action_remark ? cs.action_remark : "";
       const supItems = (items as any[]).map((it, i) => `
         <div class="itable" style="grid-template-columns: 10mm 1fr 12mm 12mm 1.4fr;">
           <span class="td">${i + 1}</span>
           <span class="td code">${esc([it.item_code, it.item_description].filter(Boolean).join(" — "))}</span>
           <span class="td">${esc(it.qty ?? 1)}</span>
           <span class="td">${esc(it.qty_carton ?? 1)}</span>
-          <span class="td remark">${it.supplier_remark ? esc(it.supplier_remark) : i === 0 && cs.action_remark ? esc(cs.action_remark) : ""}</span>
+          <span class="td remark">${esc(supRemark(it, i))}</span>
         </div>`);
       const photos = inlinedImages.slice(0, 5).map((a, i) => `
         <div class="ph"><img src="${a.data_url}" alt="${esc(a.file_name || "")}" /><span class="tag">IMG_${String(i + 1).padStart(2, "0")}</span></div>`);

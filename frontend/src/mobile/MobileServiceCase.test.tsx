@@ -92,6 +92,8 @@ const PRODUCT_CATEGORIES = [
   { id: 3, slug: "sofa", name: "Sofa", sort_order: 3, active: 1 },
 ];
 
+let detailExtra: Record<string, unknown> = {};
+
 function mount(startNew: boolean) {
   apiGet.mockImplementation(async (url: string) => {
     if (url.startsWith("/api/assr/lookups/product-categories")) return { data: PRODUCT_CATEGORIES };
@@ -114,6 +116,7 @@ function mount(startNew: boolean) {
         related_pos: [],
         stage_history: [],
         service_categories: ["Bedframe"],
+        ...detailExtra,
       };
     }
     if (url.startsWith("/api/assr?")) {
@@ -137,6 +140,7 @@ beforeEach(() => {
   apiDel.mockReset();
   apiPost.mockResolvedValue({ id: 99, assr_no: "ASSR-2608-005" });
   apiPatch.mockResolvedValue({ ok: true });
+  detailExtra = {};
 });
 afterEach(cleanup);
 
@@ -256,5 +260,39 @@ describe("MobileServiceCase product category is the maintained list, not free te
     const sent = body(call).service_category;
     expect(Array.isArray(sent)).toBe(true);
     expect(sent).toEqual(["Bedframe", "Mattress"]);
+  });
+});
+
+async function openCase() {
+  mount(false);
+  await waitFor(() => expect(screen.getByText("ASSR-2608-004")).toBeTruthy());
+  fireEvent.click(screen.getByText("ASSR-2608-004"));
+  await waitFor(() => expect(screen.getAllByText("Product info").length).toBeGreaterThan(0));
+}
+
+describe("MobileServiceCase: one place for the supplier's instruction (BUG-92)", () => {
+  const ITEM = { id: 7, item_code: "BF-01", item_description: "Bedframe", qty: 1, qty_carton: 1, supplier_remark: "Trip 1 note" };
+  const trip = (reason: string | null) => ({ id: 3, round_no: 2, ref_no: "SVC-RTN-2610-0002", pickup_at: null, returned_at: null, qc_result: null, creditor_code: null, reason, note: null });
+  const HINT = /Use \+ Add Supplier Return and type the new Reason there/;
+
+  it("drops the item Supplier remark once the case has a return", async () => {
+    detailExtra = { items: [ITEM], supplier_returns: [trip("Leg loose")] };
+    await openCase();
+    await waitFor(() => expect(screen.getByText(HINT)).toBeTruthy());
+    expect(screen.queryByDisplayValue("Trip 1 note")).toBeNull();
+  });
+
+  it("drops it even before the Reason is filled, so there is only one place to type", async () => {
+    detailExtra = { items: [ITEM], supplier_returns: [trip(null)] };
+    await openCase();
+    await waitFor(() => expect(screen.getByText(HINT)).toBeTruthy());
+    expect(screen.queryByDisplayValue("Trip 1 note")).toBeNull();
+  });
+
+  it("stays quiet before the first return", async () => {
+    detailExtra = { items: [ITEM], supplier_returns: [] };
+    await openCase();
+    await waitFor(() => expect(screen.getByDisplayValue("Trip 1 note")).toBeTruthy());
+    expect(screen.queryByText(HINT)).toBeNull();
   });
 });
