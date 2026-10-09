@@ -37,6 +37,11 @@ function world() {
     mfg_products: [{ id: 'mfg-1', company_id: CO, code: '5530-3S', name: 'SOFA 5530 3 SEATER', category: 'SOFA', status: 'ACTIVE', model_id: 'model-5530', base_model: '5530' }],
     fabric_trackings: [{ id: 'fab-1', company_id: CO, fabric_code: 'LIN-01', is_active: true }],
     warehouses: [{ id: 'wh-kl', company_id: CO, code: 'KL', name: 'KL Showroom' }],
+    suppliers: [
+      { id: 'sup-1', company_id: CO, code: '400-D001', name: 'DIGLANT FURNITURE', status: 'ACTIVE' },
+      { id: 'sup-old', company_id: CO, code: '400-X001', name: 'RETIRED SUPPLIER', status: 'INACTIVE' },
+      { id: 'sup-other', company_id: 2, code: '400-O001', name: 'OTHER CO SUPPLIER', status: 'ACTIVE' },
+    ],
     purchase_consignment_orders: [],
     entity_audit_log: [],
   }, {}, [{ table: 'mfg_products', column: 'code', name: 'mfg_products_code_key' }]);
@@ -106,6 +111,26 @@ describe('product request — raising one', () => {
     expect((ok.body.request as Row).proposed_model_name).toBeNull();
     const nobody = await as(sb, NOBODY)('/product-requests', 'POST', NEW_SOFA);
     expect(nobody.status).toBe(403);
+  });
+
+  test('the supplier and agreed price ride the request; only this company\'s suppliers; the picker is open to a Sales caller', async () => {
+    const sb = world();
+    const amy = as(sb, AMY);
+    /* The picker: ACTIVE suppliers of this company, id / code / name only. */
+    const opts = await amy('/product-requests/supplier-options');
+    expect(opts.status).toBe(200);
+    expect((opts.body.suppliers as Row[]).map((s) => s.code)).toEqual(['400-D001']);
+    expect(Object.keys((opts.body.suppliers as Row[])[0]).sort()).toEqual(['code', 'id', 'name']);
+    expect((await amy('/product-requests', 'POST', { ...NEW_SOFA, supplierId: 'sup-other' })).body.error).toBe('unknown_supplier');
+    expect((await amy('/product-requests', 'POST', { ...NEW_SOFA, unitPriceSen: -1 })).body.error).toBe('price_invalid');
+    const ok = await amy('/product-requests', 'POST', { ...NEW_SOFA, supplierId: 'sup-1', unitPriceSen: 185_000 });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(201);
+    expect((ok.body.request as Row).supplier).toEqual({ id: 'sup-1', code: '400-D001', name: 'DIGLANT FURNITURE' });
+    expect((ok.body.request as Row).unit_price_sen).toBe(185_000);
+    /* An edit that says nothing about them keeps them. */
+    const edited = await amy(`/product-requests/${(ok.body.request as Row).id}`, 'PATCH', { qty: 4 });
+    expect((edited.body.request as Row).supplier_id).toBe('sup-1');
+    expect((edited.body.request as Row).unit_price_sen).toBe(185_000);
   });
 
   test('an unknown fabric or delivery location is refused by name', async () => {

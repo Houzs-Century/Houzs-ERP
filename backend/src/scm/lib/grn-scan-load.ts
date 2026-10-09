@@ -28,8 +28,8 @@ export async function loadOpenPoLines(
     let q = svc
       .from('purchase_order_items')
       .select(`
-        id, purchase_order_id, item_code, material_name, supplier_sku, qty, received_qty,
-        po:purchase_orders!inner ( id, po_number, supplier_id, status, on_hold, company_id )
+        id, purchase_order_id, item_code, material_name, supplier_sku, qty, received_qty, warehouse_id,
+        po:purchase_orders!inner ( id, po_number, supplier_id, status, on_hold, company_id, purchase_location_id )
       `)
       .in('purchase_orders.status', RECEIVABLE_PO_STATUSES as unknown as string[]);
     if (companyId != null) q = q.eq('company_id', companyId);
@@ -40,11 +40,21 @@ export async function loadOpenPoLines(
   type Row = {
     id: string; purchase_order_id: string; item_code: string | null;
     material_name: string | null; supplier_sku: string | null;
-    qty: number | null; received_qty: number | null;
-    po: { id: string; po_number: string; supplier_id: string | null; status: string | null; on_hold: boolean | null } | null;
+    qty: number | null; received_qty: number | null; warehouse_id: string | null;
+    po: { id: string; po_number: string; supplier_id: string | null; status: string | null; on_hold: boolean | null; purchase_location_id: string | null } | null;
   };
+  const rows = (data ?? []) as unknown as Row[];
+  // The line's own warehouse overrides the PO header's (outstanding-po-lines.ts).
+  const whOf = (r: Row): string | null => r.warehouse_id ?? r.po?.purchase_location_id ?? null;
+  const whIds = [...new Set(rows.map(whOf).filter((x): x is string => Boolean(x)))];
+  const codeById = new Map<string, string>();
+  if (whIds.length > 0) {
+    const { data: whs, error: whErr } = await svc.from('warehouses').select('id, code').in('id', whIds);
+    if (whErr) throw new Error(`load PO warehouses failed: ${whErr.message}`);
+    for (const w of whs as Array<{ id: string; code: string | null }>) if (w.code) codeById.set(w.id, w.code);
+  }
   const out: OpenPoLine[] = [];
-  for (const r of ((data ?? []) as unknown as Row[])) {
+  for (const r of rows) {
     if (!r.po || isDocumentHeld(r.po)) continue; // held PO is not receivable
     const remaining = (r.qty ?? 0) - (r.received_qty ?? 0);
     if (remaining <= 0) continue; // nothing left to receive on this line
@@ -57,6 +67,7 @@ export async function loadOpenPoLines(
       materialName: r.material_name ?? null,
       supplierSku: r.supplier_sku ?? null,
       remaining,
+      locationCode: codeById.get(whOf(r) ?? '') ?? null,
     });
   }
   return out;

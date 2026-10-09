@@ -80,11 +80,18 @@ export type ModelSkuRow = {
 };
 
 export function useProductModels(opts?: { category?: MfgCategory }) {
+  const qc = useQueryClient();
   return useQuery({
     queryKey: ['product-models', opts?.category ?? 'all'],
-    queryFn: async () => {
+    queryFn: async ({ queryKey }) => {
       const qs = opts?.category ? `?category=${opts.category}` : '';
-      const res = await authedFetch<{ models: ProductModelRow[] }>(`/product-models${qs}`);
+      /* Same 60s browser cache as /mfg-products: a refetch after a write skips
+         it, so a model's SKU count moves as soon as its SKU is made (BUG-85). */
+      const pastBrowserCache = qc.getQueryState(queryKey)?.isInvalidated;
+      const res = await authedFetch<{ models: ProductModelRow[] }>(
+        `/product-models${qs}`,
+        pastBrowserCache ? { cache: 'no-cache' } : undefined,
+      );
       return res.models;
     },
     staleTime: 30_000,
@@ -266,8 +273,9 @@ export function useGenerateModelSkus() {
         { method: 'POST', body: JSON.stringify(body) },
       );
     },
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['product-models', vars.id] });
+    onSuccess: () => {
+      // The whole family: the Modular list's SKU count moves too, not just this model.
+      qc.invalidateQueries({ queryKey: ['product-models'] });
       qc.invalidateQueries({ queryKey: ['mfg-products'] });
     },
   });

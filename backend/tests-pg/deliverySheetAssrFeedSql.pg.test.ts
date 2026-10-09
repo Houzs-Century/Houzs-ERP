@@ -38,10 +38,11 @@ async function resetFixture(s: Sql): Promise<void> {
     -- Every scm suite drops and rebuilds this table itself, so a minimal one is safe.
     CREATE SCHEMA IF NOT EXISTS scm;
     DROP TABLE IF EXISTS scm.mfg_sales_orders CASCADE;
-    CREATE TABLE scm.mfg_sales_orders (doc_no text PRIMARY KEY, linked_ac_docno text, customer_country text);
-    INSERT INTO scm.mfg_sales_orders (doc_no, linked_ac_docno, customer_country) VALUES
-      ('HC-SO-9010', 'SO-9010', 'Malaysia'),
-      ('HC-SO-9011', 'HC-SO-9011', 'Singapore');
+    CREATE TABLE scm.mfg_sales_orders (doc_no text PRIMARY KEY, linked_ac_docno text, customer_country text,
+      postcode text, city text, customer_state text);
+    INSERT INTO scm.mfg_sales_orders (doc_no, linked_ac_docno, customer_country, postcode, city, customer_state) VALUES
+      ('HC-SO-9010', 'SO-9010', 'Malaysia', '47300', 'Petaling Jaya', 'Selangor'),
+      ('HC-SO-9011', 'HC-SO-9011', 'Singapore', '600314', 'Jurong East', 'West');
     DROP TABLE IF EXISTS public.assr_cases CASCADE;
     CREATE TABLE public.assr_cases (
       id bigserial PRIMARY KEY, assr_no text NOT NULL, doc_no text, company_id bigint NOT NULL, status text,
@@ -137,6 +138,10 @@ describePg('HC Delivery sheet ASSR leg feed SQL — real Postgres', () => {
     // 011's order is in Singapore (country, not address line 3) -> SG; 010 matches
     // its order through the AutoCount number and stays WEST.
     expect(pick11.Region).toBe('SG');
+    // Case 011 has no address lines 3 / 4: the order's town fills them (ASSR/2610-013).
+    expect(pick11).toMatchObject({ InvAddr3: '600314 Jurong East', InvAddr4: 'West' });
+    // Case 010 keeps its own state; only its blank line 3 takes the order's town.
+    expect(del).toMatchObject({ InvAddr3: '47300 Petaling Jaya', InvAddr4: 'Selangor' });
     expect(rows.find((r) => r.assr_no === 'ASSR/2609-010')!.customer_country).toBe('Malaysia');
   });
 

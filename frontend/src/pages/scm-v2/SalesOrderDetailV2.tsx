@@ -96,6 +96,8 @@ import {
   soDownstreamHardLocked,
 } from "../../vendor/scm/lib/so-detail-gates";
 import { MigratedReadonlyBanner } from "../../vendor/scm/components/MigratedReadonlyBanner";
+import { soAfterDoMode } from "../../vendor/scm/lib/so-after-do-client";
+import type { AfterDoTarget } from "../../vendor/shared/so-after-do-edit";
 import { customerRefOf } from '../../lib/customer-ref';
 
 import { isFocLine } from '../../vendor/scm/lib/foc-line';
@@ -162,6 +164,8 @@ type SoHeader = {
   downstream_fully_frozen?: boolean | null;
   amendment_eligible?: boolean | null;
   has_open_amendment?: boolean | null;
+  after_do_targets?: AfterDoTarget[] | null;
+  after_do_invoiced?: boolean | null;
   customer_delivery_date: string | null;
   note: string | null;
   currency: string;
@@ -661,7 +665,14 @@ function SalesOrderDetailV2ReadOnly() {
      this door leads to exactly one dropdown. Without it, handing a delivered
      order to a resigning rep's replacement meant Override — which unlocks the
      whole order, addresses and lines included. */
-  const canAttributeOther = useHouzsAuth().can("scm.so.attribute_other");
+  const { can } = useHouzsAuth();
+  const canAttributeOther = can("scm.so.attribute_other");
+  /* DEV-56 — `scm.so.edit_after_do` (DEV-32) is spent behind Override, and
+     Override lives in the ?edit=1 editor. Asked as if Override were already on:
+     the question here is only whether the editor has anything to offer. */
+  const canEditAfterDo = salesOrder
+    ? soAfterDoMode(salesOrder, { can, override: true, migrated: false }).on
+    : false;
   /* CUTOVER: an order carried across from AutoCount is view-only (owner
      2026-09-08). It out-ranks the salesperson door above — `canAttributeOther`
      exists so a hard-locked order can still change hands, and re-attributing a
@@ -670,10 +681,12 @@ function SalesOrderDetailV2ReadOnly() {
      the operator is looking at; two locks with one sentence is how a refusal
      stops being actionable. */
   const migratedLocked = soMigratedReadonly(salesOrder);
-  const editDisabled = migratedLocked || (hardLocked && !canAttributeOther);
+  const editDisabled = migratedLocked || (hardLocked && !canAttributeOther && !canEditAfterDo);
   const lockedEditHint = migratedLocked
     ? soMigratedReadonlyReason(salesOrder)
-    : hardLocked && canAttributeOther
+    : hardLocked && canEditAfterDo
+      ? "This order is locked by its Delivery Order — press Edit, then Override, to change the customer details or charge lines."
+      : hardLocked && canAttributeOther
       ? "This order is locked by a downstream Delivery Order / Sales Invoice — only the Salesperson can still be changed."
       : "This order is locked — it already has a downstream Delivery Order / Sales Invoice.";
   const editLabel = canAmend

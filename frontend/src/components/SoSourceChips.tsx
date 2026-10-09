@@ -133,6 +133,11 @@ const chipBase =
    SHIPPED source is anchored history and earns the solid chip. READY
    projections and incoming MRP coverage are floating — live, recomputed on
    every view — so they wear the dashed identity the other surfaces use. */
+/* The ETA sits on its own line so a PO chip fits the 200px Incoming PO column. */
+const EtaLine = ({ eta }: { eta: string }) => (
+  <span className="text-[10px] font-normal text-ink-muted">ETA {formatDate(eta)}</span>
+);
+
 const floatingChipBase =
   "rounded border border-dashed border-border px-1.5 py-0.5 font-docno text-[11px] font-semibold text-ink-secondary";
 
@@ -160,10 +165,10 @@ export function SoSourceChips({
           <span
             key={`b-${po}`}
             title={`${sourcePoTitle(po)} This order's purchase order for this line.`}
-            className={chipBase}
+            className={cn(chipBase, "inline-flex flex-col")}
           >
             {po}
-            {line.bound_source_po_etas?.[po] ? ` · ETA ${formatDate(line.bound_source_po_etas[po])}` : ""}
+            {line.bound_source_po_etas?.[po] && <EtaLine eta={line.bound_source_po_etas[po]} />}
           </span>
         ))}
         {line.shipped_source_adj && <StockAdjChip />}
@@ -218,10 +223,10 @@ export function SoSourceChips({
       {showIncoming && (
         <span
           title="Incoming — live MRP coverage for the un-arrived remainder, recomputed on every view; it moves as demand moves."
-          className={cn(floatingChipBase, "whitespace-nowrap font-mono")}
+          className={cn(floatingChipBase, "inline-flex flex-col whitespace-nowrap font-mono")}
         >
           {incomingPo}
-          {line.coverage_eta ? ` · ETA ${formatDate(line.coverage_eta)}` : ""}
+          {line.coverage_eta && <EtaLine eta={line.coverage_eta} />}
         </span>
       )}
     </span>

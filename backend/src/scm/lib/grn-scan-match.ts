@@ -39,6 +39,9 @@ export type OpenPoLine = {
   supplierSku: string | null;
   // qty - received_qty on the PO line, already computed by the loader (>= 0).
   remaining: number;
+  // Code of the warehouse the line ships into (line, else PO header), e.g.
+  // "SRW WAREHOUSE". Null when the PO names none.
+  locationCode: string | null;
 };
 
 // A supplier_material_bindings row, narrowed to the mapping this matcher needs:
@@ -106,9 +109,10 @@ export type GrnMatchResult = {
   // Set when no PO number was recognised and half or fewer of the scanned lines
   // hit the one PO: the draft may be against the wrong PO.
   weakMatch: { matched: number; scanned: number } | null;
-  // Set when the delivery order named exactly one open PO of the resolved
-  // supplier but no row lined up with it by item: picks are then every line
-  // still owed on that PO, at its remaining qty, for the operator to correct.
+  // Set (the PO numbers, comma-joined) when the delivery order named open POs
+  // of the resolved supplier but no row lined up with them by item: picks are
+  // then every line still owed on those POs, at its remaining qty, for the
+  // operator to correct.
   poFallback: string | null;
 };
 
@@ -229,8 +233,19 @@ export function matchGrnScanToPoLines(
   const openPos = [...new Set(supplierLines.map((l) => l.poNumber))].map((poNumber) => ({ poNumber }));
   // A tail match only inside one known supplier's POs: without a supplier, a
   // foreign ref could tail-match another supplier's PO.
-  const resolveOpenPo = (printed: string | null | undefined): string | null =>
-    resolvePrintedPo(printed, openPos, supplierId !== null)?.poNumber ?? null;
+  const resolveOpenPo = (printed: string | null | undefined): string | null => {
+    const direct = resolvePrintedPo(printed, openPos, supplierId !== null)?.poNumber ?? null;
+    if (direct !== null || supplierId === null) return direct;
+    // NB Furniture prints the ship-to location in place of our prefix
+    // ("SRW-2610-021" for HC-PO-2610-021 into SRW WAREHOUSE). Trusted only when
+    // that PO really ships to a warehouse whose code starts with the location.
+    const m = /^([A-Z]+)[\s-]+(\d.*)$/.exec((printed ?? '').trim().toUpperCase());
+    if (!m) return null;
+    const po = resolvePrintedPo(m[2], openPos, true)?.poNumber ?? null;
+    const shipsThere = supplierLines.some((l) =>
+      l.poNumber === po && normalizeCode((l.locationCode ?? '').trim().split(/\s+/)[0]) === m[1]);
+    return shipsThere ? po : null;
+  };
 
   // PO-number scoping — does the scanned header P.O. No name one of our open POs?
   const matchedPoNumberValue = resolveOpenPo(scannedPoNo);
@@ -263,6 +278,7 @@ export function matchGrnScanToPoLines(
   const poNumberOf = new Map<string, string>(); // poItemId -> po_number
   const unmatched: UnmatchedScanLine[] = [];
   const anchoredPos = new Set<string>();
+  const anchoredScanQty = new Map<string, number>(); // po_number -> qty the delivery order lists for it
   let scannedCount = 0;
   let itemOnlyMatchedCount = 0;
 
@@ -281,7 +297,10 @@ export function matchGrnScanToPoLines(
     } else if (poNumberMatched) {
       anchorPo = matchedPoNumberValue;
     }
-    if (anchorPo !== null) anchoredPos.add(anchorPo);
+    if (anchorPo !== null) {
+      anchoredPos.add(anchorPo);
+      anchoredScanQty.set(anchorPo, (anchoredScanQty.get(anchorPo) ?? 0) + sl.qty);
+    }
 
     // Candidate item-code keys this scanned line could resolve to, in priority:
     // its own printed code (direct), then the supplier-SKU / barcode bindings.
@@ -361,16 +380,21 @@ export function matchGrnScanToPoLines(
   // up by item (the supplier describes a set differently from our PO lines).
   // The PO is certain, so draft everything still owed on it for the operator to
   // correct, rather than nothing. Never without a resolved supplier: a printed
-  // number alone could name another supplier's PO.
+  // number alone could name another supplier's PO. Several named POs only when
+  // the delivery order's qty for each equals what that PO still owes; a part
+  // delivery spread over POs is left to the operator.
   let poFallback: string | null = null;
-  if (picks.length === 0 && refused === null && supplierId !== null && anchoredPos.size === 1) {
-    const po = [...anchoredPos][0];
+  const owed = (po: string): number =>
+    supplierLines.reduce((sum, l) => sum + (l.poNumber === po ? l.remaining : 0), 0);
+  const certainPos = anchoredPos.size === 1
+    || [...anchoredPos].every((po) => anchoredScanQty.get(po) === owed(po));
+  if (picks.length === 0 && refused === null && supplierId !== null && anchoredPos.size > 0 && certainPos) {
     for (const l of supplierLines) {
-      if (l.poNumber !== po || l.remaining <= 0) continue;
+      if (!anchoredPos.has(l.poNumber) || l.remaining <= 0) continue;
       picks.push({ poItemId: l.poItemId, qty: l.remaining });
       poNumberOf.set(l.poItemId, l.poNumber);
     }
-    if (picks.length > 0) poFallback = po;
+    if (picks.length > 0) poFallback = [...anchoredPos].join(', ');
   }
 
   const matchedPoNumbers = [...new Set(picks.map((p) => poNumberOf.get(p.poItemId) ?? ''))].filter(Boolean);

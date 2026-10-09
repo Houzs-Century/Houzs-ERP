@@ -296,6 +296,12 @@ fabricTracking.post('/bulk-upsert', async (c) => {
         row[col] = (v === '' || v == null) ? null : String(v);
       }
     }
+    // The tier columns are a Postgres enum: one bad value fails the whole batch
+    // upsert, so refuse it here, per row, like every other rejection.
+    for (const col of ['sofa_price_tier', 'bedframe_price_tier']) {
+      const v = row[col];
+      if (v != null && !VALID_TIERS.has(v as string)) { errors.push({ index: i, reason: `invalid_${col}` }); return; }
+    }
     let rowFailed = false;
     for (const [k, col] of INT_COLS) {
       if (k in r) {
