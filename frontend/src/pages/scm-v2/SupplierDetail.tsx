@@ -96,6 +96,7 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import styles from './SupplierDetail.module.css';
 import { exportBindingsCsv, ImportBindingsDialog } from './SupplierBindingsCsv';
+import { UnmappedModelSkus } from './UnmappedModelSkus';
 import { EffectiveDatedHistory } from '../../vendor/scm/components/EffectiveDatedHistory';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { statusLabel } from '../../vendor/scm/lib/status-pill';
@@ -669,7 +670,8 @@ const SupplierSkuPricingPanel = ({
      Needs a new supplier_material_binding_prices child table (or JSONB
      price_tiers column on supplier_material_bindings) — out of scope for
      this PR per task brief. */
-  const products = useMfgProducts();
+  // fresh: a compartment SKU made a minute ago must show in the unmapped notice.
+  const products = useMfgProducts({ fresh: true });
 
   const CATEGORY_ORDER: readonly string[] = [
     'BEDFRAME_SIZES',
@@ -792,6 +794,9 @@ const SupplierSkuPricingPanel = ({
           sofaHeights={sofaHeights}
           onClose={() => setImporting(false)}
         />
+      )}
+      {open && (
+        <UnmappedModelSkus supplierId={id} bindings={bindings} products={products.data ?? []} />
       )}
       {open && (bindings.length === 0 ? (
         <div className={styles.cardBody}>
