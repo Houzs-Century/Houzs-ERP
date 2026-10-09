@@ -454,10 +454,11 @@ dpOrders.patch('/:id', async (c) => {
   /* Only an edit that touches the address is checked, so an old job saved
      before the rule can still have its date or remark fixed. */
   if (ADDRESS_LINES.some((k) => updates[k] !== undefined)) {
-    const { data: cur } = await scopeToCompanyId(
+    const { data: cur, error: curErr } = await scopeToCompanyId(
       sb.from('dp_orders').select('address1, address2, address3, address4').eq('id', id),
       co.companyId,
     ).maybeSingle();
+    if (curErr) return c.json({ error: 'load_failed', reason: curErr.message }, 500);
     if (cur && !hasAddress({ ...(cur as Record<string, unknown>), ...updates })) {
       return c.json(ADDRESS_REQUIRED, 400);
     }
