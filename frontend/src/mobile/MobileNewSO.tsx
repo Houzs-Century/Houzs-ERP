@@ -3143,7 +3143,10 @@ function LineCard({
             <input
               className="fld-i money"
               inputMode="decimal"
-              value={line.price}
+              /* DEV-62 (Adrian): an untouched RM 0 shows as a placeholder, so
+                 typing a price does not start with deleting "0.00". */
+              value={toSen(line.price) === 0 && !line.priceAuthored ? "" : line.price}
+              placeholder="0.00"
               disabled={!canEditPrice}
               title={!canEditPrice ? "Price follows the SKU Master sell price — admin can override" : undefined}
               onChange={(e) => onChange({ price: e.target.value, priceAuthored: true })}
