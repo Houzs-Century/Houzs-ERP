@@ -707,9 +707,13 @@ const SoLineCardInner = ({
      RM 0 on Backend-keyed lines. Now takes the full FabricColourRow straight
      from the combobox's selection (identical shape to the old library row), so
      the written variant payload is byte-for-byte what the <select> produced. */
+  const fabricSeries = useMemo(
+    () => new Map((fabricLibQ.data ?? []).map((f) => [f.id, f.label] as [string, string])),
+    [fabricLibQ.data],
+  );
   const pickFabricColour = (c: FabricColourRow) => {
     const colourId = c.colourId;
-    const seriesLabel = (fabricLibQ.data ?? []).find((f) => f.id === c.fabricId)?.label ?? null;
+    const seriesLabel = fabricSeries.get(c.fabricId) ?? null;
     setVariants({
       fabricCode: colourId,
       colourId,
@@ -1116,6 +1120,8 @@ const SoLineCardInner = ({
             <FabricColourCombobox
               label="Fabrics" required={variantsRequired}
               value={String(draft.variants.fabricCode ?? '')}
+              colourLabel={String(draft.variants.colourLabel ?? '')}
+              fabricSeries={fabricSeries}
               disabled={!isEditing}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
@@ -1179,6 +1185,8 @@ const SoLineCardInner = ({
             <FabricColourCombobox
               label="Fabrics" required={variantsRequired}
               value={String(draft.variants.fabricCode ?? '')}
+              colourLabel={String(draft.variants.colourLabel ?? '')}
+              fabricSeries={fabricSeries}
               disabled={!isEditing}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
@@ -1195,6 +1203,8 @@ const SoLineCardInner = ({
             <FabricColourCombobox
               label="Fabrics" required={variantsRequired}
               value={String(draft.variants.fabricCode ?? '')}
+              colourLabel={String(draft.variants.colourLabel ?? '')}
+              fabricSeries={fabricSeries}
               disabled={!isEditing}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
@@ -1552,12 +1562,16 @@ const VariantSelect = ({
    ────────────────────────────────────────────────────────────────────── */
 
 const FabricColourCombobox = ({
-  label, value, onSelect, disabled = false, required = false, pool, inactiveCodes, itemCode,
+  label, value, colourLabel, fabricSeries, onSelect, disabled = false, required = false, pool, inactiveCodes, itemCode,
 }: {
   label:    string;
+  /** draft.variants.colourLabel — shown after the code when closed, as the phone's FabricField does. */
+  colourLabel: string;
+  /** fabric_library id → series label, for the dropdown's second line. */
+  fabricSeries: Map<string, string>;
   /** The line's SKU — the server applies its Model's pool before the 50 cap. */
   itemCode: string | null;
-  /** Selected colour code (draft.variants.fabricCode). Shown verbatim when closed. */
+  /** Selected colour code (draft.variants.fabricCode). Shown (plus colourLabel) when closed. */
   value:    string;
   /** Non-empty = restrict to these colour codes (Model allowed_options.fabrics). */
   pool?:    string[] | null;
@@ -1597,6 +1611,7 @@ const FabricColourCombobox = ({
   const menuPos = useAnchoredPanel(wrapRef, open && !disabled, SUGGEST_LIST_MAX_H);
 
   const invalid = required && !value;
+  const shown = value && colourLabel && colourLabel !== value ? `${value} — ${colourLabel}` : value;
 
   return (
     <label className={styles.variantField}>
@@ -1606,7 +1621,7 @@ const FabricColourCombobox = ({
           className={styles.select}
           /* Closed → show the selected code (NEVER blank a saved fabric).
              Open  → show the operator's live search term. */
-          value={open ? search : value}
+          value={open ? search : shown}
           placeholder={value ? undefined : 'Type 2+ chars to search…'}
           disabled={disabled}
           /* Owner 2026-08-09 — like the native Divan/Gap selects, opening must
@@ -1616,7 +1631,7 @@ const FabricColourCombobox = ({
           onBlur={() => setTimeout(() => setOpen(false), 150)}
           onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
           style={invalid && !disabled ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
-          title={value || undefined}
+          title={shown || undefined}
         />
         {menuPos && createPortal(
           <ul
@@ -1624,18 +1639,24 @@ const FabricColourCombobox = ({
             style={{ ...anchoredPanelStyle(menuPos), right: 'auto', marginTop: 0 }}
           >
             {results.length > 0 ? (
-              /* Owner 2026-06-23: show ONLY the fabric code — the code IS the
-                 fabric's identity. onMouseDown + preventDefault keeps the input
-                 focused so the portal doesn't blur-close before the pick lands. */
-              results.map((c) => (
-                <li
-                  key={c.colourId}
-                  className={styles.suggestItem}
-                  onMouseDown={(e) => { e.preventDefault(); onSelect(c); setSearch(''); setOpen(false); }}
-                >
-                  {c.colourId}
-                </li>
-              ))
+              /* The code leads (it IS the fabric's identity, owner 2026-06-23);
+                 series and colour name follow on a second line, as on the
+                 phone's fabric sheet (DEV-61). onMouseDown + preventDefault
+                 keeps the input focused so the portal doesn't blur-close before
+                 the pick lands. */
+              results.map((c) => {
+                const meta = [fabricSeries.get(c.fabricId) ?? '', c.label ?? ''].filter(Boolean).join(' · ');
+                return (
+                  <li
+                    key={c.colourId}
+                    className={styles.suggestItem}
+                    onMouseDown={(e) => { e.preventDefault(); onSelect(c); setSearch(''); setOpen(false); }}
+                  >
+                    <div className={styles.suggestItemCode}>{c.colourId}</div>
+                    {meta && <div className={styles.suggestItemMeta}>{meta}</div>}
+                  </li>
+                );
+              })
             ) : (
               <li className={styles.suggestItem} style={{ color: 'var(--fg-muted)', cursor: 'default' }}>
                 {trimmed.length < 2
