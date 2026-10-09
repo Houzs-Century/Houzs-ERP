@@ -25,9 +25,10 @@ import { activeOptions, maintPickerValues } from "@2990s/shared";
 import {
   APPLICATION_LABEL, REQUEST_STATUS, REQUEST_TYPE_LABEL, awaitsPurchaser, mayClose, mayRaisePco, needsModel, productText, requesterMayChange, specText,
   useApproveProductRequest, useCloseProductRequest, useCreateModelFromRequest, useCreateProductRequest, useProductRequest, useProductRequests,
-  useRejectProductRequest, useUpdateProductRequest, useWithdrawProductRequest,
+  useProductRequestSupplierOptions, useRejectProductRequest, useUpdateProductRequest, useWithdrawProductRequest,
   type ProductRequest, type ProductRequestApplication, type ProductRequestInput, type ProductRequestType,
 } from "../vendor/scm/lib/product-request-queries";
+import { MoneyInput } from "../vendor/scm/components/MoneyInput";
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from "../vendor/scm/lib/mfg-products-queries";
 import { MFG_PRODUCT_CATEGORIES } from "../vendor/shared/product-categories";
 import { useFabricTrackings, fabricOptionLabel } from "../vendor/scm/lib/fabric-queries";
@@ -37,7 +38,7 @@ import { DateField } from "../vendor/scm/components/DateField";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useAuth } from "../auth/AuthContext";
-import { fmtDateOrDash } from "../vendor/shared/format";
+import { fmtDateOrDash, fmtSen } from "../vendor/shared/format";
 
 type View = { t: "list" } | { t: "new" } | { t: "edit"; req: ProductRequest } | { t: "detail"; id: string };
 type Filter = "all" | "waiting" | "approved" | "closed";
@@ -213,6 +214,8 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
         {row("Qty", r.qty)}
         {row("Deliver to", r.deliveryLocation ? `${r.deliveryLocation.name} (${r.deliveryLocation.code})` : "—")}
         {row("Expected", fmtDateOrDash(r.expected_delivery_date))}
+        {row("Supplier", r.supplier ? `${r.supplier.name} (${r.supplier.code})` : "—")}
+        {row("Unit price", r.unit_price_sen != null ? fmtSen(r.unit_price_sen) : "—")}
         {r.special_remarks && row("Remarks", r.special_remarks)}
         {r.status !== "REJECTED" && r.decided_by && row("Decided by", `${r.decided_by}${r.decision_note ? ` · ${r.decision_note}` : ""}`)}
         {r.pco && row("PC Order", `${r.pco.pcNumber} · ${r.pco.status.toLowerCase().replace("_", " ")}`)}
@@ -240,7 +243,10 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
     specialRemarks: initial?.special_remarks ?? null,
     deliveryLocationId: initial?.delivery_location_id ?? null,
     expectedDeliveryDate: initial?.expected_delivery_date ?? null,
+    supplierId: initial?.supplier_id ?? null,
+    unitPriceSen: initial?.unit_price_sen ?? null,
   }));
+  const supplierOptions = useProductRequestSupplierOptions().data?.suppliers ?? [];
   const [newModel, setNewModel] = useState<boolean>(() => !!initial && !initial.item_code);
   const set = (patch: Partial<ProductRequestInput>) => setV((prev) => ({ ...prev, ...patch }));
   const isRepack = v.requestType === "REPACK";
@@ -348,6 +354,14 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
         </select>
       ))}
       {field("Expected delivery date", <DateField fullWidth className="cal-sel" aria-label="Expected delivery date" value={v.expectedDeliveryDate ?? ""} onChange={(iso) => set({ expectedDeliveryDate: iso || null })} />)}
+      <div className="sc-sl"><span className="t">⑤ Supplier and price (if agreed)</span><span className="ln" /></div>
+      {field("Supplier", (
+        <select className="cal-sel" aria-label="Supplier" value={v.supplierId ?? ""} onChange={(e) => set({ supplierId: e.target.value || null })}>
+          <option value="">— not agreed yet —</option>
+          {supplierOptions.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
+        </select>
+      ))}
+      {field("Unit price (MYR)", <MoneyInput bare valueSen={v.unitPriceSen ?? 0} onCommit={(sen) => set({ unitPriceSen: sen != null && sen > 0 ? sen : null })} inputClassName="cal-sel" selectOnFocus aria-label="Unit price" />)}
     </Shell>
   );
 }

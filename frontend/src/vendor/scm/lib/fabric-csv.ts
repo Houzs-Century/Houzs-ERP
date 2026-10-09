@@ -17,9 +17,9 @@
 // parseImportFile picks by extension so callers stay one line.
 // ----------------------------------------------------------------------------
 
-import type { FabricTrackingRow } from './fabric-queries';
+import type { FabricTier, FabricTrackingRow } from './fabric-queries';
 
-type ColKind = 'text' | 'int';
+type ColKind = 'text' | 'int' | 'tier';
 
 export type CsvColumn = {
   csv:    string;                   // header label
@@ -34,8 +34,8 @@ export const CSV_COLUMNS: CsvColumn[] = [
   { csv: 'fabric_description',      field: 'fabric_description',      apiKey: 'fabricDescription',    kind: 'text' },
   { csv: 'supplier_code',           field: 'supplier_code',           apiKey: 'supplierCode',         kind: 'text' },
   { csv: 'supplier',                field: 'supplier',                apiKey: 'supplier',             kind: 'text' },
-  { csv: 'sofa_price_tier',         field: 'sofa_price_tier',         apiKey: 'sofaPriceTier',        kind: 'text' },
-  { csv: 'bedframe_price_tier',     field: 'bedframe_price_tier',     apiKey: 'bedframePriceTier',    kind: 'text' },
+  { csv: 'sofa_price_tier',         field: 'sofa_price_tier',         apiKey: 'sofaPriceTier',        kind: 'tier' },
+  { csv: 'bedframe_price_tier',     field: 'bedframe_price_tier',     apiKey: 'bedframePriceTier',    kind: 'tier' },
   { csv: 'price_sen',             field: 'price_sen',             apiKey: 'priceSen',           kind: 'int' },
   { csv: 'soh_sen',               field: 'soh_sen',               apiKey: 'sohSen',             kind: 'int' },
   { csv: 'po_outstanding_sen',    field: 'po_outstanding_sen',    apiKey: 'poOutstandingSen',   kind: 'int' },
@@ -48,9 +48,31 @@ export const CSV_COLUMNS: CsvColumn[] = [
   { csv: 'lead_time_days',          field: 'lead_time_days',          apiKey: 'leadTimeDays',         kind: 'int' },
 ];
 
-const HEADER_TO_API: Record<string, CsvColumn> = Object.fromEntries(
+/* The table's own toolbar export (FabricsTable, "Fabrics-<date>.csv") writes the
+   on-screen labels and "Price 2", not these keys and PRICE_2. Staff export from
+   whichever button they see first, so that file must import too (BUG-88). */
+const TABLE_EXPORT_HEADERS: Record<string, string> = {
+  code:          'fabric_code',
+  description:   'fabric_description',
+  sofa_tier:     'sofa_price_tier',
+  bedframe_tier: 'bedframe_price_tier',
+};
+
+const HEADER_TO_API: Partial<Record<string, CsvColumn>> = Object.fromEntries(
   CSV_COLUMNS.map((c) => [c.csv, c]),
 );
+for (const [alias, csv] of Object.entries(TABLE_EXPORT_HEADERS)) {
+  const col = HEADER_TO_API[csv];
+  if (col) HEADER_TO_API[alias] = col;
+}
+
+// "Price 2" / "PRICE_2" / "P2" / "2" -> PRICE_2; blank or the table's "—" -> null.
+// undefined = not a tier at all.
+function parseTier(raw: string): FabricTier | null | undefined {
+  if (raw === '' || raw === '—' || raw === '-') return null;
+  const m = /^(?:price[\s_]*|p)?([123])$/i.exec(raw);
+  return m ? (`PRICE_${m[1]}` as FabricTier) : undefined;
+}
 
 function csvEscape(v: unknown): string {
   if (v === null || v === undefined) return '';
@@ -115,8 +137,8 @@ function normalizeHeader(h: string): string {
 function parseGridRows(grid: string[][]): ParsedImport {
   if (grid.length < 1) return { rows: [], errors: ['The file is empty'], warnings: [] };
   const header = (grid[0] ?? []).map(normalizeHeader);
-  if (!header.includes('fabric_code')) {
-    return { rows: [], errors: ['Header must include a fabric_code column'], warnings: [] };
+  if (!header.some((h) => HEADER_TO_API[h]?.csv === 'fabric_code')) {
+    return { rows: [], errors: ['Header must include a fabric_code (or Code) column'], warnings: [] };
   }
   const unknown = header.filter((h) => h && !HEADER_TO_API[h]);
   const warnings = unknown.length ? [`Ignoring unknown columns: ${unknown.join(', ')}`] : [];
@@ -145,6 +167,14 @@ function parseGridRows(grid: string[][]): ParsedImport {
           break;
         }
         obj[col.apiKey] = n;
+      } else if (col.kind === 'tier') {
+        const tier = parseTier(raw);
+        if (tier === undefined) {
+          errors.push(`Row ${r + 1}: ${col.csv} must be Price 1, Price 2 or Price 3 ("${raw}")`);
+          rowOk = false;
+          break;
+        }
+        obj[col.apiKey] = tier;
       } else {
         obj[col.apiKey] = raw === '' ? null : raw;
       }

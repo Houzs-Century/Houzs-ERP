@@ -17,6 +17,7 @@ import {
 import { formatPhone } from "../scm/shared/phone";
 import { fmtDate, fmtDateTime } from "../scm/shared/format";
 import { assrStageLabel } from "../scm/shared/assr-stage-labels";
+import { assrMergedPoText } from "../scm/shared/assr-case-pos";
 import { assrSubStatusLabelOf } from "../scm/shared/assr-sub-statuses";
 
 // Formal service-case document modeled on a standard Malaysian business
@@ -1132,7 +1133,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       <div class="lc">HP</div><div class="vc mono">${esc(cs.phone || "—")}</div>
       <div class="lc">Ref No</div><div class="vc mono">${esc(cs.ref_no || "—")}</div>
       <div class="lc">Delivered Date</div><div class="vc mono">${fmtDate((cs as any).do_date)}</div>
-      <div class="lc">PO No</div><div class="vc mono">${esc(cs.po_no || "—")}</div>
+      <div class="lc">PO No</div><div class="vc mono">${esc(assrMergedPoText(cs) || "—")}</div>
       <div class="lc">SO No</div><div class="vc mono">${esc(cs.doc_no || "—")}</div>
       <div class="lc">Inspection Date</div><div class="vc mono">${fmtDate((cs as any).sched_inspection_date)}</div>
       <div class="lc">Pickup Date</div><div class="vc mono">${fmtDate((cs as any).sched_pickup_date)}</div>
@@ -1240,7 +1241,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     <!-- creditor box -->
     <div class="credit-box">
       <div class="cell"><div class="k">Supplier (Creditor)</div><div class="v">${esc(trip?.creditor_name || trip?.creditor_code || (cs as any).creditor_name || (cs as any).creditor_code || "—")}</div></div>
-      <div class="cell"><div class="k">PO Number</div><div class="v">${esc(cs.po_no || "—")}</div></div>
+      <div class="cell"><div class="k">PO Number</div><div class="v">${esc(assrMergedPoText(cs) || "—")}</div></div>
       <div class="cell"><div class="k">Target Completion</div><div class="v">${supplierTargetIso ? fmtDate(supplierTargetIso) : "—"}</div></div>
     </div>
 

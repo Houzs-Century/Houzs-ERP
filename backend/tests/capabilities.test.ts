@@ -80,6 +80,18 @@ CALLERS.push({
 });
 CALLERS.push({ label: "empty caller object", caller: {} });
 
+// The 2990 POS marketing Title (owner 2026-10-08) is not in the prod snapshot,
+// so without these no caller would take pos.marketing's true branch — plus the
+// near-misses an exact-name rule must refuse.
+for (const name of ["Sales Marketing", "  sales   MARKETING ", "Sales Marketing Intern"]) {
+  for (const permissions of [[], ["*"], ["scm.so.view_all"]]) {
+    CALLERS.push({
+      label: `"${name}" — ${permissions.join(",") || "no flat grants"}`,
+      caller: { position_name: name, department_name: "Sales Department", permissions },
+    });
+  }
+}
+
 /** The registry reads only these fields; the live gates take an AuthUser. This
  *  is the same adapter capabilities.ts uses internally, restated here so the
  *  test feeds the GATE independently rather than through the code under test. */
@@ -152,6 +164,13 @@ const GATES: Record<CapabilityKey, (u: CapabilityCaller) => boolean> = {
   // The composed page-open tier — union of the write gate and the read tier.
   "scm.maintenance.open": (u) =>
     GATES["scm.config.write"](u) || GATES["org.director"](u),
+
+  // pmsAccess.isPosMarketingAccount: Sales, not a director, and EXACTLY the
+  // Title "Sales Marketing" once casing and spacing are normalised.
+  "pos.marketing": (u) =>
+    isSalesUser(asAuthUser(u)) &&
+    !isDirectorUser(asAuthUser(u)) &&
+    (u.position_name ?? "").toLowerCase().replace(/\s+/g, " ").trim() === "sales marketing",
 };
 
 describe("capabilities — every key answers exactly what its backend gate answers", () => {
@@ -303,5 +322,41 @@ describe("scm.maintenance.open — the divergence this PR closes", () => {
         ).toBe(true);
       }
     }
+  });
+});
+
+describe("pos.marketing — the 2990 POS marketing account", () => {
+  const sales = (position_name: string, extra: Partial<CapabilityCaller> = {}): CapabilityCaller => ({
+    position_name, department_name: "Sales Department", permissions: [], ...extra,
+  });
+  const policy = (cohort: "sales" | "full", profile: "rep" | "director" | null) => ({
+    position_id: 999, cohort, profile, can_move_money: false, can_write_config: false, is_fleet: false, duty: "other" as const,
+  });
+
+  test("the Sales Marketing Title is the marketing account", () => {
+    expect(resolveCapabilities(sales("Sales Marketing"))["pos.marketing"]).toBe(true);
+    expect(resolveCapabilities(sales("Sales Marketing", { position_policy: policy("sales", "rep") }))["pos.marketing"]).toBe(true);
+  });
+
+  test("a Title that only contains the words is not — a rename must not grant it", () => {
+    for (const name of ["Sales Marketing Intern", "Marketing Sales", "Sales & Marketing", "Marketing"]) {
+      expect(resolveCapabilities(sales(name))["pos.marketing"], name).toBe(false);
+    }
+  });
+
+  test("an ordinary salesperson is not", () => {
+    for (const name of ["Sales Executive", "Sales Manager", "Sales Person"]) {
+      expect(resolveCapabilities(sales(name))["pos.marketing"], name).toBe(false);
+    }
+  });
+
+  test("the wildcard never makes anyone the marketing account, so an Owner's orders are never blocked", () => {
+    expect(resolveCapabilities(sales("Sales Marketing", { permissions: ["*"] }))["pos.marketing"]).toBe(false);
+    expect(resolveCapabilities({ permissions: ["*"] })["pos.marketing"]).toBe(false);
+  });
+
+  test("the Title's row wins: a director profile or a non-sales cohort is not the marketing account", () => {
+    expect(resolveCapabilities(sales("Sales Marketing", { position_policy: policy("sales", "director") }))["pos.marketing"]).toBe(false);
+    expect(resolveCapabilities(sales("Sales Marketing", { position_policy: policy("full", null) }))["pos.marketing"]).toBe(false);
   });
 });

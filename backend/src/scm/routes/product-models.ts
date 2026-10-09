@@ -38,6 +38,7 @@ import { categorySwapAllowed } from '../shared/category-swap';
 import { invalidModelDefault } from '../shared/model-default-variants';
 import { moveModelCategory } from '../lib/model-category-move';
 import { MFG_PRODUCT_CATEGORIES } from './mfg-products';
+import { isSingleSkuCategory } from '../shared/product-categories';
 
 export const productModels = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -957,7 +958,7 @@ productModels.post('/:id/generate-skus', async (c) => {
         size_label: label,
       });
     }
-  } else if (model.category === 'ACCESSORY' || model.category === 'SERVICE') {
+  } else if (isSingleSkuCategory(model.category)) {
     // No variant axis — the Model itself IS the single SKU. Generate exactly one
     // row whose code is the model code (Wei Siang 2026-06-09: accessories /
     // services have no sizes, but must still produce one sellable SKU so they

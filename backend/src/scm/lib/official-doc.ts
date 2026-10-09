@@ -37,16 +37,32 @@ export const officialActor = (c: any): string | null => {
   return u?.name ?? u?.email ?? null;
 };
 
-/** What a create door stamps when Finance ticks 欠正式单. */
+/** Finance's remark on what to follow up (owner 2026-10-08: 可能是performa
+    invoice, 所以finance 这样也要可以remark 要follow up actual invoice) — a line,
+    at most 500 characters, or none. */
+export const OFFICIAL_NOTE_MAX = 500;
+export const officialNoteOf = (v: unknown): string | null => {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return s ? s.slice(0, OFFICIAL_NOTE_MAX) : null;
+};
+
+/** What a create door stamps when Finance ticks 欠正式单 — with the remark, when one is written. */
 export function officialOwedFields(body: Row, who: string | null): Row {
   if (body.officialDocOwed !== true) return {};
-  return { official_doc: 'OWED', official_doc_at: new Date().toISOString(), official_doc_by: who };
+  const note = officialNoteOf(body.officialDocNote);
+  return { official_doc: 'OWED', official_doc_at: new Date().toISOString(), official_doc_by: who, ...(note ? { official_doc_note: note } : {}) };
 }
 
-/** A draft's edit: the tick put on, or taken off while nothing has come yet. */
+/** A draft's edit: the tick put on (with its remark), the remark changed while
+    still owed, or the tick taken off while nothing has come yet. */
 export function officialOwedUpdates(body: Row, who: string | null, before: Row): Row {
   if (body.officialDocOwed === true && !before.official_doc) {
-    return { official_doc: 'OWED', official_doc_at: new Date().toISOString(), official_doc_by: who };
+    const note = officialNoteOf(body.officialDocNote);
+    return { official_doc: 'OWED', official_doc_at: new Date().toISOString(), official_doc_by: who, ...(note ? { official_doc_note: note } : {}) };
+  }
+  if (body.officialDocOwed === true && before.official_doc === 'OWED' && body.officialDocNote !== undefined) {
+    const note = officialNoteOf(body.officialDocNote);
+    if (note !== (before.official_doc_note ?? null)) return { official_doc_note: note, official_doc_at: new Date().toISOString(), official_doc_by: who };
   }
   if (body.officialDocOwed === false && before.official_doc === 'OWED') {
     return { official_doc: null, official_doc_note: null, official_doc_at: new Date().toISOString(), official_doc_by: who };

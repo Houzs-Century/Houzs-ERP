@@ -32,6 +32,7 @@ import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { BackToPile } from '../../vendor/scm/components/BackToPile';
 import { FilterPills } from '../../components/FilterPills';
+import { PaymentRequestsWaiting } from './PaymentRequestsWaiting';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -368,6 +369,9 @@ export const PaymentVouchers = () => {
           </div>
         }
       />
+
+      {/* Requests waiting for Finance (owner 2026-10-08: 提醒我有几个payment request 还没proceed). */}
+      <PaymentRequestsWaiting />
 
       <p className={styles.eyebrow}>
         {isLoading ? 'Loading vouchers…' : `${rows.length} payment vouchers`}

@@ -282,7 +282,7 @@ async function renderPurchaseOrderInto(
   autoTable: AutoTableFn,
   header: PoHeader,
   items: PoItem[],
-  opts?: { docTitle?: string; sofaPhotos?: Record<string, string> },
+  opts?: { docTitle?: string; sofaPhotos?: Record<string, string>; purchaseLocation?: string | null },
 ): Promise<{ supplierName: string }> {
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 10; // tighter left/right than the SO's 14 (owner 2026-06-19)
@@ -452,6 +452,8 @@ async function renderPurchaseOrderInto(
           );
           return eff ? fmtDocDate(eff) : '';
         })()],
+        /* PC Order only (DEV-57): a PO prints its location under DELIVER TO. */
+        ...(opts?.purchaseLocation ? [['Purchase Location', opts.purchaseLocation] as [string, string]] : []),
       ],
     },
     margin,
@@ -880,7 +882,7 @@ function finalizePoPdf(doc: JsPdf): void {
 export async function generatePurchaseOrderPdf(
   header: PoHeader,
   items: PoItem[],
-  opts?: { docTitle?: string; action?: PdfAction; sofaPhotos?: Record<string, string> },
+  opts?: { docTitle?: string; action?: PdfAction; sofaPhotos?: Record<string, string>; purchaseLocation?: string | null },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;

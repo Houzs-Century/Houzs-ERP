@@ -37,7 +37,7 @@ import styles from './SalesOrderDetail.module.css';
 /** projectId: the event the line's money is for (owner 2026-09-30, 5a) — null = none. */
 export type ApFormLine = { rid: number; description: string; debitAccountCode: string; amountSen: number; projectId: number | null };
 /** officialDocOwed: booked on a proforma or quotation — the official invoice is still owed (欠正式单, item 3). */
-export type ApFormValues = { supplierId: string; supplierRef: string; invoiceDate: string; dueDate: string; description: string; lines: ApFormLine[]; officialDocOwed?: boolean };
+export type ApFormValues = { supplierId: string; supplierRef: string; invoiceDate: string; dueDate: string; description: string; lines: ApFormLine[]; officialDocOwed?: boolean; officialDocNote?: string };
 export type ApFormMode = 'new' | 'edit' | 'copy';
 /** What the routes take — POST / for new and copy, PATCH /:id for edit. */
 export type ApFormSubmit = {
@@ -47,6 +47,8 @@ export type ApFormSubmit = {
   paymentRequestId?: string;
   /** 欠正式单 (item 3): sent only when ticked. */
   officialDocOwed?: boolean;
+  /** Finance's remark on what to follow up (owner 2026-10-08) — with the tick only. */
+  officialDocNote?: string;
 };
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
@@ -59,7 +61,7 @@ export const toSubmit = (v: ApFormValues): ApFormSubmit => ({
   invoiceDate: v.invoiceDate,
   dueDate: v.dueDate || null,
   ...(v.description.trim() ? { notes: v.description.trim() } : {}),
-  ...(v.officialDocOwed ? { officialDocOwed: true } : {}),
+  ...(v.officialDocOwed ? { officialDocOwed: true, ...(v.officialDocNote?.trim() ? { officialDocNote: v.officialDocNote.trim() } : {}) } : {}),
   lines: v.lines
     .filter((l) => l.debitAccountCode && l.amountSen > 0)
     .map((l) => ({
@@ -317,6 +319,13 @@ export const ApInvoiceForm = ({
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', alignSelf: 'end' }}>
             <input type="checkbox" checked={!!v.officialDocOwed} onChange={(e) => set({ officialDocOwed: e.target.checked })} aria-label="Official invoice owed" />
             Proforma / quotation — official invoice owed · 欠正式单
+          </label>
+        )}
+        {mode !== 'edit' && v.officialDocOwed && (
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Remark — what to follow up (optional)</span>
+            <input className={styles.fieldInput} value={v.officialDocNote ?? ''} onChange={(e) => set({ officialDocNote: e.target.value })} maxLength={500}
+              aria-label="Official invoice remark" placeholder="e.g. Proforma only — ask for the tax invoice" />
           </label>
         )}
         <label className={styles.field}>

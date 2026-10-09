@@ -20,6 +20,7 @@ const PCO = {
   has_children: false,
   supplier_id: 'S1',
   supplier: { id: 'S1', name: 'ACME Supplies', code: 'ACM' },
+  purchase_location_id: 'W1',
   po_date: '2026-10-07',
   expected_at: null,
   currency: 'MYR',
@@ -31,6 +32,7 @@ const PCO = {
 const DETAIL = { data: { purchaseOrder: PCO, items: [] }, isPending: false, isError: false };
 const SUPPLIER_DETAIL = { data: { supplier: null, bindings: [] } };
 const EMPTY = { data: [] };
+const WAREHOUSES = { data: [{ id: 'W1', code: '2990S MINI PUCHONG', is_active: true }] };
 const NO_MAINT = { data: undefined };
 
 vi.mock('../../vendor/scm/lib/purchase-consignment-order-queries', () => ({
@@ -53,7 +55,7 @@ vi.mock('../../vendor/scm/lib/fabric-queries', () => ({
   useFabricTrackingsLite: () => EMPTY,
 }));
 vi.mock('../../vendor/scm/lib/inventory-queries', () => ({
-  useWarehouses: () => EMPTY,
+  useWarehouses: () => WAREHOUSES,
 }));
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({
   useConfirm: () => async () => true,
@@ -76,7 +78,7 @@ vi.mock('../../vendor/scm/lib/purchase-order-pdf', () => ({
 }));
 
 describe('PurchaseConsignmentOrderDetail — Print PDF', () => {
-  it('prints the PCO number as the document number', async () => {
+  it('prints the PCO number and its Purchase Location', async () => {
     render(
       <MemoryRouter initialEntries={['/scm/pc-orders/P1']}>
         <Routes>
@@ -89,6 +91,6 @@ describe('PurchaseConsignmentOrderDetail — Print PDF', () => {
     expect(h.genMock).toHaveBeenCalledTimes(1);
     const [header, , opts] = h.genMock.mock.calls[0]!;
     expect(header.po_number).toBe('2990-PCR-2610-001');
-    expect(opts).toMatchObject({ docTitle: 'PURCHASE CONSIGNMENT ORDER', action: 'save' });
+    expect(opts).toMatchObject({ docTitle: 'PURCHASE CONSIGNMENT ORDER', purchaseLocation: '2990S MINI PUCHONG', action: 'save' });
   });
 });
