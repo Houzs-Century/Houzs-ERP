@@ -105,3 +105,51 @@ describe('cleanNumericText / parseNumericText', () => {
     expect(parseNumericText('-3.5')).toBe(-3.5);
   });
 });
+
+describe('NumberInput — stepper (DEV-62 line qty)', () => {
+  function StepHarness({ initial }: { initial: number }) {
+    const [v, setV] = useState<number | null>(initial);
+    return (
+      <>
+        <NumberInput value={v} sign="unsigned" decimal={false} step={1} min={1} aria-label="n" onValueChange={setV} />
+        <span data-testid="v">{String(v)}</span>
+      </>
+    );
+  }
+
+  test('the arrow buttons step the value and stop at min', () => {
+    render(<StepHarness initial={1} />);
+    const dec = screen.getByLabelText('Decrease') as HTMLButtonElement;
+    expect(dec.disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText('Increase'));
+    fireEvent.click(screen.getByLabelText('Increase'));
+    expect(val()).toBe('3');
+    expect(box().value).toBe('3');
+    fireEvent.click(dec);
+    expect(val()).toBe('2');
+  });
+
+  test('ArrowUp / ArrowDown step while focused and the box text follows', () => {
+    render(<StepHarness initial={2} />);
+    fireEvent.focus(box());
+    fireEvent.keyDown(box(), { key: 'ArrowUp' });
+    expect(box().value).toBe('3');
+    fireEvent.keyDown(box(), { key: 'ArrowDown' });
+    fireEvent.keyDown(box(), { key: 'ArrowDown' });
+    fireEvent.keyDown(box(), { key: 'ArrowDown' });
+    expect(box().value).toBe('1');
+    expect(val()).toBe('1');
+  });
+
+  test('typing still works on a stepper box', () => {
+    render(<StepHarness initial={1} />);
+    fireEvent.focus(box());
+    fireEvent.change(box(), { target: { value: '12' } });
+    expect(val()).toBe('12');
+  });
+
+  test('no step prop renders no arrows', () => {
+    render(<Harness sign="unsigned" decimal={false} initial={1} emptyAs={0} />);
+    expect(screen.queryByLabelText('Increase')).toBeNull();
+  });
+});
