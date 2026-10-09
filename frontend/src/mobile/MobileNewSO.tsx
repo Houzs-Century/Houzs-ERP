@@ -3128,12 +3128,21 @@ function LineCard({
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 7, padding: 10 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-          <Field label="Qty" style={{ flex: 0.5 }}>
-            <input className="fld-i" inputMode="numeric" value={line.qty} onChange={(e) => onChange({ qty: e.target.value })} />
+          {/* DEV-62 (Adrian): qty is a small count, so it steps with − / +;
+              the price is a big number, so it gets the decimal keypad. */}
+          <Field label="Qty" style={{ flex: 0.7 }}>
+            <div className="qty-step">
+              <button type="button" aria-label="Decrease qty" disabled={(num(line.qty) || 1) <= 1}
+                onClick={() => onChange({ qty: String(Math.max(1, (num(line.qty) || 1) - 1)) })}>{"−"}</button>
+              <input className="fld-i" inputMode="numeric" aria-label="Qty" value={line.qty} onChange={(e) => onChange({ qty: e.target.value })} />
+              <button type="button" aria-label="Increase qty"
+                onClick={() => onChange({ qty: String((num(line.qty) || 1) + 1) })}>{"+"}</button>
+            </div>
           </Field>
           <Field label="Unit Price" style={{ flex: 1 }}>
             <input
               className="fld-i money"
+              inputMode="decimal"
               value={line.price}
               disabled={!canEditPrice}
               title={!canEditPrice ? "Price follows the SKU Master sell price — admin can override" : undefined}

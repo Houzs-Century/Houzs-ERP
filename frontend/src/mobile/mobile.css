@@ -260,6 +260,11 @@
 .hz-m .fld-i::placeholder { color: #9aa093; }
 .hz-m .fld-i:focus { border-color: #16695f; box-shadow: 0 0 0 2px rgba(22,105,95,.15); }
 .hz-m .fld-i:disabled { background: #f4f6f3; color: #767b6e; }
+.hz-m .qty-step { display: flex; align-items: stretch; gap: 4px; }
+.hz-m .qty-step .fld-i { text-align: center; min-width: 0; }
+.hz-m .qty-step button { flex: none; width: 30px; border: 1px solid rgba(34,31,32,.14); border-radius: 9px; background: #f4f6f3; color: #0c3f39; font-size: 16px; font-weight: 700; line-height: 1; padding: 0; }
+.hz-m .qty-step button:active { background: #e3ebe7; }
+.hz-m .qty-step button:disabled { color: #b9bdb3; }
 /* An EMPTY <input type=date> collapses on iOS Safari — the shadow
    ::-webkit-date-and-time-value has no text to give it a box, so the control
    renders shorter and narrower than the text inputs beside it. Owner sighting
