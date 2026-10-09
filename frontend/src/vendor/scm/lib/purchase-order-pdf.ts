@@ -177,6 +177,26 @@ const fmtMoney = (centi: number, currency: string): string => fmtMoneySen(centi,
 const fmtAmount = (centi: number): string =>
   (centi / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+/** DEV-65 (Sim 2026-10-09): delivery under 2 weeks after the PO date prints
+    "URGENT", under 1 week "TOP URGENT". Compared on the printed (MYT) dates so
+    the badge always agrees with the Date / Delivery Date rows beside it. */
+export function poUrgencyLabel(
+  poDate: string | null | undefined,
+  deliveryDate: string | null | undefined,
+): 'TOP URGENT' | 'URGENT' | null {
+  const toUtcDay = (d: string | null | undefined): number | null => {
+    const m = /^(\d{4})\/(\d{2})\/(\d{2})$/.exec(fmtDocDate(d));
+    return m ? Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!) : null;
+  };
+  const from = toUtcDay(poDate);
+  const to = toUtcDay(deliveryDate);
+  if (from === null || to === null) return null;
+  const days = (to - from) / 86_400_000;
+  if (days < 7) return 'TOP URGENT';
+  if (days < 14) return 'URGENT';
+  return null;
+}
+
 /* A sofa is split into per-MODULE PO lines. Each line's `variants` carries that
    ONE module's spatial slot at the TOP LEVEL (x / y / rot + cellIndex), its module
    code lives in `item_code` ("{MODEL}-2A(RHF)"), and a shared `summary` string
@@ -416,6 +436,23 @@ async function renderPurchaseOrderInto(
   // Your Ref No above).
   const singleSourceSo = (!lineSoDocs.length && noteSoDocTokens.length === 1) ? noteSoDocTokens[0]! : '';
 
+  const effDelivery = effectiveDelivery(
+    header.expected_at,
+    header.supplier_delivery_date_2,
+    header.supplier_delivery_date_3,
+    header.supplier_delivery_date_4,
+  );
+  const poDetailRows: Array<[string, string]> = [
+    // _R suffix (owner 2026-07-27) — the printed number shows the revision.
+    ['PO No', poDisplayNumber(header.po_number, header.revision)],
+    ['Your Ref No', yourRef],
+    ['Date', fmtDocDate(header.po_date)],
+    /* Migration 0180 — print the EFFECTIVE (latest revised) delivery date. */
+    ['Delivery Date', effDelivery ? fmtDocDate(effDelivery) : ''],
+    /* PC Order only (DEV-57): a PO prints its location under DELIVER TO. */
+    ...(opts?.purchaseLocation ? [['Purchase Location', opts.purchaseLocation] as [string, string]] : []),
+  ];
+  const infoTop = y;
   y = drawInfoColumns(doc, y,
     /* Canonical supplier block — Company, Code, Address, Tel, Fax, Email,
        Attn, Terms — via the shared helper. formatPhone the tel like every
@@ -435,29 +472,28 @@ async function renderPurchaseOrderInto(
       attention: sFull.attention ?? s.contact_person,
       paymentTerms: sFull.payment_terms ?? header.supplier?.payment_terms ?? null,
     }),
-    {
-      title: 'PO DETAILS',
-      rows: [
-        // _R suffix (owner 2026-07-27) — the printed number shows the revision.
-        ['PO No', poDisplayNumber(header.po_number, header.revision)],
-        ['Your Ref No', yourRef],
-        ['Date', fmtDocDate(header.po_date)],
-        /* Migration 0180 — print the EFFECTIVE (latest revised) delivery date. */
-        ['Delivery Date', (() => {
-          const eff = effectiveDelivery(
-            header.expected_at,
-            header.supplier_delivery_date_2,
-            header.supplier_delivery_date_3,
-            header.supplier_delivery_date_4,
-          );
-          return eff ? fmtDocDate(eff) : '';
-        })()],
-        /* PC Order only (DEV-57): a PO prints its location under DELIVER TO. */
-        ...(opts?.purchaseLocation ? [['Purchase Location', opts.purchaseLocation] as [string, string]] : []),
-      ],
-    },
+    { title: 'PO DETAILS', rows: poDetailRows },
     margin,
   );
+
+  /* Boxed under the PO DETAILS rows; the row geometry mirrors drawInfoColumns
+     (first baseline +4.6, 4 per row, blank rows skipped). */
+  const urgency = poUrgencyLabel(header.po_date, effDelivery);
+  if (urgency) {
+    const printedRows = poDetailRows.filter(([, v]) => v.trim()).length;
+    const boxX = pageW / 2 + 2;
+    const boxY = infoTop + 4.6 + printedRows * 4 - 1;
+    const boxW = 50;
+    const boxH = 8;
+    const prevLineWidth = doc.getLineWidth();
+    doc.setDrawColor(220, 38, 38); doc.setLineWidth(0.5);
+    doc.rect(boxX, boxY, boxW, boxH);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(220, 38, 38);
+    doc.text(urgency, boxX + boxW / 2, boxY + boxH / 2 + 1.4, { align: 'center' });
+    doc.setTextColor(0); doc.setDrawColor(0); doc.setLineWidth(prevLineWidth);
+    doc.setFont('helvetica', 'normal');
+    y = Math.max(y, boxY + boxH + 4);
+  }
 
   /* Deliver To — the purchase-location warehouse + its FULL address, wrapped
      full-width so the supplier sees exactly where to ship (owner 2026-06-19;
