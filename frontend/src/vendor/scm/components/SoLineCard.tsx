@@ -70,7 +70,7 @@ import { SpecialOrders } from './SpecialOrders';
 import styles from './SoLineCard.module.css';
 import { DateField } from "./DateField";
 import { DiscountInput } from './DiscountInput';
-import { NumberInput } from './NumberInput';
+import { NumberInput, cleanNumericText } from './NumberInput';
 import { dropOneMultiPick, isSofaGroup, multiPickCount, tapMultiPick } from '../lib/sofa-piece-lines';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -970,10 +970,13 @@ const SoLineCardInner = ({
           onChange={(e) => onChange({ remark: e.target.value })}
         />
 
-        {/* 4. Qty */}
+        {/* 4. Qty — DEV-62 (Adrian): qty is a small count, so it gets the
+             up/down arrows; the Unit Price beside it is typed. */}
         <NumberInput
           sign="unsigned"
           decimal={false}
+          step={1}
+          min={1}
           className={styles.numericInput}
           value={draft.qty === 0 ? null : draft.qty}
           disabled={!isEditing}
@@ -986,8 +989,8 @@ const SoLineCardInner = ({
              amount cell is impossible to miss between the qty and date
              columns that sit either side of it. */}
         <input
-          type="number"
-          step="0.01"
+          type="text"
+          inputMode="decimal"
           className={styles.priceInput}
           value={priceText}
           disabled={!isEditing || !canEditPrice}
@@ -997,7 +1000,7 @@ const SoLineCardInner = ({
               : undefined
           }
           onChange={(e) => {
-            const t = e.target.value;
+            const t = cleanNumericText(e.target.value, 'signed', true);
             setPriceText(t);
             if (isFeeLine) {
               /* A BLANK box is mid-edit, not "waive the fee". `Number('')` is
