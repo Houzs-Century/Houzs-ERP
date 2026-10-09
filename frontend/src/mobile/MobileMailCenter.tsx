@@ -9,6 +9,7 @@ import { formatDate } from "../lib/utils";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { useAuth } from "../auth/AuthContext";
 import { pickDefaultFromAddress } from "../pages/MailCenter/mail-from-default";
+import { deliveryLabel, sentToast, type DeliveryStatus } from "../pages/MailCenter/mail-delivery";
 import {
   fetchOutbox,
   fetchOutboxDetail,
@@ -119,6 +120,7 @@ type Message = {
   sentAt: string;
   receivedAt: string;
   createdAt: string;
+  deliveryStatus?: DeliveryStatus;
   attachments?: Attachment[];
 };
 
@@ -1048,6 +1050,9 @@ function MessageBubble({ m }: { m: Message }) {
           {!out && m.fromAddress && (
             <span style={{ fontSize: 10, color: "#9aa093", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.fromAddress}</span>
           )}
+          {deliveryLabel(m.deliveryStatus) && (
+            <span style={{ fontSize: 10, fontWeight: 700, flex: "none", color: m.deliveryStatus === "failed" ? "#b42318" : "#b54708" }}>{deliveryLabel(m.deliveryStatus)}</span>
+          )}
           <span style={{ fontSize: 10, color: "#9aa093", marginLeft: "auto", flex: "none" }}>{fmtMsgTime(m)}</span>
         </div>
         {rawHtml ? (
@@ -1202,13 +1207,13 @@ function MailReply({
     }
     setSending(true);
     try {
-      await api.post(`/api/mail-center/threads/${thread.id}/reply`, {
+      const res = await api.post<{ queued?: boolean }>(`/api/mail-center/threads/${thread.id}/reply`, {
         text: text.trim(),
         ...(replyAll ? { replyAll: true } : {}),
         fromAddress: from || undefined,
         ...(files.length > 0 ? { attachments: attachmentPayload(files) } : {}),
       });
-      toast.success(replyAll ? "Reply sent to everyone." : "Reply sent.");
+      toast.success(sentToast(res.queued, replyAll ? "Reply sent to everyone." : "Reply sent."));
       onSent();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't send reply.");
@@ -1406,7 +1411,7 @@ function MailCompose({
     }
     setSending(true);
     try {
-      await api.post("/api/mail-center/compose", {
+      const res = await api.post<{ queued?: boolean }>("/api/mail-center/compose", {
         fromAddress: from,
         to: toList,
         ...(ccList.length ? { cc: ccList } : {}),
@@ -1415,7 +1420,7 @@ function MailCompose({
         text: text.trim(),
         ...(files.length > 0 ? { attachments: attachmentPayload(files) } : {}),
       });
-      toast.success("Email sent.");
+      toast.success(sentToast(res.queued, "Email sent."));
       onSent();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't send email.");

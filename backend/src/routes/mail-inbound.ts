@@ -14,8 +14,13 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { ingestInboundEmail, type InboundEmailPayload } from "./mail-center";
+import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 
 const app = new Hono<{ Bindings: Env }>();
+
+// mail-sync caps attachments at 15 MB a message; base64 adds a third, plus the
+// bodies. Anything larger did not come from it.
+export const MAX_INBOUND_BYTES = 25 * 1024 * 1024;
 
 // Length-independent constant-time string compare. Returns false fast on a
 // length mismatch (length is not secret here — the secret's value is), else
@@ -37,14 +42,27 @@ app.post("/", async (c) => {
   if (secret.length < 16) {
     return c.json({ error: "inbound mail not configured" }, 503);
   }
+  // Only wrong secrets are counted. The secret holder (mail-sync) posts every
+  // message of the last 3 days each run, sequentially, faster than KV accepts
+  // writes to one key, so a per-call counter there would not hold anyway.
   const provided = c.req.header("x-mail-secret") ?? "";
   if (!timingSafeEqual(provided, secret)) {
-    return c.json({ error: "Unauthorized" }, 401);
+    return (await checkRateLimit(c, "mail-inbound-auth", clientIp(c), 20, 900)) ?? c.json({ error: "Unauthorized" }, 401);
   }
 
-  const payload = await c.req
-    .json<InboundEmailPayload>()
-    .catch(() => null);
+  if (Number(c.req.header("content-length") ?? 0) > MAX_INBOUND_BYTES) {
+    return c.json({ error: "payload too large" }, 413);
+  }
+  const raw = await c.req.text().catch(() => "");
+  if (raw.length > MAX_INBOUND_BYTES) {
+    return c.json({ error: "payload too large" }, 413);
+  }
+  let payload: InboundEmailPayload | null = null;
+  try {
+    payload = JSON.parse(raw) as InboundEmailPayload;
+  } catch {
+    payload = null;
+  }
   if (!payload || typeof payload !== "object") {
     return c.json({ error: "invalid payload" }, 400);
   }

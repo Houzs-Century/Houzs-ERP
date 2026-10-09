@@ -76,21 +76,21 @@ export interface SendOptions {
   // hello@2990shome.com). The address must be on a Resend-VERIFIED domain to
   // deliver. Bare address (no "<>") — the company display name is added here.
   from?: string | null;
-  // Optional attachments forwarded to the provider on the IMMEDIATE send (Mail
-  // Center reply/compose). `content` is base64. NOT persisted to the outbox row
-  // (email_outbox has no attachment column), so a drained retry sends body-only.
+  // Optional attachments (Mail Center reply/compose). `content` is base64. When
+  // the immediate send fails the files are copied to R2 and listed on the outbox
+  // row, so the cron retry sends the complete message. If they cannot be stored
+  // the row is marked terminal rather than retried body-only.
   attachments?: Array<{ filename: string; content: string }>;
+  // RFC threading headers (In-Reply-To / References) for a Mail Center reply.
+  // Stored on the outbox row so a retried reply still threads at the customer.
+  headers?: Record<string, string> | null;
   // Whether a FAILED immediate send may be retried by the 5-minute cron drain.
-  // Default true (the historical behaviour, and the right one for a body-only
-  // message: a durable retry is strictly better than a lost email).
+  // Default true (a durable retry is strictly better than a lost email).
   //
-  // Pass FALSE when the message's value depends on an ATTACHMENT. email_outbox
-  // has no attachment column (see `attachments` above), so a drained retry
-  // re-sends the BODY ALONE — for a document email that means the supplier or
-  // customer receives a covering note for a document that isn't there, while the
-  // operator, having been told "not sent", sends a second complete copy. The row
-  // is still written (so the failure is visible in the outbox and email_log); it
-  // is just marked terminal instead of pending.
+  // Pass FALSE when the operator is told "not sent" and will send again by hand
+  // (the PO / DO document emails): a retry on top of that is a second copy. The
+  // row is still written (so the failure is visible in the outbox and
+  // email_log); it is just marked terminal instead of pending.
   outboxRetry?: boolean;
   // Which company's identity the outbound mail carries ('HOUZS' | '2990').
   // Drives the From DISPLAY NAME (the address itself stays the verified Resend
@@ -103,6 +103,9 @@ export interface SendResult {
   status: "sent" | "skipped" | "error";
   providerId?: string;
   reason?: string;
+  outboxId?: string;
+  // An "error" whose outbox row stays pending: the cron drain will deliver it.
+  retrying?: boolean;
 }
 
 const PURPOSE_TOGGLE_KEYS: Record<EmailPurpose, string> = {
@@ -210,7 +213,7 @@ function stripHtml(html: string): string {
 // outbox drain. Returns 'sent' | 'error' (caller pre-checks channel + key).
 async function deliverViaResend(
   env: Env,
-  m: { to: string; cc?: string | null; bcc?: string | null; subject: string; html: string; text?: string | null; replyTo?: string | null; from?: string | null; attachments?: Array<{ filename: string; content: string }> | null; companyCode?: string | null },
+  m: { to: string; cc?: string | null; bcc?: string | null; subject: string; html: string; text?: string | null; replyTo?: string | null; from?: string | null; attachments?: Array<{ filename: string; content: string }> | null; headers?: Record<string, string> | null; companyCode?: string | null },
 ): Promise<SendResult> {
   // From-name + fallback sender address come from the central Branding config
   // (per-company: m.companyCode, default HOUZS) so the outbound identity tracks
@@ -276,6 +279,7 @@ async function deliverViaResend(
         text: m.text || stripHtml(m.html),
         ...(replyTo ? { reply_to: replyTo } : {}),
         ...(m.attachments?.length ? { attachments: m.attachments } : {}),
+        ...(m.headers && Object.keys(m.headers).length ? { headers: m.headers } : {}),
       }),
     });
     if (!resp.ok) {
@@ -342,17 +346,19 @@ export async function sendEmail(env: Env, opts: SendOptions): Promise<SendResult
   // to deliver immediately. On failure the row stays 'pending' for the */5 cron
   // drain (drainEmailOutbox) to retry. email_log remains the per-attempt audit.
   const id = crypto.randomUUID();
+  let enqueued = false;
   try {
     await env.DB.prepare(
       `INSERT INTO email_outbox
-         (id, to_address, cc_address, bcc_address, subject, body_html, body_text, purpose, ref_type, ref_id, reply_to, company_code, status, attempts)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1)`,
+         (id, to_address, cc_address, bcc_address, subject, body_html, body_text, purpose, ref_type, ref_id, reply_to, company_code, from_address, headers, status, attempts)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1)`,
     )
       /* Stored as the joined lists so a cron retry sends to exactly the same
          people the immediate attempt did — a retry that quietly dropped the Cc
          would be worse than the failure it is recovering from. */
-      .bind(id, to, ccList.join(", ") || null, bccList.join(", ") || null, opts.subject, opts.html, opts.text ?? null, opts.purpose, opts.refType ?? null, opts.refId ?? null, opts.replyTo ?? null, opts.companyCode ?? null)
+      .bind(id, to, ccList.join(", ") || null, bccList.join(", ") || null, opts.subject, opts.html, opts.text ?? null, opts.purpose, opts.refType ?? null, opts.refId ?? null, opts.replyTo ?? null, opts.companyCode ?? null, opts.from ?? null, opts.headers ? JSON.stringify(opts.headers) : null)
       .run();
+    enqueued = true;
   } catch (e) {
     console.warn("[email] outbox enqueue failed; sending inline only:", e);
   }
@@ -367,26 +373,91 @@ export async function sendEmail(env: Env, opts: SendOptions): Promise<SendResult
     replyTo: opts.replyTo,
     from: opts.from,
     attachments: opts.attachments,
+    headers: opts.headers,
     companyCode: opts.companyCode,
   });
+  let retrying = false;
   try {
     if (result.status === "sent") {
-      await env.DB.prepare(`UPDATE email_outbox SET status='sent', sent_at=datetime('now') WHERE id=?`).bind(id).run();
+      await env.DB.prepare(`UPDATE email_outbox SET status='sent', sent_at=datetime('now'), provider_id=? WHERE id=?`).bind(result.providerId ?? null, id).run();
     } else if (opts.outboxRetry === false) {
-      // Attachment-bearing message: mark terminal so the cron never re-delivers
-      // it body-only (see SendOptions.outboxRetry). The row and the reason stay
-      // for the ops trace — this suppresses the RETRY, not the record.
+      // The caller tells the operator "not sent" and they send again by hand, so
+      // a retry would be a second copy (see SendOptions.outboxRetry). The row and
+      // the reason stay for the ops trace — this suppresses the RETRY only.
       await env.DB.prepare(`UPDATE email_outbox SET status='failed', last_error=? WHERE id=?`)
-        .bind(`${result.reason ?? "send failed"} [not retried: message carried an attachment the outbox cannot store]`, id)
+        .bind(`${result.reason ?? "send failed"} [not retried: the caller reports the failure instead]`, id)
         .run();
+    } else if (opts.attachments?.length) {
+      const stashed = await stashOutboxAttachments(env, id, opts.attachments);
+      if (stashed) {
+        await env.DB.prepare(`UPDATE email_outbox SET attachments=?, last_error=? WHERE id=?`).bind(stashed, result.reason ?? null, id).run();
+        retrying = enqueued;
+      } else {
+        await env.DB.prepare(`UPDATE email_outbox SET status='failed', last_error=? WHERE id=?`)
+          .bind(`${result.reason ?? "send failed"} [not retried: attachments could not be stored for the retry]`, id)
+          .run();
+      }
     } else {
       await env.DB.prepare(`UPDATE email_outbox SET last_error=? WHERE id=?`).bind(result.reason ?? null, id).run();
+      retrying = enqueued;
     }
   } catch {
     /* outbox bookkeeping is best-effort */
   }
   await logEmail(env, opts, result);
-  return result;
+  if (!enqueued) return result;
+  return result.status === "error" ? { ...result, outboxId: id, retrying } : { ...result, outboxId: id };
+}
+
+// R2 copy of a failed send's attachments (the base64 text as given), so the
+// drain can send the complete message. null = could not store; the caller then
+// marks the row terminal instead of letting it retry body-only.
+async function stashOutboxAttachments(
+  env: Env,
+  outboxId: string,
+  attachments: Array<{ filename: string; content: string }>,
+): Promise<string | null> {
+  try {
+    const list: Array<{ filename: string; key: string }> = [];
+    for (const [i, a] of attachments.entries()) {
+      const key = `mail-outbox/${outboxId}/${i + 1}`;
+      await env.POD_BUCKET.put(key, a.content);
+      list.push({ filename: a.filename, key });
+    }
+    return JSON.stringify(list);
+  } catch (e) {
+    console.warn("[email] could not store attachments for retry:", e);
+    return null;
+  }
+}
+
+// null = a listed file is gone; the drain must not send without it.
+async function loadOutboxAttachments(
+  env: Env,
+  json: string,
+): Promise<Array<{ filename: string; content: string }> | null> {
+  try {
+    const list = JSON.parse(json) as Array<{ filename: string; key: string }>;
+    const out: Array<{ filename: string; content: string }> = [];
+    for (const a of list) {
+      const obj = await env.POD_BUCKET.get(a.key);
+      if (!obj) return null;
+      out.push({ filename: a.filename, content: await obj.text() });
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+function parseHeaders(json: string | null): Record<string, string> | null {
+  if (!json) return null;
+  try {
+    const v = JSON.parse(json);
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, string>) : null;
+  } catch {
+    return null;
+  }
 }
 
 // Cron drain (called from the every-5-min scheduled handler): retry pending
@@ -398,7 +469,7 @@ export async function drainEmailOutbox(
 ): Promise<{ processed: number; sent: number; failed: number }> {
   if (!env.RESEND_API_KEY) return { processed: 0, sent: 0, failed: 0 };
   const rows = await env.DB.prepare(
-    `SELECT id, to_address, cc_address, bcc_address, subject, body_html, body_text, purpose, ref_type, ref_id, reply_to, company_code, attempts
+    `SELECT id, to_address, cc_address, bcc_address, subject, body_html, body_text, purpose, ref_type, ref_id, reply_to, company_code, from_address, headers, attachments, attempts
        FROM email_outbox WHERE status = 'pending' ORDER BY created_at LIMIT ?`,
   )
     .bind(limit)
@@ -417,6 +488,9 @@ export async function drainEmailOutbox(
       ref_id: number | null;
       reply_to: string | null;
       company_code: string | null;
+      from_address: string | null;
+      headers: string | null;
+      attachments: string | null;
       attempts: number;
     }>();
 
@@ -447,6 +521,16 @@ export async function drainEmailOutbox(
       );
       continue;
     }
+    const attachments = r.attachments ? await loadOutboxAttachments(env, r.attachments) : null;
+    if (r.attachments && !attachments) {
+      await env.DB.prepare(
+        `UPDATE email_outbox SET status='failed', last_error='attachment missing at drain' WHERE id=?`,
+      )
+        .bind(r.id)
+        .run();
+      failed++;
+      continue;
+    }
     const result = await deliverViaResend(env, {
       to: r.to_address,
       cc: r.cc_address,
@@ -455,11 +539,14 @@ export async function drainEmailOutbox(
       html: r.body_html ?? "",
       text: r.body_text,
       replyTo: r.reply_to,
+      from: r.from_address,
+      headers: parseHeaders(r.headers),
+      attachments,
       companyCode: r.company_code,
     });
     const attempts = (r.attempts ?? 0) + 1;
     if (result.status === "sent") {
-      await env.DB.prepare(`UPDATE email_outbox SET status='sent', sent_at=datetime('now'), attempts=? WHERE id=?`).bind(attempts, r.id).run();
+      await env.DB.prepare(`UPDATE email_outbox SET status='sent', sent_at=datetime('now'), attempts=?, provider_id=? WHERE id=?`).bind(attempts, result.providerId ?? null, r.id).run();
       sent++;
     } else {
       const status = attempts >= 3 ? "failed" : "pending";
