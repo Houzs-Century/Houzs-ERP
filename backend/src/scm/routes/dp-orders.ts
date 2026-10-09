@@ -38,6 +38,7 @@ import {
   type CrewAssignment, type DeliveryScope,
 } from '../lib/deliveryScope';
 import { supabaseAuth } from '../middleware/auth';
+import { ADDRESS_COLS } from '../lib/so-address-on-save';
 
 export const dpOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -175,7 +176,8 @@ const createSchema = z.object({
    the address; city / postcode / state alone do not tell a driver where to go.
    Every job type is held to it — TRANSFER and LORRY_SERVICE get theirs from the
    warehouse / workshop master, and the operator types it when that is blank. */
-const ADDRESS_LINES = ['address1', 'address2', 'address3', 'address4'] as const;
+// The four address lines, one home: so-address-on-save.ts.
+const ADDRESS_LINES = ADDRESS_COLS;
 const hasAddress = (row: Record<string, unknown>): boolean =>
   ADDRESS_LINES.some((k) => String(row[k] ?? '').trim() !== '');
 const ADDRESS_REQUIRED = {

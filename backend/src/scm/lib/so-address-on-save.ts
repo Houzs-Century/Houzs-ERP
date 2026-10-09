@@ -21,7 +21,7 @@ import { fitSoAddress } from '../../services/autocount-address-fit';
 type Sb = { from: (t: string) => any };
 
 /** The four columns, as one unit. They are fitted together or not at all. */
-const ADDRESS_COLS = ['address1', 'address2', 'address3', 'address4'] as const;
+export const ADDRESS_COLS = ['address1', 'address2', 'address3', 'address4'] as const;
 
 /**
  * Fit a pending UPDATE's address, IN PLACE, when the change touches one.
