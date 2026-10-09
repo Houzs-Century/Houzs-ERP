@@ -52,7 +52,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { APIProvider, Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
 import { X, MapPin as MapPinIcon } from 'lucide-react';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen, fmtTime } from '../../vendor/shared/format';
 import {
   clusterPins,
   legendFromRoutes,
@@ -65,6 +65,8 @@ import {
   type MapRoute,
   type ZoneSummary,
 } from '../../vendor/scm/lib/delivery-map-model';
+import { STOP_STATUS_COLOR, STOP_STATUS_LABEL, type StopStatus } from '../../vendor/scm/lib/delivery-stop-status';
+import type { VehiclePosition } from '../../vendor/scm/lib/vehicle-positions';
 
 const MAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 
@@ -119,6 +121,10 @@ type OverlayProps = {
   onRouteClick?: (routeId: string) => void;
   onHoverRef?: (ref: string | null) => void;
   onMapTypeChange?: (mapTypeId: string) => void;
+  /** Colour stops by where they are in the run (null = by trip). */
+  statusByRef: Map<string, StopStatus> | null;
+  vehicles: VehiclePosition[];
+  onVehicleClick?: (v: VehiclePosition) => void;
 };
 
 /* Imperative overlay — markers + polylines drawn/torn down on every change so
@@ -127,7 +133,7 @@ type OverlayProps = {
    direction arrows + the region fly-to). */
 function PanelOverlay({
   pins, routes, depot, focus, selectedRef, emphasisRouteId, regionKey, viewKey,
-  onPinClick, onRouteClick, onHoverRef, onMapTypeChange,
+  onPinClick, onRouteClick, onHoverRef, onMapTypeChange, statusByRef, vehicles, onVehicleClick,
 }: OverlayProps) {
   const map = useMap();
   const objectsRef = useRef<Array<{ setMap: (m: google.maps.Map | null) => void }>>([]);
@@ -196,6 +202,32 @@ function PanelOverlay({
     const onRouteRefs = new Set<string>();
     for (const r of routes) for (const s of r.stops) onRouteRefs.add(s.ref);
 
+    const statusOf = (ref: string): StopStatus | null => statusByRef?.get(ref) ?? null;
+
+    /* Lorries — where each run is now. Not part of the fit: the view frames the
+       day's stops, and a lorry still at the depot must not zoom the map out. */
+    for (const v of vehicles) {
+      const at = fmtTime(v.recordedAt);
+      const marker = new google.maps.Marker({
+        position: { lat: v.lat, lng: v.lng },
+        map,
+        title: `${v.label} · last position ${at}${v.lorryId ? ' · click for Fleet Health' : ''}`,
+        zIndex: 4000,
+        label: { text: v.label, color: '#111827', fontWeight: 'bold', fontSize: '11px' },
+        icon: {
+          path: 'M -11 -7 L 5 -7 L 5 -3 L 9 -3 L 12 1 L 12 6 L -11 6 Z',
+          scale: 1.3,
+          fillColor: '#111827',
+          fillOpacity: 1,
+          strokeColor: '#ffffff',
+          strokeWeight: 2,
+          labelOrigin: new google.maps.Point(0, 18),
+        },
+      });
+      objectsRef.current.push(marker);
+      if (onVehicleClick) listenersRef.current.push(marker.addListener('click', () => onVehicleClick(v)));
+    }
+
     /* Depot — one dark marker; dims only under emphasis if no route claims it. */
     if (depot) {
       const d = { lat: depot.lat, lng: depot.lng };
@@ -239,6 +271,7 @@ function PanelOverlay({
         path.push(p);
         extend(p, countsForFit);
         const isSel = selectedRef != null && s.ref === selectedRef;
+        const st = statusOf(s.ref);
         const marker = new google.maps.Marker({
           position: p,
           map,
@@ -248,10 +281,11 @@ function PanelOverlay({
           icon: {
             path: google.maps.SymbolPath.CIRCLE,
             scale: isSel ? 15 : 12,
-            fillColor: route.color,
+            /* By status the fill says delivered / on its way / late; the ring keeps the trip colour. */
+            fillColor: st ? STOP_STATUS_COLOR[st] : route.color,
             fillOpacity: opacity,
-            strokeColor: isSel ? '#111111' : '#ffffff',
-            strokeWeight: isSel ? 3 : 2,
+            strokeColor: isSel ? '#111111' : st ? route.color : '#ffffff',
+            strokeWeight: isSel || st ? 3 : 2,
           },
         });
         objectsRef.current.push(marker);
@@ -311,7 +345,7 @@ function PanelOverlay({
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
           scale: isSel ? 12 : 8,
-          fillColor: pin.color,
+          fillColor: statusOf(pin.ref) ? STOP_STATUS_COLOR[statusOf(pin.ref) as StopStatus] : pin.color,
           fillOpacity: dimmed ? 0.25 : 0.95,
           strokeColor: isSel ? '#111111' : '#ffffff',
           strokeWeight: isSel ? 3 : 1.5,
@@ -395,7 +429,7 @@ function PanelOverlay({
     };
     // fitSig folds pins/routes/depot/focus/view identity; handlers are stable per render pass.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, fitSig, selectedRef, zoomBucket, emphasisRouteId]);
+  }, [map, fitSig, selectedRef, zoomBucket, emphasisRouteId, statusByRef, vehicles]);
 
   /* Board row → pin: PAN to the selected ref (no zoom change). */
   useEffect(() => {
@@ -449,11 +483,18 @@ export type DeliveryMapPanelProps = {
   mapHeight?: number;
   /** Rendered under the map (Last Mile's trip/crew cards). */
   children?: ReactNode;
+  /** Where each stop is in its run — offers the Status colouring (Last Mile). */
+  statusByRef?: Map<string, StopStatus> | null;
+  /** Lorries' current positions (vehicle-positions.ts). */
+  vehicles?: VehiclePosition[];
+  onVehicleClick?: (v: VehiclePosition) => void;
   /** Extra classes on the <aside> — the pages pass the split width
    *  (`lg:w-[40%] lg:flex-none`); sticky/top live here so the panel pins while
    *  the board column scrolls. */
   className?: string;
 };
+
+const NO_VEHICLES: VehiclePosition[] = [];
 
 export function DeliveryMapPanel({
   title,
@@ -479,7 +520,18 @@ export function DeliveryMapPanel({
   mapHeight = 440,
   children,
   className,
+  statusByRef = null,
+  vehicles = NO_VEHICLES,
+  onVehicleClick,
 }: DeliveryMapPanelProps) {
+  /* Colour by status (the default when the page knows it) or by trip. */
+  const [colorBy, setColorBy] = useState<'status' | 'trip'>('status');
+  const activeStatus = statusByRef && colorBy === 'status' ? statusByRef : null;
+  const statusCounts = useMemo(() => {
+    const n: Record<StopStatus, number> = { done: 0, active: 0, overdue: 0, scheduled: 0 };
+    for (const st of activeStatus?.values() ?? []) n[st] += 1;
+    return n;
+  }, [activeStatus]);
   const [failed, setFailed] = useState(false);
   const [hoverRef, setHoverRef] = useState<string | null>(null);
   /* Legend-row hover — visual dimming only (no zoom, no board filter). */
@@ -532,6 +584,16 @@ export function DeliveryMapPanel({
           </span>
         )}
         <span className="flex-1" />
+        {statusByRef && (
+          <span className="inline-flex overflow-hidden rounded-full border border-border text-[11px]" role="group" aria-label="Colour stops by">
+            {(['status', 'trip'] as const).map((k) => (
+              <button key={k} type="button" onClick={() => setColorBy(k)} aria-pressed={colorBy === k}
+                className={colorBy === k ? 'bg-accent/10 px-2.5 py-0.5 font-semibold text-accent' : 'px-2.5 py-0.5 text-ink-secondary'}>
+                {k === 'status' ? 'By status' : 'By trip'}
+              </button>
+            ))}
+          </span>
+        )}
         {compactColumns != null && onCompactColumnsChange && (
           <button
             type="button"
@@ -616,6 +678,9 @@ export function DeliveryMapPanel({
                 onRouteClick={onRouteClick}
                 onHoverRef={setHoverRef}
                 onMapTypeChange={setMapTypeId}
+                statusByRef={activeStatus}
+                vehicles={vehicles}
+                onVehicleClick={onVehicleClick}
               />
             </GoogleMap>
           </APIProvider>
@@ -667,6 +732,21 @@ export function DeliveryMapPanel({
       {/* Trip legend — one row per drawn trip: swatch, Trip N, stop count,
           time range, crew (Last Mile), per-stop windows. Hover dims the other
           trips; click is the existing focus behaviour. */}
+      {activeStatus && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-1.5 text-[11.5px] text-ink-secondary">
+          {(['done', 'active', 'overdue', 'scheduled'] as const).map((k) => (
+            <span key={k} className="inline-flex items-center gap-1">
+              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: STOP_STATUS_COLOR[k] }} />
+              {STOP_STATUS_LABEL[k]} <span className="font-semibold tabular-nums text-ink">{statusCounts[k]}</span>
+            </span>
+          ))}
+          {vehicles.length > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block h-2.5 w-3.5 rounded-sm bg-[#111827]" /> Lorry now <span className="font-semibold tabular-nums text-ink">{vehicles.length}</span>
+            </span>
+          )}
+        </div>
+      )}
       {legend.length > 0 && (
         <div className="border-b border-border">
           {legend.map((row) => {

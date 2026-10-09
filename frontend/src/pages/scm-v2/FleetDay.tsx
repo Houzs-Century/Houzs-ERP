@@ -97,6 +97,10 @@ import { AssignSelect, OverflowSection } from './delivery-propose-ui';
 import { PackingListsSection } from '../../vendor/scm/components/PackingListsSection';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { stopStatusByRef } from '../../vendor/scm/lib/delivery-stop-status';
+import { useJobProgressMap } from '../../vendor/scm/lib/job-progress-queries';
+import { jobRefOf, jobKey } from '../../vendor/scm/lib/delivery-job';
+import { useVehiclePositions } from '../../vendor/scm/lib/vehicle-positions';
 
 function driverLine(t: FleetDayTrip): string {
   const parts = [t.driver?.name, ...(t.helpers.map((h) => h.name))].filter(Boolean);
@@ -252,6 +256,16 @@ export function FleetDay() {
       .map((o) => o.so_doc_no);
     return { routeId: focusedId, refs };
   }, [focusedId, boardOrders, date]);
+  /* Map status colours (owner 2026-10-07): delivered / on its way / late, from
+     the DO and the job's On the way / Arrived / POD. Lorries: where each run is
+     now (the crew's phone today, a GPS feed later — vehicle-positions.ts). */
+  const progressMap = useJobProgressMap(mapOpen);
+  const statusByRef = useMemo(() => stopStatusByRef(
+    boardOrders.filter((o) => lastMileSideOf(o, date) != null),
+    (o) => { const j = jobRefOf(o); return j ? progressMap.get(jobKey(j)) ?? null : null; },
+    date, new Date(),
+  ), [boardOrders, date, progressMap]);
+  const vehicles = useVehiclePositions(trips, mapOpen);
   const toggleTripFocus = (routeId: string) => setParam('trip', focusedId === routeId ? null : routeId);
   /* Two-way linkage (same shape as the sibling pages). */
   const [selectedPin, setSelectedPin] = useState<string | null>(null);
@@ -716,6 +730,9 @@ export function FleetDay() {
           ungeocoded={geo.data?.ungeocoded ?? []}
           serverConfigured={geo.data?.configured ?? true}
           isLoading={geo.isLoading || query.isLoading}
+          statusByRef={statusByRef}
+          vehicles={vehicles}
+          onVehicleClick={(v) => { if (v.lorryId) navigate(`/fleet-health/${v.lorryId}`); }}
         >
           {crewSection}
         </DeliveryMapPanel>

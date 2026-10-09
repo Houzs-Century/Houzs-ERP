@@ -77,3 +77,22 @@ export function stopStatusOf(
   }
   return "scheduled";
 }
+
+/** Malaysia's date and clock (UTC+8, no daylight saving) for a moment. */
+export function mytClock(now: Date): { today: string; nowMinutes: number } {
+  const myt = new Date(now.getTime() + 8 * 3600_000);
+  return { today: myt.toISOString().slice(0, 10), nowMinutes: myt.getUTCHours() * 60 + myt.getUTCMinutes() };
+}
+
+/** Every stop of a day's run, keyed by its board ref (so_doc_no). */
+export function stopStatusByRef<R extends StopStatusRow & { so_doc_no: string }>(
+  rows: R[],
+  progressOf: (row: R) => StopProgress,
+  day: string,
+  now: Date,
+): Map<string, StopStatus> {
+  const clock = mytClock(now);
+  const out = new Map<string, StopStatus>();
+  for (const r of rows) out.set(r.so_doc_no, stopStatusOf(r, progressOf(r), { day, ...clock }));
+  return out;
+}
