@@ -31,6 +31,7 @@
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
+import { stockTransferDeliveryPodHandler, stockTransferDeliveryPhotoHandler } from './delivery-job-progress';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { reverseMovements } from '../lib/inventory-movements';
@@ -130,6 +131,11 @@ stockTransfers.get('/', async (c) => {
 });
 
 // ── Detail ────────────────────────────────────────────────────────────
+/* The delivery run's POD of this transfer (record only) — the Transfer job's
+   times and photos, read on the Stock Transfer page. delivery-job-progress.ts. */
+stockTransfers.get('/:id/delivery-pod', stockTransferDeliveryPodHandler);
+stockTransfers.get('/:id/delivery-pod/:dpId/photo/:n', stockTransferDeliveryPhotoHandler);
+
 stockTransfers.get('/:id', async (c) => {
   const db = scmDb(c);
   const id = c.req.param('id');

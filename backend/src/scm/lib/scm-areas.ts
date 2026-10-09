@@ -97,6 +97,7 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/addons/*", "scm.procurement.products"],
   ["/drivers/*", "scm.transportation.drivers"],
   ["/delivery-planning/*", "scm.transportation.drivers"],
+  ["/delivery-jobs/*", "scm.transportation.drivers"],
   ["/delivery-planning-regions/*", "scm.transportation.drivers"],
   ["/delivery-planning-row-marks/*", "scm.transportation.drivers"],
   ["/delivery-planning-row-order/*", "scm.transportation.drivers"],

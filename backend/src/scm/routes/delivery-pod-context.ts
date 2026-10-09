@@ -77,3 +77,84 @@ export const doPodContextHandler = async (c: Context<{ Bindings: Env; Variables:
     items: (items ?? []).map((i: { so_item_id: string | null }) => ({ ...i, cancelled: !!i.so_item_id && cancelledSoItems.has(i.so_item_id) })),
   });
 };
+
+/* A self-scoped caller's OWN Service Case and Project rows on the delivery board
+   (the board's row scope matches only SO and DP rows). Returns their row keys.
+     assr     the leg's stop sits on a trip the caller is crewed on
+              (trip_stops.assr_case_id + stop_type -> leg)
+     project  the caller is that leg's driver / helper on the project
+              (public user ids — projects keep their own crew) */
+export const ASSR_LEG_BY_STOP: Record<string, string> = {
+  PICKUP: 'customer_pickup', INSPECTION: 'inspection', DELIVERY: 'delivery', SERVICE: 'delivery',
+};
+export async function ownServiceAndProjectRowKeys(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  env: Env,
+  scope: { driverIds: ReadonlySet<string>; helperIds: ReadonlySet<string> },
+  userId: number,
+  rows: Array<{ row_type: string; so_doc_no: string; assr_id?: number | null; job_kind?: string | null; dp_job_type?: string | null }>,
+): Promise<Set<string>> {
+  const own = new Set<string>();
+  const assrRows = rows.filter((r) => r.row_type === 'assr' && r.assr_id != null);
+  if (assrRows.length) {
+    const ids = [...new Set(assrRows.map((r) => Number(r.assr_id)))];
+    const { data: stops, error } = await sb.from('trip_stops').select('assr_case_id, stop_type, trip_id').in('assr_case_id', ids);
+    if (error) throw new Error(error.message);
+    const tripIds = [...new Set(((stops ?? []) as Array<{ trip_id: string | null }>).map((s) => s.trip_id).filter(Boolean))];
+    const { data: trips, error: tErr } = tripIds.length
+      ? await sb.from('trips').select('id, driver_id, helper_1_id, helper_2_id').in('id', tripIds)
+      : { data: [], error: null };
+    if (tErr) throw new Error(tErr.message);
+    const mine = new Set(((trips ?? []) as Array<Record<string, string | null>>)
+      .filter((t) => scopeMatchesAssignment({ mode: 'self', ...scope }, {
+        driverIds: [t.driver_id ?? null], helperIds: [t.helper_1_id ?? null, t.helper_2_id ?? null],
+      })).map((t) => t.id));
+    const ownLegs = new Set(((stops ?? []) as Array<{ assr_case_id: number; stop_type: string; trip_id: string | null }>)
+      .filter((s) => s.trip_id && mine.has(s.trip_id))
+      .map((s) => `${s.assr_case_id}#${ASSR_LEG_BY_STOP[s.stop_type] ?? ''}`));
+    for (const r of assrRows) if (ownLegs.has(`${r.assr_id}#${r.job_kind}`)) own.add(r.so_doc_no);
+  }
+  const projectRows = rows.filter((r) => r.row_type === 'project' && r.so_doc_no.startsWith('PRJ:'));
+  if (projectRows.length && Number.isFinite(userId)) {
+    const ids = [...new Set(projectRows.map((r) => Number(r.so_doc_no.slice(4).split('#')[0])))].filter(Number.isFinite);
+    // company-scope: crew lookup for project ids already on the caller's board, which reads projects across companies on purpose (delivery-planning.ts project rows)
+    const res = await env.DB.prepare(
+      `SELECT id, setup_driver_user_id, setup_helper_1_id, setup_helper_2_id,
+              dismantle_driver_user_id, dismantle_helper_1_id, dismantle_helper_2_id
+         FROM projects WHERE id IN (${ids.map(() => '?').join(',')})`,
+    ).bind(...ids).all<Record<string, number | null>>();
+    const byId = new Map((res.results ?? []).map((p) => [Number(p.id), p]));
+    for (const r of projectRows) {
+      const [id, leg] = r.so_doc_no.slice(4).split('#');
+      const p = byId.get(Number(id));
+      if (!p) continue;
+      const crew = leg === 'SETUP'
+        ? [p.setup_driver_user_id, p.setup_helper_1_id, p.setup_helper_2_id]
+        : [p.dismantle_driver_user_id, p.dismantle_helper_1_id, p.dismantle_helper_2_id];
+      if (crew.some((v) => v != null && Number(v) === userId)) own.add(r.so_doc_no);
+    }
+  }
+  return own;
+}
+
+/* GET /delivery-orders-mfg/:id/pod-photo/:n — the n-th proof-of-delivery photo of one DO,
+   for anyone who may read that DO (the route's area guard) in its company. The
+   photo sits in the shared houzs-erp bucket under the key the POD stored; no
+   page could show it before, so a delivered DO read as if it had no evidence. */
+export const doPodPhotoHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
+  const sb = c.get('supabase');
+  const { data, error } = await scopeToAllowedCompanies(
+    sb.from('delivery_orders').select('pod_r2_key, pod_photo_keys').eq('id', c.req.param('id') ?? ''), c,
+  ).maybeSingle();
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const row = data as { pod_r2_key: string | null; pod_photo_keys: string[] | null } | null;
+  const keys = row?.pod_photo_keys?.length ? row.pod_photo_keys : row?.pod_r2_key ? [row.pod_r2_key] : [];
+  const key = keys[Number(c.req.param('n') ?? 0)];
+  if (!key) return c.json({ error: 'not_found', reason: 'This delivery order has no POD photo.' }, 404);
+  const obj = await c.env.POD_BUCKET.get(key);
+  if (!obj) return c.json({ error: 'not_found', reason: 'The POD photo file is missing from storage.' }, 404);
+  return new Response(obj.body, {
+    headers: { 'content-type': obj.httpMetadata?.contentType ?? 'image/jpeg', 'cache-control': 'private, max-age=300' },
+  });
+};

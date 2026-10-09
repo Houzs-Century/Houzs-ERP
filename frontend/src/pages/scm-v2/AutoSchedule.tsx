@@ -21,6 +21,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useRef, useState, type CSSProperties } from 'react';
+import { JobDetailPanel, panelTargetOf, rowDocumentPath, type JobPanelTarget } from '../../components/scm-v2/JobDetailPanel';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@2990s/design-system';
 import { Lock, Unlock, Wand2, CalendarCheck, Map as MapIcon } from 'lucide-react';
@@ -73,6 +74,8 @@ const groupLabel = (g: string): string => (g === 'KLANG_VALLEY' ? 'Klang Valley 
 
 export const AutoSchedule = () => {
   const navigate = useNavigate();
+  // Single click opens the job panel; double click goes to the document.
+  const [jobPanel, setJobPanel] = useState<JobPanelTarget | null>(null);
   const propose = useProposeDelivery();
   const schedule = useScheduleDelivery();
   /* The board's inline Driver / Lorry cells share the fleet option lists — the
@@ -272,6 +275,7 @@ export const AutoSchedule = () => {
         )}
       </div>
 
+      <JobDetailPanel target={jobPanel} onClose={() => setJobPanel(null)} />
       <DeliveryPlanningBoard
         orders={sideRows}
         counts={queue.data?.counts ?? {}}
@@ -303,7 +307,7 @@ export const AutoSchedule = () => {
            Columns-panel choice turns it off) + two-way linkage (Option B). */
         visibleColumnsOverride={mapOpen && mapCompact ? MAP_ESSENTIAL_COLUMNS : null}
         onUserAdjustColumns={() => { if (mapOpen && mapCompact) setMapCompact(false); }}
-        onRowClick={(o) => { if (mapOpen && o.row_type === 'so') setSelectedPin(o.so_doc_no); }}
+        onRowClick={(o) => { if (mapOpen && o.row_type === 'so') setSelectedPin(o.so_doc_no); setJobPanel(panelTargetOf(o)); }}
         scrollToRow={scrollTo}
         /* Default queue order on entry (owner 2026-08-07): delivery date
            OLDEST first, then state, then postcode — both sides. A clicked
@@ -312,7 +316,7 @@ export const AutoSchedule = () => {
         emptyMessage={dateSide === 'PENDING_DATE'
           ? 'No orders waiting for a delivery date.'
           : 'No date-arranged orders — confirm dates on the pending tab.'}
-        onRowDoubleClick={(o) => { if (o.row_type === 'so') navigate('/scm/sales-orders/' + o.so_doc_no); }}
+        onRowDoubleClick={(o) => { const to = rowDocumentPath(o); if (to) navigate(to); else setJobPanel(panelTargetOf(o)); }}
         bulkExtras={
           <>
             {/* The packer walks days forward from here — default today. */}

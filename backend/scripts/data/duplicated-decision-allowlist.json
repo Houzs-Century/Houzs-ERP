@@ -1504,6 +1504,11 @@
       "check": "D2",
       "key": "DIVANHEIGHTS,GAPS,LEGHEIGHTS,SOFALEGHEIGHTS,SOFASIZES ~ DIVANHEIGHTS,GAPS,LEGHEIGHTS,SOFALEGHEIGHTS,SOFASIZES,TOTALHEIGHTS",
       "why": "TWO QUESTIONS ABOUT THE MAINTENANCE POOLS, not one rule at N-1 places (BUG-60, 2026-10-06). INCH_POOLS (scm/shared/maintenance-pools.ts) is which pools hold inch-bearing values whose quotes are normalised on SAVE, and Total Height is one of them. PICKER_POOLS (vendor/scm/lib/picker-maint.ts) is which pools a purchasing document's variant DROPDOWNS read, so master's options can replace a supplier cost overlay's stale list. No PO / PI / Purchase Consignment editor has a Total Height dropdown: it is derived from divan + leg + gap and only priced, so adding it to the picker list would change nothing on screen and removing it from INCH_POOLS would stop normalising stored heights."
+    },
+    {
+      "check": "D2",
+      "key": "DELIVERY,INSPECTION,PICKUP,SERVICE ~ INSPECTION,PICKUP,SERVICE",
+      "why": "TWO DIFFERENT QUESTIONS keyed on trip-stop words: assrFormIntake SCHED_COL picks which assr_cases date column an intake form writes (no delivery leg on a form); delivery-pod-context ASSR_LEG_BY_STOP maps a lorry stop to the board leg it runs, where a DELIVERY stop is the delivery-back leg. Divergence costs a missing row on a driver run-sheet, never money or stock."
     }
   ]
 }

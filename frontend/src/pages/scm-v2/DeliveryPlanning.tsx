@@ -29,6 +29,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
+import { JobDetailPanel, panelTargetOf, rowDocumentPath, type JobPanelTarget } from '../../components/scm-v2/JobDetailPanel';
 import { useNavigate } from 'react-router-dom';
 import { useStickyFilters } from '../../hooks/useStickyFilters';
 import { MapPinned, Truck, Plus, MessageSquare, CalendarClock, ChevronDown } from 'lucide-react';
@@ -72,6 +73,8 @@ import { canOperateDeliveryOrders } from '../../auth/salesAccess';
 
 export const DeliveryPlanning = () => {
   const navigate = useNavigate();
+  // Single click opens the job panel; double click goes to the document.
+  const [jobPanel, setJobPanel] = useState<JobPanelTarget | null>(null);
   const askConfirm = useConfirm();
   const notify = useNotify();
   const { user, can, pageAccess } = useAuth();
@@ -199,7 +202,9 @@ export const DeliveryPlanning = () => {
   const openRow = (o: PlanningOrder) => {
     // DP-Order rows have no SO/ASSR document to open (their so_doc_no is a
     // synthetic `DP:<id>` key) — no navigation.
-    if (isDp(o) || isProject(o)) return;
+    // A project leg opens its project; a manual DP job has no document — its panel.
+    if (isProject(o)) { const to = rowDocumentPath(o); if (to) navigate(to); return; }
+    if (isDp(o)) { setJobPanel(panelTargetOf(o)); return; }
     if (isAssr(o)) {
       if (o.assr_id != null) navigate(`/assr/${o.assr_id}`);
     } else {
@@ -370,6 +375,7 @@ export const DeliveryPlanning = () => {
         }
       />
 
+      <JobDetailPanel target={jobPanel} onClose={() => setJobPanel(null)} />
       <DeliveryPlanningBoard
         orders={allOrders}
         resetFilters={{ active: activeState !== 'ALL' || activeRegion !== 'ALL', onReset: resetView }}
@@ -401,6 +407,7 @@ export const DeliveryPlanning = () => {
         drivers={drivers}
         lorries={lorries}
         msgStatuses={msgStatuses}
+        onRowClick={(o) => setJobPanel(panelTargetOf(o))}
         onRowDoubleClick={openRow}
         bulkExtras={
           <>

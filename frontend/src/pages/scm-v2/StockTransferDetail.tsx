@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowRight, History, X, Ban, Printer, Pencil, Save, Trash2 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
+import { StockTransferPodSection } from './StockTransferPodSection';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -610,6 +611,9 @@ export const StockTransferDetail = () => {
           )}
         </div>
       </section>
+
+      {/* ── Delivery run POD (record only) ───────────────────────────── */}
+      {id && <StockTransferPodSection id={id} />}
 
       {/* History drawer — portals to <body>, so its position here is only
           about lifecycle, not layout. */}

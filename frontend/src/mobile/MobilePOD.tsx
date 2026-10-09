@@ -143,9 +143,9 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
   const [sigClearNonce, setSigClearNonce] = useState(0);
   const [gps, setGps] = useState<{ lat: number; lng: number; accuracyM: number | null; atIso: string } | null>(null);
   const [gpsState, setGpsState] = useState<"idle" | "asking" | "ok" | "denied">("idle");
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  // A delivery takes several photos (goods off the lorry, installed, the signed note).
+  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [photoError, setPhotoError] = useState<string | null>(null);
-  const photoName = photoFile?.name ?? null;
 
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -161,7 +161,7 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
     /* Every job closes with a photo (owner, 2026-10-07: 每个 Job 都必须上传 POD).
        The customer signs the paper delivery note for now, so a photo of that
        signed note is the POD; the on-screen signature stays optional. */
-    if (!photoFile) {
+    if (!photoFiles.length) {
       setActionError("Take a POD photo first - a photo of the signed delivery note is fine.");
       return;
     }
@@ -194,7 +194,9 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
       // Upload the photo to R2 FIRST (shared slip Worker-proxy pipeline) so
       // its key rides the same PATCH. A failed upload aborts the whole action —
       // we never mark delivered while claiming a photo we didn't store.
-      const { r2Key: podKey } = await uploadSlipFull({ file: photoFile });
+      const podKeys: string[] = [];
+      for (const f of photoFiles) podKeys.push((await uploadSlipFull({ file: f })).r2Key);
+      const podKey = podKeys[0];
       /* `hasSignature` — NOT the canvas — decides whether a signature is sent.
          An untouched pad is a sized, fully transparent bitmap, so
          `toDataURL("image/png")` returns a perfectly valid non-empty data URL
@@ -224,6 +226,7 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
         evidence: {
           signatureData: sig || undefined,
           podKey,
+          podKeys,
           /* Mig 0249. This reading was taken and thrown away on every delivery
              since this screen shipped — the header used to end "GPS stays
              client-side (no server column)". Sent only when the driver actually
@@ -380,34 +383,42 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
                   <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" />
                   <circle cx="12" cy="13" r="3" />
                 </svg>
-                {photoName ? "Retake photo" : "Take photo"}
+                {photoFiles.length ? "Add another photo" : "Take photo"}
                 <input
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
                   capture="environment"
+                  multiple
                   style={{ display: "none" }}
                   onChange={(e) => {
-                    const f = e.target.files?.[0] ?? null;
-                    if (!f) return;
+                    const picked = Array.from(e.target.files ?? []);
+                    e.target.value = "";
+                    if (!picked.length) return;
                     // Guard against the R2 pipeline's contract (jpeg/png/webp)
                     // up front so the operator learns before Confirm, not
                     // mid-upload. No size guard here any more: uploadSlipFull
                     // compresses photos (WO-7), so a raw 8 MB camera capture
                     // is EXPECTED input now — it leaves the phone at well
                     // under the 5 MiB slip ceiling.
-                    if (!ALLOWED_SLIP_MIMES.includes(f.type as (typeof ALLOWED_SLIP_MIMES)[number])) {
-                      setPhotoFile(null);
-                      setPhotoError("Please use a JPEG, PNG or WebP photo.");
+                    if (picked.some((f) => !ALLOWED_SLIP_MIMES.includes(f.type as (typeof ALLOWED_SLIP_MIMES)[number]))) {
+                      setPhotoError("Please use JPEG, PNG or WebP photos.");
                       return;
                     }
                     setPhotoError(null);
-                    setPhotoFile(f);
+                    setPhotoFiles((prev) => [...prev, ...picked].slice(0, 10));
                   }}
                 />
               </label>
-              <div style={{ flex: 1, borderRadius: 13, minHeight: 70, background: photoName ? "linear-gradient(135deg,#d7ded6,#c7d0c4)" : "linear-gradient(135deg,#eceee9,#e3e6e0)" }} />
+              <div style={{ flex: 1, borderRadius: 13, minHeight: 70, display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, color: "var(--mut)", background: photoFiles.length ? "linear-gradient(135deg,#d7ded6,#c7d0c4)" : "linear-gradient(135deg,#eceee9,#e3e6e0)" }}>
+                {photoFiles.length ? `${photoFiles.length} photo${photoFiles.length === 1 ? "" : "s"}` : "No photo yet"}
+              </div>
             </div>
-            {photoName && <div style={{ fontSize: 10.5, color: "var(--mut)", marginTop: 6 }} className="tnum">{photoName}</div>}
+            {photoFiles.map((f, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "var(--mut)", marginTop: 6 }}>
+                <span className="tnum">{i + 1}. {f.name}</span>
+                <button type="button" onClick={() => setPhotoFiles((prev) => prev.filter((_, j) => j !== i))} style={{ border: "none", background: "none", color: "var(--red)", fontFamily: "inherit", fontSize: 11, fontWeight: 700 }}>Remove</button>
+              </div>
+            ))}
             {photoError && <div style={{ fontSize: 10.5, color: "var(--red)", marginTop: 6 }}>{photoError}</div>}
 
             {/* Customer signature — design signature pad (canvas keeps the real capture). */}

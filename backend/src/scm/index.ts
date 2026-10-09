@@ -120,6 +120,7 @@ import { scanPayment } from "./routes/scan-payment";
 import { scanLorryInvoice } from "./routes/scan-lorry-invoice";
 import { slips } from "./routes/slips";
 import { deliveryPlanning } from "./routes/delivery-planning";
+import { deliveryJobProgress } from "./routes/delivery-job-progress";
 import { deliveryPlanningRegions } from "./routes/delivery-planning-regions";
 import { deliveryPlanningRowMarks } from "./routes/delivery-planning-row-marks";
 import { deliveryPlanningRowOrder } from "./routes/delivery-planning-row-order";
@@ -823,6 +824,21 @@ scm.route("/drivers", drivers);
 // Mounted under the existing transportation area key; owner/* bypasses, no lockout.
 // Finer per-route L2 keys (planning / fleet / trips) can be added later.
 scm.use("/delivery-planning/*", scmAreaGuard("scm.transportation.drivers"));
+// The crew's On the way / Arrived / POD on a non-DO job. writeBypass — a driver
+// or helper holds view on transportation plus scm.do.dispatch, not edit; the
+// handlers admit only the caller's OWN job (delivery scope) unless scope is 'all'.
+scm.use(
+  "/delivery-jobs/*",
+  scmAreaGuard("scm.transportation.drivers", {
+    writeBypass: (c) =>
+      c.req.method === "POST" &&
+      hasPositionCapability(
+        c.get("user") as unknown as Parameters<typeof hasPositionCapability>[0],
+        "scm.do.dispatch",
+      ),
+  }),
+);
+scm.route("/delivery-jobs", deliveryJobProgress);
 scm.route("/delivery-planning", deliveryPlanning);
 // openRead (2026-07-19, fix/so-maintenance-403) — this router is pure REFERENCE
 // data: the region master (code / name / sortOrder / active) and the per-state →

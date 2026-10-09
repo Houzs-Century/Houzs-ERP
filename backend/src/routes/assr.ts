@@ -58,6 +58,7 @@ import type { AuthUser } from "../services/auth";
 import type { Context, MiddlewareHandler } from "hono";
 import { normalizePhone } from "../scm/shared/phone";
 import { ASSR_SUB_STATUS_KEYS } from "../scm/shared/assr-sub-statuses";
+import { sendCompletionSurvey } from "../services/assrCompletionSurvey";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -2817,64 +2818,13 @@ app.post("/:id/transition", requirePermission("service_cases.write"), async (c) 
     // survey recipient, the email service silently skips (and still
     // logs the attempt). Prefer `email_for_survey` (proposal §14 —
     // separate from notify channel) and fall back to `customer_email`.
-    if (body.stage === "completed") {
-      const row = await c.env.DB.prepare(
-        `SELECT assr_no, customer_name, customer_email, email_for_survey, company_id
-           FROM assr_cases WHERE id = ?`
-      )
-        .bind(id)
-        .first<{
-          assr_no: string;
-          customer_name: string | null;
-          customer_email: string | null;
-          email_for_survey: string | null;
-          company_id: number | null;
-        }>();
-      const surveyTo = row?.email_for_survey || row?.customer_email;
-      if (surveyTo) {
-        // Customer-facing: carry the DOCUMENT's company identity (the case
-        // row's company_id), not the operator's active company.
-        const caseCompanyCode = await resolveCompanyCode(c.env, row!.company_id);
-        const token = await issueSurveyToken(c.env, id);
-        const link = publicUrl(c.env, `/survey/${token}`, caseCompanyCode);
-        const name = (row!.customer_name || "").split(" ")[0] || "there";
-        // Footer must carry the CASE's company (2990 cases must not sign off as
-        // Houzs) — derive it from the document's branding, not a hardcode.
-        const caseBranding = await getBrandingForCompany(c.env, caseCompanyCode);
-        await sendEmail(c.env, {
-          to: surveyTo,
-          subject: `How was your experience with case ${row!.assr_no}?`,
-          html: surveyEmailHtml(name, row!.assr_no, link, caseBranding.companyName),
-          purpose: "assr_survey",
-          refType: "assr",
-          refId: id,
-          companyCode: caseCompanyCode,
-        });
-      }
-    }
+    if (body.stage === "completed") await sendCompletionSurvey(c.env, id);
     return c.json({ ok: true });
   } catch (e: any) {
     return c.json({ error: e.message }, 400);
   }
 });
 
-function surveyEmailHtml(name: string, assrNo: string, link: string, companyName: string): string {
-  return `
-    <div style="font-family:system-ui,Segoe UI,Roboto,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#222">
-      <h2 style="margin:0 0 12px">Thanks for your patience, ${name}.</h2>
-      <p>We've wrapped up your service case <strong>${assrNo}</strong>. Your feedback helps us improve.</p>
-      <p style="margin:24px 0">
-        <a href="${link}"
-           style="display:inline-block;padding:12px 22px;background:#a16a2e;color:#fff;border-radius:6px;text-decoration:none;font-weight:600">
-          Rate your experience
-        </a>
-      </p>
-      <p style="color:#777;font-size:13px">Takes about 30 seconds — one rating + an optional note.</p>
-      <p style="color:#aaa;font-size:12px;border-top:1px solid #eee;padding-top:14px;margin-top:28px">
-        ${companyName}
-      </p>
-    </div>`;
-}
 app.post("/:id/supplier-returns", requirePermission("service_cases.write"), openSupplierReturnRoute);
 app.patch("/:id/supplier-returns/:roundId{[0-9]+}", requirePermission("service_cases.write"), patchSupplierReturnRoute);
 app.delete("/:id/supplier-returns/:roundId{[0-9]+}", requirePermission("service_cases.write"), archiveSupplierReturnRoute);

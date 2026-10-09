@@ -27,7 +27,9 @@ import { supabaseAuth } from '../middleware/auth';
 import { statusCapabilityRefusal, POD_STATES } from '../lib/do-status-capability';
 import { resolveDeliveryScope, scopeMatchesAssignment } from '../lib/deliveryScope';
 import { resolveCrewSeats } from '../lib/crew-seats';
-import { fetchDoCrewAssignment } from './delivery-pod-context';
+import { fetchDoCrewAssignment, doPodPhotoHandler } from './delivery-pod-context';
+import { startTripIfPlanned } from './delivery-job-progress';
+import { claimPodPhotos } from '../lib/pod-photo-claim';
 import { revertDeliveryOrderHandler } from './delivery-order-revert';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
@@ -320,7 +322,7 @@ const HEADER =
      the Delivery Planning board's /fields PATCH; the DO Detail GET / POST /
      PATCH must carry it too so the DO drawer can show + save it. */
   'arrives_em_warehouse_date, ' +
-  'pod_r2_key, signature_data, status, notes, created_at, created_by, updated_at, ' +
+  'pod_r2_key, pod_photo_keys, signature_data, departure_at, arrival_at, pod_lat, pod_lng, status, notes, created_at, created_by, updated_at, ' +
   /* Mig 0324 — the HOLD MARKER, the DO's first hold ever and the one that
      needed no enum change. docs/modules/delivery-order.md. */
   HOLD_COLUMNS;
@@ -4996,7 +4998,7 @@ deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
 export const patchDeliveryOrderStatusHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
   let body: {
-    status?: string; signatureData?: string; podKey?: string;
+    status?: string; signatureData?: string; podKey?: string; podKeys?: unknown;
     podLat?: number; podLng?: number; podAccuracyM?: number; podLocatedAt?: string;
   }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
@@ -5110,6 +5112,11 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   // into the same update below.
   const tsNum: Record<string, number> = {};
   if (toStatus === 'DISPATCHED') ts.dispatched_at = now;
+  /* "On the way" is the IN_TRANSIT flip: it stamped nothing, so the board's
+     Departure and the phone's timeline never had a time. The first flip stamps
+     it and starts the DO's trip, so the phone's live location is accepted. */
+  const startsRun = toStatus === 'IN_TRANSIT' && (prevStatus ?? '').toUpperCase() !== 'IN_TRANSIT';
+  if (startsRun) ts.departure_at = now;
   if (toStatus === 'SIGNED')     ts.signed_at = now;
   if (toStatus === 'DELIVERED')  ts.delivered_at = now;
   /* POD capture — the mobile app posts the proof-of-delivery signature +
@@ -5118,7 +5125,18 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      photo. Only write when present so a plain status change never blanks
      an existing POD. */
   if (typeof body.signatureData === 'string' && body.signatureData) ts.signature_data = body.signatureData;
-  if (typeof body.podKey === 'string' && body.podKey) ts.pod_r2_key = body.podKey;
+  /* Every photo of the POD; the first also stays in pod_r2_key. Only the caller's
+     own uploads are accepted, and claiming them stops the slip reaper deleting
+     them an hour later (lib/pod-photo-claim.ts). */
+  const podRaw = [body.podKey, ...(Array.isArray(body.podKeys) ? body.podKeys : [])].filter((k) => typeof k === 'string' && k);
+  let podKeys: string[] = [];
+  if (podRaw.length) {
+    const claim = await claimPodPhotos(sb, c, user?.id ? String(user.id) : null, podRaw);
+    if (!claim.ok) return c.json({ error: 'photo_not_accepted', reason: claim.reason }, 400);
+    podKeys = claim.keys;
+  }
+  if (podKeys.length) ts.pod_r2_key = podKeys[0]!;
+  const tsJson: Record<string, string[]> = podKeys.length ? { pod_photo_keys: podKeys } : {};
 
   /* WHERE the delivery happened (mig 0249). The phone has been taking this
      reading and discarding it since the POD screen shipped — MobilePOD's own
@@ -5204,7 +5222,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   let data: { id: string; status: string } | null;
   if (toStatus === 'CANCELLED') {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
-      .update({ status: toStatus, ...ts, ...tsNum })
+      .update({ status: toStatus, ...ts, ...tsNum, ...tsJson })
       .eq('id', id), co.companyId).neq('status', 'CANCELLED')
       .select('id, status').maybeSingle();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
@@ -5216,7 +5234,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     data = updated as { id: string; status: string };
   } else {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
-      .update({ status: toStatus, ...ts, ...tsNum }).eq('id', id), co.companyId).select('id, status').single();
+      .update({ status: toStatus, ...ts, ...tsNum, ...tsJson }).eq('id', id), co.companyId).select('id, status').single();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     data = updated as { id: string; status: string };
   }
@@ -5292,6 +5310,17 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     });
   }
 
+  /* The DO's first On the way starts its lorry run (so the phone's live location
+     is accepted) — only once the DO itself saved, and never failing the save. */
+  if (startsRun) {
+    try {
+      const { data: stop, error: stopErr } = await sb.from('trip_stops').select('trip_id').eq('do_id', id)
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (stopErr) throw new Error(stopErr.message);
+      await startTripIfPlanned(sb, (stop as { trip_id: string | null } | null)?.trip_id ?? null);
+    } catch (e) { console.error('[do-status] could not start the trip:', e); }
+  }
+
   return c.json({
     deliveryOrder: data,
     movementErrors: movementErrors.length ? movementErrors : undefined,
@@ -5338,6 +5367,7 @@ export const patchDeliveryOrderArrivalHandler = async (c: any) => {
   return c.json({ deliveryOrder: { id, arrival_at: now } });
 };
 deliveryOrdersMfg.patch('/:id/arrival', patchDeliveryOrderArrivalHandler);
+deliveryOrdersMfg.get('/:id/pod-photo/:n', doPodPhotoHandler);
 deliveryOrdersMfg.post('/:id/revert', revertDeliveryOrderHandler); // Ops-lead exception power (scm.do.revert) — routes/delivery-order-revert.ts
 
 /* PATCH .../hold — the mig-0324 MARKER, never `status`. routes/document-hold-routes.ts. */

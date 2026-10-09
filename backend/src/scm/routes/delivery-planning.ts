@@ -85,13 +85,13 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardUnionSql, assrOpenCaseGuardSql } from '../lib/assr-board-scope';
+import { assrBoardUnionSql, assrOpenCaseGuardSql, ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
 import { mintDpNoForLorry } from '../lib/dp-no-mint';
 import { resolveDeliveryScope, scopeMatchesAssignment, type DeliveryScope, type CrewAssignment } from '../lib/deliveryScope';
-import { fetchDoCrewAssignment, doPodContextHandler } from './delivery-pod-context';
+import { fetchDoCrewAssignment, doPodContextHandler, ownServiceAndProjectRowKeys } from './delivery-pod-context';
 import { deriveArrangementStage } from '../lib/arrangement-stage';
 /* Option B side map (/geo): zone derivation + set counting + cache-first
    geocoding reuse the EXISTING single-owner modules — the zone map + fallback
@@ -1496,10 +1496,14 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         is skipped and their board is byte-identical to before. A row's assignment:
           · SO row  → the latest DO's header driver_id + crew driver/helper ids.
           · DP row  → its trip's driver_id / helper_1_id / helper_2_id.
-          · ASSR / DO-less SO → no assignment (empty) → never matches a self scope. */
-  const scopedOrders = await applyDeliveryRowScope(sb, scope, allOrders, {
+          · ASSR leg → its stop's trip crew; project leg → the project's crew users
+            (ownServiceAndProjectRowKeys). DO-less SO → never matches a self scope. */
+  const scopedBase = new Set(await applyDeliveryRowScope(sb, scope, allOrders, {
     doByDoc, doDriverById, crewIdsByDo, dpTripIdByKey,
-  });
+  }));
+  const ownExtra = scope.mode === 'all' ? null
+    : await ownServiceAndProjectRowKeys(sb, c.env, scope, Number(c.get('houzsUser')?.id), allOrders);
+  const scopedOrders = allOrders.filter((o) => scopedBase.has(o) || !!ownExtra?.has(o.so_doc_no));
 
   /* 8. Counts per state — computed over the REGION-filtered set so the state
         tab badges reflect the active region. The state filter is applied AFTER
@@ -2137,7 +2141,7 @@ const scheduleSchema = z.object({
   // ASSR ONLY (type='assr'): which driving date the board row represents, so the
   // scheduleDate write-back targets the matching assr_cases column
   // (customer_pickup_at vs do_date). Ignored for so | do.
-  jobKind: z.enum(['customer_pickup', 'delivery', 'inspection']).nullable().optional(),
+  jobKind: z.enum(ASSR_BOARD_LEGS).nullable().optional(),
   // ── Optional trip wiring ───────────────────────────────────────────────────
   // Scheduling an order onto a trip. Either tripId (append to an existing trip)
   // OR {lorryId, driverId, tripDate?} (find-or-create a trip for that lorry+date).
