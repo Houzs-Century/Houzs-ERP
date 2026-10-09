@@ -482,7 +482,7 @@ mfgPurchaseOrders.get('/', async (c) => {
        Date, ...) — the same read the export uses (lib/po-line-export.ts), so the
        screen and the file agree cell for cell. The legacy unpaged path does not
        carry them: its callers never render a line column. */
-    const withLines = await attachPoLines(supabase, c, stamped.rows);
+    const withLines = await attachPoLines(supabase, c, stamped.rows, { outstandingOnly: status === 'outstanding' });
     if (withLines.error) return c.json({ error: 'lines_read_failed', reason: withLines.error }, 500);
     return c.json({ purchaseOrders: withLines.rows, total, page, pageSize, statusCounts });
   }
