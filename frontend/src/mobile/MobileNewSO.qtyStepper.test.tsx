@@ -70,4 +70,19 @@ describe("phone SO line card — qty stepper (DEV-62)", () => {
     fireEvent.change(qtyBox(container)!, { target: { value: "12" } });
     expect(qtyBox(container)!.value).toBe("12");
   });
+
+  it("a new line's Unit Price starts blank with a 0.00 placeholder, so the price is typed straight in", async () => {
+    const { container } = mount();
+    await waitFor(() => expect(qtyBox(container)).not.toBeNull(), { timeout: 4000 });
+    fireEvent.click(screen.getByRole("button", { name: /add line/i }));
+    await waitFor(() => expect(container.querySelectorAll("input.fld-i.money")).toHaveLength(2));
+    const [saved, fresh] = Array.from(container.querySelectorAll("input.fld-i.money")) as HTMLInputElement[];
+    expect(saved.value).toMatch(/2,?399\.00/);
+    expect(fresh.value).toBe("");
+    expect(fresh.placeholder).toBe("0.00");
+    fireEvent.change(fresh, { target: { value: "1500" } });
+    expect(fresh.value).toBe("1500");
+    fireEvent.change(fresh, { target: { value: "0" } });
+    expect(fresh.value).toBe("0");
+  });
 });
