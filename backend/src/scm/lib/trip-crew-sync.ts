@@ -22,10 +22,11 @@ export type CrewSeats = {
   lorryId: string | null;
 };
 
-/** The latest live DO of a sales order (not draft / cancelled), or null. */
+/** The latest live DO of a sales order (anything but cancelled — a draft DO is
+ *  what the board's crew cells write to as well), or null. */
 export async function latestLiveDoIdForSo(sb: Sb, companyId: number | null, soDocNo: string): Promise<string | null> {
   const q = sb.from('delivery_orders').select('id, status').eq('so_doc_no', soDocNo)
-    .not('status', 'in', '("DRAFT","CANCELLED")').order('created_at', { ascending: false }).limit(1);
+    .neq('status', 'CANCELLED').order('created_at', { ascending: false }).limit(1);
   const { data, error } = await scopeToCompanyIdOrOpen(q, companyId);
   if (error) throw new Error(error.message);
   return ((data ?? []) as Array<{ id: string }>)[0]?.id ?? null;
