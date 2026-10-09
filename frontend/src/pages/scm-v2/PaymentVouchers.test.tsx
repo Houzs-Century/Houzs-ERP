@@ -41,6 +41,8 @@ const confirmFn = vi.fn(async (_a: unknown) => true);
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmFn }));
 const notifyFn = vi.fn((_a: unknown) => undefined);
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => notifyFn }));
+/* The waiting-requests reminder has its own contract (PaymentRequestsWaiting.test.tsx). */
+vi.mock('./PaymentRequestsWaiting', () => ({ PaymentRequestsWaiting: () => null }));
 
 import { PaymentVouchers } from './PaymentVouchers';
 

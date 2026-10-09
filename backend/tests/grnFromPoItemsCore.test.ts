@@ -210,6 +210,20 @@ describe('createDraftGrnsFromPoItemsCore — creates a DRAFT, never posts stock'
     expect(t.inventory_movements).toHaveLength(0);
   });
 
+  test('two POs of one supplier at different warehouses become one GRN per warehouse', async () => {
+    const t = tables();
+    t.purchase_order_items[1]!.po = { ...(t.purchase_order_items[1]!.po as Row), purchase_location_id: 'wh2' };
+    const res = await runCore(t, CO_A, {
+      picks: [{ poItemId: 'poi-a', qty: 2 }, { poItemId: 'poi-c', qty: 1 }],
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.created).toHaveLength(2);
+    expect(new Set(t.grns.map((g) => g.warehouse_id))).toEqual(new Set(['wh1', 'wh2']));
+    expect(t.inventory_movements).toHaveLength(0);
+  });
+
   test('refuses over-receive with 409 qty_exceeds_remaining, writing nothing', async () => {
     const t = tables();
     const res = await runCore(t, CO_A, { picks: [{ poItemId: 'poi-a', qty: 9 }] }); // remaining is 5

@@ -56,7 +56,7 @@ export const PRODUCT_REQUEST_APPROVE_KEY = 'scm.product_request.approve';
 export const productRequests = new Hono<{ Bindings: Env; Variables: Variables }>();
 productRequests.use('*', supabaseAuth);
 
-const COLS = 'id, company_id, request_no, request_type, application, requested_by, requested_by_name, item_code, proposed_model_name, model_id, category, compartment, fabric_code, seat_size, leg_size, qty, special_remarks, delivery_location_id, expected_delivery_date, status, decision_note, decided_by, decided_at, pco_id, created_at, updated_at';
+const COLS = 'id, company_id, request_no, request_type, application, requested_by, requested_by_name, item_code, proposed_model_name, model_id, category, compartment, fabric_code, seat_size, leg_size, qty, special_remarks, delivery_location_id, expected_delivery_date, supplier_id, unit_price_sen, status, decision_note, decided_by, decided_at, pco_id, created_at, updated_at';
 const NO_PERM = { error: "You don't have permission to do that." };
 /** Special remarks are a few lines to the Purchaser, not a document. */
 export const REMARKS_MAX = 2000;
@@ -112,16 +112,25 @@ async function withLinks(c: any, companyId: number, rows: Row[]): Promise<{ rows
     if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
     for (const m of (data ?? []) as Row[]) models.set(String(m.id), m);
   }
+  const supplierIds = [...new Set(rows.map((r) => r.supplier_id).filter(Boolean))] as string[];
+  const suppliers = new Map<string, Row>();
+  if (supplierIds.length > 0) {
+    const { data, error } = await sb.from('suppliers').select('id, code, name').eq('company_id', companyId).in('id', supplierIds);
+    if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
+    for (const s of (data ?? []) as Row[]) suppliers.set(String(s.id), s);
+  }
   return {
     rows: rows.map((r) => {
       const pco = r.pco_id ? pcos.get(String(r.pco_id)) ?? null : null;
       const wh = r.delivery_location_id ? warehouses.get(String(r.delivery_location_id)) ?? null : null;
       const model = r.model_id ? models.get(String(r.model_id)) ?? null : null;
+      const supplier = r.supplier_id ? suppliers.get(String(r.supplier_id)) ?? null : null;
       return {
         ...r,
         pco: pco ? { id: pco.id, pcNumber: pco.pc_number, status: pco.status, expectedAt: pco.expected_at ?? null } : null,
         deliveryLocation: wh ? { id: wh.id, code: wh.code, name: wh.name } : null,
         model: model ? { id: model.id, modelCode: model.model_code, name: model.name } : null,
+        supplier: supplier ? { id: supplier.id, code: supplier.code, name: supplier.name } : null,
       };
     }),
   };
@@ -146,6 +155,24 @@ export const listProductRequestsHandler = async (c: any): Promise<Response> => {
 };
 productRequests.get('/', listProductRequestsHandler);
 
+/* ── GET /supplier-options — the supplier picker for a requester ───────────────
+   A salesperson holds no procurement area, so /suppliers (scm.procurement.
+   suppliers) is closed to them; this answers id / code / name of the ACTIVE
+   suppliers of the active company and nothing else (no terms, no bank, no
+   finance part). Before GET /:id so the path is not read as an id. */
+export const productRequestSupplierOptionsHandler = async (c: any): Promise<Response> => {
+  if (!mayOpen(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const { data, error } = await sb.from('suppliers').select('id, code, name, status').eq('company_id', co.companyId).order('name');
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const suppliers = ((data ?? []) as Row[]).filter((s) => s.status == null || String(s.status).toUpperCase() === 'ACTIVE')
+    .map((s) => ({ id: String(s.id), code: String(s.code ?? ''), name: String(s.name ?? '') }));
+  return c.json({ suppliers });
+};
+productRequests.get('/supplier-options', productRequestSupplierOptionsHandler);
+
 /* ── GET /:id ──────────────────────────────────────────────────────────────── */
 export const getProductRequestHandler = async (c: any): Promise<Response> => {
   if (!mayOpen(c)) return c.json(NO_PERM, 403);
@@ -165,6 +192,9 @@ type Fields = {
   item_code: string | null; proposed_model_name: string | null; model_id: string | null; category: string;
   compartment: string | null; fabric_code: string | null; seat_size: string | null; leg_size: string | null;
   qty: number; special_remarks: string | null; delivery_location_id: string | null; expected_delivery_date: string | null;
+  /** The supplier and agreed unit price the requester names (owner 2026-10-08,
+      方案 C: the Sales Director names them, the Purchaser records them). Optional. */
+  supplier_id: string | null; unit_price_sen: number | null;
 };
 
 function readFields(body: Row): { fields: Fields } | { error: string; message: string } {
@@ -190,6 +220,8 @@ function readFields(body: Row): { fields: Fields } | { error: string; message: s
   if (remarks && remarks.length > REMARKS_MAX) return { error: 'remarks_too_long', message: `Keep the special remarks to ${REMARKS_MAX.toLocaleString('en-MY')} characters.` };
   const expected = body.expectedDeliveryDate == null || body.expectedDeliveryDate === '' ? null : dateOrNull(body.expectedDeliveryDate);
   if (body.expectedDeliveryDate && !expected) return { error: 'date_invalid', message: 'The expected delivery date is not a date.' };
+  const price = body.unitPriceSen === undefined || body.unitPriceSen === null || body.unitPriceSen === '' ? null : Number(body.unitPriceSen);
+  if (price !== null && (!Number.isInteger(price) || price < 0)) return { error: 'price_invalid', message: 'The unit price must be zero or more, in sen.' };
   return {
     fields: {
       request_type: requestType, application,
@@ -197,6 +229,7 @@ function readFields(body: Row): { fields: Fields } | { error: string; message: s
       item_code: itemCode, proposed_model_name: itemCode ? null : proposed, model_id: null, category,
       compartment: text(body.compartment), fabric_code: text(body.fabricCode), seat_size: text(body.seatSize), leg_size: text(body.legSize),
       qty, special_remarks: remarks, delivery_location_id: text(body.deliveryLocationId), expected_delivery_date: expected,
+      supplier_id: text(body.supplierId), unit_price_sen: price,
     },
   };
 }
@@ -222,6 +255,11 @@ async function resolveFields(c: any, companyId: number, f: Fields): Promise<{ er
     const { data, error } = await sb.from('warehouses').select('id').eq('company_id', companyId).eq('id', f.delivery_location_id).maybeSingle();
     if (error) return { error: 'load_failed', message: error.message };
     if (!data) return { error: 'unknown_location', message: 'The delivery location is not a warehouse of this company.' };
+  }
+  if (f.supplier_id) {
+    const { data, error } = await sb.from('suppliers').select('id').eq('company_id', companyId).eq('id', f.supplier_id).maybeSingle();
+    if (error) return { error: 'load_failed', message: error.message };
+    if (!data) return { error: 'unknown_supplier', message: 'The supplier is not a supplier of this company — pick one from the list.' };
   }
   return null;
 }
@@ -291,6 +329,7 @@ export const updateProductRequestHandler = async (c: any): Promise<Response> => 
     fabricCode: keep('fabricCode', before.fabric_code), seatSize: keep('seatSize', before.seat_size), legSize: keep('legSize', before.leg_size),
     qty: keep('qty', before.qty), specialRemarks: keep('specialRemarks', before.special_remarks),
     deliveryLocationId: keep('deliveryLocationId', before.delivery_location_id), expectedDeliveryDate: keep('expectedDeliveryDate', before.expected_delivery_date),
+    supplierId: keep('supplierId', before.supplier_id), unitPriceSen: keep('unitPriceSen', before.unit_price_sen),
   });
   if ('error' in read) return c.json(read, 400);
   const resolved = await resolveFields(c, co.companyId, read.fields);

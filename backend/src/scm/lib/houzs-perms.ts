@@ -19,6 +19,7 @@ import {
   isSalesUser,
   isFinanceViewer,
   isProductCostViewer,
+  isPosMarketingAccount,
 } from '../../services/pmsAccess';
 import { userCanWriteScmConfig } from '../../services/positionPolicy';
 import { isCostingDisplayEnabled, type CostingDisplayEnv } from './costing-enabled';
@@ -130,6 +131,22 @@ export function isSalesCaller(c: HouzsUserSource): boolean {
   // Director could raise one) read as not-Sales here while the login umbrella,
   // which passes the full user, let the same person in.
   return isSalesUser({
+    position_name: hu.position_name ?? null,
+    department_name: hu.department_name ?? null,
+    position_policy: hu.position_policy ?? null,
+    permissions_set: hu.permissions_set,
+  } as AuthUser);
+}
+
+/**
+ * True when the REAL caller is the 2990 POS marketing account —
+ * pmsAccess.isPosMarketingAccount over the stashed houzsUser, the same fields
+ * isSalesCaller feeds isSalesUser. Fails CLOSED with no houzsUser.
+ */
+export function isPosMarketingCaller(c: HouzsUserSource): boolean {
+  const hu = c.get('houzsUser');
+  if (!hu) return false;
+  return isPosMarketingAccount({
     position_name: hu.position_name ?? null,
     department_name: hu.department_name ?? null,
     position_policy: hu.position_policy ?? null,

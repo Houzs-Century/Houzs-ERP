@@ -78,6 +78,7 @@ import { NotificationBell } from "./NotificationBell";
 import {
   useApprovalBadgeCounts,
   type ApprovalBadgeSource,
+  BADGE_MEANING,
 } from "../hooks/useAmendmentApprovals";
 
 /* Hover prefetch, behind a dynamic import. The route map in lib/prefetch-routes
@@ -259,12 +260,15 @@ export const NAV_TABS: NavTab[] = [
   // the same page from Money out. The key alone shows it: the sales team was
   // left out of the grant (owner 2026-10-01, 除了 sales team), so a sales rep
   // without it no longer sees an entry the route and the server refuse.
+  // Finance (scm.payment_voucher.create, `*` included) keeps only the Money out
+  // entry — the same page twice was noise (owner 2026-10-08).
   {
     section: "workspace",
     to: "/scm/payment-requests",
     label: "Payment Requests",
     icon: HandCoins,
     anyPerm: ["*", "scm.payment_request.create"],
+    hidePerm: "scm.payment_voucher.create",
   },
   // Sales Entries — Nico 2026-07-09: "sales entries 我不要了". Sidebar
   // entry removed. The /sales route + Sales.tsx page + backend endpoints
@@ -727,7 +731,7 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/payment-vouchers", label: "Payment Vouchers", icon: Wallet, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.accounting"] },
           { to: "/scm/ap-invoices", label: "AP Invoices", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.accounting"] },
           // 申请付款 (owner 2026-09-30) — the requests waiting for a voucher.
-          { to: "/scm/payment-requests", label: "Payment Requests", icon: HandCoins, anyPerm: ["*", "scm.payment_voucher.create"] },
+          { to: "/scm/payment-requests", label: "Payment Requests", icon: HandCoins, anyPerm: ["*", "scm.payment_voucher.create"], badge: "payment-requests-waiting" },
           // 欠正式单 (owner 2026-10-01) — payments made on a proforma, still owing the official invoice.
           { to: "/scm/official-docs", label: "Official Invoices Owed", icon: FileText, anyPerm: ["*", "scm.payment_voucher.create"] },
           // Supplier Maintenance (owner 2026-10-02: 放在 money out 的 sidebar) — Finance's own
@@ -1223,7 +1227,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
         onMouseEnter={() => prefetchRoute(to)}
         title={
           tab.badge && badgeCounts[tab.badge] > 0
-            ? `${tab.label} · ${badgeCounts[tab.badge]} awaiting your approval`
+            ? `${tab.label} · ${badgeCounts[tab.badge]} ${BADGE_MEANING[tab.badge]}`
             : collapsed
               ? tab.label
               : undefined

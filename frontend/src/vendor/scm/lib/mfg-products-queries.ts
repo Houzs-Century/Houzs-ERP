@@ -234,21 +234,32 @@ export function useMfgProducts(opts?: {
      marker). Opt-in and separately cache-keyed so the SO/PO pickers keep their
      lean, un-annotated list. */
   anchorState?: boolean;
+  /* Read the catalogue from the server on every mount, past both caches — for a
+     screen that acts on SKUs another person may have just created (BUG-85: the
+     Assign-to-suppliers dialog showed "0 SKUs" for a model whose SKU existed). */
+  fresh?: boolean;
 }) {
+  const qc = useQueryClient();
   return useQuery({
     queryKey: ['mfg-products', activeCompanyKey(), opts?.category ?? 'all', opts?.search ?? '', opts?.anchorState ? 'anchor' : ''],
-    queryFn: async ({ signal }) => {
+    queryFn: async ({ signal, queryKey }) => {
       const params = new URLSearchParams();
       if (opts?.category) params.set('category', opts.category);
       if (opts?.search) params.set('search', opts.search);
       if (opts?.anchorState) params.set('anchorState', '1');
+      /* The server sends this list with a 60s private max-age. A refetch that
+         follows a write (the query was invalidated) must not be answered from
+         that browser cache, or the list comes back without the SKU just made
+         and is then held as fresh for staleTime (BUG-85). */
+      const pastBrowserCache = opts?.fresh || qc.getQueryState(queryKey)?.isInvalidated;
       const res = await authedFetch<{ products: MfgProductRow[] }>(
         `/mfg-products${params.toString() ? `?${params.toString()}` : ''}`,
-        { signal },
+        { signal, ...(pastBrowserCache ? { cache: 'no-cache' as const } : {}) },
       );
       return res.products;
     },
     enabled: opts?.enabled ?? true,
+    refetchOnMount: opts?.fresh ? 'always' : true,
     /* HOUZS VENDOR perf deviation (owner 2026-07-03, "Loading Catalog is
        slow"): the catalog is stable reference data, so cache it 5 min and
        keep the previous page's rows on screen while a new (category, search)

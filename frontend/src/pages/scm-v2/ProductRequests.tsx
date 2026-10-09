@@ -25,9 +25,10 @@ import { activeOptions, maintPickerValues } from '@2990s/shared';
 import {
   APPLICATION_LABEL, REQUEST_STATUS, REQUEST_TYPE_LABEL, awaitsPurchaser, mayClose, mayRaisePco, needsModel, pcoNewFromRequestPath, productText,
   requesterMayChange, specText, useApproveProductRequest, useCloseProductRequest, useCreateModelFromRequest, useCreateProductRequest,
-  useProductRequest, useProductRequests, useRejectProductRequest, useUpdateProductRequest, useWithdrawProductRequest,
+  useProductRequest, useProductRequestSupplierOptions, useProductRequests, useRejectProductRequest, useUpdateProductRequest, useWithdrawProductRequest,
   type ProductRequest, type ProductRequestApplication, type ProductRequestInput, type ProductRequestType,
 } from '../../vendor/scm/lib/product-request-queries';
+import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
 import { useFabricTrackings, fabricOptionLabel } from '../../vendor/scm/lib/fabric-queries';
@@ -41,7 +42,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtSen } from '../../vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
@@ -248,6 +249,8 @@ export const ProductRequests = () => {
             <Meta label="Qty" value={detail.qty} />
             <Meta label="Delivery location" value={detail.deliveryLocation ? `${detail.deliveryLocation.name} (${detail.deliveryLocation.code})` : '—'} />
             <Meta label="Expected delivery" value={fmtDateOrDash(detail.expected_delivery_date)} />
+            <Meta label="Supplier" value={detail.supplier ? `${detail.supplier.name} (${detail.supplier.code})` : '—'} />
+            <Meta label="Unit price" value={detail.unit_price_sen != null ? fmtSen(detail.unit_price_sen) : '—'} />
             {detail.special_remarks && <Meta label="Special remarks" value={detail.special_remarks} />}
             {detail.status !== 'REJECTED' && detail.decided_by && (
               <Meta label="Decided by" value={`${detail.decided_by}${detail.decided_at ? ` · ${fmtDateOrDash(detail.decided_at)}` : ''}${detail.decision_note ? ` · ${detail.decision_note}` : ''}`} />
@@ -333,6 +336,8 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
     specialRemarks: initial?.special_remarks ?? null,
     deliveryLocationId: initial?.delivery_location_id ?? null,
     expectedDeliveryDate: initial?.expected_delivery_date ?? null,
+    supplierId: initial?.supplier_id ?? null,
+    unitPriceSen: initial?.unit_price_sen ?? null,
   }));
   /* Existing SKU, or a Model the catalogue has not got — a repack is always existing. */
   const [newModel, setNewModel] = useState<boolean>(() => !!initial && !initial.item_code);
@@ -341,6 +346,7 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
   const existing = isRepack || !newModel;
 
   const skus = useMfgProducts();
+  const supplierOptions = useProductRequestSupplierOptions().data?.suppliers ?? [];
   const maint = useMaintenanceConfig('master').data?.data ?? null;
   const fabrics = useFabricTrackings().data ?? [];
   const warehouses = useWarehouses().data ?? [];
@@ -476,6 +482,24 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
             <span className={styles.fieldLabel}>Expected delivery date</span>
             <DateField fullWidth value={v.expectedDeliveryDate ?? ''} onChange={(iso) => set({ expectedDeliveryDate: iso || null })} className={styles.fieldInput} aria-label="Expected delivery date"
               style={{ background: '#fff', border: '1px solid #d6d9d2', borderRadius: 8 }} />
+          </label>
+        </div>
+      </FormSection>
+
+      {/* 方案 C (owner 2026-10-08): the requester names the supplier and the agreed
+          price; the Purchaser records them and the PC Order is seeded from them. */}
+      <FormSection n={5} title="Supplier and price (if agreed)">
+        <div style={grid(200)}>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Supplier</span>
+            <select className={styles.fieldInput} value={v.supplierId ?? ''} onChange={(e) => set({ supplierId: e.target.value || null })} aria-label="Supplier">
+              <option value="">— not agreed yet —</option>
+              {supplierOptions.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
+            </select>
+          </label>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Unit price (MYR)</span>
+            <MoneyInput bare valueSen={v.unitPriceSen ?? 0} onCommit={(sen) => set({ unitPriceSen: sen != null && sen > 0 ? sen : null })} inputClassName={styles.fieldInput} selectOnFocus aria-label="Unit price" />
           </label>
         </div>
       </FormSection>
