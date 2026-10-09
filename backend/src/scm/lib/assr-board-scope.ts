@@ -44,6 +44,11 @@ import type { CompanyScopeCtx } from './companyScope';
  *  `<assr_no>#<leg>` — and the leg a crew completes through /delivery-jobs. */
 export const ASSR_BOARD_LEGS = ['customer_pickup', 'delivery', 'inspection'] as const;
 
+/** The trip stop type a Service Case leg rides -> that leg. */
+export const ASSR_LEG_BY_STOP: Record<string, string> = {
+  PICKUP: 'customer_pickup', INSPECTION: 'inspection', DELIVERY: 'delivery', SERVICE: 'delivery',
+};
+
 export function assrBoardUnionSql(c: CompanyScopeCtx): string {
   return `SELECT id            AS id,
               assr_no       AS assr_no,
