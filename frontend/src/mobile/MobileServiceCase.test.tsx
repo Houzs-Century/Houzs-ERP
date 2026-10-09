@@ -275,18 +275,18 @@ describe("MobileServiceCase: one place for the supplier's instruction (BUG-92)",
   const trip = (reason: string | null) => ({ id: 3, round_no: 2, ref_no: "SVC-RTN-2610-0002", pickup_at: null, returned_at: null, qc_result: null, creditor_code: null, reason, note: null });
   const HINT = /Use \+ Add Supplier Return and type the new Reason there/;
 
-  it("drops the item Supplier remark once the current return has a Reason", async () => {
+  it("drops the item Supplier remark once the case has a return", async () => {
     detailExtra = { items: [ITEM], supplier_returns: [trip("Leg loose")] };
     await openCase();
     await waitFor(() => expect(screen.getByText(HINT)).toBeTruthy());
     expect(screen.queryByDisplayValue("Trip 1 note")).toBeNull();
   });
 
-  it("keeps the remark while the return has no Reason yet", async () => {
+  it("drops it even before the Reason is filled, so there is only one place to type", async () => {
     detailExtra = { items: [ITEM], supplier_returns: [trip(null)] };
     await openCase();
-    await waitFor(() => expect(screen.getByDisplayValue("Trip 1 note")).toBeTruthy());
-    expect(screen.getByText(HINT)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText(HINT)).toBeTruthy());
+    expect(screen.queryByDisplayValue("Trip 1 note")).toBeNull();
   });
 
   it("stays quiet before the first return", async () => {

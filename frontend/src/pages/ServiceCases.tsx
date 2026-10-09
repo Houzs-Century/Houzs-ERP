@@ -128,7 +128,7 @@ import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, a
 import { ASSR_ISSUE_CATEGORIES, ASSR_NOTE_AUDIENCES, assrNoteIsCustomerVisible, assrMergedPoText, type AssrNoteAudience } from "../vendor/scm/lib/assr/case-fields";
 import { AssrOrderPoLine } from "../components/AssrOrderPoLine";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
-import { ANOTHER_RETURN_HINT, currentReturnReason } from "../vendor/scm/lib/assr/returns";
+import { ANOTHER_RETURN_HINT } from "../vendor/scm/lib/assr/returns";
 import type {
   Paginated,
   AssrCase,
@@ -3874,7 +3874,7 @@ function DetailContent({
                       onSaved={() => detail.reload()}
                       toast={toast}
                     />
-                    {!currentReturnReason(supplierReturns) && (
+                    {supplierReturns.length === 0 && (
                       <ItemRemarkInput
                         caseId={id}
                         item={item}
