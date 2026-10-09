@@ -3635,7 +3635,7 @@ function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pay: Paym
             )}
           </Field>
           <Field label="Amount" style={{ flex: 1.1 }}>
-            <input className="fld-i money" value={pay.amount} onChange={(e) => onChange({ amount: e.target.value })} />
+            <input className="fld-i money" inputMode="decimal" value={pay.amount} onChange={(e) => onChange({ amount: e.target.value })} />
           </Field>
         </div>
         {/* Merchant needs BOTH (missingMethodSubField); marked required now that
