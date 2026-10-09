@@ -34,6 +34,7 @@
  */
 import { LOCATION_MAP } from "../services/autocount-master-maps";
 import { bookSpellingOrOwn } from "../services/autocount-writeback";
+import { tidy } from "../services/autocount-address-fit";
 import { sheetRegion, sheetStateSpelling, type DeliverySheetRecord } from "./delivery-sheet-feed";
 
 export type AssrLegKind = "INSPECT" | "PICKUP" | "DELIVERY";
@@ -63,8 +64,11 @@ export type AssrFeedRow = {
   customer_pickup_at: string | null;
   delivery_by: string | null;
   do_date: string | null;
-  /** The linked Sales Order's country — `assr_cases` has none of its own. */
+  /** The linked Sales Order's country and town — `assr_cases` has none of its own. */
   customer_country: string | null;
+  so_postcode: string | null;
+  so_city: string | null;
+  so_state: string | null;
   last_modified_text: string;
 };
 
@@ -98,7 +102,12 @@ export type AssrLegRecord = DeliverySheetRecord & { Kind: AssrLegKind };
  * `customer_country` comes from the linked Sales Order: a Singapore case's
  * address line 3 often lacks the word (locality-master addresses read "600314
  * Jurong East"), so the region needs the SO's country (BUG-52's leg twin).
- * Exact doc_no first, then the AutoCount number. This note lives HERE, not as a
+ * Exact doc_no first, then the AutoCount number. The same order also lends its
+ * postcode / city / state: a case often holds its whole address in addr1 with
+ * addr3 / addr4 blank (ASSR/2610-013), so the sheet's Address 3 / Address 4
+ * came out empty; caseTownLines fills ONLY the blank ones, and not at all when
+ * the case names a different postcode (a service address is not always the
+ * delivery address). This note lives HERE, not as a
  * `--` comment in the SQL: toPgPlaceholders reads an apostrophe in a SQL comment
  * as an open string and then leaves ?1 / ?2 unconverted.
  */
@@ -118,13 +127,15 @@ SELECT assr_no,
        inspection_by, inspection_visit_at,
        pickup_by, customer_pickup_at,
        delivery_by, do_date,
-       (SELECT so.customer_country
-          FROM scm.mfg_sales_orders so
-         WHERE so.doc_no = assr_cases.doc_no OR so.linked_ac_docno = assr_cases.doc_no
-         ORDER BY (so.doc_no = assr_cases.doc_no) DESC
-         LIMIT 1) AS customer_country,
+       so.customer_country, so.so_postcode, so.so_city, so.so_state,
        updated_at::text AS last_modified_text
   FROM assr_cases
+  LEFT JOIN LATERAL (
+       SELECT o.customer_country, o.postcode AS so_postcode, o.city AS so_city, o.customer_state AS so_state
+         FROM scm.mfg_sales_orders o
+        WHERE o.doc_no = assr_cases.doc_no OR o.linked_ac_docno = assr_cases.doc_no
+        ORDER BY (o.doc_no = assr_cases.doc_no) DESC
+        LIMIT 1) so ON TRUE
  WHERE closed_at IS NULL
    AND archived_at IS NULL`;
 
@@ -158,13 +169,26 @@ const blankToNull = (v: string | null | undefined): string | null => {
   return s ? s : null;
 };
 
+/** Address lines 3 / 4 for a leg: the case's own, else the linked order's
+ *  "<postcode> <city>" / state, unless the case's address names a postcode the
+ *  order does not have (then the order's town would describe another place). */
+export function caseTownLines(row: AssrFeedRow): [string | null, string | null] {
+  const own3 = tidy(row.addr3);
+  const own4 = tidy(row.addr4);
+  const postcode = tidy(row.so_postcode);
+  const named = [row.addr1, row.addr2, row.addr3, row.addr4].flatMap((v) => (tidy(v) ?? "").match(/\b\d{5,6}\b/g) ?? []);
+  if (named.length > 0 && (postcode == null || !named.includes(postcode))) return [own3, own4];
+  const town = [postcode, tidy(row.so_city)].filter(Boolean).join(" ") || null;
+  return [own3 ?? town, own4 ?? tidy(row.so_state)];
+}
+
 /** The fields shared by every leg of one case — the customer, the address and
  *  the region the leg routes to. `SalesLocation` is book-normalised exactly as
  *  the SO feed does, so `sheetRegion` lands the leg in the same regional tab a
  *  Sales Order for that customer would. */
 function legBase(row: AssrFeedRow): Omit<AssrLegRecord, "Kind" | "DocNo" | "TransferTo" | "Remark2" | "SalesExemptionExpiryDate"> {
   const salesLocation = bookSpellingOrOwn(row.location, LOCATION_MAP);
-  const addr3 = blankToNull(row.addr3);
+  const [addr3, rawAddr4] = caseTownLines(row);
   return {
     ErpDocNo: row.assr_no,
     // Farra parity: col D the complaint date, col AA the case PO. Ref (col E) and
@@ -186,7 +210,7 @@ function legBase(row: AssrFeedRow): Omit<AssrLegRecord, "Kind" | "DocNo" | "Tran
     InvAddr1: blankToNull(row.addr1),
     InvAddr2: blankToNull(row.addr2),
     InvAddr3: addr3,
-    InvAddr4: sheetStateSpelling(row.addr4),
+    InvAddr4: sheetStateSpelling(rawAddr4),
     Attention: null,
     SOUDF_VENUE: null,
     Status: "PENDING",

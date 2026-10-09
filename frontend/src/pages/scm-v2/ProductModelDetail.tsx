@@ -34,6 +34,7 @@ import {
 } from '../../vendor/scm/lib/product-models-queries';
 import { DataTable } from '../../components/DataTable';
 import { useMaintenanceConfig, useUpdateMfgProductStatus, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
+import { isSingleSkuCategory } from '../../vendor/shared/product-categories';
 import { useFabricLibrary } from '../../vendor/scm/lib/queries';
 import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
 import { useAuth } from '../../auth/AuthContext';
@@ -989,6 +990,17 @@ function computeCandidates(
         size_label: label,
       };
     });
+  }
+  /* The one SKU a single-SKU Model carries, exactly as the server's own branch
+     writes it — so a Model left with none (BUG-85) can be given its SKU here. */
+  if (isSingleSkuCategory(category)) {
+    const prefix = branding.trim() ? `${branding.trim()} ` : '';
+    return [{
+      code:       modelCode.trim().toUpperCase(),
+      name:       `${prefix}${modelName.trim() || modelCode.trim()}`.trim().toUpperCase(),
+      size_code:  null,
+      size_label: null,
+    }];
   }
   return [];
 }

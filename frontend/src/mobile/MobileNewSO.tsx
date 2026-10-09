@@ -20,6 +20,7 @@ import { useSoValidate } from "../vendor/scm/lib/use-so-validate";
 import { uploadSlipFull } from "../vendor/scm/lib/slip";
 import { usePickableStaff } from "../vendor/scm/lib/admin-queries";
 import { resolveSelfStaff } from "../vendor/scm/lib/self-staff";
+import { fillCollectedBy } from "../vendor/scm/lib/default-collected-by";
 import { useAuth, isAdminLevel, isHatchSales } from "../vendor/scm/lib/auth";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
@@ -559,11 +560,11 @@ function lineFromItem(it: SoItem): LineItem {
     photoFiles: [],
   };
 }
-function newPayment(): Payment {
+function newPayment(collectedBy = ""): Payment {
   const today = todayMyt();
   return {
     key: uid(), idempotencyKey: newIdempotencyKey(),
-    method: "Cash", date: today, amount: "0.00", account: "", approval: "", collectedBy: "",
+    method: "Cash", date: today, amount: "0.00", account: "", approval: "", collectedBy,
     /* The method's L2 picks seed BLANK — desktop parity (newPaymentDraft seeds
        merchantProvider / installmentMonthsLabel / onlineType as ''). Seeding
        BANK_OPTS[0] here INVENTED a bank: a Merchant payment the operator never
@@ -1325,6 +1326,15 @@ export function MobileNewSO({
     if (isEdit) return; // edit keeps the persisted salesperson
     if (selfStaffMatch) setSalespersonId((prev) => prev || selfStaffMatch.id);
   }, [isEdit, selfStaffMatch]);
+  /* DEV-44: Collected By defaults to the signed-in salesperson, as on desktop.
+     Only when they are in the pickable list, or the select would show "—"
+     while posting their id. */
+  const selfCollectorId =
+    selfStaffMatch && (pickableStaffQ.data ?? []).some((s) => s.id === selfStaffMatch.id) ? selfStaffMatch.id : "";
+  useEffect(() => {
+    if (isEdit || !selfCollectorId) return; // edit keeps persisted collectors
+    setPays((prev) => fillCollectedBy(prev, selfCollectorId));
+  }, [isEdit, selfCollectorId]);
 
   /* Customer Type default (owner 2026-07-03, re-stated 2026-07-16) — a NEW SO
      defaults to the real DB option whose label reads "New Customer". The pick
@@ -2667,7 +2677,7 @@ export function MobileNewSO({
                     />
                   ))}
                 </div>
-                <button className="addline" onClick={() => setPays((p) => [...p, newPayment()])}>+ Add Payment</button>
+                <button className="addline" onClick={() => setPays((p) => [...p, newPayment(selfCollectorId)])}>+ Add Payment</button>
                 {/* Owner 2026-08-13 — the slip is optional, so this line no
                     longer claims a row without one is only "planned". Every
                     amount-bearing row is recorded; the slip can follow later
