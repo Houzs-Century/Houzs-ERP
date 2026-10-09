@@ -1,5 +1,5 @@
-/* DEV-62 (Adrian): on the phone line card the qty steps with − / + and the
- * Unit Price opens the decimal keypad instead of the letter keyboard. Mounted
+/* DEV-62 (Adrian): on the phone line card the qty steps with − / + (the price
+ * keypad half is pinned by MobileNewSO.priceKeypad.test.tsx, #4545). Mounted
  * the same way as MobileNewSO.frozenLines.test.tsx. */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -54,7 +54,7 @@ const mount = () => {
 
 const qtyBox = (c: HTMLElement) => c.querySelector(".qty-step input") as HTMLInputElement | null;
 
-describe("phone SO line card — qty stepper, typed price (DEV-62)", () => {
+describe("phone SO line card — qty stepper (DEV-62)", () => {
   it("− / + step the qty and − stops at 1", async () => {
     const { container } = mount();
     await waitFor(() => expect(qtyBox(container)).not.toBeNull(), { timeout: 4000 });
@@ -69,13 +69,5 @@ describe("phone SO line card — qty stepper, typed price (DEV-62)", () => {
     expect(qtyBox(container)!.value).toBe("2");
     fireEvent.change(qtyBox(container)!, { target: { value: "12" } });
     expect(qtyBox(container)!.value).toBe("12");
-  });
-
-  it("the Unit Price opens the decimal keypad", async () => {
-    const { container } = mount();
-    await waitFor(() => expect(qtyBox(container)).not.toBeNull(), { timeout: 4000 });
-    const price = container.querySelector("input.fld-i.money") as HTMLInputElement;
-    expect(price.value).toMatch(/2,?399\.00/);
-    expect(price.inputMode).toBe("decimal");
   });
 });
