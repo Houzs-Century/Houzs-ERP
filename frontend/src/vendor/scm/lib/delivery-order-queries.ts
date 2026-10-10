@@ -231,12 +231,13 @@ export function doListSearchParams(f: { status?: string; q?: string; sort?: stri
   return usp;
 }
 
-export function useMfgDeliveryOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; debtorNames?: string[]; currencies?: string[] }) {
-  const { page, pageSize, status, q, sort, debtorNames, currencies } = params;
+export function useMfgDeliveryOrdersPaged(params: { enabled: boolean; page: number; pageSize: number; status?: string; q?: string; sort?: string; debtorNames?: string[]; currencies?: string[] }) {
+  const { enabled, page, pageSize, status, q, sort, debtorNames, currencies } = params;
   const usp = doListSearchParams({ status, q, sort, debtorNames, currencies });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
   return useQuery({
+    enabled,
     queryKey: ['mfg-delivery-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? '', JSON.stringify(debtorNames ?? []), JSON.stringify(currencies ?? [])],
     queryFn: ({ signal }) => authedFetch<{ deliveryOrders: any[]; total: number; page: number; pageSize: number; statusCounts: { all: number; open: number; in_transit: number; delivered: number; cancelled: number } }>(`/delivery-orders-mfg?${usp.toString()}`, { signal }),
     placeholderData: (prev: any) => prev,

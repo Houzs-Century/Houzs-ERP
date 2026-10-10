@@ -91,6 +91,7 @@ import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
 import { mintDpNoForLorry } from '../lib/dp-no-mint';
 import { resolveDeliveryScope, scopeMatchesAssignment, type DeliveryScope, type CrewAssignment } from '../lib/deliveryScope';
+import { fetchDoCrewAssignment, doPodContextHandler } from './delivery-pod-context';
 import { deriveArrangementStage } from '../lib/arrangement-stage';
 /* Option B side map (/geo): zone derivation + set counting + cache-first
    geocoding reuse the EXISTING single-owner modules — the zone map + fallback
@@ -362,29 +363,6 @@ async function applyDeliveryRowScope<T extends { row_type: string; so_doc_no: st
 /* A single DO's crew assignment (header driver_id + delivery_order_crew ids),
    for the write-ownership check on the driver-facing step/POD endpoints. Returns
    an empty assignment (matches no self scope) when the DO or its crew is absent. */
-export async function fetchDoCrewAssignment(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  sb: any,
-  doId: string,
-): Promise<CrewAssignment> {
-  const [doRes, crewRes] = await Promise.all([
-    sb.from('delivery_orders').select('driver_id').eq('id', doId).maybeSingle(),
-    sb.from('delivery_order_crew').select('driver_1_id, driver_2_id, helper_1_id, helper_2_id').eq('do_id', doId).maybeSingle(),
-  ]);
-  const d = (doRes?.data ?? {}) as Record<string, unknown>;
-  const cr = (crewRes?.data ?? {}) as Record<string, unknown>;
-  return {
-    driverIds: [
-      (d.driverId ?? d.driver_id) as string | null,
-      (cr.driver1Id ?? cr.driver_1_id) as string | null,
-      (cr.driver2Id ?? cr.driver_2_id) as string | null,
-    ],
-    helperIds: [
-      (cr.helper1Id ?? cr.helper_1_id) as string | null,
-      (cr.helper2Id ?? cr.helper_2_id) as string | null,
-    ],
-  };
-}
 
 /* Plain-language 403 for a field-crew caller acting on a job that is not theirs. */
 const NOT_YOUR_JOB = "You can only update a delivery job assigned to you.";
@@ -1886,6 +1864,8 @@ deliveryPlanning.get('/:docNo/lines', async (c) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ items: items ?? [] });
 });
+
+deliveryPlanning.get('/do/:doRef/pod', doPodContextHandler);
 
 /* Region match: ALL → everything; else a configured region code → orders whose
    region set (customer-state buckets) includes it. validCodes is the active

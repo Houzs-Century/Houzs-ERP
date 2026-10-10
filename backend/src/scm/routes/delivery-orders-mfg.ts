@@ -27,7 +27,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { statusCapabilityRefusal, POD_STATES } from '../lib/do-status-capability';
 import { resolveDeliveryScope, scopeMatchesAssignment } from '../lib/deliveryScope';
 import { resolveCrewSeats } from '../lib/crew-seats';
-import { fetchDoCrewAssignment } from './delivery-planning';
+import { fetchDoCrewAssignment } from './delivery-pod-context';
 import { revertDeliveryOrderHandler } from './delivery-order-revert';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
@@ -5299,6 +5299,45 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   });
 };
 deliveryOrdersMfg.patch('/:id/status', patchDeliveryOrderStatusHandler);
+
+/* PATCH .../arrival — the driver's "Arrived" tap. It used to go through the
+   general PATCH /:id, which a driver (no scm.sales.delivery edit) can never
+   reach, so the run-sheet's Mark arrived answered 403 for exactly the people it
+   exists for. This stamps arrival_at with SERVER time and nothing else, under
+   the same rules as the POD: dispatch capability, the caller's own job, and a
+   DO that is already on the road. A repeat tap keeps the first arrival. */
+export const patchDeliveryOrderArrivalHandler = async (c: any) => {
+  const sb = c.get('supabase'); const id = c.req.param('id');
+  if (c.get('scmWriteBypassed')) {
+    const capRefusal = statusCapabilityRefusal(c.get('houzsUser'), 'IN_TRANSIT');
+    if (capRefusal) return c.json(capRefusal, 403);
+  }
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const { data: cur, error: readErr } = await scopeToCompanyId(
+    sb.from('delivery_orders').select('status, arrival_at').eq('id', id), co.companyId,
+  ).maybeSingle();
+  if (readErr) return c.json({ error: 'load_failed', reason: readErr.message }, 500);
+  if (!cur) return c.json(NOT_THIS_COMPANY, 404);
+  const row = cur as { status: string | null; arrival_at: string | null };
+  const status = (row.status ?? '').toUpperCase();
+  if (status !== 'DISPATCHED' && status !== 'IN_TRANSIT')
+    return c.json({ error: 'illegal_status_transition', reason: 'Arrival can only be recorded for a delivery that is on the road.' }, 409);
+  if (c.get('scmWriteBypassed')) {
+    const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
+    if (scope.mode !== 'all' && !scopeMatchesAssignment(scope, await fetchDoCrewAssignment(sb, id)))
+      return c.json({ error: 'not_your_job', reason: 'You can only update a delivery assigned to you.' }, 403);
+  }
+  if (row.arrival_at) return c.json({ deliveryOrder: { id, arrival_at: row.arrival_at } });
+  const now = new Date().toISOString();
+  const { error } = await scopeToCompanyId(
+    sb.from('delivery_orders').update({ arrival_at: now, updated_at: now }).eq('id', id).is('arrival_at', null),
+    co.companyId,
+  );
+  if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+  return c.json({ deliveryOrder: { id, arrival_at: now } });
+};
+deliveryOrdersMfg.patch('/:id/arrival', patchDeliveryOrderArrivalHandler);
 deliveryOrdersMfg.post('/:id/revert', revertDeliveryOrderHandler); // Ops-lead exception power (scm.do.revert) — routes/delivery-order-revert.ts
 
 /* PATCH .../hold — the mig-0324 MARKER, never `status`. routes/document-hold-routes.ts. */

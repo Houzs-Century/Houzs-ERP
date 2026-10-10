@@ -44,6 +44,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { authedFetch } = vi.hoisted(() => ({ authedFetch: vi.fn() }));
 vi.mock("../vendor/scm/lib/authed-fetch", () => ({ authedFetch }));
 vi.mock("../vendor/scm/lib/dialog-service", () => ({ serviceNotify: vi.fn() }));
+/* Every delivery closes with a photo (2026-10-07), so each case attaches one;
+   the upload itself is stubbed and its key is what the payload must carry. */
+vi.mock("../vendor/scm/lib/slip", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../vendor/scm/lib/slip")>()),
+  uploadSlipFull: vi.fn(async () => ({ r2Key: "slips/2026/10/pod-test.jpg" })),
+}));
 
 /* The confirm dialog names what is being lost and then lets the delivery close
    either way (owner's loosen-not-restrict rule). Always answering yes is the
@@ -147,6 +153,13 @@ function sentBody(): Record<string, unknown> {
   return JSON.parse(String(init.body));
 }
 
+/** What the camera hands the screen: one JPEG on the photo input. */
+const attachPhoto = (container: HTMLElement) => {
+  const input = container.querySelector('input[type="file"]');
+  if (!input) throw new Error("the photo input did not render");
+  fireEvent.change(input, { target: { files: [new File(["jpeg"], "pod.jpg", { type: "image/jpeg" })] } });
+};
+
 const pad = (container: HTMLElement): HTMLCanvasElement => {
   const canvas = container.querySelector("canvas");
   if (!canvas) throw new Error("the signature pad did not render");
@@ -167,6 +180,7 @@ describe("MobilePOD — the customer's signature reaches the payload", () => {
        and the payload are driven by the same flag, and a driver reads it. */
     expect(screen.getByText("Signed")).toBeTruthy();
 
+    attachPhoto(container);
     fireEvent.click(screen.getByText("Confirm delivered →"));
 
     await waitFor(() => expect(authedFetch).toHaveBeenCalled());
@@ -176,6 +190,7 @@ describe("MobilePOD — the customer's signature reaches the payload", () => {
 
     const body = sentBody();
     expect(body.status).toBe("DELIVERED");
+    expect(body.podKey).toBe("slips/2026/10/pod-test.jpg");
     expect(body.signatureData).toBe(DRAWN_PNG);
     /* The census counts a signature as REAL at 2,000 bytes. A payload the
        screen calls a signature must clear the same bar, or the row it writes
@@ -193,6 +208,7 @@ describe("MobilePOD — the customer's signature reaches the payload", () => {
     expect(pad(container)).toBeTruthy();
     expect(screen.getByText("Ask the customer to sign above")).toBeTruthy();
 
+    attachPhoto(container);
     fireEvent.click(screen.getByText("Confirm delivered →"));
 
     await waitFor(() => expect(authedFetch).toHaveBeenCalled());
@@ -213,9 +229,19 @@ describe("MobilePOD — the customer's signature reaches the payload", () => {
     fireEvent.click(screen.getByText("Clear & re-sign"));
     expect(screen.getByText("Ask the customer to sign above")).toBeTruthy();
 
+    attachPhoto(container);
     fireEvent.click(screen.getByText("Confirm delivered →"));
 
     await waitFor(() => expect(authedFetch).toHaveBeenCalled());
     expect(sentBody()).not.toHaveProperty("signatureData");
+  });
+
+  it("refuses to close a delivery without a photo, and sends nothing", async () => {
+    /* The paper delivery note is signed by hand for now; its photo is the POD.
+       A delivery confirmed with no photo would leave the DO with no evidence. */
+    wrap();
+    fireEvent.click(screen.getByText("Confirm delivered →"));
+    expect(await screen.findByText(/Take a POD photo first/)).toBeTruthy();
+    expect(authedFetch).not.toHaveBeenCalled();
   });
 });
