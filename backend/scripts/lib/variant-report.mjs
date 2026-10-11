@@ -241,9 +241,10 @@ export function reportVariants({ t, label, rows, desc2, deps: V, VERDICT, SHOW, 
   );
   if (ruledRows.length || ruledNotCarried.length || ruledAmbiguous.length) {
     plain(
-      `ruled = the OWNER read the slip and decided this build; data/sofa-compartment-corrections-*.json records it and the ` +
-        `ERP line carries EXACTLY it. Never folded into agree - the line really does differ from the book's own words, and ` +
-        `that difference is the only thing that would catch a ruling written onto the wrong document (docs/bugs/0714).`,
+      `ruled = the OWNER read the slip and decided this build; data/sofa-compartment-corrections-*.json records it, the ` +
+        `ERP line carries EXACTLY it, and the BOOK says otherwise. Its own column rather than agree - the line really does ` +
+        `differ from the book's own words, and that difference is the only thing that would catch a ruling written onto ` +
+        `the wrong document (docs/bugs/0714). Where the book agrees with the ruling too, it counts as agree.`,
     );
     plain(`   ${ruledRows.length} line(s) carry the owner's ruling:`);
     for (const line of ruledRows.slice(0, SHOW)) plain(`      ${line}`);

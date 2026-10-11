@@ -54,11 +54,16 @@
  *                「记下来给工厂看，但单据的钱不可以动」 — not an open gap.
  *   RULED        compartments only.  The OWNER read the slip and decided this
  *                build; the decision is in
- *                data/sofa-compartment-corrections-*.json and the ERP line
- *                carries exactly it.  The book's own text is NOT what it was
- *                compared against, because a ruling exists precisely where the
- *                text is wrong or silent.  Its own column, never AGREE — see
- *                lib/sofa-owner-rulings.mjs and docs/bugs/0714.
+ *                data/sofa-compartment-corrections-*.json, the ERP line carries
+ *                exactly it, AND the book's own text says something else or
+ *                says nothing.  It gets its own column instead of being folded
+ *                into AGREE, because the line really does differ from the book
+ *                and that difference is the only thing that would catch a
+ *                ruling written onto the wrong document (docs/bugs/0714).
+ *                Where the book AGREES with the ruling the verdict stays AGREE:
+ *                that is the stronger of the two statements and RULED exists to
+ *                stop a ruling reading as a difference, not to hide agreement.
+ *                See lib/sofa-owner-rulings.mjs.
  *
  * ── WHY RECORDED HAD TO BECOME ITS OWN VERDICT ─────────────────────────────
  * `record-priced-specials-on-migrated-lines.mjs` deliberately writes
@@ -204,11 +209,12 @@ export const RECORDED = "RECORDED";
    not a difference. */
 export const NO_LINE_KEY = "NO_LINE_KEY";
 /* RULED — compartments only.  The OWNER read the slip and decided this build,
-   the decision is recorded in data/sofa-compartment-corrections-*.json, and the
-   ERP line carries exactly what he ruled.  It is deliberately NOT folded into
-   AGREE: the ERP really does differ from the book's own text, and hiding that
-   would remove the only signal that catches a ruling applied to the WRONG
-   document (docs/bugs/0714).  See lib/sofa-owner-rulings.mjs. */
+   the decision is recorded in data/sofa-compartment-corrections-*.json, the ERP
+   line carries exactly what he ruled, and the BOOK says otherwise.  It is
+   deliberately NOT folded into AGREE: the ERP really does differ from the
+   book's own text, and hiding that would remove the only signal that catches a
+   ruling applied to the WRONG document (docs/bugs/0714).  Where the book agrees
+   with the ruling too, AGREE wins.  See lib/sofa-owner-rulings.mjs. */
 export const RULED = "RULED";
 export const VERDICTS = [AGREE, ERP_BLANK, BOOK_BLANK, DIFFER, PENDING, UNREADABLE, RECORDED, RULED, NO_LINE_KEY];
 
@@ -417,19 +423,31 @@ export function compareLine(deps, { book, erpLines, proceeded, ruling = null, ru
     const cell = axes.compartments;
     const have = erpLines.map((l) => compartmentOf(l.item_code)).filter(Boolean);
     cell.erp = have.join("+");
-    /* THE OWNER'S RULING COMES FIRST, AND ONLY WHEN THE LINE ACTUALLY CARRIES
-       IT.  `ruling` is a piece list he decided from the drawing; the ERP is
-       compared against THAT rather than against the book's words, which is the
-       whole reason a ruling exists.  A ruling that was never applied leaves the
-       multiset different, this branch does not fire, and the line falls through
-       to the ordinary comparison and stays locked — a file is not evidence, the
-       row is. */
-    if (ruling && ruling.length && !multisetDiff(have, ruling)) {
+    /* THE OWNER'S RULING, AND THE TWO THINGS IT MAY NOT DO.
+       `ruling` is a piece list he decided from the drawing.  It is honoured
+       ONLY where the LINE ACTUALLY CARRIES IT — a ruling never applied, or
+       applied to another document, leaves the multiset different, this branch
+       does not fire, and the line falls through to the ordinary comparison and
+       stays locked.  A file is not evidence; the row is.
+       And it may not swallow an AGREEMENT.  Where the book's own words already
+       say what the line holds, AGREE is the stronger statement of the two and
+       is kept: RULED exists to stop a ruling reading as a DIFFERENCE, not to
+       hide that the book agrees.  So the ordinary comparison runs first and the
+       ruling only ever overrides DIFFER or UNREADABLE. */
+    const ruled = ruling && ruling.length && !multisetDiff(have, ruling);
+    if (ruled && book.compartments !== null && !multisetDiff(have, book.compartments)) {
+      cell.verdict = AGREE;
+      cell.book = book.compartments.join("+");
+      cell.detail = "the owner ruled this build, and the book's own words say the same thing";
+    } else if (ruled) {
       cell.verdict = RULED;
       cell.book = ruling.join("+");
-      cell.detail = rulingWhy
+      cell.detail = (rulingWhy
         ? `the owner ruled this build from the drawing — ${rulingWhy}`
-        : "the owner ruled this build from the drawing";
+        : "the owner ruled this build from the drawing")
+        + (book.compartments === null
+          ? "; the book's own text states no build"
+          : `; the book's own text says ${book.compartments.join("+")}`);
     } else if (book.compartments === null) {
       cell.verdict = UNREADABLE;
       cell.book = "(cannot be read from Desc2)";
