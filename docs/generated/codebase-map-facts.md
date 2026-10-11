@@ -22,7 +22,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/agent-console.ts` | 33 | 1304 |
 | `backend/src/routes/announcements.ts` | 11 | 1414 |
 | `backend/src/routes/assistant.ts` | 4 | 225 |
-| `backend/src/routes/assr.ts` | 62 | 3368 |
+| `backend/src/routes/assr.ts` | 62 | 3353 |
 | `backend/src/routes/assrFormIntake.ts` | 5 | 675 |
 | `backend/src/routes/assrPortal.ts` | 14 | 540 |
 | `backend/src/routes/assr_print.ts` | 1 | 1218 |
@@ -176,7 +176,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1541 files, 595457 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1542 files, 595484 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -198,7 +198,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/scm/routes/grns.ts` | 3581 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
-| `backend/src/routes/assr.ts` | 3368 |
+| `backend/src/routes/assr.ts` | 3353 |
 | `backend/src/services/projects.ts` | 3085 |
 | `frontend/src/pages/MailCenter/Inbox.tsx` | 3012 |
 
