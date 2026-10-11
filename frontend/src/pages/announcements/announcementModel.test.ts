@@ -11,6 +11,7 @@ import {
   filterManageRows,
   isApproved,
   isArchived,
+  isVoided,
   isPendingForMe,
   manageStats,
   manageStatus,
@@ -193,6 +194,14 @@ describe("approval workflow (mig 20260906T1509)", () => {
     expect(docNo(legacy)).toBe("ANN-OLD");
     expect(docNo(ann({ id: "ann-new", refNo: "OPS-ANN-2609-0001" }))).toBe("OPS-ANN-2609-0001");
     expect(docNo(ann({ id: "ann-new", refNo: "  " }))).toBe("ANN-NEW");
+  });
+
+  test("a void outranks everything and reads as archived", () => {
+    const v = ann({ id: "v", voidedAt: "2026-09-07T00:00:00Z" });
+    expect(isVoided(v)).toBe(true);
+    expect(isArchived(v, NOW)).toBe(true);
+    expect(manageStatus(v, { pendingForMe: true, pct: 100 }, NOW)).toBe("voided");
+    expect(manageStatus({ ...v, approvalStatus: "PENDING_APPROVAL" }, { pendingForMe: false, pct: null }, NOW)).toBe("voided");
   });
 
   test("manage status: the approval state outranks awaiting / the ack rate", () => {

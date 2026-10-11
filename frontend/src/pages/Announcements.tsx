@@ -18,7 +18,9 @@ import { ComposerModal } from "./announcements/ComposerModal";
 import {
   bucketInbox,
   isApproved,
+  isVoided,
   receiptsCsv,
+  type AnnouncementFile,
   type AckSummary,
   type AcksData,
   type Announcement,
@@ -73,7 +75,7 @@ export function Announcements() {
   const items = useMemo(() => listQ.data?.data ?? [], [listQ.data]);
   // The reading inbox holds only what readers are served: a manager's own
   // pending / draft / rejected rows belong in Manage, not in their inbox.
-  const inboxItems = useMemo(() => items.filter(isApproved), [items]);
+  const inboxItems = useMemo(() => items.filter((a) => isApproved(a) && !isVoided(a)), [items]);
 
   // Lookups for the audience pickers + the "To: …" resolver. All three sit
   // behind users.read on the backend, which a plain reader does not hold — and
@@ -168,6 +170,25 @@ export function Announcements() {
     { enabled: receiptsEnabled },
   );
 
+  // The attachment log for the selected notice (mig 20260907T0715) — Manage
+  // only; the endpoint answers writers / approvers.
+  const filesQ = useQuery<{ data: AnnouncementFile[] }>(
+    `/api/announcements/${selected?.id ?? "-"}/files`,
+    () => api.get(`/api/announcements/${selected?.id}/files`),
+    [],
+    { enabled: !!selected && mode === "manage" && canOpenManage },
+  );
+  // The attachment policy for the ANN type (Settings → Documents): the
+  // composer disables Submit while a required file is missing. The server
+  // enforces it regardless.
+  const docTypesQ = useQuery<{ data: Array<{ code: string; attachmentRequired: boolean }> }>(
+    "/api/document-types",
+    () => api.get("/api/document-types"),
+    [],
+    { enabled: canWrite },
+  );
+  const attachmentRequired = (docTypesQ.data?.data ?? []).some((t) => t.code === "ANN" && t.attachmentRequired);
+
   // Manage mode: one ack-rate map for the whole table, fetched only while the
   // mode is open and only for a writer (the endpoint is write-gated).
   const summaryQ = useQuery<SummaryResponse>(
@@ -256,17 +277,41 @@ export function Announcements() {
     }
   }
 
+  // Void (mig 20260907T1030): a submitted notice keeps its row, receipts
+  // and number; it just stops being served. The reason is mandatory.
+  async function voidNotice(a: Announcement) {
+    const reason = await dialog.prompt({
+      title: "Void announcement",
+      message: `"${a.title}" stops being shown to anyone and keeps its number${a.refNo ? ` (${a.refNo})` : ""}. This cannot be undone.`,
+      placeholder: "Why it is being voided",
+      confirmLabel: "Void",
+      danger: true,
+      required: true,
+      multiline: true,
+    });
+    if (reason == null || !reason.trim()) return;
+    try {
+      await api.post(`/api/announcements/${a.id}/void`, { reason: reason.trim() });
+      toast.success("Announcement voided");
+      listQ.reload();
+      summaryQ.reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+    }
+  }
+
+  // Drafts only — a submitted notice is voided (the server refuses the rest).
   async function deleteNotice(a: Announcement) {
     const ok = await dialog.confirm({
-      title: "Delete announcement",
-      message: `Permanently delete "${a.title}"? Read-receipts will also be removed. This can't be undone.`,
-      confirmLabel: "Delete",
+      title: "Discard draft",
+      message: `Discard the draft "${a.title}"? It was never submitted, so nothing else is affected.`,
+      confirmLabel: "Discard",
       danger: true,
     });
     if (!ok) return;
     try {
       await api.del(`/api/announcements/${a.id}`);
-      toast.success("Announcement deleted");
+      toast.success("Draft discarded");
       setSelectedId(null);
       listQ.reload();
       summaryQ.reload();
@@ -395,6 +440,7 @@ export function Announcements() {
           companies={companies}
           salesDirOnly={salesDirOnly}
           currentUserId={currentUserId}
+          attachmentRequired={attachmentRequired}
           onClose={() => setComposerOpen(false)}
           onPosted={() => {
             listQ.reload();
@@ -461,6 +507,7 @@ export function Announcements() {
           onSearch={setSearch}
           receipts={receiptsQ.data?.data ?? null}
           receiptsLoading={receiptsQ.loading}
+          files={filesQ.data?.data ?? null}
           drillDept={drillDept}
           onDrill={setDrillDept}
           onRemindPending={(a) => void remindPending(a)}
@@ -473,6 +520,7 @@ export function Announcements() {
           onSubmit={(a) => void submitNotice(a)}
           onApprove={(a) => void approveNotice(a)}
           onReject={(a) => void rejectNotice(a)}
+          onVoid={(a) => void voidNotice(a)}
         />
       )}
     </div>

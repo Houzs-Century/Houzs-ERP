@@ -131,7 +131,7 @@ def reload_gz(name):
 NOW = datetime.datetime.now().isoformat(sep=" ")
 manifest = {"exported_at": NOW, "source": "%s live (read-only)" % DB, "round": "reimport-v3 2026-08-28", "files": {}}
 
-SECTION_ORDER = ["so", "iv", "dates", "po1", "po2", "dos", "bal", "costs", "grrefs", "links", "ruler", "remarks", "stamps"]
+SECTION_ORDER = ["so", "iv", "dates", "po1", "po2", "dos", "bal", "costs", "grrefs", "links", "ruler", "remarks", "stamps", "hdr"]
 START_AT = os.environ.get("START_AT", "so")
 if START_AT not in SECTION_ORDER:
     print("unknown START_AT %r" % START_AT, file=sys.stderr)
@@ -151,6 +151,8 @@ if ONLY == "ruler":
     print("ONLY=ruler refused — the ruler is derived; use START_AT=ruler", file=sys.stderr)
     sys.exit(2)
 
+SECTIONS_RUN = []
+
 def want(key):
     if ONLY:
         run = key == ONLY
@@ -158,6 +160,8 @@ def want(key):
         run = SECTION_ORDER.index(key) >= SECTION_ORDER.index(START_AT)
     if not run:
         print("skip %-6s (kept from the earlier invocation)" % key, flush=True)
+    else:
+        SECTIONS_RUN.append(key)
     return run
 
 # ── shared predicates ────────────────────────────────────────────────────────
@@ -535,8 +539,101 @@ if want("stamps"):
                   "stamps": stamps, "edges": edges, "closure": closure}},
     )
 
+# ── 15. HEADER MASTER, every document, every field ──────────────────────────
+# WHY THIS SECTION EXISTS. Section 1 exports the SO header JOINED to its lines,
+# and only for the OUTSTANDING population. Two consequences the header lane
+# cannot live with:
+#
+#   * a document that WAS outstanding when we copied it and has since been
+#     fully delivered drops out of that predicate — and the ERP still holds it,
+#     so its header master must still be kept current. Filtering by SO_OUT here
+#     would quietly define "complete" as "still outstanding", which is the exact
+#     substitution the owner ruled out on 2026-09-07.
+#   * the fields no importer read at insert (Attention, the delivery address,
+#     DisplayTerm, UDF_ToPONo, CurrencyCode) are not in any existing cut, so
+#     "the ERP is blank and AutoCount has a value" could not even be counted.
+#
+# COLUMNAR, like ac-reconcile-truth.json.gz: 22,700 headers x ~30 mostly-empty
+# fields as objects would be megabytes of repeated key names.
+#
+# The receipt (exportedAt / source) lives INSIDE the payload, not in
+# ac-reimport-manifest.json — the same reason the stamps section gives: the
+# consumer subtracts this timestamp to refuse a stale snapshot, so it is
+# timezone-aware, unlike the manifest's naive NOW.
+if want("hdr"):
+    SO_HDR_COLS = [
+        "DocNo", "DocDate", "DebtorCode", "DebtorName", "Attention", "Ref",
+        "SalesAgent", "SalesLocation", "Phone1",
+        "InvAddr1", "InvAddr2", "InvAddr3", "InvAddr4",
+        "DeliverAddr1", "DeliverAddr2", "DeliverAddr3", "DeliverAddr4",
+        "DeliverContact", "DeliverPhone1",
+        "CurrencyCode", "DisplayTerm", "Cancelled",
+        "Remark2", "Remark3", "Remark4", "UDF_Note", "SalesExemptionExpiryDate",
+        "UDF_VENUE", "UDF_BRANDING", "UDF_PDate", "UDF_BALANCE", "UDF_PAYEMENT",
+        "UDF_ToPONo", "LastModified",
+    ]
+    PO_HDR_COLS = [
+        "DocNo", "DocDate", "CreditorCode", "CreditorName", "Ref", "Attention",
+        "InvAddr1", "InvAddr2", "InvAddr3", "InvAddr4",
+        "DeliverAddr1", "DeliverAddr2", "DeliverAddr3", "DeliverAddr4",
+        "DeliverContact", "DeliverPhone1",
+        "CurrencyCode", "DisplayTerm", "Cancelled", "LastModified",
+    ]
+
+    def hdr_rows(table, cols, name_col_source):
+        # DocNo is trimmed the way every other section trims it; CreditorName is
+        # the one value that comes from a JOIN rather than the header itself.
+        sel = []
+        for c in cols:
+            if c == "DocNo":
+                sel.append("LTRIM(RTRIM(h.DocNo)) AS DocNo")
+            elif c == "CreditorName":
+                sel.append("cr.CompanyName AS CreditorName")
+            else:
+                sel.append("h.%s" % c)
+        join = " LEFT JOIN Creditor cr ON cr.AccNo = h.CreditorCode" if name_col_source else ""
+        # NO Cancelled filter: a cancelled document the ERP migrated still needs
+        # its header read, and `Cancelled` is exported so the consumer can decide.
+        rows = rows_of(
+            "SELECT %s FROM %s h%s WHERE %s ORDER BY h.DocNo"
+            % (", ".join(sel), table, join, TEST_H)
+        )
+        return [[r[c] for c in cols] for r in rows]
+
+    so_hdr = hdr_rows("SO", SO_HDR_COLS, False)
+    po_hdr = hdr_rows("PO", PO_HDR_COLS, True)
+    hdr_exported_at = datetime.datetime.now().astimezone().isoformat()
+    write_gz("ac-doc-headers.json.gz", {"rows": {
+        "exportedAt": hdr_exported_at, "source": DB,
+        "so_fields": SO_HDR_COLS, "so": so_hdr,
+        "po_fields": PO_HDR_COLS, "po": po_hdr,
+    }})
+    print("   headers: SO=%d PO=%d" % (len(so_hdr), len(po_hdr)), flush=True)
+
+# The manifest is MERGED, never replaced. `ONLY=<section>` runs one section, and
+# the sections with no reload branch (ruler, remarks, stamps, hdr) contribute
+# nothing to `manifest["files"]` on such a run — so a plain rewrite DELETED
+# their entries every time another section was re-cut alone. Merging keeps every
+# earlier receipt and lets this run's sections overwrite only their own.
+_prev = {}
+try:
+    with open(os.path.join(OUT, "ac-reimport-manifest.json"), "r", encoding="utf-8") as f:
+        _prev = json.load(f)
+except (FileNotFoundError, ValueError):
+    _prev = {}
+_merged = dict(_prev)
+_merged.update({k: v for k, v in manifest.items() if k != "files"})
+# `exported_at` names the cut the manifest's COUNTS came from. A run that
+# re-cut none of them (ONLY=hdr, ONLY=stamps) must not restamp it — that would
+# date every other section to a run that never touched it.
+if _prev.get("exported_at") and not (set(SECTIONS_RUN) & {"so", "iv", "dates", "po1", "po2", "dos", "bal", "costs", "grrefs", "links"}):
+    _merged["exported_at"] = _prev["exported_at"]
+_merged["last_run"] = {"at": NOW, "sections": SECTIONS_RUN}
+_files = dict(_prev.get("files") or {})
+_files.update(manifest["files"])
+_merged["files"] = _files
 with open(os.path.join(OUT, "ac-reimport-manifest.json"), "w", encoding="utf-8") as f:
-    json.dump(manifest, f, ensure_ascii=False, indent=2)
+    json.dump(_merged, f, ensure_ascii=False, indent=2)
 print("\nmanifest written. NOT produced here (separate passes): ac-stock-layers.json.gz,", flush=True)
 print("photo manifests, fidelity truth (run export-ac-fidelity-truth.py), live ruler (export-ac-live.py).", flush=True)
 cn.close()

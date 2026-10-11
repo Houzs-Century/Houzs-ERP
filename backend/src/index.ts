@@ -95,6 +95,7 @@ import pos from "./routes/pos";
 // Announcements — office posts every logged-in user sees as a top banner with
 // a "Got it" ack. Ported from Hookka (single-tenant + office-only here).
 import announcements from "./routes/announcements";
+import announcementApproval from "./routes/announcementApproval";
 // Agent Console — owner-only fleet console for the HOOKKA-ported agents
 // (Delivery/Document/CS). Skeleton: controls + runs + config proposals +
 // feedback; the engines register themselves in services/agent-scheduler.ts.
@@ -407,6 +408,9 @@ app.route("/api/mail-center", mailCenter);
 // ADMIN verb and no longer gates reading; CRUD/remind/acks-readout stay on
 // announcements.write.
 app.route("/api/announcements", announcements);
+// The approval + attachment-log routes (submit / approve / reject / files) —
+// same prefix, second router (routes/announcements.ts is at its size ceiling).
+app.route("/api/announcements", announcementApproval);
 // Agent Console — owner-only (requirePermission("*") inside the router).
 // Deliberately in the public /api tree, NOT /api/scm (the scm subtree swaps
 // c.get('user') to scm.staff UUIDs — the known staff-UUID bigint trap).

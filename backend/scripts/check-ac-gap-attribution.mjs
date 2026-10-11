@@ -66,7 +66,18 @@ const held = (cfg) => {
   const set = new Set();
   for (const f of files) {
     if (!fs.existsSync(path.join(DATA, f))) return { set: null, missing: f };
-    for (const r of gz(f)) {
+    const payload = gz(f);
+    /* Two shapes. Most sources are an ARRAY of document rows and the numbers sit
+       under `docField`. ac-invoice-refs.json.gz is a MAP instead - the invoice
+       number IS the key - so `keysOf` names the sub-map to read. Iterating that
+       one as an array throws, which is the honest failure but a useless one. */
+    if (cfg.keysOf) {
+      const sub = payload?.[cfg.keysOf];
+      if (!sub || typeof sub !== "object") return { set: null, missing: `${f} -> ${cfg.keysOf}` };
+      for (const k of Object.keys(sub)) if (k) set.add(String(k).trim());
+      continue;
+    }
+    for (const r of payload) {
       const v = r[cfg.docField];
       if (v) set.add(String(v).trim());
     }

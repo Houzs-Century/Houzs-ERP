@@ -26,8 +26,19 @@
 //   sofa COMPARTMENT changes                redecode-collapsed-sofa-lines.mjs /
 //                                           apply-sofa-compartment-corrections.mjs
 //
-// It WRITES only the two lanes nothing owns — line `description2`, and the
-// migrated payment/balance row — and it rebuilds the conversion links.
+// It WRITES only the lanes nothing else owns — line `description2`, the
+// migrated payment/balance row, the document HEADER MASTER fields, and the
+// conversion links it rebuilds.
+//
+// THE HEADER MASTER LANE (added 2026-09-07). The cutover census in
+// docs/golive-runbook-2026-09-07.md found "Sales agent has no cutover tool at
+// all", and the same hole covers every other header field: the importer maps
+// AutoCount's header onto the ERP's columns at INSERT and nothing has looked at
+// it since. Section 6 compares EVERY header field the importer reads, per
+// field, and reports how many documents agree, how many differ, and how many
+// the ERP holds blank while AutoCount has a value. The map is
+// lib/ac-header-fields.mjs, imported by BOTH the importer and this script so
+// the insert and the update cannot drift.
 //
 // COPY, NEVER COMPUTE. A migration reads AutoCount's own value; a value the
 // book left blank stays blank in the ERP. Nothing here derives a figure: the
@@ -40,18 +51,34 @@
 // documents disagree and I did not touch them" is the intended outcome; a
 // silent overwrite of the owner's own data is not.
 //
+// The HEADER lane's veto is narrower and better: per (document, FIELD), and
+// keyed on mfg_so_audit_log.actor_id being a real person rather than the
+// migration's own system user. It does NOT use `version > 1` —
+// check-so-version-provenance.mjs (PR #3042) measured 80 of 81 "conflicts" as
+// the automated stock-allocation sweep and exactly 1 as a person, so that arm
+// refuses the owner's data on a robot's behalf. The desc2/pay lanes keep the
+// old two-armed test for now; the header section prints what the version arm
+// WOULD have refused, so the cost is a number and not an argument.
+//
 // SOFA is decomposed only by the shared decoder lib/parse-sofa.mjs — never
 // hand-parsed here — and compartment CHANGES are reported, never applied,
 // because a changed compartment set changes the NUMBER of ERP lines.
 //
 // MODE=plan (default) | MODE=apply, and apply also needs
 //   CONFIRM="SYNC AC DELTA"
+// LANES=desc,pay,links,hdr,hdrstaff — the last two are OFF by default. `hdr`
+// writes header master fields; `hdrstaff` CREATES master data (an inactive
+// salesperson row per unbound AutoCount agent) and must be asked for by name.
 // RE-RUN: convergent. A second run against the same snapshot re-reads the live
 // rows, finds every difference already applied and writes nothing; the refusal
-// list is recomputed from scratch each run and is never persisted.
+// list is recomputed from scratch each run and is never persisted. The header
+// lane is convergent for a second reason as well — every UPDATE is guarded on
+// the value this run read, so a row somebody edited in between is skipped and
+// counted, never overwritten on a retry.
 //
 //   node scripts/sync-ac-delta.mjs
 //   MODE=apply CONFIRM="SYNC AC DELTA" node scripts/sync-ac-delta.mjs
+//   MODE=apply CONFIRM="SYNC AC DELTA" LANES=hdr node scripts/sync-ac-delta.mjs
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
@@ -61,6 +88,14 @@ import { parsePayment } from "./lib/ac-payment-udf.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { buildFabricColourIndex } from "./lib/fabric-colour-match.mjs";
 import { acFromSoDtlKey } from "./lib/ac-po-line.mjs";
+import {
+  PO_HEADER_FIELDS,
+  SO_HEADER_FIELDS,
+  compareField,
+  flat,
+  headerAuditNeedles,
+  writeValue,
+} from "./lib/ac-header-fields.mjs";
 import {
   SO_HEADER_LEGACY_PAYLOAD_KEYS,
   SO_PROCESSING_DATE_COLUMN,
@@ -89,6 +124,7 @@ const num = (v) => { const n = parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, 
 const centi = (v) => Math.round(num(v) * 100);
 const pad = (s, n) => String(s).padEnd(n);
 const rpad = (s, n) => String(s).padStart(n);
+const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 
 /* The needles refresh-so-tail-from-book.mjs uses, widened by the fields THIS
    script writes. One list, because a field this script may write is a field a
@@ -697,9 +733,267 @@ async function main() {
     }
   }
 
+  /* ─────────── 6. HEADER MASTER FIELDS ───────────
+     WHY THIS SECTION EXISTS. Every section above is about LINES, MONEY or
+     LINKS. The document HEADER — who the customer is, who sold it, where it
+     goes, which venue, which branding — was mapped once, at INSERT, by
+     import-ac-outstanding-so.mjs, and by nothing since. A census of the cutover
+     tools (PR #3050/#3054) put it plainly: "Sales agent has no cutover tool at
+     all." So an order whose agent, address or customer name changed in
+     AutoCount after we copied it still shows the value it was born with, and no
+     tool in this repo could even COUNT that.
+
+     The owner's instruction, 2026-09-07: 「不能只是照搬 而是最新的数据，不然就是
+     不完整的 … 我们最重要的是搬进来数据，然后再用我们的规则去处理这些数据。不能因为
+     搬数据 而破坏了我们的规则。」 Completeness first, our rules on top.
+
+     THE FIELD MAP IS IMPORTED, NEVER RETYPED. lib/ac-header-fields.mjs is the
+     one declaration, and import-ac-outstanding-so.mjs now reads its SALESLOC
+     out of the same file, so the INSERT and this UPDATE cannot drift apart.
+
+     THE HUMAN VETO IS PER FIELD AND USES THE ACTOR COLUMN. A refusal is
+     `scm.mfg_so_audit_log` naming that field in `field_changes` with an
+     `actor_id` that is not the migration's system user. `version > 1` is NOT
+     used: check-so-version-provenance.mjs (PR #3042) measured 80 of 81
+     "conflicts" as the automated stock-allocation sweep and exactly 1 as a
+     person, so it refuses the owner's data on a robot's behalf. Section 2's
+     desc2/pay lanes still carry the old two-armed test — deliberately left
+     alone mid-cutover; this section prints what that arm WOULD have cost here
+     so the difference is a number rather than an argument. */
+  const HDRFILE = "ac-doc-headers.json.gz";
+  const hdrWrites = [];          // { table, pk, pkVal, doc, field, col, from, to }
+  const staffCreate = [];        // agent display names with no ERP staff row
+  const staffRebind = [];        // ACIMP-* placeholder that a real staff row now shadows
+  log("");
+  if (!has(HDRFILE)) {
+    log(`HEADER MASTER: data/${HDRFILE} is missing — cut it with`);
+    log("  ONLY=hdr AC_CRED_FILE=<path> python scripts/export-ac-reimport.py");
+    log("Section skipped; no header field was compared.");
+  } else {
+    const H = gz(HDRFILE).rows;
+    const hAge = (Date.now() - Date.parse(H.exportedAt)) / 86400000;
+    log(`HEADER MASTER FIELDS  (header snapshot ${H.exportedAt}, ${hAge.toFixed(2)} days old)`);
+    if (!(hAge >= -SKEW) || hAge > MAX_AGE) {
+      log(`  REFUSED: that snapshot is ${hAge.toFixed(2)} days old (limit ${MAX_AGE}). Re-cut it before believing a number here.`);
+    } else {
+      const rowsToObj = (fields, rows) => {
+        const idx = new Map(fields.map((f, i) => [f, i]));
+        return rows.map((r) => { const o = {}; for (const [f, i] of idx) o[f] = r[i]; return o; });
+      };
+      const bookSo = new Map(rowsToObj(H.so_fields, H.so).map((r) => [String(r.DocNo).trim(), r]));
+      const bookPo = new Map(rowsToObj(H.po_fields, H.po).map((r) => [String(r.DocNo).trim(), r]));
+      log(`  AutoCount headers in the cut: ${bookSo.size} sales order(s), ${bookPo.size} purchase order(s)`);
+
+      // The ERP's own column list, read from the LIVE catalog rather than from
+      // a migration file — the repo has paid for that distinction before
+      // (system-foundation-coe.md). A field whose column is absent is reported
+      // as "no ERP column", never written.
+      const liveCols = async (table) => new Set(
+        (await sql`SELECT column_name FROM information_schema.columns
+                    WHERE table_schema = 'scm' AND table_name = ${table}`).map((r) => r.column_name));
+      const soCols = await liveCols("mfg_sales_orders");
+      const poCols = await liveCols("purchase_orders");
+
+      /* EVERY compared column is read AS TEXT, and that is load-bearing twice
+         over. It gives one comparison rule for a date, a uuid and a sen amount
+         alike — and it makes the apply lane's guard (`"col"::text = $3`) match
+         byte for byte against the value this plan actually saw. Comparing a
+         normalised value against a raw column would miss on every row whose
+         only difference was whitespace, and a guard that always misses is a
+         guard that silently does nothing. */
+      const readErp = async (table, pk, cols) => {
+        const list = [...new Set([pk, "linked_ac_docno", ...cols])]
+          .map((c) => `"${c}"::text AS "${c}"`).join(", ");
+        return sql.unsafe(`SELECT ${list} FROM scm.${table}
+                            WHERE company_id = 1 AND linked_ac_docno IS NOT NULL`);
+      };
+      const soFieldsLive = SO_HEADER_FIELDS.filter((f) => f.erp && soCols.has(f.erp));
+      const poFieldsLive = PO_HEADER_FIELDS.filter((f) => f.erp && poCols.has(f.erp));
+      const erpSoRows = await readErp("mfg_sales_orders", "doc_no", soFieldsLive.map((f) => f.erp));
+      const erpPoRows = await readErp("purchase_orders", "po_number", poFieldsLive.map((f) => f.erp));
+      log(`  ERP migrated headers: ${erpSoRows.length} sales order(s), ${erpPoRows.length} purchase order(s)`);
+
+      /* ── the human veto, per (document, field) ── */
+      const SYS_ACTOR = "00000000-0000-4000-8000-000000000001";
+      const HDR_NEEDLES = headerAuditNeedles(SO_HEADER_FIELDS);
+      const camel = (s) => s.replace(/_([a-z0-9])/g, (_m, c) => c.toUpperCase());
+      const humanField = new Set();   // `${doc}|${fieldKey}`
+      const humanDocs = new Set();
+      let auditRows = 0, sysAuthored = 0;
+      const soDocNos = erpSoRows.map((r) => r.doc_no);
+      for (let i = 0; i < soDocNos.length; i += 1000) {
+        const rows = await sql`SELECT so_doc_no, actor_id, actor_name_snapshot, field_changes::text AS fc
+                                 FROM scm.mfg_so_audit_log
+                                WHERE so_doc_no = ANY(${soDocNos.slice(i, i + 1000)})
+                                  AND field_changes::text ILIKE ANY(${HDR_NEEDLES})`;
+        for (const r of rows) {
+          auditRows++;
+          if (!r.actor_id || String(r.actor_id) === SYS_ACTOR) { sysAuthored++; continue; }
+          const fc = (r.fc || "").toLowerCase();
+          for (const f of SO_HEADER_FIELDS) {
+            if (!f.erp) continue;
+            if (fc.includes(f.erp.toLowerCase()) || fc.includes(camel(f.erp).toLowerCase())) {
+              humanField.add(`${r.so_doc_no}|${f.key}`);
+              humanDocs.add(r.so_doc_no);
+            }
+          }
+        }
+      }
+      const versionWouldRefuse = soHeaders.filter((h) => Number(h.version) > 1).length;
+      log(`  audit rows naming a header field in scope           ${auditRows}  (${sysAuthored} written by the migration's own system actor, never a veto)`);
+      log(`  sales orders where a PERSON changed a header field  ${humanDocs.size}  — those fields are refused, the rest of the document is not`);
+      log(`  for comparison, a version > 1 test would refuse     ${versionWouldRefuse} whole document(s). NOT used: PR #3042 measured 80 of 81 as the automated allocation sweep.`);
+
+      /* ── the per-field census ── */
+      const tally = (kindLabel, fields, bookByDoc, erpRows, pk, liveColSet, table) => {
+        const stats = new Map(fields.map((f) => [f.key, { agree: 0, differ: 0, erpBlank: 0, bookBlank: 0, bothBlank: 0, human: 0, sample: [] }]));
+        let noBook = 0;
+        for (const row of erpRows) {
+          const acNo = String(row.linked_ac_docno || "").trim();
+          const bh = bookByDoc.get(acNo);
+          if (!bh) { noBook++; continue; }
+          for (const f of fields) {
+            const st = stats.get(f.key);
+            /* `approval_code` holds the PARSED half of UDF_PAYEMENT. Comparing
+               the ERP's parsed value against the book's raw UDF would report
+               every order as differing, so the same parser the insert used
+               runs first — lib/ac-payment-udf.mjs, imported, not retyped. */
+            const bookRaw = f.key === "approval_code" ? parsePayment(bh.UDF_PAYEMENT).appr : bh[f.book];
+            /* A `resolve` field holds an ERP ROW ID whose source is an
+               AutoCount NAME. There is no honest text comparison between a
+               uuid and a name, and re-running the resolver here would be a
+               second copy of the importer's lookup — so this counts PRESENCE
+               only: the book names somebody and the ERP either resolved it or
+               did not. The agent section below does the real reconciliation. */
+            const c = f.kind === "resolve"
+              ? (() => {
+                  const b = flat(bh[f.book]), e = row[f.erp] == null ? null : String(row[f.erp]);
+                  if (b === null && e === null) return { verdict: "bothBlank", book: b, erp: e };
+                  if (b === null) return { verdict: "bookBlank", book: b, erp: e };
+                  if (e === null) return { verdict: "erpBlank", book: b, erp: e };
+                  return { verdict: "agree", book: b, erp: e };
+                })()
+              : compareField(f, bookRaw, row[f.erp]);
+            if ((c.verdict === "differ" || c.verdict === "erpBlank") && humanField.has(`${row[pk]}|${f.key}`)) { st.human++; continue; }
+            st[c.verdict]++;
+            if ((c.verdict === "differ" || c.verdict === "erpBlank") && st.sample.length < 3) {
+              st.sample.push(`${row[pk]} (${acNo}): ERP ${JSON.stringify(c.erp)} -> BOOK ${JSON.stringify(c.book)}`);
+            }
+            // the WRITE plan: only a straight COPY, only where the book has a
+            // value, only where no person owns that field on that document.
+            if (f.kind === "copy" && f.erp && liveColSet.has(f.erp) && (c.verdict === "differ" || c.verdict === "erpBlank")) {
+              hdrWrites.push({ table, pk, pkVal: row[pk], acNo, field: f.key, col: f.erp,
+                               cmp: f.cmp || "text", from: c.erp, fromRaw: row[f.erp] ?? null,
+                               to: writeValue(f, bookRaw) });
+            }
+          }
+        }
+        log("");
+        log(`  ${kindLabel} — ${erpRows.length} migrated header(s), ${noBook} of them absent from the AutoCount cut`);
+        log("  field                     kind     agree  differ  ERP blank  book blank  both blank  human");
+        for (const f of fields) {
+          const s = stats.get(f.key);
+          /* The label comes from the LIVE catalog, not from this map's
+             intention. A field the map points at a column production does not
+             have must read NO COL here — otherwise it reports a kind it cannot
+             honour, which is the "check that answers a different question". */
+          const kind = f.erp && liveColSet.has(f.erp) ? f.kind : "NO COL";
+          log(`  ${pad(f.key, 25)} ${pad(kind, 8)}${rpad(s.agree, 6)}${rpad(s.differ, 8)}${rpad(s.erpBlank, 11)}${rpad(s.bookBlank, 12)}${rpad(s.bothBlank, 12)}${rpad(s.human, 7)}`);
+        }
+        return stats;
+      };
+
+      /* A field with no ERP column still gets counted: `erpBlank` then reads
+         "AutoCount has a value and the ERP has nowhere to put it", which is a
+         completeness answer, not a defect. compareField sees an undefined ERP
+         value for those and returns exactly that. */
+      const soStats = tally("SALES ORDER HEADERS", SO_HEADER_FIELDS, bookSo, erpSoRows, "doc_no", soCols, "mfg_sales_orders");
+      const poStats = tally("PURCHASE ORDER HEADERS", PO_HEADER_FIELDS, bookPo, erpPoRows, "po_number", poCols, "purchase_orders");
+
+      for (const [label, fields, stats] of [["SO", SO_HEADER_FIELDS, soStats], ["PO", PO_HEADER_FIELDS, poStats]]) {
+        for (const f of fields) {
+          const s = stats.get(f.key);
+          if (!s || (!s.differ && !s.erpBlank)) continue;
+          log("");
+          log(`  ${label} ${f.key} — ${s.differ} differ, ${s.erpBlank} the ERP holds blank${f.why ? ` (${f.why})` : ""}:`);
+          for (const x of s.sample) log(`     ${x}`);
+        }
+      }
+
+      /* ── THE HEADLINE CASE: SalesAgent -> ERP staff ── */
+      const staff = await sql`SELECT id, name, staff_code, active FROM scm.staff`;
+      const staffByName = new Map(staff.map((s) => [norm(s.name), s]));
+      const staffById = new Map(staff.map((s) => [String(s.id), s]));
+      const acimp = staff.filter((s) => /^ACIMP-/.test(s.staff_code || ""));
+      const bindCsv = fs.readFileSync(path.join(here, "data", "agent-staff-binding.csv"), "utf8")
+        .replace(/^﻿/, "").split(/\r?\n/).filter(Boolean).slice(1);
+      const agentBind = new Map();
+      for (const ln of bindCsv) {
+        const [a, r] = ln.split(",");
+        agentBind.set(norm(a), (r || "").startsWith("BIND:") ? { name: r.slice(5).trim() } : { create: true });
+      }
+      const agentCount = new Map();       // book agent spelling -> orders in the ERP
+      const agentStale = [];              // the ERP's agent text no longer matches the book
+      for (const row of erpSoRows) {
+        const bh = bookSo.get(String(row.linked_ac_docno || "").trim());
+        if (!bh) continue;
+        const bookAgent = txt(bh.SalesAgent);
+        if (bookAgent) agentCount.set(bookAgent, (agentCount.get(bookAgent) || 0) + 1);
+        if (bookAgent && flat(row.agent) !== flat(bookAgent)) {
+          agentStale.push(`${row.doc_no} (${row.linked_ac_docno}): ERP agent ${JSON.stringify(txt(row.agent))} -> BOOK ${JSON.stringify(bookAgent)}`);
+        }
+      }
+      const unresolved = [];
+      for (const [agent, n] of [...agentCount].sort((a, b) => b[1] - a[1])) {
+        const b = agentBind.get(norm(agent));
+        if (!b) { unresolved.push(`${agent} — on ${n} migrated order(s), and NOT in data/agent-staff-binding.csv, so the import left salesperson_id empty`); continue; }
+        const wantName = b.name || agent;
+        if (!staffByName.has(norm(wantName))) staffCreate.push({ agent, wantName, n });
+      }
+      /* An ACIMP-* row is a placeholder this migration created. If a REAL staff
+         row now carries the same name, the placeholder is the wrong identity to
+         keep pointing at — reported, never merged here: merging two staff
+         identities moves every document, every commission and every audit row
+         that names them, which is far more than a header sync's business. */
+      for (const p of acimp) {
+        const twin = staff.find((s) => s.id !== p.id && norm(s.name) === norm(p.name));
+        if (twin) staffRebind.push(`${p.name}: placeholder ${p.staff_code} (active=${p.active}) is shadowed by real staff row ${twin.staff_code || twin.id} (active=${twin.active})`);
+      }
+      const orphanSalesperson = erpSoRows.filter((r) => r.salesperson_id && !staffById.has(String(r.salesperson_id))).length;
+      log("");
+      log("SALES AGENT -> ERP STAFF  (the case the cutover census found no tool for)");
+      log(`  distinct agent spellings on migrated orders          ${agentCount.size}`);
+      log(`  ERP staff rows                                       ${staff.length}, of which ${acimp.length} are ACIMP-* placeholders this migration created`);
+      log(`  orders whose ERP agent TEXT no longer matches the book ${agentStale.length}`);
+      log(`  orders with no salesperson_id at all                 ${erpSoRows.filter((r) => !r.salesperson_id).length}`);
+      log(`  orders whose salesperson_id names no staff row       ${orphanSalesperson}`);
+      log(`  agents the binding file does not cover               ${unresolved.length}`);
+      log(`  agents that WOULD need a new inactive staff row      ${staffCreate.length}  (LANES=hdrstaff; reported, reversible, never activated)`);
+      log(`  ACIMP placeholders a REAL staff row now shadows      ${staffRebind.length}  (REPORTED ONLY — merging staff identities is not this script's business)`);
+      if (agentStale.length) {
+        log("  ```enumeration");
+        for (const x of agentStale.slice(0, 20)) log(`  ${x}`);
+        if (agentStale.length > 20) log(`  ... and ${agentStale.length - 20} more`);
+        log("  ```");
+      }
+      for (const u of unresolved) log(`   UNBOUND ${u}`);
+      for (const c of staffCreate) log(`   WOULD CREATE inactive staff "${c.wantName}" for AutoCount agent "${c.agent}" (${c.n} order(s))`);
+      for (const r of staffRebind) log(`   SHADOWED ${r}`);
+
+      const byField = new Map();
+      for (const w of hdrWrites) byField.set(w.field, (byField.get(w.field) || 0) + 1);
+      log("");
+      log(`HEADER WRITE PLAN: ${hdrWrites.length} field value(s) across ${new Set(hdrWrites.map((w) => `${w.table}|${w.pkVal}`)).size} document(s)`);
+      for (const [f, n] of [...byField].sort((a, b) => b[1] - a[1])) log(`   ${pad(f, 26)} ${n}`);
+      log("  Only `copy` fields are in the plan. `derive`, `money`, `const` and");
+      log("  no-column fields are counted above and never written from here.");
+    }
+  }
+
   if (!APPLY) {
     log("");
     log('PLAN ONLY — no writes. MODE=apply CONFIRM="SYNC AC DELTA" writes the desc2, payment and link lanes.');
+    log(`LANES=hdr would write ${hdrWrites.length} header field value(s); LANES=hdrstaff would create ${staffCreate.length} inactive staff row(s).`);
     log("The INSERT lane is NOT this script's: run the importers named above.");
     log("Section 5 (conversions) is REPORT-ONLY in both modes — it never writes.");
     await sql.end();
@@ -755,6 +1049,52 @@ async function main() {
     log(`SO->PO dedications written: ${nLink} of ${linkPlan.length} intended`);
   }
 
+  /* ── the header master lane ──
+     One UPDATE per (document, field), each guarded by the value this run READ.
+     `col = ${from}` (or `IS NULL`) is the whole safety property: between the
+     plan and the write, a person may have edited the very field this row is
+     about, and a blind UPDATE would silently take it from them. A row that
+     changed under us updates 0 rows and is reported as a MISS, never retried.
+     That is the same "never steal" shape the SO->PO dedication lane uses. */
+  let nHdr = 0, hdrMiss = 0;
+  if (LANES.has("hdr")) {
+    for (let i = 0; i < hdrWrites.length; i += 200) {
+      const b = hdrWrites.slice(i, i + 200);
+      await sql.begin(async (tx) => {
+        for (const w of b) {
+          const r = await tx.unsafe(
+            `UPDATE scm.${w.table} SET "${w.col}" = $1
+              WHERE "${w.pk}" = $2 AND company_id = 1
+                AND ${w.fromRaw == null ? `"${w.col}" IS NULL` : `"${w.col}"::text = $3`}
+              RETURNING "${w.pk}"`,
+            w.fromRaw == null ? [w.to, w.pkVal] : [w.to, w.pkVal, w.fromRaw]);
+          if (r.length) nHdr++; else hdrMiss++;
+        }
+      });
+    }
+    log(`header master written: ${nHdr} of ${hdrWrites.length} intended; ${hdrMiss} skipped because the ERP value moved after the plan was read`);
+  }
+
+  /* ── the staff lane: auto-creating a salesperson is a WRITE TO MASTER DATA ──
+     Off unless asked for by name. Every row carries an `ACIMP-` staff_code, so
+     the whole set is findable and reversible with one predicate; `active` is
+     hard-coded false and no EXISTING staff row is touched, so this can never
+     activate a person who was deactivated on purpose. */
+  let nStaff = 0;
+  if (LANES.has("hdrstaff")) {
+    const strip = (s) => norm(s).replace(/[^A-Z0-9]/g, "");
+    const initialsOf = (n) => (norm(n).split(/\s+/).map((w) => w[0]).join("").slice(0, 4)) || "X";
+    for (const c of staffCreate) {
+      const r = await sql`INSERT INTO scm.staff (id, staff_code, name, initials, color, role, active)
+        VALUES (gen_random_uuid(), ${"ACIMP-" + strip(c.wantName).slice(0, 12)}, ${c.wantName},
+                ${initialsOf(c.wantName)}, '#9CA3AF', 'sales', false)
+        ON CONFLICT DO NOTHING RETURNING id, staff_code`;
+      if (r.length) { nStaff++; log(`   created INACTIVE staff ${r[0].staff_code} for AutoCount agent "${c.agent}"`); }
+    }
+    log(`inactive salesperson rows created: ${nStaff} of ${staffCreate.length} intended`);
+    log(`REVERSAL: DELETE FROM scm.staff WHERE staff_code LIKE 'ACIMP-%' AND active = false AND id NOT IN (SELECT salesperson_id FROM scm.mfg_sales_orders WHERE salesperson_id IS NOT NULL);`);
+  }
+
   /* ── verification: a FRESH connection, and it asserts the SHAPE ──
      A row count answers "did a row change", never "does the row now hold what
      I meant". Every sample is re-read on a connection this run has not used. */
@@ -773,8 +1113,37 @@ async function main() {
         LEFT JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id WHERE i.id = ${u.poItemId}`;
     if (!row || String(row.so_item_id) !== String(u.soItemId) || !row.doc_no || !row.item_code) { bad++; log(`   VERIFY MISMATCH po line ${u.poItemId}`); }
   }
+  /* The header lane's shape assertion. A row count would answer "a row
+     changed"; this asserts the COLUMN now reads what the plan meant, that the
+     row is still the one we aimed at (its AutoCount number is unchanged), and
+     that the value is not the empty string — writing "" where a blank was
+     intended is the classic silent corruption on a text column. */
+  if (LANES.has("hdr")) {
+    for (const w of hdrWrites.slice(0, 8)) {
+      const [row] = await v.unsafe(
+        `SELECT "${w.col}"::text AS val, linked_ac_docno FROM scm.${w.table}
+          WHERE "${w.pk}" = $1 AND company_id = 1`, [w.pkVal]);
+      const got = row ? row.val : undefined;
+      /* A date column reads back as the driver renders it, so a date is
+         compared by DAY and everything else byte for byte. The empty-string
+         check is not padding: writing "" where a value was intended is the
+         classic silent corruption on a text column, and it would satisfy any
+         "did a row change" test. */
+      const same = w.cmp === "date"
+        ? (got == null ? false : String(got).slice(0, 10) === String(w.to).slice(0, 10))
+        : String(got) === String(w.to);
+      const ok = row && String(row.linked_ac_docno).trim() === w.acNo && got !== "" && same;
+      if (!ok) { bad++; log(`   VERIFY MISMATCH ${w.table} ${w.pkVal}.${w.col}: wanted ${JSON.stringify(w.to)}, read ${JSON.stringify(got)}`); }
+    }
+  }
+  if (LANES.has("hdrstaff") && nStaff) {
+    const rows = await v`SELECT staff_code, active FROM scm.staff WHERE staff_code LIKE 'ACIMP-%'`;
+    const activated = rows.filter((r) => r.active === true);
+    if (activated.length) { bad++; log(`   VERIFY MISMATCH: ${activated.length} ACIMP-* staff row(s) are ACTIVE — this lane must never activate anybody`); }
+    else log(`   VERIFY: all ${rows.length} ACIMP-* staff row(s) are inactive, as intended.`);
+  }
   if (bad) { log(`VERIFY FAILED on ${bad} sample(s)`); await v.end(); await sql.end(); process.exit(1); }
-  log(`VERIFY (fresh connection): ${Math.min(5, descUpdates.length)} line(s), ${Math.min(5, payUpdates.length)} order(s) and ${Math.min(5, linkPlan.length)} dedication(s) re-read with the shape intended.`);
+  log(`VERIFY (fresh connection): ${Math.min(5, descUpdates.length)} line(s), ${Math.min(5, payUpdates.length)} order(s), ${Math.min(5, linkPlan.length)} dedication(s) and ${LANES.has("hdr") ? Math.min(8, hdrWrites.length) : 0} header field(s) re-read with the shape intended.`);
   await v.end();
   await sql.end();
 }

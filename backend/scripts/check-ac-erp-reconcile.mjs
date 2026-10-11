@@ -106,6 +106,12 @@ import {
 } from "./lib/variant-reconcile.mjs";
 
 import { buildScope, decodeSnapshot, isTestDoc } from "./lib/ac-scope.mjs";
+import { FIELD_MAP } from "./lib/ac-field-identity.mjs";
+import {
+  compareType, loadAcFieldSide, loadErpFieldSide, measurePoDiscount,
+  runSelfTest as runFieldSelfTest,
+} from "./lib/ac-field-identity-run.mjs";
+import { printFieldTable, printPoDiscount } from "./lib/ac-field-identity-report.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -400,6 +406,12 @@ try {
         );
       }
     }
+  }
+  /* The field-identity comparators prove themselves on PLANTED defects before
+     any of them is trusted — a comparator that cannot find a defect it is
+     handed will report a clean run over real data. */
+  for (const c of runFieldSelfTest()) {
+    problems.push(`field-identity comparator failed its own case: ${c.name}${c.error ? ` (${c.error})` : ""}`);
   }
   if (problems.length) {
     for (const p of problems) console.error(`SELF-TEST FAILED — ${p}`);
@@ -1057,6 +1069,97 @@ plain("═══════════ VARIANTS INSIDE THE LINE — ALL TYPES 
         "还没proceed还没确认的就可以直接放空的.",
     );
   }
+}
+
+/* ── 5. FIELD IDENTITY — "一模一样" read field by field ───────────────────── */
+/* The owner's bar on go-live day is not that the totals agree:
+     「不管是 sales agent 还是里面的数据 我们全部都要,而且要跟 autocount 一模一样」
+   Sections 1-4 compare presence, line count, item code, quantity, unit price,
+   document total and the variants inside a line. This one compares every OTHER
+   field the migration is supposed to carry — the address, the agent, the
+   remarks, the dates, the UDFs — against the ERP column the importer names for
+   it. The field list is taken from the four importers, not typed here; see
+   lib/ac-field-identity.mjs. */
+plain("");
+plain("═══════════ 5. FIELD IDENTITY — EVERY FIELD THE MIGRATION CARRIES ═══════════");
+{
+  const acSide = loadAcFieldSide(DATA, book);
+  if (acSide.missing.length) {
+    await refuse(
+      `the migration exports the field comparison reads are missing: ${acSide.missing.join(", ")}. ` +
+        "Re-run export-ac-reimport.py against the book. Reporting a clean field run against exports that " +
+        "are not there would be a verdict computed over nothing.",
+    );
+  }
+  let erpSide;
+  try {
+    erpSide = await loadErpFieldSide(sql, CO);
+  } catch (e) {
+    await refuse(`the ERP field columns could not be read: ${e.message}`);
+  }
+
+  plain(
+    `AutoCount side: the migration exports themselves (data/ac-outstanding-*.json.gz), which are what the ` +
+      `importers read. Scope and the book's own money come from ac-reconcile-truth.json.gz, exported ` +
+      `${snap.exported_at}. THESE ARE TWO CUTS — a document in scope on one and absent from the other is ` +
+      "reported as WINDOW, never as a gap.",
+  );
+
+  const fieldTotals = [];
+  for (const t of ["SO", "PO", "DO"]) {
+    if (!FIELD_MAP[t].header.length && !FIELD_MAP[t].line.length) continue;
+    const r = compareType({
+      t,
+      ac: acSide[t],
+      erp: erpSide[t],
+      scope: SCOPE[t],
+      mapped,
+      modelOf,
+      isSofaCode,
+      docProceeded: acSide.docProceeded[t],
+      lineProceeded: acSide.lineProceeded[t],
+      SHOW,
+    });
+    /* The no-LIMIT assertion: every ERP line the query returned is every ERP
+       line there is. A sibling check reported a drift of 842 as 500 earlier
+       today because it capped its own answer. */
+    if (erpSide[t].lines.length !== erpSide.lineCounts[t]) {
+      await refuse(
+        `${t}: the field query returned ${erpSide[t].lines.length} ERP lines but COUNT(*) says ` +
+          `${erpSide.lineCounts[t]}. The answer is being truncated; a count taken from a truncated read is a lie.`,
+      );
+    }
+    fieldTotals.push({ t, ...printFieldTable({ result: r, plain, log, SHOW }) });
+  }
+
+  for (const t of ["GR", "IV", "PI"]) {
+    plain("");
+    plain(`─── ${t} — FIELD BY FIELD ───`);
+    plain(
+      t === "GR"
+        ? "   no ERP goods-received DOCUMENT exists to compare fields against: the ERP carries a POINTER on the " +
+          "purchase order (purchase_orders.linked_ac_grn_docnos) and the units are already in from the balance " +
+          "snapshot. Presence is section 1; there is nothing here to measure."
+        : "   no population by the owner's decision (「这个不要」, the historical invoice import). An absent " +
+          "historical invoice is a DECISION, not a gap, so there is no field to compare.",
+    );
+  }
+
+  const disc = measurePoDiscount(book, SCOPE.PO);
+  printPoDiscount({ disc, plain, log });
+
+  plain("");
+  const fDiffer = fieldTotals.reduce((a, x) => a + x.differ, 0);
+  const fBlank = fieldTotals.reduce((a, x) => a + x.erpBlank, 0);
+  const fNoise = fieldTotals.reduce((a, x) => a + x.noise, 0);
+  const fNotCarried = fieldTotals.reduce((a, x) => a + (x.notCarried || 0), 0);
+  log(
+    `FIELD IDENTITY — across SO, PO and DO, on the fields an importer COPIES and on documents that have been ` +
+      `PROCEEDED: ${fDiffer} values differ and ${fBlank} are blank in the ERP where the book states one. ` +
+      `${fNoise} more differed only as transport artefacts and are not spec changes. ` +
+      `${fNotCarried} book values sit in fields no importer carries at all. ` +
+      "An unconfirmed order's blank is counted separately and is not work: 还没proceed还没确认的就可以直接放空的.",
+  );
 }
 
 /* ── one-screen verdict ──────────────────────────────────────────────────── */

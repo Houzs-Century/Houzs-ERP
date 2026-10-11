@@ -196,7 +196,7 @@ describe("ComposerModal (rendered)", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  function mount() {
+  function mount(extra: { attachmentRequired?: boolean } = {}) {
     const onPosted = vi.fn();
     const onClose = vi.fn();
     render(
@@ -206,12 +206,21 @@ describe("ComposerModal (rendered)", () => {
         companies={[]}
         salesDirOnly={false}
         currentUserId={9}
+        attachmentRequired={extra.attachmentRequired}
         onClose={onClose}
         onPosted={onPosted}
       />,
     );
     return { onPosted, onClose };
   }
+
+  it("with the attachment policy on, Submit waits for a file while Save draft stays open (mig 20260907T0715)", () => {
+    mount({ attachmentRequired: true });
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Needs a file" } });
+    expect(screen.getByTestId("attachment-required-hint")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Submit for approval" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Save draft" }) as HTMLButtonElement).disabled).toBe(false);
+  });
 
   it("Warning defaults to require-acknowledgement; Notice switches it off; SOP hides the expiry", () => {
     mount();

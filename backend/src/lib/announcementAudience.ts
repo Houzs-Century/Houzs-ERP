@@ -447,6 +447,14 @@ export type AnnouncementRow = {
   rejectReason?: string | null;
   ref_no?: string | null;
   refNo?: string | null;
+  // Void (mig 20260907T1030): a submitted notice is never deleted, only voided
+  // with a reason. voided_at set = out of every reader surface for good.
+  voided_by?: number | null;
+  voidedBy?: number | null;
+  voided_at?: string | null;
+  voidedAt?: string | null;
+  void_reason?: string | null;
+  voidReason?: string | null;
   category?: string | null;
   source?: string | null;
   company_id?: number | null;
@@ -501,10 +509,17 @@ export function readApprovalStatus(r: Pick<AnnouncementRow, "approval_status" | 
   return APPROVAL_STATUSES.has(v) ? (v as ApprovalStatus) : "APPROVED";
 }
 
+/** True once the notice was voided (mig 20260907T1030). */
+export function isVoided(r: Pick<AnnouncementRow, "voided_at" | "voidedAt">): boolean {
+  return (r.voidedAt ?? r.voided_at ?? null) != null;
+}
+
 export function deliverableNow(r: AnnouncementRow, now = Date.now()): boolean {
   // Approval first (mig 20260906T1509): a draft, pending or rejected notice
   // is nobody's to read — not the feed, not the pop-up, not the bell, not
-  // the ack endpoint, not the escalation cron.
+  // the ack endpoint, not the escalation cron. A voided notice (mig
+  // 20260907T1030) is out the same way, whatever its approval state.
+  if (isVoided(r)) return false;
   if (readApprovalStatus(r) !== "APPROVED") return false;
   if (!isActiveFlag(r.isActive ?? r.is_active ?? null)) return false;
   if (scheduledLater(r.scheduledAt ?? r.scheduled_at ?? null, now)) return false;

@@ -48,12 +48,25 @@
  *       decided by the SO it delivers, which is already filtered.
  *       Python twin: export-ac-reimport.py:285.
  *
- *   IV  no population.
- *   PI  no population.
- *       The owner declined the historical invoice import ("这个不要").  What the
- *       ERP holds is post-cutover mirroring, so an absent historical invoice is
- *       a DECISION and must be counted apart from the gaps — an empty scope is
- *       what puts it in that column.
+ *   IV  Cancelled='F', at least one line with FromDocType='DO' naming an
+ *       in-scope DO (or FromDocType='SO' naming an in-scope SO, which the SO
+ *       rule makes empty by construction — an order invoiced direct is excluded
+ *       from SO scope, so it can never carry an in-scope invoice; the arm is
+ *       written anyway so the rule reads as one sentence).
+ *
+ *   PI  Cancelled='F', at least one line with FromDocType='GR' naming an
+ *       in-scope GR, or FromDocType='PO' naming an in-scope PO.
+ *
+ *       CORRECTED 2026-09-07.  Both of these read "no population" until the
+ *       owner was shown that reading and rejected it:
+ *
+ *           没有的 SO DO 何来发票？有的 SO DO 自然要发票
+ *
+ *       His earlier 「这个不要」 declined importing the HISTORY — all 10,285
+ *       sales invoices and 5,279 purchase invoices — and that still stands.  It
+ *       never meant that an in-scope document's own invoice stays behind.  The
+ *       two are three orders of magnitude apart, and an empty Set was reporting
+ *       every one of the in-scope invoices as a DECISION rather than a gap.
  *
  * ── WHERE EACH POPULATION IS ALREADY WRITTEN DOWN ───────────────────────────
  * MIGRATION_SOURCE below names, per type, the committed file that holds the
@@ -168,7 +181,25 @@ export function buildScope(book) {
     if (ls.some((l) => l.fromDocType === "SO" && SO.has(l.fromDocNo))) DO.add(docNo);
   }
 
-  return { SO, PO, GR, DO, IV: new Set(), PI: new Set(), soDtlKeysInScope };
+  /* An invoice belongs to the migration when the document it was raised FROM
+     does. Owner 2026-09-07: 「没有的 SO DO 何来发票？有的 SO DO 自然要发票」. */
+  const IV = new Set();
+  for (const [docNo, h] of book.IV.headers) {
+    if (!docNo || h.cancelled || isTestDoc(docNo)) continue;
+    const ls = book.IV.lines.get(docNo) || [];
+    if (ls.some((l) => (l.fromDocType === "DO" && DO.has(l.fromDocNo)) ||
+                       (l.fromDocType === "SO" && SO.has(l.fromDocNo)))) IV.add(docNo);
+  }
+
+  const PI = new Set();
+  for (const [docNo, h] of book.PI.headers) {
+    if (!docNo || h.cancelled || isTestDoc(docNo)) continue;
+    const ls = book.PI.lines.get(docNo) || [];
+    if (ls.some((l) => (l.fromDocType === "GR" && GR.has(l.fromDocNo)) ||
+                       (l.fromDocType === "PO" && PO.has(l.fromDocNo)))) PI.add(docNo);
+  }
+
+  return { SO, PO, GR, DO, IV, PI, soDtlKeysInScope };
 }
 
 /**
@@ -208,6 +239,26 @@ export const MIGRATION_SOURCE = {
     writer: "backend/scripts/create-migrated-documents.mjs (KIND=do)",
     workflow: "create-migrated-documents.yml",
   },
-  IV: { file: null, docField: null, writer: null, workflow: null },
-  PI: { file: null, docField: null, writer: null, workflow: null },
+  /* CORRECTED 2026-09-07 with the population itself. These are not "no
+     importer" — `create-migrated-invoices.mjs` turns the GR and DO the ERP
+     already carries into the purchase and sales invoices AutoCount raised from
+     them, which is exactly the owner's rule 「有的 SO DO 自然要发票」. It
+     converts OUR documents; it still does not import AutoCount's invoice
+     HISTORY, which he declined separately. */
+  IV: {
+    file: "ac-invoice-refs.json.gz",
+    docField: null,
+    keysOf: "ivMeta",
+    writer: "backend/scripts/create-migrated-invoices.mjs",
+    workflow: "create-migrated-invoices.yml",
+    note: "created FROM the migrated delivery orders, not imported from the book's invoice history",
+  },
+  PI: {
+    file: "ac-invoice-refs.json.gz",
+    docField: null,
+    keysOf: "piMeta",
+    writer: "backend/scripts/create-migrated-invoices.mjs",
+    workflow: "create-migrated-invoices.yml",
+    note: "created FROM the migrated goods receipts, not imported from the book's invoice history",
+  },
 };
