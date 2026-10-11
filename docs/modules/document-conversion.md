@@ -571,20 +571,25 @@ Three properties, each of which was a real defect before:
 - **Always SINGULAR.** The button names the source *type*, not the count.
   Picking ten sales orders still reads "Transfer from Sales Order". The old
   plural ("one or more Purchase Orders") described the widget.
-- **`Deliver` and `Mark signed` leave the primary slot together.** `Deliver`
-  becomes "Transfer to Delivery Order" — it names the document produced, not the
-  physical act. `Mark signed` is NOT a transfer (it changes that document's own
-  status), so it stays *secondary* beside Edit and Print and the primary slot
-  goes to the transfer. This is what the owner spotted: the sales order reported
-  a `Delivered` STATUS while the delivery order offered a `Mark signed` ACTION.
-  **Statuses report; buttons act.**
+- **`Deliver` and the delivery-status action leave the primary slot together.**
+  `Deliver` becomes "Transfer to Delivery Order" — it names the document
+  produced, not the physical act. The status action is NOT a transfer (it
+  changes that document's own status), so it stays *secondary* beside Edit and
+  Print and the primary slot goes to the transfer. This is what the owner
+  spotted: the sales order reported a `Delivered` STATUS while the delivery
+  order offered a `Mark signed` ACTION. **Statuses report; buttons act.**
+
+  That action is called **"Mark delivered"** since 2026-08-21. It was "Mark
+  signed", which was false twice over — it writes `DELIVERED`, never `SIGNED`,
+  and the signature it named was retired that day by owner ruling. See
+  `docs/modules/delivery-order.md` § *Controls renamed the same day*.
 
   The rule landed on `DeliveryOrderDetailV2` and NOT on the delivery-order list
   drawer, where the two buttons stayed mutually exclusive in an `if / else-if`
-  chain until 2026-08-18: a DISPATCHED delivery matched the `Mark signed` arm
-  and returned, so the transfer was not disabled there — it was never rendered.
-  Both surfaces now render them independently, `Mark signed` secondary for the
-  pre-signed states and the transfer primary for every shipped one.
+  chain until 2026-08-18: a DISPATCHED delivery matched the status arm and
+  returned, so the transfer was not disabled there — it was never rendered.
+  Both surfaces now render them independently, the status action secondary for
+  the pre-close states and the transfer primary for every shipped one.
 
 #### Which deliveries may be invoiced — one declaration, five states
 
@@ -716,8 +721,9 @@ exist in exactly one place:
 - **Toasts, confirms and pending states** on Delivery Planning: "Transfer
   complete" / "Nothing transferred" / "Transfer failed" / "Transferring…" /
   "Transfer N sales orders to Delivery Order?".
-- **`DeliveryOrderDetailV2`'s transfer became `variant="primary"`** and
-  `Mark signed` stayed secondary, per the rule above.
+- **`DeliveryOrderDetailV2`'s transfer became `variant="primary"`** and the
+  delivery-status action (now "Mark delivered") stayed secondary, per the rule
+  above.
 
 **Deliberately NOT changed, and each for a reason:**
 

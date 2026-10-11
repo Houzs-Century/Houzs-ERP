@@ -8,7 +8,7 @@
 //   · Print PDF       — print-preview card + Download/Print
 //   · Edit            — navigate to the New DO form
 //
-// Stateful DO transitions (Cancel DO / Mark signed / Transfer to Sales Invoice) are
+// Stateful DO transitions (Cancel DO / Mark delivered / Transfer to Sales Invoice) are
 // kept as CONDITIONAL secondary buttons within the same header, positioned
 // between Print PDF and Edit so they don't hide from ops but also don't
 // dominate the primary action bar.
@@ -130,11 +130,12 @@ type DoHeader = {
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
-  /* Proof of delivery, as stored. Both are on the detail payload already
-     (delivery-orders-mfg.ts:305 selects `pod_r2_key, signature_data`); this
-     page simply never declared them, which is part of why it could close a
-     delivery without noticing there was no evidence on the row. */
-  signature_data?: string | null;
+  /* Proof of delivery, as stored. On the detail payload already
+     (delivery-orders-mfg.ts selects it); this page simply never declared it,
+     which is part of why it could close a delivery without noticing there was
+     no evidence on the row. `signature_data` was declared here too until
+     2026-08-21 — the signature is retired (owner ruling), and the column, which
+     holds nothing, is left in the database as a separate decision. */
   pod_r2_key?: string | null;
   lifecycle_state?: DoLifecycle;
   currency: string;
@@ -799,8 +800,8 @@ export function DeliveryOrderDetailV2() {
     const step = doAdvanceStep(deliveryOrder.status);
     if (!step) return;
     /* NAMED, NOT REFUSED — see doCloseWithoutEvidenceWarning for why the office
-       is still allowed to do this. Until now this control closed a delivery
-       with no signature, no photo and no word about either. */
+       is still allowed to do this. Before 2026-08-21 this control closed a
+       delivery with no photo and no word about it. */
     const warning = doCloseWithoutEvidenceWarning(step, deliveryOrder);
     if (warning && !window.confirm(`${warning}\n\nMark ${deliveryOrder.do_number} delivered anyway?`)) return;
     updateStatus.mutate({ id: deliveryOrder.id, status: step.status });
@@ -1131,7 +1132,7 @@ export function DeliveryOrderDetailV2() {
                 title={advanceReason ?? undefined}
                 aria-describedby={advanceReason ? "do-advance-reason" : undefined}
               >
-                {advanceStep?.label ?? "Mark signed"}
+                {advanceStep?.label ?? "Mark delivered"}
               </Button>
             )}
             {/* The transfer takes the PRIMARY slot; the advance above stays
@@ -1527,7 +1528,7 @@ export function DeliveryOrderDetailV2() {
               aria-describedby={advanceReason ? "do-advance-reason-phone" : undefined}
               className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface text-[13.5px] font-bold text-ink hover:bg-surface-dim disabled:opacity-40"
             >
-              <CheckCircle2 size={16} /> {advanceStep?.label ?? "Mark signed"}
+              <CheckCircle2 size={16} /> {advanceStep?.label ?? "Mark delivered"}
             </button>
             <button
               type="button"

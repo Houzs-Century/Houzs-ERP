@@ -5342,8 +5342,13 @@ deliveryOrdersMfg.delete('/:id/payments/:paymentId', async (c) => {
 // ── Status transition + inventory deduction / reversal ────────────────────
 export const patchDeliveryOrderStatusHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
+  /* `signatureData` was a field here until 2026-08-21 and is NOT coming back —
+     see the POD block below for the owner's ruling and the census behind it. It
+     is absent from this type ON PURPOSE: a stale client still posting the key is
+     ignored, which is the behaviour we want, and TypeScript now refuses any new
+     write path that tries to reintroduce it. */
   let body: {
-    status?: string; signatureData?: string; podKey?: string;
+    status?: string; podKey?: string;
     podLat?: number; podLng?: number; podAccuracyM?: number; podLocatedAt?: string;
   }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
@@ -5436,12 +5441,25 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   if (toStatus === 'DISPATCHED') ts.dispatched_at = now;
   if (toStatus === 'SIGNED')     ts.signed_at = now;
   if (toStatus === 'DELIVERED')  ts.delivered_at = now;
-  /* POD capture — the mobile app posts the proof-of-delivery signature +
-     photo alongside the status flip. Persist them to the existing columns
-     (signature_data, pod_r2_key) so a DELIVERED DO keeps its signature +
-     photo. Only write when present so a plain status change never blanks
-     an existing POD. */
-  if (typeof body.signatureData === 'string' && body.signatureData) ts.signature_data = body.signatureData;
+  /* POD capture — the mobile app posts the proof-of-delivery PHOTO alongside the
+     status flip. Persisted to the existing column only when present, so a plain
+     status change never blanks a POD already on the row.
+
+     THE SIGNATURE IS GONE, by owner ruling 2026-08-21: 「签收签名不需要 先
+     delete掉」. This handler accepted `signatureData` and wrote
+     `delivery_orders.signature_data` from 2026-07-14 until then. The census that
+     backs the ruling (run 32462178224) read every delivery order in the
+     database, every status, all time: `signature 0, photo 0, gps 0` across 39
+     rows, and the twelve "closed" ones were all flipped in a single minute by
+     backfill-2990-delivered-dos.mjs, not by a person. The path was never broken;
+     nothing ever went through it.
+
+     THE COLUMN IS DELIBERATELY NOT DROPPED. It holds nothing (0 rows), so there
+     is no data to lose — but a column drop is its own decision and does not ride
+     along with a capture-surface removal. `signature_data` therefore still
+     appears in the SELECT list at the top of this file and still reads as NULL
+     everywhere. Retiring it (and with it the `SIGNED` enum label) is the logged
+     follow-up. */
   if (typeof body.podKey === 'string' && body.podKey) ts.pod_r2_key = body.podKey;
 
   /* WHERE the delivery happened (mig 0249). The phone has been taking this

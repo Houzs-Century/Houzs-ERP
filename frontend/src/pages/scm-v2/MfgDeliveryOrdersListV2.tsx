@@ -111,8 +111,9 @@ type DoRow = {
    *  "STOCK ADJ" chip so the cell is explained, never blank (owner 2026-08-01). */
   source_adj?: boolean;
   ref: string | null;
-  /** POD, as stored — the list select is HEADER, which carries both. */
-  signature_data?: string | null; pod_r2_key?: string | null;
+  /** POD, as stored — the list select is HEADER, which carries it. Was a PAIR
+   *  with `signature_data` until the signature was retired on 2026-08-21. */
+  pod_r2_key?: string | null;
   branding: string | null;
   driver_name: string | null;
   vehicle: string | null;
@@ -634,7 +635,7 @@ function DetailDrawer({
                   title={advanceReason ?? undefined}
                   aria-describedby={advanceReason ? "do-drawer-advance-reason" : undefined}
                 >
-                  {advanceStep?.label ?? "Mark signed"}
+                  {advanceStep?.label ?? "Mark delivered"}
                 </Button>
               )}
               {canWrite && (

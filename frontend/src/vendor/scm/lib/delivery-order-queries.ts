@@ -289,12 +289,17 @@ export const useCreateMfgDeliveryOrder = () => {
    deliberately DROPS an out-of-range fix rather than refusing the write — "a
    bad sensor reading must never be the reason a driver cannot close a
    delivery". The client must not be stricter than that. */
+/* NO `signatureData` FIELD, and that is the point of this note rather than an
+   omission. The customer signature was retired on 2026-08-21 by owner ruling
+   (「签收签名不需要 先delete掉」): the pad, this key and the server's accept of it
+   are all gone. The census behind the ruling — run 32462178224, every delivery
+   order in the database, every status, all time — read `signature 0, photo 0,
+   gps 0` across 39 rows. Nothing was ever captured, so nothing is lost.
+   Re-adding the key here would be inert anyway: the server no longer reads it. */
 export type DoDeliveryEvidence = {
-  /** Customer signature, base64 PNG data URL → `delivery_orders.signature_data`. */
-  signatureData?: string;
   /** R2 key of the delivery photo → `delivery_orders.pod_r2_key`. */
   podKey?: string;
-  /** Where it was signed (mig 0249). Written server-side as a PAIR or not at all. */
+  /** Where it was delivered (mig 0249). Written server-side as a PAIR or not at all. */
   podLat?: number;
   podLng?: number;
   /** Radius in metres — what tells a street GPS fix from an indoor wifi guess. */

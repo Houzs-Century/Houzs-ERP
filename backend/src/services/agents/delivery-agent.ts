@@ -11,9 +11,12 @@
 //        LOAD_PLAN  — the board's ready-to-deliver pool (planning state
 //                     PENDING_SCHEDULE) bucketed by REGION, one customer's
 //                     orders grouped together inside the payload.
-//        POD_CHASE  — DOs delivered >24h ago with neither a POD photo
-//                     (pod_r2_key) nor a signature (signature_data).
-//                     Default ON (Houzs has POD capture on the DO).
+//        POD_CHASE  — DOs delivered >24h ago with no POD photo
+//                     (pod_r2_key). Default ON (Houzs has POD capture on
+//                     the DO). It also read signature_data until the
+//                     signature was retired on 2026-08-21 (owner ruling
+//                     「签收签名不需要 先delete掉」); the photo is the only
+//                     customer-side evidence the DO can still carry.
 //   2. collectDeliveryBrief — today's delivery picture (pool by planning
 //      state + region, overdue-to-deliver, DO pipeline, POD gaps, trips
 //      today/tomorrow with crew) + a snapshot row in delivery_agent_briefs.
@@ -75,7 +78,8 @@ export interface DeliveryAgentSettings {
   /** Per-state working-day transit allowance, keyed by canonical code (SEL, KL…). */
   transitDaysByState?: Record<string, number>;
   defaultTransitDays?: number;
-  /** POD chasing. Default ON — Houzs captures pod_r2_key / signature_data on the DO. */
+  /** POD chasing. Default ON — Houzs captures pod_r2_key (the delivery photo) on
+   *  the DO. The signature half of this was retired on 2026-08-21. */
   podChase?: boolean;
 }
 
@@ -322,10 +326,10 @@ async function loadPodGaps(sb: any, today: string): Promise<PodGapRow[]> {
   const { data: rows } = await paginateAll<{
     id: string; do_number: string | null; so_doc_no: string | null;
     debtor_name: string | null; customer_state: string | null;
-    delivered_at: string | null; pod_r2_key: string | null; signature_data: string | null;
+    delivered_at: string | null; pod_r2_key: string | null;
   }>((from, to) =>
     sb.from('delivery_orders')
-      .select('id, do_number, so_doc_no, debtor_name, customer_state, delivered_at, pod_r2_key, signature_data')
+      .select('id, do_number, so_doc_no, debtor_name, customer_state, delivered_at, pod_r2_key')
       .in('status', ['DELIVERED', 'INVOICED'])
       .not('delivered_at', 'is', null)
       .gte('delivered_at', isoAgo(POD_CHASE_WINDOW_DAYS))
@@ -334,7 +338,13 @@ async function loadPodGaps(sb: any, today: string): Promise<PodGapRow[]> {
       .range(from, to),
   );
   return (rows ?? [])
-    .filter((r) => !s(r.pod_r2_key).trim() && !s(r.signature_data).trim())
+    /* PHOTO ONLY since 2026-08-21. This used to require BOTH pod_r2_key and
+       signature_data to be blank; the signature no longer exists, so keeping the
+       term would have meant a row could satisfy this chase with evidence nobody
+       can capture any more. Nothing in production moves: run 32462178224 read
+       every delivery order and found `signature 0, photo 0, gps 0`, so no row
+       has ever been held out of this filter by its signature. */
+    .filter((r) => !s(r.pod_r2_key).trim())
     .map((r) => {
       const deliveredAt = mytDateOf(s(r.delivered_at));
       return {
@@ -478,7 +488,7 @@ async function generateDeliveryProposalsCore(
     });
   }
 
-  /* -- POD_CHASE: delivered >24h with neither POD photo nor signature. */
+  /* -- POD_CHASE: delivered >24h with no POD photo. */
   if (settings.podChase) {
     const gaps = await loadPodGaps(sb, snapshot.today);
     for (const g of gaps) {
@@ -488,7 +498,7 @@ async function generateDeliveryProposalsCore(
         payload: { ...g },
         summary:
           `${g.doNumber || g.doId}${g.debtorName ? ` (${g.debtorName})` : ''} was marked delivered ` +
-          `${g.deliveredAt} but has no POD photo or signature after ${g.daysSinceDelivered} day(s). ` +
+          `${g.deliveredAt} but has no POD photo after ${g.daysSinceDelivered} day(s). ` +
           `Chase the delivery crew for the POD.`,
       });
     }

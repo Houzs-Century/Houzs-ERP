@@ -35,7 +35,7 @@ reversal branch. The DO is the OUT half of the inventory ledger.
 | Desktop report | `frontend/src/pages/scm-v2/DeliveryOrderDetailListing.tsx` | Detail-listing report. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS["delivery-orders-mfg"]` (`:1064-1106`). |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:241`; status actions `:480-494`. |
-| Mobile POD | `frontend/src/mobile/MobilePOD.tsx` | The driver screen — signature + photo + GPS, through the **shared hook** (`useUpdateMfgDeliveryOrderStatus`, `evidence` parameter). It used a raw `authedFetch` until 2026-08-21; see "Who may attach proof of delivery" below. `signatureData` is sent **only when the customer actually drew** (gated on `hasSignature`, which the pad sets on the first pointerdown). It used to be gated on `canvas.toDataURL()`, which returns a valid non-empty PNG for an untouched transparent canvas — so every delivery stored a blank signature into `delivery_orders.signature_data`, indistinguishable from a real POD that failed to render. `podKey` and the GPS fields in the same payload were already gated on real capture. |
+| Mobile POD | `frontend/src/mobile/MobilePOD.tsx` | The driver screen — **photo + GPS**, through the **shared hook** (`useUpdateMfgDeliveryOrderStatus`, `evidence` parameter). It used a raw `authedFetch` until 2026-08-21. It also carried a canvas **signature pad** until that day, when the owner retired it — see "The signature is retired" below. Photo and GPS are each sent only when actually captured. |
 | Mobile convert (SO→DO) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "do"` (`:72`). Posts **`asDraft: true`** → the DO lands DRAFT and the operator confirms it; the phone never ships. Same shape as the wizard's GRN arm. CTA reads "Create draft Delivery Order". |
 | Mobile planning board | `frontend/src/mobile/MobileDeliveryPlanning.tsx` | Driver run-sheet. "Take POD photo — complete" **navigates to Mobile POD** (`onPod`); it does not write a status. It used to PATCH `DELIVERED` directly with no evidence, while telling the driver to "open the order afterwards to attach the POD photo" — which MobilePOD refuses once the DO is delivered. |
 | Mobile "Delivery details" card | `frontend/src/mobile/MobileDeliveryFieldsCard.tsx` | Split out of the run-sheet on 2026-08-21 (that file sits under a 2,449-line ceiling). Edits the HC delivery fields via `PATCH /delivery-planning/:type/:id/fields`. The DO-execution half — time window, arrival/departure, shipout, port, `delivery_substatus` — writes the **latest DO** and is hidden until one exists; the SO-context half writes the SO header and needs no DO. `replacement_disposal` is the one field that does not always take the direct write: on a locked SO it is refused 409 `so_locked_processing` and is raised as an SO Amendment instead. Rules and rationale in `docs/modules/delivery-tms.md` §1. |
@@ -43,9 +43,11 @@ reversal branch. The DO is the OUT half of the inventory ledger.
 ### Who may attach proof of delivery (2026-08-21)
 
 `delivery_orders` carries six evidence columns — `signature_data`, `pod_r2_key`,
-`pod_lat`, `pod_lng`, `pod_accuracy_m`, `pod_located_at` — and the status PATCH
-has accepted all six since migration 0249, writing each **only when present** so
-a plain status change never blanks a POD already on the row.
+`pod_lat`, `pod_lng`, `pod_accuracy_m`, `pod_located_at`. The status PATCH
+accepted all six from migration 0249 until 2026-08-21 and now accepts **five**:
+`signature_data` is no longer written by anything (see below). Each of the five
+is written **only when present**, so a plain status change never blanks a POD
+already on the row.
 
 Reaching them from the client is the shared hook's `evidence` parameter
 (`DoDeliveryEvidence` in `vendor/scm/lib/delivery-order-queries.ts`). Before that
@@ -55,10 +57,10 @@ nothing attached.
 
 | Surface | Captures evidence? | On closing without it |
 |---|---|---|
-| Mobile POD | **Yes** — pad, photo, GPS | Confirm says "No customer signature has been captured." Still allowed. |
+| Mobile POD | **Yes** — photo, GPS | Confirm says "No delivery photo has been taken." Still allowed. |
 | Mobile planning board | Routes to Mobile POD | n/a — it no longer writes a status |
 | Desktop detail / list drawer | No — the office is not at the door | `window.confirm` carrying `doCloseWithoutEvidenceWarning`. Still allowed. |
-| Mobile shell action bar | No | **Known open** — "Mark Signed" writes `SIGNED` (which counts as delivered) with no evidence. `docs/bugs/0481`. |
+| Mobile shell action bar | No | Renamed **"Mark Delivered"** 2026-08-21 and now asks a confirm naming the missing photo. It still WRITES `SIGNED` (which counts as delivered) — moving or dropping that rung is an owner call, so it stays open in `docs/bugs/0481`. |
 
 Evidence is **allowed everywhere and required nowhere**, on purpose. The office
 legitimately closes deliveries it did not attend — measured 2026-08-21, EVERY
@@ -67,6 +69,78 @@ POD step to carry over in the first place — the server itself drops a bad GPS
 reading rather than refusing the write, and the standing rule for this system is
 to loosen rather than restrict. The defect was never the permissiveness; it was
 that no screen said which of the two things you were about to do.
+
+### The signature is retired (owner ruling, 2026-08-21)
+
+> 「签收签名不需要 先delete掉」
+
+The delivery signature is not needed; take it off. What was removed, exactly:
+
+- the canvas **signature pad** on `MobilePOD.tsx`, its "Ask the customer to sign
+  above" / "Clear & re-sign" controls and the `hasSignature` latch;
+- the **`signatureData`** key on `DoDeliveryEvidence`
+  (`vendor/scm/lib/delivery-order-queries.ts`) and on the server's status-PATCH
+  body type, so `delivery_orders.signature_data` is no longer written by
+  anything;
+- the signature term in `doCloseWithoutEvidenceWarning`, in the Mobile POD
+  confirm, and in the Delivery Agent's `POD_CHASE` filter and summary.
+
+**Photo and GPS are KEPT.** He named the signature and only the signature, and
+they are independent fields on the same screen — nothing about removing the pad
+makes them unworkable. `MobilePodNoSignature.test.tsx` pins both halves: the pad
+is gone and no `signatureData` key is sent, and a photo and a GPS fix still reach
+the payload.
+
+**The evidence posture is unchanged.** Evidence stays *allowed on every closing
+path and required on none*, and each path still names what it is losing. The
+warnings did not get quieter; they stopped naming a capture surface the product
+no longer has. Warning someone about something they cannot supply is its own kind
+of dishonesty, and it is the kind that teaches people to click through warnings.
+
+**The column is deliberately NOT dropped.** `signature_data` holds nothing —
+`signature 0` on every row of every table, run 32462178224 — so there is no data
+at risk either way, and that is precisely why it does not need to ride along with
+a UI removal. A column drop is irreversible and is its own deliberate decision.
+Same for the `SIGNED` label on `scm.do_status`: nothing has written it since the
+mobile rung was the only writer, and retiring an enum value is a migration, not a
+rename. **Follow-up:** drop `delivery_orders.signature_data` and
+`consignment_delivery_orders.signature_data`, and decide whether `SIGNED` leaves
+the enum. `check-pod-evidence.mjs` keeps reporting signature byte length until
+then, because the column it reads still exists.
+
+**Consignment notes are untouched.** `scm.consignment_delivery_orders` carries
+its own `signature_data` and its own `SIGNED` status. The ruling was about
+delivery orders, there is no capture surface on that document to remove, and
+extending a ruling past what was said is how a scope becomes a rewrite.
+
+### Controls renamed the same day
+
+A control named for evidence it does not collect is false, and with the
+signature gone it is *purely* false. What each one now says:
+
+| surface | was | now | writes |
+|---|---|---|---|
+| Desktop detail header + phone action bar (`DeliveryOrderDetailV2`) | "Mark signed" | **"Mark delivered"** | `DELIVERED` |
+| Desktop list quick-view drawer (`MfgDeliveryOrdersListV2`) | "Mark signed" | **"Mark delivered"** | `DELIVERED` |
+| Native mobile shell, `IN_TRANSIT` rung (`MobileModuleDetail`) | "Mark Signed" | **"Mark Delivered"** | `SIGNED` — unchanged |
+
+The label comes from one place, `doAdvanceStep` (`vendor/scm/lib/do-next-step.ts`),
+for the three desktop-side surfaces. `do-next-step.test.ts` asserts over the whole
+`scm.do_status` enum that **no** control this module offers names a signature, so
+the word cannot come back on a different rung.
+
+The desktop pair were false twice over: they wrote `DELIVERED`, never `SIGNED`,
+which was already logged here as a label/target mismatch. Renaming settles both
+halves at once.
+
+The mobile rung was **renamed, not re-targeted**, and the difference is
+deliberate. `docs/bugs/0481`'s other remedy — moving or dropping that rung —
+removes a step drivers may be using and is the owner's call, not one to take
+while renaming a label. So its write is untouched and its words now describe the
+effect: `SIGNED` counts as delivered everywhere downstream (`DO_SHIPPED_STATES`,
+`doCountsAsDelivered`, the `delivered` list bucket, the Sales-Invoice gate). It
+also gained a confirm naming the missing photo; before this it closed a delivery
+in two taps and said nothing at all.
 
 Census of the historical population: `backend/scripts/check-pod-evidence.mjs`,
 dispatchable via the **DO integrity check (read-only)** workflow. It counts

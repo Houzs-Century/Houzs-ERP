@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   doAdvanceBlockReason,
   doAdvanceStep,
+  doCloseWithoutEvidenceWarning,
   SI_TRANSFERABLE_DO_STATUSES,
   siTransferBlockReason,
 } from './do-next-step';
@@ -114,9 +115,24 @@ describe('doAdvanceStep', () => {
     expect(doAdvanceStep('DRAFT')).toEqual({ status: 'DISPATCHED', label: 'Confirm' });
   });
 
-  it('marks the pre-signature shipped states signed', () => {
+  it('marks the pre-close shipped states DELIVERED, and says so', () => {
     for (const s of PRE_SIGNATURE) {
-      expect(doAdvanceStep(s), s).toEqual({ status: 'DELIVERED', label: 'Mark signed' });
+      expect(doAdvanceStep(s), s).toEqual({ status: 'DELIVERED', label: 'Mark delivered' });
+    }
+  });
+
+  it('offers no control that names a SIGNATURE — there is no longer one to take', () => {
+    /* Owner ruling 2026-08-21: the delivery signature is retired
+       (「签收签名不需要 先delete掉」). This control was labelled "Mark signed" and
+       it was false twice over — it writes DELIVERED, not SIGNED, and it never
+       collected a signature at any point in its life. Census run 32462178224:
+       across all 39 delivery orders, every status, all time, `signature 0`.
+
+       Asserted over the WHOLE enum rather than on the one label, so a future rung
+       cannot quietly reintroduce the word somewhere else in this module. */
+    for (const s of [...DO_STATUSES, '', 'COMPLETED']) {
+      const label = doAdvanceStep(s)?.label;
+      if (label) expect(label, s).not.toMatch(/sign/i);
     }
   });
 
@@ -132,6 +148,33 @@ describe('doAdvanceStep', () => {
        not once have succeeded; this test is what stops it coming back. */
     expect(doAdvanceStep('CANCELLED')).toBeNull();
     expect(doAdvanceBlockReason('CANCELLED')).toMatch(/new delivery order/i);
+  });
+});
+
+describe('doCloseWithoutEvidenceWarning', () => {
+  const step = { status: 'DELIVERED', label: 'Mark delivered' } as const;
+
+  it('still warns when the delivery carries no photo — the warning was not deleted', () => {
+    /* Retiring the signature must not quietly retire the WARNING with it. Today's
+       merged work made evidence allowed on every closing path and required on
+       none, with each path naming what it is losing; that stays. */
+    const w = doCloseWithoutEvidenceWarning(step, { pod_r2_key: null });
+    expect(w).toBeTruthy();
+    expect(w!).toMatch(/no delivery photo/i);
+    expect(w!).toMatch(/proof of delivery/i);
+  });
+
+  it('names no signature — a warning about a capture nobody can supply is its own lie', () => {
+    expect(doCloseWithoutEvidenceWarning(step, { pod_r2_key: null })!).not.toMatch(/signature/i);
+    expect(doCloseWithoutEvidenceWarning(step, null)!).not.toMatch(/signature/i);
+  });
+
+  it('stays silent when a photo IS on the row, and on a step that is not a close', () => {
+    expect(doCloseWithoutEvidenceWarning(step, { pod_r2_key: 'pod/2026/x.jpg' })).toBeNull();
+    expect(
+      doCloseWithoutEvidenceWarning({ status: 'DISPATCHED', label: 'Confirm' }, { pod_r2_key: null }),
+    ).toBeNull();
+    expect(doCloseWithoutEvidenceWarning(null, { pod_r2_key: null })).toBeNull();
   });
 });
 

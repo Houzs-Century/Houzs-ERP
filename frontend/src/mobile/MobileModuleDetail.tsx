@@ -1022,6 +1022,26 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
     // DISPATCHED; then DISPATCHED→IN_TRANSIT→SIGNED(→DELIVERED via POD). CANCELLED
     // is final. Offer the NEXT step + Cancel. DELIVERED is the POD screen's job,
     // so it is never offered here.
+    //
+    // THE LAST RUNG WAS LABELLED "Mark Signed" UNTIL 2026-08-21 (docs/bugs/0481).
+    // It writes SIGNED — a state that counts as delivered everywhere downstream —
+    // and it collects nothing: no signature, no photo, no GPS. The status was
+    // literally named for the evidence it does not take. The owner retired the
+    // signature that day (「签收签名不需要 先delete掉」), so a control named for one
+    // describes nothing that exists in the product.
+    //
+    // RENAMED, NOT RE-TARGETED, and the distinction is deliberate. It still
+    // writes SIGNED: docs/bugs/0481's other remedy — moving or dropping this rung
+    // — removes a step drivers may be using and is the owner's call, not one to
+    // take while renaming a label. So the WRITE is untouched and the WORDS now
+    // describe its effect. `SIGNED` surviving as a stored token with no signature
+    // behind it is the same deferred decision as the `signature_data` column that
+    // was left in place: both are named in the follow-up, neither is pretended
+    // away here.
+    //
+    // The confirm is new too. Every other closing path names what it is losing
+    // (doCloseWithoutEvidenceWarning); this one closed a delivery in two taps and
+    // said nothing at all.
     case "delivery-orders-mfg": {
       if (st === "CANCELLED" || st === "DELIVERED" || st === "INVOICED") return out;
       const path = `/delivery-orders-mfg/${enc}/status`;
@@ -1030,10 +1050,27 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
         DRAFT: ["DISPATCHED", "Confirm"],
         LOADED: ["DISPATCHED", "Dispatch"],
         DISPATCHED: ["IN_TRANSIT", "Mark In Transit"],
-        IN_TRANSIT: ["SIGNED", "Mark Signed"],
+        IN_TRANSIT: ["SIGNED", "Mark Delivered"],
       };
       const step = next[st];
-      if (step) out.push({ key: "next", label: step[1], variant: "solid", request: { path, method: "PATCH", body: { status: step[0] } } });
+      if (step) {
+        const closes = step[0] === "SIGNED";
+        out.push({
+          key: "next", label: step[1], variant: "solid",
+          request: { path, method: "PATCH", body: { status: step[0] } },
+          ...(closes
+            ? {
+                confirm: {
+                  title: "Mark this delivery delivered?",
+                  body: s(header?.pod_r2_key).trim()
+                    ? "This closes the delivery order."
+                    : "This delivery order has no delivery photo. Marking it delivered records it as complete with no proof of delivery — the driver captures that on the Proof of Delivery screen.",
+                  confirmLabel: "Mark Delivered",
+                },
+              }
+            : {}),
+        });
+      }
       out.push({ ...cancel(path, "delivery order"), confirm: { title: "Cancel this delivery order?", body: "This voids the DO and returns any shipped stock to the shelf.", confirmLabel: "Cancel DO" } });
       return out;
     }

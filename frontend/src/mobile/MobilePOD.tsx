@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { orderLineIdentity } from "@2990s/shared";
 import { invalidateDoShared, invalidateInventoryShared, invalidateSoShared } from "./sharedInvalidate";
@@ -28,12 +28,24 @@ import "./mobile.css";
 
    The delivery PHOTO is uploaded to R2 (the shared slip Worker-proxy
    pipeline: uploadSlipFull → { r2Key }) and its key is persisted as
-   PATCH /:id/status { podKey } → delivery_orders.pod_r2_key. The customer
-   SIGNATURE (base64 PNG) is persisted as { signatureData } →
-   delivery_orders.signature_data. The delivery LOCATION (lat/lng + accuracy +
-   the reading's own timestamp) persists as { podLat, podLng, podAccuracyM,
-   podLocatedAt } -> delivery_orders.pod_* (mig 0249). It used to be captured
-   here and discarded; it is the answer to "where was this actually delivered". */
+   PATCH /:id/status { podKey } → delivery_orders.pod_r2_key. The delivery
+   LOCATION (lat/lng + accuracy + the reading's own timestamp) persists as
+   { podLat, podLng, podAccuracyM, podLocatedAt } -> delivery_orders.pod_*
+   (mig 0249). It used to be captured here and discarded; it is the answer to
+   "where was this actually delivered".
+
+   NO SIGNATURE. This screen carried a canvas signature pad from the day it
+   shipped, and the owner retired it on 2026-08-21: 「签收签名不需要 先delete掉」.
+   The census that backs him (run 32462178224) read every delivery order in the
+   database — every status, all time — and found `signature 0, photo 0, gps 0`
+   across 39 rows; the twelve "closed" ones were flipped in a single minute by
+   backfill-2990-delivered-dos.mjs, not by a driver. The path was not broken.
+   Nobody ever used it.
+
+   PHOTO AND GPS STAY. He named the signature and only the signature, and they
+   are independent fields on this screen — removing the pad does not touch
+   either. The confirm still NAMES what is missing rather than refusing the
+   close; it just stops naming a pad that no longer exists. */
 
 type DoHeader = {
   id: string;
@@ -122,10 +134,8 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
   const [ticked, setTicked] = useState<Record<string, boolean>>({});
   const deliveredCount = items.reduce((n, it) => n + (ticked[it.id] ? 1 : 0), 0);
 
-  // Signature pad + GPS + photo (captured locally — see file header).
-  const sigRef = useRef<HTMLCanvasElement | null>(null);
-  const [hasSignature, setHasSignature] = useState(false);
-  const [sigClearNonce, setSigClearNonce] = useState(0);
+  // GPS + photo (captured locally — see file header; the signature pad that
+  // stood beside them was retired 2026-08-21).
   const [gps, setGps] = useState<{ lat: number; lng: number; accuracyM: number | null; atIso: string } | null>(null);
   const [gpsState, setGpsState] = useState<"idle" | "asking" | "ok" | "denied">("idle");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
@@ -147,13 +157,17 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
     if (deliveredCount < items.length) {
       notes.push(`Only ${deliveredCount} of ${items.length} items are ticked.`);
     }
-    /* NAMED, NOT REFUSED. A customer can decline to sign and a phone can be
-       denied a location fix indoors — the server already treats a bad reading
-       as droppable rather than fatal, so blocking the close here would be
-       stricter than the rule the business actually runs on. What was wrong was
-       the SILENCE: this screen offered a signature pad and then filed the
-       delivery either way without saying which had happened. */
-    if (!hasSignature) notes.push("No customer signature has been captured.");
+    /* NAMED, NOT REFUSED. A phone can be denied a location fix indoors and a
+       driver can have nothing worth photographing — the server already treats a
+       bad reading as droppable rather than fatal, so blocking the close here
+       would be stricter than the rule the business actually runs on. What was
+       wrong was the SILENCE: this screen captured evidence and then filed the
+       delivery either way without saying which had happened.
+
+       The signature line that used to sit here ("No customer signature has been
+       captured.") went with the pad on 2026-08-21. The photo line replaces it,
+       because it is the only customer-side evidence the DO still carries. */
+    if (!photoFile) notes.push("No delivery photo has been taken.");
     if (!(await confirm({
       title: `Mark ${h.do_number ?? docNo} delivered?`,
       body: notes.length ? notes.join(" ") : undefined,
@@ -162,13 +176,12 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
     setActionError(null);
     setBusy(true);
     try {
-      // Deliver action — the DO status endpoint persists the POD signature
-      // (base64 PNG) onto delivery_orders.signature_data, the delivery photo's
-      // R2 key onto delivery_orders.pod_r2_key, and (since mig 0249) the GPS
-      // reading onto pod_lat / pod_lng / pod_accuracy_m / pod_located_at. The
-      // last sentence here used to read "GPS stays client-side (no server
-      // column)", which stopped being true at 0249 and is corrected in place
-      // rather than left to teach the next reader the old shape.
+      // Deliver action — the DO status endpoint persists the delivery photo's
+      // R2 key onto delivery_orders.pod_r2_key and (since mig 0249) the GPS
+      // reading onto pod_lat / pod_lng / pod_accuracy_m / pod_located_at. It
+      // persisted a base64 signature onto delivery_orders.signature_data too
+      // until 2026-08-21; that field is gone from the payload type, so a stale
+      // client cannot smuggle one back in.
       // Upload the photo to R2 FIRST (shared slip Worker-proxy pipeline) so
       // its key rides the same PATCH. A failed upload aborts the whole action —
       // we never mark delivered while claiming a photo we didn't store.
@@ -177,22 +190,6 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
         const { r2Key } = await uploadSlipFull({ file: photoFile });
         podKey = r2Key;
       }
-      /* `hasSignature` — NOT the canvas — decides whether a signature is sent.
-         An untouched pad is a sized, fully transparent bitmap, so
-         `toDataURL("image/png")` returns a perfectly valid non-empty data URL
-         for it; `sig ? …` was therefore true on EVERY confirm once the pad had
-         mounted, and every delivery stored a blank PNG into
-         `delivery_orders.signature_data`. The screen said "Ask the customer to
-         sign above" and filed the delivery as signed anyway — worse than storing
-         nothing, because a blank image is indistinguishable from a real POD that
-         failed to render, and it is the only customer-side evidence the DO
-         carries. `hasSignature` is set by the pad's own `start()` on the first
-         pointerdown (and cleared by Clear), so it is the one flag that means a
-         human drew something. `podKey` and `gps` in the same object literal were
-         already gated on real capture; this brings the third field in line. */
-      const sig = hasSignature
-        ? (() => { try { return sigRef.current?.toDataURL("image/png") ?? ""; } catch { return ""; } })()
-        : "";
       /* THROUGH THE SHARED HOOK, not a raw fetch. This call used to bypass
          `useUpdateMfgDeliveryOrderStatus` because that hook was typed
          `{ id, status }` and could not carry any of the three fields below —
@@ -204,7 +201,6 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
         id: doId,
         status: "DELIVERED",
         evidence: {
-          signatureData: sig || undefined,
           podKey: podKey ?? undefined,
           /* Mig 0249. This reading was taken and thrown away on every delivery
              since this screen shipped — the header used to end "GPS stays
@@ -390,18 +386,9 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
             {photoName && <div style={{ fontSize: 10.5, color: "var(--mut)", marginTop: 6 }} className="tnum">{photoName}</div>}
             {photoError && <div style={{ fontSize: 10.5, color: "var(--red)", marginTop: 6 }}>{photoError}</div>}
 
-            {/* Customer signature — design signature pad (canvas keeps the real capture). */}
-            <div className="fld-l" style={{ margin: "18px 0 8px" }}>Customer signature</div>
-            <SignaturePad canvasRef={sigRef} onChange={setHasSignature} clearNonce={sigClearNonce} />
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
-              <span style={{ fontSize: 11, color: "var(--mut)" }}>{hasSignature ? "Signed" : "Ask the customer to sign above"}</span>
-              <span
-                onClick={() => { setHasSignature(false); setSigClearNonce((n) => n + 1); }}
-                style={{ fontSize: 11.5, fontWeight: 700, color: "var(--brand)", cursor: "pointer" }}
-              >
-                Clear &amp; re-sign
-              </span>
-            </div>
+            {/* A customer-signature pad stood here until 2026-08-21. Retired by
+                owner ruling 「签收签名不需要 先delete掉」 — see the file header for
+                the census. Photo and GPS below are untouched. */}
 
             {/* Delivery location — saved with the POD since mig 0249. */}
             <div className="fld-l" style={{ margin: "18px 0 8px" }}>Delivery location</div>
@@ -456,103 +443,6 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
           </button>
         )}
       </footer>
-    </div>
-  );
-}
-
-/** Canvas signature pad — pointer/touch strokes; exposes hasSignature to the
- *  parent, which reads the strokes with canvasRef.current.toDataURL() and sends
- *  them as `signatureData`. Bumping `clearNonce` wipes the pad and re-arms the
- *  "signed" latch.
- *
- *  This used to end "when a backend field to persist them exists (none today)",
- *  which stopped being true on 2026-07-14 — the DO status handler has persisted
- *  `signature_data` since then. A stale sentence in a JSDoc is worse than none:
- *  it tells the next reader the capture is decorative and there is nothing to
- *  protect. `onChange` is the ONLY thing that lets a signature through, so
- *  MobilePodSignatureCapture.test.tsx pins it in both directions. */
-function SignaturePad({ canvasRef, onChange, clearNonce }: {
-  canvasRef: React.MutableRefObject<HTMLCanvasElement | null>;
-  onChange: (hasSignature: boolean) => void;
-  clearNonce: number;
-}) {
-  const drawing = useRef(false);
-  const last = useRef<{ x: number; y: number } | null>(null);
-  const drew = useRef(false);
-
-  // Wipe the pad + re-arm the latch when the parent's Clear bumps the nonce.
-  useEffect(() => {
-    if (clearNonce === 0) return;
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
-    if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drew.current = false;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clearNonce]);
-
-  // Size the backing store to the element's CSS box (device-pixel aware) so
-  // strokes aren't stretched. Runs once on mount.
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ratio = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = Math.max(1, Math.round(rect.width * ratio));
-    canvas.height = Math.max(1, Math.round(rect.height * ratio));
-    const ctx = canvas.getContext("2d");
-    if (ctx) {
-      ctx.scale(ratio, ratio);
-      ctx.lineWidth = 2.4;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.strokeStyle = "#16695f";
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const point = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return { x: 0, y: 0 };
-    const rect = canvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-  };
-
-  const start = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
-    drawing.current = true;
-    last.current = point(e);
-    // First mark of a fresh (or freshly-cleared) pad flags a signature. The
-    // parent resets its own flag on Clear; we re-flag on the next real stroke.
-    if (!drew.current) { drew.current = true; onChange(true); }
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* older browsers */ }
-  };
-  const move = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawing.current) return;
-    e.preventDefault();
-    const ctx = canvasRef.current?.getContext("2d");
-    const p = point(e);
-    if (ctx && last.current) {
-      ctx.beginPath();
-      ctx.moveTo(last.current.x, last.current.y);
-      ctx.lineTo(p.x, p.y);
-      ctx.stroke();
-    }
-    last.current = p;
-  };
-  const end = () => { drawing.current = false; last.current = null; };
-
-  return (
-    <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: 13, padding: 14, position: "relative", height: 120 }}>
-      <canvas
-        ref={canvasRef}
-        onPointerDown={start}
-        onPointerMove={move}
-        onPointerUp={end}
-        onPointerLeave={end}
-        onPointerCancel={end}
-        style={{ width: "100%", height: 64, touchAction: "none", display: "block" }}
-      />
-      <div style={{ position: "absolute", left: 14, right: 14, bottom: 34, borderBottom: "1px dashed var(--mut2)" }} />
     </div>
   );
 }
