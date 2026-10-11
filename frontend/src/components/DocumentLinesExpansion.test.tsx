@@ -96,6 +96,81 @@ describe("Assigned SO — the caption is gone, the warning is not", () => {
   });
 });
 
+describe("Paired per-SO sub-table (2026-08-02 — one row per assigned SO)", () => {
+  const assigned = [
+    { soDocNo: "2990-SO-2606-021", deliveryDate: "2026-07-10", locked: true, source: "delivered" as const },
+    { soDocNo: "2990-SO-2606-030", deliveryDate: "2026-09-15", locked: true, source: "linked" as const },
+  ];
+  const delivered = [
+    { doNo: "2990-DO-2607-001", qty: 1, soDocNo: "2990-SO-2606-021" },
+    { doNo: "2990-DO-2607-002", qty: 2, soDocNo: "2990-SO-2606-021" },
+  ];
+
+  it("pairs each delivered DO with ITS SO row and statuses the rest PENDING", () => {
+    render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        showDelivered
+        lines={[line({ assignedSos: assigned, deliveredDos: delivered })]}
+      />,
+    );
+    // Both SO rows render; the shipped one says DELIVERED, the future-dated
+    // unshipped one says PENDING (never blank).
+    expect(screen.getByText("2990-SO-2606-021")).toBeTruthy();
+    expect(screen.getByText("2990-SO-2606-030")).toBeTruthy();
+    expect(screen.getByText("DELIVERED")).toBeTruthy();
+    expect(screen.getByText("PENDING")).toBeTruthy();
+    // The multi-DO SO row shows EVERY qty (x1 allowed on multi-chip rows).
+    expect(screen.getByText(/x1/)).toBeTruthy();
+    expect(screen.getByText(/x2/)).toBeTruthy();
+  });
+
+  it("keeps a delivered DO visible even when its SO is not among the assignments", () => {
+    render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        showDelivered
+        lines={[line({
+          assignedSos: [assigned[0]],
+          deliveredDos: [
+            { doNo: "2990-DO-2607-001", qty: 1, soDocNo: "2990-SO-2606-021" },
+            { doNo: "2990-DO-2607-099", qty: 1, soDocNo: "2990-SO-2606-777" },
+          ],
+        })]}
+      />,
+    );
+    expect(screen.getByText("2990-DO-2607-099")).toBeTruthy();
+    expect(screen.getByText("2990-SO-2606-777")).toBeTruthy();
+  });
+});
+
+describe("STOCK tag — no assignment means surplus stock, not missing data (2026-08-02)", () => {
+  it("renders STOCK in the header cell when emptyMeans=stock", () => {
+    render(<AssignedSoCell assignments={[]} emptyMeans="stock" />);
+    expect(screen.getByText("STOCK")).toBeTruthy();
+  });
+
+  it("keeps the dash for sales surfaces (default)", () => {
+    render(<AssignedSoCell assignments={[]} />);
+    expect(screen.getByText("—")).toBeTruthy();
+    expect(screen.queryByText("STOCK")).toBeNull();
+  });
+
+  it("renders STOCK on an unassigned drill line (paired mode)", () => {
+    render(
+      <DocumentLinesExpansion
+        isLoading={false}
+        showAssignment
+        showDelivered
+        lines={[line({ assignedSos: [], deliveredDos: [] })]}
+      />,
+    );
+    expect(screen.getByText("STOCK")).toBeTruthy();
+  });
+});
+
 describe("Source PO chips render the stored doc number verbatim", () => {
   it("leaves both company namespaces exactly as stored", () => {
     render(

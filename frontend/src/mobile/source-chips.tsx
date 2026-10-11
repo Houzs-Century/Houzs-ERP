@@ -7,6 +7,7 @@
 // for LIST cells; a phone detail line wraps instead).
 
 import type { CSSProperties } from "react";
+import { formatDate } from "../lib/utils";
 
 const rowStyle: CSSProperties = {
   flexBasis: "100%", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 4,
@@ -137,6 +138,119 @@ export function DeliveredRowMobile({ dos }: { dos: Array<{ doNo: string; qty: nu
           {(dos.length > 1 || d.qty > 1) ? ` x${d.qty}` : ""}
         </span>
       ))}
+    </div>
+  );
+}
+
+/* "STOCK" — a purchase-doc line with NO assignment is surplus stock, not
+   missing data (owner 2026-08-02). Mobile twin of the desktop StockTag; MRP
+   float-assigns automatically when matching demand appears. */
+export function StockTagMobile() {
+  return (
+    <span
+      style={{ ...mutedChip, border: "1px dashed #d9ded4", textTransform: "uppercase", letterSpacing: ".4px", fontSize: 10 }}
+      title="Stock replenishment — no open Sales Order demand is assigned to this line. MRP will float-assign it automatically when matching demand appears."
+    >
+      STOCK
+    </span>
+  );
+}
+
+/* Purchase docs (PO / GRN / PI): the PAIRED per-SO rows (owner 2026-08-02,
+   replacing three unaligned stacks): one row per assigned SO =
+   [SO chip | delivery date | delivered-DO chips xqty for THAT SO | status].
+   An unshipped SO with a future date reads PENDING, never blank; a delivered
+   DO whose SO is not among the assignments still renders (extra row). Empty
+   both sides → the STOCK tag. Desktop twin: PairedSoCell in
+   components/DocumentLinesExpansion.tsx — keep the two in lockstep. */
+export function PairedSoRowsMobile({
+  assigned,
+  delivered,
+  sourceLinked,
+}: {
+  assigned: Array<{ soDocNo: string; deliveryDate?: string | null; locked?: boolean; source?: string }>;
+  delivered: Array<{ doNo: string; qty: number; soDocNo?: string | null }>;
+  sourceLinked?: boolean;
+  }) {
+  const rows: Array<{ soDocNo: string; deliveryDate: string | null; floating: boolean; title: string; dos: Array<{ doNo: string; qty: number }> }> = [];
+  for (const a of assigned) {
+    const floating = a.locked === false;
+    rows.push({
+      soDocNo: a.soDocNo,
+      deliveryDate: a.deliveryDate ?? null,
+      floating,
+      title: floating
+        ? "MRP guess — a live allocation, not a stored link. It moves as demand moves and can disappear."
+        : a.source === "delivered"
+          ? "Locked — this line's goods were delivered against this Sales Order"
+          : sourceLinked === false
+            ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
+            : "Locked — a stored link to this Sales Order",
+      dos: [],
+    });
+  }
+  for (const d of delivered) {
+    const hit = rows.find((r) => r.soDocNo === (d.soDocNo ?? ""));
+    if (hit) hit.dos.push({ doNo: d.doNo, qty: d.qty });
+    else {
+      let orphan = rows.find((r) => r.soDocNo === (d.soDocNo || "—") && r.title.startsWith("This Delivery"));
+      if (!orphan) {
+        orphan = {
+          soDocNo: d.soDocNo || "—", deliveryDate: null, floating: false,
+          title: "This Delivery Order's Sales Order is not among this line's assignments — shown so the shipment stays visible.",
+          dos: [],
+        };
+        rows.push(orphan);
+      }
+      orphan.dos.push({ doNo: d.doNo, qty: d.qty });
+    }
+  }
+  if (rows.length === 0) {
+    return (
+      <div style={rowStyle}>
+        <span style={eyebrowStyle}>Assigned SO</span>
+        <StockTagMobile />
+      </div>
+    );
+  }
+  return (
+    <div style={{ flexBasis: "100%", display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+      {rows.map((r) => {
+        const shipped = r.dos.length > 0;
+        return (
+          <div key={r.soDocNo} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+            <span
+              title={r.title}
+              style={r.floating
+                ? { ...mutedChip, background: "transparent", border: "1px dashed #b6c6c0" }
+                : solidChip}
+            >
+              {r.soDocNo}{r.floating ? " ~" : ""}
+            </span>
+            <span className="money" style={{ fontSize: 10.5, color: "#9aa093", fontWeight: 600 }}>
+              {r.deliveryDate ? formatDate(r.deliveryDate) : "—"}
+            </span>
+            {r.dos.map((d) => (
+              <span key={d.doNo} style={solidChip} title="The Delivery Order that shipped this line's goods for this Sales Order">
+                {d.doNo}
+                {(r.dos.length > 1 || d.qty > 1) ? ` x${d.qty}` : ""}
+              </span>
+            ))}
+            <span
+              style={{
+                fontSize: 9, fontWeight: 800, letterSpacing: ".4px", padding: "2px 8px", borderRadius: 20,
+                color: shipped ? "#16695f" : "#5c6357",
+                background: shipped ? "#e1efed" : "#f4f6f3",
+              }}
+              title={shipped
+                ? "Delivered — at least one Delivery Order has shipped this line's goods for this Sales Order"
+                : "Pending — assigned, nothing shipped for this Sales Order yet (delivery date shown)"}
+            >
+              {shipped ? "DELIVERED" : "PENDING"}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }

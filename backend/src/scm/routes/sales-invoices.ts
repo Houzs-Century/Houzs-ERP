@@ -50,7 +50,7 @@ import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { doLineRemaining, doRemainingByItemId, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
-import { resolveDoSources, resolveDoLineSources } from '../lib/source-po-trace';
+import { resolveSiHeaderSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
@@ -700,17 +700,25 @@ async function stampDoNumber(sb: any, rows: unknown): Promise<void> {
 /* Source PO(s) for a page of Sales Invoices (owner 2026-07-31). An SI is born
    FROM a Delivery Order, so the useful cross-doc anchor is which PO the shipped-
    then-invoiced goods actually came from — the durable batch_no = source-PO hard
-   link on the SI's DO's OUT movements, NOT an Assigned SO. Resolved SI → DO →
-   ledger, batched once for the page via resolveDoSourcePosForDos, mutates rows in
-   place. An SI with no delivery_order_id (manual invoice) gets an empty list. */
+   link on the SI's DO's OUT movements, NOT an Assigned SO. An SI with no
+   delivery_order_id (manual invoice) gets an empty list.
+   2026-08-02 (header ≡ ∪(lines), same defect class as 2990-DO-2607-017): the
+   cell is the union of the SI'S OWN LINES' traces (each line matched into its
+   DO's ledger buckets — the exact per-line rule the SI detail applies), never
+   the DO's raw byDo rollup, which surfaced orphan ledger buckets as phantom
+   chips and could also include DO lines this SI never invoiced. */
 async function stampSourcePos(sb: any, rows: unknown): Promise<void> {
   if (!Array.isArray(rows) || rows.length === 0) return;
   const list = rows as Array<Record<string, unknown>>;
-  const doIds = [...new Set(list.map((r) => r.delivery_order_id as string | null).filter((d): d is string => !!d))];
-  const byDo = doIds.length > 0 ? await resolveDoSources(sb, doIds) : new Map<string, { pos: string[]; adjQty: number }>();
+  const bySi = await resolveSiHeaderSources(
+    sb,
+    list.map((r) => ({
+      id: r.id as string | null,
+      delivery_order_id: r.delivery_order_id as string | null,
+    })),
+  );
   for (const r of list) {
-    const doId = (r.delivery_order_id as string | null) ?? null;
-    const trace = doId ? byDo.get(doId) : undefined;
+    const trace = bySi.get((r.id as string | null) ?? '');
     r.source_pos = trace?.pos ?? [];
     // Shipped (at least partly) from a PO-less stock ADJUSTMENT lot — the UI
     // renders "STOCK ADJ" instead of a blank cell (owner: never a dash on

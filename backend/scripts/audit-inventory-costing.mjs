@@ -466,12 +466,22 @@ async function main() {
     hdr("3. QUANTITY — document lines vs their movements");
 
     // 3a. GRN: accepted qty (net of returns) vs the IN movements the post wrote.
+    //     GOODS lines only (2026-08-02): SERVICE lines never enter inventory
+    //     (grns.ts posts filter isServiceLine), so counting them here made the
+    //     lens DISAGREE with section 8a and mis-name a service-only delta as a
+    //     missing receipt — which is exactly how the grn-gap repair was led to
+    //     insert a phantom SVC-TRANS.CHARGES lot on 2990-GRN-2606-001.
     if (has("grns", "id", "status") && has("grn_items", "grn_id", "qty_accepted")) {
       const grnNoCol = ["grn_number", "grn_no", "doc_no"].find((c) => C.grns.has(c));
       const retCol = C.grn_items.has("returned_qty") ? "COALESCE(gi.returned_qty,0)" : "0";
+      const svcPred3a = (C.grn_items.has("item_group") || C.grn_items.has("material_code"))
+        ? svc(C.grn_items.has("item_group") ? "gi.item_group" : "NULL",
+            C.grn_items.has("material_code") ? "gi.material_code" : "NULL")
+        : "FALSE";
       const grnRows = await pg.unsafe(`
         WITH lines AS (
-          SELECT gi.grn_id, SUM(GREATEST(0, COALESCE(gi.qty_accepted,0) - ${retCol}))::int AS line_qty
+          SELECT gi.grn_id,
+                 SUM(GREATEST(0, COALESCE(gi.qty_accepted,0) - ${retCol})) FILTER (WHERE NOT ${svcPred3a})::int AS line_qty
             FROM ${q("grn_items")} gi GROUP BY gi.grn_id
         ), movs AS (
           SELECT source_doc_id::text AS doc_id,
@@ -498,9 +508,9 @@ async function main() {
       for (const r of bad.slice(0, SAMPLE)) {
         notice(`        co=${r.company_id ?? "-"} ${pad(short(r.doc_no, 22), 22)} ${pad(r.status, 12)} lines=${pad(r.line_qty, 6)} movements=${pad(r.mov_qty, 6)} rows=${pad(r.mov_rows, 4)} delta=${r.delta}`);
       }
-      verdict("3a", "GRN line qty vs IN movement qty", bad.length, grnRows.length,
+      verdict("3a", "GRN line qty vs IN movement qty (goods lines — service excluded, same lens as 8a)", bad.length, grnRows.length,
         bad.length === 0 ? "PASS" : "DEFECT",
-        "a service-only GRN legitimately writes no movement and nets to 0 here; a non-zero delta on a goods GRN is real");
+        "SERVICE lines are excluded from line_qty (they never enter inventory); a non-zero delta on a goods GRN is real");
     } else {
       notice("  3a. SKIPPED — grns / grn_items columns not present.");
     }

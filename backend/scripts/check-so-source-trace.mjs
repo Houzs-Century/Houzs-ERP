@@ -49,10 +49,44 @@
 // DOs — the audit-inventory-costing.mjs section 10c lens verbatim (per
 // movement: SUM(qty_consumed) <= |qty|; every consumption has a movement).
 //
+// SINCE 2026-08-02 this check also holds the ONE-TRUTH invariants the owner
+// mandated after the 2990-DO-2607-017 phantom-chip and 2990-PO-2606-023
+// re-claim incidents:
+//
+//   SECTION 6  DO HEADER vs LINE-UNION — per non-cancelled DO, the raw ledger
+//              rollup (every (code,variant) bucket keyed to the DO) compared
+//              against the union of ITS OWN lines' buckets. Orphan buckets
+//              (ledger rows no physical line owns — re-pointed consumptions,
+//              drifted variant keys, edited lines) are what the OLD header
+//              cell surfaced as phantom chips; the app now derives header
+//              cells as the line union BY CONSTRUCTION, so orphans can no
+//              longer reach the UI — this section keeps counting them as DATA
+//              anomalies (trend to 0 as ledger repairs land). DOS env names
+//              DOs to print in full detail.
+//   SECTION 7  J1 — SO line served by >1 distinct PO (delivered chain).
+//              SOFA multi-batch = HARD DEFECT (one set ships one batch);
+//              non-sofa with an OLDER still-open lot in the bucket =
+//              fifo-suspect (a newer receipt was consumed while an older one
+//              still sits open — eyeball); else boundary-split-legit (qty
+//              genuinely spans two receipts), listed for the owner.
+//   SECTION 8  J2 — PO line assigned to >1 SO. Allocation splits summing <=
+//              line qty are the owner-approved consolidated model (LEGIT);
+//              CONFLICTS: allocations exceeding line qty, allocation rows
+//              naming an SO line the delivered chain proves served by ANOTHER
+//              PO (the 023 class), stored so_item_id disagreeing with the
+//              PO's own delivered chain.
+//   SECTION 9  J3 — SO line CLAIMED by >1 PO's stored links/allocations —
+//              THE 023/024 defect class exactly. Expected 0 after
+//              part=fifo-attribute-repair.
+//   CLOSING    the one-truth verdict: J3 = 0 AND J1 has no HARD/suspect rows
+//              AND J2 has no CONFLICT rows. Re-runs prove the invariant.
+//
 // Read-only (SELECTs only), exit 0 for every legitimate answer.
 //   DATABASE_URL  required (env, or .dev.vars for local use)
+//   DOS           section-6 detail DOs (default 2990-DO-2607-016,2990-DO-2607-017)
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+import { variantKeyMirror } from "./lib/ledger-repair-core.mjs";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -136,7 +170,8 @@ try {
     ? await pg`
         SELECT c.source_doc_id::text AS do_id, c.product_code, COALESCE(c.variant_key,'') AS vk,
                c.qty_consumed, l.batch_no, UPPER(COALESCE(l.source_doc_type,'')) AS lot_src,
-               l.source_doc_id::text AS lot_src_id,
+               l.source_doc_id::text AS lot_src_id, l.id::text AS lot_id,
+               l.received_at, l.warehouse_id::text AS lot_wh, l.company_id AS lot_company,
                p.po_number AS grn_po
           FROM scm.inventory_lot_consumptions c
           JOIN scm.inventory_lots l ON l.id = c.lot_id
@@ -144,16 +179,16 @@ try {
           LEFT JOIN scm.purchase_orders p ON p.id = g.purchase_order_id
          WHERE c.source_doc_type = 'DO' AND c.source_doc_id::text = ANY(${doIds})`
     : [];
-  // (do::code::vk) -> { pos:Set, adj:boolean, any:boolean }
+  // (do::code::vk) -> { pos:Set, adj:boolean, any:boolean, movPos:Set, lots:[] }
   const ledger = new Map();
   const led = (k) => {
     let v = ledger.get(k);
-    if (!v) { v = { pos: new Set(), adj: false, any: false, unbatchable: 0 }; ledger.set(k, v); }
+    if (!v) { v = { pos: new Set(), adj: false, any: false, unbatchable: 0, movPos: new Set(), lots: [] }; ledger.set(k, v); }
     return v;
   };
   for (const m of movs) {
     const v = led(`${m.do_id}::${m.product_code}::${m.vk}`);
-    v.pos.add(m.batch_no); v.any = true;
+    v.pos.add(m.batch_no); v.any = true; v.movPos.add(m.batch_no);
   }
   for (const r of cons) {
     const v = led(`${r.do_id}::${r.product_code}::${r.vk}`);
@@ -162,6 +197,7 @@ try {
     if (po) v.pos.add(po);
     else if (r.lot_src === "ADJUSTMENT") v.adj = true;
     else v.unbatchable += Math.abs(Number(r.qty_consumed ?? 0));
+    v.lots.push({ lotId: r.lot_id, po, receivedAt: r.received_at, wh: r.lot_wh, company: r.lot_company, qty: Math.abs(Number(r.qty_consumed ?? 0)) });
   }
 
   // Variant key mirror — the script-side lockstep of computeVariantKey is NOT
@@ -177,9 +213,9 @@ try {
     arr.push(v);
     ledgerByDoCode.set(kk, arr);
   }
-  const deliveredBySoItem = new Map(); // so_item_id -> { qty, pos:Set, adj, any, unbatchable }
+  const deliveredBySoItem = new Map(); // so_item_id -> { qty, pos:Set, adj, any, unbatchable, lots:[] }
   for (const dl of doLines) {
-    const cur = deliveredBySoItem.get(dl.so_item_id) ?? { qty: 0, pos: new Set(), adj: false, any: false, unbatchable: 0 };
+    const cur = deliveredBySoItem.get(dl.so_item_id) ?? { qty: 0, pos: new Set(), adj: false, any: false, unbatchable: 0, lots: [] };
     cur.qty += Number(dl.qty ?? 0);
     const buckets = ledgerByDoCode.get(`${dl.delivery_order_id}::${dl.item_code}`) ?? [];
     for (const b of buckets) {
@@ -187,6 +223,7 @@ try {
       cur.adj = cur.adj || b.adj;
       cur.unbatchable += b.unbatchable;
       for (const po of b.pos) cur.pos.add(po);
+      for (const lot of b.lots) cur.lots.push(lot);
     }
     deliveredBySoItem.set(dl.so_item_id, cur);
   }
@@ -370,8 +407,300 @@ try {
 
   log("");
   log(unresolved === 0
-    ? `VERDICT: zero-or-explained holds — every in-scope line resolves to a PO, STOCK ADJ, a service line, or an accepted-explained pre-0120 lot${accepted.length ? ` (${accepted.length} of those)` : ""}.`
-    : `VERDICT: ${unresolved} line(s) do not resolve — classes above name their fix tools (ready-no-open-lots -> Recompute SO stock allocation; no-do-line-link -> part=do-line-link; the grn/basis-seed classes -> backfill-lot-batch-from-docs.mjs); the rest are listed for the owner.`);
+    ? `VERDICT (trace): zero-or-explained holds — every in-scope line resolves to a PO, STOCK ADJ, a service line, or an accepted-explained pre-0120 lot${accepted.length ? ` (${accepted.length} of those)` : ""}.`
+    : `VERDICT (trace): ${unresolved} line(s) do not resolve — classes above name their fix tools (ready-no-open-lots -> Recompute SO stock allocation; no-do-line-link -> part=do-line-link; the grn/basis-seed classes -> backfill-lot-batch-from-docs.mjs); the rest are listed for the owner.`);
+
+  // ── 6. DO HEADER vs LINE-UNION (the 2990-DO-2607-017 phantom-chip lens) ───
+  const DETAIL_DOS = (process.env.DOS || "2990-DO-2607-016,2990-DO-2607-017")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+  log("");
+  log("SECTION 6 — DO header-vs-line-union (orphan ledger buckets):");
+  const allDos = await pg`
+    SELECT d.id::text AS id, d.do_number, d.company_id
+      FROM scm.delivery_orders d
+     WHERE UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'`;
+  const allDoIds = allDos.map((d) => d.id);
+  const allDoItems = allDoIds.length ? await pg`
+    SELECT delivery_order_id::text AS do_id, item_code, item_group, variants
+      FROM scm.delivery_order_items WHERE delivery_order_id::text = ANY(${allDoIds})` : [];
+  const allMovs = allDoIds.length ? await pg`
+    SELECT source_doc_id::text AS do_id, product_code, COALESCE(variant_key,'') AS vk, batch_no
+      FROM scm.inventory_movements
+     WHERE source_doc_type = 'DO' AND movement_type = 'OUT'
+       AND source_doc_id::text = ANY(${allDoIds}) AND batch_no IS NOT NULL` : [];
+  const allCons = allDoIds.length ? await pg`
+    SELECT c.source_doc_id::text AS do_id, c.product_code, COALESCE(c.variant_key,'') AS vk,
+           COALESCE(l.batch_no, p.po_number) AS po, UPPER(COALESCE(l.source_doc_type,'')) AS lot_src
+      FROM scm.inventory_lot_consumptions c
+      JOIN scm.inventory_lots l ON l.id = c.lot_id
+      LEFT JOIN scm.grns g ON UPPER(COALESCE(l.source_doc_type,'')) = 'GRN' AND g.id = l.source_doc_id
+      LEFT JOIN scm.purchase_orders p ON p.id = g.purchase_order_id
+     WHERE c.source_doc_type = 'DO' AND c.source_doc_id::text = ANY(${allDoIds})` : [];
+  const SERVICE_LINE_RE = /^(DELIVERY|DISPOSE|LIFT)/i;
+  const isSvc = (group, code) => SERVICE_RE.test(String(group ?? "")) || SERVICE_LINE_RE.test(String(code ?? ""));
+  // Per DO: line buckets (code::computed vk, services excluded) + line codes.
+  const lineBucketsByDo = new Map();
+  const lineCodesByDo = new Map();
+  for (const it of allDoItems) {
+    if (isSvc(it.item_group, it.item_code)) continue;
+    const vk = variantKeyMirror(it.item_group, it.variants ?? null);
+    const bset = lineBucketsByDo.get(it.do_id) ?? new Set();
+    bset.add(`${it.item_code}::${vk}`);
+    lineBucketsByDo.set(it.do_id, bset);
+    const cset = lineCodesByDo.get(it.do_id) ?? new Set();
+    cset.add(String(it.item_code ?? ""));
+    lineCodesByDo.set(it.do_id, cset);
+  }
+  // Per DO: ledger buckets with their POs + which side wrote them.
+  const ledgerBucketsByDo = new Map();
+  const bucketAdd = (doId, code, vk, po, side) => {
+    if (!po) return;
+    const m = ledgerBucketsByDo.get(doId) ?? new Map();
+    const k = `${code}::${vk}`;
+    const cur = m.get(k) ?? { pos: new Set(), sides: new Set() };
+    cur.pos.add(po);
+    cur.sides.add(side);
+    m.set(k, cur);
+    ledgerBucketsByDo.set(doId, m);
+  };
+  for (const m of allMovs) bucketAdd(m.do_id, m.product_code, m.vk, m.batch_no, "movement");
+  for (const r of allCons) bucketAdd(r.do_id, r.product_code, r.vk, r.po, "consumption");
+  const doNoById2 = new Map(allDos.map((d) => [d.id, d.do_number]));
+  const detailWanted = new Set(DETAIL_DOS);
+  let orphanDoCount = 0;
+  let orphanBucketCount = 0;
+  const orphanSamples = [];
+  for (const [doId, buckets] of ledgerBucketsByDo.entries()) {
+    const lineBuckets = lineBucketsByDo.get(doId) ?? new Set();
+    const lineCodes = lineCodesByDo.get(doId) ?? new Set();
+    const orphans = [];
+    for (const [bk, v] of buckets.entries()) {
+      if (lineBuckets.has(bk)) continue;
+      const code = bk.split("::")[0];
+      orphans.push({
+        bucket: bk,
+        pos: [...v.pos].sort(),
+        sides: [...v.sides].sort().join("+"),
+        kind: lineCodes.has(code) ? "vk-drift (same code, different variant key)" : "no-line (no physical line carries this code)",
+      });
+    }
+    if (orphans.length === 0) continue;
+    orphanDoCount += 1;
+    orphanBucketCount += orphans.length;
+    if (orphanSamples.length < 25 || detailWanted.has(doNoById2.get(doId) ?? "")) {
+      orphanSamples.push({ doNo: doNoById2.get(doId) ?? doId, orphans });
+    }
+  }
+  log(`  app-level header-vs-drill mismatch: 0 BY CONSTRUCTION since 2026-08-02 — header cells derive from the line union (resolveDoHeaderSources), the raw byDo rollup no longer reaches any UI cell.`);
+  log(`  ORPHAN ledger buckets (data anomalies the old header surfaced as phantom chips): ${orphanBucketCount} bucket(s) across ${orphanDoCount} DO(s). These trend to 0 as ledger repairs (doc-relabel / repoints) land; they are invisible to the UI either way.`);
+  for (const s of orphanSamples) {
+    for (const o of s.orphans) {
+      log(`    ${s.doNo}: orphan bucket [${o.bucket}] pos={${o.pos.join(", ")}} via ${o.sides} — ${o.kind}`);
+    }
+  }
+  for (const want of DETAIL_DOS) {
+    const row = allDos.find((d) => d.do_number === want);
+    if (!row) { log(`  DETAIL ${want}: not found / cancelled.`); continue; }
+    const lineBuckets = [...(lineBucketsByDo.get(row.id) ?? new Set())].sort();
+    const buckets = ledgerBucketsByDo.get(row.id) ?? new Map();
+    const union = new Set();
+    for (const bk of lineBuckets) for (const po of buckets.get(bk)?.pos ?? []) union.add(po);
+    const raw = new Set();
+    for (const v of buckets.values()) for (const po of v.pos) raw.add(po);
+    log(`  DETAIL ${want}: header (line-union) = {${[...union].sort().join(", ")}}; raw ledger rollup = {${[...raw].sort().join(", ")}}${raw.size !== union.size ? "  << the difference is the phantom the old cell showed" : "  (identical — no orphans)"}`);
+    for (const [bk, v] of buckets.entries()) {
+      log(`      ledger bucket [${bk}] pos={${[...v.pos].sort().join(", ")}} via ${[...v.sides].join("+")}${lineBucketsByDo.get(row.id)?.has(bk) ? "" : "  << ORPHAN"}`);
+    }
+  }
+
+  // ── 7. J1 — SO line served by >1 distinct PO (delivered chain) ────────────
+  log("");
+  log("SECTION 7 — J1: SO lines served by >1 PO (delivered chain):");
+  const lineById = new Map(lines.map((l) => [l.id, l]));
+  let j1Hard = 0, j1Suspect = 0, j1Legit = 0;
+  for (const [soItemId, del] of deliveredBySoItem.entries()) {
+    if ((del.pos?.size ?? 0) <= 1) continue;
+    const l = lineById.get(soItemId);
+    if (!l) continue;
+    const isSofa = String(l.item_group ?? "").toUpperCase().includes("SOFA");
+    const posList = [...del.pos].sort().join(" + ");
+    const qtyByPo = new Map();
+    for (const lot of del.lots ?? []) {
+      if (lot.po) qtyByPo.set(lot.po, (qtyByPo.get(lot.po) ?? 0) + lot.qty);
+    }
+    const split = [...qtyByPo.entries()].map(([po, q]) => `${po} x${q}`).join(", ");
+    if (isSofa) {
+      j1Hard += 1;
+      log(`  [HARD DEFECT — sofa multi-batch] ${coCode.get(Number(soByDoc.get(l.doc_no)?.company_id)) ?? "?"} ${l.doc_no} ${l.item_code} qty=${l.qty}: served by ${posList} (${split}) — one sofa set must ship one batch (9d expects 0).`);
+      continue;
+    }
+    // fifo-suspect: an OLDER lot for the same (company, code) still open while
+    // a NEWER receipt was consumed for this line.
+    const newestConsumed = (del.lots ?? []).map((x) => x.receivedAt).filter(Boolean).sort().pop() ?? null;
+    let suspect = false;
+    if (newestConsumed) {
+      const older = await pg`
+        SELECT COUNT(*)::int AS n FROM scm.inventory_lots
+         WHERE product_code = ${l.item_code} AND qty_remaining > 0
+           AND received_at < ${newestConsumed}
+           AND company_id = ${Number(soByDoc.get(l.doc_no)?.company_id ?? 0)}`;
+      suspect = Number(older[0]?.n ?? 0) > 0;
+    }
+    if (suspect) {
+      j1Suspect += 1;
+      log(`  [fifo-suspect] ${coCode.get(Number(soByDoc.get(l.doc_no)?.company_id)) ?? "?"} ${l.doc_no} ${l.item_code} qty=${l.qty}: served by ${posList} (${split}) while an OLDER lot still sits open in the bucket — eyeball (9c expects strict FIFO).`);
+    } else {
+      j1Legit += 1;
+      log(`  [boundary-split-legit] ${coCode.get(Number(soByDoc.get(l.doc_no)?.company_id)) ?? "?"} ${l.doc_no} ${l.item_code} qty=${l.qty}: ${split} — qty genuinely spans two receipts; listed for the owner's eyes.`);
+    }
+  }
+  log(`  J1 totals: hard-defect(sofa)=${j1Hard}, fifo-suspect=${j1Suspect}, boundary-split-legit=${j1Legit}.`);
+
+  // ── 8. J2 — PO line assigned to >1 SO ─────────────────────────────────────
+  log("");
+  log("SECTION 8 — J2: PO lines assigned to >1 SO:");
+  const allocLines = await pg`
+    SELECT i.id::text AS line_id, i.qty AS line_qty, i.material_code,
+           i.so_item_id::text AS stored_so_item, p.po_number, p.company_id,
+           COALESCE(SUM(a.qty), 0)::int AS alloc_qty,
+           COUNT(a.id)::int AS alloc_n,
+           COUNT(DISTINCT a.so_item_id)::int AS alloc_so_n,
+           array_agg(DISTINCT a.so_item_id::text) FILTER (WHERE a.so_item_id IS NOT NULL) AS alloc_so_items
+      FROM scm.purchase_order_items i
+      JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+      LEFT JOIN scm.purchase_order_item_allocations a ON a.purchase_order_item_id = i.id
+     WHERE UPPER(COALESCE(p.status::text,'')) <> 'CANCELLED'
+     GROUP BY i.id, i.qty, i.material_code, i.so_item_id, p.po_number, p.company_id
+    HAVING COUNT(a.id) > 0`;
+  // SO docs + served state for every allocation-named SO line.
+  const allocSoIds = [...new Set(allocLines.flatMap((r) => r.alloc_so_items ?? []).filter(Boolean))];
+  const allocSoRows = allocSoIds.length ? await pg`
+    SELECT id::text AS id, doc_no, qty FROM scm.mfg_sales_order_items WHERE id::text = ANY(${allocSoIds})` : [];
+  const allocSoDoc = new Map(allocSoRows.map((r) => [r.id, r.doc_no]));
+  const allocSoQty = new Map(allocSoRows.map((r) => [r.id, Number(r.qty ?? 0)]));
+  // Delivered service for those SO lines (which POs actually served them).
+  const servedRows = allocSoIds.length ? await pg`
+    SELECT di.so_item_id::text AS so_item_id, di.qty,
+           COALESCE(l.batch_no, gp.po_number) AS po
+      FROM scm.delivery_order_items di
+      JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
+      JOIN scm.inventory_lot_consumptions c
+        ON c.source_doc_type = 'DO' AND c.source_doc_id = di.delivery_order_id
+       AND c.product_code = di.item_code
+      JOIN scm.inventory_lots l ON l.id = c.lot_id
+      LEFT JOIN scm.grns g ON UPPER(COALESCE(l.source_doc_type,'')) = 'GRN' AND g.id = l.source_doc_id
+      LEFT JOIN scm.purchase_orders gp ON gp.id = g.purchase_order_id
+     WHERE di.so_item_id::text = ANY(${allocSoIds})
+       AND UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'` : [];
+  const servedBySo = new Map(); // so_item_id -> { pos:Set, qty }
+  for (const r of servedRows) {
+    if (!r.po) continue;
+    const cur = servedBySo.get(r.so_item_id) ?? { pos: new Set(), qty: 0 };
+    cur.pos.add(r.po);
+    servedBySo.set(r.so_item_id, cur);
+  }
+  // Delivered qty per SO line (documented DO-line qty where the bucket resolves).
+  const servedQtyRows = allocSoIds.length ? await pg`
+    SELECT di.so_item_id::text AS so_item_id, SUM(di.qty)::int AS qty
+      FROM scm.delivery_order_items di
+      JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
+     WHERE di.so_item_id::text = ANY(${allocSoIds})
+       AND UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'
+       AND EXISTS (SELECT 1 FROM scm.inventory_lot_consumptions c
+                    WHERE c.source_doc_type = 'DO' AND c.source_doc_id = di.delivery_order_id
+                      AND c.product_code = di.item_code)
+     GROUP BY di.so_item_id` : [];
+  const servedQtyBySo = new Map(servedQtyRows.map((r) => [r.so_item_id, Number(r.qty ?? 0)]));
+  let j2Legit = 0, j2Conflict = 0;
+  for (const r of allocLines) {
+    const conflicts = [];
+    if (Number(r.alloc_qty) > Number(r.line_qty)) {
+      conflicts.push(`allocations sum ${r.alloc_qty} EXCEEDS line qty ${r.line_qty}`);
+    }
+    for (const soId of r.alloc_so_items ?? []) {
+      const served = servedBySo.get(soId);
+      if (!served || served.pos.size === 0) continue;
+      const servedQ = servedQtyBySo.get(soId) ?? 0;
+      const fullyServed = servedQ >= (allocSoQty.get(soId) ?? Number.POSITIVE_INFINITY);
+      if (fullyServed && !served.pos.has(r.po_number)) {
+        conflicts.push(`allocation names ${allocSoDoc.get(soId) ?? soId} whose demand the delivered chain proves served by ${[...served.pos].sort().join("+")} (the 023 class)`);
+      }
+    }
+    if (conflicts.length > 0) {
+      j2Conflict += 1;
+      log(`  [CONFLICT] ${coCode.get(Number(r.company_id)) ?? "?"} ${r.po_number} line ${r.line_id} ${r.material_code}: ${conflicts.join("; ")} — fix: part=fifo-attribute-repair.`);
+    } else if (Number(r.alloc_so_n) > 1) {
+      j2Legit += 1; // consolidated split — the owner-approved model; counted, not printed
+    }
+  }
+  // Stored so_item_id vs the PO's own delivered chain (PO-level lens).
+  const storedVsDelivered = await pg`
+    SELECT p.po_number, p.company_id, i.id::text AS line_id, i.material_code, si.doc_no AS stored_doc
+      FROM scm.purchase_order_items i
+      JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+      JOIN scm.mfg_sales_order_items si ON si.id = i.so_item_id
+     WHERE i.so_item_id IS NOT NULL AND UPPER(COALESCE(p.status::text,'')) <> 'CANCELLED'`;
+  const svdPoNos = [...new Set(storedVsDelivered.map((r) => r.po_number).filter(Boolean))];
+  const poServedDocs = new Map(); // po_number -> Set(so doc)
+  if (svdPoNos.length) {
+    const rows2 = await pg`
+      SELECT l.batch_no AS po_number, so_items.doc_no
+        FROM scm.inventory_lots l
+        JOIN scm.inventory_lot_consumptions c ON c.lot_id = l.id AND c.source_doc_type = 'DO'
+        JOIN scm.delivery_order_items di
+          ON di.delivery_order_id = c.source_doc_id AND di.item_code = c.product_code
+        JOIN scm.mfg_sales_order_items so_items ON so_items.id = di.so_item_id
+       WHERE l.batch_no = ANY(${svdPoNos})`;
+    for (const r of rows2) {
+      const set = poServedDocs.get(r.po_number) ?? new Set();
+      set.add(r.doc_no);
+      poServedDocs.set(r.po_number, set);
+    }
+  }
+  for (const r of storedVsDelivered) {
+    const servedDocs = poServedDocs.get(r.po_number);
+    if (!servedDocs || servedDocs.size === 0) continue; // nothing delivered — nothing to disagree with
+    if (!servedDocs.has(r.stored_doc)) {
+      j2Conflict += 1;
+      log(`  [CONFLICT] ${coCode.get(Number(r.company_id)) ?? "?"} ${r.po_number} line ${r.line_id} ${r.material_code}: stored link says ${r.stored_doc} but the PO's delivered chain served {${[...servedDocs].sort().join(", ")}} — stored-vs-delivered disagreement (needs eyes).`);
+    }
+  }
+  log(`  J2 totals: consolidated multi-SO splits (LEGIT, allocation model): ${j2Legit}; CONFLICTS: ${j2Conflict}.`);
+
+  // ── 9. J3 — SO line claimed by >1 PO (stored links ∪ allocations) ─────────
+  log("");
+  log("SECTION 9 — J3: SO lines claimed by >1 PO (the 023/024 defect class):");
+  const j3 = await pg`
+    WITH claims AS (
+      SELECT i.so_item_id, i.purchase_order_id AS po_id
+        FROM scm.purchase_order_items i
+        JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+       WHERE i.so_item_id IS NOT NULL AND UPPER(COALESCE(p.status::text,'')) <> 'CANCELLED'
+      UNION
+      SELECT a.so_item_id, i.purchase_order_id
+        FROM scm.purchase_order_item_allocations a
+        JOIN scm.purchase_order_items i ON i.id = a.purchase_order_item_id
+        JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+       WHERE a.so_item_id IS NOT NULL AND UPPER(COALESCE(p.status::text,'')) <> 'CANCELLED'
+    )
+    SELECT c.so_item_id::text AS so_item_id, si.doc_no, si.item_code,
+           array_agg(DISTINCT p.po_number ORDER BY p.po_number) AS pos
+      FROM claims c
+      JOIN scm.purchase_orders p ON p.id = c.po_id
+      LEFT JOIN scm.mfg_sales_order_items si ON si.id = c.so_item_id
+     GROUP BY c.so_item_id, si.doc_no, si.item_code
+    HAVING COUNT(DISTINCT c.po_id) > 1`;
+  for (const r of j3) {
+    log(`  [DOUBLE-CLAIM] SO line ${r.so_item_id} (${r.doc_no ?? "?"} ${r.item_code ?? "?"}) claimed by: ${(r.pos ?? []).join(", ")} — fix: part=fifo-attribute-repair.`);
+  }
+  log(`  J3 total: ${j3.length} SO line(s) claimed by more than one PO. Expected 0.`);
+
+  // ── CLOSING one-truth verdict ─────────────────────────────────────────────
+  log("");
+  const oneTruthHolds = j3.length === 0 && j1Hard === 0 && j1Suspect === 0 && j2Conflict === 0;
+  log(oneTruthHolds
+    ? `ONE-TRUTH VERDICT: HOLDS — J3 double-claims = 0, J1 has no hard/suspect rows (${j1Legit} legitimate boundary split(s) listed), J2 has no conflicts (${j2Legit} legitimate consolidated split(s)), and header cells are the line union by construction.`
+    : `ONE-TRUTH VERDICT: VIOLATED — J3 double-claims: ${j3.length} (expect 0), J1 hard-defects: ${j1Hard} + fifo-suspects: ${j1Suspect} (expect 0), J2 conflicts: ${j2Conflict} (expect 0). Fix tools: part=fifo-attribute-repair for the claim classes; sofa multi-batch and fifo-suspects go to the owner with the rows above.`);
 } finally {
   await pg.end({ timeout: 5 });
 }

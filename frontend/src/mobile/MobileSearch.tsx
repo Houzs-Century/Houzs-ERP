@@ -121,7 +121,7 @@ export function MobileSearch({
   onNavigate: (nav: SearchNav) => void;
 }) {
   const [q, setQ] = useState("");
-  const { term, hits, loading, error } = useGlobalSearchResults(q);
+  const { term, hits, loading, error, degradedNotice } = useGlobalSearchResults(q);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -188,9 +188,17 @@ export function MobileSearch({
             Couldn't search right now. Please try again.
           </div>
         )}
+        {degradedNotice && !error && (
+          <div role="alert" style={{ margin: "8px 0", borderRadius: 10, border: "1px solid #e0cba8", background: "#fdf6e9", padding: "10px 12px", fontSize: 12, color: "var(--ink, #2b2b2b)" }}>
+            {degradedNotice}
+          </div>
+        )}
         {term.length >= GLOBAL_SEARCH_MIN_LENGTH && !loading && !error && hits.length === 0 && (
           <div role="status" aria-live="polite" style={{ padding: "40px 16px", textAlign: "center", color: "var(--mut2)", fontSize: 12.5 }}>
-            No matches for "{term}". Try a different keyword.
+            {/* Must not claim absence when a source went unread — same rule as desktop. */}
+            {degradedNotice
+              ? `No matches found for "${term}" in what could be searched.`
+              : `No matches for "${term}". Try a different keyword.`}
           </div>
         )}
 

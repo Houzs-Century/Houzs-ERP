@@ -572,8 +572,12 @@ poSoCoverage.get('/:type/:id', async (c) => {
 // ----------------------------------------------------------------------------
 export type PoAssignedSummary = { assignedSos: OriginAssignment[]; sourceLinked: boolean };
 
-/* Roll a PO's per-SKU origins up to ONE distinct-SO summary for the list cell. */
-function summarizeOrigins(origins: SkuOrigin[]): PoAssignedSummary {
+/* Roll a PO's per-SKU origins up to ONE distinct-SO summary for the list cell.
+   EXPORTED since 2026-08-02: the GRN / PI lists roll up the SAME per-SKU
+   origins RESTRICTED to their own document's line SKUs (header ≡ ∪(lines) —
+   a partial-receipt GRN must not inherit assignments for PO SKUs it never
+   received). */
+export function summarizeOrigins(origins: SkuOrigin[]): PoAssignedSummary {
   const byDoc = new Map<string, OriginAssignment>();
   let sourceLinked = false;
   for (const o of origins) {
@@ -592,7 +596,21 @@ export async function resolvePoSoCoverageForPos(
   c: Context<any>,
   poIds: Array<string | null | undefined>,
 ): Promise<Map<string, PoAssignedSummary>> {
+  const perSku = await resolvePoSoCoveragePerSkuForPos(sb, c, poIds);
   const out = new Map<string, PoAssignedSummary>();
+  for (const [id, origins] of perSku.entries()) out.set(id, summarizeOrigins(origins));
+  return out;
+}
+
+/* The per-SKU half of the list rollup above — Map<poId, SkuOrigin[]>. The GRN /
+   PI lists consume THIS and roll up only the SKUs their own lines carry, so
+   their header cells stay ≡ the union of their drill lines. */
+export async function resolvePoSoCoveragePerSkuForPos(
+  sb: any,
+  c: Context<any>,
+  poIds: Array<string | null | undefined>,
+): Promise<Map<string, SkuOrigin[]>> {
+  const out = new Map<string, SkuOrigin[]>();
   const ids = [...new Set(poIds.filter((x): x is string => !!x))];
   if (ids.length === 0) return out;
 
@@ -837,7 +855,7 @@ export async function resolvePoSoCoverageForPos(
     }
     const floating = floatingByPo.get(poNum) ?? new Map<string, OriginAssignment[]>();
     const origins = mergeAssignments(skus, doLock, storedOrigin, floating, linkedSkusByPo.get(id) ?? new Set());
-    out.set(id, summarizeOrigins(origins));
+    out.set(id, origins);
   }
   return out;
 }
@@ -853,7 +871,15 @@ export async function resolvePoSoCoverageForPos(
 // Company-scoped: the DO headers are re-read scopeToCompany'd, so a foreign DO
 // never leaks and its qty never counts.
 // ----------------------------------------------------------------------------
-export type DeliveredDo = { doNo: string; qty: number };
+export type DeliveredDo = {
+  doNo: string;
+  qty: number;
+  /* The Sales Order this DO belongs to (delivery_orders.so_doc_no) — pairs each
+     delivered chip with its Assigned-SO row in the drill's per-SO sub-table
+     (owner 2026-08-02: one row per SO, not three unaligned stacks). Null for an
+     ad-hoc DO with no SO. */
+  soDocNo?: string | null;
+};
 export type PoDeliveredSummary = { deliveredDos: DeliveredDo[] };
 
 const sortDeliveredDos = (dos: DeliveredDo[]): DeliveredDo[] =>
@@ -864,22 +890,25 @@ const sortDeliveredDos = (dos: DeliveredDo[]): DeliveredDo[] =>
    shared pass with the double-count guard (consumptions primary, batched OUT
    movements fill the drop-ship gap only). This file only shapes its output. */
 
-/* Non-cancelled do_number for a set of DO ids — company-scoped, batched. A
-   CANCELLED DO is deliberately absent (it did not deliver). */
+/* Non-cancelled do_number (+ its SO doc_no, for the per-SO pairing) for a set
+   of DO ids — company-scoped, batched. A CANCELLED DO is deliberately absent
+   (it did not deliver). */
 async function nonCancelledDoNumbers(
   sb: any,
   c: Context<any>,
   doIds: string[],
-): Promise<Map<string, string>> {
-  const doNoById = new Map<string, string>();
+): Promise<Map<string, { doNo: string; soDocNo: string | null }>> {
+  const doNoById = new Map<string, { doNo: string; soDocNo: string | null }>();
   for (let k = 0; k < doIds.length; k += 300) {
     const chunk = doIds.slice(k, k + 300);
     if (chunk.length === 0) continue;
     const { data: doHdrs } = await scopeToCompany(
-      sb.from('delivery_orders').select('id, do_number, status'), c,
+      sb.from('delivery_orders').select('id, do_number, status, so_doc_no'), c,
     ).in('id', chunk);
-    for (const d of (doHdrs ?? []) as Array<{ id: string; do_number: string | null; status: string | null }>) {
-      if (d.do_number && (d.status ?? '').toUpperCase() !== 'CANCELLED') doNoById.set(d.id, d.do_number);
+    for (const d of (doHdrs ?? []) as Array<{ id: string; do_number: string | null; status: string | null; so_doc_no: string | null }>) {
+      if (d.do_number && (d.status ?? '').toUpperCase() !== 'CANCELLED') {
+        doNoById.set(d.id, { doNo: d.do_number, soDocNo: d.so_doc_no ?? null });
+      }
     }
   }
   return doNoById;
@@ -914,11 +943,58 @@ export async function resolveDeliveredDosForPos(
     if (!inner) continue;
     const dos: DeliveredDo[] = [];
     for (const [doId, qty] of inner.entries()) {
-      const doNo = doNoById.get(doId);
-      if (!doNo) continue; // foreign / cancelled DO — never counts as delivered
-      dos.push({ doNo, qty });
+      const hdr = doNoById.get(doId);
+      if (!hdr) continue; // foreign / cancelled DO — never counts as delivered
+      dos.push({ doNo: hdr.doNo, qty, soDocNo: hdr.soDocNo });
     }
     if (dos.length > 0) out.set(id, { deliveredDos: sortDeliveredDos(dos) });
+  }
+  return out;
+}
+
+/* Per-CODE list rollup — Map<poId, Map<item_code, DeliveredDo[]>>. The GRN / PI
+   lists roll THIS up over their own document's line codes only, so a partial-
+   receipt GRN's "Delivered" cell shows the DO(s) of the goods IT received —
+   never the parent PO's whole history (header ≡ ∪(lines), 2026-08-02). */
+export async function resolveDeliveredByCodeForPos(
+  sb: any,
+  c: Context<any>,
+  poIds: Array<string | null | undefined>,
+): Promise<Map<string, Map<string, DeliveredDo[]>>> {
+  const out = new Map<string, Map<string, DeliveredDo[]>>();
+  const ids = [...new Set(poIds.filter((x): x is string => !!x))];
+  if (ids.length === 0) return out;
+  const { data: poHdrs } = await scopeToCompany(
+    sb.from('purchase_orders').select('id, po_number'), c,
+  ).in('id', ids);
+  const poNumberById = new Map<string, string>();
+  for (const h of (poHdrs ?? []) as Array<{ id: string; po_number: string | null }>) {
+    poNumberById.set(h.id, h.po_number ?? '');
+  }
+  const poNumbers = [...new Set([...poNumberById.values()].filter(Boolean))];
+  if (poNumbers.length === 0) return out;
+  const { qtyByPoDoCode, doIds } = await tracePoDeliveredLedger(sb, poNumbers);
+  if (doIds.size === 0) return out;
+  const doNoById = await nonCancelledDoNumbers(sb, c, [...doIds]);
+  for (const id of poNumberById.keys()) {
+    const byDo = qtyByPoDoCode.get(poNumberById.get(id) ?? '');
+    if (!byDo) continue;
+    const byCode = new Map<string, Map<string, DeliveredDo>>();
+    for (const [doId, codeQty] of byDo.entries()) {
+      const hdr = doNoById.get(doId);
+      if (!hdr) continue;
+      for (const [code, qty] of codeQty.entries()) {
+        const inner = byCode.get(code) ?? new Map<string, DeliveredDo>();
+        const prev = inner.get(hdr.doNo);
+        if (prev) prev.qty += qty;
+        else inner.set(hdr.doNo, { doNo: hdr.doNo, qty, soDocNo: hdr.soDocNo });
+        byCode.set(code, inner);
+      }
+    }
+    if (byCode.size > 0) {
+      out.set(id, new Map([...byCode.entries()].map(([code, inner]) =>
+        [code, sortDeliveredDos([...inner.values()])])));
+    }
   }
   return out;
 }
@@ -938,19 +1014,22 @@ async function resolveDeliveredBySkuForPo(
   const doNoById = await nonCancelledDoNumbers(sb, c, [...doIds]);
   const byDo = qtyByPoDoCode.get(poNumber);
   if (!byDo) return out;
-  // (code → (doNo → qty)) so the same SKU across two DOs shows both.
-  const byCode = new Map<string, Map<string, number>>();
+  // (code → (doNo → chip)) so the same SKU across two DOs shows both; each chip
+  // carries its DO's SO doc_no for the drill's per-SO pairing.
+  const byCode = new Map<string, Map<string, DeliveredDo>>();
   for (const [doId, codeQty] of byDo.entries()) {
-    const doNo = doNoById.get(doId);
-    if (!doNo) continue;
+    const hdr = doNoById.get(doId);
+    if (!hdr) continue;
     for (const [code, qty] of codeQty.entries()) {
-      const inner = byCode.get(code) ?? new Map<string, number>();
-      inner.set(doNo, (inner.get(doNo) ?? 0) + qty);
+      const inner = byCode.get(code) ?? new Map<string, DeliveredDo>();
+      const prev = inner.get(hdr.doNo);
+      if (prev) prev.qty += qty;
+      else inner.set(hdr.doNo, { doNo: hdr.doNo, qty, soDocNo: hdr.soDocNo });
       byCode.set(code, inner);
     }
   }
   for (const [code, inner] of byCode.entries()) {
-    out.set(code, sortDeliveredDos([...inner.entries()].map(([doNo, qty]) => ({ doNo, qty }))));
+    out.set(code, sortDeliveredDos([...inner.values()]));
   }
   return out;
 }

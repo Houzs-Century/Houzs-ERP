@@ -113,7 +113,7 @@ export function GlobalSearchProvider({ children }: { children: ReactNode }) {
 
 function Palette({ onClose }: { onClose: () => void }) {
   const [q, setQ] = useState("");
-  const { term, hits, loading, error } = useGlobalSearchResults(q);
+  const { term, hits, loading, error, degradedNotice } = useGlobalSearchResults(q);
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -279,10 +279,19 @@ function Palette({ onClose }: { onClose: () => void }) {
               Search failed: {error}
             </div>
           )}
+          {degradedNotice && !error && (
+            <div role="alert" className="m-3 rounded-md border border-warn/30 bg-warn/5 px-3 py-2 text-[12px] text-ink">
+              {degradedNotice}
+            </div>
+          )}
           {term.length >= GLOBAL_SEARCH_MIN_LENGTH && !loading && hits.length === 0 && !error && (
             <div role="status" aria-live="polite" className="flex flex-col items-center gap-1 px-4 py-10 text-center">
               <Search size={20} className="text-ink-muted" />
-              <div className="text-[12.5px] text-ink">No matches for “{term}”.</div>
+              {/* Never claim absence when a source went unread — degradedNotice
+                  above already says so, and this copy must not contradict it. */}
+              <div className="text-[12.5px] text-ink">
+                {degradedNotice ? `No matches found for “${term}” in what could be searched.` : `No matches for “${term}”.`}
+              </div>
               <div className="text-[10.5px] text-ink-muted">Try a different keyword.</div>
             </div>
           )}

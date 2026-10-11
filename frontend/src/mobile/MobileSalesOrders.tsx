@@ -13,6 +13,7 @@ import { resolveSoLocation } from "../lib/soLocation";
 import { formatDate } from "../lib/utils";
 import { SearchProgress } from "../components/SearchProgress";
 import { SearchScopeHint } from "../components/SearchScopeHint";
+import { SourcePosRowMobile } from "./source-chips";
 import { identityStorageKey } from "../lib/storageIdentity";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../hooks/useServerSearch";
 import "./mobile.css";
@@ -34,6 +35,11 @@ type SoRow = {
      row actually carries it — a Draft/Cancelled SO has none). */
   planning_state: string | null;
   is_fully_ready: boolean | null; is_main_ready: boolean | null; ready_categories: string[] | null;
+  /* Union of per-line source-PO chips (owner 2026-08-02) — the mobile twin of
+     the desktop list's PO No. column: shipped consumed batches ∪ READY
+     projections, from the ONE shared resolver. */
+  source_po_union?: string[] | null;
+  source_po_adj?: boolean;
 };
 
 /* Numeric DD/MM/YYYY, TZ-aware (owner-locked desktop/mobile date format — never
@@ -592,6 +598,12 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
                   </div>
                   {/* Line 4 — fulfilment chips (only when live + present) */}
                   <FulfilChips row={r} />
+                  {/* Line 4b — source PO union (desktop PO No. column's mobile
+                      twin; owner 2026-08-02). Rendered only when non-empty —
+                      card idiom, the desktop column shows the dash instead. */}
+                  {((r.source_po_union?.length ?? 0) > 0 || r.source_po_adj) && (
+                    <SourcePosRowMobile pos={r.source_po_union ?? []} adj={r.source_po_adj} />
+                  )}
                   {/* Line 5 — created / total */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 9, paddingTop: 9, borderTop: "1px solid var(--line2)" }}>
                     <span style={{ fontSize: 10, color: "var(--mut2)" }}>{dm(soDate(r))} · created</span>

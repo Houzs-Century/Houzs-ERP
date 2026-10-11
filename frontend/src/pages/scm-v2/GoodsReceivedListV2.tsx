@@ -724,6 +724,7 @@ export function GoodsReceivedListV2() {
           assignments={r.assigned_sos}
           sourceLinked={r.assigned_so_linked}
           onOpenSo={(soDocNo) => navigate(`/scm/sales-orders/${encodeURIComponent(soDocNo)}`)}
+          emptyMeans="stock"
         />
       ),
     },

@@ -28,7 +28,7 @@ import { todayMyt } from '../lib/my-time';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import {
   resolveDoLineSources,
-  resolveDoSources,
+  resolveDoHeaderSources,
   resolveDoLineSourcePosImpl,
   resolveDoSourcePosForDosImpl,
   soLineShippedSourcePosImpl,
@@ -2494,9 +2494,15 @@ deliveryOrdersMfg.get('/', async (c) => {
   /* Source PO(s) each DO's goods shipped from (owner 2026-07-31): a DO/SI is a
      SALES-side doc, so it shows the durable batch_no = source-PO hard link, not
      an Assigned SO. ONE batched ledger pass across the page (the shared
-     resolver — GRN-healed, adjustment-classified). */
+     resolver — GRN-healed, adjustment-classified).
+     2026-08-02 (2990-DO-2607-017): derived as the UNION OF THE DO'S OWN LINES'
+     traces (resolveDoHeaderSources), never the raw byDo ledger rollup — the old
+     rollup surfaced orphan ledger buckets (re-pointed consumptions / drifted
+     variant keys) as phantom chips no item line could explain. Header ≡ ∪(lines)
+     by construction now; the orphan buckets stay visible to the read-only check
+     (check-so-source-trace.mjs), not to this cell. */
   const sourceTraceByDo = rows.length > 0
-    ? await resolveDoSources(sb, rows.map((r) => r.id))
+    ? await resolveDoHeaderSources(sb, rows.map((r) => r.id))
     : new Map<string, { pos: string[]; adjQty: number }>();
   /* Finance gate — cost / margin / per-category subtotals reach ONLY a
      finance-viewer; stripped from every row otherwise. */

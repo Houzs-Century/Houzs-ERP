@@ -125,15 +125,19 @@ posting.
    `SalesInvoicesListV2` + mobile `MobileModuleList`). There is still no
    `has_children` on an SI because nothing hangs off it.
    `stampSourcePos` (both list paths) additionally stamps **`source_pos`** per
-   row (SI → `delivery_order_id` → the ONE shared resolver in
-   `scm/lib/source-po-trace.ts`); the SI detail resolves per-line `source_pos`
-   from the SI's DO ledger through the same lib. Since 2026-08-01 both also
-   carry **`source_adj`** (shipped from a PO-less stock ADJUSTMENT lot → a
-   "STOCK ADJ" chip, desktop + mobile detail, never a blank), and NULL-batch
-   GRN lots are healed to their PO at read time. An SI is born FROM a Sales
-   Order, so it shows **Source PO** (`batch_no` = source PO), NOT an Assigned
-   SO — see `docs/modules/document-traceability.md` §2.5 + §2.8 (owner
-   2026-07-31 / 2026-08-01). A manual SI with no DO shows "—".
+   row — **since 2026-08-02 via `resolveSiHeaderSources`: the union of the SI's
+   OWN invoiced lines' traces (each line matched into its DO's ledger buckets,
+   the exact per-line rule the SI detail applies), never the DO's raw `byDo`
+   rollup** (which surfaced orphan ledger buckets as phantom chips and could
+   include DO lines the SI never invoiced — header ≡ ∪(lines)); the SI detail
+   resolves per-line `source_pos` from the SI's DO ledger through the same lib.
+   Since 2026-08-01 both also carry **`source_adj`** (shipped from a PO-less
+   stock ADJUSTMENT lot → a "STOCK ADJ" chip, desktop + mobile detail, never a
+   blank), and NULL-batch GRN lots are healed to their PO at read time. An SI
+   is born FROM a Sales Order, so it shows **Source PO** (`batch_no` = source
+   PO), NOT an Assigned SO — see `docs/modules/document-traceability.md` §2.5 +
+   §2.8 + §2.9 (owner 2026-07-31 / 2026-08-01 / 2026-08-02). A manual SI with
+   no DO shows "—".
 4. **Finance gate** — `gateSiFinance(rows, canViewScmFinance(c))` (`:213-220`)
    deletes every `SI_FINANCE_KEYS` column (`:205-209`) from every row. Applied on
    both list paths and on the detail (`:787-792`, which also strips

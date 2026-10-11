@@ -461,3 +461,65 @@ export function projectRelabelledDrift(buckets, relabels) {
   }
   return after;
 }
+
+/** MIRROR of src/scm/shared/service-sku.ts `isServiceLine` — needed because the
+ *  repair scripts run under plain node. A GRN line is a SERVICE line when ANY
+ *  signal says so: item_group contains SERVICE, category === SERVICE, or the
+ *  code starts with the seeded SVC- prefix (strictly longer than the prefix).
+ *  KEEP IN LOCKSTEP — the ledgerRepairCore test imports the real function and
+ *  fails if the two disagree.
+ *
+ *  WHY (2026-08-02, self-caught regression): the grn-gap APPLY on
+ *  2990-GRN-2606-001 counted the SVC-TRANS.CHARGES freight line into accepted
+ *  qty and INSERTED a phantom 1-unit inventory movement + lot for a service —
+ *  something the app itself never does (grns.ts posts filter isServiceLine).
+ *  Both the planner and the audit's 3a lens now exclude service lines. */
+export function isServiceLineMirror({ itemGroup, itemCode, category } = {}) {
+  const norm = (v) => String(v ?? "").trim().toUpperCase();
+  const code = norm(itemCode);
+  return (
+    norm(itemGroup).includes("SERVICE")
+    || norm(category) === "SERVICE"
+    || (code.length > 4 && code.startsWith("SVC-"))
+  );
+}
+
+/** K — plan the reversal of ONE phantom service-line receipt (the grn-gap
+ *  regression above). PURE: the script feeds the live rows in; the deletion
+ *  happens only on verdict "reverse", and only when every guard holds:
+ *    - the movement is an IN for a SERVICE-coded product (the defect shape —
+ *      reversing a real goods receipt is out of scope for this part)
+ *    - the lot belongs to that movement's document + product and is UNTOUCHED
+ *      (qty_received === qty_remaining, consumed 0)
+ *    - ZERO consumption rows reference the lot OR the movement — a consumed
+ *      lot cannot be deleted without corrupting the consumer's COGS trail
+ *  Verdicts: reverse | not-found | not-service | consumed | lot-mismatch */
+export function planServiceLotReversal({ movement, lot, lotConsumptions = 0, movementConsumptions = 0 }) {
+  if (!movement || !lot) return { verdict: "not-found", movementFound: Boolean(movement), lotFound: Boolean(lot) };
+  const svc = isServiceLineMirror({ itemCode: movement.productCode, itemGroup: movement.itemGroup ?? null });
+  if (String(movement.movementType ?? "").toUpperCase() !== "IN" || !svc) {
+    return { verdict: "not-service", movementType: movement.movementType, productCode: movement.productCode };
+  }
+  if (
+    String(lot.sourceDocType ?? "").toUpperCase() !== String(movement.sourceDocType ?? "").toUpperCase()
+    || String(lot.sourceDocId ?? "") !== String(movement.sourceDocId ?? "")
+    || String(lot.productCode ?? "") !== String(movement.productCode ?? "")
+  ) {
+    return { verdict: "lot-mismatch", lot: { sourceDocType: lot.sourceDocType, sourceDocId: lot.sourceDocId, productCode: lot.productCode } };
+  }
+  const received = Number(lot.qtyReceived ?? 0);
+  const remaining = Number(lot.qtyRemaining ?? 0);
+  if (Number(lotConsumptions) > 0 || Number(movementConsumptions) > 0 || received !== remaining) {
+    return {
+      verdict: "consumed",
+      lotConsumptions: Number(lotConsumptions),
+      movementConsumptions: Number(movementConsumptions),
+      qtyReceived: received,
+      qtyRemaining: remaining,
+    };
+  }
+  return {
+    verdict: "reverse",
+    print: `DELETE movement ${movement.id} (IN qty=${movement.qty} @ ${movement.unitCostSen} sen, ${movement.productCode}) + lot ${lot.id} (received=${received} remaining=${remaining}, never consumed)`,
+  };
+}

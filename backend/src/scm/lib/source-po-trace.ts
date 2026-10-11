@@ -48,6 +48,8 @@
 --------------------------------------------------------------------------- */
 
 import { computeVariantKey, type VariantAttrs } from '../shared';
+import { isServiceLine } from '../shared/service-sku';
+import { resolveExpectedBatchBySoItem } from './dropship-batch';
 import type { MrpResult } from '../routes/mrp';
 
 /* One bucket's forward trace: the source PO numbers (sorted, GRN-healed) plus
@@ -255,13 +257,18 @@ export async function soLineShippedSources(
   const ids = [...new Set(soItemIds.filter((x): x is string => Boolean(x)))];
   if (ids.length === 0) return new Map();
   try {
-    const { data: doItems } = await sb.from('delivery_order_items')
-      .select('so_item_id, delivery_order_id, item_code, item_group, variants')
-      .in('so_item_id', ids);
-    const doLines = (doItems ?? []) as Array<{
+    // Chunked: the SO LIST now walks this for a whole page (hundreds of SOs →
+    // thousands of line ids); one giant `.in()` would blow the PostgREST URL cap.
+    const doLines: Array<{
       so_item_id: string | null; delivery_order_id: string; item_code: string;
       item_group: string | null; variants: VariantAttrs | null;
-    }>;
+    }> = [];
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const { data: doItems } = await sb.from('delivery_order_items')
+        .select('so_item_id, delivery_order_id, item_code, item_group, variants')
+        .in('so_item_id', ids.slice(i, i + CHUNK));
+      for (const r of (doItems ?? []) as typeof doLines) doLines.push(r);
+    }
     if (doLines.length === 0) return new Map();
     const { byBucket } = await traceDoShipmentSources(sb, doLines.map((r) => r.delivery_order_id));
     for (const dl of doLines) {
@@ -303,6 +310,205 @@ export async function resolveDoSourcePosForDosImpl(
   const out = new Map<string, string[]>();
   for (const [k, v] of rich.entries()) {
     if (v.pos.length > 0) out.set(k, v.pos);
+  }
+  return out;
+}
+
+/* ── HEADER ≡ ∪(lines) — the one derivation rule for header/list chip sets ──
+   2026-08-02 (owner, off 2990-DO-2607-017): the DO list "Source PO" cell showed
+   FOUR chips while the drill's items resolved THREE. Mechanism: the old header
+   rollup (`byDo`) unioned EVERY ledger row keyed to the DO — including rows in
+   buckets NO physical item line owns any more (a consumption re-pointed by the
+   over-consumed correction, a movement whose stored variant_key drifted from
+   the line's computed key, a line edited after ship). Those orphan buckets are
+   invisible to the per-line lookup, so the header grew chips the lines could
+   not explain. THE RULE, now enforced structurally: a header/list chip set is
+   derived ONLY as the union of the per-line resolver output over the document's
+   own PHYSICAL lines (services excluded) — one derivation path, so
+   header ≡ ∪(lines) by construction, never by coincidence. Orphan ledger
+   buckets remain visible to the read-only check (check-so-source-trace.mjs
+   section: DO header-vs-line-union), never to the header cell. */
+
+export type HeaderUnionLine = {
+  /* Rollup key of the document whose header cell we are deriving
+     (delivery_order_id for a DO row, sales_invoice id for an SI row). */
+  docKey: string;
+  /* The DO whose ledger buckets this line's goods shipped under. */
+  bucketDoId: string;
+  itemCode: string | null;
+  itemGroup: string | null;
+  variants: VariantAttrs | null;
+  /* Bound-PO display fallback for a line whose ledger trace is empty — the
+     SAME fallback the DO drill renders (SO-line bound PO), so the header stays
+     ≡ the union of what the lines actually SHOW, fallback included. */
+  fallbackPo?: string | null;
+};
+
+/* PURE core: union the per-line resolver output into one trace per docKey.
+   Service lines are excluded (they move no goods, so a stray ledger row must
+   not resurface through them); a bucket shared by two lines of one document
+   counts ONCE (adjQty is per distinct bucket, not per line). */
+export function unionLineTraces(
+  byBucket: Map<string, BucketTrace>,
+  lines: HeaderUnionLine[],
+): Map<string, BucketTrace> {
+  const acc = new Map<string, { pos: Set<string>; adjBuckets: Map<string, number> }>();
+  for (const l of lines) {
+    if (!l.docKey || !l.itemCode) continue;
+    if (isServiceLine({ itemGroup: l.itemGroup ?? null, itemCode: l.itemCode ?? null })) continue;
+    const vk = computeVariantKey(l.itemGroup ?? null, l.variants ?? null);
+    const bKey = bucketKey(l.bucketDoId, l.itemCode, vk);
+    const trace = byBucket.get(bKey);
+    let cur = acc.get(l.docKey);
+    if (!cur) { cur = { pos: new Set<string>(), adjBuckets: new Map<string, number>() }; acc.set(l.docKey, cur); }
+    if (trace && (trace.pos.length > 0 || trace.adjQty > 0)) {
+      for (const po of trace.pos) cur.pos.add(po);
+      if (trace.adjQty > 0) cur.adjBuckets.set(bKey, trace.adjQty);
+    } else if (l.fallbackPo) {
+      cur.pos.add(l.fallbackPo);
+    }
+  }
+  const out = new Map<string, BucketTrace>();
+  for (const [k, v] of acc.entries()) {
+    const adjQty = [...v.adjBuckets.values()].reduce((s, n) => s + n, 0);
+    if (v.pos.size === 0 && adjQty <= 0) continue;
+    out.set(k, {
+      pos: [...v.pos].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+      adjQty,
+    });
+  }
+  return out;
+}
+
+/* DO list header cells: delivery_order_id → union of ITS lines' traces (the
+   exact set the drill renders, bound-PO fallback included). Replaces the byDo
+   rollup for every header/list surface. */
+export async function resolveDoHeaderSources(
+  sb: any,
+  doIds: Array<string | null | undefined>,
+): Promise<Map<string, BucketTrace>> {
+  const ids = [...new Set(doIds.filter((x): x is string => Boolean(x)))];
+  if (ids.length === 0) return new Map();
+  try {
+    type DoLine = {
+      delivery_order_id: string; so_item_id: string | null; item_code: string | null;
+      item_group: string | null; variants: VariantAttrs | null;
+    };
+    const doLines: DoLine[] = [];
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const { data } = await sb.from('delivery_order_items')
+        .select('delivery_order_id, so_item_id, item_code, item_group, variants')
+        .in('delivery_order_id', ids.slice(i, i + CHUNK));
+      for (const r of (data ?? []) as DoLine[]) doLines.push(r);
+    }
+    const { byBucket } = await traceDoShipmentSources(sb, ids);
+    // Bound-PO fallback for lines whose ledger trace is empty — the drill's rule
+    // verbatim (resolveExpectedBatchBySoItem; adjustment-shipped lines resolved).
+    const unresolvedSoIds = doLines
+      .filter((l) => {
+        if (!l.item_code || !l.so_item_id) return false;
+        if (isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.item_code ?? null })) return false;
+        const vk = computeVariantKey(l.item_group ?? null, l.variants ?? null);
+        const t = byBucket.get(bucketKey(l.delivery_order_id, l.item_code, vk));
+        return !t || (t.pos.length === 0 && t.adjQty <= 0);
+      })
+      .map((l) => l.so_item_id as string);
+    let boundPoBySoItem = new Map<string, { poNumber: string | null }>();
+    if (unresolvedSoIds.length > 0) {
+      try { boundPoBySoItem = await resolveExpectedBatchBySoItem(sb, unresolvedSoIds); } catch { /* fallback only */ }
+    }
+    return unionLineTraces(byBucket, doLines.map((l) => ({
+      docKey: l.delivery_order_id,
+      bucketDoId: l.delivery_order_id,
+      itemCode: l.item_code,
+      itemGroup: l.item_group,
+      variants: l.variants,
+      fallbackPo: l.so_item_id ? (boundPoBySoItem.get(l.so_item_id)?.poNumber ?? null) : null,
+    })));
+  } catch {
+    return new Map();
+  }
+}
+
+/* SI list header cells: sales_invoice id → union of the SI's OWN lines' traces
+   (each line matched into its DO's ledger buckets — the exact per-line rule the
+   SI detail applies). An SI with no delivery_order_id (manual invoice) yields
+   nothing. */
+export async function resolveSiHeaderSources(
+  sb: any,
+  sis: Array<{ id: string | null | undefined; delivery_order_id: string | null | undefined }>,
+): Promise<Map<string, BucketTrace>> {
+  const rows = sis.filter((s): s is { id: string; delivery_order_id: string } =>
+    Boolean(s.id) && Boolean(s.delivery_order_id));
+  if (rows.length === 0) return new Map();
+  try {
+    const doBySi = new Map(rows.map((r) => [r.id, r.delivery_order_id]));
+    const siIds = [...doBySi.keys()];
+    type SiLine = {
+      sales_invoice_id: string; item_code: string | null;
+      item_group: string | null; variants: VariantAttrs | null;
+    };
+    const siLines: SiLine[] = [];
+    for (let i = 0; i < siIds.length; i += CHUNK) {
+      const { data } = await sb.from('sales_invoice_items')
+        .select('sales_invoice_id, item_code, item_group, variants')
+        .in('sales_invoice_id', siIds.slice(i, i + CHUNK));
+      for (const r of (data ?? []) as SiLine[]) siLines.push(r);
+    }
+    const { byBucket } = await traceDoShipmentSources(sb, [...new Set(doBySi.values())]);
+    return unionLineTraces(byBucket, siLines
+      .filter((l) => doBySi.has(l.sales_invoice_id))
+      .map((l) => ({
+        docKey: l.sales_invoice_id,
+        bucketDoId: doBySi.get(l.sales_invoice_id) as string,
+        itemCode: l.item_code,
+        itemGroup: l.item_group,
+        variants: l.variants,
+      })));
+  } catch {
+    return new Map();
+  }
+}
+
+/* ── SO LIST "PO No." union (defect 2026-08-02-A) — the list column must show
+   the SAME union of per-line source chips the drill shows: SHIPPED/DELIVERED
+   lines' consumed-batch POs ∪ READY lines' projection POs (sofa allocated
+   batch / FIFO projection). PURE: the route feeds it the two per-line maps it
+   already derives for the drill, so the two surfaces CANNOT diverge. Ready
+   chips are suppressed for fully-shipped lines (the drill's rule — the shipped
+   trace is the durable answer there); incoming MRP coverage (stock_state 'po')
+   is deliberately NOT part of the union — the column answers "他拿的货是谁的货",
+   not "what is on the way". */
+export function unionSoLineChips(
+  items: Array<{ id: string; docNo: string }>,
+  shipped: Map<string, BucketTrace>,
+  ready: Map<string, ReadySourceChip[]>,
+  fullyShippedItemIds: Set<string>,
+): Map<string, { pos: string[]; adj: boolean }> {
+  const acc = new Map<string, { pos: Set<string>; adj: boolean }>();
+  for (const it of items) {
+    if (!it.id || !it.docNo) continue;
+    let cur = acc.get(it.docNo);
+    if (!cur) { cur = { pos: new Set<string>(), adj: false }; acc.set(it.docNo, cur); }
+    const s = shipped.get(it.id);
+    if (s) {
+      for (const po of s.pos) cur.pos.add(po);
+      if (s.adjQty > 0) cur.adj = true;
+    }
+    if (!fullyShippedItemIds.has(it.id)) {
+      for (const ch of ready.get(it.id) ?? []) {
+        if (ch.kind === 'adjustment') cur.adj = true;
+        else if (ch.po) cur.pos.add(ch.po);
+      }
+    }
+  }
+  const out = new Map<string, { pos: string[]; adj: boolean }>();
+  for (const [doc, v] of acc.entries()) {
+    if (v.pos.size === 0 && !v.adj) continue;
+    out.set(doc, {
+      pos: [...v.pos].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+      adj: v.adj,
+    });
   }
   return out;
 }

@@ -140,10 +140,17 @@ still need `edit` on `scm.sales.delivery`.
    lots), NOT an Assigned SO. Since 2026-08-01 each row/line also carries
    **`source_adj`** — shipped from a PO-less stock ADJUSTMENT lot, rendered as a
    "STOCK ADJ" chip (never a blank), on desktop AND the mobile detail
-   (`MobileModuleDetail` line rows). The list column labelled "From SO"
-   is the document-flow anchor; "Source PO" is the procurement trail. See
-   `docs/modules/document-traceability.md` §2.5 + §2.8 (owner 2026-07-31 /
-   2026-08-01).
+   (`MobileModuleDetail` line rows). **Since 2026-08-02 the header cell is
+   `resolveDoHeaderSources` — the UNION of the DO's OWN physical lines' traces
+   (services excluded, bound-PO fallback included), NEVER the raw `byDo` ledger
+   rollup**: the old rollup surfaced orphan ledger buckets (re-pointed
+   consumptions / drifted variant keys) as phantom chips no drill line could
+   explain (`2990-DO-2607-017` showed a fourth PO its three items did not
+   resolve). Header ≡ ∪(lines) is structural now; orphan buckets stay visible
+   to `check-so-source-trace.mjs` section 6 only. The list column labelled
+   "From SO" is the document-flow anchor; "Source PO" is the procurement trail.
+   See `docs/modules/document-traceability.md` §2.5 + §2.8 + §2.9 (owner
+   2026-07-31 / 2026-08-01 / 2026-08-02).
 4. **Finance gate** (`:2322-2333`) — `canViewScmFinance(c)`; when false every
    `DO_FINANCE_KEYS` column (`:317-321`) is deleted from every row. Note
    `local_total_centi` is deliberately NOT in that list: the DO total is visible
