@@ -34,7 +34,7 @@ import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-mat
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { acDeliveryDate, acDtlKey } from "./lib/ac-po-line.mjs";
 import { RECEIVED_INDETERMINATE, buildGrQtyGroups, resolveReceivedQty } from "./lib/po-line-topup-core.mjs";
-import { makeSoLineTaker } from "./lib/so-line-dedication.mjs";
+import { dedicationCandidates, makeSoLineTaker } from "./lib/so-line-dedication.mjs";
 import { aliasFoldsForCatalog, catalogPredicate, nonCatalogRefs, formatNonCatalogRefusal } from "./lib/catalog-code-guard.mjs";
 
 const DST = process.env.DATABASE_URL;
@@ -202,6 +202,10 @@ async function main() {
      to two DIFFERENT SO lines instead of both claiming the first. */
   const plan = [];
   let noSoLine = 0, noWh = 0, noSupplier = 0, recvUnits = 0, sofaPlaceholderBind = 0;
+  /* Cross-product dedications this run REFUSED. Kept apart from noSoLine: that
+     counts a line the sales order simply has no room for, this counts a
+     disagreement inside the data that no importer may resolve. */
+  const crossProductRefused = [];
   const sofaDecode = [];
   for (const [doc, lines] of toCreate) {
     const first = lines[0];
@@ -317,7 +321,34 @@ async function main() {
         continue;
       }
 
-      const soItemId = takeSoLine(byAc.get(norm(src ? src.code : "")));
+      /* SITE 4 of the key-without-identity sweep, docs/bugs/0672. This line
+         bound the purchase-order row to whatever sales-order line carried the
+         ERP translation of the SO line's OWN AutoCount code, and never once
+         looked at the code THIS row carries. `PODTL.FromSODtlKey` can name a
+         sales-order line for a different product entirely — PO-000290's two
+         keys resolve to "MYLATEX LUMBARIA (K)" and "NB-KHJ57(K)" on the same
+         order — so the bind was a cross-product link whenever the book's key
+         pointed sideways, and `so_item_id` is what tells the floor a hard-bound
+         line is READY (isHardBoundLine, src/scm/lib/so-stock-allocation.ts).
+
+         The rule is dedicationCandidates() in lib/so-line-dedication.mjs, whose
+         header names THIS FILE as the reason it exists. It is IMPORTED, never
+         restated: repair-migrated-po-lines.mjs already calls it and
+         acPoLineRepair.test.mjs already fails without the cross-product
+         refusal. Its first attempt is the PO row's own code — the attempt this
+         importer never used to make. */
+      const soBase = byAc.get(norm(src ? src.code : "")) || "";
+      const { attempts, crossProduct } = dedicationCandidates(l.erp, soBase, null);
+      let soItemId = null;
+      for (const cand of attempts) { soItemId = takeSoLine(cand); if (soItemId) break; }
+      /* REFUSE AND REPORT, never guess. A missing dedication is recoverable by
+         a human reading this list; a wrong one silently lights another
+         customer's furniture and nothing downstream can tell. */
+      if (!soItemId && crossProduct) {
+        crossProductRefused.push(
+          `${doc} line ${l.ItemCode} -> ${l.erp}: AutoCount SO ${src.doc} line "${src.code}" maps to ERP code ${soBase}, ` +
+          `a DIFFERENT product from this purchase-order line's ${l.erp} (tried ${attempts.join(" / ")}); left undedicated`);
+      }
       if (!soItemId) noSoLine++;
       recvUnits += recv;
       items.push({
@@ -342,6 +373,8 @@ async function main() {
   const linked = plan.reduce((s, p) => s + p.items.filter((i) => i.soItemId).length, 0);
   log(`to create: ${plan.length} POs / ${lineCount} lines; dedicated to an SO line: ${linked}; received units carried: ${recvUnits}`);
   log(`unresolved -> SO line ${noSoLine}; warehouse ${noWh}; supplier ${noSupplier}`);
+  log(`REFUSED as cross-product (docs/bugs/0672, left undedicated on purpose): ${crossProductRefused.length}`);
+  for (const r of crossProductRefused) log(`   ${r}`);
   for (const p of plan.slice(0, 10)) log(`   ${p.acDoc} [${p.status}] ${p.items.length} lines, recv ${p.items.reduce((s, i) => s + i.recv, 0)}`);
   if (sofaDecode.length) {
     const ok = sofaDecode.filter((d) => d.pieces);

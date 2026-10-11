@@ -401,8 +401,13 @@ async function main() {
      in-scope PO, cancelled receipts dropped. If this number ever stops
      matching the reshape's own PLAN line, one of the two has drifted. */
   const reshapePo = new Set();
-  let reshapePairs = 0;
+  /* DISTINCT (receipt x purchase order) PAIRS, not GR lines. The first run of
+     this section counted one per LINE and answered 567 against the reshape's
+     own 400 — a drift detector that is itself wrong is worse than none, because
+     it reports every correct future run as drifted. */
+  const reshapePairKeys = new Set();
   const grNamesPo = new Map();          // every GR naming this PO, in or out of scope
+  const inScopeGrNamesPo = new Map();   // ... restricted to receipts the scope accepts
   for (const r of edges.types?.GR?.lines ?? []) {
     if (String(r[eFt] ?? "").trim() !== "PO") continue;
     const po = String(r[eFn] ?? "").trim();
@@ -410,10 +415,14 @@ async function main() {
     if (!po || !gr) continue;
     if (!grNamesPo.has(po)) grNamesPo.set(po, new Set());
     grNamesPo.get(po).add(gr);
-    if (!scope.GR.has(gr) || !scope.PO.has(po) || grCancelled.get(gr)) continue;
-    if (!reshapePo.has(po)) reshapePo.add(po);
-    reshapePairs += 1;
+    if (!scope.GR.has(gr) || grCancelled.get(gr)) continue;
+    if (!inScopeGrNamesPo.has(po)) inScopeGrNamesPo.set(po, new Set());
+    inScopeGrNamesPo.get(po).add(gr);
+    if (!scope.PO.has(po)) continue;
+    reshapePo.add(po);
+    reshapePairKeys.add(`${gr}|${po}`);
   }
+  const reshapePairs = reshapePairKeys.size;
 
   /* Did the ERP's own number move after the migration? received_qty > 0 with no
      receipt document is the delta lane's fingerprint; received_qty 0 is the
@@ -461,6 +470,19 @@ async function main() {
   log("        sales-order line. A purchase order FULLY received since the migration satisfies neither, so");
   log("        it drops out of scope — and the reshape, which reads scope, then plans nothing for a");
   log("        purchase order the ERP is still holding. This is the bucket to look at first.");
+  /* WHICH HALF OF THE SCOPE TEST IS ACTUALLY REFUSING THEM. The reshape's pair
+     test has two halves — the receipt must be in scope.GR and the purchase
+     order in scope.PO. If every one of these purchase orders is named by a
+     receipt that IS in scope, then relaxing the PO half ALONE recovers all of
+     them and the GR half never has to be touched. If some are not, relaxing the
+     PO half is not enough and the answer is a different one. Splitting it is
+     the difference between a one-line change and a redesign. */
+  const rPoOutGrInScope = rPoOut.filter((r) => (inScopeGrNamesPo.get(r.po) ?? new Set()).size > 0);
+  log(`        ... of those, named by a receipt that IS in scope   ${pad(rPoOutGrInScope.length, 6)} of ${rPoOut.length}`);
+  log("            (recoverable by relaxing the PURCHASE-ORDER half of the pair test only —");
+  log("             the receipt half already accepts them, so no receipt outside the migration enters)");
+  log(`        ... named by no in-scope receipt at all             ${pad(rPoOut.length - rPoOutGrInScope.length, 6)} of ${rPoOut.length}`);
+  log("            (relaxing the purchase-order half would NOT reach these)");
   for (const r of rPoOut.slice(0, TOP)) log(`        ${r.erpPo.padEnd(22)} ${r.po}  book received ${r.acUnits}, ERP received_qty ${r.erpRecv}, receipts ${r.grs.join("/") || "none"}`);
   if (rPoOut.length > TOP) log(`        ... and ${rPoOut.length - TOP} more`);
   log(`     in scope, but NO receipt document names it              ${pad(rNoGr.length, 6)}`);

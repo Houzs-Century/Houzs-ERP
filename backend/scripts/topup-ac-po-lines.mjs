@@ -84,6 +84,7 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 import { parseBedframe } from "./lib/parse-bedframe.mjs";
+import { dedicationCandidates } from "./lib/so-line-dedication.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import {
   RECEIVED_INDETERMINATE,
@@ -294,7 +295,7 @@ async function main() {
           const code = `${model}-${comp}`;
           rows.push({ ...base, itemCode: code, materialName: (prodByCode.get(code.toUpperCase()) || {}).name || code,
             supplierSku: `${l.itemCode} ${comp}`, up: lead ? up : 0, variants, bf: null, note: null,
-            soCode: code, soFallbackCode: `${model}-1S` });
+            soAttempts: [code, `${model}-1S`], soCrossProduct: false, soBase: "" });
           lead = false;
         }
         return rows;
@@ -304,7 +305,7 @@ async function main() {
       return [{ ...base, itemCode: code, materialName: (prodByCode.get(code.toUpperCase()) || {}).name || code,
         supplierSku: l.itemCode, up, variants: { seatHeight: ps.size || null, colourLabel: colour || null, specials: ps.specials },
         bf: null, note: "SOFA UNPARSED - 按图/原文补件: " + (ps.why.join("; ") || "unreadable"),
-        soCode: code, soFallbackCode: r.erp }];
+        soAttempts: [code, r.erp], soCrossProduct: false, soBase: "" }];
     }
 
     let bf = null, variants = null;
@@ -319,9 +320,24 @@ async function main() {
         legHeight: bf.leg != null ? bf.leg + '"' : null, totalHeight: tot ? tot + '"' : null, specials: bf.specials || [] };
     }
     const prod = prodByCode.get(r.erp.toUpperCase());
+    /* SITE 4 of the key-without-identity sweep, docs/bugs/0672. `soCode` was
+       the ERP translation of the SALES-ORDER line's own AutoCount code and
+       nothing else — the code THIS purchase-order row carries (`r.erp`) was
+       never offered and never compared. `PODTL.FromSODtlKey` can name a
+       sales-order line for a different product (PO-000290's two keys resolve to
+       "MYLATEX LUMBARIA (K)" and "NB-KHJ57(K)" on one order), so the bind was a
+       cross-product link whenever the book's key pointed sideways.
+
+       dedicationCandidates() is the rule and it is IMPORTED, not restated —
+       lib/so-line-dedication.mjs, already called by repair-migrated-po-lines.mjs
+       and covered by acPoLineRepair.test.mjs. `soAttempts` replaces the
+       soCode/soFallbackCode pair so the ORDER of attempts is the library's, not
+       this file's. */
+    const soBase = src ? ((byAc.get(norm(src.code)) || {}).erp || "") : "";
+    const ded = dedicationCandidates(r.erp, soBase, null);
     return [{ ...base, itemCode: r.erp, materialName: (prod && prod.name) || l.description || r.erp,
       supplierSku: l.itemCode, up, variants, bf, note: null,
-      soCode: src ? (byAc.get(norm(src.code)) || {}).erp : null, soFallbackCode: null }];
+      soAttempts: ded.attempts, soCrossProduct: ded.crossProduct, soBase }];
   };
 
   const plan = [];
@@ -387,10 +403,23 @@ async function main() {
      claim - taking an SO line for a row that turns out to be present already
      would steal it from the sibling repair for nothing. */
   let dedicated = 0, noSoLine = 0, noWarehouse = 0;
+  /* Kept apart from noSoLine: that counts a sales order with no free line left,
+     this counts a disagreement inside the data that no importer may resolve. */
+  const crossProductRefused = [];
   for (const p of plan) {
     for (const r of p.rows) {
-      r.soItemId = takeSoLine(r.src, r.soCode) ?? (r.soFallbackCode ? takeSoLine(r.src, r.soFallbackCode) : null);
-      if (r.soItemId) dedicated++; else noSoLine++;
+      r.soItemId = null;
+      for (const cand of r.soAttempts ?? []) { r.soItemId = takeSoLine(r.src, cand); if (r.soItemId) break; }
+      if (r.soItemId) dedicated++;
+      else {
+        noSoLine++;
+        /* REFUSE AND REPORT (docs/bugs/0672). A missing dedication is something
+           a human can read off this list and fix; a wrong one silently tells the
+           floor that another customer's furniture is ready. */
+        if (r.soCrossProduct) crossProductRefused.push(
+          `${p.po?.po_number ?? "?"} (AutoCount SO ${r.src?.doc ?? "?"}) ${r.itemCode}: the sales-order line this purchase-order line was raised from ` +
+          `maps to ERP code ${r.soBase}, a DIFFERENT product from ${r.itemCode} (tried ${(r.soAttempts ?? []).join(" / ")}); left undedicated`);
+      }
       if (!r.wh) noWarehouse++;
     }
   }
@@ -405,6 +434,8 @@ async function main() {
   log(`MISSING ERP rows (their AutoCount ItemCode has ZERO rows on the document): ${rowsToInsert} across ${plan.length} purchase orders`);
   log(`   of those: sofa ${sofaRows}; other ${rowsToInsert - sofaRows}; carrying received qty ${recvRows}; value RM ${(valueSen / 100).toFixed(2)}`);
   log(`   dedicated to an SO line ${dedicated}; no SO line resolved ${noSoLine}; no warehouse match ${noWarehouse}`);
+  log(`   REFUSED as cross-product (docs/bugs/0672, left undedicated on purpose): ${crossProductRefused.length}`);
+  for (const c of crossProductRefused) log(`      ${c}`);
   const withheldRows = recvWithheld.reduce((a, w) => a + w.rows, 0);
   log("");
   log(`WITHHELD - no per-line received quantity in the export: ${recvWithheld.length} ItemCode(s), ${withheldRows} row(s) NOT written`);
