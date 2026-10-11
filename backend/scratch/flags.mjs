@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+import postgres from 'postgres';
+const m = fs.readFileSync('C:/Users/User/Desktop/.db-align/connection.txt','utf8').match(/postgres(?:ql)?:\/\/\S+/);
+const sql = postgres(m[0], { ssl:'require', max:1, connect_timeout:60 });
+const c = await sql`select column_name from information_schema.columns where table_schema='scm' and table_name='delivery_orders' and (column_name like '%short%' or column_name like '%confirm%' or column_name like '%anyway%' or column_name like '%override%')`;
+console.log('delivery_orders flags:', c.map(x=>x.column_name).join(', ') || '(none)');
+const rc = await sql`select coalesce(reason_code,'(null)') rc, count(*)::int n from scm.inventory_movements where company_id=1 and movement_type::text='OUT' group by 1 order by n desc limit 10`;
+console.log('OUT reason codes:', rc.map(r=>`${r.rc}=${r.n}`).join(', '));
+const adj = await sql`select coalesce(reason_code,'(null)') rc, count(*)::int n, sum(qty)::int units from scm.inventory_movements where company_id=1 and movement_type::text='ADJUSTMENT' group by 1 order by n desc limit 10`;
+console.log('ADJUSTMENT reason codes:', adj.map(r=>`${r.rc}=${r.n}(${r.units})`).join(', '));
+await sql.end();
