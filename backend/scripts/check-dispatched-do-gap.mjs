@@ -184,7 +184,7 @@ try {
   console.log("── 3b. the not-yet-DELIVERED ones: partial delivery, or fully covered? ──");
   const coverage = await pg`
     WITH target_so AS (
-      SELECT DISTINCT so.id, so.doc_no, so.company_id, so.status::text AS so_status
+      SELECT DISTINCT so.doc_no, so.company_id, so.status::text AS so_status
         FROM scm.delivery_orders d
         JOIN scm.mfg_sales_orders so
           ON so.doc_no = d.so_doc_no AND so.company_id = d.company_id
