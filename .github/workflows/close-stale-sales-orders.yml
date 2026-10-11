@@ -1,0 +1,79 @@
+name: Close stale sales orders (plan / apply)
+
+# Owner 2026-09-15: close the company-1 sales orders MRP still plans for that
+# nobody will deliver, in batches, after he has seen a PLAN run.
+#   「开了 DO 的东西就代表已经不需要这个货了」
+#   「这个0其实就是代表没送货的意思，是对的」 (a DO line at qty 0 stays open)
+#
+# Buckets (backend/scripts/lib/stale-so-buckets.mjs):
+#   1 AutoCount book delivered, ERP has no DO   3 already shipped something, rest expired
+#   4 expired, no DO at all — ONLY the orders named in `docs` (his ticks)
+#   2 (DO line at qty 0) and 5 (undated) are report-only and cannot be selected.
+#
+# Close = header status CLOSED + version + 1 + a status-change row + an audit
+# row. No line, DO, invoice or payment is touched; nothing is queued to
+# AutoCount. The plan (every order, every line, bucket 5 by month) is uploaded
+# as the artifact `close-stale-so-plan`.
+#
+# RE-RUN: idempotent — a CLOSED order leaves MRP, so a second run does not select it.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (read-only) or apply"
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "For apply only — type: CLOSE STALE SALES ORDERS"
+        required: false
+        default: ""
+        type: string
+      buckets:
+        description: "Buckets to close: 1, 3, 4 (e.g. 1,3)"
+        required: false
+        default: "1,3"
+        type: string
+      docs:
+        description: "Optional SO numbers (restricts every bucket; required for bucket 4)"
+        required: false
+        default: ""
+        type: string
+      exclude:
+        description: "Optional SO numbers never to close"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: close-stale-sales-orders
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/close-stale-sales-orders.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          BUCKETS: ${{ inputs.buckets }}
+          DOCS: ${{ inputs.docs }}
+          EXCLUDE: ${{ inputs.exclude }}
+          OUT_DIR: ${{ runner.temp }}/close-stale-so
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: close-stale-so-plan
+          path: ${{ runner.temp }}/close-stale-so
+          if-no-files-found: ignore

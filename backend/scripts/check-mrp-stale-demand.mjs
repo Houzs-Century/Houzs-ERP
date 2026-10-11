@@ -25,9 +25,7 @@
 // RE-RUN: read-only and idempotent.
 import postgres from "postgres";
 import fs from "node:fs";
-import zlib from "node:zlib";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { loadBook, bookState as bookStateOf, dateState as dateStateOf, plannedSoLines, todayMyt } from "./lib/mrp-stale-demand.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("DATABASE_URL missing"); process.exit(2); }
@@ -37,59 +35,20 @@ const GH = !!process.env.GITHUB_ACTIONS;
 const notice = (m) => console.log(GH ? `::notice::${m}` : m);
 const say = (m = "") => console.log(m);
 const pad = (s, n) => String(s ?? "").slice(0, n).padEnd(n);
-const HERE = path.dirname(fileURLToPath(import.meta.url));
 const sql = postgres(DSN, { ssl: "require", prepare: false, max: 1, idle_timeout: 20, connect_timeout: 120 });
 
-function readOnlyGuard(shim) {
-  const WRITES = new Set(["update", "insert", "upsert", "delete", "rpc"]);
-  return new Proxy(shim, {
-    get(target, prop, recv) {
-      if (prop === "rpc") return () => { throw new Error("read-only check: rpc refused"); };
-      if (prop !== "from") return Reflect.get(target, prop, recv);
-      return (table) => {
-        const b = target.from(table);
-        return new Proxy(b, {
-          get(bt, p, r) {
-            if (WRITES.has(String(p))) return () => { throw new Error(`read-only check: ${String(p)} on ${table} refused`); };
-            return Reflect.get(bt, p, r);
-          },
-        });
-      };
-    },
-  });
-}
-
 try { await sql`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`; } catch { /* SELECT only */ }
-const [{ today }] = await sql`SELECT to_char((now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date, 'YYYY-MM-DD') AS today`;
+const today = await todayMyt(sql);
 notice(`=== MRP stale demand — READ-ONLY · company ${COMPANY} · today ${today} (MYT) ===`);
 
 /* ── the book ─────────────────────────────────────────────────────────── */
-const snap = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(HERE, "data", "ac-convert-edges.json.gz"))).toString("utf8"));
-const L = Object.fromEntries(snap.line_fields.map((n, i) => [n, i]));
-const H = Object.fromEntries(snap.header_fields.map((n, i) => [n, i]));
-const bookHdr = new Map(snap.types.SO.headers.map((h) => [h[H.docNo], { date: h[H.docDate], cancelled: h[H.cancelled] === "T" }]));
-const bookLine = new Map();
-for (const r of snap.types.SO.lines) {
-  bookLine.set(String(r[L.dtlKey]), { docNo: r[L.docNo], item: r[L.itemKey], qty: Number(r[L.qty] || 0), toDo: Number(r[L.transferedQty] || 0), transferable: r[L.transferable] });
-}
-notice(`AutoCount snapshot exported_at ${snap.exported_at} · ${bookHdr.size} SO headers · ${bookLine.size} SO lines`);
+const book = loadBook();
+notice(`AutoCount snapshot exported_at ${book.exportedAt} · ${book.headers.size} SO headers · ${book.lines.size} SO lines`);
 
 /* ── the engine ───────────────────────────────────────────────────────── */
 const t0 = Date.now();
-let mrp;
-try {
-  const { computeMrp } = await import("../src/scm/routes/mrp.ts");
-  const { pgrestShim } = await import("./lib/pgrest-shim.mjs");
-  const shim = pgrestShim(sql, "scm");
-  mrp = await computeMrp(readOnlyGuard(shim), {
-    catFilter: null, whFilter: null, includeUndated: true, companyId: COMPANY,
-    leadBuffers: { supplierBufferDays: {}, seasonBufferDays: {} },
-  });
-  if (shim.__gaps?.length) { notice(`ENGINE DID NOT RUN CLEANLY — shim gaps: ${shim.__gaps.join(" | ")}`); process.exit(1); }
-} catch (e) { notice(`ENGINE DID NOT RUN — ${e.message}`); process.exit(1); }
-const planned = new Map();
-for (const sku of mrp.skus) for (const l of sku.lines) planned.set(l.soItemId, { qty: l.qty, stock: l.stockQty ?? 0, short: l.shortageQty ?? 0, po: l.poNumber, delivery: l.deliveryDate, cat: sku.category ?? sku.itemGroup ?? null });
-for (const s of mrp.sofaSets) planned.set(s.soItemId, { qty: s.qty, stock: s.stockQty ?? 0, short: s.shortageQty ?? 0, po: s.poNumber, delivery: s.deliveryDate, cat: "sofa" });
+let planned;
+try { planned = await plannedSoLines(sql, COMPANY); } catch (e) { notice(`ENGINE DID NOT RUN — ${e.message}`); process.exit(1); }
 notice(`engine ran in ${Math.round((Date.now() - t0) / 1000)}s · ${planned.size} sales-order lines still planned`);
 
 /* ── the ERP facts for those lines ────────────────────────────────────── */
@@ -113,18 +72,8 @@ for (let i = 0; i < ids.length; i += 2000) {
      WHERE i.id::text = ANY(${batch}) AND h.company_id = ${COMPANY}`);
 }
 
-const bookState = (f) => {
-  const key = f.ac_key;
-  const bookDoc = String(f.ac_doc ?? f.doc_no.replace(/^HC-/, "")).trim().toUpperCase();
-  if (!key && !bookHdr.has(bookDoc)) return "NOT_IN_BOOK";
-  if (bookHdr.get(bookDoc)?.cancelled) return "BOOK_CANCELLED";
-  const b = key ? bookLine.get(key) : null;
-  if (!b) return "BOOK_LINE_NOT_FOUND";
-  if (b.qty > 0 && b.toDo >= b.qty) return "BOOK_DELIVERED";
-  if (b.toDo > 0) return "BOOK_PARTIAL";
-  return "BOOK_OPEN";
-};
-const dateState = (d) => (!d ? "UNDATED" : d < today ? "EXPIRED" : "FUTURE");
+const bookState = (f) => bookStateOf(book, f);
+const dateState = (d) => dateStateOf(d, today);
 const erpState = (f) => (f.line_on_do ? "LINE_ON_DO" : f.order_has_do ? "ORDER_HAS_OTHER_DO" : "NO_DO");
 
 const rows = facts.map((f) => {
@@ -165,6 +114,6 @@ for (const o of orders.slice(0, SHOW)) {
   say(`   ${pad(o.doc_no, 14)} ${pad(o.so_status, 13)} delivery ${pad(o.delivery, 10)} processing ${pad(o.processing ?? "-", 10)} DOs ${pad(o.do_states ?? "-", 18)} ${o.lines.map((l) => `ln${l.line_no} ${l.item} x${l.qty} [${l.book}/${l.erp}]`).join("; ").slice(0, 220)}`);
 }
 for (const o of orders) console.log("ROW " + JSON.stringify(o));
-if (process.env.OUT_FILE) fs.writeFileSync(process.env.OUT_FILE, JSON.stringify({ today, snapshot: snap.exported_at, orders, all: rows }));
+if (process.env.OUT_FILE) fs.writeFileSync(process.env.OUT_FILE, JSON.stringify({ today, snapshot: book.exportedAt, orders, all: rows }));
 notice("READ-ONLY — nothing was written.");
 await sql.end();
