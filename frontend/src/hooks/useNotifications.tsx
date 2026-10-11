@@ -99,6 +99,16 @@ const NotificationsTickContext = createContext<number>(0);
 
 const POLL_INTERVAL_MS = 30_000;
 
+/* Freshness gate (staleTime), mirroring usePresence's MIN_TICK_GAP_MS (#853).
+   Any INCIDENTAL trigger — the tab regaining focus, an effect re-running, a
+   consumer remounting — within this window of the last poll is a no-op instead
+   of a fresh GET, so tab-flicking and route churn never burst
+   /api/notifications. It sits comfortably below POLL_INTERVAL_MS so the
+   scheduled 30s tick itself is never suppressed. The manual bell refresh
+   (reload) bypasses this deliberately — an explicit user action always hits the
+   network. */
+const MIN_FETCH_GAP_MS = 25_000;
+
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [feed, setFeed] = useState<NotificationItem[]>([]);
@@ -113,9 +123,15 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
      is a no-op instead of a new object identity. A ref, not state — writing it
      must not itself cause a render. */
   const lastPayloadSigRef = useRef<string | null>(null);
+  /* Timestamp of the last poll we STARTED (not finished), the staleTime gate
+     behind pollIfStale below. Set on start (like usePresence's lastTickAt) so
+     concurrent triggers are also deduped and a failed read still frees the next
+     scheduled tick rather than blocking it forever. */
+  const lastFetchAtRef = useRef(0);
 
   const fetchOnce = useCallback(async () => {
     if (!user?.id) return;
+    lastFetchAtRef.current = Date.now();
     try {
       // Bell shows unread-only. /notifications page fetches its own
       // unfiltered feed separately; the unread_by_project map returned
@@ -158,6 +174,15 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     }
   }, [user?.id]);
 
+  /* Interval + window-focus go through this: skip the network entirely when the
+     last poll is still fresh. This is the app-level equivalent of react-query's
+     refetchOnWindowFocus:false + staleTime — a returning tab does NOT burst a
+     GET unless its feed has actually gone stale (>MIN_FETCH_GAP_MS old). */
+  const pollIfStale = useCallback(async () => {
+    if (Date.now() - lastFetchAtRef.current < MIN_FETCH_GAP_MS) return;
+    await fetchOnce();
+  }, [fetchOnce]);
+
   useEffect(() => {
     if (!user?.id) {
       setFeed([]);
@@ -167,6 +192,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
          first payload happens to equal the previous user's would be skipped and
          see the cleared-out empty state. */
       lastPayloadSigRef.current = null;
+      // A real sign-out ends the cadence; the next sign-in must poll at once.
+      lastFetchAtRef.current = 0;
       return;
     }
     fetchOnce();
@@ -174,14 +201,16 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       if (timerRef.current) window.clearTimeout(timerRef.current);
       if (document.hidden) return;
       timerRef.current = window.setTimeout(async () => {
-        await fetchOnce();
+        await pollIfStale();
         schedule();
       }, POLL_INTERVAL_MS);
     }
     schedule();
     function onVis() {
       if (!document.hidden) {
-        fetchOnce();
+        // refetchOnWindowFocus:false in spirit — only refresh a STALE feed on
+        // return, never burst a GET on every tab flick (pollIfStale gates it).
+        void pollIfStale();
       }
       schedule();
     }
@@ -190,7 +219,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       document.removeEventListener("visibilitychange", onVis);
       if (timerRef.current) window.clearTimeout(timerRef.current);
     };
-  }, [user?.id, fetchOnce]);
+  }, [user?.id, fetchOnce, pollIfStale]);
 
   /* Memoised so the value's identity changes only when the DATA changes. An
      inline object literal here was a new value on every render of this provider
