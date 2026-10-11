@@ -1,3 +1,62 @@
+## The drift check advertised a money comparison it never performed [high]
+
+**Symptom** - `check-autocount-drift.mjs` section 4 is headed "HEADER FIELD
+DRIFT (date, party name, ref, document total)" and its own inline comment calls
+the document total "the most consequential drift there is, and the cheapest to
+detect". It printed `None.` for every document, however far apart the two
+systems' money was.
+
+**Root cause (traced, not guessed)** - the two comparisons were gated on
+`d.refCol` and `d.totalCol`:
+
+```js
+if (d.refCol && r.doc_ref && norm(r.doc_ref) !== norm(ac.Ref)) { ... }
+if (d.totalCol && r.doc_total != null && Math.abs(...) > 0.005) { ... }
+```
+
+Neither property was ever defined. The `DOCS` array carried only `dateCands`
+and `partyCands`, and `bound.push({ ...d, dateCol, partyCol, statusCol, have })`
+added no `refCol` or `totalCol`. Both were permanently `undefined`, so both
+conditions short-circuited on their first term and the section could only ever
+report date and party. The `SELECT` in section 1 did not fetch `doc_ref` or
+`doc_total` either, so even a defined flag would have compared against
+`undefined`. The exporter had been paying for it the whole time: it selects
+`Ref` and `NetTotal` from every document table under the comment "EVERY FIELD
+HERE IS COMPARED by check-autocount-drift.mjs", which was false for exactly
+those two.
+
+Local proof, replaying the same expression on one document whose ERP total is
+RM1500.00 and whose AutoCount `NetTotal` is RM1499.00:
+
+```
+BEFORE the fix -> divergences found: 0 []   section 4 would print: "None."
+AFTER  the fix -> divergences found: 2      ref ERP="PO-CUST-1" AC="SOMETHING-ELSE"; total ERP=1500.00 AC=1499.00
+```
+
+**Fix** - added `refCands` / `totalCands` to all six document types, resolved
+them against `information_schema` the same way `dateCands` / `partyCands` are
+resolved (probe, never assume — a hard-coded name that has drifted fails the
+whole query with 42703, or worse binds a column meaning something else),
+selected `doc_ref` / `doc_total`, and printed both bindings in the section-0
+line. `totalCands` deliberately lists only `*_centi` columns because the
+comparison divides by 100; binding a column already in currency units would make
+every document look 100x wrong, and a wrong value is worse than a blank. A doc
+type whose total cannot be bound now escalates to ATTENTION and says so, because
+unchecked must never read as clean. Regression cover:
+`backend/tests-pg/acDriftCheck.pg.test.ts` runs the real script against a real
+postgres:16 with a fixture snapshot and asserts both the positive (a RM1
+divergence is reported) and the negative (an agreeing document still prints
+`None.`).
+
+**Lesson** - a check whose heading claims coverage it does not have is worse
+than no check, because the heading is what the next reader trusts. Same class as
+`autocountWritebackWiring.test.ts`'s "every SO mutation path queues an edit",
+which asserts seven named anchors and no completeness at all.
+
+**Ref** - feat/ac-writeback-durable-queue, 2026-08-11
+
+---
+
 ## The array-shaped custom_specials are NOT the same damage, and NULLing them would have deleted correct data [med]
 
 **Symptom** - #1944 NULLed the 478 `custom_specials` values the old sofa

@@ -30,6 +30,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
+import { raiseOutboxAlarms } from './autocount-alarm';
 import {
   callAcService,
   composeCreatePo,
@@ -45,8 +46,30 @@ import {
 type Sb = SupabaseClient<any, any, any>;
 
 /** Past this an operation is surfaced as FAILED instead of retrying forever. */
-export const MAX_ATTEMPTS = 6;
+export const MAX_ATTEMPTS = 8;
 const DRAIN_BATCH = 20;
+
+/**
+ * Backoff before attempt N+1, in minutes. Doubling from the sweep interval.
+ *
+ * WHY IT IS NEEDED AT ALL. Before this, every pending row was retried on EVERY
+ * five-minute sweep, so the attempt budget was spent in wall-clock order: six
+ * sweeps, thirty minutes, and a backlog that was merely waiting for the tunnel
+ * to come back was dead-lettered instead. A dropped link is the exact
+ * condition the
+ * queue exists to survive — it cannot also be the condition that empties it.
+ *
+ * WHY THIS SHAPE. 5 · 10 · 20 · 40 · 80 · 160 · 320 minutes across 8 attempts
+ * is a little over ten hours, so an outage that starts after close is still
+ * retrying when the office opens. Past that a human is genuinely needed, which
+ * is what 'failed' plus the alarm now means.
+ */
+const BACKOFF_MINUTES = [5, 10, 20, 40, 80, 160, 320] as const;
+
+export function backoffMs(attempts: number): number {
+  const i = Math.max(0, Math.min(attempts - 1, BACKOFF_MINUTES.length - 1));
+  return BACKOFF_MINUTES[i] * 60_000;
+}
 
 /** The ERP tables that can carry an AutoCount counterpart number. */
 export type AcLinkTable =
@@ -99,6 +122,8 @@ export interface AcOutboxRow {
   status: string;
   attempts: number;
   dedupe_key: string | null;
+  /** When this row FIRST reported waiting-on-parent. Null when not waiting. */
+  first_waiting_at?: string | null;
 }
 
 export interface EnqueueInput {
@@ -145,9 +170,29 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
       status: input.status ?? 'pending',
       last_error: input.reason ?? null,
     });
-    // 23505 on the pending-dedupe index: the same intent is already queued.
-    return !error;
-  } catch {
+    if (!error) return true;
+    /* 23505 on the pending-dedupe index is the mechanism WORKING: the same
+       intent for the same company is already queued (a double-clicked Save, a
+       retried request). Anything else is a queue row that was supposed to exist
+       and does not — the document is committed and nothing will ever push it.
+       That case cannot write itself down, because the table it would write to is
+       the one that just refused; the marker below is what
+       check-ac-outbox-health.mjs's orphan section corroborates from the other
+       side, by finding ERP documents that have no outbox row at all. */
+    if (error.code !== '23505') {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[autocount-outbox] ENQUEUE LOST — ${input.op} ${input.docType} ${input.docNo} was NOT queued `
+        + `for AutoCount and never will be: ${error.code ?? ''} ${error.message ?? ''}`.trim(),
+      );
+    }
+    return false;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[autocount-outbox] ENQUEUE LOST — ${input.op} ${input.docType} ${input.docNo} was NOT queued `
+      + `for AutoCount and never will be: ${e instanceof Error ? e.message : String(e)}`,
+    );
     return false;
   }
 }
@@ -215,13 +260,18 @@ async function noteReadFailure(
   ctx: { companyId: number; op: AcOp; docType: EnqueueInput['docType']; docNo: string; docId?: string | null },
 ): Promise<void> {
   const refused = e instanceof KeylessLineError;
-  if (!refused && !(e instanceof AcReadError)) return;
-  const message = (e as Error).message;
+  /* EVERY exception is written down, not only the two named classes.
+     The earlier `return` here meant a TypeError in a composer — a null header
+     field, a shape change — produced no outbox row, no note and no log: exactly
+     the silent loss hard rule 4 forbids. An unexpected error is the case that
+     most deserves a row, because nobody predicted it. */
+  const kind = refused ? 'refused' : e instanceof AcReadError ? 'compose failed' : 'unexpected error';
+  const message = e instanceof Error ? e.message : String(e);
   // eslint-disable-next-line no-console
   console.error(
     refused
       ? `[autocount-outbox] ${ctx.op} REFUSED, nothing queued for AutoCount (line identity missing):`
-      : `[autocount-outbox] ${ctx.op} compose read failed — NOTHING queued for AutoCount:`,
+      : `[autocount-outbox] ${ctx.op} ${kind} — NOTHING queued for AutoCount:`,
     ctx.docNo,
     message,
   );
@@ -234,9 +284,7 @@ async function noteReadFailure(
       docId: ctx.docId ?? null,
       payload: { body: {} },
       status: 'skipped',
-      reason: refused
-        ? `refused, nothing sent: ${message}`
-        : `compose failed, nothing sent: ${message}`,
+      reason: `${kind}, nothing sent: ${message}`,
     });
   } catch { /* the note is best-effort; the log above is the floor */ }
 }
@@ -757,10 +805,23 @@ export async function dispatchOne(
   const payload = (row.payload ?? { body: {} }) as AcOutboxPayload;
   const body: Record<string, unknown> = { ...(payload.body ?? {}) };
 
+  /* The stall clock. A waiting row does not burn an attempt (see below), so
+     without a timestamp it has no age, and "waiting since the sweep 40 seconds
+     ago" is indistinguishable from "waiting since the parent's create was
+     skipped three days ago". Only the FIRST wait stamps it; a row that stops
+     waiting clears it, so the age is always the age of the current stall. */
+  const waitingSince = row.first_waiting_at ?? new Date().toISOString();
+  const stillWaiting = (why: string) => mark(sb, row.id, {
+    last_error: why,
+    first_waiting_at: waitingSince,
+    /* Waiting is not a retry, so it must not push next_attempt_at forward:
+       the parent may land on the very next sweep and this row should go then. */
+  });
+
   if (payload.fromDoc) {
     const from = await acDocNoOf(sb, payload.fromDoc);
     if (!from) {
-      await mark(sb, row.id, { last_error: 'waiting: parent has no AutoCount document yet' });
+      await stillWaiting('waiting: parent has no AutoCount document yet');
       return 'waiting';
     }
     body.FromDocNo = from;
@@ -768,7 +829,7 @@ export async function dispatchOne(
   if (payload.selfDoc) {
     const self = await acDocNoOf(sb, payload.selfDoc);
     if (!self) {
-      await mark(sb, row.id, { last_error: 'waiting: this document has no AutoCount counterpart yet' });
+      await stillWaiting('waiting: this document has no AutoCount counterpart yet');
       return 'waiting';
     }
     body.DocNo = self;
@@ -782,6 +843,7 @@ export async function dispatchOne(
       status: 'sent',
       attempts,
       last_error: null,
+      first_waiting_at: null,
       ac_doc_no: result.docNo,
       sent_at: new Date().toISOString(),
     });
@@ -805,6 +867,12 @@ export async function dispatchOne(
   await mark(sb, row.id, {
     status: giveUp ? 'failed' : 'pending',
     attempts,
+    first_waiting_at: null,
+    /* Hold this row off until the backoff elapses. Without it the sweep retries
+       every pending row every five minutes and a tunnel outage spends the whole
+       attempt budget in half an hour. Set even on the give-up path so a row a
+       human later re-opens does not stampede. */
+    next_attempt_at: new Date(Date.now() + backoffMs(attempts)).toISOString(),
     last_error: giveUp && result.retryable
       ? `Gave up after ${attempts} attempts. Last error: ${result.error}`
       : result.error,
@@ -819,35 +887,96 @@ export interface DrainSummary {
   failed: number;
   retried: number;
   waiting: number;
+  /**
+   * Rows the per-row flag check held back. COUNTED, not silent: before this the
+   * loop `continue`d without touching the summary, so a company outside the
+   * flag list accumulated pending rows that no number anywhere reflected.
+   */
+  heldByFlag: number;
+  /**
+   * Pending rows that exist while the sweep can do nothing about them — the
+   * service is unconfigured, or the query failed. Zero is the normal answer;
+   * anything else is a backlog nobody is draining, which is the state that used
+   * to be completely silent (an unconfigured drain logged nothing at all,
+   * because both `failed` and `processed` were 0).
+   */
+  undrainedBacklog: number;
+  /** Human-visible alarms raised on this pass, and still-unresolved ones. */
+  alarmsRaised: number;
+  alarmsOutstanding: number;
+}
+
+async function countPending(sb: Sb): Promise<number> {
+  const { count } = await sb.from('autocount_outbox')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'pending');
+  return Number(count ?? 0);
 }
 
 /**
  * The 5-minute cron sweep. No-op when the flag is off or the service is
  * unconfigured, so it is safe to wire unconditionally and it ships dark.
+ *
+ * THE ALARM PASS RUNS EVEN WHEN THE SWEEP CANNOT SEND. An unconfigured service
+ * or a flag turned off does not un-fail the rows that already failed, and a
+ * divergence must not become invisible because the mechanism that would have
+ * fixed it is switched off — that is the exact shape of the silence hard rule 4
+ * forbids.
  */
 export async function drainAutoCountOutbox(
   env: Env,
   limit = DRAIN_BATCH,
   fetchImpl: typeof fetch = fetch,
+  /* Test seam, same shape as fetchImpl above. @cloudflare/vitest-pool-workers
+     does not support vi.mock, so the client has to be injectable for the sweep
+     to be testable at all — and the sweep is where every cross-row property in
+     this module lives. */
+  client?: Sb,
 ): Promise<DrainSummary> {
-  const zero = { processed: 0, sent: 0, failed: 0, retried: 0, waiting: 0 };
-  if (!acServiceConfig(env)) return { skipped: 'ac_service_not_configured', ...zero };
+  const zero = {
+    processed: 0, sent: 0, failed: 0, retried: 0, waiting: 0,
+    heldByFlag: 0, undrainedBacklog: 0, alarmsRaised: 0, alarmsOutstanding: 0,
+  };
+  let sb: Sb;
+  try {
+    sb = client ?? getSupabaseService(env);
+  } catch {
+    return { skipped: 'supabase_not_configured', ...zero };
+  }
 
-  const sb = getSupabaseService(env);
+  const alarms = await raiseOutboxAlarms(env, sb);
+  const withAlarms = <T extends object>(s: T) =>
+    ({ ...s, alarmsRaised: alarms.raised, alarmsOutstanding: alarms.outstanding });
+
+  if (!acServiceConfig(env)) {
+    /* Says how much work is stranded rather than just "not configured". A queue
+       nobody is draining and nobody is counting is how a go-live discovers, two
+       weeks in, that AC_SYNC_URL was never set. */
+    return withAlarms({ skipped: 'ac_service_not_configured', ...zero, undrainedBacklog: await countPending(sb).catch(() => 0) });
+  }
+
   const { data, error } = await sb.from('autocount_outbox')
-    .select('id, company_id, op, doc_type, doc_no, doc_id, payload, status, attempts, dedupe_key')
+    .select('id, company_id, op, doc_type, doc_no, doc_id, payload, status, attempts, dedupe_key, first_waiting_at')
     .eq('status', 'pending')
     .lt('attempts', MAX_ATTEMPTS)
+    /* The backoff gate. A row whose retry is not due yet is simply not selected;
+       it is still pending, still durable, still counted by the health check. */
+    .lte('next_attempt_at', new Date().toISOString())
     .order('created_at', { ascending: true })
     .limit(limit);
-  if (error || !data) return { skipped: error ? 'query_failed' : undefined, ...zero };
+  if (error || !data) {
+    return withAlarms({
+      skipped: error ? 'query_failed' : undefined, ...zero,
+      undrainedBacklog: error ? await countPending(sb).catch(() => 0) : 0,
+    });
+  }
 
   const summary = { ...zero };
   for (const raw of data as AcOutboxRow[]) {
     /* Re-checked per row, not once per sweep: the flag is per COMPANY, and it
        may be turned off mid-sweep. Off leaves the row pending — it is not a
        failure, and the work must survive to be drained when it is on again. */
-    if (!(await isWritebackEnabled(sb, raw.company_id))) continue;
+    if (!(await isWritebackEnabled(sb, raw.company_id))) { summary.heldByFlag += 1; continue; }
     summary.processed += 1;
     const outcome = await dispatchOne(env, sb, raw, fetchImpl);
     if (outcome === 'sent') summary.sent += 1;
@@ -855,5 +984,5 @@ export async function drainAutoCountOutbox(
     else if (outcome === 'waiting') summary.waiting += 1;
     else summary.retried += 1;
   }
-  return summary;
+  return withAlarms(summary);
 }

@@ -54,16 +54,26 @@ runs, not a third to learn.
 
 ---
 
-## 3. The table — `scm.autocount_outbox` (migration 0277)
+## 3. The table — `scm.autocount_outbox` (migrations 0277 + 0280)
 
 | Column | Meaning |
 |---|---|
 | `op` / `doc_type` / `doc_no` / `doc_id` | Which operation, on which ERP document |
 | `payload` | **A snapshot**, taken at enqueue. It is the record of what the user's save actually produced; it is never recomposed at drain |
 | `status` | `pending` / `sent` / `failed` / `skipped` |
-| `attempts` / `last_error` | Retry bookkeeping. `MAX_ATTEMPTS` = 6 |
+| `attempts` / `last_error` | Retry bookkeeping. `MAX_ATTEMPTS` = 8 |
 | `ac_doc_no` | What AutoCount answered with |
-| `dedupe_key` | Unique among PENDING rows only. `NULL` = always enqueue |
+| `dedupe_key` | Unique among PENDING rows only, **per company** (0280). `NULL` = always enqueue |
+| `next_attempt_at` | **0280.** Earliest time this row may be dispatched again. Backoff is 5 · 10 · 20 · 40 · 80 · 160 · 320 minutes — a little over ten hours across the eight attempts, so an outage that starts after close is still retrying when the office opens |
+| `first_waiting_at` | **0280.** When the row FIRST reported waiting-on-parent; cleared when it stops. A waiting row burns no attempt, so without this it has no age and a three-day stall looks like a forty-second one |
+| `alerted_at` | **0280.** Receipt for the human-visible alarm, so it is raised once per row rather than every sweep |
+
+**Why `dedupe_key` needed the company back.** 0277 made the pending-dedupe index
+unique on `dedupe_key` alone, while keys like `create_so:<docNo>` are built from
+human document numbers. Houzs and 2990 both run an `SO-YYMM-NNN` series, so the
+same number in two companies collapsed to ONE pending row: the second insert hit
+the index, `enqueueAcOp` read the 23505 as a benign "already queued", and one
+company's document was never sent, with nothing reporting it.
 
 Two things are resolved LATE, at drain, and only two:
 
@@ -363,16 +373,42 @@ UPDATE scm.app_config SET value = '1', updated_at = now()
 **Turn it off** — set `value = 'off'`. Takes effect within 30 seconds (the cache
 TTL). Queued rows stay `pending` and drain when it is turned back on.
 
-**What to watch.** The cron logs `[cron ac-writeback]` per sweep, and logs at
-ERROR level whenever a row reaches `failed` — a failed row means a document
-exists in the ERP and does not exist in AutoCount, which is the exact divergence
-this mechanism exists to prevent.
+**What a human sees when a sync is lost.** A row that is undeliverable raises a
+WARNING notice through `postPersonalNotice` — the same private-announcement path
+the slip scan, service-case assignment and fleet-breakdown notices already use —
+tagged `source = 'ac_writeback'` and served by the notification bell at
+`/api/announcements/banner?scope=system` on both shells. It goes to the person
+whose save it was (`created_by`), expanded up their reporting chain by
+`uplineUserIds` so it cannot die with one salesman on leave, and falls back to
+the administrators when the document has no author. Two shapes qualify:
 
-```sql
-SELECT status, count(*) FROM scm.autocount_outbox GROUP BY status;
-SELECT doc_type, doc_no, op, attempts, last_error
-  FROM scm.autocount_outbox WHERE status = 'failed' ORDER BY created_at DESC;
+- **failed** — the attempts are spent, or AutoCount refused. Terminal.
+- **stalled** — still `pending`, waiting on a parent that never arrived, for
+  longer than `STALL_ALARM_MS` (6 hours). Not terminal: it will send itself the
+  moment its parent lands, but until then the document is in the ERP and not in
+  AutoCount, which is the divergence the mechanism exists to prevent.
+
+**Do not run these by hand.** Two read-only workflows answer the operational
+questions; the repo rule is that the owner is never asked to run a query.
+
+| Actions → workflow | Answers |
+|---|---|
+| **AutoCount write-back queue health (read-only)** (`backend/scripts/check-ac-outbox-health.mjs`) | Rows pending, skipped grouped by reason, oldest undelivered age, whether the alarm is actually reaching anyone, and **orphans** — documents committed in the ERP with no outbox row at all, which is the one failure the queue cannot describe about itself. Ends in a `VERDICT:` line |
+| **AutoCount drift check (read-only)** (`backend/scripts/check-autocount-drift.mjs`) | Whether anybody edited or cancelled an ERP-mastered document inside AutoCount. Broken links, **cancel parity** (hard rule 3), header drift including the document total, edits landing after our own `sent_at`, and line drift keyed on `linked_ac_dtlkey` |
+
+The drift check needs a fresh AutoCount snapshot, because a GitHub runner cannot
+reach the account book behind ZeroTier and the production DSN must not be handed
+to a human. Refresh it from a machine on the office network and commit the
+result; the check refuses to treat a stale or missing snapshot as a pass:
+
 ```
+AC_CRED_FILE=<file containing only the password> \
+  python backend/scripts/export-ac-documents.py
+```
+
+The cron still logs `[cron ac-writeback] ATTENTION` per sweep whenever anything
+is failed, alarmed, or sitting in an undrained backlog — but a log line is not
+the alarm, the notice is.
 
 ---
 
@@ -383,7 +419,10 @@ SELECT doc_type, doc_no, op, attempts, last_error
 | `src/scm/lib/downstream-lock.test.ts` | The owner's rule: one live child locks; a cancelled child does not; another document's children do not |
 | `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document |
 | `src/services/autocount-writeback.test.ts` | The master maps, sen -> decimal, Desc2 from variants, sofa parent collapse, `DtlKey` addressing, and the client's retryable/not-retryable read of a response |
-| `tests/autocountWritebackWiring.test.ts` | That every hook is still attached to its route |
+| `tests/autocountWritebackWiring.test.ts` | That every hook is still attached to its route, and that the cron shouts about every undelivered state rather than only `failed` |
+| `src/scm/lib/autocount-durable-queue.test.ts` | Hard rule 4 across sweeps: the retry backoff and its gate, the stall clock, the human-visible alarm (asserted by inspecting the `announcements` row the REAL `postPersonalNotice` writes, not a mock), the counters that used to be silent, and an unexpected compose error still landing as a `skipped` row |
+| `tests-pg/acOutboxHealth.pg.test.ts` | Migration 0280 and **every SELECT in the health check**, run as a subprocess against a real postgres:16. A phantom column cannot survive it — that is how D11 and D13 were found |
+| `tests-pg/acDriftCheck.pg.test.ts` | The drift check against real PostgreSQL with a fixture snapshot: cancel parity, broken links, header/total/ref drift, and edit-after-write. It also pins the negative — an agreeing document must still print `None.` |
 
 ---
 

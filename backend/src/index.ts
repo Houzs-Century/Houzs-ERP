@@ -526,9 +526,21 @@ export default {
           .then((r) => {
             /* A FAILED row means a document exists in the ERP and does not
                exist in AutoCount. That is the divergence this whole mechanism
-               is built to prevent, so it can never read as routine. */
-            if (r.failed) console.error(`[cron ac-writeback] FAILED ${JSON.stringify(r)}`);
-            else if (r.processed) console.log(`[cron ac-writeback] ${JSON.stringify(r)}`);
+               is built to prevent, so it can never read as routine.
+               Three more states join it, each of which used to log NOTHING:
+                 · alarmsRaised / alarmsOutstanding — undeliverable rows a human
+                   has now been told about, and ones still unresolved;
+                 · undrainedBacklog — pending rows with nobody draining them
+                   (AC_SYNC_URL unset, or the query failed). The unconfigured
+                   sweep returned early with processed = failed = 0, so a
+                   growing backlog was completely silent;
+                 · heldByFlag — rows skipped because their company is outside
+                   the flag, which used to `continue` without counting. */
+            if (r.failed || r.alarmsRaised || r.alarmsOutstanding || r.undrainedBacklog) {
+              console.error(`[cron ac-writeback] ATTENTION ${JSON.stringify(r)}`);
+            } else if (r.processed || r.heldByFlag) {
+              console.log(`[cron ac-writeback] ${JSON.stringify(r)}`);
+            }
           })
           .catch((e) => console.error("[cron ac-writeback]", e))
       );

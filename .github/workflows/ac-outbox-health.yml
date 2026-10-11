@@ -1,0 +1,76 @@
+name: AutoCount write-back queue health (read-only)
+
+# Answers "is anything stuck, lost, or unsent on its way to AutoCount?" without
+# anyone opening a SQL console.
+#
+# Hard rule 4 says a save that succeeds in the ERP while its sync is silently
+# lost must be impossible. The runtime half of that is the durable queue plus
+# the alarm notice in the ERP's notification bell. This is the half that lets
+# somebody ASK, from outside, whether that machinery is actually working —
+# including the one failure the queue cannot describe itself: a document
+# committed with NO outbox row at all (section 6).
+#
+# SELECT only. No writes, no DDL, no transaction. Exits 0 for every legitimate
+# answer, including a bad one; the verdict is the output, not the exit code.
+#
+# Manual trigger only. A production DB read on a schedule becomes CI noise
+# nobody reads, and this is a question, not a gate.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      top:
+        description: "How many rows to list per section"
+        required: false
+        default: "25"
+
+# Deliberately NOT the deploy's concurrency group: a diagnostic must never
+# queue behind — or displace — a release.
+concurrency:
+  group: ac-outbox-health-${{ inputs.target }}
+  cancel-in-progress: true
+
+jobs:
+  staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-ac-outbox-health.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TOP: ${{ inputs.top }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-ac-outbox-health.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TOP: ${{ inputs.top }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

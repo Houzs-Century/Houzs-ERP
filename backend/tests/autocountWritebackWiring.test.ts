@@ -163,10 +163,21 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
 });
 
 describe('the drain is wired to the cron', () => {
-  test('runs in the 5-minute slot, best-effort, and shouts about a FAILED row', () => {
+  test('runs in the 5-minute slot, best-effort, and shouts about every undelivered state', () => {
     const slot = between(cronSource, 'if (event.cron === "*/5 * * * *")', 'else if (event.cron === "*/30');
     expect(slot).toContain('drainAutoCountOutbox(env)');
-    expect(slot).toContain('[cron ac-writeback] FAILED');
+    expect(slot).toContain('[cron ac-writeback] ATTENTION');
     expect(slot).toContain('.catch((e) => console.error("[cron ac-writeback]", e))');
+    /* A FAILED row was the only state that shouted, and three others were
+       completely silent: an alarm raised for a human, a still-unresolved alarm,
+       and — the worst — a pending backlog with nobody draining it, which an
+       unconfigured sweep reported as processed = failed = 0, indistinguishable
+       from an empty queue. Each must reach the error channel. */
+    for (const state of ['r.failed', 'r.alarmsRaised', 'r.alarmsOutstanding', 'r.undrainedBacklog']) {
+      expect(slot).toContain(state);
+    }
+    // Rows held back by the company flag are routine, so they log without
+    // raising an alarm — but they must not vanish either.
+    expect(slot).toContain('r.heldByFlag');
   });
 });

@@ -1,0 +1,85 @@
+name: AutoCount drift check (read-only)
+
+# Answers "has anybody edited, or cancelled, an ERP-mastered document inside
+# AutoCount?" — hard rule 2's drift detection, and hard rule 3's cancel-parity
+# acceptance test.
+#
+# Staff still work in AutoCount out of habit; that is measured, not assumed
+# (SO-013175 was created there by a person on 2026-08-10). One-way sync does not
+# stop it happening, it only means the ERP will not resolve it — so the least
+# this system owes the owner is to SEE it.
+#
+# TWO HALVES, TWO PLACES, on purpose. The AutoCount host is behind ZeroTier and
+# a GitHub runner cannot reach it; the production DSN lives in Actions secrets
+# and must not be handed to a human. So refresh the AutoCount snapshot first,
+# from a machine on the office network:
+#
+#   AC_CRED_FILE=<file with only the password> \
+#     python backend/scripts/export-ac-documents.py
+#
+# and commit backend/scripts/data/ac-doc-*. This workflow then compares the ERP
+# against what was committed. The check REFUSES to treat a stale or missing
+# snapshot as a pass — it says so and downgrades the verdict.
+#
+# SELECT only on the ERP, SELECT only on AutoCount, nothing written to the
+# account book at any point. Exits 0 for every legitimate answer; the divergence
+# list is the output, not the exit code.
+#
+# Manual trigger only — NEVER on a schedule. A production DB read on a cron
+# becomes CI noise nobody reads, and this is a question, not a gate.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      top:
+        description: "How many divergences to list per section"
+        required: false
+        default: "40"
+
+concurrency:
+  group: ac-drift-check-${{ inputs.target }}
+  cancel-in-progress: true
+
+jobs:
+  staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-autocount-drift.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TOP: ${{ inputs.top }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-autocount-drift.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TOP: ${{ inputs.top }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
