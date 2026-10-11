@@ -93,6 +93,7 @@ import type { Env, Variables } from '../env';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
 import { isDefaultMrpView, readMrpSnapshot, refreshMrpSnapshot } from '../lib/mrp-snapshot';
 import { allocSourceOf, allocSourceCoveringPo, type AllocSource } from '../shared/mrp-alloc-source';
+import { soReleasedForDemand } from '../shared/mrp-demand-gate';
 import { isHardBoundLine, HARD_BOUND_COMPANY_ID } from '../lib/so-stock-allocation';
 
 export const mrp = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -410,7 +411,9 @@ export type MrpResult = {
   sofaSets: SofaSet[];
   /** Commitments with no open PO supply left to deduct from — see the type. */
   unmatchedCommitments: UnmatchedCommitment[];
-  /* How much of the demand this run walked has NO delivery date, counted
+  /* How much of the demand this run walked has NO delivery date — every one of
+     these orders HAS a processing date (an order without one is not demand; see
+     `unreleased` below) — counted
      ALWAYS — whether or not `includeUndated` let it into `skus[]`/`sofaSets[]`
      above. Same filter scope as those arrays (category + warehouse), so it is
      the honest denominator for the rows on screen.
@@ -444,6 +447,20 @@ export type MrpResult = {
         response states what it DID, so a caller whose flag was not honoured
         (see parseIncludeUndated) can see that from the answer alone. */
     hidden: boolean;
+  };
+  /* Open sales-order lines this run did NOT treat as demand because their order
+     has no processing date (owner 2026-09-15, shared/mrp-demand-gate.ts). They
+     are in no row, no allocation and no shortage above; this is the only place
+     they are mentioned, so a caller can say "N lines on M orders have no
+     processing date" instead of rendering the rest as the whole book.
+
+     Scope: the company, BEFORE the category / warehouse filters and before the
+     delivered-quantity netting — an upper bound of what the gate withheld, and
+     identical on every tab. Not `undated`: those lines HAVE a processing date and
+     are planned, last. */
+  unreleased: {
+    lines: number;
+    orders: number;
   };
   totals: {
     skuCount: number;
@@ -643,7 +660,16 @@ export async function computeMrp(
     .range(from, to));
   if (demandErr) throw new Error(`mrp_load_failed: ${demandErr.message}`);
 
-  /* Undated lines (no line delivery date AND no SO delivery date) are not ready
+  /* NO PROCESSING DATE, NO DEMAND (owner 2026-09-15, shared/mrp-demand-gate.ts).
+     An order nobody has proceeded is dropped HERE, before anything reads it:
+     it takes no stock, claims no PO, reports no shortage and is on no row of
+     the result, so every consumer of this result inherits the rule. It is
+     COUNTED (`unreleased`) so the response still states what it left out.
+
+     Undated lines below means orders that DO carry a processing date but have
+     no delivery date. They are demand, served LAST.
+
+     Undated lines (no line delivery date AND no SO delivery date) are not ready
      to order — the MRP page HIDES them by default (owner 2026-08-18;
      ?includeUndated=true shows them, marked "No date" and sorted last) and
      COUNTS them either way. They are STILL DEMAND either way, and audit D6
@@ -657,9 +683,15 @@ export async function computeMrp(
      take supply from a dated line and every dated line's coverage is IDENTICAL
      under both flag values. `includeUndated` only controls whether undated
      rows appear in the RESULT (visibility, not math). */
-  const demandActive = ((demandRaw ?? []) as unknown as DemandRow[]).filter(
+  const demandOpen = ((demandRaw ?? []) as unknown as DemandRow[]).filter(
     (r) => r.item_code && r.so && !SO_DONE.has(r.so.status) && r.qty > 0,
   );
+  const demandActive = demandOpen.filter((r) => soReleasedForDemand(r.so?.processing_date));
+  const unreleasedRows = demandOpen.filter((r) => !soReleasedForDemand(r.so?.processing_date));
+  const unreleased = {
+    lines: unreleasedRows.length,
+    orders: new Set(unreleasedRows.map((r) => r.doc_no)).size,
+  };
   const isDatedLine = (r: DemandRow): boolean => deliveryOf(r) !== null;
 
   // A partially-delivered SO keeps its header status active (the header only
@@ -933,9 +965,13 @@ export async function computeMrp(
      reads (live: HC-PO-010086 SQUARE PILLOW `fabric_accessory` on HC-SO-013346
      `accessory`, the day after the pillows changed category), and an unbound PO on
      a bound sales line sat in a pool the line never reads. Every linked line now
-     reads its own dedicated queue first (section 7), whichever side is bound. */
+     reads its own dedicated queue first (section 7), whichever side is bound.
+
+     `demandOpen`, NOT `demandActive`: the processing-date gate withholds an order's
+     DEMAND, not its binding. A PO bought for an order nobody has proceeded yet is
+     still that customer's, and must not float to another order meanwhile. */
   const demandBoundById = new Set(
-    demandActive.filter((d) => isHardBoundLine(d.item_group, d.item_code)).map((d) => d.id),
+    demandOpen.filter((d) => isHardBoundLine(d.item_group, d.item_code)).map((d) => d.id),
   );
   const isDedicated = (r: PoLineRow): boolean =>
     boundCompany
@@ -1575,6 +1611,7 @@ export async function computeMrp(
       sofaShortageUnits: undatedSofaShortageUnits,
       hidden: !includeUndated,
     },
+    unreleased,
     totals: {
       skuCount: skus.length,
       shortageSkuCount: skus.filter((s) => s.shortage > 0).length,
@@ -1829,7 +1866,10 @@ mrp.get('/', async (c) => {
   const warehouseId = c.req.query('warehouseId');
   const catFilter = category && category !== 'all' ? category.toUpperCase() : null;
   const whFilter = warehouseId && warehouseId !== 'all' ? warehouseId : null;
-  // An SO line with NO delivery date means the customer isn't ready for goods
+  // An order with NO PROCESSING date is not demand at all and never reaches this
+  // flag (shared/mrp-demand-gate.ts, owner 2026-09-15; counted in
+  // `result.unreleased`). What the flag governs is the rest:
+  // an SO line with NO delivery date means the customer isn't ready for goods
   // yet, so it must not drive ordering — but it is still demand, so it is
   // HIDDEN by default (?includeUndated=true shows it) and COUNTED either way.
   // See parseIncludeUndated for why hiding is fine and hiding silently is not,

@@ -22,7 +22,7 @@
 // through a minimal fake PostgREST client — same shape as so-converted-po.test.ts,
 // extended with the operators this engine chains (eq / in / order / limit / range).
 import { describe, expect, test } from 'vitest';
-import { computeMrp, mrpStockAssignment, stockAssignmentKey, parseIncludeUndated, InvalidQueryFlag } from './mrp';
+import { computeMrp, mrpStockAssignment, mrpLineCoverage, mrpReverseCoverage, stockAssignmentKey, parseIncludeUndated, InvalidQueryFlag } from './mrp';
 import { NO_BUFFERS } from '../lib/lead-time';
 import { distributeAssignedToLots, isMakeToOrderCategory } from '../lib/inventory-movements';
 import { parsePgrestInList } from '../lib/pgrest-in-list';
@@ -103,7 +103,7 @@ const demandRed = (qty: number): Row => ({
   item_group: 'bedframe', variants: { fabricCode: 'RED' }, qty,
   warehouse_id: 'W1', line_delivery_date: '2026-12-01', line_no: 1, created_at: '2026-07-01T00:00:00Z',
   cancelled: false,
-  so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: null, customer_state: null },
+  so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: '2026-07-02', customer_state: null },
 });
 
 // A PO supply line for BF-100 → W1. `variant` null builds the legacy '' key.
@@ -399,7 +399,7 @@ const sofaDemand = (id: string, docNo: string, qty: number, delivery: string | n
   item_group: 'sofa', variants: { fabricCode: 'RED' }, qty,
   warehouse_id: 'W1', line_delivery_date: delivery, line_no: 1, created_at: '2026-07-01T00:00:00Z',
   cancelled: false,
-  so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: delivery, processing_date: null, customer_state: null },
+  so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: delivery, processing_date: '2026-07-02', customer_state: null },
 });
 
 // A sofa PO supply line for SF-100 → W1. `variant` null builds the legacy '' key.
@@ -486,7 +486,7 @@ describe('computeMrp — includeUndated is visibility, not a demand filter (audi
   const undated: Row = {
     ...demandRed(5), id: 'si-undated', doc_no: 'SO-2',
     line_delivery_date: null,
-    so: { debtor_name: 'Beta', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: null, processing_date: null, customer_state: null },
+    so: { debtor_name: 'Beta', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: null, processing_date: '2026-07-02', customer_state: null },
   };
   const tables = () => ({
     ...BASE_TABLES,
@@ -610,11 +610,11 @@ describe('computeMrp — undated demand is COUNTED even when it is hidden', () =
   const d2 = {
     ...demandRed(1), id: 'si-d2', doc_no: 'SO-D2',
     line_delivery_date: '2026-12-02',
-    so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-02', processing_date: null, customer_state: null },
+    so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-02', processing_date: '2026-07-02', customer_state: null },
   };
   const undatedSo = (id: string, docNo: string, qty: number): Row => ({
     ...demandRed(qty), id, doc_no: docNo, line_delivery_date: null,
-    so: { debtor_name: 'Beta', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: null, processing_date: null, customer_state: null },
+    so: { debtor_name: 'Beta', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: null, processing_date: '2026-07-02', customer_state: null },
   });
   const tables = () => ({
     ...BASE_TABLES,
@@ -753,7 +753,7 @@ describe('computeMrp — SHIPPED no longer creates demand (audit D4)', () => {
   test('a SHIPPED-status SO line is done, matching so-stock-allocation / reservations', async () => {
     const shipped: Row = {
       ...demandRed(5),
-      so: { debtor_name: 'Acme', status: 'SHIPPED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: null, customer_state: null },
+      so: { debtor_name: 'Acme', status: 'SHIPPED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: '2026-07-02', customer_state: null },
     };
     const sb = fakeSb({ ...BASE_TABLES, mfg_sales_order_items: [shipped] });
     const res = await computeMrp(asSb(sb), opts);
@@ -1057,7 +1057,7 @@ const demandFor = (docNo: string, dates: Row): Row => ({
   line_delivery_date_overridden: false,
   so: {
     debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01',
-    amended_delivery_date: null, processing_date: null, customer_state: null,
+    amended_delivery_date: null, processing_date: '2026-07-02', customer_state: null,
     ...dates,
   },
 });
@@ -1472,7 +1472,7 @@ describe('an uncatalogued line keeps its category on the row, not just in the fi
     item_group: 'accessory', variants: {}, qty,
     warehouse_id: 'W1', line_delivery_date: '2026-12-01', line_no: 1, created_at: '2026-07-01T00:00:00Z',
     cancelled: false,
-    so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: null, customer_state: null },
+    so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: '2026-07-02', customer_state: null },
   });
 
   test('mfg_products has no row for it: the SKU still says ACCESSORY', async () => {
@@ -1631,5 +1631,98 @@ describe('company 1: a custom pillow is planned from its own purchase order only
   test('company 2 keeps the pooled model for pillows too', async () => {
     const res = await computeMrp(asSb(world({ mfg_sales_order_items: demand, purchase_order_items: supply }, 2)), { ...opts, companyId: 2 });
     expect(lineOf(res, 'l-013496').poNumber).not.toBeNull();
+  });
+});
+
+/* ── NO PROCESSING DATE, NO DEMAND (owner 2026-09-15) ─────────────────────────
+   「MRP 可以添加只算有 Processing date 单的功能吗？不过需求的顺序排给谁，是根据
+     Delivery Date 来排的。也就是说，没有 Processing date 的单子就不进来。」
+
+   Before this, an order nobody had proceeded was demand like any other and, with
+   an EARLIER delivery date, took the stock a proceeded order needed. Every
+   fixture below gives the unproceeded order the earliest date on purpose: under
+   the old engine it wins, so these tests are red there. */
+describe('computeMrp — an order with no processing date is not demand at all', () => {
+  const unproceeded = (qty: number, delivery: string | null = '2026-10-01'): Row => ({
+    ...demandRed(qty), id: 'si-unproc', doc_no: 'SO-UNPROC', line_delivery_date: delivery,
+    so: { debtor_name: 'NotYet', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: delivery, processing_date: null, customer_state: null },
+  });
+  const proceeded = (id: string, docNo: string, qty: number, delivery: string | null): Row => ({
+    ...demandRed(qty), id, doc_no: docNo, line_delivery_date: delivery,
+    so: { debtor_name: docNo, status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: delivery, processing_date: '2026-09-01', customer_state: null },
+  });
+  const catalog = { mfg_products: [{ code: 'BF-100', name: 'Baron Bedframe', category: 'BEDFRAME' }] };
+
+  test('it takes none of the stock a proceeded order needs, and is on no row, map or tally of the result', async () => {
+    for (const includeUndated of [true, false]) {
+      const res = await computeMrp(asSb(fakeSb({
+        ...BASE_TABLES, ...catalog,
+        mfg_sales_order_items: [unproceeded(5), proceeded('si-proc', 'SO-PROC', 5, '2026-12-01')],
+        inventory_balances: [stockRed(5)],
+      })), { ...opts, includeUndated });
+
+      const lines = res.skus.flatMap((s) => s.lines);
+      expect([includeUndated, lines.map((l) => l.soItemId)]).toEqual([includeUndated, ['si-proc']]);
+      expect([includeUndated, lines[0]]).toEqual([includeUndated, expect.objectContaining({ source: 'stock', stockQty: 5, shortageQty: 0 })]);
+      expect([includeUndated, res.skus[0]!.qtyNeeded, res.skus[0]!.shortage]).toEqual([includeUndated, 5, 0]);
+      expect([includeUndated, res.totals.shortageUnits]).toEqual([includeUndated, 0]);
+
+      expect(mrpLineCoverage(res).has('si-unproc')).toBe(false);
+      const claims = mrpStockAssignment(res).get(stockAssignmentKey('W1', 'BF-100', 'fabriccode=red'))!;
+      expect([includeUndated, claims.assigned, claims.claims.map((c) => c.soDocNo)]).toEqual([includeUndated, 5, ['SO-PROC']]);
+
+      // Not demand is not "undated demand": it is counted on its own, and only there.
+      expect([includeUndated, res.undated.lines, res.undated.shortageUnits]).toEqual([includeUndated, 0, 0]);
+      expect([includeUndated, res.unreleased]).toEqual([includeUndated, { lines: 1, orders: 1 }]);
+    }
+  });
+
+  test('it claims no incoming purchase order either — the PO serves the proceeded order', async () => {
+    const res = await computeMrp(asSb(fakeSb({
+      ...BASE_TABLES, ...catalog,
+      mfg_sales_order_items: [unproceeded(4), proceeded('si-proc', 'SO-PROC', 4, '2026-12-01')],
+      purchase_order_items: [poLine('PO-RED', 4, { fabricCode: 'RED' }, '2026-11-01')],
+    })), opts);
+    expect(res.skus.flatMap((s) => s.lines)).toEqual([expect.objectContaining({ soItemId: 'si-proc', source: 'po', poNumber: 'PO-RED', shortageQty: 0 })]);
+    expect(mrpReverseCoverage(res).get('PO-RED')!.map((a) => a.soDocNo)).toEqual(['SO-PROC']);
+  });
+
+  test('a bucket whose only demand is unproceeded has no row and no shortage', async () => {
+    const res = await computeMrp(asSb(fakeSb({ ...BASE_TABLES, ...catalog, mfg_sales_order_items: [unproceeded(3)] })), opts);
+    expect(res.skus).toEqual([]);
+    expect(res.totals).toMatchObject({ skuCount: 0, shortageSkuCount: 0, shortageUnits: 0 });
+    expect(res.unreleased).toEqual({ lines: 1, orders: 1 });
+  });
+
+  test('sofa: an unproceeded set is not planned and does not take the set PO', async () => {
+    const unprocSofa: Row = {
+      ...sofaDemand('si-sofa-u', 'SO-SU', 2, '2026-10-01'),
+      so: { debtor_name: 'NotYet', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-10-01', processing_date: null, customer_state: null },
+    };
+    const res = await computeMrp(asSb(fakeSb({
+      ...BASE_TABLES,
+      mfg_sales_order_items: [unprocSofa, sofaDemand('si-sofa-p', 'SO-SP', 2, '2026-12-01')],
+      purchase_order_items: [sofaPoLine('PO-SOFA', 2, { fabricCode: 'RED' }, '2026-11-01')],
+    })), opts);
+    expect(res.sofaSets.map((s) => [s.soItemId, s.poNumber, s.shortageQty])).toEqual([['si-sofa-p', 'PO-SOFA', 0]]);
+    expect(res.undated.sofaSets).toBe(0);
+    expect(res.unreleased).toEqual({ lines: 1, orders: 1 });
+  });
+
+  test('among proceeded orders the delivery date still decides who is served first, and no delivery date goes last', async () => {
+    const res = await computeMrp(asSb(fakeSb({
+      ...BASE_TABLES, ...catalog,
+      // Fed in reverse priority so row order cannot be what produces the answer.
+      mfg_sales_order_items: [
+        proceeded('si-c', 'SO-C', 3, null),
+        proceeded('si-b', 'SO-B', 3, '2026-12-01'),
+        unproceeded(3, '2026-09-20'),
+        proceeded('si-a', 'SO-A', 3, '2026-11-01'),
+      ],
+      inventory_balances: [stockRed(6)],
+    })), opts);
+    const by = new Map(res.skus.flatMap((s) => s.lines).map((l) => [l.soItemId, [l.stockQty, l.shortageQty]]));
+    expect(Object.fromEntries(by)).toEqual({ 'si-a': [3, 0], 'si-b': [3, 0], 'si-c': [0, 3] });
+    expect(res.undated.lines).toBe(1); // SO-C: proceeded, no delivery date, planned last
   });
 });

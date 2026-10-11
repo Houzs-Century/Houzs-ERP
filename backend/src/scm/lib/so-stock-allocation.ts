@@ -60,6 +60,7 @@ import { advanceSoGeneration } from './so-generation';
 import { enqueueStockAllocationRecompute } from './stock-allocation-queue';
 import { SO_TERMINAL_STATES_PGREST } from '../shared/so-terminal-states';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
+import { soReleasedForDemand } from '../shared/mrp-demand-gate';
 import { loadNonSellingWarehouses, warehouseCanPromise } from './non-selling-warehouse';
 import { pgrestIn } from './pgrest-in-list';
 
@@ -355,7 +356,7 @@ async function runSoStockAllocation(
        end for good with the column; see "RETIRING THE SECOND STORAGE" in
        shared/so-processing-date.ts. */
     const allocGated = new Set(
-      orders.filter((o) => !o[SO_PROCESSING_DATE_COLUMN]).map((o) => o.doc_no),
+      orders.filter((o) => !soReleasedForDemand(o[SO_PROCESSING_DATE_COLUMN])).map((o) => o.doc_no),
     );
     /* Which company each document belongs to — the pooled walk needs it to
        enforce HARD_BOUND_COMPANY_ID's exclusivity (see the constant's note). */

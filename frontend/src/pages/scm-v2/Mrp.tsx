@@ -74,7 +74,7 @@ function DeliveryCell({ iso }: { iso: string | null }) {
     <td>
       <span
         className="inline-flex items-center rounded border border-warning-text/30 bg-warning-bg px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-warning-text"
-        title="No delivery date on this line or its Sales Order — planned last, not ready to order">
+        title="No delivery date on this line or its Sales Order — it has a processing date, so it is planned, last">
         No date
       </span>
     </td>
@@ -1255,7 +1255,7 @@ export const Mrp = () => {
           <button type="button" className={TOOLBAR_BTN}
             onClick={() => { setDateFrom(''); setDateTo(''); }}>Clear window</button>
         )}
-        <label className={styles.filterField} title="Show SO lines that have no delivery date (not ready to order)">
+        <label className={styles.filterField} title="Show SO lines that have a processing date but no delivery date (planned last). Orders with no processing date are not in MRP.">
           <input type="checkbox" checked={showUndated} onChange={(e) => setShowUndated(e.target.checked)} />
           <span className={styles.filterLabel}>Show no-date</span>
         </label>

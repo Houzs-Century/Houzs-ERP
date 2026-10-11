@@ -28,6 +28,7 @@
 // first.
 import postgres from "postgres";
 import { SO_TERMINAL_STATES } from "./lib/so-terminal-states.mjs";
+import { soReleasedForDemand } from "./lib/mrp-demand-gate.mjs";
 import { parseProvenanceNote, provenanceNoteSqlPattern } from "./lib/transfer-vocabulary.mjs";
 
 const DSN = process.env.DATABASE_URL;
@@ -172,7 +173,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   const demandRaw = await sql`
     SELECT i.id, i.doc_no, i.item_code, i.item_group, i.variants, i.qty,
            i.warehouse_id, i.line_delivery_date, i.line_no, i.stock_status,
-           s.status::text AS so_status, s.customer_delivery_date,
+           s.status::text AS so_status, s.customer_delivery_date, s.processing_date,
            s.customer_state, s.sales_location
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no AND s.company_id = i.company_id
@@ -229,7 +230,9 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
      the engine always allocates the FULL active set, undated rows last (null
      dates sort after every real date). Replicate that — one allocation — and
      report the undated slice separately as the page-visibility note. */
-  const activeAll = demandRaw.filter((r) => r.item_code && !SO_DONE.has(snorm(r.so_status)) && num(r.qty) > 0);
+  const openAll = demandRaw.filter((r) => r.item_code && !SO_DONE.has(snorm(r.so_status)) && num(r.qty) > 0);
+  /* No processing date, no demand (owner 2026-09-15, shared/mrp-demand-gate.ts). */
+  const activeAll = openAll.filter((r) => soReleasedForDemand(r.processing_date));
   const undated = activeAll.filter((r) => !(r.line_delivery_date ?? r.customer_delivery_date));
   const demand = activeAll.filter((r) => effQtyOf(r) > 0);
 
@@ -457,7 +460,8 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   const totalShortage = results.reduce((a, r) => a + r.shortage, 0);
   const totalPoOutstanding = [...poOutstandingByKey.values()].reduce((a, v) => a + v, 0);
   const totalOnHandAll = [...stockByKey.values()].reduce((a, v) => a + v, 0);
-  notice(`  SO lines loaded (non-cancelled, live SO)   : ${activeAll.length}`);
+  notice(`  SO lines loaded (non-cancelled, live SO)   : ${openAll.length}`);
+  notice(`   - dropped: order has NO processing date   : ${openAll.length - activeAll.length}   (not demand, owner 2026-09-15)`);
   notice(`   - UNDATED (hidden on the page by default) : ${undated.length}   (display-only since 2026-08-01: they STILL`);
   notice("     allocate, sorted last — every caller reads ONE identical allocation and the");
   notice("     includeUndated flag only controls whether these rows are rendered)");

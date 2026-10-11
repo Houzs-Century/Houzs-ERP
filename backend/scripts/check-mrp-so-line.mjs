@@ -31,6 +31,7 @@
 //
 // Usage: SO_DOC=HC-SO-013043 node scripts/check-mrp-so-line.mjs
 import postgres from "postgres";
+import { soReleasedForDemand } from "./lib/mrp-demand-gate.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("DATABASE_URL missing"); process.exit(1); }
@@ -133,6 +134,7 @@ async function main() {
 
   const so = (await sql`
     SELECT doc_no, company_id, status::text AS so_status, customer_delivery_date,
+           processing_date::text AS processing_date,
            customer_state, sales_location, debtor_name
       FROM scm.mfg_sales_orders
      WHERE doc_no = ${RAW_DOC} OR doc_no LIKE ${"%" + RAW_DOC}
@@ -144,6 +146,8 @@ async function main() {
     + ` · SO delivery ${d2(so.customer_delivery_date) ?? "—"}`);
   const soIsDone = SO_DONE.has(snorm(so.so_status));
   if (soIsDone) notice(`  NOTE: status ${so.so_status} is in SO_DONE — the WHOLE order is out of MRP demand.`);
+  const soReleased = soReleasedForDemand(so.processing_date);
+  if (!soReleased) notice("  NOTE: no processing date — the WHOLE order is out of MRP demand (owner 2026-09-15).");
 
   const warehouses = await sql`SELECT id, code, name, company_id FROM scm.warehouses`;
   const stateMaps = await sql`SELECT state, warehouse_id, company_id FROM scm.state_warehouse_mappings`;
@@ -216,6 +220,7 @@ async function main() {
     const why = [];
     if (l.cancelled) why.push("the line is CANCELLED");
     if (soIsDone) why.push(`the SO status ${so.so_status} is in SO_DONE`);
+    if (!soReleased) why.push("the SO has no processing date");
     if (isServiceLine({ itemGroup: l.item_group, itemCode: l.item_code, category: cat })) {
       why.push("it is a SERVICE line (services never create purchase demand)");
     }
@@ -241,7 +246,7 @@ async function main() {
     const rows = await sql`
       SELECT i.id, i.doc_no, i.item_code, i.item_group, i.variants, i.qty,
              i.warehouse_id, i.line_delivery_date,
-             s.status::text AS so_status, s.customer_delivery_date,
+             s.status::text AS so_status, s.customer_delivery_date, s.processing_date,
              s.customer_state, s.sales_location, s.debtor_name
         FROM scm.mfg_sales_order_items i
         JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no AND s.company_id = i.company_id
@@ -249,6 +254,7 @@ async function main() {
     const dRows = [];
     for (const r of rows) {
       if (SO_DONE.has(snorm(r.so_status)) || num(r.qty) <= 0) continue;
+      if (!soReleasedForDemand(r.processing_date)) continue;
       if (computeVariantKey(r.item_group, r.variants) !== b.vkey) continue;
       const whId = r.warehouse_id ?? resolveSoWarehouseId(r, whScoped, mapScoped);
       if ((whId ?? null) !== (b.whId ?? null)) continue;
