@@ -141,3 +141,29 @@ Written down in memory `owner-rulings-2026-09-15-mrp-processing-gate`.
 | Leftover worktrees / temp branches | open | `.claude/worktrees/agent-*`, `houzs-work-worktrees/*` of merged PRs |
 
 Other session's open PRs (not this session): #3977 (SO consecutive save), #3979 (AutoCount night handoff), #3972 (DO export).
+
+## 5. 校正 (2026-09-15 晚) — 「删除清单」用快照拼是错的，实时量后 19 → 6
+
+**教训 (R03 的一个具体陷阱)：一个会驱动删除的分类，第一步必须量实时 ERP，不能拿 AutoCount 快照拼。**
+第一版把「过期单」分成 19 张「整张全送 → 删」，是用 09-09 账本快照里的 `BOOK_DELIVERED` 当成「ERP 送了」。两个错：(1) `check-mrp-stale-demand` 的 artifact 只含引擎仍在算的行（＝ERP 未送的行），看不到已送行，判不了「整张」；(2)「账本送了」≠「ERP 送了」——单在 AutoCount 送完，ERP 的 DO 可以是 qty 0 或没有。
+
+**实时逐行量 (Supabase, 生产 `anogrigyjbduyzclzjgn`, 只读) 后的正确分类：**
+- **A. 整张在账本全送、ERP 无 DO → 真正该处理：6 张** `HC-SO-003945 / 011850 / 012629 / 007144 / 013181 / 013276`。
+  - 账本每行 BOOK_DELIVERED，ERP `NO_DO`。根因＝AutoCount 已送货没同步成 ERP 的 DO（sync 漏单）。
+  - 交期全是 **2026-09（本月刚送）**，非历史垃圾。建议**补 DO**（ERP 如实记录已送销售）优于硬删；硬删则 ERP 永久丢这 6 笔已送记录（账本仍留）。**待老板定：删 / 补 DO。**
+- **B. 有 DO 但该行 qty=0（＝没送）→ 部分送货 → 清日期：13 张** `HC-SO-000013 / 000524 / 000951 / 001030 / 002792 / 003977 / 008652 / 009600 / 002069 / 011571 / 012025 / 001319 / 006923`。
+  - PROVEN：`HC-DO-000608 / 001526 / 002817 / 008624 / 008833` 等相关行 `do_line_qty = 0`。合老板「qty 0 = 没送」裁定，MRP 算它们对，非 bug。001319/006923 另有账本已送、ERP 短这一「逐行 sync 缺口」。
+- **C. 哪里都没送：79 张**。2026-09 内（≤2 周）56 张不列不动；2 周–3 个月 10 张；>3 个月 13 张待逐单查根因列给老板（见 §6，agent 处理中）。
+
+**清 dates 的现成工具**＝`backend/scripts/clear-stale-so-dates-2026-09-15.mjs`（#3894/#3897 已对 28 张跑过）：表头 processing/delivery 清空+version+1、未送行清 item date、已送行原样保留、PO 不动，MODE=plan 默认回滚、apply 要 CONFIRM「CLEAR STALE SO DATES」，fresh 连接复核。
+
+## 6. 已执行（2026-09-15 晚，经 Supabase 生产 `anogrigyjbduyzclzjgn`，老板逐步批准）
+
+用实时逐行送货量重分类 116 张过期单（去掉下述 6 张 cancel 前 = 122）：**37 张部分送货（有真实送货行）、79 张哪里都没送**。
+
+- **Cancel 6 张**（AutoCount 整张全送、ERP 无 DO；保留付款/PO/审计，退出 MRP）：`003945/007144/011850/012629/013181/013276`。付款均 `imported`（迁移拷贝，AutoCount 有原件）；备份 `tasks/cancel-6-fully-delivered-so-backup-2026-09-15.md`；审计 action=CANCELLED source=script。**未触发 AutoCount 写回**（裸改状态不建 outbox；三个触发器只有 vp_outbox 且其列不含 status 以外的日期列，已核）。
+- **清日期 27 张陈旧部分送货**（交期<2026-09-01）：表头 processing/delivery/amended 清空+version+1，35 个未送行 item date 清空，已送行保留。备份 `tasks/clear-dates-27-partial-so-backup-2026-09-15.md`；审计 action=DATES_CLEARED。
+- **清日期 10 张 2026-09 刚过期部分送货**（老板「继续」）：同上，12 个未送行日期清空。备份 `tasks/clear-dates-10-recent-partial-so-backup-2026-09-15.md`。
+- 合计 **43 张退出 MRP**，全部可逆（备份含恢复法）。
+
+**MRP 剩余（未执行）**：79 张哪里都没送 —— 56 张 2026-09（留着不动）、13 张 >3个月（根因见 `tasks/mrp-3mo-open-rootcause-2026-09-15.md`，待老板/人复核「还要 or remove」）、10 张 2周–3个月（待定）。另：qty-0 DO 行清理（可选）、漏 DO 的 sync 根因、qty-0 DO 行来源根因、MRP 前端 #3978、processing-date-gate 与 close-stale 分支。
