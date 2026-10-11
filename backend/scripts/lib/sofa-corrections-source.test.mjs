@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { CORRECTION_FILES, loadCorrections, readCorrectionsDoc } from "./sofa-corrections-source.mjs";
+import { CORRECTION_FILES, docsInScope, loadCorrections, parseDocScope, readCorrectionsDoc } from "./sofa-corrections-source.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "..", "data");
@@ -252,4 +252,89 @@ test("the `only` filter loads one round without replanning the other", () => {
   const one = loadCorrections(DATA, "2026-09");
   assert.equal(one.files.length, 1);
   assert.ok(one.builds.every((b) => b.source.includes("2026-09")));
+});
+
+/* ── A DOC SCOPE IS A LIST, BECAUSE A SOFA IS TWO DOCUMENTS ─────────────────
+ * `docs/bugs/0725` says plainly that `FILE=` and `DOC=` are the only safe way
+ * to run the applier: an unscoped run over every corrections file was measured
+ * planning to re-add a piece the owner had removed a round later. But `DOC=`
+ * took ONE document, and a sofa build lives on TWO — the sales order and the
+ * purchase order raised from it. Correcting one without the other is the
+ * half-write `docs/bugs/0719` refuses, and doing them in two dispatches leaves
+ * production holding the half state in between.
+ *
+ * So the scope is a LIST. Comma or whitespace separated, blank means every
+ * document, and an entry is matched EXACTLY — never as a prefix or a
+ * substring, because `HC-SO-01020` must not silently select `HC-SO-010209`.
+ */
+test("a blank scope means every document", () => {
+  assert.equal(parseDocScope(""), null);
+  assert.equal(parseDocScope("   "), null);
+  assert.equal(parseDocScope(undefined), null);
+  assert.deepEqual(docsInScope(["HC-SO-1", "HC-PO-2"], null), ["HC-SO-1", "HC-PO-2"]);
+});
+
+test("a scope of one document behaves exactly as it did before", () => {
+  const scope = parseDocScope("HC-SO-012729");
+  assert.deepEqual(docsInScope(["HC-SO-012729", "HC-PO-009554"], scope), ["HC-SO-012729"]);
+});
+
+test("a scope names a sales order AND its purchase order, so both are one operation", () => {
+  const scope = parseDocScope("HC-SO-012729,HC-PO-009554");
+  assert.deepEqual(docsInScope(["HC-SO-012729", "HC-PO-009554"], scope), ["HC-SO-012729", "HC-PO-009554"]);
+});
+
+test("commas, spaces and newlines all separate, and blanks are dropped", () => {
+  const scope = parseDocScope(" HC-SO-1 ,, HC-PO-2 \n HC-GR-3 ");
+  assert.deepEqual([...scope].sort(), ["HC-GR-3", "HC-PO-2", "HC-SO-1"]);
+});
+
+test("a scope entry matches EXACTLY — never as a prefix", () => {
+  const scope = parseDocScope("HC-SO-01020");
+  assert.deepEqual(docsInScope(["HC-SO-010209"], scope), []);
+});
+
+test("a document not in the scope is dropped, and the scope is case-insensitive", () => {
+  const scope = parseDocScope("hc-so-012729");
+  assert.deepEqual(docsInScope(["HC-SO-012729", "HC-PO-009554"], scope), ["HC-SO-012729"]);
+});
+
+/* ── THE SIX 2026-09-08 BUILDS NAME BOTH HALVES OF THEIR SOFA ───────────────
+ * These six exist BECAUSE the purchase order and the sales order describe
+ * different builds — `HC-PO-009554` held `9058-1S` while `HC-SO-012729` held a
+ * three-piece L. Writing only the sales side leaves the purchase side holding
+ * the lead piece alone, which is the half-write `docs/bugs/0719` refuses and
+ * which `HC-SO-013320` already cost this lane once (its entry had to be
+ * amended on 2026-09-07 to add `HC-PO-010008`).
+ *
+ * The general check above ("no two builds give the same document different
+ * pieces") CANNOT see this: it keys on the document number, and a sales order
+ * and its purchase order are different numbers. Nothing in the data says they
+ * are the same sofa. So the pair is pinned BY HAND, exactly as the 1ELT test
+ * above pins its own pair, and for the same reason.
+ *
+ * The purchase counterpart of each was read out of the committed book snapshot
+ * `data/ac-reconcile-truth.json.gz` — a PO line whose `fromSoDtlKey` names the
+ * sales line's DtlKey — not guessed from the numbering.
+ */
+test("each of the owner's six 2026-09-08 builds names its sales order AND its purchase order", () => {
+  const PAIRS = [
+    ["HC-SO-010287", "HC-PO-010085"],
+    ["HC-SO-012128", "HC-PO-009467"],
+    ["HC-SO-011207", "HC-PO-009830"],
+    ["HC-SO-010209", "HC-PO-009587"],
+    ["HC-SO-012729", "HC-PO-009554"],
+  ];
+  const { builds } = loadCorrections(DATA);
+  for (const [so, po] of PAIRS) {
+    const hit = builds.filter((b) => (b.docs || []).includes(so));
+    assert.ok(hit.length, `${so}: the owner ruled this build on 2026-09-08 and no entry carries it`);
+    for (const b of hit) {
+      assert.ok(
+        (b.docs || []).includes(po),
+        `${b.source} ${so}: its purchase order ${po} is not on the entry, so an apply corrects the sales ` +
+          `side alone and leaves ${po} holding the lead piece by itself (docs/bugs/0719)`,
+      );
+    }
+  }
 });
