@@ -781,6 +781,55 @@ overlay leaves the stored values alone — the fast first paint and an older
 backend's 404 both arrive that way, and blanking on them would flicker the column
 off on every open.
 
+### 0.8b A FIFTH mark in that cell: NO PURCHASE ORDER WAS EVER RAISED
+
+The four chips above all answer "where are the goods coming from". This one
+answers a different question — **nobody ever ordered them** — and it is the only
+mark in the cell that no later query can fill.
+
+| | |
+|---|---|
+| Field | `purchase_gap`, on the BASE `GET /:docNo` payload (not `/coverage`) |
+| Decided by | `backend/src/scm/lib/so-line-purchase-gap.ts` — the SERVER, never the client |
+| Desktop | `PurchaseGapChip` in `frontend/src/components/SoSourceChips.tsx` — "No PO raised" |
+| Mobile | `PurchaseGapRowMobile` in `frontend/src/mobile/source-chips.tsx` |
+| Dress | amber, SOLID — deliberately not the dashed "floating" dress, because this is not a live projection that may resolve itself |
+
+**When it is true.** Company 1 · the order carries a Processing Date · the order
+is not in `SO_TERMINAL_STATES` · the line is not cancelled · the line is
+HARD-BOUND (`isHardBoundLine` — bedframe / sofa / `(SP)` mattress) · and
+`po_qty_picked` is 0.
+
+**Why hard-bound only, and why that is not a narrowing for convenience.** A
+company-1 hard-bound line lights ONLY through its own dedicated purchase order's
+received quantity (`HARD_BOUND_COMPANY_ID`, `scm/lib/so-stock-allocation.ts`).
+With no purchase order there is no path to READY at all, however much of that
+item stands in the warehouse — so this is not "not arrived yet", it is
+unreachable. A pooled line (plain mattress, accessory) is bought against stock
+and routinely has no purchase order of its own; flagging those would bury the
+finding in hundreds of correct rows.
+
+**Three things it deliberately does not say.** An unproceeded order (blank is
+legitimate until an order is proceeded — the Processing Date IS the release to
+buy). A finished order. A PARTIAL order — `0 < po_qty_picked < qty` is a
+different sentence for a buyer and is not folded in here.
+
+**Why it is on the base payload.** It needs no MRP run, and `MobileSODetail`
+never calls `GET /:docNo/coverage` — a verdict served only there would be
+desktop-only, which is the recurring bug class this repo names in CLAUDE.md.
+
+**Why it exists.** `HC-SO-012949` sold a CODY single bedframe on 2026-07-27 that
+no purchase order on company 1 carries — and AutoCount's own export has none
+either, so the gap is in the account book, not in our copy of it. Minting one
+would diverge from the book AND make the line read READY the moment anything
+arrived against the invented document. The line read `PENDING`, which is what an
+ordinary not-yet-arrived line reads, so nothing on the document told a buyer to
+act. `docs/bugs/0677-*`.
+
+`backend/scripts/probe-unordered-sold-lines.mjs` (workflow: **Sold but never
+ordered (read-only)**) counts the population this mark covers, split into NEVER
+ORDERED and UNDEDICATED.
+
 ### 0.9 Where the neighbouring status systems are documented
 
 One home each — do not restate them here.

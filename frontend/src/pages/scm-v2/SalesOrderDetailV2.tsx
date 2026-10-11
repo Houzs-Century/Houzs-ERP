@@ -194,6 +194,9 @@ type SoItem = {
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
   delivered_qty?: number | null;
   remaining_qty?: number | null;
+  /* SERVER verdict: sold, released for purchasing, and nothing was ever ordered
+     for it. On the BASE payload, not on /coverage — it needs no MRP run. */
+  purchase_gap?: boolean | null;
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

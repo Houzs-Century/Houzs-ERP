@@ -259,6 +259,7 @@ import { advanceSoGeneration } from '../lib/so-generation';
 import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer-credits';
 import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
 import { effectiveLineStockStatus, readinessLinesByDoc, type LiveStockState } from '../lib/so-line-effective-stock';
+import { soLinePurchaseGap } from '../lib/so-line-purchase-gap';
 import { attachLineCategories, resolveLineCategories } from '../lib/so-readiness-category';
 import { deriveDisplayBrandingRowByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry, companyCodeById } from '../lib/doc-no';
@@ -962,6 +963,11 @@ const ITEM =
      Read so a READY sofa line can name the PO its goods sit in (owner
      2026-08-01: READY must always trace to a PO). Non-sofa lines are NULL. */
   'allocated_batch_no, ' +
+  /* How much of this line a live purchase order already covers, maintained by
+     recomputeSoPicked (routes/mfg-purchase-orders.ts). Read so the detail can
+     say when a HARD-BOUND line has no purchase order at all — see
+     `purchase_gap` below and scm/lib/so-line-purchase-gap.ts. */
+  'po_qty_picked, ' +
   'created_at';
 
 /* ─────────────────────────── Country auto-derive (Task #121) ──────────
@@ -2902,6 +2908,21 @@ mfgSalesOrders.get('/:docNo', async (c) => {
       shipped_source_adj: (shippedTrace?.adjQty ?? 0) > 0,
       // READY trace is MRP-derived — filled by GET /:docNo/coverage.
       ready_source_pos: [],
+      /* Sold, released for purchasing, and NOTHING was ever ordered for it.
+         Decided on the SERVER (scm/lib/so-line-purchase-gap.ts) so the desktop
+         and the phone cannot hold two opinions, and served on the BASE payload
+         rather than on /coverage because it needs no MRP run — and because
+         MobileSODetail never makes that second call. */
+      purchase_gap: soLinePurchaseGap({
+        companyId: activeCompanyId(c) ?? null,
+        orderStatus: (h.data as { status?: string | null }).status ?? null,
+        orderProcessed: !!(h.data as { processing_date?: string | null }).processing_date,
+        itemGroup: (it as { item_group?: string | null }).item_group ?? null,
+        itemCode: (it as { item_code?: string | null }).item_code ?? null,
+        cancelled: !!(it as { cancelled?: boolean | null }).cancelled,
+        qty: Number((it as { qty?: number | null }).qty ?? 0),
+        poQtyPicked: Number((it as { po_qty_picked?: number | null }).po_qty_picked ?? 0),
+      }),
     };
   });
   const totalDelivered = items.reduce((s, it) => s + Number(it.delivered_qty ?? 0), 0);

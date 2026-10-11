@@ -202,6 +202,32 @@ export function SubstitutedRowMobile({ on }: { on?: boolean }) {
   );
 }
 
+/* SO lines: NOTHING WAS EVER ORDERED for this line. Desktop twin:
+   PurchaseGapChip in components/SoSourceChips.tsx - keep the two in lockstep.
+   Amber and SOLID, deliberately not the dashed floating dress: this is not a
+   live projection that may resolve itself on the next view, it is a document
+   that does not exist and will not until somebody raises it. The verdict is the
+   SERVER's (scm/lib/so-line-purchase-gap.ts) and arrives on the base detail
+   payload, which matters here because MobileSODetail never calls
+   GET /:docNo/coverage. docs/bugs/0677-*. */
+const purchaseGapChip: CSSProperties = {
+  fontSize: 10, fontWeight: 700, color: "#8a3a00",
+  background: "#fff1e0", border: "1px solid #f0bd8a", borderRadius: 5, padding: "1px 6px",
+};
+export function PurchaseGapRowMobile({ on }: { on?: boolean | null }) {
+  if (!on) return null;
+  return (
+    <div style={rowStyle}>
+      <span
+        style={purchaseGapChip}
+        title="No purchase order has been raised for this line. It is a bedframe / sofa / special-order mattress, which on this company can only be marked READY through its OWN dedicated purchase order - so until one is raised and received, this line has no way to be fulfilled. Purchasing must order it."
+      >
+        No PO raised - purchasing must order this
+      </span>
+    </div>
+  );
+}
+
 /* Purchase docs (PO / GRN / PI): the DO(s) that shipped this line's goods.
    Multi-DO lines ALWAYS show each qty — a 1+1 batch split must not read as one
    unit shipped twice (owner 2026-08-01); a single chip shows qty only past 1. */

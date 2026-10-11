@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { formatDate } from "../lib/utils";
-import { SourcePosRowMobile, soStockPillMobile } from "./source-chips";
+import { PurchaseGapRowMobile, SourcePosRowMobile, soStockPillMobile } from "./source-chips";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
 import type { FlowNav } from "./relationship-map-model";
 import { fmtAmt } from "../lib/scm";
@@ -213,6 +213,7 @@ type SoItem = {
   remark?: string | null;
   photo_urls?: string[] | null;
   photoUrls?: string[] | null;
+  purchase_gap?: boolean | null;   // SERVER: sold, released to buy, nothing ever ordered
 };
 type SoPayment = {
   id: string;
@@ -1100,6 +1101,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                         </div>
                       );
                     })()}
+                    <PurchaseGapRowMobile on={it.purchase_gap} />
                     <SourcePosRowMobile
                       pos={it.shipped_source_pos ?? []}
                       adj={it.shipped_source_adj}

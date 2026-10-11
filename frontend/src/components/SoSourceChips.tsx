@@ -50,6 +50,14 @@ export type SoLineSourceFields = {
   ready_source_pos?: ReadySourceChip[];
   delivered_qty?: number | null;
   remaining_qty?: number | null;
+  /** SERVER verdict (scm/lib/so-line-purchase-gap.ts): this line was sold,
+   *  released for purchasing by a Processing Date, and NOTHING was ever
+   *  ordered for it. Only ever true for a company-1 hard-bound line — bedframe
+   *  / sofa / (SP) mattress — because those light ONLY through their own
+   *  dedicated purchase order, so with none there is no path to READY at all.
+   *  Never computed on the client: the phone and the desktop must not be able
+   *  to disagree about it. */
+  purchase_gap?: boolean | null;
 };
 
 /* 2990-parity stock pill (one home — formerly drillStock in the SO list):
@@ -102,6 +110,25 @@ const chipBase =
 const floatingChipBase =
   "rounded border border-dashed border-border px-1.5 py-0.5 font-docno text-[11px] font-semibold text-ink-secondary";
 
+/* The one WARNING identity in this cell. Amber, solid — deliberately not the
+   dashed "floating" dress the projections wear, because this is not a live
+   estimate that may resolve itself: no purchase order exists and none will
+   until somebody raises one. Mobile twin: PurchaseGapRowMobile in
+   mobile/source-chips.tsx — keep the two in lockstep. */
+const purchaseGapChip =
+  "rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800";
+
+export function PurchaseGapChip() {
+  return (
+    <span
+      className={purchaseGapChip}
+      title="No purchase order has been raised for this line. It is a bedframe / sofa / special-order mattress, which on this company can only be marked READY through its OWN dedicated purchase order — so until one is raised and received, this line has no way to be fulfilled. Purchasing must order it."
+    >
+      No PO raised
+    </span>
+  );
+}
+
 export function SoSourceChips({
   line,
   coverage,
@@ -130,12 +157,21 @@ export function SoSourceChips({
   const incomingPo = line.stock_state === "po" && line.coverage_po ? line.coverage_po : null;
   const showIncoming = incomingPo && !shippedSet.has(incomingPo) && !readyPoChips.some((r) => r.po === incomingPo);
 
-  if (shippedPos.length === 0 && readyPoChips.length === 0 && !anyAdj && !incomingPo) {
+  /* NOTHING WAS EVER ORDERED. This is not "no chips yet" — it is the one state
+     in this cell that no later query can fill, so it renders BEFORE the
+     placeholder and instead of the dash. HC-SO-012949 sold a CODY single
+     bedframe that no purchase order on company 1 carries; the line read PENDING
+     like any not-yet-arrived line, and nothing on the document said a buyer had
+     to act. docs/bugs/0677-*. */
+  const purchaseGap = line.purchase_gap === true;
+
+  if (shippedPos.length === 0 && readyPoChips.length === 0 && !anyAdj && !incomingPo && !purchaseGap) {
     /* BEFORE the dash: an unresolved read is not "nothing on the way". */
     return coveragePlaceholder(coverage) ?? <span className="text-[11px] text-ink-muted">—</span>;
   }
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-1">
+      {purchaseGap && <PurchaseGapChip />}
       {shippedPos.map((po) => (
         <span
           key={`s-${po}`}
