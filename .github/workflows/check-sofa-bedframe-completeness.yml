@@ -1,0 +1,68 @@
+name: Sofa + bedframe completeness audit (read-only)
+
+# Manual, read-only. The FINAL cutover completeness audit: compartment, seat
+# size, colour and special orders, split SOFA vs BEDFRAME, over every purchase
+# order line and every line on a PROCEEDED sales order, plus SO -> PO alignment.
+# There is deliberately no APPLY input - this workflow can only read.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      list:
+        description: "1 for the per-line detail, 0 for counts only"
+        required: false
+        default: "1"
+        type: string
+      cap:
+        description: "max detail lines per cell (raise to see everything)"
+        required: false
+        default: "25"
+        type: string
+
+concurrency:
+  group: check-sofa-bedframe-completeness-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-sofa-bedframe-completeness.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          LIST: ${{ inputs.list }}
+          CAP: ${{ inputs.cap }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-sofa-bedframe-completeness.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          LIST: ${{ inputs.list }}
+          CAP: ${{ inputs.cap }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

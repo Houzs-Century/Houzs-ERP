@@ -14,6 +14,7 @@ import { formatDate } from "../lib/utils";
 import { SearchProgress } from "../components/SearchProgress";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { SourcePosRowMobile } from "./source-chips";
+import { poCellChips } from "../lib/soPoChips";
 import { identityStorageKey } from "../lib/storageIdentity";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../hooks/useServerSearch";
 import "./mobile.css";
@@ -37,8 +38,13 @@ type SoRow = {
   is_fully_ready: boolean | null; is_main_ready: boolean | null; ready_categories: string[] | null;
   /* Union of per-line source-PO chips (owner 2026-08-02) — the mobile twin of
      the desktop list's PO No. column: shipped consumed batches ∪ READY
-     projections, from the ONE shared resolver. */
+     projections, from the ONE shared resolver. `converted_po_nos` (the POs
+     this SO's lines were raised INTO) rides alongside since 2026-08-11 and
+     renders as muted provenance chips — without it the card showed nothing at
+     all for a CONFIRMED, not-yet-shipped order that HAS a purchase order.
+     Both surfaces derive the split from lib/soPoChips. */
   source_po_union?: string[] | null;
+  converted_po_nos?: string[] | null;
   source_po_adj?: boolean;
 };
 
@@ -600,12 +606,16 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
                   </div>
                   {/* Line 4 — fulfilment chips (only when live + present) */}
                   <FulfilChips row={r} />
-                  {/* Line 4b — source PO union (desktop PO No. column's mobile
-                      twin; owner 2026-08-02). Rendered only when non-empty —
-                      card idiom, the desktop column shows the dash instead. */}
-                  {((r.source_po_union?.length ?? 0) > 0 || r.source_po_adj) && (
-                    <SourcePosRowMobile pos={r.source_po_union ?? []} adj={r.source_po_adj} />
-                  )}
+                  {/* Line 4b — source PO union + raised POs (desktop PO No.
+                      column's mobile twin; owner 2026-08-02, raised arm added
+                      2026-08-11). Rendered only when non-empty — card idiom,
+                      the desktop column shows the dash instead. The phone card
+                      wraps the full list; the "+N" cap is a LIST-cell rule. */}
+                  {(() => {
+                    const { source, raised } = poCellChips(r);
+                    if (source.length === 0 && raised.length === 0 && !r.source_po_adj) return null;
+                    return <SourcePosRowMobile pos={source} raised={raised} adj={r.source_po_adj} />;
+                  })()}
                   {/* Line 5 — created / total */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 9, paddingTop: 9, borderTop: "1px solid var(--line2)" }}>
                     <span style={{ fontSize: 10, color: "var(--mut2)" }}>{dm(soDate(r))} · created</span>

@@ -201,6 +201,9 @@ type SoItem = {
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
   delivered_qty?: number | null;
   remaining_qty?: number | null;
+  /* A retired line — the SO's history, not part of the live order. Returned by
+     GET /:docNo like every other row; filtered out at the use site. */
+  cancelled?: boolean | null;
 };
 type SoPayment = {
   id: string;
@@ -295,7 +298,14 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
   const pickableStaffQ = usePickableStaff({ onlySales: true });
   const houzsAuth = useHouzsAuth();
   const h = detail.data?.salesOrder as SoHeader | undefined;
-  const items = (detail.data?.items ?? []) as SoItem[];
+  /* Cancelled lines are dropped here for the SAME reason desktop V2 drops them
+     (SalesOrderDetailV2.tsx `.filter((l) => !l.cancelled)`): GET /:docNo returns
+     an SO's retired lines along with its live ones, and this screen's `items`
+     feeds both the Line items card and generateSalesOrderPdf. Desktop filtered
+     and mobile did not — the one-shared-rule divergence this repo keeps paying
+     for. Production held zero cancelled rows until 2026-08-10, so it never
+     showed. */
+  const items = ((detail.data?.items ?? []) as SoItem[]).filter((l) => !l.cancelled);
   /* MONEY IS EITHER KNOWN OR UNKNOWN — the MobilePOD (#653) rule, applied to the
      sibling screen that runs the same subtraction. `paymentsQ.data ?? []` folded
      a FAILED payments read into "no payments", and `data` is set only by a

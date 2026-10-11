@@ -306,6 +306,15 @@ for the three incident entries.
   legacy convert-time raise-link (`converted_po_nos`) survives as the tooltip
   ("Raised PO (convert-time link, not a goods source)") when it differs.
   Desktop column + mobile Orders card (`SourcePosRowMobile`).
+  **Superseded 2026-08-11 — the raise-link is a MUTED CHIP again, not a
+  tooltip.** Both source arms need execution (a DO line / an open lot that
+  resolves to a PO), so a CONFIRMED unshipped order showed "—" while its
+  Relationship Map named a PO. On production only ~53 of 2,723 Houzs Century
+  SOs can light the source arms, against 277 carrying a real non-cancelled
+  `purchase_order_items.so_item_id` link. The cell is now solid-chip = goods
+  source, muted-chip = raised PO (deduped against the source set), capped at 3
+  with a `+N` whose title lists all; one derivation in `lib/soPoChips.ts` feeds
+  desktop (`SoListPoCell`) and mobile (`SourcePosRowMobile` `raised` slot).
 - **"STOCK" tag (owner: surplus must not read as missing data).** A purchase-doc
   line/header with NO assignment renders a subtle `STOCK` tag instead of a bare
   dash (`StockTag` / `StockTagMobile`; `AssignedSoCell emptyMeans="stock"` on

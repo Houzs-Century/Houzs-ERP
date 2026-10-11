@@ -70,6 +70,7 @@ export function SourcePosRowMobile({
   pos,
   adj,
   ready,
+  raised,
   label = "Source PO",
   incoming = null,
   showEmpty = false,
@@ -77,6 +78,12 @@ export function SourcePosRowMobile({
   pos: string[];
   adj?: boolean;
   ready?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
+  /* SO list card (2026-08-11): the purchase orders this SO's lines were raised
+     INTO (`converted_po_nos`). Procurement provenance, NOT a goods source — so
+     it wears the muted dress, exactly like the "bought for" chips on the
+     purchase-doc rows. Desktop twin: the PO No. column's muted chip in
+     pages/scm-v2/MfgSalesOrdersListV2.tsx — keep the two in lockstep. */
+  raised?: string[];
   label?: string;
   /* SO lines: the MRP incoming-PO coverage for an un-arrived remainder
      (stock_state === 'po') — "PO-x · ETA dd/mm/yyyy" as muted mono text. */
@@ -86,8 +93,9 @@ export function SourcePosRowMobile({
   showEmpty?: boolean;
 }) {
   const readyPo = (ready ?? []).filter((r) => r.kind === "po" && r.po && !pos.includes(r.po));
+  const raisedPo = (raised ?? []).filter((n) => n && !pos.includes(n) && !readyPo.some((r) => r.po === n));
   const anyAdj = Boolean(adj) || (ready ?? []).some((r) => r.kind === "adjustment");
-  if (pos.length === 0 && readyPo.length === 0 && !anyAdj && !incoming) {
+  if (pos.length === 0 && readyPo.length === 0 && raisedPo.length === 0 && !anyAdj && !incoming) {
     if (!showEmpty) return null;
     return (
       <div style={rowStyle}>
@@ -113,6 +121,15 @@ export function SourcePosRowMobile({
         >
           {r.po}
           {(chipCount > 1 || r.qty > 1) ? ` x${r.qty}` : ""}
+        </span>
+      ))}
+      {raisedPo.map((n) => (
+        <span
+          key={`raised-${n}`}
+          style={mutedChip}
+          title={`Raised PO ${n} — this order's lines were converted into this purchase order. Procurement provenance: the goods have not been drawn from stock yet, so it is not (yet) a goods source.`}
+        >
+          {n}
         </span>
       ))}
       {anyAdj && <StockAdjChipMobile />}

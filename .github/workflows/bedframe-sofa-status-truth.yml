@@ -1,0 +1,36 @@
+name: Bedframe + sofa status truth vs AutoCount (read-only)
+
+# LANE D. Answers the owner's own test: under BOUND allocation the ERP's bedframe/sofa
+# readiness must EQUAL AutoCount's, so every divergence is a bug in us. Measures it per
+# line and attributes each divergence to a named rule difference. Writes nothing.
+#
+# The AutoCount side is a frozen export committed under backend/scripts/data/ because the
+# live book is only reachable over ZeroTier from the owner's LAN, not from a runner.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT in the deploy concurrency group: a diagnostic must never queue behind
+# or displace a release.
+concurrency:
+  group: bedframe-sofa-status-truth
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-bedframe-sofa-status-truth.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

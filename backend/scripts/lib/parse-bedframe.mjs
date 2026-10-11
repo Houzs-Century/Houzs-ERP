@@ -40,6 +40,19 @@ function parseBedframe(d2) {
   const QUOTE = `["”“"″'’‘′]{1,2}`;
   // an inch marker may be a quote, the word, or BOTH run together ("8'INCH")
   const INCHM = `(?:${QUOTE}\\s*INCH(?:ES)?|${QUOTE}|INCH(?:ES)?|IN\\b)`;
+  /* A measurement written BEFORE its keyword must be a number in its own right,
+     not the tail of a FABRIC CODE. Unguarded, \d+ starts mid-token: "PC151
+     divan" gave divan 151" and "PC151-01 divan" gave divan 1" (the -01 suffix);
+     "PC151 LEG 4" gave a 151" leg instead of 4".
+
+     Two ways to qualify, because staff DO glue real figures to the word before
+     them - "Hydraulic2pcs12”inner" is a genuine 12" inner depth:
+       1. the number starts cleanly, after a delimiter or at the start, or
+       2. it carries an EXPLICIT inch marker, which a fabric code never does.
+     A code like PC151 satisfies neither. Both alternatives are zero-width, so
+     the rules below keep their single capture group. Rules where the number
+     comes AFTER the keyword ("Divan10", "M.GAP:14") never had the problem. */
+  const NUM = `(?:(?<![A-Za-z0-9.-])|(?=\\d+(?:\\.\\d+)?\\s*(?:${QUOTE}|INCH)))`;
   /* HYDRAULIC beds first: the height lives inside a note — "Col:X(hydraulic 16”/
      Inner 14”/4Pump)" — and the INNER figure is the divan. Run before the general
      divan pattern so it cannot grab the 16" outer or a pump count. */
@@ -53,7 +66,7 @@ function parseBedframe(d2) {
        "inner的话就是inner+2 就是total了". So the outer wins when it is written,
        and an inner-only line converts at +2. The data agrees with him without
        exception - every line stating both reads "hydraulic 16”/Inner 14”". */
-    const innerM = /(\d+(?:\.\d+)?)\s*["”“"″'’‘′]{0,2}\s*(?:INCH(?:ES)?)?\s*INNER/i.exec(s)
+    const innerM = new RegExp(`${NUM}(\\d+(?:\\.\\d+)?)\\s*["”“"″'’‘′]{0,2}\\s*(?:INCH(?:ES)?)?\\s*INNER`, "i").exec(s)
       || /INNER[^0-9+]{0,14}?(\d+(?:\.\d+)?)/i.exec(s);
     const inner = innerM ? parseFloat(innerM[1]) : null;
     /* An outer height: stated on DIVAN, or on the word HYDRAULIC when INNER is
@@ -61,7 +74,7 @@ function parseBedframe(d2) {
        figure must carry an inch marker, so "Hydraulic2pcs12”" cannot read the
        PIECE COUNT as a height. */
     if ((hm2 = /DIV(?:AN)?\.?\s*[:：]?\s*(?:HYDRAUL[A-Z]*\s*)?(\d+(?:\.\d+)?)/i.exec(s))) o.divan = parseFloat(hm2[1]);
-    else if ((hm2 = /(\d+(?:\.\d+)?)\s*["”“"″'’‘′]{0,2}\s*(?:INCH(?:ES)?)?\s*DIV(?:AN)?\b/i.exec(s))) o.divan = parseFloat(hm2[1]);
+    else if ((hm2 = new RegExp(`${NUM}(\\d+(?:\\.\\d+)?)\\s*["”“"″'’‘′]{0,2}\\s*(?:INCH(?:ES)?)?\\s*DIV(?:AN)?\\b`, "i").exec(s))) o.divan = parseFloat(hm2[1]);
     else if ((hm2 = /(?<!INNER[^0-9]{0,14})HYDRAUL[A-Z]*(?:\s*TOTAL)?[^0-9A-Za-z]{0,4}(\d+(?:\.\d+)?)\s*(?:["”“"″'’‘′]|INCH)/i.exec(s))) o.divan = parseFloat(hm2[1]);
     // no outer height written anywhere: the inner is what we have, +2
     if (o.divan == null && inner != null) o.divan = inner + 2;
@@ -77,17 +90,17 @@ function parseBedframe(d2) {
   // "10”gap" / "12 INCH GAP" — the figure sits BEFORE the word as often as after
   // gap: also "M'GP:", "M'Gap:", "M.Gap :", and runs-together "M.GAP:14INCHES"
   if ((m = new RegExp(`(?:MATT(?:RESS)?|M)?\\s*['’.]?\\s*(?:GAP|GP)\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)`, "i").exec(s))) o.gap = parseFloat(m[1]);
-  if (o.gap == null && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*(?:MATT(?:RESS)?|M)?\\s*['’.]?\\s*(?:GAP|GP)\\b`, "i").exec(s))) o.gap = parseFloat(m[1]);
+  if (o.gap == null && (m = new RegExp(`${NUM}(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*(?:MATT(?:RESS)?|M)?\\s*['’.]?\\s*(?:GAP|GP)\\b`, "i").exec(s))) o.gap = parseFloat(m[1]);
   if (o.divan == null && (m = new RegExp(`\\bDIV(?:AN)?\\.?\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*(?:\\+\\s*(\\d+(?:\\.\\d+)?))?`, "i").exec(s))) { o.divan = parseFloat(m[1]); if (m[2] != null) o.leg = parseFloat(m[2]); }
   if (/NO\s*LEGS?/i.test(s)) o.leg = 0;
-  else if (o.leg === undefined && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*(?:WOODEN\\s*)?LEGS?`, "i").exec(s))) o.leg = parseFloat(m[1]);
+  else if (o.leg === undefined && (m = new RegExp(`${NUM}(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*(?:WOODEN\\s*)?LEGS?`, "i").exec(s))) o.leg = parseFloat(m[1]);
   // "Leg:4”" — the figure after the word, the mirror of the form above
   else if (o.leg === undefined && (m = new RegExp(`LEGS?\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)`, "i").exec(s))) o.leg = parseFloat(m[1]);
   // a divan stated with no leg mentioned at all = no leg (0), per owner's model
   if (o.leg === undefined && o.divan != null && !/LEG/i.test(s)) o.leg = 0;
   /* divan written WITHOUT the word "divan": "PC151-07/8inch+4inchLeg/Gap14inch"
      or 'DIVAN"8"'. Take the height that sits right before the leg figure. */
-  if (o.divan == null && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${INCHM}\\s*\\+\\s*(?:NO\\s*LEGS?|(\\d+(?:\\.\\d+)?))`, "i").exec(s))) {
+  if (o.divan == null && (m = new RegExp(`${NUM}(\\d+(?:\\.\\d+)?)\\s*${INCHM}\\s*\\+\\s*(?:NO\\s*LEGS?|(\\d+(?:\\.\\d+)?))`, "i").exec(s))) {
     o.divan = parseFloat(m[1]); if (o.leg === undefined) o.leg = m[2] != null ? parseFloat(m[2]) : 0;
   }
   if (o.divan == null && (m = new RegExp(`DIVAN\\s*${QUOTE}?\\s*(\\d+(?:\\.\\d+)?)`, "i").exec(s))) o.divan = parseFloat(m[1]);
@@ -95,7 +108,7 @@ function parseBedframe(d2) {
      ("frontdrawerdivan12”"), and the height is often written FIRST ("12”Divan").
      Both are the same fact stated in a different order. */
   if (o.divan == null && (m = new RegExp(`DIV(?:AN)?\\.?\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)`, "i").exec(s))) o.divan = parseFloat(m[1]);
-  if (o.divan == null && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*DIV(?:AN)?\\b`, "i").exec(s))) o.divan = parseFloat(m[1]);
+  if (o.divan == null && (m = new RegExp(`${NUM}(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*DIV(?:AN)?\\b`, "i").exec(s))) o.divan = parseFloat(m[1]);
   /* hydraulic beds state the height inside the note: "hydraulic 16”/Inner 14”",
      "12”innerhydraulic", "Hydraulic (Inner 10\")" — the INNER figure is the divan. */
   /* SPECIAL SIZE (owner): anything outside S/SS/Q/K/SK is "SP" and MUST carry its
@@ -123,9 +136,9 @@ function parseBedframe(d2) {
   // colour written as a plain word ("Cream/Divan10/Gap13", ")Cream/...", "sliver/...")
   if (!o.color && (m = /(?:^|[\/)\s])\s*(CREAM|SILVER|SLIVER|WHITE|BLACK|GREY|GRAY|BEIGE|BROWN|BLUE|GREEN|PINK|IVORY|CHARCOAL)\b/i.exec(s))) o.color = m[1].trim();
   // "8" NO LEG" with no divan keyword: the bare height before NO LEG is the divan
-  if (o.divan == null && (m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*NO\\s*LEGS?`, "i").exec(s))) { o.divan = parseFloat(m[1]); o.leg = 0; }
+  if (o.divan == null && (m = new RegExp(`${NUM}(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*NO\\s*LEGS?`, "i").exec(s))) { o.divan = parseFloat(m[1]); o.leg = 0; }
   // "8 inch : 2 inch leg" / "8 inch 1 inch leg" / "8'INCH 4'INCH LEG" — divan then leg without +
-  if ((m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${INCHM}\\s*[:,]?\\s*(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*LEGS?`, "i").exec(s))) {
+  if ((m = new RegExp(`${NUM}(\\d+(?:\\.\\d+)?)\\s*${INCHM}\\s*[:,]?\\s*(\\d+(?:\\.\\d+)?)\\s*${INCHM}?\\s*LEGS?`, "i").exec(s))) {
     if (o.divan == null) o.divan = parseFloat(m[1]);
     if (o.leg === undefined) o.leg = parseFloat(m[2]);
   }

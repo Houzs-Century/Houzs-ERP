@@ -90,6 +90,32 @@ describe("humanHttpMessage", () => {
     expect(humanHttpMessage(503, "")).toMatch(/briefly unavailable|try again in a moment/i);
   });
 
+  test("a frozen save reads as PAUSED, not as an outage — `reason` is read", () => {
+    // scm/lib/write-freeze.ts refuses a frozen write with 503 + the explanation.
+    // This mapper read only error/message/detail, so the explanation was dropped
+    // and staff were shown the generic 503 line — an outage sentence for a
+    // deliberate business decision. Worse, that sentence is what isColdPool503
+    // matches, so the client silently re-sent the refused save four more times.
+    const body = JSON.stringify({
+      error: "write_frozen",
+      reason: "Saving is paused while the AutoCount data is brought across.",
+      message: "Saving is paused while the AutoCount data is brought across.",
+    });
+    const msg = humanHttpMessage(503, body);
+    expect(msg).toMatch(/paused/i);
+    expect(msg).not.toMatch(/briefly unavailable|try again in a moment/i);
+  });
+
+  test("`reason` alone is enough — the SCM client's field is honoured here too", () => {
+    // vendor/scm/lib/authed-fetch.ts has always read `reason`, which is why SCM
+    // pages behaved better than the rest of the app on the same refusal.
+    const body = JSON.stringify({
+      error: "write_frozen",
+      reason: "Saving is paused while the AutoCount data is brought across.",
+    });
+    expect(humanHttpMessage(503, body)).toMatch(/paused/i);
+  });
+
   test("a leaked SQLite/D1 constraint error is NOT shown — falls to the status map", () => {
     // A backend catch that echoes `e.message` on a UNIQUE violation used to
     // surface the raw driver string. It must never reach the operator.

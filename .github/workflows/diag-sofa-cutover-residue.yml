@@ -1,0 +1,73 @@
+name: Sofa cutover residue diagnostic (read-only)
+
+# Manual, read-only. Everything the two sofa audits left unexplained:
+#   A  compartment completeness scored on the FIELD, beside the import-time
+#      SOFA UNPARSED remark rule, over one snapshot so the two are comparable
+#   B  every build whose PO carries fewer pieces than the SO, adjudicated
+#      against quantities, cancelled lines and sibling purchase orders
+#   C  the SO/PO variant differences classified by DIRECTION
+#   D  the null and dangling so_item_id links
+#   E  whether any row was actually DELETED in production ("不可以删只可以 cancel")
+# Proposes, never writes. There is deliberately no APPLY input.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      list:
+        description: "1 for the per-line detail, 0 for counts only"
+        required: false
+        default: "1"
+        type: string
+      cap:
+        description: "max detail lines per leg (raise to see everything)"
+        required: false
+        default: "25"
+        type: string
+
+concurrency:
+  group: diag-sofa-cutover-residue-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/diag-sofa-cutover-residue.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          LIST: ${{ inputs.list }}
+          CAP: ${{ inputs.cap }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/diag-sofa-cutover-residue.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          LIST: ${{ inputs.list }}
+          CAP: ${{ inputs.cap }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

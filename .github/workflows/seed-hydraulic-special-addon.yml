@@ -1,0 +1,67 @@
+name: Seed HYDRAULIC special-order code
+
+# Manual. Opens HYDRAULIC as a tickable code in the Special Orders picker
+# (owner 2026-08-11, "开 special order 那边勾选").
+#
+# The price is created at 0 and stays 0 until the owner sets it. That is the
+# interlock with the charging fix in the same PR: a priced special add-on now
+# really does move the customer's price, and the 49 lines that say HYDRAULIC
+# are migrated AutoCount documents that must never re-price.
+#
+# Writes scm.special_addons directly - NOT the snapshot route, which
+# deactivates every code missing from the payload. DRY-RUN unless apply=1.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      apply:
+        description: "1 to create it, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: seed-hydraulic-special-addon-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/seed-hydraulic-special-addon.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/seed-hydraulic-special-addon.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

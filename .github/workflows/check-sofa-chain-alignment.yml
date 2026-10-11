@@ -1,0 +1,70 @@
+name: Sofa document-chain alignment audit (read-only)
+
+# Manual, read-only. Does one sofa build survive SO -> PO -> GRN and SO -> DO,
+# or do the customer's paperwork and the factory's paperwork drift apart?
+# Each of those documents is a SNAPSHOT taken at creation, so a correction
+# applied to a parent does not travel on its own. Reports four legs plus the
+# so_item_id blind spot (a DO line with a NULL link is invisible to every
+# link-keyed check, so it is counted and matched a second way).
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      list:
+        description: "1 for the per-line detail, 0 for counts only"
+        required: false
+        default: "1"
+        type: string
+      cap:
+        description: "max detail lines per leg (raise to see everything)"
+        required: false
+        default: "25"
+        type: string
+
+concurrency:
+  group: check-sofa-chain-alignment-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-sofa-chain-alignment.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          LIST: ${{ inputs.list }}
+          CAP: ${{ inputs.cap }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-sofa-chain-alignment.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          LIST: ${{ inputs.list }}
+          CAP: ${{ inputs.cap }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

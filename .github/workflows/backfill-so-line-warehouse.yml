@@ -31,6 +31,10 @@ on:
         default: "sofa"
         type: choice
         options: [sofa, all]
+      top:
+        description: "How many rows to list per section"
+        required: false
+        default: "40"
 
 concurrency:
   group: backfill-so-line-warehouse-${{ inputs.target }}
@@ -51,6 +55,7 @@ jobs:
         env:
           APPLY: ${{ inputs.apply }}
           GROUP: ${{ inputs.group }}
+          TOP: ${{ inputs.top }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
   run-prod:
@@ -66,4 +71,5 @@ jobs:
         env:
           APPLY: ${{ inputs.apply }}
           GROUP: ${{ inputs.group }}
+          TOP: ${{ inputs.top }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

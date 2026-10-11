@@ -19,6 +19,83 @@ const specialsList = (v: unknown): string[] => {
   return s ? [s] : [];
 };
 
+/* ── Redundant-twin fold for the SPECIAL segment (2026-08-11) ───────────────
+   The migrated-corpus backfill (backfill-specials-into-variants.mjs) is
+   deliberately MERGE-ONLY and machine-asserts that it never removes a
+   pre-existing entry — the owner's 不可以删只可以 cancel rule. So a line whose
+   slip already carried the parser's own glued phrase now ALSO carries the
+   picker code the backfill derived from it, and `variants.specials` legitimately
+   holds both:
+
+     ["BACKCUSHIONCHANGE8030", "Change 8030 Backcushion", "Wooden Arm"]
+       → SPECIAL: BACKCUSHIONCHANGE8030 + Change 8030 Backcushion + Wooden Arm
+
+   One request, printed twice. The data is correct and must not be touched, so
+   the duplicate is resolved HERE, at the display layer, and nowhere else.
+
+   The rule is deliberately narrow: only a SINGLE-TOKEN entry — a machine-glued
+   or fragmentary string like `nylon`, `8030`, `NILONFABRIC`,
+   `BACKCUSHIONCHANGE8030` — may ever be hidden, and only when another entry in
+   the SAME list is a strictly richer twin of it (same identity, contains it, or
+   is a re-ordering of its parts). An operator's multi-word request is therefore
+   never hideable, so this can only ever suppress a machine artefact, never
+   information. The identity is `skey` — the parsers' own dedupe key, letters and
+   digits only with nilon≡nylon (scripts/lib/sofa-special-map.mjs, and the
+   containment merge in backfill-specials-into-variants.mjs `phrasesOf`) — so the
+   display agrees with the writer about what "the same phrase" means.
+
+   Ranking picks the survivor: longer identity first (`Nylon Fabric` beats
+   `nylon`), then more word-parts (the owner's spaced picker code
+   `Change 8030 Backcushion` beats the glued `BACKCUSHIONCHANGE8030`), then
+   original order. That is a strict total order, so the richest member of any
+   twin group always survives and the segment can never be emptied.
+
+   What this deliberately does NOT do: fold a SEMANTIC pair whose two strings
+   share no letters — `NOSTICHINGINSITTINGAREA` beside `No notch on Seat Cushion`,
+   `BACKRESTCHANGE8030` beside `Change 8030 Backcushion`. Deciding those needs the
+   owner's phrase ruling (scripts/data/special-order-phrase-map.json), which is a
+   Node-script data file read by two scripts and already hand-copied into
+   scripts/lib/sofa-special-map.mjs with an admitted drift. Vendoring it into the
+   Worker bundle AND the browser bundle to gain 26 production lines would make it
+   a fourth and fifth copy of one ruling, so it is measured and reported instead
+   of guessed at. Measured on production 2026-08-11: 216 of 1,051 lines carrying
+   specials render a redundant twin that this fold removes; 26 more carry a
+   semantic pair it deliberately leaves alone. */
+const SPECIAL_ID = (s: string): string =>
+  s.toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/NILON/g, 'NYLON');
+const SPECIAL_PARTS = (s: string): string[] =>
+  s.toUpperCase().replace(/NILON/g, 'NYLON').split(/[^A-Z0-9]+/).filter(Boolean);
+
+/** Can `target` be built by concatenating ALL of `parts` in some order? */
+const isReordering = (target: string, parts: string[]): boolean => {
+  if (parts.length < 2 || !target) return false;
+  if (parts.join('').length !== target.length) return false;
+  const walk = (rest: string[], remaining: string): boolean => {
+    if (rest.length === 0) return remaining === '';
+    for (let i = 0; i < rest.length; i++) {
+      if (!remaining.startsWith(rest[i])) continue;
+      if (walk(rest.slice(0, i).concat(rest.slice(i + 1)), remaining.slice(rest[i].length))) return true;
+    }
+    return false;
+  };
+  return walk(parts, target);
+};
+
+export function foldRedundantSpecials(list: string[]): string[] {
+  if (list.length < 2) return list;
+  const info = list.map((v, i) => ({ v, i, id: SPECIAL_ID(v), n: SPECIAL_PARTS(v).length }));
+  const richer = (b: typeof info[number], a: typeof info[number]): boolean =>
+    (b.id.length !== a.id.length ? b.id.length > a.id.length : (b.n !== a.n ? b.n > a.n : b.i < a.i));
+  return info
+    .filter((a) => {
+      if (!a.id || a.n !== 1) return true; // only a glued/fragmentary entry is hideable
+      return !info.some((b) => b !== a && b.id
+        && (b.id === a.id || b.id.includes(a.id) || isReordering(a.id, SPECIAL_PARTS(b.v)))
+        && richer(b, a));
+    })
+    .map((a) => a.v);
+}
+
 /**
  * Colour KIV (Loo 2026-06-12): the line committed to a fabric SERIES
  * (variants.fabricId / fabricLabel — its tier add-on is already charged) but
@@ -172,7 +249,9 @@ export function buildVariantSummary(
   // ({ code: [chosen option-group labels] }), append the picked choices after each
   // code — e.g. "SPECIAL: Right Drawer (10") + Back Cover". Read straight off
   // `variants` so no caller signature changes; missing → codes-only (old orders).
-  const specials = specialsList(variants.specials ?? variants.special);
+  // foldRedundantSpecials: one request must print once — see the rule above.
+  // The stored array is untouched; only this rendering drops the glued twin.
+  const specials = foldRedundantSpecials(specialsList(variants.specials ?? variants.special));
   const choicesMap =
     variants.specialChoices && typeof variants.specialChoices === 'object'
       ? (variants.specialChoices as Record<string, unknown>)

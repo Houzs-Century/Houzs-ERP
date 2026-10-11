@@ -221,6 +221,29 @@ const driftThresholdExceeded = (clientCenti: number, serverSen: number): boolean
   return drift > 0.005;
 };
 
+/**
+ * How much of the caller's selling price to believe.
+ *
+ *   false            the authoritative default — a catalog line is re-priced to
+ *                    mfg_products.sell_price_sen (+ fabric delta + extras).
+ *   true             owner ruling 2026-05-31: a trusted non-POS author's
+ *                    hand-entered price wins, but only when they entered one.
+ *                    0 still means "not provided" and takes the catalogue fill.
+ *   'including-zero' additionally believes a stored 0.
+ *
+ * 'including-zero' exists for MIGRATED documents (linked_ac_docno IS NOT NULL)
+ * and nothing else. Their prices came from AutoCount, where a sofa set is
+ * routinely carried as the whole-set price on ONE lead module line with 0 on its
+ * siblings. Under `true` those 0 siblings would each be handed a catalogue price
+ * on the next approved amendment and the customer would be billed for the set
+ * several times over; under 'including-zero' the AutoCount shape survives.
+ *
+ * Do NOT reach for it on a line the operator is authoring now — there a 0 really
+ * does mean the client could not resolve a price, and the catalogue fill is the
+ * correct answer.
+ */
+export type TrustSelling = boolean | 'including-zero';
+
 /** Pure mapper from a (product, fabric, variants) snapshot to the
  *  breakdown + DB column values. Used by tests + the route helpers below
  *  so the math path is verifiable without Supabase. */
@@ -275,8 +298,11 @@ export function recomputeFromSnapshot(
    *  PERSISTED as-is instead of normalised to the authoritative catalog figure.
    *  Default false = the authoritative behaviour for every other caller. NEVER
    *  true for a POS-tablet session (those are drift-rejected upstream). Cost is a
-   *  server-only snapshot and is untouched by this flag. */
-  trustOperatorSelling: boolean = false,
+   *  server-only snapshot and is untouched by this flag.
+   *
+   *  See {@link TrustSelling} for what 'including-zero' adds and why only a
+   *  MIGRATED document may ask for it. */
+  trustOperatorSelling: TrustSelling = false,
 ): RecomputedLine {
   const category = toMfgCategory(item.itemGroup, product?.category ?? '');
   const variants = item.variants ?? {};
@@ -407,15 +433,16 @@ export function recomputeFromSnapshot(
   /* D4 (Chairman 2026-05-30, Q1) — AUTHORITATIVE selling recompute + drift
      reject. The Master Account store (mfg_products.sell_price_sen, Phase-1
      migration 0109) is the customer-facing selling base; add any director-set
-     selling surcharges (breakdown.unitPriceSen — 0 today). On a catalog line we
+     selling surcharges (`sellingSurchargesSen` below). On a catalog line we
      charge that authoritative price and flag drift > 0.5% so the route returns
      HTTP 400 (CLAUDE.md non-negotiable).
 
        • SOFA is EXCLUDED from this sell_price_sen catalog path — its selling is
          recomputed from per-Model module-SKU prices just below (SOFA-SELLING-
-         PLAN). A sofa we can't price there keeps the operator's manual price.
-       • A line with no sell_price_sen (custom / special order) has no
-         authoritative figure → trust the operator.
+         PLAN), which since 2026-08-11 carries the SAME surcharges. A sofa we
+         can't price there keeps the operator's manual price.
+       • A line with neither sell_price_sen NOR a priced surcharge (custom /
+         special order) has no authoritative figure → trust the operator.
        • A client price of 0 means "not provided" (e.g. the backend SO editor
          couldn't resolve it client-side) → fill the authoritative price, no
          drift (driftThresholdExceeded returns false for client 0 vs server>0). */
@@ -432,8 +459,36 @@ export function recomputeFromSnapshot(
     ? Math.round(pwpBaseSen)
     : null;
   const effectiveBaseSen = pwpBase ?? sellBaseSen;
-  const authoritativeSellingSen = effectiveBaseSen + breakdown.unitPriceSen;
-  const hasAuthoritativeSelling = category !== 'SOFA' && effectiveBaseSen > 0;
+
+  /* Owner 2026-08-11 ("让收费追上成本") — CHARGE the selling surcharges the COST
+     path already books. `computeMfgLinePrice` pins its selling base at 0
+     (Commander 2026-05-29: the product price tables are COST), so this
+     subtraction IS the Σ of the director-authored selling surcharges —
+     specials / divan / leg / total-height — and nothing else. It is the exact
+     mirror of the sofa build's `costSurchargesSen` below, which is why the two
+     sides can no longer disagree about the same add-on. Written as a
+     subtraction rather than as `breakdown.unitPriceSen` so that if the selling
+     base ever stops being 0 this cannot silently start double-charging it. */
+  const sellingSurchargesSen = breakdown.unitPriceSen - breakdown.basePriceSen;
+
+  /* A MIGRATED document must never be re-priced by this engine (owner ruling
+     "A", enforced for the amendment path by #1954). 'including-zero' is the
+     marker the amendment path derives from `linked_ac_docno IS NOT NULL`, and
+     it is load-bearing HERE: 10,856 of 13,909 migrated lines are priced 0, so
+     the `sellingSurchargesSen > 0` arm added below is exactly the arm that
+     would hand those lines a computed price. The final trust overwrite already
+     restores the stored price, but the arm is made structurally inert under the
+     migrated marker as well, so the new behaviour cannot reach them even if a
+     future caller reorders that overwrite. */
+  const isMigratedTrust = trustOperatorSelling === 'including-zero';
+  const chargeableSurchargesSen = isMigratedTrust ? 0 : sellingSurchargesSen;
+
+  const authoritativeSellingSen = effectiveBaseSen + chargeableSurchargesSen;
+  /* A line whose product carries sell_price_sen = 0 used to be exempt from the
+     whole authoritative path, so a priced add-on on it was costed and never
+     charged. A priced surcharge is itself an authoritative figure. */
+  const hasAuthoritativeSelling =
+    category !== 'SOFA' && (effectiveBaseSen > 0 || chargeableSurchargesSen > 0);
 
   /* SOFA-SELLING-PLAN (Chairman 2026-05-31) — a configurator sofa arrives as
      ONE line carrying variants.cells + variants.depth. Recompute its
@@ -557,10 +612,18 @@ export function recomputeFromSnapshot(
       : lineCombos;
     const sofaSellingSen = computeSofaSellingSen(sofaCells as Cell[], sofaDepth, sofaModulePrices, effectiveCombos);
     if (sofaSellingSen > 0) {
-      // Server has authoritative per-Model module SELLING prices for this build,
-      // + the SELLING fabric-tier Δ (migration 0124); the POS adds the same Δ so
-      // the gate matches. Δ = 0 with default data (no tier / no config set).
-      const authoritativeSofaSen = sofaSellingSen + fabricAddonCenti + extraSen;
+      /* Server has authoritative per-Model module SELLING prices for this build,
+         + the SELLING fabric-tier Δ (migration 0124); the POS adds the same Δ so
+         the gate matches. Δ = 0 with default data (no tier / no config set).
+
+         + `chargeableSurchargesSen` (owner 2026-08-11): the sofa build was the
+         one authoritative branch that dropped the line's selling surcharges,
+         while the cost branch above re-adds its own `costSurchargesSen` on top
+         of Σ module costs. A priced sofa special add-on was therefore costed
+         and never charged — it could only ever reduce margin. Σ modules is the
+         BASE here, exactly as Σ module costs is the base there, so the
+         surcharges belong on top of it on both sides. */
+      const authoritativeSofaSen = sofaSellingSen + chargeableSurchargesSen + fabricAddonCenti + extraSen;
       drift = driftThresholdExceeded(manualUnitSelling, authoritativeSofaSen);
       unitToPersistSen = authoritativeSofaSen;
     } else {
@@ -587,8 +650,16 @@ export function recomputeFromSnapshot(
      actually entered, persist THAT over the authoritative catalog figure.
      manualUnitSelling === 0 means "not provided" (client couldn't resolve it) ->
      keep the authoritative fill. `drift` above is unchanged (only a POS caller is
-     rejected on it; a trusted caller's drift is ignored by the route). */
-  if (trustOperatorSelling && manualUnitSelling > 0) {
+     rejected on it; a trusted caller's drift is ignored by the route).
+
+     'including-zero' additionally treats a stored 0 as a REAL price rather than
+     "not provided". That distinction only makes sense for a MIGRATED document,
+     and there it is load-bearing: an AutoCount sofa is frequently carried as the
+     whole set price on ONE lead module line with 0 on its siblings, so under
+     plain `true` every sibling would still be handed a catalogue price and the
+     set would be billed several times over. Never use it for a line the operator
+     is authoring now — there a 0 really does mean "not provided". */
+  if (trustOperatorSelling && (manualUnitSelling > 0 || trustOperatorSelling === 'including-zero')) {
     unitToPersistSen = manualUnitSelling;
   }
 
@@ -984,12 +1055,21 @@ export async function loadPwpRules(sb: any): Promise<PwpRule[]> {
 /** End-to-end: given an item draft, load product + fabric + config and
  *  return the recompute. The caller assembles the DB row from the result.
  *  Returns drift=true when the client's unitPriceCenti differs > 0.5%
- *  from the server compute — caller decides whether to reject (HTTP 400). */
+ *  from the server compute — caller decides whether to reject (HTTP 400).
+ *
+ *  `opts.trustOperatorSelling` is an OPTIONS OBJECT, not a 5th positional, on
+ *  purpose. Until 2026-08-11 this wrapper could not express the flag at all: it
+ *  called recomputeFromSnapshot with 14 positional arguments and simply let the
+ *  15th default to false, so the SO amendment path — its only caller — re-priced
+ *  every approved amendment to catalogue, including a MIGRATED order carrying the
+ *  price AutoCount negotiated with the customer. A 15-argument positional call is
+ *  what made that invisible; a named option cannot be dropped by miscounting. */
 export async function recomputeOneLine(
   sb: any,
   item: MfgItemForRecompute,
   cachedConfig?: MaintenanceConfig | null,
   companyId?: number | null,
+  opts?: { trustOperatorSelling?: TrustSelling },
 ): Promise<RecomputedLine> {
   const config = cachedConfig ?? await loadMaintenanceConfig(sb);
   const [product, fabric, sellingTiers, fabricAddonConfig, modelOverrides, compartmentOverrides] = await Promise.all([
@@ -1014,5 +1094,5 @@ export async function recomputeOneLine(
         loadModelSofaModuleCostRows(sb, product.base_model, companyId),
       ])
     : [null, null];
-  return recomputeFromSnapshot(item, product, fabric, config, null, sofaModulePrices, sellingTiers, fabricAddonConfig, null, null, null, sofaModuleCostRows, modelOverrides, compartmentOverrides);
+  return recomputeFromSnapshot(item, product, fabric, config, null, sofaModulePrices, sellingTiers, fabricAddonConfig, null, null, null, sofaModuleCostRows, modelOverrides, compartmentOverrides, opts?.trustOperatorSelling ?? false);
 }

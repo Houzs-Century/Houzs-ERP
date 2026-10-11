@@ -25,6 +25,8 @@ import { computeSoDeliveryFee, type SoDeliveryFeeResult } from '../shared/pricin
    variant | compartment | combo matcher shared with the POS, used at BOTH
    recompute sites (create + cross-category re-detect). */
 import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../lib/special-delivery';
+import { soHasDownstream } from '../lib/downstream-lock';
+import { enqueueSoCreate, enqueueCancel, enqueueEdit } from '../lib/autocount-outbox';
 /* Per-compartment fabric-tier Δ (migration 0025) — reconstruct a split sofa
    build's compartment codes from its persisted module lines for the TBC path. */
 import { buildCompartmentsFromModuleLines } from '../lib/compartments-from-module-lines';
@@ -120,6 +122,7 @@ import { noteScanDraftAccepted } from '../lib/scan-sample-review';
 import { genCode, inList, resolveOwnerStaffId } from './pwp-codes';
 import { signSoItemPhotoUrl, soItemPhotoBindings, type SlipMime } from '../lib/r2';
 import { baseKeyOf, deleteThumbFor, putOptionalThumb, thumbKeyFor } from '../../services/photoThumbs';
+import { photoProxyPath, proxyFallbackPayload, warnSigningFailedOnce, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import { slipBindings } from '../lib/slip';
 import {
   loadMaintenanceConfig,
@@ -239,23 +242,34 @@ mfgSalesOrders.use('*', async (c, next) => {
    ANY non-cancelled Delivery Order OR Sales Invoice referencing it. Convert-to-
    DO (partial delivery) is NOT gated by this: the SO can keep emitting DOs;
    only line MUTATIONS + the CANCELLED status transition are blocked. Mirrors
-   grnHasDownstream in apps/api/src/routes/grns.ts. Returns the blocking JSON,
-   or null if the SO is free to edit. */
-async function soHasDownstream(sb: any, soDocNo: string): Promise<{ error: string; message: string } | null> {
-  const [{ count: doCount }, { count: siCount }] = await Promise.all([
-    sb.from('delivery_orders')
-      .select('id', { head: true, count: 'exact' })
-      .eq('so_doc_no', soDocNo)
-      .neq('status', 'CANCELLED'),
-    sb.from('sales_invoices')
-      .select('id', { head: true, count: 'exact' })
-      .eq('so_doc_no', soDocNo)
-      .neq('status', 'CANCELLED'),
-  ]);
-  if ((doCount ?? 0) > 0 || (siCount ?? 0) > 0) {
-    return { error: 'so_has_downstream', message: 'SO has a Delivery Order / Sales Invoice — delete or cancel it first to edit' };
-  }
-  return null;
+   grnHasDownstream. The rule now lives in scm/lib/downstream-lock.ts with its
+   three siblings, which had drifted into four private copies in four route
+   files. Same signature, same JSON, same behaviour — and see that module for
+   why it is also the ERP half of AutoCount's transferred-document rule. */
+
+/* -- ERP -> AutoCount edit --------------------------------------------------
+   Every SO mutation route funnels through one of these two, so exactly one
+   snapshot of the SAVED order is queued per successful save -- header edits,
+   line add/edit/delete and the tbc variant/SKU swaps alike. A variant or SKU
+   change IS a line change: AutoCount takes it as Desc2 + ItemCode on the same
+   DtlKey, which is why they need no operation of their own.
+
+   Only ever reached for an order the downstream lock let through, which is the
+   same rule AutoCount enforces on its side. Never throws. */
+async function queueAcSoEdit(c: any, docNo: string): Promise<void> {
+  await enqueueEdit(c.get('supabase'), {
+    companyId: activeCompanyId(c),
+    docType: 'SO',
+    docNo,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+}
+
+/* The same, for a route whose body runs inside runScmPgCommand: queue only
+   when the transaction actually committed (a non-2xx rolls it back). */
+async function queueAcSoEditAfter(c: any, docNo: string, res: Response): Promise<Response> {
+  if (res.ok) await queueAcSoEdit(c, docNo);
+  return res;
 }
 
 /* ── SO processing-date lock (Owner 2026-06-12) ─────────────────────────────
@@ -5468,6 +5482,17 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   try { await recomputeSoStockAllocation(sb); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-create failed:', e); }
 
+  /* ERP -> AutoCount write-back. Queued, never pushed inline: the AutoCount
+     host must not be able to fail a salesperson's Save. No-op while the flag is
+     off, which is how it ships.
+
+     NOT for a DRAFT. A draft is the scan job's guess awaiting an operator's
+     verdict; it may be rewritten or thrown away, and neither belongs in a live
+     account book. The DRAFT -> live transition below queues it instead. */
+  if ((body as { asDraft?: unknown }).asDraft !== true) {
+    await enqueueSoCreate(sb, { companyId, docNo, createdBy: c.get('houzsUser')?.id ?? null });
+  }
+
   return c.json({ docNo }, 201);
 }
 
@@ -5784,6 +5809,30 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
      also drop it out. Other PENDING SOs may move into READY. Best-effort. */
   try { await recomputeSoStockAllocation(sb); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-status failed:', e); }
+
+  /* ERP -> AutoCount cancel. Reached only for an SO the downstream lock let
+     through (soHasDownstream, checked above), which is the same rule AutoCount
+     applies on its side — so this can never ask AutoCount to cancel something
+     it has already shipped. Outside the transaction on purpose: the queue row
+     must describe a cancel that actually committed. */
+  if (isCancel) {
+    await enqueueCancel(sb, {
+      companyId: activeCompanyId(c),
+      docType: 'SO',
+      docNo,
+      self: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: docNo },
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  } else if (fromNorm === 'DRAFT') {
+    /* The draft just became a real order — this is the moment it belongs in
+       AutoCount. enqueueSoCreate refuses an SO that already has an AutoCount
+       counterpart, so a re-entered transition cannot duplicate it. */
+    await enqueueSoCreate(sb, {
+      companyId: activeCompanyId(c),
+      docNo,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  }
 
   /* Edge #B — SO cancel with deposit paid turns the deposit into a customer
      credit. Idempotent on (source_type, source_doc_no). Best-effort. */
@@ -7058,6 +7107,8 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     console.warn('[mfg-so] header saved but edit lease was no longer ours to release:', docNo, savedVersion);
   }
 
+  await queueAcSoEdit(c, docNo);
+
   return c.json({
     ok: true,
     docNo,
@@ -7894,6 +7945,8 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   try { await recomputeSoStockAllocation(sb); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-line-add failed:', e); }
 
+  await queueAcSoEdit(c, docNo);
+
   return c.json({ item: data }, 201);
 });
 
@@ -8344,6 +8397,8 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   try { await recomputeSoStockAllocation(sb); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-line-patch failed:', e); }
 
+  await queueAcSoEdit(c, docNo);
+
   return c.json({ ok: true });
 });
 
@@ -8456,6 +8511,8 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
   /* Line delete = demand drops → other queued SOs may move into READY. */
   try { await recomputeSoStockAllocation(sb); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-line-delete failed:', e); }
+
+  await queueAcSoEdit(c, docNo);
 
   return c.body(null, 204);
 });
@@ -8709,14 +8766,14 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
   await scheduleStockAllocationAfterCommand(c, sb, `tbc-update:${docNo}`);
   return c.json({ ok: true, unitPriceCenti: newUnit, deltaCenti: sellingDeltaCenti, totalCenti: newTotal });
 }
-mfgSalesOrders.post('/:docNo/items/:itemId/tbc-update', (c) => {
+mfgSalesOrders.post('/:docNo/items/:itemId/tbc-update', async (c) => {
   const company = requireActiveCompanyId(c);
   if (!company.ok) return c.json(company.refusal, 409);
-  return runScmPgCommand(c, (sb) => tbcUpdateCommandHandler(c, sb), {
+  return queueAcSoEditAfter(c, c.req.param('docNo'), await runScmPgCommand(c, (sb) => tbcUpdateCommandHandler(c, sb), {
     docNo: c.req.param('docNo'),
     leaseToken: c.req.header('X-SO-Edit-Lease')?.trim() ?? null,
     companyId: company.companyId,
-  });
+  }));
 });
 
 /* TBC product swap (Loo 2026-06-11) — exchange a line for a DIFFERENT product
@@ -9167,14 +9224,14 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     },
   });
 }
-mfgSalesOrders.post('/:docNo/items/:itemId/tbc-swap', (c) => {
+mfgSalesOrders.post('/:docNo/items/:itemId/tbc-swap', async (c) => {
   const company = requireActiveCompanyId(c);
   if (!company.ok) return c.json(company.refusal, 409);
-  return runScmPgCommand(c, (sb) => tbcSwapCommandHandler(c, sb), {
+  return queueAcSoEditAfter(c, c.req.param('docNo'), await runScmPgCommand(c, (sb) => tbcSwapCommandHandler(c, sb), {
     docNo: c.req.param('docNo'),
     leaseToken: c.req.header('X-SO-Edit-Lease')?.trim() ?? null,
     companyId: company.companyId,
-  });
+  }));
 });
 
 /* ── Sofa-reward revert plan (Loo 2026-06-12) ──
@@ -9968,14 +10025,14 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     },
   });
 }
-mfgSalesOrders.post('/:docNo/items/:itemId/tbc-swap-sofa', (c) => {
+mfgSalesOrders.post('/:docNo/items/:itemId/tbc-swap-sofa', async (c) => {
   const company = requireActiveCompanyId(c);
   if (!company.ok) return c.json(company.refusal, 409);
-  return runScmPgCommand(c, (sb) => tbcSwapSofaCommandHandler(c, sb), {
+  return queueAcSoEditAfter(c, c.req.param('docNo'), await runScmPgCommand(c, (sb) => tbcSwapSofaCommandHandler(c, sb), {
     docNo: c.req.param('docNo'),
     leaseToken: c.req.header('X-SO-Edit-Lease')?.trim() ?? null,
     companyId: company.companyId,
-  });
+  }));
 });
 
 // ── Per-line photos — PR-F (migration 0076) ──────────────────────────
@@ -10132,15 +10189,31 @@ mfgSalesOrders.post('/:docNo/items/:itemId/photos', async (c) => {
     // WO-7: thumbUrl is signed for the `.thumb` sibling. When no thumb was
     // uploaded the URL 404s on fetch and the frontend falls back to photoUrl.
     const { signedUrl: thumbUrl } = await signSoItemPhotoUrl(bindings, thumbKeyFor(photoKey));
-    return c.json({ photoKey, photoUrl: signedUrl, thumbUrl, expiresAt }, 201);
+    return c.json({ photoKey, mode: 'signed', photoUrl: signedUrl, thumbUrl, expiresAt }, 201);
   } catch (e) {
-    // Signing should never fail in production (creds + endpoint validated
-    // at boot), but if it does we fall back to the proxy URL rather than
-    // losing the upload — the row is already inserted.
-    const photoUrl = `/mfg-sales-orders/${docNo}/items/${itemId}/photos/${encodeURIComponent(photoKey)}`;
-    // eslint-disable-next-line no-console
-    console.warn('[so-item-photo] signing failed, falling back to proxy:', e);
-    return c.json({ photoKey, photoUrl }, 201);
+    /* Signing failed — the upload itself succeeded and the row is already
+       inserted, so never lose it. Hand back the proxy path.
+
+       2026-08-10: this fallback existed but was INERT. It returns `photoUrl` as
+       an API-client-relative path, and the caller only cached the value when it
+       `startsWith('http')` — which a relative path never does. So nothing was
+       cached, the tile re-fetched /signed, got the 500, and showed "err".
+       `mode` is emitted so the client can branch on the contract instead of
+       sniffing the string shape. */
+    const basePath = `/mfg-sales-orders/${docNo}/items/${itemId}`;
+    const reason = e instanceof Error ? e.message : String(e);
+    warnSigningFailedOnce('so-item-photo', reason);
+    return c.json(
+      {
+        photoKey,
+        mode: 'proxy',
+        photoUrl: photoProxyPath(basePath, photoKey),
+        thumbProxyPath: photoProxyPath(basePath, thumbKeyFor(photoKey)),
+        expiresAt: null,
+        reason,
+      },
+      201,
+    );
   }
 });
 
@@ -10148,7 +10221,7 @@ mfgSalesOrders.post('/:docNo/items/:itemId/photos', async (c) => {
 // hits this on mount when no cached URL exists for a key, and on a
 // 403 (URL expired). Auth-checked the same way as the proxy: the key
 // must belong to this SO+item and currently be in photo_urls.
-mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', async (c) => {
+export const soItemPhotoSignedHandler = async (c: any) => {
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');
   const itemId = c.req.param('itemId');
@@ -10172,19 +10245,40 @@ mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', async (c) =>
     // WO-7: signed thumb sibling. Pre-existing photos have no thumb object —
     // the frontend's <img> onError falls back to signedUrl on the 404.
     const { signedUrl: thumbUrl } = await signSoItemPhotoUrl(bindings, thumbKeyFor(photoKey));
-    return c.json({ signedUrl, thumbUrl, expiresAt });
+    const payload: PhotoUrlPayload = { mode: 'signed', signedUrl, thumbUrl, expiresAt };
+    return c.json(payload);
   } catch (e) {
-    return c.json({ error: 'signing_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
+    /* 2026-08-10: the R2 S3 creds are unset in prod, so signing throws for
+       EVERY photo and this used to answer 500 — the line card rendered "err"
+       even though the bytes are readable through the proxy below via the R2
+       binding. Serve the proxy path instead of failing. See
+       scm/lib/photoProxyFallback.ts for why this is NOT returned as
+       `signedUrl` (an <img src> sends no bearer token, so it would 401). */
+    return c.json(
+      proxyFallbackPayload(
+        'so-item-photo',
+        `/mfg-sales-orders/${docNo}/items/${itemId}`,
+        photoKey,
+        e,
+      ),
+    );
   }
-});
+};
+
+mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', soItemPhotoSignedHandler);
 
 /**
- * @deprecated Task #92 — superseded by signed-URL flow. The frontend
- * now reads photos directly from R2 via short-lived signed URLs minted
- * by `GET /photos/:photoKey/signed`. This proxy endpoint is retained
- * as a fallback for legacy clients holding old proxy URLs in the wild;
- * remove after the post-deploy cooldown (~7 days, longer than any
- * signed-URL TTL or cached page load).
+ * NOT deprecated — load-bearing. (It was marked `@deprecated Task #92` with a
+ * "remove after ~7 day cooldown" note when the signed-URL flow landed.)
+ *
+ * 2026-08-10: the R2 S3 credentials that `/photos/:photoKey/signed` needs were
+ * never provisioned in production, so signing throws for every photo and the
+ * signed route now FALLS BACK to this endpoint. It reads the R2 *binding*
+ * (c.env.SO_ITEM_PHOTOS), which needs no credential, and is the only reason SO
+ * photos display at all today. Deleting it would blank every photo in the app.
+ *
+ * It may be retired only once signing is proven working in production AND the
+ * fallback in soItemPhotoSignedHandler is removed with it.
  */
 mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
   const sb = c.get('supabase');

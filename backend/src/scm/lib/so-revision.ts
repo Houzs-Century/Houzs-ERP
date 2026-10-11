@@ -33,6 +33,7 @@ import {
   loadMaintenanceConfig,
   recomputeOneLine,
   type MfgItemForRecompute,
+  type TrustSelling,
 } from './mfg-pricing-recompute';
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { deriveMfgPoUnitCost } from './po-pricing';
@@ -295,9 +296,28 @@ export async function applySoAmendment(
      mig 0091 gave the column a HOUZS DEFAULT — so a blip books a 2990 order's new
      line to Houzs, silently, exactly as the note on that insert warns. */
   const { data: soHdrCo, error: soHdrCoErr } = await sb.from('mfg_sales_orders')
-    .select('company_id').eq('doc_no', docNo).maybeSingle();
+    .select('company_id, linked_ac_docno').eq('doc_no', docNo).maybeSingle();
   if (soHdrCoErr) throw new Error(`applySoAmendment: SO company load failed: ${soHdrCoErr.message}`);
   const soCompanyId = (soHdrCo as { company_id?: number | null } | null)?.company_id ?? null;
+
+  /* Is this order MIGRATED from AutoCount? `linked_ac_docno` is the marker that
+     actually exists on the SO header (migration 0271); `migrated_no_stock` lives
+     only on scm.grns / scm.delivery_orders and is NOT available here.
+
+     It decides whether an approved amendment may re-price the line. For a NATIVE
+     order the answer stays what it has always been — re-price to the current
+     catalogue, the owner's authoritative default. For a MIGRATED order it must
+     not: that unit price is what AutoCount recorded as negotiated with the
+     customer, and mfg_products.sell_price_sen is in no sense a better answer for
+     an order this ERP never priced. Approving even a QTY-ONLY amendment used to
+     overwrite it.
+
+     'including-zero' rather than plain `true` because a migrated sofa is
+     routinely carried as the whole-set price on ONE lead module line with 0 on
+     its siblings. Plain `true` reads a stored 0 as "not provided" and hands the
+     sibling a catalogue price anyway, which bills the set several times over. */
+  const soIsMigrated = ((soHdrCo as { linked_ac_docno?: string | null } | null)?.linked_ac_docno ?? null) !== null;
+  const amendTrust: TrustSelling = soIsMigrated ? 'including-zero' : false;
 
   // Config loaded ONCE and threaded into every per-line recompute (the create
   // path's `cachedConfig` — one maintenance_config read for the whole apply).
@@ -451,13 +471,19 @@ export async function applySoAmendment(
       ? Number(diff.new_unit_price_sen)
       : Number(row.unit_price_centi ?? 0);
 
+    /* amendTrust is 'including-zero' only for a MIGRATED order — see where it is
+       derived. On such an order clientUnit is the AutoCount price (or the
+       operator's explicit new_unit_price_sen when the amendment supplies one),
+       and either way it is the figure the customer agreed to. A SPEC change does
+       not re-price it: if the new spec should cost differently, the amendment
+       carries new_unit_price_sen and that is what persists. */
     const rec = await recomputeOneLine(sb, {
       itemCode,
       itemGroup,
       qty,
       unitPriceCenti: clientUnit,
       variants: (variants as MfgItemForRecompute['variants']) ?? null,
-    }, cachedConfig, soCompanyId);
+    }, cachedConfig, soCompanyId, { trustOperatorSelling: amendTrust });
 
     const unit = rec.unit_price_sen;
     const discount = Number(row.discount_centi ?? 0);

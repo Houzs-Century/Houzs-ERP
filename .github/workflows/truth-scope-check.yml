@@ -1,0 +1,53 @@
+name: Truth scope check (read-only)
+
+# LANE C — sizes the "convert our migrated paperwork into invoices" job.
+#
+# The owner asked for our migrated GRNs to become purchase invoices and our
+# migrated DOs to become sales invoices, so the ERP's document relationship map
+# matches AutoCount's. This job measures how big that job is BEFORE anything is
+# written: how many documents, how many lines, how many of those lines would get
+# a real cost out of it, and how much stock is sitting on the books today with no
+# cost basis at all.
+#
+# It emits the ERP half only. The prices live in live AutoCount, which no GitHub
+# runner can reach, so the output is machine-readable TSV that the companion
+# local script joins to AutoCount over read-only ODBC.
+#
+# The answer lives only in production, so this runs here rather than putting the
+# production DSN in front of a human for a SELECT (repo rule: build the check,
+# never ask the owner to run a query). Strictly read-only — SELECT only, no DDL,
+# no writes, no transaction. See backend/scripts/check-truth-scope.mjs.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read
+# must never become routine CI noise.
+on:
+  workflow_dispatch:
+
+# Own concurrency group — touches nothing, must never queue behind or displace a
+# release (and must not share the deploy's group).
+concurrency:
+  group: truth-scope-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-truth-scope.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs and
+          # the sibling read-only checks (costless-stock-check.yml).
+          NODE_OPTIONS: --dns-result-order=ipv4first

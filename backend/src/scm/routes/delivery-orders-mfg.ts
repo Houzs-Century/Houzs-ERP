@@ -18,6 +18,8 @@ import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shar
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
+import { doHasDownstream } from '../lib/downstream-lock';
+import { enqueueConvert, recordConvertSkipped, enqueueCancel } from '../lib/autocount-outbox';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
 import { loadIncomingLines, pickIncomingForBucket, pickIncomingForSofaSet, incomingBucketKey } from '../lib/do-live-allocator';
@@ -286,24 +288,10 @@ async function prepareSoAmendMirrorAudit(
    ANY non-cancelled Delivery Return (DR) OR Sales Invoice (SI) referencing it.
    Convert-to-DR / convert-to-SI is NOT gated by this: the DO can keep emitting
    children; only line MUTATIONS + the CANCELLED status transition are blocked,
-   mirroring grnHasDownstream in apps/api/src/routes/grns.ts. Returns the
-   blocking JSON, or null if the DO is free to edit. */
-async function doHasDownstream(sb: any, doId: string): Promise<{ error: string; message: string } | null> {
-  const [{ count: drCount }, { count: siCount }] = await Promise.all([
-    sb.from('delivery_returns')
-      .select('id', { head: true, count: 'exact' })
-      .eq('delivery_order_id', doId)
-      .neq('status', 'CANCELLED'),
-    sb.from('sales_invoices')
-      .select('id', { head: true, count: 'exact' })
-      .eq('delivery_order_id', doId)
-      .neq('status', 'CANCELLED'),
-  ]);
-  if ((drCount ?? 0) > 0 || (siCount ?? 0) > 0) {
-    return { error: 'do_has_downstream', message: 'DO has a Delivery Return / Sales Invoice — delete or cancel it first to edit' };
-  }
-  return null;
-}
+   mirroring grnHasDownstream. The rule now lives in scm/lib/downstream-lock.ts
+   with its three siblings, which had drifted into four private copies in four
+   route files. Same signature, same JSON, same behaviour — and see that module
+   for why it is also the ERP half of AutoCount's transferred-document rule. */
 
 /* Full DO header — mirrors the editable SO header shape. The pre-rebuild
    columns (driver / vehicle / pod / signature / m3 / dispatched-signed-
@@ -964,9 +952,30 @@ export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
 /* Deduct inventory for a DO exactly once. ROBUST: fires on the first
    transition into ANY shipped state (not only DISPATCHED). IDEMPOTENT: a
    pre-insert existence check on the DO id skips re-deduction, and the partial
-   UNIQUE index uq_inv_mov_do_source (migration 0100) is the hard backstop
-   against a race. Best-effort — a movement failure never rolls back the
-   status change (audit-DLQ pattern, same as the rest of inventory-movements). */
+   UNIQUE index uq_inv_mov_do_source is the hard backstop against a race.
+   Best-effort — a movement failure never rolls back the status change
+   (audit-DLQ pattern, same as the rest of inventory-movements).
+
+   THE INDEX IS REAL, and this is the only place in the tree that says so with
+   evidence. Read live from pg_indexes on 2026-08-11 (Actions run 31417585775,
+   "Duplicate movements check (read-only)"):
+
+     CREATE UNIQUE INDEX uq_inv_mov_do_source
+       ON scm.inventory_movements
+       USING btree (source_doc_type, source_doc_id, product_code, variant_key)
+       WHERE (source_doc_type = 'DO'::text)
+
+   Do not re-derive this from the migration tree. Its DDL is prod-only (ported
+   from 2990) and migration 0230's own comment enumerates this table's indexes
+   as "(warehouse_id, product_code), (source_doc_type, source_doc_id),
+   (created_at) and (company_id)" — four non-unique indexes, no mention of the
+   four unique ones that are actually there. Reading 0230 is how you conclude
+   this guard has no backstop. It has one.
+
+   NOTE WHAT THE KEY DOES NOT CONTAIN: movement_type, warehouse_id, batch_no.
+   One (DO, product_code, variant_key) bucket may hold exactly ONE movement row
+   of any kind, ever. That is what makes this deduction safe, and it is also
+   what resyncInventoryForDo collides with — see the note there. */
 /* ── resolveDoLineWarehouses (Agent D 2026-05-31, TASK #32) ───────────────────
    PER-WAREHOUSE CORRECTNESS for the OUTBOUND side. A DO line MUST deduct from
    the warehouse of the Sales Order LINE it delivers (mfg_sales_order_items.
@@ -1531,8 +1540,46 @@ async function returnDoRacksOnCancel(sb: any, deliveryOrderId: string, doNo: str
    0053) fires AFTER INSERT, not UPDATE. Updating qty on an existing OUT row
    would leave the lot/consumption ledger stale. A fresh IN insert lets the
    trigger create a new lot at the original cost basis; a fresh OUT insert lets
-   it consume more lots. Migration 0109 dropped the per-bucket UNIQUE so we can
-   freely write multiple delta rows over time.
+   it consume more lots.
+
+   HOW THE DELTA ROWS ESCAPE THE PER-BUCKET UNIQUE (migration 0279).
+   Production carries a PARTIAL UNIQUE index on this path's own key. Until 0279
+   the comment here read "Migration 0109 dropped the per-bucket UNIQUE so we can
+   freely write multiple delta rows over time" — that was FALSE, and it was false
+   for months because the index is prod-only DDL that appeared in no file in this
+   repo. pg_indexes read live 2026-08-11 (Actions runs 31417585775, 31426819498):
+
+     uq_inv_mov_do_source UNIQUE (source_doc_type, source_doc_id, product_code,
+     variant_key) WHERE source_doc_type = 'DO'
+
+   movement_type is NOT in that key, so one bucket held exactly ONE row, ever,
+   and every delta on an already-shipped bucket was a duplicate key and was
+   REJECTED. Measured the same day: ZERO movements in production carried this
+   function's notes marker. It had never landed a single row.
+
+   0279 replaces that index with uq_inv_mov_do_source_v2, which adds
+   COALESCE(correction_seq, 0) to the key, and this function now stamps
+   correction_seq = 1..N on the rows it writes. A first-ship row keeps
+   correction_seq NULL, folds to 0, and its double-post backstop is unchanged.
+
+   Read the migration before changing any of this. In particular the rows stay
+   source_doc_type='DO' ON PURPOSE: restampDoActualCost, fn_reverse_do_out (whose
+   step (c) exists specifically to close lots minted by THIS function's delta-INs),
+   fn_reconcile_uncosted_out and fn_reconcile_dropship_batch all key on 'DO', and
+   both cancel-path idempotency guards read "an ADJUSTMENT row exists for this DO
+   id" as "already reversed" — so re-tagging these rows ADJUSTMENT would make
+   CANCELLING an edited DO a silent no-op.
+
+   What always got through, even before 0279: a delta for a bucket with no
+   first-ship row — a newly ADDED line, or an existing line whose recomputed
+   variant_key differs from the one shipped under. The second of those is how the
+   MAKOTO divergence landed an OUT that consumed no lot
+   (docs/inventory-ledger-divergence-coe.md). 0279 does not change that; a
+   variant_key that drifts is a different bug in a different place.
+
+   A failure is still LOGGED and audited rather than silent (since 2026-08-05),
+   which is what must happen on a pre-0279 database: writeMovements strips the
+   unknown column, retries, and the old rejection stands loudly.
 
    IDEMPOTENT: re-running with no line changes yields delta 0 everywhere — no
    writes. Cancel-reversal still works via reverseMovements (it nets per
@@ -1610,28 +1657,46 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
      into the SAME batched buckets as the target. Pre-0121 (not batch-aware) we
      skip the column entirely — it may not exist yet — and every bucket's batch
      segment is '' (matches the non-batched target keys above). */
-  const movSelect = batchAware
+  /* correction_seq (0279) rides the select so we can hand the NEXT correction
+     number to each bucket below. Reading it here is also what keeps this
+     function idempotent: the corrections it wrote on earlier saves are still
+     source_doc_type='DO' rows, so they aggregate into current_net_out exactly
+     like the first ship and a re-run with no line changes computes delta 0. */
+  const baseSelect = batchAware
     ? 'movement_type, warehouse_id, product_code, variant_key, batch_no, qty, unit_cost_sen, total_cost_sen, product_name'
     : 'movement_type, warehouse_id, product_code, variant_key, qty, unit_cost_sen, total_cost_sen, product_name';
-  const { data: movs } = await sb.from('inventory_movements')
-    .select(movSelect)
+  let movsRes = await sb.from('inventory_movements')
+    .select(`${baseSelect}, correction_seq`)
     .eq('source_doc_type', 'DO')
     .eq('source_doc_id', deliveryOrderId);
-  type Agg = { out_qty: number; in_qty: number; out_total_cost: number; product_name: string | null };
+  /* Forward-compat (0279): the column may not exist yet — retry without it. Every
+     bucket then reports maxSeq 0, the write below stamps 1, writeMovements strips
+     the unknown column and the insert fails exactly as it did before 0279 —
+     loudly, into RECOUNT_FAILED. */
+  if (movsRes.error && (movsRes.error.message ?? '').includes('correction_seq')) {
+    movsRes = await sb.from('inventory_movements')
+      .select(baseSelect)
+      .eq('source_doc_type', 'DO')
+      .eq('source_doc_id', deliveryOrderId);
+  }
+  const movs = movsRes.data;
+  type Agg = { out_qty: number; in_qty: number; out_total_cost: number; product_name: string | null; max_seq: number };
   const aggByBucket = new Map<string, Agg>();
   for (const m of (movs ?? []) as Array<{
     movement_type: string; warehouse_id: string; product_code: string; variant_key: string | null; batch_no?: string | null;
     qty: number; unit_cost_sen: number | null; total_cost_sen: number | null; product_name: string | null;
+    correction_seq?: number | null;
   }>) {
     const k = `${m.warehouse_id}::${m.product_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
     let agg = aggByBucket.get(k);
-    if (!agg) { agg = { out_qty: 0, in_qty: 0, out_total_cost: 0, product_name: m.product_name }; aggByBucket.set(k, agg); }
+    if (!agg) { agg = { out_qty: 0, in_qty: 0, out_total_cost: 0, product_name: m.product_name, max_seq: 0 }; aggByBucket.set(k, agg); }
     if (m.movement_type === 'OUT') {
       agg.out_qty += Number(m.qty ?? 0);
       agg.out_total_cost += Number(m.total_cost_sen ?? 0);
     } else if (m.movement_type === 'IN') {
       agg.in_qty += Number(m.qty ?? 0);
     }
+    agg.max_seq = Math.max(agg.max_seq, Number(m.correction_seq ?? 0));
     if (!agg.product_name) agg.product_name = m.product_name;
   }
 
@@ -1643,7 +1708,7 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
   const writes: MovOut[] = [];
   for (const k of allKeys) {
     const t = targetByBucket.get(k);
-    const a = aggByBucket.get(k) ?? { out_qty: 0, in_qty: 0, out_total_cost: 0, product_name: null };
+    const a = aggByBucket.get(k) ?? { out_qty: 0, in_qty: 0, out_total_cost: 0, product_name: null, max_seq: 0 };
     const target_qty = t?.qty ?? 0;
     const current_net_out = a.out_qty - a.in_qty;
     const delta = target_qty - current_net_out;
@@ -1654,6 +1719,14 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
     const variant_key = parts[2] ?? '';
     const batch_no = parts[3] || null; // '' → null (non-sofa); else the bound dye-lot batch
     const product_name = t?.product_name ?? a.product_name ?? null;
+    /* The NEXT correction number for this bucket (0279). The first ship carries
+       correction_seq NULL, which reads as 0 here, so the first correction is 1
+       and each later save takes the next slot in uq_inv_mov_do_source_v2. A
+       bucket with NO first-ship row (a newly added line) also starts at 1 — its
+       COALESCE(...,0)=0 slot is free either way, so nothing is lost by not
+       special-casing it, and every row this function writes is then uniformly
+       identifiable as a correction. */
+    const correction_seq = a.max_seq + 1;
     if (delta > 0) {
       // Need more OUT — operator increased a line qty or added a new line on a shipped DO.
       writes.push({
@@ -1664,6 +1737,7 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
         source_doc_type: 'DO',
         source_doc_id: deliveryOrderId,
         source_doc_no: doNo,
+        correction_seq,
         performed_by: performedBy,
         notes: 'Resync: line qty increased / line added (shipped DO).',
         ...(batch_no ? { batch_no } : {}),
@@ -1682,6 +1756,7 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
         source_doc_type: 'DO',
         source_doc_id: deliveryOrderId,
         source_doc_no: doNo,
+        correction_seq,
         performed_by: performedBy,
         notes: 'Resync: line qty reduced / line deleted (shipped DO).',
         ...(batch_no ? { batch_no } : {}),
@@ -1746,7 +1821,7 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
 
    We CANNOT reuse reverseMovements: it writes a balancing IN that reuses the DO's
    (source_doc_type, source_doc_id, product_code, variant_key) key, which the
-   partial UNIQUE index uq_inv_mov_do_source (migration 0100, keyed WITHOUT
+   partial UNIQUE index uq_inv_mov_do_source (prod-only DDL, verified live; keyed WITHOUT
    movement_type) rejects → the insert silently fails (swallowed by the cancel
    path's best-effort catch) and the shipped stock is left permanently deducted.
 
@@ -3412,8 +3487,25 @@ deliveryOrdersMfg.post('/', async (c) => {
      on every remaining exit and this CREATE row is true. */
   await recordDoCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, items.length);
 
+  /* ERP -> AutoCount SO->DO. Only an SO-linked DO can be expressed: AutoCount
+     builds a DO by transferring lines FROM a source document, so a DO with no
+     SO behind it has nothing to convert from. Queued, never pushed inline. */
+  if ((body.soDocNo as string | undefined) ?? null) {
+    await enqueueConvert(sb, {
+      companyId: activeCompanyId(c),
+      op: 'so_to_do',
+      from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: String(body.soDocNo) },
+      to: { table: 'delivery_orders', keyCol: 'id', key: h.id },
+      docType: 'DO',
+      docNo: h.do_number,
+      docId: h.id,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  }
+
   /* A DO = goods shipped on creation → deduct stock now (idempotent: the
-     existence check + UNIQUE index mean this never double-deducts even if the
+     existence check + the uq_inv_mov_do_source UNIQUE index — VERIFIED live,
+     see deductInventoryForDo — mean this never double-deducts even if the
      status is later advanced). LEAK GUARD (DRAFT): a DRAFT DO has NOT shipped —
      skip the deduction AND the SO-delivered sync; both fire on Confirm. */
   let movementErrors: string[] = [];
@@ -3930,6 +4022,32 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
     sb, c.get('houzsUser'), activeCompanyId(c), dh.id, doRows.length,
     `Converted from Sales Order${docNos.length === 1 ? '' : 's'} ${docNos.join(', ')}`,
   );
+
+  /* ERP -> AutoCount SO->DO. A MERGED DO (several source SOs) has no AutoCount
+     shape — see recordConvertSkipped — so it is written down as skipped instead
+     of being invented or dropped. */
+  if (docNos.length === 1) {
+    await enqueueConvert(sb, {
+      companyId: activeCompanyId(c),
+      op: 'so_to_do',
+      from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: docNos[0] },
+      to: { table: 'delivery_orders', keyCol: 'id', key: dh.id },
+      docType: 'DO',
+      docNo: dh.do_number,
+      docId: dh.id,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  } else if (docNos.length > 1) {
+    await recordConvertSkipped(sb, {
+      companyId: activeCompanyId(c),
+      op: 'so_to_do',
+      docType: 'DO',
+      docNo: dh.do_number,
+      docId: dh.id,
+      reason: `merged from ${docNos.length} Sales Orders (${docNos.join(', ')}) — AutoCount transfers from ONE source document, so this DO has no AutoCount counterpart`,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  }
 
   let movementErrors: string[] = [];
   let emailNotice: string | null = null;
@@ -4581,7 +4699,7 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
      needs more stock OUT. Check that delta against the warehouse, gated by
      confirmShortStock. Decreases and non-qty edits skip the check.
 
-     ⚠ AND THE DELTA BINDS, mig 0230. This was the FOURTH write path and the one
+     AND THE DELTA BINDS, mig 0230. This was the FOURTH write path and the one
      left open: POST /, POST /from-sos and POST /:id/items all bind, so a
      qty-increase that shipped short went out attached to nothing — the exact
      hole this change exists to close, surviving on one route. The delta is now
@@ -4760,13 +4878,16 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
    Commander 2026-05-30 (TASK #24): unblocked on shipped DOs.
 
    Earlier this returned 409 do_shipped_line_locked because the partial UNIQUE
-   index uq_inv_mov_do_source (migration 0100) made a per-line balancing IN
-   structurally impossible — a reversing IN that reused the DO's bucket key
-   collided with the original OUT. Migrations 0108 (key includes movement_type)
-   and 0109 (drop the per-bucket UNIQUE so multiple delta rows can coexist)
-   removed that constraint, and resyncInventoryForDo writes the per-bucket
-   delta IN here. The FIFO trigger handles the new IN row by creating a fresh
-   lot at the original cost basis (weighted avg from the OUT rows).
+   index uq_inv_mov_do_source made a per-line balancing IN structurally
+   impossible — a reversing IN that reused the DO's bucket key collided with
+   the original OUT. This comment then claimed migrations 0108 (key includes
+   movement_type) and 0109 (drop the per-bucket UNIQUE) removed that
+   constraint. THEY DID NOT, in this database. pg_indexes read live on
+   2026-08-11 (Actions run 31417585775) shows the index still keyed
+   (source_doc_type, source_doc_id, product_code, variant_key) with NO
+   movement_type. The delete is unblocked, but the delta IN
+   resyncInventoryForDo writes for an already-shipped bucket is rejected by
+   that key — see the warning on resyncInventoryForDo.
 
    Guard: if the deleted line has already been invoiced or returned (downstream
    papers reference its do_item_id and qty), we refuse the delete — those Invoice
@@ -5163,7 +5284,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      wrote an OUT (source_doc_type:'DO'), so cancel must put the goods back on the
      shelf. We do NOT use reverseMovements here: its balancing IN reuses the DO's
      (source_doc_type, source_doc_id, product_code, variant_key) key, which the
-     partial UNIQUE index uq_inv_mov_do_source (migration 0100, keyed WITHOUT
+     partial UNIQUE index uq_inv_mov_do_source (prod-only DDL, verified live; keyed WITHOUT
      movement_type) rejects → the insert silently fails and the shipped stock is
      left permanently deducted. reverseInventoryForDo writes a FIFO-neutral
      positive ADJUSTMENT (unindexed by the DO source key, carrying variant_key) so
@@ -5191,6 +5312,18 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
       const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
       await recomputeSoStockAllocation(sb);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-do-cancel failed:', e); }
+    /* ERP -> AutoCount cancel. Reached only for a DO the downstream lock let
+       through (doHasDownstream, checked above) — the same rule AutoCount
+       applies, so this can never ask it to cancel an invoiced delivery. */
+    const { data: doRow } = await sb.from('delivery_orders').select('do_number').eq('id', id).maybeSingle();
+    await enqueueCancel(sb, {
+      companyId: co.companyId,
+      docType: 'DO',
+      docNo: (doRow as { do_number?: string } | null)?.do_number ?? id,
+      docId: id,
+      self: { table: 'delivery_orders', keyCol: 'id', key: id },
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
   }
 
   return c.json({

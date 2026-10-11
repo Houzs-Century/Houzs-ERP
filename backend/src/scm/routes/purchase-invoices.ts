@@ -23,6 +23,7 @@ import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChang
 import { PI_LINE_AUDIT_FIELDS, PI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
+import { enqueueConvert, recordConvertSkipped } from '../lib/autocount-outbox';
 
 export const purchaseInvoices = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseInvoices.use('*', supabaseAuth);
@@ -1671,6 +1672,31 @@ purchaseInvoices.post('/from-grn-items', async (c) => {
       sb, c.get('houzsUser'), activeCompanyId(c), h.id, bucket.lines.length,
       `Converted from Goods Receipt ${bucket.grnNumbers.join(', ')}`,
     );
+
+    /* ERP -> AutoCount GRN->Purchase Invoice, per bucket: each bucket IS its
+       own document. A bucket billing several GRNs has no AutoCount shape. */
+    if (bucket.grnIds.length === 1) {
+      await enqueueConvert(sb, {
+        companyId: activeCompanyId(c),
+        op: 'gr_to_pi',
+        from: { table: 'grns', keyCol: 'id', key: bucket.grnIds[0] },
+        to: { table: 'purchase_invoices', keyCol: 'id', key: h.id },
+        docType: 'PI',
+        docNo: h.invoice_number,
+        docId: h.id,
+        createdBy: c.get('houzsUser')?.id ?? null,
+      });
+    } else {
+      await recordConvertSkipped(sb, {
+        companyId: activeCompanyId(c),
+        op: 'gr_to_pi',
+        docType: 'PI',
+        docNo: h.invoice_number,
+        docId: h.id,
+        reason: `bills ${bucket.grnIds.length} Goods Receipts (${bucket.grnNumbers.join(', ')}) — AutoCount transfers from ONE source document, so this invoice has no AutoCount counterpart`,
+        createdBy: c.get('houzsUser')?.id ?? null,
+      });
+    }
     // Consume the GRN lines: recount invoiced_qty from live PI lines.
     await recomputeGrnInvoiced(sb, bucket.lines.map(({ row }) => row.id));
     // Split any PI-native freight before the recost reads it. This path copies GRN
@@ -1827,6 +1853,18 @@ purchaseInvoices.post('/from-grn', async (c) => {
   await reallocatePiCharges(sb, h.id, undefined, activeCompanyId(c));
   // Costing B — push the billed price down to the GRN's lots / DO / SI.
   await recostFromGrn(sb, g.id);
+
+  /* ERP -> AutoCount GRN->Purchase Invoice. Queued, never pushed inline. */
+  await enqueueConvert(sb, {
+    companyId: activeCompanyId(c),
+    op: 'gr_to_pi',
+    from: { table: 'grns', keyCol: 'id', key: g.id },
+    to: { table: 'purchase_invoices', keyCol: 'id', key: h.id },
+    docType: 'PI',
+    docNo: h.invoice_number,
+    docId: h.id,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
 
   return c.json({ id: h.id, invoiceNumber: h.invoice_number }, 201);
 });

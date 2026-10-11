@@ -944,10 +944,17 @@ type DocAction = {
   variant: ActVariant;
   /** POST/PATCH/DELETE request, relative to /api/scm. */
   request: { path: string; method: "PATCH" | "POST" | "DELETE"; body?: unknown };
-  /** In-app danger confirm before firing (Cancel / Void / Delete). */
+  /** In-app danger confirm before firing (Cancel / Void). */
   confirm?: { title: string; body?: string; confirmLabel: string };
   /** When true, the record no longer exists after this action → navigate back
-   *  to the list instead of staying on a now-deleted detail. */
+   *  to the list instead of staying on a now-deleted detail.
+   *
+   *  NO action sets this today. The last one that did was the mobile Delete PO
+   *  (removed 2026-08-11 with its endpoint — owner rule 不可以删只可以 cancel).
+   *  Kept because a legitimate `removes` action can still exist — discarding a
+   *  DRAFT that was never confirmed, the shape SO `DELETE /:docNo` has. It is
+   *  NOT the hook for re-adding a document delete; see
+   *  docs/hard-delete-inventory.md. */
   removes?: boolean;
 };
 
@@ -1054,9 +1061,9 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
       }
       if (st === "CANCELLED") {
         out.push({ key: "reopen", label: "Reopen", variant: "outline", request: { path: `/mfg-purchase-orders/${enc}/reopen`, method: "PATCH" } });
-        // Desktop parity — a CANCELLED PO offers a hard Delete (DELETE /:id,
-        // CANCELLED-only on the backend). Removes the record → navigate back.
-        out.push({ key: "delete", label: "Delete", variant: "danger", removes: true, request: { path: `/mfg-purchase-orders/${enc}`, method: "DELETE" }, confirm: { title: "Delete this purchase order?", body: "This permanently removes the cancelled PO. This cannot be undone.", confirmLabel: "Delete PO" } });
+        // A hard Delete used to sit here for desktop parity. Both are gone
+        // (owner rule 2026-08-11: 不可以删只可以 cancel) — CANCELLED is the
+        // terminal state and the record stays. Reopen is the only way back.
         return out;
       }
       // SUBMITTED / PARTIALLY_RECEIVED
@@ -1257,8 +1264,10 @@ function PaymentSheet({ kind, id, header, onClose, onDone }: {
  *  nothing when there is no valid action from the current status. */
 function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }: {
   moduleKey: string; id: string; header: any; invalidate: () => void; onPOD?: () => void;
-  /** Called after a `removes` action (e.g. Delete PO) succeeds — navigate back
-   *  to the list since the detail's record no longer exists. */
+  /** Called after a `removes` action succeeds — navigate back to the list since
+   *  the detail's record no longer exists. No action sets `removes` today (the
+   *  Delete PO that used to be the example is gone, 2026-08-11); this stays
+   *  wired for a future draft-discard. */
   onDeleted?: () => void;
 }) {
   const qc = useQueryClient();
@@ -1295,8 +1304,9 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
       }),
     onSuccess: (_data, action) => {
       setRunningKey(null);
-      // A `removes` action (Delete) drops the record → refresh the list and pop
-      // back to it; every other action stays on the (now-updated) detail.
+      // A `removes` action drops the record → refresh the list and pop back to
+      // it; every other action stays on the (now-updated) detail. Nothing sets
+      // `removes` today — see the field's note on DocAction.
       if (action.removes) {
         void qc.invalidateQueries({ queryKey: ["mobile-module"] });
         invalidateModuleShared(qc, moduleKey);

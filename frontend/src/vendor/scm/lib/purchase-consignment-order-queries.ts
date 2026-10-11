@@ -155,7 +155,11 @@ export function useDeletePurchaseConsignmentOrderItem() {
   });
 }
 
-/* ── Cancel + delete (mirror PO) ─────────────────────────────────────── */
+/* ── Cancel (mirror PO) ───────────────────────────────────────────────
+   A useDeletePurchaseConsignmentOrder used to sit below this, calling
+   DELETE /purchase-consignment-orders/:id. Both the hook and the endpoint are
+   gone (owner rule 2026-08-11: 不可以删只可以 cancel). CANCELLED is terminal
+   and the record stays. */
 export function useCancelPurchaseConsignmentOrder() {
   const qc = useQueryClient();
   return useMutation({
@@ -168,17 +172,5 @@ export function useCancelPurchaseConsignmentOrder() {
       qc.invalidateQueries({ queryKey: ['pc-order'] });
       qc.invalidateQueries({ queryKey: ['pc-order-detail', id] });
     },
-  });
-}
-
-export function useDeletePurchaseConsignmentOrder() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      authedFetch<{ ok: true; deleted: string }>(
-        `/purchase-consignment-orders/${id}`,
-        { method: 'DELETE' },
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['pc-order'] }),
   });
 }

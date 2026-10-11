@@ -197,19 +197,19 @@ export function humanHttpMessage(status: number, body: string): string {
   const t = (body ?? "").trim();
   if (t && (t.startsWith("{") || t.startsWith("["))) {
     try {
-      const j = JSON.parse(t) as { error?: unknown; message?: unknown; detail?: unknown };
+      const j = JSON.parse(t) as { error?: unknown; message?: unknown; detail?: unknown; reason?: unknown };
       // A code-shaped `error` is looked up, never shown raw; a sentence-shaped
       // `error` keeps the historic behaviour of being surfaced as-is.
       if (typeof j?.error === "string" && isErrorCode(j.error.trim())) {
         const mapped = ERROR_CODE_MESSAGES[j.error.trim()];
         if (mapped) return mapped;
-        const fallback = j?.message ?? j?.detail;
+        const fallback = j?.message ?? j?.detail ?? j?.reason;
         if (typeof fallback === "string") {
           const safe = presentable(fallback);
           if (safe) return safe;
         }
       } else {
-        const m = j?.error ?? j?.message ?? j?.detail;
+        const m = j?.error ?? j?.message ?? j?.detail ?? j?.reason;
         if (typeof m === "string") {
           const safe = presentable(m);
           if (safe) return safe;

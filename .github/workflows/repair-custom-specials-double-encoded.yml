@@ -1,0 +1,77 @@
+name: Repair double-encoded custom_specials
+
+# Manual. Clears the custom_specials values that the old sofa special-order
+# backfill double-encoded into jsonb STRING scalars (docs/jsonb-double-encoding-
+# coe.md). custom_specials is a DERIVED column — the pricing recompute emits it
+# from variants.specials and overwrites it on every line recompute — so the
+# honest repair is NULL, which is the state of a line that has not been
+# recomputed yet. Decoding the string back would restore data that was already
+# the wrong shape and the wrong content.
+#
+# Every affected row's current value is printed BEFORE the write, so the prior
+# state survives in the run log. The count comes from RETURNING and is confirmed
+# by a read-back on a fresh connection, never from a command tag.
+#
+# DRY-RUN unless apply=1; the report is the ##[notice] lines.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      show:
+        description: "how many current values to print"
+        required: false
+        default: "400"
+        type: string
+
+concurrency:
+  group: repair-custom-specials-double-encoded-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-custom-specials-double-encoded.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          SHOW: ${{ inputs.show }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-custom-specials-double-encoded.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          SHOW: ${{ inputs.show }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

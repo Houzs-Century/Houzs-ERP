@@ -20,7 +20,7 @@ const LIBRARY: Row[] = [
   row('BO315', 'BO315-5-FOSSIL'), row('BO315', 'BO315-9', 'Mint'), row('BO315', 'BO315-10-SILVER'),
   row('BO315', 'BO315-11'), row('BO315', 'BO315-21'), row('BO315', 'BO315-22'),
   row('BO315', 'BO315-23', 'LITE-01'), row('BO315', 'BO315-25'), row('BO315', 'BO315-31'),
-  row('MODENZA', 'MODENZA-01'), row('MODENZA', 'MODENZA-02', 'MODENZA-02 BARLEY'),
+  row('MODENZA', 'MODENZA-01', 'MODENZA-01 HOUSTON CREAM'), row('MODENZA', 'MODENZA-02', 'MODENZA-02 BARLEY'),
   row('MODENZA', 'MODENZA-05'), row('MODENZA', 'MODENZA-06'),
   row('HR805', 'HR805-10'), row('HR805', 'HR805-31'), row('HR805', 'HR805-40'), row('HR805', 'HR805-90'),
   row('GD2502', 'GD2502-04', 'GD2502#04 OAK'), row('GD2502', 'GD2502-09', 'GD2502#09 SANDY'),
@@ -43,7 +43,9 @@ const LIBRARY: Row[] = [
   row('PC151', 'PC151-10'), row('PC151', 'PC151-11'), row('PC151', 'PC151-17'),
   row('STAR', 'STAR-10 NAVY', 'NAVY'), row('STAR 01', 'STAR 01'), row('STAR 02', 'STAR 02'),
   row('SF', 'SF-AT 03', '03'), row('SF', 'SF-AT 07', '07'),
+  row('CH141', 'CH141-1'), row('CH141', 'CH141-1-CREAM'),
   row('CH141', 'CH141-13', 'GREY'), row('CH141', 'CH141-13-CHARCOAL'),
+  row('PHOENIX', 'PHOENIX-1', 'PHOENIX-1 OYSTER'),
   row('NINJA 02', 'NINJA 02'), row('NINJA 03', 'NINJA 03'),
   row('ORION', 'ORION-01'), row('ORION', 'ORION-1'), row('ORION', 'ORION-5'),
 ];
@@ -167,9 +169,62 @@ describe('what must stay unresolved', () => {
     }
   });
 
-  test('a name with no code cannot pick a numbered colour out of its series', () => {
-    expect(hit('Modenza-Houston Cream')).toBeNull();
-    expect(hit('Harring 02# beige')).toBeNull(); // the doc omits GD8371 entirely
+  test('a name with no code cannot LEXICALLY pick a numbered colour out of its series', () => {
+    /* These two now resolve, but through COLOUR_ALIAS, not through a rung -
+       see the alias block below. What must stay true is that no rung reaches
+       them, which is what these folds assert: the document string and the
+       library key share no common form. */
+    expect(foldColour('Modenza-Houston Cream')).not.toBe(foldColour('MODENZA-01 HOUSTON CREAM'));
+    expect(foldColour('Harring 02# beige')).not.toBe(foldColour('HIRRING GD8371-02# BEIGE'));
+  });
+});
+
+describe('COLOUR_ALIAS: the last-resort table', () => {
+  /* Five document spellings that name a colour the library REALLY HOLDS, which
+     no rung can reach because the miss is not a typo - the document writes the
+     identity a different way. Widening a rung to catch them would have to let a
+     query match a key it shares no number with, which is the door the digit
+     guard closes. Each case below is a live migrated sofa line. */
+  test('the number is absent from the document', () => {
+    expect(hit('Modenza-Houston Cream')).toBe('MODENZA-01'); // 10 live lines
+  });
+
+  test('the series letters are absent from the document', () => {
+    expect(hit('141-1')).toBe('CH141-1'); // 2 live lines
+    expect(hit('9226-13')).toBe('ARMANI J9226-13 WARM GREY'); // 2 live lines
+  });
+
+  test('the brand is written instead of the series code', () => {
+    // one alias entry covers both spellings, because it is keyed by the fold
+    expect(hit('Harring 02# Beige')).toBe('HIRRING GD8371-02# BEIGE');
+    expect(hit('Harring 02# beige')).toBe('HIRRING GD8371-02# BEIGE');
+  });
+
+  test('the number trails the colour NAME instead of leading it', () => {
+    /* The sharpest case: PHOENIX-1 OYSTER was CREATED by
+       create-missing-sofa-fabrics and the string was still unresolved
+       afterwards, so creating a row had never been the fix. */
+    expect(hit('Phoenix-oyster1')).toBe('PHOENIX-1');
+  });
+
+  test('an alias whose row is not in the library goes inert, never invents it', () => {
+    const bare = buildFabricColourIndex([row('MODENZA', 'MODENZA-05')]);
+    expect(bare.findColour('Modenza-Houston Cream')).toBeNull();
+    expect(bare.aliasUnresolved.length).toBeGreaterThan(0);
+  });
+
+  test('the alias runs LAST, so it cannot displace a lexical answer', () => {
+    /* Same fold key as the "141-1" alias, but this library resolves it
+       lexically to a different row - the lexical answer must win. */
+    const other = buildFabricColourIndex([row('CH141', 'CH141-1'), row('AM275', '141-1', 'AM275 141-1')]);
+    expect((other.findColour('141-1') as Row).colour_id).toBe('141-1');
+  });
+
+  test('the alias does not rescue what is genuinely ambiguous or not a colour', () => {
+    expect(hit('03#Straw')).toBeNull(); // HIRRING GD8371-03# STRAW vs HIVE GD2034-03# STRAW
+    expect(hit('J9833-2')).toBeNull(); // J9883-2 with two digits transposed
+    expect(hit('Bottom Use Nylon Fabric')).toBeNull();
+    expect(hit('ninja - 02,03,07,09')).toBeNull();
   });
 });
 
