@@ -350,6 +350,8 @@ export function UnbilledDeliveriesV2() {
       width: "158px",
       align: "right",
       getValue: (r) => r.unbilled_sen,
+      exportValue: (r) => r.unbilled_sen / 100,
+      exportFormat: 'money',
       render: (r) => (
         <div className="flex flex-col items-end gap-1">
           <span className="font-money text-[13px] font-bold text-err">{fmtRm(r.unbilled_sen)}</span>
@@ -366,6 +368,8 @@ export function UnbilledDeliveriesV2() {
       align: "right",
       defaultHidden: true,
       getValue: (r) => r.delivered_sen,
+      exportValue: (r) => r.delivered_sen / 100,
+      exportFormat: 'money',
       render: (r) => <span className="font-money text-[12.5px] text-ink-secondary">{fmtRm(r.delivered_sen)}</span>,
     },
     {
@@ -375,6 +379,8 @@ export function UnbilledDeliveriesV2() {
       align: "right",
       defaultHidden: true,
       getValue: (r) => r.invoiced_sen,
+      exportValue: (r) => r.invoiced_sen / 100,
+      exportFormat: 'money',
       render: (r) => <span className="font-money text-[12.5px] text-ink-secondary">{fmtRm(r.invoiced_sen)}</span>,
     },
     {

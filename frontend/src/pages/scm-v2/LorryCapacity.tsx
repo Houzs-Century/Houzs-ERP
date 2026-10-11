@@ -259,9 +259,9 @@ export const LorryCapacity = () => {
     { key: 'setup_dismantle', label: 'Setup/Dismantle', align: 'right', getValue: (l) => l.setup_dismantle, render: (l) => numOrDash(l.setup_dismantle) },
     { key: 'pickups', label: 'Pickups', align: 'right', getValue: (l) => l.pickups, render: (l) => numOrDash(l.pickups) },
     { key: 'services', label: 'Services', align: 'right', getValue: (l) => l.services, render: (l) => numOrDash(l.services) },
-    { key: 'delivery_revenue', label: 'Delivery Revenue', align: 'right', getValue: (l) => l.delivery_revenue_sen ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.delivery_revenue_sen)}</span> },
-    { key: 'revenue_per_order', label: 'Revenue/Order', align: 'right', getValue: (l) => l.revenue_per_order_sen ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.revenue_per_order_sen)}</span> },
-    { key: 'revenue_per_trip', label: 'Revenue/Trip', align: 'right', getValue: (l) => l.revenue_per_trip_sen ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.revenue_per_trip_sen)}</span> },
+    { key: 'delivery_revenue', label: 'Delivery Revenue', align: 'right', getValue: (l) => l.delivery_revenue_sen ?? null, exportValue: (l) => { const v = l.delivery_revenue_sen; return v == null ? '' : v / 100; }, exportFormat: 'money', render: (l) => <span className={styles.money}>{centiOrDash(l.delivery_revenue_sen)}</span> },
+    { key: 'revenue_per_order', label: 'Revenue/Order', align: 'right', getValue: (l) => l.revenue_per_order_sen ?? null, exportValue: (l) => { const v = l.revenue_per_order_sen; return v == null ? '' : v / 100; }, exportFormat: 'money', render: (l) => <span className={styles.money}>{centiOrDash(l.revenue_per_order_sen)}</span> },
+    { key: 'revenue_per_trip', label: 'Revenue/Trip', align: 'right', getValue: (l) => l.revenue_per_trip_sen ?? null, exportValue: (l) => { const v = l.revenue_per_trip_sen; return v == null ? '' : v / 100; }, exportFormat: 'money', render: (l) => <span className={styles.money}>{centiOrDash(l.revenue_per_trip_sen)}</span> },
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [toggleInHouse, setRepair, from, to, notify]);
 

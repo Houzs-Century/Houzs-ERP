@@ -901,6 +901,8 @@ function SalesOrderDetailV2ReadOnly() {
       width: "108px",
       align: "right",
       getValue: (l) => l.unit_price_sen,
+      exportValue: (l) => l.unit_price_sen / 100,
+      exportFormat: 'rate',
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
           {fmtMoney(l.unit_price_sen, salesOrder?.currency)}
@@ -913,6 +915,8 @@ function SalesOrderDetailV2ReadOnly() {
       width: "88px",
       align: "right",
       getValue: (l) => l.discount_sen,
+      exportValue: (l) => l.discount_sen / 100,
+      exportFormat: 'money',
       render: (l) => {
         const isFoc = isFocLine(l);
         if (isFoc) {
@@ -938,6 +942,8 @@ function SalesOrderDetailV2ReadOnly() {
       width: "132px",
       align: "right",
       getValue: (l) => l.total_sen,
+      exportValue: (l) => l.total_sen / 100,
+      exportFormat: 'money',
       render: (l) => (
         <span className="font-money text-[13px] font-semibold text-ink">
           {fmtMoney(l.total_sen, salesOrder?.currency)}

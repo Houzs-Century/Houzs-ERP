@@ -333,6 +333,7 @@ export function Sales() {
       label: "Amount",
       align: "right",
       getValue: (e) => e.amount,
+      exportFormat: 'money',
       render: (e) => (
         <span className="font-mono font-semibold">{formatCurrency(e.amount)}</span>
       ),

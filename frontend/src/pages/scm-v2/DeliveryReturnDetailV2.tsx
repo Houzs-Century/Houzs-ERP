@@ -700,6 +700,8 @@ export function DeliveryReturnDetailV2() {
       width: "108px",
       align: "right",
       getValue: (l) => l.unit_price_sen,
+      exportValue: (l) => l.unit_price_sen / 100,
+      exportFormat: 'rate',
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
           {fmtMoney(l.unit_price_sen, deliveryReturn?.currency)}
@@ -712,6 +714,8 @@ export function DeliveryReturnDetailV2() {
       width: "132px",
       align: "right",
       getValue: (l) => l.line_total_sen,
+      exportValue: (l) => l.line_total_sen / 100,
+      exportFormat: 'money',
       render: (l) => (
         <span className="font-money text-[13px] font-semibold text-err">
           {fmtMoney(l.line_total_sen ?? 0, deliveryReturn?.currency)}

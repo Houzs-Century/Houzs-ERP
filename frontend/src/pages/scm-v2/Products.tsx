@@ -673,6 +673,8 @@ const SkuMasterTab = () => {
           width: '110px',
           align: 'right',
           getValue: (r) => priceForHeightTier(r.seat_height_prices, s, tier) ?? -1,
+          exportValue: (r) => { const v = priceForHeightTier(r.seat_height_prices, s, tier); return v == null ? '' : v / 100; },
+          exportFormat: 'rate',
           render: (r) => {
             const sen = priceForHeightTier(r.seat_height_prices, s, tier);
             return <span className={sen ? styles.price : styles.priceEmpty}>{fmtRm(sen)}</span>;
@@ -703,6 +705,8 @@ const SkuMasterTab = () => {
           width: '120px',
           align: 'right',
           getValue: (r) => r.base_price_sen ?? -1,
+          exportValue: (r) => { const v = r.base_price_sen; return v == null ? '' : v / 100; },
+          exportFormat: 'rate',
           render: (r) => (
             <span className={r.base_price_sen ? styles.price : styles.priceEmpty}>
               {fmtRm(r.base_price_sen)}
@@ -732,6 +736,8 @@ const SkuMasterTab = () => {
           width: '110px',
           align: 'right',
           getValue: (r) => r.base_price_sen ?? -1,
+          exportValue: (r) => { const v = r.base_price_sen; return v == null ? '' : v / 100; },
+          exportFormat: 'rate',
           render: (r) => (
             <span className={r.base_price_sen ? styles.price : styles.priceEmpty}>
               {fmtRm(r.base_price_sen)}
@@ -744,6 +750,8 @@ const SkuMasterTab = () => {
           width: '110px',
           align: 'right',
           getValue: (r) => r.price1_sen ?? -1,
+          exportValue: (r) => { const v = r.price1_sen; return v == null ? '' : v / 100; },
+          exportFormat: 'rate',
           render: (r) => (
             <span className={r.price1_sen ? styles.price : styles.priceEmpty}>
               {fmtRm(r.price1_sen)}

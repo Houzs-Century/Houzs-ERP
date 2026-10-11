@@ -541,6 +541,8 @@ function GoodsReceivedDetailV2ReadOnly() {
       width: "108px",
       align: "right",
       getValue: (l) => l.unit_price_sen ?? 0,
+      exportValue: (l) => (l.unit_price_sen ?? 0) / 100,
+      exportFormat: 'rate',
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">{fmtMoney(l.unit_price_sen ?? 0, grn?.currency)}</span>
       ),
@@ -551,6 +553,8 @@ function GoodsReceivedDetailV2ReadOnly() {
       width: "132px",
       align: "right",
       getValue: (l) => l.line_total_sen ?? 0,
+      exportValue: (l) => (l.line_total_sen ?? 0) / 100,
+      exportFormat: 'money',
       render: (l) => {
         const freight = Number(l.allocated_charge_sen ?? 0);
         return (

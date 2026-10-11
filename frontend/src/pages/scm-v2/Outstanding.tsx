@@ -317,6 +317,7 @@ const ModuleTable = ({
         spec.kind === 'money' || spec.kind === 'qty'
           ? Number(r[spec.key]) || 0
           : String(r[spec.key] ?? ''),
+      ...(spec.kind === 'money' ? { exportValue: (r: KeyedRow) => (Number(r[spec.key]) || 0) / 100, exportFormat: 'money' as const } : {}),
       render: (r: KeyedRow) => cellText(spec, r),
     }));
     cols.push({

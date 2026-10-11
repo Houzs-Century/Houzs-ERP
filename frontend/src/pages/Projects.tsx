@@ -1888,7 +1888,7 @@ function ProjectsListView() {
           {r.rental != null ? formatCurrency(r.rental) : "—"}
         </span>
       ),
-      getValue: (r) => r.rental,
+      getValue: (r) => r.rental, exportFormat: "money",
     },
     {
       key: "total_sales",
@@ -1899,7 +1899,7 @@ function ProjectsListView() {
           {r.total_sales != null ? formatCurrency(r.total_sales) : "—"}
         </span>
       ),
-      getValue: (r) => r.total_sales,
+      getValue: (r) => r.total_sales, exportFormat: "money",
     },
     // ── Ledger-derived finance columns (opt-in via the column chooser) ──
     // Computed per project from project_finance_lines by the list endpoint
@@ -1917,7 +1917,7 @@ function ProjectsListView() {
           {r.fin_revenue != null ? formatCurrency(r.fin_revenue) : "—"}
         </span>
       ),
-      getValue: (r) => r.fin_revenue ?? null,
+      getValue: (r) => r.fin_revenue ?? null, exportFormat: "money",
     },
     {
       key: "cogs",
@@ -1939,7 +1939,7 @@ function ProjectsListView() {
         ) : (
           <span className="font-mono text-[11px]">—</span>
         ),
-      getValue: (r) => r.fin_cogs ?? null,
+      getValue: (r) => r.fin_cogs ?? null, exportFormat: "money",
     },
     {
       key: "cogs_matt_sofa",
@@ -1951,7 +1951,7 @@ function ProjectsListView() {
           {r.fin_cogs_matt_sofa != null ? formatCurrency(r.fin_cogs_matt_sofa) : "—"}
         </span>
       ),
-      getValue: (r) => r.fin_cogs_matt_sofa ?? null,
+      getValue: (r) => r.fin_cogs_matt_sofa ?? null, exportFormat: "money",
     },
     {
       key: "cogs_bedframe",
@@ -1963,7 +1963,7 @@ function ProjectsListView() {
           {r.fin_cogs_bedframe != null ? formatCurrency(r.fin_cogs_bedframe) : "—"}
         </span>
       ),
-      getValue: (r) => r.fin_cogs_bedframe ?? null,
+      getValue: (r) => r.fin_cogs_bedframe ?? null, exportFormat: "money",
     },
     {
       key: "cogs_accessories",
@@ -1975,7 +1975,7 @@ function ProjectsListView() {
           {r.fin_cogs_accessories != null ? formatCurrency(r.fin_cogs_accessories) : "—"}
         </span>
       ),
-      getValue: (r) => r.fin_cogs_accessories ?? null,
+      getValue: (r) => r.fin_cogs_accessories ?? null, exportFormat: "money",
     },
     {
       key: "gp",
@@ -1990,7 +1990,7 @@ function ProjectsListView() {
         </span>
       ),
       getValue: (r) =>
-        r.fin_revenue != null && r.fin_cogs != null ? r.fin_revenue - r.fin_cogs : null,
+        r.fin_revenue != null && r.fin_cogs != null ? r.fin_revenue - r.fin_cogs : null, exportFormat: "money",
     },
     {
       key: "gp_pct",
@@ -2025,7 +2025,7 @@ function ProjectsListView() {
       getValue: (r) =>
         r.fin_revenue != null && r.fin_total_cost != null
           ? r.fin_revenue - r.fin_total_cost
-          : null,
+          : null, exportFormat: "money",
     },
     {
       key: "margin_pct",
@@ -3081,7 +3081,7 @@ function FinanceListView() {
           {formatCurrency(r.sales)}
         </span>
       ),
-      getValue: (r) => r.sales,
+      getValue: (r) => r.sales, exportFormat: "money",
     },
     {
       key: "sales_per_day",
@@ -3096,7 +3096,7 @@ function FinanceListView() {
             {formatCurrency(r.sales_per_day)}
           </span>
         ),
-      getValue: (r) => r.sales_per_day ?? -1,
+      getValue: (r) => r.sales_per_day ?? -1, exportValue: (r) => r.sales_per_day ?? null, exportFormat: "money",
     },
     {
       key: "cogs",
@@ -3108,7 +3108,7 @@ function FinanceListView() {
           {formatCurrency(r.cogs)}
         </span>
       ),
-      getValue: (r) => r.cogs,
+      getValue: (r) => r.cogs, exportFormat: "money",
     },
     {
       key: "gp_pct",
@@ -3140,7 +3140,7 @@ function FinanceListView() {
           {formatCurrency(r.rental)}
         </span>
       ),
-      getValue: (r) => r.rental,
+      getValue: (r) => r.rental, exportFormat: "money",
     },
     {
       key: "rent_per_sqm",
@@ -3155,7 +3155,7 @@ function FinanceListView() {
             {formatCurrency(r.rent_per_sqm)}
           </span>
         ),
-      getValue: (r) => r.rent_per_sqm ?? -1,
+      getValue: (r) => r.rent_per_sqm ?? -1, exportValue: (r) => r.rent_per_sqm ?? null, exportFormat: "money",
     },
     {
       key: "setup",
@@ -3167,7 +3167,7 @@ function FinanceListView() {
           {formatCurrency(r.setup_cost)}
         </span>
       ),
-      getValue: (r) => r.setup_cost,
+      getValue: (r) => r.setup_cost, exportFormat: "money",
     },
     {
       key: "transport",
@@ -3179,7 +3179,7 @@ function FinanceListView() {
           {formatCurrency(r.transport_cost)}
         </span>
       ),
-      getValue: (r) => r.transport_cost,
+      getValue: (r) => r.transport_cost, exportFormat: "money",
     },
     {
       key: "commission",
@@ -3191,7 +3191,7 @@ function FinanceListView() {
           {formatCurrency(r.commission_cost)}
         </span>
       ),
-      getValue: (r) => r.commission_cost,
+      getValue: (r) => r.commission_cost, exportFormat: "money",
     },
     {
       key: "merchandise",
@@ -3203,7 +3203,7 @@ function FinanceListView() {
           {formatCurrency(r.merchandise_cost)}
         </span>
       ),
-      getValue: (r) => r.merchandise_cost,
+      getValue: (r) => r.merchandise_cost, exportFormat: "money",
     },
     {
       key: "others",
@@ -3215,7 +3215,7 @@ function FinanceListView() {
           {formatCurrency(r.others_cost)}
         </span>
       ),
-      getValue: (r) => r.others_cost,
+      getValue: (r) => r.others_cost, exportFormat: "money",
     },
     {
       key: "total_cost",
@@ -3227,7 +3227,7 @@ function FinanceListView() {
           {formatCurrency(r.cost)}
         </span>
       ),
-      getValue: (r) => r.cost,
+      getValue: (r) => r.cost, exportFormat: "money",
     },
     {
       key: "net_profit",
@@ -3244,7 +3244,7 @@ function FinanceListView() {
           {formatCurrency(r.net_profit)}
         </span>
       ),
-      getValue: (r) => r.net_profit,
+      getValue: (r) => r.net_profit, exportFormat: "money",
     },
     {
       key: "income",
@@ -3256,7 +3256,7 @@ function FinanceListView() {
           {formatCurrency(r.income)}
         </span>
       ),
-      getValue: (r) => r.income,
+      getValue: (r) => r.income, exportFormat: "money",
     },
     {
       key: "net",
@@ -3273,7 +3273,7 @@ function FinanceListView() {
           {formatCurrency(r.net)}
         </span>
       ),
-      getValue: (r) => r.net,
+      getValue: (r) => r.net, exportFormat: "money",
     },
     {
       key: "margin_pct",

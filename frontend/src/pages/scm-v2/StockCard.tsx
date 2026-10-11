@@ -201,6 +201,7 @@ export const StockCard = () => {
         width: '110px',
         align: 'right',
         getValue: (m) => (m.unit_cost_sen ?? 0) / 100,
+        exportFormat: 'rate',
         render: (m) => (
           <span className={`${styles.numCell} ${styles.numCellZero}`}>
             {m.unit_cost_sen && m.unit_cost_sen > 0 ? fmtRm(m.unit_cost_sen) : '—'}
@@ -395,6 +396,7 @@ export const StockCard = () => {
               {
                 key: 'value', label: 'Value', align: 'right', width: '130px',
                 getValue: (b) => (b.value_sen ?? 0) / 100,
+                exportFormat: 'money',
                 render: (b) => (
                   <span className={`${styles.numCell} ${styles.numCellZero}`}>
                     {b.value_sen && b.value_sen > 0 ? fmtRm(b.value_sen) : '—'}
@@ -517,11 +519,13 @@ export const StockCard = () => {
               {
                 key: 'unit_cost', label: 'Unit Cost', align: 'right', width: '110px',
                 getValue: (l) => l.unit_cost_sen / 100,
+                exportFormat: 'rate',
                 render: (l) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{fmtRm(l.unit_cost_sen)}</span>,
               },
               {
                 key: 'remaining_value', label: 'Remaining Value', align: 'right', width: '140px',
                 getValue: (l) => (l.remaining_value_sen ?? l.qty_remaining * l.unit_cost_sen) / 100,
+                exportFormat: 'money',
                 render: (l) => {
                   const remainingValue = l.remaining_value_sen ?? l.qty_remaining * l.unit_cost_sen;
                   return (

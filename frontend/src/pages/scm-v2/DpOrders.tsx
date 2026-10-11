@@ -193,6 +193,7 @@ export const DpOrders = () => {
          value; RM 0.00 would read as a paid-up order). */
       key: 'total_amount', label: 'Total Amount', width: '130px', align: 'right',
       getValue: (r) => (r.so_total_sen == null ? '' : r.so_total_sen / 100),
+      exportFormat: 'money',
       render: (r) => (r.so_total_sen == null
         ? <span style={{ color: 'var(--fg-muted)' }}>—</span>
         : <span style={{ fontFamily: 'var(--font-mark)', fontWeight: 700 }}>{fmtSen(r.so_total_sen)}</span>),

@@ -370,7 +370,7 @@ const AnalyticsTab = ({ warehouseId }: { warehouseId: string | null }) => {
         columns={[
           { key: 'bucket', label: 'Age Bucket', getValue: (b) => b.label, render: (b) => b.label },
           { key: 'qty', label: 'Qty', align: 'right', width: '110px', getValue: (b) => b.qty, render: (b) => <span className={`${styles.numCell} ${b.qty > 0 ? styles.numCellPos : styles.numCellZero}`}>{fmtQty(b.qty)}</span> },
-          { key: 'value', label: 'Value', align: 'right', width: '140px', getValue: (b) => b.valueSen / 100, render: (b) => <span className={styles.numCell} style={{ fontWeight: 700 }}>{b.valueSen > 0 ? fmtRm(b.valueSen) : '—'}</span> },
+          { key: 'value', label: 'Value', align: 'right', width: '140px', getValue: (b) => b.valueSen / 100, exportFormat: 'money', render: (b) => <span className={styles.numCell} style={{ fontWeight: 700 }}>{b.valueSen > 0 ? fmtRm(b.valueSen) : '—'}</span> },
           {
             key: 'share', label: 'Share of value', width: '34%', disableSort: true,
             getValue: (b) => b.valueSen,
@@ -409,7 +409,7 @@ const AnalyticsTab = ({ warehouseId }: { warehouseId: string | null }) => {
         columns={[
           { key: 'product', label: 'Product', getValue: (d) => `${d.item_code} ${d.product_name}`, render: (d) => <><span className={styles.codeChip}>{d.item_code}</span> {d.product_name}</> },
           { key: 'qty', label: 'Qty', align: 'right', width: '110px', getValue: (d) => d.qty, render: (d) => <span className={`${styles.numCell} ${styles.numCellPos}`}>{fmtQty(d.qty)}</span> },
-          { key: 'value', label: 'Value', align: 'right', width: '140px', getValue: (d) => d.valueSen / 100, render: (d) => <span className={styles.numCell} style={{ fontWeight: 700 }}>{fmtRm(d.valueSen)}</span> },
+          { key: 'value', label: 'Value', align: 'right', width: '140px', getValue: (d) => d.valueSen / 100, exportFormat: 'money', render: (d) => <span className={styles.numCell} style={{ fontWeight: 700 }}>{fmtRm(d.valueSen)}</span> },
           { key: 'lastSold', label: 'Last Sold', width: '130px', getValue: (d) => d.lastSoldAt ?? '', render: (d) => <span className={styles.numCellZero}>{fmtDay(d.lastSoldAt)}</span> },
         ] satisfies Column<(typeof data.deadStock)[number]>[]}
       />
@@ -790,6 +790,7 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     width: '110px',
     align: 'right',
     getValue: (r) => r.total_value_sen / 100,
+    exportFormat: 'money',
     render: (r) => (
       <span className={`${styles.numCell} ${styles.numCellZero}`}>
         {r.total_value_sen > 0 ? fmtRm(r.total_value_sen) : '—'}
@@ -802,6 +803,7 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     width: '100px',
     align: 'right',
     getValue: (r) => ((r.owned_qty ?? r.total_qty) > 0 && r.total_value_sen > 0 ? r.total_value_sen / (r.owned_qty ?? r.total_qty) / 100 : 0),
+    exportFormat: 'rate',
     render: (r) => (
       <span className={`${styles.numCell} ${styles.numCellZero}`}>
         {(r.owned_qty ?? r.total_qty) > 0 && r.total_value_sen > 0 ? fmtRm(Math.round(r.total_value_sen / (r.owned_qty ?? r.total_qty))) : '—'}
@@ -1775,8 +1777,8 @@ const MovementsTab = ({
               </span>
             ),
           },
-          { key: 'unitCost', label: 'Unit Cost', align: 'right', width: '100px', getValue: (m) => (m.unit_cost_sen ?? 0) / 100, render: (m) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{m.unit_cost_sen && m.unit_cost_sen > 0 ? fmtRm(m.unit_cost_sen) : '—'}</span> },
-          { key: 'lineCost', label: 'Line Cost', align: 'right', width: '110px', getValue: (m) => (m.total_cost_sen ?? 0) / 100, render: (m) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{m.total_cost_sen && m.total_cost_sen > 0 ? fmtRm(m.total_cost_sen) : '—'}</span> },
+          { key: 'unitCost', label: 'Unit Cost', align: 'right', width: '100px', getValue: (m) => (m.unit_cost_sen ?? 0) / 100, exportFormat: 'rate', render: (m) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{m.unit_cost_sen && m.unit_cost_sen > 0 ? fmtRm(m.unit_cost_sen) : '—'}</span> },
+          { key: 'lineCost', label: 'Line Cost', align: 'right', width: '110px', getValue: (m) => (m.total_cost_sen ?? 0) / 100, exportFormat: 'money', render: (m) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{m.total_cost_sen && m.total_cost_sen > 0 ? fmtRm(m.total_cost_sen) : '—'}</span> },
           {
             key: 'source', label: 'Source Doc', width: '140px',
             getValue: (m) => m.source_doc_no ?? '',
@@ -1849,8 +1851,8 @@ export const CogsTab = ({
           { key: 'warehouse', label: 'Warehouse', width: '110px', getValue: (c) => c.warehouse_code, render: (c) => c.warehouse_code },
           { key: 'product', label: 'Product', width: '160px', getValue: (c) => c.item_code, render: (c) => <span className={styles.codeChip}>{c.item_code}</span> },
           { key: 'qty', label: 'Qty', align: 'right', width: '90px', getValue: (c) => -c.qty_consumed, render: (c) => <span className={`${styles.numCell} ${styles.numCellNeg}`}>−{fmtQty(c.qty_consumed)}</span> },
-          { key: 'unitCost', label: 'Unit Cost', align: 'right', width: '100px', getValue: (c) => c.unit_cost_sen / 100, render: (c) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{fmtRm(c.unit_cost_sen)}</span> },
-          { key: 'cogs', label: 'COGS', align: 'right', width: '110px', getValue: (c) => c.total_cost_sen / 100, render: (c) => <span className={styles.numCell} style={{ fontWeight: 700 }}>{fmtRm(c.total_cost_sen)}</span> },
+          { key: 'unitCost', label: 'Unit Cost', align: 'right', width: '100px', getValue: (c) => c.unit_cost_sen / 100, exportFormat: 'rate', render: (c) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{fmtRm(c.unit_cost_sen)}</span> },
+          { key: 'cogs', label: 'COGS', align: 'right', width: '110px', getValue: (c) => c.total_cost_sen / 100, exportFormat: 'money', render: (c) => <span className={styles.numCell} style={{ fontWeight: 700 }}>{fmtRm(c.total_cost_sen)}</span> },
           { key: 'doc', label: 'Doc', width: '140px', getValue: (c) => c.source_doc_no ?? '', render: (c) => c.source_doc_no ? <span className={styles.docLink}>{c.source_doc_no}</span> : '—' },
           {
             key: 'lot', label: 'Lot Received', width: '200px',
