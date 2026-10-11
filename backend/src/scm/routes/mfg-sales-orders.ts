@@ -10147,8 +10147,32 @@ mfgSalesOrders.post('/:docNo/items/:itemId/photos', async (c) => {
 // Task #92 — refresh a signed GET URL for an existing key. Frontend
 // hits this on mount when no cached URL exists for a key, and on a
 // 403 (URL expired). Auth-checked the same way as the proxy: the key
-// must belong to this SO+item and currently be in photo_urls.
-mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', async (c) => {
+// must belong to this SO+item, to the ACTIVE COMPANY, and currently be
+// in photo_urls.
+//
+// COMPANY SCOPING (2026-08-11) — this route and the proxy below run on a
+// SERVICE-ROLE client (middleware/auth.ts getSupabaseService), so RLS is
+// bypassed and the query below is the ONLY thing standing between a caller
+// and the row. Membership alone (item -> doc_no -> photo_urls) is not
+// authorisation when the system hosts two companies: doc_no + item id +
+// photo key are all guessable-or-shareable, and 24 of the 117 SCM users
+// belong to 2990 while all 570 live SO photo keys belong to Houzs. Without
+// the company predicate, any of those 24 could read any of those 570.
+// The PO route (mfg-purchase-orders.ts) and the consignment route
+// (consignment-orders.ts) already scope; this pair was the odd one out, and
+// the PO route's own comment said so out loud ("unlike the SO route").
+//
+// Scoping the ITEM rather than the header is deliberate: the item row is
+// what the route already loads, and mfg_sales_order_items.company_id is
+// NOT NULL (mig 0083). Verified read-only against production before
+// shipping — 531 photo-carrying items / 570 keys, every one with
+// item.company_id equal to its header's, so nothing that renders today
+// stops rendering. See backend/scripts/audit-so-photo-company-scope.mjs.
+// Exported so the company-scope suite can drive the REAL handler: the
+// supabaseAuth bridge cannot run in the test harness, so the routers are not
+// mountable there. Same seam the sibling PO/consignment photo tests use.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const soItemPhotoSignedHandler = async (c: any) => {
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');
   const itemId = c.req.param('itemId');
@@ -10176,7 +10200,8 @@ mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', async (c) =>
   } catch (e) {
     return c.json({ error: 'signing_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
   }
-});
+};
+mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', soItemPhotoSignedHandler);
 
 /**
  * @deprecated Task #92 — superseded by signed-URL flow. The frontend
@@ -10186,7 +10211,8 @@ mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', async (c) =>
  * remove after the post-deploy cooldown (~7 days, longer than any
  * signed-URL TTL or cached page load).
  */
-mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const soItemPhotoProxyHandler = async (c: any) => {
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');
   const itemId = c.req.param('itemId');
@@ -10196,10 +10222,16 @@ mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
     return c.json({ error: 'photo_bucket_not_configured' }, 500);
   }
 
-  // Authorise: the photo key must belong to this SO+item AND be
-  // currently listed in photo_urls. Prevents enumeration of unrelated
-  // objects via a guessed key. WO-7: a `.thumb` sibling is authorised
-  // against its BASE key — thumbs are never listed in photo_urls.
+  // Authorise: the photo key must belong to this SO+item, the item must
+  // belong to the ACTIVE COMPANY, and the key must be currently listed in
+  // photo_urls. Prevents enumeration of unrelated objects via a guessed key.
+  // WO-7: a `.thumb` sibling is authorised against its BASE key — thumbs are
+  // never listed in photo_urls.
+  //
+  // The company predicate matters MORE here than on /signed, not less: this
+  // handler streams the R2 object body straight back, so a miss is not a
+  // stale URL, it is the bytes. Same service-role caveat as /signed above —
+  // RLS is bypassed, this query is the whole gate.
   const { data: item } = await sb
     .from('mfg_sales_order_items')
     .select('doc_no, photo_urls')
@@ -10227,7 +10259,8 @@ mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
       'cache-control': 'private, max-age=31536000, immutable',
     },
   });
-});
+};
+mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey', soItemPhotoProxyHandler);
 
 mfgSalesOrders.delete('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
   const sb = c.get('supabase');
