@@ -1,3 +1,21 @@
+## DIVAN ONLY lines demanded a mattress Gap [medium]
+
+**Symptom** — Owner 2026-08-09: bedframe lines for DIVAN ONLY products were reported
+as variant-incomplete (and so could block a Processing Date) purely because Gap was
+blank.
+
+**Root cause** — REQUIRED_VARIANT_AXES_BY_CATEGORY.bedframe requires gap for every
+bedframe line, but a DIVAN ONLY product is a divan sold WITHOUT a mattress, so there
+is no mattress gap to state. The rule only looked at item_group, never the item.
+
+**Fix** —  in scm/shared/so-variant-rule.ts; missingVariantAxes
+(and missingConfirmVariantAxes) take an optional itemCode and skip the gap axis for
+those lines. itemCode threaded through the backend gate (so-variant-check) and every
+desktop + mobile call site, and the vendored frontend copy of the rule updated in
+lockstep so the two surfaces cannot drift.
+
+**Ref** — 2026-08-09, go-live cutover.
+
 ## 2026-08-08
 
 ### [MEDIUM] Every stock movement a stock take or manual adjustment wrote said "Performed by: Unknown user" — the writers stamped the pinned SYSTEM staff row, and the roster scopes that row out

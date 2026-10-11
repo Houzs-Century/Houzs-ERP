@@ -1727,8 +1727,8 @@ export function MobileNewSO({
     if (!asDraft && (procDate || !isEdit)) {
       const missOf = (l: LineItem) =>
         procDate
-          ? missingVariantAxes(l.itemGroup, l.variants)
-          : missingConfirmVariantAxes(l.itemGroup, l.variants);
+          ? missingVariantAxes(l.itemGroup, l.variants, l.itemCode)
+          : missingConfirmVariantAxes(l.itemGroup, l.variants, l.itemCode);
       const offender = namedLines.find((l) => missOf(l).length > 0);
       if (offender) {
         const miss = missOf(offender).map((a) => a.label).join(", ");
@@ -2939,7 +2939,7 @@ function LineCard({
     ? sortNumeric(restrictPricedToPool(activeOptions(maint.legHeights, String(v.legHeight ?? "")), allow?.leg_heights)).map((o) => ({ value: o.value, label: o.value }))
     : [];
 
-  const missing = new Set(missingVariantAxes(line.itemGroup, line.variants).map((a) => a.key));
+  const missing = new Set(missingVariantAxes(line.itemGroup, line.variants, line.itemCode).map((a) => a.key));
 
   /* ── Special orders (unified entry) — the editing UI moved to the
      SpecialOrderSheet bottom sheet (owner-approved). Here we only derive a

@@ -1415,7 +1415,7 @@ export const SalesOrderNew = () => {
     if (!asDraft || processingDate) {
       const missOf = (l: SoLineDraft): string[] =>
         processingDate
-          ? missingRequiredVariants(l.itemGroup, l.variants)
+          ? missingRequiredVariants(l.itemGroup, l.variants, l.itemCode)
           : missingConfirmVariantAxes(l.itemGroup, l.variants).map((a) => a.label);
       const variantGaps = validLines
         .map((l) => ({ code: l.itemCode, miss: missOf(l) }))

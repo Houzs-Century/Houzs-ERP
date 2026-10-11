@@ -571,7 +571,7 @@ export const SalesOrderDetail = () => {
   const incompleteVariantLines = useMemo(() => {
     if (!requireVariants) return [];
     return items
-      .filter((it) => missingVariantAxes(it.item_group, it.variants as Record<string, unknown> | null).length > 0)
+      .filter((it) => missingVariantAxes(it.item_group, it.variants as Record<string, unknown> | null, it.item_code).length > 0)
       .map((it) => ({ code: it.item_code, group: (it.item_group ?? '').toLowerCase() }));
   }, [items, requireVariants]);
 
@@ -806,7 +806,7 @@ export const SalesOrderDetail = () => {
         ...(addingDraft ? [addingDraft] : []),
       ]
         .filter((d) => d.itemCode.trim())
-        .map((d) => ({ code: d.itemCode, miss: missingRequiredVariants(d.itemGroup, d.variants) }))
+        .map((d) => ({ code: d.itemCode, miss: missingRequiredVariants(d.itemGroup, d.variants, d.itemCode) }))
         .filter((x) => x.miss.length > 0);
       if (variantGaps.length > 0) {
         setSaveError(

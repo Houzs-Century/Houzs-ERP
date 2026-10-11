@@ -1410,8 +1410,9 @@ const FabricColourCombobox = ({
 export function missingRequiredVariants(
   itemGroup: string | null | undefined,
   variants: Record<string, unknown> | null | undefined,
+  itemCode?: string | null,
 ): string[] {
-  return missingVariantAxes(itemGroup, variants).map((a) => a.label);
+  return missingVariantAxes(itemGroup, variants, itemCode).map((a) => a.label);
 }
 
 /* ──────────────────────────────────────────────────────────────────────

@@ -479,7 +479,7 @@ export const ConsignmentOrderNew = () => {
     }
     if (processingDate) {
       const variantGaps = validLines
-        .map((l) => ({ code: l.itemCode, miss: missingRequiredVariants(l.itemGroup, l.variants) }))
+        .map((l) => ({ code: l.itemCode, miss: missingRequiredVariants(l.itemGroup, l.variants, l.itemCode) }))
         .filter((x) => x.miss.length > 0);
       if (variantGaps.length > 0) {
         notify({
