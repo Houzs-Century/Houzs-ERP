@@ -26,6 +26,7 @@ import {
   Printer,
   CheckCircle2,
   Receipt,
+  RotateCcw,
   ArrowRightLeft,
 } from "lucide-react";
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
@@ -46,12 +47,6 @@ import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useVisibleRows } from "../../hooks/useVisibleRows";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
-import { NextStepNote } from "../../components/NextStepNote";
-import {
-  doAdvanceBlockReason,
-  doAdvanceStep,
-  siTransferBlockReason,
-} from "../../vendor/scm/lib/do-next-step";
 import { PullToRefresh } from "../../components/PullToRefresh";
 import { ListErrorPanel, SearchPendingPanel, SearchProgress } from "../../components/SearchProgress";
 import { SearchScopeHint } from "../../components/SearchScopeHint";
@@ -67,13 +62,14 @@ import {
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
+import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel, transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
-import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -122,7 +118,7 @@ type DoRow = {
   customer_state: string | null;
   status: string;
   currency: string;
-  local_total_sen: number;
+  local_total_centi: number;
   line_count?: number;
   lifecycle_state?: "shipped" | "invoiced" | "returned";
   /** Transfer-to relations (display-only, audit R8): the SI number(s) this DO
@@ -138,18 +134,18 @@ type DoRow = {
   building_type: string | null;
   // ── Phase 2 FINANCE: backend OMITS these keys for non-finance callers
   //    (canViewScmFinance), so each is optional. margin_pct_basis = basis points.
-  mattress_sofa_sen?: number;
-  bedframe_sen?: number;
-  accessories_sen?: number;
-  others_sen?: number;
-  service_sen?: number;
-  mattress_sofa_cost_sen?: number;
-  bedframe_cost_sen?: number;
-  accessories_cost_sen?: number;
-  others_cost_sen?: number;
-  service_cost_sen?: number;
-  total_cost_sen?: number;
-  total_margin_sen?: number;
+  mattress_sofa_centi?: number;
+  bedframe_centi?: number;
+  accessories_centi?: number;
+  others_centi?: number;
+  service_centi?: number;
+  mattress_sofa_cost_centi?: number;
+  bedframe_cost_centi?: number;
+  accessories_cost_centi?: number;
+  others_cost_centi?: number;
+  service_cost_centi?: number;
+  total_cost_centi?: number;
+  total_margin_centi?: number;
   margin_pct_basis?: number;
 };
 
@@ -157,7 +153,7 @@ type StatusTab = "all" | "open" | "in_transit" | "delivered" | "cancelled";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const fmtRm = (centi: number): string => fmtSen(centi);
+const fmtRm = (centi: number): string => fmtCenti(centi);
 
 // margin_pct_basis is basis points (margin/total x 10000) → percent string.
 const fmtPctBasis = (basis: number | null | undefined): string =>
@@ -367,7 +363,7 @@ function CardsGrid({ rows, onOpen }: { rows: DoRow[]; onOpen: (r: DoRow) => void
                 </div>
               </div>
               <span className="font-money text-[15px] font-bold text-ink">
-                {fmtRm(r.local_total_sen)}
+                {fmtRm(r.local_total_centi)}
               </span>
             </div>
           </button>
@@ -385,8 +381,9 @@ function DetailDrawer({
   onOpenFull,
   onEdit,
   onPrint,
-  onAdvance,
+  onMarkSigned,
   onConvertToSi,
+  onReopen,
   salespersonName,
   canWrite,
 }: {
@@ -395,50 +392,44 @@ function DetailDrawer({
   onOpenFull: () => void;
   onEdit: () => void;
   onPrint: () => void;
-  /** Advance THIS document one status step — see do-next-step.ts for the verb. */
-  onAdvance: () => void;
+  onMarkSigned: () => void;
   onConvertToSi: () => void;
+  onReopen: () => void;
   canWrite: boolean;
   salespersonName: string;
 }) {
   const detailQ = useMfgDeliveryOrderDetail(row?.id ?? null);
   const items: Array<{
-    item_code?: string;
+    product_code?: string;
     product_name?: string;
+    item_code?: string;
     description?: string;
     description2?: string;
     item_group?: string;
     variants?: Record<string, unknown> | null;
     qty?: number;
-    unit_price_sen?: number;
-    amount_sen?: number;
-    total_sen?: number;
+    unit_price_centi?: number;
+    amount_centi?: number;
+    total_centi?: number;
   }> =
     ((detailQ.data as { items?: unknown[] } | undefined)?.items as Array<{
-      item_code?: string;
+      product_code?: string;
       product_name?: string;
+      item_code?: string;
       description?: string;
       description2?: string;
       item_group?: string;
       variants?: Record<string, unknown> | null;
       qty?: number;
-      unit_price_sen?: number;
-      amount_sen?: number;
-      total_sen?: number;
+      unit_price_centi?: number;
+      amount_centi?: number;
+      total_centi?: number;
     }>) ?? [];
 
   const open = !!row;
   const st = row ? statusFor(row.status) : null;
 
-  /* Both status questions come from the SAME module the detail page and the
-     mobile shell import, so this drawer and the page it opens can no longer
-     answer them differently. See vendor/scm/lib/do-next-step.ts. */
-  const advanceStep = doAdvanceStep(row?.status);
-  const advanceReason = doAdvanceBlockReason(row?.status);
-  const siReason = siTransferBlockReason(row?.status);
-  const canConvertToSi = siReason === null;
-
-  const totalSen = row?.local_total_sen ?? 0;
+  const totalCenti = row?.local_total_centi ?? 0;
 
   return (
     <ResizableDetailDrawer
@@ -552,11 +543,11 @@ function DetailDrawer({
                 )}
                 {items.map((l, i) => {
                   const amt =
-                    l.amount_sen ??
-                    l.total_sen ??
-                    (l.qty ?? 0) * (l.unit_price_sen ?? 0);
+                    l.amount_centi ??
+                    l.total_centi ??
+                    (l.qty ?? 0) * (l.unit_price_centi ?? 0);
                   const { primary, secondary } = orderLineIdentity({
-                    code: l.item_code || l.item_code,
+                    code: l.item_code || l.product_code,
                     description: l.description || l.product_name,
                     variant:
                       buildVariantSummary(l.item_group ?? "others", l.variants ?? null) ||
@@ -581,7 +572,7 @@ function DetailDrawer({
                         {l.qty ?? 0}
                       </span>
                       <span className="text-right font-money text-[12.5px] text-ink-secondary">
-                        {fmtRm(l.unit_price_sen ?? 0)}
+                        {fmtRm(l.unit_price_centi ?? 0)}
                       </span>
                       <span className="text-right font-money text-[12.5px] font-semibold text-ink">
                         {fmtRm(amt)}
@@ -592,18 +583,11 @@ function DetailDrawer({
               </div>
 
               <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
-                <TotalRow k="DO total" v={fmtRm(totalSen)} strong />
+                <TotalRow k="DO total" v={fmtRm(totalCenti)} strong />
               </div>
             </div>
 
-            <div className="shrink-0 border-t border-border bg-surface px-5 py-3">
-            {canWrite && (
-              <div className="mb-2 flex flex-col gap-0.5">
-                <NextStepNote id="do-drawer-advance-reason" reason={advanceReason} />
-                <NextStepNote id="do-drawer-si-reason" reason={siReason} />
-              </div>
-            )}
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2 border-t border-border bg-surface px-5 py-3">
               {canWrite && (
                 <Button variant="ghost" icon={<Edit3 size={14} />} onClick={onEdit}>
                   Edit
@@ -613,40 +597,45 @@ function DetailDrawer({
                 Print
               </Button>
               <div className="flex-1" />
-              {/* TWO FIXED SLOTS, NEVER ONE SLOT WITH THREE VERBS. This footer
-                  is the screen the owner was looking at on 2026-08-18: one green
-                  button said "Mark signed" on a dispatched row and "Transfer to
-                  Sales Invoice" on a signed one — same pixels, different action,
-                  status badge the only clue. Advance and transfer now each keep
-                  one meaning, disabled with a reason rather than swapped out.
-                  The third verb, "Reopen", is gone entirely: the server refuses
-                  every transition out of CANCELLED (`do_cancelled_final`), so it
-                  could not once have worked. Full account: do-next-step.ts. */}
-              {canWrite && (
-                <Button
-                  variant="secondary"
-                  icon={<CheckCircle2 size={14} />}
-                  onClick={onAdvance}
-                  disabled={!advanceStep}
-                  title={advanceReason ?? undefined}
-                  aria-describedby={advanceReason ? "do-drawer-advance-reason" : undefined}
-                >
-                  {advanceStep?.label ?? "Mark signed"}
-                </Button>
-              )}
-              {canWrite && (
-                <Button
-                  variant="primary"
-                  icon={<Receipt size={14} />}
-                  onClick={onConvertToSi}
-                  disabled={!canConvertToSi}
-                  title={siReason ?? undefined}
-                  aria-describedby={siReason ? "do-drawer-si-reason" : undefined}
-                >
-                  {transferToLabel('si')}
-                </Button>
-              )}
-            </div>
+              {canWrite && (() => {
+                const s = (row.status || "").toLowerCase();
+                if (["loaded", "dispatched", "in_transit"].includes(s)) {
+                  return (
+                    <Button
+                      variant="primary"
+                      icon={<CheckCircle2 size={14} />}
+                      onClick={onMarkSigned}
+                    >
+                      Mark signed
+                    </Button>
+                  );
+                }
+                if (["signed", "delivered"].includes(s)) {
+                  return (
+                    <Button
+                      variant="primary"
+                      icon={<Receipt size={14} />}
+                      onClick={onConvertToSi}
+                    >
+                      {transferToLabel('si')}
+                    </Button>
+                  );
+                }
+                // Reopen a cancelled DO back to LOADED (2990
+                // MfgDeliveryOrdersList "Reopen DO" parity).
+                if (s === "cancelled" || s === "cancel") {
+                  return (
+                    <Button
+                      variant="primary"
+                      icon={<RotateCcw size={14} />}
+                      onClick={onReopen}
+                    >
+                      Reopen
+                    </Button>
+                  );
+                }
+                return null;
+              })()}
             </div>
           </>
         )}
@@ -741,6 +730,7 @@ const SORT_COL_MAP: Record<string, string> = {
 
 type DoDrillItem = {
   item_code?: string;
+  product_code?: string;
   product_name?: string;
   description?: string;
   /* Variant fields — the SAME payload the quick-view drawer above already
@@ -751,9 +741,9 @@ type DoDrillItem = {
   variants?: Record<string, unknown> | null;
   description2?: string | null;
   qty?: number;
-  unit_price_sen?: number;
-  amount_sen?: number;
-  total_sen?: number;
+  unit_price_centi?: number;
+  amount_centi?: number;
+  total_centi?: number;
   /* Source PO(s) this DO line's shipped goods came from (owner 2026-07-31) — the
      durable batch_no = source-PO hard link resolved by the DO detail endpoint
      from the OUT movements ∪ consumed FIFO lots. A DO is a sales-side doc, so it
@@ -776,12 +766,12 @@ function DoLinesExpansion({ doId }: { doId: string }) {
     [];
   const lines: DocumentDrillLine[] = items.map((l) => ({
     itemGroup: l.item_group ?? null,
-    code: l.item_code || l.item_code || null,
+    code: l.item_code || l.product_code || null,
     description: l.description || l.product_name || null,
     description2: l.description2 ?? null,
     variants: l.variants ?? null,
     qty: Number(l.qty ?? 0),
-    amountSen: l.amount_sen ?? l.total_sen ?? (l.qty ?? 0) * (l.unit_price_sen ?? 0),
+    amountCenti: l.amount_centi ?? l.total_centi ?? (l.qty ?? 0) * (l.unit_price_centi ?? 0),
     sourcePos: l.source_pos ?? [],
     sourceAdj: l.source_adj ?? false,
   }));
@@ -808,6 +798,7 @@ export function MfgDeliveryOrdersListV2() {
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
   const askChoice = useChoice();
+  const askConfirm = useConfirm();
   // Active company (top-bar switcher) — the header subtitle reflects it so a
   // per-company list is never mislabelled as another company's (e.g. Houzs).
   const branding = useBranding();
@@ -893,9 +884,9 @@ export function MfgDeliveryOrdersListV2() {
 
   // Revenue sums the rows ON SCREEN (the paginated contract returns counts but
   // not full-set money sums), so the card and the table can never disagree.
-  const revenueSen = useMemo(() => {
+  const revenueCenti = useMemo(() => {
     let sum = 0;
-    for (const r of visible.rows) sum += r.local_total_sen ?? 0;
+    for (const r of visible.rows) sum += r.local_total_centi ?? 0;
     return sum;
   }, [visible.rows]);
 
@@ -972,26 +963,35 @@ export function MfgDeliveryOrdersListV2() {
   const goEdit = (r: DoRow) => navigate(`/scm/delivery-orders/${r.id}?edit=1`);
   const goPrint = (r: DoRow) => navigate(`/scm/delivery-orders/${r.id}?print=1`);
   const goFullPage = (r: DoRow) => navigate(`/scm/delivery-orders/${r.id}`);
-  /* One advance handler, target status supplied by do-next-step.ts — so this
-     drawer walks the same ladder as the detail page and the mobile shell. */
-  const doAdvance = (r: DoRow) => {
-    const step = doAdvanceStep(r.status);
-    if (!step) return;
+  const doMarkSigned = (r: DoRow) =>
     updateStatus.mutate(
-      { id: r.id, status: step.status },
+      { id: r.id, status: "DELIVERED" },
       { onSuccess: () => setSelected(null) }
     );
-  };
   const doConvertToSi = (r: DoRow) => navigate(convertToLink('doToSi', r.id));
-  /* `doReopen` (cancelled DO → LOADED) was REMOVED, not disabled. It could
-     never succeed: PATCH /:id/status refuses every transition out of CANCELLED
-     with `do_cancelled_final` (delivery-orders-mfg.ts:5401), because
-     un-cancelling leaves the cancel's stock add-back standing while the
-     re-deduct no-ops — the DO's whole quantity is then permanently added to
-     stock. The drawer showed it as the green PRIMARY action on every cancelled
-     row. A control whose only possible outcome is a 409 is not a capability to
-     explain, so do-next-step.ts states the real next step instead: raise a new
-     delivery order. */
+  // Reopen a cancelled DO → LOADED (2990 MfgDeliveryOrdersList "Reopen DO"
+  // parity; reuses the status PATCH endpoint).
+  const doReopen = async (r: DoRow) => {
+    if (
+      !(await askConfirm({
+        title: `Reopen ${r.do_number} back to LOADED?`,
+        confirmLabel: "Reopen",
+      }))
+    )
+      return;
+    updateStatus.mutate(
+      { id: r.id, status: "LOADED" },
+      {
+        onSuccess: () => setSelected(null),
+        onError: (e) =>
+          notify({
+            title: "Reopen failed",
+            body: e instanceof Error ? e.message : "Something went wrong.",
+            tone: "error",
+          }),
+      }
+    );
+  };
 
   // ─── Batch PDF export (ported from MfgDeliveryOrdersList) ─────────────────
   // One DO's full detail for the PDF generator. Reads via the vendored
@@ -1279,10 +1279,10 @@ export function MfgDeliveryOrdersListV2() {
       // DO backend sort whitelist has no total column — keep for CSV export but
       // disable the header sort so we never send an unsupported sort key.
       disableSort: true,
-      getValue: (r) => r.local_total_sen,
+      getValue: (r) => r.local_total_centi,
       render: (r) => (
         <span className="font-money text-[13px] font-semibold text-ink">
-          {fmtRm(r.local_total_sen)}
+          {fmtRm(r.local_total_centi)}
         </span>
       ),
     },
@@ -1494,147 +1494,147 @@ export function MfgDeliveryOrdersListV2() {
     ...(canFinance
       ? ([
           {
-            key: "mattress_sofa_sen",
+            key: "mattress_sofa_centi",
             label: "Mattress/Sofa",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.mattress_sofa_sen ?? 0,
+            getValue: (r) => r.mattress_sofa_centi ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_centi ?? 0)}</span>
             ),
           },
           {
-            key: "bedframe_sen",
+            key: "bedframe_centi",
             label: "Bedframe",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.bedframe_sen ?? 0,
+            getValue: (r) => r.bedframe_centi ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_centi ?? 0)}</span>
             ),
           },
           {
-            key: "accessories_sen",
+            key: "accessories_centi",
             label: "Accessories",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.accessories_sen ?? 0,
+            getValue: (r) => r.accessories_centi ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_centi ?? 0)}</span>
             ),
           },
           {
-            key: "others_sen",
+            key: "others_centi",
             label: "Others",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.others_sen ?? 0,
+            getValue: (r) => r.others_centi ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_centi ?? 0)}</span>
             ),
           },
           {
-            key: "service_sen",
+            key: "service_centi",
             label: "Service",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.service_sen ?? 0,
+            getValue: (r) => r.service_centi ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.service_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.service_centi ?? 0)}</span>
             ),
           },
           {
-            key: "mattress_sofa_cost_sen",
+            key: "mattress_sofa_cost_centi",
             label: "Mattress/Sofa Cost",
             width: "140px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.mattress_sofa_cost_sen ?? 0,
+            getValue: (r) => r.mattress_sofa_cost_centi ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_centi ?? 0)}</span>
             ),
           },
           {
-            key: "bedframe_cost_sen",
+            key: "bedframe_cost_centi",
             label: "Bedframe Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.bedframe_cost_sen ?? 0,
+            getValue: (r) => r.bedframe_cost_centi ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_centi ?? 0)}</span>
             ),
           },
           {
-            key: "accessories_cost_sen",
+            key: "accessories_cost_centi",
             label: "Accessories Cost",
             width: "140px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.accessories_cost_sen ?? 0,
+            getValue: (r) => r.accessories_cost_centi ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_centi ?? 0)}</span>
             ),
           },
           {
-            key: "others_cost_sen",
+            key: "others_cost_centi",
             label: "Others Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.others_cost_sen ?? 0,
+            getValue: (r) => r.others_cost_centi ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_centi ?? 0)}</span>
             ),
           },
           {
-            key: "service_cost_sen",
+            key: "service_cost_centi",
             label: "Service Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.service_cost_sen ?? 0,
+            getValue: (r) => r.service_cost_centi ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.service_cost_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.service_cost_centi ?? 0)}</span>
             ),
           },
           {
-            key: "total_cost_sen",
+            key: "total_cost_centi",
             label: "Total Cost",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.total_cost_sen ?? 0,
+            getValue: (r) => r.total_cost_centi ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_centi ?? 0)}</span>
             ),
           },
           {
-            key: "total_margin_sen",
+            key: "total_margin_centi",
             label: "Margin",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.total_margin_sen ?? 0,
+            getValue: (r) => r.total_margin_centi ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_centi ?? 0)}</span>
             ),
           },
           {
@@ -1680,7 +1680,7 @@ export function MfgDeliveryOrdersListV2() {
           </h1>
           <div className="mt-0.5 text-[12.5px] text-ink-muted">
             {total} order{total === 1 ? "" : "s"} ·{" "}
-            <span className="font-money">{fmtRm(revenueSen)}</span>
+            <span className="font-money">{fmtRm(revenueCenti)}</span>
           </div>
         </div>
       </div>
@@ -1744,7 +1744,7 @@ export function MfgDeliveryOrdersListV2() {
             <StatCard
               pending={statsPending}
               label="Revenue"
-              value={fmtRm(revenueSen)}
+              value={fmtRm(revenueCenti)}
               subtitle={visible.filtered ? "Filtered · sum shown below" : "Sum on this page"}
               rail="bg-accent"
             />
@@ -1983,8 +1983,9 @@ export function MfgDeliveryOrdersListV2() {
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
         onPrint={() => selected && goPrint(selected)}
-        onAdvance={() => selected && doAdvance(selected)}
+        onMarkSigned={() => selected && doMarkSigned(selected)}
         onConvertToSi={() => selected && doConvertToSi(selected)}
+        onReopen={() => selected && void doReopen(selected)}
         canWrite={canWriteDo}
         salespersonName={
           selected ? salespersonNameOf(null, selected.salesperson_id) : "—"

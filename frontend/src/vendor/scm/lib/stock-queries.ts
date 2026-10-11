@@ -28,7 +28,7 @@ import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
 export type InventoryBalance = {
   warehouse_id: string;
-  item_code: string;
+  product_code: string;
   /* Migration 0095 — attribute-composition bucket; '' = unclassified.
      Present on the default (non-showAll) balances rows. */
   variant_key?: string;
@@ -49,7 +49,7 @@ export type InventoryMovement = {
   id: string;
   movement_type: 'IN' | 'OUT' | 'ADJUSTMENT' | 'TRANSFER';
   warehouse_id: string;
-  item_code: string;
+  product_code: string;
   product_name: string | null;
   qty: number;
   unit_cost_sen?: number;
@@ -93,23 +93,23 @@ export function useInventoryBalances(opts?: {
 }
 
 /* PR #38 — Per-warehouse breakdown for a single product (drilldown drawer) */
-export function useInventoryProductBreakdown(itemCode: string | null) {
+export function useInventoryProductBreakdown(productCode: string | null) {
   return useQuery({
-    queryKey: ['inventory', 'breakdown', itemCode],
+    queryKey: ['inventory', 'breakdown', productCode],
     // Migration 0095 — per (warehouse × attribute-composition) rows so the
     // drawer can show a SKU broken into its variant buckets, each with qty.
     queryFn: () =>
       authedFetch<InventoryBalancesResponse>(
-        `/inventory/breakdown/${encodeURIComponent(itemCode ?? '')}`,
+        `/inventory/breakdown/${encodeURIComponent(productCode ?? '')}`,
       ),
-    enabled: Boolean(itemCode),
+    enabled: Boolean(productCode),
     staleTime: 30_000,
   });
 }
 
 export function useInventoryMovements(opts?: {
   warehouseId?: string;
-  itemCode?: string;
+  productCode?: string;
   docType?: string;
   dateFrom?: string;
   dateTo?: string;
@@ -119,7 +119,7 @@ export function useInventoryMovements(opts?: {
     queryFn: () => {
       const params = new URLSearchParams();
       if (opts?.warehouseId) params.set('warehouseId', opts.warehouseId);
-      if (opts?.itemCode) params.set('itemCode', opts.itemCode);
+      if (opts?.productCode) params.set('productCode', opts.productCode);
       if (opts?.docType) params.set('docType', opts.docType);
       if (opts?.dateFrom) params.set('dateFrom', opts.dateFrom);
       if (opts?.dateTo) params.set('dateTo', opts.dateTo);
@@ -137,7 +137,7 @@ export function useStockAdjustment() {
   return useMutation({
     mutationFn: (body: {
       warehouseId: string;
-      itemCode: string;
+      productCode: string;
       productName?: string;
       qtyDelta: number;
       reasonCode: string;
@@ -168,17 +168,17 @@ export type InventoryBucket = {
   qty: number;
 };
 
-export function useInventoryBuckets(itemCode: string | null, warehouseId: string | null) {
+export function useInventoryBuckets(productCode: string | null, warehouseId: string | null) {
   return useQuery({
-    queryKey: ['inventory', 'buckets', itemCode, warehouseId],
+    queryKey: ['inventory', 'buckets', productCode, warehouseId],
     queryFn: () => {
       const params = new URLSearchParams();
       if (warehouseId) params.set('warehouseId', warehouseId);
       return authedFetch<{ buckets: InventoryBucket[] }>(
-        `/inventory/buckets/${encodeURIComponent(itemCode ?? '')}${params.toString() ? `?${params.toString()}` : ''}`,
+        `/inventory/buckets/${encodeURIComponent(productCode ?? '')}${params.toString() ? `?${params.toString()}` : ''}`,
       ).then((r) => r.buckets);
     },
-    enabled: Boolean(itemCode && warehouseId),
+    enabled: Boolean(productCode && warehouseId),
     staleTime: 15_000,
     retry: retryUnlessClientError,
   });
@@ -218,7 +218,7 @@ export type StockTransferRow = {
 export type StockTransferLine = {
   id: string;
   stock_transfer_id: string;
-  item_code: string;
+  product_code: string;
   product_name: string | null;
   qty: number;
   notes: string | null;
@@ -269,7 +269,7 @@ export function useStockTransferDetail(id: string | null) {
 }
 
 export type StockTransferItemInput = {
-  itemCode: string;
+  productCode: string;
   productName?: string;
   // Variant bucket at the source warehouse this line moves. Keeps stock + MRP
   // accurate (the OUT/IN movements consume + re-open the matching FIFO bucket,
@@ -435,7 +435,7 @@ export type StockTakeRow = {
 export type StockTakeLine = {
   id: string;
   stock_take_id: string;
-  item_code: string;
+  product_code: string;
   product_name: string | null;
   variant_key: string;
   variant_label: string | null;

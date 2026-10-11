@@ -109,12 +109,12 @@ const draftFromItem = (it: PoItemRow): EditLine => ({
   itemId:         it.id,
   bindingId:      it.binding_id ?? undefined,
   materialKind:   it.material_kind,
-  itemCode:   it.item_code,
+  materialCode:   it.material_code,
   materialName:   it.material_name,
   supplierSku:    it.supplier_sku ?? undefined,
   qty:            it.qty,
-  unitPriceSen: it.unit_price_sen,
-  discountSen:  it.discount_sen ?? 0,
+  unitPriceCenti: it.unit_price_centi,
+  discountCenti:  it.discount_centi ?? 0,
   deliveryDate:   it.delivery_date ?? undefined,
   warehouseId:    it.warehouse_id ?? undefined,
   category:       it.item_group ?? undefined,
@@ -211,18 +211,18 @@ export const PurchaseConsignmentOrderDetail = () => {
   const recomputeLineCost = (line: EditLine): number => {
     const binding = line.bindingId
       ? bindings.find((b) => b.id === line.bindingId)
-      : bindings.find((b) => b.item_code === line.itemCode);
-    if (!binding) return line.unitPriceSen;
+      : bindings.find((b) => b.material_code === line.materialCode);
+    if (!binding) return line.unitPriceCenti;
     const category = (line.category?.toUpperCase() ?? '') as
       'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | '';
-    if (!category) return binding.unit_price_sen;
+    if (!category) return binding.unit_price_centi;
     const v = line.variants;
     const specials = Array.isArray(v.specials) ? (v.specials as string[]) : [];
     const breakdown = computeMfgPoUnitCost(
       {
         category,
         priceMatrix:    (binding.price_matrix ?? null) as PoPriceMatrix,
-        unitPriceSen: binding.unit_price_sen,
+        unitPriceCenti: binding.unit_price_centi,
         fabricTier:     fabricTierForLine(line),
         seatSize:       category === 'SOFA' ? (v.seatHeight as string | undefined) ?? null : null,
         divanHeight:    (v.divanHeight as string | undefined) ?? null,
@@ -243,9 +243,9 @@ export const PurchaseConsignmentOrderDetail = () => {
       const next = prev.map((l) => {
         if (l.priceTouched) return l;
         const cost = recomputeLineCost(l);
-        if (cost === l.unitPriceSen) return l;
+        if (cost === l.unitPriceCenti) return l;
         changed = true;
-        return { ...l, unitPriceSen: cost };
+        return { ...l, unitPriceCenti: cost };
       });
       return changed ? next : prev;
     });
@@ -320,9 +320,9 @@ export const PurchaseConsignmentOrderDetail = () => {
 
   /* Totals — in Edit, sum the live editLines; in View, the stored line totals. */
   const itemsSubtotal = isEditing
-    ? editLines.reduce((s, d) => s + Math.max(0, d.qty * d.unitPriceSen - (d.discountSen ?? 0)), 0)
-    : visibleItems.reduce((s, it) => s + (it.line_total_sen ?? 0), 0);
-  const grandTotal = itemsSubtotal + (po.tax_sen ?? 0);
+    ? editLines.reduce((s, d) => s + Math.max(0, d.qty * d.unitPriceCenti - (d.discountCenti ?? 0)), 0)
+    : visibleItems.reduce((s, it) => s + (it.line_total_centi ?? 0), 0);
+  const grandTotal = itemsSubtotal + (po.tax_centi ?? 0);
 
   const headerView = headerDraft ?? headerSnapshot(po);
 
@@ -343,11 +343,11 @@ export const PurchaseConsignmentOrderDetail = () => {
     patchLine(rid, {
       bindingId:      b.id,
       materialKind:   b.material_kind,
-      itemCode:   b.item_code,
+      materialCode:   b.material_code,
       materialName:   b.material_name,
       supplierSku:    b.supplier_sku,
-      unitPriceSen: b.unit_price_sen,
-      category:       categoryForCode(b.item_code),
+      unitPriceCenti: b.unit_price_centi,
+      category:       categoryForCode(b.material_code),
       priceTouched:   false,
     });
 
@@ -406,7 +406,7 @@ export const PurchaseConsignmentOrderDetail = () => {
   };
 
   /* Single Save (T12) — whole-line diff. For each draft:
-       · no itemId → ADD (full payload incl. variants / itemCode / SKU)
+       · no itemId → ADD (full payload incl. variants / materialCode / SKU)
        · itemId + changed any field → UPDATE (full payload)
      Deletes already fired server-side in removeLine. Then commit the header (if
      touched) and drop back to View.
@@ -415,7 +415,7 @@ export const PurchaseConsignmentOrderDetail = () => {
      columns don't exist on Houzs's consignment schema). */
   const handleSave = async () => {
     if (savingDraft) return;
-    const blankLine = editLines.find((d) => !d.itemCode.trim());
+    const blankLine = editLines.find((d) => !d.materialCode.trim());
     if (blankLine) {
       notify({ title: 'Every line needs a product', body: 'Pick a product for each line, or remove the empty one before saving.', tone: 'error' });
       return;
@@ -431,13 +431,13 @@ export const PurchaseConsignmentOrderDetail = () => {
           await addItem.mutateAsync({
             poId: po.id,
             materialKind:   d.materialKind,
-            itemCode:   d.itemCode,
-            materialName:   d.materialName || d.itemCode,
+            materialCode:   d.materialCode,
+            materialName:   d.materialName || d.materialCode,
             supplierSku:    d.supplierSku,
             qty:            d.qty,
-            unitPriceSen: d.unitPriceSen,
+            unitPriceCenti: d.unitPriceCenti,
             bindingId:      d.bindingId,
-            discountSen:  d.discountSen,
+            discountCenti:  d.discountCenti,
             deliveryDate:   d.deliveryDate || undefined,
             warehouseId:    d.warehouseId  || undefined,
             itemGroup:      d.category,
@@ -448,25 +448,25 @@ export const PurchaseConsignmentOrderDetail = () => {
         const it = byId.get(d.itemId);
         if (!it) continue;
         const changed =
-          d.itemCode !== it.item_code ||
-          (d.materialName || d.itemCode) !== it.material_name ||
+          d.materialCode !== it.material_code ||
+          (d.materialName || d.materialCode) !== it.material_name ||
           (d.supplierSku ?? '') !== (it.supplier_sku ?? '') ||
           (d.category ?? '') !== (it.item_group ?? '') ||
           d.qty !== it.qty ||
-          d.unitPriceSen !== it.unit_price_sen ||
-          (d.discountSen ?? 0) !== (it.discount_sen ?? 0) ||
+          d.unitPriceCenti !== it.unit_price_centi ||
+          (d.discountCenti ?? 0) !== (it.discount_centi ?? 0) ||
           (d.deliveryDate ?? null) !== (it.delivery_date ?? null) ||
           (d.warehouseId ?? null) !== (it.warehouse_id ?? null) ||
           JSON.stringify(d.variants ?? {}) !== JSON.stringify((it.variants as Record<string, unknown> | null) ?? {});
         if (!changed) continue;
         await updateItem.mutateAsync({
           poId: po.id, itemId: d.itemId,
-          itemCode:   d.itemCode,
-          materialName:   d.materialName || d.itemCode,
+          materialCode:   d.materialCode,
+          materialName:   d.materialName || d.materialCode,
           supplierSku:    d.supplierSku,
           qty:            d.qty,
-          unitPriceSen: d.unitPriceSen,
-          discountSen:  d.discountSen ?? 0,
+          unitPriceCenti: d.unitPriceCenti,
+          discountCenti:  d.discountCenti ?? 0,
           deliveryDate:   d.deliveryDate ?? null,
           warehouseId:    d.warehouseId ?? null,
           itemGroup:      d.category,
@@ -648,7 +648,7 @@ export const PurchaseConsignmentOrderDetail = () => {
                 return (
                   <tr key={it.id}>
                     <td>
-                      <div className={styles.codeCell}>{it.item_code}</div>
+                      <div className={styles.codeCell}>{it.material_code}</div>
                       {(() => {
                         const summary = buildVariantSummary(it.item_group, it.variants as Record<string, unknown> | null)
                           || it.description
@@ -658,9 +658,9 @@ export const PurchaseConsignmentOrderDetail = () => {
                     </td>
                     <td className={styles.muted}>{it.item_group ?? it.material_kind}</td>
                     <td className={styles.tableRight}>{it.qty}</td>
-                    <td className={styles.tableRight}>{fmtRm(it.unit_price_sen, po.currency)}</td>
-                    <td className={styles.tableRight}>{(it.discount_sen ?? 0) > 0 ? fmtRm(it.discount_sen, po.currency) : '—'}</td>
-                    <td className={styles.priceCell}>{fmtRm(it.line_total_sen, po.currency)}</td>
+                    <td className={styles.tableRight}>{fmtRm(it.unit_price_centi, po.currency)}</td>
+                    <td className={styles.tableRight}>{(it.discount_centi ?? 0) > 0 ? fmtRm(it.discount_centi, po.currency) : '—'}</td>
+                    <td className={styles.priceCell}>{fmtRm(it.line_total_centi, po.currency)}</td>
                     <td className={styles.tableRight}>{it.delivery_date ?? '—'}</td>
                     <td>{renderReceived(it)}</td>
                     <td className={styles.tableRight} style={{ fontWeight: balance > 0 ? 600 : 400, color: balance > 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)' }}>
@@ -687,7 +687,7 @@ export const PurchaseConsignmentOrderDetail = () => {
             </div>
             <div className={styles.totalRow}>
               <span className={styles.totalLabel}>Tax</span>
-              <span className={styles.totalValue}>{fmtRm(po.tax_sen, po.currency)}</span>
+              <span className={styles.totalValue}>{fmtRm(po.tax_centi, po.currency)}</span>
             </div>
             <div className={`${styles.totalRow} ${styles.grandTotalRow}`}>
               <span className={styles.totalLabel}>Total</span>

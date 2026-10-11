@@ -136,7 +136,7 @@ export function pinAssignToDate(r: SequenceAssignResponse, date: string): Sequen
         group: t.group,
         orders: t.stops.map((s) => s.ref),
         sets: t.sets,
-        revenueSen: t.revenueSen,
+        revenueCenti: t.revenueCenti,
         reason: `own fleet full on ${date} — could not fit these on the confirmed date`,
       });
     }

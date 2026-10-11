@@ -66,7 +66,7 @@ export type Warehouse = {
 
 export type InventoryBalance = {
   warehouse_id: string;
-  item_code: string;
+  product_code: string;
   /* Migration 0095 — attribute-composition bucket; '' = unclassified.
      Present on the default (non-showAll) balances rows. */
   variant_key?: string;
@@ -94,7 +94,7 @@ export type InventoryBalance = {
 
 /* PR #38 — Product totals view (one row per SKU, summed qty across warehouses) */
 export type InventoryProductTotal = {
-  item_code: string;
+  product_code: string;
   product_name: string;
   category: 'ACCESSORY' | 'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'SERVICE';
   size_label: string | null;
@@ -113,7 +113,7 @@ export type InventoryProductTotal = {
   last_movement_at: string | null;
   main_supplier_code: string | null;
   main_supplier_name: string | null;
-  main_supplier_price_sen: number | null;
+  main_supplier_price_centi: number | null;
   /* Owner 2026-07-24 six-column planning model (computed server-side, GET
      /inventory/products). committed_scheduled + unscheduled_qty == the whole
      open net-of-delivered SO demand (reserved_total):
@@ -162,7 +162,7 @@ export type InventoryMovement = {
   id: string;
   movement_type: 'IN' | 'OUT' | 'ADJUSTMENT' | 'TRANSFER';
   warehouse_id: string;
-  item_code: string;
+  product_code: string;
   product_name: string | null;
   qty: number;
   unit_cost_sen?: number;
@@ -180,7 +180,7 @@ export type InventoryLot = {
   id: string;
   warehouse_id: string;
   warehouse_code?: string;
-  item_code: string;
+  product_code: string;
   product_name: string | null;
   qty_received: number;
   qty_remaining: number;
@@ -196,7 +196,7 @@ export type CogsEntry = {
   consumed_at: string;
   warehouse_id: string;
   warehouse_code: string;
-  item_code: string;
+  product_code: string;
   qty_consumed: number;
   unit_cost_sen: number;
   total_cost_sen: number;
@@ -282,9 +282,9 @@ export type InventoryAnalytics = {
   distinctSkus: number;
   aging: { key: string; label: string; qty: number; valueSen: number }[];
   turnover: { trailingCogsSen: number; annualizedTurns: number; daysOnHand: number | null };
-  deadStock: { item_code: string; product_name: string; qty: number; valueSen: number; lastSoldAt: string | null }[];
+  deadStock: { product_code: string; product_name: string; qty: number; valueSen: number; lastSoldAt: string | null }[];
   abc: {
-    items: { item_code: string; product_name: string; cogsSen: number; onHandValueSen: number; cumPct: number; class: 'A' | 'B' | 'C' }[];
+    items: { product_code: string; product_name: string; cogsSen: number; onHandValueSen: number; cumPct: number; class: 'A' | 'B' | 'C' }[];
     summary: Record<'A' | 'B' | 'C', { count: number; valueSen: number }>;
   };
 };
@@ -305,32 +305,32 @@ export function useInventoryAnalytics(opts?: { days?: number; warehouseId?: stri
 }
 
 /* PR #38 — Per-warehouse breakdown for a single product (drilldown drawer) */
-export function useInventoryProductBreakdown(itemCode: string | null) {
+export function useInventoryProductBreakdown(productCode: string | null) {
   return useQuery({
-    queryKey: ['inventory', 'breakdown', itemCode],
+    queryKey: ['inventory', 'breakdown', productCode],
     // Migration 0095 — per (warehouse × attribute-composition) rows so the
     // drawer can show a SKU broken into its variant buckets, each with qty.
     queryFn: () =>
       authedFetch<{ balances: InventoryBalance[] }>(
-        `/inventory/breakdown/${encodeURIComponent(itemCode ?? '')}`,
+        `/inventory/breakdown/${encodeURIComponent(productCode ?? '')}`,
       ),
-    enabled: Boolean(itemCode),
+    enabled: Boolean(productCode),
     staleTime: 30_000,
   });
 }
 
-export function useInventoryLots(itemCode: string | null, opts?: { warehouseId?: string; includeClosed?: boolean }) {
+export function useInventoryLots(productCode: string | null, opts?: { warehouseId?: string; includeClosed?: boolean }) {
   return useQuery({
-    queryKey: ['inventory', 'lots', itemCode, opts ?? {}],
+    queryKey: ['inventory', 'lots', productCode, opts ?? {}],
     queryFn: () => {
       const params = new URLSearchParams();
       if (opts?.warehouseId) params.set('warehouseId', opts.warehouseId);
       if (opts?.includeClosed) params.set('includeClosed', 'true');
       return authedFetch<{ lots: InventoryLot[] }>(
-        `/inventory/lots/${encodeURIComponent(itemCode ?? '')}${params.toString() ? `?${params.toString()}` : ''}`,
+        `/inventory/lots/${encodeURIComponent(productCode ?? '')}${params.toString() ? `?${params.toString()}` : ''}`,
       ).then((r) => r.lots);
     },
-    enabled: Boolean(itemCode),
+    enabled: Boolean(productCode),
     staleTime: 30_000,
   });
 }
@@ -339,7 +339,7 @@ export function useInventoryLots(itemCode: string | null, opts?: { warehouseId?:
    A batch = the source PO number; sofa set components share one batch so the
    outbound side (Stage 3) can ship a whole colour-matched set from one dye lot. */
 export type BatchComponent = {
-  itemCode: string;
+  productCode: string;
   variantKey: string | null;
   productName: string | null;
   qtyRemaining: number;
@@ -360,13 +360,13 @@ export type InventoryBatch = {
   components: BatchComponent[];
 };
 
-export function useInventoryBatches(opts?: { warehouseId?: string; itemCode?: string }) {
+export function useInventoryBatches(opts?: { warehouseId?: string; productCode?: string }) {
   return useQuery({
     queryKey: ['inventory', 'batches', opts ?? {}],
     queryFn: () => {
       const params = new URLSearchParams();
       if (opts?.warehouseId) params.set('warehouseId', opts.warehouseId);
-      if (opts?.itemCode) params.set('itemCode', opts.itemCode);
+      if (opts?.productCode) params.set('productCode', opts.productCode);
       return authedFetch<{ batches: InventoryBatch[] }>(
         `/inventory/batches${params.toString() ? `?${params.toString()}` : ''}`,
       ).then((r) => r.batches);
@@ -375,13 +375,13 @@ export function useInventoryBatches(opts?: { warehouseId?: string; itemCode?: st
   });
 }
 
-export function useCogsEntries(opts?: { warehouseId?: string; itemCode?: string; from?: string; to?: string }) {
+export function useCogsEntries(opts?: { warehouseId?: string; productCode?: string; from?: string; to?: string }) {
   return useQuery({
     queryKey: ['inventory', 'cogs', opts ?? {}],
     queryFn: () => {
       const params = new URLSearchParams();
       if (opts?.warehouseId) params.set('warehouseId', opts.warehouseId);
-      if (opts?.itemCode) params.set('itemCode', opts.itemCode);
+      if (opts?.productCode) params.set('productCode', opts.productCode);
       if (opts?.from) params.set('from', opts.from);
       if (opts?.to) params.set('to', opts.to);
       return authedFetch<{ cogs: CogsEntry[] }>(
@@ -410,7 +410,7 @@ export type InventoryReservation = {
   warehouse_id: string;
   warehouse_code: string | null;
   warehouse_name: string | null;
-  item_code: string;
+  product_code: string;
   product_name: string | null;
   variant_key: string;
   batch_no: string | null;
@@ -515,13 +515,13 @@ export function isMakeToOrderCategory(category: string | null | undefined): bool
   return c.includes('SOFA') || c.includes('BEDFRAME');
 }
 
-export function useInventoryReservations(opts?: { warehouseId?: string; itemCode?: string }) {
+export function useInventoryReservations(opts?: { warehouseId?: string; productCode?: string }) {
   return useQuery({
     queryKey: ['inventory', 'reservations', opts ?? {}],
     queryFn: ({ signal }) => {
       const params = new URLSearchParams();
       if (opts?.warehouseId) params.set('warehouseId', opts.warehouseId);
-      if (opts?.itemCode) params.set('itemCode', opts.itemCode);
+      if (opts?.productCode) params.set('productCode', opts.productCode);
       return authedFetch<{ reservations: InventoryReservation[] }>(
         `/inventory/reservations${params.toString() ? `?${params.toString()}` : ''}`,
         { signal },
@@ -533,7 +533,7 @@ export function useInventoryReservations(opts?: { warehouseId?: string; itemCode
 
 export function useInventoryMovements(opts?: {
   warehouseId?: string;
-  itemCode?: string;
+  productCode?: string;
   docType?: string;
   dateFrom?: string;
   dateTo?: string;
@@ -543,7 +543,7 @@ export function useInventoryMovements(opts?: {
     queryFn: () => {
       const params = new URLSearchParams();
       if (opts?.warehouseId) params.set('warehouseId', opts.warehouseId);
-      if (opts?.itemCode) params.set('itemCode', opts.itemCode);
+      if (opts?.productCode) params.set('productCode', opts.productCode);
       if (opts?.docType) params.set('docType', opts.docType);
       if (opts?.dateFrom) params.set('dateFrom', opts.dateFrom);
       if (opts?.dateTo) params.set('dateTo', opts.dateTo);

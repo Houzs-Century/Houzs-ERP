@@ -27,7 +27,7 @@ import { describeRefusal } from './refusal-detail';
 // in sessionStorage, so a localStorage-only read returns "" for a perfectly
 // authenticated user and every /scm/* page throws not_authenticated. This is
 // the vendor auth boundary — it is exactly where the host's answer belongs.
-import { readAuthToken, readAuthPass } from '../../../lib/authToken';
+import { readAuthToken } from '../../../lib/authToken';
 import {
   consumeCorrelated,
   correlateError,
@@ -222,10 +222,6 @@ async function confirmShortStock(raw: string): Promise<boolean> {
 
 export async function authedFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = readAuthToken();
-  // Stage 3: the signed staff pass, sent beside the token so the SCM list
-  // reads (the slowest surface) can authorize without a DB round trip. Absent
-  // -> the server takes the DB path. Bound to the token server-side.
-  const pass = readAuthPass();
   /* This throw reaches the operator through ~90 `err.message` sinks across the
      SCM tree, and it fires on every read/write once the token is missing or has
      expired mid-session — so it was the highest-frequency machine-code leak in
@@ -244,7 +240,6 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
   const headers = {
     ...(init?.headers ?? {}),
     authorization: `Bearer ${token}`,
-    ...(pass ? { 'x-session-pass': pass } : {}),
     ...companyHeader(),
     ...(typeof init?.body === 'string' ? { 'content-type': 'application/json' } : {}),
   };
@@ -364,10 +359,10 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
       try {
         const b = JSON.parse(text.slice(Math.max(0, text.indexOf('{')))) as {
           message?: string; remedy?: string[];
-          lines?: Array<{ itemCode: string; qtyAccepted: number; knownUnitCostSen: number }>;
+          lines?: Array<{ materialCode: string; qtyAccepted: number; knownUnitCostSen: number }>;
         };
         const lines = (b.lines ?? [])
-          .map((l) => `• ${l.itemCode} x${l.qtyAccepted}\n   normally about RM${(Number(l.knownUnitCostSen) / 100).toFixed(2)} each`)
+          .map((l) => `• ${l.materialCode} x${l.qtyAccepted}\n   normally about RM${(Number(l.knownUnitCostSen) / 100).toFixed(2)} each`)
           .join('\n');
         const how = (b.remedy ?? []).map((r) => `— ${r}`).join('\n');
         msg = [b.message ?? msg, lines, how].filter(Boolean).join('\n\n');

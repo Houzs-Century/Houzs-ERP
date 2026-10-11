@@ -64,7 +64,7 @@ const scopeLabel = (scopeType: string, scopeValue: string | null): string => {
 // Local row state: counted_qty as string so empty input = null, not 0.
 type LineDraft = {
   id: string;
-  itemCode: string;
+  productCode: string;
   productName: string | null;
   variantLabel: string | null;
   /* null while the server strips it (blind take, non-supervisor viewer). */
@@ -80,7 +80,7 @@ type LineDraft = {
 
 const toDraft = (l: StockTakeLine): LineDraft => ({
   id:               l.id,
-  itemCode:      l.item_code,
+  productCode:      l.product_code,
   productName:      l.product_name,
   variantLabel:     l.variant_label,
   systemQty:        l.system_qty,
@@ -160,7 +160,7 @@ export const StockTakeDetail = () => {
     const q = search.trim().toLowerCase();
     if (!q) return lines;
     return lines.filter((l) =>
-      l.itemCode.toLowerCase().includes(q) ||
+      l.productCode.toLowerCase().includes(q) ||
       (l.productName ?? '').toLowerCase().includes(q) ||
       (l.variantLabel ?? '').toLowerCase().includes(q),
     );
@@ -226,18 +226,18 @@ export const StockTakeDetail = () => {
   /* One-click "all zero for this group" (phase 1): the common truth for a
      variant-heavy model is "none of these are physically here". Local draft
      only — Save persists, so a slip is undoable. */
-  const zeroGroup = (itemCode: string) => {
+  const zeroGroup = (productCode: string) => {
     setLines((cur) => cur.map((l) =>
-      l.itemCode === itemCode ? { ...l, countedQtyInput: '0' } : l,
+      l.productCode === productCode ? { ...l, countedQtyInput: '0' } : l,
     ));
     setDirty(true);
   };
 
-  const toggleGroup = (itemCode: string) => {
+  const toggleGroup = (productCode: string) => {
     setExpanded((cur) => {
       const next = new Set(cur);
-      if (next.has(itemCode)) next.delete(itemCode);
-      else next.add(itemCode);
+      if (next.has(productCode)) next.delete(productCode);
+      else next.add(productCode);
       return next;
     });
   };
@@ -619,13 +619,13 @@ export const StockTakeDetail = () => {
                           fontFamily: 'var(--font-mono)',
                           paddingLeft: inGroup ? 22 : undefined,
                         }}>
-                          {ln.itemCode}
+                          {ln.productCode}
                         </span>
                       </td>
                       <td style={{ fontSize: 'var(--fs-13)' }}>
                         {ln.productName || <span className={styles.muted}>—</span>}
                       </td>
-                      {/* Variant bucket (migration 0183) — the (item_code,
+                      {/* Variant bucket (migration 0183) — the (product_code,
                           variant_key) this line counts. A plain SKU shows '—'. */}
                       <td style={{ fontSize: 'var(--fs-13)' }}>
                         {ln.variantLabel
@@ -706,18 +706,18 @@ export const StockTakeDetail = () => {
                    collapsed until expanded; single-line models render plain. */
                 return groups.flatMap((g) => {
                   if (g.lines.length === 1) return [lineRow(g.lines[0], false)];
-                  const isOpen = expanded.has(g.itemCode);
+                  const isOpen = expanded.has(g.productCode);
                   const groupVariance = blindActive ? null : g.lines.reduce<number | null>((acc, l) => {
                     const v = varianceOf(l);
                     if (v == null) return acc;
                     return (acc ?? 0) + v;
                   }, null);
                   const header = (
-                    <tr key={`grp-${g.itemCode}`} style={{ background: 'var(--c-cream)' }}>
+                    <tr key={`grp-${g.productCode}`} style={{ background: 'var(--c-cream)' }}>
                       <td>
                         <button
                           type="button"
-                          onClick={() => toggleGroup(g.itemCode)}
+                          onClick={() => toggleGroup(g.productCode)}
                           style={{
                             display: 'inline-flex', alignItems: 'center', gap: 6,
                             border: 'none', background: 'transparent', cursor: 'pointer',
@@ -729,7 +729,7 @@ export const StockTakeDetail = () => {
                           {isOpen
                             ? <ChevronDown size={14} strokeWidth={1.75} />
                             : <ChevronRight size={14} strokeWidth={1.75} />}
-                          {g.itemCode}
+                          {g.productCode}
                         </button>
                       </td>
                       <td style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }}>
@@ -767,7 +767,7 @@ export const StockTakeDetail = () => {
                         <td>
                           <button
                             type="button"
-                            onClick={() => zeroGroup(g.itemCode)}
+                            onClick={() => zeroGroup(g.productCode)}
                             className={styles.chip}
                             title="Fill every line in this model with counted qty 0"
                             style={{ fontSize: 'var(--fs-11)', cursor: 'pointer' }}

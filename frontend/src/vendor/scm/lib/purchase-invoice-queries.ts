@@ -74,9 +74,9 @@ export const usePostPurchaseInvoice = () => {
 export const useRecordPiPayment = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, amountSen, notes }: { id: string; amountSen: number; notes?: string }) =>
+    mutationFn: ({ id, amountCenti, notes }: { id: string; amountCenti: number; notes?: string }) =>
       authedFetch(`/purchase-invoices/${id}/payment`, {
-        method: 'PATCH', body: JSON.stringify({ amountSen, notes }),
+        method: 'PATCH', body: JSON.stringify({ amountCenti, notes }),
       }),
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
@@ -167,7 +167,7 @@ export const useDeletePurchaseInvoiceItem = () => {
 
 /* T12 — free-add a NEW line to an existing PI (PI is free-entry, grnId:null is
    first-class). POST /purchase-invoices/:id/items already accepts the full line
-   payload (itemCode/materialName/itemGroup/variants + qty/price) and
+   payload (materialCode/materialName/itemGroup/variants + qty/price) and
    server-recomputes description2. Mirrors useAddGrnItem; invalidates the same
    keys usePurchaseInvoiceDetail + usePurchaseInvoices read. */
 export const useAddPurchaseInvoiceItem = () => {

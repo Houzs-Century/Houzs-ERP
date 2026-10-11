@@ -604,9 +604,9 @@ export function DeliveryOrderNewV2() {
     description: l.description,
     uom: l.uom,
     qty: l.qty,
-    unitPriceSen: l.unitPriceSen,
-    discountSen: l.discountSen,
-    unitCostSen: l.unitCostSen,
+    unitPriceCenti: l.unitPriceCenti,
+    discountCenti: l.discountCenti,
+    unitCostCenti: l.unitCostCenti,
     variants: l.variants,
     remark: l.remark,
     deliveryDate: l.lineDeliveryDate ?? "",
@@ -633,9 +633,9 @@ export function DeliveryOrderNewV2() {
           description: String(s.description ?? ""),
           uom: String(s.uom ?? "UNIT"),
           qty: Number(s.qty ?? 1),
-          unitPriceSen: Number(s.unitPriceSen ?? 0),
-          discountSen: Number(s.discountSen ?? 0),
-          unitCostSen: Number(s.unitCostSen ?? 0),
+          unitPriceCenti: Number(s.unitPriceCenti ?? 0),
+          discountCenti: Number(s.discountCenti ?? 0),
+          unitCostCenti: Number(s.unitCostCenti ?? 0),
           variants:
             s.variants && typeof s.variants === "object"
               ? (s.variants as Record<string, unknown>)
@@ -714,9 +714,9 @@ export function DeliveryOrderNewV2() {
         description: it.description ?? "",
         uom: it.uom ?? "UNIT",
         qty: it.remaining,
-        unitPriceSen: it.unitPriceSen,
-        discountSen: it.discountSen,
-        unitCostSen: it.unitCostSen,
+        unitPriceCenti: it.unitPriceCenti,
+        discountCenti: it.discountCenti,
+        unitCostCenti: it.unitCostCenti,
         variants:
           it.variants && typeof it.variants === "object"
             ? (it.variants as Record<string, unknown>)
@@ -772,9 +772,9 @@ export function DeliveryOrderNewV2() {
         description: String(it.description ?? ""),
         uom: String(it.uom ?? "UNIT"),
         qty: Number(it.qty ?? 1),
-        unitPriceSen: Number(it.unit_price_sen ?? 0),
-        discountSen: Number(it.discount_sen ?? 0),
-        unitCostSen: Number(it.unit_cost_sen ?? 0),
+        unitPriceCenti: Number(it.unit_price_centi ?? 0),
+        discountCenti: Number(it.discount_centi ?? 0),
+        unitCostCenti: Number(it.unit_cost_centi ?? 0),
         variants:
           it.variants && typeof it.variants === "object"
             ? (it.variants as Record<string, unknown>)
@@ -836,7 +836,7 @@ export function DeliveryOrderNewV2() {
           itemCode: p.code,
           itemGroup: category,
           description: p.name,
-          unitPriceSen: p.sell_price_sen ?? 0,
+          unitPriceCenti: p.sell_price_sen ?? 0,
           variants: inherited ? { ...inherited } : {},
         };
       }),

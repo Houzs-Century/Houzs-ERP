@@ -83,7 +83,7 @@ export const StockAdjustmentNew = () => {
 
   // ── Form state ─────────────────────────────────────────────────────
   const [warehouseId, setWarehouseId] = useState<string>('');
-  const [itemCode, setProductCode] = useState<string>('');
+  const [productCode, setProductCode] = useState<string>('');
   const [productName, setProductName] = useState<string>('');
   const [type, setType]               = useState<AdjustmentType>('decrease');
   const [qty, setQty]                 = useState<number>(1);
@@ -121,24 +121,24 @@ export const StockAdjustmentNew = () => {
 
   // Open stock buckets for the DECREASE "Take from" picker — only fires once
   // both warehouse + SKU are set (enabled guard inside the hook).
-  const bucketsQ = useInventoryBuckets(itemCode || null, warehouseId || null);
+  const bucketsQ = useInventoryBuckets(productCode || null, warehouseId || null);
   const buckets  = bucketsQ.data ?? [];
   // Drive the breakdown lookup off the picked code. The hook only fires
-  // when itemCode is non-empty (enabled guard inside the hook).
-  const breakdown  = useInventoryProductBreakdown(itemCode || null);
+  // when productCode is non-empty (enabled guard inside the hook).
+  const breakdown  = useInventoryProductBreakdown(productCode || null);
 
   // Current balance @ chosen warehouse. Pulls from showAll=true so even
   // zero-stock rows appear (commander needs to be able to adjust into
   // existence, e.g. recount up from 0).
   const currentBalance: number | null = useMemo(() => {
-    if (!warehouseId || !itemCode) return null;
+    if (!warehouseId || !productCode) return null;
     const balances = breakdown.data?.balances ?? [];
     const row = balances.find((b) =>
-      b.warehouse_id === warehouseId && b.item_code === itemCode,
+      b.warehouse_id === warehouseId && b.product_code === productCode,
     );
     if (!row) return breakdown.isLoading ? null : 0;
     return row.qty ?? 0;
-  }, [warehouseId, itemCode, breakdown.data, breakdown.isLoading]);
+  }, [warehouseId, productCode, breakdown.data, breakdown.isLoading]);
 
   const qtyDelta = type === 'increase' ? qty : -qty;
   const resultingBalance: number | null = currentBalance == null ? null : currentBalance + qtyDelta;
@@ -146,7 +146,7 @@ export const StockAdjustmentNew = () => {
 
   const canSave = Boolean(
     warehouseId &&
-    itemCode.trim() &&
+    productCode.trim() &&
     qty > 0 &&
     reasonCode,
   );
@@ -206,7 +206,7 @@ export const StockAdjustmentNew = () => {
     // INCREASE gate — sofa / bedframe must carry their variant attributes (and
     // sofa a batch number) before the found stock can be saved.
     if (type === 'increase' && hasVariantGroup) {
-      const errs = adjustmentIncreaseErrors(itemGroup, variants, batchNo, itemCode);
+      const errs = adjustmentIncreaseErrors(itemGroup, variants, batchNo, productCode);
       if (errs.length > 0) {
         void notify({ title: "This adjustment can't be saved yet", body: errs.join('\n'), tone: 'error' });
         return;
@@ -235,7 +235,7 @@ export const StockAdjustmentNew = () => {
     adjust.mutate(
       {
         warehouseId,
-        itemCode: itemCode.trim(),
+        productCode: productCode.trim(),
         productName: productName.trim() || undefined,
         qtyDelta,
         reasonCode,
@@ -309,7 +309,7 @@ export const StockAdjustmentNew = () => {
               <input
                 type="text"
                 list="stock-adjustment-skus"
-                value={itemCode}
+                value={productCode}
                 onChange={(e) => onPickSku(e.target.value)}
                 placeholder="Type or pick a SKU code…"
                 className={styles.fieldInput}
@@ -337,7 +337,7 @@ export const StockAdjustmentNew = () => {
           </div>
 
           {/* Current balance hint — appears once both warehouse + SKU are set */}
-          {warehouseId && itemCode && (
+          {warehouseId && productCode && (
             <div style={{
               marginTop: 'var(--space-3)',
               background: 'var(--c-cream)',
@@ -497,7 +497,7 @@ export const StockAdjustmentNew = () => {
           {/* DECREASE — "Take from" picker. Pick which existing lot the stock
               comes out of (so the right variant/batch is reduced), instead of
               free variant entry. Shows only when warehouse + SKU are set. */}
-          {type === 'decrease' && warehouseId && itemCode && (
+          {type === 'decrease' && warehouseId && productCode && (
             <div style={{ marginTop: 'var(--space-4)' }}>
               {bucketsQ.isLoading ? (
                 <span style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>Loading open stock…</span>

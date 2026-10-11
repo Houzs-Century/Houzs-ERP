@@ -90,7 +90,7 @@ export type ScanPrefillLine = {
   itemGroup:      string;        // 'sofa' | 'bedframe' | 'mattress' | 'accessory' | 'service' | 'others'
   description:    string;
   qty:            number;
-  unitPriceSen: number;        // RM handwriting × 100, rounded
+  unitPriceCenti: number;        // RM handwriting × 100, rounded
   remark:         string;        // short "Slip: …" chip (rawText capped ~40c) + notes; full rawText below
   /* Verification + learning carry-through. rawText is the slip's verbatim row
      (the source of truth the edit-gate pairs against the corrected code);
@@ -118,7 +118,7 @@ export type ScanPrefillPayment = {
   installmentLabel: string;        // installment_plan value, e.g. '12 months'
   onlineTypeValue:  string;        // online_type value ('' = none)
   approvalCode:     string;        // card-terminal approval / ref no. ('' = none)
-  depositSen:     number;        // deposit on slip ×100 (0 = operator fills)
+  depositCenti:     number;        // deposit on slip ×100 (0 = operator fills)
 };
 
 export type ScanPrefill = {

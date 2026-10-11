@@ -12,7 +12,7 @@
 
 export const SI_PAYMENT_COLS =
   'id, sales_invoice_id, paid_at, method, merchant_provider, installment_months, ' +
-  'online_type, approval_code, amount_sen, account_sheet, collected_by, note, ' +
+  'online_type, approval_code, amount_centi, account_sheet, collected_by, note, ' +
   'created_at, created_by';
 
 export type SiPaymentRowInput = {
@@ -24,7 +24,7 @@ export type SiPaymentRowInput = {
   installmentMonths?: number | null;
   onlineType?: string | null;
   approvalCode?: string | null;
-  amountSen: number;
+  amountCenti: number;
   accountSheet?: string | null;
   collectedBy?: string | null;
   note?: string | null;
@@ -52,7 +52,7 @@ export async function insertSiPaymentRow(sb: any, p: SiPaymentRowInput) {
     installment_months: installmentMonths,
     online_type:        onlineType,
     approval_code:      p.approvalCode ?? null,
-    amount_sen:       p.amountSen,
+    amount_centi:       p.amountCenti,
     account_sheet:      p.accountSheet ?? null,
     collected_by:       p.collectedBy ?? null,
     note:               p.note ?? null,

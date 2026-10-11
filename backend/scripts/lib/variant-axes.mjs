@@ -18,7 +18,7 @@ export const REQUIRED_VARIANT_AXES_BY_CATEGORY = {
     { key: "fabricCode", label: "Fabrics", aliases: ["fabricCode", "colorCode", "colourCode", "fabricColor"] },
   ],
   sofa: [
-    { key: "seatHeight", label: "Seat Size", aliases: ["seatHeight", "depth", "seatSize"] },
+    { key: "seatHeight", label: "Seat Height", aliases: ["seatHeight", "depth"] },
     { key: "legHeight", label: "Leg Height", aliases: ["legHeight", "sofaLegHeight"], required: false },
     { key: "fabricCode", label: "Fabrics", aliases: ["fabricCode", "colorCode", "colourCode", "fabricColor"] },
   ],

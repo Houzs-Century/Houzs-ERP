@@ -12,7 +12,7 @@
 //
 // BACKWARD-COMPATIBLE: with the history table empty every lookup returns null, so
 // pricing is byte-identical to today until a price is scheduled. Company-scoped —
-// the same item_code can exist under both companies.
+// the same product_code can exist under both companies.
 //
 // supabase-js only (matches po-pricing.ts's `sb: any`); the raw-SQL callers add
 // the predicate by hand.
@@ -23,16 +23,16 @@ import { todayMyt } from './my-time';
 export async function resolveSellPriceSenAsOf(
   sb: any,
   companyId: number,
-  itemCode: string,
+  productCode: string,
   asOf: string = todayMyt(),
 ): Promise<number | null> {
-  const code = (itemCode ?? '').trim();
+  const code = (productCode ?? '').trim();
   if (!code || !Number.isInteger(companyId) || companyId <= 0) return null;
   const { data } = await sb
     .from('mfg_product_price_history')
     .select('sell_price_sen')
     .eq('company_id', companyId)
-    .eq('item_code', code)
+    .eq('product_code', code)
     .lte('effective_from', asOf)
     .order('effective_from', { ascending: false })
     .order('created_at', { ascending: false })
@@ -47,16 +47,16 @@ export async function resolveSellPriceSenAsOf(
 export async function resolvePendingSellPriceAfter(
   sb: any,
   companyId: number,
-  itemCode: string,
+  productCode: string,
   asOf: string = todayMyt(),
 ): Promise<{ sellPriceSen: number; effectiveFrom: string } | null> {
-  const code = (itemCode ?? '').trim();
+  const code = (productCode ?? '').trim();
   if (!code || !Number.isInteger(companyId) || companyId <= 0) return null;
   const { data } = await sb
     .from('mfg_product_price_history')
     .select('sell_price_sen, effective_from')
     .eq('company_id', companyId)
-    .eq('item_code', code)
+    .eq('product_code', code)
     .gt('effective_from', asOf)
     .order('effective_from', { ascending: true })
     .order('created_at', { ascending: true })

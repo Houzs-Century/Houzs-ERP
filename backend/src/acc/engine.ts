@@ -189,7 +189,7 @@ export async function postJournal(sb: any, input: PostJournalInput): Promise<Pos
   // 5 — mint + insert, re-minting on a number collision (§2.12). Two
   // concurrent posts both read the same max; the loser's insert hits the
   // je_no unique index and the next attempt reads past the winner.
-  const prefix = await jePrefixForCompany(sb, companyId);
+  const prefix = jePrefixForCompany(companyId);
   const companyCol = companyId != null ? { company_id: companyId } : {};
   let je: { id: string; je_no: string } | null = null;
   let lastErr: { code?: string; message?: string } | null = null;
@@ -364,24 +364,18 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
 
   const companyId = orig.company_id ?? null;
   const companyCol = companyId != null ? { company_id: companyId } : {};
-  const prefix = await jePrefixForCompany(sb, companyId);
-
-  // The contra is dated when the void HAPPENS (today by default), so it must be
-  // NUMBERED in that same month's series — mirror postJournal, which mints from
-  // the entry's OWN date. Minting from orig.entry_date put an Aug void into the
-  // original's (e.g. Jan) JE-YYMM series while the row itself was dated Aug.
-  const contraEntryDate = dateOrNull(input.entryDate) ?? todayMyt();
+  const prefix = jePrefixForCompany(companyId);
 
   let revJe: { id: string; je_no: string } | null = null;
   let lastErr: { code?: string; message?: string } | null = null;
   for (let attempt = 0; attempt < 8 && !revJe; attempt += 1) {
-    const revJeNo = await nextJeNo(sb, new Date(contraEntryDate), prefix);
+    const revJeNo = await nextJeNo(sb, new Date(orig.entry_date), prefix);
     const { data: inserted, error: revErr } = await sb
       .from('journal_entries')
       .insert({
         ...companyCol,
         je_no: revJeNo,
-        entry_date: contraEntryDate,
+        entry_date: dateOrNull(input.entryDate) ?? todayMyt(),
         source_type: revType,
         source_doc_no: input.sourceDocNo ?? orig.source_doc_no ?? null,
         narration: input.narration(orig),

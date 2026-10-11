@@ -54,7 +54,7 @@ export function parseVarianceThresholds(
 }
 
 export type VarianceLine = {
-  itemCode: string;
+  productCode: string;
   /** SIGNED qty delta this line will post (counted − live). */
   adjustment: number;
   /** Best-known unit cost in SEN, or null when no basis exists (value rule skipped). */
@@ -78,9 +78,9 @@ export function findVarianceBreaches(
     const qtyBreach = absQty > t.qtyLimit;
     const valueBreach =
       l.unitCostSen != null && l.unitCostSen > 0 && absQty * l.unitCostSen > t.valueLimitSen;
-    if ((qtyBreach || valueBreach) && !seen.has(l.itemCode)) {
-      seen.add(l.itemCode);
-      out.push(l.itemCode);
+    if ((qtyBreach || valueBreach) && !seen.has(l.productCode)) {
+      seen.add(l.productCode);
+      out.push(l.productCode);
     }
   }
   return out;

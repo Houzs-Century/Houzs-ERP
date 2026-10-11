@@ -259,9 +259,9 @@ export const ConsignmentReturnFromNote = () => {
           uom: r.uom,
           qty: v.qty,
           condition: v.condition,
-          unitPriceSen: r.unitPriceSen,
-          discountSen: r.discountSen,
-          unitCostSen: r.unitCostSen,
+          unitPriceCenti: r.unitPriceCenti,
+          discountCenti: r.discountCenti,
+          unitCostCenti: r.unitCostCenti,
           variants: r.variants,
         };
       })

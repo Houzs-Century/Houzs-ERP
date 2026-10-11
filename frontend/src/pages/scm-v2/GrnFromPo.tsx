@@ -42,12 +42,12 @@ import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtMoneySen } from '@2990s/shared';
+import { fmtMoneyCenti } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
 
 /* DataGrid localStorage layout key. */
 const STORAGE_KEY = 'grn-from-po.layout.v1';
@@ -441,11 +441,11 @@ export const GrnFromPo = () => {
         const pickQty = p?.picked ? p.qty : effRemaining(r);
         return (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>
-            {fmtRm(pickQty * r.unitPriceSen)}
+            {fmtRm(pickQty * r.unitPriceCenti)}
           </span>
         );
       },
-      sortFn: (a, b) => a.remainingQty * a.unitPriceSen - b.remainingQty * b.unitPriceSen,
+      sortFn: (a, b) => a.remainingQty * a.unitPriceCenti - b.remainingQty * b.unitPriceCenti,
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- column accessors derive from the pick/qty state already in deps; listing the helpers would only rebuild the columns for no behavioural change
   ], [picks]);
@@ -473,13 +473,13 @@ export const GrnFromPo = () => {
           await addGrnItem.mutateAsync({
             grnId:               appendToGrn,
             purchaseOrderItemId: r.poItemId,
-            itemCode:        r.itemCode,
+            materialCode:        r.itemCode,
             supplierSku:         r.supplierSku ?? undefined,
             materialName:        r.description ?? r.itemCode,
             itemGroup:           r.itemGroup || undefined,
             variants:            (r.variants as Record<string, unknown> | null) ?? undefined,
             qty:                 r._pickQty,
-            unitPriceSen:      r.unitPriceSen,
+            unitPriceCenti:      r.unitPriceCenti,
             deliveryDate:        r.deliveryDate ?? undefined,
           });
         }

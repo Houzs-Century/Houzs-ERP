@@ -77,7 +77,7 @@ const isKeyInCompartmentPrefix = (key: string, code: string): boolean => {
 type CompartmentMeta = {
   imageKey?: string;
   description?: string;
-  defaultPriceSen?: number;
+  defaultPriceCenti?: number;
 };
 
 type MaintenanceConfig = {

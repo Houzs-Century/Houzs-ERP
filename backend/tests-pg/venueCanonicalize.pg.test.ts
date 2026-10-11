@@ -29,7 +29,7 @@ async function venueMigrationSql(): Promise<string> {
       `expected exactly one *_venue_canonicalize.sql migration, found ${files.length}: ${files.join(', ')}`,
     );
   }
-  return (await readFile(join(migrationsDir, files[0]), 'utf8')).replace(/\bproduct_code\b/g, 'item_code').replace(/\bmaterial_code\b/g, 'item_code');
+  return readFile(join(migrationsDir, files[0]), 'utf8');
 }
 
 let admin: Sql;

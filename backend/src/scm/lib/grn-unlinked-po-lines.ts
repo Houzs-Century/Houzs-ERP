@@ -39,12 +39,12 @@ import {
 
 export type UnlinkedPoOffender = {
   lineRef: string;
-  itemCode: string;
+  materialCode: string;
   qty: number;
   poNumber: string;
 };
 
-/** Every item_code the named Purchase Order orders. Empty when the GRN has
+/** Every material_code the named Purchase Order orders. Empty when the GRN has
  *  no parent PO, which is the legitimate free-receipt case. */
 export function poMaterialCodesOf(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -53,8 +53,8 @@ export function poMaterialCodesOf(
 ): Promise<ParentCodes> {
   return readParentCodes(sb, {
     table: 'purchase_order_items',
-    select: 'item_code',
-    codeColumn: 'item_code',
+    select: 'material_code',
+    codeColumn: 'material_code',
     parentColumn: 'purchase_order_id',
     parentId: purchaseOrderId,
   });
@@ -96,7 +96,7 @@ export async function findUnlinkedPoLines(
     ok: true,
     offenders: findUnlinkedSoItemLines(label, lines, codes.codes).map((o) => ({
       lineRef: o.lineRef,
-      itemCode: o.itemCode,
+      materialCode: o.itemCode,
       qty: o.qty,
       poNumber: label,
     })),
@@ -105,7 +105,7 @@ export async function findUnlinkedPoLines(
 
 export function unlinkedPoLinesResponse(offenders: UnlinkedPoOffender[]) {
   const po = offenders[0]?.poNumber ?? '';
-  const list = [...new Set(offenders.map((o) => o.itemCode))].join(', ');
+  const list = [...new Set(offenders.map((o) => o.materialCode))].join(', ');
   return {
     error: 'unlinked_po_lines',
     message:

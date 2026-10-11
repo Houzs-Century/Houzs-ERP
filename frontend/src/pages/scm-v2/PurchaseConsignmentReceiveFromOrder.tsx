@@ -125,7 +125,7 @@ export const PurchaseConsignmentReceiveFromOrder = () => {
             disabled={locked}
             onChange={() => togglePick(r)}
             onClick={(e) => e.stopPropagation()}
-            aria-label={`Pick ${r.itemCode}`}
+            aria-label={`Pick ${r.materialCode}`}
             style={locked ? { cursor: 'not-allowed' } : undefined}
           />
         );
@@ -150,9 +150,9 @@ export const PurchaseConsignmentReceiveFromOrder = () => {
       groupValue: (r) => (r.itemGroup ?? '(none)').toUpperCase(),
     },
     {
-      key: 'itemCode', label: 'Material Code', width: 140, sortable: true,
-      accessor: (r) => <span style={{ fontWeight: 600 }}>{r.itemCode}</span>,
-      searchValue: (r) => r.itemCode ?? '',
+      key: 'materialCode', label: 'Material Code', width: 140, sortable: true,
+      accessor: (r) => <span style={{ fontWeight: 600 }}>{r.materialCode}</span>,
+      searchValue: (r) => r.materialCode ?? '',
     },
     {
       key: 'materialName', label: 'Material', width: 220, sortable: true,
@@ -215,14 +215,14 @@ export const PurchaseConsignmentReceiveFromOrder = () => {
           supplierId: r.supplierId,
           supplierName: r.supplierName,
           materialKind: r.materialKind,
-          itemCode: r.itemCode,
+          materialCode: r.materialCode,
           materialName: r.materialName,
           supplierSku: r.supplierSku,
           itemGroup: r.itemGroup,
           description: r.description,
           uom: r.uom,
           qty: v.qty,
-          unitPriceSen: r.unitPriceSen,
+          unitPriceCenti: r.unitPriceCenti,
           variants: r.variants,
         };
       })

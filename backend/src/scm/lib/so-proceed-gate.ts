@@ -26,15 +26,15 @@ import { findColourKivLines, findIncompleteVariantLines } from './so-variant-che
 export async function soDepositFacts(
   sb: any,
   docNo: string,
-): Promise<{ paidSen: number; totalSen: number }> {
+): Promise<{ paidCenti: number; totalCenti: number }> {
   const [{ data: totRow }, { data: pays }] = await Promise.all([
-    sb.from('mfg_sales_orders').select('local_total_sen').eq('doc_no', docNo).maybeSingle(),
-    sb.from('mfg_sales_order_payments').select('amount_sen').eq('so_doc_no', docNo),
+    sb.from('mfg_sales_orders').select('local_total_centi').eq('doc_no', docNo).maybeSingle(),
+    sb.from('mfg_sales_order_payments').select('amount_centi').eq('so_doc_no', docNo),
   ]);
   return {
-    totalSen: Number((totRow as { local_total_sen?: number } | null)?.local_total_sen ?? 0),
-    paidSen: ((pays ?? []) as Array<{ amount_sen?: number | null }>)
-      .reduce((s, p) => s + Number(p.amount_sen ?? 0), 0),
+    totalCenti: Number((totRow as { local_total_centi?: number } | null)?.local_total_centi ?? 0),
+    paidCenti: ((pays ?? []) as Array<{ amount_centi?: number | null }>)
+      .reduce((s, p) => s + Number(p.amount_centi ?? 0), 0),
   };
 }
 
@@ -76,7 +76,7 @@ export async function soProceedGateBlocked(
      looser 30% — see processingDateThresholdFor for why never the stricter. */
   companyCode?: string | null,
 ): Promise<ReturnType<typeof proceedGateUnmetBody> | null> {
-  const { paidSen, totalSen } = await soDepositFacts(sb, docNo);
+  const { paidCenti, totalCenti } = await soDepositFacts(sb, docNo);
   /* NAMES WHICH CONDITIONS FAILED, and only those. This used to return one
      stored sentence reciting all five (customer name, address line 1, postcode,
      delivery date, deposit) no matter which one was actually unmet. On
@@ -93,8 +93,8 @@ export async function soProceedGateBlocked(
     hasDeliveryDate: !!eff.deliveryDate?.trim(),
     /* soDepositFacts reads the centi ledger, which is the unit these amounts
        are PRINTED in — see ProceedGateFacts on why the field names carry it. */
-    paidSen,
-    totalSen,
+    paidCenti,
+    totalCenti,
     companyCode,
   });
   /* Identical verdict to the old `meetsProceedGate(...)` call: that predicate is

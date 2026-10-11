@@ -137,7 +137,7 @@ export async function runPOPull(
       const rows = batch;
       batch = [];
       const values = rows.map(() => "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").join(",");
-      const res = await env.DB.prepare(
+      await env.DB.prepare(
         `INSERT INTO purchase_orders (
            doc_no, so_doc_no, creditor_code, creditor_name, item_code, item_description,
            location, doc_date, remaining_qty, delivery_date, supplier_date1, supplier_date2,
@@ -148,11 +148,7 @@ export async function runPOPull(
       )
         .bind(...rows.flat())
         .run();
-      // ON CONFLICT DO NOTHING drops duplicate (doc_no,item_code) lines, so the
-      // batch length overcounts. meta.changes is the true inserted-row count
-      // (RETURNING-backed on pg, native on D1), so a dropped line no longer
-      // inflates the reported count and the fetched-vs-inserted gap surfaces it.
-      inserted += res.meta.changes;
+      inserted += rows.length;
     };
 
     for (const o of data) {
@@ -293,7 +289,7 @@ export async function runPODocsPull(
       const rows = batch;
       batch = [];
       const values = rows.map(() => "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").join(",");
-      const res = await env.DB.prepare(
+      await env.DB.prepare(
         `INSERT INTO purchase_order_docs (
            doc_no, doc_date, ref, so_doc_no, creditor_code, creditor_name,
            purchase_location, doc_status, cancelled,
@@ -306,10 +302,7 @@ export async function runPODocsPull(
       )
         .bind(...rows.flat())
         .run();
-      // ON CONFLICT DO NOTHING drops duplicate doc_no rows; meta.changes is the
-      // true inserted-row count (RETURNING-backed on pg, native on D1), so a
-      // dropped duplicate no longer inflates the reported count.
-      inserted += res.meta.changes;
+      inserted += rows.length;
     };
 
     for (const o of data) {

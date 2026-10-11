@@ -9132,15 +9132,7 @@ function DocRow({
                           {showFile && (
                             <>
                               {" "}
-                              {/* inline-block, not inline: truncate is dead on
-                                  inline elements, which is how full 100-char
-                                  filenames wrapped the whole cell (owner
-                                  2026-08-17: "make it short and fit in box
-                                  only"). Full name stays on hover. */}
-                              <span
-                                title={c.body ?? undefined}
-                                className="inline-block max-w-[150px] truncate align-bottom text-ink"
-                              >
+                              <span className="max-w-[220px] truncate align-baseline text-ink">
                                 {c.body}
                               </span>
                             </>

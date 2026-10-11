@@ -11,9 +11,7 @@
 //
 // Cache shape: the human slice is one payload however it is asked for
 // (default or scope=human), so both are served from the same per-user KV
-// snapshot. The system slice is cached too, keyed on scope so it never
-// collides with the human payload (mobile bell polls at 30s, may serve up to
-// TTL-stale — the same trade the human slice already makes).
+// snapshot; only the system slice bypasses (live read, the mobile bell's 30s).
 //
 // Harness mirrors configCache.test.ts's banner section: a bare Hono app that
 // stands in the user, the real announcements router, and a minimal D1 mirror of
@@ -98,27 +96,15 @@ describe("/api/announcements/banner — scope slices", () => {
     expect(humanOnly.ids).toEqual(["ann-human"]);
     expect(humanOnly.cache).toBe("hit");
 
-    // scope=system is the bell slice: exactly the machine rows. Cached under
-    // its OWN scope key — first read misses and fills, and crucially returns
-    // the SYSTEM payload, not the human entry the default read already filled.
+    // scope=system is the bell slice: exactly the machine rows, live read.
     const systemOnly = await getBanner("system");
     expect([...systemOnly.ids].sort()).toEqual(["ann-case", "ann-scan"]);
     expect([...systemOnly.sources].sort()).toEqual(["scan", "service_case"]);
-    expect(systemOnly.cache).toBe("miss");
-
-    // A 2nd system read HITS its own entry — and the human read STILL returns
-    // the human payload, proving the two scopes never cross.
-    const systemAgain = await getBanner("system");
-    expect([...systemAgain.ids].sort()).toEqual(["ann-case", "ann-scan"]);
-    expect(systemAgain.cache).toBe("hit");
-    const humanAgain = await getBanner("human");
-    expect(humanAgain.ids).toEqual(["ann-human"]);
-    expect(humanAgain.cache).toBe("hit");
+    expect(systemOnly.cache).toBe("bypass");
 
     // The retired unscoped-full-feed spelling (scope=all) — or any unknown
     // scope — resolves to the human slice, never to "everything": a stale
-    // cached bundle cannot resurrect the machine-notice pop-up. (It shares the
-    // human snapshot, so this is a hit.)
+    // cached bundle cannot resurrect the machine-notice pop-up.
     const unknown = await getBanner("all");
     expect(unknown.ids).toEqual(["ann-human"]);
     expect(unknown.sources).toEqual([null]);

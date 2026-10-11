@@ -45,7 +45,7 @@ export type PickedSku = {
   itemCode: string;
   itemGroup: string;
   name: string;
-  unitPriceSen: number;
+  unitPriceCenti: number;
   category: MfgCategory;
 };
 
@@ -164,7 +164,7 @@ export function MobileSkuPicker({
                 itemCode: p.code,
                 itemGroup: p.category.toLowerCase(),
                 name: p.name,
-                unitPriceSen: p.sell_price_sen ?? 0,
+                unitPriceCenti: p.sell_price_sen ?? 0,
                 category: p.category,
               });
               const isOn = multi && picked.some((x) => x.id === p.id);

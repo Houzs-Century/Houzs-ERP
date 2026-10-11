@@ -70,7 +70,7 @@
       "catches": 0
     },
     "backend/src/scm/lib/customer-credits.ts": {
-      "reads": 2,
+      "reads": 3,
       "catches": 0
     },
     "backend/src/scm/lib/derive-line-branding.ts": {
@@ -238,7 +238,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/consignment-orders.ts": {
-      "reads": 24,
+      "reads": 25,
       "catches": 2
     },
     "backend/src/scm/routes/consignment-returns.ts": {
@@ -318,11 +318,11 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-purchase-orders.ts": {
-      "reads": 48,
+      "reads": 49,
       "catches": 0
     },
     "backend/src/scm/routes/mfg-sales-orders.ts": {
-      "reads": 82,
+      "reads": 84,
       "catches": 2
     },
     "backend/src/scm/routes/mrp.ts": {
@@ -375,6 +375,10 @@
     },
     "backend/src/scm/routes/reports.ts": {
       "reads": 5,
+      "catches": 0
+    },
+    "backend/src/scm/routes/sales-analysis.ts": {
+      "reads": 2,
       "catches": 0
     },
     "backend/src/scm/routes/sales-invoices.ts": {

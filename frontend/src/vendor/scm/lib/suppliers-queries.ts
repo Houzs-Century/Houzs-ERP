@@ -81,7 +81,7 @@ export type SupplierRow = {
 /** PR — Commander 2026-05-27 ("跟着 Product Maintenance 的排版"):
  *  Per-category supplier cost matrix on supplier_material_bindings
  *  (migration 0089). Two concrete shapes the UI cares about; everything
- *  else (or null) → fall back to unit_price_sen.
+ *  else (or null) → fall back to unit_price_centi.
  *
  *  SOFA:     { [seatHeight]: { P1?: centi, P2?: centi, P3?: centi } }
  *  BEDFRAME: { P1?: centi, P2?: centi }
@@ -97,10 +97,10 @@ export type BindingRow = {
   id: string;
   supplier_id: string;
   material_kind: MaterialKind;
-  item_code: string;
+  material_code: string;
   material_name: string;
   supplier_sku: string;
-  unit_price_sen: number;
+  unit_price_centi: number;
   currency: Currency;
   lead_time_days: number;
   payment_terms_override: string | null;
@@ -111,13 +111,13 @@ export type BindingRow = {
   notes: string | null;
   /** PR — Commander 2026-05-27: per-category cost matrix mirroring the
    *  Products Maintenance page shape. NULL on existing rows + on categories
-   *  that use the single unit_price_sen (mattress / accessory / service). */
+   *  that use the single unit_price_centi (mattress / accessory / service). */
   price_matrix: PriceMatrix | null;
   /** Migration 0177 — cost anchor. When true, this binding is THE cost anchor
-   *  for its item_code: editing either side's cost (this binding's
-   *  unit_price_sen / price_matrix, or the linked mfg_products
+   *  for its material_code: editing either side's cost (this binding's
+   *  unit_price_centi / price_matrix, or the linked mfg_products
    *  base_price_sen / price1_sen) mirrors onto the other. At most one anchor
-   *  per item_code (enforced server-side). SOFA bindings can be anchored
+   *  per material_code (enforced server-side). SOFA bindings can be anchored
    *  but cost sync is skipped (per-height matrix vs single SKU cost). */
   is_cost_anchor: boolean;
   created_at: string;
@@ -136,9 +136,9 @@ export type PoHeaderRow = {
   supplier_delivery_date_3?: string | null;
   supplier_delivery_date_4?: string | null;
   currency: Currency;
-  subtotal_sen: number;
-  tax_sen: number;
-  total_sen: number;
+  subtotal_centi: number;
+  tax_centi: number;
+  total_centi: number;
   notes: string | null;
   submitted_at: string | null;
   received_at: string | null;
@@ -166,7 +166,7 @@ export type PoHeaderRow = {
     address?: string | null;
   } | null;
   /** PR — Commander 2026-05-27: list endpoint embeds a tiny items summary
-      (item_code + qty per line) so the buyer can scan what's inside each
+      (material_code + qty per line) so the buyer can scan what's inside each
       PO row without drilling in. Detail endpoint returns full items[]
       separately, not on the header. Optional because not every consumer
       wants the join. */
@@ -204,7 +204,7 @@ export type PoHeaderRow = {
 };
 
 export type PoItemSummary = {
-  item_code: string;
+  material_code: string;
   material_name: string;
   qty: number;
   /** Supplier's own SKU for this line (owner 2026-08-05) — the list's
@@ -217,12 +217,12 @@ export type PoItemRow = {
   purchase_order_id: string;
   binding_id: string | null;
   material_kind: MaterialKind;
-  item_code: string;
+  material_code: string;
   material_name: string;
   supplier_sku: string | null;
   qty: number;
-  unit_price_sen: number;
-  line_total_sen: number;
+  unit_price_centi: number;
+  line_total_centi: number;
   received_qty: number;
   notes: string | null;
   /* PR #41 — variant fields (migration 0056) */
@@ -230,8 +230,8 @@ export type PoItemRow = {
   description?: string | null;
   description2?: string | null;
   uom?: string;
-  discount_sen?: number;
-  unit_cost_sen?: number;
+  discount_centi?: number;
+  unit_cost_centi?: number;
   gap_inches?: number | null;
   divan_height_inches?: number | null;
   divan_price_sen?: number;
@@ -385,7 +385,7 @@ export type SupplierScorecard = {
     poDate: string;
     expectedDate: string | null;
     receivedDate: string | null;
-    totalSen: number;
+    totalCenti: number;
     orderedQty: number;
     receivedQty: number;
   }>;
@@ -434,10 +434,10 @@ export function useUpdateSupplier() {
 
 export type NewBinding = {
   materialKind: MaterialKind;
-  itemCode: string;
+  materialCode: string;
   materialName: string;
   supplierSku: string;
-  unitPriceSen?: number;
+  unitPriceCenti?: number;
   currency?: Currency;
   leadTimeDays?: number;
   moq?: number;
@@ -513,7 +513,7 @@ export function useDeleteBinding() {
 }
 
 /** Migration 0177 — set/clear this binding as the cost anchor for its
- *  item_code. Setting clears the flag on any other binding for the same
+ *  material_code. Setting clears the flag on any other binding for the same
  *  product (one anchor per code) and pushes the binding's current cost onto the
  *  product (initial sync). We invalidate the supplier detail (flag changed) AND
  *  the mfg-products cache (the product's cost may have just been mirrored). */
@@ -634,11 +634,11 @@ export const fetchPurchaseOrderDetail = (id: string) =>
 
 export type NewPoItem = {
   materialKind: MaterialKind;
-  itemCode: string;
+  materialCode: string;
   materialName: string;
   supplierSku?: string;
   qty: number;
-  unitPriceSen: number;
+  unitPriceCenti: number;
   bindingId?: string;
   notes?: string;
   /* PR #41 — variant fields */
@@ -646,8 +646,8 @@ export type NewPoItem = {
   description?: string;
   description2?: string;
   uom?: string;
-  discountSen?: number;
-  unitCostSen?: number;
+  discountCenti?: number;
+  unitCostCenti?: number;
   gapInches?: number | null;
   divanHeightInches?: number | null;
   divanPriceSen?: number;
@@ -686,7 +686,7 @@ export type OutstandingSoItem = {
   qty:            number;
   poQtyPicked:    number;
   remainingQty:   number;
-  unitPriceSen: number;
+  unitPriceCenti: number;
   variants:       unknown;
   lineSuffix:     string | null;
   /* Commander 2026-05-28 — PO-from-SO redesign extras. processingDate +
@@ -728,7 +728,7 @@ export type OutstandingPoItem = {
   qty:            number;
   receivedQty:    number;
   remainingQty:   number;
-  unitPriceSen: number;
+  unitPriceCenti: number;
   warehouseId:    string | null;
   variants:       unknown;
   /* Delivery-carry — the PO line's delivery date, carried into the GRN line. */
@@ -819,7 +819,7 @@ export type OutstandingGrnItem = {
   itemGroup:       string;
   qtyAccepted:     number;
   remaining:       number;
-  unitPriceSen:  number;
+  unitPriceCenti:  number;
   variants:        unknown;
   /* Source note's currency + FX rate (owner 2026-08-06) — one invoice may bill
      several of a supplier's notes, but a PI header carries ONE currency + rate,
@@ -1176,12 +1176,18 @@ export function useDeletePoLineAllocation() {
   });
 }
 
-/* useSubmitPurchaseOrder (PATCH /mfg-purchase-orders/:id/submit) was REMOVED
-   2026-08-18. Its endpoint had no write path — it read the row, echoed an
-   already-SUBMITTED PO and then returned 409 cannot_submit unconditionally — so
-   the only caller left, the read-only PO detail page, failed on every DRAFT it
-   was offered on. /confirm is the one verb that commits a draft; see
-   vendor/scm/lib/po-next-step.ts for the full account. */
+export function useSubmitPurchaseOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      authedFetch<{ purchaseOrder: { id: string; status: PoStatus; submitted_at: string } }>(
+        `/mfg-purchase-orders/${id}/submit`,
+        { method: 'PATCH' },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] }),
+    onError: writeFailed,
+  });
+}
 
 /** Confirm a DRAFT PO → SUBMITTED (Draft/Confirmed two-state). This is where a
     draft commits: it stamps submitted_at server-side and advances the source
@@ -1200,13 +1206,6 @@ export function useConfirmPurchaseOrder() {
       qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
       qc.invalidateQueries({ queryKey: ['mfg-purchase-order-detail', id] });
     },
-    /* Added 2026-08-18 with the retirement of useSubmitPurchaseOrder. This is
-       now the ONLY way to commit a draft PO, and /confirm has a refusal an
-       operator can act on: PO_WAREHOUSE_REQUIRED 409s a PO with no ship-to
-       warehouse and names the offending lines. Without an onError that refusal
-       reached nobody — the button would simply appear to do nothing, which is
-       the failure mode the retired endpoint already had. */
-    onError: writeFailed,
   });
 }
 

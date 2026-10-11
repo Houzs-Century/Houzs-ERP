@@ -52,7 +52,7 @@ export type OutstandingPcOrderLine = {
   supplierId: string | null;
   supplierName: string | null;
   materialKind: string;
-  itemCode: string;
+  materialCode: string;
   materialName: string;
   supplierSku: string | null;
   itemGroup: string | null;
@@ -61,7 +61,7 @@ export type OutstandingPcOrderLine = {
   ordered: number;
   received: number;
   outstanding: number;
-  unitPriceSen: number;
+  unitPriceCenti: number;
   variants: unknown;
 };
 

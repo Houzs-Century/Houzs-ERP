@@ -9,11 +9,11 @@
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
-import { fmtDateTime, fmtMoneySen } from '@2990s/shared';
+import { fmtDateTime, fmtMoneyCenti } from '@2990s/shared';
 import { useSoRevisions, type SoRevisionRow } from '../../vendor/scm/lib/so-amendment-queries';
 import styles from './SalesOrderDetail.module.css';
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
 
 /* Read-only Revisions tab — lists prior SO snapshots (newest first) via
    useSoRevisions. Clicking a revision expands its stored snapshot as read-only
@@ -103,7 +103,7 @@ const RevisionSnapshot = ({ snapshot, currency }: { snapshot: unknown; currency:
     }}>
       <div style={{ marginBottom: 'var(--space-2)' }}>
         <strong>Customer:</strong> {str(header.debtor_name ?? header.debtorName)}
-        {' · '}<strong>Total:</strong> {centi(header.local_total_sen ?? header.localTotalSen)}
+        {' · '}<strong>Total:</strong> {centi(header.local_total_centi ?? header.localTotalCenti)}
       </div>
       {lines.length > 0 ? (
         <table className={styles.table}>
@@ -119,7 +119,7 @@ const RevisionSnapshot = ({ snapshot, currency }: { snapshot: unknown; currency:
               <tr key={i}>
                 <td>{str(l.item_code ?? l.itemCode)}</td>
                 <td className={styles.tableRight}>{str(l.qty)}</td>
-                <td className={styles.tableRight}>{centi(l.unit_price_sen ?? l.unitPriceSen)}</td>
+                <td className={styles.tableRight}>{centi(l.unit_price_centi ?? l.unitPriceCenti)}</td>
               </tr>
             ))}
           </tbody>

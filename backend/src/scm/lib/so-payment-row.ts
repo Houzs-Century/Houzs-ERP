@@ -39,11 +39,11 @@ export function deriveAccountSheet(
 }
 
 // merchant_provider, installment_months, approval_code, payment_date,
-// paid_sen) are NOT touched here — those columns are scheduled for
+// paid_centi) are NOT touched here — those columns are scheduled for
 // drop in a follow-up migration once live data is migrated.
 export const PAYMENT_COLS =
   'id, so_doc_no, paid_at, method, merchant_provider, installment_months, ' +
-  'online_type, approval_code, amount_sen, account_sheet, slip_key, collected_by, note, ' +
+  'online_type, approval_code, amount_centi, account_sheet, slip_key, collected_by, note, ' +
   'created_at, created_by, version, updated_at';
 
 /* ── recordSoPaymentRow — the factored insert+audit core of
@@ -63,7 +63,7 @@ export type SoPaymentRowInput = {
   installmentMonths?: number | null;
   onlineType?: string | null;
   approvalCode?: string | null;
-  amountSen: number;
+  amountCenti: number;
   accountSheet?: string | null;
   slipKey: string | null;
   collectedBy?: string | null;
@@ -71,7 +71,7 @@ export type SoPaymentRowInput = {
   createdBy: string;
   actorName?: string | null;
   /* First-deposit marker — the list/detail paid-rollup adds the header
-     deposit_sen on top of the ledger UNLESS an is_deposit row marks the
+     deposit_centi on top of the ledger UNLESS an is_deposit row marks the
      deposit as already booked (migration 0155 semantics). The scan job's
      first receipt row IS the header deposit, so it sets this. */
   isDeposit?: boolean;
@@ -123,7 +123,7 @@ export async function recordSoPaymentRow(
     installment_months: installmentMonths,
     online_type:        onlineType,
     approval_code:      p.approvalCode ?? null,
-    amount_sen:       p.amountSen,
+    amount_centi:       p.amountCenti,
     /* Account Sheet auto-fill (Loo 2026-06-07) — a hand-typed value wins;
        blank/whitespace falls back to the method-derived default. */
     account_sheet:      p.accountSheet?.trim() || deriveAccountSheet(p.method, merchantProvider, onlineType),
@@ -150,7 +150,7 @@ export async function recordSoPaymentRow(
     fieldChanges: [
       { field: 'paidAt',             from: null, to: p.paidAt },
       { field: 'method',             from: null, to: p.method },
-      { field: 'amountSen',        from: null, to: p.amountSen },
+      { field: 'amountCenti',        from: null, to: p.amountCenti },
       ...(merchantProvider  ? [{ field: 'merchantProvider',  from: null, to: merchantProvider  } satisfies FieldChange] : []),
       ...(installmentMonths ? [{ field: 'installmentMonths', from: null, to: installmentMonths } satisfies FieldChange] : []),
       ...(onlineType        ? [{ field: 'onlineType',        from: null, to: onlineType        } satisfies FieldChange] : []),

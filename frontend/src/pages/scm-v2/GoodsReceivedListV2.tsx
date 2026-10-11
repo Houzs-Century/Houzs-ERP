@@ -4,7 +4,7 @@
 // outstanding/owed.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -67,7 +67,7 @@ type GrnRow = {
   status: string;
   received_at: string | null;
   delivery_note_ref: string | null;
-  total_sen?: number;
+  total_centi?: number;
   currency?: string;
   notes?: string | null;
   supplier?: { id: string; code: string; name: string; contact_person?: string | null; phone?: string | null; email?: string | null; address?: string | null } | null;
@@ -89,6 +89,7 @@ type GrnRow = {
 
 type GrnItem = {
   id: string;
+  material_code?: string | null;
   item_code?: string | null;
   description?: string | null;
   description2?: string | null;
@@ -97,19 +98,19 @@ type GrnItem = {
   uom?: string;
   qty?: number;
   received_qty?: number;
-  unit_price_sen?: number;
-  line_total_sen?: number;
+  unit_price_centi?: number;
+  line_total_centi?: number;
   warehouse_code?: string | null;
 };
 
 type StatusTab = "all" | "draft" | "posted" | "cancelled";
 
-const fmtRm = (centi: number): string => fmtSen(centi);
+const fmtRm = (centi: number): string => fmtCenti(centi);
 
 const supplierNameOf = (r: GrnRow): string => r.supplier?.name || "—";
 const supplierCodeOf = (r: GrnRow): string => r.supplier?.code || "—";
 const poOf = (r: GrnRow): string => r.purchase_order?.po_number || "—";
-const totalOf = (r: GrnRow): number => r.total_sen ?? 0;
+const totalOf = (r: GrnRow): number => r.total_centi ?? 0;
 
 // grns.status → filter bucket. Must match GRN_STATUS_BUCKETS server-side
 // (backend/src/scm/routes/grns.ts), which is what the tab COUNTS are computed
@@ -324,7 +325,7 @@ function DetailDrawer({
                 {!detailQ.isLoading && items.length === 0 && <div className="px-4 py-8 text-center text-[12px] text-ink-muted">No lines</div>}
                 {items.map((l, i) => {
                   const { primary, secondary } = orderLineIdentity({
-                    code: l.item_code || l.item_code,
+                    code: l.material_code || l.item_code,
                     description: l.description,
                     variant:
                       buildVariantSummary(l.item_group ?? "others", l.variants ?? null) ||
@@ -343,8 +344,8 @@ function DetailDrawer({
                       )}
                     </div>
                     <span className="text-right font-money text-[12.5px] text-ink-secondary">{l.received_qty ?? l.qty ?? 0}</span>
-                    <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtRm(l.unit_price_sen ?? 0)}</span>
-                    <span className="text-right font-money text-[12.5px] font-semibold text-ink">{fmtRm(l.line_total_sen ?? 0)}</span>
+                    <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtRm(l.unit_price_centi ?? 0)}</span>
+                    <span className="text-right font-money text-[12.5px] font-semibold text-ink">{fmtRm(l.line_total_centi ?? 0)}</span>
                   </div>
                   );
                 })}
@@ -432,10 +433,10 @@ function TotalRow({ k, v, strong }: { k: string; v: string; strong?: boolean }) 
 }
 
 // Table column key → backend sort-whitelist column. GRN backend whitelist is
-// { received_at, grn_number, status, total_sen }; only `total` differs from
+// { received_at, grn_number, status, total_centi }; only `total` differs from
 // its backend name. Non-whitelisted columns carry `disableSort`.
 const SORT_COL_MAP: Record<string, string> = {
-  total: "total_sen",
+  total: "total_centi",
 };
 
 // ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
@@ -456,15 +457,15 @@ function GrnLinesExpansion({ id }: { id: string }) {
   const items =
     ((detailQ.data as { items?: DrillItemFields[] } | undefined)?.items ?? []);
   const lines: DocumentDrillLine[] = items.map((l) => {
-    const code = (l.item_code || l.item_code || "").trim();
+    const code = (l.material_code || l.item_code || "").trim();
     return {
       itemGroup: l.item_group ?? null,
-      code: l.item_code || l.item_code || null,
+      code: l.material_code || l.item_code || null,
       description: l.description ?? null,
       description2: l.description2 ?? null,
       variants: l.variants ?? null,
       qty: Number(l.received_qty ?? l.qty ?? 0),
-      amountSen: l.line_total_sen ?? 0,
+      amountCenti: l.line_total_centi ?? 0,
       assignedSos: byCode.get(code) ?? [],
       sourceLinked: linkedSkus.has(code),
       provenance: provByCode.get(code) ?? [],

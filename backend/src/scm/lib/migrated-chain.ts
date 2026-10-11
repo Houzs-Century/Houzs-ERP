@@ -99,8 +99,8 @@ export type MigratedSourceLine = {
   itemCode: string;
   /** the quantity that would be invoiced now */
   qty: number;
-  unitPriceSen: number;
-  discountSen?: number;
+  unitPriceCenti: number;
+  discountCenti?: number;
   /**
    * The order line this delivery/receipt line came from (so_item_id /
    * purchase_order_item_id). Two lines of one document sharing it is rule 3's
@@ -159,9 +159,9 @@ export type MigratedInvoicePlan = {
   lineCount: number;
   qty: number;
   /** what this invoice would be worth, in sen, from the SOURCE lines only */
-  valueSen: number;
+  valueCenti: number;
   /** what AutoCount actually billed on that invoice, in sen */
-  acValueSen: number;
+  acValueCenti: number;
   unpricedLines: number;
   eligible: boolean;
   reason: MigratedGateReason;
@@ -175,8 +175,8 @@ export type MigratedBlockedSource = {
   lineCount: number;
   unpricedLines: number;
   /** filled for total_disagrees_with_autocount so the report can print both */
-  valueSen?: number;
-  acValueSen?: number;
+  valueCenti?: number;
+  acValueCenti?: number;
 };
 
 export type MigratedPlanResult = {
@@ -196,8 +196,8 @@ export function migratedInvoiceNumber(acInvoiceNo: string): string {
   return `${MIGRATED_NUMBER_PREFIX}${acInvoiceNo.trim()}`;
 }
 
-export function lineValueSen(l: MigratedSourceLine): number {
-  return Math.max(0, Math.round(l.qty * l.unitPriceSen) - Math.round(l.discountSen ?? 0));
+export function lineValueCenti(l: MigratedSourceLine): number {
+  return Math.max(0, Math.round(l.qty * l.unitPriceCenti) - Math.round(l.discountCenti ?? 0));
 }
 
 /** Rule 3: the same order line on two rows of one document. */
@@ -214,7 +214,7 @@ export function duplicateSourceLineKeys(lines: MigratedSourceLine[]): string[] {
 /**
  * Group migrated source documents into the invoices AutoCount already raised.
  *
- * `acInvoiceTotalSen` is what AutoCount billed, keyed by its invoice number.
+ * `acInvoiceTotalCenti` is what AutoCount billed, keyed by its invoice number.
  * An invoice we cannot look up a total for is refused rather than written — a
  * missing cross-check is not a passing cross-check.
  *
@@ -224,11 +224,11 @@ export function duplicateSourceLineKeys(lines: MigratedSourceLine[]): string[] {
  */
 export function planMigratedInvoices(
   sources: MigratedSourceDoc[],
-  acInvoiceTotalSen: Record<string, number> | Map<string, number>,
+  acInvoiceTotalCenti: Record<string, number> | Map<string, number>,
   opts: { allowTotalMismatch?: boolean } = {},
 ): MigratedPlanResult {
   const acTotal = (k: string): number | undefined =>
-    acInvoiceTotalSen instanceof Map ? acInvoiceTotalSen.get(k) : acInvoiceTotalSen[k];
+    acInvoiceTotalCenti instanceof Map ? acInvoiceTotalCenti.get(k) : acInvoiceTotalCenti[k];
 
   const blocked: MigratedBlockedSource[] = [];
   const groups = new Map<string, MigratedSourceDoc[]>();
@@ -239,7 +239,7 @@ export function planMigratedInvoices(
     acInvoiceNos: s.acInvoiceNos,
     reason,
     lineCount: s.lines.length,
-    unpricedLines: s.lines.filter((l) => !(l.unitPriceSen > 0)).length,
+    unpricedLines: s.lines.filter((l) => !(l.unitPriceCenti > 0)).length,
   });
 
   for (const s of sources) {
@@ -268,8 +268,8 @@ export function planMigratedInvoices(
   const plans: MigratedInvoicePlan[] = [];
   for (const [acInvoiceNo, docs] of [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     const lines = docs.flatMap((d) => d.lines);
-    const valueSen = lines.reduce((t, l) => t + lineValueSen(l), 0);
-    const acValueSen = acTotal(acInvoiceNo) ?? -1;
+    const valueCenti = lines.reduce((t, l) => t + lineValueCenti(l), 0);
+    const acValueCenti = acTotal(acInvoiceNo) ?? -1;
     /* Rule 5: the merged header can name only ONE supplier / debtor, and which
        one it would name is decided by sort order. Sort order is not evidence, so
        a group that disagrees is refused. Checked BEFORE the total, because a
@@ -277,7 +277,7 @@ export function planMigratedInvoices(
     const parties = [...new Set(docs.map((d) => d.partyKey).filter((p): p is string => !!p))];
     const partySplit = parties.length > 1;
     const eligible = !partySplit
-      && (opts.allowTotalMismatch === true || (acValueSen >= 0 && acValueSen === valueSen));
+      && (opts.allowTotalMismatch === true || (acValueCenti >= 0 && acValueCenti === valueCenti));
     const reason: MigratedGateReason = eligible ? 'ok'
       : partySplit ? 'party_disagrees_across_sources' : 'total_disagrees_with_autocount';
     if (!eligible) {
@@ -288,9 +288,9 @@ export function planMigratedInvoices(
           acInvoiceNos: [acInvoiceNo],
           reason,
           lineCount: d.lines.length,
-          unpricedLines: d.lines.filter((l) => !(l.unitPriceSen > 0)).length,
-          valueSen,
-          acValueSen,
+          unpricedLines: d.lines.filter((l) => !(l.unitPriceCenti > 0)).length,
+          valueCenti,
+          acValueCenti,
         });
       }
     }
@@ -300,9 +300,9 @@ export function planMigratedInvoices(
       sourceDocNos: docs.map((d) => d.docNo).sort(),
       lineCount: lines.length,
       qty: lines.reduce((t, l) => t + l.qty, 0),
-      valueSen,
-      acValueSen,
-      unpricedLines: lines.filter((l) => !(l.unitPriceSen > 0)).length,
+      valueCenti,
+      acValueCenti,
+      unpricedLines: lines.filter((l) => !(l.unitPriceCenti > 0)).length,
       eligible,
       reason,
     });

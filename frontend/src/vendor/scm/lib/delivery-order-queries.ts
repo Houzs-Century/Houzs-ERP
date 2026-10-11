@@ -42,9 +42,9 @@ export type DeliverableSoLine = {
   description2: string | null;
   uom: string | null;
   qty: number;
-  unitPriceSen: number;
-  unitCostSen: number;
-  discountSen: number;
+  unitPriceCenti: number;
+  unitCostCenti: number;
+  discountCenti: number;
   variants: unknown;
   delivered: number;
   returned: number;
@@ -358,7 +358,7 @@ export type DoPayment = {
   installment_months: number | null;
   online_type: string | null;
   approval_code: string | null;
-  amount_sen: number;
+  amount_centi: number;
   account_sheet: string | null;
   collected_by: string | null;
   collected_by_name: string | null;

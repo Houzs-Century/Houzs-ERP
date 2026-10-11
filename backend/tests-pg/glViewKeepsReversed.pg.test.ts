@@ -45,7 +45,7 @@ async function migrationSql(suffix: string): Promise<string> {
   if (files.length !== 1) {
     throw new Error(`expected exactly one *${suffix} migration, found ${files.length}: ${files.join(', ')}`);
   }
-  return (await readFile(join(migrationsDir, files[0]!), 'utf8')).replace(/\bproduct_code\b/g, 'item_code').replace(/\bmaterial_code\b/g, 'item_code');
+  return readFile(join(migrationsDir, files[0]!), 'utf8');
 }
 
 /** mig 0106's definition, verbatim — the view as production has it TODAY. */

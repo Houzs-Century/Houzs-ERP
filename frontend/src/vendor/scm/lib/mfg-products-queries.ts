@@ -56,7 +56,7 @@ export type MaintenanceConfig = MfgMaintenanceConfig & {
   sofaCompartmentMeta?: Record<string, {
     imageKey?: string;
     description?: string;
-    defaultPriceSen?: number;
+    defaultPriceCenti?: number;
   }>;
   sofaQuickPresets?: {
     id: string;
@@ -485,7 +485,7 @@ export function useUpdateMfgProductPrices() {
 
 export type MasterPriceHistoryRow = {
   id: string;
-  item_code: string;
+  product_code: string;
   field: string;
   old_value_sen: number | null;
   new_value_sen: number | null;
@@ -556,7 +556,7 @@ export type ProductSupplierRow = {
   id: string;
   supplier_id: string;
   supplier_sku: string;
-  unit_price_sen: number;
+  unit_price_centi: number;
   currency: string;
   lead_time_days: number;
   moq: number;
@@ -593,7 +593,7 @@ export type NewMfgProductInput = {
   price1Sen?: number | null;
   costPriceSen?: number | null;
   unitM3Milli?: number;
-  fabricUsageSen?: number;
+  fabricUsageCenti?: number;
   productionTimeMinutes?: number;
   branding?: string;
   fabricColor?: string;

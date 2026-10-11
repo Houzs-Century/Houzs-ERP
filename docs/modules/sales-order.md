@@ -98,7 +98,7 @@ unwinds the SI first.
 |---|---|---|---|---|
 | `DRAFT` | not written yet | `PATCH /:docNo/status`; POS/scan create | — | Blocks conversion: the From-SO PO picker filters DRAFT SOs out entirely. Also the ONLY status that permits `DELETE /:docNo`. |
 | `CONFIRMED` | the order is real | `PATCH /:docNo/status` (the list's "Confirm" button) | **regress** from `READY_TO_SHIP` by `recomputeSoStockAllocation` when the order stops being ship-ready | — |
-| `IN_PRODUCTION` | proceeded | `PATCH /:docNo/status` — the transition that marks the order proceeded (it used to stamp `proceeded_at`; that column is neither written nor read since #2396 / mig 0286, see the note below and line 1316) | — | — |
+| `IN_PRODUCTION` | proceeded | `PATCH /:docNo/status` — this is the transition that stamps `proceeded_at` ONCE | — | — |
 | `READY_TO_SHIP` | stock is in, call the customer | `PATCH /:docNo/status` | **advance** by `recomputeSoStockAllocation` when `isShipReady` and current is `CONFIRMED` or `IN_PRODUCTION` | — |
 | `SHIPPED` | goods left | `PATCH /:docNo/status` | **nothing** | — |
 | `DELIVERED` | customer has it | `PATCH /:docNo/status` | `so-delivery-sync.ts` — advance, when every live line is fully covered and the current status is one of CONFIRMED / IN_PRODUCTION / READY_TO_SHIP / SHIPPED | — |
@@ -296,13 +296,9 @@ thereby say the stored value is standing alone.
 Where it is used:
 
 - `GET /mfg-sales-orders` rolls it up into `stock_remark` / `is_main_ready` /
-  `planning_state`. Since 2026-08-18 the list DOES NOT run `computeMrp` on its
-  critical path — those three fields (and the READY arm of the "PO No." chips)
-  are emitted from the STORED status alone on first paint (`null` live coverage,
-  the fail-soft branch above), and the client heals them a beat later from
-  `GET /mfg-sales-orders/list-mrp-enrichment` (see the LIST "PO No." column note
-  in §2 and §"why the list opens instantly"). The DETAIL endpoints below still
-  run `computeMrp` inline.
+  `planning_state`. It costs no extra query: that handler ALREADY awaits one
+  `computeMrp` (`mrpForListProm`, for the source-PO union) and `mrpLineCoverage`
+  is a pure flatten of that result.
 - `GET /:docNo` and `GET /:docNo/items` stamp it on every line as
   `stock_status_effective`. `stock_state` and `stock_status` both stay on the
   payload — they are the two INPUTS, and the source chips and MRP page still read
@@ -656,16 +652,6 @@ Three layers, tuned so the list never shows a full-load spinner on a revisit:
    ~81ms, revalidation fetch didn't start until ~767ms. Namespaced by `__BUILD_ID__`
    so a payload-shape change on deploy can't hydrate a stale shape.
 3. **`api/cache.ts`** — 15s path-cache + in-flight dedup under `authedFetch`.
-4. **Deferred MRP enrichment** (2026-08-18) — the list handler no longer runs the
-   company-wide `computeMrp` (its dominant cost). It returns immediately with the
-   SHIPPED-only "PO No." chips and stored-status readiness; the client then calls
-   `GET /mfg-sales-orders/list-mrp-enrichment?docNos=…` once for the visible page
-   and overlays the four MRP-derived fields (READY chips, `stock_remark`,
-   `is_main_ready`, `planning_state`). The endpoint's pure assembly lives in
-   `backend/src/scm/lib/so-list-mrp-enrichment.ts`; the client side is shared by
-   desktop + mobile via `useSoListMrpEnrichmentMap` + `applySoListMrpEnrichment`
-   (`frontend/src/lib/soListEnrichment.ts`); the doc set is chunked at 100 so
-   mobile's infinite scroll stays bounded and each chunk caches independently.
 
 Invalidation always wins over all three (mutation → invalidate → forced refetch).
 
@@ -676,55 +662,14 @@ Invalidation always wins over all three (mutation → invalidate → forced refe
 | Method | Path | Handler | Purpose |
 |--------|------|---------|---------|
 | GET | `/api/scm/mfg-sales-orders` | list handler | Grid rows (+ `?summary=1` lightweight bucket mode, `?status=`, `?debtor=`; `?page=` opts into the paginated contract) |
-| GET | `/api/scm/mfg-sales-orders/list-mrp-enrichment` | `mfg-sales-orders-list-enrichment.ts` | `?docNos=A,B,C` → `{ enrichment: { [docNo]: { sourcePoReady, sourcePoAdj, stockRemark, isMainReady, planningState } } }`. The deferred, MRP-derived half of the list (see §"why the list opens instantly"). Read-only, company + sales scoped, fail-soft. Registered before `/:docNo` so the static path is not captured as a doc number. |
 | GET | `/api/scm/mfg-sales-orders/:docNo` | detail | One SO header + lines |
 | GET | `/api/scm/mfg-sales-orders/my-mtd` | MTD scoreboard | Mobile Profile tiles |
 | GET | `/api/scm/mfg-sales-orders/mine` | POS board | Salesperson's own orders |
 | PATCH/POST | `…/:docNo/*` | mutations | proceed / cancel / amend / payments / etc. |
 
-All under `backend/src/scm/routes/mfg-sales-orders.ts`, except the deferred
-`list-mrp-enrichment` endpoint, which lives in its own thin router
-`backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` and is mounted at
-the same `/mfg-sales-orders` prefix in `backend/src/scm/index.ts` — BEFORE the
-main router, so its static path resolves ahead of `/:docNo`. It shares the
-`scm.sales.orders` area guard via that prefix. Auth: inside `/api/scm/*`,
+All under `backend/src/scm/routes/mfg-sales-orders.ts`. Auth: inside `/api/scm/*`,
 `user.id` is the caller's **scm.staff UUID** (bridge-pinned); use `houzsUser.id` for
 the public bigint or you get a 500 (uuid-in-int column).
-
-### The doc number is NOT a tenant key — every `/:docNo/*` read must say so
-
-Document numbers are unique per company by **PREFIX convention** (`HC-`/bare =
-HOUZS, `2990-` = 2990) and by nothing else. There is no constraint behind it, so
-a `.eq('doc_no', docNo)` on its own resolves whichever company's row happens to
-carry that string. The frontend fires the detail panels straight off the URL
-(`enabled: Boolean(docNo)`), so a pasted or emailed `2990-` link is enough — no
-deliberate act is needed.
-
-Six child reads were keyed that way until 2026-08-18 and served the other
-company's Sales Order panels: `/:docNo/audit-log`, `/:docNo/status-changes`,
-`/:docNo/price-overrides`, `/:docNo/payments`, `/:docNo/slip-url`, and
-`/cross-category-eligibility` via `checkCrossCategorySource`. Two of those are
-worse than a row leak — `/slip-url` streams the R2 **object** (the payment slip
-image itself), and the eligibility probe returns `debtor_name`, a customer
-identity, from a GET needing only a document number. See BUG-HISTORY, 2026-08-18.
-
-**The rule for anything new under `/:docNo/`:**
-
-- a child-table read gets `scopeToCompany(builder, c)` — the same predicate
-  `/:docNo/revisions` has always carried;
-- a route that also needs the salesperson tier calls `selfScopedSalesBlocked(c, docNo)`,
-  whose **step 1** is a `scopeToCompany` read of `mfg_sales_orders`. That is why
-  the `/:docNo/payments/:id/*` routes were already safe and were left untouched;
-- a helper that cannot express scoping — `checkCrossCategorySource` took only
-  `sb` — takes `c` instead of being worked around at the call site.
-
-**Do not expect the gate to catch a miss.** `scripts/check-company-scope.mjs`
-screens routes on `ID_PREDICATE` (`.eq('id')` / `.eq('*_id')`), so a `doc_no` key
-is invisible to it; its natural-key pass understands `doc_no` but walks
-`LIB_DIRS` and screens on `LIB_WRITE`, so it sees neither routes nor reads.
-`backend/scripts/probe-natural-key-reads.mjs` reports the surface that falls
-between the two passes — and its header explains why that count is an upper
-bound on exposure rather than a defect list.
 
 ### Who owns the order — `salesperson_id` (owner 2026-08-17)
 
@@ -797,23 +742,11 @@ drill-down, `SalesOrderDetailV2` (Stock + Incoming PO columns — added
 `source_po_union` + `source_po_adj` per row — the UNION of the per-line source
 chips the drill shows (shipped consumed batches ∪ READY projections, pure
 `unionSoLineChips` over the same two resolvers; READY suppressed on
-fully-shipped lines). The visible chips read
+fully-shipped lines; ONE `computeMrp` per list load). The visible chips read
 THAT, because the previous content (`converted_po_nos`, the convert-time
 raise-link) lied by omission: an accessories/CS SO fulfilled from stock bought
 under other POs raises no PO of its own and showed "—" while its drill named
 the source PO.
-
-**Since 2026-08-18 the two arms of that union arrive at different times.** The
-list handler computes only the SHIPPED arm inline (cheap real-batch reads) and
-emits `source_po_union` = shipped-only on first paint. The READY arm needs the
-company-wide `computeMrp` — the list's dominant cost — so it is no longer on the
-list path: the client fetches it from
-`GET /mfg-sales-orders/list-mrp-enrichment` (`sourcePoReady` / `sourcePoAdj`) and
-merges it in with `applySoListMrpEnrichment` (sorted set union of shipped ∪ ready,
-adj flags OR'd). `Union(shipped-only, ready-only)` per doc equals the old combined
-union, so the healed cell is byte-identical to the old inline one — it just fills
-in a beat later. Same deferral for `stock_remark` / `is_main_ready` /
-`planning_state` (§0.5).
 
 **LIST "PO No." column — the raised PO is a CHIP again (2026-08-11, SURFACE
 CHANGE).** Demoting `converted_po_nos` to a tooltip reintroduced the same lie
@@ -1271,58 +1204,8 @@ shape that silently applies no exemption at all. Five scripts are covered:
 
 Related short-circuit gates: remove-date is super-admin only
 (`processing_date_remove_forbidden`), and the processing-date LOCK once the day
-elapses (`so-field-policy`). POS "Proceed" marks the order proceeded; it does NOT write
-`processing_date` (and no longer writes `proceeded_at` either — that column is
-retired, #2396 / mig 0286).
-
-### A sofa never shares an order — `so_sofa_no_other_main`
-
-A SOFA line may not sit on the same document as a BEDFRAME or a MATTRESS line
-(PR #519). SERVICE / ACCESSORY / OTHERS ride on any order. One home,
-`backend/src/scm/lib/main-mix.ts`, and **every server path that can put a
-caller-supplied item code on a line calls it** — the same shape as the date-pair
-rule above, and for the same reason: it was hand-written five times and reached
-five of eight paths.
-
-| Write path | File | Form |
-|---|---|---|
-| SO create | `routes/mfg-sales-orders.ts` (`createSalesOrderCore`) | `createMixRefusal` — FLAT |
-| SO add-line | `routes/mfg-sales-orders.ts` `POST /:docNo/items` | `lineMixRefusal` — differential |
-| SO edit-line | `routes/mfg-sales-orders.ts` `PATCH /:docNo/items/:itemId` | `lineMixRefusal` |
-| SO TBC swap | `routes/mfg-sales-orders.ts` `tbcSwapCommandHandler` | `lineMixRefusal` |
-| SO amendment SUBMIT | `routes/mfg-sales-orders.ts` `POST /:docNo/amendments` | `amendmentMixRefusal` |
-| CO create | `routes/consignment-orders.ts` `POST /` | `createMixRefusal` — FLAT |
-| CO add-line | `routes/consignment-orders.ts` `POST /:docNo/items` | `lineMixRefusal` |
-| CO edit-line | `routes/consignment-orders.ts` `PATCH /:docNo/items/:itemId` | `lineMixRefusal` |
-
-**FLAT on create, DIFFERENTIAL everywhere else, and the difference is the whole
-rule.** A create asks "does this document mix?". Every other path asks "does this
-change INTRODUCE a mix?" — `mixesSofaWithOtherMain(after) && !mixesSofaWithOtherMain(before)`
-— so an order written before the rule existed stays editable. Putting the create
-form on an edit path would make every historic mixed order permanently
-uneditable, which is worse than the rule's own failure.
-
-**The sofa EXCHANGE path (`tbc-swap-sofa`) is exempt and says why**: it refuses
-`prev.item_group !== 'sofa'` and refuses a replacement whose catalogue category
-is not SOFA, so it is SOFA → SOFA by construction and cannot move a MAIN
-category. That exemption is recorded in the wiring test, not in prose.
-
-**A failed read is not a pass.** Each function returns `MixRefusal | null`, never
-a boolean: 400 `so_sofa_no_other_main` when it mixes, 409
-`sofa_mix_check_unavailable` when the line or catalogue read failed. The earlier
-helper discarded its read error, which made a blip look like an empty order and
-an empty order can never mix.
-
-**The client check is a SECOND implementation on purpose** — it must refuse
-before a request, and it reads free-text `itemGroup` where the server reads the
-catalogue enum. It has the same two forms: `hasSofaMixConflict` (flat) on the
-New-order surfaces, `sofaMixIntroduced(before, after)` on the Detail pages, both
-in `frontend/src/vendor/shared/so-variant-rule.ts`. A Detail page using the flat
-form refuses saves the server would accept.
-
-**The enumeration is a TEST, not prose**: `backend/tests/mainMixOneHome.test.ts`.
-Its population is every unit in the two routers that runs `validateItemCodes`, so
-a NEW line-write path fails it without anyone remembering to add a row here.
+elapses (`so-field-policy`). POS "Proceed" stamps `proceeded_at` only — it never
+writes `processing_date`.
 
 ### Both dates or neither — `processing_delivery_must_pair`
 
@@ -2064,7 +1947,6 @@ Every by-code read on the order path therefore takes a `companyId`:
 | `validateItemCodes` | `scm/lib/validate-item-codes.ts` |
 | `findServiceLineCodes` | `scm/lib/service-line-guard.ts` |
 | `findSofaLinesWithoutCompleteBatch` / `detectSofaSoItemIds` / `findIncompleteSofaSets` | `scm/lib/sofa-batch-guard.ts` |
-| `createMixRefusal` / `lineMixRefusal` / `amendmentMixRefusal` | `scm/lib/main-mix.ts` |
 | `snapshotUnitCostSen`, GRN + PI landed-charge CBM, delivery-planning / delivery-zones category maps, `scan-so`'s OCR catalogue | in their route files |
 
 **`base_model` is a partial key too.** It is plain text on the same per-company

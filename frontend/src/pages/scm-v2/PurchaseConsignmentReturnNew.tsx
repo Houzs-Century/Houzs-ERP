@@ -84,12 +84,12 @@ type DraftLine = {
   rid:            string;
   grnItemId:      string | null;
   materialKind:   string;
-  itemCode:   string;
+  materialCode:   string;
   materialName:   string;
   itemGroup:      string | null;
   variants:       Record<string, unknown> | null;
   qtyReturned:    number;
-  unitPriceSen: number;
+  unitPriceCenti: number;
   reason:         string;
   notes:          string;
 };
@@ -98,12 +98,12 @@ const newLine = (): DraftLine => ({
   rid:            `m${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
   grnItemId:      null,
   materialKind:   'mfg_product',
-  itemCode:   '',
+  materialCode:   '',
   materialName:   '',
   itemGroup:      null,
   variants:       null,
   qtyReturned:    1,
-  unitPriceSen: 0,
+  unitPriceCenti: 0,
   reason:         '',
   notes:          '',
 });
@@ -157,9 +157,9 @@ export const PurchaseConsignmentReturnNew = () => {
     if (!fromPicks || picksLoaded) return;
     type Stash = {
       receiveItemId: string; pcReceiveId: string; supplierId: string | null;
-      materialKind: string; itemCode: string; materialName: string;
+      materialKind: string; materialCode: string; materialName: string;
       itemGroup: string | null; description: string | null; uom: string | null;
-      qty: number; unitPriceSen: number; variants: unknown;
+      qty: number; unitPriceCenti: number; variants: unknown;
     };
     const stash = readScmHandoff<Stash[]>('pcrnFromReceivePicks');
     if (!stash || stash.length === 0) return;
@@ -168,12 +168,12 @@ export const PurchaseConsignmentReturnNew = () => {
       rid:            `p${s.receiveItemId}`,
       grnItemId:      s.receiveItemId,
       materialKind:   s.materialKind,
-      itemCode:   s.itemCode,
+      materialCode:   s.materialCode,
       materialName:   s.materialName,
       itemGroup:      s.itemGroup,
       variants:       (s.variants as Record<string, unknown> | null) ?? null,
       qtyReturned:    Number(s.qty ?? 0),
-      unitPriceSen: Number(s.unitPriceSen ?? 0),
+      unitPriceCenti: Number(s.unitPriceCenti ?? 0),
       reason:         '',
       notes:          '',
     })));
@@ -195,12 +195,12 @@ export const PurchaseConsignmentReturnNew = () => {
         rid:            `r${it.id}`,
         grnItemId:      it.id,
         materialKind:   it.material_kind,
-        itemCode:   it.item_code,
+        materialCode:   it.material_code,
         materialName:   it.material_name,
         itemGroup:      it.item_group ?? null,
         variants:       (it.variants as Record<string, unknown> | null) ?? null,
         qtyReturned:    it.qty_rejected ?? 0,
-        unitPriceSen: it.unit_price_sen ?? 0,
+        unitPriceCenti: it.unit_price_centi ?? 0,
         reason:         it.rejection_reason ?? '',
         notes:          '',
       }));
@@ -217,12 +217,12 @@ export const PurchaseConsignmentReturnNew = () => {
       rid:            `r${it.id}`,
       grnItemId:      null,
       materialKind:   it.material_kind,
-      itemCode:   it.item_code,
+      materialCode:   it.material_code,
       materialName:   it.material_name,
       itemGroup:      it.item_group ?? null,
       variants:       (it.variants as Record<string, unknown> | null) ?? null,
       qtyReturned:    0,
-      unitPriceSen: it.unit_price_sen ?? 0,
+      unitPriceCenti: it.unit_price_centi ?? 0,
       reason:         '',
       notes:          '',
     }));
@@ -234,8 +234,8 @@ export const PurchaseConsignmentReturnNew = () => {
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
   const addLine  = () => setLines((prev) => [...prev, newLine()]);
 
-  const subtotalSen = useMemo(
-    () => lines.filter((l) => l.qtyReturned > 0).reduce((s, l) => s + l.qtyReturned * l.unitPriceSen, 0),
+  const subtotalCenti = useMemo(
+    () => lines.filter((l) => l.qtyReturned > 0).reduce((s, l) => s + l.qtyReturned * l.unitPriceCenti, 0),
     [lines],
   );
 
@@ -252,7 +252,7 @@ export const PurchaseConsignmentReturnNew = () => {
   const pickItemForLine = (rid: string, code: string) => {
     const sku = (productsQ.data ?? []).find((p) => p.code === code);
     setLine(rid, {
-      itemCode: code,
+      materialCode: code,
       materialName: sku?.name ?? code,
       itemGroup:    sku?.category ? sku.category.toLowerCase() : null,
     });
@@ -273,7 +273,7 @@ export const PurchaseConsignmentReturnNew = () => {
     return s ? `${s.code} · ${s.name}` : '';
   }, [grn, po, suppliersQ.data, supplierId]);
 
-  const validLines = lines.filter((l) => l.itemCode.trim() && l.qtyReturned > 0);
+  const validLines = lines.filter((l) => l.materialCode.trim() && l.qtyReturned > 0);
   const canSave = !!supplierId && validLines.length > 0;
 
   const onSave = async () => {
@@ -291,11 +291,11 @@ export const PurchaseConsignmentReturnNew = () => {
           grnItemId:      l.grnItemId,
           pcReceiveItemId: l.grnItemId,
           materialKind:   l.materialKind,
-          itemCode:   l.itemCode,
+          materialCode:   l.materialCode,
           materialName:   l.materialName,
           qtyReturned:    l.qtyReturned,
-          unitPriceSen: l.unitPriceSen,
-          lineRefundSen: l.qtyReturned * l.unitPriceSen,
+          unitPriceCenti: l.unitPriceCenti,
+          lineRefundCenti: l.qtyReturned * l.unitPriceCenti,
           reason:         l.reason || undefined,
           notes:          l.notes || undefined,
           itemGroup:      l.itemGroup,
@@ -384,7 +384,7 @@ export const PurchaseConsignmentReturnNew = () => {
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Items to Return</h2>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-            {validLines.length} line{validLines.length === 1 ? '' : 's'} · refund {fmtRm(subtotalSen)}
+            {validLines.length} line{validLines.length === 1 ? '' : 's'} · refund {fmtRm(subtotalCenti)}
           </span>
         </div>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -398,7 +398,7 @@ export const PurchaseConsignmentReturnNew = () => {
             </p>
           ) : (
             lines.map((l, idx) => {
-              const lineRefundSen = l.qtyReturned * l.unitPriceSen;
+              const lineRefundCenti = l.qtyReturned * l.unitPriceCenti;
               const variantSummary = buildVariantSummary(l.itemGroup, l.variants);
               const isManualLine = isManual && l.grnItemId === null;
               const showVariantEditor =
@@ -444,7 +444,7 @@ export const PurchaseConsignmentReturnNew = () => {
                       {l.itemGroup && <ItemGroupPill group={l.itemGroup} />}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                      <span className={styles.previewPrice}>{fmtRm(lineRefundSen)}</span>
+                      <span className={styles.previewPrice}>{fmtRm(lineRefundCenti)}</span>
                       <button
                         type="button"
                         onClick={() => dropLine(l.rid)}
@@ -471,13 +471,13 @@ export const PurchaseConsignmentReturnNew = () => {
                           <input
                             type="text"
                             list={`pct-products-${l.rid}`}
-                            value={l.itemCode}
+                            value={l.materialCode}
                             onChange={(e) => {
                               const code = e.target.value;
                               setProductQuery(code);
                               const match = (productsQ.data ?? []).find((p) => p.code === code);
                               if (match) { pickItemForLine(l.rid, code); return; }
-                              setLine(l.rid, { itemCode: code });
+                              setLine(l.rid, { materialCode: code });
                             }}
                             placeholder="Type ≥2 chars to search SKUs by code or name…"
                             className={styles.fieldInput}
@@ -493,7 +493,7 @@ export const PurchaseConsignmentReturnNew = () => {
                         <input
                           type="text"
                           readOnly
-                          value={l.itemCode}
+                          value={l.materialCode}
                           className={styles.fieldInput}
                           style={{ fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />
@@ -531,7 +531,7 @@ export const PurchaseConsignmentReturnNew = () => {
                       }}>{l.itemGroup} Variants</div>
                       <PcVariantEditor
                         category={l.itemGroup ?? ''}
-                        itemCode={l.itemCode}
+                        itemCode={l.materialCode}
                         variants={(l.variants ?? {}) as Record<string, unknown>}
                         onChange={setVariant}
                         fabrics={fabrics}
@@ -550,8 +550,8 @@ export const PurchaseConsignmentReturnNew = () => {
                     </label>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Unit Price (MYR)</span>
-                      <MoneyInput bare valueSen={l.unitPriceSen}
-                        onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen ?? 0 })}
+                      <MoneyInput bare valueSen={l.unitPriceCenti}
+                        onCommit={(sen) => setLine(l.rid, { unitPriceCenti: sen ?? 0 })}
                         inputClassName={styles.fieldInput} selectOnFocus />
                     </label>
                     <label className={styles.field}>
@@ -566,7 +566,7 @@ export const PurchaseConsignmentReturnNew = () => {
                       <input
                         type="text"
                         readOnly
-                        value={fmtRm(lineRefundSen)}
+                        value={fmtRm(lineRefundCenti)}
                         className={styles.fieldInput}
                         style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                       />
@@ -610,11 +610,11 @@ export const PurchaseConsignmentReturnNew = () => {
           <div className={styles.cardBody}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-14)', marginBottom: 'var(--space-2)' }}>
               <span>Subtotal</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-16)', fontWeight: 700, borderTop: '1px solid var(--line)', paddingTop: 'var(--space-2)' }}>
               <span>Total</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti)}</span>
             </div>
           </div>
         </section>

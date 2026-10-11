@@ -40,11 +40,11 @@ import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtMoneySen } from '@2990s/shared';
+import { fmtMoneyCenti } from '@2990s/shared';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
 
 const STORAGE_KEY = 'pr-g.dr-from-do-lines.layout.v1';
 
@@ -280,9 +280,9 @@ export const DeliveryReturnFromDo = () => {
           uom: r.uom,
           qty: v.qty,
           condition: v.condition,
-          unitPriceSen: r.unitPriceSen,
-          discountSen: r.discountSen,
-          unitCostSen: r.unitCostSen,
+          unitPriceCenti: r.unitPriceCenti,
+          discountCenti: r.discountCenti,
+          unitCostCenti: r.unitCostCenti,
           variants: r.variants,
         };
       })

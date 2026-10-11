@@ -28,7 +28,7 @@ function sanitizeDraft(value: unknown): PaymentDraft | null {
   if (
     typeof draft.uid !== "string" || !draft.uid ||
     typeof draft.idempotencyKey !== "string" || !draft.idempotencyKey ||
-    typeof draft.amountSen !== "number" || !Number.isFinite(draft.amountSen) || draft.amountSen <= 0
+    typeof draft.amountCenti !== "number" || !Number.isFinite(draft.amountCenti) || draft.amountCenti <= 0
   ) return null;
   const text = (input: unknown) => typeof input === "string" ? input : "";
   const method = draft.methodLabel;
@@ -41,7 +41,7 @@ function sanitizeDraft(value: unknown): PaymentDraft | null {
     merchantProvider: text(draft.merchantProvider),
     installmentMonthsLabel: text(draft.installmentMonthsLabel),
     onlineType: text(draft.onlineType),
-    amountSen: draft.amountSen,
+    amountCenti: draft.amountCenti,
     accountSheet: text(draft.accountSheet),
     approvalCode: text(draft.approvalCode),
     collectedBy: text(draft.collectedBy),

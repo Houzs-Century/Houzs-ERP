@@ -46,13 +46,13 @@ export interface SalesItemInput {
  *  Multi-company (Phase 0b): `companyId` stamps sales_entry_items.company_id
  *  (NOT NULL after migration 0061). It's the parent sales_entry's active
  *  company, threaded down from the route handler via activeCompanyId(c). When
- *  null (companies master not resolvable — pre-migration / DB cold-start)
+ *  undefined (companies master not resolvable — pre-migration / DB cold-start)
  *  the column is OMITTED so the insert keeps working single-company. */
 export async function replaceItems(
   env: Env,
   entryId: number,
   items: SalesItemInput[],
-  companyId: number | null,
+  companyId?: number,
 ): Promise<void> {
   await env.DB.prepare(`DELETE FROM sales_entry_items WHERE entry_id = ?`)
     .bind(entryId)
@@ -108,7 +108,7 @@ export async function replacePayments(
   env: Env,
   entryId: number,
   payments: SalesPaymentInput[],
-  companyId: number | null,
+  companyId?: number,
 ): Promise<void> {
   await env.DB.prepare(`DELETE FROM sales_entry_payments WHERE entry_id = ?`)
     .bind(entryId)

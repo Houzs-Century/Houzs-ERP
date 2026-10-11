@@ -89,7 +89,7 @@ export function StockAdjustments() {
     if (!q) return all;
     return all.filter(
       (m) =>
-        m.item_code.toLowerCase().includes(q) ||
+        m.product_code.toLowerCase().includes(q) ||
         (m.product_name ?? "").toLowerCase().includes(q),
     );
   }, [data, search]);
@@ -169,10 +169,10 @@ export function StockAdjustments() {
       key: "sku",
       label: "SKU",
       alwaysVisible: true,
-      getValue: (m) => m.item_code,
+      getValue: (m) => m.product_code,
       render: (m) => (
         <span className="font-mono text-[12px] font-semibold text-primary-ink">
-          {m.item_code}
+          {m.product_code}
         </span>
       ),
     },

@@ -83,7 +83,7 @@ export type PushablePool = (typeof PUSHABLE_POOLS)[number];
 const PRICE_KEYS: ReadonlySet<string> = new Set([
   'sellingPriceSen',
   'costSen',
-  'defaultPriceSen',
+  'defaultPriceCenti',
   'priceSen',
 ]);
 
