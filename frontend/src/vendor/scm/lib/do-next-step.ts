@@ -42,7 +42,7 @@ import { SI_TRANSFERABLE_DO_STATES } from '../../shared/do-shipped-states';
 //     skips, and IN_TRANSIT is the departure marker MobileDeliveryPlanning
 //     writes for "On the way" (MobileDeliveryPlanning.tsx:1280). Collapsing the
 //     phone onto the desktop's single jump would have DELETED a step drivers
-//     use. So on DISPATCHED the desktop still says "Mark signed" and the phone
+//     use. So on DISPATCHED the desktop still says "Mark delivered" and the phone
 //     still says "Mark In Transit" — that difference is now a recorded decision
 //     with a reason, rather than two hand-written copies that had drifted.
 //
@@ -68,7 +68,7 @@ import { SI_TRANSFERABLE_DO_STATES } from '../../shared/do-shipped-states';
 //     DO. There is no reopen, and any control offering one cannot succeed.
 //   · A shipped DO may not fall back to a pre-ship status (:5418).
 //   · Otherwise forward and lateral moves are all accepted — the ladder is NOT
-//     walked one rung at a time, which is why "Mark signed" can jump straight to
+//     walked one rung at a time, which is why "Mark delivered" can jump straight to
 //     DELIVERED from LOADED.
 //
 // ── SCOPE ───────────────────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ import { SI_TRANSFERABLE_DO_STATES } from '../../shared/do-shipped-states';
        anything past DRAFT that is not CANCELLED — may be invoiced, LOADED
        included. That superseded the previous day's four-state list, and it is
        what the server has always permitted: the SI-from-DO create refuses only
-       a CANCELLED source. "Mark signed" survives as an OPTIONAL delivery-
+       a CANCELLED source. "Mark delivered" survives as an OPTIONAL delivery-
        tracking action (doAdvanceStep), never a prerequisite.
 
    It read as a status bug and is a MULTI-ORGANISATION one. The predicate carries
@@ -165,15 +165,20 @@ export function siTransferBlockReason(status: string | null | undefined): string
  * The labels and targets are the ones already shipped on the surfaces this
  * replaces, so no operator's muscle memory changes:
  *   · DRAFT → DISPATCHED, "Confirm"     (mobile MobileModuleDetail's ladder)
- *   · LOADED / DISPATCHED / IN_TRANSIT → DELIVERED, "Mark signed"
+ *   · LOADED / DISPATCHED / IN_TRANSIT → DELIVERED, "Mark delivered"
  *     (desktop DeliveryOrderDetailV2 + the list drawer)
  *
- * NOTE, recorded rather than silently changed: the "Mark signed" control writes
- * DELIVERED, not SIGNED — DeliveryOrderDetailV2.tsx:777 and
- * MfgDeliveryOrdersListV2.tsx:968 both mutate `status: "DELIVERED"`. Both
- * targets satisfy the Sales-Invoice gate, so the operator's outcome is correct
- * and this change does not touch it. The label/target mismatch is a separate
- * defect and is logged as one.
+ * THE LABEL/TARGET MISMATCH IS CLOSED (2026-08-21). This control was called
+ * "Mark signed" and has always written DELIVERED, not SIGNED —
+ * DeliveryOrderDetailV2.tsx and MfgDeliveryOrdersListV2.tsx both mutate
+ * `status: "DELIVERED"`. That was logged as a separate defect rather than fixed,
+ * because both targets satisfy the Sales-Invoice gate and the operator's outcome
+ * was correct either way.
+ *
+ * The owner's ruling of 2026-08-21 — 「签收签名不需要 先 delete掉」 — turned it
+ * from a cosmetic mismatch into a false statement: the signature capture is
+ * retired, so this control now names evidence that exists nowhere in the
+ * product. It is named for the status it writes.
  */
 export type DoAdvanceStep = {
   /** Target delivery_orders.status to PATCH. */
@@ -186,7 +191,7 @@ export function doAdvanceStep(status: string | null | undefined): DoAdvanceStep 
   const s = norm(status);
   if (s === 'draft') return { status: 'DISPATCHED', label: 'Confirm' };
   if (s === 'loaded' || s === 'dispatched' || s === 'in_transit') {
-    return { status: 'DELIVERED', label: 'Mark signed' };
+    return { status: 'DELIVERED', label: 'Mark delivered' };
   }
   return null;
 }
@@ -217,7 +222,7 @@ export function doAdvanceStep(status: string | null | undefined): DoAdvanceStep 
  *     restrict, and to prefer a default or a prompt over a wall.
  *
  * What was actually wrong was never the permissiveness — it was the SILENCE.
- * The same delivery closed from a different screen either had a signature or
+ * The same delivery closed from a different screen either had proof attached or
  * had nothing, and no screen said which you were about to do. That is the same
  * rule this module already applies to the Sales-Invoice transfer: the thing may
  * be unavailable, but it may not be silent.
@@ -227,11 +232,11 @@ export function doAdvanceStep(status: string | null | undefined): DoAdvanceStep 
  */
 export function doCloseWithoutEvidenceWarning(
   step: DoAdvanceStep | null,
-  pod: { signature_data?: string | null; pod_r2_key?: string | null } | null | undefined,
+  pod: { pod_r2_key?: string | null } | null | undefined,
 ): string | null {
   if (step?.status !== 'DELIVERED') return null;
-  if (pod?.signature_data || pod?.pod_r2_key) return null;
-  return 'This delivery order has no customer signature and no delivery photo. Marking it delivered records it as complete with no proof of delivery — the driver captures that on the Proof of Delivery screen in the mobile app.';
+  if (pod?.pod_r2_key) return null;
+  return 'This delivery order has no delivery photo. Marking it delivered records it as complete with no proof of delivery — the driver captures that on the Proof of Delivery screen in the mobile app.';
 }
 
 /**

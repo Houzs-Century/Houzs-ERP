@@ -1006,7 +1006,7 @@ function useMayOperateDoc(moduleKey: string): boolean {
 /** Build the valid status actions for a doc from its CURRENT status. Empty when
  *  the doc is terminal, the module has no status route, or the caller may only
  *  view it (`mayOperate` false → the footer renders nothing at all). */
-function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate: boolean): DocAction[] {
+export function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate: boolean): DocAction[] {
   if (!mayOperate) return [];
   const st = s(header?.status).toUpperCase();
   const enc = encodeURIComponent(id);
@@ -1022,6 +1022,19 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
     // DISPATCHED; then DISPATCHED→IN_TRANSIT→SIGNED(→DELIVERED via POD). CANCELLED
     // is final. Offer the NEXT step + Cancel. DELIVERED is the POD screen's job,
     // so it is never offered here.
+    //
+    // THE LAST RUNG IS NAMED FOR WHAT IT DOES, NOT FOR A SIGNATURE. It read
+    // "Mark Signed" until 2026-08-21, when the owner retired the signature
+    // capture (「签收签名不需要 先 delete掉」). It writes the status and nothing
+    // else — no signature, no photo, no GPS — and `SIGNED` counts as delivered
+    // everywhere downstream, so the honest word for the operator is "delivered".
+    //
+    // It still WRITES `SIGNED`, deliberately. Dropping this rung, or pointing it
+    // at DELIVERED, would remove or redirect an action drivers may be using and
+    // contradicts the decision recorded two lines above; that is the owner
+    // question raised in
+    // docs/bugs/0481-mark-signed-on-the-mobile-shell-closes-a-delivery-with-no-si.md
+    // and this change does not settle it. Only the words moved.
     case "delivery-orders-mfg": {
       if (st === "CANCELLED" || st === "DELIVERED" || st === "INVOICED") return out;
       const path = `/delivery-orders-mfg/${enc}/status`;
@@ -1030,7 +1043,7 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
         DRAFT: ["DISPATCHED", "Confirm"],
         LOADED: ["DISPATCHED", "Dispatch"],
         DISPATCHED: ["IN_TRANSIT", "Mark In Transit"],
-        IN_TRANSIT: ["SIGNED", "Mark Signed"],
+        IN_TRANSIT: ["SIGNED", "Mark delivered"],
       };
       const step = next[st];
       if (step) out.push({ key: "next", label: step[1], variant: "solid", request: { path, method: "PATCH", body: { status: step[0] } } });

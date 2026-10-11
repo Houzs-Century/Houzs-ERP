@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   doAdvanceBlockReason,
   doAdvanceStep,
+  doCloseWithoutEvidenceWarning,
   SI_TRANSFERABLE_DO_STATUSES,
   siTransferBlockReason,
 } from './do-next-step';
@@ -18,8 +19,8 @@ import { SI_TRANSFERABLE_DO_STATES } from '../../shared/do-shipped-states';
    would simply not notice, which is the whole reason the lint rule forbids one. */
 const DO_STATUSES: string[] = [...(DO_SHIPPED_STATES as string[]), 'DRAFT', 'LOADED', 'CANCELLED'];
 
-/** The shipped states from which the document is not yet signed off. */
-const PRE_SIGNATURE: string[] = ['LOADED', ...(DO_SHIPPED_STATES as string[]).filter(
+/** The shipped states from which the document is not yet closed. */
+const PRE_CLOSE: string[] = ['LOADED', ...(DO_SHIPPED_STATES as string[]).filter(
   (s) => s !== 'SIGNED' && s !== 'DELIVERED' && s !== 'INVOICED',
 )];
 
@@ -81,11 +82,11 @@ describe('siTransferBlockReason', () => {
     }
   });
 
-  it('now ALLOWS the pre-signature shipped states — Mark signed is no longer required', () => {
+  it('now ALLOWS the not-yet-closed shipped states — closing first is not required', () => {
     /* The gate this reverses: LOADED / DISPATCHED / IN_TRANSIT used to be blocked
        with "Mark this delivery order signed first". They are confirmed shipments,
        so their Sales Invoice may now be raised directly. */
-    for (const s of PRE_SIGNATURE) {
+    for (const s of PRE_CLOSE) {
       expect(siTransferBlockReason(s), s).toBeNull();
     }
   });
@@ -114,14 +115,25 @@ describe('doAdvanceStep', () => {
     expect(doAdvanceStep('DRAFT')).toEqual({ status: 'DISPATCHED', label: 'Confirm' });
   });
 
-  it('marks the pre-signature shipped states signed', () => {
-    for (const s of PRE_SIGNATURE) {
-      expect(doAdvanceStep(s), s).toEqual({ status: 'DELIVERED', label: 'Mark signed' });
+  it('names the close step for what it WRITES — never for a signature nobody takes', () => {
+    /* Owner, 2026-08-21: 「签收签名不需要 先 delete掉」. The signature capture is
+       retired, so a control called "Mark signed" is not merely mislabelled — it
+       names evidence the product no longer collects anywhere. It writes
+       DELIVERED and always did (the mismatch was logged, not fixed, when this
+       module was written), so the honest label is the status it writes. */
+    for (const s of PRE_CLOSE) {
+      expect(doAdvanceStep(s), s).toEqual({ status: 'DELIVERED', label: 'Mark delivered' });
+    }
+  });
+
+  it('no advance label anywhere claims a signature', () => {
+    for (const s of DO_STATUSES) {
+      expect(doAdvanceStep(s)?.label ?? '', s).not.toMatch(/sign/i);
     }
   });
 
   it('offers no step from a terminal or already-complete status', () => {
-    for (const s of DO_STATUSES.filter((x) => !PRE_SIGNATURE.includes(x) && x !== 'DRAFT')) {
+    for (const s of DO_STATUSES.filter((x) => !PRE_CLOSE.includes(x) && x !== 'DRAFT')) {
       expect(doAdvanceStep(s), s).toBeNull();
     }
   });
@@ -132,6 +144,34 @@ describe('doAdvanceStep', () => {
        not once have succeeded; this test is what stops it coming back. */
     expect(doAdvanceStep('CANCELLED')).toBeNull();
     expect(doAdvanceBlockReason('CANCELLED')).toMatch(/new delivery order/i);
+  });
+});
+
+describe('doCloseWithoutEvidenceWarning after the signature retirement', () => {
+  const CLOSE = { status: 'DELIVERED', label: 'Mark delivered' } as const;
+
+  it('still WARNS when a delivery closes with no proof — allowed, never silent', () => {
+    /* The property that must survive this change. Evidence stays allowed on
+       every closing path and required on none; what the path may not do is
+       close without saying what is being lost. */
+    const w = doCloseWithoutEvidenceWarning(CLOSE, { pod_r2_key: null });
+    expect(w).toBeTruthy();
+    expect(w!.length).toBeGreaterThan(20);
+  });
+
+  it('names the PHOTO, and never a signature the product no longer captures', () => {
+    const w = doCloseWithoutEvidenceWarning(CLOSE, { pod_r2_key: null })!;
+    expect(w).not.toMatch(/signature|signed/i);
+    expect(w).toMatch(/photo/i);
+  });
+
+  it('goes quiet once a delivery photo is on the row', () => {
+    expect(doCloseWithoutEvidenceWarning(CLOSE, { pod_r2_key: 'pod/2026/do-1.jpg' })).toBeNull();
+  });
+
+  it('never nags on a DRAFT confirm — that is not a delivery', () => {
+    expect(doCloseWithoutEvidenceWarning({ status: 'DISPATCHED', label: 'Confirm' }, null)).toBeNull();
+    expect(doCloseWithoutEvidenceWarning(null, null)).toBeNull();
   });
 });
 

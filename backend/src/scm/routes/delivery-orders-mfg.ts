@@ -5343,7 +5343,7 @@ deliveryOrdersMfg.delete('/:id/payments/:paymentId', async (c) => {
 export const patchDeliveryOrderStatusHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
   let body: {
-    status?: string; signatureData?: string; podKey?: string;
+    status?: string; podKey?: string;
     podLat?: number; podLng?: number; podAccuracyM?: number; podLocatedAt?: string;
   }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
@@ -5436,12 +5436,19 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   if (toStatus === 'DISPATCHED') ts.dispatched_at = now;
   if (toStatus === 'SIGNED')     ts.signed_at = now;
   if (toStatus === 'DELIVERED')  ts.delivered_at = now;
-  /* POD capture — the mobile app posts the proof-of-delivery signature +
-     photo alongside the status flip. Persist them to the existing columns
-     (signature_data, pod_r2_key) so a DELIVERED DO keeps its signature +
-     photo. Only write when present so a plain status change never blanks
-     an existing POD. */
-  if (typeof body.signatureData === 'string' && body.signatureData) ts.signature_data = body.signatureData;
+  /* POD capture — the mobile app posts the proof-of-delivery photo alongside
+     the status flip. Persist it to the existing column (pod_r2_key) so a
+     DELIVERED DO keeps its photo. Only write when present so a plain status
+     change never blanks an existing POD.
+
+     THE CUSTOMER SIGNATURE IS RETIRED (owner, 2026-08-21:
+     「签收签名不需要 先 delete掉」). This block used to also accept `signatureData`
+     and write `signature_data`. The measurement behind the ruling — census run
+     32462178224 — is that across all 39 delivery orders, every status, all time,
+     the count was `signature 0, photo 0, gps 0`: the path was never broken, it
+     was never travelled. The COLUMN is deliberately NOT dropped (0 rows, but a
+     drop is irreversible and a separate decision); it simply has no writer, and
+     `backend/tests/doSignatureRetired.test.ts` is what keeps it that way. */
   if (typeof body.podKey === 'string' && body.podKey) ts.pod_r2_key = body.podKey;
 
   /* WHERE the delivery happened (mig 0249). The phone has been taking this

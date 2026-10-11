@@ -289,12 +289,16 @@ export const useCreateMfgDeliveryOrder = () => {
    deliberately DROPS an out-of-range fix rather than refusing the write — "a
    bad sensor reading must never be the reason a driver cannot close a
    delivery". The client must not be stricter than that. */
+/* NO `signatureData`. The customer signature was retired on 2026-08-21 by the
+   owner's ruling 「签收签名不需要 先 delete掉」 — the pad, this field and the
+   server's writer went together. The COLUMN `delivery_orders.signature_data` is
+   deliberately still there and simply has no writer; dropping it is irreversible
+   and is a separate decision. Re-adding the field here would give the client a
+   way to write a column nothing else in the product understands. */
 export type DoDeliveryEvidence = {
-  /** Customer signature, base64 PNG data URL → `delivery_orders.signature_data`. */
-  signatureData?: string;
   /** R2 key of the delivery photo → `delivery_orders.pod_r2_key`. */
   podKey?: string;
-  /** Where it was signed (mig 0249). Written server-side as a PAIR or not at all. */
+  /** Where it was delivered (mig 0249). Written server-side as a PAIR or not at all. */
   podLat?: number;
   podLng?: number;
   /** Radius in metres — what tells a street GPS fix from an indoor wifi guess. */

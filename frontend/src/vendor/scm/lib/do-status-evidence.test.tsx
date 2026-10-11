@@ -1,7 +1,14 @@
 /* PROOF OF DELIVERY MUST SURVIVE THE ROUTE IT TRAVELLED.
  *
+ * NOTE, 2026-08-21: the customer SIGNATURE this file was originally written
+ * around is retired (owner: 「签收签名不需要 先 delete掉」). The photo and the GPS
+ * fix are kept, and everything below is now about those two. The structural
+ * point is unchanged and is the reason this file survives the removal: evidence
+ * has to be able to travel through the ONE shared writer, or the surfaces go
+ * back to closing deliveries with nothing attached.
+ *
  * A delivery order can be closed from four screens. Until this test existed,
- * exactly ONE of them attached the customer's signature and the GPS fix:
+ * exactly ONE of them attached the evidence and the GPS fix:
  *
  *   · frontend/src/mobile/MobilePOD.tsx            evidence — via a RAW fetch
  *   · frontend/src/mobile/MobileDeliveryPlanning.tsx   none  — raw fetch
@@ -12,8 +19,8 @@
  * `useUpdateMfgDeliveryOrderStatus` was declared `{ id, status }` and posted
  * `JSON.stringify({ status })`, so evidence could not travel through it even if
  * a caller held some. MobilePOD's bypass was therefore not sloppiness — it was
- * the only way to send a signature at all, and every screen that used the
- * shared hook silently filed a delivery with no customer-side proof.
+ * the only way to send proof at all, and every screen that used the shared hook
+ * silently filed a delivery with no customer-side proof.
  *
  * So the fix widens the hook and the tests below pin BOTH halves:
  *
@@ -63,14 +70,13 @@ beforeEach(() => {
 });
 
 describe("useUpdateMfgDeliveryOrderStatus carries proof of delivery", () => {
-  test("a signature and a GPS fix reach the endpoint", async () => {
+  test("a photo and a GPS fix reach the endpoint", async () => {
     const { result } = renderHook(() => useUpdateMfgDeliveryOrderStatus(), { wrapper });
 
     await result.current.mutateAsync({
       id: "do-1",
       status: "DELIVERED",
       evidence: {
-        signatureData: "data:image/png;base64,SIGNED",
         podKey: "pod/2026/do-1.jpg",
         podLat: 3.139,
         podLng: 101.6869,
@@ -85,7 +91,6 @@ describe("useUpdateMfgDeliveryOrderStatus carries proof of delivery", () => {
     expect(init.method).toBe("PATCH");
     expect(sentBody()).toEqual({
       status: "DELIVERED",
-      signatureData: "data:image/png;base64,SIGNED",
       podKey: "pod/2026/do-1.jpg",
       podLat: 3.139,
       podLng: 101.6869,
@@ -95,22 +100,23 @@ describe("useUpdateMfgDeliveryOrderStatus carries proof of delivery", () => {
   });
 
   test("a partial capture sends only what was captured", async () => {
-    /* A denied location permission, or a customer who signs but declines a
-       photo, must still close the delivery — the backend deliberately DROPS an
-       out-of-range fix rather than refusing (delivery-orders-mfg.ts), so the
-       client must never turn a missing reading into a sent one. */
+    /* A denied location permission, or a driver who takes the photo and moves
+       off before the fix lands, must still close the delivery — the backend
+       deliberately DROPS an out-of-range fix rather than refusing
+       (delivery-orders-mfg.ts), so the client must never turn a missing reading
+       into a sent one. */
     const { result } = renderHook(() => useUpdateMfgDeliveryOrderStatus(), { wrapper });
 
     await result.current.mutateAsync({
       id: "do-1",
       status: "DELIVERED",
-      evidence: { signatureData: "data:image/png;base64,SIGNED" },
+      evidence: { podKey: "pod/2026/do-1.jpg" },
     });
 
     await waitFor(() => expect(authedFetch).toHaveBeenCalled());
     expect(sentBody()).toEqual({
       status: "DELIVERED",
-      signatureData: "data:image/png;base64,SIGNED",
+      podKey: "pod/2026/do-1.jpg",
     });
   });
 
@@ -143,9 +149,15 @@ const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
  *
  *     KNOWN-OPEN, and deliberately not silent: SIGNED still counts as delivered
  *     everywhere downstream (it is in the `delivered` list bucket and satisfies
- *     the Sales-Invoice gate), so "Mark Signed" here closes a delivery with no
- *     signature — the same class of hole, one rung lower. Logged as a bug entry
- *     rather than fixed in the same PR as the type change.
+ *     the Sales-Invoice gate), so this rung closes a delivery with no evidence —
+ *     the same class of hole, one rung lower. Logged as a bug entry rather than
+ *     fixed in the same PR as the type change.
+ *
+ *     PARTLY ADDRESSED 2026-08-21. That rung was labelled "Mark Signed" and now
+ *     reads "Mark delivered": with the signature retired, naming it for evidence
+ *     the product cannot collect was the falsest part of it. It still writes
+ *     SIGNED and still attaches nothing, so the entry stays OPEN — removing the
+ *     rung or repointing it is the owner's call, not a unilateral fix.
  */
 const ALLOWED_WRITERS = [
   "mobile/MobileModuleDetail.tsx",
