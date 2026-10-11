@@ -165,6 +165,10 @@
       "reads": 2,
       "catches": 0
     },
+    "backend/src/scm/lib/sales-doc-derive.ts": {
+      "reads": 4,
+      "catches": 0
+    },
     "backend/src/scm/lib/salesScope.ts": {
       "reads": 1,
       "catches": 0
@@ -250,7 +254,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/consignment-orders.ts": {
-      "reads": 29,
+      "reads": 25,
       "catches": 2
     },
     "backend/src/scm/routes/consignment-returns.ts": {
@@ -334,7 +338,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-sales-orders.ts": {
-      "reads": 88,
+      "reads": 84,
       "catches": 2
     },
     "backend/src/scm/routes/mrp.ts": {
