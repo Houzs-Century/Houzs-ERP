@@ -140,7 +140,7 @@ import postgres from "postgres";
 import { buildScope, decodeSnapshot } from "./lib/ac-scope.mjs";
 /* The receiving warehouse is the BOOK'S, not the purchase order's. One rule,
    one location map — see the header of lib/ac-gr-location.mjs. */
-import { loadBookGrLocations, resolveAcReceiptLocation } from "./lib/ac-gr-location.mjs";
+import { loadBookGrLocations, loadErpToAcCodes, resolveAcReceiptLocation } from "./lib/ac-gr-location.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -300,6 +300,7 @@ async function main() {
    says why a surviving stock LAYER is not a receipt location. */
   const warehouses = await sql`SELECT id::text AS id, code, name FROM scm.warehouses WHERE company_id = ${CO}`;
   const bookLoc = loadBookGrLocations(path.join(here, "data"));
+  const erpToAc = loadErpToAcCodes(path.join(here, "data"));
   const pos = await sql`SELECT id::text AS id, po_number, linked_ac_docno AS ac, supplier_id::text AS supplier_id,
       purchase_location_id::text AS purchase_location_id, currency::text AS currency
     FROM scm.purchase_orders WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`;
@@ -665,7 +666,7 @@ async function main() {
        location we copy it; where they do not (the GR export only started
        selecting the column on 2026-09-08) we fall back and COUNT it, because a
        miss means the book was never asked, not that it agrees. */
-    const bl = resolveAcReceiptLocation([d.gr], d.items.map((i) => (i.poi ? i.poi.item_code : i.book.itemKey)), bookLoc, warehouses);
+    const bl = resolveAcReceiptLocation([d.gr], d.items.map((i) => (i.poi ? i.poi.item_code : i.book.itemKey)), bookLoc, warehouses, erpToAc);
     d.warehouseFrom = bl.warehouseId ? "book" : "purchase order";
     d.warehouseWhy = bl.why;
     d.bookLocation = bl.bookLocation;

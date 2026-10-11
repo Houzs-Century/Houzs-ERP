@@ -49,7 +49,7 @@ import {
    asked, not derived from the purchase order. lib/ac-gr-location.mjs owns that
    read and the SHARED location map; see the header there for why a surviving
    stock LAYER is not a receipt location. */
-import { loadBookGrLocations, resolveAcReceiptLocation } from "./lib/ac-gr-location.mjs";
+import { loadBookGrLocations, loadErpToAcCodes, resolveAcReceiptLocation } from "./lib/ac-gr-location.mjs";
 /* The delivery location goes on the HEADER (owner 2026-09-07, "记在单头就好").
    The map is the SHARED one the PO importer's whId() uses — a second copy of a
    location map is how stock silently moves between branches — and the resolution
@@ -160,10 +160,11 @@ async function doGrns() {
      "the book agrees". Same reason the ambiguous case (one receipt, two
      locations, one header column) falls back rather than picking the first. */
   const book = loadBookGrLocations(path.join(here, "data"));
+  const erpToAc = loadErpToAcCodes(path.join(here, "data"));
   const warehouses = await sql`SELECT id::text AS id, code, name FROM scm.warehouses WHERE company_id = ${CO}`;
   const whStat = { copied: 0, derived: 0 };
   const bookWarehouseFor = (g) => {
-    const r = resolveAcReceiptLocation(g.po.linked_ac_grn_docnos ?? [], g.items.map((i) => i.item_code), book, warehouses);
+    const r = resolveAcReceiptLocation(g.po.linked_ac_grn_docnos ?? [], g.items.map((i) => i.item_code), book, warehouses, erpToAc);
     if (!r.warehouseId) { whStat.derived += 1; return null; }
     whStat.copied += 1;
     return r.warehouseId;

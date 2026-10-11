@@ -3,11 +3,16 @@
 // answer — a receipt written by the old path and the same receipt rebuilt by the
 // reshape must not land in different warehouses.
 //
-// What these tests pin is the part that can go silently wrong: the refusal to
-// answer when the book cannot answer with ONE location, and the fact that a miss
-// carries a `why` rather than a default. `scm.grn_items` has no warehouse column,
-// so a receipt header holds exactly one location and a collapse onto the first
-// value would be invisible.
+// What these tests pin is the part that can go silently wrong:
+//
+//  1. the RECEIPT leads and the item join is only the refinement. Keying on
+//     (receipt, item) alone answered for 0 of 320 migrated receipts in
+//     production (run 34150043151) because the book holds AutoCount's ItemCode
+//     and the ERP holds the ERP one — they differ on 1,407 of the 1,577 bound
+//     codes. A key that cannot match reports a clean miss.
+//  2. the refusal when the book cannot answer with ONE location.
+//     `scm.grn_items` has no warehouse column, so a receipt header holds exactly
+//     one location and a collapse onto the first value would be invisible.
 import { describe, expect, it } from 'vitest';
 
 import { resolveAcReceiptLocation } from '../scripts/lib/ac-gr-location.mjs';
@@ -22,70 +27,110 @@ const warehouses = [
   { id: 'wh-hq', code: 'HQ', name: 'Head office' },
 ];
 
-/** book.byCell shape: `GRNO|ITEMCODE` -> Set of AutoCount locations. */
-const book = (o) => ({ byCell: new Map(Object.entries(o).map(([k, v]) => [k, new Set(v)])) });
+/** Builds both indexes the resolver reads, from `GRNO|ITEMCODE` -> locations. */
+const book = (o) => {
+  const byCell = new Map();
+  const byDoc = new Map();
+  for (const [k, v] of Object.entries(o)) {
+    byCell.set(k, new Set(v));
+    const doc = k.split('|')[0];
+    if (!byDoc.has(doc)) byDoc.set(doc, new Set());
+    for (const l of v) byDoc.get(doc).add(l);
+  }
+  return { byCell, byDoc };
+};
+
+/* The real one is inverted from autocount-erp-mapping-1561.csv. */
+const alias = new Map([['DIVAN ONLY-(K)', new Set(['AERO-DIVAN ONLY (K)'])]]);
+const NOALIAS = new Map();
 
 describe('resolveAcReceiptLocation', () => {
-  it('copies the book location and maps it through the shared SALESLOC', () => {
-    const r = resolveAcReceiptLocation(['GR-1'], ['NB-KHJ38(Q)'], book({ 'GR-1|NB-KHJ38(Q)': ['KL'] }), warehouses);
-    expect(r).toMatchObject({ warehouseId: 'wh-kl', warehouseCode: 'KL WAREHOUSE', bookLocation: 'KL', why: null });
+  it('copies the receipt location and maps it through the shared SALESLOC', () => {
+    const r = resolveAcReceiptLocation(['GR-1'], ['NB-KHJ38(Q)'], book({ 'GR-1|NB-KHJ38(Q)': ['KL'] }), warehouses, NOALIAS);
+    expect(r).toMatchObject({ warehouseId: 'wh-kl', warehouseCode: 'KL WAREHOUSE', bookLocation: 'KL', source: 'receipt', why: null });
+  });
+
+  it('answers WITHOUT the item code matching — the receipt is the key', () => {
+    /* This is the production failure of run 34150043151, pinned. The ERP passes
+       its own code; the book holds AutoCount's. A unanimous receipt needs no
+       join at all, and demanding one answered for 0 of 320. */
+    const r = resolveAcReceiptLocation(['GR-1'], ['DIVAN ONLY-(K)'], book({ 'GR-1|AERO-DIVAN ONLY (K)': ['PG'] }), warehouses, NOALIAS);
+    expect(r.warehouseId).toBe('wh-pg');
+    expect(r.source).toBe('receipt');
   });
 
   it('maps a two-word location too — the display branches are real warehouses', () => {
-    const r = resolveAcReceiptLocation(['GR-1'], ['X'], book({ 'GR-1|X': ['PG DISP'] }), warehouses);
+    const r = resolveAcReceiptLocation(['GR-1'], ['X'], book({ 'GR-1|X': ['PG DISP'] }), warehouses, NOALIAS);
     expect(r.warehouseId).toBe('wh-pgd');
     expect(r.warehouseCode).toBe('PG DISPLAY');
   });
 
-  it('agrees across the lines of one receipt', () => {
-    const r = resolveAcReceiptLocation(['GR-1'], ['A', 'B'], book({ 'GR-1|A': ['PG'], 'GR-1|B': ['PG'] }), warehouses);
+  it('narrows by item code ONLY when the receipt spans locations, and uses the ERP alias', () => {
+    const b = book({ 'GR-1|AERO-DIVAN ONLY (K)': ['PG'], 'GR-1|NB-OTHER': ['KL'] });
+    const r = resolveAcReceiptLocation(['GR-1'], ['DIVAN ONLY-(K)'], b, warehouses, alias);
     expect(r.warehouseId).toBe('wh-pg');
+    expect(r.source).toBe('lines');
   });
 
-  it('REFUSES when the receipt used two locations, and names both', () => {
-    /* A receipt header holds one warehouse. Taking the first would be a guess
-       that reads as a copy — the whole failure this module exists to stop. */
-    const r = resolveAcReceiptLocation(['GR-1'], ['A', 'B'], book({ 'GR-1|A': ['PG'], 'GR-1|B': ['KL'] }), warehouses);
+  it('REFUSES a spanning receipt when the narrowing cannot match, and names both locations', () => {
+    /* Without the alias the ERP code matches nothing, and the honest answer is
+       a refusal — never the first of the two locations. */
+    const b = book({ 'GR-1|AERO-DIVAN ONLY (K)': ['PG'], 'GR-1|NB-OTHER': ['KL'] });
+    const r = resolveAcReceiptLocation(['GR-1'], ['DIVAN ONLY-(K)'], b, warehouses, NOALIAS);
     expect(r.warehouseId).toBeNull();
     expect(r.why).toMatch(/more than one location/);
     expect(r.why).toMatch(/PG/);
     expect(r.why).toMatch(/KL/);
+    expect(r.why).toMatch(/matched none of them/);
+  });
+
+  it('REFUSES a spanning receipt whose own lines still span after narrowing', () => {
+    const b = book({ 'GR-1|A': ['PG'], 'GR-1|B': ['KL'] });
+    const r = resolveAcReceiptLocation(['GR-1'], ['A', 'B'], b, warehouses, NOALIAS);
+    expect(r.warehouseId).toBeNull();
+    expect(r.why).toMatch(/still leaves/);
   });
 
   it('REFUSES when the book was never asked, and says so', () => {
     /* Not "the book agrees". The GR export only started selecting
        GRDTL.Location on 2026-09-08, so an older cut is silent for most rows. */
-    const r = resolveAcReceiptLocation(['GR-9'], ['A'], book({ 'GR-1|A': ['KL'] }), warehouses);
+    const r = resolveAcReceiptLocation(['GR-9'], ['A'], book({ 'GR-1|A': ['KL'] }), warehouses, NOALIAS);
     expect(r.warehouseId).toBeNull();
     expect(r.bookLocation).toBeNull();
     expect(r.why).toMatch(/carry no receipt location/);
   });
 
   it('REFUSES a location with no warehouse in this company, keeping what the book said', () => {
-    const r = resolveAcReceiptLocation(['GR-1'], ['A'], book({ 'GR-1|A': ['SRW'] }), warehouses);
+    const r = resolveAcReceiptLocation(['GR-1'], ['A'], book({ 'GR-1|A': ['SRW'] }), warehouses, NOALIAS);
     expect(r.warehouseId).toBeNull();
     expect(r.bookLocation).toBe('SRW');
     expect(r.why).toMatch(/SRW WAREHOUSE/);
   });
 
-  it('normalises case and spacing on both sides of the key', () => {
-    const r = resolveAcReceiptLocation([' gr-1 '], [' nb-khj38(q) '], book({ 'GR-1|NB-KHJ38(Q)': ['kl'] }), warehouses);
+  it('normalises case and spacing on the receipt number', () => {
+    const r = resolveAcReceiptLocation([' gr-1 '], ['A'], book({ 'GR-1|A': ['kl'] }), warehouses, NOALIAS);
     expect(r.warehouseId).toBe('wh-kl');
   });
 
-  it('reads a receipt covered by more than one AutoCount receipt number', () => {
-    const r = resolveAcReceiptLocation(['GR-1', 'GR-2'], ['A'], book({ 'GR-1|A': ['PG'], 'GR-2|A': ['PG'] }), warehouses);
+  it('reads a document covered by more than one AutoCount receipt', () => {
+    const r = resolveAcReceiptLocation(['GR-1', 'GR-2'], ['A'], book({ 'GR-1|A': ['PG'], 'GR-2|A': ['PG'] }), warehouses, NOALIAS);
     expect(r.warehouseId).toBe('wh-pg');
   });
 
   it('REFUSES when two AutoCount receipts of the same document disagree', () => {
-    const r = resolveAcReceiptLocation(['GR-1', 'GR-2'], ['A'], book({ 'GR-1|A': ['PG'], 'GR-2|A': ['KL'] }), warehouses);
+    const r = resolveAcReceiptLocation(['GR-1', 'GR-2'], ['A'], book({ 'GR-1|A': ['PG'], 'GR-2|A': ['KL'] }), warehouses, NOALIAS);
     expect(r.warehouseId).toBeNull();
     expect(r.why).toMatch(/more than one location/);
   });
 
-  it('an empty receipt list and an empty item list are both a refusal, not a default', () => {
-    expect(resolveAcReceiptLocation([], ['A'], book({ 'GR-1|A': ['KL'] }), warehouses).warehouseId).toBeNull();
-    expect(resolveAcReceiptLocation(['GR-1'], [], book({ 'GR-1|A': ['KL'] }), warehouses).warehouseId).toBeNull();
+  it('an empty receipt list is a refusal, not a default', () => {
+    expect(resolveAcReceiptLocation([], ['A'], book({ 'GR-1|A': ['KL'] }), warehouses, NOALIAS).warehouseId).toBeNull();
+  });
+
+  it('THROWS when the alias map is omitted — it decides whether narrowing can match', () => {
+    /* The repo's optional-param-noop bug class: an argument that decides
+       something must not be silently defaultable. */
+    expect(() => resolveAcReceiptLocation(['GR-1'], ['A'], book({ 'GR-1|A': ['KL'] }), warehouses))
+      .toThrow(/erpToAcCodes is required/);
   });
 });

@@ -38,12 +38,28 @@
    caller must PRINT, exactly as ac-do-location.mjs does.
 
    THE ORDER, and it never guesses:
-     1. the book's own GRDTL Location for this receipt's lines, and ONLY when
-        they are unanimous. scm.grn_items has no warehouse column, so a receipt
-        that used two locations cannot be represented on one header and must not
-        be collapsed onto the first.
-     2. nothing. `warehouseId` comes back null with a `why`, and the caller falls
+     1. the RECEIPT's own locations in the book, and ONLY when they are
+        unanimous. scm.grn_items has no warehouse column, so a receipt that used
+        two locations cannot be represented on one header and must not be
+        collapsed onto the first.
+     2. when the receipt DID span locations, narrow to the lines this ERP
+        document actually covers, by item code. That needs the ERP code
+        translated back to AutoCount's, which is why `erpToAcCodes` is a
+        REQUIRED parameter rather than an optional convenience — see below.
+     3. nothing. `warehouseId` comes back null with a `why`, and the caller falls
         back to its own rule and SAYS SO.
+
+   WHY THE ITEM JOIN IS THE REFINEMENT AND NOT THE RULE — measured against
+   production, 2026-09-08. The first version of this module keyed on
+   (receipt, item) alone and asked the ERP's own `grn_items.item_code`. Run
+   34150043151 answered for **0 of 320** migrated receipts: the book is keyed by
+   AutoCount's ItemCode and the ERP holds the ERP one, and on
+   `data/autocount-erp-mapping-1561.csv` **1,407 of 1,577 codes differ**
+   (`AERO-DIVAN ONLY (K)` -> `DIVAN ONLY-(K)`). The join could not match, and it
+   failed as "the book carries no location" — which reads exactly like the book
+   being silent. A key that cannot match reports a clean miss; that is the same
+   failure CLAUDE.md records for checkers that cannot match reporting a clean
+   run. The receipt number needs no translation, so it leads.
 
    The map is the SHARED SALESLOC (AutoCount location -> ERP warehouse CODE),
    the same one the PO importer's whId() uses. The resolution onto a warehouse
@@ -55,10 +71,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 
-import { SALESLOC } from './ac-stock-compare.mjs';
+import { parseCsvLine, SALESLOC } from './ac-stock-compare.mjs';
 import { resolveWarehouseLocation } from './resolve-warehouse-location.mjs';
 
 const norm = (s) => (s || '').trim().toUpperCase().replace(/\s+/g, ' ');
+const NEWLINE = /\r?\n/;
 
 function tryGz(dir, name) {
   try {
@@ -124,33 +141,95 @@ export function loadBookGrLocations(dataDir) {
 }
 
 /**
- * Where AutoCount received the goods of ONE receipt, for the item codes an ERP
+ * The ERP product code -> the AutoCount ItemCode(s) it stands for.
+ *
+ * Inverted from the SAME binding the document importers use
+ * (`autocount-erp-mapping-1561.csv`), never re-typed. One ERP code can stand for
+ * several AutoCount codes, so the value is a Set.
+ */
+export function loadErpToAcCodes(dataDir) {
+  const out = new Map();
+  let csv;
+  try {
+    csv = fs.readFileSync(path.join(dataDir, 'autocount-erp-mapping-1561.csv'), 'utf8');
+  } catch {
+    return out;
+  }
+  const lines = csv.replace(/^﻿/, '').split(NEWLINE).filter(Boolean);
+  lines.shift();
+  for (const ln of lines) {
+    const f = parseCsvLine(ln);
+    const ac = norm(f[0]);
+    const erp = norm(f[1]);
+    if (!ac || !erp) continue;
+    if (!out.has(erp)) out.set(erp, new Set());
+    out.get(erp).add(ac);
+  }
+  return out;
+}
+
+/**
+ * Where AutoCount received the goods of ONE receipt, for the lines an ERP
  * document covers.
  *
  * @param {string[]} acGrNos    the AutoCount receipt number(s) this ERP document mirrors
- * @param {string[]} itemCodes  the item codes on the ERP document
- * @param {{byCell: Map<string, Set<string>>}} book   from loadBookGrLocations
+ * @param {string[]} itemCodes  the item codes on the ERP document (ERP or AutoCount spelling)
+ * @param {{byCell: Map<string, Set<string>>, byDoc: Map<string, Set<string>>}} book
  * @param {Array<{id:string, code?:string|null, name?:string|null}>} warehouses
  *        candidates ALREADY scoped to the receipt's company
+ * @param {Map<string, Set<string>>} erpToAcCodes  from loadErpToAcCodes. REQUIRED,
+ *        not optional: it decides whether the narrowing step can match at all,
+ *        and an optional argument that decides something is the repo's
+ *        optional-param-noop bug class. Pass an empty Map to mean "no
+ *        translation available" — that is the STRICTER direction, since an
+ *        unmatched code simply leaves the receipt ambiguous and refused.
  * @returns {{ warehouseId: string|null, warehouseCode: string|null,
- *             bookLocation: string|null, why: string|null }}
+ *             bookLocation: string|null, source: 'receipt'|'lines'|null,
+ *             why: string|null }}
  */
-export function resolveAcReceiptLocation(acGrNos, itemCodes, book, warehouses) {
-  const miss = (why) => ({ warehouseId: null, warehouseCode: null, bookLocation: null, why });
+export function resolveAcReceiptLocation(acGrNos, itemCodes, book, warehouses, erpToAcCodes) {
+  const miss = (why) => ({ warehouseId: null, warehouseCode: null, bookLocation: null, source: null, why });
+  if (!(erpToAcCodes instanceof Map)) {
+    throw new TypeError('resolveAcReceiptLocation: erpToAcCodes is required (pass loadErpToAcCodes(dataDir), or an empty Map)');
+  }
 
-  const seen = new Set();
+  /* 1. the RECEIPT's own locations. No item code is involved, so no translation
+        can go wrong here — and this is the path that answers in practice. */
+  const docLocs = new Set();
   for (const gr of acGrNos ?? []) {
-    for (const code of itemCodes ?? []) {
-      const cell = book.byCell.get(`${norm(gr)}|${norm(code)}`);
-      if (cell) for (const l of cell) seen.add(l);
-    }
+    const s = book.byDoc.get(norm(gr));
+    if (s) for (const l of s) docLocs.add(l);
   }
-  if (seen.size === 0) return miss('the book snapshots carry no receipt location for this document');
-  if (seen.size > 1) {
-    return miss(`the book received this document's lines into more than one location (${[...seen].join(' + ')}), and a receipt header holds one`);
+  if (docLocs.size === 0) return miss('the book snapshots carry no receipt location for this document');
+
+  let source = 'receipt';
+  let locs = docLocs;
+
+  /* 2. the receipt used more than one location. Narrow to the lines THIS
+        document covers — accepting the AutoCount spelling and the ERP one,
+        because the two differ on 1,407 of 1,577 codes. */
+  if (docLocs.size > 1) {
+    const wanted = new Set();
+    for (const code of itemCodes ?? []) {
+      const c = norm(code);
+      wanted.add(c);
+      for (const ac of (erpToAcCodes.get(c) ?? [])) wanted.add(ac);
+    }
+    const narrowed = new Set();
+    for (const gr of acGrNos ?? []) {
+      for (const code of wanted) {
+        const cell = book.byCell.get(`${norm(gr)}|${code}`);
+        if (cell) for (const l of cell) narrowed.add(l);
+      }
+    }
+    if (narrowed.size !== 1) {
+      return miss(`the book received this receipt's lines into more than one location (${[...docLocs].join(' + ')}), and narrowing to this document's own lines ${narrowed.size === 0 ? 'matched none of them' : `still leaves ${[...narrowed].join(' + ')}`}; a receipt header holds one`);
+    }
+    locs = narrowed;
+    source = 'lines';
   }
 
-  const bookLocation = [...seen][0];
+  const bookLocation = [...locs][0];
   const erpCode = SALESLOC[norm(bookLocation)] ?? bookLocation;
   const hit = resolveWarehouseLocation(erpCode, warehouses);
   if (!hit.id) {
@@ -159,5 +238,5 @@ export function resolveAcReceiptLocation(acGrNos, itemCodes, book, warehouses) {
       bookLocation,
     };
   }
-  return { warehouseId: hit.id, warehouseCode: erpCode, bookLocation, why: null };
+  return { warehouseId: hit.id, warehouseCode: erpCode, bookLocation, source, why: null };
 }

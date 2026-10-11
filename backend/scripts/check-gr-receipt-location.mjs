@@ -41,7 +41,7 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
 import { SALESLOC } from "./lib/ac-stock-compare.mjs";
-import { loadBookGrLocations, resolveAcReceiptLocation } from "./lib/ac-gr-location.mjs";
+import { loadBookGrLocations, loadErpToAcCodes, resolveAcReceiptLocation } from "./lib/ac-gr-location.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, "data");
@@ -161,10 +161,20 @@ async function main() {
   /* 4. THE OWNER'S QUESTION, MEASURED -------------------------------------- */
   line("4. Stored warehouse vs AutoCount's OWN receipt location (GRDTL), where the committed cuts carry it");
   const book = loadBookGrLocations(DATA);
+  const erpToAc = loadErpToAcCodes(DATA);
   line(`   book sources on this cut: ${book.sources.join("; ") || "NONE — the GR export did not select Location before 2026-09-08"}`);
   const warehouses = await pg`SELECT id::text AS id, code, name FROM scm.warehouses WHERE company_id = ${CO}`;
   const whByCode = new Map(warehouses.map((w) => [U(w.code), w.id]));
   let known = 0, agree = 0;
+  /* WHY THE JOIN CAN FAIL, counted separately from whether the book is silent.
+     Run 34150043151 answered for 0 of 320 and reported it as "the book carries
+     no location", which reads exactly like the book being silent. It was not:
+     the resolver was keying on (receipt, ITEM) and the ERP holds the ERP item
+     code while the book holds AutoCount's - they differ on 1,407 of the 1,577
+     bound codes. A key that cannot match reports a clean miss, so these three
+     counters exist to tell "never asked" apart from "asked wrongly". */
+  let noReceiptNo = 0, receiptNotInCut = 0;
+  const bySource = { receipt: 0, lines: 0 };
   const unanswered = new Map();
   const disagree = [];
   for (const r of rows) {
@@ -173,16 +183,22 @@ async function main() {
        before it the only handle was the purchase order's receipt list, which is
        why both are read. */
     const acGrs = r.ac_gr_docno ? [r.ac_gr_docno] : (r.ac_grs ?? []);
-    const res = resolveAcReceiptLocation(acGrs, r.item_codes ?? [], book, warehouses);
+    if (!acGrs.length) noReceiptNo += 1;
+    else if (!acGrs.some((g) => book.byDoc.has(U(g)))) receiptNotInCut += 1;
+    const res = resolveAcReceiptLocation(acGrs, r.item_codes ?? [], book, warehouses, erpToAc);
     if (!res.warehouseId) {
       unanswered.set(res.why, (unanswered.get(res.why) ?? 0) + 1);
       continue;
     }
     known += 1;
+    bySource[res.source] = (bySource[res.source] ?? 0) + 1;
     if (res.warehouseId === r.stored) agree += 1;
     else disagree.push(`${r.grn_number} (AutoCount ${acGrs.join(",")} / ${r.ac_po}): book=${res.bookLocation} -> ${res.warehouseCode}, ERP=${r.stored_code ?? r.stored}`);
   }
-  line(`   receipts the book can answer for: ${known} of ${rows.length}`);
+  line(`   receipts the book can answer for: ${known} of ${rows.length}` +
+       ` (${bySource.receipt} from the receipt itself, ${bySource.lines} after narrowing to this document's lines)`);
+  line(`   rows carrying NO AutoCount receipt number at all: ${noReceiptNo}`);
+  line(`   rows whose receipt number is absent from the book cut: ${receiptNotInCut}`);
   line(`   the book could NOT answer for ${rows.length - known}:`);
   for (const [why, n] of unanswered) line(`     ${n}x ${why}`);
   line(`   AGREE: ${agree}   DISAGREE: ${disagree.length}`);
