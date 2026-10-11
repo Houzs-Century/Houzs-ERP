@@ -1,0 +1,62 @@
+name: Repair over-received PO lines (DRY-RUN gated)
+
+# Brings the 65 PO lines whose received_qty EXCEEDS their ordered qty (73 excess
+# units) back to what AutoCount actually received, and corrects the migrated GRN
+# lines that mirror them.
+#
+# WHY THEY EXIST. import-ac-so-linked-pos.mjs read AutoCount's GrQty as a
+# per-line receipt; it is a per-(DocNo, ItemCode) received ROLLUP stamped onto
+# every detail line of the group, so every line of a repeated item claimed the
+# whole group's receipt. create-migrated-documents.mjs then copied that inflated
+# counter into grn_items.qty_received / qty_accepted / line_total_centi. The
+# importer is fixed; this repairs the rows it already wrote.
+#
+# WHY CLAMPING TO qty IS EXACT, NOT A GUESS. Every affected AutoCount source line
+# belongs to a group that was FULLY received, so the correct per-line receipt is
+# that line's own qty. The genuinely PARTIAL groups produce no over-received line
+# and are not touched, so nothing is rounded up to "fully received".
+# backend/tests-node/apportionReceived.test.ts asserts both facts.
+#
+# THIS WRITES NO INVENTORY MOVEMENT. Every GRN behind these lines is
+# migrated_no_stock = true and posts none, so on-hand is unaffected
+# (inventory_balances is a VIEW over movements). The script VERIFIES that per
+# line rather than assuming it: any PO line whose GRN carries even one movement
+# is SKIPPED and reported, because correcting a document quantity and reversing
+# a stock movement are different acts and the second one is the owner's call.
+#
+# RUN DRY FIRST. Read the plan, then re-run with apply=1.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, anything else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: repair-over-received-po-lines
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-over-received-po-lines.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -704,11 +704,15 @@ async function verifyGrnOverReceipt(
   const ids = [...new Set(poItemIds.filter((x): x is string => Boolean(x)))];
   if (ids.length === 0) return null;
   try {
-    // PO line caps.
+    /* PO line caps. The cap is the ordered qty PLUS any over-receipt headroom a
+       human explicitly granted on that line (migration 0277). The allowance is 0
+       unless someone recorded a reason and their identity for it, so the default
+       cap is still exactly what was ordered. */
     const { data: poItems } = await sb.from('purchase_order_items')
-      .select('id, qty').in('id', ids);
+      .select('id, qty, over_receipt_allowed_qty').in('id', ids);
     const capById = new Map<string, number>(
-      ((poItems ?? []) as Array<{ id: string; qty: number }>).map((r) => [r.id, r.qty ?? 0]),
+      ((poItems ?? []) as Array<{ id: string; qty: number; over_receipt_allowed_qty: number | null }>)
+        .map((r) => [r.id, (r.qty ?? 0) + (r.over_receipt_allowed_qty ?? 0)]),
     );
     // Live accepted per PO line across all non-cancelled GRN lines.
     const { data: sib } = await sb.from('grn_items')
@@ -1537,7 +1541,7 @@ grns.post('/', async (c) => {
     }
     if (acceptedByPoItem.size > 0) {
       const { data: poItems } = await sb.from('purchase_order_items')
-        .select('id, qty, received_qty, po:purchase_orders!inner ( status )').in('id', [...acceptedByPoItem.keys()]);
+        .select('id, qty, received_qty, over_receipt_allowed_qty, po:purchase_orders!inner ( status )').in('id', [...acceptedByPoItem.keys()]);
       /* Receivable-PO guard (audit gap #5) — a PO-linked line may only be
          received while its source PO is receivable. Only `/from-po-items`
          enforced this; the manual New-GRN form (this path) could slip PO-linked
@@ -1550,9 +1554,10 @@ grns.post('/', async (c) => {
           return c.json({ error: 'po_not_receivable', poItemId: r.id, status: st ?? null }, 409);
         }
       }
+      // Headroom = ordered + explicitly granted over-receipt allowance − already received.
       const remByPoItem = new Map<string, number>(
-        ((poItems ?? []) as Array<{ id: string; qty: number; received_qty: number }>)
-          .map((r) => [r.id, (r.qty ?? 0) - (r.received_qty ?? 0)]),
+        ((poItems ?? []) as Array<{ id: string; qty: number; received_qty: number; over_receipt_allowed_qty: number | null }>)
+          .map((r) => [r.id, (r.qty ?? 0) + (r.over_receipt_allowed_qty ?? 0) - (r.received_qty ?? 0)]),
       );
       for (const [poItemId, accepted] of acceptedByPoItem) {
         const remaining = remByPoItem.get(poItemId) ?? 0;
@@ -2070,7 +2075,7 @@ grns.post('/from-po-items', async (c) => {
     .from('purchase_order_items')
     .select(`
       id, purchase_order_id, material_kind, material_code, material_name,
-      item_group, description, description2, uom, qty, received_qty,
+      item_group, description, description2, uom, qty, received_qty, over_receipt_allowed_qty,
       unit_price_centi, variants, gap_inches, divan_height_inches, divan_price_sen,
       leg_height_inches, leg_price_sen, custom_specials, line_suffix,
       special_order_price_sen, discount_centi, delivery_date,
@@ -2084,7 +2089,7 @@ grns.post('/from-po-items', async (c) => {
     id: string; purchase_order_id: string; material_kind: string; material_code: string;
     material_name: string; item_group: string | null; description: string | null;
     description2: string | null; uom: string | null;
-    qty: number; received_qty: number; unit_price_centi: number;
+    qty: number; received_qty: number; over_receipt_allowed_qty: number | null; unit_price_centi: number;
     variants: unknown; gap_inches: number | null; divan_height_inches: number | null;
     divan_price_sen: number; leg_height_inches: number | null; leg_price_sen: number;
     custom_specials: unknown; line_suffix: string | null; special_order_price_sen: number;
@@ -2105,7 +2110,7 @@ grns.post('/from-po-items', async (c) => {
     const row = byId.get(p.poItemId);
     if (!row) return c.json({ error: 'item_not_found', poItemId: p.poItemId }, 400);
     if (p.qty <= 0) return c.json({ error: 'qty_must_be_positive', poItemId: p.poItemId }, 400);
-    const remaining = row.qty - (row.received_qty ?? 0);
+    const remaining = row.qty + (row.over_receipt_allowed_qty ?? 0) - (row.received_qty ?? 0);
     if (p.qty > remaining) {
       return c.json({ error: 'qty_exceeds_remaining', poItemId: p.poItemId, requested: p.qty, remaining }, 409);
     }
@@ -2742,10 +2747,10 @@ grns.post('/:id/items', async (c) => {
   const addLinePoItemId = (it.purchaseOrderItemId as string) ?? null;
   if (addLinePoItemId) {
     const { data: poItem } = await sb.from('purchase_order_items')
-      .select('qty, received_qty').eq('id', addLinePoItemId).maybeSingle();
+      .select('qty, received_qty, over_receipt_allowed_qty').eq('id', addLinePoItemId).maybeSingle();
     if (poItem) {
-      const p = poItem as { qty: number; received_qty: number };
-      const remaining = (p.qty ?? 0) - (p.received_qty ?? 0);
+      const p = poItem as { qty: number; received_qty: number; over_receipt_allowed_qty: number | null };
+      const remaining = (p.qty ?? 0) + (p.over_receipt_allowed_qty ?? 0) - (p.received_qty ?? 0);
       if (qtyReceived > remaining) {
         return c.json({ error: 'qty_exceeds_remaining', poItemId: addLinePoItemId, requested: qtyReceived, remaining }, 409);
       }
@@ -2800,9 +2805,10 @@ grns.post('/:id/items', async (c) => {
   if (addLinePoItemId) {
     const inserted = data as unknown as { id: string } | null;
     const { data: poItem } = await sb.from('purchase_order_items')
-      .select('qty').eq('id', addLinePoItemId).maybeSingle();
+      .select('qty, over_receipt_allowed_qty').eq('id', addLinePoItemId).maybeSingle();
     if (poItem) {
-      const cap = (poItem as { qty: number }).qty ?? 0;
+      const pi = poItem as { qty: number; over_receipt_allowed_qty: number | null };
+      const cap = (pi.qty ?? 0) + (pi.over_receipt_allowed_qty ?? 0);
       const { data: sib } = await sb.from('grn_items')
         .select('qty_accepted, grn_id').eq('purchase_order_item_id', addLinePoItemId);
       const sibRows = (sib ?? []) as Array<{ qty_accepted: number; grn_id: string }>;
@@ -2972,10 +2978,10 @@ grns.patch('/:id/items/:itemId', async (c) => {
     const prevQty = (prev as { qty_received: number }).qty_received ?? 0;
     if (poItemId && qtyReceived > prevQty) {
       const { data: poItem } = await sb.from('purchase_order_items')
-        .select('qty, received_qty').eq('id', poItemId).maybeSingle();
+        .select('qty, received_qty, over_receipt_allowed_qty').eq('id', poItemId).maybeSingle();
       if (poItem) {
-        const p = poItem as { qty: number; received_qty: number };
-        const headroom = (p.qty ?? 0) - ((p.received_qty ?? 0) - prevQty);
+        const p = poItem as { qty: number; received_qty: number; over_receipt_allowed_qty: number | null };
+        const headroom = (p.qty ?? 0) + (p.over_receipt_allowed_qty ?? 0) - ((p.received_qty ?? 0) - prevQty);
         if (qtyReceived > headroom) {
           return c.json({ error: 'qty_exceeds_remaining', poItemId, requested: qtyReceived, remaining: headroom }, 409);
         }

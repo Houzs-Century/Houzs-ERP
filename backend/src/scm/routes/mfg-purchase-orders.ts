@@ -3413,6 +3413,76 @@ mfgPurchaseOrders.delete('/:id/items/:itemId/allocations/:allocationId', async (
   return c.json({ ok: true, allocations: map.get(itemId) ?? [] });
 });
 
+/* ── Over-receipt allowance (migration 0277) ──────────────────────────────
+   A supplier really does sometimes over-ship, and a receipt ceiling that simply
+   refused would push staff into editing the PO qty to hide it — losing the fact
+   that anything unusual happened. So over-receiving stays possible and becomes
+   an EXPLICIT, ATTRIBUTABLE act instead of a silent accept: a named person
+   grants a specific number of extra units to a specific line, with a reason,
+   and both ride on the line forever.
+
+   Nothing else can open this door. The DB CHECK (po_item_over_receipt_attributed)
+   makes an allowance without a reason and an author impossible to store even for
+   a script writing straight to Postgres, and the receipt-ceiling triggers read
+   qty + this allowance as the cap. */
+mfgPurchaseOrders.put('/:id/items/:itemId/over-receipt-allowance', async (c) => {
+  const poId = c.req.param('id'); const itemId = c.req.param('itemId');
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const sb = c.get('supabase');
+  const user = c.get('user');
+  const parent = await resolveAllocationParent(sb, c, poId, itemId);
+  if (!parent.ok) return c.json(parent.body, parent.status);
+
+  const rawQty = body.qty ?? body.allowedQty ?? body.over_receipt_allowed_qty;
+  const qty = Math.round(Number(rawQty));
+  if (!Number.isFinite(qty) || qty < 0) {
+    return c.json({ error: 'invalid_qty', message: 'The allowance must be zero or a positive whole number of units.' }, 400);
+  }
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+  if (qty > 0 && reason === '') {
+    return c.json({
+      error: 'reason_required',
+      message: 'Say why this line may receive more than it ordered — an over-receipt is never recorded anonymously.',
+    }, 400);
+  }
+
+  const { data: prevRow } = await sb.from('purchase_order_items')
+    .select('over_receipt_allowed_qty').eq('id', itemId).maybeSingle();
+  const prev = Number((prevRow as { over_receipt_allowed_qty: number | null } | null)?.over_receipt_allowed_qty ?? 0);
+
+  // Clearing the allowance clears its attribution with it, so a stale reason can
+  // never sit on a line that no longer permits an over-receipt.
+  const patch = qty > 0
+    ? { over_receipt_allowed_qty: qty, over_receipt_reason: reason, over_receipt_by: user.id, over_receipt_at: new Date().toISOString() }
+    : { over_receipt_allowed_qty: 0, over_receipt_reason: null, over_receipt_by: null, over_receipt_at: null };
+
+  const { error } = await sb.from('purchase_order_items')
+    .update(patch).eq('id', itemId);
+  if (error) {
+    /* The DB refuses an allowance that would sit below what is already received
+       (the ceiling trigger fires on this column too), and refuses an
+       unattributed one. Both are the operator's to resolve, not a 500. */
+    if (/receipt_exceeds_ordered_qty|po_item_over_receipt_attributed/.test(error.message ?? '')) {
+      return c.json({
+        error: 'allowance_conflict',
+        message: 'That allowance cannot be applied to this line — it is already receiving more than the new ceiling would permit.',
+        reason: error.message,
+      }, 409);
+    }
+    return c.json({ error: 'update_failed', reason: error.message }, 500);
+  }
+
+  await recordAllocationAudit(sb, c, poId,
+    qty > 0
+      ? `Over-receipt allowance set: ${parent.item.material_code} +${qty} (${reason})`
+      : `Over-receipt allowance cleared: ${parent.item.material_code}`,
+    [{ field: 'overReceiptAllowance', from: String(prev), to: String(qty) },
+     { field: 'overReceiptReason', from: null, to: qty > 0 ? reason : null }]);
+
+  return c.json({ ok: true, itemId, overReceiptAllowedQty: qty, reason: qty > 0 ? reason : null });
+});
+
 /* ── Per-line photos — read path (migration 0274) ──────────────────────
    Owner 2026-08-10: a PO raised from an SO carries the SO line's photos, so the
    PO detail must be able to SHOW them. The keys ride on the detail row

@@ -4,7 +4,7 @@ import {
   cloudflareTest,
   readD1Migrations,
 } from "@cloudflare/vitest-pool-workers";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 // Wires vitest into the Cloudflare Workers runtime. Each test file gets
 // its own isolated D1 instance with the same schema as production
@@ -54,6 +54,18 @@ export default defineConfig(async () => {
     test: {
       globals: true,
       setupFiles: ["./tests/setup.ts"],
+      // This config has no `include`, so it sweeps up tests-node/** too — which
+      // is fine until a file reads from disk. workerd's node:fs shim cannot open
+      // a Windows drive path in ANY form: fileURLToPath gives "/C:/…" (ENOENT),
+      // the de-slashed "C:/…" is rejected as "must be a file: URL", and a file:
+      // URL is converted back to "/C:/…" internally. apportionReceived reads the
+      // committed AutoCount snapshot, so it is node-only. It still runs on every
+      // PR — vitest.pg.config.ts includes tests-node/** and CI's unconditional
+      // backend-postgres job runs `npm run test:pg`.
+      exclude: [
+        ...configDefaults.exclude,
+        "tests-node/apportionReceived.test.ts",
+      ],
       // The shared workerd module-fetch + D1 migration setup runs in the
       // suite hook; under CI runner contention it can take ~400s, which blew
       // past the previous 30s and flaked EVERY suite at once with an identical

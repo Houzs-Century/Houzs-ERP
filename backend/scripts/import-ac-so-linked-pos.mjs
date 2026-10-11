@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
+import { apportionReceived } from "./lib/apportion-received.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -144,6 +145,26 @@ async function main() {
     const first = lines[0];
     const supId = supByCode.get(norm(first.CreditorCode)) ?? null;
     if (!supId) noSupplier++;
+    /* AutoCount's GrQty is NOT a per-line receipt — it is a per-(DocNo,
+       ItemCode) received ROLLUP, replicated identically onto every detail line
+       of that group. Verified in the committed snapshot: GrQty is identical
+       across all 38 multi-line groups, and equals the group's TOTAL ordered qty
+       in 29 of them. Reading it per line (the pre-2026-08-11 behaviour) made
+       every line of a repeated item claim the WHOLE group's receipt, which is
+       how 65 production PO lines ended up with received_qty > qty and 73 excess
+       units. PO-009018 is the canonical shape: two lines, Qty 1 each, GrQty 2
+       each — ordered 2, received 2, but both lines claiming 2.
+
+       Apportion the group's receipt across its lines instead: pour it out in
+       line order, each line taking at most its own qty. This preserves the
+       group total EXACTLY (so a genuine partial receipt stays partial) while
+       making it arithmetically impossible for a line to exceed what it ordered.
+       A blanket min(GrQty, qty) clamp is NOT equivalent and was rejected: on
+       PO-009620 HOK-1052 (Q) — GrQty 1 across two Qty-1 lines — the clamp
+       records 2 received where AutoCount received 1, inventing a unit and
+       flipping the PO to fully-received while a real unit is still outstanding.
+       The waterfall records 1, matching AutoCount to the unit on every group. */
+    const recvByDtl = apportionReceived(lines, (m) => log(`   WARN ${doc} ${m}`));
     const items = [];
     for (const l of lines) {
       const src = soLineByDtl.get(String(l.FromSODtlKey));
@@ -164,8 +185,10 @@ async function main() {
       };
       const wh = whId(l.Location);
       if (!wh) noWh++;
-      const recv = Math.round(Number(l.GrQty ?? 0));
       const qty = Math.round(Number(l.Qty ?? 0));
+      // Apportioned above from the group's rollup — never the raw GrQty, and
+      // belt-and-braces clamped so this line can never exceed its own order.
+      const recv = Math.min(recvByDtl.get(String(l.DtlKey)) ?? 0, qty);
       const priceCenti = Math.round(Number(l.UnitPrice ?? 0) * 100);
       const deliveryDate = l.DeliveryDate ? l.DeliveryDate.slice(0, 10) : null;
       const group = prodCat.get(norm(l.erp)) ?? "others";

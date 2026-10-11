@@ -1,3 +1,68 @@
+## A rollup read as a per-line quantity put 65 PO lines over their ordered qty [high]
+
+**Symptom** — 65 of 864 `scm.purchase_order_items` (7.5%) carried
+`received_qty` GREATER than `qty`, 73 excess units in total. The shape was a
+doubling: `HC-PO-009018` had four lines that each ORDERED 1, and one single
+posted GRN (`HC-GR-004913`) posting 2 against every one of them. Worst cases
+`HC-PO-008943` SQUARE PILLOW ordered 2 received 4, `HC-PO-008944` 8050-1S
+ordered 1 received 3, `HC-PO-009428` MINI-(Q) ordered 1 received 3.
+
+**Root cause (traced, not guessed)** — `import-ac-so-linked-pos.mjs:167` read
+AutoCount's `GrQty` as a per-line receipt:
+`const recv = Math.round(Number(l.GrQty ?? 0))`. `GrQty` is a per-`(DocNo,
+ItemCode)` received ROLLUP that the extract stamps identically onto every detail
+line of the group — verified in the committed snapshot: `GrQty` is identical
+across all 38 multi-line groups, and equals the group's TOTAL ordered qty in 29
+of them. So every line of a repeated item claimed the WHOLE group's receipt, and
+the sofa compartment fan-out then multiplied one bad source row into 3-4 ERP
+lines. `create-migrated-documents.mjs:146` mirrored the inflated counter into
+`grn_items.qty_received` / `qty_accepted` / `line_total_centi`, which is why ONE
+GRN shows the same 2 against four different lines. AutoCount itself was clean:
+`ac-outstanding-po.json.gz` has 0 of 338 rows with `TransferedQty > Qty`. We
+manufactured all 73 units.
+
+**Why no guard caught it** — the nine `qty_exceeds_remaining` 409s in `grns.ts`
+(behind `verifyGrnOverReceipt`) were never the hole. Both scripts open their own
+`postgres()` connection and write `purchase_order_items` directly, so no route
+code ran. `diag-po-receipt-drift.mjs:61` is also blind to this class: it only
+reports where `SUM(received_qty) <> SUM(qty_accepted)`, and here they AGREE
+because the GRN mirrors the counter.
+
+**Stock was NOT overstated** — every one of the 29 GRNs behind these lines is
+`migrated_no_stock = true` and posts no movement; the production read returned
+"excess units that MOVED STOCK : 0 / DOCUMENT-ONLY : 73", with a positive
+control proving the query finds movements where movements exist (38 of 38
+non-migrated posted GRNs had them, 0 of 291 migrated ones did).
+`inventory_balances` is a VIEW over movements, so on-hand arithmetic never saw
+these units. What WAS broken is supply arithmetic: `qty - received_qty` goes
+negative, so the outstanding-PO pickers drop those lines, PO status flips to
+RECEIVED early, and MRP understates outstanding supply.
+
+**Fix** — three parts.
+1. `0277_scm_receipt_ceiling.sql` puts the ceiling in the DATABASE, where a
+   script cannot bypass it: a child guard on `grn_items`, a parent mirror on
+   `purchase_order_items.received_qty` (the one that would have stopped the
+   importer), and a third on the `grns` status transition, because posting a
+   draft writes no `grn_items` row and would otherwise slip past both. A trigger
+   rather than a CHECK: the invariant spans rows, and the 65 violating rows make
+   a CHECK unaddable until the repair has run.
+2. The importer now apportions the group's rollup across its lines, each capped
+   at its own qty (`scripts/lib/apportion-received.mjs`). A blanket
+   `min(GrQty, qty)` clamp was rejected: on `PO-009620` HOK-1052 (Q) it records 2
+   received where AutoCount received 1, inventing a unit and marking a partially
+   received PO as complete.
+3. `repair-over-received-po-lines.mjs` (DRY-RUN default, `APPLY=1` to write)
+   corrects both sides — the PO counter and the mirrored GRN line — and REFUSES
+   any line whose GRN carries an inventory movement, because correcting a
+   document quantity and reversing stock are different acts.
+
+**The class, for next time** — an aggregate column in an export is not a per-row
+value just because it appears on every row. Two independent signals said so here
+and both were available before the import ran: the value was IDENTICAL across
+every line of a group, and it equalled the group's TOTAL. Also: an application
+guard protects the application, not the table. Any invariant a `scripts/*.mjs`
+file can violate has to live in the database, because that is exactly what those
+files bypass.
 ## Duplicate-series detection paired five unrelated fabrics through "BR0WN" [low]
 
 **Symptom** - the first prod run of merge-duplicate-fabric-series reported 41

@@ -212,6 +212,47 @@ authoritative in-code lists are `HEADER` (`grns.ts:529-534`) and `ITEM` (`:535-5
 | `scm.purchase_order_items` | Upstream: `received_qty` is written by this module (`recomputePoReceived`, `:672`). |
 | `scm.purchase_invoice_items` / `scm.purchase_return_items` | Downstream: they draw on `grn_item_id`, which is what moves `invoiced_qty` / `returned_qty`. |
 
+### The receipt ceiling — held by the DATABASE, not only the route (mig `0277_scm_receipt_ceiling.sql`)
+
+A PO line may never be received beyond what it ordered. Since 2026-08-11 that is
+an invariant of the **database**, not a property of this router:
+
+| Guard | Fires on | Raises |
+|-------|----------|--------|
+| `fn_grn_item_receipt_guard` | `grn_items` INSERT / UPDATE OF `qty_accepted`, `returned_qty`, `purchase_order_item_id`, `grn_id` | `receipt_exceeds_ordered_qty` |
+| `fn_po_item_received_guard` | `purchase_order_items` INSERT / UPDATE OF `received_qty`, `qty`, `over_receipt_allowed_qty` | `receipt_exceeds_ordered_qty` |
+| `fn_grn_post_receipt_guard` | `grns` UPDATE OF `status`, on the transition into a counting status | `receipt_exceeds_ordered_qty` |
+
+All three read the same cap: `qty + over_receipt_allowed_qty`, over the same
+definition of a live receipt (`scm.fn_po_line_live_received` — net of returns,
+`DRAFT` and `CANCELLED` excluded, identical to `recomputePoReceived`).
+
+**Why this exists and why the router was not enough.** The nine
+`qty_exceeds_remaining` 409s in `grns.ts` were never the hole. Production carried
+65 over-received PO lines (73 excess units) written by *cutover scripts* that open
+their own `postgres()` connection and `UPDATE purchase_order_items` directly — not
+one line of this router ran. The third guard exists because the first two cannot
+see a `DRAFT → POSTED` transition: posting writes no row to `grn_items` at all,
+so an over-receipt staged in a draft would otherwise become real untouched.
+
+**Batch receiving is unaffected.** The cap is on the SUM across live GRN lines,
+never on a single receipt: 2 + 3 + 5 against a qty-10 line all pass and the 11th
+unit is what fails.
+
+**Migrated documents are NOT exempt.** `migrated_no_stock` (0276) means "posts no
+inventory movement", not "may exceed the order" — and migrated GRNs are precisely
+the population that broke.
+
+**A genuine supplier over-shipment is still receivable — explicitly.**
+`purchase_order_items.over_receipt_allowed_qty` raises the ceiling for one line,
+and CHECK `po_item_over_receipt_attributed` makes it impossible to store without
+`over_receipt_reason` and `over_receipt_by`. There is no silent accept and no
+global tolerance percentage. Granted via
+`PUT /api/scm/purchase-orders/:id/items/:itemId/over-receipt-allowance`
+(`{ qty, reason }`; `qty: 0` clears it and its attribution together), which writes
+an audit-trail entry. Every cap in this router adds the allowance, so a grant
+takes effect through the API too — not only at the database.
+
 Status vocabulary: `DRAFT | POSTED | CANCELLED | CLOSED`. Filter buckets
 (`:827-831`) cover only `draft` / `posted` / `cancelled` — **CLOSED has no bucket**,
 so a CLOSED GRN appears under "All" and nowhere else.
