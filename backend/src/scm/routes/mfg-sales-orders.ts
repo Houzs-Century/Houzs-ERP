@@ -10123,9 +10123,16 @@ mfgSalesOrders.post('/:docNo/items/:itemId/photos', async (c) => {
   // Task #92 — return a short-lived signed GET URL alongside the key.
   // Frontend uses this directly as <img src> (no Worker proxy roundtrip
   // on first render). When the URL expires the frontend re-fetches via
-  // GET /photos/:photoKey/signed. Falling back to the legacy proxy path
-  // here keeps existing callers (and stale clients) working until a
-  // post-deploy cleanup removes the proxy entirely.
+  // GET /photos/:photoKey/signed.
+  //
+  // DECISION 2026-08-11 (owner): the R2 S3-API credentials this signing path
+  // needs (R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_ENDPOINT wrangler
+  // secrets) will NOT be set. So in production this try{} ALWAYS throws and the
+  // proxy route further down — GET .../photos/:photoKey, which reads the R2
+  // BINDING and needs no credential — is what every caller actually gets. That
+  // proxy is the PERMANENT serving path; any note anywhere scheduling its
+  // removal is out of date. This branch stays because the day the secrets are
+  // set it starts working again with no code change.
   try {
     const bindings = soItemPhotoBindings(c.env);
     const { signedUrl, expiresAt } = await signSoItemPhotoUrl(bindings, photoKey);

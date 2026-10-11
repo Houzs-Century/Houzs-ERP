@@ -2075,7 +2075,18 @@ consignmentOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', async (c)
   }
 });
 
-// Proxy GET (fallback for clients holding proxy URLs).
+/* LOAD-BEARING — do not delete. (It reads as a legacy fallback; it is not.)
+   Consignment twin of the SO proxy in mfg-sales-orders.ts.
+
+   Two different R2 access mechanisms are in play and only one of them works:
+     - the /signed route above mints a SigV4 presigned URL, which needs the R2
+       S3-API CREDENTIALS (R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY /
+       R2_ENDPOINT — wrangler secrets);
+     - this route streams bytes through `c.env.SO_ITEM_PHOTOS`, the R2 WORKERS
+       BINDING, which needs no credential at all.
+   DECISION 2026-08-11 (owner): those secrets will NOT be set. Signing therefore
+   throws for every photo in production, so this route is the ONLY path that
+   serves consignment line photos. Deleting it blanks them all. */
 consignmentOrders.get('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');

@@ -83,6 +83,17 @@ EMAIL_REPLY_TO = "Houzs Century <hello@houzscentury.com>"
 # would display. The BUCKET NAME is not a secret (it is the same bucket the
 # [[r2_buckets]] bindings below name); only R2_ACCESS_KEY_ID /
 # R2_SECRET_ACCESS_KEY / R2_ENDPOINT are, and those stay wrangler secrets.
+#
+# DECISION 2026-08-11 (owner): those three secrets will NOT be set. Verified
+# live the same day — /photos/<key>/signed answers
+# 500 {"error":"signing_failed","reason":"R2_ACCESS_KEY_ID not configured"},
+# while the SAME path without /signed answers 200 image/jpeg. Consequence: the
+# per-line photo PROXY routes (mfg-sales-orders.ts, consignment-orders.ts) are
+# the PERMANENT and ONLY way line photos are served. They stream through the
+# [[r2_buckets]] SO_ITEM_PHOTOS binding below, which needs no credential — that
+# binding-vs-S3-credential split is the whole reason photos work at all today.
+# Do not delete those routes. Setting the secrets later re-enables signing with
+# no code change; nothing has to be reverted.
 SO_ITEM_PHOTOS_BUCKET_NAME = "houzs-erp"
 
 # D1 — REMOVED 2026-06-13 (write lockout). Prod is fully on Supabase/Postgres:
