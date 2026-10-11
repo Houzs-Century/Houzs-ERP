@@ -2,10 +2,13 @@
 // Write the owner-approved compartment + seat-size answers onto the live sofa
 // documents.
 //
-// Source of truth: data/sofa-compartment-corrections-2026-08.json — 33 builds,
-// each naming the SO and the PO raised from it (corrected together so the pair
-// cannot drift), the target piece list left to right, the seat depth, and how
-// the answer was reached.
+// Source of truth: the data/sofa-compartment-corrections-*.json files, ALL of
+// them, oldest first — a later round ADDS answers, it never replaces an earlier
+// file, because builds the earlier round could not land are still owed. Each
+// entry names the SO and the PO raised from it (corrected together so the pair
+// cannot drift), the target piece list left to right, the seat depth, how the
+// answer was reached, and — where the document holds two of the same sofa —
+// `lines: N`.
 //
 // ── WHAT THIS TOUCHES, AND WHAT IT REFUSES TO ───────────────────────────────
 // A build is one AutoCount sofa line = several ERP rows, one per compartment.
@@ -33,7 +36,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
-import { selectBuildRows } from "./lib/sofa-desc2-match.mjs";
+import { selectBuildRows, splitBuilds } from "./lib/sofa-desc2-match.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -47,14 +50,26 @@ const K = (s) => String(s ?? "").trim().toUpperCase();
 const modelOf = (code) => { const c = K(code); const d = c.indexOf("-"); return d < 0 ? c : c.slice(0, d); };
 const compOf = (code) => { const c = K(code); const d = c.indexOf("-"); return d < 0 ? "" : c.slice(d + 1); };
 
-const DATA = JSON.parse(fs.readFileSync(path.join(here, "data", "sofa-compartment-corrections-2026-08.json"), "utf8"));
+/* EVERY answer file, oldest first, never one replacing another. The 2026-08
+   round is still the source for builds this script has not landed yet (three
+   are refused on the money and two are HELD), so a later round is an ADDITION.
+   `corrections` and `entries` are the same array under two names — the 2026-09
+   file was written with the second — and both are read rather than one being
+   renamed, so a file can be dropped in exactly as its author wrote it. */
+const FILES = ["sofa-compartment-corrections-2026-08.json", "sofa-compartment-corrections-2026-09.json"];
+const DATA = { corrections: [], _held: [] };
+for (const f of FILES) {
+  const d = JSON.parse(fs.readFileSync(path.join(here, "data", f), "utf8"));
+  for (const c of d.corrections ?? d.entries ?? []) DATA.corrections.push({ ...c, _file: f });
+  for (const h of d._held ?? []) DATA._held.push({ ...h, _file: f });
+}
 
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"} company=${CO}${ONLY ? ` DOC=${ONLY}` : ""}`);
   const prods = await sql`SELECT code FROM scm.mfg_products WHERE company_id = ${CO}`;
   const codeSet = new Set(prods.map((p) => K(p.code)));
 
-  let nBuilds = 0, nUpd = 0, nIns = 0, nDel = 0, nRefused = 0, nMissingSku = 0, nPo = 0, nGr = 0, nDo = 0, nAmbiguous = 0;
+  let nBuilds = 0, nUpd = 0, nIns = 0, nDel = 0, nRefused = 0, nMissingSku = 0, nPo = 0, nGr = 0, nDo = 0, nAmbiguous = 0, nLocked = 0;
 
   for (const c of DATA.corrections) {
     const docs = ONLY ? c.docs.filter((d) => d === ONLY) : c.docs;
@@ -150,6 +165,26 @@ async function main() {
         nMissingSku++; continue;
       }
 
+      /* Two lines with the SAME Desc2 are two identical sofas, not one build
+         waiting to be split — and the two readings build different furniture,
+         so the correction must SAY which (`lines: N`). See splitBuilds(). */
+      /* `code` not `item_code` — the queries above alias it, and reading the
+         wrong field makes every row look identical. splitBuilds throws on a
+         blank code for exactly that reason. */
+      const split = splitBuilds(rows, c.lines, want, (r) => r.code);
+      if (split.verdict === "undeclared" || split.verdict === "mismatch") {
+        log(`  ${doc}: REFUSED — ${split.how}`);
+        nRefused++; continue;
+      }
+      if (split.verdict === "already") { log(`  ${doc}: ${split.how} — nothing to do`); continue; }
+      if (split.groups.length > 1) log(`  ${doc}: ${split.how}`);
+
+      let copyNo = 0;
+      for (const buildRows of split.groups) {
+      copyNo++;
+      const rows = buildRows;
+      if (split.groups.length > 1) log(`  ${doc}: sofa ${copyNo} of ${split.groups.length}`);
+
       /* Pair by code so an unchanged piece keeps its row - and its id. */
       const pool = [...rows];
       const pairs = [];
@@ -211,7 +246,20 @@ async function main() {
 
       if (!APPLY) continue;
       const touched = [];
-      await sql.begin(async (tx) => {
+      const runBuild = () => sql.begin(async (tx) => {
+        /* FAIL FAST ON A LOCKED ROW, then retry — do not sit on it. Staff edit
+           these same sales orders from the ERP all day, and without this the
+           wait ran to the server's statement_timeout, which cancels the query
+           and THROWS OUT OF THE WHOLE SCRIPT. Measured on prod 2026-09-04: run
+           33853586967 landed 20 builds and then died on one contended row
+           (`57014 ... while updating tuple (696,7) in relation
+           "mfg_sales_order_items"`), abandoning every build after it; run
+           33854676085 died the same way on the second build. Ten seconds of
+           lock_timeout turns that into a 55P03 this loop can retry and, if the
+           row is still busy, SKIP — one busy order must not cost the other
+           twenty-three. */
+        await tx`SET LOCAL lock_timeout = '10s'`;
+        touched.length = 0;
         for (const p of plan) {
           if (p.op === "delete") {
             if (isPo) await tx`DELETE FROM scm.purchase_order_items WHERE id = ${p.id}`;
@@ -256,6 +304,27 @@ async function main() {
         }
       });
 
+      /* 55P03 lock_not_available, 40P01 deadlock, 57014 statement cancelled —
+         all three mean "somebody else had the row", none means the plan is
+         wrong. Retry twice, then leave this build for the next run and MOVE ON.
+         The transaction rolled back, so a skipped build is untouched, not half
+         done. */
+      let applied = false;
+      for (let attempt = 1; attempt <= 3 && !applied; attempt++) {
+        try { await runBuild(); applied = true; }
+        catch (e) {
+          if (!["55P03", "40P01", "57014"].includes(e?.code) || attempt === 3) {
+            if (!["55P03", "40P01", "57014"].includes(e?.code)) throw e;
+            log(`  ${doc}: NOT APPLIED — another session held the row through ${attempt} attempts (${e.code}). Nothing was written; re-run this document.`);
+            nLocked++;
+          } else {
+            log(`  ${doc}: the row is locked by another session (${e.code}) — retrying in ${attempt * 5}s (${attempt}/2)`);
+            await new Promise((r) => setTimeout(r, attempt * 5000));
+          }
+        }
+      }
+      if (!applied) continue;
+
       /* Carry it down the chain. A PO line copies the SO line it is dedicated
          to; a GRN line copies the PO line it received; a DO line copies the SO
          line it delivered. All three took a SNAPSHOT of the code and variants
@@ -289,13 +358,14 @@ async function main() {
           if (d.length) { nDo += d.length; log(`      -> ${d.length} DO line(s) follow ${compOf(t.code)}`); }
         }
       }
+      } // end of one identical sofa
     }
   }
 
   log("");
   log(`builds touched ${nBuilds} · lines updated ${nUpd} · added ${nIns} · removed ${nDel}`);
   log(`downstream carried: PO lines ${nPo} · GRN lines ${nGr} · DO lines ${nDo}`);
-  log(`refused ${nRefused} (downstream reference or the money would move) · piece SKU not minted ${nMissingSku} · refused as ambiguous ${nAmbiguous}`);
+  log(`refused ${nRefused} (downstream reference, the money would move, or copies not declared) · piece SKU not minted ${nMissingSku} · refused as ambiguous ${nAmbiguous} · not applied because the row was locked ${nLocked}`);
   for (const h of DATA._held ?? []) log(`HELD ${h.docs.join(" / ")} — ${h.why}`);
   if (!APPLY) log("\nDRY-RUN — set APPLY=1 to write.");
   await sql.end();

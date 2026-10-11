@@ -25,7 +25,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { desc2Contains, normaliseDesc2, selectBuildRows } from "./sofa-desc2-match.mjs";
+import { desc2Contains, normaliseDesc2, selectBuildRows, splitBuilds } from "./sofa-desc2-match.mjs";
 
 /* ── the fixtures, exactly as prod holds them ──────────────────────────────
    `\n` in these literals is a REAL newline, which is the whole point: the
@@ -174,4 +174,78 @@ test("an empty document, and a blank needle, are answered not thrown", () => {
 test("a null description2 is not a match for anything", () => {
   const got = selectBuildRows([{ item_code: "8030-1S", description2: null }], N_009597);
   assert.equal(got.verdict, "none");
+});
+
+/* ── splitBuilds: one sofa, or two of the same one? ────────────────────────
+   Fixtures read off prod 2026-09-04. `HC-SO-013384` holds two `8030-1S` rows
+   with AutoCount detail keys 914561 / 914562 and one dedicated PO line each;
+   `HC-SO-012025` two `9050-1S` rows with keys 829179 / 829180 and a PO AND a DO
+   line each. Two keys is two AutoCount lines is two sofas — and the shape is
+   indistinguishable from one build's compartments, price on the first row and
+   0 on the second, which is why nothing here infers. */
+const SO_013384 = [
+  { item_code: "8030-1S", total_sen: 800000 },
+  { item_code: "8030-1S", total_sen: 0 },
+];
+const WANT_013384 = ["8030-1A(LHF)", "8030-1NA", "8030-1A(RHF)"];
+
+test("two identical placeholder lines with no `lines` REFUSE, they are not one build", () => {
+  const got = splitBuilds(SO_013384, undefined, WANT_013384);
+  assert.equal(got.verdict, "undeclared");
+  assert.deepEqual(got.groups, []);
+  assert.match(got.how, /"lines": 2/);
+});
+
+test("`lines: 2` builds each identical sofa separately", () => {
+  const got = splitBuilds(SO_013384, 2, WANT_013384);
+  assert.equal(got.verdict, "copies");
+  assert.equal(got.groups.length, 2);
+  assert.deepEqual(got.groups.map((g) => g.length), [1, 1]);
+  // the price rides its own row, so each sofa's money is asserted on its own
+  assert.deepEqual(got.groups.map((g) => g[0].total_sen), [800000, 0]);
+});
+
+test("re-running after `lines: 2` landed is a no-op, not a delete of three pieces", () => {
+  const done = [...WANT_013384, ...WANT_013384].map((c) => ({ item_code: c }));
+  const got = splitBuilds(done, 2, WANT_013384);
+  assert.equal(got.verdict, "already");
+  assert.deepEqual(got.groups, []);
+});
+
+test("`lines` that does not describe the document REFUSES rather than doing half", () => {
+  const got = splitBuilds([{ item_code: "8030-1S" }], 2, WANT_013384);
+  assert.equal(got.verdict, "mismatch");
+  assert.deepEqual(got.groups, []);
+});
+
+test("one already-split build is untouched by the copies guard", () => {
+  // HC-SO-012929 after its 2026-08 correction: three rows, three different codes
+  const rows = [{ item_code: "9028-1S" }, { item_code: "9028-1A(LHF)" }, { item_code: "9028-2A(RHF)" }];
+  const got = splitBuilds(rows, undefined, ["9028-1S", "9028-1A(LHF)", "9028-2A(RHF)"]);
+  assert.equal(got.verdict, "one");
+  assert.equal(got.groups.length, 1);
+  assert.equal(got.groups[0].length, 3);
+});
+
+test("a build with a repeated piece is one build, not two sofas", () => {
+  // HC-SO-012828 is 1A(LHF)+CNR+1NA+1NA+1A(RHF) — two 1NA rows, one sofa
+  const rows = ["8030-1A(LHF)", "8030-CNR", "8030-1NA", "8030-1NA", "8030-1A(RHF)"].map((c) => ({ item_code: c }));
+  const got = splitBuilds(rows, undefined, ["8030-1A(LHF)", "8030-CNR", "8030-1NA", "8030-1NA", "8030-1A(RHF)"]);
+  assert.equal(got.verdict, "one");
+  assert.equal(got.groups[0].length, 5);
+});
+
+test("a single line is one build whatever the code", () => {
+  assert.equal(splitBuilds([{ item_code: "2379-1S" }], undefined, ["2379-2S"]).verdict, "one");
+  assert.equal(splitBuilds([], undefined, ["2379-2S"]).verdict, "one");
+});
+
+test("a reader wired to the wrong field THROWS, it does not answer", () => {
+  // The apply script selects `item_code AS code`. On the first dry-run the
+  // default reader asked for `item_code`, read undefined on every row, and
+  // refused 23 correct builds as "N identical sofas" whose code printed blank.
+  const aliased = [{ code: "8030-1S" }, { code: "8030-1NA" }];
+  assert.throws(() => splitBuilds(aliased, undefined, WANT_013384), /readCode is reading the wrong field/);
+  // with the right reader it answers normally
+  assert.equal(splitBuilds(aliased, undefined, WANT_013384, (r) => r.code).verdict, "one");
 });

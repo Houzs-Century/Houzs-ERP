@@ -131,3 +131,73 @@ export function selectBuildRows(rows, needle, readDesc2 = (r) => r.description2)
   if (!loose.length) return { verdict: "none", rows: [], how: "no line carries this text, exactly or normalised", texts: [] };
   return decide(loose, "normalised", "matched once line breaks, quotes and spacing were normalised");
 }
+
+const up = (s) => String(s ?? "").trim().toUpperCase();
+const bag = (codes) => codes.map(up).sort().join("|");
+
+/**
+ * ONE build, or SEVERAL IDENTICAL ONES?
+ *
+ * A customer who orders two of the same sofa gets two AutoCount lines carrying
+ * the SAME Desc2, and the importer put the price on the first and 0 on the
+ * second — which is byte-for-byte what ONE build's several compartments look
+ * like after this script has run. The two readings produce different furniture,
+ * so this never infers: the correction has to SAY `lines: N`, and where the
+ * document is genuinely ambiguous and the file is silent, the answer is a
+ * refusal, not a guess.
+ *
+ * Proven on prod 2026-09-04 before this was written: `HC-SO-013384` holds two
+ * `8030-1S` rows with AutoCount detail keys 914561 and 914562, each with its own
+ * dedicated purchase-order line, and `HC-SO-012025` two `9050-1S` rows with keys
+ * 829179 and 829180, each with its own PO line AND its own delivery-order line.
+ * Two keys is two AutoCount lines is two sofas.
+ *
+ * @param {any[]} rows the rows selectBuildRows picked for this correction
+ * @param {number|null|undefined} declaredLines the correction's `lines`
+ * @param {string[]} wantCodes the target piece codes, already model-qualified
+ * @param {(row:any)=>unknown} [readCode] how to read a row's item code
+ * @returns {{verdict:"one"|"copies"|"already"|"undeclared"|"mismatch", groups:any[][], how:string}}
+ */
+export function splitBuilds(rows, declaredLines, wantCodes, readCode = (r) => r.item_code) {
+  const all = Array.isArray(rows) ? rows : [];
+  const codes = all.map(readCode);
+  /* A code that reads BLANK makes every row look identical, and "all identical"
+     is the input to the most consequential branch here. Caught on the first
+     dry-run of this function: the caller selects `item_code AS code`, the
+     default reader asks for `item_code`, and 23 perfectly good builds were
+     refused as "N identical sofas" whose code printed as an empty string. Throw
+     — a reader wired to the wrong field is a defect in the caller, and the one
+     thing it must never do is quietly answer. */
+  if (codes.some((c) => up(c) === "")) throw new Error(`splitBuilds: ${codes.filter((c) => up(c) === "").length} of ${codes.length} row(s) have no item code — readCode is reading the wrong field`);
+  const distinct = new Set(codes.map(up));
+  const n = Number(declaredLines ?? 1) || 1;
+
+  if (n === 1) {
+    /* Several rows that ALL still read the same code have not been exploded
+       yet, so they cannot be one build's compartments. Refuse and ask. */
+    if (all.length > 1 && distinct.size === 1)
+      return {
+        verdict: "undeclared", groups: [],
+        how: `${all.length} lines carry this text and every one of them still reads ${[...distinct][0]} — that is ${all.length} identical sofas, or one build nobody has split yet, and the correction does not say which. Add "lines": ${all.length} if they are separate sofas`,
+      };
+    return { verdict: "one", groups: [all], how: "one build" };
+  }
+
+  if (all.length === n && distinct.size === 1)
+    return { verdict: "copies", groups: all.map((r) => [r]), how: `${n} identical sofas, each built separately` };
+
+  const wantedBag = bag(wantCodes);
+  if (all.length === n * wantCodes.length) {
+    /* Already done: n groups each holding exactly the wanted pieces. Compare as
+       BAGS, because the pieces of one sofa are not stored in any order. */
+    const perGroup = [];
+    for (let i = 0; i < n; i++) perGroup.push(codes.slice(i * wantCodes.length, (i + 1) * wantCodes.length));
+    if (perGroup.every((g) => bag(g) === wantedBag))
+      return { verdict: "already", groups: [], how: `${n} sofas are already built as ${wantCodes.join("+")}` };
+  }
+
+  return {
+    verdict: "mismatch", groups: [],
+    how: `the correction says ${n} identical sofas, but the document holds ${all.length} matching line(s) reading ${[...distinct].join(", ")} — neither ${n} unsplit lines nor ${n} finished builds`,
+  };
+}
