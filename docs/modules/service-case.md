@@ -429,11 +429,36 @@ says the same).
 > until somebody edited one. `BUG-HISTORY.md` has the trace, and
 > `backend/tests/assrSlaHoursOverride.test.ts` is the guard.
 >
-> **Adding a priority still does not work**, and that is a different defect left
-> open: `assr_cases.priority` carries
-> `CHECK (priority IN ('low','normal','high','urgent'))`, so a
-> Service-Maintenance-added priority saves and lists but 500s every case create
-> that uses it. Widening it needs its own migration.
+> **CORRECTED 2026-08-21 — adding a priority DOES work. This paragraph was
+> wrong, and it was wrong in the way this repo keeps paying for: it described a
+> migration FILE as if it described production.** It used to read *"Adding a
+> priority still does not work … `assr_cases.priority` carries
+> `CHECK (priority IN ('low','normal','high','urgent'))` … Widening it needs its
+> own migration."*
+>
+> Asked directly —
+> [run 32472147332](https://github.com/Houzs-Century/Houzs-ERP/actions/runs/32472147332),
+> `pg_get_constraintdef` over `pg_constraint` — `public.assr_cases` carries **no
+> CHECK constraint of any kind**. A priority added in Service Maintenance is
+> accepted on case create. Do not write a migration for this.
+>
+> The CHECK is real in the **D1 tree** (`src/db/migrations/010_assr_redesign.sql`,
+> `074_assr_v31_stages.sql`, `d1-schema-dump.sql`), which production does not
+> read. The trap worth carrying away: `vitest.config.mts` seeds the TEST database
+> from those files, so a test creating a case with a custom priority **fails
+> while production succeeds**. Neither a green nor a red test says anything about
+> this column. `backend/scripts/check-assr-priority-constraint.mjs` (rides
+> `assr-sla-priorities-check.yml`) is the thing that does.
+>
+> **Two things about a NEW priority that are true**, neither of them a refusal:
+> `assr_priorities` has no UNIQUE index on `slug` — only `assr_priorities_pkey`
+> on `id` and `idx_assr_priorities_active` — so the lookup POST's `ON CONFLICT DO
+> NOTHING` has nothing to conflict on and a priority NAMED "High" would write a
+> second row with slug `high` (none duplicated today). And a new priority left
+> with a blank SLA silently takes the **Normal** window: `slaHoursFor`'s map holds
+> only the four original slugs, so an unknown one lands on its `?? 168`. Both are
+> owner decisions, not defects; see
+> `docs/bugs/0497-refuted-a-priority-added-in-service-maintenance-is-not-rejec.md`.
 
 `sla_hours` writes are validated on both `POST /lookups/priorities` and
 `PATCH /lookups/priorities/:id`: a positive whole number, or blank. Anything
