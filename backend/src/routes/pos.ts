@@ -84,6 +84,26 @@ pos.post("/pin-login", async (c) => {
     return c.json({ error: "not_pos_role" }, 403);
   }
 
+  // 2.6) Company gate. The POS tablet stamps X-Company-Id (its
+  //      VITE_HOUZS_COMPANY_ID, e.g. "2" for the 2990 tablet) on the login call,
+  //      so only a member of THAT company may mint a session for THAT company's
+  //      POS. /sales-staff already scopes the PIN picker by company; the login
+  //      itself was not, so a member of another company whose staffId reached
+  //      this endpoint could still mint a session. A member of both companies
+  //      (a cross-company director) still passes for either. Fail closed on a
+  //      missing/invalid header or non-membership — every houzs-target POS sends
+  //      the header, and this endpoint is only ever hit by that POS.
+  const companyId = Number(c.req.header("x-company-id"));
+  if (!Number.isInteger(companyId) || companyId <= 0) {
+    return c.json({ error: "company_required" }, 403);
+  }
+  const member = await DB.prepare(
+    `SELECT 1 FROM public.user_companies WHERE user_id = ? AND company_id = ? LIMIT 1`,
+  ).bind(row!.user_id, companyId).first();
+  if (!member) {
+    return c.json({ error: "not_company_member" }, 403);
+  }
+
   // 3) success → clear the counter, mint a Houzs session for the linked user.
   //
   // SESSION_ORIGIN_POS is the anti-tamper hinge and this is its ONLY writer.
