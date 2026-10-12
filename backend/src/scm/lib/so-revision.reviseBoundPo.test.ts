@@ -291,6 +291,9 @@ describe('reviseBoundPo — ADD reconciles the missing PO line', () => {
     store.purchase_order_items = [
       poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 1, line_total_sen: 1000 }),
     ];
+    // DEV-69 (12c): the owner's lead table, so an added line's date is the
+    // customer date minus 7 days, as Create PO sets it.
+    store.mrp_category_lead_times = [{ warehouse_id: 'WH1', category: 'bedframe', lead_days: 7, company_id: 1 }];
     return store;
   }
 
@@ -305,7 +308,8 @@ describe('reviseBoundPo — ADD reconciles the missing PO line', () => {
     expect(added).toBeDefined();
     expect(added).toMatchObject({
       purchase_order_id: 'POX', item_code: 'BF-3', material_name: 'Bed Three',
-      supplier_sku: 'SKU-BF-3', qty: 2, warehouse_id: 'WH1', delivery_date: '2026-08-01',
+      // Customer date 2026-08-01 minus the 7 lead days, not the raw customer date.
+      supplier_sku: 'SKU-BF-3', qty: 2, warehouse_id: 'WH1', delivery_date: '2026-07-25',
       from_mrp: false, company_id: 1,
     });
     // Priced by the SAME rule the create path uses.
@@ -315,6 +319,24 @@ describe('reviseBoundPo — ADD reconciles the missing PO line', () => {
     expect(store.purchase_orders[0].subtotal_sen).toBe(c1 * 1 + c3 * 2);
     expect(res.perPo[0]).toMatchObject({ linesAdded: 1, linesRemoved: 0 });
     expect(res.warnings).toEqual([]);
+  });
+
+  it("DEV-69: the owner's per-supplier lead days win over the warehouse table", async () => {
+    const store = addStore();
+    store.mrp_supplier_category_lead_times = [{ supplier_id: 'S1', category: 'bedframe', lead_days: 10, company_id: 1 }];
+
+    await reviseBoundPo(fakeSb(store), AMD, 'user-1');
+
+    expect(store.purchase_order_items.find((i) => i.so_item_id === 'L3')!.delivery_date).toBe('2026-07-22');
+  });
+
+  it('DEV-69: another company\'s lead table is not used', async () => {
+    const store = addStore();
+    store.mrp_category_lead_times = [{ warehouse_id: 'WH1', category: 'bedframe', lead_days: 30, company_id: 2 }];
+
+    await reviseBoundPo(fakeSb(store), AMD, 'user-1');
+
+    expect(store.purchase_order_items.find((i) => i.so_item_id === 'L3')!.delivery_date).toBe('2026-08-01');
   });
 
   it('is idempotent — re-running does not insert a second line for the added SO line', async () => {
