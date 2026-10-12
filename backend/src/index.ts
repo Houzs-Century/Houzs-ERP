@@ -94,6 +94,8 @@ import {
   reconcileVenturePortalOutbox,
 } from "./scm/lib/venture-portal-outbox";
 import { pushVenturePortalCatalogue } from "./scm/lib/venture-portal-catalogue";
+import { pushVenturePortalAttendance } from "./scm/lib/venture-portal-attendance";
+import { venturePortalKick } from "./scm/lib/venture-portal-kick";
 import { reconcilePendingFairs } from "./scm/lib/fair-reconcile";
 import { relinkHeldBackSweep } from "./scm/lib/autocount-relink-sweep";
 import { deliveryDateSweep } from "./scm/lib/autocount-delivery-date-sweep";
@@ -409,6 +411,12 @@ app.use("/api/*", idempotency);
 // user staleness (items assigned to others) is likewise intentionally on TTL.
 app.use("/api/assr/*", inboxBustAfterWrite);
 app.use("/api/projects/*", inboxBustAfterWrite);
+// Venture Portal: a Sales Attending edit (POST / DELETE
+// /api/projects/:id/sales-attendees) reaches the portal in seconds, and so do
+// the orders a project's venue or date change re-queues. The same middleware
+// /api/scm/* mounts — it runs after the response and can never fail it
+// (scm/lib/venture-portal-kick.ts).
+app.use("/api/projects/*", venturePortalKick());
 
 // Mount the Lead Time Portal first so /api/assr/portal/* doesn't
 // fall through into the catch-all /:id handler on the main module.
@@ -670,25 +678,42 @@ export default {
          never rejects — so a megabyte upload can never hold a connection the
          orders are waiting for, and its own failure is caught here, never
          there. The unchanged case is one md5 round trip. */
+      const vpCatalogue = vpOrderDrain
+        .then(() => pushVenturePortalCatalogue(env, { force: false }))
+        .then((r) => {
+          /* failed = the portal refused the catalogue (400/413/422) and it
+             will not be sent again until it changes or a person forces it;
+             build_failed = the SQL did not answer. A catalogue already
+             parked (refused_unchanged) is on the status page, not re-logged
+             every five minutes. */
+          if (
+            r.skipped === "catalogue_url_unknown"
+            || r.companies.some((x) => x.action === "failed" || x.action === "build_failed")
+          ) {
+            console.error(`[cron vp-catalogue] FAILED ${JSON.stringify(r)}`);
+          } else if (r.companies.some((x) => x.action === "sent" || x.action === "retry")) {
+            console.log(`[cron vp-catalogue] ${JSON.stringify(r)}`);
+          }
+        })
+        .catch((e) => console.error("[cron vp-catalogue]", e));
+      ctx.waitUntil(vpCatalogue);
+      /* The SALES ATTENDING push (mig *_scm_vp_sales_attending.sql), same
+         switch, same key, after the catalogue has settled — vpCatalogue never
+         rejects. The unchanged case is one md5 round trip. */
       ctx.waitUntil(
-        vpOrderDrain
-          .then(() => pushVenturePortalCatalogue(env, { force: false }))
+        vpCatalogue
+          .then(() => pushVenturePortalAttendance(env, { force: false }))
           .then((r) => {
-            /* failed = the portal refused the catalogue (400/413/422) and it
-               will not be sent again until it changes or a person forces it;
-               build_failed = the SQL did not answer. A catalogue already
-               parked (refused_unchanged) is on the status page, not re-logged
-               every five minutes. */
             if (
-              r.skipped === "catalogue_url_unknown"
+              r.skipped === "attendance_url_unknown"
               || r.companies.some((x) => x.action === "failed" || x.action === "build_failed")
             ) {
-              console.error(`[cron vp-catalogue] FAILED ${JSON.stringify(r)}`);
+              console.error(`[cron vp-attendance] FAILED ${JSON.stringify(r)}`);
             } else if (r.companies.some((x) => x.action === "sent" || x.action === "retry")) {
-              console.log(`[cron vp-catalogue] ${JSON.stringify(r)}`);
+              console.log(`[cron vp-attendance] ${JSON.stringify(r)}`);
             }
           })
-          .catch((e) => console.error("[cron vp-catalogue]", e))
+          .catch((e) => console.error("[cron vp-attendance]", e))
       );
       /* Keyless-conversion backlog sweep. Ships DARK: no-op unless
          scm.app_config 'scm.autocount_relink_sweep' is 'plan' (report only) or
