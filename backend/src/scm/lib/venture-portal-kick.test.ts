@@ -178,6 +178,29 @@ describe('which requests earn a drain', () => {
     expect(sb.tables.venture_portal_catalogue_changes ?? []).toEqual([]);
   });
 
+  /* SALES ATTENDING, LIVE, after the catalogue — and a catalogue step that
+     throws does not stop it. Proven the same way: its marks are cleared. */
+  test('a successful write runs the Sales Attending step too, even when the catalogue step fails', async () => {
+    const sb = fakeSb(
+      {
+        app_config: [{ key: 'scm.venture_portal_feed', value: '1' }],
+        venture_portal_attendance_changes: [{ id: 1, source: 'project_sales_attendees' }],
+      },
+      // The catalogue's marks cannot be read: its step returns early, and the
+      // attendance step must still run.
+      { venture_portal_catalogue_changes: ['id'] },
+      [],
+    );
+    currentSb = sb;
+    resetFeedFlagCache();
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const c = fakeCtx();
+    expect((await call('POST', '/connection', c)).status).toBe(200);
+    await c.settle();
+    expect(sb.tables.venture_portal_attendance_changes ?? []).toEqual([]);
+    err.mockRestore();
+  });
+
   test('a waitUntil that throws does not fail the request either', async () => {
     const angry: KickCtx = {
       waitUntil: () => { throw new Error('this context is dead'); },
