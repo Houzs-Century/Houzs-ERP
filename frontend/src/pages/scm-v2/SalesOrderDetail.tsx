@@ -324,6 +324,9 @@ type SoHeader = {
      only). Feeds soProcLockActive, which is why the line/State/Postcode freeze
      below fires with no processing date involved. */
   po_locked?: boolean;
+  /* BUG-101 — a live PO (any company) freezes the Processing Date: no move, no
+     clear, by amendment or directly. Only the Delivery Date can be requested. */
+  processing_date_po_locked?: boolean;
   has_children?: boolean; downstream_fully_frozen?: boolean; // a live DO/SI exists / every line is on one (shared/so-line-freeze.ts)
   has_open_amendment?: boolean;
   open_amendment?: { id: string; status: string; amendment_no: string; lane?: string | null } | null;
@@ -2824,6 +2827,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
      super_admin row), so mirror the API and gate on the flat permission key
      the PATCH enforces (mfg-sales-orders.ts). Owner + IT Admin pass via `*`. */
   const canRemoveProcessingDate = can('scm.so.remove_processing_date');
+  const canOverridePoProcessingDate = can('scm.so.override_po_processing_date');
 
   /* Task #118 — DB-backed dropdowns (was hardcoded). Falls back to the
      migration 0081 seed list when loading or when the DB has zero rows
@@ -3124,6 +3128,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   const processingLocked =
     originalProcessing !== '' && originalProcessing < today && !amendmentMode &&
     !canRemoveProcessingDate;
+  const processingPoLocked = originalProcessing !== '' && header.processing_date_po_locked === true && !canOverridePoProcessingDate;
 
   /* Owner 2026-07-05 — the SO PROCESS lock fires only once the SO has a
      Processing Date (which IS what being proceeded means) AND that day has
@@ -3446,14 +3451,19 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 fullWidth
                 className={styles.fieldInput}
                 value={form.processingDate}
-                disabled={scheduleDisabled || processingLocked}
-                title={processingLocked ? 'Processing date has passed — locked.' : undefined}
-                min={processingLocked ? undefined : today}
+                disabled={scheduleDisabled || processingLocked || processingPoLocked}
+                title={processingPoLocked
+                  ? 'This order already has a Purchase Order — only a Purchaser can change the Processing Date.'
+                  : processingLocked ? 'Processing date has passed — locked.' : undefined}
+                min={processingLocked || processingPoLocked ? undefined : today}
                 onChange={(iso) => set('processingDate', iso)}
                 style={datesXor && !form.processingDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
               />
               {/* Remove-Processing-Date gate: the direct clear is Super-Admin-only (2026-07-09); anyone else REQUESTS it for the Purchaser (2026-09-30). */}
-              <RequestProcessingDateRemoval docNo={header.doc_no} surface="desktop" hint={originalProcessing !== '' && !inputsDisabled && !processingLocked && !canRemoveProcessingDate && !amendmentMode} show={originalProcessing !== '' && !locked && !processingLocked && !canRemoveProcessingDate && !amendmentMode} />
+              <RequestProcessingDateRemoval docNo={header.doc_no} surface="desktop" hint={originalProcessing !== '' && !inputsDisabled && !processingLocked && !canRemoveProcessingDate && !amendmentMode} show={originalProcessing !== '' && !locked && !processingLocked && !processingPoLocked && !canRemoveProcessingDate && !amendmentMode} />
+              {processingPoLocked && !scheduleDisabled && (
+                <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>Has a Purchase Order — only a Purchaser can change this date.</span>
+              )}
             </label>
             <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Delivery Date</span>

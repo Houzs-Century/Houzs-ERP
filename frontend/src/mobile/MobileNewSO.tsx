@@ -274,6 +274,8 @@ type DetailResp = {
     amendment_eligible?: boolean | null;
     has_open_amendment?: boolean | null;
     open_amendment?: { id: string; status: string; amendment_no: string } | null;
+    /* BUG-101 — a live PO freezes the Processing Date (any company). */
+    processing_date_po_locked?: boolean | null;
   };
   items: SoItem[];
 };
@@ -672,6 +674,7 @@ export function MobileNewSO({
      Owner + IT Admin pass via `*`. Desktop SalesOrderDetail reads the identical
      key — one rule, both surfaces. */
   const canRemoveProcessingDate = can("scm.so.remove_processing_date");
+  const canOverridePoProcessingDate = can("scm.so.override_po_processing_date");
   /* Unit Price is LOCKED to the SKU Master sell price for everyone below admin
      (SO-SKU spec D4, Loo 2026-06-05) — the SAME gate the desktop SoLineCard uses
      (lib/auth): admin-level roles (or the temporary POS "hatch" role) may hand-
@@ -840,6 +843,7 @@ export function MobileNewSO({
      instead of writing the lines directly (desktop SalesOrderDetail parity).
      `hasOpenAmend` blocks raising a SECOND amendment while one is in flight. */
   const [amendEligible, setAmendEligible] = useState(false);
+  const [procPoLocked, setProcPoLocked] = useState(false);
   const [hasOpenAmend, setHasOpenAmend] = useState(false);
   /* FIX D2/D3 — the PERSISTED processing date (processing_date) drives the
      processing-date lock. Kept separate from the editable procDate form value so
@@ -1067,6 +1071,7 @@ export function MobileNewSO({
            edit view stays usable; Save then submits an amendment (see save()). */
         setAmendEligible(Boolean(detail.salesOrder.amendment_eligible));
         setHasOpenAmend(Boolean(detail.salesOrder.has_open_amendment));
+        setProcPoLocked(detail.salesOrder.processing_date_po_locked === true);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Couldn't load this order.");
       } finally {
@@ -1292,6 +1297,7 @@ export function MobileNewSO({
      would deny the very action the permission grants. Moving (rather than
      clearing) a locked date still 409s server-side — same as desktop. */
   const scheduleDatesLocked = migratedLocked || (procLocked && !amendmentMode && !canRemoveProcessingDate);
+  const procDateFrozen = isEdit && procPoLocked && origProcDate !== "" && !canOverridePoProcessingDate;
   /* Schedule-date floor (desktop parity) — the backend rejects a past
      Processing / Delivery Date (todayMY, UTC+8), so grey out earlier days in
      the picker exactly as SalesOrderNew / SalesOrderDetail do, instead of
@@ -2417,16 +2423,21 @@ export function MobileNewSO({
                     Owner 2026-07-16 — UNLESS the order is amendment-eligible:
                     then both dates are editable and go out as an amendment
                     request for approval instead of saving directly. */}
-                <Field label="Processing Date" error={touched && dateXorErr} scanned={scanned("procDate", procDate)} onClear={procDate && !scheduleDatesLocked ? () => setProcDate("") : undefined}>
+                <Field label="Processing Date" error={touched && dateXorErr} scanned={scanned("procDate", procDate)} onClear={procDate && !scheduleDatesLocked && !procDateFrozen ? () => setProcDate("") : undefined}>
                   <DateField
                     fullWidth
                     className="fld-i"
                     value={procDate}
-                    disabled={scheduleDatesLocked}
-                    min={procLocked ? undefined : today}
+                    disabled={scheduleDatesLocked || procDateFrozen}
+                    min={procLocked || procDateFrozen ? undefined : today}
                     onChange={(iso) => setProcDate(iso)}
                   />
                 </Field>
+                {procDateFrozen && !scheduleDatesLocked && (
+                  <div style={{ fontSize: 10, color: "#9aa093", marginTop: -3 }}>
+                    Has a Purchase Order — only a Purchaser can change this date.
+                  </div>
+                )}
                 <Field label="Delivery Date" error={touched && dateXorErr} scanned={scanned("delivDate", delivDate)} onClear={delivDate && !scheduleDatesLocked ? () => setDelivDate("") : undefined}>
                   <DateField
                     fullWidth
@@ -2441,7 +2452,7 @@ export function MobileNewSO({
                 <div style={{ fontSize: 10, color: "#9aa093", marginTop: -3 }}>
                   {amendmentMode ? "Changing a date here submits an amendment request — it applies once approved." : "Set both dates together, or leave both empty to keep this a draft."}
                 </div>
-                <RequestProcessingDateRemoval docNo={docNo ?? ""} surface="mobile" show={!!(isEdit && docNo && origProcDate) && !procLocked && !amendmentMode && !migratedLocked && !lineLocked && !canRemoveProcessingDate} />
+                <RequestProcessingDateRemoval docNo={docNo ?? ""} surface="mobile" show={!!(isEdit && docNo && origProcDate) && !procLocked && !procDateFrozen && !amendmentMode && !migratedLocked && !lineLocked && !canRemoveProcessingDate} />
                 <Field label="Note" scanned={scanned("note", note)}>
                   <input className="fld-i" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Internal notes — SO detail only" />
                 </Field>
