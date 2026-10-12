@@ -48,7 +48,7 @@ import { chunkIn } from './paginate-all';
 /** PO statuses that can still receive a GRN under their number. A CANCELLED
  *  PO never will; a DRAFT PO is reference-only (mirrors recomputeSoPicked's
  *  dead-PO set in mfg-purchase-orders.ts). */
-const DEAD_PO_STATUSES = new Set(['CANCELLED', 'DRAFT']);
+export const DEAD_PO_STATUSES = new Set(['CANCELLED', 'DRAFT']);
 
 /** Resolve each SO line's EXPECTED batch (bound LIVE PO number + ETA). A line
  *  with no live bound PO is simply absent from the returned map (caller treats
