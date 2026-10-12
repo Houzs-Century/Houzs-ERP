@@ -2435,7 +2435,7 @@ export function MobileNewSO({
                 </Field>
                 {procDateFrozen && !scheduleDatesLocked && (
                   <div style={{ fontSize: 10, color: "#9aa093", marginTop: -3 }}>
-                    Has a Purchase Order — only the Delivery Date can change.
+                    Has a Purchase Order — only a Purchaser can change this date.
                   </div>
                 )}
                 <Field label="Delivery Date" error={touched && dateXorErr} scanned={scanned("delivDate", delivDate)} onClear={delivDate && !scheduleDatesLocked ? () => setDelivDate("") : undefined}>

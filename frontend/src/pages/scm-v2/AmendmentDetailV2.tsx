@@ -1047,8 +1047,8 @@ export function AmendmentDetailV2() {
                   {amendment.po_date_override_by ? (
                     <p className="rounded-md border border-warn/40 bg-warn/10 px-2.5 py-2 text-[12px] text-ink">
                       This order already has a Purchase Order. The Processing Date change was
-                      requested by {actorNameOf(asStr(amendment.po_date_override_by))} under the
-                      PO exception — check with the supplier before approving.
+                      raised by {actorNameOf(asStr(amendment.po_date_override_by))} (Purchaser
+                      exception) — check with the supplier before approving.
                     </p>
                   ) : null}
                   {status === "REQUESTED" && purchaserOkRequired && (

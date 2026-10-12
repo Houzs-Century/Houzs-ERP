@@ -3453,7 +3453,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 value={form.processingDate}
                 disabled={scheduleDisabled || processingLocked || processingPoLocked}
                 title={processingPoLocked
-                  ? 'This order already has a Purchase Order — the Processing Date cannot be changed.'
+                  ? 'This order already has a Purchase Order — only a Purchaser can change the Processing Date.'
                   : processingLocked ? 'Processing date has passed — locked.' : undefined}
                 min={processingLocked || processingPoLocked ? undefined : today}
                 onChange={(iso) => set('processingDate', iso)}
@@ -3462,7 +3462,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               {/* Remove-Processing-Date gate: the direct clear is Super-Admin-only (2026-07-09); anyone else REQUESTS it for the Purchaser (2026-09-30). */}
               <RequestProcessingDateRemoval docNo={header.doc_no} surface="desktop" hint={originalProcessing !== '' && !inputsDisabled && !processingLocked && !canRemoveProcessingDate && !amendmentMode} show={originalProcessing !== '' && !locked && !processingLocked && !processingPoLocked && !canRemoveProcessingDate && !amendmentMode} />
               {processingPoLocked && !scheduleDisabled && (
-                <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>Has a Purchase Order — only the Delivery Date can change.</span>
+                <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>Has a Purchase Order — only a Purchaser can change this date.</span>
               )}
             </label>
             <label className={styles.field} style={{ gridColumn: 'span 2' }}>

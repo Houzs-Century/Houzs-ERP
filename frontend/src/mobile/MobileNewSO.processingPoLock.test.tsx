@@ -63,7 +63,7 @@ describe("phone SO editor — Processing Date under a live PO", () => {
     await waitFor(() => expect(screen.getByDisplayValue("2027/01/10")).toBeTruthy());
     expect((screen.getByDisplayValue("2027/01/10") as HTMLInputElement).disabled).toBe(true);
     expect((screen.getAllByDisplayValue("2027/01/20")[0] as HTMLInputElement).disabled).toBe(false); // header first, the line card after
-    expect(screen.getByText(/only the delivery date can change/i)).toBeTruthy();
+    expect(screen.getByText(/only a purchaser can change this date/i)).toBeTruthy();
   });
 
   it("a holder of the PO exception can still change it", async () => {

@@ -95,7 +95,7 @@ describe("desktop SO editor — Processing Date under a live PO", () => {
     mount({ ...header, processing_date_po_locked: true });
     expect(proc().disabled).toBe(true);
     expect(deliv().disabled).toBe(false);
-    expect(screen.getByText(/only the delivery date can change/i)).toBeTruthy();
+    expect(screen.getByText(/only a purchaser can change this date/i)).toBeTruthy();
   });
 
   it("stays frozen in amendment mode, where the date lock alone would open it", () => {
@@ -108,7 +108,7 @@ describe("desktop SO editor — Processing Date under a live PO", () => {
     auth.override = true;
     mount({ ...header, processing_date_po_locked: true });
     expect(proc().disabled).toBe(false);
-    expect(screen.queryByText(/only the delivery date can change/i)).toBeNull();
+    expect(screen.queryByText(/only a purchaser can change this date/i)).toBeNull();
   });
 
   it("with no PO, the Processing Date is editable as before", () => {

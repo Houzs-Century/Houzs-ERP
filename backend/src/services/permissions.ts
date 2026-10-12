@@ -106,7 +106,7 @@ export const PERMISSIONS: PermissionDef[] = [
   // super_admin; Houzs has no live staff_role (the SCM bridge pins every caller
   // to one super_admin row), so gate on this admin-level key instead. Owner + IT
   // Admin cover it via "*"; grant the ROLE it belongs to under Team > Roles & Permissions.
-  { key: "scm.so.override_po_processing_date", resource: "Supply Chain", verb: "manage", label: "Change Processing Date under a PO", description: "Move or clear the Processing Date of a Sales Order that already has a Purchase Order (BUG-101 exception; a Purchaser still approves the amendment)" },
+  { key: "scm.so.override_po_processing_date", resource: "Supply Chain", verb: "manage", label: "Change Processing Date under a PO", description: "Move or clear the Processing Date of a Sales Order that already has a Purchase Order (BUG-101: Purchaser only, never sales)" },
   { key: "scm.so.remove_processing_date", resource: "Supply Chain", verb: "manage", label: "Remove SO Processing Date", description: "Clear an already-set Processing Date on a SCM Sales Order (admin-level; pulls the order back out of the Proceed lane)" },
   // Owner 2026-09-23 — a keyed-in payment's transaction-slip date must fall in
   // the last 14 days (scm/shared/payment-slip-date.ts owns the window). This key
