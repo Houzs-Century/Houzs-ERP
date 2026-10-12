@@ -58,6 +58,7 @@ import {
   pushVenturePortalCatalogue,
   vpCatalogueUrl,
 } from '../lib/venture-portal-catalogue';
+import { VP_ATTENDANCE_URL_PROBLEM, vpAttendanceUrl } from '../lib/venture-portal-attendance';
 import { writeAudit } from '../../services/audit';
 import { resolveCallerStaffId } from '../lib/salesScope';
 
@@ -236,6 +237,16 @@ venturePortalFeed.get('/status', async (c) => {
   }
   const catalogueUrl = vpCatalogueUrl(cfg.get('vp.url')?.v ?? '');
 
+  /* The Sales Attending push: per company, the same record as the catalogue's. */
+  const { data: attendanceRows, error: attendanceErr } = await sb
+    .from('venture_portal_attendance_state')
+    .select('company_id, delivered_digest, delivered_at, portal_result, last_digest, last_outcome, last_attempt_at, last_http_status, last_error, last_bytes')
+    .order('company_id', { ascending: true });
+  if (attendanceErr) {
+    return c.json({ error: 'attendance_read_failed', message: attendanceErr.message }, 500);
+  }
+  const attendanceUrl = vpAttendanceUrl(cfg.get('vp.url')?.v ?? '');
+
   return c.json({
     feed: {
       enabled: scope !== 'off',
@@ -264,6 +275,13 @@ venturePortalFeed.get('/status', async (c) => {
       urlProblem: cfg.get('vp.url')?.v && !catalogueUrl ? VP_CATALOGUE_URL_PROBLEM : null,
       maxPostBytes: VP_CATALOGUE_MAX_POST_BYTES,
       companies: (catalogueRows as unknown[] | null) ?? [],
+    },
+    attendance: {
+      /* Null with a vp.url set means Sales Attending is NOT being sent — see
+         venture-portal-attendance.ts. */
+      url: attendanceUrl,
+      urlProblem: cfg.get('vp.url')?.v && !attendanceUrl ? VP_ATTENDANCE_URL_PROBLEM : null,
+      companies: (attendanceRows as unknown[] | null) ?? [],
     },
     canManage: MANAGE_KEYS.some((k) => hasHouzsPerm(c, k)),
   });
