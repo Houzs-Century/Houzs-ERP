@@ -11,6 +11,7 @@
 
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { isDocumentHeld } from './document-hold';
+import { lineExportDescription2 } from './line-export-description2';
 import { paginateAll } from './paginate-all';
 import { RECEIVABLE_PO_STATUSES } from './source-document-gates';
 import type { OpenPoLine, PoStatusRef, SupplierRef, SupplierSkuBinding } from './grn-scan-match';
@@ -29,6 +30,7 @@ export async function loadOpenPoLines(
       .from('purchase_order_items')
       .select(`
         id, purchase_order_id, item_code, material_name, supplier_sku, qty, received_qty, warehouse_id,
+        item_group, variants, description2,
         po:purchase_orders!inner ( id, po_number, supplier_id, status, on_hold, company_id, purchase_location_id )
       `)
       .in('purchase_orders.status', RECEIVABLE_PO_STATUSES as unknown as string[]);
@@ -41,6 +43,7 @@ export async function loadOpenPoLines(
     id: string; purchase_order_id: string; item_code: string | null;
     material_name: string | null; supplier_sku: string | null;
     qty: number | null; received_qty: number | null; warehouse_id: string | null;
+    item_group: string | null; variants: unknown; description2: string | null;
     po: { id: string; po_number: string; supplier_id: string | null; status: string | null; on_hold: boolean | null; purchase_location_id: string | null } | null;
   };
   const rows = (data ?? []) as unknown as Row[];
@@ -68,6 +71,7 @@ export async function loadOpenPoLines(
       supplierSku: r.supplier_sku ?? null,
       remaining,
       locationCode: codeById.get(whOf(r) ?? '') ?? null,
+      description2: lineExportDescription2(r.item_group, r.variants, r.description2),
     });
   }
   return out;
