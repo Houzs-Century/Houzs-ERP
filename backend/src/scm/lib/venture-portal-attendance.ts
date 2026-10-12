@@ -39,6 +39,7 @@ import {
   postPart,
   vpCatalogueDecision,
   vpCatalogueVerdict,
+  vpPushStateRow,
   vpSiblingUrl,
   type ScmClient,
   type VpCatalogueOutcome,
@@ -207,23 +208,10 @@ export async function pushVenturePortalAttendance(
     result.httpStatus = res.status;
     result.note = verdict.outcome === 'sent' ? null : `${verdict.note}${failureText ? ` — ${failureText}` : ''}`;
 
-    const row: Record<string, unknown> = {
-      company_id: companyId,
-      last_digest: digest,
-      last_outcome: verdict.outcome,
-      last_attempt_at: now,
-      last_http_status: result.httpStatus,
-      last_error: result.note,
-      last_bytes: result.bytes,
-      updated_at: now,
-    };
-    if (verdict.delivered === 'replace') {
-      row.delivered_digest = digest;
-      row.delivered_at = now;
-      row.portal_result = portalAnswer(res.text);
-    } else if (verdict.delivered === 'clear') {
-      row.delivered_digest = null;
-    }
+    const row = vpPushStateRow({
+      companyId, digest, verdict, httpStatus: result.httpStatus, note: result.note,
+      bytes: result.bytes, parts: null, portalResult: portalAnswer(res.text), now,
+    });
     /* A lost write leaves the previous record in place, so the next run sees a
        digest it never recorded as delivered and normally sends again. */
     const { error: writeErr } = await sb

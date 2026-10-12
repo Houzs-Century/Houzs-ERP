@@ -187,6 +187,44 @@ export function vpCatalogueVerdict(
 }
 
 /**
+ * The state row a push records for one company — the catalogue's and the
+ * Sales Attending push's alike, so the two records cannot drift. PURE.
+ * `delivered_digest` follows the verdict (see vpCatalogueVerdict); `parts` is
+ * null for a push that is always one post (its table has no last_parts).
+ */
+export function vpPushStateRow(input: {
+  companyId: number;
+  digest: string;
+  verdict: { outcome: VpCatalogueOutcome; delivered: 'replace' | 'keep' | 'clear' };
+  httpStatus: number | null;
+  note: string | null;
+  bytes: number;
+  parts: number | null;
+  portalResult: unknown;
+  now: string;
+}): Record<string, unknown> {
+  const row: Record<string, unknown> = {
+    company_id: input.companyId,
+    last_digest: input.digest,
+    last_outcome: input.verdict.outcome,
+    last_attempt_at: input.now,
+    last_http_status: input.httpStatus,
+    last_error: input.note,
+    last_bytes: input.bytes,
+    updated_at: input.now,
+  };
+  if (input.parts !== null) row.last_parts = input.parts;
+  if (input.verdict.delivered === 'replace') {
+    row.delivered_digest = input.digest;
+    row.delivered_at = input.now;
+    row.portal_result = input.portalResult;
+  } else if (input.verdict.delivered === 'clear') {
+    row.delivered_digest = null;
+  }
+  return row;
+}
+
+/**
  * Cut a body into POSTs of at most `maxBytes`, never splitting a section. PURE.
  *
  * Every part is a complete delivery on its own — companyId, full: true, the
@@ -456,24 +494,10 @@ export async function pushVenturePortalCatalogue(
     result.httpStatus = statuses[statuses.length - 1] ?? null;
     result.note = verdict.outcome === 'sent' ? null : `${verdict.note}${failureText ? ` — ${failureText}` : ''}`;
 
-    const row: Record<string, unknown> = {
-      company_id: companyId,
-      last_digest: digest,
-      last_outcome: verdict.outcome,
-      last_attempt_at: now,
-      last_http_status: result.httpStatus,
-      last_error: result.note,
-      last_bytes: result.bytes,
-      last_parts: result.parts,
-      updated_at: now,
-    };
-    if (verdict.delivered === 'replace') {
-      row.delivered_digest = digest;
-      row.delivered_at = now;
-      row.portal_result = answers;
-    } else if (verdict.delivered === 'clear') {
-      row.delivered_digest = null;
-    }
+    const row = vpPushStateRow({
+      companyId, digest, verdict, httpStatus: result.httpStatus, note: result.note,
+      bytes: result.bytes, parts: result.parts, portalResult: answers, now,
+    });
     /* A lost write leaves the previous record in place, so the next run sees a
        digest it never recorded as delivered and normally sends again. It is
        reported in the result and the log, not retried here. */

@@ -197,7 +197,7 @@ describe('which requests earn a drain', () => {
     const c = fakeCtx();
     expect((await call('POST', '/connection', c)).status).toBe(200);
     await c.settle();
-    expect(sb.tables.venture_portal_attendance_changes ?? []).toEqual([]);
+    expect(sb.tables.venture_portal_attendance_changes).toEqual([]);
     err.mockRestore();
   });
 

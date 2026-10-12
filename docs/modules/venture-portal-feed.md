@@ -5,7 +5,8 @@ and cancellations — to the Venture Portal, which pays Revenue Department
 commission from it. Replaces a monthly hand-exported `.xlsx`. Used by whoever
 administers sync connections (Settings) and read by Finance/Revenue ops
 checking delivery status. The same switch and key also push the product
-catalogue, **items only** — see [Catalogue push](#catalogue-push-items-only).
+catalogue, **items only** — see [Catalogue push](#catalogue-push-items-only) —
+and the PMS's Sales Attending — see [Sales Attending push](#sales-attending-push).
 
 ## Statuses and flow
 
@@ -196,6 +197,45 @@ whatever the digest. Permissions: `POST /catalogue/send` (send now, even when
 unchanged) needs the manage keys; `GET /status` → `catalogue` shows each
 company's row.
 
+## Sales Attending push
+
+Who the PMS lists at each project (a brand's booth at a fair) goes to `POST
+<portal>/api/erp/v1/sales-attending`: the portal scores each salesperson's Fair
+result at the booth they are listed at, and pays outstation claims for it.
+Same switch, company scope, `vp.url` and `vp.secret` as the orders; the receiver
+is `vp.url` with its trailing `/sales-orders` replaced by `/sales-attending`
+(any other `vp.url` → nothing sent, `GET /status` → `attendance.urlProblem`).
+
+- **The body** (`scm.vp_build_attendance`, one POST per company): `companyId`,
+  `since`, `snapshotAt`, and `booths` — EVERY project of the company whose
+  `start_date` reads `YYYY-MM-DD` on or after `since`, with or without
+  anybody listed, cancelled ones included, ordered by start date then id. Each
+  booth: `projectId`, `code`, `name`, `brand`, `venue`, `organizer`,
+  `startDate`, `endDate`, `status`, `eventType` (the type's slug) and
+  `attendees` — each listed rep's `salesRepId`, `code`, `name` and
+  `salespersonId`, the `scm.staff` id of the rep's login (the id the order
+  feed sends as the salesperson; `null` without a login), ordered by name.
+  Named keys only.
+- **The window and the retire rule.** `since` = the first day of the month six
+  months back, in Malaysia. The portal retires any of its booths from `since`
+  on that a delivery does not list, so the body must always be the WHOLE
+  window — never filter it to booths with attendees or to changed rows.
+- **Cadence: live.** Statement triggers on `public.projects` (insert, delete,
+  and an update of a column the body sends), `public.project_sales_attendees`
+  (any write) and `public.sales_reps` (name, code, login, delete) mark
+  `scm.venture_portal_attendance_changes`; the mark function swallows its own
+  failure, so a PMS save never fails because of the portal. The write kick —
+  mounted on `/api/scm/*` and `/api/projects/*` — pushes after the order drain
+  and the catalogue while a mark is there; the `*/5` cron runs the same push
+  after the catalogue and stays the safety net.
+- **Digest and outcomes**: exactly the catalogue's —
+  `scm.vp_attendance_digest`, `scm.vp_attendance_snapshot` (the digest of the
+  body WITHOUT `snapshotAt`), `scm.venture_portal_attendance_state`, the same
+  decision, verdict and table above (one post, so "an earlier post was
+  accepted" never happens). There is no send-now button: a list the portal
+  refused waits for the next change. `GET /status` → `attendance` shows each
+  company's row.
+
 ## Where the code is
 
 - `backend/src/db/migrations-pg/20260912T1800_scm_venture_portal_outbox.sql`
@@ -218,10 +258,15 @@ company's row.
 - `backend/src/scm/lib/venture-portal-catalogue.ts` — the catalogue sender
   (URL, digest decision, section split, response verdict); its SQL is
   executed by `backend/tests-pg/vpCatalogueFeed.pg.test.ts`.
+- `backend/src/db/migrations-pg/*_scm_vp_sales_attending.sql` and
+  `backend/src/scm/lib/venture-portal-attendance.ts` — the Sales Attending
+  builder, digest, state, marks and sender (it reuses the catalogue's URL,
+  decision and verdict); the SQL is executed by
+  `backend/tests-pg/vpSalesAttending.pg.test.ts`.
 - `backend/src/scm/lib/venture-portal-outbox.ts` — sender, response
   taxonomy, reconcile, secret minting.
 - `backend/src/scm/lib/venture-portal-kick.ts` — the request-triggered drain
-  middleware; the catalogue step rides the same task.
+  middleware; the catalogue and Sales Attending steps ride the same task.
 - `backend/src/scm/lib/venture-portal-feed-flag.ts` — switch + company
   scope, cached, fails closed to off.
 - `backend/src/scm/routes/venture-portal-feed.ts` — the route surface.
