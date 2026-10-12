@@ -49,7 +49,7 @@
 
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { isServiceLine } from '../shared/service-sku';
-import { resolveExpectedBatchBySoItem } from './dropship-batch';
+import { DEAD_PO_STATUSES, resolveExpectedBatchBySoItem } from './dropship-batch';
 import { chunkIn, UUID_CHUNK } from './paginate-all';
 import type { MrpResult } from '../routes/mrp';
 import { pgrestIn } from './pgrest-in-list';
@@ -177,19 +177,17 @@ export async function traceDoShipmentSources(
   doIds: Array<string | null | undefined>,
 ): Promise<DoShipmentTrace> {
   const byBucket = new Map<string, MutableTrace>();
-  const byDo = new Map<string, MutableTrace>();
+  const batchedBuckets = new Set<string>();
   const ids = [...new Set(doIds.filter((x): x is string => Boolean(x)))];
   if (ids.length === 0) return { byBucket: new Map(), byDo: new Map() };
 
   const addPo = (doId: string, code: string, vk: string | null, po: string | null): void => {
     if (!po) return;
     traceOf(byBucket, bucketKey(doId, code, vk)).pos.add(po);
-    traceOf(byDo, doId).pos.add(po);
   };
   const addAdj = (doId: string, code: string, vk: string | null, qty: number): void => {
     if (!(qty > 0)) return;
     traceOf(byBucket, bucketKey(doId, code, vk)).adjQty += qty;
-    traceOf(byDo, doId).adjQty += qty;
   };
 
   for (let i = 0; i < ids.length; i += CHUNK) {
@@ -203,7 +201,9 @@ export async function traceDoShipmentSources(
         .in('source_doc_id', chunk)
         .not('batch_no', 'is', null);
       for (const m of (movs ?? []) as Array<{ source_doc_id: string | null; item_code: string | null; variant_key: string | null; batch_no: string | null }>) {
-        if (m.source_doc_id && m.item_code) addPo(m.source_doc_id, m.item_code, m.variant_key, m.batch_no);
+        if (!m.source_doc_id || !m.item_code) continue;
+        addPo(m.source_doc_id, m.item_code, m.variant_key, m.batch_no);
+        batchedBuckets.add(bucketKey(m.source_doc_id, m.item_code, m.variant_key));
       }
     } catch { /* column/table absent — the consumption path still contributes */ }
     // 2. FIFO lot consumptions → consumed lots, classified (batch / GRN-heal / adjustment).
@@ -223,7 +223,133 @@ export async function traceDoShipmentSources(
       }
     } catch { /* consumption table absent — movement batches stand alone */ }
   }
-  return { byBucket: freeze(byBucket), byDo: freeze(byDo) };
+  let traced = freeze(byBucket);
+  try {
+    const lines = await doLinesForBoundPo(sb, ids);
+    const received = await receivedBoundPosBySoItem(sb, lines.map((l) => l.soItemId));
+    traced = preferReceivedBoundPo(traced, batchedBuckets, lines, received);
+  } catch { /* bound-PO read failed — the ledger answer stands */ }
+  return { byBucket: traced, byDo: rollUpByDo(traced) };
+}
+
+/* ── BUG-103 (2026-10-12, Sim, HC-DO-2610-154) ────────────────────────────────
+   An un-batched OUT (bed frame / mattress / accessory) is consumed by plain
+   FIFO, and FIFO is a COSTING order, not a picking order: it ate the 1 unit of
+   HC-PO-2609-187 (raised for HC-SO-010769) while the 3 CODY the warehouse had
+   labelled for HC-SO-013109 sat under HC-PO-009812 as un-numbered AutoCount
+   cutover lots. The DO printed 2609-187 and the warehouse could not find the
+   goods. Goods bought for an SO line are stored under that line's PO, so once
+   the line's own PO has received the item, that PO is the answer for the line.
+   A batched bucket (sofa dye lot, drop-ship expected batch) is left alone: its
+   OUT consumed strictly from that batch, so the ledger already is the physical
+   answer. Every line sharing the bucket must have such a PO, or the ledger
+   stands — one line's PO cannot speak for another line's units. */
+export function preferReceivedBoundPo(
+  byBucket: ReadonlyMap<string, BucketTrace>,
+  batchedBuckets: ReadonlySet<string>,
+  lines: ReadonlyArray<{ bucket: string; itemCode: string; soItemId: string | null }>,
+  receivedBound: ReadonlyMap<string, ReadonlyArray<{ itemCode: string; poNumber: string }>>,
+): Map<string, BucketTrace> {
+  const out = new Map(byBucket);
+  const linesByBucket = new Map<string, Array<{ itemCode: string; soItemId: string | null }>>();
+  for (const l of lines) {
+    const arr = linesByBucket.get(l.bucket) ?? [];
+    arr.push(l);
+    linesByBucket.set(l.bucket, arr);
+  }
+  for (const [bucket, bucketLines] of linesByBucket.entries()) {
+    if (batchedBuckets.has(bucket)) continue;
+    const pos = new Set<string>();
+    const allBound = bucketLines.every((l) => {
+      const hits = (l.soItemId ? receivedBound.get(l.soItemId) ?? [] : [])
+        .filter((b) => b.itemCode === l.itemCode);
+      for (const h of hits) pos.add(h.poNumber);
+      return hits.length > 0;
+    });
+    if (!allBound) continue;
+    out.set(bucket, {
+      pos: [...pos].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+      adjQty: 0,
+    });
+  }
+  return out;
+}
+
+const rollUpByDo = (byBucket: ReadonlyMap<string, BucketTrace>): Map<string, BucketTrace> => {
+  const acc = new Map<string, MutableTrace>();
+  for (const [k, v] of byBucket.entries()) {
+    const t = traceOf(acc, k.slice(0, k.indexOf('::')));
+    for (const po of v.pos) t.pos.add(po);
+    t.adjQty += v.adjQty;
+  }
+  return freeze(acc);
+};
+
+async function doLinesForBoundPo(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  doIds: string[],
+): Promise<Array<{ bucket: string; itemCode: string; soItemId: string | null }>> {
+  const out: Array<{ bucket: string; itemCode: string; soItemId: string | null }> = [];
+  for (let i = 0; i < doIds.length; i += CHUNK) {
+    const { data, error } = await sb.from('delivery_order_items')
+      .select('delivery_order_id, so_item_id, item_code, item_group, variants, committed_po_batch_no')
+      .in('delivery_order_id', doIds.slice(i, i + CHUNK));
+    if (error) throw new Error(error.message);
+    for (const r of (data ?? []) as Array<{
+      delivery_order_id: string; so_item_id: string | null; item_code: string | null;
+      item_group: string | null; variants: VariantAttrs | null; committed_po_batch_no: string | null;
+    }>) {
+      if (!r.item_code) continue;
+      if (isServiceLine({ itemGroup: r.item_group ?? null, itemCode: r.item_code })) continue;
+      // Batched by construction even when the OUT's stored variant key drifted
+      // from the line's, so the batchedBuckets match alone would miss it.
+      if (String(r.item_group ?? '').toUpperCase().includes('SOFA') || r.committed_po_batch_no) continue;
+      const vk = computeVariantKey(r.item_group ?? null, r.variants ?? null);
+      out.push({ bucket: bucketKey(r.delivery_order_id, r.item_code, vk), itemCode: r.item_code, soItemId: r.so_item_id });
+    }
+  }
+  return out;
+}
+
+/* so_item_id → the live POs raised for that SO line that have received at
+   least one unit, with the item each PO line orders. */
+async function receivedBoundPosBySoItem(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  soItemIds: Array<string | null>,
+): Promise<Map<string, Array<{ itemCode: string; poNumber: string }>>> {
+  const out = new Map<string, Array<{ itemCode: string; poNumber: string }>>();
+  const ids = [...new Set(soItemIds.filter((x): x is string => Boolean(x)))];
+  if (ids.length === 0) return out;
+  const links: Array<{ so_item_id: string; item_code: string | null; purchase_order_id: string | null }> = [];
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const { data, error } = await sb.from('purchase_order_items')
+      .select('so_item_id, item_code, purchase_order_id')
+      .in('so_item_id', ids.slice(i, i + CHUNK))
+      .gt('received_qty', 0);
+    if (error) throw new Error(error.message);
+    for (const r of (data ?? []) as typeof links) links.push(r);
+  }
+  const poIds = [...new Set(links.map((l) => l.purchase_order_id).filter((x): x is string => Boolean(x)))];
+  const poNoById = new Map<string, string>();
+  for (let i = 0; i < poIds.length; i += CHUNK) {
+    const { data, error } = await sb.from('purchase_orders')
+      .select('id, po_number, status')
+      .in('id', poIds.slice(i, i + CHUNK));
+    if (error) throw new Error(error.message);
+    for (const p of (data ?? []) as Array<{ id: string; po_number: string | null; status: string | null }>) {
+      if (p.po_number && !DEAD_PO_STATUSES.has((p.status ?? '').toUpperCase())) poNoById.set(p.id, p.po_number);
+    }
+  }
+  for (const l of links) {
+    const poNumber = l.purchase_order_id ? poNoById.get(l.purchase_order_id) : undefined;
+    if (!poNumber || !l.item_code) continue;
+    const arr = out.get(l.so_item_id) ?? [];
+    arr.push({ itemCode: l.item_code, poNumber });
+    out.set(l.so_item_id, arr);
+  }
+  return out;
 }
 
 /* ── FORWARD adapters (the shapes each surface consumes) ───────────────────── */
