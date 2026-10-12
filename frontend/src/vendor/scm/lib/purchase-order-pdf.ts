@@ -178,8 +178,8 @@ const fmtAmount = (centi: number): string =>
   (centi / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /** DEV-65 (Sim 2026-10-09): delivery under 2 weeks after the PO date prints
-    "URGENT", under 1 week "TOP URGENT". Compared on the printed (MYT) dates so
-    the badge always agrees with the Date / Delivery Date rows beside it. */
+    "URGENT", under 1 week "TOP URGENT". Compared on MYT calendar days, the
+    same days the PDF prints. */
 export function poUrgencyLabel(
   poDate: string | null | undefined,
   deliveryDate: string | null | undefined,
@@ -477,8 +477,10 @@ async function renderPurchaseOrderInto(
   );
 
   /* Boxed under the PO DETAILS rows; the row geometry mirrors drawInfoColumns
-     (first baseline +4.6, 4 per row, blank rows skipped). */
-  const urgency = poUrgencyLabel(header.po_date, effDelivery);
+     (first baseline +4.6, 4 per row, blank rows skipped). Judged on OUR
+     delivery date, not the supplier ETA: an order that was urgent stays urgent
+     however far the supplier postpones (Sim 2026-10-12). */
+  const urgency = poUrgencyLabel(header.po_date, header.expected_at);
   if (urgency) {
     const printedRows = poDetailRows.filter(([, v]) => v.trim()).length;
     const boxX = pageW / 2 + 2;

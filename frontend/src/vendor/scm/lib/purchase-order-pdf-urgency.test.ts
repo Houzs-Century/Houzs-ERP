@@ -91,8 +91,14 @@ describe('purchase-order-pdf urgency badge', () => {
     expect(raw).toContain('(TOP URGENT)');
   });
 
-  it('uses the supplier-revised delivery date', async () => {
+  it('stays urgent after the supplier ETA moves later', async () => {
     const { raw } = await render(header('2026-10-14', { supplier_delivery_date_2: '2026-11-30' }));
+    expect(raw).toContain('(TOP URGENT)');
+    expect(raw).toContain('(: 2026/11/30)');
+  });
+
+  it('does not turn urgent when the supplier ETA is earlier than ours', async () => {
+    const { raw } = await render(header('2026-11-30', { supplier_delivery_date_2: '2026-10-14' }));
     expect(raw).not.toContain('URGENT)');
   });
 
