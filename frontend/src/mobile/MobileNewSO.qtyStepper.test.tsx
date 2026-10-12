@@ -30,7 +30,7 @@ afterEach(cleanup);
 
 const DOC = "HC-SO-2610-001";
 
-const mount = () => {
+const mount = (unitPriceSen = 239900) => {
   detailBody.current = {
     salesOrder: {
       doc_no: DOC, status: "CONFIRMED", so_date: "2026-10-01", debtor_name: "Ada", phone: "+60123456789",
@@ -40,7 +40,7 @@ const mount = () => {
     },
     items: [{
       id: "line-1", doc_no: DOC, item_group: "mattress", item_code: "MT-QUEEN", description: "MT-QUEEN name", qty: 1,
-      unit_price_sen: 239900, discount_sen: 0, variants: {}, remark: null, cancelled: false,
+      unit_price_sen: unitPriceSen, discount_sen: 0, variants: {}, remark: null, cancelled: false,
       line_delivery_date: "2026-10-20", line_delivery_date_overridden: false, downstream_frozen: false,
     }],
   };
@@ -84,5 +84,17 @@ describe("phone SO line card — qty stepper (DEV-62)", () => {
     expect(fresh.value).toBe("1500");
     fireEvent.change(fresh, { target: { value: "0" } });
     expect(fresh.value).toBe("0");
+    fireEvent.blur(fresh);
+    expect(fresh.value).toBe("");
+  });
+
+  it("a saved RM 0 line on Edit Sales Order is blank too, with the 0.00 placeholder", async () => {
+    const { container } = mount(0);
+    await waitFor(() => expect(container.querySelectorAll("input.fld-i.money")).toHaveLength(1), { timeout: 4000 });
+    const price = container.querySelector("input.fld-i.money") as HTMLInputElement;
+    expect(price.value).toBe("");
+    expect(price.placeholder).toBe("0.00");
+    fireEvent.change(price, { target: { value: "3800" } });
+    expect(price.value).toBe("3800");
   });
 });
