@@ -168,9 +168,14 @@ const CreateBody = z.object({
   active:         z.boolean().optional(),
 });
 
+const MODEL_CODE_MAX = 32;
+
 const PatchBody = z.object({
   branding:       z.string().trim().max(80).nullable().optional(),
-  modelCode:      z.string().trim().min(1).max(32).optional(),
+  // The 32-character limit is checked in the handler, and only for a CHANGED
+  // code: imported models carry longer codes, and the edit screen sends the
+  // code back on every save, so a schema limit made those models uneditable.
+  modelCode:      z.string().trim().min(1).max(200).optional(),
   name:           z.string().trim().min(1).max(200).optional(),
   // category: any other category (shared/category-swap.ts), and it moves the
   // model's SKUs with it so none is orphaned in the other category.
@@ -511,9 +516,16 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
   // just ACTIVATED (sofa auto-SKU rule below — Chairman 2026-06-02).
   const { data: before } = await scopeToCompanyId(supabase
     .from('product_models')
-    .select('allowed_options, category')
+    .select('allowed_options, category, model_code')
     .eq('id', id), co.companyId)
     .maybeSingle();
+  const beforeCode = (before as { model_code?: string } | null)?.model_code ?? null;
+  if (u.model_code !== undefined && u.model_code !== beforeCode && String(u.model_code).length > MODEL_CODE_MAX) {
+    return c.json({
+      error: 'model_code_too_long',
+      reason: `Model code can be at most ${MODEL_CODE_MAX} characters.`,
+    }, 400);
+  }
   const beforeCategory = (before as { category?: string } | null)?.category ?? null;
   if (u.category !== undefined && u.category === beforeCategory) delete u.category;
   if (u.category !== undefined && !categorySwapAllowed(beforeCategory, String(u.category))) {
