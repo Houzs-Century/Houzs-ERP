@@ -102,6 +102,9 @@ export type AmendmentDetail = {
     /* BUG-101 — the Purchaser's OK on a Delivery Date brought forward. */
     purchaser_ok_by?: string | null;
     purchaser_ok_at?: string | null;
+    /* BUG-101 — the requester changed a PO-frozen Processing Date under
+       scm.so.override_po_processing_date. */
+    po_date_override_by?: string | null;
   };
   lines: AmendmentLine[];
   salesOrder: { doc_no: string; status: string; revision: number } | null;

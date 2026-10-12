@@ -140,7 +140,7 @@ import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
 /* "A PO is already out for this SO" — the second road to the same soft lock
    (owner 2026-08-12, 2990 only). See lib/so-po-lock.ts. */
 import { soHasLivePo, soPoLocked } from '../lib/so-po-lock';
-import { deliveryBroughtForward, deliveryNeedsPurchaserOk, processingDateFrozenByPo, PROCESSING_DATE_PO_LOCKED } from '../shared/so-po-date-rule';
+import { deliveryBroughtForward, deliveryNeedsPurchaserOk, processingDateFrozenByPo, PROCESSING_DATE_PO_LOCKED, PROCESSING_DATE_PO_OVERRIDE_KEY } from '../shared/so-po-date-rule';
 import { notifySoAmendmentPurchaserOkNeeded } from '../../services/amendmentNotify';
 import { monthBoundsMy, rangeBoundsMy, todayMyt, mytDateOf } from '../lib/my-time';
 // (canViewAllSales / isSelfScopedSales removed — replaced by flat permission
@@ -6213,7 +6213,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     if (proc !== undefined) {
       const storedProc = soDateYmd(origProc) ?? '';
       const nextProc = soDateYmd(norm(proc)) ?? '';
-      if (storedProc !== '' && nextProc !== storedProc
+      if (storedProc !== '' && nextProc !== storedProc && !hasHouzsPerm(c, PROCESSING_DATE_PO_OVERRIDE_KEY)
         && processingDateFrozenByPo({ storedProc, nextProc, hasLivePo: await soHasLivePo(sb, docNo) })) {
         return c.json(PROCESSING_DATE_PO_LOCKED, 409);
       }
@@ -11146,6 +11146,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   /* BUG-101: once a live PO exists the Processing Date is frozen, and a Delivery
      Date brought forward needs the Purchaser's OK on its Logistic half. */
   let needsPurchaserOk = false;
+  let usesPoDateOverride = false;
   if (hasHeaderChanges) {
     const cur = soRow as { processing_date?: string | null; customer_delivery_date?: string | null };
     const ymd = (v: string | null | undefined): string => (v == null ? '' : String(v).slice(0, 10));
@@ -11157,7 +11158,8 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     const delivForward = 'customerDeliveryDate' in headerChanges && deliveryBroughtForward(curDeliv, nextDeliv);
     const hasLivePo = (procMoves || delivForward) && await soHasLivePo(sb, docNo);
     if (processingDateFrozenByPo({ storedProc: curProc, nextProc, hasLivePo })) {
-      return c.json(PROCESSING_DATE_PO_LOCKED, 409);
+      if (!hasHouzsPerm(c, PROCESSING_DATE_PO_OVERRIDE_KEY)) return c.json(PROCESSING_DATE_PO_LOCKED, 409);
+      usesPoDateOverride = true;
     }
     needsPurchaserOk = deliveryNeedsPurchaserOk({
       storedDeliv: curDeliv,
@@ -11288,6 +11290,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       company_id:   activeCompanyId(c),
       header_changes:      laneHasHeader ? half.headerChanges : null,
       old_header_snapshot: laneHasHeader ? oldHeaderSnapshot : null,
+      ...(usesPoDateOverride && 'processingDate' in half.headerChanges ? { po_date_override_by: requesterStaffId } : {}),
     }).select('id, so_doc_no, amendment_no, status, lane, reason, requested_by, created_at, header_changes, old_header_snapshot').single();
     if (insErr) {
       await rollbackCreated();

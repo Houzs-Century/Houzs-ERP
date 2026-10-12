@@ -1044,6 +1044,13 @@ export function AmendmentDetailV2() {
             {lane && (status === "REQUESTED" || status === "SO_APPROVED") && (
               <AsideCard title={`${AMENDMENT_APPROVER_LABEL[soAmendmentApprover(lane)]} approval`}>
                 <div className="space-y-2">
+                  {amendment.po_date_override_by ? (
+                    <p className="rounded-md border border-warn/40 bg-warn/10 px-2.5 py-2 text-[12px] text-ink">
+                      This order already has a Purchase Order. The Processing Date change was
+                      requested by {actorNameOf(asStr(amendment.po_date_override_by))} under the
+                      PO exception — check with the supplier before approving.
+                    </p>
+                  ) : null}
                   {status === "REQUESTED" && purchaserOkRequired && (
                     <div className="space-y-2 rounded-md border border-border bg-surface-2 px-2.5 py-2">
                       <div className="text-[12px] font-semibold text-ink">

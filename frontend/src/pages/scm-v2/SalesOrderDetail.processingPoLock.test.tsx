@@ -8,7 +8,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { detail } = vi.hoisted(() => ({ detail: vi.fn() }));
+const { detail, auth } = vi.hoisted(() => ({ detail: vi.fn(), auth: { override: false } }));
 
 vi.mock("../../vendor/scm/lib/sales-order-queries", async (orig) => ({
   ...(await orig<typeof import("../../vendor/scm/lib/sales-order-queries")>()),
@@ -39,7 +39,10 @@ vi.mock("../../components/scm-v2/DocumentRelationshipMapModal", () => ({
   DocumentRelationshipMapModal: () => null,
   DocumentChoiceDialog: () => null,
 }));
-vi.mock("../../auth/AuthContext", () => ({ useAuth: () => ({ user: { id: 1, name: "Owner" }, can: () => true }) }));
+/* Every grant except the PO exception, unless a test turns it on. */
+vi.mock("../../auth/AuthContext", () => ({
+  useAuth: () => ({ user: { id: 1, name: "Desk" }, can: (p: string) => p !== "scm.so.override_po_processing_date" || auth.override }),
+}));
 vi.mock("../../vendor/scm/lib/auth", async (orig) => ({
   ...(await orig<typeof import("../../vendor/scm/lib/auth")>()),
   useAuth: () => ({ staff: null, user: null }),
@@ -68,7 +71,7 @@ const line = {
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(() => new Promise(() => undefined)));
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); auth.override = false; });
 
 const mount = (so: Record<string, unknown>) => {
   detail.mockReturnValue({ data: { salesOrder: so, items: [line] }, isLoading: false, isPending: false, isError: false, error: null });
@@ -99,6 +102,13 @@ describe("desktop SO editor — Processing Date under a live PO", () => {
     mount({ ...header, processing_date: "2026-09-30", processing_date_po_locked: true, amendment_eligible: true });
     expect((screen.getByDisplayValue("2026/09/30") as HTMLInputElement).disabled).toBe(true);
     expect(deliv().disabled).toBe(false);
+  });
+
+  it("a holder of the PO exception can still change it", () => {
+    auth.override = true;
+    mount({ ...header, processing_date_po_locked: true });
+    expect(proc().disabled).toBe(false);
+    expect(screen.queryByText(/only the delivery date can change/i)).toBeNull();
   });
 
   it("with no PO, the Processing Date is editable as before", () => {

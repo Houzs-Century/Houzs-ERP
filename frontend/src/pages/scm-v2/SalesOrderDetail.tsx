@@ -2827,6 +2827,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
      super_admin row), so mirror the API and gate on the flat permission key
      the PATCH enforces (mfg-sales-orders.ts). Owner + IT Admin pass via `*`. */
   const canRemoveProcessingDate = can('scm.so.remove_processing_date');
+  const canOverridePoProcessingDate = can('scm.so.override_po_processing_date');
 
   /* Task #118 — DB-backed dropdowns (was hardcoded). Falls back to the
      migration 0081 seed list when loading or when the DB has zero rows
@@ -3127,7 +3128,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   const processingLocked =
     originalProcessing !== '' && originalProcessing < today && !amendmentMode &&
     !canRemoveProcessingDate;
-  const processingPoLocked = originalProcessing !== '' && header.processing_date_po_locked === true;
+  const processingPoLocked = originalProcessing !== '' && header.processing_date_po_locked === true && !canOverridePoProcessingDate;
 
   /* Owner 2026-07-05 — the SO PROCESS lock fires only once the SO has a
      Processing Date (which IS what being proceeded means) AND that day has

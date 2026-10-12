@@ -110,6 +110,16 @@ describe('approve-so under a live PO', () => {
     expect(await errorOf(res)).toBe('reached-claim');
   });
 
+  it('lets it through when the requester used the override key (stamped on the row)', async () => {
+    row('A1').po_date_override_by = 'staff-owner';
+    expect(await errorOf(await call(PURCHASER, 'A1', 'approve-so'))).toBe('reached-claim');
+  });
+
+  it('lets an approver who holds the override key through', async () => {
+    const res = await call([...PURCHASER, 'scm.so.override_po_processing_date'], 'A1', 'approve-so');
+    expect(await errorOf(res)).toBe('reached-claim');
+  });
+
   it('with no live PO, neither rule applies', async () => {
     seed('CANCELLED');
     expect(await errorOf(await call(PURCHASER, 'A1', 'approve-so'))).toBe('reached-claim');

@@ -17,6 +17,12 @@
 // Pure: the caller resolves `hasLivePo` (lib/so-po-lock soHasLivePo) and the
 // stored dates. Dates are compared as YYYY-MM-DD strings, '' for none.
 
+/** The exception (Sim / owner 2026-10-12, 「only authorize person」): its holder
+ *  may still move or clear a PO-frozen Processing Date. On an amendment the
+ *  holder is the REQUESTER (stamped as so_amendments.po_date_override_by) and a
+ *  Purchaser approves as usual. Owner / IT Admin hold it through `*`. */
+export const PROCESSING_DATE_PO_OVERRIDE_KEY = 'scm.so.override_po_processing_date';
+
 export const PROCESSING_DATE_PO_LOCKED = {
   error: 'processing_date_po_locked',
   message:

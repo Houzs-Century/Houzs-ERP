@@ -42,7 +42,7 @@ import { collectProcessingGateProblems } from '../shared/so-save-problems';
 import { canonicaliseSoHeaderChanges, soDateDay, soDatePairRefusal, withProcessingRemovalCascade } from '../shared/so-processing-date';
 import { recordSoAudit } from '../lib/so-audit';
 import { soHasLivePo } from '../lib/so-po-lock';
-import { deliveryBroughtForward, deliveryNeedsPurchaserOk, processingDateFrozenByPo, PROCESSING_DATE_PO_LOCKED, PURCHASER_OK_REQUIRED } from '../shared/so-po-date-rule';
+import { deliveryBroughtForward, deliveryNeedsPurchaserOk, processingDateFrozenByPo, PROCESSING_DATE_PO_LOCKED, PROCESSING_DATE_PO_OVERRIDE_KEY, PURCHASER_OK_REQUIRED } from '../shared/so-po-date-rule';
 import { scopeToCompany, isMirroredDocNo, houzsOwns2990, MIRRORED_SO_READONLY, activeCompanyId, requireActiveCompanyId } from '../lib/companyScope';
 import {
   enqueueAmendmentCommand,
@@ -98,6 +98,7 @@ type AmendmentForWrite = {
   requested_by?: string | null;
   lane_flag_note?: string | null;
   purchaser_ok_at?: string | null;
+  po_date_override_by?: string | null;
 };
 
 /** Lane of a loaded row — narrowed to the known lane values, else legacy. */
@@ -187,7 +188,7 @@ async function loadAmendmentForWrite(
 ): Promise<AmendmentWriteLoad> {
   const { data } = await scopeToCompany(
     sb.from('so_amendments')
-      .select('id, so_doc_no, amendment_no, status, version, lane, reason, apply_lease_token, apply_lease_expires_at, header_changes, requested_by, lane_flag_note, purchaser_ok_at')
+      .select('id, so_doc_no, amendment_no, status, version, lane, reason, apply_lease_token, apply_lease_expires_at, header_changes, requested_by, lane_flag_note, purchaser_ok_at, po_date_override_by')
       .eq('id', id),
     c,
   ).maybeSingle();
@@ -550,7 +551,7 @@ soAmendments.get('/:id', async (c) => {
       // was refused without someone opening the SO's history drawer for them.
       'rejected_by, rejected_at, rejection_reason, resolution, edited_at, edit_count, ' +
         // BUG-101 — the Purchaser's OK on a Delivery Date brought forward.
-        'purchaser_ok_by, purchaser_ok_at, ' +
+        'purchaser_ok_by, purchaser_ok_at, po_date_override_by, ' +
         // mig 0119 — the HEADER half of the request (Delivery Date / Processing
         // Date / State / Postcode) + its before-snapshot. NULL on a line-only
         // amendment. Without these the approver could not SEE a requested date
@@ -866,11 +867,14 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
        before the rule or before the PO: a live PO freezes the Processing Date,
        and a Delivery Date brought forward waits for the Purchaser's OK. */
     const origProc = ymd(cur.processing_date);
-    const procMoves = 'processingDate' in headerChanges && origProc !== '' && nextProc !== origProc;
+    /* The exception travels on the row: the requester who held the override key
+       stamped it, so the Purchaser approving does not need the key too. */
+    const poDateOverridden = Boolean(amendment.po_date_override_by) || hasHouzsPerm(c, PROCESSING_DATE_PO_OVERRIDE_KEY);
+    const procMoves = 'processingDate' in headerChanges && origProc !== '' && nextProc !== origProc && !poDateOverridden;
     const delivForward = lane === 'DELIVERY' && 'customerDeliveryDate' in headerChanges
       && deliveryBroughtForward(ymd(cur.customer_delivery_date), nextDeliv);
     const hasLivePo = (procMoves || (delivForward && !amendment.purchaser_ok_at)) && await soHasLivePo(sb, amendment.so_doc_no);
-    if (processingDateFrozenByPo({ storedProc: origProc, nextProc, hasLivePo })) {
+    if (!poDateOverridden && processingDateFrozenByPo({ storedProc: origProc, nextProc, hasLivePo })) {
       return c.json(PROCESSING_DATE_PO_LOCKED, 409);
     }
     if (delivForward && hasLivePo && !amendment.purchaser_ok_at) {

@@ -674,6 +674,7 @@ export function MobileNewSO({
      Owner + IT Admin pass via `*`. Desktop SalesOrderDetail reads the identical
      key — one rule, both surfaces. */
   const canRemoveProcessingDate = can("scm.so.remove_processing_date");
+  const canOverridePoProcessingDate = can("scm.so.override_po_processing_date");
   /* Unit Price is LOCKED to the SKU Master sell price for everyone below admin
      (SO-SKU spec D4, Loo 2026-06-05) — the SAME gate the desktop SoLineCard uses
      (lib/auth): admin-level roles (or the temporary POS "hatch" role) may hand-
@@ -1296,7 +1297,7 @@ export function MobileNewSO({
      would deny the very action the permission grants. Moving (rather than
      clearing) a locked date still 409s server-side — same as desktop. */
   const scheduleDatesLocked = migratedLocked || (procLocked && !amendmentMode && !canRemoveProcessingDate);
-  const procDateFrozen = isEdit && procPoLocked && origProcDate !== "";
+  const procDateFrozen = isEdit && procPoLocked && origProcDate !== "" && !canOverridePoProcessingDate;
   /* Schedule-date floor (desktop parity) — the backend rejects a past
      Processing / Delivery Date (todayMY, UTC+8), so grey out earlier days in
      the picker exactly as SalesOrderNew / SalesOrderDetail do, instead of
