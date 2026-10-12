@@ -30,6 +30,7 @@
 // DRY-RUN BY DEFAULT: plan runs the UPDATEs in a transaction and ROLLS BACK.
 // MODE=apply with the CONFIRM phrase commits, then re-reads on a fresh
 // connection. COMPANY_ID limits it to one company; unset = every company.
+// SKIP_PO_NUMBERS=a,b leaves those purchase orders alone.
 //
 //   npx tsx scripts/repair-dev69-revise-po-dates.mjs
 //   MODE=apply CONFIRM="RESTORE REVISED PO LINE DATES" npx tsx scripts/repair-dev69-revise-po-dates.mjs
@@ -51,6 +52,8 @@ if (COMPANY_ID !== null && !Number.isInteger(COMPANY_ID)) {
   console.error(`COMPANY_ID must be an integer, got ${process.env.COMPANY_ID}. Aborting.`);
   process.exit(2);
 }
+
+const SKIP = (process.env.SKIP_PO_NUMBERS || "").split(",").map((x) => x.trim()).filter(Boolean);
 
 const log = (m = "") => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 
@@ -100,10 +103,11 @@ const selectCandidates = (db) => db`
     AND poi.delivery_date = soi.line_delivery_date
     AND poi.delivery_date::text <> fs.snap_date
     AND (${COMPANY_ID}::int IS NULL OR po.company_id = ${COMPANY_ID}::int)
+    AND NOT (po.po_number = ANY(${SKIP}::text[]))
   ORDER BY po.company_id, po.po_number, poi.line_no`;
 
 try {
-  log(`mode=${APPLY ? "APPLY" : "PLAN (rolled back)"}  company=${COMPANY_ID ?? "all"}`);
+  log(`mode=${APPLY ? "APPLY" : "PLAN (rolled back)"}  company=${COMPANY_ID ?? "all"}  skip=${SKIP.join(",") || "none"}`);
   await sql.begin(async (tx) => {
     const rows = await selectCandidates(tx);
     const review = rows.filter((r) => r.manual_after);
