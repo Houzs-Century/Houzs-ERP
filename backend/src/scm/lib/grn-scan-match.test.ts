@@ -8,6 +8,7 @@ import {
   listScanLines,
   matchGrnScanToPoLines,
   normalizeCode,
+  pickBySpec,
   normalizeSupplierName,
   resolvePrintedPo,
   resolveScannedSupplier,
@@ -575,5 +576,41 @@ describe('our whole PO number printed behind a label (DO-2610/034)', () => {
     expect(res.picks).toEqual([]);
     expect(describeUnmatchedScanLines(res.unmatched, [{ poNumber: 'HC-PO-2609-169', status: 'RECEIVED' }]))
       .toMatch(/\(PO HC-PO-2609-169 is marked Received\)\.$/);
+  });
+});
+
+// DEV-68 (2026-10-12, Sim): Hookka DO-2610-030 row "JAGER (Q) PC151-01 / GAP 11""
+// was left off GRN HC-GRN-2610-067 as "more than one PO line fits": PO
+// HC-PO-2609-320 holds HOK-1013-(Q) twice, fabric PC151-01 and PC151-02.
+describe('same item code on several PO lines: the printed spec breaks the tie (DO-2610-030)', () => {
+  const jager = (poItemId: string, poNumber: string, description2: string) =>
+    line({ poItemId, poNumber, supplierId: 'sup-hok', itemCode: 'HOK-1013-(Q)', remaining: 1, description2 });
+  const a320 = jager('pi-320a', 'HC-PO-2609-320', 'PC151-01 / DIVAN 8" + LEG 2" / GAP 11" / T.Heights 21"');
+  const b320 = jager('pi-320b', 'HC-PO-2609-320', 'PC151-02 / DIVAN 8" + LEG 2" / GAP 11" / T.Heights 21"');
+  const l319 = jager('pi-319', 'HC-PO-2609-319', 'PC151-01 / DIVAN 8" + LEG 2" / GAP 10" / T.Heights 20" / SPECIAL: HB Fully Cover');
+  const l321 = jager('pi-321', 'HC-PO-2609-321', 'PC151-01 / DIVAN 8" + NO LEG / GAP 8" / T.Heights 16"');
+  // As the scan read it (GRN 2610-067 note): item name in front, "2" LEG" word order.
+  const row = '1013-(Q) JAGER BEDFRAME (5FT) (152X190CM) PC151-01 / DIVAN 8" + 2" LEG / GAP 11" / T.Heights 21"';
+
+  test('anchored to PO 320: the PC151-01 line, not PC151-02', () => {
+    const res = matchGrnScanToPoLines(null, [scan({ itemCode: 'HOK-1013-(Q)', description: row, poNo: 'HC-PO-2609-320' })], [a320, b320], [], 'sup-hok');
+    expect(res.picks).toEqual([{ poItemId: 'pi-320a', qty: 1 }]);
+    expect(res.unmatched).toEqual([]);
+  });
+
+  test('no row PO, four same-code lines across POs: still the PO 320 PC151-01 line', () => {
+    expect(pickBySpec(row, [l319, l321, a320, b320])?.poItemId).toBe('pi-320a');
+  });
+
+  test('a tie or no printed spec stays ambiguous', () => {
+    expect(pickBySpec('JAGER BEDFRAME', [a320, b320])).toBeNull();
+    expect(pickBySpec(null, [a320, b320])).toBeNull();
+    expect(pickBySpec(row, [a320, { ...a320, poItemId: 'pi-twin' }])).toBeNull();
+  });
+
+  test('whole words only: "GAP 1" does not count as "GAP 11"', () => {
+    const gap1 = jager('pi-gap1', 'HC-PO-2609-330', 'PC151-03 / GAP 1"');
+    const gap12 = jager('pi-gap12', 'HC-PO-2609-330', 'PC151-03 / GAP 12"');
+    expect(pickBySpec('PC151-03 / GAP 11"', [gap1, gap12])).toBeNull();
   });
 });
