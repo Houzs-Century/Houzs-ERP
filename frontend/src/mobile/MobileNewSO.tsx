@@ -2996,6 +2996,7 @@ function LineCard({
   const picked = Boolean(line.itemCode.trim());
   const v = line.variants;
   const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const [priceTyping, setPriceTyping] = useState(false);
 
   /* Per-SKU allowed_options (Modular ON/OFF), resolved by code. */
   const allowQ = useModelAllowedOptionsByCode(line.itemCode || undefined);
@@ -3143,13 +3144,15 @@ function LineCard({
             <input
               className="fld-i money"
               inputMode="decimal"
-              /* DEV-62 (Adrian): an untouched RM 0 shows as a placeholder, so
-                 typing a price does not start with deleting "0.00". */
-              value={toSen(line.price) === 0 && !line.priceAuthored ? "" : line.price}
+              /* DEV-62 (Adrian): any RM 0, new or saved, shows as the placeholder
+                 so typing a price does not start with deleting "0.00". A 0 shows
+                 only while being typed, so "0" / "0.5" can still be keyed in. */
+              value={toSen(line.price) === 0 && !priceTyping ? "" : line.price}
               placeholder="0.00"
               disabled={!canEditPrice}
               title={!canEditPrice ? "Price follows the SKU Master sell price — admin can override" : undefined}
-              onChange={(e) => onChange({ price: e.target.value, priceAuthored: true })}
+              onChange={(e) => { setPriceTyping(true); onChange({ price: e.target.value, priceAuthored: true }); }}
+              onBlur={() => setPriceTyping(false)}
             />
           </Field>
         </div>
