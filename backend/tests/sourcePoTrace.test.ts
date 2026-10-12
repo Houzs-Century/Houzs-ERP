@@ -351,6 +351,7 @@ describe("traceDoShipmentSources — HC-DO-2610-154", () => {
       { id: "lot-187", batch_no: "HC-PO-2609-187", source_doc_type: "GRN", source_doc_id: "grn-1" },
       { id: "lot-ac", batch_no: null, source_doc_type: "AC_CUTOVER", source_doc_id: null },
     ],
+    delivery_orders: [{ id: "do-154", company_id: 1 }],
     delivery_order_items: [{ delivery_order_id: "do-154", so_item_id: "so-013109-cody", ...cody }],
     purchase_order_items: [
       { so_item_id: "so-013109-cody", item_code: "CODY-(Q)", purchase_order_id: "po-9812", received_qty: 3 },
@@ -378,6 +379,13 @@ describe("traceDoShipmentSources — HC-DO-2610-154", () => {
     expect(out.byBucket.get("do-154::CODY-(Q)::")).toEqual(bt(["HC-PO-2609-187"]));
   });
 
+  test("2990 (company 2) pools: the FIFO answer stands", async () => {
+    const out = await traceDoShipmentSources(seed({
+      delivery_orders: [{ id: "do-154", company_id: 2 }],
+    }), ["do-154"]);
+    expect(out.byBucket.get("do-154::CODY-(Q)::")).toEqual(bt(["HC-PO-2609-187"]));
+  });
+
   test("a cancelled bound PO does not count", async () => {
     const out = await traceDoShipmentSources(seed({
       purchase_orders: [{ id: "po-9812", po_number: "HC-PO-009812", status: "CANCELLED" }],
@@ -386,13 +394,14 @@ describe("traceDoShipmentSources — HC-DO-2610-154", () => {
   });
 });
 
-describe("traceDoShipmentSources — lines that ship a batch keep the ledger", () => {
+describe("traceDoShipmentSources — only company-1 hard-bound lines switch", () => {
   const base = (line: Record<string, unknown>) => fakeSb({
     inventory_movements: [],
     inventory_lot_consumptions: [
       { source_doc_type: "DO", source_doc_id: "do-1", lot_id: "lot-x", item_code: "X", variant_key: "", qty_consumed: 1 },
     ],
     inventory_lots: [{ id: "lot-x", batch_no: "PO-LEDGER", source_doc_type: "GRN", source_doc_id: "g" }],
+    delivery_orders: [{ id: "do-1", company_id: 1 }],
     delivery_order_items: [{ delivery_order_id: "do-1", so_item_id: "so-1", item_code: "X", variants: null, committed_po_batch_no: null, ...line }],
     purchase_order_items: [{ so_item_id: "so-1", item_code: "X", purchase_order_id: "po-own", received_qty: 1 }],
     purchase_orders: [{ id: "po-own", po_number: "PO-OWN", status: "RECEIVED" }],
@@ -403,8 +412,20 @@ describe("traceDoShipmentSources — lines that ship a batch keep the ledger", (
     expect(out.byBucket.get("do-1::X::")).toEqual(bt(["PO-LEDGER"]));
   });
 
-  test("a line shipped against a committed incoming PO", async () => {
-    const out = await traceDoShipmentSources(base({ item_group: "mattress", committed_po_batch_no: "PO-LEDGER" }), ["do-1"]);
+  test("a bedframe shipped against a committed incoming PO keeps the ledger", async () => {
+    const out = await traceDoShipmentSources(base({ item_group: "bedframe", committed_po_batch_no: "PO-LEDGER" }), ["do-1"]);
     expect(out.byBucket.get("do-1::X::")).toEqual(bt(["PO-LEDGER"]));
+  });
+
+  test("a standard mattress or accessory pools, so the FIFO answer stands", async () => {
+    for (const item_group of ["mattress", "accessory"]) {
+      const out = await traceDoShipmentSources(base({ item_group }), ["do-1"]);
+      expect(out.byBucket.get("do-1::X::")).toEqual(bt(["PO-LEDGER"]));
+    }
+  });
+
+  test("a sofa accessory (fabric_accessory) is hard-bound and switches", async () => {
+    const out = await traceDoShipmentSources(base({ item_group: "fabric_accessory" }), ["do-1"]);
+    expect(out.byBucket.get("do-1::X::")).toEqual(bt(["PO-OWN"]));
   });
 });

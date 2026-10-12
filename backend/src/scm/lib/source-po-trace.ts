@@ -53,6 +53,7 @@ import { DEAD_PO_STATUSES, resolveExpectedBatchBySoItem } from './dropship-batch
 import { chunkIn, UUID_CHUNK } from './paginate-all';
 import type { MrpResult } from '../routes/mrp';
 import { pgrestIn } from './pgrest-in-list';
+import { HARD_BOUND_COMPANY_ID, isHardBoundLine } from './so-stock-allocation';
 
 /* One bucket's forward trace: the source PO numbers (sorted, GRN-healed) plus
    how many of its shipped units came out of a PO-less stock ADJUSTMENT. */
@@ -233,14 +234,16 @@ export async function traceDoShipmentSources(
 }
 
 /* ── BUG-103 (2026-10-12, Sim, HC-DO-2610-154) ────────────────────────────────
-   An un-batched OUT (bed frame / mattress / accessory) is consumed by plain
-   FIFO, and FIFO is a COSTING order, not a picking order: it ate the 1 unit of
-   HC-PO-2609-187 (raised for HC-SO-010769) while the 3 CODY the warehouse had
-   labelled for HC-SO-013109 sat under HC-PO-009812 as un-numbered AutoCount
-   cutover lots. The DO printed 2609-187 and the warehouse could not find the
-   goods. Goods bought for an SO line are stored under that line's PO, so once
-   the line's own PO has received the item, that PO is the answer for the line.
-   A batched bucket (sofa dye lot, drop-ship expected batch) is left alone: its
+   A company-1 bedframe line is HARD-BOUND to the PO raised for it (owner
+   2026-10-12, restating the HARD_BOUND_COMPANY_ID ruling: "2990 才可以 fifo,
+   houzs century 的 bedframe 是 hard binding"), and the readiness engine already
+   lights it only through that PO. Its DO OUT, though, is un-batched, so plain
+   FIFO picked the lot: it ate the 1 unit of HC-PO-2609-187 (raised for
+   HC-SO-010769) while the 3 CODY bought for HC-SO-013109 sat under
+   HC-PO-009812 as un-numbered AutoCount cutover lots. The DO printed 2609-187
+   and the warehouse could not find the goods. So for a company-1 hard-bound
+   line (isHardBoundLine) whose own PO has received the item, that PO is the
+   answer. Company 2 and pooled categories keep the FIFO ledger. A batched bucket (sofa dye lot, drop-ship expected batch) is left alone: its
    OUT consumed strictly from that batch, so the ledger already is the physical
    answer. Every line sharing the bucket must have such a PO, or the ledger
    stands — one line's PO cannot speak for another line's units. */
@@ -291,17 +294,26 @@ async function doLinesForBoundPo(
   doIds: string[],
 ): Promise<Array<{ bucket: string; itemCode: string; soItemId: string | null }>> {
   const out: Array<{ bucket: string; itemCode: string; soItemId: string | null }> = [];
+  const boundDoIds: string[] = [];
   for (let i = 0; i < doIds.length; i += CHUNK) {
+    const { data, error } = await sb.from('delivery_orders')
+      .select('id, company_id')
+      .in('id', doIds.slice(i, i + CHUNK));
+    if (error) throw new Error(error.message);
+    for (const d of (data ?? []) as Array<{ id: string; company_id: number | null }>) {
+      if (d.company_id === HARD_BOUND_COMPANY_ID) boundDoIds.push(d.id);
+    }
+  }
+  for (let i = 0; i < boundDoIds.length; i += CHUNK) {
     const { data, error } = await sb.from('delivery_order_items')
       .select('delivery_order_id, so_item_id, item_code, item_group, variants, committed_po_batch_no')
-      .in('delivery_order_id', doIds.slice(i, i + CHUNK));
+      .in('delivery_order_id', boundDoIds.slice(i, i + CHUNK));
     if (error) throw new Error(error.message);
     for (const r of (data ?? []) as Array<{
       delivery_order_id: string; so_item_id: string | null; item_code: string | null;
       item_group: string | null; variants: VariantAttrs | null; committed_po_batch_no: string | null;
     }>) {
-      if (!r.item_code) continue;
-      if (isServiceLine({ itemGroup: r.item_group ?? null, itemCode: r.item_code })) continue;
+      if (!r.item_code || !isHardBoundLine(r.item_group, r.item_code)) continue;
       // Batched by construction even when the OUT's stored variant key drifted
       // from the line's, so the batchedBuckets match alone would miss it.
       if (String(r.item_group ?? '').toUpperCase().includes('SOFA') || r.committed_po_batch_no) continue;
