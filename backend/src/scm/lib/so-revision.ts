@@ -53,12 +53,17 @@ import {
   deriveSalesLocationFromState,
   deriveWarehouseIdFromState,
 } from '../routes/mfg-sales-orders';
-import { activeCompanyId, isMirroredDocNo, houzsOwns2990 } from './companyScope';
+import { activeCompanyId, isMirroredDocNo, houzsOwns2990, scopeToCompanyIdOrOpen } from './companyScope';
 import { todayMyt } from './my-time';
 import { dateOrNull } from './date-coerce';
 import { soWarehouseIdForDoc } from './so-warehouse';
 import { variantsForCompare } from './amendment-noop-lines';
 import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine } from './po-line-order';
+import {
+  LEAD_OVERRIDE_SELECT, LEAD_TIME_SELECT, NO_BUFFERS, loadLeadTimeBase, loadSupplierCategoryOverrides,
+  resolveLeadDays, subtractCalendarDays, type LeadBuffers, type LeadOverrides, type LeadTimeBase,
+} from './lead-time';
+import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import { soIsMigratedShape } from './so-is-migrated';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
 import { soAmendableHeaderFields } from '../shared/so-field-policy';
@@ -1454,6 +1459,29 @@ export async function reviseBoundPo(
   // (12) Per live bound PO: snapshot, re-derive surviving lines, delete orphaned
   //      lines (warn if received), insert added lines, recompute totals, bump,
   //      audit.
+  /* DEV-69 (12c): an ADDED line gets the date Create PO gives it, customer date
+     minus lead days (mfg-purchase-orders.ts, lib/lead-time.ts), not the raw
+     customer date. The lead tables load once per company, only when a PO
+     actually gains a line, and THROW on a read error like the create path: a
+     zero lead day from a failed read would ask the supplier to deliver ON the
+     customer's own date. The approve route returns 500 and the operator retries. */
+  type Lead = { base: LeadTimeBase; overrides: LeadOverrides; buffers: LeadBuffers };
+  const leadByCompany = new Map<number | null, Promise<Lead>>();
+  const leadFor = (companyId: number | null): Promise<Lead> => {
+    let p = leadByCompany.get(companyId);
+    if (!p) {
+      p = (async () => ({
+        base: await loadLeadTimeBase(
+          scopeToCompanyIdOrOpen(sb.from('mrp_category_lead_times').select(LEAD_TIME_SELECT), companyId)),
+        overrides: await loadSupplierCategoryOverrides(
+          scopeToCompanyIdOrOpen(sb.from('mrp_supplier_category_lead_times').select(LEAD_OVERRIDE_SELECT), companyId)),
+        buffers: c?.env?.DB ? await loadLeadBuffers(c.env.DB) : NO_BUFFERS,
+      }))();
+      leadByCompany.set(companyId, p);
+    }
+    return p;
+  };
+
   const perPo: ReviseBoundPoResult['perPo'] = [];
   for (const po of scopedPos) {
     const nextRevision = await snapshotPo(sb, po.id, amendmentId, userId, c);
@@ -1507,6 +1535,14 @@ export async function reviseBoundPo(
       })),
     );
     let nextLineNo = await nextPoLineNo(sb, po.id);
+    const lead = addsForPo.length > 0 ? await leadFor(po.company_id) : null;
+    // The learned supplier buffer is keyed on the supplier's business code; only
+    // look it up when the owner has approved any (empty today).
+    let supplierCode: string | null = null;
+    if (lead && po.supplier_id && Object.keys(lead.buffers.supplierBufferDays).length > 0) {
+      const { data: sup } = await sb.from('suppliers').select('code').eq('id', po.supplier_id).maybeSingle();
+      supplierCode = (sup as { code?: string | null } | null)?.code ?? null;
+    }
     for (const { add } of addsForPo) {
       const line = add.line;
       const qty = line.qty != null ? Math.max(1, line.qty) : 1;
@@ -1517,6 +1553,13 @@ export async function reviseBoundPo(
         itemCode:   line.item_code ?? '',
         itemGroup,
         variants:   variants ?? null,
+      });
+      const leadDays = resolveLeadDays(lead!.base, lead!.overrides, lead!.buffers, {
+        warehouseId: line.warehouse_id ?? null,
+        category: itemGroup ?? null,
+        supplierId: po.supplier_id,
+        supplierCode,
+        deliveryDate: line.line_delivery_date ?? null,
       });
       const { error: insErr } = await sb.from('purchase_order_items').insert({
         ...(po.company_id != null ? { company_id: po.company_id } : {}),
@@ -1529,7 +1572,7 @@ export async function reviseBoundPo(
         qty,
         unit_price_sen:  unitPriceSen,
         line_total_sen:  qty * unitPriceSen,
-        delivery_date:     line.line_delivery_date,
+        delivery_date:     subtractCalendarDays(line.line_delivery_date, leadDays.total),
         warehouse_id:      line.warehouse_id,
         item_group:        itemGroup,
         variants,
