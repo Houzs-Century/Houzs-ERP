@@ -1541,7 +1541,8 @@ export async function reviseBoundPo(
     // look it up when the owner has approved any (empty today).
     let supplierCode: string | null = null;
     if (lead && po.supplier_id && Object.keys(lead.buffers.supplierBufferDays).length > 0) {
-      const { data: sup } = await sb.from('suppliers').select('code').eq('id', po.supplier_id).maybeSingle();
+      const { data: sup, error: supErr } = await sb.from('suppliers').select('code').eq('id', po.supplier_id).maybeSingle();
+      if (supErr) throw new Error(`reviseBoundPo: supplier code read failed for PO ${po.id}: ${supErr.message}`);
       supplierCode = (sup as { code?: string | null } | null)?.code ?? null;
     }
     for (const { add } of addsForPo) {
