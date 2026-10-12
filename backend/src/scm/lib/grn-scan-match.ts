@@ -132,10 +132,11 @@ export function normalizeSupplierName(v: string | null | undefined): string {
 
 /**
  * Resolve a printed PO number to ONE of `pos`, or null. Exact (normalised)
- * first. Suppliers also print our number without the company prefix
- * ("PO-2609-223", "2609-251", "PO-010080" for HC-PO-...), so a unique tail match
- * counts too when `allowTail`, and only with at least 6 digits: a bare "251"
- * never matches. More than one candidate is null, never guessed.
+ * first, then our whole number behind a label ("PO-HC-PO-2609-169"). Suppliers
+ * also print our number without the company prefix ("PO-2609-223", "2609-251",
+ * "PO-010080" for HC-PO-...), so a unique tail match counts too when
+ * `allowTail`, and only with at least 6 digits: a bare "251" never matches.
+ * More than one candidate is null, never guessed.
  */
 export function resolvePrintedPo<T extends { poNumber: string }>(
   printed: string | null | undefined,
@@ -150,6 +151,13 @@ export function resolvePrintedPo<T extends { poNumber: string }>(
   };
   const exact = pos.filter((r) => normalizeCode(r.poNumber) === p);
   if (exact.length > 0) return unique(exact);
+  // Our whole number behind a printed label ("PO-HC-PO-2609-169", BUG-108) is
+  // as certain as exact: the company prefix is part of what matched.
+  const labelled = pos.filter((r) => {
+    const n = normalizeCode(r.poNumber);
+    return n.length > 0 && p.endsWith(n);
+  });
+  if (labelled.length > 0) return unique(labelled);
   if (!allowTail || (p.match(/\d/g)?.length ?? 0) < 6) return null;
   return unique(pos.filter((r) => normalizeCode(r.poNumber).endsWith(p)));
 }

@@ -541,3 +541,39 @@ describe('a PO printed with the ship-to location in front (NBF2610-256)', () => 
     expect(res.picks).toEqual([{ poItemId: 'pi-cody', qty: 1 }]);
   });
 });
+
+// BUG-108 (2026-10-12, Sim): DO-2610/034 printed "PO-HC-PO-2609-169", our whole
+// number behind a "PO-" label. Neither exact nor tail matched, so the slip was
+// refused as "not one of our POs".
+describe('our whole PO number printed behind a label (DO-2610/034)', () => {
+  const open: OpenPoLine[] = [
+    line({ poItemId: 'pi-9050', poNumber: 'HC-PO-2609-169', itemCode: '9050-1EPL+1B', remaining: 1 }),
+    line({ poItemId: 'pi-other', poNumber: 'HC-PO-2609-170', itemCode: 'X', remaining: 2 }),
+  ];
+  const do034 = [scan({
+    itemCode: 'SF9050',
+    description: 'SF9050 - 1EPL + 1B (32") * COL: HR805-10 * SEAT 32 / LEG 1" * BOTTOM COVER UMBRELLA FABRIC',
+    qty: 1,
+    poNo: 'PO-HC-PO-2609-169',
+  })];
+
+  test('resolves to that PO, with or without allowTail', () => {
+    const pos = [{ poNumber: 'HC-PO-2609-169' }, { poNumber: 'HC-PO-2609-170' }];
+    expect(resolvePrintedPo('PO-HC-PO-2609-169', pos, true)?.poNumber).toBe('HC-PO-2609-169');
+    expect(resolvePrintedPo('PO: HC-PO-2609-169', pos, false)?.poNumber).toBe('HC-PO-2609-169');
+    expect(resolvePrintedPo('PO-HC-PO-2609-16', pos, true)).toBeNull();
+  });
+
+  test('drafts what the PO owes for a known supplier', () => {
+    const res = matchGrnScanToPoLines(null, do034, open, [], 'sup-1');
+    expect(res.poFallback).toBe('HC-PO-2609-169');
+    expect(res.picks).toEqual([{ poItemId: 'pi-9050', qty: 1 }]);
+  });
+
+  test('a received PO says so instead of "not one of our POs"', () => {
+    const res = matchGrnScanToPoLines(null, do034, [open[1]], [], 'sup-1');
+    expect(res.picks).toEqual([]);
+    expect(describeUnmatchedScanLines(res.unmatched, [{ poNumber: 'HC-PO-2609-169', status: 'RECEIVED' }]))
+      .toMatch(/\(PO HC-PO-2609-169 is marked Received\)\.$/);
+  });
+});
