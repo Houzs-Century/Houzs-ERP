@@ -257,6 +257,26 @@ describe('reviseBoundPo — REMOVE reconciles the orphaned PO line', () => {
   });
 });
 
+/* DEV-69 (Sim, 2026-10-10): a revise rebuilt each surviving PO line from its SO
+   line and copied the CUSTOMER date over the PO's own date (customer date minus
+   supplier lead time), so the PO jumped to the customer delivery date. */
+describe('reviseBoundPo — a surviving line keeps the PO delivery date', () => {
+  it('does not copy the SO line date onto the PO line or the PO header', async () => {
+    const store = baseStore();
+    store.purchase_orders[0].expected_at = '2026-07-01';
+    store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', qty: 2, line_delivery_date: '2026-08-01' })];
+    store.purchase_order_items = [
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 1, delivery_date: '2026-07-01' }),
+    ];
+
+    await reviseBoundPo(fakeSb(store), AMD, 'user-1');
+
+    expect(store.purchase_order_items[0].qty).toBe(2);                  // the revise did apply
+    expect(store.purchase_order_items[0].delivery_date).toBe('2026-07-01');
+    expect(store.purchase_orders[0].expected_at).toBe('2026-07-01');
+  });
+});
+
 describe('reviseBoundPo — ADD reconciles the missing PO line', () => {
   function addStore(): Record<string, Row[]> {
     const store = baseStore();

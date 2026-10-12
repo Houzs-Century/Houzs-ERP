@@ -131,7 +131,6 @@ export async function rederivePoLineFromSoLine(
       variants,
       description2:     buildVariantSummary(String(itemGroup ?? ''), variants ?? null) || null,
       warehouse_id:     revised.warehouse_id,
-      delivery_date:    revised.line_delivery_date,
       photo_urls:       rederivedPhotos,
     },
   };
