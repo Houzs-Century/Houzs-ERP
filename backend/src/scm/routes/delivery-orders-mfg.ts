@@ -118,7 +118,7 @@ import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange } from '../lib/entity-audit';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
-import { pgrestIn } from '../lib/pgrest-in-list';
+import { resolveDoLineRacks, racksForDoLine } from '../lib/do-line-racks';
 import { withSoRefDocNos } from '../lib/so-ref-search';
 
 export const deliveryOrdersMfg = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -1066,73 +1066,6 @@ export async function resolveDoSourcePosForDos(
   doIds: Array<string | null | undefined>,
 ): Promise<Map<string, string[]>> {
   return resolveDoSourcePosForDosImpl(sb, doIds);
-}
-
-/* Storekeeper picking — resolve the physical RACK(s) each DO line's goods sit on.
-   The rack ledger (warehouse_racks / warehouse_rack_items, migration 0094 + the
-   GRN→rack bridge 0151) is a SEPARATE placement ledger from the FIFO inventory
-   ledger, keyed by (rack's warehouse_id, item_code, variant_key) — it is NOT
-   batch-keyed (warehouse_rack_items has no batch_no), so batch is intentionally
-   ignored here. For each DO line we match its resolved ship-from warehouse +
-   item_code + variant_key against rack placements and collect the distinct rack
-   labels. Best-effort and honest: no matching placement → empty set → the line
-   shows a dash (never a guess). Note EVERY current writer of rack placements
-   (GRN auto-placement placeGrnLinesOnRacks AND the manual /warehouse/stock-in)
-   leaves variant_key at its '' default — so an exact variant match only ever
-   succeeds for variant-less lines (mattress/accessory without specials). The
-   caller therefore falls back to the '' (unclassified) placement bucket when
-   the exact variant bucket is empty: the rack ledger simply does not know the
-   variant, and "which rack(s) hold this product code in this warehouse" is the
-   correct storekeeper answer. (This was the "Rack blank for Bed Frame" bug —
-   bedframe lines carry a non-empty variant_key that no placement row has.)
-   Returns a Map keyed `${warehouse_id}::${item_code}::${variant_key}` → rack
-   labels (sorted). Takes the already-resolved per-line warehouses so it scopes
-   racks to the SAME warehouse each line ships from (a product can be racked in
-   more than one warehouse). */
-async function resolveDoLineRacks(
-  sb: any,
-  rawItems: Array<{ id: string } & Record<string, unknown>>,
-  lineWh: Map<string, string | null>,
-): Promise<Map<string, string[]>> {
-  const byBucket = new Map<string, Set<string>>();
-  try {
-    const whIds = new Set<string>();
-    const codes = new Set<string>();
-    for (const it of rawItems) {
-      const wid = lineWh.get(it.id) ?? null;
-      const code = (it.item_code as string | null) ?? null;
-      if (!wid || !code) continue;
-      whIds.add(wid);
-      codes.add(code);
-    }
-    if (whIds.size === 0 || codes.size === 0) return new Map();
-
-    // Racks in the ship-from warehouse(s) → id, label, warehouse_id.
-    const { data: racks, error: rErr } = await sb.from('warehouse_racks')
-      .select('id, rack, warehouse_id').in('warehouse_id', [...whIds]);
-    if (rErr || !racks || racks.length === 0) return new Map();
-    const rackById = new Map(
-      (racks as Array<{ id: string; rack: string | null; warehouse_id: string | null }>)
-        .map((r) => [r.id, r]),
-    );
-
-    // Placements for those racks limited to the codes this DO ships.
-    const { data: items, error: iErr } = await pgrestIn(sb.from('warehouse_rack_items')
-      .select('rack_id, item_code, variant_key')
-      .in('rack_id', [...rackById.keys()]), 'item_code', [...codes]);
-    if (iErr) return new Map();
-    for (const ri of (items ?? []) as Array<{ rack_id: string; item_code: string; variant_key: string | null }>) {
-      const r = rackById.get(ri.rack_id) as { rack: string | null; warehouse_id: string | null } | undefined;
-      if (!r || !r.rack || !r.warehouse_id) continue;
-      const k = `${r.warehouse_id}::${ri.item_code}::${ri.variant_key ?? ''}`;
-      const set = byBucket.get(k) ?? new Set<string>();
-      set.add(r.rack);
-      byBucket.set(k, set);
-    }
-  } catch { /* rack tables absent — every line shows a dash (no rack) */ }
-  const out = new Map<string, string[]>();
-  for (const [k, set] of byBucket.entries()) out.set(k, [...set].sort());
-  return out;
 }
 
 async function deductInventoryForDo(sb: any, deliveryOrderId: string, performedBy: string): Promise<string[]> {
@@ -2891,10 +2824,9 @@ deliveryOrdersMfg.get('/:id', async (c) => {
     resolveDoLineSources(sb, id),
   ]);
   const codeMap = await warehouseCodeMap(sb, [...lineWh.values()]);
-  /* Storekeeper picking — physical rack(s) each line's goods sit on, scoped to
-     the SAME ship-from warehouse resolved above (keyed warehouse::code::variant).
-     Best-effort; unmapped lines get a dash. */
-  const racksByBucket = await resolveDoLineRacks(sb, rawItems, lineWh);
+  /* Storekeeper picking — the rack(s) each line's source PO was received onto
+     (lib/do-line-racks.ts, BUG-102). Best-effort; unmapped lines get a dash. */
+  const doRacks = await resolveDoLineRacks(sb, rawItems, lineWh);
   /* Bound-PO fallback — a line whose ledger walk found no batch (not yet
      shipped, negative-stock ship, or un-batched pre-0120 lots) still has a real
      procurement path when a PO was raised against its SO line (per-warehouse
@@ -2953,21 +2885,18 @@ deliveryOrdersMfg.get('/:id', async (c) => {
       (it.variants as VariantAttrs | null) ?? null,
     );
     const bucketKey = `${(it.item_code as string) ?? ''}::${variantKey}`;
-    const rackKey = `${wid ?? ''}::${(it.item_code as string) ?? ''}::${variantKey}`;
     const trace = sourcePosByBucket.get(bucketKey) ?? { pos: [], adjQty: 0 };
     const ledgerPos = trace.pos;
     const boundPo = ledgerPos.length === 0 && trace.adjQty <= 0 && it.so_item_id
       ? (boundPoBySoItem.get(it.so_item_id as string)?.poNumber ?? null)
       : null;
-    /* Rack lookup: exact variant bucket first; when empty, fall back to the ''
-       (unclassified) bucket — every current rack writer (GRN auto-placement +
-       manual stock-in) records placements with variant_key='', so variant lines
-       (bedframe/sofa) would otherwise never match. Same warehouse + product
-       code, so it's still the right physical answer. */
-    const exactRacks = racksByBucket.get(rackKey) ?? [];
-    const racks = exactRacks.length > 0 || variantKey === ''
-      ? exactRacks
-      : (racksByBucket.get(`${wid ?? ''}::${(it.item_code as string) ?? ''}::`) ?? []);
+    const sourcePos = ledgerPos.length > 0 ? [...ledgerPos] : (boundPo ? [boundPo] : []);
+    const racks = racksForDoLine(doRacks, {
+      warehouseId: wid,
+      itemCode: (it.item_code as string | null) ?? null,
+      rackId: (it.rack_id as string | null) ?? null,
+      sourcePos,
+    });
     return {
       ...it,
       warehouse_id: wid,
@@ -2977,14 +2906,14 @@ deliveryOrdersMfg.get('/:id', async (c) => {
          movements ∪ consumed lots), else the SO line's bound PO. Empty only
          for lines with no batch AND no bound PO (e.g. service lines, stock
          with no procurement trail). */
-      source_pos: ledgerPos.length > 0 ? [...ledgerPos] : (boundPo ? [boundPo] : []),
+      source_pos: sourcePos,
       /* This line shipped (at least partly) from a stock ADJUSTMENT lot — a
          free gift / cancel add-back with no PO behind it by design. The UI
          renders a "STOCK ADJ" chip so the cell is explained, never blank. */
       source_adj: trace.adjQty > 0,
-      /* Physical rack label(s) the goods are stored on, for storekeeper picking.
-         Empty when no rack placement matches (dash) — never guessed. */
-      racks: [...racks],
+      /* Rack label(s) for storekeeper picking. Empty (dash) when the source
+         PO's GRN recorded no rack — never guessed. */
+      racks,
       /* Intrinsic Assigned SO for this line (DO is hard-linked, never a guess).
          null when the line carries no so_item_id (ad-hoc / manual DO line). */
       so_doc_no: it.so_item_id ? (soDocBySoItem.get(it.so_item_id as string) ?? null) : null,
