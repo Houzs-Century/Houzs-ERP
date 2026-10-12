@@ -53,7 +53,8 @@ import {
   deriveSalesLocationFromState,
   deriveWarehouseIdFromState,
 } from '../routes/mfg-sales-orders';
-import { activeCompanyId, isMirroredDocNo, houzsOwns2990, scopeToCompanyIdOrOpen } from './companyScope';
+import { activeCompanyId, isMirroredDocNo, houzsOwns2990 } from './companyScope';
+import { scopeToCompanyIdOrOpen } from './companyScope';
 import { todayMyt } from './my-time';
 import { dateOrNull } from './date-coerce';
 import { soWarehouseIdForDoc } from './so-warehouse';
