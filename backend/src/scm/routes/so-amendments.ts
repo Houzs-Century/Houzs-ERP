@@ -1488,10 +1488,11 @@ soAmendments.patch('/:id/purchaser-ok', async (c) => {
   }
 
   const headerChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null) ?? {};
-  const { data: soRow } = await scopeToCompany(
+  const { data: soRow, error: soErr } = await scopeToCompany(
     sb.from('mfg_sales_orders').select('customer_delivery_date').eq('doc_no', amendment.so_doc_no),
     c,
   ).maybeSingle();
+  if (soErr) return c.json({ error: 'load_failed', reason: soErr.message }, 500);
   const needed = 'customerDeliveryDate' in headerChanges && deliveryNeedsPurchaserOk({
     storedDeliv: soDateDay((soRow as { customer_delivery_date?: unknown } | null)?.customer_delivery_date),
     nextDeliv: soDateDay(headerChanges['customerDeliveryDate']),
