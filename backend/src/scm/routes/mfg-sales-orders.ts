@@ -139,7 +139,9 @@ import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
 /* "A PO is already out for this SO" — the second road to the same soft lock
    (owner 2026-08-12, 2990 only). See lib/so-po-lock.ts. */
-import { soPoLocked } from '../lib/so-po-lock';
+import { soHasLivePo, soPoLocked } from '../lib/so-po-lock';
+import { deliveryBroughtForward, deliveryNeedsPurchaserOk, processingDateFrozenByPo, PROCESSING_DATE_PO_LOCKED } from '../shared/so-po-date-rule';
+import { notifySoAmendmentPurchaserOkNeeded } from '../../services/amendmentNotify';
 import { monthBoundsMy, rangeBoundsMy, todayMyt, mytDateOf } from '../lib/my-time';
 // (canViewAllSales / isSelfScopedSales removed — replaced by flat permission
 // gates `scm.so.view_all` / `scm.so.attribute_other` against the REAL Houzs
@@ -1707,6 +1709,10 @@ mfgSalesOrders.get('/:docNo', async (c) => {
   }
   const openAmendment = openAmendments[0] ?? null;
   /* DEV-32 — the live DOs an after-DO edit would write to (shared/so-after-do-edit.ts). Null = unreadable. */
+  /* BUG-101 — the Processing Date is frozen once a live PO exists (any company);
+     the editors disable the field on this. Skipped when there is no date to freeze. */
+  const processingDatePoLocked = amendPoLocked
+    || (soDateYmd((h.data as { processing_date?: unknown }).processing_date) != null && await soHasLivePo(sb, docNo));
   const afterDoCo = activeCompanyId(c);
   const afterDoRead = (doCount ?? 0) > 0 && afterDoCo != null ? await readAfterDoTargets(sb, docNo, afterDoCo) : null;
   const salesOrder = {
@@ -1722,6 +1728,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        amendment_eligible: that flag is already false for a hard-locked / terminal
        SO, and the editors must stay disabled in exactly those cases. */
     po_locked: amendPoLocked,
+    processing_date_po_locked: processingDatePoLocked,
     has_open_amendment: openAmendment != null,
     open_amendment: openAmendment,
     open_amendments: openAmendments,
@@ -6200,6 +6207,16 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
         }, 403);
       }
       superAdminClearsProc = true;
+    }
+    /* BUG-101 — a live PO freezes the Processing Date for every company, and the
+       admin clear above with it: removing the date does not un-raise the PO. */
+    if (proc !== undefined) {
+      const storedProc = soDateYmd(origProc) ?? '';
+      const nextProc = soDateYmd(norm(proc)) ?? '';
+      if (storedProc !== '' && nextProc !== storedProc
+        && processingDateFrozenByPo({ storedProc, nextProc, hasLivePo: await soHasLivePo(sb, docNo) })) {
+        return c.json(PROCESSING_DATE_PO_LOCKED, 409);
+      }
     }
   }
 
@@ -11126,6 +11143,9 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      values so changing ONE date is still checked against the other; an unchanged
      already-past date is NOT re-rejected (it is what the amendment exists to
      fix), but a NEWLY-requested past date is. */
+  /* BUG-101: once a live PO exists the Processing Date is frozen, and a Delivery
+     Date brought forward needs the Purchaser's OK on its Logistic half. */
+  let needsPurchaserOk = false;
   if (hasHeaderChanges) {
     const cur = soRow as { processing_date?: string | null; customer_delivery_date?: string | null };
     const ymd = (v: string | null | undefined): string => (v == null ? '' : String(v).slice(0, 10));
@@ -11133,6 +11153,17 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     const curDeliv = ymd(cur.customer_delivery_date);
     const nextProc = 'processingDate' in headerChanges ? ymd(headerChanges['processingDate']) : curProc;
     const nextDeliv = 'customerDeliveryDate' in headerChanges ? ymd(headerChanges['customerDeliveryDate']) : curDeliv;
+    const procMoves = 'processingDate' in headerChanges && curProc !== '' && nextProc !== curProc;
+    const delivForward = 'customerDeliveryDate' in headerChanges && deliveryBroughtForward(curDeliv, nextDeliv);
+    const hasLivePo = (procMoves || delivForward) && await soHasLivePo(sb, docNo);
+    if (processingDateFrozenByPo({ storedProc: curProc, nextProc, hasLivePo })) {
+      return c.json(PROCESSING_DATE_PO_LOCKED, 409);
+    }
+    needsPurchaserOk = deliveryNeedsPurchaserOk({
+      storedDeliv: curDeliv,
+      nextDeliv: 'customerDeliveryDate' in headerChanges ? nextDeliv : null,
+      hasLivePo,
+    });
     const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
     /* Same predicate as every other write path (shared/so-processing-date), with
        this path's own error code kept: `amendment_dates_xor` is what the
@@ -11227,6 +11258,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      file only asks it. Nothing here applies anything. */
   const holdsDeliveryKey = hasHouzsPerm(c, SELF_APPROVE_KEY);
   const selfApprovable: string[] = [];
+  const purchaserOkNeeded: string[] = [];
 
   for (const [i, laneKey] of split.lanes.entries()) {
     const half = split.perLane[laneKey];
@@ -11290,7 +11322,9 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       }
     }
 
-    if (laneSelfApproves(laneKey, { holdsLaneKey: holdsDeliveryKey, hasLineChanges: half.lines.length > 0 })) {
+    const awaitsPurchaserOk = laneKey === 'DELIVERY' && needsPurchaserOk && 'customerDeliveryDate' in half.headerChanges;
+    if (awaitsPurchaserOk) purchaserOkNeeded.push(amendment.amendment_no);
+    else if (laneSelfApproves(laneKey, { holdsLaneKey: holdsDeliveryKey, hasLineChanges: half.lines.length > 0 })) {
       selfApprovable.push(amendment.id);
     }
 
@@ -11312,6 +11346,13 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     created: createdAmendments.filter((a) => !selfApprovable.includes(a.id)),
     salespersonStaffId: (soRow as { salesperson_id?: string | null }).salesperson_id,
   });
+  for (const amendmentNo of purchaserOkNeeded) {
+    await notifySoAmendmentPurchaserOkNeeded(c.env, {
+      amendmentNo, soDocNo: docNo, companyId: activeCompanyId(c),
+      requesterName: c.get('houzsUser')?.name ?? null,
+      requesterUserId: c.get('houzsUser')?.id ?? null,
+    });
+  }
 
   /* `amendment` (singular) keeps the pre-split response contract for existing
      callers; `amendments` carries the full split so the UI can say "this was
