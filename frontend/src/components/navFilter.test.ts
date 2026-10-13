@@ -394,3 +394,32 @@ describe("Payment Requests — the key alone shows it", () => {
     expect(phoneAllows(ctx, "/scm/payment-requests")).toBe(true);
   });
 });
+
+describe("nav — Product Request for every Sales position (owner 2026-10-13: the Sales Director saw no entry)", () => {
+  const director = () => rep({ position_name: "Sales Director" });
+  const purchaser = () =>
+    rep({ position_name: "Procurement/Purchasing", department_name: "Operation Department", permissions: ["scm.access", "scm.product_request.approve"] });
+  const storekeeper = () => rep({ position_name: "Storekeeper", department_name: "Operation Department", permissions: [], scm_l2_configured: true });
+
+  it.each([
+    ["a sales rep", rep(), { "scm.sales.orders": "edit" }],
+    ["the Sales Director", director(), { "scm.sales": "full" }],
+    ["the Purchaser", purchaser(), { "scm.consignment.po_orders": "full", "scm.procurement": "full" }],
+  ])("shows it to %s exactly once on desktop, and on the phone", (_who, user, access) => {
+    const ctx = ctxFor(user, access as Record<string, string>);
+    expect(desktopPaths(ctx).filter((p) => p === "/scm/product-requests")).toHaveLength(1);
+    expect(phoneAllows(ctx, "/scm/product-requests")).toBe(true);
+  });
+
+  it("shows it to Sales even with no SCM page access at all (the route is allowSales)", () => {
+    const ctx = ctxFor(director(), {});
+    expect(desktopPaths(ctx)).toContain("/scm/product-requests");
+    expect(phoneAllows(ctx, "/scm/product-requests")).toBe(true);
+  });
+
+  it("hides it from a storekeeper who holds neither key nor area", () => {
+    const ctx = ctxFor(storekeeper(), { "scm.warehouse": "full" });
+    expect(desktopPaths(ctx)).not.toContain("/scm/product-requests");
+    expect(phoneAllows(ctx, "/scm/product-requests")).toBe(false);
+  });
+});
