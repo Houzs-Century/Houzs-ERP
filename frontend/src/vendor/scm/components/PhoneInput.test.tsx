@@ -122,3 +122,22 @@ describe('PhoneInput behaviour the portal could have broken', () => {
     nested.remove();
   });
 });
+
+// BUG-114: a full number pasted behind the +60 picker was stored with the
+// country code twice ("+6060192689927") and printed on the delivery sheet.
+describe('PhoneInput paste of a full Malaysian number', () => {
+  const national = () => screen.getByRole('textbox') as HTMLInputElement;
+
+  for (const pasted of ['+60 19-268 9927', '60192689927', '6060192689927', '019-268 9927']) {
+    test(`"${pasted}" is stored as one +60 number`, () => {
+      const { emitted } = renderPhone('');
+      fireEvent.change(national(), { target: { value: pasted } });
+      expect(emitted.at(-1)).toBe('+60192689927');
+    });
+  }
+
+  test('a stored doubled number opens without the extra 60', () => {
+    renderPhone('+6060192689927');
+    expect(national().value).toBe('192689927');
+  });
+});

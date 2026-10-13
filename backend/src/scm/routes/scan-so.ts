@@ -3704,9 +3704,9 @@ function buildDraftSoBodyFromSlip(
     // Delivery from the slip (today-or-later only); processing pinned to today.
     processingDate: scanProcDate,
     customerDeliveryDate: scanDelivDate,
-    emergencyContactPhone: (parsed.phones[1] ?? '').trim()
-      ? `+60${(parsed.phones[1] ?? '').replace(/\s+/g, '')}`
-      : null,
+    // BUG-114: phones[1] is already E.164 like phones[0]; "+60" in front of it
+    // stored the emergency contact as "+6060...".
+    emergencyContactPhone: normalizePhone(parsed.phones[1] ?? '') ?? null,
     /* Validated venue only — free-text slip location would bypass the venue
        master. validateSlip has already snapped this to an ACTIVE
        public.project_venues NAME (the master SO Maintenance shows and the
