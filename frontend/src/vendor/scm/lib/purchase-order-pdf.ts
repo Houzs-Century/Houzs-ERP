@@ -59,6 +59,7 @@ import {
 } from './supplier-doc-data';
 import { loadSofaCompartmentArtForPrint } from './sales-order-queries';
 import { splitBackendSofa } from './sofa-walk-order';
+import { DRAWER_DIAGRAM_H, drawDrawerDiagram, drawerSidesOf } from './po-drawer-diagram';
 import {
   blobToSquarePdfImage,
   buildPhotoGroups,
@@ -597,6 +598,7 @@ async function renderPurchaseOrderInto(
     doc.setTextColor(0);
   };
 
+  const drawerSides = orderedItems.map((it) => drawerSidesOf(it.variants));
   autoTable(doc, {
     startY: y,
     head: [[
@@ -627,6 +629,16 @@ async function renderPurchaseOrderInto(
     },
     margin: { left: margin, right: margin, top: 16 },
     didDrawPage: (data) => drawPageHeader(data.pageNumber),
+    // DEV-74: drawer lines get a pull-out picture under the description.
+    didParseCell: (data) => {
+      if (data.section !== 'body' || data.column.index !== 2 || drawerSides[data.row.index]!.length === 0) return;
+      data.cell.styles.cellPadding = { top: 1.5, right: 1.5, bottom: 1.5 + DRAWER_DIAGRAM_H, left: 1.5 };
+    },
+    didDrawCell: (data) => {
+      if (data.section !== 'body' || data.column.index !== 2) return;
+      const sides = drawerSides[data.row.index]!;
+      if (sides.length > 0) drawDrawerDiagram(doc, sides, data.cell.x + 1.5, data.cell.y + data.cell.height - DRAWER_DIAGRAM_H - 1);
+    },
   });
 
   let lastY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 5;
