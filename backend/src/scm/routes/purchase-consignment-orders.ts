@@ -104,7 +104,7 @@ const VALID_STATUSES = new Set(['SUBMITTED', 'PARTIALLY_RECEIVED', 'RECEIVED', '
 const HEADER_COLS =
   'id, pc_number, supplier_id, status, po_date, expected_at, currency, ' +
   'subtotal_sen, tax_sen, total_sen, notes, submitted_at, received_at, ' +
-  'cancelled_at, created_at, created_by, updated_at, ' +
+  'cancelled_at, cancel_reason, created_at, created_by, updated_at, ' +
   'purchase_location_id, ' +
   /* the product request this order was raised from (owner 2026-10-06) */
   'source_product_request_id, ' +
@@ -711,6 +711,10 @@ export const cancelPurchaseConsignmentOrderHandler = async (c: any) => {
   const supabase = c.get('supabase');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  let body: { cancel_reason?: unknown };
+  try { body = await c.req.json(); } catch { body = {}; }
+  const reason = String(body.cancel_reason ?? '').trim();
+  if (!reason) return c.json({ error: 'reason_required', message: 'Specify why this consignment order is cancelled.' }, 400);
 
   const { data: cur, error: readErr } = await scopeToCompanyId(supabase
     .from('purchase_consignment_orders')
@@ -739,14 +743,14 @@ export const cancelPurchaseConsignmentOrderHandler = async (c: any) => {
      response per cancel, instead of a second write silently restamping the time. */
   const { data: updRow, error: updErr } = await scopeToCompanyId(supabase
     .from('purchase_consignment_orders')
-    .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .update({ status: 'CANCELLED', cancel_reason: reason, cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('id', id).neq('status', 'CANCELLED'), co.companyId).select('id').maybeSingle();
   if (updErr) return c.json({ error: 'cancel_failed', reason: updErr.message }, 500);
   if (!updRow) return c.json({ purchaseConsignmentOrder: { id, status: 'CANCELLED' } });
 
   const { data: after } = await scopeToCompanyId(supabase
     .from('purchase_consignment_orders')
-    .select('id, status, cancelled_at')
+    .select('id, status, cancelled_at, cancel_reason')
     .eq('id', id), co.companyId)
     .maybeSingle();
   return c.json({ purchaseConsignmentOrder: after ?? { id, status: 'CANCELLED' } });

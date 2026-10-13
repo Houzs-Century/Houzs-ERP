@@ -40,7 +40,7 @@ import { warehouseLabel } from '../../vendor/scm/lib/warehouse-label';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
-import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+import { usePrompt } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import styles from './Suppliers.module.css';
@@ -49,10 +49,11 @@ import { FilterPills } from '../../components/FilterPills';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-type StatusFilter = 'all' | 'outstanding';
+type StatusFilter = 'all' | 'outstanding' | 'cancelled';
 const STATUS_CHIPS: { value: StatusFilter; label: string }[] = [
   { value: 'outstanding', label: 'Outstanding' },
   { value: 'all', label: 'All' },
+  { value: 'cancelled', label: 'Cancelled' }
 ];
 
 const fmtMoney = (centi: number, currency: Currency): string =>
@@ -304,26 +305,29 @@ export const PurchaseConsignmentOrders = () => {
   const [selected, setSelected] = useState<PoHeaderRow | null>(null);
   const navigate = useNavigate();
   const cancelPo = useCancelPurchaseConsignmentOrder();
-  const askConfirm = useConfirm();
+  const askPrompt = usePrompt();
   const notify = useNotify();
 
   const { data, isLoading, error } = usePurchaseConsignmentOrders();
   const rows = useMemo(() => {
     const all = data ?? [];
     if (status === 'all') return all;
+    if (status === 'cancelled') return all.filter((r) => r.status === 'CANCELLED');
     return all.filter((r) => r.status === 'SUBMITTED' || r.status === 'PARTIALLY_RECEIVED');
   }, [data, status]);
 
   const columns = useMemo(() => buildColumns(), []);
 
   const doCancelPo = async (po: PoHeaderRow) => {
-    if (!(await askConfirm({
-      title: `Cancel ${pcNo(po)}?`,
-      body: 'It will stop proceeding.',
-      confirmLabel: 'Cancel order',
+    const reason = await askPrompt({
+      title: `Cancel ${pcNo(po)}?`, 
+      body: 'It will stop proceeding.', 
+      confirmLabel: 'Cancel order', 
       danger: true,
-    }))) return;
-    cancelPo.mutate(po.id, {
+      input: { label: 'Why it is cancelled', required: true },
+    });
+    if (reason === null) return;
+    cancelPo.mutate({id:po.id, reason}, {
       onSuccess: () => setSelected(null),
       onError: (e) => notify({ title: 'Cancel failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
     });
