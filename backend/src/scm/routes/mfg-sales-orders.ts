@@ -36,6 +36,8 @@ import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../li
 import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
 import { soStatusAfterProcessingDateChange } from '../lib/so-proceed-status-change';
+import { liveStatusForProcessingDate } from '../shared/so-proceeded-status';
+import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
 import { exemptionExpirySeed } from '../lib/so-exemption-expiry';
 import { soIsMigrated, withSoMigratedReadonly } from '../lib/migrated-so-readonly';
 import { readSoLineFreeze, soLineWriteRefusal, soBuildLineIds, soLineFrozen, SO_FULLY_FROZEN_REFUSAL } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
@@ -4242,7 +4244,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        trading company; we don't need a DRAFT staging step. Every new SO is
        CONFIRMED on insert. The DRAFT enum value still exists for legacy
        row compatibility, but new rows skip it entirely. */
-    status: (body as { asDraft?: unknown }).asDraft === true ? 'DRAFT' : 'CONFIRMED',
+    /* A create that carries its Processing Date is already proceeded (owner
+       2026-09-01, shared/so-proceeded-status.ts), so it opens IN_PRODUCTION
+       rather than sitting in Submitted with a date nobody acts on. */
+    status: (body as { asDraft?: unknown }).asDraft === true ? 'DRAFT' : liveStatusForProcessingDate(dateOrNull(procDateOnCreate)),
     created_by: user.id,
     }),
     claimedPwpCodes.length === 0 ? 8 : 1,
@@ -4689,7 +4694,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     /* Snapshot the REAL insert status — asDraft creates land as DRAFT (the
        background scan job path), everything else as CONFIRMED. Previously
        hardcoded 'CONFIRMED', which mislabelled scan drafts. */
-    statusSnapshot: (body as { asDraft?: unknown }).asDraft === true ? 'DRAFT' : 'CONFIRMED',
+    statusSnapshot: (body as { asDraft?: unknown }).asDraft === true ? 'DRAFT' : liveStatusForProcessingDate(dateOrNull(procDateOnCreate)),
     source: c.auditSource ?? 'web',
     note: c.auditNote,
   });
@@ -4951,7 +4956,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      "confirmed"), which the old verbatim writer persisted as-is — a status no
      `=== 'CONFIRMED'` check would ever match. Normalising fixes that latent
      lowercase-persist bug and lets the transition table judge a canonical value. */
-  const toStatus = String(body.status).trim().toUpperCase();
+  let toStatus = String(body.status).trim().toUpperCase();
 
   /* Company scope made STRICT, 2026-08-18. selfScopedSalesBlocked below already
      refuses a doc outside the active company — that is its step 1, not the
@@ -5049,9 +5054,21 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      of silently passing through. DRAFT→CONFIRMED only — a resume from
      ON_HOLD or a reopen re-enters CONFIRMED on an order that already passed
      (or predates) the gate, and re-gating those would strand legacy orders. */
-  if (fromNorm === 'DRAFT' && toStatus === 'CONFIRMED') {
+  const isConfirm = fromNorm === 'DRAFT' && toStatus === 'CONFIRMED';
+  if (isConfirm) {
     const confirmProblems = await soConfirmProblemsForDoc(sb, docNo);
     if (confirmProblems.length > 0) return c.json(validationFailedBody(confirmProblems), 422);
+  }
+  /* WHERE A CONFIRM LANDS. The scan review screen and the desktop draft fill
+     the Processing Date BEFORE Confirm, and this route only ever looked at the
+     requested target — so a draft confirmed with a date on it was filed under
+     Submitted, past the header-save rule that would have moved it (it fires on
+     null -> date, and the date was already there). 171 orders on 2026-10-13.
+     The confirm gate above still judges the CONFIRM; only the landing differs. */
+  if (isConfirm) {
+    const { data: dated } = await scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_PROCESSING_DATE_COLUMN), co.companyId)
+      .eq('doc_no', docNo).maybeSingle();
+    toStatus = liveStatusForProcessingDate((dated as Record<string, string | null> | null)?.[SO_PROCESSING_DATE_COLUMN] ?? null);
   }
   /* ── Stock-location gate on the DRAFT -> live transition (owner 2026-08-13,
      company 1 only) — the SAME invariant the create path enforces. This is the
@@ -5234,7 +5251,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      one row per scan — see scan-sample-review on the missing so_doc_no index),
      and for a draft the operator edited (same header).
      Best-effort — never costs the operator their confirm. */
-  if (fromNorm === 'DRAFT' && toStatus === 'CONFIRMED') {
+  if (isConfirm) {
     const acceptNote = noteScanDraftAccepted(getSupabaseService(c.env), docNo);
     try { c.executionCtx.waitUntil(acceptNote); }
     catch { /* non-Workers runtime (tests) — let the floating promise run */ }
@@ -7482,6 +7499,11 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
          Deferred: the compartment rows are committed; the global sweep runs in
          the background (waitUntil) so the save returns without blocking ~8s. */
       deferAllocationRecompute(c, sb, 'post-line-add');
+      /* A line added to a DELIVERED order is goods that have NOT gone out: the
+         delivery reconciler re-opens the order (DELIVERED -> READY_TO_SHIP) on
+         the same evidence a cancelled DO would. It only ever ran from DO routes,
+         so HC-SO-012913 read "Delivered" with a sofa module still to ship. */
+      await syncSoDeliveredFromDo(sb, [docNo], user.id);
 
       /* The sofa branch RETURNED here and queued nothing, so adding a sofa to
          an order AutoCount already holds never reached the account book at all.
@@ -7539,6 +7561,8 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      another SO out). Deferred: the INSERT is committed; the global sweep runs in
      the background (waitUntil) so the save returns without blocking ~8s on it. */
   deferAllocationRecompute(c, sb, 'post-line-add');
+  /* Same re-open as the sofa branch above: new demand on a delivered order. */
+  await syncSoDeliveredFromDo(sb, [docNo], user.id);
 
   await queueAcSoEdit(c, docNo, [], data?.id ? [String(data.id)] : []);
 

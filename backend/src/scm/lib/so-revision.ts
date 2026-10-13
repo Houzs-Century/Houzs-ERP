@@ -70,6 +70,7 @@ import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routin
 import { soAmendableHeaderFields } from '../shared/so-field-policy';
 import { canonicaliseSoHeaderChanges, soDateYmd, withProcessingRemovalCascade } from '../shared/so-processing-date';
 import { soStatusAfterProcessingDateChange } from './so-proceed-status-change';
+import { syncSoDeliveredFromDo } from './so-delivery-sync';
 import { readSoLineFreeze, soLineWriteRefusal } from './downstream-lock';
 import { SO_IDENTITY_LOCK_COLS } from '../shared/so-identity-lock';
 
@@ -1029,6 +1030,12 @@ export async function applySoAmendment(
       routingSummary ? `routing ${routingSummary}` : null,
     ].filter(Boolean).join('; ') || 'no diffs'}`,
   });
+
+  /* An approved ADD on a DELIVERED order is goods still to ship — the same
+     re-open the direct add-line route runs (DELIVERED -> READY_TO_SHIP). Only
+     when a line was actually added: a price or header amendment changes no
+     coverage and must not pay for the reconciler's reads. */
+  if (addedLineIds.length > 0) await syncSoDeliveredFromDo(sb, [docNo], userId);
 
   return { soDocNo: docNo, revision: nextRevision, addedLineIds };
 }

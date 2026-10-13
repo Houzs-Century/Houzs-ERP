@@ -60,6 +60,7 @@ import { advanceSoGeneration } from './so-generation';
 import { enqueueStockAllocationRecompute } from './stock-allocation-queue';
 import { SO_TERMINAL_STATES_PGREST } from '../shared/so-terminal-states';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
+import { liveStatusForProcessingDate } from '../shared/so-proceeded-status';
 import { loadNonSellingWarehouses, warehouseCanPromise } from './non-selling-warehouse';
 import { pgrestIn } from './pgrest-in-list';
 
@@ -1148,10 +1149,14 @@ async function runSoStockAllocation(
           deferredDocNos.push(`${docNo}:${advanced.reason}`);
         }
       } else if (!r.isShipReady && cur === 'READY_TO_SHIP') {
-        const regressed = await advanceSoGeneration(sb, docNo, { status: 'CONFIRMED' }, { status: cur });
+        /* Back to where the date says it belongs: a proceeded order that loses
+           its stock is still proceeded (shared/so-proceeded-status.ts), so it
+           regresses to IN_PRODUCTION, not to Submitted. */
+        const regressTo = liveStatusForProcessingDate(order.processing_date);
+        const regressed = await advanceSoGeneration(sb, docNo, { status: regressTo }, { status: cur });
         if (regressed.applied) {
           ordersRegressed += 1;
-          await auditAutoStatus(cur, 'CONFIRMED', r.mainCount + r.accCount === 0
+          await auditAutoStatus(cur, regressTo, r.mainCount + r.accCount === 0
             ? 'Auto-regressed: the order has no stock-bearing lines — not ship-able'
             : 'Auto-regressed: a main product line is no longer READY (stock re-allocated)');
         } else {
