@@ -198,6 +198,12 @@ export type Env = {
   // receiver). The 2990 DB (pg_net) sends it as `x-sync-secret`. Set via
   // `wrangler secret put SYNC_SECRET`. Unset => the receiver 401s (fail-closed).
   SYNC_SECRET?: string;
+  // IT Support (routes/itSupport.ts). The requests live in the Houzs IT Hub;
+  // IT_HUB_URL is its origin and IT_HUB_API_KEY is this system's key for it
+  // (`wrangler secret put IT_HUB_API_KEY`). Either unset => the routes answer
+  // 501 and the page says IT Support is not connected.
+  IT_HUB_URL?: string;
+  IT_HUB_API_KEY?: string;
   // Houzs → 2990 Product Maintenance push (scm/routes/maintenance-push.ts).
   // The push writes 2990's public.maintenance_config_history DIRECTLY with
   // 2990's service-role key — an owner-granted, table-scoped exception to D2

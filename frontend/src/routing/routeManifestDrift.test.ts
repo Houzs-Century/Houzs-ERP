@@ -98,7 +98,9 @@ describe("executable route contract", () => {
     // product or a repack; the Purchaser approves and raises the PC Order from it.
     // 171 since 2026-10-07: /scm/stock-adjustments/:id and /:id/edit — a stock
     // adjustment became a numbered document you can open and edit (BUG-66).
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(171);
+    // 172 since 2026-10-13: /it-support — report a problem to IT and follow it;
+    // the requests live in the Houzs IT Hub.
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(172);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -146,7 +148,8 @@ describe("executable route contract", () => {
     // 177 since 2026-10-02 — /scm/supplier-maintenance; see the staff-route count above.
     // 178 since 2026-10-06 — /scm/product-requests; see the staff-route count above.
     // 180 since 2026-10-07 — /scm/stock-adjustments/:id and /:id/edit (BUG-66).
-    expect(ROUTE_CONTRACT).toHaveLength(180);
+    // 181 since 2026-10-13 — /it-support; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(181);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
