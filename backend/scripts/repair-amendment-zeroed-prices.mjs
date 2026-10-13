@@ -33,10 +33,11 @@
         through the SI recomputeTotals, GL through resyncSiRevenue (void and
         re-post), entity audit row — the exact path a live-line edit takes.
 
-   AUTOCOUNT. Nothing here talks to the account book. The corrected price
-   reaches AutoCount through the sanctioned SO write-back only: by default the
-   plan prints the "Enqueue SO write-back" workflow inputs; WRITEBACK=enqueue
-   calls the app's own enqueueEdit after the apply so the outbox drain sends it.
+   AUTOCOUNT. Nothing here talks to the account book, and this script never
+   carries the enqueue flag (tests/acWritebackPushAllowlist: a repair must
+   not). The corrected price reaches AutoCount through the sanctioned SO
+   write-back only: the run prints the "Enqueue SO write-back" workflow
+   inputs, and that workflow runs the app's own enqueueEdit.
 
    THE ALLOW-LIST IS THE DECISION. Some swaps may have been meant as free of
    charge. MODE=apply therefore REQUIRES DOC_NOS: only the orders the owner
@@ -50,7 +51,7 @@
    the plan said — the SHAPE, not a count.
 
    Env: DATABASE_URL, COMPANY (default 1), DOC_NOS=HC-SO-1,HC-SO-2,
-        SI=print|fix (default print), WRITEBACK=print|enqueue (default print).
+        SI=print|fix (default print), RESUME=1 (finish a half-applied order).
 
    RE-RUN: inert. A restored line no longer reads unit_price_sen = 0, so it
    leaves the selection; the SI and write-back steps only act on what is named. */
@@ -67,7 +68,6 @@ const APPLY = (process.env.MODE || 'plan').toLowerCase() === 'apply';
 const CONFIRM_PHRASE = 'I HAVE REVIEWED THE PLAN LINE BY LINE';
 const DOC_NOS = parseDocNos(process.env.DOC_NOS);
 const SI_MODE = (process.env.SI || 'print').toLowerCase();
-const WRITEBACK = (process.env.WRITEBACK || 'print').toLowerCase();
 /* RESUME=1 also selects a named line that already reads its snapshot price,
    so a run that stopped after the line write finishes the header, the audit
    and the downstream documents. Every write below is guarded to accept the
@@ -92,7 +92,6 @@ if (APPLY && DOC_NOS.length === 0) {
   process.exit(2);
 }
 if (!['print', 'fix'].includes(SI_MODE)) { bad(`SI must be print or fix, got "${SI_MODE}"`); process.exit(2); }
-if (!['print', 'enqueue'].includes(WRITEBACK)) { bad(`WRITEBACK must be print or enqueue, got "${WRITEBACK}"`); process.exit(2); }
 
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
 
@@ -143,7 +142,7 @@ function printPlan(groups) {
 }
 
 async function main() {
-  note(`mode=${APPLY ? 'APPLY' : 'PLAN (writes nothing)'} company=${CO} si=${SI_MODE} writeback=${WRITEBACK} resume=${RESUME}`);
+  note(`mode=${APPLY ? 'APPLY' : 'PLAN (writes nothing)'} company=${CO} si=${SI_MODE} resume=${RESUME}`);
 
   const { lines, down } = await readCandidates(sql);
   const groups = plan(lines, down);
@@ -281,18 +280,7 @@ async function main() {
       expect: { version: Number(hdr.version) }, minTotal: g.lines.filter((l) => !l.cancelled).reduce((s, l) => s + l.money.total_sen, 0) });
   }
 
-  if (WRITEBACK === 'enqueue') {
-    note(`\n=== AUTOCOUNT: ENQUEUE THE SO WRITE-BACK (app's enqueueEdit, outbox drain sends it) ===`);
-    const { enqueueEdit } = await import('../src/scm/lib/autocount-outbox.ts');
-    const sbWb = pgrestShim(sql, 'scm', { writeback: 'enqueue' });
-    for (const g of groups) {
-      const ok = await enqueueEdit(sbWb, { companyId: CO, docType: 'SO', docNo: g.docNo, createdBy: null });
-      if (sbWb.__gaps.length) throw new Error(`shim gap during enqueueEdit(${g.docNo}): ${sbWb.__gaps.join('; ')}`);
-      note(ok === false ? `  SKIP ${g.docNo}: enqueueEdit declined (write-back off, or no AutoCount counterpart)` : `  OK  ${g.docNo}: edit enqueued`);
-    }
-  } else {
-    note(`\n=== AUTOCOUNT: NOT TOUCHED. Push the corrected prices with Actions -> "Enqueue SO write-back": target=prod mode=apply docs=${groups.map((g) => g.docNo).join(',')} ===`);
-  }
+  note(`\n=== AUTOCOUNT: NOT TOUCHED. Push the corrected prices with Actions -> "Enqueue SO write-back": target=prod mode=apply docs=${groups.map((g) => g.docNo).join(',')} ===`);
 
   await sql.end({ timeout: 5 });
   const check = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
