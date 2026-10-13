@@ -256,10 +256,27 @@ describe('PC Order cancel is a single ACTIVE->CANCELLED transition', () => {
     { id: 'pco-a', pc_number: 'PCO-2607-001', company_id: CO_A, status: 'SUBMITTED' },
   ];
 
+  test('PC order cancel without reason results in a 400', async () => {
+    const t = { purchase_consignment_orders: pcos() };
+    const h = harness(t, CO_A);
+    const res = await jsonPatch(h.app, '/pc-orders/pco-a/cancel', { cancel_reason: '   ' });
+    expect(res.status).toBe(400);
+    expect((await res.json() as Row).error).toBe('reason_required');
+    expect(t.purchase_consignment_orders[0].status).toBe('SUBMITTED');
+  });
+
+  test('PC order cancel with a reason results in a proper 200', async () => {
+    const t = { purchase_consignment_orders: pcos() };
+    const h = harness(t, CO_A);
+    const res = await jsonPatch(h.app, '/pc-orders/pco-a/cancel', { cancel_reason: 'supplier stopped' });
+    expect(res.status).toBe(200);
+    expect(t.purchase_consignment_orders[0].cancel_reason).toBe('supplier stopped');
+  })
+
   test('the UPDATE carries the .neq(status, CANCELLED) gate', async () => {
     const t = { purchase_consignment_orders: pcos() };
     const h = harness(t, CO_A);
-    const res = await jsonPatch(h.app, '/pc-orders/pco-a/cancel');
+    const res = await jsonPatch(h.app, '/pc-orders/pco-a/cancel', {cancel_reason: 'x'});
     expect(res.status).toBe(200);
     expect(t.purchase_consignment_orders[0].status).toBe('CANCELLED');
     expect(h.log).toContain('purchase_consignment_orders.update:neq:status');
@@ -275,7 +292,7 @@ describe('PC Order cancel is a single ACTIVE->CANCELLED transition', () => {
         t.purchase_consignment_orders[0].cancelled_at = 'FIRST-WINNER';
       }
     });
-    const res = await jsonPatch(h.app, '/pc-orders/pco-a/cancel');
+    const res = await jsonPatch(h.app, '/pc-orders/pco-a/cancel', {cancel_reason: 'x'});
     expect(res.status).toBe(200);
     expect((await res.json() as Row).purchaseConsignmentOrder.status).toBe('CANCELLED');
     expect(t.purchase_consignment_orders[0].cancelled_at).toBe('FIRST-WINNER');

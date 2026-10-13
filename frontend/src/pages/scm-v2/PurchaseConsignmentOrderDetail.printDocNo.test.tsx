@@ -59,6 +59,7 @@ vi.mock('../../vendor/scm/lib/inventory-queries', () => ({
 }));
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({
   useConfirm: () => async () => true,
+  usePrompt: () => async () => 'test reason',
 }));
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({
   useNotify: () => vi.fn(),

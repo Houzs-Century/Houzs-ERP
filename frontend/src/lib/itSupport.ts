@@ -1,0 +1,79 @@
+import { api } from "../api/client";
+
+/**
+ * IT Support logic shared by the desktop page (pages/ItSupport.tsx) and the
+ * phone screen (mobile/MobileItSupport.tsx): the shapes the backend relays from
+ * the Houzs IT Hub, how a reporter reads each state, and the upload limits the
+ * hub enforces. The two screens differ only in layout.
+ */
+
+export type ItStatus =
+  | "open" | "in_progress" | "on_hold" | "testing" | "waiting_reporter" | "resolved" | "closed" | "rejected";
+
+export interface ItRequestRow {
+  code: string; type: string; priority: string; status: ItStatus; title: string;
+  created_at: string; updated_at: string; assignee_name: string | null; unread: boolean;
+}
+export interface ItFileRef { id: number; event_id: number; filename: string; mime: string; size: number }
+export interface ItStep {
+  id: number; kind: "created" | "comment" | "status" | "assign" | "priority" | "type";
+  author_kind: "reporter" | "developer" | "system"; author_name: string;
+  body: string | null; from_value: string | null; to_value: string | null; created_at: string;
+  attachments: ItFileRef[];
+}
+export interface ItDetail {
+  ticket: {
+    code: string; type: string; priority: string; status: ItStatus; title: string; description: string;
+    assignee_name: string | null; created_at: string; updated_at: string;
+  };
+  events: ItStep[];
+}
+
+/* How the person who SENT the request reads each state. `resolved` is IT saying
+   it is fixed and asking them to check; `waiting_reporter` is IT waiting on them. */
+const STATUS_TEXT: Record<ItStatus, string> = {
+  open: "Sent",
+  in_progress: "In progress",
+  on_hold: "On hold",
+  testing: "Being tested",
+  waiting_reporter: "Waiting for you",
+  resolved: "Done, please confirm",
+  closed: "Closed",
+  rejected: "Not going ahead",
+};
+export type ItTone = "neutral" | "accent" | "success" | "warning" | "error";
+const STATUS_TONE: Record<ItStatus, ItTone> = {
+  open: "neutral", in_progress: "accent", on_hold: "neutral", testing: "accent",
+  waiting_reporter: "warning", resolved: "success", closed: "neutral", rejected: "error",
+};
+export const IT_KINDS = [["bug", "Something is not working"], ["development", "Ask for a change"]] as const;
+export const IT_URGENCY = [["urgent", "Urgent: work has stopped"], ["high", "High"], ["medium", "Normal"], ["low", "Low"]] as const;
+
+export const IT_MAX_FILES = 5;
+export const IT_MAX_BYTES = 10 * 1024 * 1024;
+export const IT_ACCEPT = "image/*,video/mp4,video/quicktime,application/pdf";
+
+export const itMessage = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
+/** Bypasses the client's read cache: a list or a conversation IT may have just changed must come from the server. */
+export const itFresh = <T,>(path: string) => api.get<T>(path, { signal: new AbortController().signal });
+
+/* The hub may grow a state this build has never heard of; it is shown as the
+   hub spelled it rather than as a blank pill. */
+export const itStatusText = (s: string | null): string => (s && s in STATUS_TEXT ? STATUS_TEXT[s as ItStatus] : s || "a new state");
+export const itStatusTone = (s: string): ItTone => (s in STATUS_TONE ? STATUS_TONE[s as ItStatus] : "neutral");
+
+export function itStepLine(s: ItStep): string {
+  if (s.kind === "created") return "sent this request";
+  if (s.kind === "status") return `changed it to ${itStatusText(s.to_value)}`;
+  if (s.kind === "assign") return s.to_value ? `gave it to ${s.to_value}` : "took it off the person handling it";
+  return "replied";
+}
+
+/** Adding files to an attachment list: the new list, or why it was refused. */
+export function itAddFiles(current: File[], added: FileList | null): { files: File[] } | { refused: string } {
+  const next = [...current, ...Array.from(added ?? [])];
+  const big = next.find((f) => f.size > IT_MAX_BYTES);
+  if (big) return { refused: `${big.name} is larger than 10 MB.` };
+  if (next.length > IT_MAX_FILES) return { refused: `Attach at most ${IT_MAX_FILES} files.` };
+  return { files: next };
+}

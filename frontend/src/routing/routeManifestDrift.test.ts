@@ -197,10 +197,12 @@ describe("mobile route drift gate", () => {
     // from a Profile row (gated via the Team hub tab).
     // 7 since 2026-09-17: /titles, the phone Titles editor (position_policy),
     // the last desktop-only Roles & Permissions surface to reach the phone.
-    expect(PROFILE_ORG_ITEMS).toHaveLength(7);
-    expect(allMobile).toHaveLength(47);
-    expect(new Set(allMobile.map((item) => item.to)).size).toBe(47);
-    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(46);
+    // 8 since 2026-10-13: /it-support, report a problem to IT from the phone;
+    // the row shows only where IT Support is connected, as on desktop.
+    expect(PROFILE_ORG_ITEMS).toHaveLength(8);
+    expect(allMobile).toHaveLength(48);
+    expect(new Set(allMobile.map((item) => item.to)).size).toBe(48);
+    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(47);
   });
 
   it("maps every declared mobile row to a real screen, never a placeholder stub", () => {

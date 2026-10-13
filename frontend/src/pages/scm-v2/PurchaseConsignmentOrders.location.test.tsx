@@ -17,8 +17,10 @@ vi.mock('../../vendor/scm/lib/purchase-consignment-order-queries', async (orig) 
   usePurchaseConsignmentOrderDetail: () => ({ data: { items: [] }, isLoading: false, isError: false, error: null }),
   useCancelPurchaseConsignmentOrder: () => ({ mutate: vi.fn(), isPending: false }),
 }));
-vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => async () => true }));
-vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => vi.fn() }));
+vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({
+  useConfirm: () => async () => true,
+  usePrompt: () => async () => 'test reason',
+}));vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => vi.fn() }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true, pageAccess: () => 'edit' }) }));
 
 import { PurchaseConsignmentOrders } from './PurchaseConsignmentOrders';

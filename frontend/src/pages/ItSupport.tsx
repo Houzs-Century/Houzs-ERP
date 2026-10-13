@@ -5,6 +5,11 @@ import { api } from "../api/client";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
 import { formatDateTime, relativeTime } from "../lib/utils";
+import {
+  IT_ACCEPT as ACCEPT, IT_KINDS as KINDS, IT_MAX_FILES as MAX_FILES, IT_URGENCY as URGENCY,
+  itAddFiles, itFresh as fresh, itMessage as message, itStatusText as statusText, itStatusTone as statusTone,
+  itStepLine as stepLine, type ItDetail as Detail, type ItFileRef as FileRef, type ItRequestRow as RequestRow,
+} from "../lib/itSupport";
 
 /**
  * IT Support — report a problem with the system to IT, follow it, reply, and
@@ -22,62 +27,9 @@ import { formatDateTime, relativeTime } from "../lib/utils";
  * actually answered with nothing.
  */
 
-type Status =
-  | "open" | "in_progress" | "on_hold" | "testing" | "waiting_reporter" | "resolved" | "closed" | "rejected";
-
-interface RequestRow {
-  code: string; type: string; priority: string; status: Status; title: string;
-  created_at: string; updated_at: string; assignee_name: string | null; unread: boolean;
-}
-interface FileRef { id: number; event_id: number; filename: string; mime: string; size: number }
-interface Step {
-  id: number; kind: "created" | "comment" | "status" | "assign" | "priority" | "type";
-  author_kind: "reporter" | "developer" | "system"; author_name: string;
-  body: string | null; from_value: string | null; to_value: string | null; created_at: string;
-  attachments: FileRef[];
-}
-interface Detail {
-  ticket: {
-    code: string; type: string; priority: string; status: Status; title: string; description: string;
-    assignee_name: string | null; created_at: string; updated_at: string;
-  };
-  events: Step[];
-}
-
-/* How the person who SENT the request reads each state. `resolved` is IT saying
-   it is fixed and asking them to check; `waiting_reporter` is IT waiting on them. */
-const STATUS_TEXT: Record<Status, string> = {
-  open: "Sent",
-  in_progress: "In progress",
-  on_hold: "On hold",
-  testing: "Being tested",
-  waiting_reporter: "Waiting for you",
-  resolved: "Done, please confirm",
-  closed: "Closed",
-  rejected: "Not going ahead",
-};
-const STATUS_TONE: Record<Status, "neutral" | "accent" | "success" | "warning" | "error"> = {
-  open: "neutral", in_progress: "accent", on_hold: "neutral", testing: "accent",
-  waiting_reporter: "warning", resolved: "success", closed: "neutral", rejected: "error",
-};
-const KINDS = [["bug", "Something is not working"], ["development", "Ask for a change"]] as const;
-const URGENCY = [["urgent", "Urgent: work has stopped"], ["high", "High"], ["medium", "Normal"], ["low", "Low"]] as const;
-
-const MAX_FILES = 5;
-const MAX_BYTES = 10 * 1024 * 1024;
-const ACCEPT = "image/*,video/mp4,video/quicktime,application/pdf";
 const CONTROL =
   "w-full rounded-md border border-border bg-surface px-3 py-2 text-[12.5px] text-ink placeholder:text-ink-muted focus:border-primary focus:outline-none";
 const LABEL = "text-[11.5px] font-semibold text-ink-secondary";
-
-const message = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
-/** Bypasses the client's read cache: a list or a conversation IT may have just changed must come from the server. */
-const fresh = <T,>(path: string) => api.get<T>(path, { signal: new AbortController().signal });
-
-/* The hub may grow a state this build has never heard of; it is shown as the
-   hub spelled it rather than as a blank pill. */
-const statusText = (s: string | null): string => (s && s in STATUS_TEXT ? STATUS_TEXT[s as Status] : s || "a new state");
-const statusTone = (s: string) => (s in STATUS_TONE ? STATUS_TONE[s as Status] : "neutral");
 
 function StatusBadge({ status }: { status: string }) {
   return <Badge tone={statusTone(status)} size="sm" caseless>{statusText(status)}</Badge>;
@@ -87,12 +39,10 @@ function Files({ files, onChange }: { files: File[]; onChange: (f: File[]) => vo
   const input = useRef<HTMLInputElement>(null);
   const [refused, setRefused] = useState<string | null>(null);
   const add = (list: FileList | null) => {
-    const next = [...files, ...Array.from(list ?? [])];
-    const big = next.find((f) => f.size > MAX_BYTES);
-    if (big) return setRefused(`${big.name} is larger than 10 MB.`);
-    if (next.length > MAX_FILES) return setRefused(`Attach at most ${MAX_FILES} files.`);
+    const r = itAddFiles(files, list);
+    if ("refused" in r) return setRefused(r.refused);
     setRefused(null);
-    onChange(next);
+    onChange(r.files);
   };
   return (
     <div className="flex flex-col gap-2">
@@ -191,13 +141,6 @@ function NewRequest({ from, onSent, onCancel }: { from: string; onSent: (code: s
       </div>
     </form>
   );
-}
-
-function stepLine(s: Step): string {
-  if (s.kind === "created") return "sent this request";
-  if (s.kind === "status") return `changed it to ${statusText(s.to_value)}`;
-  if (s.kind === "assign") return s.to_value ? `gave it to ${s.to_value}` : "took it off the person handling it";
-  return "replied";
 }
 
 function OneRequest({ code }: { code: string }) {

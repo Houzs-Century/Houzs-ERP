@@ -13,7 +13,7 @@ An order to a supplier for goods held on consignment — the supplier's stock pa
 | PATCH | `/:id` | Update header — field-level lock once a live PC Receive exists (below) |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | Line add/update/remove |
 | PATCH | `/:id/submit` | Legacy no-op |
-| PATCH | `/:id/cancel` | -> `CANCELLED`, terminal |
+| PATCH | `/:id/cancel` | -> `CANCELLED`, terminal. Body `{ cancel_reason }` required (400 `reason_required` if blank) |
 
 **ORDER-ONLY — a PC Order writes NO inventory movements.** It is a paper commitment; only its children touch the ledger: PC Receive books stock IN, PC Return books stock OUT.
 

@@ -159,6 +159,15 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   `salesAccess.canSeeSoloOrganizer` (BD role, Owner position, weisiang). An
   exhibition's organizer shows to everybody. Display-only — the stored name,
   the list, the calendar and the API still carry the organizer.
+- The same Sales section also lists the Sales Orders hard-linked to the event
+  (`scm.mfg_sales_orders.project_id`) via `GET /api/project-sales-orders/:id`
+  (`routes/project-sales-orders.ts`; desktop `pages/projects/
+  ProjectSalesOrdersBlock.tsx`, mobile `MobilePmsSalesOrders.tsx`): same read
+  gate as the entries list, the SO module's own own/downline row scope
+  (`scoped: true` marks partial totals), CANCELLED excluded, DRAFT counted,
+  paid from the payment ledger via `so-outstanding.ts`. "Not yet opened" is
+  the lump-sum `total_sales` minus the SO total — a comparison, not a count
+  of slips.
 
 ## Gotchas
 

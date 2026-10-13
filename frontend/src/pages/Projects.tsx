@@ -129,6 +129,7 @@ import { SoloSafeName, useCanSeeSoloOrganizer } from "./projects/SoloSafeName";
 import { STATUS_OPTIONS, ProjectStatusSelect } from "./projects/projectStatus";
 import { OrganizerPicker, VenuePicker } from "./projects/ProjectPickers";
 import { CreateProjectPanel } from "./projects/CreateProjectPanel";
+import { ProjectSalesOrdersBlock, useProjectSalesOrders } from "./projects/ProjectSalesOrdersBlock";
 import { DateRangeFilter, MultiSelectFilter, SectionTaskBadges, ImportCsvPanel } from "./projects/ProjectsListParts";
 import { ProjectsCalendarView } from "./projects/ProjectsCalendarView";
 export { buildCalendarWindow, buildProjectsCalendarModel } from "./projects/calendarModel";
@@ -8154,6 +8155,8 @@ function ProjectSalesEntriesSection({
     { enabled: canViewSales }
   );
   const udf = useUdf("sales_entries");
+  // The orders opened in the SO module for this fair — same gate as the list.
+  const soQuery = useProjectSalesOrders(projectId, canViewSales);
 
   async function submitEntry(e: SalesEntry) {
     try {
@@ -8203,7 +8206,7 @@ function ProjectSalesEntriesSection({
   if (!canViewSales) return null;
 
   return (
-    <PanelSection title={`Sales (${rows.length})`}>
+    <PanelSection title={`Sales (${rows.length + (soQuery.data?.totals.count ?? 0)})`}>
       {/* Toolbar: totals · status filter · new-sale */}
       <div className="mb-2 flex flex-col gap-3 rounded-md border border-border-subtle bg-bg/30 px-3 py-2 text-[10.5px] sm:flex-row sm:flex-wrap sm:items-center">
         {totals && (
@@ -8302,6 +8305,7 @@ function ProjectSalesEntriesSection({
           )}
         </div>
       </div>
+      <ProjectSalesOrdersBlock query={soQuery} finalTotalRm={currentTotalSales} />
       {/* Quick Total Sales inline form — sets project_finance.total_sales
           directly (lump sum), no individual entries. */}
       {quickTotalOpen && (
@@ -8415,7 +8419,7 @@ function ProjectSalesEntriesSection({
       {!list.loading && rows.length === 0 && (
         <EmptyState
           compact
-          message="No sales drafted yet for this exhibition."
+          message="No sales entries drafted here yet."
           cta={
             canLogSale
               ? { label: "Draft your first sale", onClick: () => setCreating(true) }
