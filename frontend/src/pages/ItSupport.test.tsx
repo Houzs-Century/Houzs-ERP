@@ -94,7 +94,7 @@ describe("IT Support — my requests", () => {
 describe("IT Support — report a problem", () => {
   it("refuses a blank title without calling the server", async () => {
     open("/it-support?new=1");
-    fireEvent.click(screen.getByText("Send to IT"));
+    fireEvent.click(screen.getByText("Send"));
     expect(await screen.findByText("Say in a few words what the problem is.")).toBeTruthy();
     expect(api.postForm).not.toHaveBeenCalled();
   });
@@ -105,19 +105,19 @@ describe("IT Support — report a problem", () => {
     open("/it-support?new=1&from=%2Fscm%2Fdelivery-orders");
     fireEvent.change(screen.getByPlaceholderText("The delivery order will not save"), { target: { value: "  Printer is offline " } });
     fireEvent.change(screen.getByLabelText(/^Details/), { target: { value: "Since this morning" } });
-    fireEvent.change(screen.getByDisplayValue("Normal"), { target: { value: "urgent" } });
+    fireEvent.change(screen.getByDisplayValue("Medium"), { target: { value: "high" } });
     fireEvent.change(screen.getByDisplayValue("Something is not working"), { target: { value: "development" } });
     const picker = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(picker, { target: { files: [new File(["x"], "shot.png", { type: "image/png" })] } });
     expect(screen.getByLabelText("Preview shot.png")).toBeTruthy();
-    fireEvent.click(screen.getByText("Send to IT"));
+    fireEvent.click(screen.getByText("Send"));
 
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/it-support?request=HC-0007"));
     const [path, form] = api.postForm.mock.calls[0] as [string, FormData];
     expect(path).toBe("/api/it-support/tickets");
     expect(form.get("title")).toBe("Printer is offline");
     expect(form.get("description")).toBe("Since this morning");
-    expect(form.get("priority")).toBe("urgent");
+    expect(form.get("priority")).toBe("high");
     expect(form.get("type")).toBe("development");
     expect(form.get("page_url")).toBe("/scm/delivery-orders");
     expect((form.getAll("files") as File[]).map((f) => f.name)).toEqual(["shot.png"]);
@@ -142,7 +142,7 @@ describe("IT Support — report a problem", () => {
     fireEvent.click(screen.getByLabelText("Remove s0.png"));
     expect(screen.queryByLabelText("Preview s0.png")).toBeNull();
 
-    fireEvent.click(screen.getByText("Send to IT"));
+    fireEvent.click(screen.getByText("Send"));
     expect(await screen.findByText(/could not be reached/)).toBeTruthy();
     expect(title.value).toBe("Printer");
     fireEvent.click(screen.getByText("Cancel"));

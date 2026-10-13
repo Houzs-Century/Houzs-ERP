@@ -209,7 +209,7 @@ function NewRequest({ from, onSent, onCancel }: { from: string; onSent: (code: s
       </div>
       {error && <p className="rounded-md border border-err/30 bg-err/5 px-3 py-2 text-[12px] text-ink" role="alert">{error}</p>}
       <div className="flex flex-wrap items-center gap-3 pt-2">
-        <Button type="submit" disabled={busy}>{busy ? "Sending…" : "Send to IT"}</Button>
+        <Button type="submit" disabled={busy}>{busy ? "Sending…" : "Send"}</Button>
         <Button type="button" variant="secondary" onClick={onCancel} disabled={busy}>Cancel</Button>
       </div>
     </form>

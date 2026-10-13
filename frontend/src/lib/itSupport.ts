@@ -47,7 +47,7 @@ const STATUS_TONE: Record<ItStatus, ItTone> = {
   waiting_reporter: "warning", resolved: "success", closed: "neutral", rejected: "error",
 };
 export const IT_KINDS = [["bug", "Something is not working"], ["development", "Ask for a change"]] as const;
-export const IT_URGENCY = [["urgent", "Urgent: work has stopped"], ["high", "High"], ["medium", "Normal"], ["low", "Low"]] as const;
+export const IT_URGENCY = [["low", "Low"], ["medium", "Medium"], ["high", "High"]] as const;
 
 export const IT_MAX_FILES = 5;
 export const IT_MAX_BYTES = 10 * 1024 * 1024;
