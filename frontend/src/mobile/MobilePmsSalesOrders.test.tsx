@@ -49,7 +49,7 @@ describe("MobilePmsSalesOrders", () => {
     expect(screen.queryByText("your orders only")).toBeNull();
 
     expect((screen.getByText("HC-SO-013462").closest("a"))?.getAttribute("href")).toBe("/scm/sales-orders/HC-SO-013462");
-    expect((screen.getByText(/HC13503 · Anthony · Confirmed/)).textContent).toContain("balance RM 25,000.00");
+    expect((screen.getByText(/HC13503 · Anthony · Submitted/)).textContent).toContain("balance RM 25,000.00");
     expect((screen.getByText(/no ref · Adrian · Draft/)).textContent).not.toContain("balance");
   });
 

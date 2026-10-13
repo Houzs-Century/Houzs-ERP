@@ -17,6 +17,7 @@ import { cn, formatCurrency, formatDate } from "../../lib/utils";
 import { fmtSen } from "../../vendor/shared/format";
 import { formatPhone } from "../../vendor/shared/phone";
 import {
+  normalizeProjectSalesOrders,
   soStatusLabel,
   summarizeProjectSalesOrders,
   type ProjectSalesOrdersResponse,
@@ -29,7 +30,7 @@ export function useProjectSalesOrders(
 ): QueryState<ProjectSalesOrdersResponse> {
   return useQuery<ProjectSalesOrdersResponse>(
     "/api/project-sales-orders/:",
-    () => api.get(`/api/project-sales-orders/${projectId}`),
+    () => api.get<unknown>(`/api/project-sales-orders/${projectId}`).then(normalizeProjectSalesOrders),
     [projectId],
     { enabled },
   );
@@ -138,7 +139,7 @@ export function ProjectSalesOrdersBlock({
               <tr className="text-left font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
                 <th className="px-2 py-1.5">Date</th>
                 <th className="px-2 py-1.5">SO No</th>
-                <th className="px-2 py-1.5">Ref No</th>
+                <th className="px-2 py-1.5">Ref No.</th>
                 <th className="px-2 py-1.5">Customer</th>
                 <th className="px-2 py-1.5 text-right">Amount</th>
                 <th className="px-2 py-1.5 text-right">Paid</th>

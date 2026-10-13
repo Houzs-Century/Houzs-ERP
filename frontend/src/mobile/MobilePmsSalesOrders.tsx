@@ -8,9 +8,9 @@ import { api } from "../api/client";
 import { formatCurrency, formatDate } from "../lib/utils";
 import { fmtSen } from "../vendor/shared/format";
 import {
+  normalizeProjectSalesOrders,
   soStatusLabel,
   summarizeProjectSalesOrders,
-  type ProjectSalesOrdersResponse,
 } from "../pages/projects/projectSalesOrders";
 
 const LABEL: React.CSSProperties = {
@@ -28,7 +28,7 @@ export function MobilePmsSalesOrders({
 }) {
   const { data, isPending, error } = useQuery({
     queryKey: ["mobile-pms-sales-orders", projectId],
-    queryFn: () => api.get<ProjectSalesOrdersResponse>(`/api/project-sales-orders/${projectId}`),
+    queryFn: () => api.get<unknown>(`/api/project-sales-orders/${projectId}`).then(normalizeProjectSalesOrders),
     staleTime: 15_000,
   });
   const rows = data?.data ?? [];

@@ -7,6 +7,7 @@
  * Shared by the desktop block and the mobile panel so the two cannot disagree
  * on what "not yet opened" means. Pure; no fetching here.
  */
+import { statusLabel } from "../../vendor/scm/lib/status-pill";
 
 export type ProjectSalesOrderRow = {
   doc_no: string;
@@ -40,6 +41,31 @@ export type ProjectSalesOrdersResponse = {
    *  the fair's. */
   scoped: boolean;
 };
+
+const ZERO_TOTALS: ProjectSalesOrderTotals = { count: 0, draft_count: 0, amount_sen: 0, paid_sen: 0, balance_sen: 0 };
+
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+/** The read as the page may rely on it. A response that is not the shape
+ *  above — a proxy answering for another route, a stub, an older worker —
+ *  becomes an empty, unscoped read rather than a crash of the whole project
+ *  page; the rows are kept only when they are an array. */
+export function normalizeProjectSalesOrders(raw: unknown): ProjectSalesOrdersResponse {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Partial<ProjectSalesOrdersResponse>;
+  const data = Array.isArray(r.data) ? r.data : [];
+  const t = r.totals && typeof r.totals === "object" ? r.totals : ZERO_TOTALS;
+  return {
+    data,
+    totals: {
+      count: num(t.count),
+      draft_count: num(t.draft_count),
+      amount_sen: num(t.amount_sen),
+      paid_sen: num(t.paid_sen),
+      balance_sen: num(t.balance_sen),
+    },
+    scoped: r.scoped === true,
+  };
+}
 
 export type ProjectSalesOrdersSummary = {
   count: number;
@@ -86,23 +112,10 @@ export function summarizeProjectSalesOrders(
   };
 }
 
-/** A sales order's status as a person reads it: the SO list's own spellings
- *  for the few that have one, else the key with its underscores opened up. */
+/** A sales order's status as the SO list spells it — status-pill.ts is the
+ *  one vocabulary (the confirm rung reads "Submitted", owner 2026-09-12), so
+ *  this must not carry a map of its own. A blank status reads as a dash. */
 export function soStatusLabel(status: string | null | undefined): string {
-  const key = (status ?? "").trim().toUpperCase();
-  if (!key) return "—";
-  const known: Record<string, string> = {
-    DRAFT: "Draft",
-    CONFIRMED: "Confirmed",
-    IN_PRODUCTION: "In production",
-    READY_TO_SHIP: "Ready to ship",
-    SHIPPED: "Delivered",
-    DELIVERED: "Delivered",
-    INVOICED: "Invoiced",
-    CLOSED: "Closed",
-    ON_HOLD: "On hold",
-  };
-  if (known[key]) return known[key];
-  const words = key.toLowerCase().replace(/_/g, " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
+  const key = (status ?? "").trim();
+  return statusLabel("so", key || null);
 }

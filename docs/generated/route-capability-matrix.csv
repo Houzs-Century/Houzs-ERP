@@ -300,6 +300,7 @@ PATCH,/api/positions/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"require
 GET,/api/positions/:id/page-access,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""users.read"")",,NO,DECLARED_GATE,backend/src/routes/positions.ts
 GET,/api/presence,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/presence.ts
 POST,/api/presence/heartbeat,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/presence.ts
+GET,/api/project-sales-orders/:projectId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePageAccessOrSalesView(""sales"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/routes/project-sales-orders.ts
 GET,/api/projects,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""projects.list"")",,NO,DECLARED_GATE,backend/src/routes/projects.ts
 POST,/api/projects,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 GET,/api/projects-print/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/projects_print.ts

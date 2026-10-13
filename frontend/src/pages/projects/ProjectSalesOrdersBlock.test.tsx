@@ -66,7 +66,7 @@ describe("ProjectSalesOrdersBlock", () => {
     expect((first).textContent).toContain("RM 50,000.00");
     expect((first).textContent).toContain("RM 25,000.00");
     expect((first).textContent).toContain("Anthony");
-    expect((first).textContent).toContain("Confirmed");
+    expect((first).textContent).toContain("Submitted");
     expect((links[1]!.closest("tr")!).textContent).toContain("Draft");
   });
 
