@@ -24,6 +24,12 @@ via public no-login share links — outside contractors and brand partners.
   `caption` (`pages/projects/defectRemark.ts`); it renders under the photo for
   EVERY mobile viewer (`MobilePmsDefectActions.tsx`, not the hidden tasklist),
   with an inline thumbnail. A legacy free-text caption reads out as the reason.
+- Sabah/Sarawak only: a defect item carries a CLEANING mark — BD/owner
+  (`canCreateEvent`) press "Cleaning done" once the on-site cleaning service is
+  finished (`project_checklist.cleaning_status='done'`, `pages/projects/
+  DefectCleaning.tsx` + `POST /:id/checklist/:itemId/defect-cleaning`, gated on
+  `isEastMalaysiaState`). One mark, not a two-step status (owner 2026-10-13);
+  still-dirty items escalate to the purchaser through the normal Replace flow.
 - Stock transfers (`project_stock_transfers`) mirror into one checklist row
   per transfer (`notes = auto:stock_transfer=<id>`); confirm/unconfirm/delete
   re-sync or drop that row. A missing `transferred_at` defaults to today

@@ -1,0 +1,24 @@
+-- 20261013T0900_defect_cleaning_status.sql
+--
+-- Defect-item CLEANING stage (owner 2026-10-12), Sabah/Sarawak only.
+--
+-- WHY. For a Sabah/Sarawak fair the owner compiles the transporter's defect
+-- photos, hands them to a cleaning service at the booth during setup, then marks
+-- "Cleaning done" once the proof is back (owner 2026-10-13: one button only — the
+-- cleaning happens during setup, a separate "in progress" state is double work).
+-- The items that still cannot be cleaned are escalated to the purchaser (Sim)
+-- through the existing per-photo Replace flow — this only marks completion.
+--
+-- SHAPE. Three nullable columns on the defect checklist ROW (project_checklist),
+-- not a side table: the detail GET already returns `SELECT c.*`, so the status
+-- rides the query the page already runs (getProjectDetail is the module's perf
+-- hotspot — a join table would add a 17th sequential query for one small field).
+-- NULL = not marked done (every non-Sabah/Sarawak defect, and any Sabah/Sarawak
+-- one the owner has not finished cleaning). Value: 'done'.
+--
+-- WHO writes it is enforced in the route (canCreateEvent = BD / owner / weisiang)
+-- plus the Sabah/Sarawak state gate; the column itself carries no constraint so
+-- a later state-scope change needs no migration.
+ALTER TABLE project_checklist ADD COLUMN IF NOT EXISTS cleaning_status text;
+ALTER TABLE project_checklist ADD COLUMN IF NOT EXISTS cleaning_updated_at text;
+ALTER TABLE project_checklist ADD COLUMN IF NOT EXISTS cleaning_updated_by integer;

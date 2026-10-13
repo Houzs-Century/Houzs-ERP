@@ -125,6 +125,7 @@ import type {
 import { composeDefaultProjectName, viewableMime, googleCalendarUrl } from "./projects/projectHelpers";
 import { itemComplete } from "./projects/checklistDone";
 import { salesOrderProjectLabel, shownProjectName, shownOrganizer, isSoloMasked, maskSoloOrganizer, SOLO_ORGANIZER_MASK, type SoloMaskProject } from "./projects/soloOrganizerMask";
+import { DefectCleaning } from "./projects/DefectCleaning";
 import { SoloSafeName, useCanSeeSoloOrganizer } from "./projects/SoloSafeName";
 import { STATUS_OPTIONS, ProjectStatusSelect } from "./projects/projectStatus";
 import { OrganizerPicker, VenuePicker } from "./projects/ProjectPickers";
@@ -3638,6 +3639,7 @@ function ProjectDetailContent({
               <TasklistSections
                 projectId={id}
                 projectName={p.name}
+                projectState={p.state}
                 projectStartDate={p.start_date}
                 projectEndDate={p.end_date}
                 checklist={checklist}
@@ -4951,6 +4953,7 @@ function ProjectStageStepper({
 function TasklistSections({
   projectId,
   projectName,
+  projectState,
   projectStartDate,
   projectEndDate,
   checklist,
@@ -4971,6 +4974,8 @@ function TasklistSections({
   projectId: number;
   /** The event's name — what a payment request raised from its CONTRACT row says it is for. */
   projectName: string;
+  /** The event's state — drives the Sabah/Sarawak defect cleaning stage. */
+  projectState?: string | null;
   projectStartDate: string | null;
   projectEndDate: string | null;
   checklist: ChecklistItem[];
@@ -5496,6 +5501,7 @@ function TasklistSections({
                   <ChecklistRow
                     item={item}
                     projectId={projectId}
+                    projectState={projectState}
                     comments={comments.filter((c) => c.item_id === item.id)}
                     canTick={canTick}
                     canApprove={!item.required_perm || holdsChecklistApproval(user?.permissions, item.required_perm)}
@@ -6376,6 +6382,7 @@ function ChecklistRow({
   onAttachmentsChanged,
   readOnlyAttach,
   attachCaption,
+  projectState,
   toast,
 }: {
   item: ChecklistItem;
@@ -6399,6 +6406,8 @@ function ChecklistRow({
    *  attachments read-only (no upload button) plus a caption. */
   readOnlyAttach?: boolean;
   attachCaption?: string;
+  /** Project state — drives the Sabah/Sarawak defect cleaning stage. */
+  projectState?: string | null;
   toast?: ReturnType<typeof useToast>;
 }) {
   const dialog = useDialog();
@@ -6870,6 +6879,7 @@ function ChecklistRow({
             <Ban size={12} />
             N/A
           </button>
+          <DefectCleaning item={item} projectId={projectId} projectState={projectState} onChanged={() => onAttachmentsChanged?.()} />
         </div>
       </div>
 

@@ -2514,8 +2514,9 @@ app.get("/:id", requirePageAccess("projects.list"), async (c) => {
 // Event (project) creation is restricted to BD staff, the Owner account, and
 // Lim (weisiang329@gmail.com) — NOT other Super Admins nor anyone else (owner
 // 2026-07-24). This is the authority; the FE hides the New Project button for
-// everyone else. Mirrors frontend auth/salesAccess.canCreateEvent.
-function canCreateEvent(
+// everyone else. Mirrors frontend auth/salesAccess.canCreateEvent. Exported so
+// the split-out routes/defect-cleaning.ts reuses the one rule.
+export function canCreateEvent(
   user: { role_name?: string | null; position_name?: string | null; email?: string | null } | null | undefined,
 ): boolean {
   if (!user) return false;
