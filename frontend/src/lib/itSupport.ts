@@ -47,7 +47,7 @@ const STATUS_TONE: Record<ItStatus, ItTone> = {
   waiting_reporter: "warning", resolved: "success", closed: "neutral", rejected: "error",
 };
 export const IT_KINDS = [["bug", "Something is not working"], ["development", "Ask for a change"]] as const;
-export const IT_URGENCY = [["urgent", "Urgent: work has stopped"], ["high", "High"], ["medium", "Normal"], ["low", "Low"]] as const;
+export const IT_URGENCY = [["low", "Low"], ["medium", "Medium"], ["high", "High"]] as const;
 
 export const IT_MAX_FILES = 5;
 export const IT_MAX_BYTES = 10 * 1024 * 1024;
@@ -69,9 +69,15 @@ export function itStepLine(s: ItStep): string {
   return "replied";
 }
 
+/* IT_ACCEPT only filters the file browser; a dropped or pasted file is checked against it here. */
+const itAccepted = (f: File) =>
+  IT_ACCEPT.split(",").some((t) => (t.endsWith("/*") ? f.type.startsWith(t.slice(0, -1)) : f.type === t));
+
 /** Adding files to an attachment list: the new list, or why it was refused. */
-export function itAddFiles(current: File[], added: FileList | null): { files: File[] } | { refused: string } {
+export function itAddFiles(current: File[], added: ArrayLike<File> | null): { files: File[] } | { refused: string } {
   const next = [...current, ...Array.from(added ?? [])];
+  const odd = next.find((f) => !itAccepted(f));
+  if (odd) return { refused: `${odd.name} is not a picture, MP4 or MOV video, or PDF.` };
   const big = next.find((f) => f.size > IT_MAX_BYTES);
   if (big) return { refused: `${big.name} is larger than 10 MB.` };
   if (next.length > IT_MAX_FILES) return { refused: `Attach at most ${IT_MAX_FILES} files.` };

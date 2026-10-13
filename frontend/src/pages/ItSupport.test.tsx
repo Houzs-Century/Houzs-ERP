@@ -50,6 +50,9 @@ beforeEach(() => {
   api.post.mockReset();
   api.postForm.mockReset();
   api.fetchBlobUrl.mockReset();
+  // The picture previews; jsdom has no object URLs.
+  URL.createObjectURL = vi.fn(() => "blob:preview");
+  URL.revokeObjectURL = vi.fn();
 });
 afterEach(() => cleanup());
 
@@ -91,7 +94,7 @@ describe("IT Support — my requests", () => {
 describe("IT Support — report a problem", () => {
   it("refuses a blank title without calling the server", async () => {
     open("/it-support?new=1");
-    fireEvent.click(screen.getByText("Send to IT"));
+    fireEvent.click(screen.getByText("Send"));
     expect(await screen.findByText("Say in a few words what the problem is.")).toBeTruthy();
     expect(api.postForm).not.toHaveBeenCalled();
   });
@@ -101,20 +104,20 @@ describe("IT Support — report a problem", () => {
     api.get.mockResolvedValue(detail("open"));
     open("/it-support?new=1&from=%2Fscm%2Fdelivery-orders");
     fireEvent.change(screen.getByPlaceholderText("The delivery order will not save"), { target: { value: "  Printer is offline " } });
-    fireEvent.change(screen.getByPlaceholderText(/What you did/), { target: { value: "Since this morning" } });
-    fireEvent.change(screen.getByDisplayValue("Normal"), { target: { value: "urgent" } });
+    fireEvent.change(screen.getByLabelText(/^Details/), { target: { value: "Since this morning" } });
+    fireEvent.change(screen.getByDisplayValue("Medium"), { target: { value: "high" } });
     fireEvent.change(screen.getByDisplayValue("Something is not working"), { target: { value: "development" } });
     const picker = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(picker, { target: { files: [new File(["x"], "shot.png", { type: "image/png" })] } });
-    expect(screen.getByText("shot.png")).toBeTruthy();
-    fireEvent.click(screen.getByText("Send to IT"));
+    expect(screen.getByLabelText("Preview shot.png")).toBeTruthy();
+    fireEvent.click(screen.getByText("Send"));
 
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/it-support?request=HC-0007"));
     const [path, form] = api.postForm.mock.calls[0] as [string, FormData];
     expect(path).toBe("/api/it-support/tickets");
     expect(form.get("title")).toBe("Printer is offline");
     expect(form.get("description")).toBe("Since this morning");
-    expect(form.get("priority")).toBe("urgent");
+    expect(form.get("priority")).toBe("high");
     expect(form.get("type")).toBe("development");
     expect(form.get("page_url")).toBe("/scm/delivery-orders");
     expect((form.getAll("files") as File[]).map((f) => f.name)).toEqual(["shot.png"]);
@@ -136,14 +139,34 @@ describe("IT Support — report a problem", () => {
     fireEvent.change(picker, { target: { files: six } });
     expect(screen.getByText("Attach at most 5 files.")).toBeTruthy();
     fireEvent.change(picker, { target: { files: [six[0]] } });
-    fireEvent.click(screen.getByText("Remove"));
-    expect(screen.queryByText("s0.png")).toBeNull();
+    fireEvent.click(screen.getByLabelText("Remove s0.png"));
+    expect(screen.queryByLabelText("Preview s0.png")).toBeNull();
 
-    fireEvent.click(screen.getByText("Send to IT"));
+    fireEvent.click(screen.getByText("Send"));
     expect(await screen.findByText(/could not be reached/)).toBeTruthy();
     expect(title.value).toBe("Printer");
     fireEvent.click(screen.getByText("Cancel"));
     expect(screen.getByTestId("where").textContent).toBe("/it-support");
+  });
+
+  it("takes a dropped file and a pasted screenshot, refuses a file IT cannot open, and previews a picture", () => {
+    open("/it-support?new=1");
+    const zone = screen.getByText(/Drop files here/).closest("label") as HTMLLabelElement;
+    fireEvent.drop(zone, { dataTransfer: { types: ["Files"], files: [new File(["x"], "notes.docx", { type: "application/msword" })] } });
+    expect(screen.getByText("notes.docx is not a picture, MP4 or MOV video, or PDF.")).toBeTruthy();
+    fireEvent.drop(zone, { dataTransfer: { types: ["Files"], files: [new File(["x"], "clip.mp4", { type: "video/mp4" })] } });
+    expect(screen.getByLabelText("Remove clip.mp4")).toBeTruthy();
+
+    const paste = new Event("paste", { bubbles: true, cancelable: true });
+    const shot = new File(["x"], "image.png", { type: "image/png" });
+    Object.defineProperty(paste, "clipboardData", { value: { items: [{ kind: "file", getAsFile: () => shot }] } });
+    fireEvent(document, paste);
+    expect(screen.getByLabelText("Preview image.png")).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("Preview image.png"));
+    expect(screen.getByRole("dialog", { name: "image.png" })).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
 
