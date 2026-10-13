@@ -364,7 +364,9 @@ export async function drainVenturePortalOutbox(
          triggers' ON CONFLICT DO UPDATE); marking the row sent anyway would
          leave the portal a save behind with nothing queued — HC-SO-2609-271's
          header total, recomputed 1.6 s after its line, never reached it. Such a
-         row stays pending and the next sweep sends the newer state. */
+         row stays pending and the next sweep sends the newer state.
+         company-scope: the outbox has no company column; the row is addressed
+         by its primary key, and `revision` is a version guard, not a key. */
       const { data: marked, error: markErr } = await sb
         .from('venture_portal_outbox')
         .update({
