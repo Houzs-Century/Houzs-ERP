@@ -19,6 +19,13 @@
 -- WHO writes it is enforced in the route (canCreateEvent = BD / owner / weisiang)
 -- plus the Sabah/Sarawak state gate; the column itself carries no constraint so
 -- a later state-scope change needs no migration.
+--
+-- REVERSAL: ALTER TABLE project_checklist
+--             DROP COLUMN IF EXISTS cleaning_status,
+--             DROP COLUMN IF EXISTS cleaning_updated_at,
+--             DROP COLUMN IF EXISTS cleaning_updated_by;
+--           Only the Sabah/Sarawak defect cleaning mark reads these columns;
+--           dropping them loses that mark and nothing else.
 ALTER TABLE project_checklist ADD COLUMN IF NOT EXISTS cleaning_status text;
 ALTER TABLE project_checklist ADD COLUMN IF NOT EXISTS cleaning_updated_at text;
 ALTER TABLE project_checklist ADD COLUMN IF NOT EXISTS cleaning_updated_by integer;
