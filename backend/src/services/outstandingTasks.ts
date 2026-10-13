@@ -11,7 +11,7 @@ import { todayMyt } from "../scm/lib/my-time";
  * one. The month cut and the incomplete predicate are done here; task / status /
  * group-by slicing is done client-side on this one payload.
  *
- * Access is gated at the route (projects.reminders); this service only reads.
+ * Access is gated at the route (the BD / Owner / weisiang tier); this service only reads.
  */
 
 export interface OutstandingTaskRow {

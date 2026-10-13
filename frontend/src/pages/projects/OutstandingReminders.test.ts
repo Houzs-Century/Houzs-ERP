@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   distinctTasks,
+  distinctOrganizers,
+  dateRange,
   filterRows,
+  ALL_ORGANIZERS,
   groupRows,
   groupLabel,
   buildGroupMessage,
@@ -46,23 +49,55 @@ describe("distinctTasks", () => {
   });
 });
 
+describe("distinctOrganizers", () => {
+  it("returns unique trimmed organizers sorted alphabetically, skipping blanks", () => {
+    const rows = [
+      row({ id: 1, organizer: "MYHOME" }),
+      row({ id: 2, organizer: " BIGHOME " }),
+      row({ id: 3, organizer: "MYHOME" }),
+      row({ id: 4, organizer: null }),
+      row({ id: 5, organizer: "  " }),
+    ];
+    expect(distinctOrganizers(rows)).toEqual(["BIGHOME", "MYHOME"]);
+  });
+});
+
 describe("filterRows", () => {
+  const all = { task: "__all__", status: "incomplete" as const, organizer: ALL_ORGANIZERS };
   const rows = [
-    row({ id: 1, title: "Filled Floorplan", overdue_days: 3 }),
-    row({ id: 2, title: "Booth", overdue_days: 0 }),
-    row({ id: 3, title: "Filled Floorplan", overdue_days: 0 }),
+    row({ id: 1, title: "Filled Floorplan", overdue_days: 3, organizer: "MYHOME" }),
+    row({ id: 2, title: "Booth", overdue_days: 0, organizer: "REX" }),
+    row({ id: 3, title: "Filled Floorplan", overdue_days: 0, organizer: " REX " }),
   ];
 
   it("filters by a specific task title", () => {
-    expect(filterRows(rows, "Filled Floorplan", "incomplete").map((r) => r.id)).toEqual([1, 3]);
+    expect(filterRows(rows, { ...all, task: "Filled Floorplan" }).map((r) => r.id)).toEqual([1, 3]);
   });
 
   it("keeps every task when set to All", () => {
-    expect(filterRows(rows, "__all__", "incomplete")).toHaveLength(3);
+    expect(filterRows(rows, all)).toHaveLength(3);
   });
 
   it("overdue-only drops rows that are not overdue", () => {
-    expect(filterRows(rows, "__all__", "overdue").map((r) => r.id)).toEqual([1]);
+    expect(filterRows(rows, { ...all, status: "overdue" }).map((r) => r.id)).toEqual([1]);
+  });
+
+  it("narrows to one organizer, matching the trimmed value", () => {
+    expect(filterRows(rows, { ...all, organizer: "REX" }).map((r) => r.id)).toEqual([2, 3]);
+  });
+
+  it("task + organizer combine", () => {
+    expect(filterRows(rows, { ...all, task: "Filled Floorplan", organizer: "REX" }).map((r) => r.id)).toEqual([3]);
+  });
+});
+
+describe("dateRange", () => {
+  it("renders a two-day span, a same-day event, and a start-only event", () => {
+    expect(dateRange("2026-10-31", "2026-11-02")).toBe("31 Oct – 2 Nov");
+    expect(dateRange("2026-10-02", "2026-10-04")).toBe("2 Oct – 4 Oct");
+    expect(dateRange("2026-10-05", "2026-10-05")).toBe("5 Oct");
+    expect(dateRange("2026-10-05T00:00:00Z", null)).toBe("5 Oct");
+    expect(dateRange(null, "2026-10-05")).toBe("");
   });
 });
 
@@ -115,7 +150,12 @@ describe("buildAllMessage", () => {
       ],
       "organizer",
     );
-    const msg = buildAllMessage(groups, { task: "Filled Floorplan", monthLabel: "Oct 2026", status: "incomplete" });
+    const msg = buildAllMessage(groups, {
+      task: "Filled Floorplan",
+      monthLabel: "Oct 2026",
+      status: "incomplete",
+      organizer: ALL_ORGANIZERS,
+    });
     expect(msg).toContain("📋 Outstanding — Filled Floorplan · Oct 2026 · Incomplete");
     expect(msg).toContain("*BIGHOME* (1)");
     expect(msg).toContain("*MLE* (1)");
@@ -124,9 +164,25 @@ describe("buildAllMessage", () => {
 
   it("singularises the total for one task in one group", () => {
     const groups = groupRows([row({ id: 1, organizer: "BIGHOME" })], "organizer");
-    const msg = buildAllMessage(groups, { task: "__all__", monthLabel: "All months", status: "overdue" });
+    const msg = buildAllMessage(groups, {
+      task: "__all__",
+      monthLabel: "All months",
+      status: "overdue",
+      organizer: ALL_ORGANIZERS,
+    });
     expect(msg).toContain("📋 Outstanding — All tasks · All months · Overdue only");
     expect(msg).toContain("Total: 1 task across 1 group");
+  });
+
+  it("names the organizer in the header when narrowed to one", () => {
+    const groups = groupRows([row({ id: 1, organizer: "MYHOME" })], "pic");
+    const msg = buildAllMessage(groups, {
+      task: "Filled Floorplan",
+      monthLabel: "Oct 2026",
+      status: "incomplete",
+      organizer: "MYHOME",
+    });
+    expect(msg).toContain("📋 Outstanding — Filled Floorplan · MYHOME · Oct 2026 · Incomplete");
   });
 });
 

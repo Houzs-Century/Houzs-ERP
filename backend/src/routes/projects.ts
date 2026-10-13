@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../types";
 import { requirePermission, requireAnyPermission, requirePageAccess } from "../middleware/auth";
+import { canCreateEvent } from "./lib/named-tier";
 import { parseFairSheet, eventToFinanceLines } from "../services/agents/fair-report-parse";
 import { buildFileBlocks } from "../services/vision-blocks";
 import { reconcileSchedule, type ProjRow } from "../services/agents/schedule-reconcile";
@@ -2514,17 +2515,8 @@ app.get("/:id", requirePageAccess("projects.list"), async (c) => {
 // Event (project) creation is restricted to BD staff, the Owner account, and
 // Lim (weisiang329@gmail.com) — NOT other Super Admins nor anyone else (owner
 // 2026-07-24). This is the authority; the FE hides the New Project button for
-// everyone else. Mirrors frontend auth/salesAccess.canCreateEvent.
-function canCreateEvent(
-  user: { role_name?: string | null; position_name?: string | null; email?: string | null } | null | undefined,
-): boolean {
-  if (!user) return false;
-  const role = (user.role_name ?? "").toLowerCase();
-  const position = (user.position_name ?? "").toLowerCase();
-  const email = (user.email ?? "").toLowerCase();
-  return /\bbd\b/.test(role) || position === "owner" || email === "weisiang329@gmail.com";
-}
-
+// everyone else. The matcher lives in ./lib/named-tier.ts (shared with the
+// Reminder feed) and mirrors frontend auth/salesAccess.canCreateEvent.
 app.post("/", requirePermission("projects.write"), async (c) => {
   const user = c.get("user");
   if (!canCreateEvent(user)) {
