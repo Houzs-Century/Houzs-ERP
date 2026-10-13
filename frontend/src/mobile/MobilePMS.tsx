@@ -38,6 +38,7 @@ import {
   type NotifyFn, type ConfirmFn, type PromptFn, type SetBusy,
 } from "./MobilePmsDocCard";
 import { floorPlanTileVisible } from "./MobilePmsFloorPlanTiles";
+import { MobilePmsSalesOrders } from "./MobilePmsSalesOrders";
 import { SoloSafeName, useCanSeeSoloOrganizer, isSoloMasked, shownProjectName } from "../pages/projects/SoloSafeName";
 
 /* ------------------------------------------------------------------ *
@@ -1578,6 +1579,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               <SalesPanel
                 projectId={id}
                 incomeLines={data.finance_lines}
+                finalTotalRm={data.finance?.total_sales ?? null}
                 canLogSale={canLogSale}
                 busy={busy}
                 setBusy={setBusy}
@@ -1737,10 +1739,12 @@ function SalesAttending({
 // a sales-only user therefore sees the log action with an empty list and still
 // no P&L.
 function SalesPanel({
-  projectId, incomeLines, canLogSale, busy, setBusy, prompt, notify, reload,
+  projectId, incomeLines, finalTotalRm, canLogSale, busy, setBusy, prompt, notify, reload,
 }: {
   projectId: number;
   incomeLines?: FinanceLine[];
+  /** project_finance.total_sales (RM) — null when finance is stripped or unset. */
+  finalTotalRm: number | null;
   canLogSale: boolean;
   busy: boolean;
   setBusy: SetBusy;
@@ -1786,6 +1790,9 @@ function SalesPanel({
         <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
       </summary>
       <div className="pbody">
+        {/* The orders opened in the SO module for this fair — the desktop
+            block's phone half, same read and arithmetic. */}
+        <MobilePmsSalesOrders projectId={projectId} finalTotalRm={finalTotalRm} />
         <div style={{ display: "flex", alignItems: "center", margin: "0 0 6px" }}>
           <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093" }}>Sales entries</span>
           {canLogSale && <button className="tinybtn" style={{ marginLeft: "auto", color: "#16695f", borderColor: "#bcdcd7" }} disabled={busy} onClick={logSale}>+ Log sale</button>}
