@@ -19,6 +19,22 @@
 const onlyDigits = (s: string): string => s.replace(/\D+/g, '');
 
 /**
+ * BUG-114: "+60" glued onto a number that already carried it — "+60" +
+ * "60192689927" = "6060192689927", or "+60" + "0192689927" = "600192689927"
+ * (a pasted full number behind the +60 picker, or the pre-#4282 slip scan).
+ * No Malaysian national number starts with 60 or the trunk 0, so both are
+ * decidable: drop the extra 60s / 0s when what is left is a plausible
+ * Malaysian national length (8-10 digits). Anything else is left as it was.
+ */
+export function collapseDoubledMalaysianPrefix(digits: string): string {
+  if (!digits.startsWith('60')) return digits;
+  const national = digits.slice(2);
+  const stripped = national.replace(/^(?:60|0)+/, '');
+  if (stripped === national || stripped.length < 8 || stripped.length > 10) return digits;
+  return '60' + stripped;
+}
+
+/**
  * Normalize a user-typed phone string to E.164 storage form.
  *
  * Country handling:
@@ -55,6 +71,8 @@ export function normalizePhone(raw: string | null | undefined): string | null {
     // Too short to be a real phone number (likely mid-typing).
     return null;
   }
+
+  normalized = collapseDoubledMalaysianPrefix(normalized);
 
   // After normalization we should have at least 7 total digits to be plausible.
   if (normalized.length < 7) return null;
@@ -184,7 +202,7 @@ const DIALS_BY_LEN = [...COUNTRY_DIAL_CODES].sort((a, b) => b.dial.length - a.di
  */
 export function splitE164(stored: string | null | undefined): { dial: string; national: string } {
   const raw = String(stored ?? '');
-  const digits = onlyDigits(raw);
+  const digits = collapseDoubledMalaysianPrefix(onlyDigits(raw));
   if (digits.length === 0) return { dial: DEFAULT_DIAL, national: '' };
   // Country-code matching ONLY when the value carries an explicit international
   // `+` prefix. Without it the digits are a bare national number and the greedy
@@ -225,7 +243,7 @@ export function combineE164(dial: string, national: string): string {
   // reintroduce the double-dial-code invariant that the DB has no defence
   // against once the number is stored.
   const n = raw.startsWith(d) ? raw.slice(d.length) : raw;
-  return `+${d}${n}`;
+  return `+${collapseDoubledMalaysianPrefix(`${d}${n}`)}`;
 }
 
 /**
