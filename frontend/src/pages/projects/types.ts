@@ -250,6 +250,11 @@ export interface ChecklistItem {
    *  of the done/pending circle. 'rental_payment' | 'security_deposit'. */
   pill_kind: string | null;
   pill_value: string | null;
+  /** mig 20261013T0900 — Sabah/Sarawak defect cleaning stage. 'done' once the
+   *  on-site cleaning service is finished; null otherwise. Owner/BD only. */
+  cleaning_status?: string | null;
+  cleaning_updated_at?: string | null;
+  cleaning_updated_by?: number | null;
 }
 
 export interface ActivityRow {

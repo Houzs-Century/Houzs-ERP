@@ -128,6 +128,7 @@ import { publicDoScan } from "./routes/publicDoScan";
 import { publicContractorCalendar } from "./routes/publicContractorCalendar";
 import { publicBrandCalendar } from "./routes/publicBrandCalendar";
 import { brandShare } from "./routes/brandShare";
+import { defectCleaning } from "./routes/defect-cleaning";
 import { drainEmailOutbox } from "./services/email";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
@@ -456,6 +457,9 @@ app.route("/api/presence", presence);
 // does not swallow "outstanding-tasks" as an id (owner/admin Reminder view).
 app.route("/api/projects/outstanding-tasks", projectsOutstanding);
 app.route("/api/projects", projects);
+// Split out of routes/projects.ts (at its size ceiling): the Sabah/Sarawak
+// defect cleaning mark. Same /api/projects base + global auth.
+app.route("/api/projects", defectCleaning);
 // The office side of a brand's share link (generate / revoke). Own file because
 // routes/projects.ts is at its size ceiling. See routes/brandShare.ts.
 app.route("/api/brand-share", brandShare);

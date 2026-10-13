@@ -73,6 +73,18 @@ export function isDefectRegionState(state: string | null | undefined): boolean {
   return DEFECT_REVIEW_REGION_STATES.some((r) => r.toLowerCase() === s);
 }
 
+// East Malaysia (owner 2026-10-12): a Sabah/Sarawak fair's defect photos go
+// through an on-site cleaning service before any exchange, so those defect items
+// carry the extra "Cleaning done" mark. Canonical, Title-Case per mig 0175. The
+// frontend mirror is auth/salesAccess.
+export const EAST_MALAYSIA_STATES = ["Sabah", "Sarawak"];
+
+/** Does this project sit in Sabah/Sarawak, where the defect cleaning stage runs? */
+export function isEastMalaysiaState(state: string | null | undefined): boolean {
+  const s = (state ?? "").trim().toLowerCase();
+  return EAST_MALAYSIA_STATES.some((r) => r.toLowerCase() === s);
+}
+
 /** BRAND-SCOPED APPROVAL (owner 2026-08-10: "kris approve stock out transfer
  *  akemi and ergotex only, for zanotti peter approve").
  *
