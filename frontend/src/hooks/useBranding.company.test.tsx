@@ -59,7 +59,7 @@ describe("BUG-111 letterhead follows the tab's company", () => {
     expect(getBrandingCache().registrationNo).toBe("202501060667");
   });
 
-  test("printing fetches the active company's letterhead when the cache has not caught up", async () => {
+  test("printing fetches the active company's letterhead while the cache still holds the hostname company's", async () => {
     setActiveCompanyId(2);
     expect(getBrandingCache().companyName).toBe("Houzs Century Sdn Bhd");
 
