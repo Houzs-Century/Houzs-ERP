@@ -17,8 +17,8 @@
    either. The corrected value is collapseDoubledMalaysianPrefix(), the same rule
    the API now applies on every write (scripts/lib/phone-normalise.mjs, pinned
    to src/scm/shared/phone.ts by phoneNormaliseMirror.test.ts). If the result is
-   not a plausible Malaysian national length (8-10 digits) the row is SKIPPED,
-   never guessed.
+   not a plausible Malaysian national number (mobile 9-10 digits, landline 8-9)
+   the row is SKIPPED, never guessed.
 
    A repaired Sales Order also gets updated_at = now(): the delivery sheet pulls
    orders by last-modified, so without it the sheet would keep printing the old

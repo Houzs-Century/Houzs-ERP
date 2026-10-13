@@ -24,13 +24,17 @@ const onlyDigits = (s: string): string => s.replace(/\D+/g, '');
  * (a pasted full number behind the +60 picker, or the pre-#4282 slip scan).
  * No Malaysian national number starts with 60 or the trunk 0, so both are
  * decidable: drop the extra 60s / 0s when what is left is a plausible
- * Malaysian national length (8-10 digits). Anything else is left as it was.
+ * Malaysian national number (mobile 1X: 9-10 digits, landline: 8-9). Anything
+ * else is left as it was: "+606012295388" would leave an 8-digit "mobile", a
+ * digit short, so it is a number a human must check, not one to rewrite.
  */
 export function collapseDoubledMalaysianPrefix(digits: string): string {
   if (!digits.startsWith('60')) return digits;
   const national = digits.slice(2);
   const stripped = national.replace(/^(?:60|0)+/, '');
-  if (stripped === national || stripped.length < 8 || stripped.length > 10) return digits;
+  const mobile = stripped.startsWith('1');
+  const plausible = mobile ? stripped.length === 9 || stripped.length === 10 : stripped.length === 8 || stripped.length === 9;
+  if (stripped === national || !plausible) return digits;
   return '60' + stripped;
 }
 
