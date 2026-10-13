@@ -312,7 +312,8 @@ async function main() {
       if (miss.length) { failed += 1; bad(`  ${v.kind} ${v.key}: ${miss.join('; ')}`); }
       else note(`  ${v.kind} ${v.key}: ${Object.entries(v.expect).map(([k, x]) => `${k}=${x}`).join(' ')}${v.table === 'mfg_sales_orders' ? ` local_total_sen=${row.local_total_sen}` : ''}`);
     }
-    const left = await readCandidates(check);
+    /* The inert check asks the STRICT question (resume off): a restored line must no longer select. */
+    const left = { lines: await check.unsafe(candidateSql(), [CO, DOC_NOS, false]) };
     const stillNamed = left.lines.filter((l) => groups.some((g) => g.docNo === l.doc_no) && !l.cancelled);
     if (stillNamed.length) { failed += 1; bad(`  ${stillNamed.length} named line(s) still select as zeroed`); }
     else note(`  re-run is inert for the named orders: 0 of their lines still select`);
