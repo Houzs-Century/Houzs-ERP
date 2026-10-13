@@ -12,6 +12,10 @@
 // made this tedious — but it stays a checkbox, since the header-only move is the
 // right call when a PO's lines are individually managed.
 //
+// A recorded date is history (DEV-73): the server never overwrites a filled
+// slot, so the dialog shows every ticked PO's Date 1-4, defaults to "next empty
+// date" (each PO gets its own), and disables a slot every ticked PO has filled.
+//
 // The server isolates each PO: locked ones (a Goods Receipt exists) and ones
 // outside the active company come back in `skipped` with a reason instead of
 // failing the batch, so this reports a partial result honestly rather than
@@ -24,6 +28,8 @@ import { ModalOverlay } from "./DocumentRelationshipMapModal";
 import { Button } from "../Button";
 import { authedFetch, humanApiError } from "../../vendor/scm/lib/authed-fetch";
 import { DateField } from "../../vendor/scm/components/DateField";
+import type { PoHeaderRow } from "../../vendor/scm/lib/suppliers-queries";
+import { fmtDate } from "@2990s/shared";
 
 /* Same unwrap PoAmendmentCreateModal uses: authedFetch's rejection carries the
    raw status + body, which humanApiError turns into a sentence. */
@@ -39,27 +45,30 @@ const plainError = (e: unknown): string => {
 export type SupplierDateSlot = 2 | 3 | 4;
 
 export type BulkSupplierDateResult = {
-  slot: SupplierDateSlot;
+  slot: SupplierDateSlot | "next";
   date: string;
   applyToLines: boolean;
-  updated: Array<{ id: string; poNumber: string | null }>;
+  updated: Array<{ id: string; poNumber: string | null; slot: SupplierDateSlot }>;
   skipped: Array<{ id: string; poNumber: string | null; reason: string }>;
 };
 
 export function PoBulkSupplierDateModal({
   open,
   poIds,
+  pos,
   onClose,
   onDone,
 }: {
   open: boolean;
   /** The POs ticked in the list. */
   poIds: string[];
+  /** The ticked rows on this page, for the read-only Date 1-4 table. */
+  pos: PoHeaderRow[];
   onClose: () => void;
   /** Fired after a successful call so the caller can refetch + report. */
   onDone: (result: BulkSupplierDateResult) => void;
 }) {
-  const [slot, setSlot] = useState<SupplierDateSlot>(2);
+  const [slot, setSlot] = useState<SupplierDateSlot | "next">("next");
   const [date, setDate] = useState("");
   const [applyToLines, setApplyToLines] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -69,7 +78,7 @@ export function PoBulkSupplierDateModal({
   // is the kind of thing that quietly gets applied to the wrong set of POs.
   useEffect(() => {
     if (!open) return;
-    setSlot(2);
+    setSlot("next");
     setDate("");
     setApplyToLines(true);
     setError(null);
@@ -98,6 +107,12 @@ export function PoBulkSupplierDateModal({
   };
 
   const count = poIds.length;
+  const slotDate = (r: PoHeaderRow, s: SupplierDateSlot) => r[`supplier_delivery_date_${s}`] || null;
+  const filledForAll = (s: SupplierDateSlot) => pos.length > 0 && pos.every((r) => slotDate(r, s));
+  const slotButton = (active: boolean) =>
+    active
+      ? "flex-1 rounded-lg border border-primary bg-primary/10 px-3 py-2 text-[13px] font-semibold text-primary"
+      : "flex-1 rounded-lg border border-border px-3 py-2 text-[13px] text-ink hover:border-primary/50 disabled:cursor-not-allowed disabled:opacity-40";
 
   return (
     <ModalOverlay
@@ -122,25 +137,60 @@ export function PoBulkSupplierDateModal({
           <strong className="text-ink">
             {count} selected {count === 1 ? "purchase order" : "purchase orders"}
           </strong>
-          . Purchase orders with a Goods Receipt are skipped and listed after.
+          . Purchase orders with a Goods Receipt, or whose chosen date is already
+          recorded, are skipped and listed after.
         </p>
+
+        {pos.length > 0 && (
+          <div className="max-h-48 overflow-auto rounded-lg border border-border">
+            <table className="w-full text-[12px]">
+              <thead className="text-left text-ink-muted">
+                <tr>
+                  <th className="px-2 py-1 font-semibold">PO</th>
+                  <th className="px-2 py-1 font-semibold">Date 1</th>
+                  <th className="px-2 py-1 font-semibold">Date 2</th>
+                  <th className="px-2 py-1 font-semibold">Date 3</th>
+                  <th className="px-2 py-1 font-semibold">Date 4</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pos.map((r) => (
+                  <tr key={r.id} className="border-t border-border">
+                    <td className="px-2 py-1 font-medium text-ink">{r.po_number}</td>
+                    <td className="px-2 py-1">{r.expected_at ? fmtDate(r.expected_at) : "—"}</td>
+                    {([2, 3, 4] as const).map((s) => {
+                      const d = slotDate(r, s);
+                      return <td key={s} className="px-2 py-1">{d ? fmtDate(d) : "—"}</td>;
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         <div className="flex flex-col gap-1.5">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
             Which date
           </span>
           <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setSlot("next")}
+              aria-pressed={slot === "next"}
+              className={slotButton(slot === "next")}
+            >
+              Next empty date
+            </button>
             {([2, 3, 4] as const).map((s) => (
               <button
                 key={s}
                 type="button"
                 onClick={() => setSlot(s)}
                 aria-pressed={slot === s}
-                className={
-                  slot === s
-                    ? "flex-1 rounded-lg border border-primary bg-primary/10 px-3 py-2 text-[13px] font-semibold text-primary"
-                    : "flex-1 rounded-lg border border-border px-3 py-2 text-[13px] text-ink hover:border-primary/50"
-                }
+                disabled={filledForAll(s)}
+                title={filledForAll(s) ? `Supplier Date ${s} is already recorded on every ticked PO` : undefined}
+                className={slotButton(slot === s)}
               >
                 Supplier Date {s}
               </button>
