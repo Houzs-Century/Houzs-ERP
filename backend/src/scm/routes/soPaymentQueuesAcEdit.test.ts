@@ -83,7 +83,7 @@ const payment = (over: Row = {}) => ({
   paidAt: todayMyt(),
   method: 'cash' as const,
   amountSen: 300_00,
-  slipKey: null,
+  slipKey: 'slips/ac.jpg',
   createdBy: '00000000-0000-4000-8000-000000000001',
   ...over,
 });

@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
 import { normalizePhone } from '../shared/phone';
 import { checkPaymentSlipDate } from '../shared/payment-slip-date';
+import { checkPaymentSlip } from '../shared/payment-slip-required';
 import {
   pickComboMatch, spreadComboTotal, splitSofaCode, sofaHeightKey,
   buildVariantSummary, matchComboSubset, type SofaPriceTier,
@@ -3894,6 +3895,18 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      to a human — the owner's call. */
   const booksMoneyOnCreate = (posPayments ?? []).some((p) => p.method !== 'converted')
     || (typeof body.depositSen === 'number' && body.depositSen > 0);
+  /* The proof on CREATE (owner 2026-10-13, shared/payment-slip-required). The
+     single-deposit body books its row from the header slip or the scanned
+     receipt (the legacy `depositSen` path below); with neither there is nothing
+     to verify, so the order is not created. The split `payments[]` rows are
+     judged per row by planCreatePaymentSlips further down. */
+  if (!posPayments && typeof body.depositSen === 'number' && body.depositSen > 0) {
+    const slipVerdict = checkPaymentSlip({ converted: false, hasSlip: Boolean(slipKey ?? receiptImageKey) });
+    if (!slipVerdict.ok) {
+      await rollbackPwpClaims();
+      return c.json({ error: slipVerdict.code, reason: slipVerdict.reason }, 400);
+    }
+  }
   if (booksMoneyOnCreate) {
     const verdict = checkPaymentSlipDate(dateOrNull(body.paymentDate) ?? todayMyt(), todayMyt());
     if (!verdict.ok && !hasHouzsPerm(c, SO_PAYMENT_BACKDATE)) {
@@ -3902,13 +3915,13 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     }
   }
 
-  /* Resolve each split payment's slip session → R2 key up front, for the rows
-     that CLAIM one. A slip-less row resolves to null and books slip-less — the
-     slip is optional (Owner 2026-08-13); a slip that is claimed and does not
-     resolve still refuses the create. The rule is
-     `planCreatePaymentSlips` (so-create-payment-slips.ts); this block is its
-     IO. All-or-nothing, BEFORE the header insert (and rolling back PWP
-     claims), so no SO is created with half its payment proofs missing. */
+  /* Resolve each split payment's slip session → R2 key up front. A keyed row
+     without one refuses the create (owner 2026-10-13, slip required); only a
+     converted row books slip-less; a slip that is claimed and does not resolve
+     refuses too. The rule is `planCreatePaymentSlips`
+     (so-create-payment-slips.ts); this block is its IO. All-or-nothing, BEFORE
+     the header insert (and rolling back PWP claims), so no SO is created with
+     half its payment proofs missing. */
   let posPaymentSlipKeys: Array<string | null> | null = null;
   if (posPayments) {
     const sessionIds = claimedSlipSessionIds(posPayments);
@@ -10096,11 +10109,9 @@ const paymentCreateSchema = z.object({
   accountSheet:       z.string().optional().nullable(),
   collectedBy:        z.string().uuid().optional().nullable(),
   note:               z.string().optional().nullable(),
-  /* Owner 2026-07-13 — a payment slip is NOT always available (cash / walk-in
-     receipts), so the slip is OPTIONAL. When the client DID upload one it still
-     sends the session id and the row links it; when absent the payment records
-     slip-less (slip_key NULL, same as a scan-job first receipt). Previously
-     `.min(1)` (required). */
+  /* Nullable in the SCHEMA only so a converted row can send none (owner
+     2026-10-13, slip required): a keyed row without a session is refused below
+     with the shared sentence (shared/payment-slip-required), not a zod issue. */
   uploadSessionId:    z.string().min(1).optional().nullable(),
   /* Owed by a role holding the correction right (docs/bugs/0888). */
   reason:             z.string().trim().max(500).optional(),
@@ -10126,6 +10137,13 @@ export const postSoPaymentHandler = async (c: any) => {
      (docs/bugs/0888) — the rule in lib/so-payment-reason; never a window gate. */
   const owed = paymentReasonRule(c, { reason: p.reason });
   if (owed.refusal) return c.json(owed.refusal, 400);
+
+  /* The proof (owner 2026-10-13, after Admin: "collect payment is attached with
+     slip"). A keyed payment carries its slip session or is refused; a converted
+     row is money receipted when it was first collected. The write core refuses
+     the same way underneath, so no caller can skip this by calling it directly. */
+  const slipVerdict = checkPaymentSlip({ converted: p.method === 'converted', hasSlip: Boolean(p.uploadSessionId) });
+  if (!slipVerdict.ok) return c.json({ error: slipVerdict.code, reason: slipVerdict.reason }, 400);
 
   /* Slip-date window (owner 2026-09-23) — the rule is scm/shared/payment-slip-date;
      `scm.payment.backdate` is the exception, and an exercised exception says so
@@ -10167,13 +10185,10 @@ export const postSoPaymentHandler = async (c: any) => {
      the screen: soBalanceSen). Nothing here touches lines, prices or the
      order total — a payment is a payment. */
 
-  /* Owner 2026-07-13 — the slip is OPTIONAL here, and since 2026-08-13 it is
-     optional on EVERY SO path, so this route is no longer the loose end of a
-     stricter create. Only when the client attached one (uploadSessionId
-     present) do we resolve the upload session → committed R2 key; an
-     unresolved / not-yet-uploaded session is still rejected so a dangling id
-     never books a payment whose proof points nowhere. Absent session →
-     paymentSlipKey stays null (records slip-less). */
+  /* Resolve the upload session → committed R2 key. An unresolved /
+     not-yet-uploaded session is rejected so a dangling id never books a
+     payment whose proof points nowhere. Absent only for a converted row (the
+     slip check above). */
   let paymentSlipKey: string | null = null;
   if (p.uploadSessionId) {
     const { data: slipRow, error: slipErr } = await sb
@@ -10184,11 +10199,9 @@ export const postSoPaymentHandler = async (c: any) => {
     if (slipErr) return c.json({ error: 'lookup_failed', reason: slipErr.message }, 500);
     const slipRowT = slipRow as { r2_key: string | null; status: string } | null;
     if (!slipRowT || slipRowT.status !== 'uploaded' || !slipRowT.r2_key) {
-      /* Names the CLAIM, not a requirement — the payment saves fine with no
-         slip; what it cannot do is carry one that never finished uploading. */
       return c.json({
         error: 'slip_required',
-        reason: "That payment slip hasn't finished uploading. Attach it again, or save the payment without one.",
+        reason: "That payment slip hasn't finished uploading. Attach it again.",
       }, 400);
     }
     paymentSlipKey = slipRowT.r2_key;

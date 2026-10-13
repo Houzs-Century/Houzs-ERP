@@ -49,6 +49,7 @@ import { paymentRowMutable, type PaymentChangeVia } from '../lib/so-field-policy
 /* The slip-date window, byte-identical to the backend's copy — the picker's
    bounds, the inline refusal and the server's 400 are one rule. */
 import { checkPaymentSlipDate, paymentSlipDateWindow } from '../lib/payment-slip-date';
+import { checkPaymentSlip } from '../lib/payment-slip-required';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { owesPaymentReason, paymentReasonAsk, reasonWhyFor } from '../lib/payment-reason';
 import { usePrompt } from './ConfirmDialog';
@@ -356,6 +357,24 @@ export const slipDateProblem = (
 ): string | null => {
   if (mayBackdate || d.methodLabel === CONVERT_LABEL) return null;
   const verdict = checkPaymentSlipDate(d.paidAt, today);
+  return verdict.ok ? null : verdict.reason;
+};
+
+/* WHY THIS ROW CANNOT BE SAVED WITHOUT ITS PROOF, or null (owner 2026-10-13:
+   every collected payment is keyed with its slip). The rule is
+   lib/payment-slip-required (the backend reads the same file); this adds what
+   the rule must not know — a row EDITING a booked payment keeps the slip it
+   has, a scanned card receipt IS the slip, and money MOVED from another order
+   was receipted when first collected. Exported so the New SO batch guard and
+   the phone sheet ask the same question the panel's own Save button does. */
+export const slipMissingProblem = (
+  d: Pick<PaymentDraft, 'methodLabel' | 'slipUploadSessionId'> & Partial<Pick<PaymentDraft, 'receiptImageKey' | 'editingPersistedId'>>,
+): string | null => {
+  if (d.editingPersistedId) return null;
+  const verdict = checkPaymentSlip({
+    converted: d.methodLabel === CONVERT_LABEL,
+    hasSlip: Boolean(d.slipUploadSessionId) || Boolean(d.receiptImageKey),
+  });
   return verdict.ok ? null : verdict.reason;
 };
 
@@ -946,9 +965,6 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      commit affordance; the parent batches them at SO-create time. */
   const commitDraft = async (d: PaymentDraft) => {
     if (!isSaved) return;
-    /* Owner 2026-07-13 — the slip is OPTIONAL now (a receipt isn't always on
-       hand). Gate only on an amount > 0; the SO route accepts a slip-less
-       payment. The slip uploader stays available for when one IS attached. */
     if (d.amountSen <= 0) return;
     /* Same-day EDIT (owner 2026-07-13) — an edit draft carries the id of the
        persisted row it amends. Route it through PATCH instead of POST. */
@@ -966,6 +982,10 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       });
       return;
     }
+    /* The proof (owner 2026-10-13) — before the window, so a late slip is
+       asked for its photo before it is sent to an admin as a request. */
+    const noSlip = slipMissingProblem(d);
+    if (noSlip) { void notify({ title: 'Attach the slip first', body: noSlip, tone: 'error' }); return; }
     /* Slip-date window (owner 2026-09-23). The field is already bounded, but a
        row seeded from a scanned receipt carries the receipt's own date and a
        stale draft can outlive the window while the page sits open. */
@@ -1072,6 +1092,8 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       if (d.amountSen <= 0) { blocked.push(`${d.methodLabel}: no amount`); continue; }
       const missing = missingMethodSubField(d);
       if (missing) { blocked.push(`${d.methodLabel}: pick the ${missing}`); continue; }
+      const noSlip = slipMissingProblem(d);
+      if (noSlip) { blocked.push(`${d.methodLabel}: ${noSlip}`); continue; }
       const outOfWindow = slipDateProblem(d, todayMyt(), mayBackdateSlip);
       if (outOfWindow) { blocked.push(`${d.methodLabel}: ${needsRequest(d) ? REQUEST_HINT : outOfWindow}`); continue; }
       let method: PaymentMethod;
@@ -1825,11 +1847,12 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                         </div>
                       ) : null;
                     })()}
-                    {/* Owner 2026-07-13 — per-payment slip uploader is OPTIONAL
-                        now (a receipt isn't always available); commit no longer
-                        waits on it. Still offered for when one IS on hand. */}
+                    {/* The proof is REQUIRED on a new row (owner 2026-10-13,
+                        lib/payment-slip-required); Save waits on it. An edit
+                        of a booked row keeps the slip it has, so the marker
+                        goes with the rule. */}
                     <SlipUploadField
-                      required={false}
+                      required={!d.editingPersistedId}
                       disabled={locked}
                       onConfirmed={(sid) => patchDraft(d.uid, { slipUploadSessionId: sid })}
                       onCleared={() => patchDraft(d.uid, { slipUploadSessionId: null })}
@@ -1867,13 +1890,12 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                         Only the SO-route batching page (SalesOrderNew) sets
                         slipUpload; DO / SI / consignment pages do NOT, so their
                         tables render no uploader (the endpoint doesn't accept
-                        one). NOT required-marked: the slip is optional on the
-                        new-SO path too (Owner 2026-08-13), so the asterisk went
-                        with the rule — the SAVED-mode uploader above has never
-                        carried one since 2026-07-13. */}
+                        one). Required-marked (owner 2026-10-13): the New-SO
+                        save is blocked by slipMissingProblem until every keyed
+                        row carries its slip. A converted row needs none. */}
                     {!isSaved && (props as DraftModeProps).slipUpload && (
                       <SlipUploadField
-                        required={false}
+                        required={d.methodLabel !== CONVERT_LABEL}
                         disabled={locked}
                         onConfirmed={(sid) => patchDraft(d.uid, { slipUploadSessionId: sid })}
                         onCleared={() => patchDraft(d.uid, { slipUploadSessionId: null })}
@@ -1890,13 +1912,17 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                          required sub-field(s). */
                       const noAmount = d.amountSen <= 0;
                       const missing  = missingMethodSubField(d);
+                      /* The proof (owner 2026-10-13): no slip, no Save — and no request either. */
+                      const noSlip   = slipMissingProblem(d);
                       /* Too old for the window: commitDraft sends it as a request instead. */
-                      const asRequest = !noAmount && !missing && needsRequest(d);
-                      const blocked  = noAmount || missing !== null || (slipProblem !== null && !asRequest);
+                      const asRequest = !noAmount && !missing && !noSlip && needsRequest(d);
+                      const blocked  = noAmount || missing !== null || noSlip !== null || (slipProblem !== null && !asRequest);
                       const title = noAmount
                         ? 'Enter an amount > 0 first'
                         : missing
                           ? `Pick the ${missing} for this ${d.methodLabel} payment first`
+                          : noSlip
+                            ? noSlip
                           : asRequest ? REQUEST_HINT : slipProblem
                             ? slipProblem
                             : d.editingPersistedId ? 'Save changes' : 'Save payment';

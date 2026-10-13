@@ -29,7 +29,7 @@
    `MobileScan` is a camera screen behind a dozen catalog queries; what matters
    here is whether the value is a CONSTANT or a piece of state, and whether the
    list the desktop offers is fetched at all. Same idiom as
-   `vendor/scm/lib/so-slip-optional-contract.test.ts`. The list normaliser it
+   `vendor/scm/lib/so-slip-required-contract.test.ts`. The list normaliser it
    now shares with desktop is unit tested for real below. */
 
 import { readFileSync } from 'node:fs';
