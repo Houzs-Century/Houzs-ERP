@@ -44,6 +44,7 @@ import {
   useDeleteMfgSalesOrderItem,
   useDebtorSearch,
   useOverrideMfgSoLinePrice,
+  useMfgSoLinePriceAfterDo,
   useSalesOrderAuditLog,
   useSalesOrderPayments,
   useUploadSoItemPhoto,
@@ -97,7 +98,7 @@ import { DocumentRelationshipMapModal, DocumentChoiceDialog } from '../../compon
 import { useSoRelationshipMap } from './so-relationship-map';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { SoLockBanner } from './SoLockBanner';
-import { soAfterDoMode, afterDoEditableLine, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoSave } from '../../vendor/scm/lib/so-after-do-client';
+import { soAfterDoMode, soPriceAfterDoOn, afterDoEditableLine, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoSave } from '../../vendor/scm/lib/so-after-do-client';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from '../../vendor/scm/lib/amendment-approver';
@@ -649,6 +650,7 @@ export const SalesOrderDetail = () => {
     return out;
   }, [items, editingDrafts, addingDrafts]);
   const [overriding, setOverriding] = useState<SoItem | null>(null);
+  const [repricing, setRepricing] = useState<SoItem | null>(null);
   const [unlockOverride, setUnlockOverride] = useState(false), [afterDoTargetId, setAfterDoTargetId] = useState<string | null>(null), afterDoRef = useRef<AfterDoSave | null>(null); // DEV-32
   // PR-D — History panel toggle. Commander asked for the HOOKKA-style
   // floating right-side history drawer.
@@ -1601,6 +1603,7 @@ export const SalesOrderDetail = () => {
   const downstreamLocked = soDownstreamHardLocked(header), migratedLocked = soMigratedReadonly(header);
   const isLocked = migratedLocked || isSoLocked(header.status, downstreamLocked, unlockOverride); // migrated is OUTSIDE isSoLocked: Override must not reach it
   const afterDo = soAfterDoMode(header, { can, override: unlockOverride, migrated: migratedLocked }); // DEV-32: Logistics edits charges + customer details after the DO
+  const priceAfterDo = soPriceAfterDoOn(header, { can, migrated: migratedLocked }); // DEV-70: a delivered line's price, through its $ dialog
   /* The one thing a hard-locked SO still accepts: a new salesperson. Same
      permission the API enforces (mfg-sales-orders.ts PATCH), so the Edit button
      it re-enables can never open an order the server would refuse to save. */
@@ -1960,7 +1963,7 @@ export const SalesOrderDetail = () => {
                 dropdown. The heavy door stays for everything else. */}
             {!isEditing ? (
               <Button variant="primary"
-                onClick={enterEdit} disabled={migratedLocked || (isLocked && !canAttributeOther && !afterDo.on)}>
+                onClick={enterEdit} disabled={migratedLocked || (isLocked && !canAttributeOther && !afterDo.on && !priceAfterDo)}>
                 <Pencil {...ICON} />
                 <span>Edit</span>
               </Button>
@@ -2273,11 +2276,18 @@ export const SalesOrderDetail = () => {
                         locked SO goes through the amendment's line diff instead,
                         which carries newUnitPriceSen. Off, not render-then-deny. */}
                     {frozen && <span style={FROZEN_LINE_LABEL_STYLE}>{FROZEN_LINE_LABEL}</span>}
-                    <button type="button" className={styles.iconBtn} title="Override price"
-                      disabled={overrideLocked || frozen}
-                      onClick={() => !overrideLocked && !frozen && setOverriding(it)}>
-                      <DollarSign {...SM_ICON} />
-                    </button>
+                    {frozen && priceAfterDo ? (
+                      <button type="button" className={styles.iconBtn} title="Change price after DO"
+                        onClick={() => setRepricing(it)}>
+                        <DollarSign {...SM_ICON} />
+                      </button>
+                    ) : (
+                      <button type="button" className={styles.iconBtn} title="Override price"
+                        disabled={overrideLocked || frozen}
+                        onClick={() => !overrideLocked && !frozen && setOverriding(it)}>
+                        <DollarSign {...SM_ICON} />
+                      </button>
+                    )}
                   </div>
                   <SoLineCard
                     index={idx}
@@ -2640,6 +2650,14 @@ export const SalesOrderDetail = () => {
           docNo={header.doc_no}
           currency={header.currency}
           onClose={() => setOverriding(null)}
+        />
+      )}
+      {repricing && (
+        <PriceAfterDoModal
+          item={repricing}
+          docNo={header.doc_no}
+          currency={header.currency}
+          onClose={() => setRepricing(null)}
         />
       )}
 
@@ -3866,6 +3884,104 @@ const OverridePriceModal = ({
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button variant="primary" onClick={submit} disabled={override.isPending}>
             {override.isPending ? 'Saving…' : 'Override + Audit'}
+          </Button>
+        </footer>
+      </div>
+    </div>
+  );
+};
+
+/* DEV-70 — PriceAfterDoModal: unit price + discount of a line a Delivery Order
+   already carries (`scm.so.edit_price_after_do`). The server copies both onto
+   the DO line(s); qty, product and spec stay as delivered. */
+const PriceAfterDoModal = ({
+  item,
+  docNo,
+  currency,
+  onClose,
+}: {
+  item: SoItem;
+  docNo: string;
+  currency: string;
+  onClose: () => void;
+}) => {
+  const save = useMfgSoLinePriceAfterDo();
+  const notify = useNotify();
+  const [unitRm, setUnitRm] = useState((item.unit_price_sen / 100).toFixed(2));
+  const [discRm, setDiscRm] = useState(((item.discount_sen ?? 0) / 100).toFixed(2));
+  const [reason, setReason] = useState('');
+  const unitSen = Math.round(Number(unitRm) * 100), discSen = Math.round(Number(discRm || 0) * 100);
+  const valid = Number.isFinite(unitSen) && unitSen >= 0 && Number.isFinite(discSen) && discSen >= 0 && discSen <= item.qty * unitSen;
+  const totalSen = valid ? item.qty * unitSen - discSen : null;
+
+  const submit = () => {
+    if (!valid) {
+      notify({ title: 'Unit price and discount must be zero or more, and the discount cannot be more than qty x unit price.', tone: 'error' });
+      return;
+    }
+    save.mutate(
+      { docNo, itemId: item.id, unitPriceSen: unitSen, discountSen: discSen, reason: reason.trim() || undefined },
+      {
+        onSuccess: (r) => {
+          const msg = afterDoCopyProblem(r);
+          if (msg) void notify({ title: 'Delivery Order not updated', body: msg, tone: 'error' });
+          onClose();
+        },
+      },
+    );
+  };
+
+  return (
+    <div className={styles.modalBackdrop} onClick={onClose}>
+      <div className={styles.modal} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Change price after DO">
+        <header className={styles.modalHeader}>
+          <h3 className={styles.modalTitle}>
+            <DollarSign {...ICON} style={{ verticalAlign: 'middle', marginRight: 6 }} />
+            Change Price After DO
+          </h3>
+          <button type="button" className={styles.iconBtn} onClick={onClose} title="Close">
+            <X {...ICON} />
+          </button>
+        </header>
+
+        <div className={styles.modalBody}>
+          <p className={styles.muted}>
+            Item <strong>{item.item_code}</strong>{item.description ? ` — ${item.description}` : ''} · Qty {item.qty}<br />
+            Now: {fmtRm(item.unit_price_sen, currency)} each, discount {fmtRm(item.discount_sen ?? 0, currency)}, amount {fmtRm(item.total_sen, currency)}<br />
+            The Delivery Order line changes too. Qty and product stay as delivered.
+          </p>
+
+          <div className={styles.formGrid4}>
+            <label className={styles.field} style={{ gridColumn: 'span 2' }}>
+              <span className={styles.fieldLabel}>Unit Price (RM) *</span>
+              <input type="number" step="0.01" min="0" aria-label="Unit Price (RM)"
+                className={styles.fieldInput}
+                value={unitRm}
+                onChange={(e) => setUnitRm(e.target.value)} />
+            </label>
+            <label className={styles.field} style={{ gridColumn: 'span 2' }}>
+              <span className={styles.fieldLabel}>Discount (RM)</span>
+              <input type="number" step="0.01" min="0" aria-label="Discount (RM)"
+                className={styles.fieldInput}
+                value={discRm}
+                onChange={(e) => setDiscRm(e.target.value)} />
+            </label>
+          </div>
+          <p className={styles.muted}>New amount: <strong>{totalSen == null ? '—' : fmtRm(totalSen, currency)}</strong></p>
+
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Reason (shown in History)</span>
+            <textarea className={styles.fieldInput} rows={2}
+              placeholder="e.g. Price was not keyed in when the order was imported."
+              value={reason}
+              onChange={(e) => setReason(e.target.value)} />
+          </label>
+        </div>
+
+        <footer className={styles.modalFooter}>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" onClick={submit} disabled={save.isPending || !valid}>
+            {save.isPending ? 'Saving…' : 'Save price'}
           </Button>
         </footer>
       </div>

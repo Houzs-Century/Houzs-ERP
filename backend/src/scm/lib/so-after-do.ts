@@ -15,7 +15,7 @@ import { enqueueEdit } from './autocount-outbox';
 import { recordEntityAudit, compactChanges, fieldChange, type AuditActor } from './entity-audit';
 import { normalizePhone } from '../shared/phone';
 import { isServiceCategory } from '../shared/service-sku';
-import { AFTER_DO_FORBIDDEN, AFTER_DO_NO_DO, doHeaderPatchFromSo, type AfterDoTarget } from '../shared/so-after-do-edit';
+import { AFTER_DO_FORBIDDEN, AFTER_DO_NO_DO, doHeaderPatchFromSo, doLineDiscountShares, type AfterDoTarget } from '../shared/so-after-do-edit';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the SCM libs */
 type Db = any;
@@ -195,6 +195,51 @@ export async function readDoLinesOfSoLine(sb: Db, soItemId: string, companyId: n
   if (error) return null;
   const liveIds = new Set(targets.map((t) => t.id));
   return ((data ?? []) as DoLineOfSoLine[]).filter((r) => liveIds.has(r.delivery_order_id));
+}
+
+/** DEV-70 — after an SO line's price saved, give every DO line carrying it the
+ *  same unit price and its share of the discount. Each DO line keeps its own
+ *  qty: a partly delivered line's DO carries fewer units than the order.
+ *  Returns the DO numbers whose write failed. */
+export async function copyLinePriceToDos(
+  sb: Db,
+  who: Who,
+  soLine: { item_code: string | null; qty: number; unit_price_sen: number; discount_sen: number },
+  doLines: ReadonlyArray<DoLineOfSoLine>,
+  targets: ReadonlyArray<AfterDoTarget>,
+): Promise<string[]> {
+  const shares = doLineDiscountShares(soLine.discount_sen, soLine.qty, doLines.map((d) => Number(d.qty)));
+  const failed: string[] = [];
+  for (const [i, d] of doLines.entries()) {
+    const target = targets.find((t) => t.id === d.delivery_order_id);
+    const label = target?.do_number ?? d.delivery_order_id;
+    const { data: prev, error: prevErr } = await scopeToCompanyId(
+      sb.from('delivery_order_items').select('qty, unit_price_sen, discount_sen, line_cost_sen').eq('id', d.id), who.companyId,
+    ).maybeSingle();
+    if (prevErr || !prev) { failed.push(label); continue; }
+    const p = prev as { qty: number | null; unit_price_sen: number | null; discount_sen: number | null; line_cost_sen: number | null };
+    const qty = Number(p.qty ?? 0), unit = soLine.unit_price_sen, disc = shares[i];
+    const lineTotal = Math.max(0, qty * unit - disc);
+    const { error } = await scopeToCompanyId(
+      sb.from('delivery_order_items').update({
+        unit_price_sen: unit, discount_sen: disc, line_total_sen: lineTotal,
+        line_margin_sen: lineTotal - Number(p.line_cost_sen ?? 0),
+      }).eq('id', d.id), who.companyId,
+    );
+    if (error) { failed.push(label); continue; }
+    await recomputeDoTotals(sb, d.delivery_order_id);
+    await recordEntityAudit(sb, {
+      entityType: 'DELIVERY_ORDER', entityId: d.delivery_order_id, entityDocNo: target?.do_number ?? null, action: 'UPDATE',
+      actor: who.actor, companyId: who.companyId, statusSnapshot: target?.status ?? null,
+      note: `Line price updated from ${who.soDocNo} (price after DO): ${String(soLine.item_code ?? '')}`,
+      fieldChanges: compactChanges([
+        fieldChange('unitPriceSen', p.unit_price_sen ?? null, unit),
+        fieldChange('discountSen', p.discount_sen ?? null, disc),
+      ]),
+    });
+    await queueDoEdit(sb, who, d.delivery_order_id);
+  }
+  return failed;
 }
 
 /** After the SO charge line saved, make its one DO line say the same. */

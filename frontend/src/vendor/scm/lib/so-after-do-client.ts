@@ -8,7 +8,7 @@
 
 import { LOCKED_STATUSES, soItemFrozen } from './so-detail-gates';
 import {
-  SO_EDIT_AFTER_DO_PERMISSION, afterDoHeaderRefusal, afterDoLineAllowed, type AfterDoTarget,
+  SO_EDIT_AFTER_DO_PERMISSION, SO_EDIT_PRICE_AFTER_DO_PERMISSION, afterDoHeaderRefusal, afterDoLineAllowed, type AfterDoTarget,
 } from '../../shared/so-after-do-edit';
 
 export type AfterDoHeader = {
@@ -36,6 +36,16 @@ export function soAfterDoMode(
   const on = p.can(SO_EDIT_AFTER_DO_PERMISSION) && !p.migrated && header.after_do_invoiced !== true
     && openTargets.length > 0 && (p.override || !statusLocked);
   return { on, headerOpen: on && afterDoHeaderRefusal(targets, false) === null, targets, openTargets };
+}
+
+/** DEV-70 — `scm.so.edit_price_after_do` may re-price a line a DO carries. No
+ *  Override needed: the door is one line's price dialog, not the whole order. */
+export function soPriceAfterDoOn(
+  header: AfterDoHeader,
+  p: { can: (key: string) => boolean; migrated: boolean },
+): boolean {
+  return p.can(SO_EDIT_PRICE_AFTER_DO_PERMISSION) && !p.migrated && header.after_do_invoiced !== true
+    && (header.after_do_targets ?? []).some((t) => !t.locked);
 }
 
 /** A saved line the mode reopens: a DO already carries it, and it is a charge. */

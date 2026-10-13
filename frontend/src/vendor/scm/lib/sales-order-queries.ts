@@ -653,6 +653,31 @@ export const useOverrideMfgSoLinePrice = () => {
   });
 };
 
+/* DEV-70 — unit price + discount of a line a DO already carries; the DO line follows. */
+export const useMfgSoLinePriceAfterDo = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ docNo, itemId, unitPriceSen, discountSen, reason }: {
+      docNo: string; itemId: string; unitPriceSen: number; discountSen: number; reason?: string;
+    }) =>
+      runSoVersionedMutation(qc, docNo, 'price-after-do', ({ leaseToken }) =>
+        authedFetch<{ ok: boolean; doNumbers?: string[]; doCopyFailed?: string[] }>(
+          `/mfg-sales-orders/${docNo}/items/${itemId}/price-after-do`,
+          {
+            method: 'POST',
+            headers: { 'X-SO-Edit-Lease': leaseToken },
+            body: JSON.stringify({ unitPriceSen, discountSen, reason }),
+          },
+        ),
+      ),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ['mfg-sales-order-detail', vars.docNo] });
+      invalidateSoLists(qc);
+    },
+    onError: writeFailed,
+  });
+};
+
 export const useUpdateSoItemStockStatus = () => {
   const qc = useQueryClient();
   return useMutation({
