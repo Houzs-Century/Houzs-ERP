@@ -62,6 +62,21 @@ describe("/api/it-support", () => {
     expect(calls[0].headers.get("X-Reporter-Id")).toBe("42");
   });
 
+  test("status: connected only where both settings are present; not connected is an answer, not an error", async () => {
+    const calls = fakeHub(() => json({}));
+    const on = await appAs(AINA).request("/api/it-support/status");
+    expect(on.status).toBe(200);
+    expect(await on.json()).toEqual({ connected: true });
+    for (const env of [{}, { IT_HUB_URL: "https://hub.example" }, { IT_HUB_API_KEY: "k" }]) {
+      const off = await appAs(AINA, env as Record<string, string>).request("/api/it-support/status");
+      expect(off.status).toBe(200);
+      expect(await off.json()).toEqual({ connected: false });
+    }
+    expect((await appAs(SERVICE).request("/api/it-support/status")).status).toBe(403);
+    // Answering it never asks the hub, and never carries the key or the address.
+    expect(calls).toHaveLength(0);
+    expect(await (await appAs(AINA).request("/api/it-support/status")).text()).not.toMatch(/hub_hc_test-key|hub.example/);
+  });
   test("the reporter cannot be chosen by the request", async () => {
     const calls = fakeHub(() => json({ tickets: [] }));
     await appAs(AINA).request("/api/it-support/tickets?userId=7&reporter_id=7", { headers: { "X-Reporter-Id": "7" } });
