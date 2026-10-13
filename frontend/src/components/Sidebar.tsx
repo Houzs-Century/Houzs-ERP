@@ -72,6 +72,7 @@ import { booleanRecordPreference, useIdentityPreference } from "../hooks/useIden
 import { useAuth } from "../auth/AuthContext";
 import type { CapabilityKey } from "../auth/capabilities";
 import { makeNavFilter } from "./navFilter";
+import { useItSupportConnected, withoutUnconnectedItSupport } from "../hooks/useItSupportConnected";
 import { CompanyMark } from "./CompanyMark";
 import { PresencePanel } from "./PresencePanel";
 import { GlobalSearchTrigger } from "./GlobalSearch";
@@ -1001,7 +1002,8 @@ export const NAV_TABS: NavTab[] = [
   // No gate, like Announcements: every signed-in user reports problems to IT
   // and reads only their OWN requests (the server takes the reporter from the
   // session — backend routes/itSupport.ts), so a permission here would only be
-  // a way to lock someone out of asking for help.
+  // a way to lock someone out of asking for help. The row is dropped at render
+  // where this environment is not connected to the IT Hub (see visibleTabs).
   {
     section: "system",
     to: "/it-support",
@@ -1112,8 +1114,12 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
   // MenuModal (MobileTabBar) filters identically and can never drift.
   const filterTab = makeNavFilter({ user, can, pageAccess });
 
-  const visibleTabs = NAV_TABS.map(filterTab).filter(
-    (t): t is NavTab => t !== null,
+  // IT Support is listed only where this environment is connected to the IT
+  // Hub; production has no row until its two secrets are set.
+  const itSupportConnected = useItSupportConnected();
+  const visibleTabs = withoutUnconnectedItSupport(
+    NAV_TABS.map(filterTab).filter((t): t is NavTab => t !== null),
+    itSupportConnected,
   );
 
   // Recursive renderer for tabs — handles plain links and nested groups.
