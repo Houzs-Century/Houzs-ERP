@@ -39,6 +39,8 @@ export type PaymentVoucherRow = Record<string, unknown> & {
   voucher_date: string | null;
   payee_name: string;
   total_sen?: number;
+  /** DEV-75: recorded only — not in total_sen, posts nothing. */
+  bank_charge_sen?: number | null;
   currency?: string;
   exchange_rate?: string | number | null;
   credit_account_code?: string;

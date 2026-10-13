@@ -97,10 +97,11 @@ const PV_AUDIT_FIELDS: Array<[string, string]> = [
   ['totalSen', 'total_sen'],
   ['billRef', 'bill_ref'],
   ['billDate', 'bill_date'],
+  ['bankChargeSen', 'bank_charge_sen'],
 ];
 
 const HEADER =
-  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by, refund_source_type, refund_source_doc_no, customer_id, debtor_code, bill_ref, bill_date, official_doc, official_doc_note, official_doc_at, official_doc_by';
+  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by, refund_source_type, refund_source_doc_no, customer_id, debtor_code, bill_ref, bill_date, official_doc, official_doc_note, official_doc_at, official_doc_by, bank_charge_sen';
 
 const LINE = 'id, pv_id, line_no, description, debit_account_code, amount_sen, created_at, project_id';
 
@@ -664,6 +665,10 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
     return c.json({ error: 'allocations_exceed_total', allocated: allocBuilt.total, total: built.total }, 400);
   }
 
+  /* DEV-75: the bank's charge, recorded on the header only — not in total_sen, not on the GL. */
+  const bankChargeSen = parseAmountSen(body.bankChargeSen);
+  if (bankChargeSen === null) return c.json({ error: 'bank_charge_invalid' }, 400);
+
   const sb = c.get('supabase'); const user = c.get('user');
 
   // Every applied-to invoice must be THIS company's — see allocationPisOutsideCompany.
@@ -709,6 +714,7 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
       purpose,
       notes:               (body.notes as string | undefined) ?? null,
       total_sen:         built.total,
+      bank_charge_sen:     bankChargeSen,
       status:              'DRAFT',
       created_by:          user.id,
       ...(refund && refund.ok ? refund.fields : {}),
@@ -839,6 +845,11 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   }
   if (body.supplierId !== undefined) updates.supplier_id = (body.supplierId as string | null) || null;
   if (body.notes !== undefined) updates.notes = (body.notes as string | null) ?? null;
+  if (body.bankChargeSen !== undefined) {
+    const v = parseAmountSen(body.bankChargeSen);
+    if (v === null) return c.json({ error: 'bank_charge_invalid' }, 400);
+    updates.bank_charge_sen = v;
+  }
   Object.assign(updates, pvBillUpdates(body), officialOwedUpdates(body, officialActor(c), before));
   // PV→PI settlement (0202) — purpose is editable while DRAFT.
   if (body.purpose !== undefined) updates.purpose = normalizePurpose(body.purpose);
