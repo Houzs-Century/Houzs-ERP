@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+// The letterhead is fetched for the tab's company before drawing (BUG-111).
+vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 import { purchaseOrderPdfBase64 } from './purchase-order-pdf';
 import { splitBackendSofa } from './sofa-walk-order';
 

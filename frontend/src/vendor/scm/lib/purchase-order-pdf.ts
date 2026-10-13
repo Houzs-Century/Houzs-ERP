@@ -50,6 +50,7 @@ import { drawSofaLayout } from './sofa-layout-pdf';
 import { COMPANY, amountInWordsMyr, deliverPdf, drawInfoColumns, ensurePdfCjkFont, fmtDocDate, fmtDocStamp, safeName, type PdfAction } from './pdf-common';
 import { supplierBlock } from './pdf-party-blocks';
 import { poDisplayNumber } from './po-status';
+import { ensureBrandingForActiveCompany } from '../../../hooks/useBranding';
 import {
   loadSupplierDocData,
   supplierCodeFor,
@@ -307,6 +308,8 @@ async function renderPurchaseOrderInto(
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 10; // tighter left/right than the SO's 14 (owner 2026-06-19)
   const docTitle = opts?.docTitle ?? 'PURCHASE ORDER';
+
+  await ensureBrandingForActiveCompany();
 
   /* Print-time lookups (all fail-soft): supplier SKU bindings + Fabric
      Converter colour map + the FULL supplier master record (the PO detail
