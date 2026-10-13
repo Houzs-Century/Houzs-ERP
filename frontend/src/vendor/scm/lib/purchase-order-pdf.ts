@@ -46,7 +46,7 @@ import {
   sortLinesByStoredLineNo,
   sortSoLinesByGroupRank,
 } from '@2990s/shared/so-line-display';
-import { drawSofaLayout } from './sofa-layout-pdf';
+import { drawSofaLayout, layoutDepth } from './sofa-layout-pdf';
 import { COMPANY, amountInWordsMyr, deliverPdf, drawInfoColumns, ensurePdfCjkFont, fmtDocDate, fmtDocStamp, safeName, type PdfAction } from './pdf-common';
 import { supplierBlock } from './pdf-party-blocks';
 import { poDisplayNumber } from './po-status';
@@ -208,7 +208,7 @@ const SOFA_MODULE_IDS_BY_LEN = SOFA_MODULES.map((m) => m.id).sort((a, b) => b.le
 function sofaCellFromLine(
   variants: Record<string, unknown> | null | undefined,
   itemCode: string | null | undefined,
-): { cell: Cell; depth: Depth; groupKey: string; idx: number } | null {
+): { cell: Cell; depths: unknown[]; groupKey: string; idx: number } | null {
   if (!variants || typeof variants !== 'object') return null;
   const v = variants as Record<string, unknown>;
   const x = v.x;
@@ -221,11 +221,12 @@ function sofaCellFromLine(
   const moduleId = SOFA_MODULE_IDS_BY_LEN.find((id) => code.endsWith(id)) ?? null;
   if (!moduleId || !findModule(moduleId)) return null;
   const rot: 0 | 90 | 180 | 270 = v.rot === 90 || v.rot === 180 || v.rot === 270 ? v.rot : 0;
-  const depthRaw = v.depth;
-  const depth: Depth = typeof depthRaw === 'string' && depthRaw.trim() ? depthRaw : '24';
   const groupKey = typeof v.summary === 'string' && v.summary.trim() ? v.summary.trim() : '';
   const idx = typeof v.cellIndex === 'number' && Number.isFinite(v.cellIndex) ? v.cellIndex : 0;
-  return { cell: { moduleId, x, y, rot }, depth, groupKey, idx };
+  // The summary's depth was written with the x/y ("2A(LHF) + L(RHF) · 28\" · ...").
+  const summaryDepth = /·\s*(\d+)(?:"|″)/.exec(groupKey)?.[1];
+  const depths = [v.depth, v.seatHeight, summaryDepth, '24'];
+  return { cell: { moduleId, x, y, rot }, depths, groupKey, idx };
 }
 
 /* Resolve a sofa MODULE id (+ the BASE model it belongs to) from a
@@ -687,7 +688,7 @@ async function renderPurchaseOrderInto(
   type DistinctSofa = { cells: Cell[]; depth: Depth; model: string; soNo: string };
   const sofaGroups = new Map<
     string,
-    { parts: Array<{ cell: Cell; idx: number }>; depth: Depth; model: string; soNo: string }
+    { parts: Array<{ cell: Cell; idx: number }>; depths: unknown[]; model: string; soNo: string }
   >();
   /* Geometry-less backend sofa lines, grouped by SO no + base model, modules
      kept in line (= display) order for a deterministic left→right layout. */
@@ -713,7 +714,7 @@ async function renderPurchaseOrderInto(
         const model = (part.groupKey ? (part.groupKey.split('·')[0] ?? '').trim() : '')
           || (it.material_name ?? '').trim()
           || (it.item_code ?? '').trim();
-        g = { parts: [], depth: part.depth, model, soNo };
+        g = { parts: [], depths: part.depths, model, soNo };
         sofaGroups.set(gk, g);
       }
       g.parts.push({ cell: part.cell, idx: part.idx });
@@ -754,7 +755,7 @@ async function renderPurchaseOrderInto(
     // L(LHF) + 1A(P)(RHF) + 1NA. g.model (summary → material_name → item_code)
     // stays the fallback for a group whose cells somehow carry no code.
     const caption = cells.map((c) => c.moduleId).filter(Boolean).join(' + ') || g.model;
-    distinctSofas.push({ cells, depth: g.depth, model: caption, soNo: g.soNo });
+    distinctSofas.push({ cells, depth: layoutDepth(cells, g.depths), model: caption, soNo: g.soNo });
   }
   for (const [fk, g] of fallbackGroups) {
     if (geometryKeys.has(fk)) continue; // already drawn from real geometry
