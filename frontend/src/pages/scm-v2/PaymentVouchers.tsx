@@ -108,6 +108,14 @@ const buildPvColumns = (): GridColumn<PaymentVoucherRow>[] => [
     sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
   },
   {
+    /* DEV-75: recorded only — not in Total, posts nothing. */
+    key: 'bank_charge_sen', label: 'Bank Charges', width: 120, sortable: true, align: 'right', groupable: false,
+    accessor: (r) => fmtMoney(Number(r.bank_charge_sen ?? 0), 'MYR'),
+    exportValue: (r) => Number(r.bank_charge_sen ?? 0) / 100,
+    exportFormat: 'money',
+    sortFn: (a, b) => Number(a.bank_charge_sen ?? 0) - Number(b.bank_charge_sen ?? 0),
+  },
+  {
     key: 'status', label: 'Status', width: 160, sortable: true, groupable: true,
     /* The four layers' marks ride BESIDE the pill, never inside the status
        enum (the 0324 lesson). A checked DRAFT reads differently from a

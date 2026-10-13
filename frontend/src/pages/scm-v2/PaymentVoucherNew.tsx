@@ -158,6 +158,7 @@ export const PaymentVoucherNew = () => {
   }, [rolesQ.data, moneyAccounts]);
   const [voucherDate, setVoucherDate]             = useState<string>(() => todayMyt());
   const [notes, setNotes]                         = useState<string>('');
+  const [bankChargeSen, setBankChargeSen]         = useState<number>(0);
   /* The bill's own number and date (owner 2026-10-01: 同一张单 — the same pair on
      another request, voucher or AP invoice is said out loud, never refused). */
   const [billRef, setBillRef]                     = useState<string>('');
@@ -724,6 +725,7 @@ export const PaymentVoucherNew = () => {
         creditAccountCode,
         voucherDate,
         notes:             notes || undefined,
+        bankChargeSen,
         // Multi-currency (Phase 1-A) — resolved currency + rate. MYR forces 1
         // (server enforces too); a blank/invalid foreign rate → 1.
         currency,
@@ -865,6 +867,12 @@ export const PaymentVoucherNew = () => {
                 className={styles.fieldInput}
                 placeholder={accountsQ.isLoading ? 'Loading accounts…' : '— Bank / cash —'}
               />
+            </label>
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Bank Charges (MYR, not in total)</span>
+              <MoneyInput bare valueSen={bankChargeSen} aria-label="Bank charges"
+                onCommit={(sen) => setBankChargeSen(Math.max(0, sen ?? 0))}
+                inputClassName={styles.fieldInput} selectOnFocus />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Notes</span>

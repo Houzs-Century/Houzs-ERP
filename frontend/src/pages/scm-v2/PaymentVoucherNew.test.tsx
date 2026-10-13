@@ -490,6 +490,33 @@ describe('the plain Payment Voucher (/new)', () => {
     expect(mutateAsync).not.toHaveBeenCalled();
   });
 
+  /* DEV-75: the bank's charge rides the header — recorded only, never added to a line or the total. */
+  test('Bank Charges is sent as its own sen figure and leaves the lines alone', async () => {
+    mutateAsync.mockClear();
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: '/scm/payment-vouchers/new',
+        state: { billPrefill: {
+          extraction: {
+            vendorName: 'TENAGA NASIONAL BERHAD', vendorRegNo: null, documentKind: 'bill' as const,
+            invoiceNumber: 'INV-77', invoiceDate: '2026-09-01', dueDate: null,
+            currency: 'MYR', totalSen: 15000, sstSen: null, lines: [],
+          },
+          memory: { payeeName: 'TNB', debitAccountCode: '900-A002', purpose: 'OTHER', timesSeen: 3 },
+        } },
+      }]}><PaymentVoucherNew /></MemoryRouter>,
+    );
+    const charge = screen.getByLabelText('Bank charges') as HTMLInputElement;
+    fireEvent.focus(charge);
+    fireEvent.change(charge, { target: { value: '10.50' } });
+    fireEvent.blur(charge);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3', cancelable: true, bubbles: true }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const payload = mutateAsync.mock.calls[0]![0];
+    expect(payload.bankChargeSen).toBe(1050);
+    expect(payload.lines).toEqual([expect.objectContaining({ amountSen: 15000 })]);
+  });
+
   test('the account search actually narrows — 打关键字眼 finds the account', () => {
     draw('/scm/payment-vouchers/new');
     const paidFrom = screen.getByLabelText(/Paid From/) as HTMLInputElement;
