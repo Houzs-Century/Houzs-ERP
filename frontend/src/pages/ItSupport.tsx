@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { ArrowLeft, LifeBuoy, Paperclip, Plus, RotateCcw } from "lucide-react";
+import { ArrowLeft, FileText, Film, LifeBuoy, Paperclip, Plus, RotateCcw, Upload, X } from "lucide-react";
 import { api } from "../api/client";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
-import { formatDateTime, relativeTime } from "../lib/utils";
+import { clipboardFiles, useStrayFileDropGuard } from "../lib/uploadDropZone";
+import { cn, formatDateTime, relativeTime } from "../lib/utils";
 import {
   IT_ACCEPT as ACCEPT, IT_KINDS as KINDS, IT_MAX_FILES as MAX_FILES, IT_URGENCY as URGENCY,
   itAddFiles, itFresh as fresh, itMessage as message, itStatusText as statusText, itStatusTone as statusTone,
@@ -35,38 +36,110 @@ function StatusBadge({ status }: { status: string }) {
   return <Badge tone={statusTone(status)} size="sm" caseless>{statusText(status)}</Badge>;
 }
 
+/* One picture's preview address, released when the file goes. Made in the
+   effect rather than a memo so StrictMode's second mount never holds a released one. */
+function useObjectUrl(file: File): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const made = URL.createObjectURL(file);
+    setUrl(made);
+    return () => URL.revokeObjectURL(made);
+  }, [file]);
+  return url;
+}
+
+function Thumb({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const url = useObjectUrl(file);
+  const [viewing, setViewing] = useState(false);
+  useEffect(() => {
+    if (!viewing) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setViewing(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [viewing]);
+  const isImage = file.type.startsWith("image/");
+  return (
+    <li className="relative h-20 w-20">
+      {isImage ? (
+        <button type="button" title={file.name} aria-label={`Preview ${file.name}`} onClick={() => setViewing(true)}
+          className="h-full w-full overflow-hidden rounded-md border border-border transition hover:border-primary hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+          {url && <img src={url} alt="" className="h-full w-full object-cover" />}
+        </button>
+      ) : (
+        <div title={file.name} className="flex h-full w-full flex-col items-center justify-center gap-1 rounded-md border border-border bg-bg/40 text-primary">
+          {file.type.startsWith("video/") ? <Film size={22} /> : <FileText size={22} />}
+          <span className="max-w-full truncate px-1 text-[10px] font-semibold">{file.name.split(".").pop()?.toUpperCase()}</span>
+        </div>
+      )}
+      <button type="button" aria-label={`Remove ${file.name}`} onClick={onRemove}
+        className="absolute -right-2 -top-2 grid h-6 w-6 place-items-center rounded-full bg-ink text-surface shadow transition-colors hover:bg-err focus:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+        <X size={14} />
+      </button>
+      {viewing && url && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/70" onClick={() => setViewing(false)} />
+          <div role="dialog" aria-modal="true" aria-label={file.name} className="relative">
+            <img src={url} alt={file.name} className="max-h-[85vh] max-w-[90vw] rounded-md bg-surface object-contain shadow-2xl" />
+            <button type="button" aria-label="Close preview" onClick={() => setViewing(false)}
+              className="absolute -right-3 -top-3 grid h-8 w-8 place-items-center rounded-full bg-surface text-ink shadow transition-colors hover:bg-bg">
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+    </li>
+  );
+}
+
+/* Click to browse, drop files on the box, or paste a screenshot anywhere on
+   the page. Only one of these boxes is ever on screen, so a page-wide paste
+   cannot land in the wrong one; a text paste is left alone. */
 function Files({ files, onChange }: { files: File[]; onChange: (f: File[]) => void }) {
-  const input = useRef<HTMLInputElement>(null);
   const [refused, setRefused] = useState<string | null>(null);
-  const add = (list: FileList | null) => {
+  const [dragging, setDragging] = useState(false);
+  useStrayFileDropGuard();
+  const add = (list: ArrayLike<File> | null) => {
     const r = itAddFiles(files, list);
     if ("refused" in r) return setRefused(r.refused);
     setRefused(null);
     onChange(r.files);
   };
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (e.defaultPrevented) return;
+      const pasted = clipboardFiles(e);
+      if (!pasted.length) return;
+      e.preventDefault();
+      add(pasted);
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  });
   return (
-    <div className="flex flex-col gap-2">
-      <input ref={input} type="file" multiple accept={ACCEPT} className="hidden"
-        onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
-      {files.map((f, i) => (
-        <div key={`${f.name}-${i}`} className="flex items-center gap-2 text-[12px] text-ink-secondary">
-          <Paperclip size={13} />
-          <span className="min-w-0 truncate">{f.name}</span>
-          <button type="button" className="text-[11.5px] font-semibold text-primary hover:underline"
-            onClick={() => onChange(files.filter((_, j) => j !== i))}>
-            Remove
-          </button>
-        </div>
-      ))}
-      {files.length < MAX_FILES && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" variant="secondary" icon={<Paperclip size={14} />} onClick={() => input.current?.click()}>
-            Add a screenshot or file
-          </Button>
-          <span className="text-[11.5px] text-ink-muted">Pictures, MP4 or MOV video, or PDF. Up to 5 files, 10 MB each.</span>
-        </div>
-      )}
+    <div className="flex flex-col gap-3">
+      <label
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false); }}
+        onDrop={(e) => { e.preventDefault(); setDragging(false); add(e.dataTransfer.files); }}
+        className={cn(
+          "flex cursor-pointer flex-col items-center gap-1 rounded-md border-2 border-dashed px-4 py-6 text-center transition-colors focus-within:ring-2 focus-within:ring-primary",
+          dragging ? "border-primary bg-primary-soft" : "border-border hover:border-primary hover:bg-bg/40",
+        )}
+      >
+        <input type="file" multiple accept={ACCEPT} className="sr-only"
+          onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
+        <Upload size={20} className="text-primary" />
+        <span className="text-[12.5px] font-semibold text-ink">Drop files here, click to browse, or paste a screenshot</span>
+        <span className="text-[11.5px] text-ink-muted">Pictures, MP4 or MOV video, or PDF. Up to {MAX_FILES} files, 10 MB each.</span>
+      </label>
       {refused && <p className="text-[12px] text-err" role="alert">{refused}</p>}
+      {files.length > 0 && (
+        <ul className="flex flex-wrap gap-3">
+          {files.map((f, i) => (
+            <Thumb key={`${f.name}-${i}`} file={f} onRemove={() => { setRefused(null); onChange(files.filter((_, j) => j !== i)); }} />
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -104,17 +177,17 @@ function NewRequest({ from, onSent, onCancel }: { from: string; onSent: (code: s
   };
 
   return (
-    <form onSubmit={send} className="flex flex-col gap-4 rounded-lg border border-border bg-surface p-4 shadow-stone">
+    <form onSubmit={send} className="flex flex-col gap-4 rounded-lg border border-border bg-surface p-5 shadow-stone sm:p-8">
       <label className="flex flex-col gap-1.5">
-        <span className={LABEL}>What is the problem?</span>
+        <span className={LABEL}>What is the problem? <span className="text-err">*</span></span>
         <input className={CONTROL} value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)}
           placeholder="The delivery order will not save" />
       </label>
       <label className="flex flex-col gap-1.5">
         <span className={LABEL}>Details</span>
         <textarea className={`${CONTROL} min-h-32 resize-y`} value={description} maxLength={10000}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="What you did, what you expected, and what happened instead." />
+          onChange={(e) => setDescription(e.target.value)} />
+        <span className="text-[11.5px] text-ink-muted">What you did, what you expected, and what happened instead.</span>
       </label>
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="flex flex-col gap-1.5">
@@ -135,9 +208,9 @@ function NewRequest({ from, onSent, onCancel }: { from: string; onSent: (code: s
         <Files files={files} onChange={setFiles} />
       </div>
       {error && <p className="rounded-md border border-err/30 bg-err/5 px-3 py-2 text-[12px] text-ink" role="alert">{error}</p>}
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="secondary" onClick={onCancel} disabled={busy}>Cancel</Button>
+      <div className="flex flex-wrap items-center gap-3 pt-2">
         <Button type="submit" disabled={busy}>{busy ? "Sending…" : "Send to IT"}</Button>
+        <Button type="button" variant="secondary" onClick={onCancel} disabled={busy}>Cancel</Button>
       </div>
     </form>
   );

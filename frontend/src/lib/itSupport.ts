@@ -69,9 +69,14 @@ export function itStepLine(s: ItStep): string {
   return "replied";
 }
 
+/* IT_ACCEPT only filters the file browser; a dropped or pasted file is checked here. */
+const itAccepted = (f: File) => f.type.startsWith("image/") || ["video/mp4", "video/quicktime", "application/pdf"].includes(f.type);
+
 /** Adding files to an attachment list: the new list, or why it was refused. */
-export function itAddFiles(current: File[], added: FileList | null): { files: File[] } | { refused: string } {
+export function itAddFiles(current: File[], added: ArrayLike<File> | null): { files: File[] } | { refused: string } {
   const next = [...current, ...Array.from(added ?? [])];
+  const odd = next.find((f) => !itAccepted(f));
+  if (odd) return { refused: `${odd.name} is not a picture, MP4 or MOV video, or PDF.` };
   const big = next.find((f) => f.size > IT_MAX_BYTES);
   if (big) return { refused: `${big.name} is larger than 10 MB.` };
   if (next.length > IT_MAX_FILES) return { refused: `Attach at most ${IT_MAX_FILES} files.` };
