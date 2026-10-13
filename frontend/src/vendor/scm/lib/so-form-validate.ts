@@ -120,7 +120,7 @@ export function soDateGuardError(i: SoDateGuardInput): SoFormError | null {
    row, so refusing the save was the only thing standing between a cashier and
    a payment that silently never booked. Both writers now post on AMOUNT alone
    (`recordNewPayments` on mobile, `flushPaymentDrafts` on desktop), which is
-   what makes dropping the guard safe. `so-slip-optional-contract.test.ts`
+   what makes dropping the guard safe. `so-slip-required-contract.test.ts`
    pins that pairing on both surfaces — if a writer ever goes back to
    filtering on the slip, that is the money bug returning, not a style change. */
 

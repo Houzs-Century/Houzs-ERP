@@ -103,6 +103,7 @@ import { RecordedPaymentsList, type RecordedPayment } from "./RecordedPayments";
    below), so it is the one surface a rule landing on the shared/detail ledger
    keeps missing (#583, then again in fix/b3-pay). */
 import { missingMethodSubField, slipDateProblem } from "../vendor/scm/components/PaymentsTable";
+import { SLIP_REQUIRED_REASON, slipMissingProblem } from "../vendor/scm/lib/payment-slip-gate";
 import { paymentSlipDateWindow } from "../vendor/scm/lib/payment-slip-date";
 import { REQUEST_HINT, askNewSoBackdateReason, isBackdateRequestRow, sendNewSoBackdateRequests } from "../vendor/scm/lib/new-so-backdate";
 /* Money moved from a cancelled order (docs/bugs/0933): the method option, its pick, the body, the seed. */
@@ -1450,12 +1451,26 @@ export function MobileNewSO({
     [pays, can],
   );
 
-  /* Two genuinely client-only blockers the backend cannot see: an invalid email
-     format, and a line with no product picked. Merged into the same list. */
+  /* The proof (owner 2026-10-13, lib/payment-slip-required): every keyed row carries its slip before the save, as on desktop. A converted row needs none. */
+  const slipMissingPayments = useMemo(
+    () => pays.filter((p) => toSen(p.amount) > 0 && slipMissingProblem({ methodLabel: p.method, slipUploadSessionId: p.slipSession || null }) !== null),
+    [pays],
+  );
+
+  /* Client-only blockers the backend cannot see: an invalid email format, a
+     payment date or slip the validate body does not carry, and a line with no
+     product picked. Merged into the same list. */
   const soClientExtras = useMemo<SaveProblem[]>(() => [
     ...(emailErr ? [{ code: "email_invalid", message: "Enter a valid email, or leave it blank.", field: "Email" }] : []),
     ...(outOfWindowPayments.length > 0
       ? [{ code: "slip_date_out_of_window", message: outOfWindowPayments[0]!, field: "Payment date" }]
+      : []),
+    ...(slipMissingPayments.length > 0
+      ? [{
+          code: "slip_required",
+          message: `${slipMissingPayments.length} payment${slipMissingPayments.length === 1 ? " has" : "s have"} no slip attached. ${SLIP_REQUIRED_REASON}`,
+          field: "Payment slip",
+        }]
       : []),
     ...(unpickedLines.length > 0
       ? [{
@@ -1464,7 +1479,7 @@ export function MobileNewSO({
           field: "Line items",
         }]
       : []),
-  ], [emailErr, unpickedLines, outOfWindowPayments]);
+  ], [emailErr, unpickedLines, outOfWindowPayments, slipMissingPayments]);
 
   const liveSoValidateDraft = useMemo(() => buildSoValidateDraft(false), [buildSoValidateDraft]);
   const { problems: soBackendProblems } = useSoValidate(liveSoValidateDraft, true);
@@ -1633,15 +1648,10 @@ export function MobileNewSO({
 
   /* Post-create payment recording — records each amount-bearing row AFTER the
      SO exists, through the same POST /:docNo/payments the SO-detail screen uses.
-
-     THE FILTER IS THE AMOUNT, AND ONLY THE AMOUNT. It used to also demand a
-     slipSession, which silently dropped a slip-less row: the cashier's payment
-     never posted and the SO read unpaid (BUG-HISTORY, the money bug that
-     produced the shared slipless guard). With the slip now OPTIONAL everywhere
-     (Owner 2026-08-13) that guard is gone, so this filter is the only thing
-     deciding whether the money is recorded — it must never look at the slip
-     again. The route accepts a null uploadSessionId and records the row
-     slip-less. */
+     THE FILTER IS THE AMOUNT, AND ONLY THE AMOUNT: a slip filter here once
+     silently dropped a row and the SO read unpaid (BUG-HISTORY). The slip is
+     REQUIRED (owner 2026-10-13) but that gate is BEFORE the save
+     (slipMissingPayments); this writer stays blind to it. */
   async function recordNewPayments(createdDocNo: string) {
     const rows = pays.filter((p) => toSen(p.amount) > 0);
     if (rows.length === 0) return;
@@ -2158,9 +2168,9 @@ export function MobileNewSO({
         asDraft: asDraft === true,
         /* GATE-ONLY, never booked: recordNewPayments posts AFTER the create, so
            without this the Processing-Date deposit gate saw RM0 (deadlock; same
-           fix as desktop). The AMOUNT only — never the slip (optional since
-           2026-08-13) — and never a backdate-request row, which is not money
-           the order holds until an admin approves it. */
+           fix as desktop). The AMOUNT only — never the slip — and never a
+           backdate-request row, which is not money the order holds until an
+           admin approves it. */
         pendingDepositSen: (() => {
           const c = pays
             .filter((p) => toSen(p.amount) > 0 && !isBackdateRow(p))
@@ -2689,13 +2699,9 @@ export function MobileNewSO({
                   ))}
                 </div>
                 <button className="addline" onClick={() => setPays((p) => [...p, newPayment(selfCollectorId)])}>+ Add Payment</button>
-                {/* Owner 2026-08-13 — the slip is optional, so this line no
-                    longer claims a row without one is only "planned". Every
-                    amount-bearing row is recorded; the slip can follow later
-                    from the SO detail screen. */}
                 {!!pays.length && (
                   <div style={{ fontSize: 10, color: "#767b6e", marginTop: 6 }}>
-                    Payments are recorded on the order when you {isEdit ? "Save" : "Create"}. A slip is optional — attach one here, or add it later from the SO detail screen.
+                    Payments are recorded on the order when you {isEdit ? "Save" : "Create"}. Every payment needs its slip or receipt photo attached first.
                   </div>
                 )}
               </div>
@@ -3696,7 +3702,7 @@ function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pay: Paym
             </select>
           </Field>
           <div style={{ flex: 1 }}>
-            <div className="fld-l" style={{ color: "#9aa093" }}>Slip</div>
+            <div className="fld-l" style={{ color: "#9aa093" }}>{pay.method === CONVERT_LABEL ? "Slip" : "Slip (required)"}</div>
             <input ref={fileRef} type="file" accept="image/*,application/pdf" style={{ display: "none" }} onChange={(e) => { void onPickSlip(e.target.files?.[0] ?? null); e.target.value = ""; }} />
             <button
               type="button"
@@ -3718,11 +3724,13 @@ function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pay: Paym
             </button>
           </div>
         </div>
-        {/* The per-row amber warning is gone (Owner 2026-08-13): it called a
-            slip-less row a mere plan, which was true only while the writer
-            filtered on the slip. The slip is optional and the row is recorded
-            on its amount, so that line asked for something not required and
-            implied the money would not book without it. */}
+        {/* The proof is required (owner 2026-10-13, lib/payment-slip-required):
+            the save is blocked until this row carries its slip, and the line
+            says so in the shared sentence. The row is still RECORDED on its
+            amount alone once saved — the writer never filters on the slip. */}
+        {pay.slipPhase !== "uploading" && toSen(pay.amount) > 0 && slipMissingProblem({ methodLabel: pay.method, slipUploadSessionId: pay.slipSession || null }) && (
+          <div style={{ fontSize: 11, lineHeight: 1.3, color: "var(--red)" }}>{SLIP_REQUIRED_REASON}</div>
+        )}
       </div>
     </div>
   );

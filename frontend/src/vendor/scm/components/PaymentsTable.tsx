@@ -49,6 +49,7 @@ import { paymentRowMutable, type PaymentChangeVia } from '../lib/so-field-policy
 /* The slip-date window, byte-identical to the backend's copy — the picker's
    bounds, the inline refusal and the server's 400 are one rule. */
 import { checkPaymentSlipDate, paymentSlipDateWindow } from '../lib/payment-slip-date';
+import { slipMissingProblem } from '../lib/payment-slip-gate';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { owesPaymentReason, paymentReasonAsk, reasonWhyFor } from '../lib/payment-reason';
 import { usePrompt } from './ConfirmDialog';
@@ -946,9 +947,6 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      commit affordance; the parent batches them at SO-create time. */
   const commitDraft = async (d: PaymentDraft) => {
     if (!isSaved) return;
-    /* Owner 2026-07-13 — the slip is OPTIONAL now (a receipt isn't always on
-       hand). Gate only on an amount > 0; the SO route accepts a slip-less
-       payment. The slip uploader stays available for when one IS attached. */
     if (d.amountSen <= 0) return;
     /* Same-day EDIT (owner 2026-07-13) — an edit draft carries the id of the
        persisted row it amends. Route it through PATCH instead of POST. */
@@ -966,6 +964,9 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       });
       return;
     }
+    /* The proof (owner 2026-10-13), before the window: a late slip needs its photo before it goes to an admin. */
+    const noSlip = slipMissingProblem(d);
+    if (noSlip) { void notify({ title: 'Attach the slip first', body: noSlip, tone: 'error' }); return; }
     /* Slip-date window (owner 2026-09-23). The field is already bounded, but a
        row seeded from a scanned receipt carries the receipt's own date and a
        stale draft can outlive the window while the page sits open. */
@@ -1072,6 +1073,8 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       if (d.amountSen <= 0) { blocked.push(`${d.methodLabel}: no amount`); continue; }
       const missing = missingMethodSubField(d);
       if (missing) { blocked.push(`${d.methodLabel}: pick the ${missing}`); continue; }
+      const noSlip = slipMissingProblem(d);
+      if (noSlip) { blocked.push(`${d.methodLabel}: ${noSlip}`); continue; }
       const outOfWindow = slipDateProblem(d, todayMyt(), mayBackdateSlip);
       if (outOfWindow) { blocked.push(`${d.methodLabel}: ${needsRequest(d) ? REQUEST_HINT : outOfWindow}`); continue; }
       let method: PaymentMethod;
@@ -1825,11 +1828,10 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                         </div>
                       ) : null;
                     })()}
-                    {/* Owner 2026-07-13 — per-payment slip uploader is OPTIONAL
-                        now (a receipt isn't always available); commit no longer
-                        waits on it. Still offered for when one IS on hand. */}
+                    {/* The proof is REQUIRED on a new row (owner 2026-10-13, lib/payment-slip-gate);
+                        Save waits on it. An edit of a booked row keeps the slip it has. */}
                     <SlipUploadField
-                      required={false}
+                      required={!d.editingPersistedId}
                       disabled={locked}
                       onConfirmed={(sid) => patchDraft(d.uid, { slipUploadSessionId: sid })}
                       onCleared={() => patchDraft(d.uid, { slipUploadSessionId: null })}
@@ -1867,13 +1869,12 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                         Only the SO-route batching page (SalesOrderNew) sets
                         slipUpload; DO / SI / consignment pages do NOT, so their
                         tables render no uploader (the endpoint doesn't accept
-                        one). NOT required-marked: the slip is optional on the
-                        new-SO path too (Owner 2026-08-13), so the asterisk went
-                        with the rule — the SAVED-mode uploader above has never
-                        carried one since 2026-07-13. */}
+                        one). Required-marked (owner 2026-10-13): the New-SO
+                        save is blocked by slipMissingProblem until every keyed
+                        row carries its slip. A converted row needs none. */}
                     {!isSaved && (props as DraftModeProps).slipUpload && (
                       <SlipUploadField
-                        required={false}
+                        required={d.methodLabel !== CONVERT_LABEL}
                         disabled={locked}
                         onConfirmed={(sid) => patchDraft(d.uid, { slipUploadSessionId: sid })}
                         onCleared={() => patchDraft(d.uid, { slipUploadSessionId: null })}
@@ -1890,16 +1891,14 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                          required sub-field(s). */
                       const noAmount = d.amountSen <= 0;
                       const missing  = missingMethodSubField(d);
+                      /* No slip (owner 2026-10-13): no Save, and no request either. */
+                      const noSlip   = slipMissingProblem(d);
                       /* Too old for the window: commitDraft sends it as a request instead. */
-                      const asRequest = !noAmount && !missing && needsRequest(d);
-                      const blocked  = noAmount || missing !== null || (slipProblem !== null && !asRequest);
-                      const title = noAmount
-                        ? 'Enter an amount > 0 first'
-                        : missing
-                          ? `Pick the ${missing} for this ${d.methodLabel} payment first`
-                          : asRequest ? REQUEST_HINT : slipProblem
-                            ? slipProblem
-                            : d.editingPersistedId ? 'Save changes' : 'Save payment';
+                      const asRequest = !noAmount && !missing && !noSlip && needsRequest(d);
+                      const blocked  = noAmount || missing !== null || noSlip !== null || (slipProblem !== null && !asRequest);
+                      const title = noAmount ? 'Enter an amount > 0 first'
+                        : missing ? `Pick the ${missing} for this ${d.methodLabel} payment first`
+                        : noSlip ?? (asRequest ? REQUEST_HINT : slipProblem ?? (d.editingPersistedId ? 'Save changes' : 'Save payment'));
                       /* A LABELLED button, not a bare glyph — see the note on
                          the drafts block. `title` still carries the reason the
                          button is unavailable, which a label cannot. */
