@@ -102,8 +102,8 @@ import { RecordedPaymentsList, type RecordedPayment } from "./RecordedPayments";
    makes. This screen owns the only OTHER payment editor (the pre-create PayCard
    below), so it is the one surface a rule landing on the shared/detail ledger
    keeps missing (#583, then again in fix/b3-pay). */
-import { missingMethodSubField, slipDateProblem, slipMissingProblem } from "../vendor/scm/components/PaymentsTable";
-import { SLIP_REQUIRED_REASON } from "../vendor/scm/lib/payment-slip-required";
+import { missingMethodSubField, slipDateProblem } from "../vendor/scm/components/PaymentsTable";
+import { SLIP_REQUIRED_REASON, slipMissingProblem } from "../vendor/scm/lib/payment-slip-gate";
 import { paymentSlipDateWindow } from "../vendor/scm/lib/payment-slip-date";
 import { REQUEST_HINT, askNewSoBackdateReason, isBackdateRequestRow, sendNewSoBackdateRequests } from "../vendor/scm/lib/new-so-backdate";
 /* Money moved from a cancelled order (docs/bugs/0933): the method option, its pick, the body, the seed. */

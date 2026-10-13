@@ -49,7 +49,8 @@ import {
   type SoDropdownOption,
 } from "../vendor/scm/lib/so-dropdown-options-queries";
 import { paymentMethodCodeForValue, PAYMENT_METHOD_CODE_TO_VALUE } from "../vendor/scm/lib/payment-methods";
-import { missingMethodSubField, slipDateProblem, slipMissingProblem } from "../vendor/scm/components/PaymentsTable";
+import { missingMethodSubField, slipDateProblem } from "../vendor/scm/components/PaymentsTable";
+import { slipMissingProblem } from "../vendor/scm/lib/payment-slip-gate";
 import { paymentSlipDateWindow } from "../vendor/scm/lib/payment-slip-date";
 import { BACKDATE_REASON_ASK, REQUEST_HINT, slipDateNeedsRequest, useRaiseBackdateRequest } from "../vendor/scm/lib/payment-backdate-queries";
 import { BackdateRequestsPanel } from "../vendor/scm/components/BackdateRequestsPanel";

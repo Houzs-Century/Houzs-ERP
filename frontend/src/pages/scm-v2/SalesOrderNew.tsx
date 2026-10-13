@@ -123,10 +123,10 @@ import { useSpecialAddons, type MfgProductRow } from '../../vendor/scm/lib/mfg-p
 import { type ScanPrefill, type ExtractedSlip } from '../../vendor/scm/components/ScanOrderModal';
 import {
   PaymentsTable, labelToApi, draftMethodFields, newPaymentDraft, convertDraftsFrom,
-  missingMethodSubField, parseInstallmentMonths, slipDateProblem, slipMissingProblem, type PaymentDraft,
+  missingMethodSubField, parseInstallmentMonths, slipDateProblem, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
 import { useOrdersWithMoney } from '../../vendor/scm/lib/so-money-queries';
-import { SLIP_REQUIRED_REASON } from '../../vendor/scm/lib/payment-slip-required';
+import { SLIP_REQUIRED_REASON, slipMissingProblem } from '../../vendor/scm/lib/payment-slip-gate';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
 import { consoleAttachOptions, fmtMoneySen } from '@2990s/shared';

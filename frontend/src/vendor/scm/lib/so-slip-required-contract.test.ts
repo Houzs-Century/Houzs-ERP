@@ -21,9 +21,8 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { slipMissingProblem } from '../components/PaymentsTable';
+import { SLIP_REQUIRED_REASON, slipMissingProblem } from './payment-slip-gate';
 import { CONVERT_LABEL } from './so-money-queries';
-import { SLIP_REQUIRED_REASON } from './payment-slip-required';
 
 const read = (rel: string): string =>
   readFileSync(resolve(process.cwd(), rel), 'utf8');
@@ -42,7 +41,7 @@ const sliceFrom = (source: string, startAnchor: string, endAnchor: string): stri
   return source.slice(start, end);
 };
 
-describe('slipMissingProblem — the rule plus the three things the rule must not know', () => {
+describe('slipMissingProblem (lib/payment-slip-gate) — the rule plus the three things the rule must not know', () => {
   test('a keyed row with no slip is refused in the shared sentence', () => {
     expect(slipMissingProblem({ methodLabel: 'Cash', slipUploadSessionId: null })).toBe(SLIP_REQUIRED_REASON);
     expect(slipMissingProblem({ methodLabel: 'Merchant', slipUploadSessionId: '' })).toBe(SLIP_REQUIRED_REASON);

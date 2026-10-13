@@ -49,7 +49,7 @@ import { paymentRowMutable, type PaymentChangeVia } from '../lib/so-field-policy
 /* The slip-date window, byte-identical to the backend's copy — the picker's
    bounds, the inline refusal and the server's 400 are one rule. */
 import { checkPaymentSlipDate, paymentSlipDateWindow } from '../lib/payment-slip-date';
-import { checkPaymentSlip } from '../lib/payment-slip-required';
+import { slipMissingProblem } from '../lib/payment-slip-gate';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { owesPaymentReason, paymentReasonAsk, reasonWhyFor } from '../lib/payment-reason';
 import { usePrompt } from './ConfirmDialog';
@@ -357,24 +357,6 @@ export const slipDateProblem = (
 ): string | null => {
   if (mayBackdate || d.methodLabel === CONVERT_LABEL) return null;
   const verdict = checkPaymentSlipDate(d.paidAt, today);
-  return verdict.ok ? null : verdict.reason;
-};
-
-/* WHY THIS ROW CANNOT BE SAVED WITHOUT ITS PROOF, or null (owner 2026-10-13:
-   every collected payment is keyed with its slip). The rule is
-   lib/payment-slip-required (the backend reads the same file); this adds what
-   the rule must not know — a row EDITING a booked payment keeps the slip it
-   has, a scanned card receipt IS the slip, and money MOVED from another order
-   was receipted when first collected. Exported so the New SO batch guard and
-   the phone sheet ask the same question the panel's own Save button does. */
-export const slipMissingProblem = (
-  d: Pick<PaymentDraft, 'methodLabel' | 'slipUploadSessionId'> & Partial<Pick<PaymentDraft, 'receiptImageKey' | 'editingPersistedId'>>,
-): string | null => {
-  if (d.editingPersistedId) return null;
-  const verdict = checkPaymentSlip({
-    converted: d.methodLabel === CONVERT_LABEL,
-    hasSlip: Boolean(d.slipUploadSessionId) || Boolean(d.receiptImageKey),
-  });
   return verdict.ok ? null : verdict.reason;
 };
 
@@ -982,8 +964,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       });
       return;
     }
-    /* The proof (owner 2026-10-13) — before the window, so a late slip is
-       asked for its photo before it is sent to an admin as a request. */
+    /* The proof (owner 2026-10-13), before the window: a late slip needs its photo before it goes to an admin. */
     const noSlip = slipMissingProblem(d);
     if (noSlip) { void notify({ title: 'Attach the slip first', body: noSlip, tone: 'error' }); return; }
     /* Slip-date window (owner 2026-09-23). The field is already bounded, but a
@@ -1847,10 +1828,8 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                         </div>
                       ) : null;
                     })()}
-                    {/* The proof is REQUIRED on a new row (owner 2026-10-13,
-                        lib/payment-slip-required); Save waits on it. An edit
-                        of a booked row keeps the slip it has, so the marker
-                        goes with the rule. */}
+                    {/* The proof is REQUIRED on a new row (owner 2026-10-13, lib/payment-slip-gate);
+                        Save waits on it. An edit of a booked row keeps the slip it has. */}
                     <SlipUploadField
                       required={!d.editingPersistedId}
                       disabled={locked}
@@ -1912,20 +1891,14 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                          required sub-field(s). */
                       const noAmount = d.amountSen <= 0;
                       const missing  = missingMethodSubField(d);
-                      /* The proof (owner 2026-10-13): no slip, no Save — and no request either. */
+                      /* No slip (owner 2026-10-13): no Save, and no request either. */
                       const noSlip   = slipMissingProblem(d);
                       /* Too old for the window: commitDraft sends it as a request instead. */
                       const asRequest = !noAmount && !missing && !noSlip && needsRequest(d);
                       const blocked  = noAmount || missing !== null || noSlip !== null || (slipProblem !== null && !asRequest);
-                      const title = noAmount
-                        ? 'Enter an amount > 0 first'
-                        : missing
-                          ? `Pick the ${missing} for this ${d.methodLabel} payment first`
-                          : noSlip
-                            ? noSlip
-                          : asRequest ? REQUEST_HINT : slipProblem
-                            ? slipProblem
-                            : d.editingPersistedId ? 'Save changes' : 'Save payment';
+                      const title = noAmount ? 'Enter an amount > 0 first'
+                        : missing ? `Pick the ${missing} for this ${d.methodLabel} payment first`
+                        : noSlip ?? (asRequest ? REQUEST_HINT : slipProblem ?? (d.editingPersistedId ? 'Save changes' : 'Save payment'));
                       /* A LABELLED button, not a bare glyph — see the note on
                          the drafts block. `title` still carries the reason the
                          button is unavailable, which a label cannot. */
