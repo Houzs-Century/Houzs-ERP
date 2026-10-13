@@ -129,7 +129,7 @@ function printPlan(groups) {
       n += 1;
       const docs = [...l.dos.map((d) => `DO ${d.doc_no} (${d.status})`), ...l.sis.map((s) => `SI ${s.doc_no} (${s.status}, paid ${rm(s.paid_sen)})`)];
       note(`  ${g.docNo} | ${g.status} | ${l.line_id} | ${l.old_item_code ?? '?'} -> ${l.item_code} | ${l.qty} | ${rm(l.old_unit_price_sen)} | ${rm(l.unit_price_sen)} | ${rm(l.money.unit_price_sen)} | ${rm(l.money.total_sen)} | ${docs.length ? docs.join('; ') : '-'}`);
-      note(`      amendment ${l.amendment_no} (${l.amendment_id}) ${l.amendment_status} approved ${String(l.so_approved_at).slice(0, 10)}, requested price ${l.new_unit_price_sen ?? 'null'}${l.cancelled ? ' — LINE IS CANCELLED, skipped' : ''}`);
+      note(`      amendment ${l.amendment_no} (${l.amendment_id}) ${l.amendment_status} approved ${new Date(l.so_approved_at).toISOString().slice(0, 10)}, requested price ${l.new_unit_price_sen ?? 'null'}${l.cancelled ? ' — LINE IS CANCELLED, skipped' : ''}`);
     }
     const delta = g.lines.filter((l) => !l.cancelled).reduce((s, l) => s + l.money.total_sen, 0);
     note(`      header ${g.docNo}: local_total_sen ${rm(g.totalSen)} now, about ${rm(g.totalSen + delta)} after (the canonical recompute decides), version ${g.version} -> ${g.version + 1}`);
