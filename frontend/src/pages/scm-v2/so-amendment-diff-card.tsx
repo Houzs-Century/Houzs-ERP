@@ -127,10 +127,14 @@ export function SoAmendmentDiffCard({ line }: { line: AmendmentLine }) {
               </div>
               <div className="mt-0.5 font-money text-[11.5px]">
                 <span className={nowCls(changed.qty, "")}>Qty {line.new_qty ?? old.qty ?? "—"}</span>
-                {typeof line.new_unit_price_sen === "number" ? (
+                {/* A null requested price keeps the stored one (a seeded 0 is sent
+                    as no price, HC-SO-013490), so the Requesting side shows the
+                    stored price unchanged rather than a blank that reads as
+                    "price removed". */}
+                {typeof (line.new_unit_price_sen ?? old.unitPriceSen) === "number" ? (
                   <>
                     <span className="text-ink-muted">{" · "}</span>
-                    <span className={nowCls(changed.unitPrice, "")}>{fmtSen(line.new_unit_price_sen)}</span>
+                    <span className={nowCls(changed.unitPrice, "")}>{fmtSen((line.new_unit_price_sen ?? old.unitPriceSen) as number)}</span>
                   </>
                 ) : ""}
               </div>
