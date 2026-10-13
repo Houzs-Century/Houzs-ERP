@@ -11,7 +11,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch, type SaveProblem } from "../vendor/scm/lib/authed-fetch";
 import { lineWriteFailure, lineWriteSaveMessage, type LineWriteFailure } from "../vendor/scm/lib/line-write-failures";
-import { amendmentVariants } from "../vendor/scm/lib/so-amendment-line-diff";
+import { amendmentVariants, amendmentRequestedUnitPriceSen } from "../vendor/scm/lib/so-amendment-line-diff";
 import { photoLabel, photoUploadFailure, photoUploadFailureMessage, unmatchedLinePhotos, type PhotoUploadFailure } from "../vendor/scm/lib/photo-upload-failures";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
 import { notifySaveProblems, SaveProblemsList, saveProblemsTitle } from "../vendor/scm/components/SaveProblemsList";
@@ -1786,10 +1786,11 @@ export function MobileNewSO({
      its own old_snapshot and rendered as an identical Was/Requesting pair
      (Owner 2026-07-16: "完全看不出有什麼變動申請？"). Desktop had the same defect via
      lineCommitSig; both now test only what the payload carries. */
+  const requestedPriceSen = (l: LineItem): number | null => amendmentRequestedUnitPriceSen({ unitPriceSen: toSen(l.price), priceAuthored: l.priceAuthored }); // a seeded 0 requests NO price (HC-SO-013490)
   const amendmentLineChanged = (l: LineItem, snap: SoItem): boolean => {
     if (l.itemCode !== (snap.item_code ?? "")) return true;
     if ((num(l.qty) || 1) !== (snap.qty ?? 1)) return true;
-    if (toSen(l.price) !== (snap.unit_price_sen ?? 0)) return true;
+    if ((requestedPriceSen(l) ?? (snap.unit_price_sen ?? 0)) !== (snap.unit_price_sen ?? 0)) return true;
     /* Variants WITHOUT the remark side channel on BOTH sides (amendmentVariants):
        buildVariants copies the remark into variants.remark, the stored blob of an
        imported line carries none, so the raw compare read every remarked line as
@@ -1861,7 +1862,7 @@ export function MobileNewSO({
       if (!amendmentLineChanged(l, snap)) continue; // nothing amendable moved
       const codeSame = l.itemCode === (snap.item_code ?? "");
       const variantsSame = canonJson(amendmentVariants(buildVariants(l))) === canonJson(amendmentVariants(snap.variants));
-      const priceSame = toSen(l.price) === (snap.unit_price_sen ?? 0);
+      const priceSame = (requestedPriceSen(l) ?? (snap.unit_price_sen ?? 0)) === (snap.unit_price_sen ?? 0);
       const qtyMoved = (num(l.qty) || 1) !== (snap.qty ?? 1);
       const qtyOnly = codeSame && variantsSame && priceSame && qtyMoved;
       out.push({
@@ -1871,7 +1872,7 @@ export function MobileNewSO({
         // The remark rides newRemark below, never inside the variants an approval writes back.
         newVariants: amendmentVariants(buildVariants(l)) ?? undefined,
         newQty: num(l.qty) || 1,
-        newUnitPriceSen: toSen(l.price),
+        ...(requestedPriceSen(l) != null ? { newUnitPriceSen: requestedPriceSen(l) as number } : {}), // omitted = null on the row = keep the stored price
         /* mig 0280 — send the remark only when it MOVED (desktop parity): a null
            new_remark is "not requested", which is what keeps the apply from
            rewriting a remark this session never touched. */
