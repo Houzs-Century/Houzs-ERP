@@ -101,11 +101,58 @@ describe("pgrest-shim — the loud-failure contract", () => {
     expect(sb.__gaps[0]).toContain(".or(");
   });
 
-  test("rpc() is a recorded gap — reconcile functions are driven with sql.unsafe, not through the shim", () => {
-    const { sql } = fakeSql([]);
+  test("rpc() calls the function in the shim's schema with the arguments bound by name — nextJeNo's counter", async () => {
+    const { sql, calls } = fakeSql([{ result: 42 }]);
     const sb = pgrestShim(sql as never);
-    expect(() => sb.rpc("fn_reconcile_uncosted_out")).toThrow(/GAP/);
-    expect(sb.__gaps[0]).toContain("fn_reconcile_uncosted_out");
+    const { data, error } = await sb.rpc("next_doc_no_n", { p_series: "HC-JE", p_floor: 41 });
+    expect(error).toBeNull();
+    expect(data).toBe(42);
+    expect(calls[0].text).toBe('SELECT "scm"."next_doc_no_n"("p_series" := $1, "p_floor" := $2) AS result');
+    expect(calls[0].params).toEqual(["HC-JE", 41]);
+    expect(sb.__gaps).toEqual([]);
+  });
+
+  test("rpc() answers a failing function as { error }, never a throw — the caller checks .error", async () => {
+    const sql = { unsafe: async () => { throw new Error("function scm.nope() does not exist"); } };
+    const sb = pgrestShim(sql as never);
+    const { data, error } = await sb.rpc("nope", {});
+    expect(data).toBeNull();
+    expect(error?.message).toContain("does not exist");
+  });
+
+  test("schema('public') reads the companies master outside scm and shares the gap list", async () => {
+    const { sql, calls } = fakeSql([{ code: "HOUZS" }]);
+    const sb = pgrestShim(sql as never);
+    const { data } = await sb.schema("public").from("companies").select("code").eq("id", 1).maybeSingle();
+    expect(data).toEqual({ code: "HOUZS" });
+    expect(calls[0].text).toContain('FROM "public"."companies"');
+    expect(() => (sb.schema("public").from("companies") as unknown as { textSearch: () => void }).textSearch()).toThrow(/GAP/);
+    expect(sb.__gaps.length).toBe(1);
+  });
+
+  test("like() emits LIKE with the pattern as a parameter — nextJeNo's prefix scan", async () => {
+    const { sql, calls } = fakeSql([]);
+    const sb = pgrestShim(sql as never);
+    await sb.from("journal_entries").select("je_no").like("je_no", "HC-JE-%").order("je_no", { ascending: false }).limit(1);
+    expect(calls[0].text).toContain('"je_no" LIKE $1');
+    expect(calls[0].params).toEqual(["HC-JE-%"]);
+  });
+
+  test("insert().select('*').single() returns the minted row — postJournal reads its own entry back", async () => {
+    const { sql, calls } = fakeSql([{ id: "je-1", je_no: "HC-JE-2610-001" }]);
+    const sb = pgrestShim(sql as never);
+    const { data, error } = await sb.from("journal_entries").insert({ je_no: "HC-JE-2610-001", posted: false }).select("*").single();
+    expect(error).toBeNull();
+    expect(data).toEqual({ id: "je-1", je_no: "HC-JE-2610-001" });
+    expect(calls[0].text).toMatch(/^INSERT INTO "scm"."journal_entries" \("je_no", "posted"\) VALUES \(\$1, \$2\) RETURNING \*$/);
+  });
+
+  test("a bare insert() still returns data:null and no RETURNING — the audit appends are unchanged", async () => {
+    const { sql, calls } = fakeSql([]);
+    const sb = pgrestShim(sql as never);
+    const { data } = await sb.from("journal_entry_lines").insert([{ line_no: 1 }, { line_no: 2 }]);
+    expect(data).toBeNull();
+    expect(calls[0].text).not.toContain("RETURNING");
   });
 
   test("embedded/aliased selects are refused loudly, not mistranslated", async () => {

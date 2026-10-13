@@ -22,7 +22,11 @@ export const APPLIED_AMENDMENT_STATUSES = ['SO_APPROVED', 'PO_APPROVED', 'SENT']
 export const OLD_UNIT_SQL = "COALESCE(l.old_snapshot->>'unitPriceSen', l.old_snapshot->>'unit_price_sen')::bigint";
 export const OLD_CODE_SQL = "COALESCE(l.old_snapshot->>'itemCode', l.old_snapshot->>'item_code')";
 
-/** $1 = company id, $2 = text[] of doc_nos (empty array = every order). */
+/** $1 = company id, $2 = text[] of doc_nos (empty array = every order),
+ *  $3 = resume: also pick a line that already reads the snapshot price, so a
+ *  run that stopped between the line write and the header roll-up can finish
+ *  the header, the audit and the downstream documents. Every other predicate
+ *  stays: the amendment evidence is still required. */
 export function candidateSql() {
   const statuses = APPLIED_AMENDMENT_STATUSES.map((s) => `'${s}'`).join(', ');
   return `
@@ -41,7 +45,7 @@ export function candidateSql() {
        AND l.change_type = 'SPEC'
        AND ${OLD_UNIT_SQL} > 0
        AND COALESCE(l.new_unit_price_sen, 0) = 0
-       AND i.unit_price_sen = 0
+       AND (i.unit_price_sen = 0 OR ($3::boolean AND i.unit_price_sen = ${OLD_UNIT_SQL}))
        AND (cardinality($2::text[]) = 0 OR so.doc_no = ANY($2::text[]))
      ORDER BY so.doc_no, i.item_code, i.id`;
 }

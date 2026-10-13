@@ -36,8 +36,8 @@ describe('candidateSql — only a line zeroed BY an applied SKU-swap amendment',
     expect(q).toContain('COALESCE(l.new_unit_price_sen, 0) = 0');
   });
 
-  it('matches only a line that STILL reads zero — a line re-priced since is left alone', () => {
-    expect(q).toContain('i.unit_price_sen = 0');
+  it('matches a line that STILL reads zero, or on RESUME one already at its snapshot price — never any other figure', () => {
+    expect(q).toContain("(i.unit_price_sen = 0 OR ($3::boolean AND i.unit_price_sen = COALESCE(l.old_snapshot->>'unitPriceSen', l.old_snapshot->>'unit_price_sen')::bigint))");
   });
 
   it('carries company scope on every table that has it, as the only boundary', () => {

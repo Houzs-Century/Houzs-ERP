@@ -68,6 +68,11 @@ const CONFIRM_PHRASE = 'I HAVE REVIEWED THE PLAN LINE BY LINE';
 const DOC_NOS = parseDocNos(process.env.DOC_NOS);
 const SI_MODE = (process.env.SI || 'print').toLowerCase();
 const WRITEBACK = (process.env.WRITEBACK || 'print').toLowerCase();
+/* RESUME=1 also selects a named line that already reads its snapshot price,
+   so a run that stopped after the line write finishes the header, the audit
+   and the downstream documents. Every write below is guarded to accept the
+   restored figure as well as 0, so nothing is written twice. */
+const RESUME = ['1', 'true', 'yes'].includes(String(process.env.RESUME || '').toLowerCase());
 const SOURCE = 'script:repair-amendment-zeroed-prices';
 
 /* Plain lines, not ::notice:: annotations: the runner keeps at most ten
@@ -96,7 +101,7 @@ const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
 const ctx = { get: (k) => (k === 'companyId' ? CO : undefined) };
 
 async function readCandidates(client) {
-  const lines = await client.unsafe(candidateSql(), [CO, DOC_NOS]);
+  const lines = await client.unsafe(candidateSql(), [CO, DOC_NOS, RESUME]);
   const ids = lines.map((l) => l.line_id);
   const down = ids.length ? await client.unsafe(downstreamSql(), [CO, ids]) : [];
   return { lines, down };
@@ -138,7 +143,7 @@ function printPlan(groups) {
 }
 
 async function main() {
-  note(`mode=${APPLY ? 'APPLY' : 'PLAN (writes nothing)'} company=${CO} si=${SI_MODE} writeback=${WRITEBACK}`);
+  note(`mode=${APPLY ? 'APPLY' : 'PLAN (writes nothing)'} company=${CO} si=${SI_MODE} writeback=${WRITEBACK} resume=${RESUME}`);
 
   const { lines, down } = await readCandidates(sql);
   const groups = plan(lines, down);
@@ -197,10 +202,10 @@ async function main() {
       const back = await sql.unsafe(
         `UPDATE scm.mfg_sales_order_items
             SET unit_price_sen = $3, total_sen = $4, total_inc_sen = $4, balance_sen = $4, line_margin_sen = $5
-          WHERE id = $1::uuid AND company_id = $2 AND unit_price_sen = 0
+          WHERE id = $1::uuid AND company_id = $2 AND unit_price_sen IN (0, $3)
         RETURNING id::text AS id`, [l.line_id, CO, m.unit_price_sen, m.total_sen, m.line_margin_sen]);
       if (back.length !== 1) throw new Error(`${g.docNo} line ${l.line_id}: not written (changed since the plan was read?)`);
-      note(`  OK  ${g.docNo} line ${l.item_code}: ${rm(0)} -> ${rm(m.unit_price_sen)}, total ${rm(m.total_sen)}`);
+      note(`  OK  ${g.docNo} line ${l.item_code}: ${rm(l.unit_price_sen)} -> ${rm(m.unit_price_sen)}, total ${rm(m.total_sen)}`);
       verify.push({ kind: 'SO line', key: `${g.docNo} ${l.item_code}`, table: 'mfg_sales_order_items', id: l.line_id,
         expect: { unit_price_sen: m.unit_price_sen, total_sen: m.total_sen, total_inc_sen: m.total_sen, balance_sen: m.total_sen, line_margin_sen: m.line_margin_sen } });
       fieldChanges.push(
@@ -214,7 +219,7 @@ async function main() {
         const w = await sql.unsafe(
           `UPDATE scm.delivery_order_items
               SET unit_price_sen = $3, line_total_sen = $4, line_margin_sen = $5
-            WHERE id = $1::uuid AND company_id = $2 AND unit_price_sen = 0
+            WHERE id = $1::uuid AND company_id = $2 AND unit_price_sen IN (0, $3)
           RETURNING id::text AS id`, [d.item_id, CO, a.unit_price_sen, a.line_total_sen, a.line_margin_sen]);
         if (w.length !== 1) throw new Error(`DO ${d.doc_no} line ${d.item_id}: not written (changed since the plan was read?)`);
         await recomputeDoTotals(sb, d.doc_id);
@@ -237,7 +242,7 @@ async function main() {
         const w = await sql.unsafe(
           `UPDATE scm.sales_invoice_items
               SET unit_price_sen = $3, line_total_sen = $4, line_margin_sen = $5
-            WHERE id = $1::uuid AND company_id = $2 AND unit_price_sen = 0
+            WHERE id = $1::uuid AND company_id = $2 AND unit_price_sen IN (0, $3)
           RETURNING id::text AS id`, [s.item_id, CO, a.unit_price_sen, a.line_total_sen, a.line_margin_sen]);
         if (w.length !== 1) throw new Error(`SI ${s.doc_no} line ${s.item_id}: not written (changed since the plan was read?)`);
         await siFromDo.recomputeTotals(sb, s.doc_id);
