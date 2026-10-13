@@ -43,6 +43,7 @@ import type { Env, Variables } from '../env';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId, scopeToCompany, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { checkPaymentSlipDate } from '../shared/payment-slip-date';
+import { checkPaymentSlip } from '../shared/payment-slip-required';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import { todayMyt } from '../lib/my-time';
 import { dateOrNull } from '../lib/date-coerce';
@@ -146,6 +147,11 @@ soPaymentBackdateRequests.post('/:docNo/payment-backdate-requests', async (c: An
   const methodRefusal = paymentMethodFieldRefusal(p);
   if (methodRefusal) return c.json(methodRefusal, 400);
 
+  /* Admin verifies a late payment with Finance before approving it, which needs
+     the slip (owner 2026-10-13). A request is never parked without one. */
+  const slipVerdict = checkPaymentSlip({ converted: false, hasSlip: Boolean(p.uploadSessionId) });
+  if (!slipVerdict.ok) return c.json({ error: slipVerdict.code, reason: slipVerdict.reason }, 400);
+
   const actor = actorOf(c);
   if (actor.id == null) return c.json({ error: 'caller_unknown', message: 'Could not identify who is raising this request.' }, 403);
 
@@ -162,7 +168,7 @@ soPaymentBackdateRequests.post('/:docNo/payment-backdate-requests', async (c: An
     if (!s || s.status !== 'uploaded' || !s.r2_key) {
       return c.json({
         error: 'slip_required',
-        reason: "That payment slip hasn't finished uploading. Attach it again, or send the request without one.",
+        reason: "That payment slip hasn't finished uploading. Attach it again.",
       }, 400);
     }
     slipKey = s.r2_key;
@@ -295,6 +301,7 @@ async function loadRequest(c: AnyCtx): Promise<{ ok: true; row: RequestRow } | {
 }
 
 const NOT_OPEN = { error: 'request_not_open', reason: 'This request has already been decided.' };
+const NO_SLIP_TO_APPROVE = { error: 'no_slip_attached', reason: 'This request has no slip attached, so it cannot be approved. Reject it and ask the requester to send it again with the slip.' };
 
 /** Move a REQUESTED row on, conditionally, so two admins cannot both decide it. */
 async function claim(c: AnyCtx, r: Pick<RequestRow, 'id' | 'company_id'>, patch: Record<string, unknown>): Promise<boolean> {
@@ -316,6 +323,10 @@ paymentBackdateInbox.post('/:id/approve', async (c: AnyCtx) => {
   if (!loaded.ok) return loaded.res;
   const r = loaded.row;
   if (r.status !== 'REQUESTED') return c.json(NOT_OPEN, 409);
+  /* Parked before the slip became required (owner 2026-10-13): the write core
+     would refuse to book it anyway, so say so up front and leave it open for a
+     reject — the requester sends it again with the slip. */
+  if (!r.slip_key) return c.json(NO_SLIP_TO_APPROVE, 409);
   const note = await readNote(c);
   const actor = actorOf(c);
   if (actor.id != null && actor.id === Number(r.requested_by)) return c.json(OWN_REQUEST, 403);

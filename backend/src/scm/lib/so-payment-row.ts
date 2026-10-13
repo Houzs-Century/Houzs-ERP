@@ -24,6 +24,7 @@ import { cancelDepositInvoiceForPaymentBestEffort, issueDepositInvoiceBestEffort
 import { companyCodeById } from './doc-no';
 import { recomputeSiPaidForOrder } from './si-order-deposit';
 import { checkPaymentSlipDate } from '../shared/payment-slip-date';
+import { checkPaymentSlip } from '../shared/payment-slip-required';
 
 /* Account Sheet auto-fill (Loo 2026-06-07) — "where did the money land".
    Derived from the payment's own method fields whenever the operator didn't
@@ -269,6 +270,14 @@ export async function recordSoPaymentRow(
     const verdict = checkPaymentSlipDate(p.paidAt, todayMyt());
     if (!verdict.ok) return { payment: null, errorMessage: verdict.reason };
   }
+  /* The proof (owner 2026-10-13, shared/payment-slip-required): a keyed payment
+     carries its slip or scanned receipt, or it is not written. Below every
+     writer for the same reason as the window — the routes refuse earlier with
+     the HTTP code, the scan job always owns a receipt key, and a backdate
+     approval cannot book a request that was parked without one. Converted rows
+     and their mirrors are money that was receipted when first collected. */
+  const slipVerdict = checkPaymentSlip({ converted: p.method === CONVERTED_METHOD, hasSlip: Boolean(p.slipKey) });
+  if (!slipVerdict.ok) return { payment: null, errorMessage: slipVerdict.reason };
 
   const merchantLike      = p.method === 'merchant' || p.method === 'installment';
   const merchantProvider  = merchantLike ? (p.merchantProvider ?? null) : null;
