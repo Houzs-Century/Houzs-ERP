@@ -33,8 +33,9 @@ event (`project_id`, `fair_match`, `fair_date`) or editing `venue` /
 Outbox row: `pending → sent | failed | skipped`; parked `failed` at 6
 attempts. Three drain paths: (1) the saving request itself schedules a drain
 ~1.5s after its response (`kickVenturePortalDrain`, collapses a burst of
-edits into one delivery, sweeps up to 4×25=100 docs, re-sweeps only when a
-full batch left the queue); (2) the unchanged `*/5` cron
+edits into one delivery, sweeps up to 4×25=100 docs, re-sweeps when a full
+batch left the queue, or after the same wait when an order was saved again
+while in flight); (2) the unchanged `*/5` cron
 (`drainVenturePortalOutbox`) — the zero-loss guarantee; (3) the `*/30` cron
 (`reconcileVenturePortalOutbox`) requeues any in-scope order with no
 delivered row. **Trigger-written rows drain before backfill/RECONCILE rows**
@@ -69,9 +70,15 @@ non-2xx"):
 - **No payload column on the outbox.** This is a state mirror, not an
   operation log — the payload is rebuilt fresh at SEND time from the view,
   never stored at enqueue. Do not add a stored snapshot here.
-- **One PENDING row per document** (partial unique index, `ON CONFLICT (doc_no)
-  WHERE status='pending' DO NOTHING`) — ordering across repeated edits is
-  handled by rebuilding at send time, never by queuing a second pending row.
+- **One PENDING row per document** (partial unique index) — ordering across
+  repeated edits is handled by rebuilding at send time, never by queuing a
+  second pending row. A save that finds the pending row bumps its `revision`
+  (`ON CONFLICT (doc_no) WHERE status='pending' DO UPDATE`), and the drain marks
+  a row `sent` only while `revision` is still what it read before building the
+  payload; otherwise the row stays `pending` (`changed` in the drain summary)
+  and goes again. Never `DO NOTHING` here: a save landing between the build and
+  the mark would be folded into a delivery that never carried it, and nothing
+  would queue the order again.
 - The header comes from the **view** `mfg_sales_orders_with_payment_totals`,
   never the base table — `paid_total_sen` / `balance_sen_live` are computed
   there and the portal's deposit gate depends on `balance_sen_live` being
