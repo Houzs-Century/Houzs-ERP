@@ -72,6 +72,7 @@ import { booleanRecordPreference, useIdentityPreference } from "../hooks/useIden
 import { useAuth } from "../auth/AuthContext";
 import type { CapabilityKey } from "../auth/capabilities";
 import { makeNavFilter } from "./navFilter";
+import { useItSupportConnected, withoutUnconnectedItSupport } from "../hooks/useItSupportConnected";
 import { CompanyMark } from "./CompanyMark";
 import { PresencePanel } from "./PresencePanel";
 import { GlobalSearchTrigger } from "./GlobalSearch";
@@ -454,14 +455,18 @@ export const NAV_TABS: NavTab[] = [
         icon: History,
         salesRepOnly: true,
       },
-      // Rep-only Product Request leaf (owner 2026-10-06: Sales 都能提). Same shape
-      // and same reasoning as the Amendments leaf above: the office path sits in
-      // the Consignment subgroup, which a rep never sees.
+      // Product Request leaf for EVERY Sales position, director included (owner
+      // 2026-10-06: Sales 都能提; 2026-10-13: the Sales Director saw no entry —
+      // salesRepOnly cut directors and the Consignment child needs an area a
+      // director does not hold). showForSales admits Sales by org field; the
+      // anyPerm admits a non-Sales holder of the create key. The office path is
+      // the Consignment child below, hidden from Sales so nobody sees two rows.
       {
         to: "/scm/product-requests",
         label: "Product Request",
         icon: Sofa,
-        salesRepOnly: true,
+        showForSales: true,
+        anyPerm: ["scm.product_request.create"],
       },
       // Rep-only Delivery Orders + Sales Invoices leaves (owner rule 2026-07-16):
       // a salesperson must be able to find the DO / invoice generated from their
@@ -536,7 +541,7 @@ export const NAV_TABS: NavTab[] = [
           // Product request (owner 2026-10-06): what a Purchase Consignment Order
           // is raised from. The office / Purchaser path; a rep reaches it via the
           // rep-only leaf above. Either flat key shows it too, like PO Amendments.
-          { to: "/scm/product-requests", label: "Product Request", icon: Sofa, anyPerm: ["*", "scm.access", "scm.product_request.create", "scm.product_request.approve"], anyAccess: ["scm.consignment.po_orders", "scm.procurement.po", "scm.procurement.products"], hideForSalesRep: true },
+          { to: "/scm/product-requests", label: "Product Request", icon: Sofa, anyPerm: ["*", "scm.access", "scm.product_request.create", "scm.product_request.approve"], anyAccess: ["scm.consignment.po_orders", "scm.procurement.po", "scm.procurement.products"], hideForSales: true },
           { to: "/scm/purchase-consignment-receives", label: "Purchase Consignment Receive", icon: PackageOpen, anyPerm: ["*", "scm.access"], anyAccess: ["scm.consignment.po_receives"] },
           { to: "/scm/purchase-consignment-returns", label: "Purchase Consignment Return", icon: Reply, anyPerm: ["*", "scm.access"], anyAccess: ["scm.consignment.po_returns"] },
         ],
@@ -1001,7 +1006,8 @@ export const NAV_TABS: NavTab[] = [
   // No gate, like Announcements: every signed-in user reports problems to IT
   // and reads only their OWN requests (the server takes the reporter from the
   // session — backend routes/itSupport.ts), so a permission here would only be
-  // a way to lock someone out of asking for help.
+  // a way to lock someone out of asking for help. The row is dropped at render
+  // where this environment is not connected to the IT Hub (see visibleTabs).
   {
     section: "system",
     to: "/it-support",
@@ -1112,8 +1118,12 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
   // MenuModal (MobileTabBar) filters identically and can never drift.
   const filterTab = makeNavFilter({ user, can, pageAccess });
 
-  const visibleTabs = NAV_TABS.map(filterTab).filter(
-    (t): t is NavTab => t !== null,
+  // IT Support is listed only where this environment is connected to the IT
+  // Hub; production has no row until its two secrets are set.
+  const itSupportConnected = useItSupportConnected();
+  const visibleTabs = withoutUnconnectedItSupport(
+    NAV_TABS.map(filterTab).filter((t): t is NavTab => t !== null),
+    itSupportConnected,
   );
 
   // Recursive renderer for tabs — handles plain links and nested groups.

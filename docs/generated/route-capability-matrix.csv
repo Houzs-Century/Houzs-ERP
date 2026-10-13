@@ -239,6 +239,7 @@ PATCH,/api/fleet-maintenance/workshops/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONT
 GET,/api/fleet/staff,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesView(""users.read"")",,NO,DECLARED_GATE,backend/src/routes/fleet.ts
 GET,/api/inbox,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/inbox.ts
 GET,/api/it-support/attachments/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/itSupport.ts
+GET,/api/it-support/status,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/itSupport.ts
 GET,/api/it-support/tickets,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/itSupport.ts
 POST,/api/it-support/tickets,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/itSupport.ts
 GET,/api/it-support/tickets/:code,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/itSupport.ts

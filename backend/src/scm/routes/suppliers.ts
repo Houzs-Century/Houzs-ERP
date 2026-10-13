@@ -159,7 +159,7 @@ const BINDING_COLS =
                                        flows via unit_price_sen).
    Unknown / null / empty → undefined (caller should write NULL). */
 const TIER_KEYS = new Set(['P1', 'P2', 'P3']);
-function validatePriceMatrix(
+export function validatePriceMatrix(
   raw: unknown,
   category: string | null,
 ): Record<string, unknown> | null | undefined {
@@ -195,10 +195,11 @@ function validatePriceMatrix(
   if (cat === 'SOFA') {
     const out: Record<string, Record<string, number>> = {};
     for (const [height, inner] of Object.entries(raw as Record<string, unknown>)) {
-      // Heights are free-form numeric strings (24/26/28/30/32/35 by default
-      // but commander can edit the maintenance config). Allow anything that
-      // parses to a number.
-      if (!Number.isFinite(Number(height))) {
+      // Height keys come from the Maintenance Sizes pool: numeric ("24"),
+      // inch-marked (`25"`) or named ("Flat", "DEFAULT"). Same rule as
+      // validatePricesByHeight in sofa-combos.ts; the old numeric-only check
+      // refused the whole row once a "Flat" cell was priced (BUG-109).
+      if (!/^[A-Za-z0-9][A-Za-z0-9 _"'-]*$/.test(height)) {
         throw new Error(`invalid_price_matrix:sofa_height:${height}`);
       }
       if (inner === null || inner === undefined) continue;
