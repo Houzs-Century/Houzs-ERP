@@ -189,7 +189,7 @@ describe('the SO and PO mutation paths the named-anchor test did not cover', () 
     expect(tail).toContain('queueAcPoEdit(c, id)');
     /* Inside the loop, not after it: the route skips POs that are missing,
        downstream-locked or failed to write, and those must queue nothing. */
-    expect(tail.indexOf('queueAcPoEdit(c, id)')).toBeLessThan(tail.indexOf('updated.push({ id, poNumber });'));
+    expect(tail.indexOf('queueAcPoEdit(c, id)')).toBeLessThan(tail.indexOf('updated.push({ id, poNumber, slot: pick.slot });'));
   });
 
   test('PO convert-from-SO — appending SO lines to an existing PO is an edit', () => {
