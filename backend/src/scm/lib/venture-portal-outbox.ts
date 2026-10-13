@@ -102,6 +102,9 @@ export type VpDrainSummary = {
   failed: number;
   retried: number;
   outOfScope: number;
+  /** Delivered, but the order was saved again while its delivery was in
+   *  flight, so the row stays pending and goes again with the newer state. */
+  changed: number;
 };
 
 type VpOutboxRow = {
@@ -109,6 +112,7 @@ type VpOutboxRow = {
   doc_no: string;
   op: string;
   attempts: number;
+  revision: number;
 };
 
 type VpPayload = {
@@ -209,7 +213,7 @@ export async function drainVenturePortalOutbox(
   limit: number = VP_DRAIN_BATCH,
   fetchImpl: typeof fetch = fetch,
 ): Promise<VpDrainSummary> {
-  const zero = { processed: 0, sent: 0, failed: 0, retried: 0, outOfScope: 0 };
+  const zero = { processed: 0, sent: 0, failed: 0, retried: 0, outOfScope: 0, changed: 0 };
   const sb = getSupabaseService(env);
 
   const scope = await readFeedScope(sb);
@@ -249,7 +253,7 @@ export async function drainVenturePortalOutbox(
      of at most 25 narrow rows, inside the subrequest diet. */
   const { data: liveData, error: liveErr } = await sb
     .from('venture_portal_outbox')
-    .select('id, doc_no, op, attempts')
+    .select('id, doc_no, op, attempts, revision')
     .eq('status', 'pending')
     .lt('attempts', VP_MAX_ATTEMPTS)
     .neq('op', VP_RECONCILE_OP)
@@ -261,7 +265,7 @@ export async function drainVenturePortalOutbox(
   if (rows.length < limit) {
     const { data: backfillData, error: backfillErr } = await sb
       .from('venture_portal_outbox')
-      .select('id, doc_no, op, attempts')
+      .select('id, doc_no, op, attempts, revision')
       .eq('status', 'pending')
       .lt('attempts', VP_MAX_ATTEMPTS)
       .eq('op', VP_RECONCILE_OP)
@@ -355,7 +359,15 @@ export async function drainVenturePortalOutbox(
     const verdict = classifyVpResponse(result.status);
 
     if (verdict.outcome === 'sent') {
-      await sb
+      /* Sent only while nobody saved the order since this row was read. A save
+         that landed after the payload was built bumped `revision` (the enqueue
+         triggers' ON CONFLICT DO UPDATE); marking the row sent anyway would
+         leave the portal a save behind with nothing queued — HC-SO-2609-271's
+         header total, recomputed 1.6 s after its line, never reached it. Such a
+         row stays pending and the next sweep sends the newer state.
+         company-scope: the outbox has no company column; the row is addressed
+         by its primary key, and `revision` is a version guard, not a key. */
+      const { data: marked, error: markErr } = await sb
         .from('venture_portal_outbox')
         .update({
           status: 'sent',
@@ -365,7 +377,14 @@ export async function drainVenturePortalOutbox(
           sent_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
-        .eq('id', row.id);
+        .eq('id', row.id)
+        .eq('revision', row.revision)
+        .select('id')
+        .maybeSingle();
+      if (!markErr && !marked) {
+        summary.changed += 1;
+        continue;
+      }
       summary.sent += 1;
       continue;
     }
@@ -666,12 +685,18 @@ export type VpKickOutcome = 'scheduled' | 'debounced' | 'no_execution_context';
  * `outOfScope` counts, because those rows were cleared with no request at all —
  * continuing is nearly free and there may be hundreds more behind them.
  *
+ * `changed` earns another sweep on its own: those orders were saved again while
+ * their delivery was in flight, and the save that did it usually belongs to the
+ * same Save press (a line, then the header total it recomputes), so its own kick
+ * was debounced into this one. Without the sweep they would wait for the cron.
+ *
  * Conservative where it is unsure, on purpose: 20 delivered and 5 retried stops
  * the kick, and the next save's kick or the five-minute sweep picks the rest up.
  * The cron is the guarantee; this is only the accelerator.
  */
 export function vpKickSweepAgain(summary: VpDrainSummary): boolean {
   if (summary.skipped) return false;
+  if (summary.changed > 0) return true;
   return summary.sent + summary.failed + summary.outOfScope >= VP_DRAIN_BATCH;
 }
 
@@ -726,6 +751,9 @@ async function runVpKick(env: Env, afterDrain: ((env: Env) => Promise<unknown>) 
     for (let sweep = 0; sweep < VP_KICK_MAX_SWEEPS; sweep += 1) {
       const summary = await drainVenturePortalOutbox(env);
       if (!vpKickSweepAgain(summary)) break;
+      /* A save still being written (its header total lands after its line) gets
+         the same wait the first sweep gave it before it is built again. */
+      if (summary.changed > 0) await vpKickSeams.sleep(VP_KICK_DELAY_MS);
     }
   } catch (e) {
     /* [vp-kick] is the string to alert on. A burst of these means the drain is

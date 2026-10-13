@@ -781,6 +781,10 @@ const SupplierCard = ({
                 const wh = warehouses.find((w) => w.id === po.purchase_location_id);
                 return wh ? wh.code : null;
               })()} />
+
+          <div style={{ gridColumn: 'span 2' }}>
+              <InfoCell label="Notes" value={po.notes || null} />
+          </div>
           {po.status === 'CANCELLED' && (
             <div style={{ gridColumn: 'span 2' }}>
               <InfoCell label="Cancel reason" value={po.cancel_reason || null} />
