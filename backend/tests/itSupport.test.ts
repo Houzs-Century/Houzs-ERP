@@ -15,15 +15,16 @@ import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import itSupport from "../src/routes/itSupport";
 
-const ENV = { IT_HUB_URL: "https://hub.example/", IT_HUB_API_KEY: "hub_hc_test-key" };
+const ENV = { IT_HUB_URL: "https://hub.example/", IT_HUB_API_KEY_HOUZS: "hub_hc_test-key", IT_HUB_API_KEY_2990: "hub_2990_test-key" };
 const AINA = { id: 42, email: "aina@houzs.test", name: "Aina", department_name: "Sales" };
 const NO_NAME = { id: 43, email: "noname@houzs.test", name: null };
 const SERVICE = { id: 0, email: "service@local", name: "Service" };
 
-function appAs(user: unknown, env: Record<string, string> = ENV) {
+function appAs(user: unknown, env: Record<string, string> = ENV, companyCode: string | null = "HOUZS") {
   const app = new Hono();
   app.use("*", async (c: any, next: any) => {
     c.set("user", user);
+    if (companyCode) c.set("companyCode", companyCode);
     await next();
   });
   app.route("/api/it-support", itSupport);
@@ -67,7 +68,7 @@ describe("/api/it-support", () => {
     const on = await appAs(AINA).request("/api/it-support/status");
     expect(on.status).toBe(200);
     expect(await on.json()).toEqual({ connected: true });
-    for (const env of [{}, { IT_HUB_URL: "https://hub.example" }, { IT_HUB_API_KEY: "k" }]) {
+    for (const env of [{}, { IT_HUB_URL: "https://hub.example" }, { IT_HUB_API_KEY_HOUZS: "k" }]) {
       const off = await appAs(AINA, env as Record<string, string>).request("/api/it-support/status");
       expect(off.status).toBe(200);
       expect(await off.json()).toEqual({ connected: false });
@@ -76,6 +77,34 @@ describe("/api/it-support", () => {
     // Answering it never asks the hub, and never carries the key or the address.
     expect(calls).toHaveLength(0);
     expect(await (await appAs(AINA).request("/api/it-support/status")).text()).not.toMatch(/hub_hc_test-key|hub.example/);
+  });
+  test("the inbox follows the active company: 2990 uses its own key, and never borrows Houzs's", async () => {
+    const calls = fakeHub(() => json({ code: "2990-0001", status: "open" }, 201));
+    const post = (company: string | null, env: Record<string, string> = ENV) =>
+      appAs(AINA, env, company).request("/api/it-support/tickets", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: "Printer" }),
+      });
+
+    expect((await post("2990")).status).toBe(201);
+    expect(calls[0].headers.get("Authorization")).toBe("Bearer hub_2990_test-key");
+    expect((await post("HOUZS")).status).toBe(201);
+    expect(calls[1].headers.get("Authorization")).toBe("Bearer hub_hc_test-key");
+    await appAs(AINA, ENV, "2990").request("/api/it-support/tickets");
+    expect(calls[2].headers.get("Authorization")).toBe("Bearer hub_2990_test-key");
+
+    // 2990 with no key of its own is NOT connected. Falling back to the Houzs
+    // key would file the request in the wrong inbox and report success.
+    const houzsOnly = { IT_HUB_URL: "https://hub.example", IT_HUB_API_KEY_HOUZS: "hub_hc_test-key" };
+    expect((await post("2990", houzsOnly)).status).toBe(501);
+    const status = await appAs(AINA, houzsOnly, "2990").request("/api/it-support/status");
+    expect(await status.json()).toEqual({ connected: false });
+    expect(await (await appAs(AINA, houzsOnly, "HOUZS").request("/api/it-support/status")).json()).toEqual({ connected: true });
+    // A code that is not a plain company code never becomes part of a secret's name.
+    expect((await post("2990 X")).status).toBe(501);
+    expect((await post("__proto__")).status).toBe(501);
+    // The company could not be resolved: refuse and ask for a retry, never guess.
+    expect((await post(null)).status).toBe(503);
+    expect(calls).toHaveLength(3);
   });
   test("the reporter cannot be chosen by the request", async () => {
     const calls = fakeHub(() => json({ tickets: [] }));
@@ -104,7 +133,7 @@ describe("/api/it-support", () => {
 
   test("not connected: 501, not an empty list", async () => {
     const calls = fakeHub(() => json({ tickets: [] }));
-    for (const env of [{}, { IT_HUB_URL: "https://hub.example" }, { IT_HUB_API_KEY: "k" }, { IT_HUB_URL: " ", IT_HUB_API_KEY: "k" }]) {
+    for (const env of [{}, { IT_HUB_URL: "https://hub.example" }, { IT_HUB_API_KEY_HOUZS: "k" }, { IT_HUB_URL: " ", IT_HUB_API_KEY_HOUZS: "k" }, { IT_HUB_URL: "https://hub.example", IT_HUB_API_KEY: "k" }]) {
       const res = await appAs(AINA, env as Record<string, string>).request("/api/it-support/tickets");
       expect(res.status).toBe(501);
       expect(typeof ((await res.json()) as { error?: string }).error).toBe("string");

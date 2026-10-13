@@ -764,20 +764,20 @@ Total: 1424 route registrations across 198 files.
 - L1956  DELETE /:id/items/:itemId
 
 ## backend/src/scm/routes/suppliers.ts  (14)
-- L452  GET    /
-- L487  GET    /:id
-- L576  POST   /
-- L684  PATCH  /:id
-- L687  GET    /:id/bindings
-- L787  POST   /:id/bindings
-- L904  POST   /:id/bindings/batch
-- L996  PATCH  /:id/bindings/:bindingId
-- L1008  PATCH  /:id/bindings/:bindingId/cost-anchor
-- L1073  DELETE /:id/bindings/:bindingId
-- L1177  GET    /:id/bindings/:bindingId/price-changes
-- L1273  POST   /:id/bindings/:bindingId/price-changes
-- L1284  GET    /:id/scorecard
-- L1414  GET    /material/:kind/:code
+- L453  GET    /
+- L488  GET    /:id
+- L577  POST   /
+- L685  PATCH  /:id
+- L688  GET    /:id/bindings
+- L788  POST   /:id/bindings
+- L905  POST   /:id/bindings/batch
+- L997  PATCH  /:id/bindings/:bindingId
+- L1009  PATCH  /:id/bindings/:bindingId/cost-anchor
+- L1074  DELETE /:id/bindings/:bindingId
+- L1178  GET    /:id/bindings/:bindingId/price-changes
+- L1274  POST   /:id/bindings/:bindingId/price-changes
+- L1285  GET    /:id/scorecard
+- L1415  GET    /material/:kind/:code
 
 ## backend/src/routes/auth.ts  (13)
 - L53  GET    /status
@@ -1156,13 +1156,13 @@ Total: 1424 route registrations across 198 files.
 - L399  POST   /:docNo/payment-backdate-requests/:id/withdraw
 
 ## backend/src/routes/itSupport.ts  (7)
-- L134  GET    /status
-- L141  GET    /tickets
-- L148  GET    /tickets/:code
-- L157  POST   /tickets
-- L185  POST   /tickets/:code/replies
-- L208  POST   /tickets/:code/confirm
-- L221  GET    /attachments/:id
+- L151  GET    /status
+- L158  GET    /tickets
+- L165  GET    /tickets/:code
+- L174  POST   /tickets
+- L202  POST   /tickets/:code/replies
+- L225  POST   /tickets/:code/confirm
+- L238  GET    /attachments/:id
 
 ## backend/src/scm/routes/delivery-planning-regions.ts  (7)
 - L79  GET    /

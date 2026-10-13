@@ -13,7 +13,16 @@
 // id, so an id read from a query string would be everyone's requests one edit
 // away. The service-tier caller (id 0) is refused: it is nobody's inbox.
 //
-// The hub key (IT_HUB_API_KEY) never leaves the Worker.
+// WHICH INBOX follows the active company, like every other document here. The
+// hub keeps one system per company, each with its own key, and the key is DATA:
+// the secret named IT_HUB_API_KEY_<company code> (IT_HUB_API_KEY_HOUZS,
+// IT_HUB_API_KEY_2990). No company is named in this file, so adding a company
+// is adding a secret. A request raised while working in a company lands in that
+// company's inbox and the list shows that company's requests. A company with
+// no key is "not connected" — it never borrows another company's key, which
+// would file its requests in the wrong inbox without anyone noticing.
+//
+// The hub keys never leave the Worker.
 //
 // "Could not ask the hub" is answered as that — 501 when this environment is
 // not connected, 502 when the hub is down or refuses our key — never as an
@@ -29,6 +38,8 @@ type Ctx = Context<{ Bindings: Env }>;
 
 const HUB_TIMEOUT_MS = 20_000;
 const REQUEST_CODE = /^[A-Z0-9]{2,6}-\d{1,8}$/;
+// A company code becomes part of a secret's NAME, so only a plain code may.
+const COMPANY_CODE = /^[A-Z0-9]{2,12}$/;
 const TYPES = new Set(["bug", "development"]);
 const PRIORITIES = new Set(["urgent", "high", "medium", "low"]);
 // What the browser may set on a new request. Every reporter_* field and
@@ -52,8 +63,14 @@ function hubFor(c: Ctx): Hub | Response {
   if (!user || !Number.isInteger(user.id) || user.id <= 0) {
     return c.json({ error: "IT Support is for signed-in staff accounts." }, 403);
   }
+  // companyContext leaves the code unset only when the companies master could
+  // not be read (a cold isolate's first read failing). Guessing a company then
+  // would file one company's request under another, so the caller retries.
+  const company = c.get("companyCode");
+  if (!company) return c.json({ error: UNREACHABLE }, 503);
   const base = (c.env.IT_HUB_URL ?? "").trim().replace(/\/+$/, "");
-  const key = (c.env.IT_HUB_API_KEY ?? "").trim();
+  const secret = COMPANY_CODE.test(company) ? (c.env as Record<string, unknown>)[`IT_HUB_API_KEY_${company}`] : undefined;
+  const key = typeof secret === "string" ? secret.trim() : "";
   if (!base || !key) return c.json({ error: NOT_CONNECTED }, 501);
   return { base, key, reporterId: String(user.id) };
 }

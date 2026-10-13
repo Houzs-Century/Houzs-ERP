@@ -42,7 +42,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/finance.ts` | 2 | 466 |
 | `backend/src/routes/fleet.ts` | 1 | 37 |
 | `backend/src/routes/inbox.ts` | 1 | 545 |
-| `backend/src/routes/itSupport.ts` | 7 | 241 |
+| `backend/src/routes/itSupport.ts` | 7 | 258 |
 | `backend/src/routes/lib/actor-company-gate.ts` | 0 | 41 |
 | `backend/src/routes/lib/project-company-gate.ts` | 0 | 101 |
 | `backend/src/routes/logs.ts` | 1 | 66 |
@@ -254,7 +254,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/stock-takes.ts` | 13 | 1446 |
 | `backend/src/scm/routes/stock-transfers.ts` | 6 | 813 |
 | `backend/src/scm/routes/supplier-maintenance.ts` | 2 | 256 |
-| `backend/src/scm/routes/suppliers.ts` | 14 | 1437 |
+| `backend/src/scm/routes/suppliers.ts` | 14 | 1438 |
 | `backend/src/scm/routes/threepl-companies.ts` | 5 | 319 |
 | `backend/src/scm/routes/trip-scan-token.ts` | 1 | 61 |
 | `backend/src/scm/routes/trips.ts` | 15 | 1391 |
@@ -280,7 +280,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (3274 files, 909267 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (3275 files, 909358 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
