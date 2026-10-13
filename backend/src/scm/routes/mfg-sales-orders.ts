@@ -5066,8 +5066,11 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      null -> date, and the date was already there). 171 orders on 2026-10-13.
      The confirm gate above still judges the CONFIRM; only the landing differs. */
   if (isConfirm) {
-    const { data: dated } = await scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_PROCESSING_DATE_COLUMN), co.companyId)
+    const { data: dated, error: datedErr } = await scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_PROCESSING_DATE_COLUMN), co.companyId)
       .eq('doc_no', docNo).maybeSingle();
+    /* A failed read is not "no date": confirming into Submitted on a blip would
+       file a proceeded order under the wrong tab, which is the defect itself. */
+    if (datedErr) return c.json({ error: 'load_failed', reason: datedErr.message }, 500);
     toStatus = liveStatusForProcessingDate((dated as Record<string, string | null> | null)?.[SO_PROCESSING_DATE_COLUMN] ?? null);
   }
   /* ── Stock-location gate on the DRAFT -> live transition (owner 2026-08-13,
