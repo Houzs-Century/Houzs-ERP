@@ -3,6 +3,7 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
+- IT Support (`/it-support`, requests live in the Houzs IT Hub as system HC): after the PR deploys, issue the HC key in the hub repo (`node scripts/issue-api-key.mjs HC`) and set `IT_HUB_URL` + `IT_HUB_API_KEY` as Worker secrets — until then the page says "not connected"; desktop only (a phone shows the desktop-only screen) and no unread badge yet — 2026-10-13
 - Product request (新品 / 重新包装申请): after the PR deploys, grant `scm.product_request.approve` to the Procurement/Purchasing role in Team > Roles & Permissions — until then only the Owner / IT Admin (`*`) can approve; every Sales caller can already raise one — 2026-10-06
 - 2990 price-lane amendments: after this PR deploys, assign Kris (only) to the new "Sales Director (Price Approver)" role in Team > Roles — his login e-mail is PII, so the migration creates the role but does not reassign the user. Until then a 2990 price-only SO amendment stays on the Purchaser's queue — 2026-09-21
 - Outsourced transport in Members: remove the 3 invited accounts (JAN #94, SHAKTI #93, Cheah #92) in Team, then dedupe their Fleet driver rows under a 3PL company (all 0 trips, safe). Going forward the invite/profile Title picker now warns to build outsourced drivers in Fleet, not Members — 2026-09-17

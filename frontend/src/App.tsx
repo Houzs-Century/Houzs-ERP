@@ -64,6 +64,7 @@ const Sales = lazy(() => import("./pages/Sales").then((m) => ({ default: m.Sales
 const Profile = lazy(() => import("./pages/Profile").then((m) => ({ default: m.Profile })));
 const Notifications = lazy(() => import("./pages/Notifications").then((m) => ({ default: m.Notifications })));
 const Announcements = lazy(() => import("./pages/Announcements").then((m) => ({ default: m.Announcements })));
+const ItSupport = lazy(() => import("./pages/ItSupport").then((m) => ({ default: m.ItSupport })));
 const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
 const Team = lazy(() => import("./pages/Team").then((m) => ({ default: m.Team })));
 const SystemHealth = lazy(() => import("./pages/SystemHealth").then((m) => ({ default: m.SystemHealth })));
@@ -651,6 +652,10 @@ export default function App() {
             keys off `canWrite` = announcements.write / Sales Director, which the
             backend re-checks. ── */}
         <Route path="/announcements" element={<Announcements />} />
+        {/* IT Support — report a problem to IT and follow it. Not guarded, like
+            Announcements: every signed-in user has it, and /api/it-support
+            answers each caller with their OWN requests only. */}
+        <Route path="/it-support" element={<ItSupport />} />
         {/* Fleet Health — Fleet Maintenance & Compliance Phase 1 dashboard.
             Gated on the flat fleet.read permission; fleet.write covers the
             mutations (backend re-checks). Desktop ops screen. */}

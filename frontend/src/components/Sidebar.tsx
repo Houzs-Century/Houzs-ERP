@@ -62,6 +62,7 @@ import {
   Map,
   MapPinned,
   Megaphone,
+  LifeBuoy,
   History,
   Wand2,
   CalendarOff,
@@ -996,6 +997,16 @@ export const NAV_TABS: NavTab[] = [
     label: "Agent Console",
     icon: Bot,
     anyPerm: ["*"],
+  },
+  // No gate, like Announcements: every signed-in user reports problems to IT
+  // and reads only their OWN requests (the server takes the reporter from the
+  // session — backend routes/itSupport.ts), so a permission here would only be
+  // a way to lock someone out of asking for help.
+  {
+    section: "system",
+    to: "/it-support",
+    label: "IT Support",
+    icon: LifeBuoy,
   },
   {
     section: "system",

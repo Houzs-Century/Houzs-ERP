@@ -28,6 +28,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/change-log",
   "/team",
   "/announcements",
+  "/it-support",
   "/fleet-health",
   "/fleet-health/:lorryId",
   "/mail-center",

@@ -37,6 +37,7 @@ import companies from "./routes/companies";
 import tableLayouts from "./routes/tableLayouts";
 import notifications from "./routes/notifications";
 import pushDevices from "./routes/push";
+import itSupport from "./routes/itSupport";
 import { runPushFleetReminders } from "./services/pushFleetReminders";
 import presence from "./routes/presence";
 import projects from "./routes/projects";
@@ -447,6 +448,8 @@ app.route("/api/table-layouts", tableLayouts);
 app.route("/api/notifications", notifications);
 // Native-app push device registry (any signed-in user, own device only).
 app.route("/api/push", pushDevices);
+// IT Support: a proxy to the Houzs IT Hub (any signed-in user, own requests only).
+app.route("/api/it-support", itSupport);
 app.route("/api/presence", presence);
 // Mounted at the EXACT path BEFORE the projects router so its "/:id" catch-all
 // does not swallow "outstanding-tasks" as an id (owner/admin Reminder view).
