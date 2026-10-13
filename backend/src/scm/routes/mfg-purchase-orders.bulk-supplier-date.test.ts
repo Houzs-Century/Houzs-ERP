@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseBulkSupplierDateBody } from './mfg-purchase-orders';
+import { pickSupplierDateSlot } from '../lib/po-supplier-date-cascade';
 
 /* The batch endpoint writes a date onto every line of every PO it is handed, so
    its input guard is the only thing between a fat-fingered payload and a lot of
@@ -28,6 +29,12 @@ describe('parseBulkSupplierDateBody — slot', () => {
 
   it('accepts a numeric string (the form sends what the buttons hold)', () => {
     expect(ok({ ...base, slot: '3' }).slot).toBe(3);
+  });
+
+  it('accepts "next": each PO then gets its own first empty slot', () => {
+    const r = ok({ ...base, slot: 'next' });
+    expect(r.slot).toBe('next');
+    expect(r.col).toBeNull();
   });
 
   it('rejects anything else — slot 1 is the ORIGINAL delivery date, not a revision', () => {
@@ -98,5 +105,39 @@ describe('parseBulkSupplierDateBody — applyToLines', () => {
 
   it('honours an explicit false for header-only moves', () => {
     expect(ok({ ...base, applyToLines: false }).applyToLines).toBe(false);
+  });
+});
+
+/* DEV-73 (Sim, 13 Oct 2026): a recorded supplier date is history. Re-setting
+   Date 2 used to overwrite it silently, so the route now refuses a filled slot
+   and "next" walks each PO to its own first empty one. */
+describe('pickSupplierDateSlot', () => {
+  const row = (d2: unknown, d3: unknown, d4: unknown) => ({
+    supplier_delivery_date_2: d2, supplier_delivery_date_3: d3, supplier_delivery_date_4: d4,
+  });
+
+  it('uses an explicit slot that is empty', () => {
+    expect(pickSupplierDateSlot(2, row(null, null, null))).toEqual({ ok: true, slot: 2 });
+    expect(pickSupplierDateSlot(3, row('2026-10-14', null, null))).toEqual({ ok: true, slot: 3 });
+  });
+
+  it('refuses an explicit slot that is already recorded, naming the recorded date', () => {
+    expect(pickSupplierDateSlot(2, row('2026-10-14', null, null)))
+      .toEqual({ ok: false, reason: 'Supplier Date 2 already recorded (2026-10-14).' });
+  });
+
+  it('treats a blank string as not recorded', () => {
+    expect(pickSupplierDateSlot(2, row('', null, null))).toEqual({ ok: true, slot: 2 });
+  });
+
+  it('next picks the first empty slot per PO', () => {
+    expect(pickSupplierDateSlot('next', row(null, null, null))).toEqual({ ok: true, slot: 2 });
+    expect(pickSupplierDateSlot('next', row('2026-10-14', null, null))).toEqual({ ok: true, slot: 3 });
+    expect(pickSupplierDateSlot('next', row('2026-10-14', '2026-10-20', null))).toEqual({ ok: true, slot: 4 });
+  });
+
+  it('next refuses a PO with 2-4 all recorded', () => {
+    expect(pickSupplierDateSlot('next', row('2026-10-14', '2026-10-20', '2026-10-27')))
+      .toEqual({ ok: false, reason: 'Supplier Dates 2-4 are all recorded.' });
   });
 });

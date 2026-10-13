@@ -1,6 +1,12 @@
-import { useEffect } from "react";
-import { useQuery } from "./useQuery";
+import { useEffect, useSyncExternalStore } from "react";
+import { buildQueryKey, useQuery } from "./useQuery";
 import { api } from "../api/client";
+import { queryClient } from "../lib/queryClient";
+import {
+  getActiveCompanyId,
+  getActiveCompanySnapshot,
+  subscribeActiveCompany,
+} from "../lib/activeCompany";
 import {
   type Branding,
   HOUZS_COMPANY_CODE,
@@ -26,6 +32,48 @@ interface BrandingResponse {
 /** Branding plus the company it belongs to. All Branding fields are present,
  *  so every existing `const branding = useBranding()` callsite is unchanged. */
 export type BrandingWithCompany = Branding & { companyCode: string };
+
+const BRANDING_KEY = "/api/branding";
+const BRANDING_STALE_MS = 10 * 60_000;
+
+function fetchBranding(): Promise<BrandingResponse> {
+  return api.get<BrandingResponse>(BRANDING_KEY);
+}
+
+function resolveBranding(data: BrandingResponse | null | undefined): BrandingWithCompany {
+  const companyCode = (
+    (data?.companyCode ?? data?.company_code)?.trim() ||
+    hostDefaultCompanyCode()
+  ).toUpperCase();
+  const branding = data
+    ? normalizeBranding(data.branding, defaultBrandingForCompany(companyCode))
+    : defaultBrandingForCompany(companyCode);
+  return { ...branding, companyCode };
+}
+
+/**
+ * Bring the PDF letterhead cache up to THIS tab's company before a document is
+ * drawn. BUG-111: the cache can still hold the hostname default (Houzs) while
+ * the tab is on 2990, and a 2990 PO went to the supplier under Houzs's name.
+ * Served from the query cache when useBranding already has this company's
+ * answer, so a normal print costs no request. Throws when it cannot load:
+ * a document with another company's letterhead is worse than a retry.
+ */
+export async function ensureBrandingForActiveCompany(): Promise<void> {
+  let data: BrandingResponse;
+  try {
+    data = await queryClient.fetchQuery({
+      queryKey: buildQueryKey(BRANDING_KEY, [getActiveCompanyId()]),
+      queryFn: fetchBranding,
+      staleTime: BRANDING_STALE_MS,
+    });
+  } catch {
+    throw new Error("Could not load the company letterhead. Please try again.");
+  }
+  const { companyCode, ...branding } = resolveBranding(data);
+  setBrandingCache(branding, companyCode);
+  await ensureBrandingLogoLoaded();
+}
 
 /**
  * Company identity for the app chrome, the login screen, and (indirectly, via
@@ -58,17 +106,20 @@ export function useBranding(): BrandingWithCompany {
   // derived from `fetcher.toString()`, which minification could break by
   // aliasing the imported `api` differently per module — two callsites wanting
   // the same branding could end up on different keys and disagree.
-  const q = useQuery<BrandingResponse>("/api/branding", () => api.get("/api/branding"), [], {
-    staleTime: 10 * 60_000,
+  //
+  // The tab's company is part of the key (BUG-111): the answer depends on the
+  // X-Company-Id header, so one fetched before this tab adopted its company
+  // must not be served once it has.
+  const activeCompanyId = useSyncExternalStore(
+    subscribeActiveCompany,
+    getActiveCompanySnapshot,
+    getActiveCompanySnapshot,
+  );
+  const q = useQuery<BrandingResponse>(BRANDING_KEY, fetchBranding, [activeCompanyId], {
+    staleTime: BRANDING_STALE_MS,
   });
 
-  const companyCode = (
-    (q.data?.companyCode ?? q.data?.company_code)?.trim() ||
-    hostDefaultCompanyCode()
-  ).toUpperCase();
-  const branding = q.data
-    ? normalizeBranding(q.data.branding, defaultBrandingForCompany(companyCode))
-    : defaultBrandingForCompany(companyCode);
+  const { companyCode, ...branding } = resolveBranding(q.data);
 
   // Keep the non-React PDF cache in sync once the real value lands.
   useEffect(() => {

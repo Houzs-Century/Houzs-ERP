@@ -25,6 +25,28 @@ export type SupplierDateSlot = keyof typeof SUPPLIER_DATE_SLOT_COL;
    from-value must still read as the day, not "Tue Sep 15 2026 ...". */
 const dayOrRaw = (v: unknown): unknown => (v instanceof Date ? v.toISOString().slice(0, 10) : v);
 
+/* A recorded supplier date is history (DEV-73), so POST /bulk-supplier-date
+   asks this before it writes and never overwrites a filled slot. Not called by
+   cascadePoSupplierDate itself: the header PATCH is the correction path, and
+   the line import / delivery-sheet sync writers are not gated (open question). */
+export function pickSupplierDateSlot(
+  requested: SupplierDateSlot | 'next',
+  header: Record<string, unknown>,
+): { ok: true; slot: SupplierDateSlot } | { ok: false; reason: string } {
+  const recorded = (s: SupplierDateSlot): string | null => {
+    const v = header[SUPPLIER_DATE_SLOT_COL[s]];
+    return v == null || v === '' ? null : String(dayOrRaw(v)).slice(0, 10);
+  };
+  if (requested === 'next') {
+    const slot = ([2, 3, 4] as const).find((s) => recorded(s) === null);
+    return slot ? { ok: true, slot } : { ok: false, reason: 'Supplier Dates 2-4 are all recorded.' };
+  }
+  const existing = recorded(requested);
+  return existing === null
+    ? { ok: true, slot: requested }
+    : { ok: false, reason: `Supplier Date ${requested} already recorded (${existing}).` };
+}
+
 export async function cascadePoSupplierDate(
   sb: any,
   args: {

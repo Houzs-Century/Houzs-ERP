@@ -11,7 +11,7 @@ import {
 // Multi-company (Phase 0c): stamp the active company on every request. Returns
 // {} when no company is selected (single-company / pre-activation), so the
 // backend falls back to its hostname default and nothing changes.
-import { companyHeader } from "../lib/activeCompany";
+import { companyHeader, getActiveCompanyId } from "../lib/activeCompany";
 // The token's storage key + the read that knows about BOTH backing stores.
 // Shared with the vendored SCM fetch layer — see lib/authToken.
 // AUTH_TOKEN_KEY is no longer imported here: tokenStore below now delegates to
@@ -553,19 +553,23 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
  */
 function cachedGet<T>(path: string): Promise<T> {
   if (!cacheable(path)) return request<T>(path);
-  const hit = getCached<T>(path);
+  // The answer depends on this tab's X-Company-Id, so a read made before the tab
+  // adopted its company must not answer for it (BUG-111: a 2990 PO printed the
+  // Houzs letterhead). The suffix keeps prefix invalidation working.
+  const key = `${path}#co=${getActiveCompanyId() ?? ""}`;
+  const hit = getCached<T>(key);
   if (hit !== undefined) return Promise.resolve(hit);
-  const joined = getInflight<T>(path);
+  const joined = getInflight<T>(key);
   if (joined) return joined;
   // Capture the invalidation clock at request start. If a mutation invalidates
   // this resource family while the request is in flight, we must NOT cache the
   // (now-stale) response when it resolves.
   const startedEpoch = currentEpoch();
   const p = request<T>(path).then((data) => {
-    if (data !== undefined && !invalidatedSince(path, startedEpoch)) setCached(path, data);
+    if (data !== undefined && !invalidatedSince(path, startedEpoch)) setCached(key, data);
     return data;
   });
-  setInflight(path, p);
+  setInflight(key, p);
   return p;
 }
 

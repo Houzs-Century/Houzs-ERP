@@ -1,6 +1,8 @@
 // DEV-65 (Sim 2026-10-09): the PO prints "URGENT" when the delivery date is
 // under 2 weeks after the PO date and "TOP URGENT" under 1 week.
 import { describe, expect, it, vi } from 'vitest';
+// The letterhead is fetched for the tab's company before drawing (BUG-111).
+vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 import { writeFileSync } from 'node:fs';
 import { poUrgencyLabel } from './purchase-order-pdf';
 

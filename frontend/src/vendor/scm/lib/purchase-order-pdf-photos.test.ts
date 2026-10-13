@@ -22,6 +22,8 @@
 // PHOTO_PDF_SRC=<file.jpg> swaps in a real photograph and PHOTO_PDF_OUT=<file>
 // writes the PDF, for showing the owner an actual document.
 import { describe, expect, it, vi, beforeAll } from 'vitest';
+// The letterhead is fetched for the tab's company before drawing (BUG-111).
+vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 import { readFileSync, writeFileSync } from 'node:fs';
 /* jsdom's Blob has no `arrayBuffer()`; Node's does, and every real browser's
    does. Using the platform one keeps the decode path un-stubbed. */
