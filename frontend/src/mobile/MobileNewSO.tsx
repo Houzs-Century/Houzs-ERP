@@ -1786,11 +1786,7 @@ export function MobileNewSO({
      its own old_snapshot and rendered as an identical Was/Requesting pair
      (Owner 2026-07-16: "完全看不出有什麼變動申請？"). Desktop had the same defect via
      lineCommitSig; both now test only what the payload carries. */
-  /* The price this line REQUESTS: null for a SEEDED 0 (an unpriced SKU pick,
-     priceAuthored false), which asks for no price and keeps the stored one
-     (HC-SO-013490, billed RM 0). Desktop parity: amendmentRequestedUnitPriceSen. */
-  const requestedPriceSen = (l: LineItem): number | null =>
-    amendmentRequestedUnitPriceSen({ unitPriceSen: toSen(l.price), priceAuthored: l.priceAuthored });
+  const requestedPriceSen = (l: LineItem): number | null => amendmentRequestedUnitPriceSen({ unitPriceSen: toSen(l.price), priceAuthored: l.priceAuthored }); // a seeded 0 requests NO price (HC-SO-013490)
   const amendmentLineChanged = (l: LineItem, snap: SoItem): boolean => {
     if (l.itemCode !== (snap.item_code ?? "")) return true;
     if ((num(l.qty) || 1) !== (snap.qty ?? 1)) return true;
@@ -1866,8 +1862,7 @@ export function MobileNewSO({
       if (!amendmentLineChanged(l, snap)) continue; // nothing amendable moved
       const codeSame = l.itemCode === (snap.item_code ?? "");
       const variantsSame = canonJson(amendmentVariants(buildVariants(l))) === canonJson(amendmentVariants(snap.variants));
-      const requestedUnitSen = requestedPriceSen(l);
-      const priceSame = (requestedUnitSen ?? (snap.unit_price_sen ?? 0)) === (snap.unit_price_sen ?? 0);
+      const priceSame = (requestedPriceSen(l) ?? (snap.unit_price_sen ?? 0)) === (snap.unit_price_sen ?? 0);
       const qtyMoved = (num(l.qty) || 1) !== (snap.qty ?? 1);
       const qtyOnly = codeSame && variantsSame && priceSame && qtyMoved;
       out.push({
@@ -1877,8 +1872,7 @@ export function MobileNewSO({
         // The remark rides newRemark below, never inside the variants an approval writes back.
         newVariants: amendmentVariants(buildVariants(l)) ?? undefined,
         newQty: num(l.qty) || 1,
-        // Omitted (null on the row) when no price is requested: the apply keeps the stored price.
-        ...(requestedUnitSen != null ? { newUnitPriceSen: requestedUnitSen } : {}),
+        ...(requestedPriceSen(l) != null ? { newUnitPriceSen: requestedPriceSen(l) as number } : {}), // omitted = null on the row = keep the stored price
         /* mig 0280 — send the remark only when it MOVED (desktop parity): a null
            new_remark is "not requested", which is what keeps the apply from
            rewriting a remark this session never touched. */
