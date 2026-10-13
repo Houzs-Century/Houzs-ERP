@@ -5,7 +5,7 @@ import { secureHeaders } from "hono/secure-headers";
 import type { Env } from "./types";
 import { GIT_SHA, resolveBuildSha } from "./build-info";
 import { restKeyClaims, restUrlRef } from "./db/rest-key-claims";
-import { auth, requirePermission, requireAnyPermission, requireScmAccess } from "./middleware/auth";
+import { auth, requirePermission, requireAnyPermission, requireScmAccess, requirePageAccessOrSalesView } from "./middleware/auth";
 import { TRANSIENT_CONN_RE } from "./db/d1-compat";
 // Ported 2990's SCM modules (furniture supply chain). Talk to the `scm` Postgres
 // schema via supabase-js; namespaced under /api/scm/*, owner-only during the port.
@@ -41,6 +41,7 @@ import itSupport from "./routes/itSupport";
 import { runPushFleetReminders } from "./services/pushFleetReminders";
 import presence from "./routes/presence";
 import projects from "./routes/projects";
+import { projectSalesOrders } from "./routes/project-sales-orders";
 import projectsOutstanding from "./routes/projectsOutstanding";
 // Sales entries (/api/sales) is retained as a DEPENDENCY of Projects — the
 // Projects page embeds the sales-entry EntryPanel + submit/void/delete flow.
@@ -458,6 +459,12 @@ app.route("/api/projects", projects);
 // The office side of a brand's share link (generate / revoke). Own file because
 // routes/projects.ts is at its size ceiling. See routes/brandShare.ts.
 app.route("/api/brand-share", brandShare);
+// The Sales Orders written at one exhibition, read from inside the project page.
+// Same read gate as GET /api/sales/entries so the section and its data admit the
+// same people; own prefix because routes/projects.ts is at its size ceiling and
+// the router carries the SCM bridge. See routes/project-sales-orders.ts.
+app.use("/api/project-sales-orders/*", requirePageAccessOrSalesView("sales"));
+app.route("/api/project-sales-orders", projectSalesOrders);
 app.route("/api/sales", sales);
 app.route("/api/finance", finance);
 app.route("/api/stockitems", stockItems);

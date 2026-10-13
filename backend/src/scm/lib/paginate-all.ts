@@ -48,7 +48,7 @@ export const PAGE = 1000;
 // Absolute ceiling so a runaway view can't loop forever (50 pages = 50k rows).
 const MAX_PAGES = 50;
 
-type PageResult<T> = { data: T[] | null; error: { message: string; code?: string } | null };
+export type PageResult<T> = { data: T[] | null; error: { message: string; code?: string } | null };
 
 export async function paginateAll<T = Record<string, unknown>>(
   makeQuery: (from: number, to: number) => PromiseLike<PageResult<T>>,
