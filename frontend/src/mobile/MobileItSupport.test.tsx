@@ -93,12 +93,12 @@ describe("IT Support on a phone — report, reply, confirm", () => {
     render(<MobileItSupport onBack={() => {}} />);
     await screen.findByText("Nothing sent to IT yet.");
     fireEvent.click(screen.getByText("Report a problem"));
-    fireEvent.click(screen.getByText("Send to IT"));
+    fireEvent.click(screen.getByText("Send"));
     expect(await screen.findByText("Say in a few words what the problem is.")).toBeTruthy();
     expect(api.postForm).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByPlaceholderText("The delivery order will not save"), { target: { value: "Cannot print DO" } });
-    fireEvent.click(screen.getByText("Send to IT"));
+    fireEvent.click(screen.getByText("Send"));
     await waitFor(() => expect(api.postForm).toHaveBeenCalledTimes(1));
     const [path, form] = api.postForm.mock.calls[0] as [string, FormData];
     expect(path).toBe("/api/it-support/tickets");

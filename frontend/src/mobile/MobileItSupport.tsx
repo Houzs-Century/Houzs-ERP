@@ -120,7 +120,7 @@ function NewRequest({ onSent }: { onSent: (code: string) => void }) {
         <Files files={files} onChange={setFiles} />
       </div>
       {error && <div role="alert" style={ALERT}>{error}</div>}
-      <button type="submit" className="btn" disabled={busy}>{busy ? "Sending..." : "Send to IT"}</button>
+      <button type="submit" className="btn" disabled={busy}>{busy ? "Sending..." : "Send"}</button>
     </form>
   );
 }
