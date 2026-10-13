@@ -8,6 +8,7 @@ import { DataTable, type Column } from "../components/DataTable";
 import { Pagination } from "../components/Pagination";
 import { ListSkeleton } from "../components/Skeleton";
 import { useQuery } from "../hooks/useQuery";
+import { getActiveCompanyId } from "../lib/activeCompany";
 import { useToast } from "../hooks/useToast";
 import { useDialog } from "../hooks/useDialog";
 import { pageSizePreference, useIdentityPreference } from "../hooks/useIdentityPreference";
@@ -766,7 +767,9 @@ function BrandingTab() {
   const { can } = useAuth();
   const canEdit = can("settings.manage");
 
-  const q = useQuery<BrandingResponse>("/api/branding", () => api.get("/api/branding"));
+  // Same key as useBranding (company included), so q.reload() after a save
+  // refreshes the app chrome too.
+  const q = useQuery<BrandingResponse>("/api/branding", () => api.get("/api/branding"), [getActiveCompanyId()]);
   const [form, setForm] = useState<Branding | null>(null);
   const [saving, setSaving] = useState(false);
 
