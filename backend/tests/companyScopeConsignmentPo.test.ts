@@ -160,14 +160,14 @@ describe('PC Order cancel', () => {
 
   test('A cannot cancel B\'s PC Order, and B\'s stays SUBMITTED', async () => {
     const t = { purchase_consignment_orders: rows() };
-    const res = await jsonPatch(harness(t, CO_A).app, '/pc-orders/pco-b/cancel');
+    const res = await jsonPatch(harness(t, CO_A).app, '/pc-orders/pco-b/cancel', { cancel_reason: 'x' })
     expect(res.status).toBe(404);
     expect(t.purchase_consignment_orders.find((r) => r.id === 'pco-b')!.status).toBe('SUBMITTED');
   });
 
   test('A CAN still cancel its own PC Order', async () => {
     const t = { purchase_consignment_orders: rows() };
-    const res = await jsonPatch(harness(t, CO_A).app, '/pc-orders/pco-a/cancel');
+    const res = await jsonPatch(harness(t, CO_A).app, '/pc-orders/pco-a/cancel',  { cancel_reason: 'x' });
     expect(res.status).toBe(200);
     expect(t.purchase_consignment_orders.find((r) => r.id === 'pco-a')!.status).toBe('CANCELLED');
   });
