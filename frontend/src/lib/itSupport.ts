@@ -69,8 +69,9 @@ export function itStepLine(s: ItStep): string {
   return "replied";
 }
 
-/* IT_ACCEPT only filters the file browser; a dropped or pasted file is checked here. */
-const itAccepted = (f: File) => f.type.startsWith("image/") || ["video/mp4", "video/quicktime", "application/pdf"].includes(f.type);
+/* IT_ACCEPT only filters the file browser; a dropped or pasted file is checked against it here. */
+const itAccepted = (f: File) =>
+  IT_ACCEPT.split(",").some((t) => (t.endsWith("/*") ? f.type.startsWith(t.slice(0, -1)) : f.type === t));
 
 /** Adding files to an attachment list: the new list, or why it was refused. */
 export function itAddFiles(current: File[], added: ArrayLike<File> | null): { files: File[] } | { refused: string } {
