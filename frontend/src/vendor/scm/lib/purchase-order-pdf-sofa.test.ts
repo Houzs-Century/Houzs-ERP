@@ -14,7 +14,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 import { writeFileSync } from 'node:fs';
 import { purchaseOrderPdfBase64 } from './purchase-order-pdf';
-import { motionMark } from './sofa-layout-pdf';
+import { layoutDepth, motionMark } from './sofa-layout-pdf';
 
 /* One cast for every test's line array, instead of one per call site: the
    generator takes the rich PoItem[]; these fixtures carry only the fields each
@@ -145,6 +145,21 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
     expect(raw).toContain('Sofa layout');
     expect(raw.match(/\(P\) Tj/g)?.length ?? 0).toBe(2);
     if (process.env.SOFA_PDF_OUT) writeFileSync(process.env.SOFA_PDF_OUT.replace(/\.pdf$/, '-p.pdf'), pdf);
+  });
+
+  /* BUG-110 (Sim 2026-10-13): 2990-SO-2610-037 was laid out at 28" (L(RHF) at
+     x=178, the 28" width of a 2A) but its lines carry no `depth`, so the PO
+     drew at 24" with a 20cm gap. -022 stores seatHeight 28 while its x/y are
+     24" (L at x=158) and must stay joined. Real variants from both SOs. */
+  it('draws a POS sofa at the depth its positions were laid out at', () => {
+    const cells = (lx: number) => [
+      { moduleId: '2A(LHF)', x: 0, y: 0, rot: 0 as const },
+      { moduleId: 'L(RHF)', x: lx, y: 0, rot: 0 as const },
+    ];
+    expect(layoutDepth(cells(178), [undefined, '28', '28', '24'])).toBe('28');
+    expect(layoutDepth(cells(158), [undefined, '28', '24', '24'])).toBe('24');
+    expect(layoutDepth(cells(158), [undefined, undefined, undefined, '24'])).toBe('24');
+    expect(layoutDepth(cells(178), [])).toBe('24');
   });
 
   it('reads the motion letter from the first paren group only', () => {

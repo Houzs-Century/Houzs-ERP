@@ -44,6 +44,29 @@ export function motionMark(moduleId: string): 'P' | 'R' | 'L' | null {
   return m ? (m[1] as 'P' | 'R' | 'L') : null;
 }
 
+/** The seat depth a POS build's stored x/y were laid out at. Module widths grow
+ *  with depth, so drawing the cells at another depth opens gaps (or overlaps)
+ *  between pieces that touched on the canvas. The SO split drops the line's
+ *  `depth` key in favour of `seatHeight`, and the two can disagree with the x/y
+ *  (BUG-110, Sim 2026-10-13: 2990-SO-2610-037, laid out at 28", drew at the 24"
+ *  default with a 20cm gap; -022 stores seatHeight 28 but its x/y and summary
+ *  are 24"). Of the candidates,
+ *  the one under which the cells join into the fewest sofas wins; ties keep
+ *  candidate order. */
+export function layoutDepth(cells: Cell[], candidates: ReadonlyArray<unknown>): Depth {
+  const depths = [...new Set(
+    candidates.map((d) => String(d ?? '').trim()).filter((d) => /^\d+$/.test(d)),
+  )];
+  if (depths.length === 0) return '24';
+  let best = depths[0]!;
+  let bestGroups = Infinity;
+  for (const d of depths) {
+    const n = groupSofas(cells, d).length;
+    if (n < bestGroups) { best = d; bestGroups = n; }
+  }
+  return best;
+}
+
 /**
  * Draw a small top-down sofa schematic at (x, y) within (maxW × maxH) mm.
  * Returns the height (mm) actually drawn (sofa + TV block + dims caption).
