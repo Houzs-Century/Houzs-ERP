@@ -70,7 +70,11 @@ const SI_MODE = (process.env.SI || 'print').toLowerCase();
 const WRITEBACK = (process.env.WRITEBACK || 'print').toLowerCase();
 const SOURCE = 'script:repair-amendment-zeroed-prices';
 
-const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
+/* Plain lines, not ::notice:: annotations: the runner keeps at most ten
+   annotations per step and drops the rest, which is exactly the table the
+   owner has to read line by line. Errors stay annotations so a failed run
+   is visible from the summary. */
+const note = (m) => console.log(m);
 const bad = (m) => console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : `ERROR ${m}`);
 const rm = (sen) => `RM ${(Number(sen ?? 0) / 100).toFixed(2)}`;
 
