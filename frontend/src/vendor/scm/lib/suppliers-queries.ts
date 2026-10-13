@@ -182,6 +182,7 @@ export type PoHeaderRow = PoHoldFields & {
   submitted_at: string | null;
   received_at: string | null;
   cancelled_at: string | null;
+  cancel_reason?: string | null;
   /** Mig 0080 — bumped on every approved revision (SO-amendment follow-up or
    *  standalone PO amendment). Display shows `_R{revision-1}` when > 1. */
   revision?: number | null;
