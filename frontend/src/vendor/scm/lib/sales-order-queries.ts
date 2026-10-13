@@ -671,7 +671,7 @@ export const useMfgSoLinePriceAfterDo = () => {
         ),
       ),
     onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['mfg-sales-order-detail', vars.docNo] });
+      void qc.invalidateQueries({ queryKey: ['mfg-sales-order-detail', vars.docNo] });
       invalidateSoLists(qc);
     },
     onError: writeFailed,
