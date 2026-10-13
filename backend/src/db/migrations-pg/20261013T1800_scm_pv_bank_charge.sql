@@ -1,4 +1,4 @@
--- 20261013T1400_scm_pv_bank_charge.sql
+-- 20261013T1800_scm_pv_bank_charge.sql
 -- DEV-75: Finance records the bank charge on a Payment Voucher header.
 -- Stored and shown only: it is NOT in total_sen and posts nothing to the GL
 -- (no account chosen for it yet). Integer sen, never negative.
