@@ -16,7 +16,9 @@ export function collapseDoubledMalaysianPrefix(digits) {
   if (!digits.startsWith('60')) return digits;
   const national = digits.slice(2);
   const stripped = national.replace(/^(?:60|0)+/, '');
-  if (stripped === national || stripped.length < 8 || stripped.length > 10) return digits;
+  const mobile = stripped.startsWith('1');
+  const plausible = mobile ? stripped.length === 9 || stripped.length === 10 : stripped.length === 8 || stripped.length === 9;
+  if (stripped === national || !plausible) return digits;
   return '60' + stripped;
 }
 

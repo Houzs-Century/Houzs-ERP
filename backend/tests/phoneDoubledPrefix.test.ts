@@ -48,6 +48,16 @@ describe('numbers that must not be touched', () => {
     expect(collapseDoubledMalaysianPrefix('6060123')).toBe('6060123');
     expect(collapseDoubledMalaysianPrefix('60601234567890123')).toBe('60601234567890123');
   });
+
+  test('a doubled prefix over a mobile a digit short is not rewritten (plan run 2026-10-13)', () => {
+    expect(normalizePhone('+606012295388')).toBe('+606012295388');
+    expect(normalizePhone('+606017268613')).toBe('+606017268613');
+  });
+
+  test('a doubled prefix over an 8-digit landline still collapses', () => {
+    expect(normalizePhone('+606078441319')).toBe('+6078441319');
+    expect(normalizePhone('+606098009078')).toBe('+6098009078');
+  });
 });
 
 describe('the +60 picker (split / combine) cleans a pasted full number', () => {
