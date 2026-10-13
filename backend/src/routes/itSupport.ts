@@ -127,6 +127,16 @@ function filesRefusal(files: File[]): string | null {
   return odd ? `${odd.name} is not a picture, an MP4 or MOV video, or a PDF.` : null;
 }
 
+// ---- Is IT Support connected in this environment? --------------------------
+// The menu row is listed only where this answers true (Sidebar.tsx), so an
+// environment without the hub's settings shows no row leading to a page that
+// could only say "not connected". Not connected is an answer here, not an error.
+app.get("/status", (c) => {
+  const hub = hubFor(c);
+  if (hub instanceof Response) return hub.status === 501 ? c.json({ connected: false }) : hub;
+  return c.json({ connected: true });
+});
+
 // ---- My requests ----------------------------------------------------------
 app.get("/tickets", async (c) => {
   const hub = hubFor(c);
