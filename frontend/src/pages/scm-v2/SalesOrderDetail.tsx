@@ -38,7 +38,6 @@ import {
   useMfgSalesOrderDetail,
   useUpdateMfgSalesOrderHeader,
   useUpdateMfgSalesOrderStatus,
-  useDeleteMfgSalesOrder,
   useAddMfgSalesOrderItem,
   useUpdateMfgSalesOrderItem,
   useDeleteMfgSalesOrderItem,
@@ -163,6 +162,7 @@ import styles from './SalesOrderDetail.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { HoldChip } from "../../vendor/scm/components/HoldChip";
 import { CancelRequestPanel } from "../../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "./use-cancel-request-action";
+import { useDiscardDraftAction } from "./use-discard-draft-action";
 
 import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
 import { useAddLineHandoff } from '../../vendor/scm/lib/useAddLineHandoff';
@@ -513,7 +513,7 @@ export const SalesOrderDetail = () => {
   const updateHeader = useUpdateMfgSalesOrderHeader();
   const updateStatus = useUpdateMfgSalesOrderStatus();
   const requestCancel = useCancelRequestAction('so');
-  const deleteDraft = useDeleteMfgSalesOrder();
+  const deleteDraft = useDiscardDraftAction();
   const askConfirm = useConfirm();
   const submitDialog = useAmendmentSubmitDialog();
   const notify = useNotify();
@@ -1749,22 +1749,9 @@ export const SalesOrderDetail = () => {
      anything but a DRAFT. On success the SO is gone, so we leave the page for the
      SO list rather than render a detail for a deleted order. */
   const handleDiscardDraft = async () => {
-    if (!(await askConfirm({
-      title: `Discard draft ${header.doc_no}?`,
-      body: 'This permanently deletes this draft order and everything on it. It cannot be undone. (Confirmed orders are cancelled, not discarded.)',
-      confirmLabel: 'Discard draft', danger: true,
-    }))) return;
-    try {
-      await deleteDraft.mutateAsync({ docNo: header.doc_no });
-      notify({ title: 'Draft discarded' });
-      navigate('/scm/sales-orders');
-    } catch (e) {
-      notify({
-        title: 'Could not discard this draft',
-        body: `${e instanceof Error ? e.message : String(e)} Nothing was changed — please try again.`,
-        tone: 'error',
-      });
-    }
+    /* Confirm + words + refusal handling live in ./use-discard-draft-action,
+       shared with the read-only page, the list menu and the quick view. */
+    if (await deleteDraft.discard(header.doc_no)) navigate('/scm/sales-orders');
   };
   const deliverPrintPdf = (action: PdfAction) => {
     /* Followup #81 — Wait for the payments query before generating; legacy

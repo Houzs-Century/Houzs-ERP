@@ -35,7 +35,9 @@ import {
   MoreHorizontal,
   Wallet,
   Plus,
+  Trash2,
 } from "lucide-react";
+import { DISCARD_DRAFT_LABEL, useDiscardDraftAction } from "./use-discard-draft-action";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
@@ -596,6 +598,7 @@ function SalesOrderDetailV2ReadOnly() {
   const coverage = useSoLineCoverage(docNo ?? null);
   const updateStatus = useUpdateMfgSalesOrderStatus();
   const requestCancel = useCancelRequestAction("so");
+  const discardDraft = useDiscardDraftAction();
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const staffRoster = useStaff();
   const notify = useNotify();
@@ -755,6 +758,12 @@ function SalesOrderDetailV2ReadOnly() {
      the cancel itself (executeCancel) is run by CancelRequestPanel on the
      second signature, with every guard the status route always had. */
   const doCancel = () => { if (salesOrder) void requestCancel(salesOrder.doc_no, salesOrder.doc_no); };
+  /* Discard a DRAFT (owner 2026-10-13: 「这个draft - discard不到」 — this read-only
+     page offered Request cancellation and nothing else on a draft). The order
+     ceases to exist on success, so we leave for the list. */
+  const doDiscard = async () => {
+    if (salesOrder && (await discardDraft.discard(salesOrder.doc_no))) navigate("/scm/sales-orders");
+  };
   const executeCancel = () => {
     if (!salesOrder) return;
     updateStatus.mutate({ docNo: salesOrder.doc_no, status: "CANCELLED", expectedStatus: salesOrder.status });
@@ -1237,7 +1246,19 @@ function SalesOrderDetailV2ReadOnly() {
                 so it is disabled-with-a-reason rather than hidden: a salesperson
                 looking for it must find out WHY it cannot be used, not wonder
                 where it went. */}
-            {salesOrder.status?.toLowerCase() !== "cancelled" && (
+            {/* A DRAFT is discarded, not cancelled (owner 2026-07-20): DELETE,
+                no document number burnt, no dead CANCELLED row. The right-click
+                menu on the list still offers Request cancellation on a draft. */}
+            {salesOrder.status.toLowerCase() === "draft" ? (
+              <Button
+                variant="danger"
+                icon={<Trash2 size={14} />}
+                onClick={() => void doDiscard()}
+                disabled={discardDraft.isPending}
+              >
+                {discardDraft.isPending ? "Discarding…" : DISCARD_DRAFT_LABEL}
+              </Button>
+            ) : salesOrder.status?.toLowerCase() !== "cancelled" && (
               <Button
                 variant="danger"
                 icon={<XCircle size={14} />}

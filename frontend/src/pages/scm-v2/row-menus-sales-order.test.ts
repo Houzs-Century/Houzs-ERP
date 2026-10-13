@@ -37,7 +37,7 @@ const noop = () => {};
 const soMenu = (over: Partial<Parameters<typeof salesOrderRowMenu<Row>>[0]> = {}) =>
   salesOrderRowMenu<Row>({
     open: noop, edit: noop, print: noop, confirm: noop, transferToDo: noop,
-    setStatus: noop, close: noop, setHold: noop, cancel: noop, reopen: noop, canDeliver: true,
+    setStatus: noop, close: noop, setHold: noop, cancel: noop, discard: noop, reopen: noop, canDeliver: true,
     ...over,
   });
 
@@ -165,7 +165,34 @@ describe("Print, for the whole chain", () => {
   test("the groups after Print are untouched", () => {
     const items = labels(soMenu()(withChain({ status: "DRAFT", do_refs: [], si_refs: [] })));
     expect(items).toEqual([
-      "Open", "Edit", "Print", "—", "Confirm", "Put On Hold", "—", "Request cancellation",
+      "Open", "Edit", "Print", "—", "Confirm", "Put On Hold", "—", "Discard draft", "Request cancellation",
     ]);
+  });
+});
+
+/* A draft's way out is a DELETE, not a cancel (owner 2026-07-20): no document
+   number is burnt and no dead CANCELLED row is left. Until 2026-10-13 the
+   desktop right-click menu did not offer it at all (「这个draft - discard不到」),
+   so the entry is pinned by name on the one status that may have it. */
+describe("Discard draft", () => {
+  test("is offered on a DRAFT, red, beside Request cancellation", () => {
+    const m = soMenu()(R({ status: "DRAFT" }));
+    const discard = m.find((x) => x.label === "Discard draft");
+    expect(discard?.danger).toBe(true);
+    expect(labels(m).slice(-2)).toEqual(["Discard draft", "Request cancellation"]);
+  });
+
+  test.each(["CONFIRMED", "IN_PRODUCTION", "DELIVERED", "INVOICED", "CANCELLED", "CLOSED"])(
+    "is NOT offered on %s — a confirmed order is cancelled, never discarded",
+    (status) => {
+      expect(labels(soMenu()(R({ status })))).not.toContain("Discard draft");
+    },
+  );
+
+  test("calls the discard handler with the row", () => {
+    const discard = vi.fn();
+    const m = soMenu({ discard })(R({ status: "DRAFT" }));
+    m.find((x) => x.label === "Discard draft")!.onClick();
+    expect(discard).toHaveBeenCalledWith(expect.objectContaining({ doc_no: "SO-0001" }));
   });
 });

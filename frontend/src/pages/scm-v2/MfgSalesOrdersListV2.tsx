@@ -43,7 +43,9 @@ import {
   CheckCircle2,
   Truck,
   RotateCcw,
+  Trash2,
 } from "lucide-react";
+import { DISCARD_DRAFT_LABEL, useDiscardDraftAction } from "./use-discard-draft-action";
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { salesOrderPrintChain } from "../../lib/printChain";
@@ -443,6 +445,7 @@ function DetailDrawer({
   onEdit,
   onPrint,
   onConfirm,
+  onDiscard,
   onDeliver,
   onReopen,
   canDeliver,
@@ -454,6 +457,8 @@ function DetailDrawer({
   onEdit: () => void;
   onPrint: () => void;
   onConfirm: () => void;
+  /** DRAFT only: hard-delete it (use-discard-draft-action.ts). */
+  onDiscard: () => void;
   onDeliver: () => void;
   onReopen: () => void;
   /** Sales may raise the SO but not operate the DO (owner 2026-07-17). False
@@ -703,14 +708,27 @@ function DetailDrawer({
                 // "DRAFT"); normalise once so the CTA switch works regardless.
                 const s = (row.status || "").toLowerCase();
                 if (s === "draft") {
+                  /* Discard beside Confirm (owner 2026-10-13: 「这个draft - discard
+                     不到」 — the drawer offered no way to delete a junk draft).
+                     Ghost + red so it never competes with Confirm. */
                   return (
-                    <Button
-                      variant="primary"
-                      icon={<CheckCircle2 size={14} />}
-                      onClick={onConfirm}
-                    >
-                      Confirm
-                    </Button>
+                    <>
+                      <Button
+                        variant="ghost"
+                        icon={<Trash2 size={14} />}
+                        onClick={onDiscard}
+                        style={{ color: "var(--c-festive-b, #B8331F)" }}
+                      >
+                        {DISCARD_DRAFT_LABEL}
+                      </Button>
+                      <Button
+                        variant="primary"
+                        icon={<CheckCircle2 size={14} />}
+                        onClick={onConfirm}
+                      >
+                        Confirm
+                      </Button>
+                    </>
                   );
                 }
                 if (soCanRaiseDo(row.status, row.on_hold ?? null)) {
@@ -1119,6 +1137,7 @@ export function MfgSalesOrdersListV2() {
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const updateStatus = useUpdateMfgSalesOrderStatus();
   const requestCancel = useCancelRequestAction("so");
+  const { discard: discardDraft } = useDiscardDraftAction();
   const setHold = useSetDocumentHold("so");
 
   // The server already filtered (status + search) and sorted this page; the
@@ -1239,6 +1258,9 @@ export function MfgSalesOrdersListV2() {
       { docNo: r.doc_no, status: "confirmed", expectedStatus: r.status },
       { onSuccess: () => setSelected(null) }
     );
+  /* Discard a DRAFT (DELETE /:docNo) — confirm + words in ./use-discard-draft-action.
+     The row no longer exists on success, so the drawer closes. */
+  const doDiscard = async (r: SoRow) => { if (await discardDraft(r.doc_no)) setSelected(null); };
   const doDeliver = (r: SoRow) => navigate(convertToLink('soToDo', r.doc_no));
   // Reopen a cancelled SO → CONFIRMED so it can proceed again (2990
   // MfgSalesOrdersList "Reopen SO" parity; reuses the status PATCH endpoint).
@@ -1292,7 +1314,7 @@ export function MfgSalesOrdersListV2() {
   const soContextMenu = salesOrderRowMenu<SoRow>({
     open: goFullPage, edit: goEdit, print: printDocument,
     confirm: doConfirm, transferToDo: doDeliver, reopen: doReopen,
-    setStatus: setSoStatus, close: doCloseSo, setHold: setSoHold, cancel: doCancelSo, canDeliver,
+    setStatus: setSoStatus, close: doCloseSo, setHold: setSoHold, cancel: doCancelSo, discard: (r) => void doDiscard(r), canDeliver,
   });
 
   // ─── Multi-select → batch "Print all" ─────────────────────────────────────
@@ -2253,6 +2275,7 @@ export function MfgSalesOrdersListV2() {
         onEdit={() => selected && goEdit(selected)}
         onPrint={() => selected && printDocument(salesOrderPrintChain(selected).own)}
         onConfirm={() => selected && doConfirm(selected)}
+        onDiscard={() => selected && void doDiscard(selected)}
         onDeliver={() => selected && doDeliver(selected)}
         onReopen={() => selected && void doReopen(selected)}
         canDeliver={canDeliver}

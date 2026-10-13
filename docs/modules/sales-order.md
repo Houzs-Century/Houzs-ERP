@@ -65,7 +65,7 @@ Locks
 - Every lock fails closed when its read fails (`downstream_check_failed`). A failed read never counts as zero.
 - The save lock covers one save and lasts 60 s (`SO_EDIT_LEASE_MS`, `lib/so-edit-lease.ts`). The holder is recorded and can reclaim their own lock; the refusal says held, expired or missing. Keep it: version CAS cannot see a half-applied multi-request save.
 - Status CAS: `useUpdateMfgSalesOrderStatus` sends `{status, version, expectedStatus}`. `expectedStatus` is a required value from the caller (what the operator saw), or `null` when unknown. Never take it from the query cache.
-- `DELETE /:docNo` works only for a DRAFT (409 `so_not_draft`) with no live downstream document and no payment (409 `so_has_payments`, `soDiscardBlocked`). Every other order is cancelled.
+- `DELETE /:docNo` works only for a DRAFT (409 `so_not_draft`) with no live downstream document and no payment (409 `so_has_payments`, `soDiscardBlocked`). Every other order is cancelled. Desktop offers it as "Discard draft" on the list right-click menu, the quick-view drawer, the read-only detail bar (in place of Request cancellation) and the editor, all through `use-discard-draft-action.ts`; mobile has its own button.
 
 Validation
 - Confirm gate (`lib/so-confirm-gate.ts`), run on DRAFT -> live and on any create not sent as a draft. It requires: every live line in the company catalog; a salesperson (`salesperson_id`, or `agent` text that `resolveAcAgent` accepts); a venue. Returns 422 `validation_failed` listing every problem. It does not check variants.
