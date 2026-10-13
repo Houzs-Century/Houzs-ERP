@@ -12,6 +12,9 @@ import { buildDoItemRow } from './do-item-row';
 import { recomputeDoTotals } from './do-totals';
 import { coerceEmptyDates } from './date-coerce';
 import { enqueueEdit } from './autocount-outbox';
+import { recomputeTotals as recomputeSiTotals } from './si-from-do';
+import { recomputeSiPaid } from './si-order-deposit';
+import { resyncSiRevenue } from './post-si-revenue';
 import { recordEntityAudit, compactChanges, fieldChange, type AuditActor } from './entity-audit';
 import { normalizePhone } from '../shared/phone';
 import { isServiceCategory } from '../shared/service-sku';
@@ -65,10 +68,11 @@ export async function readAfterDoTargets(sb: Db, docNo: string, companyId: numbe
   if (sis.error) return { ok: false, reason: `sales_invoices: ${sis.error.message}` };
   if (drs.error) return { ok: false, reason: `delivery_returns: ${drs.error.message}` };
   const locked = new Set([...sis.data, ...drs.data].filter((r) => live(r.status)).map((r) => r.delivery_order_id));
+  const returned = new Set(drs.data.filter((r) => live(r.status)).map((r) => r.delivery_order_id));
   const targets = heads.data
     .filter((h) => live(h.status))
     .sort((a, b) => String(a.do_number ?? '').localeCompare(String(b.do_number ?? '')))
-    .map((h) => ({ id: h.id, do_number: h.do_number ?? null, status: h.status ?? null, locked: locked.has(h.id) }));
+    .map((h) => ({ id: h.id, do_number: h.do_number ?? null, status: h.status ?? null, locked: locked.has(h.id), returned: returned.has(h.id) }));
   return { ok: true, targets, invoicedWithoutDo };
 }
 
@@ -238,6 +242,70 @@ export async function copyLinePriceToDos(
       ]),
     });
     await queueDoEdit(sb, who, d.delivery_order_id);
+  }
+  return failed;
+}
+
+/** DEV-70 option B (Nico 2026-10-13) — after the DO lines took the new price,
+ *  every live Sales Invoice line billing them takes it too, issued or not. Each
+ *  invoice is then re-totalled, its paid status re-derived and its revenue
+ *  entry voided and re-posted at the new total (resyncSiRevenue, the owner's
+ *  2026-06-01 ruling for a line edited after issue), then queued to AutoCount.
+ *  Returns the invoice numbers whose write failed. */
+export async function copyLinePriceToInvoices(
+  sb: Db,
+  who: Who,
+  soLine: { item_code: string | null; qty: number; unit_price_sen: number; discount_sen: number },
+  doLineIds: ReadonlyArray<string>,
+): Promise<string[]> {
+  if (doLineIds.length === 0) return [];
+  const { data: lines, error } = await scopeToCompanyId(
+    sb.from('sales_invoice_items').select('id, sales_invoice_id, qty, unit_price_sen, discount_sen, tax_sen, line_cost_sen').in('do_item_id', doLineIds), who.companyId,
+  );
+  if (error) return ['(invoice lines unreadable)'];
+  type SiLine = { id: string; sales_invoice_id: string; qty: number | null; unit_price_sen: number | null; discount_sen: number | null; tax_sen: number | null; line_cost_sen: number | null };
+  const all = (lines ?? []) as SiLine[];
+  if (all.length === 0) return [];
+  const { data: heads, error: headErr } = await scopeToCompanyId(
+    sb.from('sales_invoices').select('id, invoice_number, status').in('id', [...new Set(all.map((l) => l.sales_invoice_id))]), who.companyId,
+  );
+  if (headErr) return ['(invoices unreadable)'];
+  const liveHeads = ((heads ?? []) as Array<{ id: string; invoice_number: string | null; status: string | null }>).filter((h) => live(h.status));
+  const billed = all.filter((l) => liveHeads.some((h) => h.id === l.sales_invoice_id));
+  const shares = doLineDiscountShares(soLine.discount_sen, soLine.qty, billed.map((l) => Number(l.qty ?? 0)));
+  const failed: string[] = [];
+  for (const h of liveHeads) {
+    const label = h.invoice_number ?? h.id;
+    const changes: Array<ReturnType<typeof fieldChange>> = [];
+    let ok = true;
+    for (const [i, l] of billed.entries()) {
+      if (l.sales_invoice_id !== h.id) continue;
+      const qty = Number(l.qty ?? 0), unit = soLine.unit_price_sen, disc = shares[i];
+      const lineTotal = Math.max(0, qty * unit - disc + Number(l.tax_sen ?? 0));
+      const { error: upErr } = await scopeToCompanyId(
+        sb.from('sales_invoice_items').update({
+          unit_price_sen: unit, discount_sen: disc, line_total_sen: lineTotal,
+          line_margin_sen: lineTotal - Number(l.line_cost_sen ?? 0),
+        }).eq('id', l.id), who.companyId,
+      );
+      if (upErr) { ok = false; continue; }
+      changes.push(fieldChange('unitPriceSen', l.unit_price_sen ?? null, unit), fieldChange('discountSen', l.discount_sen ?? null, disc));
+    }
+    if (!ok) failed.push(label);
+    await recomputeSiTotals(sb, h.id);
+    await recomputeSiPaid(sb, h.id);
+    if (h.invoice_number) {
+      try {
+        await resyncSiRevenue(sb, h.invoice_number);
+      } catch (e) { /* eslint-disable-next-line no-console */ console.error('[si-revenue] price-after-DO resync failed:', e); }
+    }
+    await recordEntityAudit(sb, {
+      entityType: 'SALES_INVOICE', entityId: h.id, entityDocNo: h.invoice_number, action: 'UPDATE',
+      actor: who.actor, companyId: who.companyId, statusSnapshot: h.status,
+      note: `Line price updated from ${who.soDocNo} (price after DO): ${String(soLine.item_code ?? '')}`,
+      fieldChanges: compactChanges(changes),
+    });
+    await enqueueEdit(sb, { companyId: who.companyId, docType: 'IV', docId: h.id, newLineIds: [], createdBy: who.actor?.id ?? null });
   }
   return failed;
 }

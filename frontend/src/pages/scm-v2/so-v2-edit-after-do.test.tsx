@@ -131,4 +131,13 @@ describe("a delivered order, with only Edit SO line price after DO", () => {
     mount({ ...delivered, after_do_invoiced: true });
     expect(editButtons().every((b) => b.disabled)).toBe(true);
   });
+
+  it("the DO's own invoice does not shut Edit (the invoice follows); its Delivery Return does", () => {
+    perms.add("scm.so.edit_price_after_do");
+    mount({ ...delivered, after_do_targets: [{ ...DO_OPEN, locked: true, returned: false }] });
+    expect(editButtons().every((b) => !b.disabled)).toBe(true);
+    cleanup();
+    mount({ ...delivered, after_do_targets: [{ ...DO_OPEN, locked: true, returned: true }] });
+    expect(editButtons().every((b) => b.disabled)).toBe(true);
+  });
 });

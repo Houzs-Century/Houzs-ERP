@@ -1,7 +1,8 @@
 /* DEV-70 (syasya 2026-10-12) — "Edit SO line price after DO" in the desktop
  * editor. HC-SO-013490's shape: DELIVERED, product lines on the DO at RM 0.
  * With `scm.so.edit_price_after_do` the frozen line's $ button opens the
- * price dialog (no Override needed) and posts to /price-after-do.
+ * price dialog (no Override needed) and posts to /price-after-do. An invoice
+ * on the DO no longer hides it (the invoice follows); a Delivery Return does.
  *
  * Harness copied from SalesOrderDetail.afterDo.test.tsx.
  */
@@ -134,8 +135,13 @@ describe("with the price permission", () => {
     expect((screen.getByRole("button", { name: "Save price" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("not once every DO of the order has an invoice or return", () => {
-    mount({ ...header, after_do_targets: [{ ...DO1, locked: true }] });
+  it("still offered when the DO has an invoice: the invoice follows (option B)", () => {
+    mount({ ...header, after_do_targets: [{ ...DO1, locked: true, returned: false }] });
+    expect(priceBtn()).toBeTruthy();
+  });
+
+  it("not once every DO of the order has a Delivery Return", () => {
+    mount({ ...header, after_do_targets: [{ ...DO1, locked: true, returned: true }] });
     expect(priceBtn()).toBeNull();
   });
 });

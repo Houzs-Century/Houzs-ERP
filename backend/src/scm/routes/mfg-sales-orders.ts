@@ -251,8 +251,8 @@ import {
   isProcessingRemovalOnlyRequest,
 } from '../shared/so-processing-date';
 import { ATTRIBUTE_OTHER_REFUSAL, SO_IDENTITY_LOCK_COLS, changedIdentityLockCols, salespersonReattributed } from '../shared/so-identity-lock';
-import { SO_EDIT_AFTER_DO_PERMISSION, SO_EDIT_PRICE_AFTER_DO_PERMISSION, SO_AFTER_DO_CUSTOMER_COLS, AFTER_DO_INVOICED, AFTER_DO_PRICE_FORBIDDEN, AFTER_DO_PRICE_NOT_DELIVERED, AFTER_DO_SERVICE_ONLY, afterDoBlockedCols, afterDoFieldsRefusal, afterDoHeaderRefusal, afterDoTargetLockedRefusal, pickAfterDoTarget, type AfterDoTarget } from '../shared/so-after-do-edit';
-import { openAfterDo, readAfterDoTargets, catalogSaysService, copyCustomerDetailsToDos, addChargeLineToDo, readDoLinesOfSoLine, copyChargeLineToDo, copyLinePriceToDos, type DoLineOfSoLine } from '../lib/so-after-do';
+import { SO_EDIT_AFTER_DO_PERMISSION, SO_EDIT_PRICE_AFTER_DO_PERMISSION, SO_AFTER_DO_CUSTOMER_COLS, AFTER_DO_INVOICED, AFTER_DO_PRICE_FORBIDDEN, AFTER_DO_PRICE_NOT_DELIVERED, afterDoPriceReturnedRefusal, AFTER_DO_SERVICE_ONLY, afterDoBlockedCols, afterDoFieldsRefusal, afterDoHeaderRefusal, afterDoTargetLockedRefusal, pickAfterDoTarget, type AfterDoTarget } from '../shared/so-after-do-edit';
+import { openAfterDo, readAfterDoTargets, catalogSaysService, copyCustomerDetailsToDos, addChargeLineToDo, readDoLinesOfSoLine, copyChargeLineToDo, copyLinePriceToDos, copyLinePriceToInvoices, type DoLineOfSoLine } from '../lib/so-after-do';
 /* Variants-vocabulary unification (port of 2990 73aeeb1e, 2026-06-26):
    POS-handover sofa lines speak `depth`/`sofaLegHeight`/`fabricColor`, Backend
    editors read `seatHeight`/`legHeight`/`fabricCode`. canonicalizeVariants
@@ -5546,6 +5546,7 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
 
 /* DEV-70 — the unit price + discount of a line a live DO already carries, for a
    caller holding `scm.so.edit_price_after_do` (rule: shared/so-after-do-edit.ts).
+   Live invoices billing those DO lines follow too (option B, Nico 2026-10-13).
    Its own route rather than an `afterDo` flag on the line PATCH: that handler
    re-prices, re-derives the delivery fee and reconciles free gifts, any of which
    could move a delivered line. This one writes two columns and their totals. */
@@ -5574,8 +5575,8 @@ mfgSalesOrders.post('/:docNo/items/:itemId/price-after-do', async (c) => {
   const doLines = await readDoLinesOfSoLine(sb, itemId, co.companyId, open.targets);
   if (doLines === null) return c.json({ error: 'downstream_check_failed', message: 'Could not read the Delivery Order lines, so nothing was changed. Try again.' }, 409);
   if (doLines.length === 0) return c.json(AFTER_DO_PRICE_NOT_DELIVERED, 409);
-  const lockedDos = open.targets.filter((t) => t.locked && doLines.some((d) => d.delivery_order_id === t.id));
-  if (lockedDos.length > 0) return c.json(afterDoTargetLockedRefusal(lockedDos.map((t) => t.do_number ?? t.id)), 409);
+  const returnedDos = open.targets.filter((t) => t.returned && doLines.some((d) => d.delivery_order_id === t.id));
+  if (returnedDos.length > 0) return c.json(afterDoPriceReturnedRefusal(returnedDos.map((t) => t.do_number ?? t.id)), 409);
   const qty = Number(prev.qty);
   if (discount > qty * unit) {
     return c.json({ error: 'invalid_discount', message: 'Discount cannot be more than qty x unit price.', discount, max: qty * unit }, 422);
@@ -5609,12 +5610,12 @@ mfgSalesOrders.post('/:docNo/items/:itemId/price-after-do', async (c) => {
     note: `Price changed after DO${reason ? `: ${reason}` : ''}`,
   });
   await queueAcSoEdit(c, docNo);
-  const failed = await copyLinePriceToDos(
-    sb, { companyId: co.companyId, actor: c.get('houzsUser') ?? null, soDocNo: docNo },
-    { item_code: prev.item_code, qty, unit_price_sen: unit, discount_sen: discount }, doLines, open.targets,
-  );
+  const who = { companyId: co.companyId, actor: c.get('houzsUser') ?? null, soDocNo: docNo };
+  const priced = { item_code: prev.item_code, qty, unit_price_sen: unit, discount_sen: discount };
+  const failed = await copyLinePriceToDos(sb, who, priced, doLines, open.targets);
+  const siFailed = await copyLinePriceToInvoices(sb, who, priced, doLines.map((d) => d.id));
   const doNumbers = [...new Set(doLines.map((d) => open.targets.find((t) => t.id === d.delivery_order_id)?.do_number ?? d.delivery_order_id))];
-  return c.json({ ok: true, doNumbers, ...(failed.length > 0 ? { doCopyFailed: failed } : {}) });
+  return c.json({ ok: true, doNumbers, ...(failed.length > 0 ? { doCopyFailed: failed } : {}), ...(siFailed.length > 0 ? { siCopyFailed: siFailed } : {}) });
 });
 
 // ── PATCH header — edit debtor info, addresses, note, etc. ───────────

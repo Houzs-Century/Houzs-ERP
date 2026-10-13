@@ -45,7 +45,7 @@ export function soPriceAfterDoOn(
   p: { can: (key: string) => boolean; migrated: boolean },
 ): boolean {
   return p.can(SO_EDIT_PRICE_AFTER_DO_PERMISSION) && !p.migrated && header.after_do_invoiced !== true
-    && (header.after_do_targets ?? []).some((t) => !t.locked);
+    && (header.after_do_targets ?? []).some((t) => !t.returned);
 }
 
 /** A saved line the mode reopens: a DO already carries it, and it is a charge. */

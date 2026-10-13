@@ -653,7 +653,7 @@ export const useOverrideMfgSoLinePrice = () => {
   });
 };
 
-/* DEV-70 — unit price + discount of a line a DO already carries; the DO line follows. */
+/* DEV-70 — unit price + discount of a line a DO already carries; the DO and invoice lines follow. */
 export const useMfgSoLinePriceAfterDo = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -661,7 +661,7 @@ export const useMfgSoLinePriceAfterDo = () => {
       docNo: string; itemId: string; unitPriceSen: number; discountSen: number; reason?: string;
     }) =>
       runSoVersionedMutation(qc, docNo, 'price-after-do', ({ leaseToken }) =>
-        authedFetch<{ ok: boolean; doNumbers?: string[]; doCopyFailed?: string[] }>(
+        authedFetch<{ ok: boolean; doNumbers?: string[]; doCopyFailed?: string[]; siCopyFailed?: string[] }>(
           `/mfg-sales-orders/${docNo}/items/${itemId}/price-after-do`,
           {
             method: 'POST',

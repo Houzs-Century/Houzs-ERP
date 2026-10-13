@@ -3893,7 +3893,7 @@ const OverridePriceModal = ({
 
 /* DEV-70 — PriceAfterDoModal: unit price + discount of a line a Delivery Order
    already carries (`scm.so.edit_price_after_do`). The server copies both onto
-   the DO line(s); qty, product and spec stay as delivered. */
+   the DO line(s) and any invoice billing them; qty, product and spec stay as delivered. */
 const PriceAfterDoModal = ({
   item,
   docNo,
@@ -3925,6 +3925,7 @@ const PriceAfterDoModal = ({
         onSuccess: (r) => {
           const msg = afterDoCopyProblem(r);
           if (msg) void notify({ title: 'Delivery Order not updated', body: msg, tone: 'error' });
+          if (r.siCopyFailed?.length) void notify({ title: 'Invoice not updated', body: `The Sales Order saved, but ${r.siCopyFailed.join(', ')} was not updated. Open the invoice and check its amount.`, tone: 'error' });
           onClose();
         },
       },
@@ -3948,7 +3949,7 @@ const PriceAfterDoModal = ({
           <p className={styles.muted}>
             Item <strong>{item.item_code}</strong>{item.description ? ` — ${item.description}` : ''} · Qty {item.qty}<br />
             Now: {fmtRm(item.unit_price_sen, currency)} each, discount {fmtRm(item.discount_sen ?? 0, currency)}, amount {fmtRm(item.total_sen, currency)}<br />
-            The Delivery Order line changes too. Qty and product stay as delivered.
+            The Delivery Order line and its invoice change too. Qty and product stay as delivered.
           </p>
 
           <div className={styles.formGrid4}>

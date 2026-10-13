@@ -1,7 +1,9 @@
 /* DEV-70 (syasya 2026-10-12): with `scm.so.edit_price_after_do`, the unit price
    and discount of a line a Delivery Order already carries can change — product
-   lines too — and every DO line carrying it follows. Qty stays as delivered; a
-   DO with a live invoice or return stays locked (shared/so-after-do-edit.ts).
+   lines too — and every DO line carrying it follows, and every live invoice
+   line billing those DO lines, issued or not (Nico 2026-10-13, option B). Qty
+   stays as delivered; a DO with a live Delivery Return stays locked
+   (shared/so-after-do-edit.ts).
 
    Harness copied from soAfterDoEditRoutes.test.ts. The fixture is
    HC-SO-013490's shape: a DELIVERED order whose product lines came across at
@@ -175,11 +177,36 @@ describe('changing a delivered line price', () => {
     expect(soLine('line-bed').qty).toBe(1);
   });
 
-  test('a DO with a live Sales Invoice stays locked', async () => {
-    tables.sales_invoices.push({ id: 'si-1', delivery_order_id: 'do-1', so_doc_no: DOC, status: 'POSTED', company_id: 1 });
+  test('an issued invoice on the DO follows: its line, its total and its History (HC-SI-2610-103)', async () => {
+    tables.sales_invoices.push({ id: 'si-1', invoice_number: 'HC-SI-2610-103', delivery_order_id: 'do-1', so_doc_no: DOC, status: 'SENT', total_sen: 0, company_id: 1 });
+    tables.sales_invoice_items.push(
+      { id: 'sii-1', sales_invoice_id: 'si-1', do_item_id: 'doi-3', item_code: 'BF-QUEEN', item_group: 'bedframe', qty: 1, unit_price_sen: 0, discount_sen: 0, tax_sen: 0, line_total_sen: 0, line_cost_sen: 0, company_id: 1 },
+      { id: 'sii-2', sales_invoice_id: 'si-1', do_item_id: 'doi-1', item_code: 'MT-QUEEN', item_group: 'mattress', qty: 1, unit_price_sen: 0, discount_sen: 0, tax_sen: 0, line_total_sen: 0, line_cost_sen: 0, company_id: 1 },
+    );
+    const res = await reprice('line-bed', { unitPriceSen: 850000, discountSen: 0 });
+    expect(res.status).toBe(200);
+    expect(await res.json()).not.toHaveProperty('siCopyFailed');
+    expect(soLine('line-bed').unit_price_sen).toBe(850000);
+    expect(doLine('doi-3').unit_price_sen).toBe(850000);
+    expect(tables.sales_invoice_items.find((r) => r.id === 'sii-1')).toMatchObject({ unit_price_sen: 850000, line_total_sen: 850000 });
+    expect(tables.sales_invoice_items.find((r) => r.id === 'sii-2')).toMatchObject({ unit_price_sen: 0, line_total_sen: 0 });
+    expect(tables.sales_invoices[0]).toMatchObject({ total_sen: 850000 });
+    expect((tables.entity_audit_log ?? []).find((r) => r.entity_type === 'SALES_INVOICE' && r.entity_id === 'si-1')?.note)
+      .toContain('price after DO');
+  });
+
+  test('a cancelled invoice is left alone', async () => {
+    tables.sales_invoices.push({ id: 'si-x', invoice_number: 'HC-SI-2610-090', delivery_order_id: 'do-1', so_doc_no: DOC, status: 'CANCELLED', total_sen: 0, company_id: 1 });
+    tables.sales_invoice_items.push({ id: 'sii-x', sales_invoice_id: 'si-x', do_item_id: 'doi-3', qty: 1, unit_price_sen: 0, discount_sen: 0, line_total_sen: 0, company_id: 1 });
+    expect((await reprice('line-bed', { unitPriceSen: 850000, discountSen: 0 })).status).toBe(200);
+    expect(tables.sales_invoice_items.find((r) => r.id === 'sii-x')!.unit_price_sen).toBe(0);
+  });
+
+  test('a DO with a live Delivery Return stays locked', async () => {
+    tables.delivery_returns.push({ id: 'dr-1', delivery_order_id: 'do-1', status: 'POSTED', company_id: 1 });
     const res = await reprice('line-bed', { unitPriceSen: 250000, discountSen: 0 });
     expect(res.status).toBe(409);
-    expect((await res.json()).error).toBe('after_do_target_locked');
+    expect((await res.json()).error).toBe('after_do_price_returned');
     expect(soLine('line-bed').unit_price_sen).toBe(0);
   });
 

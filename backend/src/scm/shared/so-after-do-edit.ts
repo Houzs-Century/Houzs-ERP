@@ -25,9 +25,11 @@
  * DEV-70 (syasya, 2026-10-12, Samuel's answers 2026-10-13): a second, narrower
  * door. A caller holding `scm.so.edit_price_after_do` may change the UNIT PRICE
  * and DISCOUNT of ANY line a live Delivery Order carries (product lines too);
- * qty, product and specification stay frozen. Every DO line carrying it follows.
- * Same stop as above: not through a DO with a live Sales Invoice or Delivery
- * Return, never on an order invoiced without a DO. */
+ * qty, product and specification stay frozen. Every DO line carrying it follows,
+ * and so does every live Sales Invoice line billing those DO lines, issued or
+ * not: its totals, paid status and revenue entry are re-derived (Nico,
+ * 2026-10-13, option B). Not through a DO with a live Delivery Return, never on
+ * an order invoiced without a DO. */
 
 import { isServiceLine } from './service-sku';
 
@@ -59,8 +61,9 @@ export const SO_AFTER_DO_CUSTOMER_COLS: Readonly<Record<string, string | null>> 
 };
 
 /** A live Delivery Order of the order, as the detail payload carries it.
- *  `locked` = it has a live Sales Invoice or Delivery Return. */
-export type AfterDoTarget = { id: string; do_number: string | null; status: string | null; locked: boolean };
+ *  `locked` = it has a live Sales Invoice or Delivery Return; `returned` = a
+ *  live Delivery Return alone (the one that also stops a price change). */
+export type AfterDoTarget = { id: string; do_number: string | null; status: string | null; locked: boolean; returned?: boolean };
 
 export type AfterDoRefusal = { error: string; message: string; [k: string]: unknown };
 
@@ -73,6 +76,14 @@ export const AFTER_DO_PRICE_FORBIDDEN: AfterDoRefusal = {
   error: 'forbidden_edit_price_after_do',
   message: 'Changing a line price after its Delivery Order needs the "Edit SO line price after DO" permission.',
 };
+
+export function afterDoPriceReturnedRefusal(doNumbers: ReadonlyArray<string>): AfterDoRefusal {
+  return {
+    error: 'after_do_price_returned',
+    message: `${doNumbers.join(', ')} has a Delivery Return. Cancel the return first to change this price.`,
+    doNumbers: [...doNumbers],
+  };
+}
 
 export const AFTER_DO_PRICE_NOT_DELIVERED: AfterDoRefusal = {
   error: 'after_do_price_not_on_do',
