@@ -213,6 +213,9 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow
   /** Put the mig-0324 hold marker on, or take it off. NEVER a status write. */
   setHold: (r: R, onHold: boolean) => void;
   cancel: (r: R) => void;
+  /** Hard-delete a DRAFT (DELETE /:docNo). A draft is discarded, never
+   *  cancelled — see use-discard-draft-action.ts. */
+  discard: (r: R) => void;
   reopen: (r: R) => void;
   canDeliver: boolean;
 }): (r: R) => RowMenuItem[] {
@@ -258,7 +261,13 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow
         live && { label: "Close remaining", onClick: () => h.close(r) },
         isCancelled && { label: "Reopen", onClick: () => h.reopen(r) },
       ],
-      [!isCancelled && dangerItem("Request cancellation", () => h.cancel(r))],
+      [
+        /* A draft's way out (owner 2026-07-20): delete it, no document number
+           burnt, no dead CANCELLED row. Offered beside Cancel, not instead of
+           it — every record keeps its right-click Cancel (owner 2026-09-14). */
+        isDraft && dangerItem("Discard draft", () => h.discard(r)),
+        !isCancelled && dangerItem("Request cancellation", () => h.cancel(r)),
+      ],
     );
   };
 }

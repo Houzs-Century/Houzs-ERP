@@ -20,6 +20,7 @@ vi.mock("../../vendor/scm/lib/sales-order-queries", () => ({
   useSalesOrderRelatedAuditLog: () => ({ data: [], isLoading: false, isError: false, error: null }),
   useSalesOrderPayments: () => ({ data: [], isLoading: false, isError: false, error: null }),
   useUpdateMfgSalesOrderStatus: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteMfgSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSoLineCoverage: () => ({ data: undefined }),
 }));
 vi.mock("../../hooks/useBreadcrumbs", () => ({ useSetBreadcrumbs: () => undefined }));
