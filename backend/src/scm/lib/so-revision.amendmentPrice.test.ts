@@ -471,6 +471,76 @@ describe('applySoAmendment — the MIGRATED-order protections still hold', () =>
   });
 });
 
+/* ── A SEEDED 0 is not a requested price (HC-SO-013490) ─────────────────────
+   The amend editor fills a re-picked line's price from the catalogue, and a SKU
+   with no sell price seeds 0 with `priceAuthored: false`. Both builders used to
+   send that 0 as `newUnitPriceSen` on every changed line, so a SPEC swap to an
+   unpriced SKU reached here as an approved RM 0: on a migrated order
+   'including-zero' kept it, on a native one 'operator-zero' did. 11 lines on
+   10 orders were billed RM 0 that way (HC-SO-013490: 8,500 -> 0). The builders
+   now send NO price for an unauthored 0 (amendmentRequestedUnitPriceSen), and
+   these pin what the engine does with that: the line keeps its stored price, on
+   both order shapes, while a typed 0 an approver signed still lands as 0. */
+describe('applySoAmendment — a SPEC swap to an UNPRICED SKU keeps the stored price when no price is requested', () => {
+  /* The swap target: a catalogue row with NO sell price, the shape that seeds 0. */
+  const unpriced = () => product({ code: 'MAT-2', name: 'Mattress (unpriced)', sell_price_sen: null, base_price_sen: null });
+  const swapLine = (over: Partial<Row> = {}) => specLine({
+    new_item_code: 'MAT-2',
+    old_snapshot: { item_code: 'ACC-1', itemGroup: 'accessory', qty: 1, unitPriceSen: 850000 },
+    ...over,
+  });
+
+  it('MIGRATED: stored 850000, new_unit_price_sen null -> 850000 survives the swap', async () => {
+    const store = baseStore({ linkedAcDocNo: 'AC-SO-0001' });
+    store.mfg_products.push(unpriced());
+    store.mfg_sales_order_items = [soLine({ unit_price_sen: 850000, total_sen: 850000, balance_sen: 850000 })];
+    store.so_amendment_lines = [swapLine({ new_unit_price_sen: null })];
+
+    await apply(store);
+
+    const line = lineOf(store);
+    expect(line.item_code).toBe('MAT-2');
+    expect(line.unit_price_sen).toBe(850000);
+    expect(line.total_sen).toBe(850000);
+  });
+
+  it('NATIVE: stored 850000, new_unit_price_sen null -> 850000 survives the swap too', async () => {
+    const store = baseStore();
+    store.mfg_products.push(unpriced());
+    store.mfg_sales_order_items = [soLine({ unit_price_sen: 850000, total_sen: 850000, balance_sen: 850000 })];
+    store.so_amendment_lines = [swapLine({ new_unit_price_sen: null })];
+
+    await apply(store);
+
+    const line = lineOf(store);
+    expect(line.item_code).toBe('MAT-2');
+    expect(line.unit_price_sen).toBe(850000);
+  });
+
+  it('MIGRATED: an EXPLICIT 0 an approver signed still lands as 0 (unchanged behaviour)', async () => {
+    const store = baseStore({ linkedAcDocNo: 'AC-SO-0001' });
+    store.mfg_products.push(unpriced());
+    store.mfg_sales_order_items = [soLine({ unit_price_sen: 850000, total_sen: 850000, balance_sen: 850000 })];
+    store.so_amendment_lines = [swapLine({ new_unit_price_sen: 0 })];
+
+    await apply(store);
+
+    expect(lineOf(store).unit_price_sen).toBe(0);
+    expect(lineOf(store).total_sen).toBe(0);
+  });
+
+  it('NATIVE: an EXPLICIT 0 an approver signed still lands as 0 (unchanged behaviour)', async () => {
+    const store = baseStore();
+    store.mfg_products.push(unpriced());
+    store.mfg_sales_order_items = [soLine({ unit_price_sen: 850000, total_sen: 850000, balance_sen: 850000 })];
+    store.so_amendment_lines = [swapLine({ new_unit_price_sen: 0 })];
+
+    await apply(store);
+
+    expect(lineOf(store).unit_price_sen).toBe(0);
+  });
+});
+
 /* ── The discount channel (mig 0317) ─────────────────────────────────────
    Until 0317 this block was titled "What an approved amendment still CANNOT
    change": so_amendment_lines had no discount column, the apply copied the

@@ -20,6 +20,7 @@ import {
   amendmentLineFieldKinds,
   amendmentLineIsChange,
   amendmentLineSig,
+  amendmentRequestedUnitPriceSen,
   amendmentUnrenderedAxes,
   amendmentVariantSummaries,
   amendmentVariants,
@@ -385,6 +386,39 @@ describe('amendmentLineSig', () => {
 
   it('an untouched draft round-trips to the same signature', () => {
     expect(amendmentLineSig({ ...draft })).toBe(amendmentLineSig(draft));
+  });
+});
+
+/* HC-SO-013490 (2026-10-13): a SPEC swap to a SKU with no sell price seeded 0
+   into the editor (priceAuthored false), both builders sent it as
+   newUnitPriceSen, and an approval made it the billed price. The amendment road
+   now reads an UNAUTHORED 0 the way zeroPriceClaim does on the direct road: no
+   price requested, the stored price stays. */
+describe('amendmentRequestedUnitPriceSen', () => {
+  it('a seeded 0 (not authored) requests NO price', () => {
+    expect(amendmentRequestedUnitPriceSen({ unitPriceSen: 0, priceAuthored: false })).toBeNull();
+  });
+
+  it('an absent priceAuthored flag is not an authored price either', () => {
+    expect(amendmentRequestedUnitPriceSen({ unitPriceSen: 0 })).toBeNull();
+  });
+
+  it('a typed 0 is a real request for RM 0', () => {
+    expect(amendmentRequestedUnitPriceSen({ unitPriceSen: 0, priceAuthored: true })).toBe(0);
+  });
+
+  it('a non-zero price is requested whether or not it was typed (a catalogue fill is a price)', () => {
+    expect(amendmentRequestedUnitPriceSen({ unitPriceSen: 850000, priceAuthored: false })).toBe(850000);
+    expect(amendmentRequestedUnitPriceSen({ unitPriceSen: 850000, priceAuthored: true })).toBe(850000);
+  });
+
+  it('a line whose request carries no price is NOT a price change, and routes without a PRICE atom', () => {
+    const swap: DiffableAmendmentLine = {
+      change_type: 'SPEC', new_item_code: 'MAT-2', new_qty: 1, new_unit_price_sen: null,
+      old_snapshot: { itemCode: 'MAT-1', qty: 1, unitPriceSen: 850000, itemGroup: 'mattress' },
+    };
+    expect(amendmentLineChangedFields(swap).unitPrice).toBe(false);
+    expect(amendmentLineFieldKinds(swap)).toEqual(['SPEC']);
   });
 });
 

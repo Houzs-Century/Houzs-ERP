@@ -2010,8 +2010,9 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
                             <div className="money" style={{ fontSize: 12.5, fontWeight: 700, color: "#0c3f39", ...mEmphIf(chg.itemCode) }}>{l.new_item_code ?? old.itemCode ?? "—"}</div>
                             <div className="money" style={{ fontSize: 11, color: "var(--mut)", marginTop: 2 }}>
                               <span style={mEmphIf(chg.qty)}>Qty {l.new_qty ?? old.qty ?? "—"}</span>
-                              {typeof l.new_unit_price_sen === "number" ? (
-                                <>{" · "}<span style={mEmphIf(chg.unitPrice)}>RM {rm(l.new_unit_price_sen)}</span></>
+                              {/* A null requested price keeps the stored one (desktop parity): show it unchanged. */}
+                              {typeof (l.new_unit_price_sen ?? old.unitPriceSen) === "number" ? (
+                                <>{" · "}<span style={mEmphIf(chg.unitPrice)}>RM {rm((l.new_unit_price_sen ?? old.unitPriceSen) as number)}</span></>
                               ) : ""}
                             </div>
                             {newSummary ? <div style={{ fontSize: 10.5, color: "var(--mut2)", marginTop: 2, ...mEmphIf(chg.variants) }}>{newSummary}</div> : null}
