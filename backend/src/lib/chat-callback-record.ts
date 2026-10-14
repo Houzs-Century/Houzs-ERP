@@ -145,7 +145,7 @@ export async function recordChatTap(sb: AnySchemaClient, input: ChatTapInput): P
     try {
       let beforeQuery = sb
         .from("mfg_sales_orders")
-        .select("amend_date_from_customer, amend_reason, delivery_message_status, status")
+        .select("amend_date_from_customer, amend_reason_from_customer, delivery_message_status, status")
         .eq("doc_no", docNo);
       if (companyId != null) beforeQuery = beforeQuery.eq("company_id", companyId);
       const { data: beforeRow, error: beforeErr } = await beforeQuery.maybeSingle();

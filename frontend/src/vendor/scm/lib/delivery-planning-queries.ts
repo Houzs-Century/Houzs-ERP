@@ -126,9 +126,12 @@ export type PlanningOrder = {
      original, what Days Left / OVERDUE actually use. */
   amend_date_from_customer: string | null;
   amended_delivery_date: string | null;
-  /* HC "Amend Client Date Reason" (migration 0201) — free-text reason paired
-     with the amend dates above. */
+  /* HC "Amend Client Date Reason" (migration 0201) — OUR reason for moving the
+     date (the AMEND_REASONS presets, printed by the Postpone notice). */
   amend_reason: string | null;
+  /* The CUSTOMER's reason for asking to move it (the WhatsApp amend tap:
+     "Renovation Delay" / "Date Unavailable"). Read-only on the board. */
+  amend_reason_from_customer?: string | null;
   effective_delivery_date: string | null;
   processing_date: string | null;
   /* Owner 2026-08-12 (2990 only) — a live PO already claims one of this SO's
