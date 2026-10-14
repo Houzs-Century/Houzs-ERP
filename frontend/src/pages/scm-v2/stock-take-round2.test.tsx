@@ -104,6 +104,20 @@ describe('Stock Take detail — round 2', () => {
     );
   });
 
+  /* HC-0019 (Sim, 29 Sep): a note per line could be saved but never typed. */
+  test('a note typed on a line is saved with the counts', () => {
+    updateLines.mockClear();
+    draw();
+    fireEvent.change(screen.getByLabelText('Note for MATT-B'), { target: { value: ' torn box ' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save Counts/ }));
+    expect(updateLines).toHaveBeenCalledWith(
+      { id: 'st-1', lines: [expect.objectContaining({ id: 'l2', notes: 'torn box' })] },
+      expect.anything(),
+    );
+    /* A note alone must not re-send the count (that re-stamps Counted By). */
+    expect(updateLines.mock.calls[0][0].lines[0]).not.toHaveProperty('countedQty');
+  });
+
   test('a rack that is not in this warehouse blocks the save', () => {
     updateLines.mockClear();
     draw();
