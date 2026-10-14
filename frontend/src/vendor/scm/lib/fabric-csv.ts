@@ -18,6 +18,10 @@
 // ----------------------------------------------------------------------------
 
 import type { FabricTier, FabricTrackingRow } from './fabric-queries';
+import { parseCSV } from '../../../lib/csv';
+import {
+  isWorkbookFile, normalizeImportHeader, readWorkbookSheets, resolveImportHeaders, UNREADABLE_WORKBOOK,
+} from '../../../lib/import-sheet';
 
 type ColKind = 'text' | 'int' | 'tier';
 
@@ -61,10 +65,6 @@ const TABLE_EXPORT_HEADERS: Record<string, string> = {
 const HEADER_TO_API: Partial<Record<string, CsvColumn>> = Object.fromEntries(
   CSV_COLUMNS.map((c) => [c.csv, c]),
 );
-for (const [alias, csv] of Object.entries(TABLE_EXPORT_HEADERS)) {
-  const col = HEADER_TO_API[csv];
-  if (col) HEADER_TO_API[alias] = col;
-}
 
 // "Price 2" / "PRICE_2" / "P2" / "2" -> PRICE_2; blank or the table's "—" -> null.
 // undefined = not a tier at all.
@@ -87,60 +87,24 @@ export function toCsv(rows: FabricTrackingRow[]): string {
   return '﻿' + header + '\r\n' + body + '\r\n';
 }
 
-// Parse CSV text into a 2D grid. Handles quoted fields (including embedded
-// commas, CRLF, and "" escapes). Tolerant of mixed line endings.
-function parseGrid(text: string): string[][] {
-  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = '';
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') { cell += '"'; i++; continue; }
-        inQuotes = false;
-      } else {
-        cell += ch;
-      }
-      continue;
-    }
-    if (ch === '"' && cell === '') { inQuotes = true; continue; }
-    if (ch === ',') { row.push(cell); cell = ''; continue; }
-    if (ch === '\r') continue;
-    if (ch === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; continue; }
-    cell += ch;
-  }
-  if (cell !== '' || row.length > 0) { row.push(cell); rows.push(row); }
-  return rows;
-}
-
 export type ParsedImport = {
   rows:     Array<Record<string, unknown>>;
   errors:   string[];
   warnings: string[];
 };
 
-/* Header matching is tolerant of case AND of space-vs-underscore, so a
-   hand-made Excel sheet with "Fabric Code" maps to the same column as the
-   round-trip export's "fabric_code". Runs of whitespace/underscore collapse to
-   one underscore; the CSV_COLUMNS keys are already lower snake_case, so this is
-   identity on an exported file and only ever LOOSENS matching. */
-function normalizeHeader(h: string): string {
-  return h.trim().toLowerCase().replace(/[\s_]+/g, '_');
-}
-
 // Map a parsed grid (row 0 = headers, the rest = data) into the camelCase row
 // shape bulk-upsert expects. The single normalisation point for BOTH the CSV
 // and the Excel path — do not duplicate this logic in either caller.
 function parseGridRows(grid: string[][]): ParsedImport {
   if (grid.length < 1) return { rows: [], errors: ['The file is empty'], warnings: [] };
-  const header = (grid[0] ?? []).map(normalizeHeader);
-  if (!header.some((h) => HEADER_TO_API[h]?.csv === 'fabric_code')) {
+  /* Case and space-vs-underscore never matter (bugs/0605); the table export's
+     labels are aliases (BUG-88). */
+  const header = resolveImportHeaders(grid[0] ?? [], CSV_COLUMNS.map((c) => c.csv), TABLE_EXPORT_HEADERS);
+  if (!header.includes('fabric_code')) {
     return { rows: [], errors: ['Header must include a fabric_code (or Code) column'], warnings: [] };
   }
-  const unknown = header.filter((h) => h && !HEADER_TO_API[h]);
+  const unknown = header.filter((h) => h && !HEADER_TO_API[h]).map(normalizeImportHeader);
   const warnings = unknown.length ? [`Ignoring unknown columns: ${unknown.join(', ')}`] : [];
 
   const rows: Array<Record<string, unknown>> = [];
@@ -190,38 +154,25 @@ function parseGridRows(grid: string[][]): ParsedImport {
 }
 
 export function parseCsv(text: string): ParsedImport {
-  return parseGridRows(parseGrid(text));
+  return parseGridRows(parseCSV(text));
 }
 
-// Excel (.xlsx/.xls/...) → the SAME row shape as parseCsv. First sheet only,
-// first row = headers. `raw: false` renders every cell as a string (dates,
-// numbers) so cell-typing matches the CSV path where everything arrives as
-// text and parseGridRows re-parses the int columns. SheetJS is loaded lazily
-// (the same lib the SKU/Products import already uses) so its parser chunk stays
-// out of the main bundle.
+// Excel -> the SAME row shape as parseCsv: first sheet, every cell as the text
+// Excel shows, so parseGridRows re-parses the int columns exactly as for CSV.
 export async function parseWorkbook(buffer: ArrayBuffer): Promise<ParsedImport> {
-  const XLSX = await import('../../../lib/xlsx-runtime');
-  const wb = XLSX.read(buffer, { type: 'array' });
-  const first = wb.SheetNames[0];
-  const sheet = first ? wb.Sheets[first] : undefined;
-  if (!sheet) return { rows: [], errors: ['The workbook has no sheets'], warnings: [] };
-  const aoa = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, defval: '' });
-  const grid = aoa.map((r) => (Array.isArray(r) ? r.map((c) => String(c ?? '')) : []));
-  return parseGridRows(grid);
+  const [first] = await readWorkbookSheets(buffer, false);
+  if (!first) return { rows: [], errors: ['The workbook has no sheets'], warnings: [] };
+  return parseGridRows(first.map((r) => (Array.isArray(r) ? r.map((c) => String(c ?? '')) : [])));
 }
 
-const WORKBOOK_EXT = /\.(xlsx|xls|xlsm|xlsb)$/i;
-
-// One entry point for the file picker: dispatch on extension so a caller does
-// not have to know CSV from Excel. A workbook that SheetJS cannot open (a
-// mislabelled or corrupt file) becomes a readable error rather than an
-// unhandled rejection.
+// One entry point for the file picker. A workbook SheetJS cannot open becomes a
+// readable error rather than an unhandled rejection.
 export async function parseImportFile(file: File): Promise<ParsedImport> {
-  if (WORKBOOK_EXT.test(file.name)) {
+  if (isWorkbookFile(file.name)) {
     try {
       return await parseWorkbook(await file.arrayBuffer());
     } catch {
-      return { rows: [], errors: ['This file could not be read as an Excel workbook. Re-save it as .xlsx or export to CSV and try again.'], warnings: [] };
+      return { rows: [], errors: [UNREADABLE_WORKBOOK], warnings: [] };
     }
   }
   return parseCsv(await file.text());
