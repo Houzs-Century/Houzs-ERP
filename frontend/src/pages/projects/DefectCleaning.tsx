@@ -74,7 +74,7 @@ export function DefectCleaning({
     } catch (e) {
       // A refused save must reach the operator — the button is gated on a
       // client-side role read the server re-checks, so a refusal is reachable.
-      toast?.error(e instanceof Error ? e.message : "Couldn't update the cleaning status. Please try again.");
+      toast.error(e instanceof Error ? e.message : "Couldn't update the cleaning status. Please try again.");
     } finally {
       setBusy(false);
     }
