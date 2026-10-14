@@ -10,6 +10,7 @@ import { suggestEvents } from '../lib/event-match';
 import { todayMyt } from '../lib/my-time';
 import { extractOneBill, matchSupplier, normalizeVendor, BILL_IMAGE_MIMES, MAX_BILLS_PER_CALL, MAX_FILES_PER_BILL, MAX_BILL_FILE_BYTES } from '../../acc/bill-extract';
 import { toBase64 } from '../lib/scan-ocr';
+import { scanTimer } from '../lib/scan-timing';
 
 /* ── Bill OCR — read incoming bills into voucher pre-fills (2026-09-02) ──────
    我想要把ocr 功能放去payment 那边. Each `bills` entry is ONE document (its
@@ -28,6 +29,7 @@ export const extractBillsHandler = async (c: any) => {
     return c.json({ error: 'anthropic_key_missing', reason: 'Run: npx wrangler secret put ANTHROPIC_API_KEY' }, 503);
   }
 
+  const timer = scanTimer('pv');
   let body: any;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   /* { fromRequest } — the bill a payment request carries, read when Finance
@@ -65,6 +67,7 @@ export const extractBillsHandler = async (c: any) => {
     }
   }
 
+  timer.mark('upload');
   /* Suppliers once for the whole batch — matching is per bill, in code. */
   const sb = c.get('supabase');
   const { data: supRaw, error: supErr } = await scopeToCompany(
@@ -94,6 +97,7 @@ export const extractBillsHandler = async (c: any) => {
     return null;
   };
 
+  timer.mark('prep');
   const read: Array<Awaited<ReturnType<typeof extractOneBill>>> = [];
   for (const [i, b] of bills.entries()) {
     const files = (b.files as Array<{ name?: unknown; mime?: unknown; dataBase64?: unknown }>).map((f) => ({
@@ -101,6 +105,7 @@ export const extractBillsHandler = async (c: any) => {
     }));
     read.push(await extractOneBill(apiKey, files));
   }
+  timer.mark('model');
 
   /* The events the bills could be for (owner 2026-09-30: ocr 要有办法 detect
      相关的 event) — read ONCE for the batch, only when a bill printed an event,
@@ -136,6 +141,8 @@ export const extractBillsHandler = async (c: any) => {
         : [],
     };
   });
+  timer.mark('parse');
+  timer.done(c.env, null, read.some((r) => r.ok) ? 'ok' : 'error');
   return c.json({ bills: out });
 };
 

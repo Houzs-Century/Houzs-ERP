@@ -54,6 +54,7 @@ import {
   type ExtractedPayment,
 } from '../lib/scan-receipt-plan';
 import { safeScanDepositSen } from '../lib/scan-header-deposit';
+import { scanTimer } from '../lib/scan-timing';
 import { variantNotAllowedSentence } from '../lib/allowed-options-check';
 // Document-type-agnostic OCR transport, shared with the GR/PI scanners.
 import {
@@ -3774,6 +3775,8 @@ async function runScanJob(
     imageKeys: string[];
   },
 ): Promise<void> {
+  const timer = scanTimer('so');
+  let outcome: 'ok' | 'error' = 'ok';
   const svc = serviceClient(env);
   const touch = async (patch: Record<string, unknown>): Promise<void> => {
     try {
@@ -3787,6 +3790,7 @@ async function runScanJob(
     }
   };
   const fail = async (plainMsg: string): Promise<void> => {
+    outcome = 'error';
     await touch({ status: 'error', error: plainMsg });
     // A hard failure produced no draft — tell the rep privately so they know to
     // scan again (system faults only now; unreadable slips land a shell draft).
@@ -3813,7 +3817,9 @@ async function runScanJob(
     const branding = await getBranding(env);
     const cachedPrefix = buildCachedPrefix(catalog, branding.companyName);
     const inj = await loadPromptInjections(svc, job.salesperson);
+    timer.mark('prep');
     const call = await callClaudeSlipExtract(apiKey, cachedPrefix, inj, job.fileBlocks);
+    timer.mark('model');
     const parsed = call.parsed;
 
     // Learning pool + slip/receipt provenance — identical to /extract.
@@ -3831,6 +3837,7 @@ async function runScanJob(
     const { imageKey, receiptImageKey } = await storeScanImages(
       env.SO_ITEM_PHOTOS, svc, sampleId, job.uploadedImages, parsed,
     );
+    timer.mark('save');
 
     // Owner 2026-07-04: EVERY scan ends as a draft the rep can open — success,
     // duplicate, OR unreadable. A scan that could not be turned into a full
@@ -3849,6 +3856,7 @@ async function runScanJob(
       shellNote = 'The scan could not read this slip, so this draft is blank. Please open it and fill in the order from the photo.';
     } else {
       await postProcessSlip(parsed, svc, env.GOOGLE_MAPS_API_KEY, catalog);
+      timer.mark('parse');
 
       // Multi-receipt manifest (migration 0141) — record WHICH uploads the OCR
       // classified as payment receipts (the durable audit trail of "the
@@ -4047,6 +4055,9 @@ async function runScanJob(
   } catch (e) {
     console.error('[scan-job] pipeline threw:', job.id, e);
     await fail(JOB_MSG.fallback);
+  } finally {
+    timer.mark('save');
+    timer.done(env, job.id, outcome);
   }
 }
 
@@ -4091,6 +4102,7 @@ scanSo.post('/enqueue', async (c) => {
   /* company-scope: the by-id reads the checker attributes to this handler are
      NOT in it — they belong to processScanQueueMessage, declared inside this
      handler's slice. Trace in docs/modules/scan-to-so.md section 7. */
+  const timer = scanTimer('so-enqueue');
   let formData: FormData;
   try {
     formData = await c.req.formData();
@@ -4229,6 +4241,9 @@ scanSo.post('/enqueue', async (c) => {
         .eq('id', jobId);
     }
   }
+
+  timer.mark('upload');
+  timer.done(c.env, jobId, 'ok');
 
   // 3) Hand the job to the Cloudflare Queue. The consumer (index.ts `queue()`)
   //    rebuilds EVERYTHING from the scan_jobs row + R2 photos, so the message
