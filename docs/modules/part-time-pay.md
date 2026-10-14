@@ -4,7 +4,7 @@ What a part-time salesperson is paid for an event, raised as a payment request F
 
 ## Flow
 
-- The part-timer must be a member with a sales position and a POS PIN (Team > Members), and log into the POS under their own name — the sheet reads their logins and their orders.
+- A part-timer is a TEMPORARY member (owner 2026-10-14, option A): HR adds them under the position `Sales Part-time` with a POS PIN (Team > Members), they log into the POS under their own name, and HR sets them to disabled after the event. Disabled hides them from the POS screen; the sheet still lists them for the events they worked, so pay after the event is unaffected. Re-enable the same member when they return.
 - `HR > Part-time Pay`, pick the event. Everyone who logged into the POS or sold during the event's period is listed with their days, the first login of each day (the arrival time), their sales and the priced figures.
 - The owner (`scm.part_time_pay.request`) ticks who goes on the sheet, corrects days, ticks one WiFi holder, keys the bank details and saves. A saved row is `DRAFT`.
 - HR (`scm.part_time_pay.confirm`) confirms a row: a `SUBMITTED` payment request is raised for it, purpose `Part-time sales — {event} ({start} to {end})`, note = the breakdown, payee = the account name. The row is `CONFIRMED` and locked.
