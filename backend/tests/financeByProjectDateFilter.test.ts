@@ -96,9 +96,11 @@ describe("GET /finance/by-project — sales agrees with the project page", () =>
     const { rows } = await drive("?date_from=2026-09-01&date_to=2026-09-30");
     const sql = flat(rows.sql);
     expect(sql).toContain('LEFT JOIN "project_finance" pf ON pf.project_id = p.id');
-    const salesCol = /CASE WHEN (.+?) > 0 THEN .+? ELSE COALESCE\(MAX\(pf\.total_sales\), 0\) END AS sales/.exec(sql);
-    expect(salesCol).not.toBeNull();
-    // The thing being tested for > 0 is the SUM of individual sales lines.
-    expect(salesCol![1]).toContain("l.category = 'sales'");
+    // The thing tested for > 0 is the SUM of individual sales lines, and the
+    // fallback is the lump box.
+    expect(sql).toContain(
+      "l.category = 'sales' AND l.archived_at IS NULL THEN l.amount ELSE 0 END), 0) > 0 THEN",
+    );
+    expect(sql).toContain("ELSE COALESCE(MAX(pf.total_sales), 0) END AS sales");
   });
 });
