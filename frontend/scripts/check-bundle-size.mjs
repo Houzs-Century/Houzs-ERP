@@ -237,7 +237,11 @@ const CEILINGS = {
   // Requests page and the PMS dialogs import it) and the lazy PmsRequestModals
   // chunk, and api/client.ts gained fetchBlob (fetchBlobUrl now reads through
   // it). Same shared-lazy-chunk mechanism as the 09-14 / 09-16 notes.
-  INITIAL_JS_GZIP: 171 * KB,
+  // 171 -> 172 on 2026-10-14: main sat at 171.0 and the Houzs POS Admin page
+  // (PR #4635) added NO eager module: one lazy() route for /pos-admin in
+  // App.tsx and one Sidebar entry (System > POS Admin, the Store icon). The
+  // measured delta was +0.2 KB. Same shell-growth mechanism as the notes above.
+  INITIAL_JS_GZIP: 172 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT
