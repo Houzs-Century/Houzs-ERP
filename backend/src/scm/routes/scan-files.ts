@@ -74,28 +74,22 @@ export const scanFileContentHandler = async (kind: ScanFileKind, c: Ctx): Promis
   });
 };
 
-const forKind = (kind: ScanFileKind) => ({
-  list: (c: unknown) => listScanFilesHandler(kind, c as Ctx),
-  content: (c: unknown) => scanFileContentHandler(kind, c as Ctx),
-});
-const SO = forKind("so"), PAY = forKind("payment"), PV = forKind("pv"), WS = forKind("workshop");
-
 export const scanFilesSo = new Hono<{ Bindings: Env; Variables: Variables }>();
 scanFilesSo.use('*', supabaseAuth);
-scanFilesSo.get('/doc/:documentId', SO.list);
-scanFilesSo.get('/:id/content', SO.content);
+scanFilesSo.get('/doc/:documentId', (c) => listScanFilesHandler('so', c as unknown as Ctx));
+scanFilesSo.get('/:id/content', (c) => scanFileContentHandler('so', c as unknown as Ctx));
 
 export const scanFilesPayment = new Hono<{ Bindings: Env; Variables: Variables }>();
 scanFilesPayment.use('*', supabaseAuth);
-scanFilesPayment.get('/doc/:documentId', PAY.list);
-scanFilesPayment.get('/:id/content', PAY.content);
+scanFilesPayment.get('/doc/:documentId', (c) => listScanFilesHandler('payment', c as unknown as Ctx));
+scanFilesPayment.get('/:id/content', (c) => scanFileContentHandler('payment', c as unknown as Ctx));
 
 export const scanFilesPv = new Hono<{ Bindings: Env; Variables: Variables }>();
 scanFilesPv.use('*', supabaseAuth);
-scanFilesPv.get('/doc/:documentId', PV.list);
-scanFilesPv.get('/:id/content', PV.content);
+scanFilesPv.get('/doc/:documentId', (c) => listScanFilesHandler('pv', c as unknown as Ctx));
+scanFilesPv.get('/:id/content', (c) => scanFileContentHandler('pv', c as unknown as Ctx));
 
 export const scanFilesWorkshop = new Hono<{ Bindings: Env; Variables: Variables }>();
 scanFilesWorkshop.use('*', supabaseAuth);
-scanFilesWorkshop.get('/doc/:documentId', WS.list);
-scanFilesWorkshop.get('/:id/content', WS.content);
+scanFilesWorkshop.get('/doc/:documentId', (c) => listScanFilesHandler('workshop', c as unknown as Ctx));
+scanFilesWorkshop.get('/:id/content', (c) => scanFileContentHandler('workshop', c as unknown as Ctx));
