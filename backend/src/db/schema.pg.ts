@@ -608,6 +608,30 @@ export const project_checklist_template_items = pgTable(
   },
 );
 
+// ── project_sales_bills (mig 20261014T1600) ────────────────
+// The evening sales report pasted into a project's chat, one row per booklet
+// number: what the slip said and who sold it, so the project can say which
+// bills are still not opened as Sales Orders. Matching is done at read time
+// (routes/lib/sales-report-bills.ts); nothing about the match is stored.
+export const project_sales_bills = pgTable(
+  "project_sales_bills",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    project_id: bigint("project_id", { mode: "number" }).notNull(),
+    ref_token: text("ref_token").notNull(),
+    ref_raw: text("ref_raw").notNull(),
+    amount_sen: bigint("amount_sen", { mode: "number" }).notNull(),
+    salesperson_name: text("salesperson_name"),
+    report_date: text("report_date"),
+    source_activity_id: bigint("source_activity_id", { mode: "number" }),
+    created_by: bigint("created_by", { mode: "number" }),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("uq_project_sales_bills_token").on(t.company_id, t.project_id, t.ref_token)],
+);
+
 // ── sales_entries (mig 041 / 051) ──────────────────────────
 export const sales_entries = pgTable("sales_entries", {
   company_id: bigint("company_id", { mode: "number" }),

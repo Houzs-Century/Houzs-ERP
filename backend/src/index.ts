@@ -42,6 +42,7 @@ import { runPushFleetReminders } from "./services/pushFleetReminders";
 import presence from "./routes/presence";
 import projects from "./routes/projects";
 import { projectSalesOrders } from "./routes/project-sales-orders";
+import { projectSalesBills } from "./routes/project-sales-bills";
 import projectsOutstanding from "./routes/projectsOutstanding";
 // Sales entries (/api/sales) is retained as a DEPENDENCY of Projects — the
 // Projects page embeds the sales-entry EntryPanel + submit/void/delete flow.
@@ -467,6 +468,11 @@ app.route("/api/brand-share", brandShare);
 // the router carries the SCM bridge. See routes/project-sales-orders.ts.
 app.use("/api/project-sales-orders/*", requirePageAccessOrSalesView("sales"));
 app.route("/api/project-sales-orders", projectSalesOrders);
+// The evening sales report a project keeps, bill by bill, matched to the orders
+// opened since. Same read gate as the Sales section; saving is for the three
+// named people, checked inside. See routes/project-sales-bills.ts.
+app.use("/api/project-sales-bills/*", requirePageAccessOrSalesView("sales"));
+app.route("/api/project-sales-bills", projectSalesBills);
 app.route("/api/sales", sales);
 app.route("/api/finance", finance);
 app.route("/api/stockitems", stockItems);

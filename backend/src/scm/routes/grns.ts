@@ -446,7 +446,7 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
     posted_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }).eq('id', grnId), companyId).eq('status', preStatus).select('id, status, posted_at').maybeSingle();
-  // HC-0004: the DB cap (mig 20261014T1400) refused a post past a PO line's qty.
+  // HC-0004: the DB cap (mig 20261014T1600) refused a post past a PO line's qty.
   if (isPoLineOverReceived(error)) return { ok: false, reason: 'qty_exceeds_remaining', status: 409 };
   if (error) return { ok: false, reason: error.message, status: 500 };
   // Lost the race: another confirm advanced the row between the read and the
