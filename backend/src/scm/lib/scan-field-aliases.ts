@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the service client is schema-parameterised; same alias as scan-sample-review.ts
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
 export type SlipAliasField = 'customerName' | 'phone' | 'itemCode';

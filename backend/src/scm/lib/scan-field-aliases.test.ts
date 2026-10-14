@@ -5,7 +5,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { noteScanDraftAccepted } from './scan-sample-review';
 import { readSlipWithAliases, slipAliasPairs } from './scan-field-aliases';
 
-type Row = Record<string, any>;
+type Row = Record<string, unknown>;
 
 /* PostgREST stand-in: select/eq/not/or/limit/order/update/upsert. */
 function fakeDb(tables: Record<string, Row[]>) {
@@ -15,7 +15,10 @@ function fakeDb(tables: Record<string, Row[]>) {
     private patch: Row | Row[] = {};
     private conflict: string[] = [];
     constructor(private table: string) {}
-    private get rows() { return (tables[this.table] ||= []); }
+    private get rows(): Row[] {
+      const t = tables[this.table] as Row[] | undefined;
+      return t ?? (tables[this.table] = []);
+    }
     select() { return this; }
     order() { return this; }
     limit() { return this; }
@@ -44,11 +47,11 @@ function fakeDb(tables: Record<string, Row[]>) {
       return hit;
     }
     maybeSingle() { return Promise.resolve({ data: this.run()[0] ?? null, error: null }); }
-    then(res: (v: any) => any, rej?: (e: any) => any) {
+    then<A>(res: (v: { data: Row[]; error: null }) => A, rej?: (e: unknown) => A) {
       return Promise.resolve({ data: this.run(), error: null }).then(res, rej);
     }
   }
-  return { from: (t: string) => new Q(t) } as never;
+  return { from: (t: string) => new Q(t) } as unknown as Parameters<typeof noteScanDraftAccepted>[0];
 }
 
 const DOC = 'SO-2610-001';
@@ -77,7 +80,7 @@ describe('readSlipWithAliases + noteScanDraftAccepted: correct once, right next 
 
     // Scan 1: nothing learnt yet, so the model's read stands.
     const first = await readSlipWithAliases(db, COMPANY, model);
-    expect(first.parsed?.customerName).toBe('Tan Ah Kow');
+    expect(first.parsed.customerName).toBe('Tan Ah Kow');
     expect(model.mock.calls[0]![0]).toBe('');
 
     // The draft built from it; the operator fixes three fields and confirms.
@@ -96,14 +99,14 @@ describe('readSlipWithAliases + noteScanDraftAccepted: correct once, right next 
 
     // Scan 2: same misread from the model; the table fixes it, and the model was told.
     const second = await readSlipWithAliases(db, COMPANY, model);
-    expect(second.parsed?.customerName).toBe('Tan Ah Kau');
-    expect(second.parsed?.phones[0]).toBe('127778881');
-    expect(second.parsed?.lines[0].skuMatch).toMatchObject({ code: 'BC-KING', confidence: 1 });
+    expect(second.parsed.customerName).toBe('Tan Ah Kau');
+    expect((second.parsed.phones as string[])[0]).toBe('127778881');
+    expect((second.parsed.lines as Row[])[0]!.skuMatch).toMatchObject({ code: 'BC-KING', confidence: 1 });
     expect(model.mock.calls[1]![0]).toContain('Tan Ah Kau');
 
     // Another company's scan learns nothing from this one.
     const other = await readSlipWithAliases(db, 2, model);
-    expect(other.parsed?.customerName).toBe('Tan Ah Kow');
+    expect(other.parsed.customerName).toBe('Tan Ah Kow');
   });
 
   test('a confirm with no edits teaches no alias', async () => {
@@ -114,7 +117,7 @@ describe('readSlipWithAliases + noteScanDraftAccepted: correct once, right next 
     };
     await noteScanDraftAccepted(fakeDb(tables), DOC);
     expect(tables.so_scan_samples![0]!.status).toBe('ACCEPTED');
-    expect(tables.scan_field_aliases ?? []).toHaveLength(0);
+    expect((tables.scan_field_aliases as Row[] | undefined) ?? []).toHaveLength(0);
   });
 });
 
