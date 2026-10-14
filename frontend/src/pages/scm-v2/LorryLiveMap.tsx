@@ -5,6 +5,7 @@
 // Reuses the trip map component; one pin per lorry, amber when the fix is old.
 // ----------------------------------------------------------------------------
 
+import { fmtTime } from '@2990s/shared';
 import { PageHeader } from '../../components/Layout';
 import { LiveTripMap, type LiveMarker } from '../../vendor/scm/components/LiveTripMap';
 import { useLorryPositions, type LorryPosition } from '../../vendor/scm/lib/lorries-queries';
@@ -81,7 +82,7 @@ export function LorryLiveMap() {
                       <td className="px-3 py-2 font-semibold text-ink">{p.plate}</td>
                       <td className={isStale(p) ? 'px-3 py-2 text-amber-600' : 'px-3 py-2 text-ink-secondary'}>
                         {ago(p.recorded_at)}
-                        <span className="ml-1 text-ink-muted">({new Date(p.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})</span>
+                        <span className="ml-1 text-ink-muted">({fmtTime(p.recorded_at)})</span>
                       </td>
                       <td className="px-3 py-2">{p.speed_kmh == null ? '—' : `${Math.round(p.speed_kmh)} km/h`}</td>
                       <td className="px-3 py-2">{p.ignition == null ? '—' : p.ignition ? 'On' : 'Off'}</td>
