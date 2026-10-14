@@ -49,6 +49,9 @@ export const deviceApi = {
   ping: () => call<{ ok: boolean; at: string }>("/api/pos-device/ping", { method: "GET" }, 5000),
   prepare: <T>(token: string) => call<{ bundle: T }>("/api/pos-device/prepare", { method: "GET", headers: { "X-POS-Device": token } }, 60_000),
   heartbeat: (token: string, body: unknown) => call<{ ok: boolean; at: string; catalog_version: number | null }>("/api/pos-device/heartbeat", { method: "POST", body: JSON.stringify(body), headers: { "X-POS-Device": token } }, 10_000),
+  salesBatch: (token: string, body: unknown) =>
+    call<{ results: { uuid: string; status: "accepted" | "duplicate" | "updated" | "rejected"; reason?: string; stock_warning?: string | null }[]; at: string; accepted: number; duplicates: number; rejected: number }>(
+      "/api/pos-device/sales/batch", { method: "POST", body: JSON.stringify(body), headers: { "X-POS-Device": token } }, 60_000),
 };
 
 /** Online for real: `navigator.onLine` says the radio is up, the ping says

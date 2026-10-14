@@ -10,7 +10,8 @@ import {
   addItem, cartTotals, discLabel, emptyCart, findByBarcode, formatReceiptNo, lineAmountSen, overridePrice, removeLine,
   setBillDiscount, setLineDiscount, setQty, toggleFoc, type Cart, type CartLine, type Discount, type HeldBill,
 } from "../cart";
-import { sendHeartbeat } from "../deviceStore";
+import { SyncPanel, syncIndicator, useSyncStatus } from "../sell/SyncPanel";
+import { afterSale, heartbeat, syncNow } from "../sync";
 import { discardHold, holdCart, listHolds } from "../holdsStore";
 import { fmtMyt } from "../loginRules";
 import { onPrinterStatus, type PrinterStatus } from "../printer";
@@ -40,11 +41,13 @@ type Popup =
   | { kind: "pay" }
   | { kind: "find"; q: string }
   | { kind: "return"; original: SaleRecord | null }
+  | { kind: "sync" }
   | null;
 
 type Toast = { text: string; bad?: boolean; id: number };
 
-export function Sell({ state, session, online, onLogout }: { state: DeviceState; session: Session; online: boolean | null; onLogout: () => void }) {
+export function Sell({ state, session, online, onLogout, onStateChanged }: { state: DeviceState; session: Session; online: boolean | null; onLogout: () => void; onStateChanged: (s: DeviceState) => void }) {
+  const ss = useSyncStatus();
   const b = state.bundle;
   const s = b.settings;
   const cashEnabled = s.general.payment_methods.CASH;
@@ -65,6 +68,8 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
   const searchTimer = useRef<number | null>(null);
   const lastSalesman = useRef<Cart["salesman"]>(null);
   const lastSale = useRef<SaleRecord | null>(null);
+  const ssRef = useRef(ss);
+  ssRef.current = ss;
 
   const items = useMemo<BundleItem[]>(() => b.items.map((i) => ({ ...i, stock_qty: i.stock_qty + (stockAdj[String(i.id)] ?? 0) })), [b.items, stockAdj]);
   const totals = useMemo(() => cartTotals(cart, s.sst_receipt.sst_rate, false), [cart, s.sst_receipt.sst_rate]);
@@ -152,6 +157,7 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
       setPopup(null);
       setDone(sale);
       refreshStats();
+      void afterSale();
     } catch (e) {
       say(e instanceof Error ? e.message : "Could not save the sale", true);
     }
@@ -172,6 +178,7 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
       setPopup(null);
       setDone(ret);
       refreshStats();
+      void afterSale();
       say(`${ret.receipt_no} saved; stock adjusted on this device`);
     } catch (e) {
       say(e instanceof Error ? e.message : "Could not save the return", true);
@@ -202,7 +209,8 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
     },
     returns: () => setPopup({ kind: "return", original: null }),
     todaysSales: () => say("Today's sales report (Ctrl+T) arrives with build step 8."),
-    syncNow: () => { if (online === false) { say("Offline: nothing can sync now", true); return; } sendHeartbeat(state, session.cashier.name).then((r) => say(r ? `ERP reached. ${pending.count} sale(s) pending; the sync engine arrives with step 6.` : "ERP not reachable", !r)); },
+    syncNow: () => { syncNow("manual").then(heartbeat).then(() => say(ssRef.current.last_error ?? (ssRef.current.pending ? `${ssRef.current.pending} still pending` : "Synced"), !!ssRef.current.last_error)); },
+    syncPanel: () => setPopup({ kind: "sync" }),
     salesman: () => setPopup({ kind: "salesman" }),
     customer: () => setPopup({ kind: "customer" }),
   };
@@ -261,9 +269,9 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
       <header className="topbar">
         <div className="brand">{b.company.name}</div>
         <span className="pill">{b.event.receipt_header || b.event.name}</span>
-        <span className="pill">{online === false ? `Offline · ${pending.count} pending` : online ? (pending.count ? `Online · ${pending.count} pending` : "Online · synced") : "Checking…"}</span>
+        <span className="pill">{syncIndicator(ss)}</span>
         <div className="grow" />
-        <div className="meta">Last sync {state.last_sync_at ? fmtMyt(state.last_sync_at) : "--"}</div>
+        <button type="button" className="btn link" style={{ color: "#fff" }} onClick={actions.syncPanel} title="Sync panel">Last sync {ss.last_sync_at ?? state.last_sync_at ? fmtMyt(ss.last_sync_at ?? state.last_sync_at) : "--"}</button>
         <button type="button" className="btn" style={{ minHeight: 34, padding: "4px 10px" }} onClick={actions.syncNow}>Sync now</button>
       </header>
       {state.test_mode && <div className="banner test">TEST MODE: every sale is a TEST sale (numbered {nextNo}), never synced, no stock deduction.</div>}
@@ -367,7 +375,7 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
         <span>Cashier {session.cashier.name}{session.cashier.role === "SUPERVISOR" ? " (supervisor)" : ""}</span><span>Terminal {b.terminal.code}</span><span>{b.event.name}</span>
         <span className={printer.connected ? "ok-text" : ""}>Printer: {printer.connected ? `${printer.name} ready` : "not paired"}</span>
         <span className="grow" />
-        <span>{pending.count} pending{pending.count ? ` · RM ${rm(pending.amount_sen)}` : ""} · last sync {state.last_sync_at ? fmtMyt(state.last_sync_at) : "--"}</span><span>{fmtMyt(new Date(clock).toISOString())}</span>
+        <button type="button" className="btn link" style={{ padding: 0, minHeight: 0, fontSize: 12 }} onClick={actions.syncPanel}>{ss.pending} pending{ss.pending ? ` · RM ${rm(ss.pending_sen)}` : ""} · last sync {ss.last_sync_at ?? state.last_sync_at ? fmtMyt(ss.last_sync_at ?? state.last_sync_at) : "--"}</button><span>{fmtMyt(new Date(clock).toISOString())}</span>
       </div>
 
       {toast && <div className={`toast${toast.bad ? " bad" : ""}`}>{toast.text}</div>}
@@ -411,7 +419,8 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
       {popup?.kind === "pay" && (
         <PaymentPopup cart={cart} sstRate={s.sst_receipt.sst_rate} roundingOnCash={s.sst_receipt.rounding_on_cash} general={s.general} onComplete={(pays) => void completeSale(pays)} onClose={close} />
       )}
-      {popup?.kind === "find" && <FindBill state={state} initialQuery={popup.q} onReturn={(orig) => setPopup({ kind: "return", original: orig })} onClose={() => { close(); refreshStats(); }} say={say} />}
+      {popup?.kind === "find" && <FindBill state={state} initialQuery={popup.q} onReturn={(orig) => setPopup({ kind: "return", original: orig })} onClose={() => { close(); refreshStats(); void afterSale(); }} say={say} />}
+      {popup?.kind === "sync" && <SyncPanel state={state} onStateChanged={onStateChanged} onClose={close} say={say} />}
       {popup?.kind === "return" && <ReturnExchange state={state} initial={popup.original} onSave={completeReturn} onClose={close} say={say} />}
     </div>
   );

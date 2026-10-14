@@ -65,9 +65,41 @@ page, and the POS Admin menu. This guide carries only what is built.
   the sale is already saved: Skip print / Reconnect / Retry (P14). The
   e-receipt is the same receipt as an HTML page through the share sheet or
   Save as PDF, generated on the device (no server, so it works offline).
+- Sync (`pos/src/sync.ts`, layout P14): pending receipts (`synced_at` null,
+  never test sales) are pushed FIFO in batches of 50 to
+  `POST /api/pos-device/sales/batch`, idempotent on the device uuid; the ERP
+  answers per uuid `accepted | duplicate | updated | rejected`, and only an
+  answered receipt is marked synced (a rejected one keeps its reason and
+  never blocks the rest). Triggers: the `online` event verified by a ping
+  (captive-portal WiFi), every sale, Sync now, a retry with backoff, the
+  heartbeat timer. The heartbeat carries pending count / RM, last sync,
+  receipt counter, storage and catalog version; a newer catalog version
+  refreshes the bundle on the spot. The sync panel (tap Last sync) shows
+  connection, pending, last sync / attempt / error, catalog version and the
+  backup; Logout with pending sales asks Cancel / Sync now / Logout anyway,
+  and the browser prompts on close.
+- The ERP side of a synced receipt (`routes/lib/pos-sync.ts`, tested):
+  the shape is validated whole or rejected; a repeat uuid is a duplicate
+  unless it now says VOID (applied once, stock restored) or the salesman
+  changed (updated + `pos_audit`); a receipt number already used by another
+  uuid is a conflict. Inventory: OUT per unit sold (FOC included), IN per
+  unit returned, reversed on void, written to `scm.inventory_movements`
+  against the receipt number (`source_doc_type POS_SALE | POS_RETURN |
+  POS_VOID`, `notes "POS sale T02-000279"`) at the event's stock source
+  warehouse, else the General POS store; no location, or a location gone
+  negative, is kept on `pos_sales.stock_warning` (the FIFO trigger records
+  the short; over-sell is allowed). Idempotent per (doc type, receipt no).
+- Backup (`pos/src/backup.ts`, tested): `houzs_pos_T02_backup.json`, every
+  receipt AES-GCM encrypted under a key derived from the SHA-256 of the
+  device token (the ERP holds that hash on `pos_terminals.token_hash`, so
+  Import backup can decrypt it); written after every sale to a folder the
+  admin picked once (File System Access API, Chrome), else Export backup
+  downloads it.
 - Device API, pre-auth, device token in `X-POS-Device`
   (`routes/pos-device.ts`): `GET /api/pos-device/ping`, `GET /prepare` (the
-  bundle), `POST /heartbeat`. The token is minted by
+  bundle), `POST /heartbeat` (logged in `pos_heartbeats`; an empty device
+  whose last heartbeat still had pending bills is stamped
+  `db_empty_at` / `DATA_LOST` for step 7), `POST /sales/batch`. The token is minted by
   `POST /api/pos-admin/device/register` (an ERP account with `pos.manage`,
   signed in on the device during Device setup) and stored as its SHA-256
   in `pos_terminals.token_hash`; re-preparing rotates it. The bundle

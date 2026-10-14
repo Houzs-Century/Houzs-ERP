@@ -8,15 +8,19 @@ import { PinPad } from "../PinPad";
 import { afterWrongPin, findCashierById, fmtDateRange, fmtMyt, freshLock, lockedFor, loginTiles, syncTone, type LockState } from "../loginRules";
 import { verifyPin } from "../pin";
 import { APP_VERSION, applyUpdate } from "../pwa";
+import { SyncPanel } from "../sell/SyncPanel";
 import type { BundleCashier, DeviceState } from "../types";
 
-export function Login({ state, online, updateWaiting, onLogin, onOpenSetup }: {
+export function Login({ state, online, updateWaiting, onLogin, onOpenSetup, onStateChanged }: {
   state: DeviceState;
   online: boolean | null;
   updateWaiting: boolean;
   onLogin: (c: BundleCashier) => void;
   onOpenSetup: () => void;
+  onStateChanged: (s: DeviceState) => void;
 }) {
+  const [syncOpen, setSyncOpen] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
   const b = state.bundle;
   const { tiles, overflow } = useMemo(() => loginTiles(b.cashiers), [b.cashiers]);
   const [selected, setSelected] = useState<BundleCashier | null>(null);
@@ -80,7 +84,7 @@ export function Login({ state, online, updateWaiting, onLogin, onOpenSetup }: {
           <div>Terminal <span className="pill mono">{b.terminal.code}</span></div>
         </div>
         <div className="meta">
-          <div className={`sync ${tone}`}>Last sync {state.last_sync_at ? fmtMyt(state.last_sync_at) : `-- (prepared ${fmtMyt(state.prepared_at)})`}</div>
+          <button type="button" className={`btn link sync ${tone}`} style={{ padding: 0, minHeight: 0, fontSize: 12 }} onClick={() => setSyncOpen(true)} title="Sync panel">Last sync {state.last_sync_at ? fmtMyt(state.last_sync_at) : `-- (prepared ${fmtMyt(state.prepared_at)})`}</button>
           <div>{state.last_login ? `Previous login ${state.last_login.cashier} · ${fmtMyt(state.last_login.at)}` : "No login yet"}</div>
         </div>
         <button type="button" className="btn link" style={{ color: "#fff", fontSize: 20 }} title="Device setup (supervisor PIN)" onClick={() => { if (!supervisorsExist) onOpenSetup(); else { setGear(true); setSelected(null); setError(null); } }}>&#9881;</button>
@@ -126,6 +130,8 @@ export function Login({ state, online, updateWaiting, onLogin, onOpenSetup }: {
         </div>
       </div>
 
+      {syncOpen && <SyncPanel state={state} onStateChanged={onStateChanged} onClose={() => setSyncOpen(false)} say={(t) => { setNote(t); setTimeout(() => setNote(null), 2500); }} />}
+      {note && <div className="toast">{note}</div>}
       <footer className="footer">
         <button type="button" className="btn link" onClick={() => { setTyping((v) => !v); setGear(false); }}>Keyboard</button>
         <button type="button" className="btn link" onClick={() => window.location.reload()}>Exit</button>

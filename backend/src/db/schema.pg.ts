@@ -670,6 +670,9 @@ export const pos_sales = pgTable(
     is_test: boolean("is_test").notNull().default(false),
     source: text("source").notNull().default("NORMAL"),
     local_seq: integer("local_seq"),
+    // Mig 20261014T1445: why the stock deduction was not clean (no location,
+    // location went negative); NULL = deducted without a remark.
+    stock_warning: text("stock_warning"),
     synced_at: timestamp("synced_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
     created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
     updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
@@ -823,6 +826,11 @@ export const pos_terminals = pgTable(
     status: text("status").notNull().default("NEW"),
     active: boolean("active").notNull().default(true),
     token_hash: text("token_hash"),
+    // Mig 20261014T1445: the last heartbeat that still reported pending bills,
+    // so an empty device reconnecting is recognised as DATA LOST.
+    last_known_pending_count: integer("last_known_pending_count").notNull().default(0),
+    last_known_pending_sen: bigint("last_known_pending_sen", { mode: "number" }).notNull().default(0),
+    db_empty_at: timestamp("db_empty_at", { withTimezone: true, mode: "string" }),
     created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
     updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
   },
@@ -874,6 +882,31 @@ export const pos_event_prices = pgTable(
   },
   (t) => [primaryKey({ columns: [t.link_id, t.pos_item_id] })],
 );
+
+export const pos_heartbeats = pgTable(
+  "pos_heartbeats",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    terminal_id: bigint("terminal_id", { mode: "number" }).notNull(),
+    at: timestamp("at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    payload: jsonb("payload").notNull().default({}),
+  },
+  (t) => [index("idx_pos_heartbeats_terminal_at").on(t.terminal_id, t.at)],
+);
+
+export const pos_alerts = pgTable("pos_alerts", {
+  id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+  company_id: bigint("company_id", { mode: "number" }).notNull(),
+  type: text("type").notNull(),
+  terminal_id: bigint("terminal_id", { mode: "number" }),
+  project_id: bigint("project_id", { mode: "number" }),
+  detail: jsonb("detail").notNull().default({}),
+  email_sent_at: timestamp("email_sent_at", { withTimezone: true, mode: "string" }),
+  last_resent_at: timestamp("last_resent_at", { withTimezone: true, mode: "string" }),
+  resolved_at: timestamp("resolved_at", { withTimezone: true, mode: "string" }),
+  created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+});
 
 export const pos_audit = pgTable(
   "pos_audit",

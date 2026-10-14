@@ -33,7 +33,7 @@ export async function pendingSummary(): Promise<{ count: number; amount_sen: num
   let count = 0; let amount = 0; let last: string | null = null;
   for (const s of all) {
     if (s.is_test) continue;
-    if (!s.synced_at) { count += 1; amount += s.total_sen; }
+    if (!s.synced_at) { count += 1; if (s.status === "PAID") amount += s.total_sen; }
     if (!last || s.sold_at > last) last = s.sold_at;
   }
   return { count, amount_sen: amount, last_sale_at: last };
