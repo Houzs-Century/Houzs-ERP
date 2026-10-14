@@ -1,4 +1,4 @@
--- 20261014T1500_scm_threepl_do_charges.sql
+-- 20261014T1510_scm_threepl_do_charges.sql
 -- REVERSAL: DROP TABLE IF EXISTS scm.threepl_do_charges;
 --   Revert the code first (scm/routes/threepl-do-charges.ts is the only reader
 --   and writer). Dropping it loses the keyed-in 3PL invoice amounts.
