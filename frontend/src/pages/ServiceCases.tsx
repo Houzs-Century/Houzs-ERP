@@ -107,6 +107,7 @@ import { useFocusFromUrl } from "../hooks/useFocusFromUrl";
 import { useAuth } from "../auth/AuthContext";
 import { isSalesStaff } from "../auth/salesAccess";
 import { api, buildQuery } from "../api/client";
+import { downloadAllPagesCSV } from "../lib/csv";
 import { formatPhone } from "../vendor/shared/phone";
 import { uploadAssrAttachment } from "../lib/assrAttachmentUpload";
 import {
@@ -503,17 +504,8 @@ function CasesView({
   const list = useQuery<Paginated<AssrCase>>("assr-list",
     (signal) =>
       api.get(
-        `/api/assr${buildQuery({
-          stage: stage === "ALL" ? undefined : stage,
-          search,
-          page,
-          per_page: perPage,
-          archived_only: showArchived ? 1 : undefined,
-          exclude_stage: excludeStageParam,
-          assigned_to: myCases && user?.id ? user.id : undefined,
-          creditor_code: creditorFilter || undefined,
-          ...sortParams,
-        })}`,
+        // Same filter as Board / Calendar and Export.
+        `/api/assr${buildQuery({ ...caseFilters, page, per_page: perPage, ...sortParams })}`,
         { signal },
       ),
     [stage, search, page, perPage, showArchived, excludeStageParam, myCases, user?.id, creditorFilter, sort?.key, sort?.dir],
@@ -1153,6 +1145,11 @@ function CasesView({
         udfTable="assr"
         udfTableLabel="Service Cases"
         exportName="service-cases"
+        onExport={(cols) =>
+          void downloadAllPagesCSV("service-cases", cols, (pg, per) =>
+            api.get<Paginated<AssrCase>>(`/api/assr${buildQuery({ ...caseFilters, page: pg, per_page: per, ...sortParams })}`),
+          ).catch((e) => toast.error(`Export failed: ${e?.message || e}`))
+        }
         search={{
           value: search,
           onChange: (v) => { setPage(1); setSearch(v); },
