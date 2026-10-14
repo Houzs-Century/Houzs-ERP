@@ -116,9 +116,9 @@ export function reportBlockHtml(rows: (string | number)[][], firstCell: string, 
   const start = rows.findIndex((r) => r[0] === firstCell);
   if (start < 0) return "";
   const body: (string | number)[][] = [];
-  for (let i = start + 1; i < rows.length && body.length < limit; i += 1) { const r = rows[i]; if (!r || r.length === 0) break; body.push(r); }
+  for (let i = start + 1; i < rows.length && body.length < limit; i += 1) { const r = rows.at(i); if (!r || r.length === 0) break; body.push(r); }
   if (body.length === 0) return "";
-  const head = rows[start] ?? [];
+  const head = rows.at(start) ?? [];
   return `<table><tr>${head.map((h) => `<th>${esc(String(h))}</th>`).join("")}</tr>${body.map((r) => `<tr>${r.map((c, i) => `<td class="${i > 0 && numeric(c) ? "n" : ""}">${esc(String(c))}</td>`).join("")}</tr>`).join("")}</table>`;
 }
 
