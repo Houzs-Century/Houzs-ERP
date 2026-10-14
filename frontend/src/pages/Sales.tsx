@@ -10,6 +10,7 @@ import { useDialog } from "../hooks/useDialog";
 import { useUdf, type UdfField, type UdfFieldType } from "../hooks/useUdf";
 import { useStickyFilters } from "../hooks/useStickyFilters";
 import { api } from "../api/client";
+import { downloadAllPagesCSV } from "../lib/csv";
 import { formatPhone } from "../vendor/shared/phone";
 import { useAuth } from "../auth/AuthContext";
 import { usePageAccess } from "../auth/PageGuard";
@@ -609,6 +610,14 @@ export function Sales() {
           error={list.error}
           getRowKey={(e) => e.id}
           exportName="sales"
+          onExport={(cols) =>
+            void downloadAllPagesCSV("sales", cols, (pg, per) => {
+              const p = new URLSearchParams(qs);
+              p.set("page", String(pg));
+              p.set("per_page", String(per));
+              return api.get<ListResponse>(`/api/sales/entries?${p.toString()}`);
+            }).catch((e) => toast.error(`Export failed: ${e?.message || e}`))
+          }
         />
       )}
       {list.data && !searchTransition.resultsAreStale && (
