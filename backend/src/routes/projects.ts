@@ -2390,7 +2390,7 @@ app.get("/sales-rep-options", requirePermission("projects.write"), async (c) => 
        FROM sales_reps r
       WHERE r.archived_at IS NULL
         AND r.status = 'active'
-      ORDER BY r.name, r.code`
+      ORDER BY LOWER(r.name), r.code`
   ).all<{ id: number; code: string; name: string; phone: string | null }>();
   return c.json({ data: rows.results ?? [] });
 });

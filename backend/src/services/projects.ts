@@ -901,7 +901,7 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
        LEFT JOIN sales_reps r ON r.id = a.sales_rep_id
        LEFT JOIN users u      ON u.id = r.user_id
       WHERE a.project_id = ?
-      ORDER BY r.code, r.name`
+      ORDER BY LOWER(r.name), r.code`
   )
     .bind(id)
     .all();
