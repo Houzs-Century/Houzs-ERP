@@ -97,7 +97,7 @@ import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item
 import { resolveItemGroups } from '../lib/sku-category';
 import { buildDoItemRow as buildItemRow, loadCarriedSoLinePhotos, carriedPhotoUrls } from '../lib/do-item-row';
 import { recomputeDoTotals as recomputeTotals } from '../lib/do-totals';
-import { soRemainingByItemId } from '../lib/so-remaining-by-item';
+import { isSoLineOverDelivered, soRemainingByItemId } from '../lib/so-remaining-by-item';
 import { lineLinkItemMismatch, assertLinkedLineItemsMatch } from '../lib/line-link-item-identity';
 import { checkStockAvailability, shortStockResponse, stockCheckableLines, uncoveredStockCheckLines, type StockShortage } from '../lib/check-stock-availability';
 import { findSofaLinesWithoutCompleteBatch, sofaNoCompleteBatchResponse, findIncompleteSofaSets, sofaIncompleteSetResponse, detectSofaSoItemIds } from '../lib/sofa-batch-guard';
@@ -3261,7 +3261,12 @@ deliveryOrdersMfg.post('/', async (c) => {
     const linePhotos = await loadCarriedSoLinePhotos(sb, items as Array<{ soItemId?: unknown }>, (q) => scopeToCompany(q, c));
     const rows = items.map((it, lineNo) => buildItemRow(h.id, it, lineNo, commitments.get(String(lineNo)) ?? null, linePhotos));
     const { error: iErr } = await sb.from('delivery_order_items').insert(stampCompany(rows, c));
-    if (iErr) { await sb.from('delivery_orders').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
+    if (iErr) {
+      await sb.from('delivery_orders').delete().eq('id', h.id);
+      // HC-0004: the DB cap (mig 20261014T1300) refused a line past its SO line's qty.
+      if (isSoLineOverDelivered(iErr)) return c.json({ error: 'race_conflict', message: 'Another operator just delivered overlapping qty from this Sales Order. Refresh and try again.', reason: iErr.message }, 409);
+      return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500);
+    }
     await recomputeTotals(sb, h.id);
   }
 
@@ -3834,6 +3839,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
   if (iErr) {
     // Roll the header back so we don't leave a headerless DO.
     await sb.from('delivery_orders').delete().eq('id', dh.id);
+    if (isSoLineOverDelivered(iErr)) return c.json({ error: 'race_conflict', message: 'Another operator just converted overlapping qty from this Sales Order. Refresh the picker and try again.', reason: iErr.message }, 409);
     return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500);
   }
 
@@ -4461,6 +4467,7 @@ export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Va
   const addPhotos = await loadCarriedSoLinePhotos(sb, [it as { soItemId?: unknown }], (q) => scopeToCompany(q, c));
   const row = buildItemRow(id, it, nextLineNo, addCommitments.get('add') ?? null, addPhotos);
   const { data, error } = await sb.from('delivery_order_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
+  if (isSoLineOverDelivered(error)) return c.json({ error: 'over_remaining', message: 'Add qty exceeds remaining on the linked Sales Order line.', soItemId: it.soItemId ?? null, reason: error?.message }, 409);
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   /* Drop-ship (mig 0057) — once a drop-shipped line is added, stamp the DO so
      the "batch not received" badge shows. Best-effort (never blocks the add). */
@@ -4761,6 +4768,7 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
   }
 
   const { error } = await scopeToCompanyId(sb.from('delivery_order_items').update(updates).eq('id', itemId), co.companyId);
+  if (isSoLineOverDelivered(error)) return c.json({ error: 'over_remaining', message: 'New qty exceeds the most this line can deliver for the linked Sales Order line.', soItemId: prev.so_item_id ?? null, reason: error?.message }, 409);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row. qty
@@ -5149,6 +5157,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   } else {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
       .update({ status: toStatus, ...ts, ...tsNum }).eq('id', id), co.companyId).select('id, status').single();
+    if (isSoLineOverDelivered(error)) return c.json({ error: 'over_delivery', message: 'This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.', reason: error?.message }, 409);
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     data = updated as { id: string; status: string };
   }
