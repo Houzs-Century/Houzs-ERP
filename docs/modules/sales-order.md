@@ -184,6 +184,7 @@ Desktop / mobile parity
 - `description2` is rebuilt from variants on every edit. AutoCount's original line text lives in `remark` under `账本原文: `; don't add a second place for it.
 - A migrated order's city may be blank. AutoCount `InvAddr4` holds the State; never copy it into city.
 - `ac_to_po_no` is AutoCount's list of POs raised from the order, not a customer PO. The AutoCount-mirror header columns (`attention`, `delivery_address1..4`, `display_term`) have no reader or writer in the app.
+- Header `branding` comes from the lines (`derive-line-branding.ts`): the first main line that names a brand (`namesABrand`) wins over a category word (BEDFRAME); it is re-derived after every line add / edit / delete on an ERP order with no live DO / SI; a client-sent category word or placeholder is ignored.
 - A header branding of `NONE` / `N/A` / blank is a placeholder (`isPlaceholderBrandText`). The sofa label is the company house brand (ZANOTTI / 2990s Sofa). The PDF letterhead lookup is per company (`lib/brand-letterhead.ts`).
 - Floating pickers use `frontend/src/lib/anchoredPanel.ts`, which sets both `top` and `bottom`. Don't hand-roll `top: rect.bottom + 4`.
 - Amendments: a new line field must add the signature entry, payload, column, `applySoAmendment` write and every reader together. The direct half drops amendable keys (`withoutFrozenHeaderFields`) rather than reverting them. `DIRECT_ONLY` skips only the amendment. Line delivery date, description, uom, item group and cost cannot be changed on a locked SO.
