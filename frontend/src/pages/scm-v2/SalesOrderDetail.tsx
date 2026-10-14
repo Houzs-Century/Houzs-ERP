@@ -96,7 +96,7 @@ import { DocumentRelationshipMapModal, DocumentChoiceDialog } from '../../compon
 import { useSoRelationshipMap } from './so-relationship-map';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { SoLockBanner } from './SoLockBanner';
-import { soAfterDoMode, afterDoEditableLine, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoSave } from '../../vendor/scm/lib/so-after-do-client';
+import { soAfterDoMode, soPriceAfterDoOn, afterDoEditableLine, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoSave } from '../../vendor/scm/lib/so-after-do-client';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from '../../vendor/scm/lib/amendment-approver';
@@ -159,6 +159,7 @@ import {
 } from './so-version-conflict';
 import { RevisionsTab } from './so-revisions-tab';
 import styles from './SalesOrderDetail.module.css';
+import { PriceAfterDoModal } from './PriceAfterDoModal';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { HoldChip } from "../../vendor/scm/components/HoldChip";
 import { CancelRequestPanel } from "../../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "./use-cancel-request-action";
@@ -649,6 +650,7 @@ export const SalesOrderDetail = () => {
     return out;
   }, [items, editingDrafts, addingDrafts]);
   const [overriding, setOverriding] = useState<SoItem | null>(null);
+  const [repricing, setRepricing] = useState<SoItem | null>(null);
   const [unlockOverride, setUnlockOverride] = useState(false), [afterDoTargetId, setAfterDoTargetId] = useState<string | null>(null), afterDoRef = useRef<AfterDoSave | null>(null); // DEV-32
   // PR-D — History panel toggle. Commander asked for the HOOKKA-style
   // floating right-side history drawer.
@@ -1607,6 +1609,7 @@ export const SalesOrderDetail = () => {
   const downstreamLocked = soDownstreamHardLocked(header), migratedLocked = soMigratedReadonly(header);
   const isLocked = migratedLocked || isSoLocked(header.status, downstreamLocked, unlockOverride); // migrated is OUTSIDE isSoLocked: Override must not reach it
   const afterDo = soAfterDoMode(header, { can, override: unlockOverride, migrated: migratedLocked }); // DEV-32: Logistics edits charges + customer details after the DO
+  const priceAfterDo = soPriceAfterDoOn(header, { can, migrated: migratedLocked }); // DEV-70: a delivered line's price, through its $ dialog
   /* The one thing a hard-locked SO still accepts: a new salesperson. Same
      permission the API enforces (mfg-sales-orders.ts PATCH), so the Edit button
      it re-enables can never open an order the server would refuse to save. */
@@ -1953,7 +1956,7 @@ export const SalesOrderDetail = () => {
                 dropdown. The heavy door stays for everything else. */}
             {!isEditing ? (
               <Button variant="primary"
-                onClick={enterEdit} disabled={migratedLocked || (isLocked && !canAttributeOther && !afterDo.on)}>
+                onClick={enterEdit} disabled={migratedLocked || (isLocked && !canAttributeOther && !afterDo.on && !priceAfterDo)}>
                 <Pencil {...ICON} />
                 <span>Edit</span>
               </Button>
@@ -2266,11 +2269,15 @@ export const SalesOrderDetail = () => {
                         locked SO goes through the amendment's line diff instead,
                         which carries newUnitPriceSen. Off, not render-then-deny. */}
                     {frozen && <span style={FROZEN_LINE_LABEL_STYLE}>{FROZEN_LINE_LABEL}</span>}
-                    <button type="button" className={styles.iconBtn} title="Override price"
-                      disabled={overrideLocked || frozen}
-                      onClick={() => !overrideLocked && !frozen && setOverriding(it)}>
-                      <DollarSign {...SM_ICON} />
-                    </button>
+                    {frozen && priceAfterDo
+                      ? <button type="button" className={styles.iconBtn} title="Change price after DO" onClick={() => setRepricing(it)}><DollarSign {...SM_ICON} /></button>
+                      : (
+                      <button type="button" className={styles.iconBtn} title="Override price"
+                        disabled={overrideLocked || frozen}
+                        onClick={() => !overrideLocked && !frozen && setOverriding(it)}>
+                        <DollarSign {...SM_ICON} />
+                      </button>
+                    )}
                   </div>
                   <SoLineCard
                     index={idx}
@@ -2635,6 +2642,7 @@ export const SalesOrderDetail = () => {
           onClose={() => setOverriding(null)}
         />
       )}
+      {repricing && <PriceAfterDoModal item={repricing} docNo={header.doc_no} currency={header.currency} onClose={() => setRepricing(null)} />}
 
       {/* Phase 1-C — Amendment before/after diff modal ("view changes"). */}
       {viewingAmendmentId && (

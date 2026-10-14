@@ -253,8 +253,8 @@ import {
   isProcessingRemovalOnlyRequest,
 } from '../shared/so-processing-date';
 import { ATTRIBUTE_OTHER_REFUSAL, SO_IDENTITY_LOCK_COLS, changedIdentityLockCols, salespersonReattributed } from '../shared/so-identity-lock';
-import { SO_EDIT_AFTER_DO_PERMISSION, SO_AFTER_DO_CUSTOMER_COLS, AFTER_DO_INVOICED, AFTER_DO_SERVICE_ONLY, afterDoBlockedCols, afterDoFieldsRefusal, afterDoHeaderRefusal, afterDoTargetLockedRefusal, pickAfterDoTarget, type AfterDoTarget } from '../shared/so-after-do-edit';
-import { openAfterDo, readAfterDoTargets, catalogSaysService, copyCustomerDetailsToDos, addChargeLineToDo, readDoLinesOfSoLine, copyChargeLineToDo, type DoLineOfSoLine } from '../lib/so-after-do';
+import { SO_EDIT_AFTER_DO_PERMISSION, SO_EDIT_PRICE_AFTER_DO_PERMISSION, SO_AFTER_DO_CUSTOMER_COLS, AFTER_DO_INVOICED, AFTER_DO_PRICE_FORBIDDEN, AFTER_DO_PRICE_NOT_DELIVERED, afterDoPriceReturnedRefusal, AFTER_DO_SERVICE_ONLY, afterDoBlockedCols, afterDoFieldsRefusal, afterDoHeaderRefusal, afterDoTargetLockedRefusal, pickAfterDoTarget, type AfterDoTarget } from '../shared/so-after-do-edit';
+import { openAfterDo, readAfterDoTargets, catalogSaysService, copyCustomerDetailsToDos, addChargeLineToDo, readDoLinesOfSoLine, copyChargeLineToDo, copyLinePriceToDos, copyLinePriceToInvoices, type DoLineOfSoLine } from '../lib/so-after-do';
 /* Variants-vocabulary unification (port of 2990 73aeeb1e, 2026-06-26):
    POS-handover sofa lines speak `depth`/`sofaLegHeight`/`fabricColor`, Backend
    editors read `seatHeight`/`legHeight`/`fabricCode`. canonicalizeVariants
@@ -6667,6 +6667,80 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     } : {}),
   });
 };
+
+/* DEV-70 — the unit price + discount of a line a live DO already carries, for a
+   caller holding `scm.so.edit_price_after_do` (rule: shared/so-after-do-edit.ts).
+   Live invoices billing those DO lines follow too (option B, Nico 2026-10-13).
+   Its own route rather than an `afterDo` flag on the line PATCH: that handler
+   re-prices, re-derives the delivery fee and reconciles free gifts, any of which
+   could move a delivered line. This one writes two columns and their totals. */
+mfgSalesOrders.post('/:docNo/items/:itemId/price-after-do', async (c) => {
+  const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const itemId = c.req.param('itemId');
+  const user = c.get('user');
+  if (!hasHouzsPerm(c, SO_EDIT_PRICE_AFTER_DO_PERMISSION)) return c.json(AFTER_DO_PRICE_FORBIDDEN, 403);
+  if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
+  const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
+  let body: { unitPriceSen?: unknown; discountSen?: unknown; reason?: unknown };
+  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const unit = Number(body.unitPriceSen), discount = Number(body.discountSen ?? 0);
+  if (!Number.isInteger(unit) || unit < 0) return c.json({ error: 'invalid_price', message: 'Unit price must be zero or more.' }, 400);
+  if (!Number.isInteger(discount) || discount < 0) return c.json({ error: 'invalid_discount', message: 'Discount must be zero or more.' }, 400);
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+
+  const open = await openAfterDo(sb, docNo, true, co.companyId);
+  if (!open.ok) return c.json(open.body, open.status);
+  if (open.invoicedWithoutDo) return c.json(AFTER_DO_INVOICED, 409);
+  const { data: line, error: lineErr } = await scopeSoItemToDocument(
+    sb.from('mfg_sales_order_items').select('item_code, qty, unit_price_sen, discount_sen, line_cost_sen'), docNo, itemId,
+  ).maybeSingle();
+  if (lineErr) return c.json({ error: 'downstream_check_failed', message: 'Could not read the line, so nothing was changed. Try again.' }, 409);
+  if (!line) return c.json({ error: 'not_found' }, 404);
+  const prev = line as { item_code: string | null; qty: number; unit_price_sen: number; discount_sen: number; line_cost_sen: number | null };
+  const doLines = await readDoLinesOfSoLine(sb, itemId, co.companyId, open.targets);
+  if (doLines === null) return c.json({ error: 'downstream_check_failed', message: 'Could not read the Delivery Order lines, so nothing was changed. Try again.' }, 409);
+  if (doLines.length === 0) return c.json(AFTER_DO_PRICE_NOT_DELIVERED, 409);
+  const returnedDos = open.targets.filter((t) => t.returned && doLines.some((d) => d.delivery_order_id === t.id));
+  if (returnedDos.length > 0) return c.json(afterDoPriceReturnedRefusal(returnedDos.map((t) => t.do_number ?? t.id)), 409);
+  const qty = Number(prev.qty);
+  if (discount > qty * unit) {
+    return c.json({ error: 'invalid_discount', message: 'Discount cannot be more than qty x unit price.', discount, max: qty * unit }, 422);
+  }
+  if (unit === Number(prev.unit_price_sen) && discount === Number(prev.discount_sen)) return c.json({ ok: true, unchanged: true });
+
+  const leaseBlocked = await requireSoLineWriteLease(sb, docNo, c);
+  if (leaseBlocked) return leaseBlocked;
+  const lineTotal = senOrZero(qty * unit - discount);
+  const { error } = await scopeSoItemToDocument(
+    sb.from('mfg_sales_order_items').update({
+      unit_price_sen: unit, discount_sen: discount,
+      total_sen: lineTotal, total_inc_sen: lineTotal, balance_sen: lineTotal,
+      line_margin_sen: lineTotal - senOrZero(prev.line_cost_sen),
+    }),
+    docNo,
+    itemId,
+  );
+  if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+  await recomputeTotals(sb, docNo, c);
+  await recordSoAudit(sb, {
+    docNo,
+    action: 'UPDATE_LINE',
+    actorId: user.id,
+    actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+    fieldChanges: [
+      { field: 'itemCode', to: prev.item_code },
+      ...(unit !== prev.unit_price_sen ? [{ field: 'unitPriceSen', from: prev.unit_price_sen, to: unit }] : []),
+      ...(discount !== prev.discount_sen ? [{ field: 'discountSen', from: prev.discount_sen, to: discount }] : []),
+    ],
+    note: `Price changed after DO${reason ? `: ${reason}` : ''}`,
+  });
+  await queueAcSoEdit(c, docNo);
+  const who = { companyId: co.companyId, actor: c.get('houzsUser') ?? null, soDocNo: docNo };
+  const priced = { item_code: prev.item_code, qty, unit_price_sen: unit, discount_sen: discount };
+  const failed = await copyLinePriceToDos(sb, who, priced, doLines, open.targets);
+  const siFailed = await copyLinePriceToInvoices(sb, who, priced, doLines.map((d) => d.id));
+  const doNumbers = [...new Set(doLines.map((d) => open.targets.find((t) => t.id === d.delivery_order_id)?.do_number ?? d.delivery_order_id))];
+  return c.json({ ok: true, doNumbers, ...(failed.length > 0 ? { doCopyFailed: failed } : {}), ...(siFailed.length > 0 ? { siCopyFailed: siFailed } : {}) });
+});
 
 mfgSalesOrders.patch('/:docNo', patchMfgSalesOrderHeaderHandler);
 

@@ -114,3 +114,31 @@ describe("a delivered order, every line on an open DO", () => {
     expect(editButtons().every((b) => b.disabled)).toBe(true);
   });
 });
+
+/* DEV-70 — `scm.so.edit_price_after_do` alone opens the editor (the $ dialog
+   lives there), but not Add line: it re-prices delivered lines, it adds none. */
+describe("a delivered order, with only Edit SO line price after DO", () => {
+  it("Edit opens the editor, Add line stays shut", () => {
+    perms.add("scm.so.edit_price_after_do");
+    mount();
+    expect(editButtons().every((b) => !b.disabled)).toBe(true);
+    expect(addLine().disabled).toBe(true);
+    fireEvent.click(editButtons()[0]);
+    expect(screen.getByTestId("loc").textContent).toBe(`/scm/sales-orders/${DOC}?edit=1`);
+  });
+
+  it("an invoiced order keeps Edit shut", () => {
+    perms.add("scm.so.edit_price_after_do");
+    mount({ ...delivered, after_do_invoiced: true });
+    expect(editButtons().every((b) => b.disabled)).toBe(true);
+  });
+
+  it("the DO's own invoice does not shut Edit (the invoice follows); its Delivery Return does", () => {
+    perms.add("scm.so.edit_price_after_do");
+    mount({ ...delivered, after_do_targets: [{ ...DO_OPEN, locked: true, returned: false }] });
+    expect(editButtons().every((b) => !b.disabled)).toBe(true);
+    cleanup();
+    mount({ ...delivered, after_do_targets: [{ ...DO_OPEN, locked: true, returned: true }] });
+    expect(editButtons().every((b) => b.disabled)).toBe(true);
+  });
+});

@@ -693,3 +693,45 @@ describe('applySoAmendment — an approved delivery-date amendment is both SEEN 
     expect(line.line_delivery_date_overridden).toBe(true);
   });
 });
+
+/* DEV-70 — the submit route now splits a SKU swap that also moves the price
+   (lib/amendment-noop-lines splitPriceFromSpec): the LINES half arrives with
+   no price, the PRICE half with nothing but the price. HC-SO-013490/A1: the
+   King mattress line held the RM 8,500 set price and the swapped-to SKU sells
+   at 0 in the catalogue. */
+describe('applySoAmendment — the two halves of a split SKU-swap-with-price (DEV-70)', () => {
+  const PRICE_APPROVED: SoAmendmentApproval = { approvedByUserId: 'user-finance', approvalPermission: 'scm.amendment.approve_price' };
+  const swapStore = (linkedAcDocNo: string | null) => {
+    const store = baseStore({ linkedAcDocNo });
+    store.mfg_sales_order_items = [soLine({ unit_price_sen: 850000, total_sen: 850000, balance_sen: 850000 })];
+    store.mfg_products.push(product({ code: 'ACC-2', name: 'Swapped Table', sell_price_sen: 0, base_price_sen: 0 }));
+    return store;
+  };
+
+  it('migrated order: the spec half swaps the SKU and keeps the stored set price', async () => {
+    const store = swapStore('SO-013490');
+    store.so_amendment_lines = [specLine({ new_item_code: 'ACC-2', new_unit_price_sen: null })];
+
+    await apply(store);
+
+    expect(lineOf(store)).toMatchObject({ item_code: 'ACC-2', unit_price_sen: 850000, total_sen: 850000 });
+  });
+
+  it('native order: the spec half keeps the stored price too, not the new SKU\'s catalogue 0', async () => {
+    const store = swapStore(null);
+    store.so_amendment_lines = [specLine({ new_item_code: 'ACC-2', new_unit_price_sen: null })];
+
+    await apply(store);
+
+    expect(lineOf(store)).toMatchObject({ item_code: 'ACC-2', unit_price_sen: 850000 });
+  });
+
+  it('the price half moves only the price: code, qty and spec stay as they are', async () => {
+    const store = swapStore('SO-013490');
+    store.so_amendment_lines = [specLine({ new_item_code: null, new_qty: null, new_variants: null, new_unit_price_sen: 0 })];
+
+    await apply(store, PRICE_APPROVED);
+
+    expect(lineOf(store)).toMatchObject({ item_code: 'ACC-1', qty: 1, unit_price_sen: 0, total_sen: 0 });
+  });
+});

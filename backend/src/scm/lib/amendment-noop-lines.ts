@@ -106,6 +106,30 @@ export function amendmentLinePriceOnly(l: NoopCheckLine, cur: StoredLine): boole
   return !nonPriceMoved;
 }
 
+/** DEV-70 — a product line whose change moves the price AND something else (a
+ *  swapped SKU re-fills the price from the new SKU's sell price, 0 on many
+ *  cutover SKUs). Split into the spec half, which no longer carries a price, and
+ *  a price-only half for the PRICE lane, so the Purchaser's signature on a code
+ *  correction can never also sign a price (HC-SO-013490/A1 RM 8,500 -> 0,
+ *  HC-SO-013497/A1 RM 5,340 -> 0). `null` = nothing to split. */
+export function splitPriceFromSpec<L extends NoopCheckLine>(l: L, cur: StoredLine): { spec: L; price: L } | null {
+  const type = String(l.changeType ?? '').toUpperCase();
+  if (type === 'ADD' || type === 'REMOVE') return null;
+  const unitMoved = l.newUnitPriceSen != null && Math.round(Number(l.newUnitPriceSen)) !== Math.round(Number(cur.unit_price_sen ?? 0));
+  const discMoved = l.newDiscountSen != null && Math.round(Number(l.newDiscountSen)) !== Math.round(Number(cur.discount_sen ?? 0));
+  if (!unitMoved && !discMoved) return null;
+  if (amendmentLinePriceOnly(l, cur)) return null;
+  return {
+    spec: { ...l, newUnitPriceSen: null, newDiscountSen: null },
+    price: {
+      ...l,
+      newItemCode: null, newVariants: null, newQty: null, newRemark: null,
+      newUnitPriceSen: unitMoved ? l.newUnitPriceSen : null,
+      newDiscountSen: discMoved ? l.newDiscountSen : null,
+    },
+  };
+}
+
 /**
  * The submitted lines minus the ones that request nothing. Reads the referenced
  * lines from THIS order only (an id from another order is unknown here and is

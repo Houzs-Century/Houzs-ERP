@@ -7,7 +7,7 @@
  * kept; ADD / REMOVE are always kept; a failed read is null, not "keep all". */
 import { describe, expect, it } from 'vitest';
 import {
-  amendmentLineIsNoop, amendmentLinePriceOnly, dropNoopAmendmentLines, variantsForCompare, canonicalJson,
+  amendmentLineIsNoop, amendmentLinePriceOnly, dropNoopAmendmentLines, variantsForCompare, canonicalJson, splitPriceFromSpec, type StoredLine,
 } from './amendment-noop-lines';
 
 const stored = {
@@ -138,5 +138,31 @@ describe('dropNoopAmendmentLines', () => {
 
   it('answers null when the read fails, never "keep everything"', async () => {
     expect(await dropNoopAmendmentLines(makeSb([], true), 'HC-SO-1', [{ salesOrderItemId: 'li-bed', changeType: 'SPEC' }])).toBeNull();
+  });
+});
+
+describe('splitPriceFromSpec (DEV-70)', () => {
+  /* HC-SO-013490/A1's King mattress line: the set price sat on it. */
+  const cur: StoredLine = { id: 'li', item_code: 'AKEMI SOLITUDE MATT (K)', qty: 1, unit_price_sen: 850000, variants: null, remark: null, discount_sen: 0 };
+
+  it('a SKU swap that re-fills the price splits into a price-less spec half and a price-only half', () => {
+    const halves = splitPriceFromSpec({ salesOrderItemId: 'li', changeType: 'SPEC', newItemCode: 'HAPPI SLEEP SOLITUDE MATT (K)', newQty: 1, newUnitPriceSen: 0 }, cur);
+    expect(halves).toEqual({
+      spec: { salesOrderItemId: 'li', changeType: 'SPEC', newItemCode: 'HAPPI SLEEP SOLITUDE MATT (K)', newQty: 1, newUnitPriceSen: null, newDiscountSen: null },
+      price: { salesOrderItemId: 'li', changeType: 'SPEC', newItemCode: null, newVariants: null, newQty: null, newRemark: null, newUnitPriceSen: 0, newDiscountSen: null },
+    });
+  });
+
+  it('a price-only change is not split (it goes to PRICE whole)', () => {
+    expect(splitPriceFromSpec({ salesOrderItemId: 'li', changeType: 'SPEC', newUnitPriceSen: 800000 }, cur)).toBeNull();
+  });
+
+  it('a spec change that resends the stored price is not split', () => {
+    expect(splitPriceFromSpec({ salesOrderItemId: 'li', changeType: 'SPEC', newItemCode: 'X', newUnitPriceSen: 850000 }, cur)).toBeNull();
+  });
+
+  it('ADD and REMOVE are whole-line changes, never split', () => {
+    expect(splitPriceFromSpec({ changeType: 'ADD', newItemCode: 'X', newUnitPriceSen: 0 }, cur)).toBeNull();
+    expect(splitPriceFromSpec({ salesOrderItemId: 'li', changeType: 'REMOVE' }, cur)).toBeNull();
   });
 });

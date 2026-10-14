@@ -101,12 +101,13 @@ describe('splitAmendmentByLane', () => {
   // No price lane: the two-lane behaviour the split has always had (HOUZS, and
   // every caller before the 2026-09-21 PRICE lane).
   const noPrice = () => false;
+  const noSplit = () => null;
 
   it('splits a mixed submission into both lanes (proc date rides LINES)', () => {
     const split = splitAmendmentByLane<L>(
       { customerDeliveryDate: '2026-08-01', processingDate: '2026-07-30' },
       [{ id: 'a', code: 'PC151-01' }, { id: 'b', code: 'SVC-DELIVERY' }],
-      byCode, noPrice, false,
+      byCode, noPrice, false, noSplit,
     );
     expect(split.lanes).toEqual(['LINES', 'DELIVERY']);
     expect(split.perLane.LINES.lines.map((l) => l.id)).toEqual(['a']);
@@ -118,7 +119,7 @@ describe('splitAmendmentByLane', () => {
   });
 
   it('a product-only submission yields only LINES', () => {
-    const split = splitAmendmentByLane<L>({}, [{ id: 'a', code: 'PC151-01' }], byCode, noPrice, false);
+    const split = splitAmendmentByLane<L>({}, [{ id: 'a', code: 'PC151-01' }], byCode, noPrice, false, noSplit);
     expect(split.lanes).toEqual(['LINES']);
     expect(split.perLane.DELIVERY.lines).toEqual([]);
     expect(split.perLane.DELIVERY.headerKeys).toEqual([]);
@@ -128,7 +129,7 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<L>(
       { customerDeliveryDate: '2026-08-01', processingDate: '2026-07-30' },
       [],
-      byCode, noPrice, false,
+      byCode, noPrice, false, noSplit,
     );
     expect(split.lanes).toEqual(['LINES', 'DELIVERY']);
     expect(split.perLane.LINES.headerKeys).toEqual(['processingDate']);
@@ -142,7 +143,7 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<L>(
       { processingDate: null, customerDeliveryDate: null },
       [],
-      byCode, noPrice, false,
+      byCode, noPrice, false, noSplit,
     );
     expect(split.lanes).toEqual(['LINES']);
     expect(split.perLane.LINES.headerChanges).toEqual({ processingDate: null, customerDeliveryDate: null });
@@ -150,7 +151,7 @@ describe('splitAmendmentByLane', () => {
   });
 
   it('a Delivery Date clear without a Processing Date removal still signs with Logistic', () => {
-    const split = splitAmendmentByLane<L>({ customerDeliveryDate: null }, [], byCode, noPrice, false);
+    const split = splitAmendmentByLane<L>({ customerDeliveryDate: null }, [], byCode, noPrice, false, noSplit);
     expect(split.lanes).toEqual(['DELIVERY']);
   });
 
@@ -158,7 +159,7 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<L>(
       { address1: '12 Jalan Baru', replacementDisposal: 'Old sofa 1pc' },
       [],
-      byCode, noPrice, false,
+      byCode, noPrice, false, noSplit,
     );
     expect(split.lanes).toEqual(['DELIVERY']);
   });
@@ -171,7 +172,7 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<LG>(
       {},
       [{ id: 'a', code: '9028-L(RHF)', group: 'sofa' }, { id: 'b', code: 'DISPOSE', group: 'service' }],
-      (l) => ({ itemCode: l.code, itemGroup: l.group }), () => false, false,
+      (l) => ({ itemCode: l.code, itemGroup: l.group }), () => false, false, noSplit,
     );
     expect(split.lanes).toEqual(['LINES', 'DELIVERY']);
     expect(split.perLane.LINES.lines.map((l) => l.id)).toEqual(['a']);
@@ -188,7 +189,7 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<L>(
       {},
       [{ id: 'a', code: 'PC151-01' }, { id: 'p', code: 'JAGER-(K)' }],
-      byCode, priceOnly, true,
+      byCode, priceOnly, true, noSplit,
     );
     expect(split.lanes).toEqual(['LINES', 'PRICE']);
     expect(split.perLane.LINES.lines.map((l) => l.id)).toEqual(['a']);
@@ -199,7 +200,7 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<L>(
       {},
       [{ id: 'p', code: 'JAGER-(K)' }],
-      byCode, () => true, false,
+      byCode, () => true, false, noSplit,
     );
     expect(split.lanes).toEqual(['LINES']);
     expect(split.perLane.PRICE.lines).toEqual([]);
@@ -209,7 +210,7 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<L>(
       {},
       [{ id: 's', code: 'SVC-DELIVERY' }],
-      byCode, () => true, true,
+      byCode, () => true, true, noSplit,
     );
     expect(split.lanes).toEqual(['DELIVERY']);
     expect(split.perLane.PRICE.lines).toEqual([]);
@@ -219,7 +220,7 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<L>(
       { processingDate: '2026-07-30' },
       [{ id: 'p', code: 'JAGER-(K)' }],
-      byCode, () => true, true,
+      byCode, () => true, true, noSplit,
     );
     expect(split.lanes).toEqual(['LINES', 'PRICE']);
     expect(split.perLane.LINES.headerKeys).toEqual(['processingDate']);

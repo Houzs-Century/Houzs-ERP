@@ -98,7 +98,7 @@ import {
   soDownstreamHardLocked,
 } from "../../vendor/scm/lib/so-detail-gates";
 import { MigratedReadonlyBanner } from "../../vendor/scm/components/MigratedReadonlyBanner";
-import { soAfterDoMode } from "../../vendor/scm/lib/so-after-do-client";
+import { soAfterDoMode, soPriceAfterDoOn } from "../../vendor/scm/lib/so-after-do-client";
 import type { AfterDoTarget } from "../../vendor/shared/so-after-do-edit";
 import { customerRefOf } from '../../lib/customer-ref';
 
@@ -684,9 +684,13 @@ function SalesOrderDetailV2ReadOnly() {
      the operator is looking at; two locks with one sentence is how a refusal
      stops being actionable. */
   const migratedLocked = soMigratedReadonly(salesOrder);
-  const editDisabled = migratedLocked || (hardLocked && !canAttributeOther && !canEditAfterDo);
+  /* DEV-70 — a delivered line's price is changed from the editor's $ button. */
+  const canPriceAfterDo = salesOrder ? soPriceAfterDoOn(salesOrder, { can, migrated: migratedLocked }) : false;
+  const editDisabled = migratedLocked || (hardLocked && !canAttributeOther && !canEditAfterDo && !canPriceAfterDo);
   const lockedEditHint = migratedLocked
     ? soMigratedReadonlyReason(salesOrder)
+    : hardLocked && canPriceAfterDo && !canEditAfterDo
+      ? "This order is locked by its Delivery Order — press Edit, then the $ button on a line, to change its unit price or discount."
     : hardLocked && canEditAfterDo
       ? "This order is locked by its Delivery Order — press Edit, then Override, to change the customer details or charge lines."
       : hardLocked && canAttributeOther
@@ -1275,7 +1279,7 @@ function SalesOrderDetailV2ReadOnly() {
               variant="secondary"
               icon={<Plus size={14} />}
               onClick={goAddLine}
-              disabled={editDisabled}
+              disabled={editDisabled || (hardLocked && !canEditAfterDo && !canAttributeOther)}
             >
               {ADD_LINE_LABEL}
             </Button>
