@@ -3,7 +3,7 @@
   "totals": {
     "@typescript-eslint/no-explicit-any": 488,
     "@typescript-eslint/no-floating-promises": 750,
-    "@typescript-eslint/no-unnecessary-condition": 1667,
+    "@typescript-eslint/no-unnecessary-condition": 1660,
     "no-restricted-syntax": 132
   },
   "files": {
@@ -654,7 +654,7 @@
     },
     "src/pages/scm-v2/Products.tsx": {
       "@typescript-eslint/no-floating-promises": 11,
-      "@typescript-eslint/no-unnecessary-condition": 31
+      "@typescript-eslint/no-unnecessary-condition": 24
     },
     "src/pages/scm-v2/PurchaseConsignmentOrderDetail.tsx": {
       "@typescript-eslint/no-floating-promises": 2,
