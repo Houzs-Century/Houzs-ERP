@@ -235,7 +235,7 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
   test('the SO and PO routers use the SHARED downstream lock, not a private copy', () => {
     expect(soSource).toContain("import { soHasDownstream } from '../lib/downstream-lock';");
     expect(poSource).toContain("import { poHasDownstream } from '../lib/downstream-lock';");
-    expect(doSource).toContain("import { doHasDownstream } from '../lib/downstream-lock';");
+    expect(doSource).toMatch(/import \{[^}]*\bdoHasDownstream\b[^}]*\} from '\.\.\/lib\/downstream-lock';/);
     expect(grnSource).toContain("import { grnHasDownstream } from '../lib/downstream-lock';");
     // The private copies are gone — one rule, one place, one test.
     expect(soSource).not.toContain('async function soHasDownstream');
