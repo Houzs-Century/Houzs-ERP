@@ -691,3 +691,10 @@ export function siTransferRefusal(status: string | null | undefined): { error: s
      is true, rather than asserting a billing fact the flag cannot support. */
   return { error: 'do_not_transferable', reason: `A Sales Invoice can only be raised from a confirmed delivery order (${SI_TRANSFERABLE_DO_STATES.join(', ')}).` };
 }
+
+/** SQLSTATE raised by scm.assert_do_line_not_over_invoiced (mig
+ *  20261014T1410): the write would push a DO line's live invoiced total past
+ *  its delivered qty net of returns. Callers answer it with a 409, not a 500. */
+export const DO_LINE_OVER_INVOICED = 'P0413';
+export const isDoLineOverInvoiced = (err: unknown): boolean =>
+  (err as { code?: unknown } | null | undefined)?.code === DO_LINE_OVER_INVOICED;

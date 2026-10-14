@@ -27,7 +27,7 @@ import {
   coveredGrnIds, findUnlinkedPiLines, unlinkedInvoiceResponse, unlinkedCheckFailedResponse,
 } from '../lib/return-unlinked-lines';
 import { assertSourceLinesInCompany } from '../lib/ref-in-company';
-import { piGrnSourceRefusal } from '../lib/pi-grn-source-guard';
+import { isGrnLineOverInvoiced, piGrnSourceRefusal } from '../lib/pi-grn-source-guard';
 import { readStatusCounts } from '../lib/status-counts';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
@@ -789,6 +789,12 @@ purchaseInvoices.post('/', async (c) => {
   const rowsWithId = itemRows.map((r) => ({ ...r, purchase_invoice_id: h.id }));
   const { error: iErr } = await withPoPriceSnapshot(sb, rowsWithId, () => sb.from('purchase_invoice_items').insert(stampCompany(rowsWithId, c)));
   if (iErr) {
+    // HC-0004: the DB cap (mig 20261014T1410) refused a line past its GRN line.
+    if (isGrnLineOverInvoiced(iErr)) {
+      const b = { error: 'qty_exceeds_remaining', message: 'Another purchase invoice already bills this goods received line. Refresh and try again.', reason: iErr.message };
+      if (!await rollbackPi(sb, h.id, h.invoice_number)) return c.json(b, 409);
+      return refuseWithoutWriting(c, b, 409);
+    }
     // The claim follows the PROOF: an unproven rollback keeps it (a retype), a
     // released one over a surviving header would mint a second invoice.
     const b = insertFailed(iErr.message, 'items_insert_failed');
@@ -970,6 +976,7 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
   const { data, error } = await scopeToCompanyId(sb.from('purchase_invoices').update({
     status: 'POSTED', posted_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   }).eq('id', id), co.companyId).eq('status', 'DRAFT').select('id, status').maybeSingle();
+  if (isGrnLineOverInvoiced(error)) return c.json({ error: 'qty_exceeds_remaining', message: 'Another purchase invoice already bills a goods received line on this draft. Reduce the quantities, or cancel this draft.', reason: error?.message }, 409);
   if (error) return c.json({ error: 'post_failed', reason: error.message }, 500);
   if (!data) {
     // Lost the race — a concurrent confirm already flipped it. Echo the live row.
@@ -1287,6 +1294,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
 
   const sb = c.get('supabase');
   const created: Array<{ id: string; invoiceNumber: string; supplierId: string; grnCount: number; lineCount: number }> = [];
+  let dbCapRefused = false;
 
   for (const draft of coreRes.created) {
     /* Auto-post (the UI create is auto-posted; the draft-only core left this to
@@ -1294,9 +1302,16 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
        status POSTED in the insert and never called postPiAccounting — so the flip
        reproduces that exactly. It MUST precede recomputeGrnInvoiced, which
        excludes DRAFT PIs from the invoiced_qty recount. */
-    await sb.from('purchase_invoices').update({
+    const { error: flipErr } = await scopeToCompanyId(sb.from('purchase_invoices').update({
       status: 'POSTED', posted_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-    }).eq('id', draft.id);
+    }).eq('id', draft.id), activeCompanyId(c) as number);
+    // HC-0004: the DB cap refused the post (a concurrent PI billed the line).
+    // Roll this bucket's draft back (the header cascades its lines).
+    if (isGrnLineOverInvoiced(flipErr)) {
+      await scopeToCompanyId(sb.from('purchase_invoices').delete().eq('id', draft.id), activeCompanyId(c) as number);
+      dbCapRefused = true;
+      continue;
+    }
 
     /* CREATE recorded HERE, past the flip, so its status snapshot reads POSTED
        exactly as when the insert stamped POSTED inline. Each bucket is its own
@@ -1337,6 +1352,9 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
     });
   }
 
+  if (dbCapRefused) {
+    return c.json({ error: 'qty_exceeds_remaining', message: 'Another purchase invoice already bills these goods received lines. Refresh the picker and try again.', created }, 409);
+  }
   return c.json({ created, total: created.length }, 201);
 };
 purchaseInvoices.post('/from-grn-items', createPurchaseInvoicesFromGrnItemsHandler);
@@ -1477,7 +1495,11 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
     discount_sen: discFor(it),
   }));
   const { error: insErr } = await withPoPriceSnapshot(sb, rows, () => sb.from('purchase_invoice_items').insert(stampCompany(rows, c)));
-  if (insErr) { await sb.from('purchase_invoices').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: insErr.message }, 500); }
+  if (insErr) {
+    await sb.from('purchase_invoices').delete().eq('id', h.id);
+    if (isGrnLineOverInvoiced(insErr)) return c.json({ error: 'qty_exceeds_remaining', message: 'Another purchase invoice already bills these goods received lines. Refresh and try again.', reason: insErr.message }, 409);
+    return c.json({ error: 'items_insert_failed', reason: insErr.message }, 500);
+  }
 
   /* Post-insert over-invoice verification (race guard) — the remaining filter
      above is read-before-write; re-sum live invoiced per GRN line now that this
@@ -1743,6 +1765,7 @@ purchaseInvoices.post('/:id/items', async (c) => {
     uom: (it.uom as string) ?? 'UNIT',
   };
   const { data, error } = await withPoPriceSnapshot(sb, [row], () => sb.from('purchase_invoice_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single());
+  if (isGrnLineOverInvoiced(error)) return c.json({ error: 'qty_exceeds_remaining', message: 'Add qty exceeds what is left to bill on the goods received line.', reason: error?.message }, 409);
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
 
   /* Bug #3/#11 — POST-INSERT over-invoice verification. The pre-check is a
@@ -1954,6 +1977,7 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
   }
 
   const { error } = await scopeToCompanyId(sb.from('purchase_invoice_items').update(updates).eq('id', itemId), co.companyId);
+  if (isGrnLineOverInvoiced(error)) return c.json({ error: 'qty_exceeds_remaining', message: 'New qty exceeds what is left to bill on the goods received line.', reason: error?.message }, 409);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row. qty,
