@@ -56,7 +56,7 @@ export async function fetchAllPages<T>(
   const all: T[] = [];
   for (let page = 1; page <= 500; page++) {
     const res = await fetchPage(page, 200);
-    const batch = res.data ?? [];
+    const batch = res.data;
     all.push(...batch);
     if (batch.length === 0 || all.length >= res.total) break;
   }
