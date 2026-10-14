@@ -262,15 +262,13 @@ const brandTone = (r: SoRow): BrandTone => brandingToneForCategory(r.first_item_
  *  redesign is showing off is the visual composition, not menu wizardry. */
 function SplitDropdown({
   onFromQuotation,
-  onImport,
   onDuplicate,
   canMaintain,
 }: {
   onFromQuotation: () => void;
-  onImport: () => void;
   onDuplicate: () => void;
-  /* SO Maintenance is director-only (owner 2026-07-15). Import-from-file and
-     Duplicate-last-SO both land on /scm/sales-orders/maintenance, so they are
+  /* SO Maintenance is director-only (owner 2026-07-15). Duplicate-last-SO
+     lands on /scm/sales-orders/maintenance, so it is
      hidden from a non-director (OFF, not hide — no menu entry, and the route
      itself Forbids). "New from quotation" stays for everyone. */
   canMaintain: boolean;
@@ -310,16 +308,6 @@ function SplitDropdown({
             </button>
             {canMaintain && (
               <>
-                <button
-                  type="button"
-                  className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
-                  onClick={() => {
-                    setOpen(false);
-                    onImport();
-                  }}
-                >
-                  Import from file
-                </button>
                 <button
                   type="button"
                   className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
@@ -1248,7 +1236,6 @@ export function MfgSalesOrdersListV2() {
   const goScanOrder = () => setShowScan(true);
   const goSoMaintenance = () => navigate("/scm/sales-orders/maintenance");
   const goFromQuotation = () => navigate("/scm/sales-orders/new/guided");
-  const goImport = () => navigate("/scm/sales-orders/maintenance?tab=import");
   const goDuplicate = () => navigate("/scm/sales-orders/maintenance?tab=duplicate");
   const goEdit = (r: SoRow) => navigate(`/scm/sales-orders/${r.doc_no}?edit=1`);
   const printDocument = usePrintDocument();
@@ -2008,7 +1995,6 @@ export function MfgSalesOrdersListV2() {
                 </Button>
                 <SplitDropdown
                   onFromQuotation={goFromQuotation}
-                  onImport={goImport}
                   onDuplicate={goDuplicate}
                   canMaintain={canMaintain}
                 />
