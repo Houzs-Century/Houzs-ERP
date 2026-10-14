@@ -130,6 +130,9 @@ import { STATUS_OPTIONS, ProjectStatusSelect } from "./projects/projectStatus";
 import { OrganizerPicker, VenuePicker } from "./projects/ProjectPickers";
 import { CreateProjectPanel } from "./projects/CreateProjectPanel";
 import { ProjectSalesOrdersBlock, useProjectSalesOrders } from "./projects/ProjectSalesOrdersBlock";
+import { ProjectSalesBillsBlock } from "./projects/ProjectSalesBillsBlock";
+import { useCanViewProjectSales, useProjectSalesBills } from "../hooks/useProjectSalesBills";
+import { fmtRmSen, notOpenedByRepId, type ProjectSalesBillsResponse } from "../lib/projectSalesBills";
 import { DateRangeFilter, MultiSelectFilter, SectionTaskBadges, ImportCsvPanel } from "./projects/ProjectsListParts";
 import { ProjectsCalendarView } from "./projects/ProjectsCalendarView";
 export { buildCalendarWindow, buildProjectsCalendarModel } from "./projects/calendarModel";
@@ -3292,6 +3295,11 @@ function ProjectDetailContent({
     }
   });
   const detail = useQuery<ProjectDetail>("/api/projects/:", () => api.get(`/api/projects/${id}`), [id]);
+  // The pasted sales report, read once here and shared by the Sales section
+  // (its block) and Sales Attending (the red number beside each name).
+  const salesGate = useCanViewProjectSales();
+  const billsQ = useProjectSalesBills(id, salesGate.canViewSales);
+  const notOpenedByRep = notOpenedByRepId(billsQ.data?.persons ?? []);
   // Users list — fetched once per open panel, reused for owner pickers
   // in the logistics section, checklist add form, and reassign dropdowns.
   const usersQ = useQuery<{ id: number; name: string }[]>("/api/users#unwrapped",
@@ -3632,6 +3640,7 @@ function ProjectDetailContent({
                 project={p}
                 canManage={can("sales.manage")}
                 currentTotalSales={detail.data?.finance?.total_sales ?? null}
+                bills={billsQ}
                 onTotalSaved={() => detail.reload()}
                 toast={toast}
               />
@@ -3705,6 +3714,7 @@ function ProjectDetailContent({
                 picUsersLoading={picUsersQ.loading}
                 canEditPic={canAssignPeople}
                 canEditAttending={canEditAttending}
+                notOpenedByRep={notOpenedByRep}
                 patch={patch}
                 onChanged={() => detail.reload()}
                 toast={toast}
@@ -3755,10 +3765,13 @@ function ProjectTeamSection({
   patch,
   onChanged,
   toast,
+  notOpenedByRep,
 }: {
   projectId: number;
   project: ProjectDetail["project"];
   attendees: SalesAttendee[];
+  /** sen still not opened per rep, from the pasted sales report — red beside the name. */
+  notOpenedByRep: Map<number, number>;
   picUsers: Array<{ id: number; name: string | null; email: string }>;
   picUsersLoading: boolean;
   /** Owner 2026-07-18: may this user (re)assign the PIC — open to every
@@ -3922,6 +3935,11 @@ function ProjectTeamSection({
                 <span className="font-medium text-ink">
                   {a.rep_name || a.user_name || `#${a.sales_rep_id}`}
                 </span>
+                {(notOpenedByRep.get(a.sales_rep_id) ?? 0) > 0 && (
+                  <span className="font-mono text-[10px] font-semibold text-err" title="Bills in the sales report not yet opened as Sales Orders">
+                    {fmtRmSen(notOpenedByRep.get(a.sales_rep_id))}
+                  </span>
+                )}
                 {a.rep_phone && (
                   <span className="font-mono text-[9px] text-ink-muted">
                     {formatPhone(a.rep_phone)}
@@ -8046,6 +8064,7 @@ function ProjectSalesEntriesSection({
   project,
   canManage,
   currentTotalSales,
+  bills,
   onTotalSaved,
   toast,
 }: {
@@ -8054,6 +8073,8 @@ function ProjectSalesEntriesSection({
   project: SoloMaskProject;
   canManage: boolean;
   currentTotalSales: number | null;
+  /** The pasted sales report, read by the detail page and shared with Sales Attending. */
+  bills: QueryState<ProjectSalesBillsResponse>;
   onTotalSaved: () => void;
   toast: ReturnType<typeof useToast>;
 }) {
@@ -8305,6 +8326,13 @@ function ProjectSalesEntriesSection({
           )}
         </div>
       </div>
+      <ProjectSalesBillsBlock
+        projectId={projectId}
+        query={bills}
+        finalTotalRm={currentTotalSales}
+        canSetTotalSales={canSetTotalSales}
+        onSetTotalSales={async (rm) => { await api.patch(`/api/projects/${projectId}/finance`, { total_sales: rm }); toast.success("Total sales updated"); onTotalSaved(); }}
+      />
       <ProjectSalesOrdersBlock query={soQuery} finalTotalRm={currentTotalSales} />
       {/* Quick Total Sales inline form — sets project_finance.total_sales
           directly (lump sum), no individual entries. */}
