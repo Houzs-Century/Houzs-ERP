@@ -111,6 +111,21 @@ export function canSeeSoloOrganizer(user: AuthUser | null | undefined): boolean 
 }
 
 /**
+ * May this user SAVE a pasted sales report into a project (and delete a bill
+ * from it)? Owner 2026-10-14: "ummu, owner, weisiang" — the Owner position and
+ * two accounts by email, the same named-people shape as canCreateEvent. This
+ * only decides whether the chat shows the Save button; the backend
+ * (routes/lib/sales-report-bills.ts canSaveSalesReport) is the authority.
+ * Reading the saved report needs only the Sales section's own gate.
+ */
+export function canSaveSalesReport(user: AuthUser | null | undefined): boolean {
+  if (!user) return false;
+  const position = (user.position_name ?? "").trim().toLowerCase();
+  const email = (user.email || "").trim().toLowerCase();
+  return position === "owner" || email === "weisiang329@gmail.com" || email === "ummuaimanlm@gmail.com";
+}
+
+/**
  * Non-director sales user — the restricted cohort of the Sales access model
  * (Delivery Returns hidden, Projects Finances hidden, etc.). Directors in the
  * Sales department are explicitly NOT restricted.

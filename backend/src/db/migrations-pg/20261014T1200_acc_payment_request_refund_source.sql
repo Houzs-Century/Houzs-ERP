@@ -1,4 +1,4 @@
--- 20261014T1200_acc_payment_request_refund_source.sql
+-- 20261014T1400_acc_payment_request_refund_source.sql
 -- REVERSAL: DROP INDEX IF EXISTS scm.idx_acc_payment_requests_refund_source;
 --           ALTER TABLE scm.acc_payment_requests DROP CONSTRAINT IF EXISTS acc_payment_requests_refund_source_chk;
 --           ALTER TABLE scm.acc_payment_requests DROP COLUMN IF EXISTS refund_source_doc_no,
