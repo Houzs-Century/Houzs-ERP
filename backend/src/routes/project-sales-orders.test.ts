@@ -50,7 +50,7 @@ const REP: Caller = { accessLevel: 'partial', position: 'Sales Executive', perms
 const TABLES: Record<string, Row[]> = {
   mfg_sales_orders: [
     { doc_no: 'HC-SO-000001', company_id: 1, project_id: 77, status: 'CONFIRMED', so_date: '2026-09-18',
-      ref: 'HC13503', debtor_name: 'Lim Ah Kow', phone: '0123456789', salesperson_id: 'staff-a',
+      ref: null, customer_so_no: 'HC 13503', debtor_name: 'Lim Ah Kow', phone: '0123456789', salesperson_id: 'staff-a',
       local_total_sen: 500000, total_revenue_sen: 500000, deposit_sen: 0, fair_match: 'PICKED', linked_ac_docno: null, created_at: '2026-09-18T02:00:00Z' },
     { doc_no: 'HC-SO-000002', company_id: 1, project_id: 77, status: 'CONFIRMED', so_date: '2026-09-19',
       ref: 'HC13504', debtor_name: 'Tan Mei', phone: null, salesperson_id: 'staff-b',
@@ -97,6 +97,10 @@ describe('GET /project-sales-orders/:projectId', () => {
     const first = body.data.find((r) => r.doc_no === 'HC-SO-000001')!;
     expect(first.customer_name).toBe('Lim Ah Kow');
     expect(first.salesperson_name).toBe('Anthony');
+    /* The booklet number a new order carries in Ref No. (customer_so_no) is
+       what the column shows; a migrated order's `ref` is the fallback. */
+    expect(first.ref).toBe('HC 13503');
+    expect(body.data.find((r) => r.doc_no === 'HC-SO-000002')!.ref).toBe('HC13504');
     /* paid = ledger only (the deposit is IN the ledger, so the header deposit
        is not added again); balance = total − paid, signed. */
     expect(first.amount_sen).toBe(500000);

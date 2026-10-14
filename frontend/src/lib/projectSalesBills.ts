@@ -1,10 +1,11 @@
-/* The evening sales report a project keeps, as the page reads it — the wire
- * shape of GET /api/project-sales-bills/:projectId and the small derivations
- * every surface shares (owner 2026-10-14): the red number beside a name under
- * Sales Attending is that person's bills not yet opened as Sales Orders.
+/* The evening sales report a project's chat carries, as the page reads it —
+ * the wire shape of GET /api/project-sales-bills/:projectId and the small
+ * derivations every surface shares (owner 2026-10-14): the red number beside a
+ * name under Sales Attending is that person's bills not yet opened as Sales
+ * Orders.
  *
- * Shared by the desktop block, the mobile panel and the chat's Save dialog so
- * the three cannot disagree. Pure; no fetching here.
+ * Shared by the desktop block, the mobile panel and the chat so they cannot
+ * disagree. Pure; no fetching here.
  */
 import { fmtSen } from "../vendor/shared/format";
 
@@ -22,17 +23,23 @@ export type BillMatch = {
 };
 
 export type ProjectSalesBill = {
-  id: number;
+  /** `${source_activity_id}:${line}` — stable while the chat message is. */
+  key: string;
   ref_raw: string;
   ref_token: string;
   amount_sen: number;
+  /** A "+ 710(T)" tail the report keeps apart from the bill; shown, not counted. */
+  extra_sen: number | null;
+  extra_tag: string | null;
   salesperson_name: string | null;
   report_date: string | null;
-  source_activity_id: number | null;
+  source_activity_id: number;
   created_at: string | null;
   match: BillMatch;
   person_key: string;
   sales_rep_id: number | null;
+  /** The event a wrongly linked order sits under, when it is one. */
+  other_event_name: string | null;
 };
 
 export type PersonSummary = {
@@ -59,43 +66,41 @@ export type BillTotals = {
   other_event_count: number;
 };
 
+/** The latest summary message's Total — the figure for Total Sales. */
+export type ReportSummary = {
+  activity_id: number;
+  total_sen: number;
+  /** Sum of its day lines; null when it has none. */
+  days_sen: number | null;
+  created_at: string | null;
+};
+
 export type ProjectSalesBillsResponse = {
   bills: ProjectSalesBill[];
   persons: PersonSummary[];
   totals: BillTotals;
-  /** Chat message ids a report was saved from — the chat marks those "Saved". */
-  saved_activity_ids: number[];
+  /** Chat messages whose bills count — the chat marks those. */
+  report_activity_ids: number[];
+  summary: ReportSummary | null;
   can_save: boolean;
-};
-
-/** What a paste would save, from POST …/preview. */
-export type SalesReportPreviewBill = {
-  line: number;
-  ref_raw: string;
-  ref_token: string;
-  amount_sen: number;
-  /** A "+ 710(T)" tail the report keeps apart from the bill; shown, not counted. */
-  extra_sen: number | null;
-  extra_tag: string | null;
-  salesperson_name: string | null;
-  existing: boolean;
-  match: BillMatch;
-  sales_rep_id: number | null;
-};
-
-export type SalesReportPreview = {
-  date: { day: number; month: number } | null;
-  report_date: string | null;
-  total_sen: number | null;
-  skipped: Array<{ line: number; text: string }>;
-  warnings: string[];
-  bills: SalesReportPreviewBill[];
 };
 
 const ZERO: BillTotals = {
   count: 0, amount_sen: 0, opened_count: 0, opened_sen: 0, not_opened_count: 0, not_opened_sen: 0, other_event_count: 0,
 };
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+function normalizeSummary(raw: unknown): ReportSummary | null {
+  if (!raw || typeof raw !== "object") return null;
+  const s = raw as Partial<ReportSummary>;
+  if (typeof s.activity_id !== "number" || typeof s.total_sen !== "number") return null;
+  return {
+    activity_id: s.activity_id,
+    total_sen: s.total_sen,
+    days_sen: typeof s.days_sen === "number" ? s.days_sen : null,
+    created_at: typeof s.created_at === "string" ? s.created_at : null,
+  };
+}
 
 /** The read as the page may rely on it: a response of another shape (a stub,
  *  a proxy answering for another route) becomes an empty read, never a crash
@@ -112,7 +117,8 @@ export function normalizeProjectSalesBills(raw: unknown): ProjectSalesBillsRespo
       not_opened_count: num(t.not_opened_count), not_opened_sen: num(t.not_opened_sen),
       other_event_count: num(t.other_event_count),
     },
-    saved_activity_ids: Array.isArray(r.saved_activity_ids) ? r.saved_activity_ids.map(Number).filter(Number.isFinite) : [],
+    report_activity_ids: Array.isArray(r.report_activity_ids) ? r.report_activity_ids.map(Number).filter(Number.isFinite) : [],
+    summary: normalizeSummary(r.summary),
     can_save: r.can_save === true,
   };
 }
@@ -127,6 +133,14 @@ export function notOpenedByRepId(persons: readonly PersonSummary[]): Map<number,
     out.set(p.sales_rep_id, (out.get(p.sales_rep_id) ?? 0) + p.not_opened_sen);
   }
   return out;
+}
+
+/** The bills the list shows: the ones still to be acted on. An order opened
+ *  under THIS event is already in the Sales Orders list below the report, so
+ *  its bill is not repeated (owner 2026-10-14); one opened under another
+ *  event or under none still needs a person, so it stays. */
+export function billsNeedingAction<T extends { match: BillMatch }>(bills: readonly T[]): T[] {
+  return bills.filter((b) => b.match.status !== "opened" || b.match.other_event || b.match.unlinked);
 }
 
 export type BillStatusTone = "red" | "green" | "amber" | "grey";

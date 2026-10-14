@@ -1,6 +1,6 @@
-/* The derivations every surface shares for a project's pasted sales report:
-   the red number per attending rep, the words on a bill's row, and a read of
-   another shape degrading to empty rather than crashing the page. */
+/* The derivations every surface shares for a project's sales report: the red
+   number per attending rep, the words on a bill's row, and a read of another
+   shape degrading to empty rather than crashing the page. */
 import { describe, expect, test } from "vitest";
 import { billStatusLabel, fmtRmSen, normalizeProjectSalesBills, notOpenedByRepId, type PersonSummary } from "./projectSalesBills";
 
@@ -32,18 +32,27 @@ describe("billStatusLabel", () => {
 
 describe("normalizeProjectSalesBills", () => {
   test("passes a well-formed read through and empties any other shape", () => {
-    const full = { bills: [], persons: [person({})], totals: { count: 1, amount_sen: 2, opened_count: 3, opened_sen: 4, not_opened_count: 5, not_opened_sen: 6, other_event_count: 7 }, saved_activity_ids: [9, "10"], can_save: true };
+    const full = {
+      bills: [], persons: [person({})],
+      totals: { count: 1, amount_sen: 2, opened_count: 3, opened_sen: 4, not_opened_count: 5, not_opened_sen: 6, other_event_count: 7 },
+      report_activity_ids: [9, "10"],
+      summary: { activity_id: 5091, total_sen: 4818500, days_sen: 4836500, created_at: "2026-10-14 11:27:25" },
+      can_save: true,
+    };
     const r = normalizeProjectSalesBills(full);
     expect(r.persons).toHaveLength(1);
     expect(r.totals.other_event_count).toBe(7);
-    expect(r.saved_activity_ids).toEqual([9, 10]);
+    expect(r.report_activity_ids).toEqual([9, 10]);
+    expect(r.summary).toEqual({ activity_id: 5091, total_sen: 4818500, days_sen: 4836500, created_at: "2026-10-14 11:27:25" });
     expect(r.can_save).toBe(true);
     for (const raw of [{ data: [] }, null, "x", 1]) {
       const e = normalizeProjectSalesBills(raw);
       expect(e.bills).toEqual([]);
       expect(e.totals.count).toBe(0);
+      expect(e.summary).toBeNull();
       expect(e.can_save).toBe(false);
     }
+    expect(normalizeProjectSalesBills({ summary: { activity_id: "x" } }).summary).toBeNull();
   });
 });
 

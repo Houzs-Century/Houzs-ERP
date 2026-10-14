@@ -8327,7 +8327,6 @@ function ProjectSalesEntriesSection({
         </div>
       </div>
       <ProjectSalesBillsBlock
-        projectId={projectId}
         query={bills}
         finalTotalRm={currentTotalSales}
         canSetTotalSales={canSetTotalSales}
