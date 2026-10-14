@@ -126,6 +126,14 @@ export async function restampHeaderBranding(
   }
 }
 
+/** The bulk repair script's half (repair-so-header-branding.mjs): a brand change
+ *  re-opens a fair verdict that found no booth under the old brand, so the
+ *  nightly reconcile retries it (PENDING). The app re-detects at once instead
+ *  (`redetectFairAfterBrandChange`). */
+export function fairRependsOnBrandChange(h: { project_id: number | null; fair_match: string | null }): boolean {
+  return h.project_id == null && (h.fair_match === 'AMBIGUOUS' || h.fair_match === 'UNMATCHED');
+}
+
 /**
  * Fill in `branding` in place from `scm.mfg_products.branding` for any row
  * that has an item_code but no branding. Scoped per-company (mfg_products is
@@ -225,8 +233,7 @@ export async function deriveHeaderBrandingFromLines(
   if (codes.length === 0) return null;
   const cid = rows.find((r) => r.company_id != null)?.company_id ?? fallbackCompanyId;
 
-  const brandByCode = new Map<string, string>();
-  const catByCode = new Map<string, string>();
+  const products: HeaderBrandingProduct[] = [];
   for (let i = 0; i < codes.length; i += 300) {
     let q = pgrestIn(sb.from('mfg_products').select('code, branding, category'), 'code', codes.slice(i, i + 300));
     if (cid != null) q = q.eq('company_id', cid);
@@ -237,10 +244,30 @@ export async function deriveHeaderBrandingFromLines(
        the caller leaves the header alone, and the SO list still derives a label
        from the lines. */
     if (error) return null;
-    for (const p of (data ?? []) as Array<{ code: string; branding: string | null; category: string | null }>) {
-      if (!isBlank(p.branding)) brandByCode.set(p.code, p.branding!.trim());
-      if (p.category) catByCode.set(p.code, p.category.trim().toUpperCase());
-    }
+    products.push(...((data ?? []) as HeaderBrandingProduct[]));
+  }
+  return pickHeaderBranding(rows, products, listFallback);
+}
+
+export type HeaderBrandingProduct = { code: string; branding: string | null; category: string | null };
+
+/**
+ * The pure half of deriveHeaderBrandingFromLines: the header brand for these
+ * live lines (in line order) given this company's catalogue rows for their
+ * codes. Exported so backend/scripts/check-so-header-branding.mjs judges old
+ * orders by this exact rule, not a copy of it.
+ */
+export function pickHeaderBranding(
+  rows: Array<LineBrandingRow & { item_group?: string | null }>,
+  products: readonly HeaderBrandingProduct[],
+  listFallback: { companyCode: string | null; brands: readonly string[] } | null,
+): string | null {
+  if (!rows.some((r) => !isBlank(r.item_code))) return null;
+  const brandByCode = new Map<string, string>();
+  const catByCode = new Map<string, string>();
+  for (const p of products) {
+    if (!isBlank(p.branding)) brandByCode.set(p.code, p.branding!.trim());
+    if (p.category) catByCode.set(p.code, p.category.trim().toUpperCase());
   }
 
   const isMain = (code: string | null | undefined): boolean => {
