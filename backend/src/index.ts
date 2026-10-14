@@ -130,6 +130,7 @@ import { publicContractorCalendar } from "./routes/publicContractorCalendar";
 import { publicBrandCalendar } from "./routes/publicBrandCalendar";
 import { brandShare } from "./routes/brandShare";
 import { drainEmailOutbox } from "./services/email";
+import { pollVelocity } from "./scm/lib/velocity-poll";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
 import { runAssrAlerts, runAssrDailyDigest } from "./services/assrAlerts";
@@ -622,6 +623,14 @@ export default {
             if (r.processed) console.log(`[cron email-outbox] processed=${r.processed} sent=${r.sent} failed=${r.failed}`);
           })
           .catch((e) => console.error("[cron email-outbox]", e))
+      );
+      // DEV-42: store live lorry positions from Velocity (no-op until the secret is set).
+      ctx.waitUntil(
+        pollVelocity(env)
+          .then((r) => {
+            if (!r.skipped) console.log(`[cron velocity] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron velocity]", e instanceof Error ? e.message : e))
       );
       // AutoCount inbound SO pull (incremental, checkpoint-driven). getSince()
       // fetches every SO modified since the stored pull_checkpoint and upserts

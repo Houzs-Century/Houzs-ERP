@@ -31,7 +31,7 @@
 import { useState } from 'react';
 import { AlertTriangle, ArrowLeft, CalendarDays, Check, Link2, Lock, Printer, Unlock } from 'lucide-react';
 import {
-  useBankMonths, useBankMonth, useLockBankMonth, useUnlockBankMonth, useAutoMatchStatement, useTypeMonthClosing,
+  useBankMonths, useBankMonth, useLockBankMonth, useUnlockBankMonth, useAutoMatchStatement, useTypeMonthClosing, useLeaveOutRepeats,
   type BankMonth, type BankMonthAssembly, type BankMonthBalances, type BankMonthLock, type BankLine,
   type BankBalanceSource, type BankTypedBalance, type Reconciliation,
 } from './bank-queries';
@@ -246,7 +246,8 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
           statement，然后 lock 在 by month？不能做一起？). */}
       {q.data && (
         <StillToDecide open={open.length} locked={q.data.lock != null}
-          statements={q.data.statements.map((s) => ({ id: s.id, fileName: s.file_name }))} />
+          statements={q.data.statements.map((s) => ({ id: s.id, fileName: s.file_name }))}
+          repeats={q.data.repeats} />
       )}
 
       {/* MOUNTED ONLY WHILE OPEN. The dialog reads the company branding through
@@ -496,16 +497,66 @@ const WhereTheFiguresCameFrom = ({ a }: { a: BankMonthAssembly }) => {
 
 /* ── How much is left, and the rule that clears the obvious part ──────────── */
 
-const StillToDecide = ({ open, locked, statements }: {
+const StillToDecide = ({ open, locked, statements, repeats }: {
   open: number; locked: boolean; statements: Array<{ id: number; fileName: string }>;
+  repeats?: { count: number; statementIds: number[] };
 }) => (
-  <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-    {open === 0
-      ? <b style={{ color: good }}>Nothing left to decide</b>
-      : <b style={{ color: danger }}>{open} still to decide</b>}
-    {open > 0 && !locked && statements.length > 0 && <MatchTheObviousOnes statements={statements} />}
+  <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
+    <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+      {open === 0
+        ? <b style={{ color: good }}>Nothing left to decide</b>
+        : <b style={{ color: danger }}>{open} still to decide</b>}
+      {open > 0 && !locked && statements.length > 0 && <MatchTheObviousOnes statements={statements} />}
+    </div>
+    {!locked && repeats != null && repeats.count > 0 && (
+      <LeaveOutRepeats count={repeats.count} statements={statements.filter((s) => repeats.statementIds.includes(s.id))} />
+    )}
   </div>
 );
+
+/* WHAT AN EARLIER FILE ALREADY RECORDED (owner 2026-10-14: B，做). The month-end
+   statement printed the any-day export's movements with more words ("… at KLM")
+   and they came back as still to decide; the upload now knows them, and this
+   files the ones already in the same way — one press, each file in turn. Undo
+   on any one of them puts it back. */
+const LeaveOutRepeats = ({ count, statements }: { count: number; statements: Array<{ id: number; fileName: string }> }) => {
+  const run = useLeaveOutRepeats();
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ leftOut: number; refused: string[] } | null>(null);
+  const go = async () => {
+    setBusy(true);
+    const tally = { leftOut: 0, refused: [] as string[] };
+    for (const s of statements) {
+      try {
+        tally.leftOut += (await run.mutateAsync(s.id)).leftOut;
+      } catch (err) {
+        tally.refused.push(`${s.fileName}: ${refusalText(err, 'nothing was left out.')}`);
+      }
+    }
+    setResult(tally);
+    setBusy(false);
+  };
+  return (
+    <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+      <button type="button" style={{ ...btn(), padding: '2px 8px' }} disabled={busy} onClick={() => { void go(); }}>
+        <Check {...ICON} /> {busy ? 'Leaving out…' : `Leave out ${count} already recorded`}
+      </button>
+      <span style={softText}>
+        {count} movement{count === 1 ? '' : 's'} below {count === 1 ? 'is' : 'are'} already on a file uploaded earlier
+        ({statements.map((s) => s.fileName).join(', ')} repeats {count === 1 ? 'it' : 'them'}, printed a little differently).
+        They go under already dealt with, each naming where it is recorded; Undo puts any one back.
+      </span>
+      {result && (
+        <span style={{ fontSize: 'var(--fs-13)', color: result.leftOut > 0 ? good : undefined }}>
+          {result.leftOut} left out.
+        </span>
+      )}
+      {result?.refused.map((r) => (
+        <span key={r} style={{ fontSize: 'var(--fs-12)', color: danger }}>{r}</span>
+      ))}
+    </div>
+  );
+};
 
 /* The file screen's rule, run over EVERY file that fed this month, one after
    the other; the answer is the sum. A file the server refuses (one crossing
