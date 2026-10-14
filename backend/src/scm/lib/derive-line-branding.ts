@@ -23,6 +23,7 @@ import { brandingLabel } from '../shared/so-branding-label';
 import { namesABrand } from './vp-brand';
 import { activeCompanyId, activeCompanySql, scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { soHasDownstream } from './downstream-lock';
+import { redetectFairAfterBrandChange, type FairDb } from './fair-binding';
 
 export type LineBrandingRow = {
   item_code?: string | null;
@@ -69,9 +70,10 @@ export async function loadHeaderBrandList(
  *
  * Left alone: a migrated order (its header is AutoCount's copy), an order a
  * live DO / SI has snapshotted (the header identity lock), and any read that
- * fails. A brand change on an order whose fair verdict was computed from the
- * old brand and found no booth (AMBIGUOUS / UNMATCHED, no link) goes back to
- * PENDING so the nightly fair reconcile retries with the right brand.
+ * fails. A brand change re-runs fair detection with the new brand
+ * (`redetectFairAfterBrandChange`, HC-0094): an unlinked order is linked to an
+ * existing fair now, and a link to the old brand's booth moves to the new
+ * brand's booth at the same event.
  */
 export async function restampHeaderBranding(
   sb: SupabaseClient,
@@ -80,11 +82,11 @@ export async function restampHeaderBranding(
 ): Promise<void> {
   try {
     const { data: head, error } = await scopeToCompany(
-      sb.from('mfg_sales_orders').select('branding, linked_ac_docno, project_id, fair_match'),
+      sb.from('mfg_sales_orders').select('branding, linked_ac_docno, project_id, fair_match, venue, so_date'),
       c,
     ).eq('doc_no', docNo).maybeSingle();
     if (error || !head) return;
-    const h = head as { branding: string | null; linked_ac_docno: string | null; project_id: number | null; fair_match: string | null };
+    const h = head as { branding: string | null; linked_ac_docno: string | null; project_id: number | null; fair_match: string | null; venue: string | null; so_date: string | null };
     if (h.linked_ac_docno) return;
     if (await soHasDownstream(sb, docNo)) return;
     const { data: lines, error: lErr } = await scopeToCompany(
@@ -101,11 +103,22 @@ export async function restampHeaderBranding(
       await loadHeaderBrandList(c),
     );
     if (!brand || brand === h.branding) return;
-    const repend = h.project_id == null && (h.fair_match === 'AMBIGUOUS' || h.fair_match === 'UNMATCHED');
     const companyId = activeCompanyId(c);
     if (companyId == null) return;
+    const fair = await redetectFairAfterBrandChange({
+      db: c.env.DB as unknown as FairDb,
+      companySql: activeCompanySql(c, 'p.company_id'),
+      order: {
+        venue: h.venue,
+        soDate: String(h.so_date ?? '').slice(0, 10),
+        projectId: h.project_id == null ? null : Number(h.project_id),
+        fairMatch: h.fair_match,
+      },
+      oldBrand: h.branding,
+      newBrand: brand,
+    });
     await sb.from('mfg_sales_orders')
-      .update(repend ? { branding: brand, fair_match: 'PENDING' } : { branding: brand })
+      .update({ branding: brand, ...(fair ?? {}) })
       .eq('doc_no', docNo).eq('company_id', companyId);
   } catch (e) {
     // eslint-disable-next-line no-console

@@ -71,6 +71,7 @@ import { soAmendableHeaderFields } from '../shared/so-field-policy';
 import { canonicaliseSoHeaderChanges, soDateYmd, withProcessingRemovalCascade } from '../shared/so-processing-date';
 import { soStatusAfterProcessingDateChange } from './so-proceed-status-change';
 import { syncSoDeliveredFromDo } from './so-delivery-sync';
+import { restampHeaderBranding } from './derive-line-branding';
 import { readSoLineFreeze, soLineWriteRefusal } from './downstream-lock';
 import { SO_IDENTITY_LOCK_COLS } from '../shared/so-identity-lock';
 
@@ -977,6 +978,9 @@ export async function applySoAmendment(
     // eslint-disable-next-line no-console
     console.error('[so-amendment] rederiveDeliveryFee failed (non-fatal):', e);
   }
+  /* An approved product change can change the brand (HC-0095): re-derive the
+     header and its fair booth exactly as a direct line edit does. Non-fatal. */
+  if (c) await restampHeaderBranding(sb, docNo, c);
 
   // (5) Bump the SO's revision + updated_at.
   let bump = sb

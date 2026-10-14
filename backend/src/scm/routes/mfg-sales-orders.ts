@@ -6092,11 +6092,22 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     updates['venue_source'] = 'MANUAL' satisfies VenueSource;
     /* FAIR LINK (owner 2026-09-13) — the venue just moved, so whatever fair this
        order was linked to is now a claim about a place it was not written at.
-       A picked EVENT was linked above; a place alone (Others) drops the link to
-       PENDING for the nightly reconcile and, failing that, the pending screen. */
+       A picked EVENT was linked above; a place alone (Others) runs the same
+       venue + date + brand detection create does (HC-0094), and what it cannot
+       settle stays PENDING / AMBIGUOUS / UNMATCHED for the reconcile and the
+       pending screen. */
     if (!fairLink) {
-      updates['project_id'] = null;
-      updates['fair_match'] = 'PENDING';
+      const fair = await resolveFairForSave({
+        db: c.env?.DB as unknown as FairDb,
+        companySql: activeCompanySql(c, 'p.company_id'),
+        venue: typeof body['venue'] === 'string' ? body['venue'] : null,
+        organizer: null,
+        picked: null,
+        soDate: String(updates['so_date'] ?? beforeRecord.so_date ?? '').slice(0, 10),
+        brand: typeof (updates['branding'] ?? beforeRecord.branding) === 'string' ? String(updates['branding'] ?? beforeRecord.branding) : null,
+      });
+      updates['project_id'] = fair.projectId;
+      updates['fair_match'] = fair.projectId != null ? 'PICKED' : fair.match;
       updates['fair_date'] = null;
       body['fairDate'] = null;
     }
