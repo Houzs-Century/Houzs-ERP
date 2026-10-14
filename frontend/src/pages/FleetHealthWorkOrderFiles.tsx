@@ -29,7 +29,7 @@ export function WorkOrderFiles({ wo, onChanged }: {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const base = `/api/fleet-work-order-files/${wo.id}`;
-  const fail = (e: unknown) => setErr(e instanceof Error ? e.message : "The file could not be saved.");
+  const errText = (e: unknown) => (e instanceof Error ? e.message : "The file could not be saved.");
 
   const upload = async (files: File[]) => {
     if (busy || files.length === 0) return;
@@ -43,19 +43,19 @@ export function WorkOrderFiles({ wo, onChanged }: {
           f, f.type || "application/octet-stream");
       }
       onChanged();
-    } catch (e) { fail(e); } finally { setBusy(false); }
+    } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
   };
 
   const open = async (key: string) => {
     try { window.open(await api.fetchBlobUrl(`${base}/file?key=${encodeURIComponent(key)}`), "_blank", "noopener"); }
-    catch (e) { fail(e); }
+    catch (e) { setErr(errText(e)); }
   };
 
   const remove = async (key: string) => {
     if (busy) return;
     setBusy(true); setErr(null);
     try { await api.del(`${base}?key=${encodeURIComponent(key)}`); onChanged(); }
-    catch (e) { fail(e); } finally { setBusy(false); }
+    catch (e) { setErr(errText(e)); } finally { setBusy(false); }
   };
 
   return (
