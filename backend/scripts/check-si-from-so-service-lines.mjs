@@ -22,7 +22,7 @@ const isSvc = (code, group) => {
 try {
   const prods = await pg`
     select code, name, category, company_id from scm.mfg_products
-    where upper(coalesce(category,'')) = 'SERVICE' or upper(code) like 'SVC-%'
+    where category::text = 'SERVICE' or upper(code) like 'SVC-%'
     order by code`;
   console.log(`(a) SERVICE products: ${prods.length}`);
   for (const p of prods) console.log(`  ${p.code} | ${p.name} | cat=${p.category} | co=${p.company_id}`);
