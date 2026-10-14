@@ -79,7 +79,7 @@ type Row = Record<string, any>;
 export const paymentRequests = new Hono<{ Bindings: Env; Variables: Variables }>();
 paymentRequests.use('*', supabaseAuth);
 
-const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee_name, amount_sen, due_date, purpose, project_id, bank_name, bank_account_no, bank_account_name, status, pv_id, ap_invoice_id, finance_note, decided_by, decided_at, created_at, updated_at, bill_no, bill_date, bill_total_sen, event_bill, no_event_reason, parent_request_id, installment_no, pay_pct, note, checklist_item_id, refund_source_type, refund_source_doc_no';
+const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee_name, amount_sen, due_date, purpose, project_id, bank_name, bank_account_no, bank_account_name, status, pv_id, ap_invoice_id, finance_note, decided_by, decided_at, created_at, updated_at, bill_no, bill_date, bill_total_sen, event_bill, no_event_reason, parent_request_id, installment_no, pay_pct, note, checklist_item_id, refund_source_type, refund_source_doc_no, part_time_pay_id';
 const NO_PERM = { error: "You don't have permission to do that." };
 
 const mayRequest = (c: any): boolean => hasHouzsPerm(c, PAYMENT_REQUEST_KEY);
@@ -115,7 +115,7 @@ const officialOf = (doc: Row): { state: string; note: string | null } | null =>
 
 /** Each request with its answering document's facts — the voucher's, or the
     AP invoice's and the AP Payments' that paid it — and the stage they say. */
-async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
+export async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
   const sb = c.get('supabase');
   const pvIds = [...new Set(rows.map((r) => r.pv_id).filter(Boolean))] as string[];
   let vouchers = new Map<string, VoucherFacts>();

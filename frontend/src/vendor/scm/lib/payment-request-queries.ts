@@ -29,6 +29,9 @@ export type PaymentRequest = {
   purpose: string;
   /** The requester's note to Finance (2026-10-02) — absent before then. */
   note?: string | null;
+  /** The part-time pay sheet row this request was raised from (owner
+      2026-10-14) — such a request has no bill; the sheet is the evidence. */
+  part_time_pay_id?: string | null;
   project_id: number | null;
   bank_name: string | null;
   bank_account_no: string | null;

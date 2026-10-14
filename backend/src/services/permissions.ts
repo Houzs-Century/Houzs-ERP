@@ -271,6 +271,12 @@ export const PERMISSIONS: PermissionDef[] = [
   // Admin hold both via "*" — grant either explicitly and sparingly.
   { key: "scm.hr.close",  resource: "Supply Chain", verb: "manage", label: "Close HR payout period", description: "Freeze a commission period so later rate changes cannot alter what it pays — the payroll approval step" },
   { key: "scm.hr.reopen", resource: "Supply Chain", verb: "manage", label: "Reopen HR payout period", description: "Un-freeze a closed commission period so it recomputes again — reverses an approved payout and is always recorded with a reason" },
+  // Part-time sales pay (owner 2026-10-14): the owner keys a part-timer's pay
+  // for an event (days from the POS logins, 2% of sales, the WiFi allowance,
+  // the bank details); HR confirms it, which raises the payment request
+  // Finance pays. Two keys because the two steps are two people on purpose.
+  { key: "scm.part_time_pay.request", resource: "Supply Chain", verb: "create", label: "Request part-time sales pay", description: "Key a part-time salesperson's pay sheet for an event (days, sales, WiFi allowance, bank details) for HR to confirm" },
+  { key: "scm.part_time_pay.confirm", resource: "Supply Chain", verb: "manage", label: "Confirm part-time sales pay", description: "Confirm a part-time pay sheet — raises the payment request Finance pays, and sees the bank slip once paid" },
 
   // AutoCount write-back queue (scm.autocount_outbox, mig 0277) — the READ of
   // what the ERP has told the licensed account book and what came back. It is a

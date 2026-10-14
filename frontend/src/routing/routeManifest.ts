@@ -101,6 +101,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/stock-takes/:id",
   "/scm/hr/commission",
   "/scm/hr/settings",
+  "/scm/hr/part-time-pay",
   "/scm/purchase-returns",
   "/scm/purchase-returns/new",
   "/scm/purchase-returns/:id",

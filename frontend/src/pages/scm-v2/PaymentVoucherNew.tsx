@@ -418,7 +418,9 @@ export const PaymentVoucherNew = () => {
   const requestRead = useRef(false);
   useEffect(() => {
     const r = requestQ.data?.request;
-    if (!fromRequest || isAp || isRefund || requestRead.current || !r) return;
+    /* A part-timer's pay (owner 2026-10-14) carries no bill: the sheet is the
+       evidence and the breakdown is already in the notes. Nothing to read. */
+    if (!fromRequest || isAp || isRefund || requestRead.current || !r || r.part_time_pay_id) return;
     requestRead.current = true;
     const who = r.requested_by_name ?? 'the requester';
     const asked = `Answering ${r.request_no} from ${who} — its bill is attached to this voucher when you save.`;

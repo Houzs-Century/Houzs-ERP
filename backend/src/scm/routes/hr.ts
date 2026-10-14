@@ -142,7 +142,7 @@ const issues = (e: z.ZodError) => e.issues.map((i) => ({ path: i.path, message: 
 
 // ── config ───────────────────────────────────────────────────────────────
 const CONFIG_SELECT =
-  'base_bps, personal_kpi_threshold_sen, personal_kpi_bonus_bps, showroom_kpi_threshold_sen, showroom_kpi_bonus_bps, override_base_bps, override_kpi_bonus_bps, override_mode, updated_at';
+  'base_bps, personal_kpi_threshold_sen, personal_kpi_bonus_bps, showroom_kpi_threshold_sen, showroom_kpi_bonus_bps, override_base_bps, override_kpi_bonus_bps, override_mode, part_time_commission_bps, part_time_day_rate_sen, part_time_wifi_sen, updated_at';
 
 type ConfigRow = {
   base_bps: number;
@@ -153,6 +153,10 @@ type ConfigRow = {
   override_base_bps: number;
   override_kpi_bonus_bps: number;
   override_mode: string;
+  /* Part-time sales pay (owner 2026-10-14) — migration 20261014T1810. */
+  part_time_commission_bps: number;
+  part_time_day_rate_sen: number;
+  part_time_wifi_sen: number;
   updated_at?: string;
 };
 
@@ -174,6 +178,9 @@ const toConfigApi = (r: ConfigRow) => ({
   overrideBaseBps: r.override_base_bps,
   overrideKpiBonusBps: r.override_kpi_bonus_bps,
   overrideMode: r.override_mode,
+  partTimeCommissionBps: Number(r.part_time_commission_bps ?? 0),
+  partTimeDayRateSen: Number(r.part_time_day_rate_sen ?? 0),
+  partTimeWifiSen: Number(r.part_time_wifi_sen ?? 0),
   updatedAt: r.updated_at,
 });
 
@@ -233,6 +240,9 @@ const configPatchSchema = z.object({
   overrideBaseBps: z.number().int().nonnegative().optional(),
   overrideKpiBonusBps: z.number().int().nonnegative().optional(),
   overrideMode: z.enum(['showroom', 'chain']).optional(),
+  partTimeCommissionBps: z.number().int().nonnegative().optional(),
+  partTimeDayRateSen: z.number().int().nonnegative().optional(),
+  partTimeWifiSen: z.number().int().nonnegative().optional(),
 });
 
 hr.patch('/config', async (c) => {
@@ -264,6 +274,9 @@ hr.patch('/config', async (c) => {
   if (d.overrideBaseBps !== undefined) patch.override_base_bps = d.overrideBaseBps;
   if (d.overrideKpiBonusBps !== undefined) patch.override_kpi_bonus_bps = d.overrideKpiBonusBps;
   if (d.overrideMode !== undefined) patch.override_mode = d.overrideMode;
+  if (d.partTimeCommissionBps !== undefined) patch.part_time_commission_bps = d.partTimeCommissionBps;
+  if (d.partTimeDayRateSen !== undefined) patch.part_time_day_rate_sen = d.partTimeDayRateSen;
+  if (d.partTimeWifiSen !== undefined) patch.part_time_wifi_sen = d.partTimeWifiSen;
 
   /* Switching TO chain with no levels configured would pay every manager a
      RM 0 override on the next run. Refuse the switch at the door — the report

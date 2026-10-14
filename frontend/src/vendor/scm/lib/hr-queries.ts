@@ -34,6 +34,10 @@ export type HrConfig = {
   overrideBaseBps: number;
   overrideKpiBonusBps: number;
   overrideMode: HrOverrideMode;
+  /** Part-time sales pay (owner 2026-10-14): 2% is 200 bps; the day rate and the WiFi allowance in sen. */
+  partTimeCommissionBps: number;
+  partTimeDayRateSen: number;
+  partTimeWifiSen: number;
   updatedAt?: string;
 };
 

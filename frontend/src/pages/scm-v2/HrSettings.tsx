@@ -628,6 +628,26 @@ export const HrSettings = () => {
               bps={cfgDraft.overrideKpiBonusBps ?? cfg.overrideKpiBonusBps}
               onChange={(v) => stageCfg({ overrideKpiBonusBps: v })}
             />
+            {/* Part-time sales pay (owner 2026-10-14): what a part-timer earns at an
+                event — priced on the Part-time pay sheet from these three. */}
+            <RateField
+              label="Part-time commission %"
+              editable={editMode}
+              bps={cfgDraft.partTimeCommissionBps ?? cfg.partTimeCommissionBps}
+              onChange={(v) => stageCfg({ partTimeCommissionBps: v })}
+            />
+            <SenField
+              label="Part-time day rate RM"
+              editable={editMode}
+              centi={cfgDraft.partTimeDayRateSen ?? cfg.partTimeDayRateSen}
+              onChange={(v) => stageCfg({ partTimeDayRateSen: v })}
+            />
+            <SenField
+              label="Part-time WiFi allowance RM (one per event)"
+              editable={editMode}
+              centi={cfgDraft.partTimeWifiSen ?? cfg.partTimeWifiSen}
+              onChange={(v) => stageCfg({ partTimeWifiSen: v })}
+            />
             <label className="flex flex-col gap-1">
               <Label>Override mode</Label>
               <select
