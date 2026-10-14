@@ -1018,6 +1018,15 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     }).eq('id', id).eq('version', applyVersion + 1).eq('apply_lease_token', applyToken);
     // eslint-disable-next-line no-console
     console.error('[so-amendment] approve-so apply failed:', e);
+    /* HC-0004: the DB floor (mig 20261014T1420) refused a qty cut below what
+       live delivery orders already ship — one raced in after the freeze read. */
+    if (e instanceof Error && e.message.includes('so_line_over_delivered')) {
+      return c.json({
+        error: 'qty_below_delivered',
+        message: 'A Delivery Order has just shipped this Sales Order line. Its qty can no longer be cut below what was delivered. Refresh and check the order.',
+        reason: e.message,
+      }, 409);
+    }
     return c.json({
       error: 'apply_failed',
       reason: e instanceof Error ? e.message : 'Failed to apply the SO revision.',

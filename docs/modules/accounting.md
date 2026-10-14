@@ -107,7 +107,7 @@ Merchant reconciliation
 - Bank recognition rules are global; regexes compile at write time and need a capture group; no delete (`is_active = false`).
 
 Bank reconciliation
-- Columns are found by heading text, never position; overlapping uploads dedupe by `movementFingerprint`; CSV and PDF cannot mix in one account-month (`mixed_sources`).
+- Columns are found by heading text, never position; overlapping uploads dedupe by day, amount and words — one print's words all inside the other's counts too, since Hong Leong's month-end file adds "at KLM" and a DuitNow id (`acc/bank-repeats.ts`, owner 2026-10-14); `POST /bank/statements/:id/repeats` (the month view's "Leave out N already recorded") files the repeats of a statement already in the same way; CSV and PDF cannot mix in one account-month (`mixed_sources`).
 - A movement belongs to the month of its own date; a file's balance speaks for a month only if the file lies wholly inside it; files must chain; a typed month-end closing applies only where no file prints one.
 - Entries offered for a movement: same amount to the sen, same direction, within 7 days, never already claimed; proposed, not applied. Auto "obvious" match needs exactly one such entry whose names agree.
 - Group match is several movements → one entry or one → several (`one_side_only` otherwise), totals equal to the sen (`amount_mismatch`); undo reopens every movement in the group.
