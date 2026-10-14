@@ -36,6 +36,7 @@ import {
   RATE_RULE_CATEGORIES, rulesByCategory, type RateRuleCategory, type RateRuleTypeT,
 } from '../../vendor/scm/lib/rate-rule-taxonomy';
 import { ThreePLCompanies } from './ThreePLCompanies';
+import { ThreePLInvoices } from './ThreePLInvoices';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -79,7 +80,7 @@ const COMPANY_LIST_KEY = ['delivery-rate-card-meta'];
 export const DeliveryRateCards = ({ embedded = false }: {
   embedded?: boolean;
 } = {}) => {
-  const [tab, setTab] = useState<'cards' | 'reconcile'>('cards');
+  const [tab, setTab] = useState<'cards' | 'reconcile' | 'invoices'>('cards');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState<{ carrierCompanyId: string | null } | null>(null);
   const [companiesOpen, setCompaniesOpen] = useState(false);
@@ -114,7 +115,7 @@ export const DeliveryRateCards = ({ embedded = false }: {
       )}
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, borderBottom: '1px solid var(--border, rgba(0,0,0,0.1))' }}>
-        {(['cards', 'reconcile'] as const).map((t) => (
+        {(['cards', 'invoices', 'reconcile'] as const).map((t) => (
           <button key={t} type="button" onClick={() => setTab(t)}
             style={{
               background: 'none', border: 'none', padding: '8px 14px', cursor: 'pointer',
@@ -122,7 +123,7 @@ export const DeliveryRateCards = ({ embedded = false }: {
               color: tab === t ? 'var(--fg, #111)' : 'var(--fg-muted)',
               borderBottom: tab === t ? '2px solid var(--c-primary-a, #2563eb)' : '2px solid transparent',
             }}>
-            {t === 'cards' ? 'Rate Cards' : 'Reconciliation'}
+            {t === 'cards' ? 'Rate Cards' : t === 'invoices' ? '3PL invoices' : 'Reconciliation'}
           </button>
         ))}
         {/* Embedded there is no PageHeader, so the tab strip carries the actions
@@ -154,7 +155,7 @@ export const DeliveryRateCards = ({ embedded = false }: {
             ? <CardEditor key={selectedId} cardId={selectedId} onDeleted={() => setSelectedId(null)} />
             : <div style={{ padding: 24, color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Select a card to edit its rules, or create one.</div>}
         </div>
-      ) : (
+      ) : tab === 'invoices' ? <ThreePLInvoices /> : (
         <ReconcileView />
       )}
 
