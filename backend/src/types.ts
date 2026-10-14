@@ -118,6 +118,9 @@ export type Env = {
   // so Connect authenticates with its own credential.
   CONNECT_SERVICE_TOKEN: string;
   GOOGLE_MAPS_API_KEY?: string;
+  // DEV-42 lorry GPS (scm/lib/velocity-poll.ts). Either unset -> the poll is a no-op.
+  VELOCITY_REFRESH_TOKEN?: string;
+  VELOCITY_CUSTOMER_ID?: string;
   // Email (Resend). Leave RESEND_API_KEY unset to run in no-op mode —
   // send() will log + skip, never throw.
   RESEND_API_KEY?: string;

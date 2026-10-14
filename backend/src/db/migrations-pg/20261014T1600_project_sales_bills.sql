@@ -1,4 +1,4 @@
--- 20261014T1400_project_sales_bills.sql
+-- 20261014T1600_project_sales_bills.sql
 -- REVERSAL: DROP TABLE IF EXISTS public.project_sales_bills;
 --   The bills are a copy of a chat message the project keeps; dropping the table
 --   loses the per-bill, per-person record of a fair's sales reports and nothing

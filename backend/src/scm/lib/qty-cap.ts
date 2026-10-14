@@ -168,3 +168,10 @@ export async function qtyCapRefusal(
     ownPriorDraw: args.ownPriorDraw,
   });
 }
+
+/** SQLSTATE raised by scm.assert_po_line_not_over_received (mig
+ *  20261014T1400): the write would push a PO line's live received total up
+ *  past its qty. Callers answer it with their existing 409, not a 500. */
+export const PO_LINE_OVER_RECEIVED = 'P0411';
+export const isPoLineOverReceived = (err: { code?: string | null } | null | undefined): boolean =>
+  err?.code === PO_LINE_OVER_RECEIVED;
