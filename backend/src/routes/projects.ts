@@ -65,6 +65,7 @@ import { canonicalizeVenue } from "../scm/lib/canonical-venue";
 import { getDb } from "../db/client";
 import {
   project_brands,
+  project_finance,
   project_finance_lines,
   projects as projectsTable,
 } from "../db/schema";
@@ -2887,10 +2888,8 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
   };
   const orderByClause = sql`ORDER BY ${sql.raw(`${sortMap[sortBy] ?? sortMap.net} ${sortDir}`)}, id DESC`;
 
-  // The aggregate row per project; row visibility under a date range is
-  // enforced by the `visible` wrapper below (line_count > 0).
-  // Per-category breakdown built with one CASE-SUM per dedicated column;
-  // the residue lands in `others_cost`.
+  // The aggregate row per project. Per-category breakdown built with one
+  // CASE-SUM per dedicated column; the residue lands in `others_cost`.
   const baseSelect = sql`
     SELECT p.id,
            p.code,
@@ -2903,7 +2902,14 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
            p.venue,
            p.organizer,
            COALESCE(SUM(CASE WHEN l.kind = 'income' AND l.archived_at IS NULL ${dateClause} THEN l.amount ELSE 0 END), 0) AS income,
-           COALESCE(SUM(CASE WHEN l.kind = 'income' AND l.category = 'sales' AND l.archived_at IS NULL ${dateClause} THEN l.amount ELSE 0 END), 0) AS sales,
+           -- Same rule as the project page's P&L snapshot: individual sales
+           -- lines when any exist, else the lump "Total Sales" box
+           -- (project_finance.total_sales), which is where most events keep
+           -- their sales. MAX(): pf is 1:1 with p but not in the GROUP BY.
+           CASE WHEN COALESCE(SUM(CASE WHEN l.kind = 'income' AND l.category = 'sales' AND l.archived_at IS NULL ${dateClause} THEN l.amount ELSE 0 END), 0) > 0
+                THEN COALESCE(SUM(CASE WHEN l.kind = 'income' AND l.category = 'sales' AND l.archived_at IS NULL ${dateClause} THEN l.amount ELSE 0 END), 0)
+                ELSE COALESCE(MAX(pf.total_sales), 0)
+           END AS sales,
            COALESCE(SUM(CASE WHEN l.kind = 'cost'   AND l.archived_at IS NULL ${dateClause} THEN l.amount ELSE 0 END), 0) AS cost,
            -- COGS family (2026-05-08): legacy cogs slug + the three product
            -- sub-categories the boss requested. Sums into one column for the
@@ -2923,6 +2929,7 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
            COUNT(CASE WHEN l.archived_at IS NULL ${dateClause} THEN l.id END) AS line_count
       FROM ${projectsTable} p
       LEFT JOIN ${project_finance_lines} l ON l.project_id = p.id
+      LEFT JOIN ${project_finance} pf ON pf.project_id = p.id
       ${whereClause}
       GROUP BY p.id
   `;
