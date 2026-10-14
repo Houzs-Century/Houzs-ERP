@@ -38,6 +38,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Phone/desktop parity defects B-6, B-7, B-8, B-10 to B-13, MD-3, one PR each — 2026-09-14
 - Sales order list: right-click "Reopen" shows on cancelled orders but the server always refuses it — 2026-09-15
 - Photos over 2 MiB are dropped (4 documents) — 2026-09-14
+- Drop `public.project_sales_bills` (created by mig 20261014T1600, unused since the sales report is derived from the project chat; 38 saved rows are superseded by the chat they came from) — needs a migration with REVERSAL — 2026-10-14
 
 ## Plans in force
 - One table component (owner 2026-09-25): done 2026-09-27. Every list renders `components/DataTable.tsx`, with resize-one-column, wrap, freeze-up-to, Title Case headers, auto-fit, footer totals, Ctrl+C, export of the ticked rows, header descriptions (`lib/columnDescriptions.ts`), fixed overdue/owing highlights (`lib/tableHighlight.ts`), column filters in the URL (`cf.<tableId>`), and one display format (yyyy/mm/dd, "RM 1,234.00" incl. PDFs, readable status). Left: quantity separators on document detail line tables and create-from pickers (in progress); mobile card lists have no totals / freeze / copy by design.

@@ -1,57 +1,55 @@
 // ----------------------------------------------------------------------------
-// project-sales-bills — the evening sales report a project keeps, bill by
-// bill, and what it says is still not opened.
+// project-sales-bills — the evening sales report a project's chat carries,
+// counted bill by bill, and what it says is still not opened.
 //
 // WHY (owner 2026-10-14). Every evening the floor posts, per booth, one line
 // per bill: booklet number, amount, who sold it. Until each bill is keyed into
 // the Sales Order module that message is the only record of what the fair sold
-// and whose it is. Pasted into the project's chat and saved here, the project
-// can say — by booklet number, which is the order's Ref No. — which bills are
-// still not opened, and how much of that sits with each salesperson, shown in
-// red beside their name under Sales Attending.
+// and whose it is. Pasted into the project's chat by the Owner, Ummu or Wei
+// Siang, it counts at once — and so does every report pasted before this
+// existed — and the project says, by booklet number (the order's Ref No.),
+// which bills are still not opened, and how much of that sits with each
+// salesperson, shown in red beside their name under Sales Attending.
 //
-//   GET    /api/project-sales-bills/:projectId            the saved bills, each
-//          matched to its order, per-person and per-event totals
-//   POST   /api/project-sales-bills/:projectId/preview    { text } → what a
-//          paste would save, before saving it
-//   POST   /api/project-sales-bills/:projectId            { text, source_activity_id? }
-//          save (a booklet number pasted again updates its row)
-//   DELETE /api/project-sales-bills/:projectId/:billId
+//   GET  /api/project-sales-bills/:projectId                 the bills the chat
+//        carries, each matched to its order, per-person and per-event totals,
+//        and the latest summary's Total for Total Sales
+//   POST /api/project-sales-bills/:projectId/notify          ask the rep of any
+//        order found under another event to amend its fair
+//   POST /api/project-sales-bills/:projectId/void/:activityId  void a wrongly
+//        pasted chat message: it leaves the chat and stops counting
+//
+// DERIVED, NOT COPIED. The bills are read out of the chat (project_activity
+// notes) on every request — lib/sales-report-bills.ts collectReport — so a
+// message counts the moment it is posted, from either surface, and a voided
+// message stops counting with nothing else to clean up. The order match is
+// likewise computed on every read: the orders change daily as reps key them in.
 //
 // GATES. index.ts puts the Sales section's own read gate in front of the prefix
 // (requirePageAccessOrSalesView("sales")) — every attending rep may see their
-// number. Saving and deleting are for the three people the owner named
-// (lib/sales-report-bills.ts canSaveSalesReport), checked here on the REAL
-// caller. Company scope: the project is read inside the active company, the
-// bills carry company_id, and the order read is scopeToCompany.
-//
-// THE MATCH is computed on every read, never stored: the orders change daily
-// as the reps key them in, and a stored verdict would be stale by the morning.
-// An order found under ANOTHER event is still "opened" (the bill exists in the
-// system) but flagged, and on save its salesperson gets a personal notice
-// asking them to amend the fair on the order — the owner's rule for a
-// mis-picked fair.
+// number. Notify and void are for the three people the owner named
+// (canSaveSalesReport), checked here on the REAL caller. Company scope: the
+// project is read inside the active company before anything under it, and the
+// order read is scopeToCompany.
 // ----------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Env, Variables } from "../scm/env";
 import { supabaseAuth } from "../scm/middleware/auth";
 import { getDb } from "../db/client";
-import { projects, project_sales_attendees, sales_reps, users, project_sales_bills } from "../db/schema";
+import { projects, project_activity, project_finance, project_sales_attendees, positions, sales_reps, users } from "../db/schema";
 import { activeCompanyId, requireActiveCompanyId, scopeToCompany } from "../scm/lib/companyScope";
 import { paginateAll, chunkIn, type PageResult } from "../scm/lib/paginate-all";
 import { postPersonalNotice } from "../services/personalNotice";
-import { parseSalesReport, reportDateFor } from "../scm/shared/sales-report-parse";
 import {
   canSaveSalesReport,
-  indexOrdersByToken,
-  matchBill,
+  collectReport,
   matchBills,
   summarizeBills,
   type AttendeeRow,
-  type BillRow,
   type MatchedBill,
+  type NoteRow,
   type OrderRow,
 } from "./lib/sales-report-bills";
 
@@ -60,6 +58,7 @@ type Db = ReturnType<typeof getDb>;
 type ProjectRow = { id: number; name: string; start_date: string | null; end_date: string | null };
 
 const MISMATCH_SOURCE = "sales_report_fair_mismatch";
+const ONLY_THREE = "Only the owner, Ummu or Wei Siang can do this.";
 
 /** The real caller — supabaseAuth has replaced `user` with the pinned scm
  *  staff row by the time a handler runs; the person is in houzsUser. */
@@ -102,21 +101,28 @@ async function loadAttendees(db: Db, projectId: number): Promise<AttendeeRow[]> 
   }));
 }
 
-async function loadBills(db: Db, projectId: number, companyId: number | undefined): Promise<BillRow[]> {
+/** The project's live chat messages and who wrote each — the report's source.
+ *  The project itself was read inside the company first; its notes are its own. */
+async function loadNotes(db: Db, projectId: number): Promise<NoteRow[]> {
   const rows = await db
-    .select()
-    .from(project_sales_bills)
-    .where(and(eq(project_sales_bills.project_id, projectId), companyId != null ? eq(project_sales_bills.company_id, companyId) : undefined))
-    .orderBy(desc(project_sales_bills.report_date), asc(project_sales_bills.ref_token));
+    .select({
+      id: project_activity.id,
+      note: project_activity.note,
+      created_at: project_activity.created_at,
+      author_email: users.email,
+      author_position: positions.name,
+    })
+    .from(project_activity)
+    .leftJoin(users, eq(users.id, project_activity.user_id))
+    .leftJoin(positions, eq(positions.id, users.position_id))
+    .where(and(eq(project_activity.project_id, projectId), eq(project_activity.action, "note"), isNull(project_activity.archived_at)))
+    .orderBy(asc(project_activity.created_at), asc(project_activity.id));
   return rows.map((r) => ({
     id: Number(r.id),
-    ref_raw: r.ref_raw,
-    ref_token: r.ref_token,
-    amount_sen: Number(r.amount_sen),
-    salesperson_name: r.salesperson_name ?? null,
-    report_date: r.report_date ?? null,
-    source_activity_id: r.source_activity_id != null ? Number(r.source_activity_id) : null,
+    note: r.note,
     created_at: r.created_at,
+    author_email: r.author_email,
+    author_position: r.author_position,
   }));
 }
 
@@ -150,20 +156,50 @@ async function loadOrders(c: Ctx, project: ProjectRow): Promise<OrderRow[]> {
   return data ?? [];
 }
 
-async function readPayload(c: Ctx, db: Db, companyId: number | undefined, project: ProjectRow) {
-  const [bills, attendees, orders] = await Promise.all([
-    loadBills(db, project.id, companyId),
+/** The names of the events a wrongly linked order sits under, so the page can
+ *  say where it went. Same company as the project being read. */
+async function loadEventNames(db: Db, ids: number[], companyId: number | undefined): Promise<Map<number, string>> {
+  if (ids.length === 0) return new Map();
+  const rows = await db
+    .select({ id: projects.id, name: projects.name })
+    .from(projects)
+    .where(and(inArray(projects.id, ids), companyId != null ? eq(projects.company_id, companyId) : undefined));
+  return new Map(rows.map((r) => [Number(r.id), r.name] as const));
+}
+
+/** Total Sales (whole RM), for the three who report only: the chat needs it to
+ *  put Total Sales back when the summary it came from is voided. Everyone else
+ *  gets null — Total Sales is finance data the project detail strips for them. */
+async function loadTotalSalesFor(c: Ctx, db: Db, projectId: number): Promise<number | null> {
+  if (!canSaveSalesReport(realUser(c))) return null;
+  const rows = await db.select({ total_sales: project_finance.total_sales }).from(project_finance).where(eq(project_finance.project_id, projectId)).limit(1);
+  return rows.length > 0 ? rows[0].total_sales : null;
+}
+
+async function readPayload(c: Ctx, db: Db, project: ProjectRow) {
+  const [notes, attendees, totalSalesRm] = await Promise.all([
+    loadNotes(db, project.id),
     loadAttendees(db, project.id),
-    loadOrders(c, project),
+    loadTotalSalesFor(c, db, project.id),
   ]);
-  const matched = matchBills(bills, project.id, orders, attendees);
+  const report = collectReport(notes, project.start_date);
+  /* No bills, no matching: most events have no report, and the order read is
+     the heavy one. */
+  const orders = report.bills.length > 0 ? await loadOrders(c, project) : [];
+  const matched = matchBills(report.bills, project.id, orders, attendees);
   const { persons, totals } = summarizeBills(matched, attendees);
-  const savedActivityIds = Array.from(new Set(bills.map((b) => b.source_activity_id).filter((v): v is number => v != null)));
+  const otherIds = Array.from(new Set(matched.filter((b) => b.match.other_event).map((b) => b.match.so_project_id!)));
+  const otherNames = await loadEventNames(db, otherIds, activeCompanyId(c));
   return {
-    bills: matched,
+    bills: matched.map((b) => ({
+      ...b,
+      other_event_name: b.match.other_event ? otherNames.get(b.match.so_project_id!) ?? null : null,
+    })),
     persons,
     totals,
-    saved_activity_ids: savedActivityIds,
+    report_activity_ids: report.report_activity_ids,
+    summary: report.summary,
+    total_sales_rm: totalSalesRm,
     can_save: canSaveSalesReport(realUser(c)),
   };
 }
@@ -182,9 +218,8 @@ async function notifyWrongFair(c: Ctx, db: Db, project: ProjectRow, matched: rea
     staffIds,
     (batch, a, b) => sb.from("staff").select("id, user_id").in("id", batch).range(a, b),
   );
-  /* A failed staff read means nobody can be addressed; the save itself has
-     already succeeded, so say so in the log and send nothing rather than
-     silently treating the failure as "no such people". */
+  /* A failed staff read means nobody can be addressed: say so in the log and
+     send nothing rather than treating the failure as "no such people". */
   if (staffErr) {
     console.log(`[project-sales-bills] staff lookup failed, no wrong-fair notice sent: ${staffErr.message}`);
     return 0;
@@ -225,120 +260,63 @@ projectSalesBills.get("/:projectId", async (c) => {
   const projectId = parseProjectId(c);
   if (projectId == null) return c.json({ error: "invalid_project_id" }, 400);
   const db = getDb(c.env);
-  const companyId = activeCompanyId(c);
-  const project = await loadProject(db, projectId, companyId);
+  const project = await loadProject(db, projectId, activeCompanyId(c));
   if (!project) return c.json({ error: "Not found" }, 404);
   try {
-    return c.json(await readPayload(c, db, companyId, project));
+    return c.json(await readPayload(c, db, project));
   } catch (e) {
     return c.json({ error: "load_failed", reason: e instanceof Error ? e.message : String(e) }, 500);
   }
 });
 
-projectSalesBills.post("/:projectId/preview", async (c) => {
-  if (!canSaveSalesReport(realUser(c))) return c.json({ error: "Only the owner, Ummu or Wei Siang can save a sales report." }, 403);
+projectSalesBills.post("/:projectId/notify", async (c) => {
+  if (!canSaveSalesReport(realUser(c))) return c.json({ error: ONLY_THREE }, 403);
   const projectId = parseProjectId(c);
   if (projectId == null) return c.json({ error: "invalid_project_id" }, 400);
-  const body = await c.req.json<{ text?: string }>().catch(() => ({} as { text?: string }));
   const db = getDb(c.env);
-  const companyId = activeCompanyId(c);
-  const project = await loadProject(db, projectId, companyId);
+  const project = await loadProject(db, projectId, activeCompanyId(c));
   if (!project) return c.json({ error: "Not found" }, 404);
-  const parsed = parseSalesReport(body.text ?? "");
   try {
-    const [existing, attendees, orders] = await Promise.all([
-      loadBills(db, project.id, companyId),
-      loadAttendees(db, project.id),
-      loadOrders(c, project),
-    ]);
-    const have = new Set(existing.map((b) => b.ref_token));
-    const index = indexOrdersByToken(orders);
-    const bills = parsed.bills.map((b) => ({
-      ...b,
-      existing: have.has(b.ref_token),
-      match: matchBill(b.ref_token, project.id, index),
-      sales_rep_id: matchBills([{ ...b, id: 0, report_date: null, source_activity_id: null, created_at: null }], project.id, [], attendees)[0]!.sales_rep_id,
-    }));
-    return c.json({
-      date: parsed.date,
-      report_date: reportDateFor(parsed.date, project.start_date),
-      total_sen: parsed.total_sen,
-      skipped: parsed.skipped,
-      warnings: parsed.warnings,
-      bills,
-    });
+    const payload = await readPayload(c, db, project);
+    return c.json({ notified: await notifyWrongFair(c, db, project, payload.bills) });
   } catch (e) {
     return c.json({ error: "load_failed", reason: e instanceof Error ? e.message : String(e) }, 500);
   }
 });
 
-projectSalesBills.post("/:projectId", async (c) => {
+/* Void a wrongly pasted message (owner 2026-10-14: "kalau wrong … void"). The
+   message is archived — the chat and the detail page already leave archived
+   rows out — so it stops counting at once, and a trail row records who voided
+   what. Only a chat message (action 'note') can be voided, never a system row. */
+projectSalesBills.post("/:projectId/void/:activityId", async (c) => {
   const me = realUser(c);
-  if (!canSaveSalesReport(me)) return c.json({ error: "Only the owner, Ummu or Wei Siang can save a sales report." }, 403);
+  if (!me || !canSaveSalesReport(me)) return c.json({ error: ONLY_THREE }, 403);
   const projectId = parseProjectId(c);
-  if (projectId == null) return c.json({ error: "invalid_project_id" }, 400);
+  const activityId = Number(c.req.param("activityId"));
+  if (projectId == null || !Number.isInteger(activityId) || activityId <= 0) return c.json({ error: "invalid_id" }, 400);
   const company = requireActiveCompanyId(c);
   if (!company.ok) return c.json(company.refusal, 409);
-  const body = await c.req.json<{ text?: string; source_activity_id?: number | null }>().catch(() => ({} as { text?: string; source_activity_id?: number | null }));
-  const parsed = parseSalesReport(body.text ?? "");
-  if (parsed.bills.length === 0) return c.json({ error: "No bill lines found. A bill line reads like: 1. HC8993 RM6500 Jason" }, 400);
   const db = getDb(c.env);
   const project = await loadProject(db, projectId, company.companyId);
   if (!project) return c.json({ error: "Not found" }, 404);
-  const sourceId = Number.isInteger(Number(body.source_activity_id)) && Number(body.source_activity_id) > 0 ? Number(body.source_activity_id) : null;
-  const reportDate = reportDateFor(parsed.date, project.start_date);
-
-  /* One row per booklet number per event: a re-paste updates the row. Last
-     paste wins on amount and name — the evening's corrected report is the
-     truer one, and the preview showed what was already there. */
-  for (const b of parsed.bills) {
-    await db
-      .insert(project_sales_bills)
-      .values({
-        company_id: company.companyId,
-        project_id: project.id,
-        ref_token: b.ref_token,
-        ref_raw: b.ref_raw,
-        amount_sen: b.amount_sen,
-        salesperson_name: b.salesperson_name,
-        report_date: reportDate,
-        source_activity_id: sourceId,
-        created_by: me?.id ?? null,
-      })
-      .onConflictDoUpdate({
-        target: [project_sales_bills.company_id, project_sales_bills.project_id, project_sales_bills.ref_token],
-        set: {
-          ref_raw: b.ref_raw,
-          amount_sen: b.amount_sen,
-          salesperson_name: b.salesperson_name,
-          report_date: reportDate,
-          source_activity_id: sourceId,
-          updated_at: sql`now()`,
-        },
-      });
-  }
-
-  try {
-    const payload = await readPayload(c, db, company.companyId, project);
-    const notified = await notifyWrongFair(c, db, project, payload.bills);
-    return c.json({ saved: parsed.bills.length, skipped: parsed.skipped, warnings: parsed.warnings, notified, ...payload });
-  } catch (e) {
-    return c.json({ error: "load_failed", reason: e instanceof Error ? e.message : String(e) }, 500);
-  }
-});
-
-projectSalesBills.delete("/:projectId/:billId", async (c) => {
-  if (!canSaveSalesReport(realUser(c))) return c.json({ error: "Only the owner, Ummu or Wei Siang can change a sales report." }, 403);
-  const projectId = parseProjectId(c);
-  const billId = Number(c.req.param("billId"));
-  if (projectId == null || !Number.isInteger(billId) || billId <= 0) return c.json({ error: "invalid_id" }, 400);
-  const company = requireActiveCompanyId(c);
-  if (!company.ok) return c.json(company.refusal, 409);
-  const db = getDb(c.env);
-  const gone = await db
-    .delete(project_sales_bills)
-    .where(and(eq(project_sales_bills.id, billId), eq(project_sales_bills.project_id, projectId), eq(project_sales_bills.company_id, company.companyId)))
-    .returning({ id: project_sales_bills.id });
-  if (gone.length === 0) return c.json({ error: "Not found" }, 404);
+  const voided = await db
+    .update(project_activity)
+    .set({ archived_at: sql`to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')` })
+    .where(and(
+      eq(project_activity.id, activityId),
+      eq(project_activity.project_id, project.id),
+      eq(project_activity.action, "note"),
+      isNull(project_activity.archived_at),
+    ))
+    .returning({ id: project_activity.id, note: project_activity.note });
+  if (voided.length === 0) return c.json({ error: "Not found" }, 404);
+  const row = voided[0];
+  const firstLine = (row.note ?? "").split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+  await db.insert(project_activity).values({
+    project_id: project.id,
+    user_id: me.id,
+    action: "sales_report_voided",
+    note: firstLine.slice(0, 120) || null,
+  });
   return c.json({ ok: true });
 });

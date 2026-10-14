@@ -334,10 +334,14 @@ export function MobilePMS({ onBack, initialProjectId }: { onBack?: () => void; i
   // leaves PMS entirely; once the user visits the list, Back returns to it.
   const [direct, setDirect] = useState<boolean>(initialProjectId != null);
 
+  // Peter 2026-10-14: the list screen unmounts while a detail is open, so its
+  // scroll position died with it — remember it here and restore on return.
+  const listScroll = useRef(0);
+
   if (openId != null) {
     return <ProjectDetailView id={openId} onBack={() => (direct ? onBack?.() : setOpenId(null))} />;
   }
-  return <ProjectListView onOpen={(id) => { setDirect(false); setOpenId(id); }} onBack={onBack} />;
+  return <ProjectListView onOpen={(id) => { setDirect(false); setOpenId(id); }} onBack={onBack} scrollMemory={listScroll} />;
 }
 
 // ── List ──
@@ -377,7 +381,7 @@ const STAGE_FILTERS: [string, string][] = [
 
 const PMS_PAGE_SIZE = 30;
 
-function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onBack?: () => void }) {
+function ProjectListView({ onOpen, onBack, scrollMemory }: { onOpen: (id: number) => void; onBack?: () => void; scrollMemory?: { current: number } }) {
   const { can, user } = useAuth();
   // Owner 2026-07-21: the sales cohort's list rows show progress over THEIR
   // OWN deliverables (SALES PIC tasks) — the admin section chip ("CONTRACT
@@ -480,6 +484,15 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
     [data],
   );
   const totalCount = data?.pages[0]?.total ?? 0;
+  // Restore the remembered scroll ONCE rows have height again (they come from
+  // the query cache on return, so this fires on the first paint back).
+  const restoredScroll = useRef(false);
+  useEffect(() => {
+    if (restoredScroll.current || !scrollMemory?.current || rows.length === 0) return;
+    restoredScroll.current = true;
+    scrollRef.current?.scrollTo(0, scrollMemory.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows.length]);
   const searchTransition = useSearchResultTransition({
     inputTerm: q,
     requestTerm: debouncedQ,
@@ -566,7 +579,7 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
         </div>
       </header>
 
-      <div ref={scrollRef} className="scroll" style={{ padding: 14, paddingBottom: 120 }}>
+      <div ref={scrollRef} className="scroll" style={{ padding: 14, paddingBottom: 120 }} onScroll={(e) => { if (scrollMemory) scrollMemory.current = e.currentTarget.scrollTop; }}>
 
         {isLoading && <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "26px 0" }}>Loading…</div>}
         {error && <div style={{ textAlign: "center", color: "#b23a3a", fontSize: 12, padding: "26px 0" }}>Couldn't load projects. Pull to retry.</div>}

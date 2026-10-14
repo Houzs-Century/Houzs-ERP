@@ -734,6 +734,27 @@ function ProjectsListView() {
     // the next page/filter loads instead of flashing an empty table.
     { keepPreviousData: true }
   );
+  // Peter 2026-10-14: opening an event and coming back landed the list at the
+  // TOP — <main> is the app's scroll container and this page remounts on
+  // return. Save its scrollTop when a row opens; restore once rows render.
+  const openProject = (id: number) => {
+    try {
+      sessionStorage.setItem("projects:listScroll", String(document.querySelector("main")?.scrollTop ?? 0));
+    } catch {}
+    navigate(`/projects/${id}`);
+  };
+  const hasRows = !!list.data;
+  useEffect(() => {
+    if (!hasRows) return;
+    try {
+      const v = sessionStorage.getItem("projects:listScroll");
+      if (v == null) return;
+      sessionStorage.removeItem("projects:listScroll");
+      const el = document.querySelector("main");
+      if (el) el.scrollTop = parseInt(v, 10) || 0;
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasRows]);
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
     requestTerm: search,
@@ -1520,7 +1541,7 @@ function ProjectsListView() {
               return (
                 <button
                   key={r.id}
-                  onClick={() => navigate(`/projects/${r.id}`)}
+                  onClick={() => openProject(r.id)}
                   className={cn(
                     "group relative flex w-full items-center gap-4 overflow-hidden rounded-xl border border-border bg-surface p-4 pl-5 text-left shadow-stone transition-all hover:-translate-y-px hover:border-primary hover:shadow-slab",
                     r.archived_at && "opacity-60",
@@ -1619,7 +1640,7 @@ function ProjectsListView() {
           emptyLabel="No projects yet"
           getRowKey={(r) => r.id}
           getRowClassName={(r) => (r.archived_at ? "opacity-60" : undefined)}
-          onRowClick={(r) => navigate(`/projects/${r.id}`)}
+          onRowClick={(r) => openProject(r.id)}
           serverSort
           onSortChange={handleSortChange}
         />
@@ -1659,7 +1680,7 @@ function ProjectsListView() {
                   {upcoming.map((r) => (
                     <li key={r.id}>
                       <button
-                        onClick={() => navigate(`/projects/${r.id}`)}
+                        onClick={() => openProject(r.id)}
                         className="group flex w-full items-center justify-between gap-2 text-left"
                       >
                         <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-ink group-hover:text-primary">
@@ -8340,7 +8361,6 @@ function ProjectSalesEntriesSection({
         </div>
       </div>
       <ProjectSalesBillsBlock
-        projectId={projectId}
         query={bills}
         finalTotalRm={currentTotalSales}
         canSetTotalSales={canSetTotalSales}
