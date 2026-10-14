@@ -160,7 +160,7 @@ export function parseCsv(text: string): ParsedImport {
 // Excel -> the SAME row shape as parseCsv: first sheet, every cell as the text
 // Excel shows, so parseGridRows re-parses the int columns exactly as for CSV.
 export async function parseWorkbook(buffer: ArrayBuffer): Promise<ParsedImport> {
-  const [first] = await readWorkbookSheets(buffer, false);
+  const first = (await readWorkbookSheets(buffer, false)).at(0);
   if (!first) return { rows: [], errors: ['The workbook has no sheets'], warnings: [] };
   return parseGridRows(first.map((r) => (Array.isArray(r) ? r.map((c) => String(c ?? '')) : [])));
 }
