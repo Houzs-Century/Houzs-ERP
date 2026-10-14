@@ -19,7 +19,7 @@ const checkAsync = vi.fn(async (_id: string) => ({}));
 const approveAsync = vi.fn(async (_id: string) => ({}));
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   usePaymentVouchers: () => ({ data: { paymentVouchers: [
-    { id: 'raw', pv_number: 'PV-2609-001', payee_name: 'Raw Draft Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 10000, currency: 'MYR', exchange_rate: 1, submitted_at: null, checked_at: null, approved_at: null },
+    { id: 'raw', pv_number: 'PV-2609-001', payee_name: 'Raw Draft Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 10000, currency: 'MYR', exchange_rate: 1, submitted_at: null, checked_at: null, approved_at: null, notes: 'BIGHOME PENANG WATERFRONT CONVENTION CENTRE PG 30 OCT - 1 NOV26 (AKEMI, ZANOTTI)' },
     { id: 'prep', pv_number: 'PV-2609-002', payee_name: 'Prepared Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 20000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: null, approved_at: null },
     { id: 'chk', pv_number: 'PV-2609-003', payee_name: 'Checked Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 30000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: null },
     { id: 'done', pv_number: 'PV-2609-004', payee_name: 'Posted Co', status: 'POSTED', voucher_date: '2026-09-01', total_sen: 40000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: '2026-09-02T03:00:00Z' },
@@ -148,6 +148,25 @@ describe('the batch runs in voucher-date order (docs/bugs/0653)', () => {
     fireEvent.click(screen.getByText('Check 2'));
     await waitFor(() => expect(checkAsync).toHaveBeenCalledTimes(2));
     expect(checkAsync.mock.calls.map((c) => c[0])).toEqual(['prep-early', 'prep']);
+  });
+});
+
+describe('the Notes column (owner 2026-10-14: pv 那边的 list，可以让他把 notes 显示出来吗？)', () => {
+  test('each row shows its Notes, whole on hover; a voucher without notes reads —', () => {
+    draw();
+    expect(screen.getByRole('columnheader', { name: /Notes/ })).toBeTruthy();
+    const note = 'BIGHOME PENANG WATERFRONT CONVENTION CENTRE PG 30 OCT - 1 NOV26 (AKEMI, ZANOTTI)';
+    const cell = screen.getByText(note).closest('td');
+    expect(cell?.getAttribute('title')).toBe(note);
+    /* The other five carry none. */
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(5);
+  });
+
+  test('the search box finds a voucher by its notes', async () => {
+    draw();
+    fireEvent.change(screen.getByPlaceholderText('Search voucher no, payee, notes…'), { target: { value: 'penang' } });
+    await waitFor(() => expect(screen.queryByText('PV-2609-002')).toBeNull());
+    expect(screen.getByText('PV-2609-001')).toBeTruthy();
   });
 });
 
