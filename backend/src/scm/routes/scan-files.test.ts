@@ -6,6 +6,7 @@ import { linkScanFiles, linkPaymentScan } from '../lib/scan-files';
 import { listScanFilesHandler, scanFileContentHandler } from './scan-files';
 
 type Row = Record<string, unknown>;
+type HandlerCtx = Parameters<typeof listScanFilesHandler>[0];
 
 /* PostgREST stand-in: select/eq/is/in/order/limit/update/insert/maybeSingle. */
 function fakeDb(tables: Record<string, Row[]>) {
@@ -92,7 +93,7 @@ describe('scan file routes', () => {
       file({ id: 'B', document_id: 'SO-1', company_id: 2 }),
       file({ id: 'C', document_id: 'SO-2' }),
     ] });
-    const res = await listScanFilesHandler(ctx(db, { kind: 'so', documentId: 'SO-1' }, 1, {}) as never);
+    const res = await listScanFilesHandler(ctx(db, { kind: 'so', documentId: 'SO-1' }, 1, {}) as unknown as HandlerCtx);
     const body = await res.json() as { files: Row[] };
     expect(body.files.map((f) => f.id)).toEqual(['A']);
   });
@@ -100,7 +101,7 @@ describe('scan file routes', () => {
   test('opening a scan streams the bytes and records who opened it and when', async () => {
     const tables: Record<string, Row[]> = { scan_files: [file({ id: 'A', document_id: 'SO-1' })] };
     const db = fakeDb(tables);
-    const res = await scanFileContentHandler(ctx(db, { kind: 'so', id: 'A' }, 1, { 'scan-jobs/J1/0': 'JPG' }) as never);
+    const res = await scanFileContentHandler(ctx(db, { kind: 'so', id: 'A' }, 1, { 'scan-jobs/J1/0': 'JPG' }) as unknown as HandlerCtx);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('image/jpeg');
     expect(await res.text()).toBe('JPG');
@@ -111,13 +112,13 @@ describe('scan file routes', () => {
 
   test('another company\'s scan is not found, and no view is recorded', async () => {
     const tables: Record<string, Row[]> = { scan_files: [file({ id: 'A', company_id: 2 })] };
-    const res = await scanFileContentHandler(ctx(fakeDb(tables), { kind: 'so', id: 'A' }, 1, { 'scan-jobs/J1/0': 'JPG' }) as never);
+    const res = await scanFileContentHandler(ctx(fakeDb(tables), { kind: 'so', id: 'A' }, 1, { 'scan-jobs/J1/0': 'JPG' }) as unknown as HandlerCtx);
     expect(res.status).toBe(404);
-    expect(tables.scan_file_views ?? []).toHaveLength(0);
+    expect(tables.scan_file_views).toBeUndefined();
   });
 
   test('an unknown kind is refused (each kind sits behind its own area guard)', async () => {
-    const res = await listScanFilesHandler(ctx(fakeDb({}), { kind: 'hr', documentId: 'X' }, 1, {}) as never);
+    const res = await listScanFilesHandler(ctx(fakeDb({}), { kind: 'hr', documentId: 'X' }, 1, {}) as unknown as HandlerCtx);
     expect(res.status).toBe(404);
   });
 });

@@ -18,7 +18,7 @@ export function ViewOriginalScan({ kind, documentId }: { kind: ScanKind; documen
     if (documentId === '') return;
     authedFetch<{ files: Array<{ id: string }> }>(`/scan-files/${kind}/doc/${encodeURIComponent(documentId)}`)
       .then((r) => { if (live) setFiles(r.files); })
-      .catch(() => {});
+      .catch((e: unknown) => { console.warn('[scan-files] list failed:', e instanceof Error ? e.message : e); });
     return () => { live = false; };
   }, [kind, documentId]);
   if (files.length === 0) return null;
