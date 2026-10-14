@@ -11,6 +11,7 @@
    Branding filter. */
 import { describe, expect, it } from 'vitest';
 import { clientHeaderBranding, deriveHeaderBrandingFromLines, restampHeaderBranding } from './derive-line-branding';
+import soRevision from './so-revision.ts?raw';
 
 type Prod = { code: string; branding: string | null; category: string | null; company_id: number };
 
@@ -120,8 +121,9 @@ describe('header branding is a brand, not a category word (BUG-115, HC-0094)', (
    (free-gift-reconcile). HC-SO-2609-336's shape: header BEDFRAME, the only live
    line a Dunlopillo mattress. */
 describe('restampHeaderBranding', () => {
-  type Head = { branding: string | null; linked_ac_docno: string | null; project_id: number | null; fair_match: string | null };
-  function world(head: Head, liveDos = 0) {
+  type Head = { branding: string | null; linked_ac_docno: string | null; project_id: number | null; fair_match: string | null; venue?: string | null; so_date?: string | null };
+  type Fair = { id: number; venue: string; organizer: string | null; brand: string; startdate: string; enddate: string | null; status: string | null };
+  function world(head: Head, liveDos = 0, fairs: Fair[] = []) {
     const updates: Array<Record<string, unknown>> = [];
     const products: Prod[] = [
       { code: 'BF1', branding: 'BEDFRAME', category: 'BEDFRAME', company_id: 1 },
@@ -155,7 +157,14 @@ describe('restampHeaderBranding', () => {
     };
     const c = {
       get: (k: string) => ({ companyId: 1, companyCode: 'HOUZS' } as Record<string, unknown>)[k],
-      env: { DB: { prepare: () => ({ all: () => Promise.resolve({ results: HOUZS_BRANDS.map((name) => ({ name })) }) }) } },
+      env: { DB: { prepare: (sql: string) => ({
+        all: () => Promise.resolve({ results: HOUZS_BRANDS.map((name) => ({ name })) }),
+        /* The fair reads: by id, by exact event, or by venue (the window is not modelled). */
+        bind: (...v: unknown[]) => ({ all: () => Promise.resolve({ results: fairs.filter((f) =>
+          sql.includes('p.id = ?') ? f.id === v[0]
+            : sql.includes('p.start_date = ?') ? f.venue === v[0] && (f.organizer ?? '') === v[1] && f.startdate === v[2] && (f.enddate ?? '') === (v[3] ?? '')
+            : f.venue === v[0]) }) }),
+      }) } },
     };
     return {
       updates,
@@ -169,10 +178,42 @@ describe('restampHeaderBranding', () => {
     expect(w.updates).toEqual([{ branding: 'DUNLOPILLO' }]);
   });
 
-  it('a fair verdict computed from the wrong brand goes back to PENDING for the reconcile', async () => {
-    const w = world({ branding: 'BEDFRAME', linked_ac_docno: null, project_id: null, fair_match: 'UNMATCHED' });
+  it('a fair verdict computed from the wrong brand goes back to PENDING when no fair fits yet', async () => {
+    const w = world({ branding: 'BEDFRAME', linked_ac_docno: null, project_id: null, fair_match: 'UNMATCHED', venue: 'MID VALLEY', so_date: '2026-10-12' });
     await w.run();
-    expect(w.updates).toEqual([{ branding: 'DUNLOPILLO', fair_match: 'PENDING' }]);
+    expect(w.updates).toEqual([{ branding: 'DUNLOPILLO', project_id: null, fair_match: 'PENDING' }]);
+  });
+
+  /* HC-0094 (Chew, IT Hub, 2026-10-13): a manual edit must re-detect the
+     project, linking an existing fair now rather than leaving it unlinked. */
+  const MV = { venue: 'MID VALLEY', organizer: 'MLE', startdate: '2026-10-10', enddate: '2026-10-12', status: 'Confirmed' };
+  it('an unlinked order whose brand is corrected links to the existing fair booth of that brand at once', async () => {
+    const w = world({ branding: 'BEDFRAME', linked_ac_docno: null, project_id: null, fair_match: 'UNMATCHED', venue: 'MID VALLEY', so_date: '2026-10-12' }, 0,
+      [{ id: 20, brand: 'AKEMI', ...MV }, { id: 21, brand: 'DUNLOPILLO', ...MV }]);
+    await w.run();
+    expect(w.updates).toEqual([{ branding: 'DUNLOPILLO', project_id: 21, fair_match: 'PICKED' }]);
+  });
+
+  it('an order linked to the old brand booth moves to the new brand booth at the SAME event', async () => {
+    const w = world({ branding: 'AKEMI', linked_ac_docno: null, project_id: 20, fair_match: 'PICKED', venue: 'MID VALLEY', so_date: '2026-10-12' }, 0,
+      [{ id: 20, brand: 'AKEMI', ...MV }, { id: 21, brand: 'DUNLOPILLO', ...MV },
+       { id: 30, brand: 'DUNLOPILLO', ...MV, organizer: 'REX' }]);
+    await w.run();
+    expect(w.updates).toEqual([{ branding: 'DUNLOPILLO', project_id: 21, fair_match: 'PICKED' }]);
+  });
+
+  it('a link whose booth never matched the order brand (settled by a person) is kept', async () => {
+    const w = world({ branding: 'BEDFRAME', linked_ac_docno: null, project_id: 20, fair_match: 'PICKED', venue: 'MID VALLEY', so_date: '2026-10-12' }, 0,
+      [{ id: 20, brand: 'AKEMI', ...MV }, { id: 21, brand: 'DUNLOPILLO', ...MV }]);
+    await w.run();
+    expect(w.updates).toEqual([{ branding: 'DUNLOPILLO' }]);
+  });
+
+  it('a no-fair order stays no-fair', async () => {
+    const w = world({ branding: 'BEDFRAME', linked_ac_docno: null, project_id: null, fair_match: 'NO_FAIR', venue: 'MID VALLEY', so_date: '2026-10-12' }, 0,
+      [{ id: 21, brand: 'DUNLOPILLO', ...MV }]);
+    await w.run();
+    expect(w.updates).toEqual([{ branding: 'DUNLOPILLO' }]);
   });
 
   it('leaves a migrated order, a delivered order and an already-right header alone', async () => {
@@ -184,5 +225,18 @@ describe('restampHeaderBranding', () => {
       await w.run();
       expect(w.updates).toEqual([]);
     }
+  });
+});
+
+/* HC-0095 (Chew, IT Hub, 2026-10-13): "if amend the product or brand, it wont
+   re-pair to the correct fair". The approved-amendment apply rewrites lines
+   without the line routes' tail (reconcileFreeGiftLinesForSo), so it must call
+   the re-derive itself, after the lines and before the revision bump. */
+describe('an approved amendment re-derives the header brand and its fair', () => {
+  it('applySoAmendment calls restampHeaderBranding after its line writes', () => {
+    const body = soRevision.slice(soRevision.indexOf('export async function applySoAmendment('));
+    const call = body.indexOf('await restampHeaderBranding(sb, docNo, c)');
+    expect(call).toBeGreaterThan(body.indexOf('await rederiveDeliveryFee(sb, docNo, c)'));
+    expect(call).toBeLessThan(body.indexOf('// (5) Bump the SO'));
   });
 });
