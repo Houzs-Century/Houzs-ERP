@@ -6,9 +6,13 @@
  *     the event's bills from the chat (routes/project-sales-bills.ts), so the
  *     chat only marks which messages count, and after a post it re-reads the
  *     report and asks the reps of wrong-event orders to amend them;
- *   · a summary message ("9/10: RM10,500 … Total RM48,185") sets Total Sales
- *     when its days add up to its Total, and otherwise offers both figures;
- *   · any message can be voided — it leaves the chat and stops counting.
+ *   · a summary message ("9/10: RM10,500 … Total RM48,185") sets Total Sales to
+ *     its Total line when posted — the Total line is the figure, the owner's
+ *     rule; when the day lines add up to something else that is shown, not
+ *     acted on;
+ *   · any message can be voided — it leaves the chat and stops counting, and
+ *     when Total Sales came from that summary it goes back to the latest one
+ *     left (or empty).
  *
  * Own module: ProjectChat is about the conversation, and this is about money.
  */
@@ -19,7 +23,7 @@ import { canSaveSalesReport, canWriteProjectFinance } from "../auth/salesAccess"
 import { useDialog } from "../hooks/useDialog";
 import { useInvalidateProjectSalesBills, useProjectSalesBills } from "../hooks/useProjectSalesBills";
 import type { useToast } from "../hooks/useToast";
-import { fmtRmSen } from "../lib/projectSalesBills";
+import { fmtRmSen, normalizeProjectSalesBills } from "../lib/projectSalesBills";
 import { cn } from "../lib/utils";
 import { parseSalesReport, summaryTotalOf } from "../vendor/shared/sales-report-parse";
 
@@ -54,12 +58,19 @@ export function useChatSalesReport({
   const counted = useMemo(() => new Set(billsQ.data?.report_activity_ids ?? []), [billsQ.data]);
   const [busyId, setBusyId] = useState<number | null>(null);
 
-  async function setTotal(activityId: number | null, sen: number) {
+  /** Write Total Sales (whole RM, or null to empty it). */
+  async function writeTotal(sen: number | null, done: string) {
+    await api.patch(`/api/projects/${projectId}/finance`, { total_sales: sen == null ? null : sen / 100 });
+    toast.success(done);
+    onTotalSet();
+    invalidate();
+  }
+
+  async function setTotal(activityId: number | null, sen: number, daysSen: number | null) {
     setBusyId(activityId);
     try {
-      await api.patch(`/api/projects/${projectId}/finance`, { total_sales: sen / 100 });
-      toast.success(`Total Sales set to ${fmtRmSen(sen)}`);
-      onTotalSet();
+      const note = daysSen != null && daysSen !== sen ? ` (its days add up to ${fmtRmSen(daysSen)})` : "";
+      await writeTotal(sen, `Total Sales set to ${fmtRmSen(sen)}${note}`);
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Could not set Total Sales");
     } finally {
@@ -70,12 +81,20 @@ export function useChatSalesReport({
   async function voidMessage(a: ChatMessage) {
     const first = (a.note ?? "").split(/\r?\n/).find((l) => l.trim().length > 0)?.trim() ?? "this message";
     if (!(await dialog.confirm(`Void "${first}"? It leaves the chat and stops counting in this event's sales report.`))) return;
+    const summary = summaryTotalOf(parseSalesReport(a.note));
+    const totalWas = billsQ.data?.total_sales_rm ?? null;
     setBusyId(a.id);
     try {
       await api.post(`/api/project-sales-bills/${projectId}/void/${a.id}`, {});
       onVoided(a.id);
       invalidate();
       toast.success("Voided — it no longer counts for this event");
+      /* Total Sales came from this summary: put back the latest one left. */
+      if (summary && canSetTotal && totalWas != null && Math.round(totalWas * 100) === summary.total_sen) {
+        const fresh = normalizeProjectSalesBills(await api.get<unknown>(`/api/project-sales-bills/${projectId}`));
+        const next = fresh.summary?.total_sen ?? null;
+        await writeTotal(next, next == null ? "Total Sales emptied — no summary left in the chat" : `Total Sales back to ${fmtRmSen(next)}`);
+      }
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Could not void the message");
     } finally {
@@ -96,14 +115,7 @@ export function useChatSalesReport({
       return;
     }
     const s = summaryTotalOf(parsed);
-    if (!s || !canSetTotal) return;
-    if (s.days_sen == null || s.days_sen === s.total_sen) {
-      await setTotal(null, s.total_sen);
-    } else {
-      toast.error(
-        `Total Sales not set: the days add up to ${fmtRmSen(s.days_sen)} but the Total line says ${fmtRmSen(s.total_sen)}. Pick one under the message.`,
-      );
-    }
+    if (s && canSetTotal) await setTotal(null, s.total_sen, s.days_sen);
   }
 
   function footerFor(a: ChatMessage): ReactNode {
@@ -135,23 +147,17 @@ export function useChatSalesReport({
           <button
             type="button"
             disabled={busy}
-            onClick={() => void setTotal(a.id, summary.total_sen)}
+            onClick={() => void setTotal(a.id, summary.total_sen, summary.days_sen)}
             className="rounded-full border border-emerald-600/40 bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 hover:bg-emerald-200 disabled:opacity-50"
             title="Type this message's Total into the event's Total Sales (without transport or disposal)"
           >
             Set Total Sales = {fmtRmSen(summary.total_sen)}
           </button>
         )}
-        {summary && canSetTotal && daysDiffer && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void setTotal(a.id, summary.days_sen!)}
-            className="rounded-full border border-err/40 bg-err/10 px-2 py-0.5 text-[10px] font-semibold text-err hover:bg-err/20 disabled:opacity-50"
-            title="The day lines of this message do not add up to its Total line"
-          >
-            Days add up to {fmtRmSen(summary.days_sen)} — use this
-          </button>
+        {summary && daysDiffer && (
+          <span className="text-[10px] text-ink-muted" title="The day lines of this message do not add up to its Total line; the Total line is used">
+            days add up to {fmtRmSen(summary.days_sen)}
+          </span>
         )}
         <button
           type="button"

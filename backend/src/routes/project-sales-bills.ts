@@ -38,7 +38,7 @@ import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Env, Variables } from "../scm/env";
 import { supabaseAuth } from "../scm/middleware/auth";
 import { getDb } from "../db/client";
-import { projects, project_activity, project_sales_attendees, positions, sales_reps, users } from "../db/schema";
+import { projects, project_activity, project_finance, project_sales_attendees, positions, sales_reps, users } from "../db/schema";
 import { activeCompanyId, requireActiveCompanyId, scopeToCompany } from "../scm/lib/companyScope";
 import { paginateAll, chunkIn, type PageResult } from "../scm/lib/paginate-all";
 import { postPersonalNotice } from "../services/personalNotice";
@@ -167,8 +167,21 @@ async function loadEventNames(db: Db, ids: number[], companyId: number | undefin
   return new Map(rows.map((r) => [Number(r.id), r.name] as const));
 }
 
+/** Total Sales (whole RM), for the three who report only: the chat needs it to
+ *  put Total Sales back when the summary it came from is voided. Everyone else
+ *  gets null — Total Sales is finance data the project detail strips for them. */
+async function loadTotalSalesFor(c: Ctx, db: Db, projectId: number): Promise<number | null> {
+  if (!canSaveSalesReport(realUser(c))) return null;
+  const rows = await db.select({ total_sales: project_finance.total_sales }).from(project_finance).where(eq(project_finance.project_id, projectId)).limit(1);
+  return rows.length > 0 ? rows[0].total_sales : null;
+}
+
 async function readPayload(c: Ctx, db: Db, project: ProjectRow) {
-  const [notes, attendees] = await Promise.all([loadNotes(db, project.id), loadAttendees(db, project.id)]);
+  const [notes, attendees, totalSalesRm] = await Promise.all([
+    loadNotes(db, project.id),
+    loadAttendees(db, project.id),
+    loadTotalSalesFor(c, db, project.id),
+  ]);
   const report = collectReport(notes, project.start_date);
   /* No bills, no matching: most events have no report, and the order read is
      the heavy one. */
@@ -186,6 +199,7 @@ async function readPayload(c: Ctx, db: Db, project: ProjectRow) {
     totals,
     report_activity_ids: report.report_activity_ids,
     summary: report.summary,
+    total_sales_rm: totalSalesRm,
     can_save: canSaveSalesReport(realUser(c)),
   };
 }

@@ -175,8 +175,11 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   (`GET /api/project-sales-bills/:id`, `routes/project-sales-bills.ts`; parser
   `scm/shared/sales-report-parse.ts` mirrored to the frontend; rules in
   `routes/lib/sales-report-bills.ts`). Void = archive the note (`POST
-  …/void/:activityId`, trail row `sales_report_voided`). A summary message sets
-  Total Sales on post only when its days add up to its Total. Bills match orders
+  …/void/:activityId`, trail row `sales_report_voided`). A summary's Total line
+  IS Total Sales: set on post, and an empty Total Sales (null or 0) is filled from
+  the latest summary when a finance writer opens the event; a set figure is never
+  overwritten on view; voiding the summary it came from puts back the latest one
+  left (or empties it). Day lines that differ are shown, never used. Bills match orders
   by booklet number (SO `customer_so_no` / `ref` tokens); one under another event
   counts as opened, is listed with that event, and its rep is noticed on post
   (`…/notify`, `source=sales_report_fair_mismatch`). The red amount beside a
