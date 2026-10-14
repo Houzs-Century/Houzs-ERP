@@ -43,6 +43,7 @@ import presence from "./routes/presence";
 import projects from "./routes/projects";
 import { projectSalesOrders } from "./routes/project-sales-orders";
 import { projectSalesBills } from "./routes/project-sales-bills";
+import { projectPosSales } from "./routes/project-pos-sales";
 import projectsOutstanding from "./routes/projectsOutstanding";
 // Sales entries (/api/sales) is retained as a DEPENDENCY of Projects — the
 // Projects page embeds the sales-entry EntryPanel + submit/void/delete flow.
@@ -473,6 +474,10 @@ app.route("/api/project-sales-orders", projectSalesOrders);
 // named people, checked inside. See routes/project-sales-bills.ts.
 app.use("/api/project-sales-bills/*", requirePageAccessOrSalesView("sales"));
 app.route("/api/project-sales-bills", projectSalesBills);
+// Houzs POS bills of one event (layout E9) — the Sales section's POS half, so
+// the same read gate as its Sales Orders and sales report.
+app.use("/api/project-pos-sales/*", requirePageAccessOrSalesView("sales"));
+app.route("/api/project-pos-sales", projectPosSales);
 app.route("/api/sales", sales);
 app.route("/api/finance", finance);
 app.route("/api/stockitems", stockItems);

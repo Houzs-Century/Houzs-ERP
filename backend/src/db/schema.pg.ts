@@ -42,6 +42,7 @@ import {
   index,
   uniqueIndex,
   check,
+  numeric,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -630,6 +631,111 @@ export const project_sales_bills = pgTable(
     updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("uq_project_sales_bills_token").on(t.company_id, t.project_id, t.ref_token)],
+);
+
+// ── Houzs POS (mig 20261014T1147) ──────────────────────────
+// The cash & carry booth app's bills, synced from the device into the ERP's
+// own database. Money is integer sen. A bill is VOIDed, never deleted; its
+// lines and payments hang under it (ON DELETE CASCADE in the DDL).
+export const pos_sales = pgTable(
+  "pos_sales",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    uuid: uuid("uuid").notNull(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    project_id: bigint("project_id", { mode: "number" }).notNull(),
+    terminal_code: text("terminal_code").notNull(),
+    receipt_no: text("receipt_no").notNull(),
+    type: text("type").notNull().default("SALE"),
+    ref_sale_uuid: uuid("ref_sale_uuid"),
+    cashier_id: bigint("cashier_id", { mode: "number" }),
+    cashier_name: text("cashier_name"),
+    salesman_id: bigint("salesman_id", { mode: "number" }),
+    salesman_name: text("salesman_name"),
+    customer_name: text("customer_name"),
+    customer_phone: text("customer_phone"),
+    sold_at: timestamp("sold_at", { withTimezone: true, mode: "string" }).notNull(),
+    subtotal_sen: bigint("subtotal_sen", { mode: "number" }).notNull().default(0),
+    item_discount_sen: bigint("item_discount_sen", { mode: "number" }).notNull().default(0),
+    bill_discount_sen: bigint("bill_discount_sen", { mode: "number" }).notNull().default(0),
+    sst_applied: boolean("sst_applied").notNull().default(false),
+    sst_rate: numeric("sst_rate", { precision: 5, scale: 2 }).notNull().default("0"),
+    sst_amount_sen: bigint("sst_amount_sen", { mode: "number" }).notNull().default(0),
+    rounding_sen: bigint("rounding_sen", { mode: "number" }).notNull().default(0),
+    total_sen: bigint("total_sen", { mode: "number" }).notNull().default(0),
+    status: text("status").notNull().default("PAID"),
+    void_reason: text("void_reason"),
+    void_by: text("void_by"),
+    voided_at: timestamp("voided_at", { withTimezone: true, mode: "string" }),
+    is_test: boolean("is_test").notNull().default(false),
+    source: text("source").notNull().default("NORMAL"),
+    local_seq: integer("local_seq"),
+    synced_at: timestamp("synced_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_pos_sales_uuid").on(t.uuid),
+    uniqueIndex("uq_pos_sales_receipt").on(t.company_id, t.terminal_code, t.receipt_no),
+    index("idx_pos_sales_project_sold").on(t.project_id, t.sold_at),
+  ],
+);
+
+export const pos_sale_lines = pgTable(
+  "pos_sale_lines",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    sale_id: bigint("sale_id", { mode: "number" }).notNull(),
+    line_no: integer("line_no").notNull(),
+    item_id: bigint("item_id", { mode: "number" }),
+    item_code: text("item_code").notNull(),
+    description: text("description").notNull(),
+    uom: text("uom").notNull().default("UNIT"),
+    qty: numeric("qty", { precision: 12, scale: 3 }).notNull(),
+    unit_price_sen: bigint("unit_price_sen", { mode: "number" }).notNull(),
+    original_price_sen: bigint("original_price_sen", { mode: "number" }),
+    override_by: text("override_by"),
+    override_reason: text("override_reason"),
+    discount_source: text("discount_source"),
+    discount_type: text("discount_type"),
+    discount_value: numeric("discount_value", { precision: 12, scale: 2 }),
+    discount_amount_sen: bigint("discount_amount_sen", { mode: "number" }).notNull().default(0),
+    is_foc: boolean("is_foc").notNull().default(false),
+    amount_sen: bigint("amount_sen", { mode: "number" }).notNull(),
+  },
+  (t) => [uniqueIndex("uq_pos_sale_lines_no").on(t.sale_id, t.line_no)],
+);
+
+export const pos_payments = pgTable(
+  "pos_payments",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    sale_id: bigint("sale_id", { mode: "number" }).notNull(),
+    method: text("method").notNull(),
+    amount_sen: bigint("amount_sen", { mode: "number" }).notNull(),
+    reference: text("reference"),
+    last4: text("last4"),
+    tendered_sen: bigint("tendered_sen", { mode: "number" }),
+    change_sen: bigint("change_sen", { mode: "number" }),
+  },
+  (t) => [index("idx_pos_payments_sale").on(t.sale_id)],
+);
+
+export const pos_audit = pgTable(
+  "pos_audit",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    entity: text("entity").notNull(),
+    entity_id: text("entity_id").notNull(),
+    field: text("field").notNull(),
+    from_value: text("from_value"),
+    to_value: text("to_value"),
+    by_user_id: bigint("by_user_id", { mode: "number" }),
+    by_name: text("by_name"),
+    at: timestamp("at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_pos_audit_entity").on(t.entity, t.entity_id)],
 );
 
 // ── sales_entries (mig 041 / 051) ──────────────────────────

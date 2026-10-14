@@ -130,6 +130,7 @@ import { STATUS_OPTIONS, ProjectStatusSelect } from "./projects/projectStatus";
 import { OrganizerPicker, VenuePicker } from "./projects/ProjectPickers";
 import { CreateProjectPanel } from "./projects/CreateProjectPanel";
 import { ProjectSalesOrdersBlock, useProjectSalesOrders } from "./projects/ProjectSalesOrdersBlock";
+import { ProjectPosSalesSection } from "./projects/ProjectPosSalesSection";
 import { ProjectSalesBillsBlock } from "./projects/ProjectSalesBillsBlock";
 import { useCanViewProjectSales, useProjectSalesBills } from "../hooks/useProjectSalesBills";
 import { fmtRmSen, notOpenedByRepId, type ProjectSalesBillsResponse } from "../lib/projectSalesBills";
@@ -3635,6 +3636,17 @@ function ProjectDetailContent({
           <DefectActionsCtx.Provider value={defectActionsValue}>
           <DetailGrid>
             <DetailMain>
+              {/* A Cash & Carry fair sells through the Houzs POS app and has no
+                  Sales Order module: its Sales section is the POS Sales list
+                  (layout E9) in place of entries + orders. */}
+              {eventTypes.find((t) => t.id === p.event_type_id)?.slug === "cash_carry" ? (
+                <ProjectPosSalesSection
+                  projectId={id}
+                  currentTotalSales={detail.data?.finance?.total_sales ?? null}
+                  onTotalSaved={() => detail.reload()}
+                  toast={toast}
+                />
+              ) : (
               <ProjectSalesEntriesSection
                 projectId={id}
                 project={p}
@@ -3644,6 +3656,7 @@ function ProjectDetailContent({
                 onTotalSaved={() => detail.reload()}
                 toast={toast}
               />
+              )}
 
               <TasklistSections
                 projectId={id}

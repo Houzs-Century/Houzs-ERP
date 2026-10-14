@@ -39,6 +39,7 @@ import {
 } from "./MobilePmsDocCard";
 import { floorPlanTileVisible } from "./MobilePmsFloorPlanTiles";
 import { MobilePmsSalesOrders } from "./MobilePmsSalesOrders";
+import { MobilePmsPosSales, useMobileProjectPosSales } from "./MobilePmsPosSales";
 import { MobilePmsSalesBills, useMobileProjectSalesBills, type MobileProjectSalesBillsQuery } from "./MobilePmsSalesBills";
 import { fmtRmSen, notOpenedByRepId } from "../lib/projectSalesBills";
 import { SoloSafeName, useCanSeeSoloOrganizer, isSoloMasked, shownProjectName } from "../pages/projects/SoloSafeName";
@@ -1767,6 +1768,9 @@ function SalesPanel({
   notify: NotifyFn;
   reload: () => void;
 }) {
+  // The POS bills of a Cash & Carry fair; also tells the panel to drop the
+  // SO / sales-report blocks that project type has none of.
+  const posQ = useMobileProjectPosSales(projectId, true);
   // Quick-log a sale at the project (POST /api/sales/entries { quick_log }).
   // Lands as a draft sales entry; surfaces as a synthetic income line.
   const logSale = async () => {
@@ -1805,10 +1809,13 @@ function SalesPanel({
         <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
       </summary>
       <div className="pbody">
+        {/* The Houzs POS bills of a Cash & Carry fair (layout E9) stand in for
+            the sales report and the SO block, which that project type has none of. */}
+        <MobilePmsPosSales query={posQ} />
         {/* The orders opened in the SO module for this fair — the desktop
             block's phone half, same read and arithmetic. */}
-        <MobilePmsSalesBills query={bills} />
-        <MobilePmsSalesOrders projectId={projectId} finalTotalRm={finalTotalRm} />
+        {!posQ.data?.pos_enabled && <MobilePmsSalesBills query={bills} />}
+        {!posQ.data?.pos_enabled && <MobilePmsSalesOrders projectId={projectId} finalTotalRm={finalTotalRm} />}
         <div style={{ display: "flex", alignItems: "center", margin: "0 0 6px" }}>
           <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093" }}>Sales entries</span>
           {canLogSale && <button className="tinybtn" style={{ marginLeft: "auto", color: "#16695f", borderColor: "#bcdcd7" }} disabled={busy} onClick={logSale}>+ Log sale</button>}
