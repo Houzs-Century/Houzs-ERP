@@ -13,6 +13,9 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 AUTOCOUNT_API_URL = "https://it-houzs.dev/"
+# DEV-42: Velocity customer key for account 33342001 (telematics). Not a secret;
+# the token is VELOCITY_REFRESH_TOKEN (wrangler secret). Prod only.
+VELOCITY_CUSTOMER_ID = "23318492750001"
 
 # Inbound AutoCount sync kill switch. "true" = skip every AutoCount pull
 # (cron SO/PO/overdue/creditors/stock + manual /api/sync/pull). Non-AutoCount
