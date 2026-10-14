@@ -1264,7 +1264,8 @@ describe('uploading overlapping exports of the same account', () => {
     const open = lines.filter((l: Row) => l.state === 'OPEN').map((l: Row) => [String(l.booked_on), Number(l.amount_sen)]);
     expect(open).toEqual([['2026-08-03', 171000], ['2026-08-15', 50000]]);
     const dup = lines.find((l: Row) => l.state === 'IGNORED') as Row;
-    expect(String(dup.note)).toMatch(/already recorded — statement \d+ \(still open there\)/);
+    /* Named by the earlier FILE since 2026-10-14 — "statement 1" told nobody which. */
+    expect(String(dup.note)).toMatch(/already recorded — aug\.csv \(still open there\)/);
   });
 });
 
@@ -1503,7 +1504,7 @@ describe('uploading an overlapping period again', () => {
     expect(dup.note).toMatch(/already recorded — /);
     expect(dup.note).not.toMatch(/still open there/);   // the posted one names its entry
     const stillOpenElsewhere = d2.lines.find((l: any) => l.kind === 'DUPLICATE' && l.reference === 'Jaslyn');
-    expect(stillOpenElsewhere.note).toMatch(/already recorded — statement \d+ \(still open there\)/);
+    expect(stillOpenElsewhere.note).toMatch(/already recorded — aug\.csv \(still open there\)/);
 
     /* So they are not in the work, and not in the difference either. */
     expect(d2.lines.filter((l: any) => l.state === 'OPEN').map((l: any) => l.reference)).toEqual(['DEP1']);
