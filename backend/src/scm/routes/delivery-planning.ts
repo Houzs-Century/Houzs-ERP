@@ -447,10 +447,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     // amended_delivery_date drives the effective countdown. dual-read camelCase.
     amend_date_from_customer: string | null; amended_delivery_date: string | null;
     amendDateFromCustomer?: string | null; amendedDeliveryDate?: string | null;
-    // HC "Amend Client Date Reason" — OUR postpone reason (staff preset). dual-read camelCase below.
-    amend_reason: string | null; amendReason?: string | null;
-    // The CUSTOMER's reason for asking to move the date (WhatsApp amend tap).
-    amend_reason_from_customer: string | null; amendReasonFromCustomer?: string | null;
+    // HC "Amend Client Date Reason" — amend_reason is OUR postpone reason (staff
+    // preset); amend_reason_from_customer is the customer's WhatsApp amend tap.
+    amend_reason: string | null; amendReason?: string | null; amend_reason_from_customer: string | null; amendReasonFromCustomer?: string | null;
     // HC SO-context raw-data fields. dual-read camelCase below.
     possession_date: string | null; house_type: string | null;
     replacement_disposal: string | null; referral: string | null; ref: string | null; customer_so_no: string | null;
@@ -957,11 +956,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       // confirmed. The Original column above is unchanged.
       amend_date_from_customer: amendDateFromCustomer,
       amended_delivery_date: amendedDD,
-      // HC "Amend Client Date Reason" — OUR postpone reason, paired with the
-      // amend dates. dual-read.
-      amend_reason: r.amendReason ?? r.amend_reason ?? null,
-      // The customer's own reason (the WhatsApp amend tap), kept apart.
-      amend_reason_from_customer: r.amendReasonFromCustomer ?? r.amend_reason_from_customer ?? null,
+      // HC "Amend Client Date Reason" — OUR postpone reason (dual-read), then the
+      // customer's own WhatsApp amend tap reason, kept apart.
+      amend_reason: r.amendReason ?? r.amend_reason ?? null, amend_reason_from_customer: r.amendReasonFromCustomer ?? r.amend_reason_from_customer ?? null,
       // EFFECTIVE date (amended ?? original) — what the countdown actually uses.
       effective_delivery_date: effectiveDD,
       processing_date: procDate,
@@ -1140,8 +1137,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           customer_delivery_date: leg.date,
           amend_date_from_customer: null,
           amended_delivery_date: leg.date,
-          amend_reason: null,
-          amend_reason_from_customer: null,
+          amend_reason: null, amend_reason_from_customer: null,
           effective_delivery_date: leg.date,
           processing_date: leg.date,
           /* Synthetic job row — its so_doc_no is a ROW KEY, not a real SO doc
@@ -1310,8 +1306,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         customer_delivery_date: date,
         amend_date_from_customer: null,
         amended_delivery_date: date,
-        amend_reason: null,
-          amend_reason_from_customer: null,
+        amend_reason: null, amend_reason_from_customer: null,
         effective_delivery_date: date,
         processing_date: date,
         /* Synthetic DP job row — so_doc_no is `DP:<id>`, not a real SO doc
@@ -1452,8 +1447,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           customer_delivery_date: leg.date,
           amend_date_from_customer: null,
           amended_delivery_date: leg.date,
-          amend_reason: null,
-          amend_reason_from_customer: null,
+          amend_reason: null, amend_reason_from_customer: null,
           effective_delivery_date: leg.date,
           processing_date: leg.date,
           /* Synthetic job row — its so_doc_no is a ROW KEY, not a real SO doc
