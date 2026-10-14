@@ -34,6 +34,7 @@ import { Hono } from 'hono';
 import type { Env } from '../../types';
 import type { Variables } from '../env';
 import { supabaseAuth } from '../middleware/auth';
+import { scanTimer } from '../lib/scan-timing';
 
 export const scanLorryInvoice = new Hono<{ Bindings: Env; Variables: Variables }>();
 scanLorryInvoice.use('*', supabaseAuth);
@@ -262,6 +263,7 @@ scanLorryInvoice.post('/extract', async (c) => {
     return c.json({ error: 'anthropic_key_missing', reason: 'Document reading is not configured on this environment.' }, 503);
   }
 
+  const timer = scanTimer('workshop');
   let form: FormData;
   try { form = await c.req.formData(); } catch {
     return c.json({ error: 'invalid_upload', reason: 'Could not read the uploaded file.' }, 400);
@@ -282,7 +284,9 @@ scanLorryInvoice.post('/extract', async (c) => {
     return c.json({ error: 'unsupported_file', reason: `Unsupported file type "${file.name}". Use PDF / JPEG / PNG / WEBP.` }, 400);
   }
 
-  const data = toBase64(await file.arrayBuffer());
+  const buf = await file.arrayBuffer();
+  timer.mark('upload');
+  const data = toBase64(buf);
   const fileBlock = isPdf
     ? { type: 'document' as const, source: { type: 'base64' as const, media_type: 'application/pdf' as const, data } }
     : {
@@ -327,6 +331,7 @@ scanLorryInvoice.post('/extract', async (c) => {
     });
 
     const bodyText = await resp.text();
+    timer.mark('model');
     if (!resp.ok) {
       errorMsg = `Anthropic ${resp.status}: ${bodyText.slice(0, 300)}`;
     } else {
@@ -348,9 +353,14 @@ scanLorryInvoice.post('/extract', async (c) => {
       : `Could not reach the reader: ${e instanceof Error ? e.message : 'unknown error'}`;
   }
 
-  if (!parsed) return c.json({ error: 'extract_failed', reason: errorMsg ?? 'Could not read the document.' }, 502);
+  timer.mark('parse');
+  if (!parsed) {
+    timer.done(c.env, null, 'error');
+    return c.json({ error: 'extract_failed', reason: errorMsg ?? 'Could not read the document.' }, 502);
+  }
 
   const check = reconcile(parsed);
+  timer.done(c.env, null, 'ok');
   return c.json({
     document: parsed,
     /* Everything below is DERIVED for the review screen. The record is not
