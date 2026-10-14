@@ -420,6 +420,15 @@ export const requireScmAccess: MiddlewareHandler<{ Bindings: Env }> = async (c, 
     await next();
     return;
   }
+  // Additive (owner 2026-10-14, part-time sales pay): the owner's
+  // scm.part_time_pay.request and HR's scm.part_time_pay.confirm reach the
+  // part-time pay sheet and nothing else — HR holds no SCM area, and the sheet
+  // is pay, so it never rides the umbrella.
+  if (/\/scm\/hr\/part-time-pay(\/|$)/.test(c.req.path)
+    && (hasPermission(granted, "scm.part_time_pay.request") || hasPermission(granted, "scm.part_time_pay.confirm"))) {
+    await next();
+    return;
+  }
   // Additive (owner 2026-10-06, product request: Sales 都能提, Purchaser 批): a
   // Sales caller by stable org field, or a holder of either flat product-request
   // key, reaches the product-request router and nothing else. The router shows

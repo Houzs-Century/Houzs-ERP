@@ -19,6 +19,7 @@ import {
 import { applySalesJdOverride } from "./salesJdAccess";
 import { issueSessionPass, sessionSigningSecret } from "./session-pass";
 import { sidFor, revokeSession } from "./session-revocation";
+import { recordPosLogout } from "./posLogin";
 import { resolvePositionPolicy, positionGrantsWildcard } from "./positionPolicy";
 import { policyRowFromDb, type PositionPolicyRow } from "./positionPolicyRows";
 
@@ -370,6 +371,9 @@ export async function mintSessionPass(
 
 export async function deleteSession(env: Env, token: string): Promise<void> {
   await env.DB.prepare(`DELETE FROM sessions WHERE token = ?`).bind(token).run();
+  // The POS attendance book: a POS login's row gets its logout time. A no-op
+  // for every other session (no row matches), best-effort for a POS one.
+  await recordPosLogout(env, token);
   // Void this session's SIGNED PASS. A pass verifies with no DB read, so
   // deleting the session row does not log it out — the revocation board is what
   // does. Best-effort; the pass also self-expires in 8h.

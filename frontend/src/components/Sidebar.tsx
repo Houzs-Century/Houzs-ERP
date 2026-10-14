@@ -862,9 +862,12 @@ export const NAV_TABS: NavTab[] = [
     // Commission page itself (per-button), not here: they grant an action
     // inside the module, never admittance to it. Neither is usable without
     // scm.hr.read anyway, since the API refuses to show the period first.
-    anyPerm: ["*", "scm.hr.read", "scm.hr.manage"],
+    anyPerm: ["*", "scm.hr.read", "scm.hr.manage", "scm.part_time_pay.request", "scm.part_time_pay.confirm"],
     children: [
       { to: "/scm/hr/commission", label: "Commission", icon: DollarSign, anyPerm: ["*", "scm.hr.read", "scm.hr.manage"] },
+      // Part-time sales pay (owner 2026-10-14): the owner keys a part-timer's
+      // pay for an event, HR confirms, Finance pays. Its own two flat keys.
+      { to: "/scm/hr/part-time-pay", label: "Part-time Pay", icon: HandCoins, anyPerm: ["*", "scm.part_time_pay.request", "scm.part_time_pay.confirm"] },
       // Settings is an EDITOR — read-only holders are not shown a page whose
       // every control the API would reject (2990 bounces them to the report).
       { to: "/scm/hr/settings", label: "HR Settings", icon: SlidersHorizontal, anyPerm: ["*", "scm.hr.manage"] },

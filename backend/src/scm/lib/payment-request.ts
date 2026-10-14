@@ -216,7 +216,7 @@ export async function paymentRequestLinkGuard(c: any, rawId: unknown, answer: An
   if (!id) return { request: null };
   const sb = c.get('supabase');
   const { data: req, error } = await scopeToCompany(sb.from('acc_payment_requests')
-    .select('id, company_id, request_no, status, pv_id, ap_invoice_id, bill_no, bill_date, parent_request_id, refund_source_type, refund_source_doc_no').eq('id', id), c).maybeSingle();
+    .select('id, company_id, request_no, status, pv_id, ap_invoice_id, bill_no, bill_date, parent_request_id, refund_source_type, refund_source_doc_no, part_time_pay_id').eq('id', id), c).maybeSingle();
   if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
   if (!req) return { resp: c.json({ error: 'request_not_found', message: 'That payment request is not in the company you are working in.' }, 404) };
   if (req.status === 'WITHDRAWN' || req.status === 'REJECTED') {
@@ -234,6 +234,10 @@ export async function paymentRequestLinkGuard(c: any, rawId: unknown, answer: An
   /* A refund request goes without a file (owner 2026-10-14: 退款申请不一定要附件) —
      the order and its payments are the evidence. */
   if (req.refund_source_doc_no) return { request: req };
+  /* A part-timer's pay (owner 2026-10-14, routes/hr-part-time-pay.ts) has no
+     bill either — the confirmed sheet is the evidence, and its breakdown is
+     the request's note. */
+  if (req.part_time_pay_id) return { request: req };
   /* 申请一定要有 (owner 2026-10-01): no bill, no payment — Finance returns it.
      A balance carries the bill of the request it was raised from (item 2). */
   const owners = [String(req.id), ...(req.parent_request_id ? [String(req.parent_request_id)] : [])];

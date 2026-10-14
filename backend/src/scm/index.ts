@@ -143,6 +143,7 @@ import { freeItemCampaigns } from "./routes/free-item-campaigns";
 // POS endpoints ported from 2990 apps/api (cutover P2), company_2 scoped.
 import { quotes } from "./routes/quotes";
 import { hr } from "./routes/hr";
+import { partTimePay } from "./routes/hr-part-time-pay";
 
 import { scmAreaGuard } from "./middleware/area-guard";
 import { hasPositionCapability } from "../services/positionCapabilities";
@@ -753,6 +754,12 @@ scm.route("/product-requests", productRequests);
 // REAL caller — which is stricter than any area guard, since /commission returns
 // every colleague's salary and must never ride the coarse scm.access umbrella
 // that /api/scm/* already applies. Wire an area key here IF/WHEN the page ships.
+// Part-time sales pay (owner 2026-10-14) — the owner keys a part-timer's pay
+// for an event, HR confirms, the confirm raises the payment request. Same
+// reasoning as /hr: no area guard; the two flat scm.part_time_pay.* keys are
+// checked inside against the real caller, and requireScmAccess admits this
+// prefix for those keys alone. Mounted before /hr so its paths are its own.
+scm.route("/hr/part-time-pay", partTimePay);
 scm.route("/hr", hr);
 // ── MRP (scm.procurement.mrp) ───────────────────────────────────────────────
 scm.use("/mrp/*", scmAreaGuard("scm.procurement.mrp"));

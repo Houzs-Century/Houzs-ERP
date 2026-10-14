@@ -31,6 +31,7 @@ import {
   SESSION_ORIGIN_POS,
 } from "../services/auth";
 import { posPinWriteRefusal, readPosPinStatus, setPosPinForUser } from "../services/posPin";
+import { recordPosLogin } from "../services/posLogin";
 /* item-KPI: the SAME source /hr/commission reads, so the dashboard's KPI row
    and the commission run can never disagree about what a flagged item earned.
    getSupabaseService rather than the `supabase` middleware: /api/pos is
@@ -111,6 +112,14 @@ pos.post("/pin-login", async (c) => {
   // the way through the PIN gate, by the server.
   try { await DB.prepare(`SELECT scm.pin_attempt_reset(?)`).bind(staffId).run(); } catch {}
   const token = await createSession(c.env, Number(row!.user_id), SESSION_ORIGIN_POS);
+  /* The attendance book (owner 2026-10-14, part-time sales pay): this login,
+     under the company the tablet names (the same header /sales-staff honours).
+     Best-effort — see services/posLogin.ts. */
+  const headerCompany = Number(c.req.header("x-company-id"));
+  await recordPosLogin(c.env, {
+    staffId, userId: Number(row!.user_id), token,
+    companyId: Number.isInteger(headerCompany) && headerCompany > 0 ? headerCompany : null,
+  });
   return c.json({ token, userId: Number(row!.user_id), staffId });
 });
 
