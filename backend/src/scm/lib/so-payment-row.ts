@@ -25,6 +25,7 @@ import { companyCodeById } from './doc-no';
 import { recomputeSiPaidForOrder } from './si-order-deposit';
 import { checkPaymentSlipDate } from '../shared/payment-slip-date';
 import { checkPaymentSlip } from '../shared/payment-slip-required';
+import { linkPaymentScan } from './scan-files';
 
 /* Account Sheet auto-fill (Loo 2026-06-07) — "where did the money land".
    Derived from the payment's own method fields whenever the operator didn't
@@ -332,6 +333,7 @@ export async function recordSoPaymentRow(
     ...(p.isDeposit === true ? { is_deposit: true } : {}),
   }).select(PAYMENT_COLS).single();
   if (error) return { payment: null, errorMessage: error.message };
+  await linkPaymentScan(sb, { companyId, slipKey: p.slipKey, paymentId: String((data as { id?: unknown } | null)?.id ?? '') }); // HC-0006 T7
 
   /* The Official Receipt is born in bookSoPaymentBestEffort below, with the
      booking and the deposit invoice — one hook for every path (docs/bugs/0935). */

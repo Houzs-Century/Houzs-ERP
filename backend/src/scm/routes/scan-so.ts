@@ -55,7 +55,7 @@ import {
 } from '../lib/scan-receipt-plan';
 import { safeScanDepositSen } from '../lib/scan-header-deposit';
 import { scanTimer } from '../lib/scan-timing';
-import { keepScanFile } from '../lib/scan-files';
+import { keepScanFile, linkScanFiles } from '../lib/scan-files';
 import { variantNotAllowedSentence } from '../lib/allowed-options-check';
 // Document-type-agnostic OCR transport, shared with the GR/PI scanners.
 import {
@@ -3978,6 +3978,7 @@ async function runScanJob(
     }
     const docNo = (outcome.body as { docNo?: unknown }).docNo;
     if (outcome.status === 201 && typeof docNo === 'string' && docNo !== '') {
+      await linkScanFiles(svc, { companyId: job.companyId, kind: 'so', documentId: docNo, keys: job.imageKeys, sha256: null }); // HC-0006 T7
       // Shell/blank draft — there is no reliable OCR payment to book. Record the
       // plain "please complete" note so the Orders-open toast tells the rep, and
       // stop here (no receipt-payment pass on a draft the model couldn't read).

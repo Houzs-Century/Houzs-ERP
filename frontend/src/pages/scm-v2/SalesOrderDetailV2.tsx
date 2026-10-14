@@ -81,6 +81,7 @@ import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { useSoRelationshipMap } from "./so-relationship-map";
 import { PaymentsTable, type PaymentDraft } from "../../vendor/scm/components/PaymentsTable";
+import { ViewOriginalScan } from "../../vendor/scm/components/ViewOriginalScan";
 import { fetchSoSlipUrl } from "../../vendor/scm/lib/slip";
 import {
   completePaymentRetryDraft, consumePaymentRetryNavigationState,
@@ -1168,6 +1169,7 @@ function SalesOrderDetailV2ReadOnly() {
                 <span>SO date {fmtDate(salesOrder.so_date)}</span>
                 <Divider />
                 <span>{items.length} line{items.length === 1 ? "" : "s"}</span>
+                <ViewOriginalScan kind="so" documentId={salesOrder.doc_no} />
                 {refOf(salesOrder) !== "—" && (
                   <>
                     <Divider />

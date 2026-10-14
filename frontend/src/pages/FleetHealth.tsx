@@ -1,3 +1,4 @@
+import { ViewOriginalScan } from "../vendor/scm/components/ViewOriginalScan";
 import { useMemo, useState, useRef, useEffect } from "react";
 import { useSearchParams, Link, useNavigate } from "react-router-dom";
 import { Truck, RefreshCw, X, AlertTriangle, ChevronRight, FileUp } from "lucide-react";
@@ -1677,6 +1678,7 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
       defaultOpen={wo.open}
     >
       {err && <div className="mt-2 rounded-md border border-err/25 bg-err/10 px-2.5 py-1.5 text-[11px] text-err">{err}</div>}
+      <div className="mt-1"><ViewOriginalScan kind="workshop" documentId={wo.id} /></div>
       {/* Stepper */}
       <div className="mt-2 flex flex-wrap items-center gap-1">
         {WORK_ORDER_STATES.map((s, i) => {

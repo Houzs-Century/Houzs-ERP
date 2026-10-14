@@ -63,3 +63,45 @@ export async function keepScanFile(
   }
   return key;
 }
+
+/** Fill scan_files.document_id for the document just created (HC-0006 T7):
+ *  match by storage key (SO, workshop) or by the bytes' sha256 (a PV file,
+ *  a payment slip). Company- and kind-scoped, and only where unlinked, so a
+ *  file already shown on one document never moves to another. Best-effort. */
+export async function linkScanFiles(
+  sb: Sb,
+  f: { companyId: number | null; kind: ScanFileKind; documentId: string; keys: string[]; sha256: string | null },
+): Promise<void> {
+  if (!f.companyId || !f.documentId || (f.keys.length === 0 && !f.sha256)) return;
+  let q = sb.from('scan_files').update({ document_id: f.documentId })
+    .eq('company_id', f.companyId).eq('kind', f.kind).is('document_id', null);
+  q = f.keys.length > 0 ? q.in('storage_key', f.keys) : q.eq('sha256', f.sha256);
+  try {
+    const { error } = await q;
+    if (error) console.warn(`[scan-files ${f.kind}] link failed:`, f.documentId, error.message);
+  } catch (e) {
+    console.warn(`[scan-files ${f.kind}] link failed:`, f.documentId, (e as Error).message);
+  }
+}
+
+/** A scanned receipt reaches its payment row as a slip (scan-payment's
+ *  persistReceiptAsSlip): same bytes, so the slip's content_hash is the scan's
+ *  sha256. */
+export async function linkPaymentScan(
+  sb: Sb,
+  f: { companyId: number | null; slipKey: string | null; paymentId: string },
+): Promise<void> {
+  if (!f.companyId || !f.slipKey || !f.paymentId) return;
+  try {
+    const { data, error } = await sb.from('pending_slip_uploads').select('content_hash')
+      .eq('company_id', f.companyId).eq('r2_key', f.slipKey).limit(1).maybeSingle();
+    if (error) {
+      console.warn('[scan-files payment] slip lookup failed — scan not linked:', f.paymentId, error.message);
+      return;
+    }
+    const sha256 = (data as { content_hash?: string } | null)?.content_hash ?? null;
+    if (sha256) await linkScanFiles(sb, { companyId: f.companyId, kind: 'payment', documentId: f.paymentId, keys: [], sha256 });
+  } catch (e) {
+    console.warn('[scan-files payment] link failed:', f.paymentId, (e as Error).message);
+  }
+}

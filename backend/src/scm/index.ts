@@ -118,6 +118,7 @@ import { scanGr } from "./routes/scan-gr";
 import { scanPi } from "./routes/scan-pi";
 import { scanPayment } from "./routes/scan-payment";
 import { scanLorryInvoice } from "./routes/scan-lorry-invoice";
+import { scanFiles } from "./routes/scan-files";
 import { slips } from "./routes/slips";
 import { deliveryPlanning } from "./routes/delivery-planning";
 import { deliveryPlanningRegions } from "./routes/delivery-planning-regions";
@@ -979,6 +980,13 @@ scm.route("/scan-pi", scanPi);
 // /scan-payment/extract returns 503 anthropic_key_missing when absent.
 scm.use("/scan-payment/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
 scm.route("/scan-payment", scanPayment);
+/* Original scans (HC-0006 T7) — each kind behind its own document's area
+   guard; the router 404s any other kind, which no guard covers. */
+scm.use("/scan-files/so/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
+scm.use("/scan-files/payment/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
+scm.use("/scan-files/pv/*", scmAreaGuard("scm.finance.accounting"));
+scm.use("/scan-files/workshop/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/scan-files", scanFiles);
 // Ported 2026-06-24 — payment-slip upload session (init → upload → confirm).
 // PRODUCES the pending_slip_uploads row that the SO-create + add-payment
 // handlers (mfg-sales-orders.ts) CONSUME by upload_session_id; without it the

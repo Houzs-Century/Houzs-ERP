@@ -21,6 +21,7 @@
 // across both modes.
 // ----------------------------------------------------------------------------
 
+import { ViewOriginalScan } from './ViewOriginalScan';
 import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -1458,6 +1459,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                         it — a slip that turns up on a later day is exactly the
                         case this exists for. `locked` still applies, so it only
                         shows once the operator has opted into payment edits. */}
+                    {isSaved && <ViewOriginalScan kind="payment" documentId={String(p.id)} />}
                     {isSaved && !locked && (
                       <SlipUploadField
                         key={p.slip_key ?? 'none'}

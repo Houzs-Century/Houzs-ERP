@@ -18,6 +18,7 @@
 // the scm.payment_voucher.* flat permissions.
 // ----------------------------------------------------------------------------
 
+import { ViewOriginalScan } from '../../vendor/scm/components/ViewOriginalScan';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, Copy, History, Pencil, Plus, Printer, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
@@ -544,6 +545,7 @@ export const PaymentVoucherDetail = () => {
         actions={
           <div className={styles.actions} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
             <StatusPill docType="pv" status={pv.status} />
+            <ViewOriginalScan kind="pv" documentId={String(pv.id)} />
             {/* History drawer toggle. Same header seat on every detail page, and
                 ungated: whoever may open the voucher may see who changed it. */}
             <Button variant="ghost" size="md" onClick={() => setHistoryOpen(true)}>

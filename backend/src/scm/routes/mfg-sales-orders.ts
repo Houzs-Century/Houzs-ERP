@@ -55,6 +55,7 @@ import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
    without importing a 12,000-line router. Re-exported below for the callers
    that still name this module. */
 import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, bookSoPaymentBestEffort, repostSoPaymentBestEffort, soPaymentFieldChanges, type SoPaymentRowInput } from '../lib/so-payment-row';
+import { linkPaymentScan } from '../lib/scan-files';
 import { enqueueSoPaymentEdit } from '../lib/ac-so-payment-edit';
 import { paymentMethodFieldRefusal } from '../lib/payment-method-fields';
 import { selfScopedSalesBlocked } from '../lib/so-self-scope';
@@ -4318,6 +4319,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         continue;
       }
       await bookSoPaymentBestEffort(sb, depRow, 'split payment at SO create'); // docs/bugs/0652: this row used to skip the gate
+      await linkPaymentScan(sb, { companyId: companyId ?? null, slipKey: posPaymentSlipKeys![i] ?? null, paymentId: String((depRow as { id?: unknown }).id ?? '') }); // HC-0006 T7
       /* Promote — 'promoted' rows are excluded from the slip reaper (same dance
          as the SO-create order slip). The UPDATE runs under the caller's RLS
          (pending_slip_uploads allows the UPLOADER to promote); in this flow the
@@ -4405,6 +4407,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         console.error('[so-create] deposit ledger insert failed:', depErr.message);
       } else {
         await bookSoPaymentBestEffort(sb, depRow, 'deposit at SO create'); // docs/bugs/0652: this row used to skip the gate
+        await linkPaymentScan(sb, { companyId: companyId ?? null, slipKey, paymentId: String((depRow as { id?: unknown }).id ?? '') }); // HC-0006 T7
         await recordSoAudit(sb, {
           docNo,
           action: 'ADD_PAYMENT',

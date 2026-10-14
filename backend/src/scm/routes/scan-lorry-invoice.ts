@@ -288,7 +288,7 @@ scanLorryInvoice.post('/extract', async (c) => {
 
   const buf = await file.arrayBuffer();
   // HC-0006: keep the original + its scan_files row BEFORE the read.
-  await keepScanFile(c.env, c.get('supabase'), {
+  const scanFileKey = await keepScanFile(c.env, c.get('supabase'), {
     kind: 'workshop', companyId: activeCompanyId(c), buf, mime: mime || (isPdf ? 'application/pdf' : 'image/jpeg'),
     uploadedBy: (c.get('user') as { id?: string } | undefined)?.id ?? null, key: null,
   });
@@ -370,6 +370,8 @@ scanLorryInvoice.post('/extract', async (c) => {
   timer.done(c.env, null, 'ok');
   return c.json({
     document: parsed,
+    /* The kept original; the work-order create links it (HC-0006 T7). */
+    scanFileKey,
     /* Everything below is DERIVED for the review screen. The record is not
        written here — the operator confirms first. */
     totals: {

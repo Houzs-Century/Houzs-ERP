@@ -348,6 +348,7 @@ export const PAYMENT_REQUEST_FILES: DocFilesSpec = {
   fkColumn: 'request_id',
   keyPrefix: 'payment-request-files',
   writePerms: [PAYMENT_REQUEST_KEY, 'scm.payment_voucher.create'],
+  scanKind: null,
   load: async (c: any) => {
     const found = await loadVisible(c, c.req.param('id'));
     if ('resp' in found) return found;

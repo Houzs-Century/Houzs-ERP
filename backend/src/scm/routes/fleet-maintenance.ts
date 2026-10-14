@@ -25,6 +25,7 @@ import { requireHouzsPerm } from "../lib/houzs-perms";
 import { nextCode, CODE_PREFIX } from "../lib/fleet-code-mint";
 import { activeCompanyId, scopeToCompany, scopeToCompanyIdOrOpen } from "../lib/companyScope";
 import { todayMyt } from "../lib/my-time";
+import { linkScanFiles } from "../lib/scan-files";
 import {
   dateOrNull, floatOrNull, intOrNull, iso, normPlate, numOrNull, refsOrNull, tsOrNull,
 } from "../lib/fleet-coerce";
@@ -1589,9 +1590,7 @@ fleetMaintenance.post("/vehicles/:id/work-orders", requireHouzsPerm("fleet.write
   if (!est.ok) return c.json({ error: "invalid_est_complete" }, 400);
   const docDate = dateOrNull(body.documentDate);
   if (!docDate.ok) return c.json({ error: "invalid_document_date" }, 400);
-  const invoiceRefs = refsOrNull(body.invoiceRefs);
-  const quoteRefs = refsOrNull(body.quoteRefs);
-  const photoRefs = refsOrNull(body.photoRefs);
+  const [invoiceRefs, quoteRefs, photoRefs] = [refsOrNull(body.invoiceRefs), refsOrNull(body.quoteRefs), refsOrNull(body.photoRefs)];
   if (!invoiceRefs.ok || !quoteRefs.ok || !photoRefs.ok) return c.json({ error: "invalid_refs" }, 400);
 
   const exists = await lorryExists(sb, lorryId);
@@ -1637,6 +1636,7 @@ fleetMaintenance.post("/vehicles/:id/work-orders", requireHouzsPerm("fleet.write
     if (error.code === "23503") return c.json({ error: "vehicle_not_found" }, 404);
     return c.json({ error: "insert_failed", reason: error.message }, 500);
   }
+  await linkScanFiles(sb, { companyId: activeCompanyId(c) ?? null, kind: "workshop", documentId: String(inserted?.id ?? ""), keys: typeof body.scanFileKey === "string" ? [body.scanFileKey] : [], sha256: null }); // HC-0006 T7
   return c.json({ id: inserted?.id, status: "REPORTED" }, 201);
 });
 

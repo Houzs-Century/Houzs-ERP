@@ -52,6 +52,7 @@ type ExtractedLine = {
 };
 
 type ExtractResponse = {
+  scanFileKey?: string | null;
   document: {
     docKind: "QUOTATION" | "INVOICE" | null;
     docNo: string | null;
@@ -255,6 +256,8 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
         /* labour rides the LINES, so the header scalar must stay 0 or the
            total counts it twice (the route 409s if it is not). */
         labourSen: 0,
+        /* The kept original links to this work order (HC-0006 T7). */
+        scanFileKey: res?.scanFileKey ?? undefined,
       });
       /* Sequential on purpose: the LABOUR guard reads the header, and the
          error that matters ("line 7 was rejected") is unreadable if six

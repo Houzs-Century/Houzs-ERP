@@ -19,6 +19,8 @@
 import { hasHouzsPerm } from './houzs-perms';
 import { requireActiveCompanyId, scopeToCompany } from './companyScope';
 import type { PdfAttachment } from './pdf-attach';
+import { linkScanFiles, type ScanFileKind } from './scan-files';
+import { sha256Hex } from './scan-ocr';
 
 type Row = Record<string, any>;
 
@@ -51,6 +53,9 @@ export type DocFilesSpec = {
   /** Set when the document must keep at least one file (a payment request's
       bill, owner 2026-10-01: 申请一定要有) — removing the last one is refused. */
   keepOne?: { error: string; message: string };
+  /** The scan kind whose kept original (scm.scan_files) an attached file links
+      to by its bytes (HC-0006 T7), or null when this document is never scanned. */
+  scanKind: ScanFileKind | null;
 };
 
 type Bucket = {
@@ -121,6 +126,9 @@ export function makeDocFileHandlers(spec: DocFilesSpec) {
       created_by: String(c.get('user')?.id ?? ''),
     }).select('id, file_name, mime, size_bytes, sort_no').single();
     if (insErr || !row) return c.json({ error: 'save_failed', reason: insErr?.message ?? 'insert returned nothing' }, 500);
+    if (spec.scanKind) {
+      await linkScanFiles(sb, { companyId: co.companyId, kind: spec.scanKind, documentId: found.doc.id, keys: [], sha256: await sha256Hex(bytes.buffer as ArrayBuffer) });
+    }
     return c.json({ ok: true, file: row }, 201);
   };
 
