@@ -94,6 +94,7 @@ export const PRODUCT_CODE_KEEPS_VALUE: readonly KeptColumn[] = [
   { column: 'public.purchase_orders.item_code', why: `AutoCount outstanding-PO snapshot: ${AUTOCOUNT}` },
   { column: 'public.stock_items.item_code', why: `AutoCount StockItem cache (services/stockItems.ts): ${AUTOCOUNT}` },
   { column: 'public.sales_entry_items.item_code', why: 'legacy Sales Entry module: typed text, not a link to mfg_products' },
+  { column: 'public.pos_sale_lines.item_code', why: 'Houzs POS receipt line: the code as it was sold and printed; a bill reprints as issued, a later rename never rewrites it (20261014T1147)' },
   { column: 'public.project_defects.item_code', why: 'project defect report: typed text, not a link to mfg_products' },
   ...[
     'public.addons.service_sku',

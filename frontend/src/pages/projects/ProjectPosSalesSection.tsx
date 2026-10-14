@@ -15,6 +15,7 @@ import { api } from "../../api/client";
 import { useAuth } from "../../auth/AuthContext";
 import { canWriteProjectFinance } from "../../auth/salesAccess";
 import { PanelSection } from "../../components/Panel";
+import { DateField } from "../../vendor/scm/components/DateField";
 import { useDialog } from "../../hooks/useDialog";
 import { useCanViewProjectSales } from "../../hooks/useProjectSalesBills";
 import { useProjectPosSales } from "../../hooks/useProjectPosSales";
@@ -29,6 +30,7 @@ import {
   posNetRm,
   posReceiptStatusLabel,
   type PosReceipt,
+  type PosReceiptStatus,
   type PosSalesFilter,
   type ProjectPosSalesResponse,
 } from "../../lib/projectPosSales";
@@ -42,7 +44,7 @@ function Tile({ label, value, accent }: { label: string; value: string; accent?:
   );
 }
 
-const STATUS_PILL: Record<"PAID" | "VOID" | "RETURN", string> = {
+const STATUS_PILL: Record<PosReceiptStatus, string> = {
   PAID: "bg-emerald-100 text-emerald-800",
   VOID: "bg-rose-100 text-rose-800",
   RETURN: "bg-sky-100 text-sky-800",
@@ -78,10 +80,9 @@ function Filters({
   const active = filter.date || filter.terminal || filter.cashier_id != null || filter.method || filter.status;
   return (
     <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[10.5px]">
-      <input
-        type="date"
+      <DateField
         value={filter.date ?? ""}
-        onChange={(e) => setFilter({ ...filter, date: e.target.value || null })}
+        onChange={(iso) => setFilter({ ...filter, date: iso || null })}
         className={selectCls}
         aria-label="Date"
       />

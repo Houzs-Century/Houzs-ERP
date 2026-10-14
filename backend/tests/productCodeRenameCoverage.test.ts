@@ -98,7 +98,11 @@ describe('every code-bearing column is decided', () => {
   });
 
   test('no recorded column has disappeared from production', () => {
-    expect([...kept].filter((k) => !live.has(k))).toEqual([]);
+    /* A column a migration newer than the snapshot CREATES is not on
+       production yet; it is decided above, not missing. */
+    const newer = readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql') && f > snapshot.newestMigrationAtCapture);
+    const arriving = new Set(newer.flatMap((f) => codeColumnsInSql(readFileSync(path.join(MIGRATIONS, f), 'utf8'))));
+    expect([...kept].filter((k) => !live.has(k) && !arriving.has(k))).toEqual([]);
   });
 });
 

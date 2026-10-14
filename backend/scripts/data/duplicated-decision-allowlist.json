@@ -1514,6 +1514,11 @@
       "check": "D1",
       "key": "AMOUNT_SEN,COUNT,NOT_OPENED_COUNT,NOT_OPENED_SEN,OPENED_COUNT,OPENED_SEN,OTHER_EVENT_COUNT|backend/src/routes/lib/sales-report-bills.ts frontend/src/lib/projectSalesBills.ts",
       "why": "ONE WIRE SHAPE seen from its two ends, not two answers to one question: routes/lib/sales-report-bills.ts summarizeBills builds the totals object GET /api/project-sales-bills/:projectId sends, and the page-side ZERO in lib/projectSalesBills.ts is the empty value of that same object, used only when the read came back in another shape (normalizeProjectSalesBills). The keys are the response contract; nothing is decided twice. Cost of divergence is a 0 in the Sales header, caught by sales-report-bills.test.ts on one side and projectSalesBills.test.ts on the other."
+    },
+    {
+      "check": "D1",
+      "key": "CASH,CREDIT,DEBIT,EWALLET,QR|backend/src/scm/shared/pos-vocabulary.ts frontend/src/vendor/shared/pos-vocabulary.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. POS_METHOD_LABEL (the Houzs POS payment methods and their words) is declared ONCE in scm/shared/pos-vocabulary.ts and frontend/src/vendor/shared/pos-vocabulary.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. The method array is derived from the label keys, so even inside the file the list is stated once. Cost of divergence is a build failure, not a wrong payment line."
     }
   ]
 }

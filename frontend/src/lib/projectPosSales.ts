@@ -3,8 +3,21 @@
  * the list prints, and the rows its Excel export writes.
  *
  * Shared by the desktop section and the mobile panel so the two cannot
- * disagree. Pure; no fetching here. Money is integer sen on the wire.
+ * disagree. Pure; no fetching here. Money is integer sen on the wire. The
+ * vocabularies (payment methods, receipt status word, empty totals) have ONE
+ * home, vendor/shared/pos-vocabulary.ts, and are re-exported from here.
  */
+import {
+  emptyPosSalesTotals,
+  isPosPaymentMethod,
+  isPosReceiptStatus,
+  posMethodLabel,
+  posReceiptStatusLabel,
+  type PosReceiptStatus,
+  type PosSalesTotals,
+} from "../vendor/shared/pos-vocabulary";
+
+export { posMethodLabel, posReceiptStatusLabel, type PosReceiptStatus, type PosSalesTotals };
 
 export type PosReceiptLine = {
   line_no: number;
@@ -54,26 +67,12 @@ export type PosReceipt = {
   payments: { method: string; amount_sen: number; reference: string | null }[];
 };
 
-export type PosSalesTotals = {
-  count: number;
-  paid_count: number;
-  void_count: number;
-  return_count: number;
-  net_sen: number;
-  sales_sen: number;
-  return_sen: number;
-  void_sen: number;
-  discount_sen: number;
-  sst_sen: number;
-  by_method: Record<string, number>;
-};
-
 export type PosSalesFilter = {
   date: string | null;
   terminal: string | null;
   cashier_id: number | null;
   method: string | null;
-  status: "PAID" | "VOID" | "RETURN" | null;
+  status: PosReceiptStatus | null;
 };
 
 export type ProjectPosSalesResponse = {
@@ -89,63 +88,52 @@ export type ProjectPosSalesResponse = {
 
 export const EMPTY_POS_FILTER: PosSalesFilter = { date: null, terminal: null, cashier_id: null, method: null, status: null };
 
-const ZERO_TOTALS: PosSalesTotals = {
-  count: 0, paid_count: 0, void_count: 0, return_count: 0,
-  net_sen: 0, sales_sen: 0, return_sen: 0, void_sen: 0, discount_sen: 0, sst_sen: 0, by_method: {},
-};
-
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+/** Every numeric field of the totals coerced; the method map kept when it is one. */
+function normalizeTotals(raw: unknown): PosSalesTotals {
+  const t = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const out = emptyPosSalesTotals();
+  for (const k of Object.keys(out) as (keyof PosSalesTotals)[]) {
+    if (k === "by_method") continue;
+    out[k] = num(t[k]);
+  }
+  const bm = t.by_method;
+  if (bm && typeof bm === "object") {
+    for (const [m, v] of Object.entries(bm as Record<string, unknown>)) out.by_method[m] = num(v);
+  }
+  return out;
+}
 
 /** The read as the page may rely on it: a response of another shape becomes
  *  an empty, disabled read rather than a crash of the whole project page. */
 export function normalizeProjectPosSales(raw: unknown): ProjectPosSalesResponse {
   const r = (raw && typeof raw === "object" ? raw : {}) as Partial<ProjectPosSalesResponse>;
-  const t = r.totals && typeof r.totals === "object" ? r.totals : ZERO_TOTALS;
   const o = r.options && typeof r.options === "object" ? r.options : undefined;
   return {
     project: r.project && typeof r.project === "object" ? r.project : null,
     pos_enabled: r.pos_enabled === true,
     data: Array.isArray(r.data) ? r.data : [],
-    totals: {
-      count: num(t.count), paid_count: num(t.paid_count), void_count: num(t.void_count), return_count: num(t.return_count),
-      net_sen: num(t.net_sen), sales_sen: num(t.sales_sen), return_sen: num(t.return_sen), void_sen: num(t.void_sen),
-      discount_sen: num(t.discount_sen), sst_sen: num(t.sst_sen),
-      by_method: t.by_method && typeof t.by_method === "object" ? t.by_method : {},
-    },
+    totals: normalizeTotals(r.totals),
     all_count: num(r.all_count),
     options: {
-      terminals: Array.isArray(o?.terminals) ? o!.terminals : [],
-      cashiers: Array.isArray(o?.cashiers) ? o!.cashiers : [],
-      methods: Array.isArray(o?.methods) ? o!.methods : [],
+      terminals: Array.isArray(o?.terminals) ? o.terminals : [],
+      cashiers: Array.isArray(o?.cashiers) ? o.cashiers : [],
+      methods: Array.isArray(o?.methods) ? o.methods : [],
     },
   };
 }
 
-/** The query string the filter becomes; only set fields travel. */
+/** The query string the filter becomes; only set, well-formed fields travel. */
 export function posSalesFilterQuery(f: PosSalesFilter): string {
   const q = new URLSearchParams();
   if (f.date) q.set("date", f.date);
   if (f.terminal) q.set("terminal", f.terminal);
   if (f.cashier_id != null) q.set("cashier", String(f.cashier_id));
-  if (f.method) q.set("method", f.method);
-  if (f.status) q.set("status", f.status);
+  if (f.method && isPosPaymentMethod(f.method)) q.set("method", f.method);
+  if (f.status && isPosReceiptStatus(f.status)) q.set("status", f.status);
   const s = q.toString();
   return s ? `?${s}` : "";
-}
-
-export const POS_METHOD_LABEL: Record<string, string> = {
-  QR: "QR / DuitNow",
-  CREDIT: "Credit Card",
-  DEBIT: "Debit Card",
-  EWALLET: "E-wallet",
-  CASH: "Cash",
-};
-export const posMethodLabel = (m: string): string => POS_METHOD_LABEL[m] ?? m;
-
-/** The pill on a receipt row: VOID beats RETURN beats PAID. */
-export function posReceiptStatusLabel(r: Pick<PosReceipt, "status" | "type">): "PAID" | "VOID" | "RETURN" {
-  if (r.status === "VOID") return "VOID";
-  return r.type === "RETURN" ? "RETURN" : "PAID";
 }
 
 /** The Total Sales button writes the booth's NET takings, in whole RM with

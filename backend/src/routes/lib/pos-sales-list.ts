@@ -7,6 +7,13 @@
 // sales (is_test) never reach here: the device never syncs them, and the
 // import path drops them, so the query does not filter them again.
 // ----------------------------------------------------------------------------
+import {
+  emptyPosSalesTotals,
+  isPosPaymentMethod,
+  isPosReceiptStatus,
+  type PosReceiptStatus,
+  type PosSalesTotals,
+} from "../../scm/shared/pos-vocabulary";
 
 export type PosSaleHeader = {
   id: number;
@@ -114,23 +121,7 @@ export type PosReceipt = {
   payments: { method: string; amount_sen: number; reference: string | null }[];
 };
 
-export type PosSalesTotals = {
-  /** Receipts in the list (every type and status). */
-  count: number;
-  paid_count: number;
-  void_count: number;
-  return_count: number;
-  /** PAID sales minus PAID returns — what the booth actually took. */
-  net_sen: number;
-  /** PAID sales only (gross of returns). */
-  sales_sen: number;
-  return_sen: number;
-  void_sen: number;
-  discount_sen: number;
-  sst_sen: number;
-  /** Net received per payment method, PAID bills only; refunds are negative. */
-  by_method: Record<string, number>;
-};
+export type { PosSalesTotals };
 
 const num = (v: unknown): number => {
   const n = Number(v);
@@ -220,11 +211,7 @@ export function groupPosReceipts(
 /** The header tiles. A RETURN's total is stored POSITIVE (what was refunded)
  *  and subtracted here; a VOID bill counts in void_* only. */
 export function posSalesTotals(receipts: readonly PosReceipt[]): PosSalesTotals {
-  const t: PosSalesTotals = {
-    count: 0, paid_count: 0, void_count: 0, return_count: 0,
-    net_sen: 0, sales_sen: 0, return_sen: 0, void_sen: 0, discount_sen: 0, sst_sen: 0,
-    by_method: {},
-  };
+  const t = emptyPosSalesTotals();
   for (const r of receipts) {
     t.count += 1;
     if (r.status === "VOID") {
@@ -258,7 +245,7 @@ export type PosSalesFilter = {
   terminal: string | null;
   cashier_id: number | null;
   method: string | null;
-  status: "PAID" | "VOID" | "RETURN" | null;
+  status: PosReceiptStatus | null;
 };
 
 /** The date a bill belongs to, in Malaysia time (UTC+8, no DST). */
@@ -287,7 +274,7 @@ export function parsePosSalesFilter(q: Record<string, string | undefined>): PosS
   const terminal = q.terminal && q.terminal.trim() ? q.terminal.trim() : null;
   const cashierNum = Number(q.cashier);
   const cashier_id = q.cashier && Number.isInteger(cashierNum) && cashierNum > 0 ? cashierNum : null;
-  const method = q.method && ["QR", "CREDIT", "DEBIT", "EWALLET", "CASH"].includes(q.method) ? q.method : null;
-  const status = q.status === "PAID" || q.status === "VOID" || q.status === "RETURN" ? q.status : null;
+  const method = isPosPaymentMethod(q.method) ? q.method : null;
+  const status = isPosReceiptStatus(q.status) ? q.status : null;
   return { date, terminal, cashier_id, method, status };
 }

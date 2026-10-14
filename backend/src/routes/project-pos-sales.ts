@@ -62,8 +62,9 @@ async function loadProject(db: Db, projectId: number, companyId: number | undefi
       LEFT JOIN project_event_types et ON et.id = p.event_type_id
      WHERE p.id = ${projectId}${companyPred}
      LIMIT 1`);
+  if (rows.length === 0) return null;
   const r = rows[0];
-  return r ? { id: Number(r.id), name: r.name, event_type_slug: r.event_type_slug ?? null } : null;
+  return { id: Number(r.id), name: r.name, event_type_slug: r.event_type_slug ?? null };
 }
 
 async function loadReceipts(db: Db, projectId: number, companyId: number | undefined) {

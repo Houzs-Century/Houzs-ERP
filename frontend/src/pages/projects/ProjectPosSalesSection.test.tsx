@@ -7,9 +7,10 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, test, vi, beforeEach } from "vitest";
 import type { QueryState } from "../../hooks/useQuery";
+import type { useToast } from "../../hooks/useToast";
 import type { PosReceipt, ProjectPosSalesResponse } from "../../lib/projectPosSales";
 
-const patch = vi.fn(async () => ({}));
+const patch = vi.fn(async (_path: string, _body: unknown) => ({}));
 let canView = true;
 let canFinance = true;
 let posQuery: QueryState<ProjectPosSalesResponse>;
@@ -60,7 +61,7 @@ const query = (over: Partial<QueryState<ProjectPosSalesResponse>>): QueryState<P
   data: null, loading: false, fetching: false, placeholder: false, error: null, reload: () => {}, ...over,
 });
 
-const toast = { success: vi.fn(), error: vi.fn(), info: vi.fn() } as never;
+const toast: ReturnType<typeof useToast> = { show: vi.fn(), success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() };
 const mount = () => render(<ProjectPosSalesSection projectId={9} currentTotalSales={null} onTotalSaved={() => {}} toast={toast} />);
 
 beforeEach(() => {

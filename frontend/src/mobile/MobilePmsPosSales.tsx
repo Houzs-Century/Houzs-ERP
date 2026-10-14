@@ -14,6 +14,7 @@ import {
   posMethodLabel,
   posReceiptStatusLabel,
   posSalesFilterQuery,
+  type PosReceiptStatus,
   type ProjectPosSalesResponse,
 } from "../lib/projectPosSales";
 
@@ -21,11 +22,13 @@ const LABEL: React.CSSProperties = {
   fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093",
 };
 const MUTED: React.CSSProperties = { fontSize: 12, color: "#9aa093" };
-const PILL: Record<"PAID" | "VOID" | "RETURN", React.CSSProperties> = {
-  PAID: { background: "#d9f0e4", color: "#16695f" },
-  VOID: { background: "#f9dede", color: "#9b2c2c" },
-  RETURN: { background: "#dbeefb", color: "#0b6b8f" },
-};
+/* The pill's tint per status word; a function, not a map, so the desktop's
+   Tailwind map stays the only literal of the vocabulary's presentation. */
+function pillStyle(status: PosReceiptStatus): React.CSSProperties {
+  if (status === "VOID") return { background: "#f9dede", color: "#9b2c2c" };
+  if (status === "RETURN") return { background: "#dbeefb", color: "#0b6b8f" };
+  return { background: "#d9f0e4", color: "#16695f" };
+}
 
 export function useMobileProjectPosSales(projectId: number, enabled: boolean) {
   return useQuery<ProjectPosSalesResponse>({
@@ -72,7 +75,7 @@ export function MobilePmsPosSales({ query }: { query: ReturnType<typeof useMobil
           <div key={r.id} style={{ borderTop: "1px solid #e6e8e1", padding: "6px 0" }} onClick={() => setOpen(isOpen ? null : r.id)}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
               <span className="mono" style={{ fontWeight: 700, color: "#16695f" }}>{r.receipt_no}</span>
-              <span style={{ ...PILL[status], fontSize: 9, fontWeight: 700, borderRadius: 999, padding: "1px 6px" }}>{status}</span>
+              <span style={{ ...pillStyle(status), fontSize: 9, fontWeight: 700, borderRadius: 999, padding: "1px 6px" }}>{status}</span>
               <span className="money" style={{ marginLeft: "auto", fontWeight: 700, textDecoration: status === "VOID" ? "line-through" : undefined }}>
                 {r.type === "RETURN" && status !== "VOID" ? "-" : ""}{fmtSen(r.total_sen)}
               </span>
