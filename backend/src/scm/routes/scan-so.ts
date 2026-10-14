@@ -55,6 +55,7 @@ import {
 } from '../lib/scan-receipt-plan';
 import { safeScanDepositSen } from '../lib/scan-header-deposit';
 import { scanTimer } from '../lib/scan-timing';
+import { keepScanFile } from '../lib/scan-files';
 import { variantNotAllowedSentence } from '../lib/allowed-options-check';
 // Document-type-agnostic OCR transport, shared with the GR/PI scanners.
 import {
@@ -4221,18 +4222,15 @@ scanSo.post('/enqueue', async (c) => {
   // 2) Persist the uploaded photos to R2 (durability/audit) BEFORE responding
   //    — small puts, still fast. Best-effort: the pipeline runs off the
   //    in-memory buffers, so a failed put never blocks the job.
+  //    Each kept photo also gets its scm.scan_files row (HC-0006) via keepScanFile.
   const imageKeys: string[] = [];
   if (c.env.SO_ITEM_PHOTOS) {
     for (let i = 0; i < allFiles.length; i += 1) {
-      const key = `scan-jobs/${jobId}/${i}`;
-      try {
-        await c.env.SO_ITEM_PHOTOS.put(key, allFiles[i].buffer, {
-          httpMetadata: { contentType: allFiles[i].mime },
-        });
-        imageKeys.push(key);
-      } catch (e) {
-        console.warn('[scan-so enqueue] R2 put failed:', key, (e as Error).message);
-      }
+      const key = await keepScanFile(c.env, svc, {
+        kind: 'so', companyId: activeCompanyId(c), buf: allFiles[i].buffer,
+        mime: allFiles[i].mime, uploadedBy: user.id, key: `scan-jobs/${jobId}/${i}`,
+      });
+      if (key) imageKeys.push(key);
     }
     if (imageKeys.length > 0) {
       await svc
