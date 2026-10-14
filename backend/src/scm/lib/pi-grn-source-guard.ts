@@ -93,3 +93,10 @@ export async function piGrnSourceRefusal(
   if (over.length > 0) return { body: { error: 'qty_exceeds_remaining', lines: over }, status: 409 };
   return null;
 }
+
+/** SQLSTATE raised by scm.assert_grn_line_not_over_invoiced (mig
+ *  20261014T1410): the write would push a GRN line's live invoiced total past
+ *  qty_accepted - returned_qty. Callers answer it with a 409, not a 500. */
+export const GRN_LINE_OVER_INVOICED = 'P0412';
+export const isGrnLineOverInvoiced = (err: unknown): boolean =>
+  (err as { code?: unknown } | null | undefined)?.code === GRN_LINE_OVER_INVOICED;
