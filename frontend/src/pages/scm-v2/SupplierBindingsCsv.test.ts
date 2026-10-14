@@ -3,7 +3,7 @@
 // sen), leave KNOWN codes alone, and always carry a non-empty supplier_sku +
 // materialName (the batch-create endpoint requires them).
 import { describe, expect, test } from 'vitest';
-import { buildCreates, detectImportFormat } from './SupplierBindingsCsv';
+import { bindingsHeader, buildCreates, detectImportFormat } from './SupplierBindingsCsv';
 import type { BindingRow } from '../../vendor/scm/lib/suppliers-queries';
 import type { MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
 
@@ -60,5 +60,17 @@ describe('buildCreates — bulk import auto-create', () => {
   test('detectImportFormat picks long when price_rm present', () => {
     expect(detectImportFormat(LONG_HEADER)).toBe('long');
     expect(detectImportFormat(['internal_code', 'unit_price_rm'])).toBe('wide');
+  });
+});
+
+describe('bindingsHeader: a hand-made sheet imports (HC-0003 T5)', () => {
+  test('headers in any case/spacing, and "Item Code", land on the import keys', () => {
+    expect(bindingsHeader(['Item Code', 'Supplier SKU', 'Category', 'Height', 'Tier', 'Price RM', 'Lead Time Days', 'MOQ', 'Is Main Supplier'], ['24']))
+      .toEqual(LONG_HEADER);
+  });
+
+  test('the old wide matrix keeps its case-sensitive column names', () => {
+    expect(bindingsHeader(['internal_code', 'SOFA_24_p1', 'Bedframe P2', 'Unit Price RM'], ['24']))
+      .toEqual(['internal_code', 'sofa_24_P1', 'bedframe_P2', 'unit_price_rm']);
   });
 });

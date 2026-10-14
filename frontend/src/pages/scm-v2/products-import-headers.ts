@@ -15,17 +15,13 @@
 import { normalizeSofaTier } from '@2990s/shared';
 import type { Column } from '../../components/DataTable';
 import { parseMoneyToSen } from '../../lib/money';
+import { parseCSV } from '../../lib/csv';
+import { normalizeImportHeader } from '../../lib/import-sheet';
 import type { BatchImportRow, SeatHeightPrice } from '../../vendor/scm/lib/mfg-products-queries';
 
-/* Tolerant of case AND of space-vs-underscore, so a hand-made sheet with
-   "Base Price" maps to the same column as the export's `base_price`. This is
-   the rule `vendor/scm/lib/fabric-csv.ts` has run since 0605. Runs of
-   whitespace and underscore collapse to one underscore; the export's own
-   headers are already lower snake_case, so this is IDENTITY on an exported file
-   and only ever LOOSENS matching. */
-export function normalizeImportHeader(h: string): string {
-  return h.trim().toLowerCase().replace(/[\s_]+/g, '_');
-}
+/* Case and space-vs-underscore never matter in a header (one rule for every
+   importer since HC-0003 T5, lib/import-sheet.ts). */
+export { normalizeImportHeader };
 
 /* THE OTHER FILE ON THIS PAGE, and why it can never be imported.
  *
@@ -195,38 +191,9 @@ export function withSkuImportHeaders<T>(cols: Column<T>[]): Column<T>[] {
   });
 }
 
-/* ─── Round-trip CSV parser (RFC4180) for the SKU import ───────────────────
- * Generic header-keyed parser: returns one plain object per data row, keyed by
- * the exact header text (lower-cased, trimmed). Handles quoted fields with
- * embedded commas, quotes ("" escape), and CR/LF inside quotes. Strips a
- * leading UTF-8 BOM so a file saved from Excel parses cleanly. (fabric-csv's
- * parseCsv is fabric-specific — it requires a fabric_code column and remaps to
- * fabric apiKeys — so we keep a small local parser here.) */
+/** The SKU import's CSV path: the shared parser, then header-keyed rows. */
 export function parseSkuCsv(text: string): Array<Record<string, string | undefined>> {
-  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-  const grid: string[][] = [];
-  let row: string[] = [];
-  let cellStr = '';
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') { cellStr += '"'; i++; continue; }
-        inQuotes = false;
-      } else {
-        cellStr += ch;
-      }
-      continue;
-    }
-    if (ch === '"' && cellStr === '') { inQuotes = true; continue; }
-    if (ch === ',') { row.push(cellStr); cellStr = ''; continue; }
-    if (ch === '\r') continue;
-    if (ch === '\n') { row.push(cellStr); grid.push(row); row = []; cellStr = ''; continue; }
-    cellStr += ch;
-  }
-  if (cellStr !== '' || row.length > 0) { row.push(cellStr); grid.push(row); }
-  return gridToSkuRecords(grid);
+  return gridToSkuRecords(parseCSV(text));
 }
 
 /** Header-key a parsed grid, reading BOTH files this page writes (bugs/0662). */

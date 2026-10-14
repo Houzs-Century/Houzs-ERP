@@ -8,6 +8,12 @@ const { apiGet, apiPost, reload } = vi.hoisted(() => ({
   reload: vi.fn(),
 }));
 
+/* The pasted-sales-report hooks need the app's QueryClient and are not what
+   these polling tests are about; a stub keeps them out of the request counts. */
+vi.mock("../hooks/useProjectSalesBills", () => ({
+  useProjectSalesBills: () => ({ data: null, loading: false, fetching: false, placeholder: false, error: null, reload: () => {} }),
+  useInvalidateProjectSalesBills: () => () => {},
+}));
 vi.mock("../api/client", () => ({
   api: { get: apiGet, post: apiPost },
 }));

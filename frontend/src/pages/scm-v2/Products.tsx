@@ -122,7 +122,8 @@ import { useBrandingPool, useProductModel } from '../../vendor/scm/lib/product-m
 import { useQueryClient } from '@tanstack/react-query';
 import { parseMoneyToSen } from '../../lib/money';
 import styles from './Products.module.css';
-import { buildSkuImportRows, gridToSkuRecords, importFailureMessage, parseSkuCsv, priceSheetRinggit, withSkuImportHeaders } from './products-import-headers';
+import { buildSkuImportRows, gridToSkuRecords, importFailureMessage, priceSheetRinggit, withSkuImportHeaders } from './products-import-headers';
+import { readImportGrid } from '../../lib/import-sheet';
 import { ProductRow, fmtRm, fmtUnit, priceForHeightTier, useSkuGridOrder, saveStagedEdits, stageRowEdit, type ProductEditPatch } from './products/SkuEditRow';
 import { renameCompartmentMeta } from './compartmentRename';
 
@@ -4601,22 +4602,6 @@ function exportSkusCsv(rows: MfgProductRow[], sofaSizes: string[], tier: SofaPri
   URL.revokeObjectURL(url);
 }
 
-/** Read the first sheet of an uploaded Excel workbook (.xlsx/.xls) into rows of
- *  string cells, so an exported CSV that Excel re-saved as a workbook still
- *  imports. CSV stays on parseSkuCsv. */
-async function readXlsxGrid(file: File): Promise<string[][]> {
-  const XLSX = await import('../../lib/xlsx-runtime');
-  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-  const first = wb.SheetNames[0];
-  const sheet = first ? wb.Sheets[first] : undefined;
-  if (!sheet) return [];
-  const aoa = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, defval: '' });
-  return aoa
-    .map((r) => (Array.isArray(r) ? r.map((c) => String(c ?? '')) : []))
-    .filter((r) => r.some((c) => c.trim().length > 0));
-}
-
-
 const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose: () => void }) => {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<BatchImportResult | null>(null);
@@ -4631,10 +4616,7 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
     setResult(null);
     setErrorMsg(null);
     try {
-      const fname = file.name.toLowerCase();
-      const parsed = (fname.endsWith('.xlsx') || fname.endsWith('.xls'))
-        ? gridToSkuRecords(await readXlsxGrid(file))
-        : parseSkuCsv(await file.text());
+      const parsed = gridToSkuRecords(await readImportGrid(file));
       if (parsed.length === 0) {
         setErrorMsg('That file had no rows. Export a copy first, edit it, then import the same file.');
         setBusy(false);

@@ -55,6 +55,7 @@ import {
 } from '../lib/scan-receipt-plan';
 import { safeScanDepositSen } from '../lib/scan-header-deposit';
 import { scanTimer } from '../lib/scan-timing';
+import { readSlipWithAliases } from '../lib/scan-field-aliases';
 import { keepScanFile } from '../lib/scan-files';
 import { variantNotAllowedSentence } from '../lib/allowed-options-check';
 // Document-type-agnostic OCR transport, shared with the GR/PI scanners.
@@ -3819,7 +3820,10 @@ async function runScanJob(
     const cachedPrefix = buildCachedPrefix(catalog, branding.companyName);
     const inj = await loadPromptInjections(svc, job.salesperson);
     timer.mark('prep');
-    const call = await callClaudeSlipExtract(apiKey, cachedPrefix, inj, job.fileBlocks);
+    // HC-0006 T8: this company's confirmed corrections, read before the model and applied to its output.
+    const call = await readSlipWithAliases(svc, job.companyId, (hint) => callClaudeSlipExtract(
+      apiKey, cachedPrefix, hint ? { ...inj, globalAliasText: [inj.globalAliasText, hint].filter(Boolean).join('\n\n') } : inj, job.fileBlocks,
+    ));
     timer.mark('model');
     const parsed = call.parsed;
 

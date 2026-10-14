@@ -39,6 +39,8 @@ import {
 } from "./MobilePmsDocCard";
 import { floorPlanTileVisible } from "./MobilePmsFloorPlanTiles";
 import { MobilePmsSalesOrders } from "./MobilePmsSalesOrders";
+import { MobilePmsSalesBills, useMobileProjectSalesBills, type MobileProjectSalesBillsQuery } from "./MobilePmsSalesBills";
+import { fmtRmSen, notOpenedByRepId } from "../lib/projectSalesBills";
 import { SoloSafeName, useCanSeeSoloOrganizer, isSoloMasked, shownProjectName } from "../pages/projects/SoloSafeName";
 
 /* ------------------------------------------------------------------ *
@@ -926,6 +928,10 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   // (isSalesExecMgr) HOLDS the log-sale action but has canFinancial=false, so
   // nesting it under the finance gate lost the action for the person who owns it.
   const canViewSales = salesAccess !== "none" || isSalesStaff || isDirectorPos;
+  // The pasted sales report — the Sales panel's block and the red number
+  // beside each name under Sales Attending read the same query.
+  const billsQ = useMobileProjectSalesBills(id, canViewSales);
+  const notOpenedByRep = notOpenedByRepId(billsQ.data?.persons ?? []);
   // ── Owner 2026-07-23 card respec — the remaining two cohorts go card-based ──
   // cohortMgmt = management dept / directors / owner / BD; cohortOps = the
   // office/ops staff left over (Nancy, Farra, Sim, Syu, Syasya, logistic
@@ -1296,6 +1302,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                   projectId={id}
                   attendees={data.sales_attendees ?? []}
                   options={salesReps}
+                  notOpenedByRep={notOpenedByRep}
                   canWrite={canEditAttending}
                   busy={busy}
                   setBusy={setBusy}
@@ -1580,6 +1587,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 projectId={id}
                 incomeLines={data.finance_lines}
                 finalTotalRm={data.finance?.total_sales ?? null}
+                bills={billsQ}
                 canLogSale={canLogSale}
                 busy={busy}
                 setBusy={setBusy}
@@ -1615,11 +1623,13 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
 
 // ── Sales attending (add via picker + remove) ──
 function SalesAttending({
-  projectId, attendees, options, canWrite, busy, setBusy, notify, confirm, reload,
+  projectId, attendees, options, notOpenedByRep, canWrite, busy, setBusy, notify, confirm, reload,
 }: {
   projectId: number;
   attendees: SalesAttendee[];
   options: SalesRepOption[];
+  /** sen still not opened per rep, from the pasted sales report — red beside the name. */
+  notOpenedByRep: Map<number, number>;
   canWrite: boolean;
   busy: boolean;
   setBusy: SetBusy;
@@ -1718,6 +1728,9 @@ function SalesAttending({
             <div key={s.sales_rep_id} style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderTop: i === 0 ? "none" : "1px solid #eceee9" }}>
               <span className="money" style={{ fontSize: 10, color: "#9aa093" }}>{s.rep_code || "—"}</span>
               <span style={{ fontSize: 12.5, fontWeight: 600, color: "#11140f", flex: 1, minWidth: 0 }}>{s.rep_name || s.user_name || "—"}</span>
+              {(notOpenedByRep.get(s.sales_rep_id) ?? 0) > 0 && (
+                <span className="money" style={{ fontSize: 11, fontWeight: 700, color: "#b42318" }}>{fmtRmSen(notOpenedByRep.get(s.sales_rep_id))}</span>
+              )}
               {canWrite && (
                 <button aria-label="Remove" className="tinybtn" disabled={busy} style={{ padding: "3px 7px", color: "#a13a34", fontWeight: 700 }} onClick={() => remove(s)}>×</button>
               )}
@@ -1739,12 +1752,14 @@ function SalesAttending({
 // a sales-only user therefore sees the log action with an empty list and still
 // no P&L.
 function SalesPanel({
-  projectId, incomeLines, finalTotalRm, canLogSale, busy, setBusy, prompt, notify, reload,
+  projectId, incomeLines, finalTotalRm, bills, canLogSale, busy, setBusy, prompt, notify, reload,
 }: {
   projectId: number;
   incomeLines?: FinanceLine[];
   /** project_finance.total_sales (RM) — null when finance is stripped or unset. */
   finalTotalRm: number | null;
+  /** The pasted sales report, read by the detail view and shared with Sales Attending. */
+  bills: MobileProjectSalesBillsQuery;
   canLogSale: boolean;
   busy: boolean;
   setBusy: SetBusy;
@@ -1792,6 +1807,7 @@ function SalesPanel({
       <div className="pbody">
         {/* The orders opened in the SO module for this fair — the desktop
             block's phone half, same read and arithmetic. */}
+        <MobilePmsSalesBills query={bills} />
         <MobilePmsSalesOrders projectId={projectId} finalTotalRm={finalTotalRm} />
         <div style={{ display: "flex", alignItems: "center", margin: "0 0 6px" }}>
           <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093" }}>Sales entries</span>
