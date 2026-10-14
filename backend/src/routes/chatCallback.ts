@@ -188,12 +188,19 @@ app.post("/", async (c) => {
   const reason = String(body.reason ?? "").trim().slice(0, 200) || null;
   const note = String(body.note ?? "").trim().slice(0, 500) || null;
   // event "property": the four Property Details answers, each bounded; null
-  // when this is not a property callback.
+  // when this is not a property callback. Connect's interpolator leaves an
+  // UNSET attribute as its literal "{key}" (an answer the customer skipped, e.g.
+  // the disposal item when they said No) — treat that exact shape as blank so
+  // the placeholder never lands in a column.
+  const propField = (v: unknown, max: number): string | null => {
+    const t = String(v ?? "").trim().slice(0, max);
+    return !t || /^\{[a-z0-9_]+\}$/i.test(t) ? null : t;
+  };
   const property = event === "property" ? {
-    houseType: String(body.house_type ?? "").trim().slice(0, 60) || null,
-    deliveryPurpose: String(body.delivery_purpose ?? "").trim().slice(0, 60) || null,
-    needDisposal: String(body.need_disposal ?? "").trim().slice(0, 20) || null,
-    disposalItem: String(body.disposal_item ?? "").trim().slice(0, 200) || null,
+    houseType: propField(body.house_type, 60),
+    deliveryPurpose: propField(body.delivery_purpose, 60),
+    needDisposal: propField(body.need_disposal, 20),
+    disposalItem: propField(body.disposal_item, 200),
   } : null;
 
   const sb = getSupabaseService(c.env);
