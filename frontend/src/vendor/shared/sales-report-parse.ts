@@ -15,7 +15,7 @@
 // not opened as orders and how much of that sits with each salesperson.
 //
 // THE GRAMMAR, deliberately tolerant — this is typed on a phone, not a form:
-//   · a BILL line is  [n.]  <booklet no>  [-|:]  [RM] <amount>  [-|:]  [name]
+//   · a BILL line is  (n.)  <booklet no>  (- or :)  (RM) <amount>  (- or :)  (name)
 //     booklet no  = 1–5 letters, optional space/dash, 3–6 digits  (HC8993,
 //                   HC 10785, ZNT-6042, CR0315); kept as typed in `ref_raw`
 //                   and normalised (upper, letters+digits only) in `ref_token`,
@@ -76,9 +76,13 @@ export function extractRefTokens(text: string | null | undefined): string[] {
   return Array.from(new Set(out));
 }
 
+/* Spelled as alternations, not character classes, and no bracket-colon form
+   anywhere in this file, comments included: Tailwind scans every source file
+   for class candidates and turned the dash/colon class into an invalid CSS
+   rule that failed the production build. */
 const BILL_RE =
-  /^\s*(?:\d{1,3}\s*[.)]\s*)?([A-Za-z]{1,5}\s*-?\s*\d{3,6})\b\s*[-:–]?\s*(?:RM|rm|Rm)?\s*([\d][\d,]*(?:\.\d{1,2})?)\s*[-:–]?\s*(.*?)\s*$/;
-const TOTAL_RE = /^\s*total\b\s*[-:–=]?\s*(?:RM|rm|Rm)?\s*([\d][\d,]*(?:\.\d{1,2})?)\s*$/i;
+  /^\s*(?:\d{1,3}\s*[.)]\s*)?([A-Za-z]{1,5}\s*-?\s*\d{3,6})\b\s*(?:-|:|–)?\s*(?:RM|rm|Rm)?\s*([\d][\d,]*(?:\.\d{1,2})?)\s*(?:-|:|–)?\s*(.*?)\s*$/;
+const TOTAL_RE = /^\s*total\b\s*(?:-|:|–|=)?\s*(?:RM|rm|Rm)?\s*([\d][\d,]*(?:\.\d{1,2})?)\s*$/i;
 const DATE_RE = /^\s*(\d{1,2})\s*\/\s*(\d{1,2})\b/;
 
 /** sen → "1,234.00" for the one sentence this module writes; the shared
@@ -115,7 +119,7 @@ export function parseSalesReport(text: string | null | undefined): ParsedSalesRe
     if (bill) {
       const amount = amountToSen(bill[2]!);
       if (amount != null && amount > 0) {
-        const name = bill[3]!.replace(/^[-:–]\s*/, "").trim();
+        const name = bill[3]!.replace(/^(?:-|:|–)\s*/, "").trim();
         bills.push({
           line,
           ref_raw: bill[1]!.replace(/\s+/g, " ").trim(),

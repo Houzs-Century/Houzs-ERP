@@ -178,10 +178,17 @@ async function notifyWrongFair(c: Ctx, db: Db, project: ProjectRow, matched: rea
   const sb = c.get("supabase");
 
   const staffIds = Array.from(new Set(wrong.map((b) => b.match.so_salesperson_id!)));
-  const { data: staff } = await chunkIn<{ id: string; user_id: number | null }>(
+  const { data: staff, error: staffErr } = await chunkIn<{ id: string; user_id: number | null }>(
     staffIds,
     (batch, a, b) => sb.from("staff").select("id, user_id").in("id", batch).range(a, b),
   );
+  /* A failed staff read means nobody can be addressed; the save itself has
+     already succeeded, so say so in the log and send nothing rather than
+     silently treating the failure as "no such people". */
+  if (staffErr) {
+    console.log(`[project-sales-bills] staff lookup failed, no wrong-fair notice sent: ${staffErr.message}`);
+    return 0;
+  }
   const userByStaff = new Map(staff.map((s) => [s.id, s.user_id != null ? Number(s.user_id) : null] as const));
 
   const otherIds = Array.from(new Set(wrong.map((b) => b.match.so_project_id!)));
