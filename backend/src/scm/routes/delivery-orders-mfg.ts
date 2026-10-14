@@ -33,7 +33,7 @@ import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { dateOrNull, coerceEmptyDates, normalizeEventDay } from '../lib/date-coerce';
 import { allocateAcrossBuckets } from '../lib/bucket-cost-allocation';
-import { doHasDownstream } from '../lib/downstream-lock';
+import { doCancelDbRefusal, doHasDownstream } from '../lib/downstream-lock';
 import { claimedSoItemIdsOnDo, fillMissingSoItemIds } from '../lib/derive-do-so-item-id';
 import { DO_AUDIT_FIELDS, DO_AUDIT_SELECT, DO_LINE_AUDIT_FIELDS, DO_IDENTITY_LABELS } from '../lib/do-audit-fields';
 import { identityLockedRefusal } from '../shared/header-inherited-lock'; import { doLockedHeaderChanges, DO_HEADER_OPEN_DESCRIPTION } from '../shared/do-header-lock';
@@ -5136,6 +5136,9 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
       .update({ status: toStatus, ...ts, ...tsNum })
       .eq('id', id), co.companyId).neq('status', 'CANCELLED')
       .select('id, status').maybeSingle();
+    // HC-0004 T2: an SI line raced in after the doHasDownstream check above.
+    const dbLock = doCancelDbRefusal(error);
+    if (dbLock) return c.json(dbLock, 409);
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     if (!updated) {
       // Lost the race — another concurrent cancel already flipped it. Do NOT
