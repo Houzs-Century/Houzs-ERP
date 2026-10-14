@@ -1,4 +1,4 @@
--- 20261014T1300_scm_scan_files.sql
+-- 20261014T1320_scm_scan_files.sql
 -- REVERSAL: DROP TABLE IF EXISTS scm.scan_files;
 --   Revert the code first (scm/lib/scan-files.ts and its four callers write this
 --   table). The bytes under scan-jobs/ and scan-files/ in the SO_ITEM_PHOTOS R2
