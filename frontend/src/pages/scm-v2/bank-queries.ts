@@ -479,6 +479,10 @@ export const useBankMonth = (accountCode: string | null, month: string | null) =
     statements: Array<BankStatement & { spanning: boolean }>;
     lines: Array<BankLine & { file_name: string | null }>;
     unmatchedEntries: LedgerEntry[];
+    /** This month's movements still to decide that an earlier file of the
+        account already recorded, and the files carrying them (owner
+        2026-10-14). Optional only for the minute a newer screen reads an older server. */
+    repeats?: { count: number; statementIds: number[] };
   }>(`/accounting/bank/months/${encodeURIComponent(accountCode!)}/${encodeURIComponent(month!)}`),
   enabled: accountCode != null && month != null,
   retry: retryUnlessClientError,
@@ -511,6 +515,20 @@ export const useAutoMatchStatement = () => {
     mutationFn: (id: number) =>
       authedFetch<{ ok: boolean; matched: number; jeNos: string[]; contraPairs: number }>(
         `/accounting/bank/statements/${id}/auto-match`, { method: 'POST', body: '{}' },
+      ),
+    onSuccess: () => invalidateAfterBankPosting(qc),
+  });
+};
+
+/* What an earlier file of the account already recorded, left out of a statement
+   already in (owner 2026-10-14: a month-end file that printed the export's
+   movements with more words brought them back as still to decide). */
+export const useLeaveOutRepeats = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      authedFetch<{ ok: boolean; leftOut: number; lineIds: number[] }>(
+        `/accounting/bank/statements/${id}/repeats`, { method: 'POST', body: '{}' },
       ),
     onSuccess: () => invalidateAfterBankPosting(qc),
   });

@@ -433,13 +433,20 @@ export function parseBankStatement(cfg: BankParseConfig, text: string): BankPars
    transfer" on the other, and Hong Leong's any-day export even splits
    "MERCHANT" into "MERCHAN" + "T" across two columns. So a movement's
    fingerprint is its day, its amount and its WORDS — folded, one-letter
-   fragments glued back onto the word before them, sorted — not its text. */
-export function movementFingerprint(m: { bookedOn: string; amountSen: number; description: string; reference: string | null }): string {
+   fragments glued back onto the word before them, sorted — not its text.
+   Words that one print adds and the other leaves out (Hong Leong's month-end
+   statement: "… at KLM", a transfer's DuitNow id) are acc/bank-repeats.ts's
+   business, on top of these words. */
+export function movementWords(m: { description: string; reference: string | null }): Set<string> {
   const raw = `${m.description} ${m.reference ?? ''}`.toLowerCase().replace(/[^a-z0-9\s]+/g, ' ').trim();
   const tokens: string[] = [];
   for (const t of raw.split(/\s+/).filter(Boolean)) {
     if (t.length === 1 && tokens.length > 0) tokens[tokens.length - 1] += t;
     else tokens.push(t);
   }
-  return `${m.bookedOn}|${m.amountSen}|${[...new Set(tokens)].sort().join(' ')}`;
+  return new Set(tokens);
+}
+
+export function movementFingerprint(m: { bookedOn: string; amountSen: number; description: string; reference: string | null }): string {
+  return `${m.bookedOn}|${m.amountSen}|${[...movementWords(m)].sort().join(' ')}`;
 }

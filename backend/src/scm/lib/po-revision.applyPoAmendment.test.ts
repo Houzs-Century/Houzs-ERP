@@ -213,6 +213,46 @@ describe('applyPoAmendment — snapshot + revision + audit', () => {
     expect(store.purchase_order_items.find((i) => i.id === 'POI-1')!.qty).toBe(1);  // unchanged fixture qty
   });
 
+  it('answers the DB floor (P0411, a GRN posted after the floor read) with ReceivedFloorError, not a 500', async () => {
+    const store = baseStore();
+    store.purchase_order_items.find((i) => i.id === 'POI-1')!.qty = 3;
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'QTY', new_qty: 1, new_unit_price_sen: null, new_item_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 3 } },
+    ];
+    const sb = fakeSb(store);
+    const from = sb.from;
+    // received_qty still reads 0, so the app floor passes; the trigger refuses the write.
+    sb.from = (table: string) => {
+      const q = from(table);
+      if (table === 'purchase_order_items') {
+        q.update = (() => ({ eq: async () => ({ data: null, error: { code: 'P0411', message: 'po_line_over_received: PO line POI-1 would have 2 received against qty 1' } }) })) as unknown as Query['update'];
+      }
+      return q;
+    };
+    const err = await applyPoAmendment(sb, AMD, 'user-1').catch((e) => e);
+    expect(err).toBeInstanceOf(ReceivedFloorError);
+    expect(err).toMatchObject({ poItemId: 'POI-1', revisedQty: 1, receivedQty: 2 });
+  });
+
+  it('leaves any other line-update error a plain Error', async () => {
+    const store = baseStore();
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'QTY', new_qty: 2, new_unit_price_sen: null, new_item_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
+    ];
+    const sb = fakeSb(store);
+    const from = sb.from;
+    sb.from = (table: string) => {
+      const q = from(table);
+      if (table === 'purchase_order_items') {
+        q.update = (() => ({ eq: async () => ({ data: null, error: { code: '23505', message: 'duplicate key' } }) })) as unknown as Query['update'];
+      }
+      return q;
+    };
+    const err = await applyPoAmendment(sb, AMD, 'user-1').catch((e) => e);
+    expect(err).not.toBeInstanceOf(ReceivedFloorError);
+    expect(String(err.message)).toContain('line update failed');
+  });
+
   it('applies a header supplier change and records it', async () => {
     const store = baseStore();
     store.po_amendments[0].header_changes = { supplier_id: 'S2' };
