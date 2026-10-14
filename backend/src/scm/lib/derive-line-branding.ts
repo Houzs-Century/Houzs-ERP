@@ -102,11 +102,11 @@ export async function restampHeaderBranding(
     );
     if (!brand || brand === h.branding) return;
     const repend = h.project_id == null && (h.fair_match === 'AMBIGUOUS' || h.fair_match === 'UNMATCHED');
-    await scopeToCompany(
-      sb.from('mfg_sales_orders')
-        .update(repend ? { branding: brand, fair_match: 'PENDING' } : { branding: brand }),
-      c,
-    ).eq('doc_no', docNo);
+    const companyId = activeCompanyId(c);
+    if (companyId == null) return;
+    await sb.from('mfg_sales_orders')
+      .update(repend ? { branding: brand, fair_match: 'PENDING' } : { branding: brand })
+      .eq('doc_no', docNo).eq('company_id', companyId);
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error('[restamp-header-branding] failed for', docNo, e);
