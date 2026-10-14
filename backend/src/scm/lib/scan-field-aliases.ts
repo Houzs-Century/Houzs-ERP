@@ -124,7 +124,15 @@ export async function readSlipWithAliases<T extends { parsed: Slip | null }>(
   companyId: number | null,
   callModel: (hint: string) => Promise<T>,
 ): Promise<T> {
-  const aliases = companyId === null ? [] : await loadSlipAliases(svc, companyId).catch(() => []);
+  let aliases: FieldAlias[] = [];
+  if (companyId !== null) {
+    try {
+      aliases = await loadSlipAliases(svc, companyId);
+    } catch (e) {
+      /* The scan still runs on the model alone; the miss is logged, not hidden. */
+      console.warn('[scan-field-aliases] load threw (scan runs without aliases):', (e as Error).message);
+    }
+  }
   const call = await callModel(aliasHint(aliases));
   if (call.parsed) applySlipAliases(call.parsed, aliases);
   return call;
