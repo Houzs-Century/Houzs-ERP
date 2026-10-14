@@ -1,9 +1,10 @@
-// The rules behind a project's pasted sales report: who may save it, which
-// bill is already an order (and whether under the right event), whose bill it
-// is, and what each person still has to open.
+// The rules behind a project's sales report: which chat messages count, who
+// may report, which bill is already an order (and whether under the right
+// event), whose bill it is, and what each person still has to open.
 import { describe, expect, test } from "vitest";
 import {
   canSaveSalesReport,
+  collectReport,
   indexOrdersByToken,
   matchBill,
   matchBills,
@@ -11,6 +12,7 @@ import {
   summarizeBills,
   type AttendeeRow,
   type BillRow,
+  type NoteRow,
   type OrderRow,
 } from "./sales-report-bills";
 
@@ -18,10 +20,13 @@ const order = (over: Partial<OrderRow> & { doc_no: string }): OrderRow => ({
   project_id: 344, status: "CONFIRMED", customer_so_no: null, ref: null, salesperson_id: "staff-j",
   local_total_sen: 650000, total_revenue_sen: 650000, ...over,
 });
-const bill = (over: Partial<BillRow> & { id: number; ref_token: string }): BillRow => ({
-  ref_raw: over.ref_token, amount_sen: 100000, salesperson_name: null, report_date: null,
-  source_activity_id: null, created_at: null, ...over,
-});
+const bill = (over: Partial<BillRow> & { line: number; ref_token: string }): BillRow => {
+  const { line, ...rest } = over;
+  return {
+    key: `1:${line}`, ref_raw: over.ref_token, amount_sen: 100000, extra_sen: null, extra_tag: null, salesperson_name: null,
+    report_date: null, source_activity_id: 1, created_at: null, ...rest,
+  };
+};
 const ATTENDEES: AttendeeRow[] = [
   { sales_rep_id: 11, rep_name: "Jason Lee", user_name: "Jason Lee", rep_user_id: 101 },
   { sales_rep_id: 12, rep_name: "Melvin Tan", user_name: null, rep_user_id: 102 },
@@ -37,6 +42,46 @@ describe("canSaveSalesReport", () => {
     expect(canSaveSalesReport({ position_name: "Sales Director", email: "sd@houzs.com" })).toBe(false);
     expect(canSaveSalesReport({ position_name: "Super Admin", email: "nico@houzs.com" })).toBe(false);
     expect(canSaveSalesReport(null)).toBe(false);
+  });
+});
+
+describe("collectReport", () => {
+  const note = (id: number, text: string, author: Partial<Pick<NoteRow, "author_email" | "author_position">> = {}): NoteRow => ({
+    id, note: text, created_at: `2026-10-14 0${id}:00:00`, author_email: "ummuaimanlm@gmail.com", author_position: "Operation Executive", ...author,
+  });
+
+  test("counts the bills of messages written by someone who may report, newest message winning per booklet number", () => {
+    const r = collectReport([
+      note(1, "9/10\n1. HC13161 RM10,500 CH"),
+      note(2, "10/10\n1. HC13162 RM1999 Ethan\n2. HC13163 RM4172 + 710(T) Ethan"),
+      /* A rep pasting numbers does not move the event. */
+      note(3, "1. HC99999 RM100 Me", { author_email: "rep@houzs.com", author_position: "Sales Executive" }),
+      /* The corrected re-paste of HC13162 wins. */
+      note(4, "10/10\n1. HC13162 RM2099 Ethan"),
+    ], "2026-10-09");
+    expect(r.bills.map((b) => [b.ref_token, b.amount_sen, b.report_date, b.source_activity_id, b.extra_sen])).toEqual([
+      ["HC13162", 209900, "2026-10-10", 4, null],
+      ["HC13163", 417200, "2026-10-10", 2, 71000],
+      ["HC13161", 1050000, "2026-10-09", 1, null],
+    ]);
+    expect([...r.report_activity_ids].sort()).toEqual([1, 2, 4]);
+    expect(r.summary).toBeNull();
+  });
+
+  test("a message all of whose bills were overtaken no longer counts as contributing", () => {
+    const r = collectReport([note(1, "1. HC1001 RM100 A"), note(2, "1. HC1001 RM150 A")], "2026-10-09");
+    expect(r.bills.map((b) => [b.ref_token, b.amount_sen])).toEqual([["HC1001", 15000]]);
+    expect(r.report_activity_ids).toEqual([2]);
+  });
+
+  test("the latest summary by someone who may report is the event's summary, with its days for checking", () => {
+    const r = collectReport([
+      note(1, "Total RM 1,000", { author_email: "hello@houzscentury.com", author_position: "Owner" }),
+      note(2, "JB @ Sutera Mall 9-11/10\n9/10:RM10,500\n10/10:RM37,865+2883\nTotal RM48,185+2883"),
+      note(3, "Total RM 5", { author_email: "rep@houzs.com", author_position: "Sales Executive" }),
+    ], "2026-10-09");
+    expect(r.summary).toEqual({ activity_id: 2, total_sen: 4818500, days_sen: 4836500, created_at: "2026-10-14 02:00:00" });
+    expect(r.bills).toEqual([]);
   });
 });
 
@@ -83,7 +128,7 @@ describe("indexOrdersByToken / matchBill", () => {
 });
 
 describe("resolveAttendee", () => {
-  test("exact, then first-name, then a word; ambiguity resolves to nobody", () => {
+  test("exact, then first-name, then a word, then initials; ambiguity resolves to nobody", () => {
     expect(resolveAttendee("Jason Lee", ATTENDEES)?.sales_rep_id).toBe(11);
     expect(resolveAttendee("jason", ATTENDEES)?.sales_rep_id).toBe(11);
     expect(resolveAttendee("Melvin", ATTENDEES)?.sales_rep_id).toBe(12);
@@ -91,6 +136,12 @@ describe("resolveAttendee", () => {
     expect(resolveAttendee("Wong", ATTENDEES)?.sales_rep_id).toBe(13);
     /* "Ting" is a word of two attendees' names — not a guess. */
     expect(resolveAttendee("Ting", ATTENDEES)).toBeNull();
+    /* Initials, as the floor writes them: CH is Chea Huan, ST is Shi Ting. */
+    const withChea = [...ATTENDEES, { sales_rep_id: 15, rep_name: "Chea Huan", user_name: null, rep_user_id: 105 }];
+    expect(resolveAttendee("CH", withChea)?.sales_rep_id).toBe(15);
+    expect(resolveAttendee("ST", withChea)?.sales_rep_id).toBe(14);
+    /* MT fits Mei Ting and Melvin Tan both — not a guess. */
+    expect(resolveAttendee("MT", withChea)).toBeNull();
     expect(resolveAttendee("Adrian", ATTENDEES)).toBeNull();
     expect(resolveAttendee(null, ATTENDEES)).toBeNull();
     expect(resolveAttendee("  ", ATTENDEES)).toBeNull();
@@ -104,11 +155,11 @@ describe("matchBills + summarizeBills", () => {
       order({ doc_no: "HC-SO-2", customer_so_no: "HC8995", project_id: 345 }),
     ];
     const bills = [
-      bill({ id: 1, ref_token: "HC8993", amount_sen: 650000, salesperson_name: "Jason" }),
-      bill({ id: 2, ref_token: "HC8994", amount_sen: 499900, salesperson_name: "Melvin" }),
-      bill({ id: 3, ref_token: "HC8995", amount_sen: 200000, salesperson_name: "Jason" }),
-      bill({ id: 4, ref_token: "HC8996", amount_sen: 120000, salesperson_name: "Adrian" }),
-      bill({ id: 5, ref_token: "HC8997", amount_sen: 50000, salesperson_name: null }),
+      bill({ line: 1, ref_token: "HC8993", amount_sen: 650000, salesperson_name: "Jason" }),
+      bill({ line: 2, ref_token: "HC8994", amount_sen: 499900, salesperson_name: "Melvin" }),
+      bill({ line: 3, ref_token: "HC8995", amount_sen: 200000, salesperson_name: "Jason" }),
+      bill({ line: 4, ref_token: "HC8996", amount_sen: 120000, salesperson_name: "Adrian" }),
+      bill({ line: 5, ref_token: "HC8997", amount_sen: 50000, salesperson_name: null }),
     ];
     const matched = matchBills(bills, 344, orders, ATTENDEES);
     expect(matched.map((b) => [b.ref_token, b.match.status, b.sales_rep_id])).toEqual([

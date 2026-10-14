@@ -56,13 +56,16 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
    `phone` are the order's denormalised customer: an SO carries no customers
    join (mfg-sales-orders.ts, the "customers table" note by its list). */
 const SO_COLS =
-  "doc_no, so_date, ref, debtor_name, phone, status, salesperson_id, " +
+  "doc_no, so_date, ref, customer_so_no, debtor_name, phone, status, salesperson_id, " +
   "local_total_sen, total_revenue_sen, deposit_sen, fair_match, linked_ac_docno, created_at";
 
 type SoRow = {
   doc_no: string;
   so_date: string | null;
   ref: string | null;
+  /** The booklet number as the rep typed it in Ref No. on a new order; `ref`
+   *  is where an order migrated from AutoCount carries it. */
+  customer_so_no: string | null;
   debtor_name: string | null;
   phone: string | null;
   status: string | null;
@@ -186,7 +189,7 @@ export async function projectSalesOrdersHandler(c: Ctx): Promise<Response> {
     return {
       doc_no: h.doc_no,
       so_date: h.so_date,
-      ref: h.ref,
+      ref: h.customer_so_no || h.ref,
       customer_name: h.debtor_name,
       customer_phone: h.phone,
       salesperson_name: h.salesperson_id ? staffNames.get(h.salesperson_id) ?? null : null,

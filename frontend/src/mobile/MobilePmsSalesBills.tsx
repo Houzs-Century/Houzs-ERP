@@ -7,7 +7,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { formatDate } from "../lib/utils";
-import { billStatusLabel, fmtRmSen, normalizeProjectSalesBills, type ProjectSalesBillsResponse } from "../lib/projectSalesBills";
+import { billStatusLabel, billsNeedingAction, fmtRmSen, normalizeProjectSalesBills, type ProjectSalesBillsResponse } from "../lib/projectSalesBills";
 
 export type MobileProjectSalesBillsQuery = UseQueryResult<ProjectSalesBillsResponse>;
 
@@ -29,12 +29,14 @@ const TONE_COLOR = { red: "#b42318", green: "#2f8a5b", amber: "#8a4e0e", grey: "
 export function MobilePmsSalesBills({ query }: { query: MobileProjectSalesBillsQuery }) {
   const data = query.data;
   const totals = data?.totals;
-  const bills = data?.bills ?? [];
+  /* Only the bills still to act on; an order opened under this event is in
+     the Sales Orders list below (owner 2026-10-14). */
+  const bills = billsNeedingAction(data?.bills ?? []);
 
   return (
     <div style={{ marginBottom: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 6px" }}>
-        <span style={LABEL}>Sales report (pasted)</span>
+        <span style={LABEL}>Sales report (chat)</span>
         {totals && totals.count > 0 && (
           <span className="money" style={{ marginLeft: "auto", fontSize: 12, fontWeight: 700, color: "#414539" }}>
             {totals.count} · {fmtRmSen(totals.amount_sen)}
@@ -71,13 +73,15 @@ export function MobilePmsSalesBills({ query }: { query: MobileProjectSalesBillsQ
       ) : query.error ? (
         <div style={{ fontSize: 12, color: TONE_COLOR.red }}>{query.error instanceof Error ? query.error.message : "Could not load the sales report."}</div>
       ) : data && totals && totals.count === 0 ? (
-        <div style={MUTED}>No sales report has been saved for this event. It is pasted into the chat on the desktop.</div>
+        <div style={MUTED}>No bills found in this event's chat. The report counts once the Owner, Ummu or Wei Siang posts it in the chat on the desktop.</div>
+      ) : totals && bills.length === 0 ? (
+        <div style={{ fontSize: 12, color: TONE_COLOR.green }}>All {totals.count} bill{totals.count === 1 ? "" : "s"} are opened as Sales Orders under this event — listed below.</div>
       ) : bills.length > 0 ? (
         <div style={{ border: "1px solid #eceee9", borderRadius: 10, overflow: "hidden" }}>
           {bills.map((b, i) => {
             const st = billStatusLabel(b.match);
             return (
-              <div key={b.id} style={{ padding: "9px 12px", borderTop: i === 0 ? "none" : "1px solid #eceee9" }}>
+              <div key={b.key} style={{ padding: "9px 12px", borderTop: i === 0 ? "none" : "1px solid #eceee9" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span className="money" style={{ fontSize: 12, fontWeight: 700, color: "#11140f" }}>{b.ref_raw}</span>
                   <span style={{ flex: 1, minWidth: 60, fontSize: 12, color: "#414539" }}>{b.salesperson_name || "—"}</span>
@@ -89,11 +93,12 @@ export function MobilePmsSalesBills({ query }: { query: MobileProjectSalesBillsQ
                   {b.match.so_doc_no && (
                     <>
                       {" "}·{" "}
-                      <Link to={`/scm/sales-orders/${encodeURIComponent(b.match.so_doc_no)}`} style={{ color: "#16695f", textDecoration: "none" }}>
+                      <Link to={`/scm/sales-orders/${encodeURIComponent(b.match.so_doc_no)}`} style={{ color: "#16695f", fontWeight: 700, textDecoration: "underline" }}>
                         {b.match.so_doc_no}
                       </Link>
                     </>
                   )}
+                  {b.other_event_name && <span style={{ color: TONE_COLOR.amber }}> · under {b.other_event_name}</span>}
                 </div>
               </div>
             );

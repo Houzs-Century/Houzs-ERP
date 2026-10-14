@@ -1,25 +1,94 @@
 // ─────────────────────────────────────────────────────────────────────────
-// sales-report-bills.ts — the rules behind a project's pasted sales report:
-// which bill is already an order, whose it is, and what each person still has
-// to open. Pure; routes/project-sales-bills.ts does the reading and writing.
+// sales-report-bills.ts — the rules behind a project's sales report: which
+// chat messages count, which bill is already an order, whose it is, and what
+// each person still has to open. Pure; routes/project-sales-bills.ts reads.
 //
-// Owner 2026-10-14: paste the evening report into the project, keep it, and
-// once Total Sales is typed and the reps start opening orders, the project
-// says how much is still not opened — per bill, and per salesperson beside
-// their name under Sales Attending.
+// Owner 2026-10-14: the evening report pasted into the project's chat is the
+// record — it counts the moment it is posted, a message pasted before this
+// existed counts too, and a wrong paste is voided by voiding the message. So
+// the bills are DERIVED from the chat on every read, never copied out of it:
+// there is no second store to fall out of step with what the chat shows.
 // ─────────────────────────────────────────────────────────────────────────
-import { extractRefTokens } from "../../scm/shared/sales-report-parse";
+import { extractRefTokens, parseSalesReport, reportDateFor, summaryTotalOf } from "../../scm/shared/sales-report-parse";
 
 export type BillRow = {
-  id: number;
+  /** `${source_activity_id}:${line}` — stable for as long as the message is. */
+  key: string;
   ref_raw: string;
   ref_token: string;
   amount_sen: number;
+  extra_sen: number | null;
+  extra_tag: string | null;
   salesperson_name: string | null;
   report_date: string | null;
-  source_activity_id: number | null;
+  source_activity_id: number;
   created_at: string | null;
 };
+
+/** A chat message (project_activity, action 'note', not archived) and who wrote it. */
+export type NoteRow = {
+  id: number;
+  note: string | null;
+  created_at: string | null;
+  author_email: string | null;
+  author_position: string | null;
+};
+
+export type ReportSummary = {
+  activity_id: number;
+  total_sen: number;
+  /** Sum of the message's day lines; null when it has none. */
+  days_sen: number | null;
+  created_at: string | null;
+};
+
+/** Every bill the project's chat carries, newest message winning per booklet
+ *  number; the messages that contributed; and the latest summary's total.
+ *  Only messages written by someone who may report (canSaveSalesReport) count:
+ *  a rep chatting a number does not move the event's figures. */
+export function collectReport(
+  notes: readonly NoteRow[],
+  projectStartDate: string | null,
+): { bills: BillRow[]; report_activity_ids: number[]; summary: ReportSummary | null } {
+  const ordered = [...notes].sort((a, b) =>
+    (a.created_at ?? "").localeCompare(b.created_at ?? "") || a.id - b.id,
+  );
+  const byToken = new Map<string, BillRow>();
+  const contributing = new Set<number>();
+  let summary: ReportSummary | null = null;
+  for (const n of ordered) {
+    if (!canSaveSalesReport({ email: n.author_email, position_name: n.author_position })) continue;
+    const parsed = parseSalesReport(n.note);
+    if (parsed.bills.length > 0) {
+      const reportDate = reportDateFor(parsed.date, projectStartDate);
+      for (const b of parsed.bills) {
+        byToken.set(b.ref_token, {
+          key: `${n.id}:${b.line}`,
+          ref_raw: b.ref_raw,
+          ref_token: b.ref_token,
+          amount_sen: b.amount_sen,
+          extra_sen: b.extra_sen,
+          extra_tag: b.extra_tag,
+          salesperson_name: b.salesperson_name,
+          report_date: reportDate,
+          source_activity_id: n.id,
+          created_at: n.created_at,
+        });
+      }
+      contributing.add(n.id);
+      continue;
+    }
+    const s = summaryTotalOf(parsed);
+    if (s) summary = { activity_id: n.id, total_sen: s.total_sen, days_sen: s.days_sen, created_at: n.created_at };
+  }
+  /* A message whose every bill was overtaken by a later message no longer
+     contributes; the chat should not mark it as counted. */
+  const bills = [...byToken.values()].sort(
+    (a, b) => (b.report_date ?? "").localeCompare(a.report_date ?? "") || a.ref_token.localeCompare(b.ref_token),
+  );
+  const live = new Set(bills.map((b) => b.source_activity_id));
+  return { bills, report_activity_ids: [...contributing].filter((id) => live.has(id)), summary };
+}
 
 /** The Sales Order columns the match reads — see routes/project-sales-bills.ts. */
 export type OrderRow = {
@@ -184,7 +253,16 @@ export function resolveAttendee(name: string | null | undefined, attendees: read
   const prefix = attendees.filter((a) => namesOf(a).some((n) => n.startsWith(`${key} `)));
   if (prefix.length > 0) return only(prefix);
   const word = attendees.filter((a) => namesOf(a).some((n) => ` ${n} `.includes(` ${key} `)));
-  return only(word);
+  if (word.length > 0) return only(word);
+  /* Initials — the floor writes "CH" for Chea Huan (owner 2026-10-14). Two or
+     three letters that are the first letters of a rep's name words, in order. */
+  if (/^[a-z]{2,3}$/.test(key)) {
+    const initials = attendees.filter((a) =>
+      namesOf(a).some((n) => n.split(" ").map((w) => w.charAt(0)).join("") === key),
+    );
+    return only(initials);
+  }
+  return null;
 }
 
 /* ── the numbers ───────────────────────────────────────────────────────────── */
