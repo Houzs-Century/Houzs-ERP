@@ -122,7 +122,7 @@ const buildPvColumns = (): GridColumn<PaymentVoucherRow>[] => [
     sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
   },
   {
-    /* DEV-75: recorded only — not in Total, posts nothing. */
+    /* DEV-75: not in Total; posts Dr 900-B001 / Cr the bank with the voucher. */
     key: 'bank_charge_sen', label: 'Bank Charges', width: 120, sortable: true, align: 'right', groupable: false,
     accessor: (r) => fmtMoney(Number(r.bank_charge_sen ?? 0), 'MYR'),
     exportValue: (r) => Number(r.bank_charge_sen ?? 0) / 100,

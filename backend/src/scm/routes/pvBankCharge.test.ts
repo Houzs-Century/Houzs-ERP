@@ -1,5 +1,5 @@
 // DEV-75: a Payment Voucher header carries the bank's charge (bank_charge_sen,
-// integer sen). It is recorded only: never added to total_sen, never posted.
+// integer sen). Never added to total_sen; its posting is pvBankChargePosting.test.ts.
 // A negative or fractional charge is refused by name, like a line amount.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
