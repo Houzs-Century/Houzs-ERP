@@ -42,13 +42,16 @@
 //   lib/chat-request-patch.ts — never the schedule. See that module.
 //
 //   { callback_id?: string,          // idempotency; chat's own step id
-//     event: "confirm" | "amend" | "postage_confirm" | "postage_amend",
+//     event: "confirm" | "amend" | "postage_confirm" | "postage_amend"
+//            | "property",             // the Property Details form answers
 //     ref: string,                   // the number the customer was shown: our
 //                                    // doc_no OR the AutoCount linked_ac_docno
 //     refs?: string,                 // the whole bundle, comma-joined (refs_all)
 //     phone?: string,
 //     delivery_date?: string,        // amend only — what the customer asked for
 //     reason?: string,               // amend only — Renovation Delay / Date Unavailable
+//     house_type?, delivery_purpose?, need_disposal?, disposal_item?: string,
+//                                    // property only — the form's four answers
 //     note?: string }                // free text, optional
 // ---------------------------------------------------------------------------
 
@@ -149,6 +152,11 @@ app.post("/", async (c) => {
     reason?: string;
     address?: string;
     note?: string;
+    // event "property": the Property Details form answers.
+    house_type?: string;
+    delivery_purpose?: string;
+    need_disposal?: string;
+    disposal_item?: string;
   } | null = null;
   try {
     body = await c.req.json();
@@ -179,6 +187,14 @@ app.post("/", async (c) => {
   const requestedAddress = String(body.address ?? "").trim().slice(0, 300) || null;
   const reason = String(body.reason ?? "").trim().slice(0, 200) || null;
   const note = String(body.note ?? "").trim().slice(0, 500) || null;
+  // event "property": the four Property Details answers, each bounded; null
+  // when this is not a property callback.
+  const property = event === "property" ? {
+    houseType: String(body.house_type ?? "").trim().slice(0, 60) || null,
+    deliveryPurpose: String(body.delivery_purpose ?? "").trim().slice(0, 60) || null,
+    needDisposal: String(body.need_disposal ?? "").trim().slice(0, 20) || null,
+    disposalItem: String(body.disposal_item ?? "").trim().slice(0, 200) || null,
+  } : null;
 
   const sb = getSupabaseService(c.env);
 
@@ -255,6 +271,7 @@ app.post("/", async (c) => {
         phone,
         requestedDate,
         reason,
+        property,
         note: requestedAddress ? `${note ?? ""}${note ? " | " : ""}address: ${requestedAddress}` : note,
       }));
     } catch (e) {

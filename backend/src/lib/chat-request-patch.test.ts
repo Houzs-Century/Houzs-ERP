@@ -48,6 +48,31 @@ describe("chatRequestPatch — what a WhatsApp tap may write on the SO", () => {
     expect(chatRequestPatch("confirm", null, null)).toEqual({ delivery_message_status: "Done Scheduling" });
   });
 
+  it("property: the form answers fill the board's house / disposal columns, no status moves", () => {
+    expect(
+      chatRequestPatch("property", null, null, {
+        houseType: "Condo",
+        deliveryPurpose: "Move-in New House",
+        needDisposal: "Yes",
+        disposalItem: "old sofa",
+      }),
+    ).toEqual({
+      house_type: "Condo",
+      replacement_disposal: "Move-in New House",
+      disposal_request: "old sofa",
+    });
+  });
+
+  it("property: No disposal records 'No'; a blank answer is not written", () => {
+    expect(chatRequestPatch("property", null, null, { houseType: "Landed", needDisposal: "No", disposalItem: "" })).toEqual({
+      house_type: "Landed",
+      disposal_request: "No",
+    });
+    const p = chatRequestPatch("property", null, null, { houseType: "  " });
+    expect(p).not.toHaveProperty("house_type");
+    expect(p).not.toHaveProperty("delivery_message_status");
+  });
+
   it("never names a schedule or lifecycle column", () => {
     // The board plans trips off customer_delivery_date / amended_delivery_date;
     // a customer tap must not be able to move them. Pin the two lists apart.
