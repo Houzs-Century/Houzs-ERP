@@ -45,6 +45,26 @@ page, and the POS Admin menu. This guide carries only what is built.
   PIN verified offline with `src/pin.ts`), the sell frame (P2, idle logout).
   Shared modules are imported from `frontend/src/vendor/shared` through the
   `@shared` alias, never copied a third time.
+- Selling on the device (`pos/src/screens/Sell.tsx`, rules in `pos/src/cart.ts`
+  and `pos/src/sale.ts`, both tested): the cart, discounts, FOC, hold /
+  recall (`holdsStore.ts`), payment (`sell/Payment.tsx`: cashless methods,
+  split across two, Cash with 5 sen rounding and change only when General
+  enables it), the completion screen (`sell/Complete.tsx`), find bill /
+  void / change salesman (`sell/FindBill.tsx`), return / exchange
+  (`sell/ReturnExchange.tsx`). Every receipt is a `SaleRecord` in the
+  IndexedDB `sales` store keyed by its uuid, with `synced_at` null until the
+  ERP acknowledges it (step 6); the receipt counter lives in `meta`
+  (`salesStore.ts`) and is bumped BEFORE the sale is written, so a number is
+  never reused. Local stock = bundle snapshot + `meta.stock_adj` (sold minus
+  returned since Prepare); a VOID restores it, a RETURN gives it back, an
+  exchange's new items deduct.
+- Receipt (`pos/src/receipt.ts`, tested) in the AutoCount layout at 32 / 48
+  columns; ESC/POS bytes (`escpos.ts`, Code 128 of the receipt no); the
+  printer over Web Bluetooth / WebUSB (`printer.ts`, Connect printer and
+  Test print in Device setup, auto-reconnect at boot). If printing fails
+  the sale is already saved: Skip print / Reconnect / Retry (P14). The
+  e-receipt is the same receipt as an HTML page through the share sheet or
+  Save as PDF, generated on the device (no server, so it works offline).
 - Device API, pre-auth, device token in `X-POS-Device`
   (`routes/pos-device.ts`): `GET /api/pos-device/ping`, `GET /prepare` (the
   bundle), `POST /heartbeat`. The token is minted by

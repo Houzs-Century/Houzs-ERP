@@ -9,6 +9,9 @@ import { adminApi, deviceApi, erpReachable } from "../api";
 import { requestPersistentStorage, storageEstimate } from "../db";
 import { refreshBundle, saveDeviceState, stateFromBundle, platformName } from "../deviceStore";
 import { fmtMyt } from "../loginRules";
+import { connectPrinter, onPrinterStatus, printerSupported, type PrinterStatus } from "../printer";
+import { printTestPage } from "../printing";
+import { clearTestSales } from "../salesStore";
 import { APP_VERSION } from "../pwa";
 import type { DeviceState, PosBundle } from "../types";
 
@@ -37,6 +40,9 @@ export function Setup({ state, onPrepared, onExit, onToggleTest }: {
   const [deviceName, setDeviceName] = useState(state?.device_name ?? "");
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
+  const [printer, setPrinter] = useState<PrinterStatus>({ connected: false, name: null, transport: null, error: null });
+  const support = printerSupported();
+  useEffect(() => onPrinterStatus(setPrinter), []);
 
   useEffect(() => {
     let alive = true;
@@ -110,8 +116,21 @@ export function Setup({ state, onPrepared, onExit, onToggleTest }: {
   }
 
   async function testPrint() {
-    setMsg({ tone: "bad", text: "No printer is paired yet. Printer pairing and Test print arrive with the receipt step." });
-    await Promise.resolve();
+    if (!state) return;
+    setBusy("print");
+    const r = await printTestPage(state);
+    setBusy(null);
+    setMsg(r.ok ? { tone: "ok", text: "Test page sent to the printer." } : { tone: "bad", text: `Test print failed: ${r.reason}` });
+  }
+  async function connect(kind: "BLUETOOTH" | "USB") {
+    setBusy("printer");
+    const st = await connectPrinter(kind);
+    setBusy(null);
+    setMsg(st.connected ? { tone: "ok", text: `Printer ${st.name} connected. The browser remembers it.` } : { tone: "bad", text: st.error ?? "No printer chosen" });
+  }
+  async function clearTests() {
+    const n = await clearTestSales();
+    setMsg({ tone: "ok", text: `${n} test sale(s) cleared.` });
   }
 
   const b = state?.bundle ?? null;
@@ -128,7 +147,14 @@ export function Setup({ state, onPrepared, onExit, onToggleTest }: {
         <h2>Status</h2>
         <div className="status-line"><Dot tone={online == null ? "none" : online ? "ok" : "bad"} /> ERP connection: {online == null ? "checking…" : online ? "reachable" : "not reachable (setup needs internet)"}</div>
         <div className="status-line"><Dot tone={b ? "ok" : "warn"} /> Terminal: {b ? <><b className="mono">&nbsp;{b.terminal.code}</b>&nbsp;· {b.event.name} · prepared {fmtMyt(state?.prepared_at)}</> : "not prepared"}</div>
-        <div className="status-line"><Dot tone="warn" /> Printer: not paired (the receipt step adds Connect printer)</div>
+        <div className="status-line">
+          <Dot tone={printer.connected ? "ok" : "bad"} /> Printer: {printer.connected ? `${printer.name} ready (${printer.transport === "USB" ? "USB" : "Bluetooth"})` : printer.error ? `not connected (${printer.error})` : "not found"}
+          {!printer.connected && <span className="row" style={{ marginLeft: "auto", gap: 6 }}>
+            {support.bluetooth && <button type="button" className="btn" style={{ minHeight: 34 }} disabled={busy !== null} onClick={() => void connect("BLUETOOTH")}>Connect Bluetooth printer</button>}
+            {support.usb && <button type="button" className="btn" style={{ minHeight: 34 }} disabled={busy !== null} onClick={() => void connect("USB")}>Connect USB printer</button>}
+            {!support.bluetooth && !support.usb && <span className="muted small">Use Chrome for Bluetooth / USB printing</span>}
+          </span>}
+        </div>
         <div className="status-line"><Dot tone="none" /> Scanner: ready after the first successful scan on the sell screen (HID keyboard mode, no setup)</div>
         <div className="status-line"><Dot tone={storage?.persisted ? "ok" : "warn"} /> Storage: {storage ? `${storage.persisted ? "persistent" : "best-effort"} · ${(storage.usage / 1048576).toFixed(1)} MB used` : "checking…"}</div>
       </div>
@@ -144,10 +170,11 @@ export function Setup({ state, onPrepared, onExit, onToggleTest }: {
           </ul>
           <div className="row" style={{ marginTop: 10 }}>
             <button type="button" className="btn" disabled={busy !== null || !online} onClick={() => void refresh()}>Refresh catalog</button>
-            <button type="button" className="btn" disabled={busy !== null} onClick={() => void testPrint()}>Test print</button>
+            <button type="button" className="btn" disabled={busy !== null || !printer.connected} onClick={() => void testPrint()}>Test print</button>
             <button type="button" className="btn" disabled title="Arrives with the sync step">Import backup</button>
             <span className="grow" />
             <label className="row small"><input type="checkbox" checked={state?.test_mode ?? false} onChange={(e) => onToggleTest(e.target.checked)} /> Test mode</label>
+            <button type="button" className="btn" disabled={busy !== null} onClick={() => void clearTests()} title="Delete every TEST sale on this device">Clear test sales</button>
           </div>
         </div>
       )}

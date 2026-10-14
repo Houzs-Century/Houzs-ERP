@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { erpReachable } from "./api";
 import { loadDeviceState, saveDeviceState, sendHeartbeat } from "./deviceStore";
+import { reconnectPrinter } from "./printer";
 import { onUpdateAvailable } from "./pwa";
 import { Login } from "./screens/Login";
 import { Sell } from "./screens/Sell";
@@ -21,7 +22,7 @@ export function App() {
 
   useEffect(() => {
     loadDeviceState()
-      .then((s) => { setState(s); setScreen(s ? "login" : "setup"); if (s) void sendHeartbeat(s, null); })
+      .then((s) => { setState(s); setScreen(s ? "login" : "setup"); if (s) { void sendHeartbeat(s, null); void reconnectPrinter(); } })
       .catch((e) => setBootError(e instanceof Error ? e.message : "Local storage could not be opened"));
     return onUpdateAvailable(setUpdateWaiting);
   }, []);

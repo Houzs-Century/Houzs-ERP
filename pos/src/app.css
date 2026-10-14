@@ -161,3 +161,24 @@ table.cart .ovr { color: var(--bad); font-size: 11px; }
   .sell .head { grid-template-columns: 1fr 1fr; }
   .sell .head .total { grid-column: 1 / -1; text-align: left; }
 }
+
+/* Payment / complete / find bill / return */
+.pay-total { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+.pay-total .lbl { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.pay-total .big { font-size: 32px; font-weight: 800; }
+.pay-methods { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.tile.pay { min-height: 64px; font-size: 15px; }
+.pay-lines { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.pay-line { display: grid; grid-template-columns: 140px 1fr 1fr; gap: 8px; align-items: center; }
+.ok-text { color: var(--ok); font-weight: 700; }
+.lbl { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.complete { max-width: 640px; margin: 30px auto; }
+.big-no { font-size: 22px; }
+.change-big { display: flex; align-items: baseline; gap: 14px; margin: 16px 0; }
+.change-big b { font-size: 44px; font-weight: 800; }
+.find { display: grid; grid-template-columns: 360px 1fr; gap: 14px; min-height: 420px; }
+.find-rows { max-height: 55vh; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+.find-detail { min-width: 0; }
+.pill.okp { background: var(--accent-soft); color: var(--ok); }
+.ret { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 900px) { .find, .ret { grid-template-columns: 1fr; } .pay-line { grid-template-columns: 1fr; } }

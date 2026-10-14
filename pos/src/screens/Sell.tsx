@@ -1,20 +1,28 @@
-/* The sell screen (layout P2) and its popups (P3 to P6, P11). AutoCount
- * layout: scan bar always focused, the cart grid, side buttons with their
- * F-keys, the payment block, totals, the footer bar and the status bar.
- * Everything here is offline: the catalog, the PIN checks, the held bills.
- * Pay (F4) opens the payment screen of step 5. */
+/* The sell screen (layout P2) and its popups (P3 to P7, P10 to P12, P16).
+ * AutoCount layout: scan bar always focused, the cart grid, side buttons
+ * with their F-keys, the payment block, totals, the footer bar and the
+ * status bar. Everything here is offline: the catalog, the PIN checks, the
+ * held bills, the sales queue, the local stock. Pay (F4) saves the sale on
+ * the device first, prints, then shows the completion screen. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { beep } from "../beep";
 import {
   addItem, cartTotals, discLabel, emptyCart, findByBarcode, formatReceiptNo, lineAmountSen, overridePrice, removeLine,
   setBillDiscount, setLineDiscount, setQty, toggleFoc, type Cart, type CartLine, type Discount, type HeldBill,
 } from "../cart";
-import { idb } from "../db";
 import { sendHeartbeat } from "../deviceStore";
 import { discardHold, holdCart, listHolds } from "../holdsStore";
 import { fmtMyt } from "../loginRules";
-import type { BundleCashier, DeviceState, Session } from "../types";
+import { onPrinterStatus, type PrinterStatus } from "../printer";
+import { printSale } from "../printing";
+import { buildReturn, buildSale, mytDate, newUuid, type PaymentDraft, type ReturnPick, type SaleRecord } from "../sale";
+import { applyStock, currentCounter, listSales, nextCounter, pendingSummary, saveSale, stockAdjustments } from "../salesStore";
+import type { BundleCashier, BundleItem, DeviceState, Session } from "../types";
+import { CompleteScreen } from "../sell/Complete";
+import { FindBill } from "../sell/FindBill";
+import { PaymentPopup } from "../sell/Payment";
 import { DiscountPopup, HoldPopup, ItemSearch, PricePopup, QtyPopup, RecallPopup, SalesmanPopup } from "../sell/Popups";
+import { ReturnExchange } from "../sell/ReturnExchange";
 import { SupervisorPin } from "../sell/SupervisorPin";
 
 const rm = (sen: number) => (sen / 100).toFixed(2);
@@ -29,6 +37,9 @@ type Popup =
   | { kind: "customer" }
   | { kind: "recall"; holds: HeldBill[] }
   | { kind: "sup"; why: string; then: (s: BundleCashier) => void }
+  | { kind: "pay" }
+  | { kind: "find"; q: string }
+  | { kind: "return"; original: SaleRecord | null }
   | null;
 
 type Toast = { text: string; bad?: boolean; id: number };
@@ -40,34 +51,43 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
   const [cart, setCart] = useState<Cart>(() => emptyCart(b.event.sst_default));
   const [sel, setSel] = useState<number | null>(null);
   const [popup, setPopup] = useState<Popup>(null);
+  const [done, setDone] = useState<SaleRecord | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [scan, setScan] = useState("");
   const [scannerReady, setScannerReady] = useState(false);
   const [clock, setClock] = useState(Date.now());
   const [today, setToday] = useState<{ bills: number; total_sen: number }>({ bills: 0, total_sen: 0 });
+  const [pending, setPending] = useState<{ count: number; amount_sen: number }>({ count: 0, amount_sen: 0 });
+  const [counter, setCounter] = useState<number>(b.terminal.receipt_counter);
+  const [stockAdj, setStockAdj] = useState<Record<string, number>>({});
+  const [printer, setPrinter] = useState<PrinterStatus>({ connected: false, name: null, transport: null, error: null });
   const scanRef = useRef<HTMLInputElement>(null);
   const searchTimer = useRef<number | null>(null);
   const lastSalesman = useRef<Cart["salesman"]>(null);
+  const lastSale = useRef<SaleRecord | null>(null);
 
+  const items = useMemo<BundleItem[]>(() => b.items.map((i) => ({ ...i, stock_qty: i.stock_qty + (stockAdj[String(i.id)] ?? 0) })), [b.items, stockAdj]);
   const totals = useMemo(() => cartTotals(cart, s.sst_receipt.sst_rate, false), [cart, s.sst_receipt.sst_rate]);
   const selected = cart.lines.find((l) => l.line_no === sel) ?? null;
-  const nextNo = formatReceiptNo(s.general.receipt_no_format, b.terminal.code, b.terminal.receipt_counter + 1, state.test_mode);
+  const nextNo = formatReceiptNo(s.general.receipt_no_format, b.terminal.code, counter + 1, state.test_mode);
 
   const say = useCallback((text: string, bad = false) => setToast({ text, bad, id: Date.now() }), []);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 2500); return () => clearTimeout(t); }, [toast]);
   useEffect(() => { const t = setInterval(() => setClock(Date.now()), 30_000); return () => clearInterval(t); }, []);
-  useEffect(() => {
-    idb.all<{ sold_at?: string; total_sen?: number; status?: string; is_test?: boolean }>("sales").then((rows) => {
-      const day = fmtMyt(new Date().toISOString()).slice(0, 10);
+  useEffect(() => onPrinterStatus(setPrinter), []);
+
+  const refreshStats = useCallback(() => {
+    const day = mytDate(new Date().toISOString());
+    listSales().then((rows) => {
       let bills = 0; let total = 0;
-      for (const r of rows) {
-        if (!r.sold_at || r.is_test || r.status === "VOID") continue;
-        if (fmtMyt(r.sold_at).slice(0, 10) !== day) continue;
-        bills += 1; total += r.total_sen ?? 0;
-      }
+      for (const r of rows) { if (r.is_test || r.status === "VOID" || mytDate(r.sold_at) !== day) continue; bills += r.type === "SALE" ? 1 : 0; total += r.total_sen; }
       setToday({ bills, total_sen: total });
     }).catch(() => {});
-  }, []);
+    pendingSummary().then((p) => setPending({ count: p.count, amount_sen: p.amount_sen })).catch(() => {});
+    currentCounter(b.terminal.receipt_counter).then(setCounter).catch(() => {});
+    stockAdjustments().then(setStockAdj).catch(() => {});
+  }, [b.terminal.receipt_counter]);
+  useEffect(() => { refreshStats(); }, [refreshStats]);
 
   /* Idle auto-logout (General). */
   useEffect(() => {
@@ -79,15 +99,15 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
   }, [s.general.idle_logout_minutes, onLogout]);
 
   /* The scan bar stays focused whenever no popup is open. */
-  const focusScan = useCallback(() => { if (!popup) scanRef.current?.focus(); }, [popup]);
+  const focusScan = useCallback(() => { if (!popup && !done) scanRef.current?.focus(); }, [popup, done]);
   useEffect(() => { focusScan(); }, [focusScan]);
   useEffect(() => {
-    const h = (e: MouseEvent) => { const t = e.target as HTMLElement; if (!popup && t.tagName !== "INPUT" && t.tagName !== "TEXTAREA") setTimeout(focusScan, 0); };
+    const h = (e: MouseEvent) => { const t = e.target as HTMLElement; if (!popup && !done && t.tagName !== "INPUT" && t.tagName !== "TEXTAREA" && t.tagName !== "SELECT") setTimeout(focusScan, 0); };
     window.addEventListener("click", h);
     return () => window.removeEventListener("click", h);
-  }, [focusScan, popup]);
+  }, [focusScan, popup, done]);
 
-  const add = useCallback((item: NonNullable<ReturnType<typeof findByBarcode>>) => {
+  const add = useCallback((item: BundleItem) => {
     setCart((c) => { const r = addItem(c, item, s.printer_scanner.same_barcode_adds_qty); setSel(r.line_no); return r.cart; });
   }, [s.printer_scanner.same_barcode_adds_qty]);
 
@@ -95,7 +115,7 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
     const c = code.trim();
     setScan("");
     if (!c) return;
-    const item = findByBarcode(b.items, c);
+    const item = findByBarcode(items, c);
     if (item) {
       add(item);
       setScannerReady(true);
@@ -116,6 +136,47 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
   }
 
   const needLine = (): CartLine | null => { if (!selected) { say("Select a line first", true); return null; } return selected; };
+  const newCart = useCallback(() => { setCart(emptyCart(b.event.sst_default, lastSalesman.current)); setSel(null); }, [b.event.sst_default]);
+
+  /** Pay: the sale is saved on the device BEFORE anything else (P10). */
+  async function completeSale(pays: PaymentDraft[]) {
+    try {
+      const n = await nextCounter(state.test_mode, b.terminal.receipt_counter);
+      const sale = buildSale(cart, s.sst_receipt.sst_rate, s.sst_receipt.rounding_on_cash, pays, {
+        uuid: newUuid(), terminal_code: b.terminal.code, project_id: b.event.project_id, cashier: { id: session.cashier.id, name: session.cashier.name },
+        receipt_format: s.general.receipt_no_format, counter: n, is_test: state.test_mode, now: new Date().toISOString(),
+      });
+      await saveSale(sale);
+      await applyStock(sale);
+      lastSale.current = sale;
+      setPopup(null);
+      setDone(sale);
+      refreshStats();
+    } catch (e) {
+      say(e instanceof Error ? e.message : "Could not save the sale", true);
+    }
+  }
+
+  async function completeReturn(original: SaleRecord, picks: ReturnPick[], newItems: Cart | null, pays: PaymentDraft[], supervisor: BundleCashier) {
+    try {
+      const n = await nextCounter(state.test_mode, b.terminal.receipt_counter);
+      const ret = buildReturn(original, picks, newItems, s.sst_receipt.sst_rate, pays, {
+        uuid: newUuid(), terminal_code: b.terminal.code, project_id: b.event.project_id, cashier: { id: session.cashier.id, name: session.cashier.name },
+        receipt_format: s.general.receipt_no_format, counter: n, is_test: state.test_mode, now: new Date().toISOString(),
+      });
+      ret.void_by = null;
+      ret.lines = ret.lines.map((l) => (l.qty < 0 ? { ...l, override_by: supervisor.name } : l));
+      await saveSale(ret);
+      await applyStock(ret);
+      lastSale.current = ret;
+      setPopup(null);
+      setDone(ret);
+      refreshStats();
+      say(`${ret.receipt_no} saved; stock adjusted on this device`);
+    } catch (e) {
+      say(e instanceof Error ? e.message : "Could not save the return", true);
+    }
+  }
 
   const actions = {
     search: () => setPopup({ kind: "search", q: "" }),
@@ -128,15 +189,20 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
     discount: () => { if (needLine()) setPopup({ kind: "discount", target: "item" }); },
     foc: () => { const l = needLine(); if (!l) return; if (!l.foc_allowed) { say("FOC is not allowed for this item", true); return; } setCart((c) => toggleFoc(c, l.line_no)); },
     del: () => { const l = needLine(); if (!l) return; setCart((c) => removeLine(c, l.line_no)); setSel(null); },
-    pay: () => { if (cart.lines.length === 0) { say("Cart is empty", true); return; } say("Payment (F4) arrives with build step 5."); },
+    pay: () => { if (cart.lines.length === 0) { say("Cart is empty", true); return; } if (totals.total_sen <= 0 && !cart.lines.some((l) => !l.is_foc)) { say("Only FOC lines: use a zero payment", true); } setPopup({ kind: "pay" }); },
     billDiscount: () => { if (cart.lines.length === 0) { say("Cart is empty", true); return; } setPopup({ kind: "discount", target: "bill" }); },
     hold: () => { if (cart.lines.length === 0) { say("Nothing to hold", true); return; } setPopup({ kind: "hold" }); },
     recall: () => { listHolds(b.event.end_date).then((holds) => setPopup({ kind: "recall", holds })).catch(() => say("Could not read held bills", true)); },
-    clear: () => { if (cart.lines.length === 0) return; if (window.confirm("Clear the whole cart?")) { setCart(emptyCart(b.event.sst_default, lastSalesman.current)); setSel(null); } },
-    findBill: () => say("Find bill (Ctrl+B) arrives with build step 5."),
-    reprint: () => say("Reprint (Ctrl+F) arrives with build step 5."),
+    clear: () => { if (cart.lines.length === 0) return; if (window.confirm("Clear the whole cart?")) newCart(); },
+    findBill: () => setPopup({ kind: "find", q: "" }),
+    reprint: () => {
+      const last = lastSale.current;
+      if (!last) { setPopup({ kind: "find", q: "" }); return; }
+      printSale(last, state, "COPY").then((r) => say(r.ok ? `${last.receipt_no} COPY printed` : r.reason, !r.ok));
+    },
+    returns: () => setPopup({ kind: "return", original: null }),
     todaysSales: () => say("Today's sales report (Ctrl+T) arrives with build step 8."),
-    syncNow: () => { if (online === false) { say("Offline: nothing can sync now", true); return; } sendHeartbeat(state, session.cashier.name).then((r) => say(r ? "ERP reached. No sales pending." : "ERP not reachable", !r)); },
+    syncNow: () => { if (online === false) { say("Offline: nothing can sync now", true); return; } sendHeartbeat(state, session.cashier.name).then((r) => say(r ? `ERP reached. ${pending.count} sale(s) pending; the sync engine arrives with step 6.` : "ERP not reachable", !r)); },
     salesman: () => setPopup({ kind: "salesman" }),
     customer: () => setPopup({ kind: "customer" }),
   };
@@ -144,7 +210,7 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
   /* Keyboard map (spec section 15), quiet while a popup is open. */
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      if (popup) return;
+      if (popup || done) return;
       const k = e.key;
       const ctrl = e.ctrlKey || e.metaKey;
       const fire = (fn: () => void) => { e.preventDefault(); fn(); };
@@ -153,7 +219,7 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
       else if (k === "F3") fire(actions.price);
       else if (k === "F4") fire(actions.pay);
       else if (k === "F8") fire(actions.billDiscount);
-      else if (k === "F9") fire(() => say("Return / exchange (F9) arrives with build step 5."));
+      else if (k === "F9") fire(actions.returns);
       else if (k === "F10") fire(actions.discount);
       else if (k === "F12") fire(onLogout);
       else if (k === "Delete" && document.activeElement === scanRef.current && scan === "") fire(actions.del);
@@ -180,12 +246,22 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
     close();
   };
 
+  if (done) {
+    return (
+      <div className="app">
+        <header className="topbar"><div className="brand">{b.company.name}</div><span className="pill">{b.event.receipt_header || b.event.name}</span><div className="grow" /><div className="meta">Terminal {b.terminal.code}</div></header>
+        {state.test_mode && <div className="banner test">TEST MODE</div>}
+        <CompleteScreen sale={done} state={state} online={online} onNewSale={() => { setDone(null); newCart(); setTimeout(() => scanRef.current?.focus(), 0); }} />
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <header className="topbar">
         <div className="brand">{b.company.name}</div>
         <span className="pill">{b.event.receipt_header || b.event.name}</span>
-        <span className="pill">{online === false ? "Offline · 0 pending" : online ? "Online · synced" : "Checking…"}</span>
+        <span className="pill">{online === false ? `Offline · ${pending.count} pending` : online ? (pending.count ? `Online · ${pending.count} pending` : "Online · synced") : "Checking…"}</span>
         <div className="grow" />
         <div className="meta">Last sync {state.last_sync_at ? fmtMyt(state.last_sync_at) : "--"}</div>
         <button type="button" className="btn" style={{ minHeight: 34, padding: "4px 10px" }} onClick={actions.syncNow}>Sync now</button>
@@ -281,20 +357,22 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
         <button type="button" className="btn" onClick={actions.hold}>Hold<small>Ctrl+C</small></button>
         <button type="button" className="btn" onClick={actions.recall}>Recall<small>Ctrl+E</small></button>
         <button type="button" className="btn" onClick={actions.reprint}>Reprint<small>Ctrl+F</small></button>
+        <button type="button" className="btn" onClick={actions.returns}>Return<small>F9</small></button>
         <button type="button" className="btn" onClick={actions.todaysSales}>Today's Sales<small>Ctrl+T</small></button>
         <button type="button" className="btn" onClick={actions.syncNow}>Sync Now<small>Ctrl+S</small></button>
         <span className="grow" />
         <button type="button" className="btn" onClick={onLogout}>Logout<small>F12</small></button>
       </div>
       <div className="status">
-        <span>Cashier {session.cashier.name}{session.cashier.role === "SUPERVISOR" ? " (supervisor)" : ""}</span><span>Terminal {b.terminal.code}</span><span>{b.event.name}</span><span>Printer: not paired</span>
+        <span>Cashier {session.cashier.name}{session.cashier.role === "SUPERVISOR" ? " (supervisor)" : ""}</span><span>Terminal {b.terminal.code}</span><span>{b.event.name}</span>
+        <span className={printer.connected ? "ok-text" : ""}>Printer: {printer.connected ? `${printer.name} ready` : "not paired"}</span>
         <span className="grow" />
-        <span>0 pending · last sync {state.last_sync_at ? fmtMyt(state.last_sync_at) : "--"}</span><span>{fmtMyt(new Date(clock).toISOString())}</span>
+        <span>{pending.count} pending{pending.count ? ` · RM ${rm(pending.amount_sen)}` : ""} · last sync {state.last_sync_at ? fmtMyt(state.last_sync_at) : "--"}</span><span>{fmtMyt(new Date(clock).toISOString())}</span>
       </div>
 
       {toast && <div className={`toast${toast.bad ? " bad" : ""}`}>{toast.text}</div>}
 
-      {popup?.kind === "search" && <ItemSearch items={b.items} initial={popup.q} onPick={(i) => { add(i); if (s.printer_scanner.beep) beep("ok"); close(); }} onClose={close} />}
+      {popup?.kind === "search" && <ItemSearch items={items} initial={popup.q} onPick={(i) => { add(i); if (s.printer_scanner.beep) beep("ok"); close(); }} onClose={close} />}
       {popup?.kind === "qty" && selected && <QtyPopup line={selected} onOk={(q) => { setCart((c) => setQty(c, selected.line_no, q)); if (q === 0) setSel(null); close(); }} onClose={close} />}
       {popup?.kind === "price" && selected && <PricePopup line={selected} supervisor={popup.supervisor} onOk={(p, reason) => { setCart((c) => overridePrice(c, selected.line_no, p, popup.supervisor.name, reason)); close(); }} onClose={close} />}
       {popup?.kind === "discount" && (popup.target === "bill" || selected) && (
@@ -314,7 +392,7 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
       {popup?.kind === "customer" && <HoldPopup cart={cart} onOk={(cu) => { setCart((c) => ({ ...c, customer: cu })); close(); }} onClose={close} />}
       {popup?.kind === "hold" && (
         <HoldPopup cart={cart} onOk={(cu) => {
-          holdCart({ ...cart, customer: cu }, session.cashier.name).then((h) => { say(`Held as ${h.hold_no}`); setCart(emptyCart(b.event.sst_default, lastSalesman.current)); setSel(null); }).catch(() => say("Could not hold the bill", true));
+          holdCart({ ...cart, customer: cu }, session.cashier.name).then((h) => { say(`Held as ${h.hold_no}`); newCart(); }).catch(() => say("Could not hold the bill", true));
           close();
         }} onClose={close} />
       )}
@@ -330,6 +408,11 @@ export function Sell({ state, session, online, onLogout }: { state: DeviceState;
           onClose={close}
         />
       )}
+      {popup?.kind === "pay" && (
+        <PaymentPopup cart={cart} sstRate={s.sst_receipt.sst_rate} roundingOnCash={s.sst_receipt.rounding_on_cash} general={s.general} onComplete={(pays) => void completeSale(pays)} onClose={close} />
+      )}
+      {popup?.kind === "find" && <FindBill state={state} initialQuery={popup.q} onReturn={(orig) => setPopup({ kind: "return", original: orig })} onClose={() => { close(); refreshStats(); }} say={say} />}
+      {popup?.kind === "return" && <ReturnExchange state={state} initial={popup.original} onSave={completeReturn} onClose={close} say={say} />}
     </div>
   );
 }
