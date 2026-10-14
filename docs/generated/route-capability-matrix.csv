@@ -283,6 +283,9 @@ GET,/api/portal/case/attachments/:attId,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPA
 POST,/api/portal/case/attachments/:attId/archive,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,caseTrack,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/portal.ts
 POST,/api/portal/case/comments,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,caseTrack,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/portal.ts
 POST,/api/portal/case/comments/:actId/archive,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,caseTrack,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/portal.ts
+POST,/api/pos-admin/alerts/:id/acknowledge,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+POST,/api/pos-admin/backup/import,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+POST,/api/pos-admin/backup/preview,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
 GET,/api/pos-admin/cashiers,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
 POST,/api/pos-admin/cashiers,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
 PATCH,/api/pos-admin/cashiers/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
@@ -305,6 +308,7 @@ GET,/api/pos-admin/labels,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requi
 POST,/api/pos-admin/labels/generate,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
 GET,/api/pos-admin/settings,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
 PUT,/api/pos-admin/settings/:group,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+GET,/api/pos-admin/status,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
 GET,/api/pos-admin/terminals,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
 POST,/api/pos-admin/terminals,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
 PATCH,/api/pos-admin/terminals/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts

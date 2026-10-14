@@ -849,6 +849,8 @@ export const pos_event_links = pgTable(
     receipt_header: text("receipt_header"),
     catalog_version: integer("catalog_version").notNull().default(1),
     pushed_at: timestamp("pushed_at", { withTimezone: true, mode: "string" }),
+    // Mig 20261014T1530: the end-of-event summary email went out (once).
+    summary_sent_at: timestamp("summary_sent_at", { withTimezone: true, mode: "string" }),
     created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
     updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
   },

@@ -141,6 +141,7 @@ import { runAssrAlerts, runAssrDailyDigest } from "./services/assrAlerts";
 import { runOverdueEscalation } from "./services/announcementEscalation";
 import { runScheduledLeadTimeActivations } from "./services/assrLeadTime";
 import { runProjectDueReminders } from "./services/projectReminders";
+import { runPosAlerts } from "./services/posAlerts";
 // Weekly OCR rule-distill (scan-so self-evolution). Run via the daily 02:00
 // slot gated to Sundays — no new cron trigger. getSupabaseService is the same
 // service client scan-so.ts uses internally (serviceClient(env)).
@@ -848,6 +849,16 @@ export default {
             if (r.requeued) console.warn(`[cron vp-reconcile] requeued=${r.requeued}`);
           })
           .catch((e) => console.error("[cron vp-reconcile]", e))
+      );
+      // Houzs POS watchdog (spec section 10): terminal alerts, their emails
+      // (once, then daily), auto-resolve, and the once-per-event summary.
+      ctx.waitUntil(
+        runPosAlerts(env)
+          .then((r) => {
+            if (r.opened || r.resolved || r.emailed || r.summaries || r.errors)
+              console.log(`[cron pos-alerts] opened=${r.opened} resolved=${r.resolved} emailed=${r.emailed} summaries=${r.summaries} errors=${r.errors}`);
+          })
+          .catch((e) => console.error("[cron pos-alerts]", e))
       );
       // ASSR/QMS v3.1 — per-stage alert scanner (half / approaching / breach).
       // Cheap: one query over open stage_history rows, idempotent via the

@@ -10,10 +10,12 @@ import { PosLabelsTab } from "./pos-admin/PosLabelsTab";
 import { PosCashiersTab } from "./pos-admin/PosCashiersTab";
 import { PosEventsTab } from "./pos-admin/PosEventsTab";
 import { PosTerminalsTab } from "./pos-admin/PosTerminalsTab";
+import { PosSyncStatusTab } from "./pos-admin/PosSyncStatusTab";
+import { PosImportBackupTab } from "./pos-admin/PosImportBackupTab";
 import { PosGeneralTab, PosPrinterScannerTab, PosSstReceiptTab } from "./pos-admin/PosSettingsTabs";
 
-type Tab = "items" | "labels" | "cashiers" | "events" | "sst" | "printer" | "terminals" | "general";
-const TABS: Tab[] = ["items", "labels", "cashiers", "events", "sst", "printer", "terminals", "general"];
+type Tab = "items" | "labels" | "cashiers" | "events" | "sst" | "printer" | "terminals" | "general" | "sync" | "import";
+const TABS: Tab[] = ["items", "labels", "cashiers", "events", "sst", "printer", "terminals", "general", "sync", "import"];
 
 const HEADER: Record<Tab, { title: string; description: string }> = {
   items: { title: "POS Items", description: "Inventory items tagged for the booth: barcodes, selling price, event price, pre-set (AUTO) discount, FOC, max manual discount, stock source, short receipt name." },
@@ -24,6 +26,8 @@ const HEADER: Record<Tab, { title: string; description: string }> = {
   printer: { title: "Printer & Scanner", description: "ESC/POS printer connection and paper, what happens when the printer is unavailable, scanner Enter suffix, beep and repeat-scan behaviour." },
   terminals: { title: "Terminals", description: "The terminal IDs devices pick in Device setup, with their event, printer, prepared time, last seen, last sync, pending bills and app version." },
   general: { title: "General", description: "Payment methods (Cash off by default), idle logout, price override, void rule, receipt number format, alert thresholds and email, heartbeat, POS stock location." },
+  sync: { title: "Sync Status", description: "Whether every terminal's sales have reached the ERP: terminals active, bills pending, open alerts, last seen and last sync per terminal, and the alert log with its email state." },
+  import: { title: "Import backup", description: "Recover a terminal's receipts from its houzs_pos_T0x_backup.json when the device cannot sync: preview NEW / DUPLICATE / CONFLICT, then import through the same path as a sync." },
 };
 
 export function PosAdmin() {
@@ -40,6 +44,8 @@ export function PosAdmin() {
     { value: "printer", label: "Printer & Scanner" },
     { value: "terminals", label: "Terminals" },
     { value: "general", label: "General" },
+    { value: "sync", label: "Sync Status" },
+    { value: "import", label: "Import backup" },
   ];
   return (
     <div className="max-w-6xl">
@@ -53,6 +59,8 @@ export function PosAdmin() {
       {active === "printer" && <PosPrinterScannerTab />}
       {active === "terminals" && <PosTerminalsTab />}
       {active === "general" && <PosGeneralTab />}
+      {active === "sync" && <PosSyncStatusTab />}
+      {active === "import" && <PosImportBackupTab />}
     </div>
   );
 }

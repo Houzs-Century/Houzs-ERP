@@ -29,6 +29,7 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Env } from "../types";
 import { getDb } from "../db/client";
 import {
+  pos_alerts,
   pos_audit,
   pos_cashiers,
   pos_event_cashiers,
@@ -49,6 +50,11 @@ import { skuByCodes, skuFactsByIds, skuSearch } from "./lib/pos-sku";
 import { deviceTokenHash, mintDeviceToken } from "./lib/pos-bundle";
 import { loadPosBundle } from "./lib/pos-bundle-load";
 import { companyBlock } from "./pos-device";
+import { ALERT_WORDS, terminalStatusWord, type AlertType } from "./lib/pos-alerts";
+import { ingestSale, previewSale, stockLocationFor, type PreviewKind } from "./lib/pos-ingest";
+import { parseIncomingSale, type BatchResult, type IncomingSale } from "./lib/pos-sync";
+import { generalSettings, loadTerminalFacts } from "../services/posAlerts";
+import { decryptBackupPayload, isPosBackupFile, type PosBackupFile } from "../scm/shared/pos-backup-crypto";
 import {
   isCashierRole,
   isPosCashierPin,
@@ -718,6 +724,152 @@ posAdmin.post("/device/register", async (c) => {
   if (!bundle) return c.json({ error: "bundle_failed" }, 500);
   await audit(db, co.companyId, c, "pos_terminal", terminalId, "prepared", null, `${res[0].code} -> project ${projectId}`);
   return c.json({ token, bundle });
+});
+
+
+/* ── Sync Status (layout E7) ───────────────────────────────────────────── */
+
+posAdmin.get("/status", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const db = getDb(c.env);
+  const now = Date.now();
+  const [general, facts, extra, alerts] = await Promise.all([
+    generalSettings(db, co.companyId),
+    loadTerminalFacts(db, co.companyId),
+    db.select({ id: pos_terminals.id, platform: pos_terminals.platform, printer: pos_terminals.printer, app_version: pos_terminals.app_version, receipt_counter: pos_terminals.receipt_counter }).from(pos_terminals).where(eq(pos_terminals.company_id, co.companyId)),
+    db.select().from(pos_alerts).where(eq(pos_alerts.company_id, co.companyId)).orderBy(desc(pos_alerts.created_at)).limit(200),
+  ]);
+  const extraBy = new Map(extra.map((e) => [e.id, e]));
+  const termBy = new Map(facts.map((t) => [t.id, t]));
+  const terminals = facts.map((t) => ({ ...t, ...(extraBy.get(t.id) ?? { platform: null, printer: null, app_version: null, receipt_counter: 0 }), status_word: terminalStatusWord(t, general.alert_pending_days, now) }));
+  const active = facts.filter((t) => t.active);
+  const open = alerts.filter((a) => !a.resolved_at);
+  return c.json({
+    thresholds: { pending_days: general.alert_pending_days, event_end_days: general.alert_event_end_days, alert_email: general.alert_email, heartbeat_minutes: general.heartbeat_minutes },
+    kpis: {
+      terminals_active: active.filter((t) => t.prepared_at).length,
+      terminals_total: active.length,
+      pending_count: active.reduce((n, t) => n + t.pending_count, 0),
+      pending_sen: active.reduce((n, t) => n + t.pending_amount_sen, 0),
+      open_alerts: open.length,
+      critical_alerts: open.filter((a) => a.type === "DATA_LOST").length,
+    },
+    terminals,
+    alerts: alerts.map((a) => {
+      const t = a.terminal_id == null ? undefined : termBy.get(a.terminal_id);
+      const words = a.type in ALERT_WORDS ? ALERT_WORDS[a.type as AlertType] : { title: a.type, level: "AMBER" as const };
+      return { id: a.id, type: a.type, title: words.title, level: words.level, terminal_id: a.terminal_id, terminal_code: t?.code ?? null, project_id: a.project_id, event_name: t?.event_name ?? null, detail: a.detail, email_sent_at: a.email_sent_at, last_resent_at: a.last_resent_at, resolved_at: a.resolved_at, created_at: a.created_at };
+    }),
+    at: new Date(now).toISOString(),
+  });
+});
+
+/** Acknowledge an alert by hand: the bills were recovered (Import backup) or
+ *  the device is written off. The terminal's pending figures and the
+ *  data-lost mark are cleared, so the watchdog does not reopen it. */
+posAdmin.post("/alerts/:id/acknowledge", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const id = intParam(c, "id");
+  if (!id) return c.json({ error: "invalid_id" }, 400);
+  const db = getDb(c.env);
+  const rows = await db.select().from(pos_alerts).where(and(eq(pos_alerts.id, id), eq(pos_alerts.company_id, co.companyId))).limit(1);
+  if (rows.length === 0) return c.json({ error: "Not found" }, 404);
+  const a = rows[0];
+  const now = nowIso();
+  if (!a.resolved_at) await db.update(pos_alerts).set({ resolved_at: now }).where(eq(pos_alerts.id, id));
+  if (a.terminal_id != null) {
+    await db.update(pos_terminals).set({ pending_count: 0, pending_amount_sen: 0, last_known_pending_count: 0, last_known_pending_sen: 0, db_empty_at: null, status: "SYNCED", updated_at: now }).where(and(eq(pos_terminals.id, a.terminal_id), eq(pos_terminals.company_id, co.companyId)));
+  }
+  await audit(db, co.companyId, c, "pos_alert", id, "acknowledged", a.type, now);
+  return c.json({ ok: true });
+});
+
+/* ── Import backup (layout E8) ─────────────────────────────────────────── */
+
+type BackupRow = { uuid: string; receipt_no: string; type: string; status: string; sold_at: string; total_sen: number; cashier_name: string; kind: PreviewKind | "INVALID"; reason?: string };
+
+/** Open the dropped file with the terminal's stored token hash and classify
+ *  every receipt; shared by the preview and the import. */
+async function openBackup(db: Db, companyId: number, raw: unknown): Promise<{ ok: true; terminal: typeof pos_terminals.$inferSelect; file: PosBackupFile; sales: IncomingSale[]; rows: BackupRow[] } | { ok: false; error: string; reason: string }> {
+  if (!isPosBackupFile(raw)) return { ok: false, error: "not_a_backup", reason: "This is not a Houzs POS backup file (houzs_pos_T0x_backup.json)." };
+  const found = await db.select().from(pos_terminals).where(and(eq(pos_terminals.company_id, companyId), eq(pos_terminals.code, raw.terminal))).limit(1);
+  if (found.length === 0) return { ok: false, error: "terminal_unknown", reason: `Terminal ${raw.terminal} does not exist in this company.` };
+  const terminal = found[0];
+  if (!terminal.token_hash) return { ok: false, error: "terminal_never_prepared", reason: `Terminal ${raw.terminal} was never prepared, so no key can open its backup.` };
+  let parsedList: unknown[];
+  try {
+    const json: unknown = JSON.parse(await decryptBackupPayload(raw, terminal.token_hash));
+    if (!Array.isArray(json)) return { ok: false, error: "backup_malformed", reason: "The file opened but holds no receipt list." };
+    parsedList = json;
+  } catch {
+    return { ok: false, error: "cannot_decrypt", reason: `The file cannot be opened with the current key of ${raw.terminal}. A re-prepared terminal gets a new key; backups written before that need the old device.` };
+  }
+  const sales: IncomingSale[] = [];
+  const rows: BackupRow[] = [];
+  for (const r of parsedList) {
+    const p = parseIncomingSale(r);
+    const o = r && typeof r === "object" ? (r as Record<string, unknown>) : {};
+    if (!p.ok) { rows.push({ uuid: String(o.uuid ?? ""), receipt_no: String(o.receipt_no ?? ""), type: String(o.type ?? ""), status: String(o.status ?? ""), sold_at: String(o.sold_at ?? ""), total_sen: Number(o.total_sen ?? 0), cashier_name: String(o.cashier_name ?? ""), kind: "INVALID", reason: p.reason }); continue; }
+    const s = p.sale;
+    if (s.terminal_code !== terminal.code) { rows.push({ uuid: s.uuid, receipt_no: s.receipt_no, type: s.type, status: s.status, sold_at: s.sold_at, total_sen: s.total_sen, cashier_name: s.cashier_name, kind: "INVALID", reason: `receipt belongs to terminal ${s.terminal_code}` }); continue; }
+    const pv = await previewSale(db, companyId, s);
+    sales.push(s);
+    rows.push({ uuid: s.uuid, receipt_no: s.receipt_no, type: s.type, status: s.status, sold_at: s.sold_at, total_sen: s.total_sen, cashier_name: s.cashier_name, kind: pv.kind, reason: pv.reason });
+  }
+  return { ok: true, terminal, file: raw, sales, rows };
+}
+
+const backupSummary = (rows: BackupRow[]) => ({
+  new: rows.filter((r) => r.kind === "NEW").length, update: rows.filter((r) => r.kind === "UPDATE").length, duplicate: rows.filter((r) => r.kind === "DUPLICATE").length,
+  conflict: rows.filter((r) => r.kind === "CONFLICT").length, invalid: rows.filter((r) => r.kind === "INVALID").length,
+  new_sen: rows.filter((r) => r.kind === "NEW" && r.status === "PAID").reduce((n, r) => n + r.total_sen, 0),
+});
+
+posAdmin.post("/backup/preview", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const body = await c.req.json<{ file?: unknown }>().catch(() => ({} as { file?: unknown }));
+  const db = getDb(c.env);
+  const opened = await openBackup(db, co.companyId, body.file);
+  if (!opened.ok) return c.json({ error: opened.error, reason: opened.reason }, 422);
+  const ev = await db.execute<{ name: string }>(sql`SELECT name FROM projects WHERE id = ${opened.file.project_id} AND company_id = ${co.companyId}`);
+  return c.json({
+    terminal: { id: opened.terminal.id, code: opened.terminal.code, device_name: opened.terminal.device_name, pending_count: opened.terminal.pending_count, db_empty_at: opened.terminal.db_empty_at },
+    file: { exported_at: opened.file.exported_at, count: opened.file.count, total_sen: opened.file.total_sen, receipt_counter: opened.file.receipt_counter, project_id: opened.file.project_id, event_name: ev.length ? ev[0].name : null },
+    rows: opened.rows, summary: backupSummary(opened.rows),
+  });
+});
+
+/** Import: every NEW and UPDATE receipt goes through the same ingest as the
+ *  device sync (stock booked, audit written); DUPLICATE, CONFLICT and INVALID
+ *  rows are left alone and reported. `uuids` narrows it to a selection. */
+posAdmin.post("/backup/import", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const body = await c.req.json<{ file?: unknown; uuids?: unknown }>().catch(() => ({} as { file?: unknown; uuids?: unknown }));
+  const db = getDb(c.env);
+  const opened = await openBackup(db, co.companyId, body.file);
+  if (!opened.ok) return c.json({ error: opened.error, reason: opened.reason }, 422);
+  const only = Array.isArray(body.uuids) ? new Set(body.uuids.filter((u): u is string => typeof u === "string")) : null;
+  const warehouseId = await stockLocationFor(db, co.companyId, opened.file.project_id);
+  const u = c.get("user");
+  const who = `import ${opened.terminal.code} by ${u?.name ?? u?.email ?? "admin"}`;
+  const results: BatchResult[] = [];
+  for (const s of opened.sales) {
+    const row = opened.rows.find((r) => r.uuid === s.uuid);
+    if (!row || row.kind === "CONFLICT" || row.kind === "DUPLICATE" || row.kind === "INVALID") continue;
+    if (only && !only.has(s.uuid)) continue;
+    results.push(await ingestSale(db, co.companyId, warehouseId, s, who));
+  }
+  const accepted = results.filter((r) => r.status === "accepted").length;
+  const updated = results.filter((r) => r.status === "updated").length;
+  const rejected = results.filter((r) => r.status === "rejected");
+  const counter = opened.file.receipt_counter > opened.terminal.receipt_counter ? opened.file.receipt_counter : opened.terminal.receipt_counter;
+  await db.update(pos_terminals).set({ receipt_counter: counter, updated_at: nowIso() }).where(eq(pos_terminals.id, opened.terminal.id));
+  await audit(db, co.companyId, c, "pos_terminal", opened.terminal.id, "backup_import", null, `${accepted} new, ${updated} updated, ${rejected.length} rejected (file ${opened.file.exported_at})`);
+  return c.json({ ok: true, accepted, updated, rejected, skipped: backupSummary(opened.rows), results });
 });
 
 export { posAdmin };

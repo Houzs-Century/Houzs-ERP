@@ -171,3 +171,41 @@ export const toSen = (rmText: string): number | null => {
   const n = Number(String(rmText).replace(/[^0-9.-]/g, ""));
   return rmText.trim() === "" || !Number.isFinite(n) ? null : Math.round(n * 100);
 };
+
+/* ── Sync Status (E7) and Import backup (E8) ──────────────────────────── */
+
+export type SyncStatusWord = "SYNCED" | "PENDING" | "PENDING > 3D" | "DATA LOST" | "INACTIVE" | "NOT PREPARED";
+
+export type SyncTerminal = {
+  id: number; code: string; device_name: string | null; active: boolean; project_id: number | null; event_name: string | null; event_start: string | null; event_end: string | null;
+  prepared_at: string | null; last_seen_at: string | null; last_sync_at: string | null; pending_count: number; pending_amount_sen: number;
+  last_known_pending_count: number; last_known_pending_sen: number; db_empty_at: string | null;
+  platform: string | null; printer: string | null; app_version: string | null; receipt_counter: number; status_word: SyncStatusWord;
+};
+
+export type SyncAlert = {
+  id: number; type: string; title: string; level: "CRITICAL" | "AMBER"; terminal_id: number | null; terminal_code: string | null; project_id: number | null; event_name: string | null;
+  detail: Record<string, unknown>; email_sent_at: string | null; last_resent_at: string | null; resolved_at: string | null; created_at: string;
+};
+
+export type SyncStatus = {
+  thresholds: { pending_days: number; event_end_days: number; alert_email: string; heartbeat_minutes: number };
+  kpis: { terminals_active: number; terminals_total: number; pending_count: number; pending_sen: number; open_alerts: number; critical_alerts: number };
+  terminals: SyncTerminal[];
+  alerts: SyncAlert[];
+  at: string;
+};
+
+export const useSyncStatus = (enabled = true): QueryState<SyncStatus> =>
+  useQuery<SyncStatus>(`${POS_ADMIN}/status`, () => api.get<SyncStatus>(`${POS_ADMIN}/status`), [], { enabled });
+
+export type BackupRowKind = "NEW" | "DUPLICATE" | "UPDATE" | "CONFLICT" | "INVALID";
+export type BackupRow = { uuid: string; receipt_no: string; type: string; status: string; sold_at: string; total_sen: number; cashier_name: string; kind: BackupRowKind; reason?: string };
+export type BackupSummary = { new: number; update: number; duplicate: number; conflict: number; invalid: number; new_sen: number };
+export type BackupPreview = {
+  terminal: { id: number; code: string; device_name: string | null; pending_count: number; db_empty_at: string | null };
+  file: { exported_at: string; count: number; total_sen: number; receipt_counter: number; project_id: number; event_name: string | null };
+  rows: BackupRow[];
+  summary: BackupSummary;
+};
+export type BackupImportResult = { ok: true; accepted: number; updated: number; rejected: { uuid: string; reason?: string }[]; skipped: BackupSummary };

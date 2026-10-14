@@ -99,7 +99,8 @@ page, and the POS Admin menu. This guide carries only what is built.
   (`routes/pos-device.ts`): `GET /api/pos-device/ping`, `GET /prepare` (the
   bundle), `POST /heartbeat` (logged in `pos_heartbeats`; an empty device
   whose last heartbeat still had pending bills is stamped
-  `db_empty_at` / `DATA_LOST` for step 7), `POST /sales/batch`. The token is minted by
+  `db_empty_at` / `DATA_LOST`, which the watchdog turns into the critical
+  alert), `POST /sales/batch` (through `routes/lib/pos-ingest.ts`). The token is minted by
   `POST /api/pos-admin/device/register` (an ERP account with `pos.manage`,
   signed in on the device during Device setup) and stored as its SHA-256
   in `pos_terminals.token_hash`; re-preparing rotates it. The bundle
@@ -107,8 +108,48 @@ page, and the POS Admin menu. This guide carries only what is built.
   terminal, event, company block (branding), items in scope with event
   prices and every barcode, cashiers assigned with their PIN hashes, and
   the settings.
+- Sync Status (POS Admin > Sync Status, layout E7; `GET /api/pos-admin/status`):
+  KPI tiles (terminals active / sales pending / pending RM / open alerts),
+  one row per terminal with last seen and last sync coloured by age and a
+  status word (`SYNCED`, `PENDING`, `PENDING > 3D`, `DATA LOST`, `INACTIVE`,
+  `NOT PREPARED`, `routes/lib/pos-alerts.ts terminalStatusWord`), Details,
+  Import backup, and the alert log with its email state; a red banner while
+  a DATA_LOST alert is open, amber for the others.
+- Alerts (`pos_alerts`, mig `20261014T1445`; rules in
+  `routes/lib/pos-alerts.ts`, tested; runner `services/posAlerts.ts` on the
+  `*/30 * * * *` cron): `PENDING_STALE` (pending > 0 and no sync for more
+  than General `alert_pending_days`), `EVENT_ENDED_PENDING` (event end +
+  `alert_event_end_days` passed with pending, or never synced since the
+  event started), `DATA_LOST` (critical: `pos_terminals.db_empty_at` set
+  by a heartbeat from an empty device that last reported pending). Each
+  opens once, posts a WARNING personal notice to every active user whose
+  role holds `pos.manage` or `*`, emails General `alert_email`
+  (`[POS ALERT] <title> · <terminal> · <event>`) once and then once a day
+  while open, and resolves on its own when no longer wanted (pending back
+  to zero, device back). `POST /alerts/:id/acknowledge` closes one by hand
+  AND zeroes the terminal's pending figures and `db_empty_at` (for "bills
+  recovered from backup" or "device written off").
+- End-of-event summary: once per linked event, when the event's end date
+  has passed (Malaysia day) and every active terminal of the event shows
+  zero pending, `[POS SUMMARY] <event>` goes to the alert address with
+  bills, net, discount, SST, void / return counts, FOC units, by method, by
+  salesman, per terminal and the top 10 items, plus a CSV attachment (opens
+  in Excel; the backend has no xlsx writer) carrying the same tables and the
+  by-day split. `pos_event_links.summary_sent_at` (mig `20261014T1530`) is
+  the once-marker. Aggregation in `routes/lib/pos-report.ts` (tested), rows
+  loaded by `routes/lib/pos-report-load.ts`; step 8's reports reuse both.
+- Import backup (POS Admin > Import backup, layout E8): drop
+  `houzs_pos_T0x_backup.json`; `POST /api/pos-admin/backup/preview` opens
+  it with that terminal's `token_hash` (`scm/shared/pos-backup-crypto.ts`,
+  the one cipher the device and the ERP share) and classifies every receipt
+  `NEW / UPDATE / DUPLICATE / CONFLICT / INVALID`; `POST /backup/import`
+  writes NEW + UPDATE through `routes/lib/pos-ingest.ts`, the SAME ingest
+  the device batch uses (classification, rows, inventory movements, audit),
+  with `pos_sales.source = 'IMPORT'`, and lifts the terminal's receipt
+  counter to the file's.
 - Shared, vendored byte-identical to `frontend/src/vendor/shared/`:
   `scm/shared/pos-vocabulary.ts` (payment methods, receipt status word,
+  `pos-backup-crypto.ts` (the backup file cipher and shape),
   empty totals), `pos-settings.ts` (the three settings groups, defaults,
   normaliser), `ean13.ts` (check digit, internal prefix 200, bar pattern /
   SVG for labels).
@@ -154,6 +195,23 @@ page, and the POS Admin menu. This guide carries only what is built.
 - The ERP sign-in used by Device setup is dropped after Prepare (logout);
   only the device token stays on the device. A device whose terminal is
   deactivated, or re-prepared elsewhere, answers 401 on every device call.
+- One ingest: a receipt enters the ERP only through
+  `routes/lib/pos-ingest.ts ingestSale` (device batch and backup import
+  alike). Anything that writes `pos_sales` another way breaks the
+  duplicate / conflict guarantee and the stock booking's idempotency.
+- Alert cadence is the rules file's, not the runner's: `wantedAlerts`
+  decides what should be open, `reconcileAlerts` diffs it against
+  `pos_alerts`, `emailDue` says when a mail goes (first time, then every
+  24 h), `summaryDue` gates the once-per-event summary. Change thresholds in
+  General, not in code; an alert never emails more than once a day.
+- The summary email is sent with `outboxRetry: false`: a drained retry
+  would go out without the CSV. `summary_sent_at` is stamped on `sent` AND
+  on `skipped` (channel off / no key), so a disabled email channel does not
+  make the cron try forever; re-enable and clear the stamp to resend.
+- A backup opens only with the terminal's CURRENT `token_hash`; after a
+  re-prepare the old file is unreadable by design (the key rotated with the
+  token). The import never trusts the file's terminal code over the stored
+  terminal: a receipt whose `terminal_code` differs is `INVALID`.
 
 ## Gotchas
 

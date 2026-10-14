@@ -2,59 +2,32 @@
  * every receipt on this terminal, encrypted with AES-GCM under a key both
  * sides can derive, the SHA-256 of the device token (the ERP stores that
  * hash, the device holds the token), so the file is useless to a bystander
- * and readable by Import backup in the ERP. Written after every sale to a
- * folder the admin picked once (File System Access API, Chrome), else
- * downloaded on demand. */
+ * and readable by Import backup in the ERP. The cipher itself lives in the
+ * shared module both sides import. Written after every sale to a folder the
+ * admin picked once (File System Access API, Chrome), else downloaded on
+ * demand. */
+import { decryptBackupPayload, encryptBackupPayload, posBackupFileName, sha256Hex, type PosBackupFile } from "@shared/pos-backup-crypto";
 import type { SaleRecord } from "./sale";
 
-const SALT = "houzs-pos-backup";
+export type BackupFile = PosBackupFile;
 
-const hex = (b: ArrayBuffer | Uint8Array) => Array.from(b instanceof Uint8Array ? b : new Uint8Array(b), (x) => x.toString(16).padStart(2, "0")).join("");
-const b64 = (b: Uint8Array) => btoa(String.fromCharCode(...b));
-const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
-
-export async function tokenHash(token: string): Promise<string> {
-  return hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)));
-}
-
-export async function backupKey(tokenHashHex: string): Promise<CryptoKey> {
-  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(tokenHashHex), "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey({ name: "PBKDF2", salt: new TextEncoder().encode(SALT), iterations: 100_000, hash: "SHA-256" }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
-}
-
-export type BackupFile = {
-  format: "houzs-pos-backup/1";
-  terminal: string;
-  project_id: number;
-  exported_at: string;
-  count: number;
-  total_sen: number;
-  receipt_counter: number;
-  iv: string;
-  data: string;
-};
+export const tokenHash = (token: string): Promise<string> => sha256Hex(token);
 
 export async function encryptBackup(sales: readonly SaleRecord[], meta: { terminal: string; project_id: number; receipt_counter: number }, tokenHashHex: string): Promise<BackupFile> {
-  const key = await backupKey(tokenHashHex);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
   const real = sales.filter((s) => !s.is_test);
-  const plain = new TextEncoder().encode(JSON.stringify(real));
-  const cipher = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plain));
+  const { iv, data } = await encryptBackupPayload(JSON.stringify(real), tokenHashHex);
   return {
     format: "houzs-pos-backup/1", terminal: meta.terminal, project_id: meta.project_id, exported_at: new Date().toISOString(),
     count: real.length, total_sen: real.filter((s) => s.status === "PAID").reduce((t, s) => t + s.total_sen, 0), receipt_counter: meta.receipt_counter,
-    iv: b64(iv), data: b64(cipher),
+    iv, data,
   };
 }
 
 export async function decryptBackup(file: BackupFile, tokenHashHex: string): Promise<SaleRecord[]> {
-  const key = await backupKey(tokenHashHex);
-  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(file.iv) }, key, unb64(file.data));
-  return JSON.parse(new TextDecoder().decode(plain)) as SaleRecord[];
+  return JSON.parse(await decryptBackupPayload(file, tokenHashHex)) as SaleRecord[];
 }
 
-export const backupFileName = (terminal: string): string => `houzs_pos_${terminal}_backup.json`;
-
+export const backupFileName = posBackupFileName;
 /* ── where it goes ─────────────────────────────────────────────────────── */
 
 type DirHandle = { name: string; queryPermission?(o: { mode: string }): Promise<string>; requestPermission?(o: { mode: string }): Promise<string>; getFileHandle(name: string, o: { create: boolean }): Promise<{ createWritable(): Promise<{ write(d: string): Promise<void>; close(): Promise<void> }> }> };
