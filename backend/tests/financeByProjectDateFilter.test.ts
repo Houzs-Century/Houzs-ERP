@@ -84,3 +84,23 @@ describe("GET /finance/by-project — the date window is on the event dates", ()
     expect(rows.params).not.toContain("2026-09-30T23:59:59");
   });
 });
+
+// Symptom (2026-10-14, same day): the Sales column read RM 0.00 for every
+// September event while each project page showed its sales. The page's P&L
+// snapshot falls back to the lump "Total Sales" box (project_finance.
+// total_sales) when no individual sales line exists; the list summed lines
+// only. On production 18 / 26 September events carried their sales ONLY in
+// that box.
+describe("GET /finance/by-project — sales agrees with the project page", () => {
+  test("sales = sales lines when any exist, else project_finance.total_sales", async () => {
+    const { rows } = await drive("?date_from=2026-09-01&date_to=2026-09-30");
+    const sql = flat(rows.sql);
+    expect(sql).toContain('LEFT JOIN "project_finance" pf ON pf.project_id = p.id');
+    // The thing tested for > 0 is the SUM of individual sales lines, and the
+    // fallback is the lump box.
+    expect(sql).toContain(
+      "l.category = 'sales' AND l.archived_at IS NULL THEN l.amount ELSE 0 END), 0) > 0 THEN",
+    );
+    expect(sql).toContain("ELSE COALESCE(MAX(pf.total_sales), 0) END AS sales");
+  });
+});

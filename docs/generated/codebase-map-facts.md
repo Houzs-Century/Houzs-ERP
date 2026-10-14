@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-250 route modules (60 in `backend/src/routes`, 190 in `backend/src/scm/routes`), 1459 endpoint registrations.
+250 route modules (60 in `backend/src/routes`, 190 in `backend/src/scm/routes`), 1460 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -59,7 +59,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/presence.ts` | 2 | 201 |
 | `backend/src/routes/project-sales-bills.ts` | 4 | 344 |
 | `backend/src/routes/project-sales-orders.ts` | 1 | 208 |
-| `backend/src/routes/projects.ts` | 115 | 5181 |
+| `backend/src/routes/projects.ts` | 115 | 5188 |
 | `backend/src/routes/projectsOutstanding.ts` | 1 | 31 |
 | `backend/src/routes/projects_print.ts` | 1 | 1314 |
 | `backend/src/routes/publicBrandCalendar.ts` | 6 | 138 |
@@ -169,7 +169,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/inventory.ts` | 17 | 1783 |
 | `backend/src/scm/routes/loading-list.ts` | 1 | 186 |
 | `backend/src/scm/routes/localities.ts` | 4 | 273 |
-| `backend/src/scm/routes/lorries.ts` | 3 | 329 |
+| `backend/src/scm/routes/lorries.ts` | 4 | 352 |
 | `backend/src/scm/routes/lorry-capacity.ts` | 3 | 493 |
 | `backend/src/scm/routes/lorry-service-records.ts` | 6 | 327 |
 | `backend/src/scm/routes/maintenance-config.ts` | 5 | 486 |
@@ -285,7 +285,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (3342 files, 919314 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (3343 files, 919482 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -296,7 +296,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/services/autocount-sofa-corpus.ts` | 8581 |
 | `frontend/src/pages/Team.tsx` | 5675 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5246 |
-| `backend/src/routes/projects.ts` | 5181 |
+| `backend/src/routes/projects.ts` | 5188 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 4774 |
 | `backend/src/scm/routes/scan-so.ts` | 4742 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4483 |
@@ -313,7 +313,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 
 ## 4. Frontend desktop routes
 
-174 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
+175 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
 `frontend/src/lib/routeAliases.ts` are expanded at runtime and not counted here).
 
 | path | page module |
@@ -406,6 +406,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/scm/inventory/stock-card/:itemCode` | `frontend/src/pages/scm-v2/StockCard` |
 | `/scm/loading-list` | `frontend/src/pages/scm-v2/LoadingList` |
 | `/scm/lorry-capacity` | `frontend/src/pages/scm-v2/LorryCapacity` |
+| `/scm/lorry-live-map` | `frontend/src/pages/scm-v2/LorryLiveMap` |
 | `/scm/maintenance` | `frontend/src/pages/scm-v2/Products` |
 | `/scm/merchant-recon` | `frontend/src/pages/scm-v2/MerchantRecon` |
 | `/scm/mrp` | `frontend/src/pages/scm-v2/Mrp` |
@@ -502,7 +503,7 @@ Page files by directory:
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/projects` | 17 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 225 |
+| `frontend/src/pages/scm-v2` | 226 |
 | `frontend/src/pages/scm-v2/products` | 2 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 12 |

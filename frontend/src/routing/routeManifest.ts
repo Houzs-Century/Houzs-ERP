@@ -122,6 +122,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/fleet-day",
   "/scm/fleet-run-sheet",
   "/scm/lorry-capacity",
+  "/scm/lorry-live-map",
   "/scm",
   "/scm/sales-order",
   "/scm/consignment",
