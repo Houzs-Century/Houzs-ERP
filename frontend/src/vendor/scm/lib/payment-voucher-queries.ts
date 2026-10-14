@@ -44,6 +44,8 @@ export type PaymentVoucherRow = Record<string, unknown> & {
   currency?: string;
   exchange_rate?: string | number | null;
   credit_account_code?: string;
+  /** The header's Notes, as Finance typed them — the list shows them (owner 2026-10-14). */
+  notes?: string | null;
   supplier?: { id: string; code: string; name: string } | null;
   /* The owner's four layers (2026-09-02). No marks: raw Draft. submitted:
      Prepared (still editable). checked: locked, on Daily Bank's pending.

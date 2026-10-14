@@ -67,6 +67,8 @@ const fmtMoney = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi,
 
 const PV_LIST_STORAGE_KEY = 'pv-list.layout.v1';
 
+const notesOf = (r: PaymentVoucherRow): string => (r.notes ?? '').trim();
+
 const buildPvColumns = (): GridColumn<PaymentVoucherRow>[] => [
   {
     key: 'pv_number', label: 'Voucher No.', width: 150, sortable: true,
@@ -81,6 +83,18 @@ const buildPvColumns = (): GridColumn<PaymentVoucherRow>[] => [
     searchValue: (r) => `${r.payee_name ?? ''} ${r.supplier?.name ?? ''}`.trim(),
     groupValue: (r) => r.payee_name || r.supplier?.name || '(none)',
     sortFn: (a, b) => (a.payee_name ?? '').localeCompare(b.payee_name ?? ''),
+  },
+  {
+    /* The header's Notes (owner 2026-10-14: pv 那边的 list，可以让他把 notes
+       显示出来吗？) — what the voucher is for, in Finance's own words. A long
+       note is cut with … and reads whole on hover (the cell's title comes
+       from filterValue) or with WRAP on; the search box and Export carry it. */
+    key: 'notes', label: 'Notes', width: 260, sortable: true, groupable: false,
+    accessor: (r) => notesOf(r) || '—',
+    filterValue: (r) => notesOf(r),
+    searchValue: (r) => notesOf(r),
+    exportValue: (r) => notesOf(r),
+    sortFn: (a, b) => notesOf(a).localeCompare(notesOf(b)),
   },
   {
     key: 'credit_account_code', label: 'Paid From', width: 120, sortable: true, groupable: true,
@@ -468,7 +482,7 @@ export const PaymentVouchers = () => {
              a double-click opens, right-click menus; nothing else ticks. */
           checkboxOnly: true,
         }}
-        searchPlaceholder="Search voucher no, payee…"
+        searchPlaceholder="Search voucher no, payee, notes…"
         loadedSearchLimit={500}
         groupBanner={false}
         onRowDoubleClick={(r) => navigate(`/scm/payment-vouchers/${r.id}`)}
