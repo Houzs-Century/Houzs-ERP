@@ -2821,18 +2821,11 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
 
   const db = getDb(c.env);
 
-  // Date filter (owner request 2026-10-14): the From/To window must match the
-  // "Dates" column the user sees, so it is a PROJECT predicate on the event
-  // dates — not a per-line occurred_at filter. Picking September shows the
-  // events held in September, with ALL of their lines summed. Previously the
-  // window filtered lines by occurred_at/created_at, which surfaced a July
-  // 2027 event just because its rent line was keyed in September.
-  //
-  // Overlap semantics: an event is in range when it ends on/after From and
-  // starts on/before To. end_date falls back to start_date for one-day
-  // events; a project with no start_date never matches a window (it has no
-  // date to show in the column either). substr() keeps the comparison
-  // text-vs-text on both dialects (see /analytics/profitability).
+  // The From/To window is a PROJECT predicate on the event dates (the "Dates"
+  // column), not a per-line occurred_at filter: filtering lines surfaced a
+  // July 2027 event under September because its rent line was keyed then.
+  // Overlap: ends on/after From, starts on/before To; end_date falls back to
+  // start_date. substr() keeps it text-vs-text (see /analytics/profitability).
   const projConds: any[] = [];
   if (dateFrom) {
     projConds.push(
@@ -2842,8 +2835,7 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
   if (dateTo) {
     projConds.push(sql`substr(p.start_date, 1, 10) <= ${dateTo.slice(0, 10)}`);
   }
-  // No per-line date clause: the line SUMs below count every non-archived
-  // line of a matching project.
+  // Every non-archived line of a matching project is summed: no line clause.
   const dateClause = sql``;
 
   // Project-level WHERE (continued).
