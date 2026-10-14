@@ -21,7 +21,7 @@ const isSvc = (code, group) => {
 
 try {
   const prods = await pg`
-    select code, name, category, company_id from mfg_products
+    select code, name, category, company_id from scm.mfg_products
     where upper(coalesce(category,'')) = 'SERVICE' or upper(code) like 'SVC-%'
     order by code`;
   console.log(`(a) SERVICE products: ${prods.length}`);
@@ -29,16 +29,16 @@ try {
 
   const sis = await pg`
     select si.id, si.invoice_number, si.so_doc_no, si.status, si.created_at, si.company_id
-    from sales_invoices si
+    from scm.sales_invoices si
     where si.so_doc_no is not null and si.delivery_order_id is null
       and si.created_at >= '2026-10-14'
-      and not exists (select 1 from sales_invoice_items it where it.sales_invoice_id = si.id and it.do_item_id is not null)
+      and not exists (select 1 from scm.sales_invoice_items it where it.sales_invoice_id = si.id and it.do_item_id is not null)
     order by si.created_at`;
   console.log(`(b) SO-sourced, no-DO invoices since 2026-10-14: ${sis.length}`);
   for (const s of sis) {
     console.log(`  ${s.invoice_number} <- ${s.so_doc_no} status=${s.status} created=${s.created_at.toISOString()} co=${s.company_id}`);
     const lines = await pg`
-      select l.item_code, l.item_group, l.cancelled, (select p.category from mfg_products p where p.code = l.item_code and p.company_id = l.company_id limit 1) as category from mfg_sales_order_items l
+      select l.item_code, l.item_group, l.cancelled, (select p.category from scm.mfg_products p where p.code = l.item_code and p.company_id = l.company_id limit 1) as category from scm.mfg_sales_order_items l
       where l.doc_no = ${s.so_doc_no} and l.company_id = ${s.company_id} order by l.item_code`;
     for (const l of lines) {
       console.log(`    ${l.item_code} | group=${l.item_group} | cancelled=${l.cancelled} | productCategory=${l.category} | service=${isSvc(l.item_code, l.item_group)}`);
