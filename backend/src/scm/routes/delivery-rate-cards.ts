@@ -87,7 +87,7 @@ const n = (v: unknown): number | null => {
   return Number.isFinite(x) ? x : null;
 };
 
-function cardOut(r: Row) {
+export function cardOut(r: Row) {
   return {
     id: String(r.id),
     name: String(r.name ?? ''),
@@ -111,7 +111,7 @@ function cardOut(r: Row) {
   };
 }
 
-function ruleOut(r: Row) {
+export function ruleOut(r: Row) {
   return {
     id: String(r.id),
     cardId: String(r.card_id),
@@ -138,7 +138,7 @@ function toRuleSpecs(rules: ReturnType<typeof ruleOut>[]): RateRuleSpec[] {
   }));
 }
 
-function toCardSpec(card: ReturnType<typeof cardOut>, rules: ReturnType<typeof ruleOut>[]): RateCardSpec {
+export function toCardSpec(card: ReturnType<typeof cardOut>, rules: ReturnType<typeof ruleOut>[]): RateCardSpec {
   return {
     basis: card.basis,
     aggregation: card.aggregation,
