@@ -44,6 +44,7 @@ import projects from "./routes/projects";
 import { projectSalesOrders } from "./routes/project-sales-orders";
 import { projectSalesBills } from "./routes/project-sales-bills";
 import { projectPosSales } from "./routes/project-pos-sales";
+import { posAdmin } from "./routes/pos-admin";
 import projectsOutstanding from "./routes/projectsOutstanding";
 // Sales entries (/api/sales) is retained as a DEPENDENCY of Projects — the
 // Projects page embeds the sales-entry EntryPanel + submit/void/delete flow.
@@ -478,6 +479,10 @@ app.route("/api/project-sales-bills", projectSalesBills);
 // the same read gate as its Sales Orders and sales report.
 app.use("/api/project-pos-sales/*", requirePageAccessOrSalesView("sales"));
 app.route("/api/project-pos-sales", projectPosSales);
+// Houzs POS Admin (layouts E1-E5): owner / admin only, the whole menu behind
+// one key. NOT under /api/pos — that is the older 2990 tablet-POS auth.
+app.use("/api/pos-admin/*", requirePermission("pos.manage"));
+app.route("/api/pos-admin", posAdmin);
 app.route("/api/sales", sales);
 app.route("/api/finance", finance);
 app.route("/api/stockitems", stockItems);

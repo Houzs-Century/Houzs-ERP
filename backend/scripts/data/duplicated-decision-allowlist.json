@@ -1519,6 +1519,31 @@
       "check": "D1",
       "key": "CASH,CREDIT,DEBIT,EWALLET,QR|backend/src/scm/shared/pos-vocabulary.ts frontend/src/vendor/shared/pos-vocabulary.ts",
       "why": "THE MIRROR ITSELF, not a second decision. POS_METHOD_LABEL (the Houzs POS payment methods and their words) is declared ONCE in scm/shared/pos-vocabulary.ts and frontend/src/vendor/shared/pos-vocabulary.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. The method array is derived from the label keys, so even inside the file the list is stated once. Cost of divergence is a build failure, not a wrong payment line."
+    },
+    {
+      "check": "D1",
+      "key": "GENERAL,PRINTER_SCANNER,SST_RECEIPT|backend/src/scm/shared/pos-settings.ts frontend/src/vendor/shared/pos-settings.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. POS_SETTINGS_GROUPS (the three Houzs POS settings documents: SST & receipt, printer & scanner, general) is declared ONCE in scm/shared/pos-settings.ts and frontend/src/vendor/shared/pos-settings.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. The server validates a PUT group against this list and the settings page iterates it; a group added to one side without the other is a build failure, never a lost setting."
+    },
+    {
+      "check": "D1",
+      "key": "0000101,0001001,0010001,0010111,0011011,0011101,0100001,0100111,0110011,0111001|backend/src/scm/shared/ean13.ts frontend/src/vendor/shared/ean13.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the G digit-pattern table is the EAN-13 standard's fixed encoding table (GS1 General Specifications, not a business rule) declared ONCE in scm/shared/ean13.ts and frontend/src/vendor/shared/ean13.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. A wrong digit here prints an unscannable label, and ean13.test.ts pins the bar pattern against GS1 worked examples."
+    },
+    {
+      "check": "D1",
+      "key": "0001011,0001101,0010011,0011001,0100011,0101111,0110001,0110111,0111011,0111101|backend/src/scm/shared/ean13.ts frontend/src/vendor/shared/ean13.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the L digit-pattern table is the EAN-13 standard's fixed encoding table (GS1 General Specifications, not a business rule) declared ONCE in scm/shared/ean13.ts and frontend/src/vendor/shared/ean13.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. A wrong digit here prints an unscannable label, and ean13.test.ts pins the bar pattern against GS1 worked examples."
+    },
+    {
+      "check": "D1",
+      "key": "1000010,1000100,1001000,1001110,1010000,1011100,1100110,1101100,1110010,1110100|backend/src/scm/shared/ean13.ts frontend/src/vendor/shared/ean13.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the R digit-pattern table is the EAN-13 standard's fixed encoding table (GS1 General Specifications, not a business rule) declared ONCE in scm/shared/ean13.ts and frontend/src/vendor/shared/ean13.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. A wrong digit here prints an unscannable label, and ean13.test.ts pins the bar pattern against GS1 worked examples."
+    },
+    {
+      "check": "D1",
+      "key": "LGGGLL,LGGLGL,LGGLLG,LGLGGL,LGLGLG,LGLLGG,LLGGGL,LLGGLG,LLGLGG,LLLLLL|backend/src/scm/shared/ean13.ts frontend/src/vendor/shared/ean13.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the PARITY digit-pattern table is the EAN-13 standard's fixed encoding table (GS1 General Specifications, not a business rule) declared ONCE in scm/shared/ean13.ts and frontend/src/vendor/shared/ean13.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. A wrong digit here prints an unscannable label, and ean13.test.ts pins the bar pattern against GS1 worked examples."
     }
   ]
 }

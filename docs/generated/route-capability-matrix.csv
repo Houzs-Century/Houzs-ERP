@@ -283,6 +283,30 @@ GET,/api/portal/case/attachments/:attId,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPA
 POST,/api/portal/case/attachments/:attId/archive,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,caseTrack,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/portal.ts
 POST,/api/portal/case/comments,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,caseTrack,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/portal.ts
 POST,/api/portal/case/comments/:actId/archive,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,caseTrack,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/portal.ts
+GET,/api/pos-admin/cashiers,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
+POST,/api/pos-admin/cashiers,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+PATCH,/api/pos-admin/cashiers/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+POST,/api/pos-admin/cashiers/:id/pin,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+GET,/api/pos-admin/events,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
+DELETE,/api/pos-admin/events/:projectId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+PUT,/api/pos-admin/events/:projectId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+POST,/api/pos-admin/events/:projectId/push,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+GET,/api/pos-admin/events/candidates,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
+GET,/api/pos-admin/inventory/search,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
+GET,/api/pos-admin/items,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
+POST,/api/pos-admin/items,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+DELETE,/api/pos-admin/items/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+PATCH,/api/pos-admin/items/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+POST,/api/pos-admin/items/:id/barcodes,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+DELETE,/api/pos-admin/items/:id/barcodes/:bid,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+POST,/api/pos-admin/items/import,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+GET,/api/pos-admin/labels,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
+POST,/api/pos-admin/labels/generate,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+GET,/api/pos-admin/settings,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
+PUT,/api/pos-admin/settings/:group,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+GET,/api/pos-admin/terminals,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
+POST,/api/pos-admin/terminals,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+PATCH,/api/pos-admin/terminals/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
 GET,/api/pos/admin-pin-status/:userId,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,,,"auth + requirePermission(""users.manage"")",,NO,DECLARED_GATE,backend/src/routes/pos.ts
 POST,/api/pos/admin-reset-pin/:userId,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,,,"auth + requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/pos.ts
 POST,/api/pos/admin-set-pin/:userId,AUTHENTICATED_MIDDLEWARE,NO_GLOBAL_COMPANY_CONTEXT,,,"auth + requirePermission(""users.manage"")",,YES,DECLARED_GATE,backend/src/routes/pos.ts
