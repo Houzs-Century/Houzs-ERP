@@ -216,6 +216,8 @@ describePg('delete-test-so — the reference sweep, against real Postgres', () =
     expect(hit?.n).toBe(1);
     // Who created the order outlives the order. That is the point.
     expect(classifyReference('scm.mfg_so_audit_log', new Set())).toBe(AUDIT);
+    expect(classifyReference('scm.mfg_so_item_deletions', new Set())).toBe(AUDIT);
+    expect(classifyReference('scm.venture_portal_outbox', new Set())).toBe(AUDIT);
   });
 
   test('a reference is matched trimmed and case-folded, the way the register does', async () => {
