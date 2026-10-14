@@ -1,4 +1,4 @@
--- 20261014T1400_scm_scan_field_aliases.sql
+-- 20261014T1440_scm_scan_field_aliases.sql
 -- REVERSAL: DROP TABLE IF EXISTS scm.scan_field_aliases;
 --   Revert the code first (scm/lib/scan-field-aliases.ts reads and writes this
 --   table; both are best-effort, so a missing table only stops the learning).
