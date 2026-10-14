@@ -326,4 +326,27 @@ lorries.patch('/:id', async (c) => {
   return c.json({ lorry: data });
 });
 
+// DEV-42: each lorry's latest Velocity fix in the last 24 h (scm/lib/velocity-poll.ts
+// writes them every 5 min). Unified fleet like GET / — not scoped by company.
+lorries.get('/positions/latest', async (c) => {
+  const sb = c.get('supabase');
+  const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+  // ponytail: scans 24 h of rows (288 per tracked lorry); a DISTINCT ON view if the fleet grows large.
+  const { data, error } = await sb.from('lorry_positions')
+    .select('lorry_id, lat, lng, speed_kmh, heading, ignition, street, recorded_at, received_at')
+    .gte('recorded_at', since)
+    .order('recorded_at', { ascending: false });
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const latest = new Map<string, NonNullable<typeof data>[number]>();
+  for (const r of data) if (!latest.has(r.lorry_id)) latest.set(r.lorry_id, r);
+  if (!latest.size) return c.json({ positions: [] });
+  const { data: plates, error: pErr } = await sb.from('lorries').select('id, plate').in('id', [...latest.keys()]);
+  if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
+  const plateById = new Map(plates.map((l) => [l.id as string, l.plate as string]));
+  const positions = [...latest.values()]
+    .map((r) => ({ ...r, plate: plateById.get(r.lorry_id) ?? '' }))
+    .sort((a, b) => a.plate.localeCompare(b.plate));
+  return c.json({ positions });
+});
+
 export default lorries;
