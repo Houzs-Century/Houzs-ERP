@@ -2,12 +2,12 @@
 // Original scans (HC-0006 T7): open the file a document was read from, and
 // record who opened it and when (scm.scan_file_views).
 //
-//   GET /scan-files/:kind/doc/:documentId   the document's kept originals
-//   GET /scan-files/:kind/:id/content       the bytes, inline; writes a view row
+//   GET /scan-files/<kind>/doc/:documentId   the document's kept originals
+//   GET /scan-files/<kind>/:id/content       the bytes, inline; writes a view row
 //
-// :kind is in the path so scm/index.ts can put each kind behind the area guard
-// of the document it belongs to (SO + payment: sales orders; pv: accounting;
-// workshop: transportation). An unknown kind has no guard, so it is a 404 here.
+// One router per kind, so scm/index.ts puts each behind the area guard of the
+// document it belongs to (SO + payment: sales orders; pv: accounting;
+// workshop: transportation). Any other kind is simply not routed.
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
@@ -17,7 +17,6 @@ import { supabaseAuth } from '../middleware/auth';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import type { ScanFileKind } from '../lib/scan-files';
 
-const KINDS: ReadonlySet<string> = new Set<ScanFileKind>(['so', 'payment', 'pv', 'workshop']);
 const COLS = 'id, kind, mime, size_bytes, uploaded_by, created_at';
 
 type Row = Record<string, unknown>;
@@ -31,10 +30,9 @@ type Ctx = {
 
 const notFound = (c: Ctx) => c.json({ error: 'not_found' }, 404);
 
-export const listScanFilesHandler = async (c: Ctx): Promise<Response> => {
-  const kind = c.req.param('kind') ?? '';
+export const listScanFilesHandler = async (kind: ScanFileKind, c: Ctx): Promise<Response> => {
   const documentId = c.req.param('documentId') ?? '';
-  if (!KINDS.has(kind) || !documentId) return notFound(c);
+  if (!documentId) return notFound(c);
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data, error } = await c.get('supabase').from('scan_files').select(COLS)
@@ -44,10 +42,9 @@ export const listScanFilesHandler = async (c: Ctx): Promise<Response> => {
   return c.json({ files: (data ?? []) as Row[] });
 };
 
-export const scanFileContentHandler = async (c: Ctx): Promise<Response> => {
-  const kind = c.req.param('kind') ?? '';
+export const scanFileContentHandler = async (kind: ScanFileKind, c: Ctx): Promise<Response> => {
   const id = c.req.param('id') ?? '';
-  if (!KINDS.has(kind) || !id) return notFound(c);
+  if (!id) return notFound(c);
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
@@ -77,7 +74,28 @@ export const scanFileContentHandler = async (c: Ctx): Promise<Response> => {
   });
 };
 
-export const scanFiles = new Hono<{ Bindings: Env; Variables: Variables }>();
-scanFiles.use('*', supabaseAuth);
-scanFiles.get('/:kind/doc/:documentId', (c) => listScanFilesHandler(c as unknown as Ctx));
-scanFiles.get('/:kind/:id/content', (c) => scanFileContentHandler(c as unknown as Ctx));
+const forKind = (kind: ScanFileKind) => ({
+  list: (c: unknown) => listScanFilesHandler(kind, c as Ctx),
+  content: (c: unknown) => scanFileContentHandler(kind, c as Ctx),
+});
+const SO = forKind("so"), PAY = forKind("payment"), PV = forKind("pv"), WS = forKind("workshop");
+
+export const scanFilesSo = new Hono<{ Bindings: Env; Variables: Variables }>();
+scanFilesSo.use('*', supabaseAuth);
+scanFilesSo.get('/doc/:documentId', SO.list);
+scanFilesSo.get('/:id/content', SO.content);
+
+export const scanFilesPayment = new Hono<{ Bindings: Env; Variables: Variables }>();
+scanFilesPayment.use('*', supabaseAuth);
+scanFilesPayment.get('/doc/:documentId', PAY.list);
+scanFilesPayment.get('/:id/content', PAY.content);
+
+export const scanFilesPv = new Hono<{ Bindings: Env; Variables: Variables }>();
+scanFilesPv.use('*', supabaseAuth);
+scanFilesPv.get('/doc/:documentId', PV.list);
+scanFilesPv.get('/:id/content', PV.content);
+
+export const scanFilesWorkshop = new Hono<{ Bindings: Env; Variables: Variables }>();
+scanFilesWorkshop.use('*', supabaseAuth);
+scanFilesWorkshop.get('/doc/:documentId', WS.list);
+scanFilesWorkshop.get('/:id/content', WS.content);
