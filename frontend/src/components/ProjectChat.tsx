@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Send } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -6,6 +6,11 @@ import { useNotifications } from "../hooks/useNotifications";
 import type { useToast } from "../hooks/useToast";
 import { cn, relativeTime } from "../lib/utils";
 import { Avatar } from "./Avatar";
+import { canSaveSalesReport } from "../auth/salesAccess";
+import { parseSalesReport } from "../vendor/shared/sales-report-parse";
+import { useInvalidateProjectSalesBills, useProjectSalesBills } from "../hooks/useProjectSalesBills";
+import { fmtRmSen } from "../lib/projectSalesBills";
+import { SalesReportSaveDialog } from "./SalesReportSaveDialog";
 
 // ── Types ────────────────────────────────────────────────────
 // Mirrors the ActivityRow shape that /api/projects/:id/activity
@@ -55,6 +60,14 @@ export function ProjectChat({
 }: ProjectChatProps) {
   const { user: me } = useAuth();
   const notifs = useNotifications();
+  // "Save as sales report" (owner 2026-10-14): for the three people who may
+  // save, a message that reads as a bill list gets a button under it, and the
+  // project's saved read tells the chat which messages are already kept.
+  const canSaveReport = canSaveSalesReport(me);
+  const billsQ = useProjectSalesBills(projectId, canSaveReport);
+  const invalidateBills = useInvalidateProjectSalesBills();
+  const savedIds = useMemo(() => new Set(billsQ.data?.saved_activity_ids ?? []), [billsQ.data]);
+  const [reportFor, setReportFor] = useState<ActivityRow | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -322,11 +335,42 @@ export function ProjectChat({
             Date.parse(a.created_at) - Date.parse(prev.created_at) <
               5 * 60 * 1000;
           const grouped = !!(samePerson && withinWindow);
+          const report = canSaveReport && a.note ? parseSalesReport(a.note) : null;
+          const footer =
+            report && report.bills.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setReportFor(a)}
+                className={cn(
+                  "mt-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                  savedIds.has(a.id)
+                    ? "border-emerald-600/40 bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
+                    : "border-amber-500/40 bg-amber-100 text-amber-800 hover:bg-amber-200",
+                )}
+                title={savedIds.has(a.id) ? "Already saved to this event. Save again to update it." : "Keep these bills on the event and track which are not yet opened as Sales Orders"}
+              >
+                {savedIds.has(a.id) ? "Saved as sales report" : "Save as sales report"} · {report.bills.length} bill{report.bills.length === 1 ? "" : "s"} · {fmtRmSen(report.bills.reduce((s, b) => s + b.amount_sen, 0))}
+              </button>
+            ) : null;
           return (
-            <ChatBubble key={a.id} a={a} isMine={isMine} grouped={grouped} />
+            <ChatBubble key={a.id} a={a} isMine={isMine} grouped={grouped} footer={footer} />
           );
         })}
       </div>
+
+      {reportFor && (
+        <SalesReportSaveDialog
+          projectId={projectId}
+          activityId={reportFor.id}
+          text={reportFor.note ?? ""}
+          onClose={() => setReportFor(null)}
+          onSaved={() => {
+            invalidateBills();
+            billsQ.reload();
+          }}
+          toast={toast}
+        />
+      )}
 
       {canPost ? (
         <div className="flex items-end gap-2 border-t border-border bg-surface px-2.5 py-2">
@@ -399,10 +443,13 @@ function ChatBubble({
   a,
   isMine,
   grouped,
+  footer,
 }: {
   a: ActivityRow;
   isMine: boolean;
   grouped: boolean;
+  /** An action drawn under the bubble — today the Save as sales report button. */
+  footer?: ReactNode;
 }) {
   const name = a.user_name || "Unknown";
   return (
@@ -447,6 +494,7 @@ function ChatBubble({
         >
           {a.note}
         </div>
+        {footer}
         <span
           className="mt-0.5 px-0.5 font-mono text-[9.5px] text-ink-muted"
           title={a.created_at}

@@ -168,6 +168,17 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   paid from the payment ledger via `so-outstanding.ts`. "Not yet opened" is
   the lump-sum `total_sales` minus the SO total — a comparison, not a count
   of slips.
+- The evening sales report (one bill per line: booklet no, amount, salesperson)
+  pasted into the project chat can be SAVED to the project (`project_sales_bills`,
+  `GET/POST/DELETE /api/project-sales-bills/:id`, `routes/project-sales-bills.ts`;
+  parser `scm/shared/sales-report-parse.ts`, mirrored to the frontend; rules in
+  `routes/lib/sales-report-bills.ts`). Saving/deleting is for the Owner position
+  plus Ummu and weisiang by email (`canSaveSalesReport`, both sides); reading is
+  the Sales section's gate. Each bill is matched to an order by booklet number
+  (SO `customer_so_no` / `ref` tokens) on every read; an order under another
+  event counts as opened, is flagged, and its salesperson gets a personal notice
+  to amend the fair (`source=sales_report_fair_mismatch`). The red amount beside
+  a name under Sales Attending is that rep's bills not yet opened.
 
 ## Gotchas
 
