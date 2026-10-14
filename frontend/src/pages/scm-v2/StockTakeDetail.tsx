@@ -395,7 +395,9 @@ export const StockTakeDetail = () => {
         id,
         lines: changed.map((l) => ({
           id:         l.id,
-          countedQty: parseCounted(l.countedQtyInput),
+          /* Only a changed count is sent: the server re-stamps Counted By on
+             every countedQty it receives, so a note-only edit must not. */
+          ...(parseCounted(l.countedQtyInput) !== l.origCountedQty ? { countedQty: parseCounted(l.countedQtyInput) } : {}),
           notes:      l.notes.trim() ? l.notes.trim() : null,
           ...(l.rackId !== l.origRackId ? { rackId: l.rackId } : {}),
         })),
@@ -800,6 +802,7 @@ export const StockTakeDetail = () => {
                 {!blindActive && <th style={{ width: 110, textAlign: 'right' }}>System Qty</th>}
                 <th style={{ width: 130, textAlign: 'right' }}>Counted Qty</th>
                 <th style={{ width: 120 }}>Rack</th>
+                <th style={{ width: 160 }}>Notes</th>
                 {!blindActive && <th style={{ width: 110, textAlign: 'right' }}>Variance</th>}
                 {!blindActive && <th style={{ width: 110, textAlign: 'right' }}>Value (RM)</th>}
                 <th style={{ width: 130 }}>Counted By</th>
@@ -808,8 +811,8 @@ export const StockTakeDetail = () => {
             </thead>
             <tbody>
               {(() => {
-                /* SKU + Name + Variant + Counted + Counted By = 5 fixed. */
-                const colCount = 6 + (blindActive ? 0 : 3) + (isDraft ? 1 : 0);
+                /* SKU + Name + Variant + Counted + Rack + Notes + Counted By = 7 fixed. */
+                const colCount = 7 + (blindActive ? 0 : 3) + (isDraft ? 1 : 0);
                 if (filteredLines.length === 0) {
                   return (
                     <tr><td colSpan={colCount} className={styles.emptyRow}>
@@ -903,6 +906,21 @@ export const StockTakeDetail = () => {
                           />
                         ) : (
                           <span style={{ fontSize: 'var(--fs-12)' }}>{rackLabel(ln.rackId)}</span>
+                        )}
+                      </td>
+                      {/* HC-0019: the line note was saved by onSave but had no box to type it in. */}
+                      <td>
+                        {isDraft ? (
+                          <input
+                            type="text"
+                            className={styles.fieldInput}
+                            aria-label={`Note for ${ln.itemCode}`}
+                            value={ln.notes}
+                            onChange={(e) => setLine(ln.id, { notes: e.target.value })}
+                            style={{ fontSize: 'var(--fs-12)' }}
+                          />
+                        ) : (
+                          <span style={{ fontSize: 'var(--fs-12)' }}>{ln.notes || <span className={styles.muted}>—</span>}</span>
                         )}
                       </td>
                       {!blindActive && (
@@ -1005,6 +1023,7 @@ export const StockTakeDetail = () => {
                           ? <span className={styles.muted}>0/{g.lines.length}</span>
                           : <>{fmtQty(g.countedTotal)} <span style={{ color: 'var(--fg-muted)' }}>({g.countedLines}/{g.lines.length})</span></>}
                       </td>
+                      <td><span className={styles.muted}>—</span></td>
                       <td><span className={styles.muted}>—</span></td>
                       {!blindActive && (
                         <td className={styles.tableRight}
