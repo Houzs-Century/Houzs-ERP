@@ -133,10 +133,12 @@ describe('AutoCount money is the order\'s money', () => {
 
   test('a refund from the panel may take the AutoCount money too', async () => {
     const { app, sb } = harness();
-    const res = await app.request(`/mfg-sales-orders/${A}/money/refund`, json({ amountSen: 1_980_000, note: 'whole order' }));
+    /* A payment request since 2026-10-14 — the reason and the customer's bank required. */
+    const ask = { reason: 'whole order', bankName: 'Maybank', bankAccountNo: '5123 4567 8901', bankAccountName: 'TERESA TEH' };
+    const res = await app.request(`/mfg-sales-orders/${A}/money/refund`, json({ amountSen: 1_980_000, ...ask }));
     expect(res.status, await res.clone().text()).toBe(201);
-    expect(sb.tables.payment_vouchers[0]).toMatchObject({ purpose: 'CUSTOMER_REFUND', refund_source_doc_no: A, total_sen: 1_980_000, status: 'DRAFT' });
-    const more = await app.request(`/mfg-sales-orders/${A}/money/refund`, json({ amountSen: 100 }));
+    expect(sb.tables.acc_payment_requests[0]).toMatchObject({ refund_source_doc_no: A, amount_sen: 1_980_000, status: 'SUBMITTED' });
+    const more = await app.request(`/mfg-sales-orders/${A}/money/refund`, json({ amountSen: 100, ...ask }));
     expect(more.status).toBe(409);
   });
 

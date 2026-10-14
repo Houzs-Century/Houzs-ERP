@@ -264,12 +264,18 @@ export const NAV_TABS: NavTab[] = [
   // without it no longer sees an entry the route and the server refuse.
   // Finance (scm.payment_voucher.create, `*` included) keeps only the Money out
   // entry — the same page twice was noise (owner 2026-10-08).
+  // Since 2026-10-14 (option A) the refund a salesperson asks for from a Sales
+  // Order is a payment request of their own: Sales staff and anyone who works
+  // Sales Orders see this entry to read their own requests — without the key
+  // the page offers no New request, and the server raises nothing for them.
   {
     section: "workspace",
     to: "/scm/payment-requests",
     label: "Payment Requests",
     icon: HandCoins,
     anyPerm: ["*", "scm.payment_request.create"],
+    anyAccess: ["scm.sales.orders"],
+    showForSales: true,
     hidePerm: "scm.payment_voucher.create",
   },
   // Sales Entries — Nico 2026-07-09: "sales entries 我不要了". Sidebar

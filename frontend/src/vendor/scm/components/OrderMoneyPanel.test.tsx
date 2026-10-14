@@ -2,8 +2,9 @@
 // paid · refunded · moved · remaining, and the two exits side by side.
 //
 // Pinned: nothing for a live order; the figures and the two buttons for a
-// cancelled one with money left; Refund raises the voucher draft with the
-// amount and the note; Convert lists this order (ticked) and the customer's
+// cancelled one with money left; Refund sends a payment request (owner
+// 2026-10-14) with the amount, the reason and the customer's bank — all
+// required — and the panel lists each request with its answer; Convert lists this order (ticked) and the customer's
 // other cancelled orders (unticked), each for what is left, and opens the New
 // SO page with the customer copied and one converted row per tick; a
 // spent order shows why the buttons are gone.
@@ -56,6 +57,8 @@ describe('moneySummary', () => {
     expect(moneySummary(money({ refundedSen: 40_000, convertedSen: 30_000, remainingSen: 0 }))).toBe('Paid RM 700.00 · Refunded RM 400.00 · Moved RM 300.00 · Remaining RM 0.00');
     /* The AutoCount money counts and is named (owner 2026-10-05). */
     expect(moneySummary(money({ importedSen: 20_000 }))).toBe('Paid RM 700.00 (incl. RM 200.00 from AutoCount) · Remaining RM 700.00');
+    /* A refund request still waiting holds its money (owner 2026-10-14). */
+    expect(moneySummary(money({ requestedSen: 40_000, remainingSen: 30_000 }))).toBe('Paid RM 700.00 · Refund requested RM 400.00 · Remaining RM 300.00');
   });
 });
 
@@ -106,18 +109,52 @@ describe('OrderMoneyPanel', () => {
     expect(screen.getByRole('button', { name: 'Convert' })).toBeTruthy();
   });
 
-  it('Refund: the amount (part or all) and the note go to the voucher draft', async () => {
-    mutateAsync.mockResolvedValue({ id: 'pv1', pvNumber: '2990Draft-2609-003' });
+  it('Refund: the amount (part or all), the reason and the customer\'s bank — all required — go to a payment request', async () => {
+    mutateAsync.mockResolvedValue({ id: 'r1', requestNo: '2990-PRQ-2610-001' });
     render(wrap(<OrderMoneyPanel docNo={OLD} />));
     fireEvent.click(screen.getByRole('button', { name: 'Refund' }));
     const amount = screen.getByLabelText('Refund amount') as HTMLInputElement;
     fireEvent.change(amount, { target: { value: '400.00' } });
     fireEvent.blur(amount);
-    fireEvent.change(screen.getByLabelText('Refund note'), { target: { value: 'customer wants it back' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Raise refund draft' }));
-    await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith({ amountSen: 40_000, note: 'customer wants it back' }));
+    const send = screen.getByRole('button', { name: 'Send refund request' }) as HTMLButtonElement;
+    expect(send.disabled).toBe(true);
+    expect(screen.getByText(/Still needed: the reason, the customer's bank, the account number, the name on the account/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Refund reason'), { target: { value: 'customer wants it back' } });
+    fireEvent.change(screen.getByLabelText("Customer's bank"), { target: { value: 'Maybank' } });
+    fireEvent.change(screen.getByLabelText('Account number'), { target: { value: '5123 4567 8901' } });
+    expect(send.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Name on the account'), { target: { value: 'AH MENG' } });
+    expect(send.disabled).toBe(false);
+    fireEvent.click(send);
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith({
+      amountSen: 40_000, reason: 'customer wants it back', bankName: 'Maybank', bankAccountNo: '5123 4567 8901', bankAccountName: 'AH MENG',
+    }));
     await waitFor(() => expect(notifySpy).toHaveBeenCalled());
-    expect(String(notifySpy.mock.calls[0]![0].title)).toContain('2990Draft-2609-003');
+    expect(String(notifySpy.mock.calls[0]![0].title)).toBe('Refund request 2990-PRQ-2610-001 sent to Finance');
+  });
+
+  it('lists the refund requests with their answer — waiting, rejected with why, answered — each opening the request', () => {
+    useOrderMoney.mockReturnValue({
+      data: {
+        money: money({
+          requestedSen: 20_000, remainingSen: 50_000,
+          refundRequests: [
+            { id: 'r1', requestNo: '2990-PRQ-2610-001', amountSen: 20_000, state: 'WAITING', reason: 'x', financeNote: null, requestedBy: 'Nancy', requestedOn: '2026-10-14', pvNumber: null },
+            { id: 'r2', requestNo: '2990-PRQ-2610-002', amountSen: 10_000, state: 'RETURNED', reason: 'y', financeNote: 'Convert it instead', requestedBy: 'Nancy', requestedOn: '2026-10-14', pvNumber: null },
+            { id: 'r3', requestNo: '2990-PRQ-2610-003', amountSen: 5_000, state: 'WITHDRAWN', reason: 'z', financeNote: null, requestedBy: 'Nancy', requestedOn: '2026-10-14', pvNumber: null },
+          ],
+        }),
+        others: [],
+      },
+      isError: false,
+    });
+    render(wrap(<OrderMoneyPanel docNo={OLD} />));
+    const waiting = screen.getByText('2990-PRQ-2610-001 · RM 200.00 (waiting for Finance)');
+    expect(waiting.getAttribute('href')).toBe('/scm/payment-requests?open=r1');
+    expect(screen.getByText('2990-PRQ-2610-002 · RM 100.00 (rejected: Convert it instead)')).toBeTruthy();
+    /* A withdrawn one says nothing. */
+    expect(screen.queryByText(/2990-PRQ-2610-003/)).toBeNull();
+    expect(screen.getByText('Paid RM 700.00 · Refund requested RM 200.00 · Remaining RM 500.00')).toBeTruthy();
   });
 
   it('Convert: this order ticked and the customer\'s other cancelled order beside it; the New SO page opens with one row per tick', () => {

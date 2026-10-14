@@ -132,6 +132,22 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   (`PaymentRequestsWaiting.tsx` → `/scm/payment-requests?filter=waiting`) and the
   red count on Money out › Payment Requests; Finance sees that entry only — the
   Workspace one is the requester's (`hidePerm`).
+- A Sales Order's Refund button raises a payment request, not a voucher (owner
+  2026-10-14; `backend/src/scm/lib/refund-request.ts`): the customer as payee,
+  the reason and the customer's bank required, a file not;
+  `refund_source_type`/`refund_source_doc_no` name the order. While it waits
+  (submitted, or its voucher cancelled) it holds that much of the order's money
+  — in `ordersMoney` and in the refund headroom (`loadRefundSource`) alike.
+  Only a Customer Refund voucher on that order answers it
+  (`refundAnswerRefusal`: `refund_request_needs_refund`, and
+  `request_not_a_refund` the other way round), and its own amount is left out
+  of the headroom (`excludeRequestId`; PV New `?type=refund&fromRequest=`);
+  Finance's Return is the rejection. It is never edited
+  (`refund_request_fixed`) and takes no balance (`refund_no_balance`). Its
+  requester reads it on Payment Requests without the key — every caller reads
+  their own requests there, a Sales caller reaches the router
+  (`requireScmAccess`), and the list says `mayRaise` so the page offers New
+  request only to the key and Finance.
 - Finance's 欠正式单 remark (what to follow up) rides the mark: written with the
   tick on PV New / the AP invoice form (`officialDocNote`) or on the detail
   (`POST /official-docs/:kind/:id` with `note`), at most 500 characters; a

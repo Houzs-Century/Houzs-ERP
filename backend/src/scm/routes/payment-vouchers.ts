@@ -593,7 +593,7 @@ export const createPaymentVoucherHandler = async (c: any) => {
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   return createPaymentVoucherCore(c, body);
 };
-/** The voucher raised from a body already in hand — the door above, and lib/so-money's refund draft (docs/bugs/0927). */
+/** The voucher raised from a body already in hand — the door above (a refund from an order's money panel is a payment request since 2026-10-14). */
 export const createPaymentVoucherCore = async (c: any, body: Record<string, unknown>) => {
   const payeeName = (body.payeeName as string | undefined)?.trim();
   if (!payeeName) return c.json({ error: 'payee_required' }, 400);
@@ -621,7 +621,7 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
   const eventErr = await pvLineEventRefusal(c, body.purpose, built.rows); // lib/event-tags.ts
   if (eventErr) return eventErr;
   /* 申请付款: the request this voucher answers, still waiting (lib/payment-request.ts). */
-  const prq = await paymentRequestLinkGuard(c, body.paymentRequestId);
+  const prq = await paymentRequestLinkGuard(c, body.paymentRequestId, { kind: 'PV', body });
   if ('resp' in prq) return prq.resp;
 
   /* The AP split (owner 2026-09-03): a 405-x supplier's paper belongs to

@@ -411,8 +411,12 @@ export const requireScmAccess: MiddlewareHandler<{ Bindings: Env }> = async (c, 
   // scm.payment_request.create — a sales PIC asking Finance to pay an event's
   // rental — reaches the payment-request router and nothing else. TIGHT: that one
   // prefix; the router answers such a caller with their OWN requests only and
-  // keeps every voucher, account and supplier behind Finance's own doors.
-  if (/\/scm\/payment-requests(\/|$)/.test(c.req.path) && hasPermission(granted, "scm.payment_request.create")) {
+  // keeps every voucher, account and supplier behind Finance's own doors. A
+  // Sales caller by stable org field reaches it too (owner 2026-10-14, option
+  // A): the refund they asked for from an order is a request of their own, read
+  // there — raising any other request still takes the key.
+  if (/\/scm\/payment-requests(\/|$)/.test(c.req.path)
+    && (hasPermission(granted, "scm.payment_request.create") || isSalesUser(user))) {
     await next();
     return;
   }

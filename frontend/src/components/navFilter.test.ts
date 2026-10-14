@@ -379,14 +379,16 @@ describe("nav — every sub-group hub groupId still resolves", () => {
   });
 });
 
-/* 申请付款 (owner 2026-10-01: 除了 sales team) — the request key alone shows the
-   Payment Requests entry. A sales rep without it used to see the entry through
-   the rep bypass and then hit a refusal on both the route and the server. */
-describe("Payment Requests — the key alone shows it", () => {
-  it("a sales rep without the key sees no Payment Requests, on either surface", () => {
+/* 申请付款 (owner 2026-10-01: 除了 sales team) — the sales team holds no request
+   key. Since 2026-10-14 (option A: the refund a salesperson asks for from a Sales
+   Order is a payment request of their own) a sales rep sees the entry anyway, to
+   read their own requests: the route and the server admit them for that, the
+   page offers them no New request, and the server raises nothing for them. */
+describe("Payment Requests — the key, or a salesperson reading their own refunds", () => {
+  it("a sales rep without the key sees Payment Requests on both surfaces (their own refund requests)", () => {
     const ctx = ctxFor(rep());
-    expect(desktopPaths(ctx)).not.toContain("/scm/payment-requests");
-    expect(phoneAllows(ctx, "/scm/payment-requests")).toBe(false);
+    expect(desktopPaths(ctx)).toContain("/scm/payment-requests");
+    expect(phoneAllows(ctx, "/scm/payment-requests")).toBe(true);
   });
   it("a holder of the key sees it on both", () => {
     const ctx = ctxFor(rep({ permissions: ["scm.payment_request.create"] }));

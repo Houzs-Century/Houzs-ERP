@@ -429,6 +429,9 @@ export type RefundSource = {
   importedSen?: number;
   refunds: RefundVoucherRow[];
   refundedSen: number;
+  /** Refund requests on the order still waiting for Finance (owner 2026-10-14)
+      — spoken for, all but the one being answered. Optional against an older server. */
+  requestedSen?: number;
   refundableSen: number;
   /** Deposit invoices still standing on the order, and what is left on them
       (docs/bugs/0860). Optional only for the minute a newer screen reads an
@@ -438,11 +441,13 @@ export type RefundSource = {
   reason: string | null;
 };
 
-export const useRefundSource = (type: 'SO' | 'SI', docNo: string, excludePvId: string | null = null) => useQuery({
-  queryKey: ['pv-refund-source', type, docNo.trim(), excludePvId],
+/** `excludeRequestId` — the refund request this voucher answers: its own amount
+    is not held against it (owner 2026-10-14). */
+export const useRefundSource = (type: 'SO' | 'SI', docNo: string, excludePvId: string | null = null, excludeRequestId: string | null = null) => useQuery({
+  queryKey: ['pv-refund-source', type, docNo.trim(), excludePvId, excludeRequestId],
   enabled: docNo.trim().length > 0,
   retry: false,
   queryFn: () => authedFetch<{ source: RefundSource }>(
-    `/payment-vouchers/refund-source?type=${type}&docNo=${encodeURIComponent(docNo.trim())}${excludePvId ? `&excludePvId=${encodeURIComponent(excludePvId)}` : ''}`,
+    `/payment-vouchers/refund-source?type=${type}&docNo=${encodeURIComponent(docNo.trim())}${excludePvId ? `&excludePvId=${encodeURIComponent(excludePvId)}` : ''}${excludeRequestId ? `&excludeRequestId=${encodeURIComponent(excludeRequestId)}` : ''}`,
   ),
 });
