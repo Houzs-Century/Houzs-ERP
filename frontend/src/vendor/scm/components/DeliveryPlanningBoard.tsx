@@ -909,7 +909,7 @@ export function DeliveryPlanningBoard({
       'total_amount', 'balance_sen', 'stock_remark',
       // The delivery dates and the amend conversation
       'processing_date', 'customer_delivery_date', 'amended_delivery_date',
-      'amend_date_from_customer', 'amend_reason', 'time_confirmed',
+      'amend_date_from_customer', 'amend_reason_from_customer', 'amend_reason', 'time_confirmed',
       // Customer / house detail, then the address block
       'house_type', 'replacement_disposal', 'disposal_request',
       'po_nos', 'address', 'postcode', 'region',
@@ -1143,8 +1143,18 @@ export function DeliveryPlanningBoard({
       sortFn: (a, b) => String(a.amend_date_from_customer ?? '').localeCompare(String(b.amend_date_from_customer ?? '')),
       filterType: 'date', dateValue: (o) => o.amend_date_from_customer,
     },
-    /* HC "Amend Client Date Reason" (migration 0201) — free-text reason paired
-       with the amend dates above. default-HIDES (off in the Columns menu). */
+    /* The customer's own reason for asking to move the date — what they tapped
+       in the WhatsApp amend flow. Read-only: /api/chat-callback writes it. */
+    {
+      key: 'amend_reason_from_customer', label: 'Customer Amend Reason', width: 170,
+      accessor: (o) => detail(o.amend_reason_from_customer || '—'),
+      searchValue: (o) => o.amend_reason_from_customer ?? '',
+      exportValue: (o) => o.amend_reason_from_customer ?? '',
+    },
+    /* HC "Amend Client Date Reason" (migration 0201) — OUR reason for moving
+       the date: a preset from AMEND_REASONS (or free text), chosen by staff
+       and printed by the Postpone notice after "due to". A customer's tap
+       never writes here (it has its own column above). */
     {
       key: 'amend_reason', label: 'Amend Reason', width: 220,
       accessor: (o) => <AmendReasonEditCell order={o} updateFields={updateFields} />,

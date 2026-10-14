@@ -5,14 +5,16 @@
 // /api/chat-callback records every tap in scm.wa_message_log. This module
 // decides which of the SO's REQUEST columns that tap also fills, so the
 // Delivery Planning board shows it in the columns it already has:
-//   amend_date_from_customer  → "Customer Request Date"
-//   amend_reason              → "Amend Reason"
-//   delivery_message_status   → "Delivery Message Status"
+//   amend_date_from_customer    → "Customer Request Date"
+//   amend_reason_from_customer  → "Customer Amend Reason"
+//   delivery_message_status     → "Delivery Message Status"
 // These are the request/evidence fields the HC Delivery sheet used to fill from
 // Seampify. They are NOT the schedule: customer_delivery_date and
 // amended_delivery_date (the dates trips are planned around) are never in a
-// patch from here — a human applies a requested date from the board. The test
-// beside this file pins that list.
+// patch from here — a human applies a requested date from the board. Nor is
+// amend_reason: that is OUR reason (the board's preset list, printed by the
+// Postpone notice after "due to"), chosen by staff; until 2026-10-14 the
+// customer's tap overwrote it. The test beside this file pins both lists.
 // ---------------------------------------------------------------------------
 
 import { normDate } from "../services/agents/schedule-reconcile";
@@ -20,17 +22,19 @@ import { normDate } from "../services/agents/schedule-reconcile";
 /** Columns a chat tap may write. Anything else is a bug, not a feature. */
 export const CHAT_WRITABLE_SO_COLUMNS = [
   "amend_date_from_customer",
-  "amend_reason",
+  "amend_reason_from_customer",
   "delivery_message_status",
 ] as const;
 
-/** Columns a chat tap must NEVER write — the schedule and the lifecycle. */
+/** Columns a chat tap must NEVER write — the schedule, the lifecycle, and the
+ *  staff-owned postpone reason. */
 export const CHAT_FORBIDDEN_SO_COLUMNS = [
   "customer_delivery_date",
   "amended_delivery_date",
   "delivery_state",
   "status",
   "processing_date",
+  "amend_reason",
 ] as const;
 
 /** Values of the board's Delivery Message Status vocabulary this writes
@@ -68,7 +72,7 @@ export function chatRequestPatch(
   if (event === "amend") {
     const iso = normDate(requestedDate);
     if (iso) patch.amend_date_from_customer = iso;
-    if (reason) patch.amend_reason = reason;
+    if (reason) patch.amend_reason_from_customer = reason;
   }
   return patch;
 }
@@ -108,7 +112,7 @@ export function chatRequestFieldChanges(
 ): Array<{ field: string; from: unknown; to: unknown }> {
   const names: Record<string, string> = {
     amend_date_from_customer: "amendDateFromCustomer",
-    amend_reason: "amendReason",
+    amend_reason_from_customer: "amendReasonFromCustomer",
     delivery_message_status: "deliveryMessageStatus",
   };
   const out: Array<{ field: string; from: unknown; to: unknown }> = [];
