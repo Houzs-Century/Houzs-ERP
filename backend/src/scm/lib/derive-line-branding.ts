@@ -87,9 +87,10 @@ export async function restampHeaderBranding(
     const h = head as { branding: string | null; linked_ac_docno: string | null; project_id: number | null; fair_match: string | null };
     if (h.linked_ac_docno) return;
     if (await soHasDownstream(sb, docNo)) return;
-    const { data: lines, error: lErr } = await sb.from('mfg_sales_order_items')
-      .select('item_code, item_group, branding, company_id')
-      .eq('doc_no', docNo).eq('cancelled', false)
+    const { data: lines, error: lErr } = await scopeToCompany(
+      sb.from('mfg_sales_order_items').select('item_code, item_group, branding, company_id'),
+      c,
+    ).eq('doc_no', docNo).eq('cancelled', false)
       .order('line_no', { ascending: true, nullsFirst: false })
       .order('created_at', { ascending: true });
     if (lErr) return;
@@ -103,10 +104,9 @@ export async function restampHeaderBranding(
     const repend = h.project_id == null && (h.fair_match === 'AMBIGUOUS' || h.fair_match === 'UNMATCHED');
     await scopeToCompany(
       sb.from('mfg_sales_orders')
-        .update(repend ? { branding: brand, fair_match: 'PENDING' } : { branding: brand })
-        .eq('doc_no', docNo),
+        .update(repend ? { branding: brand, fair_match: 'PENDING' } : { branding: brand }),
       c,
-    );
+    ).eq('doc_no', docNo);
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error('[restamp-header-branding] failed for', docNo, e);
