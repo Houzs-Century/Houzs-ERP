@@ -229,17 +229,6 @@ export function useLorryServiceRecords(lorryId: string | null) {
   });
 }
 
-export function useCreateLorryServiceRecord() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: NewLorryServiceRecord) =>
-      authedFetch<{ record: LorryServiceRecord }>(`/lorry-service-records`, {
-        method: 'POST', body: JSON.stringify(body),
-      }),
-    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['lorry-service-records', v.lorryId] }),
-  });
-}
-
 export function useUpdateLorryServiceRecord(lorryId: string) {
   const qc = useQueryClient();
   return useMutation({

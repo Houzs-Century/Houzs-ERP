@@ -2797,9 +2797,9 @@ app.get("/finance/categories", (c) => {
 // Per-project finance summary — feeds the Finances → List tab. One row
 // per project; SUMs income / cost / net out of project_finance_lines
 // and joins back to projects for display fields (code, name, brand,
-// stage, dates). Filters: date range constrains which lines are summed
-// (a project shows up as long as it has any matching activity within
-// the range, OR has its start/end inside the range); brand + search
+// stage, dates). Filters: the date range selects PROJECTS whose event
+// dates (start_date..end_date — the "Dates" column) overlap the window;
+// every line of a matching project is summed. Brand + stage + search
 // filter the project itself.
 app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
@@ -2821,25 +2821,24 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
 
   const db = getDb(c.env);
 
-  // Date filter applies INSIDE the SUM aggregations (each SUM only counts
-  // lines in the window) AND as a row filter: when a range is set, projects
-  // with no lines in it are dropped entirely (owner decision 2026-08-13 —
-  // a date filter should mean "don't show me anything outside it", not
-  // rows of zeros). With no range set, every project still surfaces, so
-  // upcoming events with no lines yet remain visible in the default view.
-  const dateConds: any[] = [];
+  // The From/To window is a PROJECT predicate on the event dates (the "Dates"
+  // column), not a per-line occurred_at filter: filtering lines surfaced a
+  // July 2027 event under September because its rent line was keyed then.
+  // Overlap: ends on/after From, starts on/before To; end_date falls back to
+  // start_date. substr() keeps it text-vs-text (see /analytics/profitability).
+  const projConds: any[] = [];
   if (dateFrom) {
-    dateConds.push(sql`COALESCE(l.occurred_at, l.created_at) >= ${dateFrom}`);
+    projConds.push(
+      sql`substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ${dateFrom.slice(0, 10)}`
+    );
   }
   if (dateTo) {
-    dateConds.push(sql`COALESCE(l.occurred_at, l.created_at) <= ${`${dateTo}T23:59:59`}`);
+    projConds.push(sql`substr(p.start_date, 1, 10) <= ${dateTo.slice(0, 10)}`);
   }
-  const dateClause = dateConds.length
-    ? sql`AND ${sql.join(dateConds, sql` AND `)}`
-    : sql``;
+  // Every non-archived line of a matching project is summed: no line clause.
+  const dateClause = sql``;
 
-  // Project-level WHERE.
-  const projConds: any[] = [];
+  // Project-level WHERE (continued).
   // Multi-company: rollups follow the active company (no predicate when the
   // context is unresolved).
   const rollupCompanyId = activeCompanyId(c);
@@ -2957,14 +2956,10 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
       FROM (${baseSelect}) sub
   `;
 
-  // Row filter for date ranges: a project only appears when it has at least
-  // one non-archived line inside the window. line_count (not the amounts)
-  // is the predicate, so a window containing only zero-amount lines still
-  // shows — there IS data in range, it just nets to zero.
-  const visible =
-    dateFrom || dateTo
-      ? sql`SELECT * FROM (${wrapped}) vis WHERE line_count > 0`
-      : wrapped;
+  // Row visibility is decided by the project-date predicate in whereClause
+  // (an event in the window shows even before any line is keyed, matching
+  // the Projects list), so no line_count gate here.
+  const visible = wrapped;
 
   const totalRow = await db.get<{ count: number }>(
     sql`SELECT COUNT(*) AS count FROM (${visible}) outerSub`

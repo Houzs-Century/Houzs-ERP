@@ -18,12 +18,12 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { Plus, X, Paperclip, Trash2 } from 'lucide-react';
+import { X, Paperclip, Trash2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { Button } from '@2990s/design-system';
 import {
   useUpdateLorry,
   useLorryServiceRecords,
-  useCreateLorryServiceRecord,
   useDeleteLorryServiceRecord,
   useUploadServiceInvoice,
   fetchServiceInvoiceUrl,
@@ -94,7 +94,7 @@ const fmtDateField = (l: unknown, col: string): string => {
 
 export const LorryDetail = ({ lorry, onClose }: { lorry: LorryRow; onClose: () => void }) => {
   const records = useLorryServiceRecords(lorry.id);
-  const [adding, setAdding] = useState(false);
+  const internal = (lorry.isInternal ?? lorry.is_internal) !== false;
 
   const next = useMemo(() => nextServiceView(records.data ?? []), [records.data]);
 
@@ -121,18 +121,19 @@ export const LorryDetail = ({ lorry, onClose }: { lorry: LorryRow; onClose: () =
           <section className={styles.section}>
             <div className={styles.headerRow}>
               <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Service &amp; repair history</h3>
-              <Button variant="primary" size="sm" onClick={() => setAdding(true)}>
-                <Plus {...ICON} />
-                <span>Add record</span>
-              </Button>
+              {/* HC-0031: ONE service history. New repairs are Fleet Health work
+                  orders (parts, workshop documents, breakdown link); this list
+                  only keeps any record made here before, read and deletable. */}
+              {internal && (
+                <Link to={`/fleet-health/${lorry.id}`} className={styles.eyebrow}>Record repairs in Fleet Health</Link>
+              )}
             </div>
 
             {records.isLoading ? (
               <p className={styles.eyebrow}>Loading…</p>
             ) : (records.data ?? []).length === 0 ? (
               <p className={styles.eyebrow}>
-                No service records yet. Add one after each workshop visit — date, what was done,
-                cost, odometer, and the invoice.
+                No older service records. Repairs and services are recorded as work orders in Fleet Health.
               </p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
@@ -149,7 +150,6 @@ export const LorryDetail = ({ lorry, onClose }: { lorry: LorryRow; onClose: () =
         </footer>
       </aside>
 
-      {adding && <AddServiceRecord lorryId={lorry.id} onClose={() => setAdding(false)} />}
     </>
   );
 };
@@ -538,76 +538,6 @@ const ServiceRow = ({ record, lorryId }: { record: LorryServiceRecord; lorryId: 
         </Button>
       </div>
     </div>
-  );
-};
-
-// ── add ──────────────────────────────────────────────────────────────────────
-
-const AddServiceRecord = ({ lorryId, onClose }: { lorryId: string; onClose: () => void }) => {
-  const create = useCreateLorryServiceRecord();
-  const notify = useNotify();
-  const [form, setForm] = useState({
-    serviceDate: '', description: '', workshop: '', cost: '',
-    odometerKm: '', nextServiceDate: '', nextServiceKm: '', notes: '',
-  });
-  const set = <K extends keyof typeof form>(k: K, v: string) => setForm((s) => ({ ...s, [k]: v }));
-
-  const submit = () => {
-    if (!form.serviceDate) { notify({ title: 'Service date required.', tone: 'error' }); return; }
-    if (!form.description.trim()) { notify({ title: 'Describe what was done.', tone: 'error' }); return; }
-    const cost = form.cost.trim();
-    if (cost && !Number.isFinite(Number(cost))) { notify({ title: 'Cost must be a number.', tone: 'error' }); return; }
-
-    create.mutate({
-      lorryId,
-      serviceDate: form.serviceDate,
-      description: form.description.trim(),
-      workshop: form.workshop.trim() || null,
-      costSen: cost ? Math.round(Number(cost) * 100) : 0,
-      odometerKm: form.odometerKm.trim() ? Math.round(Number(form.odometerKm)) : null,
-      nextServiceDate: form.nextServiceDate || null,
-      nextServiceKm: form.nextServiceKm.trim() ? Math.round(Number(form.nextServiceKm)) : null,
-      notes: form.notes.trim() || null,
-    }, {
-      onSuccess: () => { notify({ title: 'Service record added.' }); onClose(); },
-      onError: (e: unknown) => notify({ title: (e as Error)?.message ?? 'Could not save the record.', tone: 'error' }),
-    });
-  };
-
-  return (
-    <>
-      <div className={styles.backdrop} onClick={onClose} />
-      <aside className={styles.drawer}>
-        <header className={styles.drawerHeader}>
-          <h2 className={styles.drawerTitle}>Add service record</h2>
-          <button type="button" className={styles.iconBtn} onClick={onClose}><X {...ICON} /></button>
-        </header>
-        <div className={styles.drawerBody}>
-          <div className={styles.formGrid}>
-            <Field label="Service date *" type="date" value={form.serviceDate} onChange={(v) => set('serviceDate', v)} />
-            <Field label="What was done *" value={form.description} onChange={(v) => set('description', v)} placeholder="e.g. Engine oil + filter" />
-            <Field label="Workshop" value={form.workshop} onChange={(v) => set('workshop', v)} />
-            <Field label="Cost (RM)" value={form.cost} onChange={(v) => set('cost', v)} placeholder="e.g. 480" />
-            <Field label="Odometer (km)" value={form.odometerKm} onChange={(v) => set('odometerKm', v)} placeholder="e.g. 148200" />
-            <Field label="Next service date" type="date" value={form.nextServiceDate} onChange={(v) => set('nextServiceDate', v)} />
-            <Field label="Next service (km)" value={form.nextServiceKm} onChange={(v) => set('nextServiceKm', v)} placeholder="e.g. 158200" />
-            <Field label="Notes" value={form.notes} onChange={(v) => set('notes', v)} />
-          </div>
-          <p className={styles.eyebrow} style={{ marginTop: 'var(--space-3)' }}>
-            The odometer is only recorded here, so the reading is only as fresh as the last
-            service. Next service shows the date countdown and the workshop&rsquo;s km target
-            against the reading it was set from — current mileage is not tracked.
-          </p>
-          <p className={styles.eyebrow}>Attach the invoice from the history list once the record is saved.</p>
-        </div>
-        <footer className={styles.drawerFooter}>
-          <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" size="md" onClick={submit} disabled={create.isPending}>
-            {create.isPending ? 'Saving…' : 'Add record'}
-          </Button>
-        </footer>
-      </aside>
-    </>
   );
 };
 
