@@ -120,7 +120,7 @@ import { loadSoWarehouseMasters, resolveSoWarehouseId } from '../lib/so-warehous
 import { resolveCreateWarehouseDefaults } from '../lib/so-create-warehouse-default';
 import { planStateRebindForDoc, stateChangeConflictBody } from '../lib/so-state-warehouse-rebind';
 import { canonicalizeMyState } from '../lib/canonical-state';
-import { deriveLineBrandingFromProduct, deriveHeaderBrandingFromLines } from '../lib/derive-line-branding';
+import { deriveLineBrandingFromProduct, deriveHeaderBrandingFromLines, clientHeaderBranding, loadHeaderBrandList } from '../lib/derive-line-branding';
 import { resolveBrandLetterheadKey } from '../lib/brand-letterhead';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { correctedSizeDescription, loadSizeSkuMap } from '../lib/size-variant-description';
@@ -2556,8 +2556,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      inserted. Carried down to the fair stamp after that. An explicit
      body.branding is the caller's decision and wins, exactly as it does for the
      header stamp itself. */
-  let effectiveBrand: string | null =
-    String((body.branding as string | null | undefined) ?? '').trim() || null;
+  let effectiveBrand: string | null = clientHeaderBranding(body.branding);
 
   /* Houzs venue_id guard — only a real uuid reaches the uuid column; a
      project_venues integer id or a `showroom:…` synthetic id becomes NULL and
@@ -4065,7 +4064,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     doc_no: dn,
     transfer_to: (body.transferTo as string) ?? null,
     so_date: dateOrNull(body.soDate) ?? todayMyt(),
-    branding: (body.branding as string) ?? null,
+    branding: clientHeaderBranding(body.branding),
     debtor_code: (body.debtorCode ?? body.customerCode as string) ?? null,
     debtor_name: customerName,
     agent: agentToStamp,
@@ -4498,23 +4497,13 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        and no shipped client sends that field, so every ERP-created order landed
        with a blank header — which is exactly the hole the 2990 backfill had to
        fill for 100 orders, and would have re-opened on the next order created.
-       Only ever fills a BLANK header: an explicit body.branding is the caller's
-       decision and is not second-guessed. A null result leaves it blank rather
+       Fills the header unless the caller sent a real brand: a blank, placeholder
+       or category word ("BEDFRAME") is not one, so the lines decide. A null result leaves it blank rather
        than inventing one. */
-    if (String((body.branding as string | null | undefined) ?? '').trim() === '') {
+    if (clientHeaderBranding(body.branding) === null) {
       /* The company's maintained brands, so a sofa whose SKU carries no brand is
-         stamped with what the list shows (ZANOTTI) instead of NULL. An
-         unreadable pool is null and leaves the SKU-only answer. */
-      let listFallback: { companyCode: string | null; brands: string[] } | null = null;
-      try {
-        const brandRows = await c.env.DB.prepare(
-          `SELECT name FROM project_brands WHERE active = 1${activeCompanySql(c)}`
-        ).all<{ name: string }>();
-        listFallback = {
-          companyCode: c.get('companyCode') ?? null,
-          brands: (brandRows.results ?? []).map((b) => String(b.name ?? '').trim()).filter(Boolean),
-        };
-      } catch { listFallback = null; }
+         stamped with what the list shows (ZANOTTI) instead of NULL. */
+      const listFallback = await loadHeaderBrandList(c);
       const headerBrand = await deriveHeaderBrandingFromLines(
         sb,
         rowsWithDoc as unknown as Array<{ item_code?: string | null; item_group?: string | null; branding?: string | null; company_id?: number | null }>,
@@ -5821,6 +5810,9 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  /* A category word or placeholder is not a brand (BUG-115): ignore it, the
+     lines keep deciding. An explicit null still clears. */
+  if (body.branding != null && clientHeaderBranding(body.branding) === null) delete body.branding;
 
   /* Audit 2026-06-20 — self-scoped sales may only edit their OWN SO. Without
      this a sales/sales_executive reaching the Backend SO detail could PATCH any

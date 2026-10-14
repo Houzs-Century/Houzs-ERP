@@ -34,6 +34,7 @@ import { activeCompanyId, scopeToCompanyId } from './companyScope';
 // module-eval time. Same pattern the route already uses with delivery-orders-mfg.
 import { recomputeTotals } from '../routes/mfg-sales-orders';
 import { recordSoAudit, type FieldChange } from './so-audit';
+import { restampHeaderBranding } from './derive-line-branding';
 import { loadSoWarehouseMasters, resolveSoWarehouseId } from './so-warehouse';
 import { readSoLineFreeze } from './downstream-lock';
 import { soLineFrozen } from '../shared/so-line-freeze';
@@ -270,4 +271,6 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
   // roll-up) — even if the reconcile pass above threw. This REPLACES the final
   // recomputeTotals each edit endpoint used to call directly.
   await recomputeTotals(sb, docNo, c);
+  // Every line add / edit / delete ends here, so the header brand follows the lines (BUG-115).
+  await restampHeaderBranding(sb, docNo, c);
 }
