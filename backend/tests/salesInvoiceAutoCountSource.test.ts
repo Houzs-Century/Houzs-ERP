@@ -312,3 +312,39 @@ describe('an invoice raised straight off a Sales Order cannot bill it twice (DEV
     expect((await create(app, { soDocNo: 'HC-SO-1', deliveryOrderId: 'do-a', items: [line('M1', 'doi-a')] })).status).toBe(201);
   });
 });
+
+describe('an invoice straight off a Sales Order is for charge-only orders (no DO = no stock out)', () => {
+  /* A Sales Invoice writes no inventory movement; only a DO ships stock out.
+     So SO -> SI with no DO is allowed only when every live SO line is a
+     SERVICE line (Finance ruling 14 Oct: an extra charge goes on its own SO). */
+  const soLine = (code: string, group: string | null, cancelled = false): Row => ({
+    doc_no: 'HC-SO-2', company_id: CO_A, item_code: code, item_group: group, cancelled,
+  });
+  const soTables = (lines: Row[]) => ({
+    ...baseTables(),
+    mfg_sales_orders: [{ doc_no: 'HC-SO-2', company_id: CO_A }],
+    mfg_sales_order_items: lines,
+  });
+
+  test('an SO with a goods line is refused, naming the goods', async () => {
+    const t = soTables([soLine('SVC-DELIVERY', 'service'), soLine('M1', 'bedframe')]);
+    const res = await create(harness(t).app, { soDocNo: 'HC-SO-2', items: [line('ADHOC', null)] });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe('so_has_stock_lines');
+    expect(body.message).toContain('M1');
+    expect(body.message).not.toContain('SVC-DELIVERY');
+  });
+
+  test('an SO whose only goods line is cancelled, rest service, is allowed', async () => {
+    const t = soTables([soLine('SVC-ADDON', null), soLine('M1', 'bedframe', true)]);
+    const res = await create(harness(t).app, { soDocNo: 'HC-SO-2', items: [line('ADHOC', null)] });
+    expect(res.status).toBe(201);
+  });
+
+  test('a DO-sourced invoice of goods is unaffected', async () => {
+    const t = soTables([soLine('M1', 'bedframe')]);
+    const res = await create(harness(t).app, { soDocNo: 'HC-SO-2', deliveryOrderId: 'do-a', items: [line('M1', 'doi-a')] });
+    expect(res.status).toBe(201);
+  });
+});

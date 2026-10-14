@@ -66,6 +66,7 @@ import { SO_AUDIT_LABELS } from "./so-audit-labels";
 import { useSoHistoryWithRelated } from "./so-history-related";
 import { fmtDateTime } from "../../vendor/shared/format";
 import { brandingLabel } from "../../vendor/shared/so-branding-label";
+import { isServiceLine } from "../../vendor/shared/service-sku";
 import { getBrandingCompanyCode } from "../../lib/branding";
 import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
@@ -1246,8 +1247,10 @@ function SalesOrderDetailV2ReadOnly() {
                 Collect payment
               </Button>
             )}
-            {/* DEV-76: a charge-only order (no DO) is invoiced straight off the SO. */}
-            {!migratedLocked && salesOrder.status.toLowerCase() === "confirmed" && salesOrder.has_children === false && (
+            {/* DEV-76: a charge-only order (no DO) is invoiced straight off the SO.
+                An SI moves no stock, so goods must go through a DO; the API refuses them too. */}
+            {!migratedLocked && salesOrder.status.toLowerCase() === "confirmed" && salesOrder.has_children === false
+              && items.every((l) => isServiceLine({ itemCode: l.item_code, itemGroup: l.item_group })) && (
               <Button
                 variant="secondary"
                 icon={<FileText size={14} />}

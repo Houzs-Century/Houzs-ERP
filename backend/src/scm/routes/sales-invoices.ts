@@ -732,6 +732,24 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
           message: `${srcSoDocNo} already has invoice ${liveSi.invoice_number}. Cancel it first, or raise the extra charge on a new Sales Order.`,
         }, 409);
       }
+      /* A Sales Invoice moves no stock; only a DO ships it out. So SO -> SI with
+         no DO is for charge-only orders: every live SO line must be a SERVICE
+         line, or the goods are billed and never leave the books. */
+      const { data: soLines, error: slErr } = await scopeToCompany(
+        sb.from('mfg_sales_order_items').select('item_code, item_group')
+          .eq('doc_no', srcSoDocNo).eq('cancelled', false), c,
+      );
+      if (slErr) return c.json({ error: 'load_failed', reason: slErr.message }, 500);
+      const goods = ((soLines ?? []) as Array<{ item_code: string | null; item_group: string | null }>)
+        .filter((l) => !isServiceLine({ itemCode: l.item_code, itemGroup: l.item_group }))
+        .map((l) => l.item_code ?? '(no code)');
+      if (goods.length > 0) {
+        const named = goods.slice(0, 5).join(', ') + (goods.length > 5 ? ` and ${goods.length - 5} more` : '');
+        return c.json({
+          error: 'so_has_stock_lines',
+          message: `These lines are goods: ${named}. Make a Delivery Order first; the invoice comes from the DO.`,
+        }, 409);
+      }
     }
   }
 

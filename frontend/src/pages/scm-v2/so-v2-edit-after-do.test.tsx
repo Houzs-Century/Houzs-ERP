@@ -68,8 +68,8 @@ function LocationProbe() {
   return <div data-testid="loc">{`${loc.pathname}${loc.search}`}</div>;
 }
 
-const mount = (so: Record<string, unknown> = delivered) => {
-  detail.mockReturnValue({ data: { salesOrder: so, items: [] }, isLoading: false, isPending: false, isError: false, error: null });
+const mount = (so: Record<string, unknown> = delivered, items: unknown[] = []) => {
+  detail.mockReturnValue({ data: { salesOrder: so, items }, isLoading: false, isPending: false, isError: false, error: null });
   return render(
     <MemoryRouter initialEntries={[`/scm/sales-orders/${DOC}`]}>
       <LocationProbe />
@@ -140,5 +140,26 @@ describe("a delivered order, with only Edit SO line price after DO", () => {
     cleanup();
     mount({ ...delivered, after_do_targets: [{ ...DO_OPEN, locked: true, returned: true }] });
     expect(editButtons().every((b) => b.disabled)).toBe(true);
+  });
+});
+
+/* SO -> SI with no DO moves no stock, so "Create Invoice" is only for an order
+   whose every live line is a SERVICE line (the API refuses the rest). */
+describe("Create Invoice on a confirmed order with no DO", () => {
+  const confirmed = { ...delivered, status: "CONFIRMED", has_children: false, after_do_targets: [] };
+  const soLine = (id: string, item_code: string, item_group: string, cancelled = false) => ({
+    id, item_code, item_group, cancelled, description: item_code, description2: null, uom: "UNIT",
+    qty: 1, unit_price_sen: 1000, discount_sen: 0, total_sen: 1000, variants: null,
+  });
+  const createInvoice = () => screen.queryByRole("button", { name: /create invoice/i });
+
+  it("is shown when every live line is a service line", () => {
+    mount(confirmed, [soLine("l1", "SVC-ADDON", "service"), soLine("l2", "M1", "bedframe", true)]);
+    expect(createInvoice()).not.toBeNull();
+  });
+
+  it("is hidden when any live line is goods", () => {
+    mount(confirmed, [soLine("l1", "SVC-DELIVERY", "service"), soLine("l2", "M1", "bedframe")]);
+    expect(createInvoice()).toBeNull();
   });
 });
