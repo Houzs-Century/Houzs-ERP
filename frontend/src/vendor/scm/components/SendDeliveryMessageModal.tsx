@@ -27,6 +27,7 @@ import {
   useUpdateDeliveryFields,
   type PlanningOrder,
   type SendMessageKind,
+  AMEND_REASONS,
 } from '../lib/delivery-planning-queries';
 import { useDrivers } from '../lib/drivers-queries';
 import { useLorries } from '../lib/lorries-queries';
@@ -105,8 +106,13 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
   const [driverId, setDriverId] = useState('');
   const [lorryId, setLorryId] = useState('');
   const [deliveryTime, setDeliveryTime] = useState('');
-  const [postponeReason, setPostponeReason] = useState('');
+  // The Postpone notice's reason is the board's own Amend Reason: the preset
+  // list, pre-filled from the row (staff often pick it on the board first),
+  // and written back to amend_reason on every order the notice went to.
+  const [postponeReason, setPostponeReason] = useState(() => rows.find((r) => r.amend_reason)?.amend_reason ?? '');
   const [postponeDate, setPostponeDate] = useState('');
+  const postponeIsPreset = !postponeReason || (AMEND_REASONS as readonly string[]).includes(postponeReason);
+  const [postponeOther, setPostponeOther] = useState(!postponeIsPreset);
 
   const driver = (drivers.data ?? []).find((d) => d.id === driverId) ?? null;
   const lorry = (lorries.data ?? []).find((l) => l.id === lorryId) ?? null;
@@ -153,7 +159,14 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
         if (after) {
           for (const s of res.sent) {
             for (const id of s.docNos) {
-              updateFields.mutate({ type: 'so', id, deliveryMessageStatus: after });
+              updateFields.mutate({
+                type: 'so',
+                id,
+                deliveryMessageStatus: after,
+                // The reason the customer was just told is the order's Amend
+                // Reason from now on.
+                ...(kind === 'postpone' && postpone ? { amendReason: postpone.reason } : {}),
+              });
             }
           }
         }
@@ -219,8 +232,27 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
             <div style={{ display: 'grid', gap: 'var(--space-3)', marginBottom: 'var(--space-3)', padding: 'var(--space-3)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)' }}>
               <label style={fieldStyle}>
                 <span>Reason (printed after "due to")</span>
-                <input value={postponeReason} onChange={(e) => setPostponeReason(e.target.value)} placeholder="e.g. lorry breakdown" maxLength={120} style={inputStyle} />
+                <select
+                  value={postponeOther ? '__other' : postponeReason}
+                  onChange={(e) => {
+                    if (e.target.value === '__other') { setPostponeOther(true); setPostponeReason(''); }
+                    else { setPostponeOther(false); setPostponeReason(e.target.value); }
+                  }}
+                  style={inputStyle}
+                >
+                  <option value="">—</option>
+                  {AMEND_REASONS.map((r) => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                  <option value="__other">Other…</option>
+                </select>
               </label>
+              {postponeOther && (
+                <label style={fieldStyle}>
+                  <span>Other reason</span>
+                  <input value={postponeReason} onChange={(e) => setPostponeReason(e.target.value)} placeholder="e.g. lorry breakdown" maxLength={120} style={inputStyle} />
+                </label>
+              )}
               <label style={fieldStyle}>
                 <span>Proposed new date</span>
                 <DateField fullWidth value={postponeDate} onChange={(iso) => setPostponeDate(iso)} style={inputStyle} />

@@ -43,7 +43,7 @@ const FIELDS: Record<string, string> = {
   /* Coverage-audit additions (2026-07) — keys emitted by the DO amend mirror,
      Delivery Planning /fields + /schedule and payment/automation entries. */
   amendDateFromCustomer: 'Amend date (customer)', amendedDeliveryDate: 'Amended delivery date',
-  amendReason: 'Amend reason', deliveryState: 'Delivery region',
+  amendReason: 'Amend reason', amendReasonFromCustomer: 'Amend reason (customer)', deliveryState: 'Delivery region',
   possessionDate: 'Possession date', houseType: 'House type',
   replacementDisposal: 'Replacement / disposal', referral: 'Referral',
   amountSen: 'Amount', paidAt: 'Paid on', method: 'Method',
