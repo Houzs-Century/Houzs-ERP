@@ -16,6 +16,9 @@ vi.mock("../../api/client", () => ({ api: { post } }));
 const { useAuth } = vi.hoisted(() => ({ useAuth: vi.fn() }));
 vi.mock("../../auth/AuthContext", () => ({ useAuth }));
 
+const { toastError } = vi.hoisted(() => ({ toastError: vi.fn() }));
+vi.mock("../../hooks/useToast", () => ({ useToast: () => ({ error: toastError, success: vi.fn(), info: vi.fn() }) }));
+
 import { DefectCleaning, isEastMalaysiaState, showsDefectCleaning } from "./DefectCleaning";
 import type { ChecklistItem } from "./types";
 
@@ -26,7 +29,7 @@ const bd = { id: 7, role_name: "BD Exec", position_name: "Operation Executive", 
 const sales = { id: 2, role_name: "Sales Person", position_name: "Sales Executive", email: "s@x.my", permissions: [] };
 
 afterEach(cleanup);
-beforeEach(() => { post.mockReset(); post.mockResolvedValue({}); useAuth.mockReset(); });
+beforeEach(() => { post.mockReset(); post.mockResolvedValue({}); useAuth.mockReset(); toastError.mockReset(); });
 
 describe("isEastMalaysiaState / showsDefectCleaning", () => {
   test("only Sabah and Sarawak are east-Malaysia", () => {
@@ -79,5 +82,17 @@ describe("DefectCleaning component", () => {
     useAuth.mockReturnValue({ user: sales });
     const { container } = render(<DefectCleaning item={item()} projectId={1} projectState="Sabah" onChanged={() => {}} />);
     expect(container.textContent).toBe("");
+  });
+
+  test("a refused save reaches the operator (toast) and does not reload", async () => {
+    const user = userEvent.setup();
+    const onChanged = vi.fn();
+    post.mockRejectedValue(new Error("You don't have permission."));
+    useAuth.mockReturnValue({ user: bd });
+    render(<DefectCleaning item={item()} projectId={1} projectState="Sabah" onChanged={onChanged} />);
+    await user.click(screen.getByRole("button", { name: /Cleaning done/i }));
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
+    expect(String(toastError.mock.calls[0][0])).toContain("You don't have permission");
+    expect(onChanged).not.toHaveBeenCalled();
   });
 });

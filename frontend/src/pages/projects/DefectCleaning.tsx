@@ -12,6 +12,7 @@ import { useState } from "react";
 import { Sparkles, Check } from "lucide-react";
 import { api } from "../../api/client";
 import { useAuth } from "../../auth/AuthContext";
+import { useToast } from "../../hooks/useToast";
 import { canCreateEvent } from "../../auth/salesAccess";
 import type { ChecklistItem } from "./types";
 
@@ -42,6 +43,7 @@ export function DefectCleaning({
   className?: string;
 }) {
   const { user } = useAuth();
+  const toast = useToast();
   const [busy, setBusy] = useState(false);
   if (!showsDefectCleaning(item, projectState)) return null;
 
@@ -69,6 +71,10 @@ export function DefectCleaning({
         status: done ? "none" : "done",
       });
       onChanged();
+    } catch (e) {
+      // A refused save must reach the operator — the button is gated on a
+      // client-side role read the server re-checks, so a refusal is reachable.
+      toast?.error(e instanceof Error ? e.message : "Couldn't update the cleaning status. Please try again.");
     } finally {
       setBusy(false);
     }
