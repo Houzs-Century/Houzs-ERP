@@ -165,7 +165,7 @@ const linesOfPr = (r: PrRow): readonly PrGridLine[] => {
   return out;
 };
 
-function SplitDropdown({ onImport, onDuplicate }: { onImport: () => void; onDuplicate: () => void }) {
+function SplitDropdown({ onDuplicate }: { onDuplicate: () => void }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="relative">
@@ -182,9 +182,6 @@ function SplitDropdown({ onImport, onDuplicate }: { onImport: () => void; onDupl
         <>
           <div className="fixed inset-0 z-[80]" onClick={() => setOpen(false)} aria-hidden />
           <div role="menu" className="absolute right-0 top-full z-[81] mt-1.5 min-w-[220px] rounded-md border border-border bg-surface py-1 shadow-slab">
-            <button type="button" className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft" onClick={() => { setOpen(false); onImport(); }}>
-              Import from file
-            </button>
             <button type="button" className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft" onClick={() => { setOpen(false); onDuplicate(); }}>
               Duplicate last return
             </button>
@@ -596,7 +593,6 @@ export function PurchaseReturnsListV2() {
   };
 
   const goNewPr = () => navigate("/scm/purchase-returns/new");
-  const goImport = () => navigate("/scm/purchase-returns?import=1");
   const goDuplicate = () => navigate("/scm/purchase-returns?duplicate=1");
   const goGrns = () => navigate("/scm/grns");
   const goSuppliers = () => navigate("/scm/suppliers");
@@ -831,7 +827,7 @@ export function PurchaseReturnsListV2() {
                 <Button variant="primary" icon={<Plus size={14} />} onClick={goNewPr} className="rounded-r-none">
                   New Purchase Return
                 </Button>
-                <SplitDropdown onImport={goImport} onDuplicate={goDuplicate} />
+                <SplitDropdown onDuplicate={goDuplicate} />
               </div>
             }
             secondaryActions={[
