@@ -58,6 +58,7 @@ import { timingSafeEqualStr } from "../services/auth";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { CHAT_EVENTS, DOC_REF_RE, parseCallbackRefs, type ChatEvent } from "../lib/chat-request-patch";
+import { blastPhone } from "../scm/routes/delivery-messages";
 import { ChatTapLogFailed, recordChatTap, type ChatTapResult } from "../lib/chat-callback-record";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -103,13 +104,6 @@ async function chatCompany(
   } catch {
     return { master: false, id: null };
   }
-}
-
-/** Digits-only then '+'-prefixed, matching delivery-messages.normalizePhone so
- *  a callback's phone is comparable to the one the send logged. */
-function normalizePhone(raw: unknown): string | null {
-  const digits = String(raw ?? "").replace(/\D/g, "");
-  return digits.length >= 8 ? `+${digits}` : null;
 }
 
 /** Trim to a bounded, LIKE-safe token. The callback id is interpolated into an
@@ -173,7 +167,7 @@ app.post("/", async (c) => {
   if (!ref) return c.json({ error: "ref (SO doc_no) is required" }, 400);
 
   const callbackId = safeId(body.callback_id);
-  const phone = normalizePhone(body.phone);
+  const phone = blastPhone(body.phone);
   // Dates ride through as the customer's REQUEST, never as a schedule. Kept as
   // the raw string the flow sent: this row is evidence of what was asked for,
   // and reformatting it here would quietly lose "2026-09-30" vs "2026/09/30"

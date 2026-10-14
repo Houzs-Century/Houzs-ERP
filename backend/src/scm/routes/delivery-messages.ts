@@ -26,6 +26,7 @@ import type { Env, Variables } from '../env';
 import { activeCompanyId, scopeToAllowedCompanies } from '../lib/companyScope';
 import { supabaseAuth } from '../middleware/auth';
 import { effectiveSoDelivery, type SoDeliveryDateRow } from '../shared';
+import { normalizePhone } from '../shared/phone';
 import {
   KIND_AUTOMATION,
   MESSAGE_KINDS,
@@ -50,13 +51,11 @@ export const deliveryMessages = new Hono<{ Bindings: Env; Variables: Variables }
 // without it has no c.get('supabase') and 500s on the first query).
 deliveryMessages.use('*', supabaseAuth);
 
-/** Digits-only, then '+'-prefixed — the sheet-era fix: the first BulkSend
- *  failed until the phone carried the '+'. Returns null for an empty/blank
- *  phone so the caller can skip (and report) the row instead of sending into
- *  the void. */
-function normalizePhone(raw: unknown): string | null {
-  const digits = String(raw ?? '').replace(/\D/g, '');
-  return digits.length >= 8 ? `+${digits}` : null;
+/** The shared E.164 normaliser, so a stored "+6060..." (pre-#4582 header) or
+ *  "0176..." is sent as "+60176...", not to a number that does not exist
+ *  (HC-0096). Null for a blank phone so the caller can skip (and report) it. */
+export function blastPhone(raw: unknown): string | null {
+  return normalizePhone(raw == null ? null : String(raw));
 }
 
 /** ISO YYYY-MM-DD → the template payload's YYYY/MM/DD. */
@@ -127,7 +126,7 @@ deliveryMessages.post('/send', async (c) => {
   for (const docNo of docNos) {
     const r = byDoc.get(docNo);
     if (!r) { skipped.push({ docNo, reason: 'not_found' }); continue; }
-    const phone = normalizePhone(r.phone);
+    const phone = blastPhone(r.phone);
     if (!phone) { skipped.push({ docNo, reason: 'no_phone' }); continue; }
     const arr = byPhone.get(phone) ?? [];
     arr.push(r);
