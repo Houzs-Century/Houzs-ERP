@@ -127,6 +127,10 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/scan-gr/*", "scm.procurement.grn"],
   ["/scan-pi/*", "scm.procurement.pi"],
   ["/scan-payment/*", "scm.sales.orders"],
+  ["/scan-files/so/*", "scm.sales.orders"],
+  ["/scan-files/payment/*", "scm.sales.orders"],
+  ["/scan-files/pv/*", "scm.finance.accounting"],
+  ["/scan-files/workshop/*", "scm.transportation.drivers"],
   ["/slips/*", "scm.sales.orders"],
 ] as const;
 

@@ -31,6 +31,7 @@ export const PV_FILES: DocFilesSpec = {
   fkColumn: 'pv_id',
   keyPrefix: 'pv-files',
   writePerms: ['scm.payment_voucher.write'],
+  scanKind: 'pv',
   load: async (c: any) => {
     const sb = c.get('supabase');
     const { data, error } = await scopeToCompany(

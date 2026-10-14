@@ -1,3 +1,4 @@
+import { ViewOriginalScan } from "../vendor/scm/components/ViewOriginalScan";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { formatDate } from "../lib/utils";
 import { NonSellingWarehouseNoteMobile, SourcePosRowMobile, soStockPillMobile } from "./source-chips";
@@ -783,6 +784,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
         </div>
         <div className="eyebrow" style={{ marginTop: 7, display: "flex", alignItems: "center", gap: 6, minWidth: 0, flexWrap: "wrap" }}>
           <span className="money" style={{ flex: "none" }}>{h?.doc_no ?? docNo}</span>
+          {h?.doc_no && <ViewOriginalScan kind="so" documentId={h.doc_no} />}
           {(h?.customer_so_no || h?.ref || h?.po_doc_no) && (<><span style={{ opacity: .5, flex: "none" }}>·</span><span className="money" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{h?.customer_so_no || h?.ref || h?.po_doc_no}</span></>)}
         </div>
         <div className="scr-title">{h?.debtor_name || "—"}</div>
