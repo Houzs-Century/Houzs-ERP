@@ -17,6 +17,7 @@ import { useAuth } from "../auth/AuthContext";
 import { api, buildQuery } from "../api/client";
 import { invalidate } from "../api/cache";
 import { relativeTime } from "../lib/utils";
+import { downloadAllPagesCSV } from "../lib/csv";
 import {
   type Branding,
   DEFAULT_BRANDING,
@@ -934,6 +935,7 @@ function BrandingTab() {
 // ── Activity Log ──────────────────────────────────────────────
 
 function ActivityLog() {
+  const toast = useToast();
   const [type, setType] = useState("");
   const [logStatus, setLogStatus] = useState("");
   const [page, setPage] = useState(1);
@@ -1039,6 +1041,11 @@ function ActivityLog() {
         udfTable="logs"
         udfTableLabel="Activity Log"
         exportName="activity-log"
+        onExport={(cols) =>
+          void downloadAllPagesCSV("activity-log", cols, (pg, per) =>
+            api.get<Paginated<ExecutionLog>>(`/api/logs${buildQuery({ type, status: logStatus, page: pg, per_page: per })}`),
+          ).catch((e) => toast.error(`Export failed: ${e?.message || e}`))
+        }
         columns={columns}
         rows={list.data?.data ?? null}
         loading={list.loading}

@@ -9,7 +9,7 @@
 // on a phone with bad signal and must not lose one. A workshop invoice is one
 // document, uploaded at a desk, and the operator is looking at the screen
 // waiting for it. So this mirrors scan-payment.ts: ONE synchronous /extract, no
-// job row, no queue, no learning. It EXTRACTS AND RETURNS — it writes nothing.
+// job row, no queue, no learning. It EXTRACTS AND RETURNS — it writes nothing but the kept original (scm.scan_files, HC-0006).
 // Creating the work order stays the caller's explicit second step, because an
 // OCR pass that silently books a RM22,208.50 repair is not something anyone
 // asked for.
@@ -35,6 +35,8 @@ import type { Env } from '../../types';
 import type { Variables } from '../env';
 import { supabaseAuth } from '../middleware/auth';
 import { scanTimer } from '../lib/scan-timing';
+import { keepScanFile } from '../lib/scan-files';
+import { activeCompanyId } from '../lib/companyScope';
 
 export const scanLorryInvoice = new Hono<{ Bindings: Env; Variables: Variables }>();
 scanLorryInvoice.use('*', supabaseAuth);
@@ -285,6 +287,11 @@ scanLorryInvoice.post('/extract', async (c) => {
   }
 
   const buf = await file.arrayBuffer();
+  // HC-0006: keep the original + its scan_files row BEFORE the read.
+  await keepScanFile(c.env, c.get('supabase'), {
+    kind: 'workshop', companyId: activeCompanyId(c), buf, mime: mime || (isPdf ? 'application/pdf' : 'image/jpeg'),
+    uploadedBy: (c.get('user') as { id?: string } | undefined)?.id ?? null, key: null,
+  });
   timer.mark('upload');
   const data = toBase64(buf);
   const fileBlock = isPdf

@@ -62,6 +62,7 @@ import { getBranding } from '../../services/branding';
 import { slipBindings, expiresInOneHour } from '../lib/slip';
 import { buildSlipKey, type SlipMime } from '../lib/r2';
 import { scanTimer } from '../lib/scan-timing';
+import { keepScanFile } from '../lib/scan-files';
 
 // scm-scoped, loosely-typed client (matches scm/env.ts Variables.supabase).
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
@@ -460,6 +461,12 @@ scanPayment.post('/extract', async (c) => {
   }
 
   const buf = await file.arrayBuffer();
+  // HC-0006: keep the original + its scan_files row BEFORE the read, so a
+  // failed read still leaves both.
+  await keepScanFile(c.env, c.get('supabase'), {
+    kind: 'payment', companyId: activeCompanyId(c), buf, mime: mime || (isPdf ? 'application/pdf' : 'image/jpeg'),
+    uploadedBy: (c.get('user') as { id?: string } | undefined)?.id ?? null, key: null,
+  });
   timer.mark('upload');
   const data = toBase64(buf);
   // Canonical slip mime for R2 storage (RECEIPT-AS-SLIP) — same coercion as
