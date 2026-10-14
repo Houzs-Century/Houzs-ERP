@@ -48,6 +48,11 @@ export const AUDIT_KEEP = new Set([
      cascading into a table nobody has thought about. */
   "scm.mfg_so_audit_log",
   "scm.entity_audit_log",
+  /* Append-only logs the order's own triggers write to: the line-delete audit
+     (0302) and the Venture Portal feed queue. Deleting the order queues the
+     DELETE the portal needs to drop it, so the queue must survive the delete. */
+  "scm.mfg_so_item_deletions",
+  "scm.venture_portal_outbox",
 ]);
 
 /* A hit in one of these is a real downstream DOCUMENT and refuses the run. The
