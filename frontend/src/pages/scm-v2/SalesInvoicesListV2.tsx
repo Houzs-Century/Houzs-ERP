@@ -240,10 +240,8 @@ const outstandingOf = (r: SiRow): number =>
    conversion this ERP has, in either direction. */
 function SplitDropdown({
   onFromDo,
-  onImport,
 }: {
   onFromDo: () => void;
-  onImport: () => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -277,16 +275,6 @@ function SplitDropdown({
               }}
             >
               New from Delivery Order
-            </button>
-            <button
-              type="button"
-              className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
-              onClick={() => {
-                setOpen(false);
-                onImport();
-              }}
-            >
-              Import from file
             </button>
           </div>
         </>
@@ -1000,7 +988,6 @@ export function SalesInvoicesListV2() {
 
   const goNewSi = () => navigate("/scm/sales-invoices/new");
   const goFromDo = () => navigate("/scm/sales-invoices/from-do");
-  const goImport = () => navigate("/scm/sales-invoices?import=1");
   const goDoList = () => navigate("/scm/delivery-orders");
   const goOutstanding = () => navigate("/scm/outstanding");
   const goEdit = (r: SiRow) => navigate(`/scm/sales-invoices/${r.id}?edit=1`);
@@ -1755,7 +1742,6 @@ export function SalesInvoicesListV2() {
                       </Button>
                       <SplitDropdown
                         onFromDo={goFromDo}
-                        onImport={goImport}
                       />
                     </div>
                   </>
