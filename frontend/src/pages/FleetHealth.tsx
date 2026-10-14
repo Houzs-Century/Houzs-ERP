@@ -8,6 +8,7 @@ import { StatCard } from "../components/StatCard";
 import { ResizableDetailDrawer } from "../components/ResizableDetailDrawer";
 import { ListSkeleton } from "../components/Skeleton";
 import { RepairDocumentImport } from "../components/RepairDocumentImport";
+import { WorkOrderFiles } from "./FleetHealthWorkOrderFiles";
 import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
@@ -194,6 +195,10 @@ export type WorkOrderView = {
   componentId: string | null;
   notes: string | null;
   parts: PartView[];
+  /** R2 keys of the workshop's documents (HC-0031). */
+  quoteRefs?: string[];
+  invoiceRefs?: string[];
+  photoRefs?: string[];
 };
 
 export type BreakdownView = {
@@ -1754,6 +1759,7 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
           <span className="text-[12px] font-semibold text-ink">Total {money(wo.totalSen)}</span>
         </div>
       )}
+      <WorkOrderFiles wo={wo} onChanged={onChanged} />
       {editing && <WorkOrderEdit wo={wo} onSaved={() => { setEditing(false); onChanged(); }} onCancel={() => setEditing(false)} />}
     </RecordCard>
   );
