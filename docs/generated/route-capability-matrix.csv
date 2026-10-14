@@ -236,6 +236,9 @@ POST,/api/fleet-maintenance/work-orders/:woId/transition,AUTHENTICATED_MIDDLEWAR
 GET,/api/fleet-maintenance/workshops,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.read"")",,NO,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 POST,/api/fleet-maintenance/workshops,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 PATCH,/api/fleet-maintenance/workshops/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
+DELETE,/api/fleet-work-order-files/:woId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-work-order-files.ts
+PUT,/api/fleet-work-order-files/:woId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-work-order-files.ts
+GET,/api/fleet-work-order-files/:woId/file,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.read"")",,NO,DECLARED_GATE,backend/src/scm/routes/fleet-work-order-files.ts
 GET,/api/fleet/staff,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesView(""users.read"")",,NO,DECLARED_GATE,backend/src/routes/fleet.ts
 GET,/api/inbox,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/inbox.ts
 GET,/api/it-support/attachments/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/itSupport.ts

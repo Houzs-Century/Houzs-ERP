@@ -36,6 +36,7 @@ const loadRefs = (sb: Variables["supabase"], woId: string) =>
 // order in the same instant can drop one ref. The screen uploads one at a time.
 // Move to a child table (like lorry_compliance_attachments) if that bites.
 fleetWorkOrderFiles.put("/:woId", requireHouzsPerm("fleet.write"), async (c) => {
+  // company-scope: unified fleet - one fleet shared by HOUZS and 2990 (see fleet-maintenance.ts inHouseLorries).
   const woId = c.req.param("woId");
   const sb = c.get("supabase");
   const kind = c.req.query("kind");
@@ -63,6 +64,7 @@ fleetWorkOrderFiles.put("/:woId", requireHouzsPerm("fleet.write"), async (c) => 
 
 // DELETE /:woId?key=... - drops the ref AND the R2 object.
 fleetWorkOrderFiles.delete("/:woId", requireHouzsPerm("fleet.write"), async (c) => {
+  // company-scope: unified fleet - one fleet shared by HOUZS and 2990 (see fleet-maintenance.ts inHouseLorries).
   const woId = c.req.param("woId");
   const key = c.req.query("key") || "";
   const sb = c.get("supabase");
