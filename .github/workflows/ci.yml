@@ -958,6 +958,30 @@ jobs:
   # `coverage-ratchet` job declares `needs: [..., frontend-checks]` and downloads
   # the `coverage-frontend` artifact it uploads. Splitting the other half out
   # leaves both of those untouched.
+  # Houzs POS (pos/): the booth app. Small and self-contained, so it runs on
+  # every PR rather than through the changes filter; it also imports the
+  # vendored shared modules, which a frontend-only change can move.
+  pos:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pos
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pos/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: The service worker carries this build's precache list
+        run: |
+          grep -q '"/assets/' dist/sw.js
+          ! grep -q '__SW_' dist/sw.js
+
   frontend-typecheck:
     needs: changes
     if: needs.changes.outputs.frontend == 'true'

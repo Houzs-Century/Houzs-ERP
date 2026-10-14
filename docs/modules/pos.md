@@ -34,6 +34,27 @@ page, and the POS Admin menu. This guide carries only what is built.
   `services/auth.hashPassword`, role `PARTTIME|SUPERVISOR`), `pos_terminals`,
   `pos_event_links` (+ `pos_event_cashiers`, `pos_event_items`,
   `pos_event_prices`), `pos_settings` (one JSON document per group).
+- The POS app itself: `pos/` (its own Vite + React app, Cloudflare Pages
+  project `houzs-pos`, `pos.houzscentury.com`, deploy
+  `.github/workflows/deploy-pos.yml`, CI job `pos`). Installable PWA:
+  `public/sw.js` precaches the built shell (the file list and a build id are
+  stamped at build), `/api` is never cached and is proxied to the Worker by
+  `functions/api/[[path]].ts`. All data in IndexedDB (`src/db.ts`,
+  persistent storage requested at Prepare). Screens: Device setup (P15,
+  `screens/Setup.tsx`), Login (P1, `screens/Login.tsx`, tiles + PIN pad,
+  PIN verified offline with `src/pin.ts`), the sell frame (P2, idle logout).
+  Shared modules are imported from `frontend/src/vendor/shared` through the
+  `@shared` alias, never copied a third time.
+- Device API, pre-auth, device token in `X-POS-Device`
+  (`routes/pos-device.ts`): `GET /api/pos-device/ping`, `GET /prepare` (the
+  bundle), `POST /heartbeat`. The token is minted by
+  `POST /api/pos-admin/device/register` (an ERP account with `pos.manage`,
+  signed in on the device during Device setup) and stored as its SHA-256
+  in `pos_terminals.token_hash`; re-preparing rotates it. The bundle
+  (`routes/lib/pos-bundle-load.ts`, pure part `pos-bundle.ts`) carries the
+  terminal, event, company block (branding), items in scope with event
+  prices and every barcode, cashiers assigned with their PIN hashes, and
+  the settings.
 - Shared, vendored byte-identical to `frontend/src/vendor/shared/`:
   `scm/shared/pos-vocabulary.ts` (payment methods, receipt status word,
   empty totals), `pos-settings.ts` (the three settings groups, defaults,
@@ -73,6 +94,14 @@ page, and the POS Admin menu. This guide carries only what is built.
   `product_id`; the bundle re-reads the live code at prepare time.
 - Money stays in sen on the wire; the page formats. The Disc column is a word
   (`-10%`, `-RM15`, `FOC`, `--`) computed once in `discLabel`.
+
+- A cashier PIN is verified on the device against the bundle's hash with
+  the same PBKDF2 parameters as `services/auth.ts` (100,000 iterations,
+  SHA-256, 256 bits, "salt$hash" base64); five wrong PINs lock the pad
+  for 30 s. The device never sends a PIN to the server.
+- The ERP sign-in used by Device setup is dropped after Prepare (logout);
+  only the device token stays on the device. A device whose terminal is
+  deactivated, or re-prepared elsewhere, answers 401 on every device call.
 
 ## Gotchas
 

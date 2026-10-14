@@ -1,0 +1,28 @@
+{
+  "name": "houzs-pos",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Houzs POS - the cash & carry booth app (pos.houzscentury.com), an installable offline-first PWA on the Houzs ERP backend.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "deploy": "npm run build && wrangler pages deploy --commit-dirty=true"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "typescript": "^5.7.2",
+    "vite": "^8.1.5",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.112.0"
+  }
+}

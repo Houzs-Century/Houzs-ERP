@@ -45,6 +45,7 @@ import { projectSalesOrders } from "./routes/project-sales-orders";
 import { projectSalesBills } from "./routes/project-sales-bills";
 import { projectPosSales } from "./routes/project-pos-sales";
 import { posAdmin } from "./routes/pos-admin";
+import { posDevice } from "./routes/pos-device";
 import projectsOutstanding from "./routes/projectsOutstanding";
 // Sales entries (/api/sales) is retained as a DEPENDENCY of Projects — the
 // Projects page embeds the sales-entry EntryPanel + submit/void/delete flow.
@@ -334,6 +335,9 @@ app.route("/api/sync/warehouse-mirror", warehouseMirror);
 // every OTHER route in the router re-applies `auth` on itself (set-pin,
 // verify-pin, sales-stats and the three admin-*-pin doors).
 app.route("/api/pos", pos);
+// Houzs POS booth terminals (NOT the 2990 tablet POS above): PRE-AUTH, every
+// route carries its own device-token guard (routes/pos-device.ts).
+app.route("/api/pos-device", posDevice);
 
 // Google Form intake webhook — PRE-AUTH like mail-inbound: called by
 // Google Apps Script (no staff session), self-guarded by the

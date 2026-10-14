@@ -45,6 +45,10 @@ import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { hashPassword } from "../services/auth";
 import { internalEan13 } from "../scm/shared/ean13";
 import { POS_SETTINGS_GROUPS, normalizePosSettings, normalizePosSettingsGroup, type PosSettingsGroup } from "../scm/shared/pos-settings";
+import { skuByCodes, skuFactsByIds, skuSearch } from "./lib/pos-sku";
+import { deviceTokenHash, mintDeviceToken } from "./lib/pos-bundle";
+import { loadPosBundle } from "./lib/pos-bundle-load";
+import { companyBlock } from "./pos-device";
 import {
   isCashierRole,
   isPosCashierPin,
@@ -85,50 +89,7 @@ async function audit(db: Db, companyId: number, c: Ctx, entity: string, entityId
   });
 }
 
-/* ── SKU master facts (scm schema) — raw SQL helpers, nothing else in them ── */
-
-type SkuFact = { product_id: string; code: string; name: string; category: string | null; barcode: string | null; sell_price_sen: number | null; cost_price_sen: number | null; stock_qty: number };
-
-async function skuFactsByIds(db: Db, companyId: number, productIds: string[]): Promise<Map<string, SkuFact>> {
-  const out = new Map<string, SkuFact>();
-  if (productIds.length === 0) return out;
-  const rows = await db.execute<SkuFact>(sql`
-    SELECT p.id AS product_id, p.code, p.name, p.category::text AS category, p.barcode,
-           COALESCE(p.sell_price_sen, p.price1_sen, p.base_price_sen) AS sell_price_sen,
-           p.cost_price_sen,
-           COALESCE((SELECT SUM(b.qty) FROM scm.inventory_balances b WHERE b.item_code = p.code AND b.company_id = p.company_id), 0)::float8 AS stock_qty
-      FROM scm.mfg_products p
-     WHERE p.company_id = ${companyId} AND p.id IN ${productIds}`);
-  for (const r of rows) out.set(r.product_id, { ...r, stock_qty: Number(r.stock_qty) });
-  return out;
-}
-
-async function skuSearch(db: Db, companyId: number, q: string, limit: number): Promise<SkuFact[]> {
-  const like = `%${q.replace(/[%_]/g, "")}%`;
-  const rows = await db.execute<SkuFact>(sql`
-    SELECT p.id AS product_id, p.code, p.name, p.category::text AS category, p.barcode,
-           COALESCE(p.sell_price_sen, p.price1_sen, p.base_price_sen) AS sell_price_sen,
-           p.cost_price_sen,
-           COALESCE((SELECT SUM(b.qty) FROM scm.inventory_balances b WHERE b.item_code = p.code AND b.company_id = p.company_id), 0)::float8 AS stock_qty
-      FROM scm.mfg_products p
-     WHERE p.company_id = ${companyId} AND p.status = 'ACTIVE'
-       AND (p.code ILIKE ${like} OR p.name ILIKE ${like} OR p.barcode = ${q})
-     ORDER BY p.code
-     LIMIT ${limit}`);
-  return rows.map((r) => ({ ...r, stock_qty: Number(r.stock_qty) }));
-}
-
-async function skuByCodes(db: Db, companyId: number, codes: string[]): Promise<Map<string, SkuFact>> {
-  const out = new Map<string, SkuFact>();
-  if (codes.length === 0) return out;
-  const rows = await db.execute<SkuFact>(sql`
-    SELECT p.id AS product_id, p.code, p.name, p.category::text AS category, p.barcode,
-           COALESCE(p.sell_price_sen, p.price1_sen, p.base_price_sen) AS sell_price_sen, p.cost_price_sen, 0::float8 AS stock_qty
-      FROM scm.mfg_products p
-     WHERE p.company_id = ${companyId} AND upper(p.code) IN ${codes.map((x) => x.toUpperCase())}`);
-  for (const r of rows) out.set(r.code.toUpperCase(), r);
-  return out;
-}
+/* ── SKU master facts (scm schema) live in ./lib/pos-sku.ts ──────────────── */
 
 type LabelRow = { product_id: string; code: string; name: string; category: string | null; factory_barcode: string | null; sell_price_sen: number | null; total: number };
 
@@ -726,6 +687,37 @@ posAdmin.patch("/terminals/:id", async (c) => {
   const res = await db.update(pos_terminals).set(patch).where(and(eq(pos_terminals.id, id), eq(pos_terminals.company_id, co.companyId))).returning({ id: pos_terminals.id });
   if (res.length === 0) return c.json({ error: "Not found" }, 404);
   return c.json({ ok: true });
+});
+
+/* ── device registration (layout P15 "Prepare device") ─────────────────── */
+
+/** An admin signed in on the device picks a terminal + event: the terminal is
+ *  bound to the event, a fresh device token is minted (its hash stored; the
+ *  token itself shown to the device once) and the bundle comes back with it.
+ *  Re-preparing a terminal rotates its token, so a lost device stops talking. */
+posAdmin.post("/device/register", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  type RegisterBody = { terminal_id?: number; project_id?: number; device_name?: string | null; platform?: string | null };
+  const body = await c.req.json<RegisterBody>().catch(() => ({} as RegisterBody));
+  const terminalId = num(body.terminal_id);
+  const projectId = num(body.project_id);
+  if (!terminalId || !projectId) return c.json({ error: "terminal_and_event_required" }, 400);
+  const db = getDb(c.env);
+  const link = await db.select({ id: pos_event_links.id }).from(pos_event_links).where(and(eq(pos_event_links.company_id, co.companyId), eq(pos_event_links.project_id, projectId)));
+  if (link.length === 0) return c.json({ error: "event_not_linked", reason: "Link the project to POS in POS Admin > Events first." }, 409);
+  const token = mintDeviceToken();
+  const now = nowIso();
+  const res = await db
+    .update(pos_terminals)
+    .set({ project_id: projectId, token_hash: await deviceTokenHash(token), prepared_at: now, last_seen_at: now, status: "PREPARED", device_name: str(body.device_name) ?? undefined, platform: str(body.platform) ?? undefined, updated_at: now })
+    .where(and(eq(pos_terminals.id, terminalId), eq(pos_terminals.company_id, co.companyId), eq(pos_terminals.active, true)))
+    .returning({ id: pos_terminals.id, code: pos_terminals.code });
+  if (res.length === 0) return c.json({ error: "Not found" }, 404);
+  const bundle = await loadPosBundle(db, co.companyId, terminalId, await companyBlock(c.env, co.companyId));
+  if (!bundle) return c.json({ error: "bundle_failed" }, 500);
+  await audit(db, co.companyId, c, "pos_terminal", terminalId, "prepared", null, `${res[0].code} -> project ${projectId}`);
+  return c.json({ token, bundle });
 });
 
 export { posAdmin };
