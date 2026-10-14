@@ -22,3 +22,10 @@ export async function soRemainingByItemId(
   for (const id of ids) out.set(id, remainingMap.get(id)?.remaining ?? 0);
   return out;
 }
+
+/** SQLSTATE raised by scm.assert_so_line_not_over_delivered (mig
+ *  20261014T1300): the write would push an SO line's live delivered total up
+ *  past its qty. Callers answer it with their existing 409, not a 500. */
+export const SO_LINE_OVER_DELIVERED = 'P0409';
+export const isSoLineOverDelivered = (err: { code?: string | null } | null | undefined): boolean =>
+  err?.code === SO_LINE_OVER_DELIVERED;
