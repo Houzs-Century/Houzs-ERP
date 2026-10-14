@@ -128,6 +128,7 @@ import { deliveryResidenceRules } from "./routes/delivery-residence-rules";
 import { threeplCompanies } from "./routes/threepl-companies";
 import { deliveryZones } from "./routes/delivery-zones";
 import { deliveryRateCards } from "./routes/delivery-rate-cards";
+import { threeplDoCharges } from "./routes/threepl-do-charges";
 import { driverLeave } from "./routes/driver-leave";
 import { trips } from "./routes/trips";
 import { tripScanToken } from "./routes/trip-scan-token";
@@ -861,6 +862,10 @@ scm.route("/delivery-zones", deliveryZones);
 // and it does NOT touch the FIFO money-path.
 scm.use("/delivery-rate-cards/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/delivery-rate-cards", deliveryRateCards);
+// HC-0031 - the 3PL invoice keyed in after delivery, tallied per DO against the
+// rate cards above. Same Transportation area gate.
+scm.use("/threepl-do-charges/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/threepl-do-charges", threeplDoCharges);
 // Fleet A3 (mig 0206) — driver-leave admin. The date-ranged absences the A2
 // auto-assigner reads to skip on-leave drivers. Same Transportation area gate as
 // the rest of the TMS fleet masters: read = view, record/delete = edit.
