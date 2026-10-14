@@ -22,8 +22,8 @@ describe('parseSalesReport', () => {
     const r = parseSalesReport(REPORT);
     expect(r.date).toEqual({ day: 11, month: 10 });
     expect(r.bills).toEqual([
-      { line: 3, ref_raw: 'HC8993', ref_token: 'HC8993', amount_sen: 650000, salesperson_name: 'Jason' },
-      { line: 4, ref_raw: 'HC10785', ref_token: 'HC10785', amount_sen: 499900, salesperson_name: 'Melvin' },
+      { line: 3, ref_raw: 'HC8993', ref_token: 'HC8993', amount_sen: 650000, extra_sen: null, extra_tag: null, salesperson_name: 'Jason' },
+      { line: 4, ref_raw: 'HC10785', ref_token: 'HC10785', amount_sen: 499900, extra_sen: null, extra_tag: null, salesperson_name: 'Melvin' },
     ]);
     expect(r.total_sen).toBe(1149900);
     expect(r.skipped).toEqual([]);
@@ -94,6 +94,58 @@ describe('normalizeRefToken / extractRefTokens', () => {
     expect(extractRefTokens('HC 13281')).toEqual(['HC13281']);
     expect(extractRefTokens('')).toEqual([]);
     expect(extractRefTokens(null)).toEqual([]);
+  });
+});
+
+describe('the report as WhatsApp actually pastes it (2026-10-14, Sutera Mall)', () => {
+  /* The list copied from the group carried U+2060 word joiners after the
+     numbering on three lines and a non-breaking space on one; three of seven
+     bills were dropped on the first live paste. */
+  const WA = [
+    'JB @ SUTERA MALL 9-11/10',
+    '',
+    '10/10',
+    '1. HC13162 RM1999 Ethan',
+    '2. HC13163 RM4172 + 710(T) Ethan',
+    '3. \u2060HC13164 RM5300 CH',
+    '4. HC13130 RM4273 + 727(T) Ethan',
+    '5. HC13031 RM8622 + 1446 (T) Sheldon',
+    '6. \u2060HC13106\u00a0RM8199 Louis',
+    '7. \u2060HC13165 RM5300 CH',
+    '',
+    'TOTAL: RM37,865+2883(T)',
+  ].join('\n');
+
+  test('invisible joiners and non-breaking spaces do not hide a bill', () => {
+    const r = parseSalesReport(WA);
+    expect(r.bills.map((b) => b.ref_token)).toEqual(['HC13162', 'HC13163', 'HC13164', 'HC13130', 'HC13031', 'HC13106', 'HC13165']);
+    expect(r.date).toEqual({ day: 10, month: 10 });
+    expect(r.skipped.map((s) => s.text)).toEqual(['JB @ SUTERA MALL 9-11/10']);
+  });
+
+  test('a "+ 710(T)" tail is kept apart from the bill and out of the name', () => {
+    const r = parseSalesReport(WA);
+    const t = r.bills.find((b) => b.ref_token === 'HC13163')!;
+    expect(t.amount_sen).toBe(417200);
+    expect(t.extra_sen).toBe(71000);
+    expect(t.extra_tag).toBe('T');
+    expect(t.salesperson_name).toBe('Ethan');
+    const s = r.bills.find((b) => b.ref_token === 'HC13031')!;
+    expect([s.amount_sen, s.extra_sen, s.extra_tag, s.salesperson_name]).toEqual([862200, 144600, 'T', 'Sheldon']);
+    const plain = r.bills.find((b) => b.ref_token === 'HC13106')!;
+    expect([plain.extra_sen, plain.extra_tag, plain.salesperson_name]).toEqual([null, null, 'Louis']);
+  });
+
+  test('the TOTAL line with its own "+" part is read, matches the bills, and the extras are reported', () => {
+    const r = parseSalesReport(WA);
+    expect(r.total_sen).toBe(3786500);
+    expect(r.bills.reduce((s, b) => s + b.amount_sen, 0)).toBe(3786500);
+    expect(r.warnings).toEqual(['3 bills carry a "+" amount (RM 2,883.00 in total) that is not counted in the bill amount.']);
+  });
+
+  test('a "+" amount without a tag is still an extra, and the name stays whole', () => {
+    const r = parseSalesReport('1. HC1001 RM100 + 50 Ethan Lee');
+    expect([r.bills[0]!.amount_sen, r.bills[0]!.extra_sen, r.bills[0]!.extra_tag, r.bills[0]!.salesperson_name]).toEqual([10000, 5000, null, 'Ethan Lee']);
   });
 });
 

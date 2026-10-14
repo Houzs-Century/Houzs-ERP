@@ -19,9 +19,9 @@ const PREVIEW: SalesReportPreview = {
   skipped: [{ line: 5, text: "foc pillow" }],
   warnings: [],
   bills: [
-    { line: 2, ref_raw: "HC8993", ref_token: "HC8993", amount_sen: 650000, salesperson_name: "Jason", existing: false, sales_rep_id: 11,
+    { line: 2, ref_raw: "HC8993", ref_token: "HC8993", amount_sen: 650000, extra_sen: 71000, extra_tag: "T", salesperson_name: "Jason", existing: false, sales_rep_id: 11,
       match: { status: "opened", so_doc_no: "HC-SO-2609-104", so_status: "CONFIRMED", so_project_id: 344, so_salesperson_id: "s", so_amount_sen: 650000, other_event: false, unlinked: false } },
-    { line: 3, ref_raw: "HC10785", ref_token: "HC10785", amount_sen: 499900, salesperson_name: "Melvin", existing: true, sales_rep_id: 12,
+    { line: 3, ref_raw: "HC10785", ref_token: "HC10785", amount_sen: 499900, extra_sen: null, extra_tag: null, salesperson_name: "Melvin", existing: true, sales_rep_id: 12,
       match: { status: "not_opened", so_doc_no: null, so_status: null, so_project_id: null, so_salesperson_id: null, so_amount_sen: null, other_event: false, unlinked: false } },
   ],
 };
@@ -48,6 +48,7 @@ describe("SalesReportSaveDialog", () => {
     expect(screen.getByText("Opened")).toBeTruthy();
     expect(screen.getByText("Not opened")).toBeTruthy();
     expect(screen.getByText("already saved")).toBeTruthy();
+    expect(screen.getByText("+ RM 710.00 (T)")).toBeTruthy();
     expect(screen.getByText("foc pillow")).toBeTruthy();
 
     fireEvent.click(screen.getByText("Save 2 bills"));

@@ -74,6 +74,9 @@ export type SalesReportPreviewBill = {
   ref_raw: string;
   ref_token: string;
   amount_sen: number;
+  /** A "+ 710(T)" tail the report keeps apart from the bill; shown, not counted. */
+  extra_sen: number | null;
+  extra_tag: string | null;
   salesperson_name: string | null;
   existing: boolean;
   match: BillMatch;

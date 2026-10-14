@@ -113,7 +113,14 @@ export function SalesReportSaveDialog({
                   return (
                     <tr key={b.line} className="border-t border-border-subtle">
                       <td className="py-1 pr-2 font-mono">{b.ref_raw}</td>
-                      <td className="py-1 pr-2 text-right font-mono">{fmtRmSen(b.amount_sen)}</td>
+                      <td className="py-1 pr-2 text-right font-mono">
+                        {fmtRmSen(b.amount_sen)}
+                        {b.extra_sen != null && (
+                          <span className="ml-1 text-[10px] text-ink-muted" title="Kept apart from the bill, as the report itself does; not counted in the amount">
+                            + {fmtRmSen(b.extra_sen)}{b.extra_tag ? ` (${b.extra_tag})` : ""}
+                          </span>
+                        )}
+                      </td>
                       <td className="py-1 pr-2">{b.salesperson_name || "—"}</td>
                       <td className="py-1">
                         <span className={cn("inline-flex rounded-full px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider", TONE[st.tone])}>

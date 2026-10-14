@@ -184,7 +184,16 @@ export function resolveAttendee(name: string | null | undefined, attendees: read
   const prefix = attendees.filter((a) => namesOf(a).some((n) => n.startsWith(`${key} `)));
   if (prefix.length > 0) return only(prefix);
   const word = attendees.filter((a) => namesOf(a).some((n) => ` ${n} `.includes(` ${key} `)));
-  return only(word);
+  if (word.length > 0) return only(word);
+  /* Initials — the floor writes "CH" for Chea Huan (owner 2026-10-14). Two or
+     three letters that are the first letters of a rep's name words, in order. */
+  if (/^[a-z]{2,3}$/.test(key)) {
+    const initials = attendees.filter((a) =>
+      namesOf(a).some((n) => n.split(" ").map((w) => w.charAt(0)).join("") === key),
+    );
+    return only(initials);
+  }
+  return null;
 }
 
 /* ── the numbers ───────────────────────────────────────────────────────────── */

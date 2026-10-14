@@ -91,6 +91,12 @@ describe("resolveAttendee", () => {
     expect(resolveAttendee("Wong", ATTENDEES)?.sales_rep_id).toBe(13);
     /* "Ting" is a word of two attendees' names — not a guess. */
     expect(resolveAttendee("Ting", ATTENDEES)).toBeNull();
+    /* Initials, as the floor writes them: CH is Chea Huan, ST is Shi Ting. */
+    const withChea = [...ATTENDEES, { sales_rep_id: 15, rep_name: "Chea Huan", user_name: null, rep_user_id: 105 }];
+    expect(resolveAttendee("CH", withChea)?.sales_rep_id).toBe(15);
+    expect(resolveAttendee("ST", withChea)?.sales_rep_id).toBe(14);
+    /* MT fits Mei Ting and Melvin Tan both — not a guess. */
+    expect(resolveAttendee("MT", withChea)).toBeNull();
     expect(resolveAttendee("Adrian", ATTENDEES)).toBeNull();
     expect(resolveAttendee(null, ATTENDEES)).toBeNull();
     expect(resolveAttendee("  ", ATTENDEES)).toBeNull();

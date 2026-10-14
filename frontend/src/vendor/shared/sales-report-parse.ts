@@ -43,6 +43,12 @@ export type ParsedBill = {
   ref_raw: string;
   ref_token: string;
   amount_sen: number;
+  /** A "+ 710(T)" tail after the amount: an extra the report keeps apart from
+   *  the bill — its own TOTAL line adds them up separately — so it is not
+   *  counted in amount_sen, only shown. The tag is whatever sat in the
+   *  parentheses, upper-cased. */
+  extra_sen: number | null;
+  extra_tag: string | null;
   salesperson_name: string | null;
 };
 
@@ -81,8 +87,8 @@ export function extractRefTokens(text: string | null | undefined): string[] {
    for class candidates and turned the dash/colon class into an invalid CSS
    rule that failed the production build. */
 const BILL_RE =
-  /^\s*(?:\d{1,3}\s*[.)]\s*)?([A-Za-z]{1,5}\s*-?\s*\d{3,6})\b\s*(?:-|:|–)?\s*(?:RM|rm|Rm)?\s*([\d][\d,]*(?:\.\d{1,2})?)\s*(?:-|:|–)?\s*(.*?)\s*$/;
-const TOTAL_RE = /^\s*total\b\s*(?:-|:|–|=)?\s*(?:RM|rm|Rm)?\s*([\d][\d,]*(?:\.\d{1,2})?)\s*$/i;
+  /^\s*(?:\d{1,3}\s*[.)]\s*)?([A-Za-z]{1,5}\s*-?\s*\d{3,6})\b\s*(?:-|:|–)?\s*(?:RM|rm|Rm)?\s*([\d][\d,]*(?:\.\d{1,2})?)(?:\s*\+\s*(?:RM|rm|Rm)?\s*([\d][\d,]*(?:\.\d{1,2})?)(?:\s*\(\s*([A-Za-z]{1,3})\s*\))?)?\s*(?:-|:|–)?\s*(.*?)\s*$/;
+const TOTAL_RE = /^\s*total\b\s*(?:-|:|–|=)?\s*(?:RM|rm|Rm)?\s*([\d][\d,]*(?:\.\d{1,2})?)(?:\s*\+\s*(?:RM|rm|Rm)?\s*[\d][\d,]*(?:\.\d{1,2})?(?:\s*\(\s*[A-Za-z]{1,3}\s*\))?)?\s*$/i;
 const DATE_RE = /^\s*(\d{1,2})\s*\/\s*(\d{1,2})\b/;
 
 /** sen → "1,234.00" for the one sentence this module writes; the shared
@@ -106,7 +112,12 @@ export function parseSalesReport(text: string | null | undefined): ParsedSalesRe
 
   for (let i = 0; i < lines.length; i++) {
     const line = i + 1;
-    const t = lines[i]!.trim();
+    /* WhatsApp and iOS copy a numbered list with invisible joiners (U+2060,
+       zero-width spaces, a BOM) and non-breaking spaces. The eye cannot see
+       them and neither could this reader: three of seven bills were dropped
+       on the first live paste (2026-10-14). Strip the former and fold the
+       latter to a space before anything is matched. */
+    const t = lines[i]!.replace(/[\u200B-\u200D\u2060\uFEFF]/g, "").replace(/\u00A0/g, " ").trim();
     if (!t) continue;
 
     const total = t.match(TOTAL_RE);
@@ -119,12 +130,15 @@ export function parseSalesReport(text: string | null | undefined): ParsedSalesRe
     if (bill) {
       const amount = amountToSen(bill[2]!);
       if (amount != null && amount > 0) {
-        const name = bill[3]!.replace(/^(?:-|:|–)\s*/, "").trim();
+        const name = bill[5]!.replace(/^(?:-|:|–)\s*/, "").trim();
+        const extra = bill[3] ? amountToSen(bill[3]) : null;
         bills.push({
           line,
           ref_raw: bill[1]!.replace(/\s+/g, " ").trim(),
           ref_token: normalizeRefToken(bill[1]!),
           amount_sen: amount,
+          extra_sen: extra != null && extra > 0 ? extra : null,
+          extra_tag: bill[4] ? bill[4].toUpperCase() : null,
           salesperson_name: name || null,
         });
         continue;
@@ -142,6 +156,14 @@ export function parseSalesReport(text: string | null | undefined): ParsedSalesRe
     }
 
     skipped.push({ line, text: t });
+  }
+
+  const extras = bills.filter((b) => b.extra_sen != null);
+  if (extras.length > 0) {
+    const extraSum = extras.reduce((s, b) => s + (b.extra_sen ?? 0), 0);
+    warnings.push(
+      `${extras.length} bill${extras.length === 1 ? "" : "s"} carry a "+" amount (RM ${ringgit(extraSum)} in total) that is not counted in the bill amount.`,
+    );
   }
 
   const sum = bills.reduce((s, b) => s + b.amount_sen, 0);
