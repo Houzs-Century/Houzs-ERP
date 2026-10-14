@@ -5,6 +5,7 @@
 // by terminal, void / return counts, FOC units, top items. Pure; sen.
 // ----------------------------------------------------------------------------
 import { posReceiptStatusLabel } from "../../scm/shared/pos-vocabulary";
+import { fmtSen } from "../../scm/shared/format";
 
 export type ReportSale = {
   uuid: string; type: string; status: string; receipt_no: string; terminal_code: string; sold_at: string;
@@ -91,10 +92,10 @@ export function summaryHtml(eventName: string, t: ReportTotals): string {
     `<table cellpadding="4" style="border-collapse:collapse;font-size:13px"><tr>${head.map((h) => `<th align="left" style="border-bottom:1px solid #ccc">${esc(h)}</th>`).join("")}</tr>${body.map((r) => `<tr>${r.map((c) => `<td>${esc(String(c))}</td>`).join("")}</tr>`).join("")}</table>`;
   return `<div style="font-family:Arial,sans-serif;color:#222">
 <h2 style="margin:0 0 8px">POS summary · ${esc(eventName)}</h2>
-<p><b>${t.bills}</b> bills · net sales <b>RM ${rm(t.net_sen)}</b> · discount RM ${rm(t.discount_sen)} · SST RM ${rm(t.sst_sen)} · void ${t.void_count} (RM ${rm(t.void_sen)}) · return ${t.return_count} (RM ${rm(t.return_sen)}) · FOC units ${t.foc_units}</p>
-<h3>By payment method</h3>${table(["Method", "RM"], t.by_method.map((m) => [m.method, rm(m.amount_sen)]))}
-<h3>By salesman</h3>${table(["Salesman", "Bills", "Net RM"], t.by_salesman.map((s) => [s.salesman, s.bills, rm(s.net_sen)]))}
-<h3>Per terminal</h3>${table(["Terminal", "Bills", "Net RM"], t.by_terminal.map((x) => [x.terminal, x.bills, rm(x.net_sen)]))}
-<h3>Top 10 items</h3>${table(["Code", "Description", "Qty", "Net RM"], t.top_items.map((i) => [i.item_code, i.description, i.qty, rm(i.net_sen)]))}
+<p><b>${t.bills}</b> bills · net sales <b>${fmtSen(t.net_sen)}</b> · discount ${fmtSen(t.discount_sen)} · SST ${fmtSen(t.sst_sen)} · void ${t.void_count} (${fmtSen(t.void_sen)}) · return ${t.return_count} (${fmtSen(t.return_sen)}) · FOC units ${t.foc_units}</p>
+<h3>By payment method</h3>${table(["Method", "Amount"], t.by_method.map((m) => [m.method, fmtSen(m.amount_sen)]))}
+<h3>By salesman</h3>${table(["Salesman", "Bills", "Net"], t.by_salesman.map((s) => [s.salesman, s.bills, fmtSen(s.net_sen)]))}
+<h3>Per terminal</h3>${table(["Terminal", "Bills", "Net"], t.by_terminal.map((x) => [x.terminal, x.bills, fmtSen(x.net_sen)]))}
+<h3>Top 10 items</h3>${table(["Code", "Description", "Qty", "Net"], t.top_items.map((i) => [i.item_code, i.description, i.qty, fmtSen(i.net_sen)]))}
 <p style="color:#777;font-size:12px">The attached CSV opens in Excel with every table above and the by-day split.</p></div>`;
 }

@@ -3657,26 +3657,13 @@ function ProjectDetailContent({
           <DefectActionsCtx.Provider value={defectActionsValue}>
           <DetailGrid>
             <DetailMain>
-              {/* A Cash & Carry fair sells through the Houzs POS app and has no
-                  Sales Order module: its Sales section is the POS Sales list
-                  (layout E9) in place of entries + orders. */}
               {eventTypes.find((t) => t.id === p.event_type_id)?.slug === "cash_carry" ? (
-                <ProjectPosSalesSection
-                  projectId={id}
-                  currentTotalSales={detail.data?.finance?.total_sales ?? null}
-                  onTotalSaved={() => detail.reload()}
-                  toast={toast}
-                />
+                <ProjectPosSalesSection projectId={id} currentTotalSales={detail.data?.finance?.total_sales ?? null} onTotalSaved={() => detail.reload()} toast={toast} />
               ) : (
-              <ProjectSalesEntriesSection
-                projectId={id}
-                project={p}
-                canManage={can("sales.manage")}
-                currentTotalSales={detail.data?.finance?.total_sales ?? null}
-                bills={billsQ}
-                onTotalSaved={() => detail.reload()}
-                toast={toast}
-              />
+                <ProjectSalesEntriesSection
+                  projectId={id} project={p} canManage={can("sales.manage")} currentTotalSales={detail.data?.finance?.total_sales ?? null}
+                  bills={billsQ} onTotalSaved={() => detail.reload()} toast={toast}
+                />
               )}
 
               <TasklistSections

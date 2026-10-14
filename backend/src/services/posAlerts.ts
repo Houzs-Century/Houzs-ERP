@@ -17,6 +17,7 @@ import type { Env } from "../types";
 import { getDb } from "../db/client";
 import { pos_alerts, pos_event_links, pos_settings, pos_terminals } from "../db/schema";
 import { normalizePosSettingsGroup } from "../scm/shared/pos-settings";
+import { fmtSen } from "../scm/shared/format";
 import { publicUrl, sendEmail } from "./email";
 import { postPersonalNotice } from "./personalNotice";
 import { parsePermissions } from "./permissions";
@@ -59,7 +60,7 @@ async function posAdminUserIds(env: Env): Promise<number[]> {
   return rows.results.filter((r) => { const p = parsePermissions(r.permissions); return p.includes("*") || p.includes("pos.manage"); }).map((r) => Number(r.id));
 }
 
-const rm = (sen: number) => `RM ${(sen / 100).toFixed(2)}`;
+const rm = (sen: number) => fmtSen(sen);
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 function alertHtml(env: Env, type: AlertType, t: TerminalFacts, detail: Record<string, unknown>, repeat: boolean): string {
