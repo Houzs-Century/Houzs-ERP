@@ -316,3 +316,26 @@ export function useUploadServiceInvoice(lorryId: string) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['lorry-service-records', lorryId] }),
   });
 }
+
+/* DEV-42: latest Velocity tracker fix per lorry (last 24 h), as GET /lorries/positions/latest emits it. */
+export type LorryPosition = {
+  lorry_id: string;
+  plate: string;
+  lat: number;
+  lng: number;
+  speed_kmh: number | null;
+  heading: number | null;
+  ignition: boolean | null;
+  street: string | null;
+  recorded_at: string;
+  received_at: string;
+};
+
+/* The server stores a fix every 5 min; polling each minute shows it within one cycle. */
+export function useLorryPositions() {
+  return useQuery({
+    queryKey: ['lorries', 'positions', 'latest'],
+    queryFn: () => authedFetch<{ positions: LorryPosition[] }>('/lorries/positions/latest').then((r) => r.positions),
+    refetchInterval: 60_000,
+  });
+}
