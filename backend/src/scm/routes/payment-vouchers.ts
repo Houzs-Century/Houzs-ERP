@@ -51,7 +51,8 @@ import { docMonthTag, mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-
 import { isDocumentHeld } from '../lib/document-hold';
 import { dateOrNull } from '../lib/date-coerce';
 import { postJournal, reverseJournal } from '../../acc/engine';
-import { apControlRole, pvLines, customerRefundLines, resolveRoles } from '../../acc/rules';
+import { apControlRole, pvLines, pvBankChargeLines, customerRefundLines, resolveRoles, PV_BANK_CHARGE_ACCOUNT } from '../../acc/rules';
+import { checkExpenseLeaf } from '../../acc/charge-account';
 import { customerPartyCode } from '../../acc/payments';
 import { refundSourceHandler, refundCreateGuard, refundOwnControl, bookRefundCredit, refundHookInput } from '../lib/pv-refund';
 import { refundDepositInvoicesBestEffort, releaseRefundNotesBestEffort } from '../../acc/deposit-refunds';
@@ -1026,7 +1027,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
     id: string; pv_number: string; voucher_date: string; payee_name: string;
     credit_account_code: string; total_sen: number; currency: string | null;
     exchange_rate: string | number | null; status: string; purpose: string | null;
-    company_id: number | null;
+    company_id: number | null; bank_charge_sen: number | null;
     supplier: { code: string | null; name: string | null } | null;
   };
   if (pv.status === 'CANCELLED') return c.json({ error: 'cannot_post', message: 'Voucher is cancelled' }, 409);
@@ -1089,6 +1090,15 @@ export const postPaymentVoucherHandler = async (c: any) => {
     ? (await resolveRoles(sb, companyId))[apControlRole(supplier.code)]
     : null;
 
+  /* DEV-75: the header's Bank Charges ride the same journal (Finance, 2026-10-14:
+     900-B001). Refused rather than posted without the fee when the account is
+     not a usable expense leaf here. */
+  const feeSen = Number(pv.bank_charge_sen ?? 0);
+  if (feeSen > 0) {
+    const okFee = await checkExpenseLeaf(sb, co.companyId, PV_BANK_CHARGE_ACCOUNT, 'a bank charge');
+    if (!okFee.ok) return c.json({ error: 'bank_charge_account', message: `Bank charges cannot post: ${okFee.reason}` }, okFee.status === 'load_failed' ? 500 : 409);
+  }
+
   const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_VOUCHER', entityId: id, action: 'POST', companyId });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
@@ -1108,9 +1118,10 @@ export const postPaymentVoucherHandler = async (c: any) => {
     sourceType: 'PV',
     sourceDocNo: pv.pv_number,
     narration: isRefund(pv.purpose) ? `Customer refund ${pv.pv_number} — ${pv.payee_name} (${refundPv.refund_source_doc_no ?? '?'})` : `Payment voucher ${pv.pv_number} — ${pv.payee_name}`,
-    lines: isRefund(pv.purpose)
+    lines: (isRefund(pv.purpose)
       ? customerRefundLines({ ...pv, refund_source_doc_no: refundPv.refund_source_doc_no ?? null }, (await resolveRoles(sb, companyId)).AR, { code: customerPartyCode(refundPv.debtor_code, refundPv.customer_id), name: pv.payee_name }, totalSen)
-      : pvLines(pv, debitLegs, supplier, apControlCode),
+      : pvLines(pv, debitLegs, supplier, apControlCode)
+    ).concat(pvBankChargeLines(pv, feeSen)),
   });
   if (!r.ok) {
     if (r.status === 'je_insert_failed') return c.json({ error: 'je_insert_failed', reason: r.reason }, 500);

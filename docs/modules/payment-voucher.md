@@ -49,9 +49,11 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   every failure is logged and stepped over.
 - A negative or fractional amount is refused (400), never silently clamped to
   0.
-- **Bank Charges** (`bank_charge_sen`, header, MYR sen) is recorded only: not
-  in `total_sen`, not on the GL; negative/fractional refused 400
-  `bank_charge_invalid`.
+- **Bank Charges** (`bank_charge_sen`, header, MYR sen) is not in `total_sen`.
+  On post it adds Dr `900-B001` / Cr the PV's bank to the same journal, in MYR
+  as keyed (never through the exchange rate); a cancel's contra reverses it.
+  900-B001 not an active expense leaf of the company = post refused 409
+  `bank_charge_account`. Negative/fractional refused 400 `bank_charge_invalid`.
 - An allocation names a PI **or** an AP invoice, never both or neither
   (`allocation_two_targets` / `allocation_pi_required`).
 - An invoice a saved unposted (Draft/Prepared/Checked) voucher already applies

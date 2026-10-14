@@ -404,6 +404,24 @@ export function pvLines(
   return lines;
 }
 
+/** Where a PV's header Bank Charges post (DEV-75, Finance/Chew 2026-10-14). */
+export const PV_BANK_CHARGE_ACCOUNT = '900-B001';
+
+/** The bank's fee on a payment voucher: Dr bank charges / Cr the same bank the
+    voucher pays from. MYR sen as keyed — the bank takes it in ringgit, so it is
+    never run through the voucher's exchange rate. Empty when there is no fee. */
+export function pvBankChargeLines(
+  pv: { pv_number: string; credit_account_code: string },
+  feeSen: number,
+): RuleLine[] {
+  if (!(feeSen > 0)) return [];
+  const blank = { partyType: null, partyCode: null, partyName: null };
+  return [
+    { accountCode: PV_BANK_CHARGE_ACCOUNT, debitSen: feeSen, creditSen: 0, ...blank, notes: `Bank charges — ${pv.pv_number}` },
+    { accountCode: pv.credit_account_code, debitSen: 0, creditSen: feeSen, ...blank, notes: `Bank charges — ${pv.pv_number}` },
+  ];
+}
+
 /**
  * Customer refund posted (a CUSTOMER_REFUND payment voucher, owner 2026-09-07):
  * the mirror of customerPaymentLines — Dr AR for that customer (undoing the
