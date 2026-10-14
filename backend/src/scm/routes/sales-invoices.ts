@@ -710,6 +710,31 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
     }
   }
 
+  /* An invoice raised straight off a Sales Order (no DO, no DO line) bills the
+     whole order, so a second one would bill it twice. Refused while any live
+     invoice already names this SO. DO-sourced invoices are exempt: one SO may
+     legitimately carry one invoice per delivery.
+     ponytail: read-before-write, two simultaneous submits can both pass; the
+     page's idempotency key covers the double-tap, a DB constraint would cover the rest. */
+  {
+    const srcSoDocNo = (body.soDocNo as string | undefined) ?? null;
+    const fromDo = Boolean(body.deliveryOrderId) || items.some((it) => Boolean(it.doItemId));
+    if (srcSoDocNo && !fromDo) {
+      const { data: sis, error: siErr } = await scopeToCompany(
+        sb.from('sales_invoices').select('invoice_number, status').eq('so_doc_no', srcSoDocNo), c,
+      );
+      if (siErr) return c.json({ error: 'load_failed', reason: siErr.message }, 500);
+      const liveSi = ((sis ?? []) as Array<{ invoice_number: string; status: string | null }>)
+        .find((s) => String(s.status ?? '').trim().toUpperCase() !== 'CANCELLED');
+      if (liveSi) {
+        return c.json({
+          error: 'so_already_invoiced',
+          message: `${srcSoDocNo} already has invoice ${liveSi.invoice_number}. Cancel it first, or raise the extra charge on a new Sales Order.`,
+        }, 409);
+      }
+    }
+  }
+
   /* Price-vs-order drift — a WARNING carried back in the response, NEVER a
      rejection (see siPriceDriftWarnings). Computed here so the operator hears
      about a fat-fingered price on the same round-trip that creates the invoice,

@@ -36,6 +36,7 @@ import {
   Wallet,
   Plus,
   Trash2,
+  FileText,
 } from "lucide-react";
 import { DISCARD_DRAFT_LABEL, useDiscardDraftAction } from "./use-discard-draft-action";
 import { Badge } from "../../components/Badge";
@@ -1243,6 +1244,16 @@ function SalesOrderDetailV2ReadOnly() {
                 title="Record a payment against this order — everything else stays as it is."
               >
                 Collect payment
+              </Button>
+            )}
+            {/* DEV-76: a charge-only order (no DO) is invoiced straight off the SO. */}
+            {!migratedLocked && salesOrder.status.toLowerCase() === "confirmed" && salesOrder.has_children === false && (
+              <Button
+                variant="secondary"
+                icon={<FileText size={14} />}
+                onClick={() => navigate(`/scm/sales-invoices/new?fromSo=${encodeURIComponent(salesOrder.doc_no)}`)}
+              >
+                Create Invoice
               </Button>
             )}
             {/* Cancel is a WRITE (PATCH /:docNo/status), and on a migrated order
