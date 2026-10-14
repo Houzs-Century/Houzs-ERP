@@ -3,7 +3,8 @@
  * receipt, the ERP and the report cannot disagree by a sen. */
 import type { BundleItem } from "./types";
 
-export type Discount = { source: "AUTO" | "MANUAL"; type: "PCT" | "RM"; value: number };
+/** approved_by: the supervisor who passed a discount above the cap (P5); audited on the ERP. */
+export type Discount = { source: "AUTO" | "MANUAL"; type: "PCT" | "RM"; value: number; approved_by?: string | null };
 
 export type CartLine = {
   line_no: number;
@@ -28,7 +29,7 @@ export type CartLine = {
 
 export type Cart = {
   lines: CartLine[];
-  bill_discount: { type: "PCT" | "RM"; value: number } | null;
+  bill_discount: { type: "PCT" | "RM"; value: number; approved_by?: string | null } | null;
   salesman: { id: number; name: string } | null;
   customer: { name: string; phone: string } | null;
   sst_applied: boolean;

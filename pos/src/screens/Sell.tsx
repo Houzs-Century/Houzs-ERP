@@ -394,7 +394,7 @@ export function Sell({ state, session, online, onLogout, onStateChanged }: { sta
           cashiers={b.cashiers}
           onOk={(d) => applyDiscount(popup.target, d)}
           onClose={close}
-          onNeedSupervisor={(d) => setPopup({ kind: "sup", why: `A ${d.type === "PCT" ? `${d.value}%` : `RM${d.value}`} discount is above ${session.cashier.name}'s cap.`, then: () => applyDiscount(popup.target, d) })}
+          onNeedSupervisor={(d) => setPopup({ kind: "sup", why: `A ${d.type === "PCT" ? `${d.value}%` : `RM${d.value}`} discount is above ${session.cashier.name}'s cap.`, then: (sup) => applyDiscount(popup.target, { ...d, approved_by: sup.name }) })}
         />
       )}
       {popup?.kind === "sup" && <SupervisorPin why={popup.why} cashiers={b.cashiers} onOk={(sup) => { const then = popup.then; setPopup(null); then(sup); }} onClose={close} />}

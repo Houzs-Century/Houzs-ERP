@@ -10,13 +10,13 @@ import { isPosPaymentMethod } from "../../scm/shared/pos-vocabulary";
 export type IncomingLine = {
   line_no: number; item_id: number | null; code: string; description: string; uom: string; qty: number; unit_price_sen: number;
   original_price_sen: number | null; override_by: string | null; override_reason: string | null;
-  discount_source: "AUTO" | "MANUAL" | null; discount_type: "PCT" | "RM" | null; discount_value: number | null; discount_amount_sen: number; is_foc: boolean; amount_sen: number;
+  discount_source: "AUTO" | "MANUAL" | null; discount_type: "PCT" | "RM" | null; discount_value: number | null; discount_by: string | null; discount_amount_sen: number; is_foc: boolean; amount_sen: number;
 };
 export type IncomingPayment = { method: string; amount_sen: number; reference: string | null; tendered_sen: number | null; change_sen: number | null };
 export type IncomingSale = {
   uuid: string; type: "SALE" | "RETURN"; ref_sale_uuid: string | null; receipt_no: string; terminal_code: string; project_id: number;
   cashier_id: number | null; cashier_name: string; salesman_id: number | null; salesman_name: string | null; customer_name: string | null; customer_phone: string | null;
-  sold_at: string; subtotal_sen: number; item_discount_sen: number; bill_discount_sen: number; sst_applied: boolean; sst_rate: number; sst_amount_sen: number; rounding_sen: number; total_sen: number;
+  sold_at: string; subtotal_sen: number; item_discount_sen: number; bill_discount_sen: number; bill_discount_by: string | null; sst_applied: boolean; sst_rate: number; sst_amount_sen: number; rounding_sen: number; total_sen: number;
   status: "PAID" | "VOID"; void_reason: string | null; void_by: string | null; voided_at: string | null; is_test: boolean; local_seq: number | null;
   lines: IncomingLine[]; payments: IncomingPayment[];
 };
@@ -56,7 +56,7 @@ export function parseIncomingSale(raw: unknown): { ok: true; sale: IncomingSale 
       override_by: strOrNull(l.override_by), override_reason: strOrNull(l.override_reason),
       discount_source: l.discount_source === "AUTO" || l.discount_source === "MANUAL" ? l.discount_source : null,
       discount_type: l.discount_type === "PCT" || l.discount_type === "RM" ? l.discount_type : null,
-      discount_value: isNum(l.discount_value) ? l.discount_value : null, discount_amount_sen: l.discount_amount_sen, is_foc: l.is_foc === true, amount_sen: l.amount_sen,
+      discount_value: isNum(l.discount_value) ? l.discount_value : null, discount_by: strOrNull(l.discount_by), discount_amount_sen: l.discount_amount_sen, is_foc: l.is_foc === true, amount_sen: l.amount_sen,
     });
   }
   const payments: IncomingPayment[] = [];
@@ -75,7 +75,7 @@ export function parseIncomingSale(raw: unknown): { ok: true; sale: IncomingSale 
       receipt_no: r.receipt_no.trim().slice(0, 40), terminal_code: r.terminal_code.trim().slice(0, 20), project_id: r.project_id,
       cashier_id: isInt(r.cashier_id) ? r.cashier_id : null, cashier_name: typeof r.cashier_name === "string" ? r.cashier_name.slice(0, 80) : "",
       salesman_id: isInt(r.salesman_id) ? r.salesman_id : null, salesman_name: strOrNull(r.salesman_name), customer_name: strOrNull(r.customer_name), customer_phone: strOrNull(r.customer_phone),
-      sold_at: new Date(r.sold_at).toISOString(), subtotal_sen: r.subtotal_sen as number, item_discount_sen: r.item_discount_sen as number, bill_discount_sen: r.bill_discount_sen as number,
+      sold_at: new Date(r.sold_at).toISOString(), subtotal_sen: r.subtotal_sen as number, item_discount_sen: r.item_discount_sen as number, bill_discount_sen: r.bill_discount_sen as number, bill_discount_by: strOrNull(r.bill_discount_by),
       sst_applied: r.sst_applied === true, sst_rate: isNum(r.sst_rate) ? r.sst_rate : 0, sst_amount_sen: r.sst_amount_sen as number, rounding_sen: r.rounding_sen as number, total_sen: r.total_sen as number,
       status, void_reason: strOrNull(r.void_reason), void_by: strOrNull(r.void_by), voided_at: typeof r.voided_at === "string" && Number.isFinite(Date.parse(r.voided_at)) ? new Date(r.voided_at).toISOString() : null,
       is_test: false, local_seq: isInt(r.local_seq) ? r.local_seq : null, lines, payments,
@@ -123,3 +123,19 @@ export function voidMovementsFor(sale: IncomingSale): MovementRow[] {
 }
 
 export type BatchResult = { uuid: string; status: "accepted" | "duplicate" | "updated" | "rejected"; reason?: string; stock_warning?: string | null };
+
+export type AuditEntry = { field: string; from_value: string | null; to_value: string | null; by_name: string };
+
+/** The pos_audit rows a NEW receipt earns (QA item 8): every supervisor
+ *  price override and every manual discount a supervisor passed above the
+ *  cap, per line and per bill. Written once, with the receipt. */
+export function auditEntriesFor(sale: IncomingSale, source: string): AuditEntry[] {
+  const out: AuditEntry[] = [];
+  const disc = (l: { discount_type: "PCT" | "RM" | null; discount_value: number | null }) => (l.discount_type === "PCT" ? `${l.discount_value ?? 0}%` : `RM${l.discount_value ?? 0}`);
+  for (const l of sale.lines) {
+    if (l.override_by) out.push({ field: `price_override:${l.line_no}:${l.code}`, from_value: l.original_price_sen == null ? null : String(l.original_price_sen), to_value: String(l.unit_price_sen), by_name: `${l.override_by} (${source})${l.override_reason ? ` ${l.override_reason}` : ""}` });
+    if (l.discount_by && l.discount_source === "MANUAL") out.push({ field: `discount_above_cap:${l.line_no}:${l.code}`, from_value: null, to_value: disc(l), by_name: `${l.discount_by} (${source}) for ${sale.cashier_name}` });
+  }
+  if (sale.bill_discount_by && sale.bill_discount_sen > 0) out.push({ field: "bill_discount_above_cap", from_value: null, to_value: String(sale.bill_discount_sen), by_name: `${sale.bill_discount_by} (${source}) for ${sale.cashier_name}` });
+  return out;
+}

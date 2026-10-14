@@ -19,6 +19,8 @@ export type SaleLine = {
   discount_source: "AUTO" | "MANUAL" | null;
   discount_type: "PCT" | "RM" | null;
   discount_value: number | null;
+  /** The supervisor who passed a manual discount above the cap, else null. */
+  discount_by: string | null;
   discount_amount_sen: number;
   is_foc: boolean;
   amount_sen: number;
@@ -44,6 +46,7 @@ export type SaleRecord = {
   subtotal_sen: number;
   item_discount_sen: number;
   bill_discount_sen: number;
+  bill_discount_by: string | null;
   sst_applied: boolean;
   sst_rate: number;
   sst_amount_sen: number;
@@ -69,7 +72,7 @@ export function saleLinesFromCart(lines: readonly CartLine[]): SaleLine[] {
     line_no: l.line_no, item_id: l.item_id, code: l.code, description: l.receipt_name, uom: l.uom, qty: l.qty, unit_price_sen: l.unit_price_sen,
     original_price_sen: l.original_price_sen, override_by: l.override_by, override_reason: l.override_reason,
     discount_source: l.is_foc ? null : l.discount?.source ?? null, discount_type: l.is_foc ? null : l.discount?.type ?? null, discount_value: l.is_foc ? null : l.discount?.value ?? null,
-    discount_amount_sen: lineDiscountSen(l), is_foc: l.is_foc, amount_sen: lineAmountSen(l),
+    discount_by: l.is_foc ? null : l.discount?.approved_by ?? null, discount_amount_sen: lineDiscountSen(l), is_foc: l.is_foc, amount_sen: lineAmountSen(l),
   }));
 }
 
@@ -127,7 +130,7 @@ export function buildSale(cart: Cart, sstRate: number, roundingOnCash: boolean, 
     terminal_code: ctx.terminal_code, project_id: ctx.project_id, cashier_id: ctx.cashier.id, cashier_name: ctx.cashier.name,
     salesman_id: cart.salesman?.id ?? null, salesman_name: cart.salesman?.name ?? null,
     customer_name: cart.customer?.name || null, customer_phone: cart.customer?.phone || null,
-    sold_at: ctx.now, subtotal_sen: t.subtotal_sen, item_discount_sen: t.item_discount_sen, bill_discount_sen: t.bill_discount_sen,
+    sold_at: ctx.now, subtotal_sen: t.subtotal_sen, item_discount_sen: t.item_discount_sen, bill_discount_sen: t.bill_discount_sen, bill_discount_by: cart.bill_discount?.approved_by ?? null,
     sst_applied: cart.sst_applied, sst_rate: cart.sst_applied ? sstRate : 0, sst_amount_sen: t.sst_sen, rounding_sen: t.rounding_sen, total_sen: t.total_sen,
     status: "PAID", void_reason: null, void_by: null, voided_at: null, is_test: ctx.is_test, local_seq: ctx.counter,
     lines: saleLinesFromCart(cart.lines),
@@ -240,7 +243,7 @@ export function buildReturn(
     receipt_no: `R-${formatReceiptNo(ctx.receipt_format, ctx.terminal_code, ctx.counter, ctx.is_test)}`,
     terminal_code: ctx.terminal_code, project_id: ctx.project_id, cashier_id: ctx.cashier.id, cashier_name: ctx.cashier.name,
     salesman_id: original.salesman_id, salesman_name: original.salesman_name, customer_name: original.customer_name, customer_phone: original.customer_phone,
-    sold_at: ctx.now, subtotal_sen: lines.reduce((s, l) => s + l.qty * l.unit_price_sen, 0), item_discount_sen: lines.reduce((s, l) => s + l.discount_amount_sen, 0), bill_discount_sen: 0,
+    sold_at: ctx.now, subtotal_sen: lines.reduce((s, l) => s + l.qty * l.unit_price_sen, 0), item_discount_sen: lines.reduce((s, l) => s + l.discount_amount_sen, 0), bill_discount_sen: 0, bill_discount_by: null,
     sst_applied: original.sst_applied, sst_rate: original.sst_applied ? original.sst_rate : 0, sst_amount_sen: 0, rounding_sen: 0, total_sen: t.difference_sen,
     status: "PAID", void_reason: null, void_by: null, voided_at: null, is_test: ctx.is_test, local_seq: ctx.counter,
     lines, payments, synced_at: null, sync_error: null, returned: picks.filter((p) => p.qty > 0),

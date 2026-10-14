@@ -5,9 +5,9 @@ import type { DeviceState } from "./types";
 
 const sale = (over: Partial<SaleRecord>): SaleRecord => ({
   uuid: "u1", type: "SALE", ref_sale_uuid: null, ref_receipt_no: null, receipt_no: "T02-000001", terminal_code: "T02", project_id: 9, cashier_id: 1, cashier_name: "Aina", salesman_id: 2, salesman_name: "Farah",
-  customer_name: null, customer_phone: null, sold_at: "2026-10-14T06:00:00Z", subtotal_sen: 11980, item_discount_sen: 1198, bill_discount_sen: 0, sst_applied: false, sst_rate: 0, sst_amount_sen: 0, rounding_sen: 0,
+  customer_name: null, customer_phone: null, sold_at: "2026-10-14T06:00:00Z", subtotal_sen: 11980, item_discount_sen: 1198, bill_discount_sen: 0, bill_discount_by: null, sst_applied: false, sst_rate: 0, sst_amount_sen: 0, rounding_sen: 0,
   total_sen: 10782, status: "PAID", void_reason: null, void_by: null, voided_at: null, is_test: false, local_seq: 1,
-  lines: [{ line_no: 1, item_id: 5, code: "PL-01", description: "Pillow", uom: "PCS", qty: 2, unit_price_sen: 5990, original_price_sen: 5990, override_by: null, override_reason: null, discount_source: "AUTO", discount_type: "PCT", discount_value: 10, discount_amount_sen: 1198, is_foc: false, amount_sen: 10782 }],
+  lines: [{ line_no: 1, item_id: 5, code: "PL-01", description: "Pillow", uom: "PCS", qty: 2, unit_price_sen: 5990, original_price_sen: 5990, override_by: null, override_reason: null, discount_source: "AUTO", discount_type: "PCT", discount_value: 10, discount_by: null, discount_amount_sen: 1198, is_foc: false, amount_sen: 10782 }],
   payments: [{ method: "QR", amount_sen: 10782, reference: null, tendered_sen: null, change_sen: null }],
   synced_at: null, sync_error: null, returned: null, ...over,
 });

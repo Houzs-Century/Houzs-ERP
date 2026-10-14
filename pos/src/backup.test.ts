@@ -4,7 +4,7 @@ import type { SaleRecord } from "./sale";
 
 const sale = (over: Partial<SaleRecord>): SaleRecord => ({
   uuid: "u1", type: "SALE", ref_sale_uuid: null, ref_receipt_no: null, receipt_no: "T02-000001", terminal_code: "T02", project_id: 9, cashier_id: 1, cashier_name: "A",
-  salesman_id: null, salesman_name: null, customer_name: null, customer_phone: null, sold_at: "2026-10-14T06:00:00Z", subtotal_sen: 100, item_discount_sen: 0, bill_discount_sen: 0,
+  salesman_id: null, salesman_name: null, customer_name: null, customer_phone: null, sold_at: "2026-10-14T06:00:00Z", subtotal_sen: 100, item_discount_sen: 0, bill_discount_sen: 0, bill_discount_by: null,
   sst_applied: false, sst_rate: 0, sst_amount_sen: 0, rounding_sen: 0, total_sen: 100, status: "PAID", void_reason: null, void_by: null, voided_at: null, is_test: false, local_seq: 1,
   lines: [], payments: [], synced_at: null, sync_error: null, returned: null, ...over,
 });

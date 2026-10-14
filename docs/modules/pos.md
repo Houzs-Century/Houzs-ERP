@@ -218,6 +218,10 @@ page, and the POS Admin menu. This guide carries only what is built.
 - The ERP sign-in used by Device setup is dropped after Prepare (logout);
   only the device token stays on the device. A device whose terminal is
   deactivated, or re-prepared elsewhere, answers 401 on every device call.
+- Audit: a supervisor price override (`override_by`) and a manual discount
+  passed above the cap (`discount_by` per line, `bill_discount_by` per bill)
+  ride on the receipt and become `pos_audit` rows at ingest
+  (`pos-sync.ts auditEntriesFor`); the PIN alone is never the record.
 - One ingest: a receipt enters the ERP only through
   `routes/lib/pos-ingest.ts ingestSale` (device batch and backup import
   alike). Anything that writes `pos_sales` another way breaks the

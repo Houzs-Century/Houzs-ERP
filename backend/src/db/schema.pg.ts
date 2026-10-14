@@ -658,6 +658,8 @@ export const pos_sales = pgTable(
     subtotal_sen: bigint("subtotal_sen", { mode: "number" }).notNull().default(0),
     item_discount_sen: bigint("item_discount_sen", { mode: "number" }).notNull().default(0),
     bill_discount_sen: bigint("bill_discount_sen", { mode: "number" }).notNull().default(0),
+    // Mig 20261014T1711: the supervisor who passed a bill discount above the cap.
+    bill_discount_by: text("bill_discount_by"),
     sst_applied: boolean("sst_applied").notNull().default(false),
     sst_rate: numeric("sst_rate", { precision: 5, scale: 2 }).notNull().default("0"),
     sst_amount_sen: bigint("sst_amount_sen", { mode: "number" }).notNull().default(0),
@@ -702,6 +704,8 @@ export const pos_sale_lines = pgTable(
     discount_source: text("discount_source"),
     discount_type: text("discount_type"),
     discount_value: numeric("discount_value", { precision: 12, scale: 2 }),
+    // Mig 20261014T1711: the supervisor who passed a manual discount above the cap.
+    discount_by: text("discount_by"),
     discount_amount_sen: bigint("discount_amount_sen", { mode: "number" }).notNull().default(0),
     is_foc: boolean("is_foc").notNull().default(false),
     amount_sen: bigint("amount_sen", { mode: "number" }).notNull(),

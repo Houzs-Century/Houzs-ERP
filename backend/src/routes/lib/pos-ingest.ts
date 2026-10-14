@@ -11,7 +11,7 @@ import { and, eq, sql } from "drizzle-orm";
 import type { getDb } from "../../db/client";
 import { pos_audit, pos_event_links, pos_payments, pos_sale_lines, pos_sales, pos_settings } from "../../db/schema";
 import { normalizePosSettingsGroup } from "../../scm/shared/pos-settings";
-import { classifyIncoming, movementsFor, voidMovementsFor, type BatchResult, type IncomingSale, type MovementRow } from "./pos-sync";
+import { auditEntriesFor, classifyIncoming, movementsFor, voidMovementsFor, type BatchResult, type IncomingSale, type MovementRow } from "./pos-sync";
 
 export type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -106,16 +106,18 @@ export async function ingestSale(db: Db, companyId: number, warehouseId: string 
       const [row] = await tx.insert(pos_sales).values({
         uuid: sale.uuid, company_id: companyId, project_id: sale.project_id, terminal_code: sale.terminal_code, receipt_no: sale.receipt_no, type: sale.type, ref_sale_uuid: sale.ref_sale_uuid,
         cashier_id: sale.cashier_id, cashier_name: sale.cashier_name, salesman_id: sale.salesman_id, salesman_name: sale.salesman_name, customer_name: sale.customer_name, customer_phone: sale.customer_phone,
-        sold_at: sale.sold_at, subtotal_sen: sale.subtotal_sen, item_discount_sen: sale.item_discount_sen, bill_discount_sen: sale.bill_discount_sen, sst_applied: sale.sst_applied, sst_rate: String(sale.sst_rate),
+        sold_at: sale.sold_at, subtotal_sen: sale.subtotal_sen, item_discount_sen: sale.item_discount_sen, bill_discount_sen: sale.bill_discount_sen, bill_discount_by: sale.bill_discount_by, sst_applied: sale.sst_applied, sst_rate: String(sale.sst_rate),
         sst_amount_sen: sale.sst_amount_sen, rounding_sen: sale.rounding_sen, total_sen: sale.total_sen, status: sale.status, void_reason: sale.void_reason, void_by: sale.void_by, voided_at: sale.voided_at,
         is_test: false, source: source.startsWith("import") ? "IMPORT" : "NORMAL", local_seq: sale.local_seq, stock_warning: warning,
       }).returning({ id: pos_sales.id });
       await tx.insert(pos_sale_lines).values(sale.lines.map((l) => ({
         sale_id: row.id, line_no: l.line_no, item_id: l.item_id, item_code: l.code, description: l.description, uom: l.uom, qty: String(l.qty), unit_price_sen: l.unit_price_sen,
         original_price_sen: l.original_price_sen, override_by: l.override_by, override_reason: l.override_reason, discount_source: l.discount_source, discount_type: l.discount_type,
-        discount_value: l.discount_value == null ? null : String(l.discount_value), discount_amount_sen: l.discount_amount_sen, is_foc: l.is_foc, amount_sen: l.amount_sen,
+        discount_value: l.discount_value == null ? null : String(l.discount_value), discount_by: l.discount_by, discount_amount_sen: l.discount_amount_sen, is_foc: l.is_foc, amount_sen: l.amount_sen,
       })));
       if (sale.payments.length) await tx.insert(pos_payments).values(sale.payments.map((p) => ({ sale_id: row.id, method: p.method, amount_sen: p.amount_sen, reference: p.reference, tendered_sen: p.tendered_sen, change_sen: p.change_sen })));
+      const audits = auditEntriesFor(sale, source);
+      if (audits.length) await tx.insert(pos_audit).values(audits.map((a) => ({ company_id: companyId, entity: "pos_sale", entity_id: String(row.id), ...a })));
       return { uuid: sale.uuid, status: "accepted", stock_warning: warning } as BatchResult;
     });
   } catch (e) {
