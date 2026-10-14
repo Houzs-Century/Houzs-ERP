@@ -1,4 +1,4 @@
--- 20261014T1510_scm_scan_file_views.sql
+-- 20261014T1610_scm_scan_file_views.sql
 -- REVERSAL: DROP TABLE IF EXISTS scm.scan_file_views;
 --   Revert the code first (scm/routes/scan-files.ts writes this table on every
 --   open, and refuses to serve a scan when the write fails).

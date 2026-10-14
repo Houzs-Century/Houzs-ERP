@@ -28,7 +28,7 @@
 // ----------------------------------------------------------------------------
 
 import type { Context } from 'hono';
-import { snapshotPo, ReceivedFloorError } from './so-revision';
+import { snapshotPo, ReceivedFloorError, receivedFloorFromDb } from './so-revision';
 import { recordEntityAudit } from './entity-audit';
 import { poReceivedFloorViolation } from '../shared/po-amendment';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
@@ -335,7 +335,10 @@ export async function applyPoAmendment(
       .from('purchase_order_items')
       .update(patch)
       .eq('id', diff.purchase_order_item_id);
-    if (updErr) throw new Error(`applyPoAmendment: line update failed for ${diff.purchase_order_item_id}: ${updErr.message}`);
+    if (updErr) {
+      throw receivedFloorFromDb(updErr, String(diff.purchase_order_item_id), qty)
+        ?? new Error(`applyPoAmendment: line update failed for ${diff.purchase_order_item_id}: ${updErr.message}`);
+    }
     linesUpdated++;
   }
 
