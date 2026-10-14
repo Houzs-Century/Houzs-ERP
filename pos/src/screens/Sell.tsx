@@ -24,6 +24,7 @@ import { FindBill } from "../sell/FindBill";
 import { PaymentPopup } from "../sell/Payment";
 import { DiscountPopup, HoldPopup, ItemSearch, PricePopup, QtyPopup, RecallPopup, SalesmanPopup } from "../sell/Popups";
 import { ReturnExchange } from "../sell/ReturnExchange";
+import { ReportPopup } from "../sell/Report";
 import { SupervisorPin } from "../sell/SupervisorPin";
 
 const rm = (sen: number) => (sen / 100).toFixed(2);
@@ -42,6 +43,7 @@ type Popup =
   | { kind: "find"; q: string }
   | { kind: "return"; original: SaleRecord | null }
   | { kind: "sync" }
+  | { kind: "report" }
   | null;
 
 type Toast = { text: string; bad?: boolean; id: number };
@@ -208,7 +210,7 @@ export function Sell({ state, session, online, onLogout, onStateChanged }: { sta
       printSale(last, state, "COPY").then((r) => say(r.ok ? `${last.receipt_no} COPY printed` : r.reason, !r.ok));
     },
     returns: () => setPopup({ kind: "return", original: null }),
-    todaysSales: () => say("Today's sales report (Ctrl+T) arrives with build step 8."),
+    todaysSales: () => setPopup({ kind: "report" }),
     syncNow: () => { syncNow("manual").then(heartbeat).then(() => say(ssRef.current.last_error ?? (ssRef.current.pending ? `${ssRef.current.pending} still pending` : "Synced"), !!ssRef.current.last_error)); },
     syncPanel: () => setPopup({ kind: "sync" }),
     salesman: () => setPopup({ kind: "salesman" }),
@@ -421,6 +423,7 @@ export function Sell({ state, session, online, onLogout, onStateChanged }: { sta
       )}
       {popup?.kind === "find" && <FindBill state={state} initialQuery={popup.q} onReturn={(orig) => setPopup({ kind: "return", original: orig })} onClose={() => { close(); refreshStats(); void afterSale(); }} say={say} />}
       {popup?.kind === "sync" && <SyncPanel state={state} onStateChanged={onStateChanged} onClose={close} say={say} />}
+      {popup?.kind === "report" && <ReportPopup state={state} session={session} onClose={close} say={say} />}
       {popup?.kind === "return" && <ReturnExchange state={state} initial={popup.original} onSave={completeReturn} onClose={close} say={say} />}
     </div>
   );

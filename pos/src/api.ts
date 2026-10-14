@@ -52,6 +52,7 @@ export const deviceApi = {
   salesBatch: (token: string, body: unknown) =>
     call<{ results: { uuid: string; status: "accepted" | "duplicate" | "updated" | "rejected"; reason?: string; stock_warning?: string | null }[]; at: string; accepted: number; duplicates: number; rejected: number }>(
       "/api/pos-device/sales/batch", { method: "POST", body: JSON.stringify(body), headers: { "X-POS-Device": token } }, 60_000),
+  report: <T>(token: string, from: string, to: string) => call<{ sales: T[] }>(`/api/pos-device/report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { method: "GET", headers: { "X-POS-Device": token } }, 60_000),
 };
 
 /** Online for real: `navigator.onLine` says the radio is up, the ping says

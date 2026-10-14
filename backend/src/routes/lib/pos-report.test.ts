@@ -26,7 +26,9 @@ describe("aggregateSales", () => {
     expect(t.return_count).toBe(1);
     expect(t.return_sen).toBe(5391);
     expect(t.foc_units).toBe(2);
-    expect(t.by_method).toEqual([{ method: "CREDIT", amount_sen: 10782 }, { method: "QR", amount_sen: 5391 }]);
+    expect(t.by_method).toEqual([{ method: "CREDIT", amount_sen: 10782, sales_sen: 10782, refund_sen: 0 }, { method: "QR", amount_sen: 5391, sales_sen: 10782, refund_sen: 5391 }]);
+    expect(t.voids).toEqual([{ receipt_no: "T02-000003", total_sen: 10782, reason: "", by: "Aina" }]);
+    expect(t.returns).toEqual([{ receipt_no: "R-T02-000002", total_sen: -5391, ref: "" }]);
     expect(t.by_salesman).toEqual([{ salesman: "Booth", bills: 1, net_sen: 10782 }, { salesman: "Farah", bills: 1, net_sen: 5391 }]);
     expect(t.by_day.map((d) => [d.day, d.bills, d.net_sen])).toEqual([["2026-10-14", 1, 10782], ["2026-10-15", 1, 5391]]);
     expect(t.by_terminal).toEqual([{ terminal: "T01", bills: 1, net_sen: 10782 }, { terminal: "T02", bills: 1, net_sen: 5391 }]);
@@ -38,8 +40,8 @@ describe("aggregateSales", () => {
     const t = aggregateSales([sale({})]);
     const csv = summaryCsv("AEON C&C", t);
     expect(csv).toContain("Net sales (RM),107.82");
-    expect(csv).toContain("QR,107.82");
-    expect(csv).toContain("PL-01,Pillow,2,107.82");
+    expect(csv).toContain("QR,107.82,0.00,107.82");
+    expect(csv).toContain("PL-01,Pillow,2,0,119.80,11.98,107.82");
     const html = summaryHtml("AEON <C&C>", t);
     expect(html).toContain("AEON &lt;C&amp;C&gt;");
     expect(html).toContain("RM 107.82");

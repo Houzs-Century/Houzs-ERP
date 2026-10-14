@@ -54,6 +54,9 @@ import { ALERT_WORDS, terminalStatusWord, type AlertType } from "./lib/pos-alert
 import { ingestSale, previewSale, stockLocationFor, type PreviewKind } from "./lib/pos-ingest";
 import { parseIncomingSale, type BatchResult, type IncomingSale } from "./lib/pos-sync";
 import { generalSettings, loadTerminalFacts } from "../services/posAlerts";
+import { loadReportSales } from "./lib/pos-report-load";
+import { aggregateSales } from "../scm/shared/pos-report";
+import { posReceiptStatusLabel } from "../scm/shared/pos-vocabulary";
 import { decryptBackupPayload, isPosBackupFile, type PosBackupFile } from "../scm/shared/pos-backup-crypto";
 import {
   isCashierRole,
@@ -870,6 +873,50 @@ posAdmin.post("/backup/import", async (c) => {
   await db.update(pos_terminals).set({ receipt_counter: counter, updated_at: nowIso() }).where(eq(pos_terminals.id, opened.terminal.id));
   await audit(db, co.companyId, c, "pos_terminal", opened.terminal.id, "backup_import", null, `${accepted} new, ${updated} updated, ${rejected.length} rejected (file ${opened.file.exported_at})`);
   return c.json({ ok: true, accepted, updated, rejected, skipped: backupSummary(opened.rows), results });
+});
+
+
+/* ── Sales Report (layout E6) ──────────────────────────────────────────── */
+
+/** The report over one event: filters date range (Malaysia days), terminal,
+ *  salesman, status; the shared aggregation; and the stock left per item at
+ *  the event's stock location (else the POS store). */
+posAdmin.get("/report", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const projectId = num(c.req.query("project_id"));
+  if (!projectId) return c.json({ error: "project_id_required" }, 400);
+  const day = /^\d{4}-\d{2}-\d{2}$/;
+  const from = c.req.query("from") ?? "";
+  const to = c.req.query("to") ?? "";
+  const terminal = str(c.req.query("terminal"));
+  const salesman = str(c.req.query("salesman"));
+  const status = str(c.req.query("status"))?.toUpperCase() ?? null;
+  const db = getDb(c.env);
+  const all = await loadReportSales(db, co.companyId, { projectId, terminalCode: terminal, fromIso: day.test(from) ? `${from}T00:00:00+08:00` : null, toIso: day.test(to) ? `${to}T23:59:59.999+08:00` : null });
+  const sales = all.filter((s) => (!salesman || (s.salesman_name ?? "Booth") === salesman) && (!status || posReceiptStatusLabel(s) === status));
+  const totals = aggregateSales(sales);
+  const warehouseId = await stockLocationFor(db, co.companyId, projectId);
+  const codes = totals.by_item.map((i) => i.item_code);
+  const stock = codes.length
+    ? await db.execute<{ item_code: string; qty: number | string }>(warehouseId
+      ? sql`SELECT item_code, SUM(qty)::float8 AS qty FROM scm.inventory_balances WHERE company_id = ${co.companyId} AND warehouse_id = ${warehouseId}::uuid AND item_code IN ${codes} GROUP BY item_code`
+      : sql`SELECT item_code, SUM(qty)::float8 AS qty FROM scm.inventory_balances WHERE company_id = ${co.companyId} AND item_code IN ${codes} GROUP BY item_code`)
+    : [];
+  const stockBy = new Map(stock.map((r) => [r.item_code, Number(r.qty)]));
+  const ev = await db.execute<{ name: string; start_date: string | null; end_date: string | null }>(sql`SELECT name, start_date, end_date FROM projects WHERE id = ${projectId} AND company_id = ${co.companyId}`);
+  return c.json({
+    project: ev.length ? { id: projectId, ...ev[0] } : null,
+    filter: { from: day.test(from) ? from : null, to: day.test(to) ? to : null, terminal, salesman, status },
+    options: {
+      terminals: Array.from(new Set(all.map((s) => s.terminal_code))).sort(),
+      salesmen: Array.from(new Set(all.map((s) => s.salesman_name ?? "Booth"))).sort(),
+    },
+    totals,
+    stock_left: Object.fromEntries(stockBy),
+    stock_location: warehouseId,
+    count: sales.length,
+  });
 });
 
 export { posAdmin };

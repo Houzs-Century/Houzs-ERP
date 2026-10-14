@@ -11,6 +11,7 @@
 // below re-applies its own guard: the token's hash must match an ACTIVE
 // terminal, and that terminal's company is the scope of everything read.
 //   POST /sales/batch         the receipts (routes/lib/pos-ingest.ts books them)
+//   GET  /report              the event bills for the all-terminals report (P13)
 // ----------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -23,6 +24,7 @@ import { deviceTokenHash, isDeviceToken } from "./lib/pos-bundle";
 import { loadPosBundle, type BundleCompany } from "./lib/pos-bundle-load";
 import { parseIncomingSale, type BatchResult } from "./lib/pos-sync";
 import { ingestSale, stockLocationFor } from "./lib/pos-ingest";
+import { loadReportSales } from "./lib/pos-report-load";
 
 type Terminal = typeof pos_terminals.$inferSelect;
 type Vars = { terminal: Terminal };
@@ -93,6 +95,22 @@ posDevice.post("/heartbeat", async (c: Ctx) => {
     sql`SELECT catalog_version FROM pos_event_links WHERE company_id = ${t.company_id} AND project_id = ${t.project_id ?? -1}`,
   );
   return c.json({ ok: true, at: now, catalog_version: link.length ? link[0].catalog_version : null, event_project_id: t.project_id });
+});
+
+/* ── the event's bills for the device report, all terminals (layout P13) ── */
+
+/** A supervisor's "all terminals" report: every bill of this terminal's
+ *  event that reached the ERP, in the Malaysia-day range [from, to]. Bills
+ *  still pending on other devices are not here yet, and the device says so. */
+posDevice.get("/report", async (c: Ctx) => {
+  const t = c.get("terminal");
+  if (t.project_id == null) return c.json({ error: "no_event" }, 409);
+  const day = /^\d{4}-\d{2}-\d{2}$/;
+  const from = c.req.query("from") ?? "";
+  const to = c.req.query("to") ?? "";
+  if (!day.test(from) || !day.test(to)) return c.json({ error: "from_and_to_required" }, 400);
+  const sales = await loadReportSales(getDb(c.env), t.company_id, { projectId: t.project_id, fromIso: `${from}T00:00:00+08:00`, toIso: `${to}T23:59:59.999+08:00` });
+  return c.json({ sales, at: new Date().toISOString() });
 });
 
 /* ── the sales batch (layout P14) ──────────────────────────────────────── */

@@ -12,10 +12,11 @@ import { PosEventsTab } from "./pos-admin/PosEventsTab";
 import { PosTerminalsTab } from "./pos-admin/PosTerminalsTab";
 import { PosSyncStatusTab } from "./pos-admin/PosSyncStatusTab";
 import { PosImportBackupTab } from "./pos-admin/PosImportBackupTab";
+import { PosReportTab } from "./pos-admin/PosReportTab";
 import { PosGeneralTab, PosPrinterScannerTab, PosSstReceiptTab } from "./pos-admin/PosSettingsTabs";
 
-type Tab = "items" | "labels" | "cashiers" | "events" | "sst" | "printer" | "terminals" | "general" | "sync" | "import";
-const TABS: Tab[] = ["items", "labels", "cashiers", "events", "sst", "printer", "terminals", "general", "sync", "import"];
+type Tab = "items" | "labels" | "cashiers" | "events" | "sst" | "printer" | "terminals" | "general" | "sync" | "import" | "report";
+const TABS: Tab[] = ["items", "labels", "cashiers", "events", "sst", "printer", "terminals", "general", "sync", "import", "report"];
 
 const HEADER: Record<Tab, { title: string; description: string }> = {
   items: { title: "POS Items", description: "Inventory items tagged for the booth: barcodes, selling price, event price, pre-set (AUTO) discount, FOC, max manual discount, stock source, short receipt name." },
@@ -28,6 +29,7 @@ const HEADER: Record<Tab, { title: string; description: string }> = {
   general: { title: "General", description: "Payment methods (Cash off by default), idle logout, price override, void rule, receipt number format, alert thresholds and email, heartbeat, POS stock location." },
   sync: { title: "Sync Status", description: "Whether every terminal's sales have reached the ERP: terminals active, bills pending, open alerts, last seen and last sync per terminal, and the alert log with its email state." },
   import: { title: "Import backup", description: "Recover a terminal's receipts from its houzs_pos_T0x_backup.json when the device cannot sync: preview NEW / DUPLICATE / CONFLICT, then import through the same path as a sync." },
+  report: { title: "Sales Report", description: "One event at a time: KPIs, by day with the payment split, by salesman (review only), by item with FOC, gross, discount, net and stock left, by payment method. Filters date range, terminal, salesman, status. Export Excel / PDF." },
 };
 
 export function PosAdmin() {
@@ -46,6 +48,7 @@ export function PosAdmin() {
     { value: "general", label: "General" },
     { value: "sync", label: "Sync Status" },
     { value: "import", label: "Import backup" },
+    { value: "report", label: "Sales Report" },
   ];
   return (
     <div className="max-w-6xl">
@@ -61,6 +64,7 @@ export function PosAdmin() {
       {active === "general" && <PosGeneralTab />}
       {active === "sync" && <PosSyncStatusTab />}
       {active === "import" && <PosImportBackupTab />}
+      {active === "report" && <PosReportTab />}
     </div>
   );
 }

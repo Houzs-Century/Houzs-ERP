@@ -136,8 +136,8 @@ page, and the POS Admin menu. This guide carries only what is built.
   salesman, per terminal and the top 10 items, plus a CSV attachment (opens
   in Excel; the backend has no xlsx writer) carrying the same tables and the
   by-day split. `pos_event_links.summary_sent_at` (mig `20261014T1530`) is
-  the once-marker. Aggregation in `routes/lib/pos-report.ts` (tested), rows
-  loaded by `routes/lib/pos-report-load.ts`; step 8's reports reuse both.
+  the once-marker. Aggregation in `scm/shared/pos-report.ts` (tested), rows
+  loaded by `routes/lib/pos-report-load.ts`; the email HTML in `routes/lib/pos-report.ts`.
 - Import backup (POS Admin > Import backup, layout E8): drop
   `houzs_pos_T0x_backup.json`; `POST /api/pos-admin/backup/preview` opens
   it with that terminal's `token_hash` (`scm/shared/pos-backup-crypto.ts`,
@@ -147,9 +147,32 @@ page, and the POS Admin menu. This guide carries only what is built.
   the device batch uses (classification, rows, inventory movements, audit),
   with `pos_sales.source = 'IMPORT'`, and lifts the terminal's receipt
   counter to the file's.
+- Reports, one aggregation (`scm/shared/pos-report.ts`, vendored;
+  `aggregateSales`, `reportRows`, `summaryCsv`, `reportHtml`): bills, net,
+  gross, discount, SST, void / return counts and lists, FOC units, by
+  payment method with sales / refunds / net received, by salesman, by day
+  with the method split, by terminal, by item, top 10. The device report,
+  the ERP Sales Report and the summary email all read it, and the CSV, the
+  Excel sheets and the printable page all come from `reportRows`, so the
+  four agree column for column.
+- Device Sales report (layout P13, Ctrl+T, `pos/src/sell/Report.tsx`, rules
+  `pos/src/report.ts`): Today / Pick date / Full event over the local bills
+  (offline); All terminals (supervisor PIN) asks
+  `GET /api/pos-device/report?from&to` for the event's synced bills. Print
+  daily report = thermal Z-report (`zReportLines`, re-printable any time,
+  no close-counter step), Export PDF (the printable page through the
+  browser's print dialog), Export Excel (`write-excel-file`, lazy).
+- ERP Sales Report (POS Admin > Sales Report, layout E6;
+  `GET /api/pos-admin/report?project_id&from&to&terminal&salesman&status`):
+  one linked event at a time; KPIs; by day with the payment columns; by
+  payment method; by salesman (review only); by item with qty, FOC, gross,
+  discount, net and stock left (`scm.inventory_balances` at the event's
+  stock source, else the POS store, else the company total, flagged);
+  Export Excel (the shared rows plus the stock column) / PDF.
 - Shared, vendored byte-identical to `frontend/src/vendor/shared/`:
   `scm/shared/pos-vocabulary.ts` (payment methods, receipt status word,
-  `pos-backup-crypto.ts` (the backup file cipher and shape),
+  `pos-backup-crypto.ts` (the backup file cipher and shape), `pos-report.ts`
+  (the report aggregation, rows, CSV and printable page),
   empty totals), `pos-settings.ts` (the three settings groups, defaults,
   normaliser), `ean13.ts` (check digit, internal prefix 200, bar pattern /
   SVG for labels).

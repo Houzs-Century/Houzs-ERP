@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "write-excel-file": "^2.3.10"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

@@ -4,6 +4,7 @@
 import { api } from "../../api/client";
 import { useQuery, type QueryState } from "../../hooks/useQuery";
 import { normalizePosSettings, type PosSettings, type PosSettingsGroup } from "../../vendor/shared/pos-settings";
+import type { ReportTotals } from "../../vendor/shared/pos-report";
 
 export const POS_ADMIN = "/api/pos-admin";
 
@@ -209,3 +210,34 @@ export type BackupPreview = {
   summary: BackupSummary;
 };
 export type BackupImportResult = { ok: true; accepted: number; updated: number; rejected: { uuid: string; reason?: string }[]; skipped: BackupSummary };
+
+/* ── Sales Report (E6) ───────────────────────────────────────────────── */
+
+export type ReportFilter = { project_id: number | null; from: string; to: string; terminal: string; salesman: string; status: string };
+
+export type ReportResponse = {
+  project: { id: number; name: string; start_date: string | null; end_date: string | null } | null;
+  filter: { from: string | null; to: string | null; terminal: string | null; salesman: string | null; status: string | null };
+  options: { terminals: string[]; salesmen: string[] };
+  totals: ReportTotals;
+  stock_left: Partial<Record<string, number>>;
+  stock_location: string | null;
+  count: number;
+};
+
+export const useSalesReport = (f: ReportFilter): QueryState<ReportResponse> =>
+  useQuery<ReportResponse>(
+    `${POS_ADMIN}/report`,
+    () => {
+      const q = new URLSearchParams();
+      q.set("project_id", String(f.project_id));
+      if (f.from) q.set("from", f.from);
+      if (f.to) q.set("to", f.to);
+      if (f.terminal) q.set("terminal", f.terminal);
+      if (f.salesman) q.set("salesman", f.salesman);
+      if (f.status) q.set("status", f.status);
+      return api.get<ReportResponse>(`${POS_ADMIN}/report?${q.toString()}`);
+    },
+    [f.project_id, f.from, f.to, f.terminal, f.salesman, f.status],
+    { enabled: f.project_id != null, keepPreviousData: true },
+  );

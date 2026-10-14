@@ -182,3 +182,18 @@ table.cart .ovr { color: var(--bad); font-size: 11px; }
 .pill.okp { background: var(--accent-soft); color: var(--ok); }
 .ret { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 @media (max-width: 900px) { .find, .ret { grid-template-columns: 1fr; } .pay-line { grid-template-columns: 1fr; } }
+
+/* Sales report (P13) */
+.report .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+.report .kpis div { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.report .kpis span { display: block; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.report .kpis b { font-size: 18px; }
+.report .kpis small { font-size: 11px; color: var(--muted); font-weight: 600; }
+.report .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.report h4 { margin: 8px 0 4px; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+table.rpt { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.rpt th { text-align: left; font-size: 10px; color: var(--muted); padding: 2px 6px; border-bottom: 1px solid var(--line); }
+table.rpt td { padding: 4px 6px; border-bottom: 1px solid var(--line); }
+table.rpt .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.rpt tr.total td { font-weight: 700; border-bottom: 0; }
+@media (max-width: 640px) { .report .cols { grid-template-columns: 1fr; } .report .kpis { grid-template-columns: repeat(2, 1fr); } }
