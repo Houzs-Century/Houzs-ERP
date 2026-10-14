@@ -54,20 +54,8 @@ export function MobilePmsSalesBills({ query }: { query: MobileProjectSalesBillsQ
           )}
         </div>
       )}
-      {data && data.persons.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "0 0 8px" }}>
-          {data.persons.map((p) => (
-            <span key={p.key} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #e3e6e0", borderRadius: 999, padding: "3px 9px", fontSize: 11 }}>
-              <span style={{ fontWeight: 600, color: "#11140f" }}>{p.name}</span>
-              {p.not_opened_sen > 0 ? (
-                <span className="money" style={{ fontWeight: 700, color: TONE_COLOR.red }}>{fmtRmSen(p.not_opened_sen)}</span>
-              ) : (
-                <span style={{ fontSize: 9, textTransform: "uppercase", color: TONE_COLOR.green }}>all opened</span>
-              )}
-            </span>
-          ))}
-        </div>
-      )}
+      {/* No per-person row: the red sum sits beside each name under Sales
+          attending, and the bills are listed below (owner 2026-10-14). */}
       {query.isPending && query.fetchStatus !== "idle" ? (
         <div style={MUTED}>Loading sales report…</div>
       ) : query.error ? (

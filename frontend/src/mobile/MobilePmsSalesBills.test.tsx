@@ -45,6 +45,7 @@ const RESPONSE: ProjectSalesBillsResponse = {
   totals: { count: 2, amount_sen: 1149900, opened_count: 1, opened_sen: 650000, not_opened_count: 1, not_opened_sen: 499900, other_event_count: 0 },
   report_activity_ids: [5],
   summary: null,
+  total_sales_rm: null,
   can_save: false,
 };
 
@@ -56,8 +57,9 @@ describe("MobilePmsSalesBills", () => {
     expect(get).toHaveBeenCalledWith("/api/project-sales-bills/344");
     expect(screen.getByText("2 · RM 11,499.00")).toBeTruthy();
     expect(screen.getByText(/Not opened 1 · RM 4,999.00/)).toBeTruthy();
-    expect(screen.getByText("Melvin Tan").parentElement!.textContent).toContain("RM 4,999.00");
-    expect(screen.getByText("Jason Lee").parentElement!.textContent).toContain("all opened");
+    /* No per-person row: the red sums sit under Sales attending. */
+    expect(screen.queryByText("Melvin Tan")).toBeNull();
+    expect(screen.queryByText("all opened")).toBeNull();
     expect(screen.getByText("HC-SO-2609-104").closest("a")?.getAttribute("href")).toBe("/scm/sales-orders/HC-SO-2609-104");
     expect(screen.getByText(/under JOHOR \[AKEMI\] MLE @ MVEC SOUTHKEY/)).toBeTruthy();
     expect(screen.getByText("Not opened")).toBeTruthy();

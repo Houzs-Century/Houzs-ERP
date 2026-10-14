@@ -9,7 +9,7 @@
  *
  * Own module: Projects.tsx is at its file-size ceiling.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import type { QueryState } from "../../hooks/useQuery";
 import { cn, formatDate } from "../../lib/utils";
@@ -53,10 +53,23 @@ export function ProjectSalesBillsBlock({
   const bills = billsNeedingAction(data?.bills ?? []);
   const totals = data?.totals;
   const summary = data?.summary ?? null;
-  /* Offer the latest summary's Total for Total Sales when the two differ — an
-     offer, never a silent write: Total Sales is the owner's figure. */
+  /* The summary's Total line is the event's Total Sales (owner 2026-10-14:
+     "this format mention total sales so fill up by this total"). An EMPTY
+     Total Sales (none, or 0) is filled from the latest summary in the chat the
+     first time someone who may write it opens the event — summaries pasted
+     before this existed included. A figure somebody already set is never
+     overwritten here: a new summary posted in the chat sets it, or the offer
+     below does on one click. */
+  const totalEmpty = finalTotalRm == null || finalTotalRm === 0;
+  const filledFor = useRef<number | null>(null);
+  useEffect(() => {
+    if (!canSetTotalSales || summary == null || !totalEmpty) return;
+    if (filledFor.current === summary.activity_id) return;
+    filledFor.current = summary.activity_id;
+    void setTotal(summary.total_sen);
+  }, [canSetTotalSales, summary?.activity_id, totalEmpty]);
   const offerTotal =
-    canSetTotalSales && summary != null && Math.round((finalTotalRm ?? 0) * 100) !== summary.total_sen;
+    canSetTotalSales && summary != null && finalTotalRm != null && finalTotalRm !== 0 && Math.round(finalTotalRm * 100) !== summary.total_sen;
   const daysDiffer = summary != null && summary.days_sen != null && summary.days_sen !== summary.total_sen;
 
   async function setTotal(sen: number) {
@@ -113,20 +126,9 @@ export function ProjectSalesBillsBlock({
         </div>
       )}
 
-      {data && data.persons.length > 0 && (
-        <div className="mb-1.5 flex flex-wrap gap-1">
-          {data.persons.map((p) => (
-            <span key={p.key} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-bg/60 px-2 py-0.5 text-[11px]" title={`${p.count} bill${p.count === 1 ? "" : "s"} · ${fmtRmSen(p.amount_sen)} · opened ${p.opened_count}`}>
-              <span className="font-medium text-ink">{p.name}</span>
-              {p.not_opened_sen > 0 ? (
-                <span className="font-mono text-[10px] font-semibold text-err">{fmtRmSen(p.not_opened_sen)}</span>
-              ) : (
-                <span className="font-mono text-[9px] uppercase text-emerald-700">all opened</span>
-              )}
-            </span>
-          ))}
-        </div>
-      )}
+      {/* No per-person row here: each rep's not-opened sum sits in red beside
+          their name under Sales Attending, and the bills are listed below
+          (owner 2026-10-14: a third copy was a duplicate). */}
 
       {totals && totals.count > 0 && bills.length === 0 && (
         <div className="rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-800">

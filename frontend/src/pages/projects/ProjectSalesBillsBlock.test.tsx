@@ -1,6 +1,6 @@
 /* The sales report a project's chat carries, inside its Sales section (owner
    2026-10-14). Pinned: the header counts bills, opened and not opened (red),
-   names each person with their red number or "all opened", links an opened
+   lists no per-person row (the red sum is under Sales Attending), links an opened
    bill to its order, shows a "+ (T)" extra apart from the amount, offers the
    latest summary's Total for Total Sales only to someone who may and only when
    the figures differ (with its days when they do not add up), and reports —
@@ -34,6 +34,7 @@ const RESPONSE: ProjectSalesBillsResponse = {
   totals: { count: 3, amount_sen: 1349900, opened_count: 2, opened_sen: 850000, not_opened_count: 1, not_opened_sen: 499900, other_event_count: 1 },
   report_activity_ids: [5, 6],
   summary: { activity_id: 7, total_sen: 4818500, days_sen: 4836500, created_at: "2026-10-14 11:27:25" },
+  total_sales_rm: null,
   can_save: true,
 };
 
@@ -61,8 +62,10 @@ describe("ProjectSalesBillsBlock", () => {
     expect(notOpened.className).toContain("text-err");
     expect(strip.getByText("1 under another event")).toBeTruthy();
 
-    expect(screen.getByText("Melvin Tan").parentElement!.textContent).toContain("RM 4,999.00");
-    expect(screen.getByText("Jason Lee").parentElement!.textContent).toContain("all opened");
+    /* No per-person row: the red sums live beside the names under Sales
+       Attending; repeating them here was a duplicate (owner 2026-10-14). */
+    expect(screen.queryByText("Melvin Tan")).toBeNull();
+    expect(screen.queryByText("all opened")).toBeNull();
 
     /* Only the bills still to act on: HC8993 is opened under this event and is
        in the Sales Orders list, so the report does not repeat it. */
@@ -96,6 +99,30 @@ describe("ProjectSalesBillsBlock", () => {
     expect(screen.queryByText(/Set Total Sales/)).toBeNull();
   });
 
+  test("an empty Total Sales (none or 0) is filled from the latest summary on opening; a set figure is never overwritten", async () => {
+    const onSet = vi.fn(async (_rm: number) => {});
+    const { unmount } = mount(query({ data: RESPONSE }), null, true, onSet);
+    await vi.waitFor(() => expect(onSet).toHaveBeenCalledWith(48185));
+    unmount();
+
+    const onSet0 = vi.fn(async (_rm: number) => {});
+    const { unmount: u0 } = mount(query({ data: RESPONSE }), 0, true, onSet0);
+    await vi.waitFor(() => expect(onSet0).toHaveBeenCalledWith(48185));
+    u0();
+
+    const onSetKept = vi.fn(async (_rm: number) => {});
+    const { unmount: u1 } = mount(query({ data: RESPONSE }), 48_365, true, onSetKept);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(onSetKept).not.toHaveBeenCalled();
+    expect(screen.getByText("Set Total Sales = RM 48,185.00")).toBeTruthy();
+    u1();
+
+    const onSetNo = vi.fn(async (_rm: number) => {});
+    mount(query({ data: RESPONSE }), null, false, onSetNo);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(onSetNo).not.toHaveBeenCalled();
+  });
+
   test("when every bill is opened under this event, it says so instead of a list", () => {
     mount(query({ data: { ...RESPONSE, bills: [RESPONSE.bills[0]!] } }), 48_185);
     expect(screen.queryByRole("table")).toBeNull();
@@ -104,7 +131,7 @@ describe("ProjectSalesBillsBlock", () => {
 
   test("nothing counted says how a report counts; loading and errors show as such", () => {
     const empty: ProjectSalesBillsResponse = {
-      bills: [], persons: [], report_activity_ids: [], summary: null, can_save: true,
+      bills: [], persons: [], report_activity_ids: [], summary: null, total_sales_rm: null, can_save: true,
       totals: { count: 0, amount_sen: 0, opened_count: 0, opened_sen: 0, not_opened_count: 0, not_opened_sen: 0, other_event_count: 0 },
     };
     const { unmount } = mount(query({ data: empty }), 113_990);

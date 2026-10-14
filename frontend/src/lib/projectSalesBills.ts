@@ -82,6 +82,8 @@ export type ProjectSalesBillsResponse = {
   /** Chat messages whose bills count — the chat marks those. */
   report_activity_ids: number[];
   summary: ReportSummary | null;
+  /** Total Sales in whole RM — sent to the three who report only, else null. */
+  total_sales_rm: number | null;
   can_save: boolean;
 };
 
@@ -119,6 +121,7 @@ export function normalizeProjectSalesBills(raw: unknown): ProjectSalesBillsRespo
     },
     report_activity_ids: Array.isArray(r.report_activity_ids) ? r.report_activity_ids.map(Number).filter(Number.isFinite) : [],
     summary: normalizeSummary(r.summary),
+    total_sales_rm: typeof r.total_sales_rm === "number" && Number.isFinite(r.total_sales_rm) ? r.total_sales_rm : null,
     can_save: r.can_save === true,
   };
 }
