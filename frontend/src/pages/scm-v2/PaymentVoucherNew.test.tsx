@@ -25,12 +25,17 @@ let copySourceDetail: { paymentVoucher: Record<string, unknown>; lines: Array<Re
 let reservations: { byPi: Record<string, number>; byApInvoice: Record<string, number>; holders: Record<string, string[]> } = { byPi: {}, byApInvoice: {}, holders: {} };
 /* The document a Customer Refund names (§14) — set by the refund test. */
 let refundSource: Record<string, unknown> | undefined;
+/* Each read of the refund source: the document and the request left out of the held money (owner 2026-10-14). */
+const refundSourceAsks: Array<[string, string | null]> = [];
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useCreatePaymentVoucher: () => ({ mutateAsync, isPending: false }),
   usePvReservations: () => ({ data: reservations, isLoading: false }),
   NO_RESERVATIONS: { byPi: {}, byApInvoice: {}, holders: {} },
   usePaymentVoucherDetail: (id: string | null) => ({ data: id ? copySourceDetail : undefined, isLoading: false }),
-  useRefundSource: (_type: string, docNo: string) => ({ data: docNo && refundSource ? { source: refundSource } : undefined, isLoading: false, isError: false, error: null }),
+  useRefundSource: (_type: string, docNo: string, _excludePvId?: string | null, excludeRequestId: string | null = null) => {
+    refundSourceAsks.push([docNo, excludeRequestId]);
+    return { data: docNo && refundSource ? { source: refundSource } : undefined, isLoading: false, isError: false, error: null };
+  },
   useExtractBills: () => ({ mutateAsync: extractAsync, isPending: false }),
   useExtractRequestBill: () => ({ mutateAsync: extractRequestAsync, isPending: false }),
   useUploadPvFile: () => ({ mutateAsync: uploadPvAsync, isPending: false }),
@@ -787,5 +792,41 @@ describe('the Customer Refund (?type=refund, §14)', () => {
     expect((screen.getByLabelText('Refund amount') as HTMLInputElement).disabled).toBe(true);
     expect((screen.getByText('Create Refund').closest('button') as HTMLButtonElement).disabled).toBe(true);
     refundSource = undefined;
+  });
+
+  /* Owner 2026-10-14: a refund raised from a Sales Order is a payment request — Finance
+     approves it here, on its own order, for the amount asked. */
+  test('answering a refund request: its order fixed, its amount, the customer\'s bank in the notes, no bill read; the save names the request', async () => {
+    mutateAsync.mockClear(); extractRequestAsync.mockClear(); refundSourceAsks.length = 0;
+    requestDetail = {
+      id: 'r9', request_no: 'HC-PRQ-2610-009', requested_by_name: 'Nancy', payee_name: 'NG WAN JUN', amount_sen: 120_000,
+      purpose: 'Customer want cancel this bill', bank_name: 'Maybank', bank_account_no: '5123 4567 8901', bank_account_name: 'NG WAN JUN',
+      note: null, project_id: null, bill_no: null, bill_date: null, refund_source_type: 'SO', refund_source_doc_no: 'HC-SO-2610-144',
+    };
+    refundSource = {
+      type: 'SO', docNo: 'HC-SO-2610-144', status: 'CANCELLED',
+      customer: { name: 'NG WAN JUN', phone: '012', customerId: 'c9', debtorCode: null },
+      payments: [{ id: 'p1', paidOn: '2026-10-01', method: 'transfer', provider: null, amountSen: 336_500, booked: true }],
+      bookedSen: 336_500, refunds: [], refundedSen: 0, requestedSen: 50_000, refundableSen: 286_500, eligible: true, reason: null,
+    };
+    draw('/scm/payment-vouchers/new?type=refund&fromRequest=r9');
+    const doc = screen.getByLabelText('Refunded document') as HTMLInputElement;
+    await waitFor(() => expect(doc.value).toBe('HC-SO-2610-144'));
+    expect(doc.readOnly).toBe(true);
+    expect((screen.getByText('Sales Invoice').closest('button') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/Answering HC-PRQ-2610-009 from Nancy — a refund of RM 1,200\.00 on HC-SO-2610-144/)).toBeTruthy();
+    await waitFor(() => expect((screen.getByLabelText('Refund amount') as HTMLInputElement).value).toBe('1,200.00'));
+    /* Its own amount is not held against it; another request's still is. */
+    expect(refundSourceAsks.some(([d, ex]) => d === 'HC-SO-2610-144' && ex === 'r9')).toBe(true);
+    expect(screen.getByText(/Waiting on other refund requests/)).toBeTruthy();
+    expect(extractRequestAsync).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('Create Refund'));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    const payload = mutateAsync.mock.calls[0]![0];
+    expect(payload).toMatchObject({
+      purpose: 'CUSTOMER_REFUND', refundSourceType: 'SO', refundSourceDocNo: 'HC-SO-2610-144', refundAmountSen: 120_000, paymentRequestId: 'r9',
+    });
+    expect(payload.notes).toBe('Payment request HC-PRQ-2610-009 — Customer want cancel this bill · pay to Maybank 5123 4567 8901 NG WAN JUN');
+    requestDetail = undefined; refundSource = undefined;
   });
 });

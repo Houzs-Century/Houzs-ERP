@@ -13,6 +13,7 @@
 // read off the ledger every time, never kept in a column:
 //
 //     remaining = paid − refund vouchers (draft or posted)
+//                      − refund requests still waiting for Finance
 //                      − converted rows on other orders naming this one
 //
 // where PAID is the payments this ledger booked (an active SOPAY / SOCONV)
@@ -52,18 +53,17 @@
 // A converted row is undone the way any payment is — deleted (the same-day
 // / amend gate) — and its transfer, its notes and its invoice go with it.
 //
-// A REFUND from the panel raises the Customer Refund voucher as a DRAFT for
-// Finance — the existing paper (lib/pv-refund.ts), through the voucher
-// door's own core (routes/payment-vouchers.ts createPaymentVoucherCore), on
-// the salesperson's behalf: the voucher-create key is Finance's, the refund
-// request is not. Finance changes the Paid From account in Draft if the
-// default bank is not the one, and only Finance approves.
+// A REFUND from the panel is a PAYMENT REQUEST for Finance (owner 2026-10-14:
+// 「可以让他跑去 payment request，而不是直接去 draft pv 吗？因为我可能还会拒绝」;
+// lib/refund-request.ts): the customer as payee, the customer's bank, the
+// reason, this order named. Finance answers it with the Customer Refund
+// voucher (lib/pv-refund.ts) or returns it; while it waits it holds its money.
 // ----------------------------------------------------------------------------
 
 import { CONVERTED_METHOD, CONVERT_SOURCE } from '../../acc/payments';
 import { issueDepositInvoice } from '../../acc/deposit-invoices';
 import { releaseConversionNotes, takeFromDepositInvoices } from '../../acc/deposit-refunds';
-import { resolveRoles } from '../../acc/rules';
+import { heldSen, refundRequestsOn, type MoneyRefundRequest } from './refund-request';
 import { mytDateOf, todayMyt } from './my-time';
 import { companyCodeById } from './doc-no';
 import { processingDateThresholdFor } from '../shared/order-rules';
@@ -111,6 +111,10 @@ export type OrderMoney = {
   importedSen: number;
   refunds: MoneyRefund[];
   refundedSen: number;
+  /** The refund requests raised on the order (owner 2026-10-14), each with its
+      state; the waiting ones hold `requestedSen` (lib/refund-request.ts). */
+  refundRequests: MoneyRefundRequest[];
+  requestedSen: number;
   conversions: MoneyConversion[];
   convertedSen: number;
   remainingSen: number;
@@ -194,6 +198,10 @@ export async function ordersMoney(sb: Db, companyId: number, docNosRaw: readonly
     .order('id').range(f, t));
   if (pvs.error) return { ok: false, reason: pvs.error.message };
 
+  /* The refund requests raised on them — the waiting ones hold their money. */
+  const asked = await refundRequestsOn(sb, companyId, docs);
+  if (!asked.ok) return { ok: false, reason: asked.reason };
+
   /* Every converted row on another order that names one of these as its source. */
   const convs = await chunkIn<Row>(docs, (batch, f, t) => sb.from('mfg_sales_order_payments')
     .select('id, so_doc_no, amount_sen, paid_at, created_at, converted_from_so_doc_no')
@@ -236,8 +244,10 @@ export async function ordersMoney(sb: Db, companyId: number, docNosRaw: readonly
     const bookedSen = counts.reduce((s, p) => s + p.amountSen, 0);
     const importedSen = counts.filter((p) => p.imported && !p.booked).reduce((s, p) => s + p.amountSen, 0);
     const refundedSen = refunds.reduce((s, r) => s + r.totalSen, 0);
+    const refundRequests = asked.byDoc.get(docNo) ?? [];
+    const requestedSen = heldSen(refundRequests);
     const convertedSen = conversions.reduce((s, r) => s + r.amountSen, 0);
-    const remainingSen = Math.max(0, bookedSen - refundedSen - convertedSen);
+    const remainingSen = Math.max(0, bookedSen - refundedSen - requestedSen - convertedSen);
     const status = row.status ?? null;
     const cancelled = String(status ?? '').toUpperCase() === 'CANCELLED';
     const keepFraction = cancelled ? 0 : liveFraction;
@@ -246,11 +256,11 @@ export async function ordersMoney(sb: Db, companyId: number, docNosRaw: readonly
     const movableSen = Math.max(0, remainingSen - keepSen);
     let reason: string | null = null;
     if (bookedSen === 0) reason = payments.length === 0 ? `${docNo} collected nothing.` : `${docNo}'s payments never reached this ledger — nothing here to refund or move.`;
-    else if (remainingSen === 0) reason = `${docNo}'s money is spoken for — refunded or moved in full.`;
+    else if (remainingSen === 0) reason = `${docNo}'s money is spoken for — refunded, asked back or moved in full.`;
     out.set(docNo, {
       docNo, status, cancelled,
       customer: { name: row.debtor_name ?? null, phone: row.phone ?? null, customerId: row.customer_id ?? null, debtorCode: row.debtor_code?.trim() || null },
-      payments, bookedSen, importedSen, refunds, refundedSen, conversions, convertedSen, remainingSen,
+      payments, bookedSen, importedSen, refunds, refundedSen, refundRequests, requestedSen, conversions, convertedSen, remainingSen,
       totalSen, keepFraction, keepSen, movableSen,
       open: remainingSen > 0, reason,
     });
@@ -305,7 +315,7 @@ export async function convertGuard(
   if (amount > money.remainingSen) {
     return {
       ok: false, status: 409, error: 'convert_exceeds_remaining',
-      message: `${fromDocNo} has ${fmtSen(money.remainingSen)} left to move (${fmtSen(money.bookedSen)} paid, ${fmtSen(money.refundedSen)} on refund vouchers, ${fmtSen(money.convertedSen)} moved already) — not ${fmtSen(amount)}.`,
+      message: `${fromDocNo} has ${fmtSen(money.remainingSen)} left to move (${fmtSen(money.bookedSen)} paid, ${fmtSen(money.refundedSen)} on refund vouchers${money.requestedSen > 0 ? `, ${fmtSen(money.requestedSen)} on refund requests waiting for Finance` : ''}, ${fmtSen(money.convertedSen)} moved already) — not ${fmtSen(amount)}.`,
     };
   }
   if (amount > money.movableSen) {
@@ -349,11 +359,11 @@ export async function cancelledRemovalGuard(
   if (!m.ok) return m;
   const pay = m.money.payments.find((x) => x.id === p.paymentId);
   if (!pay || !(pay.booked || pay.imported)) return { ok: true };
-  const takenSen = m.money.refundedSen + m.money.convertedSen;
+  const takenSen = m.money.refundedSen + m.money.requestedSen + m.money.convertedSen;
   if (m.money.bookedSen - pay.amountSen < takenSen) {
     return {
       ok: false, status: 409, error: 'cancelled_money_taken',
-      message: `${fmtSen(takenSen)} of ${p.docNo}'s money is refunded or moved to another order. Undo that first, then remove this payment.`,
+      message: `${fmtSen(takenSen)} of ${p.docNo}'s money is refunded, asked back or moved to another order. Undo that first, then remove this payment.`,
     };
   }
   return { ok: true };
@@ -488,21 +498,4 @@ export async function afterConvertedRowRemoved(sb: Db, p: { paymentId: string; c
   } catch (e) {
     log(`delete ${p.paymentId}: release hook threw:`, e);
   }
-}
-
-/** The body the voucher core takes for a refund raised from the order's
-    money panel: the customer as payee, the company's default bank as Paid
-    From (Finance changes it in Draft), the amount, the request's note. */
-export async function refundDraftBody(sb: Db, companyId: number, money: OrderMoney, amountSen: number, note: string | null, requestedBy: string | null): Promise<Record<string, unknown>> {
-  const roles = await resolveRoles(sb, companyId);
-  return {
-    purpose: 'CUSTOMER_REFUND',
-    refundSourceType: 'SO',
-    refundSourceDocNo: money.docNo,
-    refundAmountSen: amountSen,
-    payeeName: money.customer.name ?? money.docNo,
-    creditAccountCode: roles.BANK_DEFAULT,
-    voucherDate: todayMyt(),
-    notes: `Refund requested from ${money.docNo}${requestedBy ? ` by ${requestedBy}` : ''}${note ? ` — ${note}` : ''}`,
-  };
 }

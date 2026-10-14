@@ -279,6 +279,7 @@ function Guard({
   anyPerm,
   anyAccess,
   allowSalesDirector = false,
+  allowSales = false,
   children,
 }: {
   perm?: string;
@@ -298,9 +299,15 @@ function Guard({
    *  spelling of "admit the Sales Director too" and the next route that needs it
    *  must not invent a second one. */
   allowSalesDirector?: boolean;
+  /** ADDITIVE: a Sales-department user (auth/salesAccess.isSalesStaff) passes —
+   *  the same spelling as ScmGuard's and PageGuard's allowSales. Set on
+   *  /scm/payment-requests (owner 2026-10-14): a salesperson reads the refund
+   *  they asked for there; the server shows them their own requests only. */
+  allowSales?: boolean;
   children: React.ReactNode;
 }) {
   const { can, pageAccess, user } = useAuth();
+  if (allowSales && isSalesStaff(user)) return <>{children}</>;
   // OR across all provided gates — pass if ANY is satisfied. (Previously each
   // gate could only DENY; with anyAccess the gates are alternatives, so a
   // grant on any one is sufficient.)
@@ -768,8 +775,10 @@ export default function App() {
         <Route path="/scm/ar-invoices" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmArInvoicesV2 /></Scm2990Shell></ScmGuard>} />
         {/* 申请付款 (owner 2026-09-30): a flat-key door, not an SCM area — a sales PIC
             asking Finance to pay a bill holds no Finance area; Finance comes in on
-            the voucher key. The server shows a requester their own requests only. */}
-        <Route path="/scm/payment-requests" element={<Guard anyPerm={["*", "scm.payment_request.create", "scm.payment_voucher.create"]}><Scm2990Shell><ScmPaymentRequestsV2 /></Scm2990Shell></Guard>} />
+            the voucher key. The server shows a requester their own requests only.
+            Since 2026-10-14 (option A) Sales staff and anyone working Sales Orders
+            come in too: the refund they ask for from an order is their request. */}
+        <Route path="/scm/payment-requests" element={<Guard anyPerm={["*", "scm.payment_request.create", "scm.payment_voucher.create"]} anyAccess={["scm.sales.orders"]} allowSales><Scm2990Shell><ScmPaymentRequestsV2 /></Scm2990Shell></Guard>} />
         {/* Product request (owner 2026-10-06): Sales 都能提 (allowSales), the Purchaser
             批 (any scm.* grant, like the cancel-requests inbox) — the router shows a
             requester their own requests only. */}
