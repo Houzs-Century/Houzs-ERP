@@ -27,6 +27,15 @@ try {
   console.log(`(a) SERVICE products: ${prods.length}`);
   for (const p of prods) console.log(`  ${p.code} | ${p.name} | cat=${p.category} | co=${p.company_id}`);
 
+  const grp = await pg`
+    select l.company_id, l.item_code, l.item_group, count(*)::int as n, max(l.created_at) as last
+    from scm.mfg_sales_order_items l
+    join scm.mfg_products p on p.code = l.item_code and p.company_id = l.company_id and p.category::text = 'SERVICE'
+    where not l.cancelled
+    group by 1,2,3 order by 1,2,3`;
+  console.log(`(a2) live SO lines on SERVICE products, by item_group:`);
+  for (const g of grp) console.log(`  co=${g.company_id} ${g.item_code} | group=${g.item_group} | n=${g.n} | last=${g.last?.toISOString?.() ?? g.last} | serviceByGroupOrCode=${isSvc(g.item_code, g.item_group)}`);
+
   const sis = await pg`
     select si.id, si.invoice_number, si.so_doc_no, si.status, si.created_at, si.company_id
     from scm.sales_invoices si
