@@ -156,7 +156,6 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/fabric-tier-addon.ts` | 8 | 323 |
 | `backend/src/scm/routes/fabric-tracking.ts` | 10 | 720 |
 | `backend/src/scm/routes/fleet-maintenance.ts` | 23 | 2096 |
-| `backend/src/scm/routes/fleet-work-order-files.ts` | 3 | 104 |
 | `backend/src/scm/routes/free-item-campaigns.ts` | 4 | 115 |
 | `backend/src/scm/routes/grn-exports.ts` | 1 | 36 |
 | `backend/src/scm/routes/grns-list-enrichment.ts` | 1 | 120 |
@@ -218,7 +217,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/purchase-order-item-photos.ts` | 2 | 227 |
 | `backend/src/scm/routes/purchase-return-exports.ts` | 1 | 36 |
 | `backend/src/scm/routes/purchase-returns.ts` | 14 | 1956 |
-| `backend/src/scm/routes/pv-extract.ts` | 0 | 179 |
+| `backend/src/scm/routes/pv-extract.ts` | 0 | 196 |
 | `backend/src/scm/routes/pv-files.ts` | 0 | 140 |
 | `backend/src/scm/routes/pwp-codes.ts` | 5 | 494 |
 | `backend/src/scm/routes/pwp-rules.ts` | 4 | 233 |
@@ -230,11 +229,11 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/sales-invoices.ts` | 15 | 2064 |
 | `backend/src/scm/routes/sales-order-exports.ts` | 1 | 54 |
 | `backend/src/scm/routes/scan-gr.ts` | 5 | 611 |
-| `backend/src/scm/routes/scan-lorry-invoice.ts` | 1 | 391 |
-| `backend/src/scm/routes/scan-payment.ts` | 1 | 596 |
+| `backend/src/scm/routes/scan-lorry-invoice.ts` | 1 | 398 |
+| `backend/src/scm/routes/scan-payment.ts` | 1 | 603 |
 | `backend/src/scm/routes/scan-pi.ts` | 5 | 330 |
 | `backend/src/scm/routes/scan-so-serialize.ts` | 0 | 30 |
-| `backend/src/scm/routes/scan-so.ts` | 11 | 4739 |
+| `backend/src/scm/routes/scan-so.ts` | 11 | 4737 |
 | `backend/src/scm/routes/sg-postcode.ts` | 1 | 35 |
 | `backend/src/scm/routes/slips.ts` | 3 | 246 |
 | `backend/src/scm/routes/so-amendment-lane-preview.ts` | 1 | 89 |
@@ -258,6 +257,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/supplier-maintenance.ts` | 2 | 256 |
 | `backend/src/scm/routes/suppliers.ts` | 14 | 1438 |
 | `backend/src/scm/routes/threepl-companies.ts` | 5 | 319 |
+| `backend/src/scm/routes/threepl-do-charges.ts` | 3 | 186 |
 | `backend/src/scm/routes/trip-scan-token.ts` | 1 | 61 |
 | `backend/src/scm/routes/trips.ts` | 15 | 1391 |
 | `backend/src/scm/routes/unbilled-deliveries.ts` | 1 | 429 |
@@ -276,13 +276,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 161 | `162_table_layouts_company_shared.sql` (162) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 514 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 516 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (3310 files, 915169 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (3313 files, 915479 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -295,7 +295,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5246 |
 | `backend/src/routes/projects.ts` | 5186 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 4792 |
-| `backend/src/scm/routes/scan-so.ts` | 4739 |
+| `backend/src/scm/routes/scan-so.ts` | 4737 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4485 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4198 |
 | `frontend/src/mobile/MobilePMS.tsx` | 3884 |
@@ -494,12 +494,12 @@ Page files by directory:
 
 | directory | *.tsx |
 |---|---|
-| `frontend/src/pages` | 41 |
+| `frontend/src/pages` | 40 |
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/announcements` | 5 |
 | `frontend/src/pages/projects` | 16 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 224 |
+| `frontend/src/pages/scm-v2` | 225 |
 | `frontend/src/pages/scm-v2/products` | 2 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/team` | 12 |
