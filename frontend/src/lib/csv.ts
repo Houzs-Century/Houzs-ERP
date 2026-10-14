@@ -101,7 +101,8 @@ export function parseCSV(text: string): string[][] {
       continue;
     }
 
-    if (ch === '"') {
+    // A quote opens a quoted field only at its start; mid-field it is an inch mark.
+    if (ch === '"' && field === "") {
       inQuotes = true;
       i++;
       continue;
@@ -148,19 +149,4 @@ export function parseCSV(text: string): string[][] {
   }
 
   return rows;
-}
-
-// Convenience: parse a CSV File into an array of objects keyed by header row.
-export async function parseCSVFile(file: File): Promise<Array<Record<string, string>>> {
-  const text = await file.text();
-  const grid = parseCSV(text);
-  if (grid.length === 0) return [];
-  const headers = grid[0].map((h) => h.trim());
-  return grid.slice(1).map((cells) => {
-    const obj: Record<string, string> = {};
-    headers.forEach((h, i) => {
-      obj[h] = (cells[i] ?? "").trim();
-    });
-    return obj;
-  });
 }
