@@ -1,4 +1,4 @@
--- D1 / test-tree twin of migrations-pg/20261014T1200_project_sales_bills.sql.
+-- D1 / test-tree twin of migrations-pg/20261014T1400_project_sales_bills.sql.
 -- The prod tree is Postgres; this SQLite copy exists so the generated test
 -- schema (tests/generated/test-schema-snapshot.sql) carries the table the
 -- project page's sales report reads. SQLite types; no backfill (tests start empty).

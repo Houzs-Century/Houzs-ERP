@@ -608,7 +608,7 @@ export const project_checklist_template_items = pgTable(
   },
 );
 
-// ── project_sales_bills (mig 20261014T1200) ────────────────
+// ── project_sales_bills (mig 20261014T1400) ────────────────
 // The evening sales report pasted into a project's chat, one row per booklet
 // number: what the slip said and who sold it, so the project can say which
 // bills are still not opened as Sales Orders. Matching is done at read time
