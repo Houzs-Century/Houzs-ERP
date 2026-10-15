@@ -303,10 +303,10 @@ export const DeliveryPlanning = () => {
   const sendPostponeDirect = () => {
     const docNos = selectedSoDocNos();
     if (docNos.length === 0 || sendMsg.isPending) return;
-    sendMsg.mutate({ docNos, kind: 'postpone' }, {
+    void sendMsg.mutate({ docNos, kind: 'postpone' }, {
       onSuccess: (res: SendDeliveryMessagesResult) => {
         const after = KIND_AFTER_STATUS['postpone'];
-        if (after) for (const g of res.sent) for (const id of g.docNos) updateFields.mutate({ type: 'so', id, deliveryMessageStatus: after });
+        if (after) for (const g of res.sent) for (const id of g.docNos) void updateFields.mutate({ type: 'so', id, deliveryMessageStatus: after });
         const parts: string[] = [];
         if (res.sent.length) parts.push(`Sent ${res.sent.length} message${res.sent.length === 1 ? '' : 's'} (${res.sent.reduce((n, g) => n + g.docNos.length, 0)} orders).`);
         if (res.failed.length) parts.push(`Failed ${res.failed.length}: ${res.failed.map((f) => `${f.phone} (${f.error})`).join('; ')}.`);
