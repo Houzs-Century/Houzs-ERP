@@ -6,9 +6,11 @@
 // ----------------------------------------------------------------------------
 
 import { fmtTime } from '@2990s/shared';
+import { Link } from 'react-router-dom';
+import { fmtSen } from '../../vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
 import { LiveTripMap, type LiveMarker } from '../../vendor/scm/components/LiveTripMap';
-import { useLorryPositions, type LorryPosition } from '../../vendor/scm/lib/lorries-queries';
+import { useLorryKmCost, useLorryPositions, type LorryKmCost, type LorryPosition } from '../../vendor/scm/lib/lorries-queries';
 
 /* Three missed polls = stale. */
 const STALE_MS = 15 * 60_000;
@@ -22,9 +24,25 @@ function ago(iso: string): string {
 
 const isStale = (p: LorryPosition) => Date.now() - Date.parse(p.recorded_at) > STALE_MS;
 
+/* Km from today's Velocity fixes (Malaysia day) x the lorry's RM/km. No rate =
+   no cost shown: unknown is not zero. The rate is set on the Fleet page. */
+function KmCostCells({ kc }: { kc: LorryKmCost | undefined }) {
+  return (
+    <>
+      <td className="px-3 py-2 text-right tabular-nums">{kc ? `${kc.km.toFixed(1)} km` : '—'}</td>
+      <td className="px-3 py-2 text-right tabular-nums">
+        {kc?.cost_sen != null ? fmtSen(kc.cost_sen) : kc ? (
+          <Link className="text-accent underline-offset-2 hover:underline" to="/scm/fleet">set RM/km</Link>
+        ) : '—'}
+      </td>
+    </>
+  );
+}
+
 export function LorryLiveMap() {
   const q = useLorryPositions();
   const positions = q.data ?? [];
+  const kmCost = new Map((useLorryKmCost().data ?? []).map((k) => [k.lorry_id, k]));
   const mapsKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 
   const markers: LiveMarker[] = positions.map((p) => ({
@@ -74,6 +92,8 @@ export function LorryLiveMap() {
                     <th className="px-3 py-2">Speed</th>
                     <th className="px-3 py-2">Engine</th>
                     <th className="px-3 py-2">Where</th>
+                    <th className="px-3 py-2 text-right">Km today</th>
+                    <th className="px-3 py-2 text-right">Cost today</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -96,6 +116,7 @@ export function LorryLiveMap() {
                           {p.street || `${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`}
                         </a>
                       </td>
+                      <KmCostCells kc={kmCost.get(p.lorry_id)} />
                     </tr>
                   ))}
                 </tbody>
