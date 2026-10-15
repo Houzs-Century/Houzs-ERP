@@ -40,9 +40,10 @@ export function costSen(km: number, costPerKmSen: number | null): number | null 
 }
 
 /** The UTC window for one Malaysia (UTC+8) calendar day; null for a date that
- *  does not exist (2026-13-45 passes a shape check). */
+ *  does not exist (2026-13-45, or 2026-02-30 which Date.parse rolls to 2 Mar).
+ *  A hop across midnight counts on neither day. */
 export function myDayWindow(date: string): { from: string; to: string } | null {
   const start = Date.parse(`${date}T00:00:00+08:00`);
-  if (Number.isNaN(start)) return null;
+  if (Number.isNaN(start) || new Date(start + 8 * 3_600_000).toISOString().slice(0, 10) !== date) return null;
   return { from: new Date(start).toISOString(), to: new Date(start + 86_400_000).toISOString() };
 }

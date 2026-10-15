@@ -30,5 +30,8 @@ describe('myDayWindow', () => {
   it('a Malaysia day starts 16:00 UTC the day before', () => {
     expect(myDayWindow('2026-10-15')).toEqual({ from: '2026-10-14T16:00:00.000Z', to: '2026-10-15T16:00:00.000Z' });
   });
-  it('null for a date that does not exist', () => expect(myDayWindow('2026-13-45')).toBeNull());
+  it('null for a date that does not exist', () => {
+    expect(myDayWindow('2026-13-45')).toBeNull();
+    expect(myDayWindow('2026-02-30')).toBeNull();
+  });
 });

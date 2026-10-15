@@ -382,7 +382,7 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
     const rm = form.price.trim();
     if (rm && !Number.isFinite(Number(rm))) { notify({ title: 'Purchase price must be a number.', tone: 'error' }); return; }
     const perKm = form.perKm.trim();
-    if (perKm && !(Number(perKm) >= 0)) { notify({ title: 'Running cost per km must be a number, 0 or more.', tone: 'error' }); return; }
+    if (perKm && !(Number.isFinite(Number(perKm)) && Number(perKm) >= 0)) { notify({ title: 'Running cost per km must be a number, 0 or more.', tone: 'error' }); return; }
     update.mutate({
       id: lorry.id,
       model: form.model.trim() || null,
