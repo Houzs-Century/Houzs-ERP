@@ -24,6 +24,8 @@ import {
   amendmentUnrenderedAxes,
   amendmentVariantSummaries,
   amendmentVariants,
+  amendmentVariantsKey,
+  storedLineRemark,
   resolveVariantGroup,
   unrenderedVariantAxes,
   visibleAmendmentLines,
@@ -444,5 +446,32 @@ describe('amendmentVariants', () => {
     const v = { gap: '14"', remark: 'x' };
     amendmentVariants(v);
     expect(v).toEqual({ gap: '14"', remark: 'x' });
+  });
+});
+
+describe('edit-view fills are not changes (HC-0103)', () => {
+  const sig = (variants: unknown, remark = '') => amendmentLineSig({ itemCode: 'X', qty: 1, unitPriceSen: 0, variants, remark, discountSen: 0 });
+
+  it('a blank sofa leg filled with "Default" does not move the signature; a real leg does', () => {
+    const stored = { colourId: 'NICCA-02', specials: ['Nylon Fabric'], seatHeight: '24' };
+    expect(sig({ ...stored, legHeight: 'Default' })).toBe(sig(stored));
+    expect(sig({ ...stored, legHeight: '6"' })).not.toBe(sig(stored));
+  });
+
+  it('a recomputed bedframe totalHeight does not move it; a moved divan does', () => {
+    const stored = { divanHeight: '8"', legHeight: '1"', gap: '10"', totalHeight: '9"' };
+    expect(amendmentVariantsKey({ ...stored, totalHeight: '19"' })).toBe(amendmentVariantsKey(stored));
+    expect(amendmentVariantsKey({ ...stored, divanHeight: '10"', totalHeight: '21"' })).not.toBe(amendmentVariantsKey(stored));
+  });
+
+  it('key order and the remark side channel never count', () => {
+    expect(amendmentVariantsKey({ b: 1, a: 2, remark: 'x' })).toBe(amendmentVariantsKey({ a: 2, b: 1 }));
+    expect(amendmentVariantsKey({ remark: 'x', totalHeight: '' })).toBe('null');
+  });
+
+  it('the stored remark falls back to the copy in variants.remark (HC-SO-2609-321/A2)', () => {
+    expect(storedLineRemark(null, { remark: 'Backrest change to 8069' })).toBe('Backrest change to 8069');
+    expect(storedLineRemark('column wins', { remark: 'blob' })).toBe('column wins');
+    expect(storedLineRemark(undefined, null)).toBe('');
   });
 });

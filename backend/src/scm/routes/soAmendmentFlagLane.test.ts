@@ -59,6 +59,7 @@ const ROWS = (): Row[] => [
   am('l7', 'HC-SO-7', 'LINES', { amendment_no: 'HC-SO-7/A2' }),   // the target desk is already busy on this order
   am('l8', 'HC-SO-8', 'LINES', { lane_flag_note: 'came from Logistic' }),
   am('p9', 'HC-SO-9', 'PRICE'),                                   // a 2990 price-only lane — never handed over
+  am('l10', 'HC-SO-10', 'LINES'),                                 // HC-0103: only edit-view fills, no real change
 ];
 
 function appFor(permissions: string[]) {
@@ -85,12 +86,16 @@ const FINANCE = ['scm.amendment.approve_price'];
 beforeEach(() => {
   sb.tables.so_amendments = ROWS();
   sb.tables.mfg_sales_order_items = [
-    { id: 'i4', doc_no: 'HC-SO-4', item_code: 'PC151-01', item_group: 'sofa' },
-    { id: 'i5', doc_no: 'HC-SO-5', item_code: 'SVC-DELIVERY', item_group: 'service' },
+    { id: 'i4', doc_no: 'HC-SO-4', item_code: 'PC151-01', item_group: 'sofa', company_id: 1 },
+    { id: 'i5', doc_no: 'HC-SO-5', item_code: 'SVC-DELIVERY', item_group: 'service', company_id: 1 },
+    { id: 'i10', doc_no: 'HC-SO-10', item_code: '9058-1NA', item_group: 'sofa', company_id: 1, qty: 1, unit_price_sen: 0,
+      variants: { colourId: 'NICCA-02', specials: ['Nylon Fabric'] }, remark: null, discount_sen: 0 },
   ];
   sb.tables.so_amendment_lines = [
     { id: 'x4', amendment_id: 'l4', sales_order_item_id: 'i4', change_type: 'QTY', new_item_code: null, new_variants: null, new_qty: 3, new_unit_price_sen: null },
     { id: 'x5', amendment_id: 'l5', sales_order_item_id: 'i5', change_type: 'QTY', new_item_code: null, new_variants: null, new_qty: 2, new_unit_price_sen: null },
+    { id: 'x10', amendment_id: 'l10', sales_order_item_id: 'i10', change_type: 'SPEC', new_item_code: '9058-1NA',
+      new_variants: { specials: ['Nylon Fabric'], colourId: 'NICCA-02', legHeight: 'Default' }, new_qty: 1, new_unit_price_sen: 0 },
   ];
   audits.length = 0; handed.length = 0;
 });
@@ -158,6 +163,12 @@ describe('PATCH /so-amendments/:id/flag-lane', () => {
     expect(res.status).toBe(200);
     expect(row('l5').lane).toBe('DELIVERY');
     expect(handed[0]).toMatchObject({ fromLane: 'LINES', toLane: 'DELIVERY' });
+  });
+
+  it('lets the Purchaser pass a request whose only "changes" are edit-view fills (HC-0103)', async () => {
+    const res = await pass(PURCHASER, 'l10', { note: 'only a payment was added' });
+    expect(res.status).toBe(200);
+    expect(row('l10').lane).toBe('DELIVERY');
   });
 
   it('passes once: a request that was already handed over cannot be bounced back', async () => {

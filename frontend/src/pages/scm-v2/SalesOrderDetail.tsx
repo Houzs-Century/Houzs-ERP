@@ -113,7 +113,7 @@ import {
   amendmentLineFieldKinds,
   amendmentOldSnapshot,
   amendmentVariantSummaries,
-  visibleAmendmentLines, amendmentLineSig, amendmentRequestedUnitPriceSen} from '../../vendor/scm/lib/so-amendment-line-diff';
+  visibleAmendmentLines, amendmentLineSig, amendmentVariantsKey, amendmentRequestedUnitPriceSen} from '../../vendor/scm/lib/so-amendment-line-diff';
 import { routeField, type AmendmentFieldKind } from '../../vendor/scm/lib/amendment-routing';
 import { fetchSoSlipUrl, fetchScanSlipImageBlobUrl } from '../../vendor/scm/lib/slip';
 import {
@@ -1073,7 +1073,7 @@ export const SalesOrderDetail = () => {
          POS-created sofa line as SPEC). */
       const qtyOnly =
         draft.itemCode === orig.itemCode
-        && JSON.stringify(draft.variants ?? null) === JSON.stringify(orig.variants ?? null)
+        && amendmentVariantsKey(draft.variants) === amendmentVariantsKey(orig.variants)
         && effective.unitPriceSen === orig.unitPriceSen
         && draft.qty !== orig.qty;
       out.push({

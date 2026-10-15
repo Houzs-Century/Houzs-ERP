@@ -70,6 +70,39 @@ describe('amendmentLineIsNoop', () => {
   });
 });
 
+describe('edit-view fills are not changes (HC-0103)', () => {
+  it('HC-SO-012826/A1: a blank sofa leg filled with "Default" is a no-op; a real leg is kept', () => {
+    const sofa: StoredLine = {
+      id: 'li', item_code: '9058-1NA', qty: 1, unit_price_sen: 0, remark: 'compartment corrected 2026-09-04', discount_sen: 0,
+      variants: { colourId: 'NICCA-02', fabricId: 'NICCA', specials: ['Change 8030 Backcushion', 'Nylon Fabric'], seatHeight: '24' },
+    };
+    const sent = { salesOrderItemId: 'li', changeType: 'SPEC', newItemCode: '9058-1NA', newQty: 1, newUnitPriceSen: 0 };
+    expect(amendmentLineIsNoop({ ...sent, newVariants: { ...sofa.variants as object, legHeight: 'Default' } }, sofa)).toBe(true);
+    expect(amendmentLineIsNoop({ ...sent, newVariants: { ...sofa.variants as object, legHeight: '6"' } }, sofa)).toBe(false);
+  });
+
+  it('HC-SO-011077/A1: a recomputed bedframe totalHeight is a no-op; a moved divan is kept', () => {
+    const bed: StoredLine = {
+      id: 'li', item_code: 'TRION (A)-(K)', qty: 1, unit_price_sen: 0, remark: '账本原文: TBC/8”divan+1”legs/10” gaps', discount_sen: 0,
+      variants: { gap: '10"', divanHeight: '8"', legHeight: '1"', fabricCode: 'PC151-10', totalHeight: '9"' },
+    };
+    const sent = { salesOrderItemId: 'li', changeType: 'SPEC', newItemCode: 'TRION (A)-(K)', newQty: 1, newUnitPriceSen: 0 };
+    expect(amendmentLineIsNoop({ ...sent, newVariants: { ...bed.variants as object, totalHeight: '19"' } }, bed)).toBe(true);
+    expect(amendmentLineIsNoop({ ...sent, newVariants: { ...bed.variants as object, divanHeight: '10"', totalHeight: '21"' } }, bed)).toBe(false);
+  });
+
+  it('HC-SO-2609-321/A2: a remark moved from variants.remark to the column is a no-op; an edited one is kept', () => {
+    const line: StoredLine = {
+      id: 'li', item_code: '9058-L(RHF)', qty: 1, unit_price_sen: 0, remark: null, discount_sen: 0,
+      variants: { remark: 'Backrest change to 8069', colourId: 'NICCA-07', legHeight: 'Default' },
+    };
+    const sent = { salesOrderItemId: 'li', changeType: 'SPEC', newItemCode: '9058-L(RHF)', newQty: 1, newUnitPriceSen: 0,
+      newVariants: { colourId: 'NICCA-07', legHeight: 'Default' } };
+    expect(amendmentLineIsNoop({ ...sent, newRemark: 'Backrest change to 8069' }, line)).toBe(true);
+    expect(amendmentLineIsNoop({ ...sent, newRemark: 'Backrest change to 8030' }, line)).toBe(false);
+  });
+});
+
 describe('amendmentLinePriceOnly', () => {
   // A full no-op baseline (every field equals `stored`), so patching ONE field
   // isolates that field as the only thing that moved.
