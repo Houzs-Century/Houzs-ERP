@@ -15,7 +15,8 @@
 //   available_days = max(0, working_days − repair_days).
 //   total_trips    = non-CANCELLED trips with trip_date in [from,to].
 //                    PLUS one per lorry-date from DO crew assignments where that
-//                    lorry-date has no trip (deliveries +1 per DO), lib/lorry-capacity-do.ts.
+//                    lorry-date has no trip (deliveries +1 per DO), lib/lorry-capacity-do.ts,
+//                    and the same for PMS project setup/dismantle lorries (setup_dismantle +1).
 //   km             = GPS km from lorry_positions; running_cost = km x cost_per_km_sen.
 //   work_days      = distinct trip_date count (the displayed Work Days column).
 //   delivery_days  = distinct trip_date where the trip has ≥1 DELIVERY stop.
@@ -337,8 +338,33 @@ lorryCapacity.get('/', async (c) => {
       const acc = byLorry.get(lorryId);
       if (!acc) continue;
       acc.totalTrips += t.dates.size;
-      acc.deliveries += t.deliveries;
+      acc.deliveries += t.jobs;
       for (const d of t.dates) { acc.tripDates.add(d); acc.deliveryTripDates.add(d); }
+    }
+
+    /* 4d. PMS project setup / dismantle windows with a lorry (420 of the 421
+          lorry rows on the board, 15 Oct 2026). Same raw-SQL read as the board's
+          project rows; fleet is company-shared there too, so not scoped. */
+    const proj = await c.env.DB.prepare(
+      `SELECT setup_lorry_id, setup_start_at, dismantle_lorry_id, dismantle_start_at
+         FROM projects WHERE archived_at IS NULL
+          AND (setup_lorry_id IS NOT NULL OR dismantle_lorry_id IS NOT NULL)`,
+    ).all<Record<string, unknown>>();
+    const legs: DoDay[] = [];
+    for (const p of proj.results ?? []) {
+      for (const k of ['setup', 'dismantle'] as const) {
+        const lorryId = dual<string | number | null>(p, `${k}_lorry_id`);
+        const date = String(dual<string | null>(p, `${k}_start_at`) ?? '').slice(0, 10);
+        if (lorryId != null && date >= from && date <= to) legs.push({ lorryId: String(lorryId), lorryPlate: null, date });
+      }
+    }
+    const tripDates2 = new Map([...byLorry.values()].map((a) => [a.id, a.tripDates]));
+    for (const [lorryId, t] of tripsFromDoCrew(legs, idByPlate, tripDates2)) {
+      const acc = byLorry.get(lorryId);
+      if (!acc) continue;
+      acc.totalTrips += t.dates.size;
+      acc.setupDismantle += t.jobs;
+      for (const d of t.dates) acc.tripDates.add(d);
     }
   }
 
