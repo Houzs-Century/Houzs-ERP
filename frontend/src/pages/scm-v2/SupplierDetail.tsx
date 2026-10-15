@@ -1217,6 +1217,11 @@ const SOFA_TIER_CHIPS: { value: 'P1' | 'P2' | 'P3'; label: string }[] = [
 
 const SOFA_HEIGHT_FALLBACK = ['24', '26', '28', '30', '32', '35'];
 
+/** Column header for a seat-height. Pool values are free text: a bare number
+ *  gains its inch mark, anything typed with one (`25"`) or a word (`DEFAULT`)
+ *  shows as typed, so the header never reads `25""`. */
+export const seatHeightLabel = (h: string): string => (/^\d+(\.\d+)?$/.test(h.trim()) ? `${h.trim()}"` : h);
+
 const SofaSkuMappingsTable = ({
   supplierId,
   bindings,
@@ -1248,7 +1253,7 @@ const SofaSkuMappingsTable = ({
     ...bindingHeadColumns(supplierId, update),
     ...heights.map<GridColumn<BindingRow>>((h) => ({
       key: `h-${h}`,
-      label: `${h}"`,
+      label: seatHeightLabel(h),
       width: 110,
       align: 'right',
       accessor: (b) => (
@@ -1297,6 +1302,7 @@ const SofaSkuMappingsTable = ({
           <button
             key={c.value}
             type="button"
+            aria-pressed={selectedTier === c.value}
             onClick={() => setSelectedTier(c.value)}
             style={{
               fontFamily: 'var(--font-button)',
@@ -1313,7 +1319,7 @@ const SofaSkuMappingsTable = ({
             {c.label}
           </button>
         ))}
-        <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-10)', color: 'var(--fg-soft)' }}>
+        <span style={{ marginInlineStart: 'var(--space-2)', fontSize: 'var(--fs-10)', color: 'var(--fg-soft)' }}>
           Cost per (seat-height × tier). Empty cell = "no price set".
         </span>
       </div>
