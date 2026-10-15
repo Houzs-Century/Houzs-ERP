@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { api } = vi.hoisted(() => ({
@@ -39,10 +40,12 @@ function Where() {
 }
 const open = (url: string) =>
   render(
-    <MemoryRouter initialEntries={[url]}>
-      <ItSupport />
-      <Where />
-    </MemoryRouter>,
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={[url]}>
+        <ItSupport />
+        <Where />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 
 beforeEach(() => {
@@ -69,6 +72,21 @@ describe("IT Support — my requests", () => {
     expect(screen.getByText("Not picked up yet")).toBeTruthy();
     fireEvent.click(screen.getByText("Add a column"));
     expect(screen.getByTestId("where").textContent).toBe("/it-support?request=HC-0002");
+  });
+
+  it("All / Active / Resolved: counts from every request, the tab kept in the URL", async () => {
+    const done = { ...ROW, code: "HC-0003", title: "Printer offline", status: "closed", unread: false };
+    api.get.mockResolvedValue({ tickets: [ROW, done] });
+    open("/it-support");
+    expect(await screen.findByText("Printer offline")).toBeTruthy();
+    expect(screen.getAllByText("High")).toHaveLength(2);
+    fireEvent.click(screen.getByText("Resolved"));
+    expect(screen.getByTestId("where").textContent).toBe("/it-support?tab=resolved");
+    expect(screen.queryByText("Delivery order will not save")).toBeNull();
+    expect(screen.getByText("Printer offline")).toBeTruthy();
+    fireEvent.click(screen.getByText("Active"));
+    expect(screen.getByText("Delivery order will not save")).toBeTruthy();
+    expect(screen.queryByText("Printer offline")).toBeNull();
   });
 
   it("says nothing was sent only when the server answered with nothing", async () => {
@@ -120,6 +138,7 @@ describe("IT Support — report a problem", () => {
     expect(form.get("priority")).toBe("high");
     expect(form.get("type")).toBe("development");
     expect(form.get("page_url")).toBe("/scm/delivery-orders");
+    expect(Number.isNaN(Date.parse(String(form.get("occurred_at"))))).toBe(false);
     expect((form.getAll("files") as File[]).map((f) => f.name)).toEqual(["shot.png"]);
     // Who is reporting is the server's business, never the form's.
     expect(form.get("reporter_name")).toBeNull();
@@ -177,7 +196,7 @@ describe("IT Support — one request", () => {
     open("/it-support?request=HC-0001");
     expect(await screen.findByText("Which lorry was it?")).toBeTruthy();
     expect(api.get.mock.calls[0][0]).toBe("/api/it-support/tickets/HC-0001");
-    expect(screen.getByText("Handled by Samuel")).toBeTruthy();
+    expect(screen.getByText("Something is not working · High · Handled by Samuel")).toBeTruthy();
     expect(screen.getByText("gave it to Samuel")).toBeTruthy();
     expect(screen.getByText("changed it to Waiting for you")).toBeTruthy();
     expect(screen.getByText("You")).toBeTruthy();

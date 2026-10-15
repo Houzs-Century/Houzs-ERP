@@ -61,13 +61,34 @@ export function canonicalJson(o: unknown): string {
   return `{${Object.keys(rec).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(rec[k])}`).join(',')}}`;
 }
 
+const DEFAULT_LEG_RE = /^\s*default\s*$/i;
+
 /** The variants blob as an amendment compares it: without the `remark` side
- *  channel, and with an empty object reading the same as none. */
+ *  channel, and with an empty object reading the same as none.
+ *
+ *  HC-0103 (2026-10-15): the edit view also FILLS a saved line on open — a blank
+ *  sofa leg becomes "Default", a bedframe's totalHeight is recomputed from
+ *  divan + leg + gap — and three amendments carrying only those fills sat with
+ *  the Purchaser, refused a handover to Logistic as "product line changes".
+ *  totalHeight is derived (no form has an input for it), so it moves only when
+ *  a part moves, and the part is compared; a "Default" leg is the same order
+ *  as no leg picked. */
 export function variantsForCompare(v: unknown): string {
   if (v == null || typeof v !== 'object' || Array.isArray(v)) return canonicalJson(v ?? null);
   const rest: Record<string, unknown> = { ...(v as Record<string, unknown>) };
   delete rest.remark;
+  delete rest.totalHeight;
+  if (typeof rest.legHeight === 'string' && DEFAULT_LEG_RE.test(rest.legHeight)) delete rest.legHeight;
   return Object.keys(rest).length === 0 ? 'null' : canonicalJson(rest);
+}
+
+/** The line's remark as the edit view seeds it: the column, else the copy an
+ *  older write left in variants.remark (HC-SO-2609-321/A2 moved one from the
+ *  blob to the column and read as a remark change). */
+export function storedLineRemark(cur: Pick<StoredLine, 'remark' | 'variants'>): string {
+  if (cur.remark != null) return cur.remark.trim();
+  const v = cur.variants as Record<string, unknown> | null;
+  return v && typeof v === 'object' && typeof v.remark === 'string' ? v.remark.trim() : '';
 }
 
 /** True when the line asks for a value that differs from the stored line. */
@@ -77,7 +98,7 @@ export function amendmentLineIsNoop(l: NoopCheckLine, cur: StoredLine): boolean 
   if (l.newItemCode != null && l.newItemCode.trim() !== (cur.item_code ?? '').trim()) return false;
   if (l.newQty != null && Number(l.newQty) !== Number(cur.qty ?? 1)) return false;
   if (l.newUnitPriceSen != null && Math.round(Number(l.newUnitPriceSen)) !== Math.round(Number(cur.unit_price_sen ?? 0))) return false;
-  if (l.newRemark != null && l.newRemark.trim() !== (cur.remark ?? '').trim()) return false;
+  if (l.newRemark != null && l.newRemark.trim() !== storedLineRemark(cur)) return false;
   if (l.newDiscountSen != null && Math.round(Number(l.newDiscountSen)) !== Math.round(Number(cur.discount_sen ?? 0))) return false;
   if (l.newVariants != null && variantsForCompare(l.newVariants) !== variantsForCompare(cur.variants)) return false;
   return true;
@@ -101,7 +122,7 @@ export function amendmentLinePriceOnly(l: NoopCheckLine, cur: StoredLine): boole
   const nonPriceMoved =
     (l.newItemCode != null && l.newItemCode.trim() !== (cur.item_code ?? '').trim())
     || (l.newQty != null && Number(l.newQty) !== Number(cur.qty ?? 1))
-    || (l.newRemark != null && l.newRemark.trim() !== (cur.remark ?? '').trim())
+    || (l.newRemark != null && l.newRemark.trim() !== storedLineRemark(cur))
     || (l.newVariants != null && variantsForCompare(l.newVariants) !== variantsForCompare(cur.variants));
   return !nonPriceMoved;
 }

@@ -63,6 +63,21 @@ describe("/api/it-support", () => {
     expect(calls[0].headers.get("X-Reporter-Id")).toBe("42");
   });
 
+  test("unread count: the hub's number as { count }, the shape every menu count reads", async () => {
+    const calls = fakeHub(() => json({ unread: 3 }));
+    const res = await appAs(AINA).request("/api/it-support/unread-count");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ count: 3 });
+    expect(calls[0].url).toBe("https://hub.example/api/v1/sys/tickets/unread-count");
+    expect(calls[0].headers.get("X-Reporter-Id")).toBe("42");
+    for (const odd of [{}, { unread: "x" }, { unread: -2 }]) {
+      fakeHub(() => json(odd));
+      expect(await (await appAs(AINA).request("/api/it-support/unread-count")).json()).toEqual({ count: 0 });
+    }
+    // Not connected stays an error, so the menu shows no count rather than a made-up 0.
+    expect((await appAs(AINA, {}).request("/api/it-support/unread-count")).status).toBe(501);
+  });
+
   test("status: connected only where both settings are present; not connected is an answer, not an error", async () => {
     const calls = fakeHub(() => json({}));
     const on = await appAs(AINA).request("/api/it-support/status");
@@ -118,6 +133,7 @@ describe("/api/it-support", () => {
     for (const user of [SERVICE, undefined, { id: "42", email: "x" }]) {
       for (const [path, method] of [
         ["/api/it-support/tickets", "GET"],
+        ["/api/it-support/unread-count", "GET"],
         ["/api/it-support/tickets/HC-0001", "GET"],
         ["/api/it-support/tickets", "POST"],
         ["/api/it-support/tickets/HC-0001/replies", "POST"],
@@ -152,7 +168,7 @@ describe("/api/it-support", () => {
     });
     const app = appAs(AINA);
     for (mode of ["throw", "badkey", "html", "500"]) {
-      for (const path of ["/api/it-support/tickets", "/api/it-support/tickets/HC-0001"]) {
+      for (const path of ["/api/it-support/tickets", "/api/it-support/tickets/HC-0001", "/api/it-support/unread-count"]) {
         const res = await app.request(path);
         expect(res.status, `${mode} ${path}`).toBe(502);
         const text = await res.text();
@@ -186,6 +202,7 @@ describe("/api/it-support", () => {
     form.set("type", "bug");
     form.set("priority", "high");
     form.set("page_url", "/scm/delivery-orders");
+    form.set("occurred_at", "2026-10-15T02:00:00.000Z");
     form.set("reporter_name", "The Boss");
     form.set("reporter_email", "boss@houzs.test");
     form.set("reporter_department", "Board");
@@ -206,6 +223,7 @@ describe("/api/it-support", () => {
     expect(sent.get("title")).toBe("Delivery order will not save");
     expect(sent.get("priority")).toBe("high");
     expect(sent.get("page_url")).toBe("/scm/delivery-orders");
+    expect(sent.get("occurred_at")).toBe("2026-10-15T02:00:00.000Z");
     expect(sent.get("reporter_name")).toBe("Aina");
     expect(sent.get("reporter_email")).toBe("aina@houzs.test");
     expect(sent.get("reporter_department")).toBe("Sales");

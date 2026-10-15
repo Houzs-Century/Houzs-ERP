@@ -2,7 +2,7 @@
 // coercion that guarantees downstream code a well-shaped GrnExtracted whatever
 // the model returns.
 import { describe, expect, test } from 'vitest';
-import { normalizeGrnExtract } from './grn-scan-extract';
+import { normalizeGrnExtract, emptyScanNote } from './grn-scan-extract';
 
 describe('normalizeGrnExtract', () => {
   test('coerces a clean delivery order', () => {
@@ -68,5 +68,21 @@ describe('normalizeGrnExtract', () => {
   test('non-ISO delivery date is dropped to null', () => {
     expect(normalizeGrnExtract({ deliveryDate: '18/09/2026' }).deliveryDate).toBeNull();
     expect(normalizeGrnExtract({ deliveryDate: '2026-09-18' }).deliveryDate).toBe('2026-09-18');
+  });
+});
+
+describe('emptyScanNote', () => {
+  const retake = /does not look like a delivery order/;
+  const noLines = /could not read any lines/;
+  test('a totally empty read says the photo is not a DO or is cut off', () => {
+    expect(emptyScanNote(normalizeGrnExtract({}))).toMatch(retake);
+  });
+  test('a failed call (no read) keeps the neutral note', () => {
+    expect(emptyScanNote(null)).toMatch(noLines);
+  });
+  test('any header read with no lines keeps the neutral note', () => {
+    for (const head of [{ doNo: 'DO-1' }, { poNo: 'PO-1' }, { supplierName: 'Hookka' }]) {
+      expect(emptyScanNote(normalizeGrnExtract(head))).toMatch(noLines);
+    }
   });
 });

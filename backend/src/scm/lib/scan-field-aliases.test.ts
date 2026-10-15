@@ -3,7 +3,7 @@
 // the same way both times (temperature 0), so only the alias table can fix it.
 import { describe, expect, test, vi } from 'vitest';
 import { noteScanDraftAccepted } from './scan-sample-review';
-import { readSlipWithAliases, slipAliasPairs } from './scan-field-aliases';
+import { aliasHint, readSlipWithAliases, slipAliasPairs } from './scan-field-aliases';
 
 type Row = Record<string, unknown>;
 
@@ -131,5 +131,22 @@ describe('slipAliasPairs', () => {
   test('a field the operator blanked teaches nothing (no alias to empty)', () => {
     const ai = modelRead();
     expect(slipAliasPairs(ai, { ...ai, customerName: null })).toEqual([]);
+  });
+
+  test('two slip lines with the same text are ambiguous and teach nothing', () => {
+    const line = (code: string) => ({ rawText: 'CUSHION', skuMatch: { code } });
+    const ai = { ...modelRead(), lines: [line('A'), line('B')] };
+    const op = { ...ai, lines: [line('A'), line('C')] };
+    expect(slipAliasPairs(ai, op)).toEqual([]);
+  });
+});
+
+describe('aliasHint', () => {
+  test('hints the newest 50 only and keeps an operator quote inside its string', () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({ field: 'customerName' as const, raw: `R${i}`, value: i === 0 ? 'A "B" C' : `V${i}` }));
+    const hint = aliasHint(many);
+    expect(hint.split('\n').filter((l) => l.startsWith('- '))).toHaveLength(50);
+    expect(hint).toContain('"A \\"B\\" C"');
+    expect(hint).not.toContain('R50');
   });
 });

@@ -20,6 +20,8 @@ export type FieldAlias = { field: SlipAliasField; raw: string; value: string };
 const KIND = 'so';
 /* ponytail: newest 500 per company; a bigger table needs a lookup by raw. */
 const LOAD_LIMIT = 500;
+/* The prompt is paid for on every scan: hint the newest few, apply all LOAD_LIMIT. */
+const HINT_LIMIT = 50;
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
 /** The match key: case and runs of space never matter. */
@@ -45,11 +47,15 @@ export function slipAliasPairs(extracted: Slip, corrected: Slip): FieldAlias[] {
 
   /* corrected.lines are in SO order and each spreads its slip line, so the slip
      text pairs them with the model's lines. */
-  const aiByText = new Map(linesOf(extracted).flatMap((l) => {
-    const t = str(l.rawText);
-    return t ? [[aliasKey(t), l] as const] : [];
-  }));
-  for (const l of linesOf(corrected)) {
+  const keysOf = (ls: Line[]) => ls.map((l) => { const t = str(l.rawText); return t ? aliasKey(t) : null; });
+  const aiLines = linesOf(extracted);
+  const aiKeys = keysOf(aiLines);
+  const opKeys = keysOf(linesOf(corrected));
+  /* Two lines with the same slip text cannot be told apart, so they teach nothing. */
+  const once = (k: string | null, all: Array<string | null>) => k !== null && all.filter((x) => x === k).length === 1;
+  const aiByText = new Map(aiLines.flatMap((l, i) => (once(aiKeys[i], aiKeys) ? [[aiKeys[i] as string, l] as const] : [])));
+  for (const [i, l] of linesOf(corrected).entries()) {
+    if (!once(opKeys[i], opKeys)) continue;
     const t = str(l.rawText);
     const ai = t ? aiByText.get(aliasKey(t)) : undefined;
     const aiCode = ai ? codeOf(ai) : null;
@@ -89,7 +95,7 @@ export function aliasHint(aliases: FieldAlias[]): string {
   if (aliases.length === 0) return '';
   const label: Record<SlipAliasField, string> = { customerName: 'customer name', phone: 'phone', itemCode: 'line text -> item code' };
   return 'CONFIRMED CORRECTIONS for this company. When the slip reads as the left side, the operator ' +
-    'confirmed the right side:\n' + aliases.map((a) => `- ${label[a.field]}: "${a.raw}" -> "${a.value}"`).join('\n');
+    'confirmed the right side:\n' + aliases.slice(0, HINT_LIMIT).map((a) => `- ${label[a.field]}: ${JSON.stringify(a.raw)} -> ${JSON.stringify(a.value)}`).join('\n');
 }
 
 /** Overwrite exact hits on the model's output, in place. Returns the fields changed. */

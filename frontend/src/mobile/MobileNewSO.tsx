@@ -11,7 +11,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch, type SaveProblem } from "../vendor/scm/lib/authed-fetch";
 import { lineWriteFailure, lineWriteSaveMessage, type LineWriteFailure } from "../vendor/scm/lib/line-write-failures";
-import { amendmentVariants, amendmentRequestedUnitPriceSen } from "../vendor/scm/lib/so-amendment-line-diff";
+import { amendmentVariants, amendmentVariantsKey, amendmentRequestedUnitPriceSen, storedLineRemark } from "../vendor/scm/lib/so-amendment-line-diff";
 import { photoLabel, photoUploadFailure, photoUploadFailureMessage, unmatchedLinePhotos, type PhotoUploadFailure } from "../vendor/scm/lib/photo-upload-failures";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
 import { notifySaveProblems, SaveProblemsList, saveProblemsTitle } from "../vendor/scm/components/SaveProblemsList";
@@ -556,7 +556,7 @@ function lineFromItem(it: SoItem): LineItem {
     price: fromSen(it.unit_price_sen),
     priceAuthored: true, // off the persisted row: a 0 IS its price (edit-DRAFT re-creates)
     ddate: (it.line_delivery_date ?? "").slice(0, 10),
-    remark: it.remark ?? (typeof v.remark === "string" ? v.remark : ""),
+    remark: storedLineRemark(it.remark, it.variants),
     cat,
     variants: v,
     photoKeys: Array.isArray(it.photoUrls) ? it.photoUrls : Array.isArray(it.photo_urls) ? it.photo_urls : [],
@@ -1796,10 +1796,10 @@ export function MobileNewSO({
        imported line carries none, so the raw compare read every remarked line as
        a spec change — a Delivery Date change on HC-SO-011410 opened a second,
        Purchaser approval over nothing (owner 2026-09-15). */
-    if (canonJson(amendmentVariants(buildVariants(l))) !== canonJson(amendmentVariants(snap.variants))) return true;
+    if (amendmentVariantsKey(buildVariants(l)) !== amendmentVariantsKey(snap.variants)) return true;
     /* mig 0280 — the remark is a carryable field, so a remark-only edit IS a
        request; it is tested HERE, as its own field, on both platforms. */
-    if (l.remark.trim() !== (snap.remark ?? "").trim()) return true;
+    if (l.remark.trim() !== storedLineRemark(snap.remark, snap.variants).trim()) return true;
     return false;
   };
 
@@ -1861,7 +1861,7 @@ export function MobileNewSO({
       if (!snap) continue;
       if (!amendmentLineChanged(l, snap)) continue; // nothing amendable moved
       const codeSame = l.itemCode === (snap.item_code ?? "");
-      const variantsSame = canonJson(amendmentVariants(buildVariants(l))) === canonJson(amendmentVariants(snap.variants));
+      const variantsSame = amendmentVariantsKey(buildVariants(l)) === amendmentVariantsKey(snap.variants);
       const priceSame = (requestedPriceSen(l) ?? (snap.unit_price_sen ?? 0)) === (snap.unit_price_sen ?? 0);
       const qtyMoved = (num(l.qty) || 1) !== (snap.qty ?? 1);
       const qtyOnly = codeSame && variantsSame && priceSame && qtyMoved;
@@ -1876,7 +1876,7 @@ export function MobileNewSO({
         /* mig 0280 — send the remark only when it MOVED (desktop parity): a null
            new_remark is "not requested", which is what keeps the apply from
            rewriting a remark this session never touched. */
-        ...(l.remark.trim() !== (snap.remark ?? "").trim()
+        ...(l.remark.trim() !== storedLineRemark(snap.remark, snap.variants).trim()
           ? { newRemark: l.remark.trim() }
           : {}),
         oldSnapshot: {

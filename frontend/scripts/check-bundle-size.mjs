@@ -241,6 +241,10 @@ const CEILINGS = {
   // (PR #4635) added NO eager module: one lazy() route for /pos-admin in
   // App.tsx and one Sidebar entry (System > POS Admin, the Store icon). The
   // measured delta was +0.2 KB. Same shell-growth mechanism as the notes above.
+  // 171 -> 172 on 2026-10-15: main sat at 170,990 bytes, 10 under. PR #4646
+  // (supplier sofa pricing headers) added NO eager module; only the lazy
+  // SupplierDetail chunk's hashed name changed in the entry's lazy-chunk map,
+  // and gzip of the new hash cost a few bytes. Any lazy-page edit could trip it.
   INITIAL_JS_GZIP: 172 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left

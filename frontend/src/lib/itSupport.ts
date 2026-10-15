@@ -24,6 +24,7 @@ export interface ItStep {
 export interface ItDetail {
   ticket: {
     code: string; type: string; priority: string; status: ItStatus; title: string; description: string;
+    occurred_at?: string | null; page_url?: string | null;
     assignee_name: string | null; created_at: string; updated_at: string;
   };
   events: ItStep[];
@@ -48,6 +49,24 @@ const STATUS_TONE: Record<ItStatus, ItTone> = {
 };
 export const IT_KINDS = [["bug", "Something is not working"], ["development", "Ask for a change"]] as const;
 export const IT_URGENCY = [["low", "Low"], ["medium", "Medium"], ["high", "High"]] as const;
+/* IT may raise a request to urgent on the hub, so the list can show it even though the form does not offer it. */
+const URGENCY_TEXT: Record<string, string> = { urgent: "Urgent", high: "High", medium: "Medium", low: "Low" };
+const URGENCY_ORDER = ["urgent", "high", "medium", "low"];
+const KIND_TEXT: Record<string, string> = Object.fromEntries(IT_KINDS);
+export const itUrgencyText = (p: string): string => URGENCY_TEXT[p] ?? p;
+/** Most urgent first; an unknown level sorts last. */
+export const itUrgencyRank = (p: string): number => (URGENCY_ORDER.includes(p) ? URGENCY_ORDER.indexOf(p) : URGENCY_ORDER.length);
+export const itUrgencyTone = (p: string): ItTone => (p === "urgent" || p === "high" ? "error" : p === "medium" ? "warning" : "neutral");
+export const itKindText = (k: string): string => KIND_TEXT[k] ?? k;
+
+/* The list's three tabs. Done-please-confirm sits with Resolved: IT's part is
+   over and the request waits only on the person's "Yes, it is fixed". */
+export type ItTab = "all" | "active" | "resolved";
+export const IT_TABS: readonly ItTab[] = ["all", "active", "resolved"];
+const RESOLVED: ReadonlySet<string> = new Set(["resolved", "closed", "rejected"]);
+export const itInTab = (status: string, tab: ItTab): boolean =>
+  tab === "all" || (tab === "resolved") === RESOLVED.has(status);
+export const isItTab = (s: string | null): s is ItTab => s !== null && (IT_TABS as readonly string[]).includes(s);
 
 export const IT_MAX_FILES = 5;
 export const IT_MAX_BYTES = 10 * 1024 * 1024;

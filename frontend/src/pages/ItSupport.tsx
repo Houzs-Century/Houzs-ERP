@@ -1,15 +1,20 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ArrowLeft, FileText, Film, LifeBuoy, Paperclip, Plus, RotateCcw, Upload, X } from "lucide-react";
 import { api } from "../api/client";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
+import { DataTable, type Column } from "../components/DataTable";
+import { TabStrip } from "../components/TabStrip";
+import { useRefreshItSupportUnread } from "../hooks/useAmendmentApprovals";
 import { clipboardFiles, useStrayFileDropGuard } from "../lib/uploadDropZone";
 import { cn, formatDateTime, relativeTime } from "../lib/utils";
 import {
-  IT_ACCEPT as ACCEPT, IT_KINDS as KINDS, IT_MAX_FILES as MAX_FILES, IT_URGENCY as URGENCY,
-  itAddFiles, itFresh as fresh, itMessage as message, itStatusText as statusText, itStatusTone as statusTone,
-  itStepLine as stepLine, type ItDetail as Detail, type ItFileRef as FileRef, type ItRequestRow as RequestRow,
+  IT_ACCEPT as ACCEPT, IT_KINDS as KINDS, IT_MAX_FILES as MAX_FILES, IT_TABS, IT_URGENCY as URGENCY,
+  isItTab, itAddFiles, itFresh as fresh, itInTab, itKindText as kindText, itMessage as message,
+  itStatusText as statusText, itStatusTone as statusTone, itStepLine as stepLine, itUrgencyRank as urgencyRank,
+  itUrgencyText as urgencyText, itUrgencyTone as urgencyTone,
+  type ItDetail as Detail, type ItFileRef as FileRef, type ItRequestRow as RequestRow, type ItTab,
 } from "../lib/itSupport";
 
 /**
@@ -20,8 +25,10 @@ import {
  * themselves live in the Houzs IT Hub, not in this database.
  *
  * One page, three views, chosen by the URL so a link can open any of them:
- * the list, `?new=1` (with `&from=<path>` naming the page the problem is on),
- * and `?request=HC-0001`.
+ * the list (`?tab=active|resolved`, All when absent), `?new=1` (with
+ * `&from=<path>` naming the page the problem is on), and `?request=HC-0001`.
+ * The list is laid out like Hookka's IT Support (tabs, a searchable sortable
+ * table) so every system's IT Support works the same way; the look is Century's.
  *
  * A list we FAILED to load is not an empty list — the same rule the
  * Notifications page keeps. "Nothing sent yet" is drawn only when the server
@@ -34,6 +41,10 @@ const LABEL = "text-[11.5px] font-semibold text-ink-secondary";
 
 function StatusBadge({ status }: { status: string }) {
   return <Badge tone={statusTone(status)} size="sm" caseless>{statusText(status)}</Badge>;
+}
+
+function UrgencyBadge({ priority }: { priority: string }) {
+  return <Badge tone={urgencyTone(priority)} size="sm" caseless>{urgencyText(priority)}</Badge>;
 }
 
 /* One picture's preview address, released when the file goes. Made in the
@@ -164,6 +175,7 @@ function NewRequest({ from, onSent, onCancel }: { from: string; onSent: (code: s
     form.set("description", description.trim());
     form.set("type", kind);
     form.set("priority", urgency);
+    form.set("occurred_at", new Date().toISOString());
     if (from) form.set("page_url", from);
     for (const f of files) form.append("files", f, f.name);
     try {
@@ -224,15 +236,18 @@ function OneRequest({ code }: { code: string }) {
   const [busy, setBusy] = useState<"" | "reply" | "confirm" | "file">("");
   const [error, setError] = useState<string | null>(null);
   const path = `/api/it-support/tickets/${encodeURIComponent(code)}`;
+  const refreshUnread = useRefreshItSupportUnread();
 
   const load = useCallback(async () => {
     try {
       setDetail(await fresh<Detail>(path));
       setLoadError(null);
+      // Reading it marked it seen on the hub, so the menu count has moved.
+      refreshUnread();
     } catch (err) {
       setLoadError(message(err, "This IT request could not be opened."));
     }
-  }, [path]);
+  }, [path, refreshUnread]);
 
   useEffect(() => {
     void load();
@@ -316,7 +331,7 @@ function OneRequest({ code }: { code: string }) {
           <span className="font-mono text-[12px] font-semibold text-ink">{t.code}</span>
           <StatusBadge status={t.status} />
           <span className="text-[11.5px] text-ink-muted">
-            {t.assignee_name ? `Handled by ${t.assignee_name}` : "Not picked up yet"}
+            {kindText(t.type)} · {urgencyText(t.priority)} · {t.assignee_name ? `Handled by ${t.assignee_name}` : "Not picked up yet"}
           </span>
         </div>
         <h2 className="text-[15px] font-bold text-ink [overflow-wrap:anywhere]">{t.title}</h2>
@@ -377,7 +392,14 @@ function OneRequest({ code }: { code: string }) {
   );
 }
 
-function RequestList({ onOpen, onNew }: { onOpen: (code: string) => void; onNew: () => void }) {
+const TAB_LABEL: Record<ItTab, string> = { all: "All", active: "Active", resolved: "Resolved" };
+const TAB_EMPTY: Record<ItTab, string> = {
+  all: "No requests match.", active: "Nothing is with IT right now.", resolved: "No resolved requests yet.",
+};
+
+function RequestList({ tab, onTab, onOpen, onNew }: {
+  tab: ItTab; onTab: (t: ItTab) => void; onOpen: (code: string) => void; onNew: () => void;
+}) {
   const [rows, setRows] = useState<RequestRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -394,6 +416,47 @@ function RequestList({ onOpen, onNew }: { onOpen: (code: string) => void; onNew:
     const t = window.setInterval(() => { if (document.visibilityState === "visible") void load(); }, 60_000);
     return () => window.clearInterval(t);
   }, [load]);
+
+  // Counts come from every request, never from what the search box left.
+  const counts = useMemo(
+    () => Object.fromEntries(IT_TABS.map((k) => [k, (rows ?? []).filter((r) => itInTab(r.status, k)).length])) as Record<ItTab, number>,
+    [rows],
+  );
+  const shown = useMemo(() => (rows ? rows.filter((r) => itInTab(r.status, tab)) : null), [rows, tab]);
+
+  const columns = useMemo<Column<RequestRow>[]>(() => [
+    {
+      key: "code", label: "Request", width: "110px",
+      render: (r) => <span className="font-mono text-[11.5px] font-semibold text-ink">{r.code}</span>,
+      getValue: (r) => r.code,
+    },
+    {
+      key: "title", label: "Problem",
+      render: (r) => (
+        <span className="flex items-center gap-2">
+          <span className={cn("text-ink [overflow-wrap:anywhere]", r.unread && "font-bold")}>{r.title}</span>
+          {r.unread && <Badge tone="accent" variant="solid" size="sm" caseless>New reply</Badge>}
+        </span>
+      ),
+      getValue: (r) => r.title,
+    },
+    { key: "status", label: "Status", width: "170px", render: (r) => <StatusBadge status={r.status} />, getValue: (r) => statusText(r.status) },
+    {
+      key: "priority", label: "Urgency", width: "110px",
+      render: (r) => <UrgencyBadge priority={r.priority} />,
+      getValue: (r) => urgencyText(r.priority), sortValue: (r) => urgencyRank(r.priority),
+    },
+    {
+      key: "assignee_name", label: "Handled by", width: "170px",
+      render: (r) => (r.assignee_name ? <span className="text-ink">{r.assignee_name}</span> : <span className="italic text-ink-muted">Not picked up yet</span>),
+      getValue: (r) => r.assignee_name ?? "Not picked up yet",
+    },
+    {
+      key: "updated_at", label: "Last update", width: "160px",
+      render: (r) => <span className="whitespace-nowrap text-ink-muted" title={relativeTime(r.updated_at)}>{formatDateTime(r.updated_at)}</span>,
+      getValue: (r) => r.updated_at, searchValue: (r) => formatDateTime(r.updated_at),
+    },
+  ], []);
 
   if (!rows) {
     return error ? (
@@ -418,28 +481,24 @@ function RequestList({ onOpen, onNew }: { onOpen: (code: string) => void; onNew:
     );
   }
   return (
-    <>
+    <div>
       {error && (
-        <p className="rounded-md border border-err/30 bg-err/5 px-3 py-2 text-[12px] text-ink" role="alert">
+        <p className="mb-3 rounded-md border border-err/30 bg-err/5 px-3 py-2 text-[12px] text-ink" role="alert">
           Showing what was last loaded. {error}
         </p>
       )}
-      <ul className="flex flex-col gap-2">
-        {rows.map((r) => (
-          <li key={r.code}>
-            <button type="button" onClick={() => onOpen(r.code)}
-              className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-surface px-3 py-2.5 text-left shadow-stone transition-colors hover:border-accent/40 hover:bg-bg/40">
-              <span className="w-[76px] shrink-0 font-mono text-[11px] text-ink-muted">{r.code}</span>
-              <span className={`min-w-[180px] flex-1 text-[12.5px] text-ink [overflow-wrap:anywhere] ${r.unread ? "font-bold" : ""}`}>{r.title}</span>
-              {r.unread && <Badge tone="accent" variant="solid" size="sm" caseless>New reply</Badge>}
-              <StatusBadge status={r.status} />
-              <span className="w-[130px] shrink-0 truncate text-[11.5px] text-ink-muted">{r.assignee_name ?? "Not picked up yet"}</span>
-              <span className="w-[70px] shrink-0 text-right font-mono text-[9.5px] text-ink-muted" title={formatDateTime(r.updated_at)}>{relativeTime(r.updated_at)}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </>
+      <TabStrip value={tab} onChange={onTab} options={IT_TABS.map((k) => ({ value: k, label: TAB_LABEL[k], count: counts[k] }))} />
+      <DataTable<RequestRow>
+        tableId="it-support-my-requests"
+        exportName="it-requests"
+        columns={columns}
+        rows={shown}
+        emptyLabel={TAB_EMPTY[tab]}
+        getRowKey={(r) => r.code}
+        onRowClick={(r) => onOpen(r.code)}
+        clientSearch={{ placeholder: "Search my requests" }}
+      />
+    </div>
   );
 }
 
@@ -447,10 +506,12 @@ export function ItSupport() {
   const [params, setParams] = useSearchParams();
   const code = params.get("request") ?? "";
   const isNew = params.get("new") === "1";
+  const tabParam = params.get("tab");
+  const tab: ItTab = isItTab(tabParam) ? tabParam : "all";
   const go = (next: Record<string, string>) => setParams(next);
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-5">
+    <div className={cn("mx-auto flex w-full flex-col gap-4 px-4 py-5", (isNew || code) && "max-w-3xl")}>
       <header className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
           <span className="grid h-9 w-9 place-items-center rounded-md bg-accent-soft/60 text-accent">
@@ -479,7 +540,8 @@ export function ItSupport() {
       ) : code ? (
         <OneRequest key={code} code={code} />
       ) : (
-        <RequestList onOpen={(c) => go({ request: c })} onNew={() => go({ new: "1" })} />
+        <RequestList tab={tab} onTab={(t) => go(t === "all" ? {} : { tab: t })}
+          onOpen={(c) => go({ request: c })} onNew={() => go({ new: "1" })} />
       )}
     </div>
   );

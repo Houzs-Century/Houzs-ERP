@@ -126,53 +126,11 @@
 
 /* ── Tables (SKU mappings + last 10 POs) ─────────────────────────── */
 
-/* PR — Commander 2026-05-28 ("你看右边断掉了"): Sofa Compartments + Bedframe
-   tables grow past the card's right edge when commander adds enough seat-
-   height / tier columns, clipping the MAIN + ACTIONS columns. Wrap each
-   table in .tableScroll so the table can keep its natural width and scroll
-   horizontally INSIDE the card. The pseudo-element draws a subtle right-
-   edge gradient as a "more to the right" hint; it sits over the scrollbar
-   on Windows but disappears on macOS overlay scrollbars. */
-.tableScroll {
-  position: relative;
-  width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  /* Light scrollbar styling to stay quiet against the card. */
-  scrollbar-color: #d6d9d2 transparent;
-  scrollbar-width: thin;
-}
-
-.tableScroll::after {
-  content: '';
-  position: sticky;
-  top: 0;
-  right: 0;
-  display: block;
-  width: 18px;
-  height: 100%;
-  margin-left: -18px;
-  pointer-events: none;
-  background: linear-gradient(
-    to right,
-    rgba(255, 255, 255, 0),
-    #fff 80%
-  );
-  /* Sticky pseudo-elements are unreliable across browsers — keep the
-     gradient subtle so the absence isn't jarring when it doesn't paint. */
-}
-
 .table {
   width: 100%;
   border-collapse: collapse;
   table-layout: auto;
 }
-
-/* Per-table min-widths so the sofa + bedframe variants can keep their
-   natural width inside the scroll wrapper without squashing. */
-.tableSofa  { min-width: 1080px; }
-.tableBedframe { min-width: 880px; }
-.tableDefault  { min-width: 820px; }
 
 .table thead th {
   /* Batch 3 theme skin — same measured SO-sample header spec as the
@@ -202,7 +160,7 @@
 .table tbody tr:last-child td { border-bottom: none; }
 .table tbody tr:hover { background: #f4f6f3; }
 
-.tableRight { text-align: right; }
+.tableRight { text-align: end; }
 
 .codeCell {
   font-family: var(--font-mono);

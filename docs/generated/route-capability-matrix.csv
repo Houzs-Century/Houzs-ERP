@@ -248,6 +248,7 @@ POST,/api/it-support/tickets,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YE
 GET,/api/it-support/tickets/:code,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/itSupport.ts
 POST,/api/it-support/tickets/:code/confirm,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/itSupport.ts
 POST,/api/it-support/tickets/:code/replies,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/itSupport.ts
+GET,/api/it-support/unread-count,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/itSupport.ts
 GET,/api/logs,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""logs.read"")",,NO,DECLARED_GATE,backend/src/routes/logs.ts
 DELETE,/api/mail-center/access,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-center.ts
 GET,/api/mail-center/access,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-center.ts

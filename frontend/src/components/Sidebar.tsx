@@ -1021,6 +1021,7 @@ export const NAV_TABS: NavTab[] = [
     to: "/it-support",
     label: "IT Support",
     icon: LifeBuoy,
+    badge: "it-support-replies",
   },
   {
     section: "system",

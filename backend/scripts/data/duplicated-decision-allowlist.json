@@ -1579,6 +1579,11 @@
       "check": "D1",
       "key": "BY PAYMENT METHOD,NET RECEIVED (RM),REFUNDS (RM),SALES (RM)|backend/src/scm/shared/pos-report.ts frontend/src/vendor/shared/pos-report.ts",
       "why": "THE MIRROR ITSELF, not a second decision. the By payment method block header of reportRows is declared ONCE in scm/shared/pos-report.ts (the one Houzs POS report aggregation behind the device report, the ERP Sales Report, the summary email, the CSV and the Excel sheets) and frontend/src/vendor/shared/pos-report.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. Every table on every POS report is built from these rows, so a column renamed on one side without the other is a build failure, never two reports that disagree."
+    },
+    {
+      "check": "D1",
+      "key": "HIGH,LOW,MEDIUM,URGENT|backend/src/routes/itSupport.ts frontend/src/lib/itSupport.ts",
+      "why": "The four urgency levels are the Houzs IT Hub's own vocabulary, not a Century rule: the relay (routes/itSupport.ts PRIORITIES) refuses any other value before the hub does, and the list (lib/itSupport.ts URGENCY_ORDER) only sorts and labels what the hub sends back, an unknown level sorting last. The hub owns the set; divergence costs a sort position, never a lost request."
     }
   ]
 }
