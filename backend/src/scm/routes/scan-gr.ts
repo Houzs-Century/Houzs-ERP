@@ -36,7 +36,7 @@ import {
   type ContentBlock,
   type UploadedImage,
 } from '../lib/scan-ocr';
-import { callClaudeGrExtract, loadGrnFewShot, type GrnExtracted } from '../lib/grn-scan-extract';
+import { callClaudeGrExtract, emptyScanNote, loadGrnFewShot, type GrnExtracted } from '../lib/grn-scan-extract';
 import { loadOpenPoLines, loadPoStatuses, loadSupplierBindings, loadSuppliers } from '../lib/grn-scan-load';
 import {
   describeUnmatchedScanLines, listScanLines, matchGrnScanToPoLines, resolveScannedSupplier,
@@ -235,9 +235,7 @@ async function runGrnScanJob(
 
     if (!parsed || parsed.lines.length === 0) {
       console.error('[scan-gr] extraction empty, needs review:', job.id, call.errorMsg);
-      return await needsReview(
-        'We could not read any lines off this delivery order. Please open the PO and create the goods receipt from it.',
-      );
+      return await needsReview(emptyScanNote(parsed));
     }
 
     // Resolve the company doc prefix from the captured company (headless — no

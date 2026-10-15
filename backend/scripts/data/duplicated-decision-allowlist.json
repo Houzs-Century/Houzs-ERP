@@ -1514,6 +1514,11 @@
       "check": "D1",
       "key": "AMOUNT_SEN,COUNT,NOT_OPENED_COUNT,NOT_OPENED_SEN,OPENED_COUNT,OPENED_SEN,OTHER_EVENT_COUNT|backend/src/routes/lib/sales-report-bills.ts frontend/src/lib/projectSalesBills.ts",
       "why": "ONE WIRE SHAPE seen from its two ends, not two answers to one question: routes/lib/sales-report-bills.ts summarizeBills builds the totals object GET /api/project-sales-bills/:projectId sends, and the page-side ZERO in lib/projectSalesBills.ts is the empty value of that same object, used only when the read came back in another shape (normalizeProjectSalesBills). The keys are the response contract; nothing is decided twice. Cost of divergence is a 0 in the Sales header, caught by sales-report-bills.test.ts on one side and projectSalesBills.test.ts on the other."
+    },
+    {
+      "check": "D1",
+      "key": "HIGH,LOW,MEDIUM,URGENT|backend/src/routes/itSupport.ts frontend/src/lib/itSupport.ts",
+      "why": "The four urgency levels are the Houzs IT Hub's own vocabulary, not a Century rule: the relay (routes/itSupport.ts PRIORITIES) refuses any other value before the hub does, and the list (lib/itSupport.ts URGENCY_ORDER) only sorts and labels what the hub sends back, an unknown level sorting last. The hub owns the set; divergence costs a sort position, never a lost request."
     }
   ]
 }
