@@ -16,6 +16,7 @@ import {
   ClipboardList,
   Zap,
   Settings as SettingsIcon,
+  Store,
   PanelLeftClose,
   PanelLeftOpen,
   ChevronDown,
@@ -1028,6 +1029,14 @@ export const NAV_TABS: NavTab[] = [
     label: "Settings",
     icon: SettingsIcon,
     perm: "settings.manage",
+  },
+  // Houzs POS Admin (the cash & carry booth app's ERP side): owner / admin.
+  {
+    section: "system",
+    to: "/pos-admin",
+    label: "POS Admin",
+    icon: Store,
+    anyPerm: ["*", "pos.manage"],
   },
 ];
 

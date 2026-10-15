@@ -1517,6 +1517,71 @@
     },
     {
       "check": "D1",
+      "key": "CASH,CREDIT,DEBIT,EWALLET,QR|backend/src/scm/shared/pos-vocabulary.ts frontend/src/vendor/shared/pos-vocabulary.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. POS_METHOD_LABEL (the Houzs POS payment methods and their words) is declared ONCE in scm/shared/pos-vocabulary.ts and frontend/src/vendor/shared/pos-vocabulary.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. The method array is derived from the label keys, so even inside the file the list is stated once. Cost of divergence is a build failure, not a wrong payment line."
+    },
+    {
+      "check": "D1",
+      "key": "GENERAL,PRINTER_SCANNER,SST_RECEIPT|backend/src/scm/shared/pos-settings.ts frontend/src/vendor/shared/pos-settings.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. POS_SETTINGS_GROUPS (the three Houzs POS settings documents: SST & receipt, printer & scanner, general) is declared ONCE in scm/shared/pos-settings.ts and frontend/src/vendor/shared/pos-settings.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. The server validates a PUT group against this list and the settings page iterates it; a group added to one side without the other is a build failure, never a lost setting."
+    },
+    {
+      "check": "D1",
+      "key": "0000101,0001001,0010001,0010111,0011011,0011101,0100001,0100111,0110011,0111001|backend/src/scm/shared/ean13.ts frontend/src/vendor/shared/ean13.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the G digit-pattern table is the EAN-13 standard's fixed encoding table (GS1 General Specifications, not a business rule) declared ONCE in scm/shared/ean13.ts and frontend/src/vendor/shared/ean13.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. A wrong digit here prints an unscannable label, and ean13.test.ts pins the bar pattern against GS1 worked examples."
+    },
+    {
+      "check": "D1",
+      "key": "0001011,0001101,0010011,0011001,0100011,0101111,0110001,0110111,0111011,0111101|backend/src/scm/shared/ean13.ts frontend/src/vendor/shared/ean13.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the L digit-pattern table is the EAN-13 standard's fixed encoding table (GS1 General Specifications, not a business rule) declared ONCE in scm/shared/ean13.ts and frontend/src/vendor/shared/ean13.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. A wrong digit here prints an unscannable label, and ean13.test.ts pins the bar pattern against GS1 worked examples."
+    },
+    {
+      "check": "D1",
+      "key": "1000010,1000100,1001000,1001110,1010000,1011100,1100110,1101100,1110010,1110100|backend/src/scm/shared/ean13.ts frontend/src/vendor/shared/ean13.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the R digit-pattern table is the EAN-13 standard's fixed encoding table (GS1 General Specifications, not a business rule) declared ONCE in scm/shared/ean13.ts and frontend/src/vendor/shared/ean13.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. A wrong digit here prints an unscannable label, and ean13.test.ts pins the bar pattern against GS1 worked examples."
+    },
+    {
+      "check": "D1",
+      "key": "LGGGLL,LGGLGL,LGGLLG,LGLGGL,LGLGLG,LGLLGG,LLGGGL,LLGGLG,LLGLGG,LLLLLL|backend/src/scm/shared/ean13.ts frontend/src/vendor/shared/ean13.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the PARITY digit-pattern table is the EAN-13 standard's fixed encoding table (GS1 General Specifications, not a business rule) declared ONCE in scm/shared/ean13.ts and frontend/src/vendor/shared/ean13.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. A wrong digit here prints an unscannable label, and ean13.test.ts pins the bar pattern against GS1 worked examples."
+    },
+    {
+      "check": "D1",
+      "key": "AMOUNT (RM),BY,REASON,VOID|backend/src/scm/shared/pos-report.ts frontend/src/vendor/shared/pos-report.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the Void block header of reportRows is declared ONCE in scm/shared/pos-report.ts (the one Houzs POS report aggregation behind the device report, the ERP Sales Report, the summary email, the CSV and the Excel sheets) and frontend/src/vendor/shared/pos-report.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. Every table on every POS report is built from these rows, so a column renamed on one side without the other is a build failure, never two reports that disagree."
+    },
+    {
+      "check": "D1",
+      "key": "AMOUNT (RM),ORIGINAL,RETURN|backend/src/scm/shared/pos-report.ts frontend/src/vendor/shared/pos-report.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the Return block header of reportRows is declared ONCE in scm/shared/pos-report.ts (the one Houzs POS report aggregation behind the device report, the ERP Sales Report, the summary email, the CSV and the Excel sheets) and frontend/src/vendor/shared/pos-report.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. Every table on every POS report is built from these rows, so a column renamed on one side without the other is a build failure, never two reports that disagree."
+    },
+    {
+      "check": "D1",
+      "key": "BILLS,BY SALESMAN,NET (RM)|backend/src/scm/shared/pos-report.ts frontend/src/vendor/shared/pos-report.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the By salesman block header of reportRows is declared ONCE in scm/shared/pos-report.ts (the one Houzs POS report aggregation behind the device report, the ERP Sales Report, the summary email, the CSV and the Excel sheets) and frontend/src/vendor/shared/pos-report.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. Every table on every POS report is built from these rows, so a column renamed on one side without the other is a build failure, never two reports that disagree."
+    },
+    {
+      "check": "D1",
+      "key": "BILLS,BY TERMINAL,NET (RM)|backend/src/scm/shared/pos-report.ts frontend/src/vendor/shared/pos-report.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the By terminal block header of reportRows is declared ONCE in scm/shared/pos-report.ts (the one Houzs POS report aggregation behind the device report, the ERP Sales Report, the summary email, the CSV and the Excel sheets) and frontend/src/vendor/shared/pos-report.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. Every table on every POS report is built from these rows, so a column renamed on one side without the other is a build failure, never two reports that disagree."
+    },
+    {
+      "check": "D1",
+      "key": "BILLS,BY_DAY,BY_ITEM,BY_METHOD,BY_SALESMAN,BY_TERMINAL,DISCOUNT_SEN,FOC_UNITS,GROSS_SEN,NET_SEN,RETURNS,RETURN_COUNT,RETURN_SEN,SST_SEN,TOP_ITEMS,UNITS,VOIDS,VOID_COUNT,VOID_SEN|backend/src/scm/shared/pos-report.ts frontend/src/vendor/shared/pos-report.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the ReportTotals shape (the empty totals object aggregateSales fills) is declared ONCE in scm/shared/pos-report.ts (the one Houzs POS report aggregation behind the device report, the ERP Sales Report, the summary email, the CSV and the Excel sheets) and frontend/src/vendor/shared/pos-report.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. Every table on every POS report is built from these rows, so a column renamed on one side without the other is a build failure, never two reports that disagree."
+    },
+    {
+      "check": "D1",
+      "key": "BY ITEM,DESCRIPTION,DISCOUNT (RM),FOC,GROSS (RM),NET (RM),QTY|backend/src/scm/shared/pos-report.ts frontend/src/vendor/shared/pos-report.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the By item block header of reportRows is declared ONCE in scm/shared/pos-report.ts (the one Houzs POS report aggregation behind the device report, the ERP Sales Report, the summary email, the CSV and the Excel sheets) and frontend/src/vendor/shared/pos-report.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. Every table on every POS report is built from these rows, so a column renamed on one side without the other is a build failure, never two reports that disagree."
+    },
+    {
+      "check": "D1",
+      "key": "BY PAYMENT METHOD,NET RECEIVED (RM),REFUNDS (RM),SALES (RM)|backend/src/scm/shared/pos-report.ts frontend/src/vendor/shared/pos-report.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the By payment method block header of reportRows is declared ONCE in scm/shared/pos-report.ts (the one Houzs POS report aggregation behind the device report, the ERP Sales Report, the summary email, the CSV and the Excel sheets) and frontend/src/vendor/shared/pos-report.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. Every table on every POS report is built from these rows, so a column renamed on one side without the other is a build failure, never two reports that disagree."
+    },
+    {
+      "check": "D1",
       "key": "HIGH,LOW,MEDIUM,URGENT|backend/src/routes/itSupport.ts frontend/src/lib/itSupport.ts",
       "why": "The four urgency levels are the Houzs IT Hub's own vocabulary, not a Century rule: the relay (routes/itSupport.ts PRIORITIES) refuses any other value before the hub does, and the list (lib/itSupport.ts URGENCY_ORDER) only sorts and labels what the hub sends back, an unknown level sorting last. The hub owns the set; divergence costs a sort position, never a lost request."
     }

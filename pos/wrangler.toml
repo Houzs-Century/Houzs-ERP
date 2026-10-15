@@ -1,0 +1,8 @@
+name = "houzs-pos"
+compatibility_date = "2024-12-01"
+pages_build_output_dir = "./dist"
+
+# Static SPA on Cloudflare Pages, served at pos.houzscentury.com (custom domain
+# on the `houzs-pos` Pages project). /api is proxied to the Worker by
+# functions/api/[[path]].ts, so the app and the ERP share one backend and one
+# origin rule. `wrangler pages deploy` reads name + pages_build_output_dir here.
