@@ -1246,8 +1246,7 @@ fleetMaintenance.post("/vehicles/:id/plans", requireHouzsPerm("fleet.write"), as
     component,
     interval_km: intervalKm.value,
     interval_months: intervalMonths.value,
-    /* The plan is the RULE; a done service moves last-done (fleet-plan-service.ts).
-       An edit that does not send these keeps them, instead of wiping the history. */
+    // The plan is the RULE; a done service moves last-done (fleet-plan-service.ts). Unsent keys are kept.
     ...("lastDoneDate" in body ? { last_done_date: lastDoneDate.value } : {}),
     ...("lastDoneKm" in body ? { last_done_km: lastDoneKm.value } : {}),
     ...("workshop" in body ? { workshop: (body.workshop as string)?.trim() || null } : {}),
