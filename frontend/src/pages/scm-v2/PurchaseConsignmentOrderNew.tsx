@@ -112,11 +112,12 @@ export const PurchaseConsignmentOrderNew = () => {
 
   const [dialog, setDialog] = useState<{ title: string; body: string } | null>(null);
 
-  /* Raised from a product request (owner 2026-10-06, ?fromProductRequest=): the
-     header's Purchase Location + Expected Delivery and ONE line — the request's
-     SKU, qty, fabric / seat / leg as the variant bag, its remarks as the line
-     note — are seeded once when the request arrives. The Purchaser picks the
-     supplier and the price; on save the order claims the request (PCO_ISSUED). */
+  /* Raised from a product request (owner 2026-10-06, ?fromProductRequest=; 方案 A
+     2026-10-15: one order line PER REQUEST LINE): the header's Purchase Location +
+     Expected Delivery, the supplier, and a line per request line — its SKU, qty,
+     fabric / seat / leg as the variant bag — are seeded once when the request
+     arrives; the line remarks ride the order notes (an order line has no remark). The Purchaser checks the prices; on save the order
+     claims the request (PCO_ISSUED). */
   const [searchParams] = useSearchParams();
   const fromProductRequest = searchParams.get('fromProductRequest');
   const requestQ = useProductRequest(fromProductRequest);
@@ -126,31 +127,33 @@ export const PurchaseConsignmentOrderNew = () => {
     if (!fromProductRequest || requestSeeded || !sourceRequest) return;
     if (sourceRequest.delivery_location_id) setPurchaseLocationId(sourceRequest.delivery_location_id);
     if (sourceRequest.expected_delivery_date) setExpectedAt(sourceRequest.expected_delivery_date);
-    /* 方案 C (owner 2026-10-08): the supplier and the agreed price the requester
-       named seed the Creditor and the line price; the Purchaser may still change them. */
+    /* 方案 C (owner 2026-10-08): the supplier and the agreed prices the requester
+       named seed the Creditor and the line prices; the Purchaser may still change them. */
     if (sourceRequest.supplier_id) setSupplierId(sourceRequest.supplier_id);
-    setNotes((prev) => prev || [`From Product Request ${sourceRequest.request_no}`, sourceRequest.special_remarks].filter(Boolean).join(' · '));
-    if (sourceRequest.item_code) {
+    setNotes((prev) => prev || [
+      `From Product Request ${sourceRequest.request_no}`, sourceRequest.special_remarks,
+      ...sourceRequest.lines.filter((l) => l.remarks).map((l) => `L${l.line_no}: ${l.remarks}`),
+    ].filter(Boolean).join(' · '));
+    const seeded = sourceRequest.lines.filter((l) => !!l.item_code).map((l): DraftLine => {
       const variants: Record<string, unknown> = {};
-      if (sourceRequest.fabric_code) variants.fabricCode = sourceRequest.fabric_code;
-      if (sourceRequest.seat_size) variants.seatHeight = sourceRequest.seat_size;
-      if (sourceRequest.leg_size) variants.legHeight = sourceRequest.leg_size;
-      setLines([{
+      if (l.fabric_code) variants.fabricCode = l.fabric_code;
+      if (l.seat_size) variants.seatHeight = l.seat_size;
+      if (l.leg_size) variants.legHeight = l.leg_size;
+      return {
         ...newLine(),
-        itemCode: sourceRequest.item_code,
-        materialName: sourceRequest.model?.name ?? sourceRequest.proposed_model_name ?? sourceRequest.item_code,
-        qty: sourceRequest.qty,
-        category: sourceRequest.category.toLowerCase() || undefined,
+        itemCode: l.item_code!,
+        materialName: l.model?.name ?? l.proposed_model_name ?? l.item_code!,
+        qty: l.qty,
+        category: l.category.toLowerCase() || undefined,
         variants,
         deliveryDate: sourceRequest.expected_delivery_date ?? undefined,
         warehouseId: sourceRequest.delivery_location_id ?? undefined,
         /* An agreed price is the requester's figure, kept over the binding's
            default (priceTouched), exactly as a hand-typed price would be. */
-        ...(sourceRequest.unit_price_sen != null && sourceRequest.unit_price_sen > 0
-          ? { unitPriceSen: sourceRequest.unit_price_sen, priceTouched: true }
-          : {}),
-      }]);
-    }
+        ...(l.unit_price_sen != null && l.unit_price_sen > 0 ? { unitPriceSen: l.unit_price_sen, priceTouched: true } : {}),
+      };
+    });
+    if (seeded.length > 0) setLines(seeded);
     setRequestSeeded(true);
   }, [fromProductRequest, requestSeeded, sourceRequest]);
 

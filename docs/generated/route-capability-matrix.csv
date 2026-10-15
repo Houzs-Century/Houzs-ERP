@@ -1134,7 +1134,7 @@ GET,/api/scm/product-requests/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth 
 PATCH,/api/scm/product-requests/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/product-requests.ts
 POST,/api/scm/product-requests/:id/approve,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/product-requests.ts
 POST,/api/scm/product-requests/:id/close,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/product-requests.ts
-POST,/api/scm/product-requests/:id/create-model,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/product-requests.ts
+POST,/api/scm/product-requests/:id/lines/:lineId/create-model,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/product-requests.ts
 POST,/api/scm/product-requests/:id/reject,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/product-requests.ts
 POST,/api/scm/product-requests/:id/withdraw,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/product-requests.ts
 GET,/api/scm/product-requests/supplier-options,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/product-requests.ts
