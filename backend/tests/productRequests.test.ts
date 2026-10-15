@@ -37,6 +37,7 @@ function world() {
     companies: [{ id: CO, code: 'HC' }],
     product_requests: [],
     product_request_lines: [],
+    product_request_files: [],
     product_models: [{ id: 'model-5530', company_id: CO, model_code: '5530', name: 'SOFA 5530', category: 'SOFA', active: true, allowed_options: {} }],
     mfg_products: [{ id: 'mfg-1', company_id: CO, code: '5530-3S', name: 'SOFA 5530 3 SEATER', category: 'SOFA', status: 'ACTIVE', model_id: 'model-5530', base_model: '5530' }],
     fabric_trackings: [{ id: 'fab-1', company_id: CO, fabric_code: 'LIN-01', is_active: true }],
@@ -52,6 +53,21 @@ function world() {
   sb.rpcHandlers.entity_audit_writable = () => true;
   return sb;
 }
+
+/* The SLIPS bucket, in memory — the file factory's only I/O beside the index row. */
+const fakeR2 = () => {
+  const store = new Map<string, { bytes: ArrayBuffer; contentType: string }>();
+  return {
+    store,
+    put: async (k: string, v: ArrayBuffer, o?: { httpMetadata?: { contentType?: string } }) => { store.set(k, { bytes: v, contentType: o?.httpMetadata?.contentType ?? '' }); },
+    get: async (k: string) => {
+      const hit = store.get(k);
+      return hit ? { arrayBuffer: async () => hit.bytes, body: new Blob([hit.bytes]).stream(), httpMetadata: { contentType: hit.contentType } } : null;
+    },
+    delete: async (k: string) => { store.delete(k); },
+  };
+};
+const R2 = fakeR2();
 
 function as(sb: ReturnType<typeof world>, who: Who) {
   const app = new Hono();
@@ -71,8 +87,8 @@ function as(sb: ReturnType<typeof world>, who: Who) {
   });
   app.route('/product-requests', productRequests);
   return async (path: string, method = 'GET', body?: unknown) => {
-    const res = await app.request(path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
-    return { status: res.status, body: await res.json() as Row };
+    const res = await app.request(path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }, { SLIPS: R2 });
+    return { status: res.status, body: res.headers.get('content-type')?.includes('json') ? await res.json() as Row : {} };
   };
 }
 
@@ -309,6 +325,56 @@ describe('product request — the new Models, then the PC Order', () => {
     expect(found.ok).toBe(false);
     if (!found.ok) expect(found.status).toBe(404);
     expect((await as(sb, PURCHASER)('/product-requests/pr-x')).status).toBe(404);
+  });
+});
+
+describe('product request — its files (owner 2026-10-15: 需要可以 attach 文件功能)', () => {
+  const PDF = { fileName: 'quotation.pdf', mime: 'application/pdf', dataBase64: btoa('%PDF-1.4 quotation') };
+  test('the requester attaches and removes on their own request; another Sales caller sees nothing; the Purchaser reads, attaches and removes', async () => {
+    const sb = world();
+    const amy = as(sb, AMY);
+    const id = String(((await amy('/product-requests', 'POST', NEW_SOFA)).body.request as Row).id);
+    const up = await amy(`/product-requests/${id}/files`, 'POST', PDF);
+    expect(up.status, JSON.stringify(up.body)).toBe(201);
+    expect((up.body.file as Row).sort_no).toBe(1);
+    const row = sb.tables.product_request_files[0]!;
+    expect(row).toMatchObject({ company_id: CO, request_id: id, file_name: 'quotation.pdf', mime: 'application/pdf' });
+    expect(String(row.file_key)).toMatch(new RegExp(`^product-request-files/${CO}/${id}/`));
+    expect(R2.store.has(String(row.file_key))).toBe(true);
+    /* Not an image or a PDF: refused. */
+    expect((await amy(`/product-requests/${id}/files`, 'POST', { ...PDF, mime: 'text/plain' })).body.error).toBe('bad_mime');
+    /* Another Sales caller: the request is not theirs to see, so neither are its files. */
+    const ben = as(sb, BEN);
+    expect((await ben(`/product-requests/${id}/files`)).status).toBe(404);
+    expect((await ben(`/product-requests/${id}/files`, 'POST', PDF)).status).toBe(404);
+    /* The Purchaser reads the list and adds a photo. */
+    const purchaser = as(sb, PURCHASER);
+    expect(((await purchaser(`/product-requests/${id}/files`)).body.files as Row[]).map((f) => f.file_name)).toEqual(['quotation.pdf']);
+    expect((await purchaser(`/product-requests/${id}/files`, 'POST', { fileName: 'photo.jpg', mime: 'image/jpeg', dataBase64: btoa('jpg') })).status).toBe(201);
+    /* A storekeeper holds neither key nor Sales position: refused outright. */
+    expect((await as(sb, NOBODY)(`/product-requests/${id}/files`, 'POST', PDF)).status).toBe(403);
+    /* The requester removes their own file while the request waits. */
+    const fileId = String(row.id);
+    expect((await amy(`/product-requests/${id}/files/${fileId}`, 'DELETE')).status).toBe(200);
+    expect(sb.tables.product_request_files).toHaveLength(1);
+    expect(R2.store.has(String(row.file_key))).toBe(false);
+  });
+
+  test("once the Purchaser has decided, the requester's files stay; the Purchaser may still remove one; a closed request takes no more", async () => {
+    const sb = world();
+    const amy = as(sb, AMY);
+    const purchaser = as(sb, PURCHASER);
+    const id = String(((await amy('/product-requests', 'POST', NEW_SOFA)).body.request as Row).id);
+    const fileId = String(((await amy(`/product-requests/${id}/files`, 'POST', PDF)).body.file as Row).id);
+    await purchaser(`/product-requests/${id}/approve`, 'POST', {});
+    expect((await amy(`/product-requests/${id}/files/${fileId}`, 'DELETE')).body.error).toBe('request_decided');
+    /* Approved: more evidence may still arrive (a photo of the sample). */
+    expect((await amy(`/product-requests/${id}/files`, 'POST', { fileName: 'sample.jpg', mime: 'image/jpeg', dataBase64: btoa('jpg') })).status).toBe(201);
+    expect((await purchaser(`/product-requests/${id}/files/${fileId}`, 'DELETE')).status).toBe(200);
+    await purchaser(`/product-requests/${id}/close`, 'POST', {});
+    expect((await purchaser(`/product-requests/${id}/files`, 'POST', PDF)).body.error).toBe('request_closed');
+    /* The list still reads for the Purchaser after closing. */
+    expect(((await purchaser(`/product-requests/${id}/files`)).body.files as Row[]).map((f) => f.file_name)).toEqual(['sample.jpg']);
   });
 });
 

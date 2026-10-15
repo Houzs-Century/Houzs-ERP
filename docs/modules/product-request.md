@@ -17,6 +17,7 @@ A salesperson's request for new products or repacks: a HEADER (new product or re
 | POST | `/:id/reject` | `scm.product_request.approve` | `REQUESTED` -> `REJECTED`, note required |
 | POST | `/:id/lines/:lineId/create-model` | `scm.product_request.approve` | `APPROVED`, a line with no SKU: creates the Model (find-or-create) + first SKU, stamps the line's `item_code` / `model_id`; status unchanged |
 | POST | `/:id/close` | `scm.product_request.approve` | `APPROVED` / `PCO_ISSUED` -> `CLOSED` |
+| POST / GET | `/:id/files`, GET + DELETE `/:id/files/:fileId` | requester (own), Purchaser (any) | the request's files (quotation, photos, drawing; image or PDF, 20 MB each) through `lib/doc-files.ts` on `scm.product_request_files`, bytes in the SLIPS R2 bucket under `product-request-files/<company>/<request>/` |
 
 The PC Order is raised on PC Order New (`?fromProductRequest=<id>`), which seeds the header's Purchase Location + Expected Delivery + supplier, and ONE ORDER LINE PER REQUEST LINE (SKU, qty, fabric / seat / leg as the variant bag, the agreed price with `priceTouched`); the request's remarks and the line remarks ride the order notes. `POST /purchase-consignment-orders` takes `productRequestId`: it refuses a request not `APPROVED` (`request_not_approved`), already issued (`request_already_issued`) or with any line without a SKU (`model_not_created`); once the order stands the request reads `PCO_ISSUED` with `pco_id`, and the order carries `source_product_request_id` (`lib/product-request-link.ts`).
 
@@ -37,6 +38,7 @@ The PC Order is raised on PC Order New (`?fromProductRequest=<id>`), which seeds
 - `create-model` goes through `ensureModelForSku` (the one find-or-create every SKU-create path shares); the SKU lands `status ACTIVE`, `pos_active false`. A SKU code already in the company is refused (`duplicate_code`), never overwritten. SKU code defaults to `<MODEL>-<compartment>` for a sofa with a compartment, else the model code; 30 characters at most. The line update is guarded on `item_code IS NULL`, so two builds at once cannot both name the line.
 - Every status move is guarded on the status the row was read in (`request_moved` 409 on a race); the PC Order link claims the request only while `APPROVED`, so two orders raised at once cannot both claim it — the loser's order stays, unlinked, and the create answer says `requestClaimed: false`.
 - A PATCH that replaces lines deletes and re-inserts them after the header update; a refused body (bad line, unknown SKU) leaves the stored lines untouched because validation runs first.
+- Files (owner 2026-10-15): the requester attaches to their own request and removes while it is `REQUESTED` / `REJECTED`; once decided their files stay (`request_decided`) though they may still add one; the Purchaser attaches and removes on any; `WITHDRAWN` / `CLOSED` take no more (`request_closed`). The file factory's `mayWrite` (not a flat key) admits a Sales caller; `load` narrows a requester to their own request. The form uploads files picked before sending one by one after the request exists — a failed upload leaves the request standing.
 - Every write pre-flights the audit sink (`assertAuditWritable`) and records `PRODUCT_REQUEST` in `scm.entity_audit_log` (`lineCount` and a `products` summary on create / edit; `lineNo` + `itemCode` on a build).
 - The service-role client bypasses RLS: the `company_id` predicate is the only boundary, on every read and write — lines carry their own `company_id`.
 
@@ -50,7 +52,7 @@ The PC Order is raised on PC Order New (`?fromProductRequest=<id>`), which seeds
 ## Where the code is
 
 - `backend/src/scm/routes/product-requests.ts` — API surface. `backend/src/scm/shared/product-request.ts` — state machine + line / PC-Order refusals. `backend/src/scm/lib/product-request-link.ts` — the PC Order's door.
-- `backend/src/db/migrations-pg/20261006T0741_scm_product_requests.sql` (header + `purchase_consignment_orders.source_product_request_id`), `20261015T0540_scm_product_request_lines.sql` (`scm.product_request_lines`, header columns dropped).
+- `backend/src/db/migrations-pg/20261006T0741_scm_product_requests.sql` (header + `purchase_consignment_orders.source_product_request_id`), `20261015T0540_scm_product_request_lines.sql` (`scm.product_request_lines`, header columns dropped), `20261015T0930_scm_product_request_files.sql` (`scm.product_request_files`).
 - `frontend/src/vendor/scm/lib/product-request-queries.ts` — hooks, status words, line helpers, `pcoNewFromRequestPath`.
 - `frontend/src/pages/scm-v2/ProductRequests.tsx` (desktop), `frontend/src/mobile/MobileProductRequests.tsx` (phone), `PurchaseConsignmentOrderNew.tsx` (`?fromProductRequest=` seed).
 - Tests: `backend/tests/productRequests.test.ts`, `backend/src/scm/shared/product-request.test.ts`, `frontend/src/pages/scm-v2/ProductRequests.test.tsx`.
