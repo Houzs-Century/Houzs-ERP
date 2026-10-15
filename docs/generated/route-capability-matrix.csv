@@ -220,6 +220,7 @@ PATCH,/api/fleet-maintenance/components/:componentId,AUTHENTICATED_MIDDLEWARE,CO
 POST,/api/fleet-maintenance/components/:componentId/events,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 GET,/api/fleet-maintenance/dashboard,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.read"")",,NO,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 PATCH,/api/fleet-maintenance/plans/:planId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
+POST,/api/fleet-maintenance/plans/:planId/service,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"supabaseAuth + requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-plan-service.ts
 GET,/api/fleet-maintenance/reminders,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.read"")",,NO,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 GET,/api/fleet-maintenance/vehicles/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.read"")",,NO,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
 POST,/api/fleet-maintenance/vehicles/:id/breakdowns,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-maintenance.ts
@@ -906,6 +907,7 @@ PATCH,/api/scm/localities/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + re
 GET,/api/scm/lorries,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/lorries.ts
 POST,/api/scm/lorries,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/lorries.ts
 PATCH,/api/scm/lorries/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/lorries.ts
+GET,/api/scm/lorries/:id/track,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/lorries.ts
 GET,/api/scm/lorries/km-cost,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/lorries.ts
 GET,/api/scm/lorries/positions/latest,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/lorries.ts
 GET,/api/scm/lorry-capacity,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/lorry-capacity.ts

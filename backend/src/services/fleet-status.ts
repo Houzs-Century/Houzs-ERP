@@ -33,15 +33,19 @@ export type ComplianceDocType =
   | "PUSPAKOM"
   | "ROAD_TAX"
   | "INSURANCE"
+  | "GERAN"
+  /* No longer tracked (owner, 2026-10-15: not needed). Kept in the type so a
+     row filed before still reads; never offered, never counted. */
   | "APAD"
   | "CROSS_BORDER";
 
+/** The kinds an in-house lorry is tracked for. GERAN (the registration card)
+ *  has no expiry: it is kept on file, it never reminds and never grounds. */
 export const COMPLIANCE_DOC_TYPES: readonly ComplianceDocType[] = [
   "PUSPAKOM",
   "ROAD_TAX",
   "INSURANCE",
-  "APAD",
-  "CROSS_BORDER",
+  "GERAN",
 ] as const;
 
 /** Human labels for the doc types (no emoji — house rule). */
@@ -49,6 +53,7 @@ export const COMPLIANCE_DOC_LABELS: Record<ComplianceDocType, string> = {
   PUSPAKOM: "PUSPAKOM inspection",
   ROAD_TAX: "Road Tax / LKM",
   INSURANCE: "Insurance",
+  GERAN: "Geran (registration card)",
   APAD: "APAD permit",
   CROSS_BORDER: "Cross-border permit",
 };

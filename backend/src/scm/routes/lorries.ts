@@ -395,4 +395,23 @@ lorries.get('/km-cost', async (c) => {
   return c.json({ date, lorries: out });
 });
 
+// One lorry's driven track for a Malaysia day — its Velocity fixes in time order
+// (Fleet Health's lorry page draws them as the route it actually drove), plus the
+// km they add up to. Unified fleet like /positions/latest.
+lorries.get('/:id/track', async (c) => {
+  // company-scope: UNIFIED FLEET — one shared fleet across all companies (lorries.ts:132), same as /positions/latest and /km-cost.
+  const date = c.req.query('date') ?? new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+  const day = ISO_DATE.test(date) ? myDayWindow(date) : null;
+  if (!day) return c.json({ error: 'invalid_date', reason: 'date must be YYYY-MM-DD' }, 400);
+  const { data, error } = await paginateAll<Fix & { speed_kmh: number | null; street: string | null }>((f, t) => c.get('supabase').from('lorry_positions')
+    .select('lat, lng, recorded_at, speed_kmh, street')
+    .eq('lorry_id', c.req.param('id'))
+    .gte('recorded_at', day.from).lt('recorded_at', day.to)
+    .order('recorded_at').order('id')
+    .range(f, t));
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const fixes = data ?? [];
+  return c.json({ date, km: kmFromFixes(fixes), fixes });
+});
+
 export default lorries;

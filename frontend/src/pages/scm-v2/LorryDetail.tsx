@@ -39,18 +39,6 @@ import { useThreePLCompanies } from '../../vendor/scm/lib/threepl-companies-quer
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtSen } from '../../vendor/shared/format';
-import {
-  COMPLIANCE_KINDS,
-  COMPLIANCE_LABEL,
-  COMPLIANCE_CADENCE,
-  expiryStatus,
-  expiryPhrase,
-  nextServiceView,
-  nextServiceKmPhrase,
-  odometerStalenessNote,
-  type ComplianceKind,
-  type ComplianceTone,
-} from '../../vendor/shared/lorry-compliance';
 import { formatDate } from '../../lib/utils';
 import styles from './Suppliers.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -69,21 +57,6 @@ const numOrNull = (v: number | string | null | undefined): number | null => {
 const boxM3 = (l: number | null, w: number | null, h: number | null): number | null =>
   l != null && w != null && h != null ? Math.round(l * w * h * FT3_TO_M3 * 100) / 100 : null;
 
-/* Tone → the design-system tokens. Kept as a map rather than inline ternaries
-   so the four tiles and the history rows can never drift apart on what "red"
-   means. 'none' (nothing recorded) is deliberately NOT green — an unrecorded
-   expiry is an open question, not a pass. */
-const TONE_STYLE: Record<ComplianceTone, { fg: string; bg: string; border: string }> = {
-  expired:  { fg: 'var(--c-error)',   bg: 'var(--c-error-bg)',   border: 'var(--c-error)' },
-  critical: { fg: 'var(--c-error)',   bg: 'var(--c-error-bg)',   border: 'var(--c-error)' },
-  warning:  { fg: 'var(--c-warn)',    bg: 'var(--c-warn-bg)',    border: 'var(--c-warn)' },
-  ok:       { fg: 'var(--c-success)', bg: 'var(--c-success-bg)', border: 'var(--line)' },
-  none:     { fg: 'var(--fg-muted)',  bg: 'transparent',         border: 'var(--line)' },
-};
-
-const lorryExpiry = (l: LorryRow, k: ComplianceKind): string | null =>
-  (k === 'roadTax' ? l.road_tax_expiry : k === 'insurance' ? l.insurance_expiry : l.puspakom_expiry) ?? null;
-
 // ─────────────────────────────────────────────────────────────────────────────
 
 export /** A date column the LorryRow type does not declare yet (mig 0245). */
@@ -95,8 +68,6 @@ const fmtDateField = (l: unknown, col: string): string => {
 export const LorryDetail = ({ lorry, onClose }: { lorry: LorryRow; onClose: () => void }) => {
   const records = useLorryServiceRecords(lorry.id);
   const internal = (lorry.isInternal ?? lorry.is_internal) !== false;
-
-  const next = useMemo(() => nextServiceView(records.data ?? []), [records.data]);
 
   return (
     <>
@@ -114,10 +85,22 @@ export const LorryDetail = ({ lorry, onClose }: { lorry: LorryRow; onClose: () =
         </header>
 
         <div className={styles.drawerBody}>
-          <ComplianceStrip lorry={lorry} next={next} />
+          {/* Delivery capacity is every lorry's. Owner, 2026-10-15: compliance,
+              vehicle details and purchase are an IN-HOUSE lorry's record and are
+              kept in Fleet Health only; an outsourced lorry needs none of them. */}
           <CapacitySection lorry={lorry} />
-          <PurchaseSection lorry={lorry} />
 
+          {internal && (
+          <section className={styles.section}>
+            <div className={styles.headerRow}>
+              <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Compliance, vehicle &amp; purchase</h3>
+              <Link to={`/fleet-health/${lorry.id}`} className={styles.eyebrow}>Open in Fleet Health</Link>
+            </div>
+            <p className={styles.eyebrow}>Road tax, insurance, PUSPAKOM, Geran, vehicle dates and purchase are recorded in Fleet Health.</p>
+          </section>
+          )}
+
+          {internal && (
           <section className={styles.section}>
             <div className={styles.headerRow}>
               <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Service &amp; repair history</h3>
@@ -143,6 +126,7 @@ export const LorryDetail = ({ lorry, onClose }: { lorry: LorryRow; onClose: () =
               </div>
             )}
           </section>
+          )}
         </div>
 
         <footer className={styles.drawerFooter}>
@@ -153,76 +137,6 @@ export const LorryDetail = ({ lorry, onClose }: { lorry: LorryRow; onClose: () =
     </>
   );
 };
-
-// ── the compliance strip ─────────────────────────────────────────────────────
-
-const ComplianceStrip = ({ lorry, next }: { lorry: LorryRow; next: ReturnType<typeof nextServiceView> }) => {
-  const kmLine = nextServiceKmPhrase(next);
-  const stale = odometerStalenessNote(next);
-
-  return (
-    <section className={styles.section}>
-      <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Compliance</h3>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-2)' }}>
-        {COMPLIANCE_KINDS.map((k) => {
-          const s = expiryStatus(lorryExpiry(lorry, k));
-          const t = TONE_STYLE[s.tone];
-          return (
-            <Tile
-              key={k}
-              title={COMPLIANCE_LABEL[k]}
-              cadence={COMPLIANCE_CADENCE[k]}
-              date={s.date ? formatDate(s.date) : '—'}
-              phrase={expiryPhrase(s)}
-              tone={t}
-            />
-          );
-        })}
-
-        {/* Next service. Colour comes from the DATE only — see the file header. */}
-        <Tile
-          title="Next service"
-          cadence="Set by the workshop"
-          date={next.dueDate ? formatDate(next.dueDate) : '—'}
-          phrase={
-            next.dueDate
-              ? expiryPhrase({ tone: next.tone, days: next.daysToDue, date: next.dueDate })
-              : kmLine
-                ? 'No date set'
-                : 'Not recorded'
-          }
-          tone={TONE_STYLE[next.tone]}
-          extra={kmLine}
-          caveat={stale}
-        />
-      </div>
-    </section>
-  );
-};
-
-const Tile = ({
-  title, cadence, date, phrase, tone, extra, caveat,
-}: {
-  title: string; cadence: string; date: string; phrase: string;
-  tone: { fg: string; bg: string; border: string };
-  extra?: string | null; caveat?: string | null;
-}) => (
-  <div style={{
-    border: `1px solid ${tone.border}`, background: tone.bg,
-    borderRadius: 'var(--radius-md)', padding: 'var(--space-3)',
-    display: 'flex', flexDirection: 'column', gap: 2,
-  }}>
-    <span style={{ fontSize: 'var(--fs-12)', fontWeight: 600, color: 'var(--c-ink)' }}>{title}</span>
-    {/* The cadence rides on the tile, not in a date formula — the renewal
-        interval is the thing the operator needs to know and the system
-        deliberately never computes the next date from it. */}
-    <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-soft)' }}>{cadence}</span>
-    <span style={{ fontSize: 'var(--fs-15)', fontWeight: 700, color: tone.fg, marginTop: 4 }}>{date}</span>
-    <span style={{ fontSize: 'var(--fs-12)', color: tone.fg }}>{phrase}</span>
-    {extra ? <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', marginTop: 4 }}>{extra}</span> : null}
-    {caveat ? <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-soft)', fontStyle: 'italic' }}>{caveat}</span> : null}
-  </div>
-);
 
 // ── purchase ─────────────────────────────────────────────────────────────────
 
@@ -356,7 +270,7 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
   );
 };
 
-const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
+export const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
   const update = useUpdateLorry();
   const notify = useNotify();
   const [editing, setEditing] = useState(false);
@@ -407,7 +321,7 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
     return (
       <section className={styles.section}>
         <div className={styles.headerRow}>
-          <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Purchase &amp; documents</h3>
+          <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Vehicle details &amp; purchase</h3>
           <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>Edit</Button>
         </div>
         <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--space-3)', margin: 0 }}>
@@ -426,7 +340,7 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
   return (
     <section className={styles.section}>
       <div className={styles.headerRow}>
-        <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Purchase &amp; documents</h3>
+        <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Vehicle details &amp; purchase</h3>
       </div>
       <div className={styles.formGrid}>
         <Field label="Model" value={form.model} onChange={(v) => set('model', v)} placeholder="e.g. Isuzu NPR 3.0" />
