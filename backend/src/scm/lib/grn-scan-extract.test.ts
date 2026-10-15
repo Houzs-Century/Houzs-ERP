@@ -2,7 +2,7 @@
 // coercion that guarantees downstream code a well-shaped GrnExtracted whatever
 // the model returns.
 import { describe, expect, test } from 'vitest';
-import { normalizeGrnExtract, emptyScanNote, EMPTY_SCAN_NOTE_NO_LINES, EMPTY_SCAN_NOTE_UNREADABLE } from './grn-scan-extract';
+import { normalizeGrnExtract, emptyScanNote } from './grn-scan-extract';
 
 describe('normalizeGrnExtract', () => {
   test('coerces a clean delivery order', () => {
@@ -72,13 +72,17 @@ describe('normalizeGrnExtract', () => {
 });
 
 describe('emptyScanNote', () => {
+  const retake = /does not look like a delivery order/;
+  const noLines = /could not read any lines/;
   test('a totally empty read says the photo is not a DO or is cut off', () => {
-    const parsed = normalizeGrnExtract({});
-    expect(emptyScanNote(parsed)).toBe(EMPTY_SCAN_NOTE_UNREADABLE);
-    expect(emptyScanNote(null)).toBe(EMPTY_SCAN_NOTE_UNREADABLE);
+    expect(emptyScanNote(normalizeGrnExtract({}))).toMatch(retake);
   });
-  test('a header read with no lines keeps the old note', () => {
-    const parsed = normalizeGrnExtract({ doNo: 'DO-1' });
-    expect(emptyScanNote(parsed)).toBe(EMPTY_SCAN_NOTE_NO_LINES);
+  test('a failed call (no read) keeps the neutral note', () => {
+    expect(emptyScanNote(null)).toMatch(noLines);
+  });
+  test('any header read with no lines keeps the neutral note', () => {
+    for (const head of [{ doNo: 'DO-1' }, { poNo: 'PO-1' }, { supplierName: 'Hookka' }]) {
+      expect(emptyScanNote(normalizeGrnExtract(head))).toMatch(noLines);
+    }
   });
 });
