@@ -32,7 +32,7 @@ The PC Order is raised on PC Order New (`?fromProductRequest=<id>`), which seeds
 - A request has at least one line and at most 200 (`lines_required` / `too_many_lines`). Every line refusal names its line (`Line 2: …`).
 - A `REPACK` line always names an existing SKU (`item_code_required`). A `NEW_PRODUCT` line names an existing SKU or a Model by name (`product_required`); never neither (DB check `product_request_lines_names_product`).
 - A SKU or fabric not in the active company is refused by line (`unknown_item` / `unknown_fabric`); a delivery location or supplier not in it by name (`unknown_location` / `unknown_supplier`). A picked SKU fixes the line's category and Model.
-- The header's `supplier_id` and each line's `unit_price_sen` are the requester's named supplier and agreed prices (方案 C, owner 2026-10-08), all optional; PC Order New seeds the Creditor and each line price from them (`priceTouched`, so the binding's default does not overwrite the agreed figure). The Purchaser may still change them on the order.
+- The header's `supplier_id` is the requester's named supplier (方案 C, owner 2026-10-08), optional; PC Order New seeds the Creditor from it. Each line's `unit_price_sen` stays on the row and the API but is no longer asked or shown (owner 2026-10-15: unit price 也是不需要); a value an API caller sends still seeds the order line price (`priceTouched`). The Purchaser prices the order.
 - An approved request cannot raise a PC Order until EVERY line names a SKU: a PC Receive books stock by item code, and a code the catalogue has not got would be stock nothing can sell.
 - `create-model` goes through `ensureModelForSku` (the one find-or-create every SKU-create path shares); the SKU lands `status ACTIVE`, `pos_active false`. A SKU code already in the company is refused (`duplicate_code`), never overwritten. SKU code defaults to `<MODEL>-<compartment>` for a sofa with a compartment, else the model code; 30 characters at most. The line update is guarded on `item_code IS NULL`, so two builds at once cannot both name the line.
 - Every status move is guarded on the status the row was read in (`request_moved` 409 on a race); the PC Order link claims the request only while `APPROVED`, so two orders raised at once cannot both claim it — the loser's order stays, unlinked, and the create answer says `requestClaimed: false`.
@@ -44,7 +44,7 @@ The PC Order is raised on PC Order New (`?fromProductRequest=<id>`), which seeds
 
 - The PC Order form is desktop-only, so on the phone an approved request says to raise the order on the computer; the phone approves, rejects, builds each line's Model and closes.
 - `decision_note` holds the Purchaser's words for approve, reject and close alike; a resubmit clears it.
-- A line's `category` defaults to `SOFA`; the compartment picker shows only for a sofa, seat sizes read `sofaSizes`, leg sizes read `sofaLegHeights` for a sofa and `legHeights` otherwise.
+- A line's `category` defaults to `SOFA`; seat sizes read `sofaSizes`, leg sizes read `sofaLegHeights` for a sofa and `legHeights` otherwise. `compartment` stays on the row and the API (owner 2026-10-15: removed from the form), so a new Model's default SKU code is the model code and the Purchaser types `<MODEL>-<compartment>` when a sofa needs it.
 - `scm.product_requests` lost its one-product columns on 2026-10-15 (migration `20261015T0540`, 0 rows on production then); anything reading `product_requests.item_code` is stale.
 
 ## Where the code is

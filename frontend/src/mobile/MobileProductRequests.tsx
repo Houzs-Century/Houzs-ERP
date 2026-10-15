@@ -30,7 +30,6 @@ import {
   useProductRequestSupplierOptions, useRejectProductRequest, useUpdateProductRequest, useWithdrawProductRequest,
   type ProductRequest, type ProductRequestApplication, type ProductRequestInput, type ProductRequestLine, type ProductRequestLineInput, type ProductRequestType,
 } from "../vendor/scm/lib/product-request-queries";
-import { MoneyInput } from "../vendor/scm/components/MoneyInput";
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from "../vendor/scm/lib/mfg-products-queries";
 import { MFG_PRODUCT_CATEGORIES } from "../vendor/shared/product-categories";
 import { useFabricTrackings, fabricOptionLabel } from "../vendor/scm/lib/fabric-queries";
@@ -40,7 +39,7 @@ import { DateField } from "../vendor/scm/components/DateField";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useAuth } from "../auth/AuthContext";
-import { fmtDateOrDash, fmtSen } from "../vendor/shared/format";
+import { fmtDateOrDash } from "../vendor/shared/format";
 
 type View = { t: "list" } | { t: "new" } | { t: "edit"; req: ProductRequest } | { t: "detail"; id: string };
 type Filter = "all" | "waiting" | "approved" | "closed";
@@ -167,7 +166,7 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
     reject.mutate({ id: r.id, note });
   };
   const onBuild = async (l: ProductRequestLine) => {
-    const code = await askPrompt({ title: `Create Model + SKU — line ${l.line_no}`, body: `${l.proposed_model_name ?? "The new Model"} · ${mfgCategoryLabel(l.category)}${l.compartment ? ` · ${l.compartment}` : ""}. The SKU code follows (model, or model-compartment for a sofa); it lands in the catalogue but not on POS.`, confirmLabel: "Create", input: { label: "Model code", placeholder: "e.g. 5530", required: true } });
+    const code = await askPrompt({ title: `Create Model + SKU — line ${l.line_no}`, body: `${l.proposed_model_name ?? "The new Model"} · ${mfgCategoryLabel(l.category)}. The SKU code defaults to the model code; it lands in the catalogue but not on POS.`, confirmLabel: "Create", input: { label: "Model code", placeholder: "e.g. 5530", required: true } });
     if (!code) return;
     try {
       const res = await build.mutateAsync({ id: r.id, lineId: l.id, modelCode: code.trim() });
@@ -227,7 +226,6 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
             <span style={{ fontWeight: 700, fontSize: 13 }}>× {l.qty}</span>
           </div>
           <div style={{ fontSize: 11.5, color: "var(--mut)" }}>{mfgCategoryLabel(l.category)} · {specText(l)}{l.model ? ` · Model ${l.model.modelCode}` : ""}</div>
-          {l.unit_price_sen != null && <div style={{ fontSize: 11.5 }}>Unit price {fmtSen(l.unit_price_sen)}</div>}
           {l.remarks && <div style={{ fontSize: 11.5 }}>{l.remarks}</div>}
           {approver && r.status === "APPROVED" && !l.item_code && (
             <button type="button" className="btn" style={{ marginTop: 6 }} onClick={() => void onBuild(l)} disabled={build.isPending}>Create Model + SKU</button>
@@ -268,7 +266,6 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
   const maint = useMaintenanceConfig("master").data?.data ?? null;
   const fabrics = useFabricTrackings().data ?? [];
   const warehouses = useWarehouses().data ?? [];
-  const compartments = maintPickerValues(maint?.sofaCompartments ?? [], "");
   const seatSizes = sortByNumeric(maintPickerValues(maint?.sofaSizes ?? [], ""));
   const sofaLegs = sortByNumeric(activeOptions(maint?.sofaLegHeights ?? [], "")).map((o) => o.value);
   const otherLegs = sortByNumeric(activeOptions(maint?.legHeights ?? [], "")).map((o) => o.value);
@@ -333,7 +330,6 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
       <div className="sc-sl"><span className="t">② Products ({lines.length})</span><span className="ln" /></div>
       <datalist id="mpr-skus">{skuList.map((p) => <option key={p.id} value={p.code}>{p.name} · {mfgCategoryLabel(p.category)}</option>)}</datalist>
       <datalist id="mpr-fabrics">{pickableFabrics.map((f) => <option key={f.id} value={f.fabric_code}>{f.name}</option>)}</datalist>
-      <datalist id="mpr-compartments">{compartments.map((o) => <option key={o} value={o} />)}</datalist>
       <datalist id="mpr-seat-sizes">{seatSizes.map((o) => <option key={o} value={o} />)}</datalist>
       <datalist id="mpr-leg-sofa">{sofaLegs.map((o) => <option key={o} value={o} />)}</datalist>
       <datalist id="mpr-leg-other">{otherLegs.map((o) => <option key={o} value={o} />)}</datalist>
@@ -365,12 +361,10 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
                 {MFG_PRODUCT_CATEGORIES.map((c) => <option key={c} value={c}>{mfgCategoryLabel(c)}</option>)}
               </select>
             ))}
-            {isSofa && field("Compartment", <input className="cal-sel" list="mpr-compartments" aria-label={`Compartment line ${n}`} value={l.compartment ?? ""} placeholder="e.g. 3S, LHF, Console" onChange={(e) => setLine(l.rid, { compartment: e.target.value || null })} />)}
             {field("Fabric", <input className="cal-sel" list="mpr-fabrics" aria-label={`Fabric line ${n}`} value={l.fabricCode ?? ""} placeholder="Type or pick a fabric code…" onChange={(e) => setLine(l.rid, { fabricCode: e.target.value || null })} />)}
             {field(isSofa ? "Sofa size (seat)" : "Size", <input className="cal-sel" list={isSofa ? "mpr-seat-sizes" : undefined} aria-label={`${isSofa ? "Sofa size" : "Size"} line ${n}`} value={l.seatSize ?? ""} placeholder={isSofa ? "e.g. 22" : "e.g. Queen"} onChange={(e) => setLine(l.rid, { seatSize: e.target.value || null })} />)}
             {field("Leg size", <input className="cal-sel" list={isSofa ? "mpr-leg-sofa" : "mpr-leg-other"} aria-label={`Leg size line ${n}`} value={l.legSize ?? ""} placeholder="e.g. 4" onChange={(e) => setLine(l.rid, { legSize: e.target.value || null })} />)}
             {field("Qty *", <input className="cal-sel" type="number" inputMode="numeric" min={1} aria-label={`Qty line ${n}`} value={l.qty || ""} onChange={(e) => setLine(l.rid, { qty: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />)}
-            {field("Unit price (MYR, if agreed)", <MoneyInput bare valueSen={l.unitPriceSen ?? 0} onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen != null && sen > 0 ? sen : null })} inputClassName="cal-sel" selectOnFocus aria-label={`Unit price line ${n}`} />)}
             {field("Remarks", <input className="cal-sel" aria-label={`Remarks line ${n}`} maxLength={500} value={l.remarks ?? ""} placeholder="e.g. deeper seat, no piping" onChange={(e) => setLine(l.rid, { remarks: e.target.value || null })} />)}
           </div>
         );

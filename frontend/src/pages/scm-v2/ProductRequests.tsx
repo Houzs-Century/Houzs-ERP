@@ -1,6 +1,6 @@
 // ----------------------------------------------------------------------------
 // ProductRequests — a request for new products or repacks (owner 2026-10-06:
-// to request new product / repack product — Application, Model, Compartment,
+// to request new product / repack product — Application, Model,
 // Fabric, Sofa size, Leg size, Special remarks, Delivery location, Expected
 // delivery date; 要审批, Purchaser 批; Sales 都能提; 然后这个会连接 purchase
 // consignment order. 2026-10-15, 方案 A: a request is a header plus LINES, the
@@ -32,7 +32,6 @@ import {
   useProductRequest, useProductRequestSupplierOptions, useProductRequests, useRejectProductRequest, useUpdateProductRequest, useWithdrawProductRequest,
   type ProductRequest, type ProductRequestApplication, type ProductRequestInput, type ProductRequestLine, type ProductRequestLineInput, type ProductRequestType,
 } from '../../vendor/scm/lib/product-request-queries';
-import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
 import { useFabricTrackings, fabricOptionLabel } from '../../vendor/scm/lib/fabric-queries';
@@ -46,7 +45,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDateOrDash, fmtSen } from '../../vendor/shared/format';
+import { fmtDateOrDash } from '../../vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
@@ -282,7 +281,6 @@ export const ProductRequests = () => {
 
 /* ── The request's lines, read-only, with the per-line build button ───────── */
 function LinesTable({ request, onBuild }: { request: ProductRequest; onBuild: ((line: ProductRequestLine) => void) | null }) {
-  const priced = request.lines.some((l) => l.unit_price_sen != null);
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={lineTable} aria-label={`Lines of ${request.request_no}`}>
@@ -293,7 +291,6 @@ function LinesTable({ request, onBuild }: { request: ProductRequest; onBuild: ((
             <th style={th}>Category</th>
             <th style={th}>Spec</th>
             <th style={{ ...th, textAlign: 'right' }}>Qty</th>
-            {priced && <th style={{ ...th, textAlign: 'right' }}>Unit price</th>}
             <th style={th}>Remarks</th>
             {onBuild && <th style={th} />}
           </tr>
@@ -306,7 +303,6 @@ function LinesTable({ request, onBuild }: { request: ProductRequest; onBuild: ((
               <td style={td}>{mfgCategoryLabel(l.category)}</td>
               <td style={td}>{specText(l)}</td>
               <td style={{ ...td, textAlign: 'right' }}>{l.qty}</td>
-              {priced && <td style={{ ...td, textAlign: 'right' }}>{l.unit_price_sen != null ? fmtSen(l.unit_price_sen) : '—'}</td>}
               <td style={td}>{l.remarks ?? '—'}</td>
               {onBuild && (
                 <td style={{ ...td, whiteSpace: 'nowrap' }}>
@@ -320,7 +316,7 @@ function LinesTable({ request, onBuild }: { request: ProductRequest; onBuild: ((
           <tr>
             <td style={{ ...td, borderBottom: 'none' }} colSpan={4}><span style={soft}>{request.lines.length} line{request.lines.length === 1 ? '' : 's'}</span></td>
             <td style={{ ...td, borderBottom: 'none', textAlign: 'right', fontWeight: 600 }}>{totalQty(request)}</td>
-            <td style={{ ...td, borderBottom: 'none' }} colSpan={(priced ? 1 : 0) + 1 + (onBuild ? 1 : 0)} />
+            <td style={{ ...td, borderBottom: 'none' }} colSpan={1 + (onBuild ? 1 : 0)} />
           </tr>
         </tfoot>
       </table>
@@ -336,8 +332,7 @@ function BuildModelForm({ request, line, onDone, onCancel }: { request: ProductR
   const [skuCode, setSkuCode] = useState('');
   const [name, setName] = useState(line.proposed_model_name ?? '');
   const code = modelCode.trim().toUpperCase().replace(/\s+/g, '-');
-  const comp = (line.compartment ?? '').trim().toUpperCase().replace(/\s+/g, '-');
-  const defaultSku = line.category === 'SOFA' && comp ? `${code}-${comp}` : code;
+  const defaultSku = code;
   const save = async () => {
     if (!code) { void notify({ title: 'Not yet complete', body: 'Give the new Model a code.', tone: 'error' }); return; }
     try {
@@ -349,7 +344,7 @@ function BuildModelForm({ request, line, onDone, onCancel }: { request: ProductR
   };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-      <div style={soft}>Line {line.line_no}: {line.proposed_model_name} · {mfgCategoryLabel(line.category)}{line.compartment ? ` · ${line.compartment}` : ''} · ×{line.qty}</div>
+      <div style={soft}>Line {line.line_no}: {line.proposed_model_name} · {mfgCategoryLabel(line.category)} · ×{line.qty}</div>
       <label className={styles.field}>
         <span className={styles.fieldLabel}>Model code *</span>
         <input className={styles.fieldInput} value={modelCode} onChange={(e) => setModelCode(e.target.value)} aria-label="Model code" placeholder="e.g. 5530" style={mono} />
@@ -360,7 +355,7 @@ function BuildModelForm({ request, line, onDone, onCancel }: { request: ProductR
       </label>
       <label className={styles.field}>
         <span className={styles.fieldLabel}>SKU code</span>
-        <input className={styles.fieldInput} value={skuCode} onChange={(e) => setSkuCode(e.target.value)} aria-label="SKU code" placeholder={defaultSku || 'model code, or model-compartment for a sofa'} style={mono} />
+        <input className={styles.fieldInput} value={skuCode} onChange={(e) => setSkuCode(e.target.value)} aria-label="SKU code" placeholder={defaultSku || 'defaults to the model code'} style={mono} />
       </label>
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
@@ -401,7 +396,6 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
   const fabrics = useFabricTrackings().data ?? [];
   const warehouses = useWarehouses().data ?? [];
   const skuList = useMemo(() => sortByText(skus.data ?? []), [skus.data]);
-  const compartments = maintPickerValues(maint?.sofaCompartments ?? [], '');
   const seatSizes = sortByNumeric(maintPickerValues(maint?.sofaSizes ?? [], ''));
   const sofaLegs = sortByNumeric(activeOptions(maint?.sofaLegHeights ?? [], '')).map((o) => o.value);
   const otherLegs = sortByNumeric(activeOptions(maint?.legHeights ?? [], '')).map((o) => o.value);
@@ -477,12 +471,10 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
                 <th style={th}>#</th>
                 <th style={{ ...th, minWidth: 260 }}>Model / SKU</th>
                 <th style={{ ...th, minWidth: 110 }}>Category</th>
-                <th style={{ ...th, minWidth: 90 }}>Compartment</th>
                 <th style={{ ...th, minWidth: 130 }}>Fabric</th>
                 <th style={{ ...th, minWidth: 70 }}>Size</th>
                 <th style={{ ...th, minWidth: 70 }}>Leg</th>
                 <th style={{ ...th, minWidth: 64 }}>Qty</th>
-                <th style={{ ...th, minWidth: 100 }}>Unit price</th>
                 <th style={{ ...th, minWidth: 140 }}>Remarks</th>
                 <th style={th} />
               </tr>
@@ -517,9 +509,6 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
                       </select>
                     </td>
                     <td style={td}>
-                      {isSofa && <input style={cell} list="pr-compartments" value={l.compartment ?? ''} onChange={(e) => setLine(l.rid, { compartment: e.target.value || null })} aria-label={`Compartment line ${n}`} placeholder="3S, LHF…" />}
-                    </td>
-                    <td style={td}>
                       <input style={{ ...cell, ...mono }} list="pr-fabrics" value={l.fabricCode ?? ''} onChange={(e) => setLine(l.rid, { fabricCode: e.target.value || null })} aria-label={`Fabric line ${n}`} placeholder="Fabric code…" />
                     </td>
                     <td style={td}>
@@ -530,9 +519,6 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
                     </td>
                     <td style={td}>
                       <NumberInput value={l.qty} sign="unsigned" decimal={false} onValueChange={(q) => setLine(l.rid, { qty: q ?? 0 })} aria-label={`Qty line ${n}`} style={{ ...cell, textAlign: 'right' }} />
-                    </td>
-                    <td style={td}>
-                      <MoneyInput bare valueSen={l.unitPriceSen ?? 0} onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen != null && sen > 0 ? sen : null })} selectOnFocus aria-label={`Unit price line ${n}`} style={{ ...cell, textAlign: 'right' }} />
                     </td>
                     <td style={td}>
                       <input style={cell} value={l.remarks ?? ''} onChange={(e) => setLine(l.rid, { remarks: e.target.value || null })} aria-label={`Remarks line ${n}`} maxLength={500} placeholder="deeper seat, no piping…" />
@@ -551,7 +537,6 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
         </div>
         <datalist id="pr-skus">{skuList.map((p) => <option key={p.id} value={p.code}>{p.name} · {mfgCategoryLabel(p.category)}</option>)}</datalist>
         <datalist id="pr-fabrics">{pickableFabrics.map((f) => <option key={f.id} value={f.fabric_code}>{f.name}</option>)}</datalist>
-        <datalist id="pr-compartments">{compartments.map((o) => <option key={o} value={o} />)}</datalist>
         <datalist id="pr-seat-sizes">{seatSizes.map((o) => <option key={o} value={o} />)}</datalist>
         <datalist id="pr-leg-sofa">{sofaLegs.map((o) => <option key={o} value={o} />)}</datalist>
         <datalist id="pr-leg-other">{otherLegs.map((o) => <option key={o} value={o} />)}</datalist>
@@ -595,7 +580,6 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
               {supplierOptions.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
             </select>
           </label>
-          <div style={{ ...soft, alignSelf: 'end', paddingBottom: 8 }}>The agreed unit price goes on each line above.</div>
         </div>
       </FormSection>
 

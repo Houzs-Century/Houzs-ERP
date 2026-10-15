@@ -150,9 +150,10 @@ export const productText = (r: Pick<ProductRequest, 'lines'>): string => {
 /** Every unit on the request. */
 export const totalQty = (r: Pick<ProductRequest, 'lines'>): number => r.lines.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
 
-/** One line's spec: compartment · fabric · seat · leg. */
-export const specText = (l: Pick<ProductRequestLine, 'compartment' | 'fabric_code' | 'seat_size' | 'leg_size'>): string =>
-  [l.compartment, l.fabric_code, l.seat_size ? `seat ${l.seat_size}` : null, l.leg_size ? `leg ${l.leg_size}` : null].filter(Boolean).join(' · ') || '—';
+/** One line's spec: fabric · seat · leg. The stored compartment (owner 2026-10-15: remove
+    compartment from the form) is kept on the row but no longer shown or asked. */
+export const specText = (l: Pick<ProductRequestLine, 'fabric_code' | 'seat_size' | 'leg_size'>): string =>
+  [l.fabric_code, l.seat_size ? `seat ${l.seat_size}` : null, l.leg_size ? `leg ${l.leg_size}` : null].filter(Boolean).join(' · ') || '—';
 
 type ListAnswer = { requests: ProductRequest[]; approver: boolean; mayRequest: boolean };
 
@@ -224,7 +225,7 @@ export const useRejectProductRequest = () => {
 
 /** The Purchaser builds one line's new Model and its first SKU from an
     approved request. The SKU code defaults on the server to
-    `<MODEL>-<compartment>` for a sofa with a compartment, else the model code. */
+    the model code (the Purchaser may type another). */
 export const useCreateModelFromRequest = () => {
   const qc = useQueryClient();
   return useMutation({
