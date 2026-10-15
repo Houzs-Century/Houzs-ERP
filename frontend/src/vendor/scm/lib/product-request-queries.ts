@@ -17,6 +17,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { writeFailedAs } from './mutation-error';
+import { fetchDocFileBlobUrl, type PvFile, type PvFilePayload } from './payment-voucher-queries';
 
 export type ProductRequestType = 'NEW_PRODUCT' | 'REPACK';
 export type ProductRequestApplication = 'SHOWROOM' | 'CUSTOMER_ORDER' | 'SAMPLE' | 'FAIR_EXHIBITION';
@@ -251,6 +252,41 @@ export const useCloseProductRequest = () => {
     onError: writeFailedAs('The request was not closed'),
   });
 };
+
+/* The request's files (owner 2026-10-15: 需要可以 attach 文件功能) — the same
+   factory the payment request's bill rides (doc-files.ts): quotation, photos,
+   a drawing. Attach on the request after it exists; the form uploads what was
+   picked once the request is created. */
+export const useProductRequestFiles = (id: string | null) => useQuery({
+  queryKey: ['product-request-files', id],
+  queryFn: () => authedFetch<{ files: PvFile[] }>(`/product-requests/${id}/files`),
+  enabled: !!id,
+});
+
+export const useUploadProductRequestFile = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, file }: { id: string; file: PvFilePayload }) =>
+      authedFetch<{ ok: true; file: PvFile }>(`/product-requests/${id}/files`, {
+        method: 'POST', body: JSON.stringify({ fileName: file.name, mime: file.mime, dataBase64: file.dataBase64 }),
+      }),
+    onSuccess: (_d, vars) => { void qc.invalidateQueries({ queryKey: ['product-request-files', vars.id] }); },
+    onError: writeFailedAs('The file was not attached'),
+  });
+};
+
+export const useDeleteProductRequestFile = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, fileId }: { id: string; fileId: string }) =>
+      authedFetch<{ ok: true }>(`/product-requests/${id}/files/${fileId}`, { method: 'DELETE' }),
+    onSuccess: (_d, vars) => { void qc.invalidateQueries({ queryKey: ['product-request-files', vars.id] }); },
+    onError: writeFailedAs('The file was not removed'),
+  });
+};
+
+export const fetchProductRequestFileBlobUrl = (id: string, fileId: string): Promise<{ url: string; contentType: string }> =>
+  fetchDocFileBlobUrl(`/product-requests/${id}/files/${fileId}`);
 
 /** Where the Purchaser raises the PC Order from a request: PC Order New,
     prefilled from it. One home, so the desktop and the phone land on the same door. */

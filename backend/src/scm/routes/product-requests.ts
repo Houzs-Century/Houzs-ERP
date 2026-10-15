@@ -15,6 +15,8 @@
 //   POST   /:id/reject                       the Purchaser says no, saying why
 //   POST   /:id/lines/:lineId/create-model   the Purchaser builds a line's new Model + SKU
 //   POST   /:id/close                        the Purchaser ends it
+//   POST   /:id/files, GET /:id/files, GET + DELETE /:id/files/:fileId
+//                                            the request's evidence (quotation, photos) — lib/doc-files.ts
 //
 // Each line's product is an existing SKU (item_code, picked from the catalogue)
 // or a Model the catalogue does not have yet (proposed_model_name). A repack
@@ -44,6 +46,7 @@ import { dateOrNull } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
 import { assertAuditWritable, auditUnavailableBody, compactChanges, fieldChange, recordEntityAudit } from '../lib/entity-audit';
 import { ensureModelForSku } from '../lib/ensure-model-for-sku';
+import { makeDocFileHandlers, type DocFilesSpec } from '../lib/doc-files';
 import { callerUserId } from '../lib/payment-request';
 import { MFG_PRODUCT_CATEGORIES } from '../shared/product-categories';
 import {
@@ -213,6 +216,46 @@ export const getProductRequestHandler = async (c: any): Promise<Response> => {
   return c.json({ request: linked.rows[0], approver: isApprover(c), mayRequest: mayRequest(c) });
 };
 productRequests.get('/:id', getProductRequestHandler);
+
+/* ── The request's files (owner 2026-10-15: 需要可以 attach 文件功能) ──────────
+   The ONE file factory every money document rides (doc-files.ts), fed this
+   document's rules: the requester attaches to their own request, the Purchaser
+   to any; a withdrawn or closed request takes no more; once the Purchaser has
+   decided, the requester's files stay (the Purchaser may still remove one). */
+export const PRODUCT_REQUEST_FILES: DocFilesSpec = {
+  table: 'product_request_files',
+  fkColumn: 'request_id',
+  keyPrefix: 'product-request-files',
+  writePerms: [PRODUCT_REQUEST_CREATE_KEY, PRODUCT_REQUEST_APPROVE_KEY],
+  mayWrite: (c: any) => mayRequest(c) || isApprover(c),
+  scanKind: null,
+  load: async (c: any) => {
+    const found = await loadVisible(c, c.req.param('id'));
+    if ('resp' in found) return found;
+    const r = found.req;
+    const status = String(r.status) as ProductRequestStatus;
+    return {
+      doc: {
+        id: String(r.id),
+        closed: status === 'WITHDRAWN' || status === 'CLOSED',
+        /* Decided: the requester's evidence stays as the Purchaser read it. */
+        locked: !isApprover(c) && !requesterMayChange(status),
+      },
+    };
+  },
+  closedRefusal: { error: 'request_closed', message: 'A withdrawn or closed request takes no more files.' },
+  lockedRefusal: { error: 'request_decided', message: 'The Purchaser has decided this request — its files stay. Ask the Purchaser to remove one.' },
+  keepOne: undefined,
+};
+const fileHandlers = makeDocFileHandlers(PRODUCT_REQUEST_FILES);
+export const uploadProductRequestFileHandler = fileHandlers.upload;
+export const listProductRequestFilesHandler = fileHandlers.list;
+export const streamProductRequestFileHandler = fileHandlers.stream;
+export const deleteProductRequestFileHandler = fileHandlers.remove;
+productRequests.post('/:id/files', uploadProductRequestFileHandler);
+productRequests.get('/:id/files', listProductRequestFilesHandler);
+productRequests.get('/:id/files/:fileId', streamProductRequestFileHandler);
+productRequests.delete('/:id/files/:fileId', deleteProductRequestFileHandler);
 
 /* ── The requester's fields, as the body sends them ───────────────────────── */
 type HeaderFields = {

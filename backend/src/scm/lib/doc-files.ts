@@ -45,6 +45,10 @@ export type DocFilesSpec = {
   keyPrefix: string;
   /** Upload and delete need one of these; reading rides the document. */
   writePerms: readonly string[];
+  /** Set when the writer is not a key holder — a product request's own
+      requester (a Sales caller holds no flat key). Replaces `writePerms`
+      entirely when present; `load` still narrows what the caller may reach. */
+  mayWrite?: (c: any) => boolean;
   /** The document under the active company — 404 when it is not there. */
   load: (c: any) => Promise<{ doc: DocForFiles } | { resp: Response }>;
   /** The refusals, worded for THIS document. */
@@ -77,7 +81,7 @@ export const decodeBase64 = (b64: string): Uint8Array | null => {
 };
 
 export function makeDocFileHandlers(spec: DocFilesSpec) {
-  const canWrite = (c: any): boolean => spec.writePerms.some((k) => hasHouzsPerm(c, k));
+  const canWrite = (c: any): boolean => (spec.mayWrite ? spec.mayWrite(c) : spec.writePerms.some((k) => hasHouzsPerm(c, k)));
   const noPerm = (c: any): Response => c.json({ error: "You don't have permission to do that." }, 403);
 
   const upload = async (c: any): Promise<Response> => {

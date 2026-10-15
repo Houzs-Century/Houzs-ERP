@@ -40,6 +40,9 @@ const approveMutate = vi.fn();
 const rejectMutate = vi.fn();
 const buildAsync = vi.fn(async (_b: Req) => ({ ok: true, model: { id: 'm1', modelCode: 'AURORA', created: true }, sku: { id: 's1', code: 'AURORA-2S' }, lineId: 'l1', request: base({ status: 'APPROVED', lines: [line({ item_code: 'AURORA-2S' })] }) }));
 const closeMutate = vi.fn();
+let files: Array<Record<string, unknown>> = [];
+const uploadAsync = vi.fn(async (_b: Req) => ({ ok: true, file: { id: 'f-new' } }));
+const removeFileAsync = vi.fn(async (_b: Req) => ({ ok: true }));
 
 vi.mock('../../vendor/scm/lib/product-request-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/product-request-queries')>()),
@@ -53,6 +56,9 @@ vi.mock('../../vendor/scm/lib/product-request-queries', async (importOriginal) =
   useRejectProductRequest: () => ({ mutate: rejectMutate, isPending: false }),
   useCreateModelFromRequest: () => ({ mutateAsync: buildAsync, isPending: false }),
   useCloseProductRequest: () => ({ mutate: closeMutate, isPending: false }),
+  useProductRequestFiles: (id: string | null) => ({ data: id ? { files } : undefined, isLoading: false }),
+  useUploadProductRequestFile: () => ({ mutateAsync: uploadAsync, isPending: false }),
+  useDeleteProductRequestFile: () => ({ mutateAsync: removeFileAsync, isPending: false }),
 }));
 vi.mock('../../vendor/scm/lib/mfg-products-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/mfg-products-queries')>()),
@@ -162,6 +168,41 @@ describe('Product Requests — the requester', () => {
     expect(within(rejected).getByText(/Pick 5530 instead/)).toBeTruthy();
     expect(within(rejected).getByRole('button', { name: 'Fix and send again' })).toBeTruthy();
     expect(within(rejected).queryByRole('button', { name: 'Approve' })).toBeNull();
+  });
+});
+
+describe('Product Requests — files (owner 2026-10-15)', () => {
+  test('the detail shows the files card; the requester attaches while it waits and sees a decided request keep its files', async () => {
+    files = [{ id: 'f1', file_name: 'quotation.pdf', mime: 'application/pdf', size_bytes: 20480, sort_no: 1, created_at: '2026-10-15T01:00:00Z' }];
+    requests = [base({}), base({ id: 'r3', request_no: 'HC-PDR-2610-003', status: 'APPROVED' })];
+    approver = false; uploadAsync.mockClear();
+    draw();
+    openDetail('HC-PDR-2610-001');
+    let dialog = screen.getByRole('dialog', { name: 'Product request HC-PDR-2610-001' });
+    expect(within(dialog).getByText('quotation.pdf')).toBeTruthy();
+    expect(within(dialog).getByLabelText('Attach a file')).toBeTruthy();
+    expect(within(dialog).getByLabelText('Remove quotation.pdf')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    /* Approved: the requester may still attach, but the files stay. */
+    openDetail('HC-PDR-2610-003');
+    dialog = screen.getByRole('dialog', { name: 'Product request HC-PDR-2610-003' });
+    expect(within(dialog).getByLabelText('Attach a file')).toBeTruthy();
+    expect(within(dialog).queryByLabelText('Remove quotation.pdf')).toBeNull();
+  });
+
+  test('files picked on the new-request form are uploaded once the request exists', async () => {
+    requests = []; approver = false; createAsync.mockClear(); uploadAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByRole('button', { name: /New request/ }));
+    const dialog = screen.getByRole('dialog', { name: 'New product request' });
+    fireEvent.change(within(dialog).getByLabelText('SKU line 1'), { target: { value: '5530-3S' } });
+    const picker = within(dialog).getByLabelText('Pick files to attach') as HTMLInputElement;
+    const quote = new File(['%PDF-1.4 q'], 'quotation.pdf', { type: 'application/pdf' });
+    fireEvent.change(picker, { target: { files: [quote] } });
+    expect(within(dialog).getByText('quotation.pdf')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Send to the Purchaser' }));
+    await waitFor(() => expect(uploadAsync).toHaveBeenCalledTimes(1));
+    expect(uploadAsync.mock.calls[0][0]).toMatchObject({ id: 'r-new', file: { name: 'quotation.pdf', mime: 'application/pdf' } });
   });
 });
 

@@ -21,13 +21,13 @@
  * allowed() resolves, so phone and desktop are gated by one declaration.
  * ------------------------------------------------------------------------- */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { activeOptions, maintPickerValues } from "@2990s/shared";
 import {
   APPLICATION_LABEL, REQUEST_STATUS, REQUEST_TYPE_LABEL, awaitsPurchaser, emptyRequestLine, lineProductText, lineToInput, linesNeedingModel,
   mayClose, mayRaisePco, needsModel, productText, requesterMayChange, specText, totalQty,
-  useApproveProductRequest, useCloseProductRequest, useCreateModelFromRequest, useCreateProductRequest, useProductRequest, useProductRequests,
-  useProductRequestSupplierOptions, useRejectProductRequest, useUpdateProductRequest, useWithdrawProductRequest,
+  fetchProductRequestFileBlobUrl, useApproveProductRequest, useCloseProductRequest, useCreateModelFromRequest, useCreateProductRequest, useDeleteProductRequestFile,
+  useProductRequest, useProductRequestFiles, useProductRequests, useProductRequestSupplierOptions, useRejectProductRequest, useUpdateProductRequest, useUploadProductRequestFile, useWithdrawProductRequest,
   type ProductRequest, type ProductRequestApplication, type ProductRequestInput, type ProductRequestLine, type ProductRequestLineInput, type ProductRequestType,
 } from "../vendor/scm/lib/product-request-queries";
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from "../vendor/scm/lib/mfg-products-queries";
@@ -40,6 +40,7 @@ import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useAuth } from "../auth/AuthContext";
 import { fmtDateOrDash } from "../vendor/shared/format";
+import { fileToBase64, PV_FILE_ACCEPT } from "../vendor/scm/lib/payment-voucher-queries";
 
 type View = { t: "list" } | { t: "new" } | { t: "edit"; req: ProductRequest } | { t: "detail"; id: string };
 type Filter = "all" | "waiting" | "approved" | "closed";
@@ -143,11 +144,42 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
   const reject = useRejectProductRequest();
   const build = useCreateModelFromRequest();
   const close = useCloseProductRequest();
+  const files = useProductRequestFiles(id);
+  const upload = useUploadProductRequestFile();
+  const removeFile = useDeleteProductRequestFile();
+  const camRef = useRef<HTMLInputElement>(null);
+  const libRef = useRef<HTMLInputElement>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   if (!r) return <Shell eyebrow="Product request" title="Request" onBack={onBack}><Note>{q.isLoading ? "Loading…" : "Could not load this request."}</Note></Shell>;
   const mine = Number(r.requested_by) === me;
   const mayChange = mine && requesterMayChange(r);
   const pending = linesNeedingModel(r).length;
+  /* Files (owner 2026-10-15): the requester attaches to their own, the Purchaser to any;
+     a withdrawn or closed request takes no more; a decided one keeps the requester's. */
+  const fileOpen = r.status !== "WITHDRAWN" && r.status !== "CLOSED";
+  const mayAttach = (approver || mine) && fileOpen;
+  const mayRemoveFile = (approver || mayChange) && fileOpen;
+  const addFiles = async (list: FileList | null) => {
+    setFileError(null);
+    for (const f of [...(list ?? [])]) {
+      try {
+        await upload.mutateAsync({ id: r.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+      } catch (e) {
+        setFileError(`${f.name} did not attach — ${e instanceof Error ? e.message : "try again"}.`);
+        break;
+      }
+    }
+  };
+  const viewFile = async (fileId: string) => {
+    try {
+      const { url } = await fetchProductRequestFileBlobUrl(r.id, fileId);
+      window.open(url, "_blank", "noopener");
+      setTimeout(() => { URL.revokeObjectURL(url); }, 60_000);
+    } catch (e) {
+      setFileError(e instanceof Error ? e.message : "The file could not be opened.");
+    }
+  };
 
   const onWithdraw = async () => {
     if (!(await askConfirm({ title: `Withdraw ${r.request_no}?`, body: "The Purchaser will not act on it.", confirmLabel: "Withdraw", danger: true }))) return;
@@ -232,6 +264,28 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
           )}
         </div>
       ))}
+      <div className="sc-sl"><span className="t">Files</span><span className="ln" /></div>
+      {fileError && <div className="st-warn" role="alert">{fileError}</div>}
+      {(files.data?.files ?? []).length === 0 && <Note>No file yet — a quotation, a photo or a drawing.</Note>}
+      {(files.data?.files ?? []).map((f) => (
+        <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "#fff", borderRadius: 10, fontSize: 12.5 }}>
+          <button type="button" onClick={() => void viewFile(f.id)} style={{ flex: 1, textAlign: "left", border: "none", background: "none", color: "var(--brand-d)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.file_name}</button>
+          {mayRemoveFile && (
+            <button type="button" onClick={() => removeFile.mutate({ id: r.id, fileId: f.id })} disabled={removeFile.isPending}
+              style={{ border: "none", background: "none", color: "#a33", fontSize: 12 }}>Remove</button>
+          )}
+        </div>
+      ))}
+      {mayAttach && (
+        <div style={{ display: "flex", gap: 8 }}>
+          <input ref={camRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} aria-label="Take a photo"
+            onChange={(e) => { void addFiles(e.target.files); e.target.value = ""; }} />
+          <input ref={libRef} type="file" accept={PV_FILE_ACCEPT} multiple style={{ display: "none" }} aria-label="Pick files"
+            onChange={(e) => { void addFiles(e.target.files); e.target.value = ""; }} />
+          <button className="btn" style={{ flex: 1 }} onClick={() => camRef.current?.click()} disabled={upload.isPending}>Photo</button>
+          <button className="btn" style={{ flex: 1, background: "var(--bg)", color: "var(--ink)" }} onClick={() => libRef.current?.click()} disabled={upload.isPending}>Pick file</button>
+        </div>
+      )}
     </Shell>
   );
 }
@@ -247,7 +301,11 @@ const draftLine = (from: ProductRequestLineInput | null): DraftLine => ({
 function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductRequest | null; onBack: () => void; onDone: (id: string) => void }) {
   const create = useCreateProductRequest();
   const update = useUpdateProductRequest();
+  const upload = useUploadProductRequestFile();
   const notify = useNotify();
+  /* Files picked before the request exists; uploaded once it does (new request only). */
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const pickRef = useRef<HTMLInputElement>(null);
   const [v, setV] = useState<Omit<ProductRequestInput, "lines">>(() => ({
     requestType: initial?.request_type ?? "NEW_PRODUCT",
     application: initial?.application ?? "CUSTOMER_ORDER",
@@ -299,6 +357,11 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
     const body: ProductRequestInput = { ...v, specialRemarks: v.specialRemarks?.trim() || null, lines: lines.map(lineBody) };
     try {
       const res = initial ? await update.mutateAsync({ id: initial.id, ...body }) : await create.mutateAsync(body);
+      for (const f of pendingFiles) {
+        try {
+          await upload.mutateAsync({ id: res.request.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+        } catch { /* the mutation's own onError told the user; attach again on the request */ }
+      }
       onDone(res.request.id);
     } catch { /* the mutation's own onError told the user */ }
   };
@@ -379,7 +442,22 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
       ))}
       {field("Expected delivery date", <DateField fullWidth className="cal-sel" aria-label="Expected delivery date" value={v.expectedDeliveryDate ?? ""} onChange={(iso) => set({ expectedDeliveryDate: iso || null })} />)}
       {field("Special remarks", <textarea className="cal-sel" rows={2} aria-label="Special remarks" maxLength={2000} value={v.specialRemarks ?? ""} onChange={(e) => set({ specialRemarks: e.target.value || null })} placeholder="Anything the Purchaser should know about the whole request" />)}
-      <div className="sc-sl"><span className="t">④ Supplier (if agreed)</span><span className="ln" /></div>
+      {!initial && (
+        <>
+          <div className="sc-sl"><span className="t">④ Files</span><span className="ln" /></div>
+          {pendingFiles.map((f, i) => (
+            <div key={`${f.name}-${i}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "#fff", borderRadius: 10, fontSize: 12.5 }}>
+              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+              <button type="button" aria-label={`Remove ${f.name}`} onClick={() => setPendingFiles((prev) => prev.filter((_, j) => j !== i))}
+                style={{ border: "none", background: "none", color: "#a33", fontSize: 12 }}>Remove</button>
+            </div>
+          ))}
+          <input ref={pickRef} type="file" accept={PV_FILE_ACCEPT} multiple style={{ display: "none" }} aria-label="Pick files to attach"
+            onChange={(e) => { setPendingFiles((prev) => [...prev, ...Array.from(e.target.files ?? [])]); e.target.value = ""; }} />
+          <button type="button" className="btn" style={{ background: "var(--bg)", color: "var(--ink)" }} onClick={() => pickRef.current?.click()}>Attach a quotation, photo or drawing</button>
+        </>
+      )}
+      <div className="sc-sl"><span className="t">{initial ? "④" : "⑤"} Supplier (if agreed)</span><span className="ln" /></div>
       {field("Supplier", (
         <select className="cal-sel" aria-label="Supplier" value={v.supplierId ?? ""} onChange={(e) => set({ supplierId: e.target.value || null })}>
           <option value="">— not agreed yet —</option>

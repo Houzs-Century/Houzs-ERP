@@ -22,14 +22,14 @@
 
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Trash2 } from 'lucide-react';
+import { Paperclip, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { activeOptions, maintPickerValues } from '@2990s/shared';
 import {
   APPLICATION_LABEL, REQUEST_STATUS, REQUEST_TYPE_LABEL, awaitsPurchaser, emptyRequestLine, lineProductText, lineToInput, linesNeedingModel,
   mayClose, mayRaisePco, needsModel, pcoNewFromRequestPath, productText, requesterMayChange, specText, totalQty,
-  useApproveProductRequest, useCloseProductRequest, useCreateModelFromRequest, useCreateProductRequest,
-  useProductRequest, useProductRequestSupplierOptions, useProductRequests, useRejectProductRequest, useUpdateProductRequest, useWithdrawProductRequest,
+  fetchProductRequestFileBlobUrl, useApproveProductRequest, useCloseProductRequest, useCreateModelFromRequest, useCreateProductRequest, useDeleteProductRequestFile,
+  useProductRequest, useProductRequestFiles, useProductRequestSupplierOptions, useProductRequests, useRejectProductRequest, useUpdateProductRequest, useUploadProductRequestFile, useWithdrawProductRequest,
   type ProductRequest, type ProductRequestApplication, type ProductRequestInput, type ProductRequestLine, type ProductRequestLineInput, type ProductRequestType,
 } from '../../vendor/scm/lib/product-request-queries';
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
@@ -38,6 +38,8 @@ import { useFabricTrackings, fabricOptionLabel } from '../../vendor/scm/lib/fabr
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { sortByNumeric, sortByText } from '../../vendor/scm/lib/sort-options';
 import { Modal } from '../../vendor/scm/components/Modal';
+import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
+import { fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { useConfirm, usePrompt } from '../../vendor/scm/components/ConfirmDialog';
@@ -260,6 +262,7 @@ export const ProductRequests = () => {
             request={detail}
             onBuild={approver && detail.status === 'APPROVED' ? (line) => setBuildFor({ request: detail, line }) : null}
           />
+          <RequestFiles request={detail} canWrite={approver || mine(detail)} approver={approver} />
         </Modal>
       )}
 
@@ -278,6 +281,34 @@ export const ProductRequests = () => {
     </div>
   );
 };
+
+/* ── The request's files (owner 2026-10-15: 需要可以 attach 文件功能) ──────────
+   The same card the payment request's bill uses. A requester attaches to
+   their own request and removes while it waits; once the Purchaser has
+   decided their files stay (the Purchaser may still remove one); a withdrawn
+   or closed request takes no more. */
+function RequestFiles({ request, canWrite, approver }: { request: ProductRequest; canWrite: boolean; approver: boolean }) {
+  const filesQ = useProductRequestFiles(request.id);
+  const upload = useUploadProductRequestFile();
+  const remove = useDeleteProductRequestFile();
+  return (
+    <DocFilesCard
+      files={filesQ.data?.files ?? []}
+      canWrite={canWrite}
+      locked={!approver && !requesterMayChange(request)}
+      closed={request.status === 'WITHDRAWN' || request.status === 'CLOSED'}
+      lockedNote=" · kept as the Purchaser read them"
+      emptyNote="No file yet — attach the supplier's quotation, a photo or a drawing (image or PDF)."
+      removeBody="The file leaves this request."
+      attachAriaLabel="Attach a file"
+      uploading={upload.isPending}
+      removing={remove.isPending}
+      onUpload={(file) => upload.mutateAsync({ id: request.id, file })}
+      onRemove={(fileId) => remove.mutateAsync({ id: request.id, fileId })}
+      openUrl={(fileId) => fetchProductRequestFileBlobUrl(request.id, fileId)}
+    />
+  );
+}
 
 /* ── The request's lines, read-only, with the per-line build button ───────── */
 function LinesTable({ request, onBuild }: { request: ProductRequest; onBuild: ((line: ProductRequestLine) => void) | null }) {
@@ -377,6 +408,10 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
   const notify = useNotify();
   const create = useCreateProductRequest();
   const update = useUpdateProductRequest();
+  const upload = useUploadProductRequestFile();
+  /* Files picked before the request exists; uploaded one by one once it does
+     (a new request only — an existing one attaches on its own card). */
+  const [pending, setPending] = useState<File[]>([]);
   const [v, setV] = useState<Omit<ProductRequestInput, 'lines'>>(() => ({
     requestType: initial?.request_type ?? 'NEW_PRODUCT',
     application: initial?.application ?? 'CUSTOMER_ORDER',
@@ -432,6 +467,12 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
     const body: ProductRequestInput = { ...v, specialRemarks: v.specialRemarks?.trim() || null, lines: lines.map(lineBody) };
     try {
       const res = initial ? await update.mutateAsync({ id: initial.id, ...body }) : await create.mutateAsync(body);
+      for (const f of pending) {
+        try {
+          const file: PvFilePayload = { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) };
+          await upload.mutateAsync({ id: res.request.id, file });
+        } catch { /* the mutation's own onError told the user; the request stands — attach again on it */ }
+      }
       onDone(res.request.id);
     } catch { /* the mutation's own onError told the user */ }
   };
@@ -569,9 +610,32 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
         </label>
       </FormSection>
 
+      {!initial && (
+        <FormSection n={4} title="Files">
+          <div style={soft}>The supplier's quotation, photos or a drawing — image or PDF, 20 MB each. They attach once the request is sent; an existing request attaches on its own card.</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {pending.map((f, i) => (
+              <div key={`${f.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13)' }}>
+                <Paperclip size={14} strokeWidth={1.75} />
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                <button type="button" aria-label={`Remove ${f.name}`} onClick={() => setPending((prev) => prev.filter((_, j) => j !== i))}
+                  style={{ ...linkBtn, color: 'var(--fg-muted)', textDecoration: 'none', display: 'inline-flex' }}>
+                  <Trash2 size={14} strokeWidth={1.75} />
+                </button>
+              </div>
+            ))}
+            <label style={{ alignSelf: 'flex-start', fontSize: 'var(--fs-12)', color: 'var(--c-orange)', cursor: 'pointer', fontWeight: 600 }}>
+              Attach file…
+              <input type="file" multiple accept={PV_FILE_ACCEPT} aria-label="Pick files to attach" style={{ display: 'none' }}
+                onChange={(e) => { setPending((prev) => [...prev, ...Array.from(e.target.files ?? [])]); e.target.value = ''; }} />
+            </label>
+          </div>
+        </FormSection>
+      )}
+
       {/* 方案 C (owner 2026-10-08): the requester names the supplier and the agreed
           prices; the Purchaser records them and the PC Order is seeded from them. */}
-      <FormSection n={4} title="Supplier (if agreed)">
+      <FormSection n={initial ? 4 : 5} title="Supplier (if agreed)">
         <div style={grid(200)}>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Supplier</span>
