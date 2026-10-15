@@ -44,7 +44,7 @@ const TYPES = new Set(["bug", "development"]);
 const PRIORITIES = new Set(["urgent", "high", "medium", "low"]);
 // What the browser may set on a new request. Every reporter_* field and
 // user_agent are filled in here from the session and the request.
-const REQUEST_FIELDS = ["title", "description", "type", "priority", "page_url"] as const;
+const REQUEST_FIELDS = ["title", "description", "type", "priority", "page_url", "occurred_at"] as const;
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const FILE_KINDS = /^(image\/|video\/mp4$|video\/quicktime$|application\/pdf$)/;
@@ -159,6 +159,19 @@ app.get("/tickets", async (c) => {
   const hub = hubFor(c);
   if (hub instanceof Response) return hub;
   return relay(c, hubFetch(hub, "/tickets"), null);
+});
+
+// ---- How many of my requests IT answered since I last opened them ----------
+// For the red count on the menu row. Answered as `{ count }`, the shape every
+// other sidebar count reads (hooks/useAmendmentApprovals.ts).
+app.get("/unread-count", async (c) => {
+  const hub = hubFor(c);
+  if (hub instanceof Response) return hub;
+  const res = await relay(c, hubFetch(hub, "/tickets/unread-count"), null);
+  if (!res.ok) return res;
+  const body = (await res.json()) as { unread?: unknown };
+  const n = Number(body.unread);
+  return c.json({ count: Number.isFinite(n) && n > 0 ? n : 0 });
 });
 
 // ---- One request and what IT said on it (the hub marks it seen) ------------

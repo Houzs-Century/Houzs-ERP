@@ -1,16 +1,19 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { LifeBuoy, Paperclip } from "lucide-react";
 import { api } from "../api/client";
 import { formatDateTime, relativeTime } from "../lib/utils";
+import { useRefreshItSupportUnread } from "../hooks/useAmendmentApprovals";
 import {
-  IT_ACCEPT, IT_KINDS, IT_MAX_FILES, IT_URGENCY, itAddFiles, itFresh, itMessage, itStatusText, itStatusTone, itStepLine,
-  type ItDetail, type ItFileRef, type ItRequestRow, type ItTone,
+  IT_ACCEPT, IT_KINDS, IT_MAX_FILES, IT_TABS, IT_URGENCY, itAddFiles, itFresh, itInTab, itKindText, itMessage,
+  itStatusText, itStatusTone, itStepLine, itUrgencyText, itUrgencyTone,
+  type ItDetail, type ItFileRef, type ItRequestRow, type ItTab, type ItTone,
 } from "../lib/itSupport";
 
 /**
  * IT Support on a phone: the same requests, states and rules as the desktop
  * page (pages/ItSupport.tsx, shared logic in lib/itSupport.ts), laid out as one
- * mobile screen with three views: my requests, report a problem, one request.
+ * mobile screen with three views: my requests (All / Active / Resolved, with a
+ * search), report a problem, one request.
  * Who is asking comes from the session on the server, never from this screen.
  */
 
@@ -23,6 +26,33 @@ const ALERT = { border: "1px solid var(--red, #b23a3a)", borderRadius: 10, paddi
 
 function StatusBadge({ status }: { status: string }) {
   return <span className={`badge ${TONE_CLASS[itStatusTone(status)]}`}>{itStatusText(status)}</span>;
+}
+
+/* A picture shows as itself so the person can see it is the right screenshot. */
+function FileTile({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!file.type.startsWith("image/")) return;
+    const made = URL.createObjectURL(file);
+    setUrl(made);
+    return () => URL.revokeObjectURL(made);
+  }, [file]);
+  return (
+    <div style={{ position: "relative", width: 72, height: 72, flex: "none" }}>
+      {url ? (
+        <img src={url} alt={file.name} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 10, border: "1px solid var(--line)" }} />
+      ) : (
+        <div title={file.name} style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, borderRadius: 10, border: "1px solid var(--line)", background: "var(--bg)", color: "var(--brand)" }}>
+          <Paperclip size={16} />
+          <span style={{ fontSize: 10, fontWeight: 700 }}>{file.name.split(".").pop()?.toUpperCase()}</span>
+        </div>
+      )}
+      <button type="button" aria-label={`Remove ${file.name}`} onClick={onRemove}
+        style={{ position: "absolute", top: -7, right: -7, width: 24, height: 24, borderRadius: 12, border: "none", background: "var(--ink)", color: "#fff", fontSize: 15, lineHeight: 1, padding: 0 }}>
+        ×
+      </button>
+    </div>
+  );
 }
 
 function Files({ files, onChange }: { files: File[]; onChange: (f: File[]) => void }) {
@@ -38,16 +68,13 @@ function Files({ files, onChange }: { files: File[]; onChange: (f: File[]) => vo
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <input ref={input} type="file" multiple accept={IT_ACCEPT} style={{ display: "none" }}
         onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
-      {files.map((f, i) => (
-        <div key={`${f.name}-${i}`} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-          <Paperclip size={14} />
-          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
-          <button type="button" onClick={() => onChange(files.filter((_, j) => j !== i))}
-            style={{ background: "none", border: "none", color: "var(--brand)", fontWeight: 700, fontSize: 13, padding: 6 }}>
-            Remove
-          </button>
+      {files.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, paddingTop: 6 }}>
+          {files.map((f, i) => (
+            <FileTile key={`${f.name}-${i}`} file={f} onRemove={() => { setRefused(null); onChange(files.filter((_, j) => j !== i)); }} />
+          ))}
         </div>
-      ))}
+      )}
       {files.length < IT_MAX_FILES && (
         <button type="button" className="btn-ghost" onClick={() => input.current?.click()}>
           <Paperclip size={16} /> Add a screenshot or file
@@ -79,6 +106,7 @@ function NewRequest({ onSent }: { onSent: (code: string) => void }) {
     form.set("description", description.trim());
     form.set("type", kind);
     form.set("priority", urgency);
+    form.set("occurred_at", new Date().toISOString());
     for (const f of files) form.append("files", f, f.name);
     try {
       const r = await api.postForm<{ code: string }>("/api/it-support/tickets", form);
@@ -133,15 +161,18 @@ function OneRequest({ code }: { code: string }) {
   const [busy, setBusy] = useState<"" | "reply" | "confirm" | "file">("");
   const [error, setError] = useState<string | null>(null);
   const path = `/api/it-support/tickets/${encodeURIComponent(code)}`;
+  const refreshUnread = useRefreshItSupportUnread();
 
   const load = useCallback(async () => {
     try {
       setDetail(await itFresh<ItDetail>(path));
       setLoadError(null);
+      // Reading it marked it seen on the hub, so the Profile count has moved.
+      refreshUnread();
     } catch (err) {
       setLoadError(itMessage(err, "This IT request could not be opened."));
     }
-  }, [path]);
+  }, [path, refreshUnread]);
 
   useEffect(() => {
     void load();
@@ -222,7 +253,9 @@ function OneRequest({ code }: { code: string }) {
           <StatusBadge status={t.status} />
         </div>
         <div style={{ fontSize: 16, fontWeight: 800, overflowWrap: "anywhere" }}>{t.title}</div>
-        <div style={{ fontSize: 12, color: "var(--mut)" }}>{t.assignee_name ? `Handled by ${t.assignee_name}` : "Not picked up yet"}</div>
+        <div style={{ fontSize: 12, color: "var(--mut)" }}>
+          {itKindText(t.type)} · {itUrgencyText(t.priority)} · {t.assignee_name ? `Handled by ${t.assignee_name}` : "Not picked up yet"}
+        </div>
         {t.description && <div style={{ fontSize: 13.5, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{t.description}</div>}
         {t.status === "resolved" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10, borderTop: "1px solid var(--line2)", paddingTop: 10 }}>
@@ -272,7 +305,14 @@ function OneRequest({ code }: { code: string }) {
   );
 }
 
-function RequestList({ onOpen }: { onOpen: (code: string) => void }) {
+const TAB_LABEL: Record<ItTab, string> = { all: "All", active: "Active", resolved: "Resolved" };
+const TAB_EMPTY: Record<ItTab, string> = {
+  all: "No requests match.", active: "Nothing is with IT right now.", resolved: "No resolved requests yet.",
+};
+
+function RequestList({ tab, onTab, search, onSearch, onOpen }: {
+  tab: ItTab; onTab: (t: ItTab) => void; search: string; onSearch: (s: string) => void; onOpen: (code: string) => void;
+}) {
   const [rows, setRows] = useState<ItRequestRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -289,6 +329,15 @@ function RequestList({ onOpen }: { onOpen: (code: string) => void }) {
     const t = window.setInterval(() => { if (document.visibilityState === "visible") void load(); }, 60_000);
     return () => window.clearInterval(t);
   }, [load]);
+
+  // Counts come from every request, never from what the search box left.
+  const counts = useMemo(
+    () => Object.fromEntries(IT_TABS.map((k) => [k, (rows ?? []).filter((r) => itInTab(r.status, k)).length])) as Record<ItTab, number>,
+    [rows],
+  );
+  const q = search.trim().toLowerCase();
+  const shown = (rows ?? []).filter((r) => itInTab(r.status, tab) && (!q
+    || [r.code, r.title, r.assignee_name ?? "", itStatusText(r.status), itUrgencyText(r.priority)].some((v) => v.toLowerCase().includes(q))));
 
   if (!rows) {
     return error ? (
@@ -313,7 +362,19 @@ function RequestList({ onOpen }: { onOpen: (code: string) => void }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {error && <div role="alert" style={ALERT}>Showing what was last loaded. {error}</div>}
-      {rows.map((r) => (
+      <div className="seg" role="tablist" aria-label="Which requests">
+        {IT_TABS.map((k) => (
+          <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => onTab(k)}>
+            {TAB_LABEL[k]} {counts[k]}
+          </button>
+        ))}
+      </div>
+      <div className="searchbar">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9aa093" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+        <input type="search" value={search} onChange={(e) => onSearch(e.target.value)} placeholder="Search my requests" aria-label="Search my requests" />
+      </div>
+      {shown.length === 0 && <div className="empty"><div className="empty-s">{TAB_EMPTY[tab]}</div></div>}
+      {shown.map((r) => (
         <button key={r.code} type="button" className="card card-b" onClick={() => onOpen(r.code)}
           style={{ display: "flex", flexDirection: "column", gap: 6, textAlign: "left", width: "100%", cursor: "pointer" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%" }}>
@@ -322,8 +383,9 @@ function RequestList({ onOpen }: { onOpen: (code: string) => void }) {
             <span style={{ marginLeft: "auto" }}><StatusBadge status={r.status} /></span>
           </div>
           <div style={{ fontSize: 14, fontWeight: r.unread ? 800 : 600, color: "var(--ink)", overflowWrap: "anywhere" }}>{r.title}</div>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: "var(--mut2)", width: "100%" }}>
-            <span>{r.assignee_name ?? "Not picked up yet"}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, color: "var(--mut2)", width: "100%" }}>
+            <span className={`badge ${TONE_CLASS[itUrgencyTone(r.priority)]}`}>{itUrgencyText(r.priority)}</span>
+            <span style={{ flex: 1, minWidth: 0 }}>{r.assignee_name ?? "Not picked up yet"}</span>
             <span title={formatDateTime(r.updated_at)}>{relativeTime(r.updated_at)}</span>
           </div>
         </button>
@@ -336,6 +398,9 @@ type View = { v: "list" } | { v: "new" } | { v: "one"; code: string };
 
 export function MobileItSupport({ onBack }: { onBack: () => void }) {
   const [view, setView] = useState<View>({ v: "list" });
+  // Kept here, not in the list, so opening a request and coming back keeps them.
+  const [tab, setTab] = useState<ItTab>("all");
+  const [search, setSearch] = useState("");
   const toList = () => setView({ v: "list" });
 
   return (
@@ -358,7 +423,7 @@ export function MobileItSupport({ onBack }: { onBack: () => void }) {
         ) : view.v === "one" ? (
           <OneRequest key={view.code} code={view.code} />
         ) : (
-          <RequestList onOpen={(code) => setView({ v: "one", code })} />
+          <RequestList tab={tab} onTab={setTab} search={search} onSearch={setSearch} onOpen={(code) => setView({ v: "one", code })} />
         )}
       </div>
 
