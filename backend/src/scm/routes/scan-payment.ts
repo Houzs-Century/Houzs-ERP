@@ -461,9 +461,9 @@ scanPayment.post('/extract', async (c) => {
   }
 
   const buf = await file.arrayBuffer();
-  // HC-0006: keep the original + its scan_files row BEFORE the read, so a
+  // HC-0006: keep the original + its scan_files row, started with the read so it adds no wait; a
   // failed read still leaves both.
-  await keepScanFile(c.env, c.get('supabase'), {
+  const kept = keepScanFile(c.env, c.get('supabase'), {
     kind: 'payment', companyId: activeCompanyId(c), buf, mime: mime || (isPdf ? 'application/pdf' : 'image/jpeg'),
     uploadedBy: (c.get('user') as { id?: string } | undefined)?.id ?? null, key: null,
   });
@@ -566,6 +566,7 @@ scanPayment.post('/extract', async (c) => {
   } catch (e) {
     errorMsg = `Network/fetch error: ${(e as Error).message}`;
   }
+  await kept; // kept alongside the model read, also when it threw; never throws
 
   if (!parsed) {
     timer.done(c.env, null, 'error');

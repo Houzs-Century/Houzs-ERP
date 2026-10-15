@@ -66,6 +66,7 @@ const Notifications = lazy(() => import("./pages/Notifications").then((m) => ({ 
 const Announcements = lazy(() => import("./pages/Announcements").then((m) => ({ default: m.Announcements })));
 const ItSupport = lazy(() => import("./pages/ItSupport").then((m) => ({ default: m.ItSupport })));
 const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
+const PosAdmin = lazy(() => import("./pages/PosAdmin").then((m) => ({ default: m.PosAdmin })));
 const Team = lazy(() => import("./pages/Team").then((m) => ({ default: m.Team })));
 const SystemHealth = lazy(() => import("./pages/SystemHealth").then((m) => ({ default: m.SystemHealth })));
 const AutoCountSync = lazy(() => import("./pages/AutoCountSync").then((m) => ({ default: m.AutoCountSync })));
@@ -586,6 +587,9 @@ export default function App() {
         {/* Agent console — owner/IT only (wildcard). Runtime governance for the
             agent fleet: pause/kill, autonomy gates, proposals + findings, the
             learned-tuning approvals, and the per-agent teaching notebook. */}
+        {/* Houzs POS Admin (layouts E1-E9): owner / admin, the same key the
+            /api/pos-admin routes read. */}
+        <Route path="/pos-admin" element={<Guard anyPerm={["*", "pos.manage"]}><PosAdmin /></Guard>} />
         <Route path="/agents" element={<Guard anyPerm={["*"]}><Agents /></Guard>} />
         {/* No permission gate: the Assistant is open to every authenticated staff
             member, and what each may SEE is scoped server-side per position

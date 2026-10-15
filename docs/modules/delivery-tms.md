@@ -91,6 +91,7 @@ Live GPS
 - Browser capture posts ~25 s and stops when the trip ends or the page is hidden; the native app uses background location (distance filter) through the same endpoint. `simulated` fixes are recorded, never refused.
 - Dispatcher map polls `/trips/:id/locations/latest` every 15 s; stale after 90 s. No websockets.
 - Velocity trackers (DEV-42): the */5 cron (`scm/lib/velocity-poll.ts`) stores each lorry's fix in `scm.lorry_positions`, matched by normalized plate, one row per lorry + tracker time. Velocity keeps no history, so this table is it. Unmatched plates are logged, not stored. No-op until `VELOCITY_REFRESH_TOKEN` is set.
+- Own-lorry running cost: km per Malaysia day from `scm.lorry_positions` (straight line between 5-min fixes, hops over 150 km/h dropped) x `scm.lorries.cost_per_km_sen` (set on the lorry, blank = no cost shown). `GET /lorries/km-cost`, shown on Lorry Live Map. Not posted to COGS.
 
 Packing lists and the run QR
 - No `packing_lists` table — a packing list IS a trip row (it has `company_id` and `qr_token`).

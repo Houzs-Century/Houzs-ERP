@@ -56,6 +56,7 @@ import {
 import { safeScanDepositSen } from '../lib/scan-header-deposit';
 import { scanTimer } from '../lib/scan-timing';
 import { readSlipWithAliases } from '../lib/scan-field-aliases';
+import { ttlCached } from '../lib/ttl-cache';
 import { keepScanFile, linkScanFiles } from '../lib/scan-files';
 import { variantNotAllowedSentence } from '../lib/allowed-options-check';
 // Document-type-agnostic OCR transport, shared with the GR/PI scanners.
@@ -377,7 +378,18 @@ async function loadVenueNames(db: D1Database): Promise<string[]> {
   }
 }
 
-async function loadCatalog(sb: SupabaseClient, db: D1Database, companyId?: number | null): Promise<Catalog> {
+/* HC-0006 speed: the catalogue is ~10 paginated reads and changes rarely, so one
+   isolate keeps it for a minute. Scans in that window skip the reads and reuse
+   the same object, which also keeps the cached prompt prefix byte-identical.
+   A failed or empty load is not kept. */
+const CATALOG_TTL_MS = 60_000;
+const catalogCache = new Map<string, { at: number; v: Catalog }>();
+function loadCatalog(sb: SupabaseClient, db: D1Database, companyId: number | null): Promise<Catalog> {
+  return ttlCached(catalogCache, String(companyId ?? 'all'), CATALOG_TTL_MS, () => loadCatalogFresh(sb, db, companyId),
+    // an empty SKU or venue list is a failed read that fails soft: never keep it
+    (cat) => cat.skus.length > 0 && cat.venues.length > 0);
+}
+async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: number | null): Promise<Catalog> {
   // PostgREST's default 1000-row cap silently truncates the OCR validation
   // catalogue (mfg_products is 1141 ACTIVE SKUs live, my_localities 2933) — a
   // truncated catalogue makes the OCR reject valid SKUs/states as "unknown".
@@ -684,7 +696,7 @@ async function warmCatalogCache(
   if (!apiKey) return { ok: false, reason: 'no_key' };
   let catalog: Catalog;
   try {
-    catalog = await loadCatalog(sb, db, companyId);
+    catalog = await loadCatalog(sb, db, companyId ?? null);
   } catch (e) {
     return { ok: false, reason: `catalog_load_failed: ${(e as Error).message}` };
   }
@@ -2900,7 +2912,7 @@ scanSo.post('/extract', async (c) => {
   // operator already has on the SKU master screens). env.DB carries the venue
   // master read (public.project_venues — unreachable by the scm client).
   const sb = c.get('supabase');
-  const catalog = await loadCatalog(sb, c.env.DB, activeCompanyId(c));
+  const catalog = await loadCatalog(sb, c.env.DB, activeCompanyId(c) ?? null);
 
   // Company name for the prompt anchor comes from the central Branding config
   // (stable → the cached prefix below stays byte-identical to /warm + cron).
@@ -4230,13 +4242,11 @@ scanSo.post('/enqueue', async (c) => {
   //    Each kept photo also gets its scm.scan_files row (HC-0006) via keepScanFile.
   const imageKeys: string[] = [];
   if (c.env.SO_ITEM_PHOTOS) {
-    for (let i = 0; i < allFiles.length; i += 1) {
-      const key = await keepScanFile(c.env, svc, {
-        kind: 'so', companyId: activeCompanyId(c), buf: allFiles[i].buffer,
-        mime: allFiles[i].mime, uploadedBy: user.id, key: `scan-jobs/${jobId}/${i}`,
-      });
-      if (key) imageKeys.push(key);
-    }
+    const keys = await Promise.all(allFiles.map((f, i) => keepScanFile(c.env, svc, {
+      kind: 'so', companyId: activeCompanyId(c), buf: f.buffer,
+      mime: f.mime, uploadedBy: user.id, key: `scan-jobs/${jobId}/${i}`,
+    })));
+    for (const key of keys) if (key) imageKeys.push(key);
     if (imageKeys.length > 0) {
       await svc
         .from('scan_jobs')

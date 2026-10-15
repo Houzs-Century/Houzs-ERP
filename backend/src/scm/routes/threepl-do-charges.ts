@@ -82,6 +82,7 @@ threeplDoCharges.get('/', async (c) => {
   const soDocs = [...new Set([...doById.values()].map((d) => str(d.so_doc_no)).filter((x): x is string => !!x))];
   const linesBySo = new Map<string, SetLine[]>();
   const zoneBySo = new Map<string, string | null>();
+  const addressBySo = new Map<string, string>();
   if (soDocs.length) {
     const [{ data: lineRows, error: e5 }, { data: soRows, error: e6 }] = await Promise.all([
       scopeToAllowedCompanies(sb.from('mfg_sales_order_items').select('doc_no, item_group, qty, cancelled'), c).in('doc_no', soDocs),
@@ -98,6 +99,7 @@ threeplDoCharges.get('/', async (c) => {
       linesBySo.set(String(l.doc_no), arr);
     }
     for (const so of (soRows ?? []) as Row[]) {
+      addressBySo.set(String(so.doc_no), [str(so.address1), str(so.address2), str(so.postcode)].filter(Boolean).join(' '));
       zoneBySo.set(String(so.doc_no), zoneForAddress({ postcode: str(so.postcode), address1: str(so.address1), address2: str(so.address2) }, [...DEFAULT_ZONE_PREFIX_MAP]).zone);
     }
   }
@@ -109,7 +111,7 @@ threeplDoCharges.get('/', async (c) => {
     const carrierId = String(r.threepl_company_id);
     const card = specByCarrier.get(carrierId) ?? null;
     const billed = Number(r.billed_sen ?? 0);
-    const expected = d && soDoc ? expectedSen(card?.spec ?? null, doFacts(linesBySo.get(soDoc) ?? [], zoneBySo.get(soDoc) ?? null)) : null;
+    const expected = d && soDoc ? expectedSen(card?.spec ?? null, doFacts(linesBySo.get(soDoc) ?? [], zoneBySo.get(soDoc) ?? null, addressBySo.get(soDoc) ?? null)) : null;
     return {
       id: String(r.id),
       doId: String(r.do_id),

@@ -359,9 +359,6 @@ deliveryRateCards.post('/:id/rules', async (c) => {
   const parsed = ruleCreateSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
   const p = parsed.data;
-  if ((p.ruleType === 'OUTSTATION' || p.ruleType === 'OUTSTATION_TRIP') && p.zone && !ZONE_SET.has(p.zone.toUpperCase())) {
-    return c.json({ error: 'unknown_zone', reason: 'outstation zone must be one of the area zones', knownZones: [...ZONE_SET] }, 400);
-  }
   if (!(await loadCardForWrite(c, id, co.companyId))) return c.json(NOT_THIS_COMPANY, 404);
   const sb = c.get('supabase');
   const { data, error } = await rc(sb).from('delivery_rate_rules').insert({
@@ -579,6 +576,7 @@ deliveryRateCards.get('/reconcile', async (c) => {
   const linesBySo = new Map<string, SetLine[]>();
   const zoneBySo = new Map<string, string | null>();
   const customerKeyBySo = new Map<string, string>();
+  const addressBySo = new Map<string, string>();
   if (allSoDocs.size > 0) {
     const { data: lineRows } = await paginateAll<Row>((lo, hi) =>
       scopeToAllowedCompanies(sb.from('mfg_sales_order_items').select('doc_no, item_group, cancelled'), c).in('doc_no', [...allSoDocs]).range(lo, hi),
@@ -604,6 +602,7 @@ deliveryRateCards.get('/reconcile', async (c) => {
       const where = [s(so.address1), s(so.address2), s(so.postcode)]
         .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toUpperCase();
       customerKeyBySo.set(doc, `${who}@@${where}`);
+      addressBySo.set(doc, where);
     }
   }
 
@@ -642,7 +641,7 @@ deliveryRateCards.get('/reconcile', async (c) => {
       /* perTrip: the FIXED per-trip outstation fee is now emitted INSIDE the
          calculator, before the min/cap/rounding envelope. It used to be added
          here afterwards, which let a capped card bill above its own cap. */
-      breakdown = computeDeliveryCost(spec, { setCount, dropCount, customerCount, destinationZone, destinationZones: zones }, { perTrip: true });
+      breakdown = computeDeliveryCost(spec, { setCount, dropCount, customerCount, destinationZone, destinationZones: zones, addressText: soDocs.map((d) => addressBySo.get(d) ?? '').join(' | ') }, { perTrip: true });
       expectedSen = breakdown.totalSen;
     }
     const deltaSen = expectedSen == null ? null : billedSen - expectedSen;

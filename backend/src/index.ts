@@ -43,6 +43,9 @@ import presence from "./routes/presence";
 import projects from "./routes/projects";
 import { projectSalesOrders } from "./routes/project-sales-orders";
 import { projectSalesBills } from "./routes/project-sales-bills";
+import { projectPosSales } from "./routes/project-pos-sales";
+import { posAdmin } from "./routes/pos-admin";
+import { posDevice } from "./routes/pos-device";
 import projectsOutstanding from "./routes/projectsOutstanding";
 // Sales entries (/api/sales) is retained as a DEPENDENCY of Projects — the
 // Projects page embeds the sales-entry EntryPanel + submit/void/delete flow.
@@ -138,6 +141,7 @@ import { runAssrAlerts, runAssrDailyDigest } from "./services/assrAlerts";
 import { runOverdueEscalation } from "./services/announcementEscalation";
 import { runScheduledLeadTimeActivations } from "./services/assrLeadTime";
 import { runProjectDueReminders } from "./services/projectReminders";
+import { runPosAlerts } from "./services/posAlerts";
 // Weekly OCR rule-distill (scan-so self-evolution). Run via the daily 02:00
 // slot gated to Sundays — no new cron trigger. getSupabaseService is the same
 // service client scan-so.ts uses internally (serviceClient(env)).
@@ -332,6 +336,9 @@ app.route("/api/sync/warehouse-mirror", warehouseMirror);
 // every OTHER route in the router re-applies `auth` on itself (set-pin,
 // verify-pin, sales-stats and the three admin-*-pin doors).
 app.route("/api/pos", pos);
+// Houzs POS booth terminals (NOT the 2990 tablet POS above): PRE-AUTH, every
+// route carries its own device-token guard (routes/pos-device.ts).
+app.route("/api/pos-device", posDevice);
 
 // Google Form intake webhook — PRE-AUTH like mail-inbound: called by
 // Google Apps Script (no staff session), self-guarded by the
@@ -473,6 +480,14 @@ app.route("/api/project-sales-orders", projectSalesOrders);
 // named people, checked inside. See routes/project-sales-bills.ts.
 app.use("/api/project-sales-bills/*", requirePageAccessOrSalesView("sales"));
 app.route("/api/project-sales-bills", projectSalesBills);
+// Houzs POS bills of one event (layout E9) — the Sales section's POS half, so
+// the same read gate as its Sales Orders and sales report.
+app.use("/api/project-pos-sales/*", requirePageAccessOrSalesView("sales"));
+app.route("/api/project-pos-sales", projectPosSales);
+// Houzs POS Admin (layouts E1-E5): owner / admin only, the whole menu behind
+// one key. NOT under /api/pos — that is the older 2990 tablet-POS auth.
+app.use("/api/pos-admin/*", requirePermission("pos.manage"));
+app.route("/api/pos-admin", posAdmin);
 app.route("/api/sales", sales);
 app.route("/api/finance", finance);
 app.route("/api/stockitems", stockItems);
@@ -834,6 +849,16 @@ export default {
             if (r.requeued) console.warn(`[cron vp-reconcile] requeued=${r.requeued}`);
           })
           .catch((e) => console.error("[cron vp-reconcile]", e))
+      );
+      // Houzs POS watchdog (spec section 10): terminal alerts, their emails
+      // (once, then daily), auto-resolve, and the once-per-event summary.
+      ctx.waitUntil(
+        runPosAlerts(env)
+          .then((r) => {
+            if (r.opened || r.resolved || r.emailed || r.summaries || r.errors)
+              console.log(`[cron pos-alerts] opened=${r.opened} resolved=${r.resolved} emailed=${r.emailed} summaries=${r.summaries} errors=${r.errors}`);
+          })
+          .catch((e) => console.error("[cron pos-alerts]", e))
       );
       // ASSR/QMS v3.1 — per-stage alert scanner (half / approaching / breach).
       // Cheap: one query over open stage_history rows, idempotent via the

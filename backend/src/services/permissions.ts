@@ -86,6 +86,11 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "sales.write",  resource: "Sales Entries", verb: "write",  label: "Edit sales entries",   description: "Create and edit own draft sales entries, submit for review" },
   { key: "sales.manage", resource: "Sales Entries", verb: "manage", label: "Manage sales entries", description: "Edit any entry, configure fields, void entries, push to AutoCount" },
 
+  // Houzs POS (the cash & carry booth app) — the ERP's POS Admin menu: items,
+  // barcode labels, cashiers, events, settings, sync status, reports. Owner +
+  // IT Admin cover it via "*"; this key lets another role in.
+  { key: "pos.manage", resource: "POS Admin", verb: "manage", label: "Manage POS", description: "The POS Admin menu: POS items, barcode labels, cashiers, events, SST / receipt / printer / general settings, sync status and the POS sales report" },
+
   // Supply Chain — ported 2990's furniture SCM (/api/scm). Single coarse
   // gate: holding scm.access (or "*") unlocks every SCM module. Owner +
   // IT Admin already cover it via "*"; this lets non-admin roles in too.
