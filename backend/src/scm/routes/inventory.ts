@@ -44,7 +44,7 @@ import {
 } from '../lib/inventory-movements';
 import { computeVariantKey, effectiveDelivery, effectiveSoDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import { warehouseLabel } from '../lib/warehouse-label';
-import { isNonSellingWarehouseType } from '../lib/non-selling-warehouse';
+import { deadStockQty, isDeadStockLot, isNonSellingWarehouseType } from '../lib/non-selling-warehouse';
 import { computeMrp, mrpStockAssignment, stockAssignmentKey } from './mrp';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import type { Env, Variables } from '../env';
@@ -894,8 +894,9 @@ inventory.get('/products', async (c) => {
       /* Held is already out of `available`, and the non-selling balance COUNTS
          those held units (they stand in the showroom), so subtract only the
          OWNED portion parked in non-selling warehouses — else held would be
-         removed twice and a real dead-stock candidate could hide. */
-      sellable_surplus_qty: Math.max(0, (available - unsched) - Math.max(0, (nonSellingQty.get(code) ?? 0) - lotHeld)),
+         removed twice and a real dead-stock candidate could hide. Incoming is
+         NOT counted: dead stock is on-hand only (owner 2026-10-15). */
+      sellable_surplus_qty: deadStockQty(lotOwned, committed + unsched, Math.max(0, (nonSellingQty.get(code) ?? 0) - lotHeld)),
       non_selling_qty:     nonSellingQty.get(code) ?? 0,
       incoming_qty:        inc,
       incoming_pos:        pos,
@@ -1618,8 +1619,8 @@ inventory.get('/reservations', async (c) => {
     (byBucket.get(bk) ?? byBucket.set(bk, []).get(bk)!).push(claim);
   }
 
-  const { data: whs } = await sb.from('warehouses').select('id, code, name');
-  const whMap = new Map((whs ?? []).map((w: { id: string; code: string; name: string }) => [w.id, w]));
+  const { data: whs } = await sb.from('warehouses').select('id, code, name, type');
+  const whMap = new Map((whs ?? []).map((w: { id: string; code: string; name: string; type: string | null }) => [w.id, w]));
 
   // 3b. SKU category per item_code (set-based) — drives the make-to-order
   //     dead-stock emphasis (SOFA/BEDFRAME free stock is abnormal; MATTRESS free
@@ -1765,13 +1766,14 @@ inventory.get('/reservations', async (c) => {
       //    SO(s) this lot's assigned units belong to (FIFO-spread from the
       //    bucket's MRP allocation). category / make_to_order drive the
       //    dead-stock emphasis. is_dead_stock: this lot carries FREE (un-assigned)
-      //    OWNED units — consignment is held-not-owned, so never flagged.
+      //    OWNED units outside a non-selling warehouse — consignment is
+      //    held-not-owned, and showroom / service stock is doing its job.
       category,
       make_to_order: isMakeToOrderCategory(category),
       assigned_qty: assignedQty,
       free_qty: freeQty,
       mrp_assigned_to: mrpAsg?.claims ?? [],
-      is_dead_stock: !isConsignment && freeQty > 0,
+      is_dead_stock: isDeadStockLot(isConsignment, freeQty, w?.type ?? null),
     };
   });
 

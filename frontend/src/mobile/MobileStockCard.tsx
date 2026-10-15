@@ -10,6 +10,7 @@ import {
   buildStockBreakdown,
   lotAssignedQty,
   lotFreeQty,
+  lotIsDeadStock,
   isMakeToOrderCategory,
   type InventoryMovement,
   type InventoryReservation,
@@ -54,7 +55,7 @@ function LotCard({ l, consignment, first }: { l: InventoryReservation; consignme
   const free = lotFreeQty(l);
   const claims = l.mrp_assigned_to ?? [];
   const mto = l.make_to_order ?? isMakeToOrderCategory(l.category);
-  const deadStock = !consignment && free > 0;
+  const deadStock = !consignment && lotIsDeadStock(l);
   const statusLabel = assigned > 0 && free > 0
     ? `${assigned} assigned · ${free} free`
     : assigned > 0
