@@ -44,6 +44,18 @@ export type GrnExtracted = {
   lines: GrnExtractedLine[];
 };
 
+export const EMPTY_SCAN_NOTE_NO_LINES =
+  'We could not read any lines off this delivery order. Please open the PO and create the goods receipt from it.';
+export const EMPTY_SCAN_NOTE_UNREADABLE =
+  'This photo does not look like a delivery order, or the paper is cut off or blurry. Please retake it with the whole paper in view, or open the PO and create the goods receipt from it.';
+
+// Needs-review note for a scan that produced no lines. A read with no DO no,
+// PO no, supplier and lines means the model saw no delivery order at all.
+export function emptyScanNote(parsed: GrnExtracted | null): string {
+  const blank = !parsed || (!parsed.doNo && !parsed.poNo && !parsed.supplierName && parsed.lines.length === 0);
+  return blank ? EMPTY_SCAN_NOTE_UNREADABLE : EMPTY_SCAN_NOTE_NO_LINES;
+}
+
 export type GrnExtractCall = {
   parsed: GrnExtracted | null;
   errorMsg: string | null;
