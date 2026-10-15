@@ -10,10 +10,11 @@ import { recordEntityAudit, compactChanges, fieldChange, type AuditActor } from 
 
 type Row = Record<string, any>;
 
-export const PRODUCT_REQUEST_LINK_COLS = 'id, request_no, status, item_code, company_id, pco_id';
+export const PRODUCT_REQUEST_LINK_COLS = 'id, request_no, status, company_id, pco_id';
+export const PRODUCT_REQUEST_LINE_LINK_COLS = 'id, line_no, item_code, qty';
 
-/** The approved request a PC Order is being raised from, company-scoped — or
-    the refusal the create door answers with. */
+/** The approved request a PC Order is being raised from, with its lines,
+    company-scoped — or the refusal the create door answers with. */
 export async function loadRequestForPco(
   sb: SupabaseClient,
   companyId: number,
@@ -23,9 +24,13 @@ export async function loadRequestForPco(
     .eq('company_id', companyId).eq('id', requestId).maybeSingle();
   if (error) return { ok: false, status: 500, body: { error: 'load_failed', reason: error.message } };
   if (!data) return { ok: false, status: 404, body: { error: 'request_not_found', message: 'That product request is not in the company you are working in.' } };
-  const refusal = pcoFromRequestRefusal(data as { status: string; item_code: string | null; request_no: string });
+  const { data: lines, error: lErr } = await sb.from('product_request_lines').select(PRODUCT_REQUEST_LINE_LINK_COLS)
+    .eq('company_id', companyId).eq('request_id', requestId).order('line_no');
+  if (lErr) return { ok: false, status: 500, body: { error: 'load_failed', reason: lErr.message } };
+  const request = { ...(data as Row), lines: (lines ?? []) as Row[] };
+  const refusal = pcoFromRequestRefusal(request as { status: string; request_no: string; lines: Array<{ item_code: string | null }> });
   if (refusal) return { ok: false, status: 409, body: refusal };
-  return { ok: true, request: data as Row };
+  return { ok: true, request };
 }
 
 /** After the PC Order stands: the request points at it and reads PCO_ISSUED.

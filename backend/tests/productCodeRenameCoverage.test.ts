@@ -52,6 +52,27 @@ function codeColumnsInSql(sqlText: string): string[] {
   return [...found];
 }
 
+/** schema.table.column for every code-bearing column a migration DROPS — a
+    column a later migration took away is not an undecided one (2026-10-15:
+    scm.product_requests.item_code moved to scm.product_request_lines). */
+function droppedCodeColumnsInSql(sqlText: string): string[] {
+  const sql = sqlText.replace(/--[^\n]*/g, '');
+  const found = new Set<string>();
+  const qualify = (name: string) => {
+    const bare = name.replace(/"/g, '').toLowerCase();
+    return bare.includes('.') ? bare : `public.${bare}`;
+  };
+  const ident = String.raw`((?:"?\w+"?\.)?"?\w+"?)`;
+  for (const m of sql.matchAll(new RegExp(String.raw`ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?${ident}([^;]*);`, 'gi'))) {
+    const table = qualify(m[1]);
+    for (const a of m[2].matchAll(/DROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?/gi)) {
+      const col = a[1].toLowerCase();
+      if (CODE_COLUMN.test(col)) found.add(`${table}.${col}`);
+    }
+  }
+  return [...found];
+}
+
 const cascaded = new Set(PRODUCT_CODE_CASCADE.map((c) => `scm.${c.table}.${c.col}`));
 const kept = new Set(PRODUCT_CODE_KEEPS_VALUE.map((k) => k.column));
 const live = new Map(snapshot.columns.map((c) => [`${c.schema}.${c.table}.${c.column}`, c]));
@@ -64,6 +85,13 @@ describe('the migration scanner sees what it claims to (a verdict over nothing i
       ALTER TABLE scm.other RENAME COLUMN material_code TO item_code;
       -- ALTER TABLE scm.commented ADD COLUMN item_code text;
     `).sort()).toEqual(['scm.other.item_code', 'scm.widget_lines.item_code', 'scm.widget_lines.new_item_code']);
+  });
+
+  test('finds a dropped code column, and only a dropped one', () => {
+    expect(droppedCodeColumnsInSql(`
+      ALTER TABLE scm.widget_lines ADD COLUMN IF NOT EXISTS new_item_code text, DROP COLUMN IF EXISTS item_code, DROP COLUMN qty;
+      -- ALTER TABLE scm.commented DROP COLUMN item_code;
+    `)).toEqual(['scm.widget_lines.item_code']);
   });
 
   test('reads the real migration tree', () => {
@@ -86,9 +114,12 @@ describe('every code-bearing column is decided', () => {
   });
 
   test('each code column a migration newer than the snapshot adds is decided too', () => {
-    const newer = readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql') && f > snapshot.newestMigrationAtCapture);
-    const undecided = newer.flatMap((f) => codeColumnsInSql(readFileSync(path.join(MIGRATIONS, f), 'utf8'))
-      .filter((k) => !cascaded.has(k) && !kept.has(k))
+    const newer = readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql') && f > snapshot.newestMigrationAtCapture).sort();
+    const texts = newer.map((f) => [f, readFileSync(path.join(MIGRATIONS, f), 'utf8')] as const);
+    /* A column one newer migration adds and a later one drops is gone, not undecided. */
+    const dropped = new Set(texts.flatMap(([, sql]) => droppedCodeColumnsInSql(sql)));
+    const undecided = texts.flatMap(([f, sql]) => codeColumnsInSql(sql)
+      .filter((k) => !cascaded.has(k) && !kept.has(k) && !dropped.has(k))
       .map((k) => `${f}: ${k}`));
     expect(undecided).toEqual([]);
   });

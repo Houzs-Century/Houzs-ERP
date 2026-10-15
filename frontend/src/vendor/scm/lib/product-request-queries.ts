@@ -1,15 +1,17 @@
 // ----------------------------------------------------------------------------
-// product-request-queries — a request for a new product or a repack (owner
+// product-request-queries — a request for new products or repacks (owner
 // 2026-10-06: to request new product / repack product; 要审批, Purchaser 批;
-// Sales 都能提; 然后这个会连接 purchase consignment order). Server:
+// Sales 都能提; 然后这个会连接 purchase consignment order; 2026-10-15 方案 A: a
+// header plus LINES, like a PC Order). Server:
 // backend/src/scm/routes/product-requests.ts.
 //
-// The salesperson asks — an existing SKU or a new Model by name, in a fabric,
-// seat size and leg size, for a use, delivered where and by when. The
-// Purchaser approves or rejects, builds the new Model + SKU from the request,
-// then raises the Purchase Consignment Order from it on PC Order New
-// (?fromProductRequest=). The desktop page, the phone screen and the PC Order
-// form all read and write through these hooks; the status words live here once.
+// The salesperson asks — each line an existing SKU or a new Model by name, in
+// a fabric, seat size and leg size — for a use, delivered where and by when.
+// The Purchaser approves or rejects the whole request, builds each new-Model
+// line's Model + SKU, then raises ONE Purchase Consignment Order from it on PC
+// Order New (?fromProductRequest=). The desktop page, the phone screen and the
+// PC Order form all read and write through these hooks; the status words live
+// here once.
 // ----------------------------------------------------------------------------
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -20,13 +22,9 @@ export type ProductRequestType = 'NEW_PRODUCT' | 'REPACK';
 export type ProductRequestApplication = 'SHOWROOM' | 'CUSTOMER_ORDER' | 'SAMPLE' | 'FAIR_EXHIBITION';
 export type ProductRequestStatus = 'REQUESTED' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN' | 'PCO_ISSUED' | 'CLOSED';
 
-export type ProductRequest = {
+export type ProductRequestLine = {
   id: string;
-  request_no: string;
-  request_type: ProductRequestType;
-  application: ProductRequestApplication;
-  requested_by: number;
-  requested_by_name: string | null;
+  line_no: number;
   /** An existing SKU's code — picked by the requester, or built by the Purchaser from a new Model. */
   item_code: string | null;
   /** The Model the catalogue does not have yet, by the requester's name for it. */
@@ -38,13 +36,24 @@ export type ProductRequest = {
   seat_size: string | null;
   leg_size: string | null;
   qty: number;
+  /** The agreed unit price the requester named (owner 2026-10-08, 方案 C); the PC Order line is seeded from it. Optional. */
+  unit_price_sen: number | null;
+  remarks: string | null;
+  model: { id: string; modelCode: string; name: string } | null;
+};
+
+export type ProductRequest = {
+  id: string;
+  request_no: string;
+  request_type: ProductRequestType;
+  application: ProductRequestApplication;
+  requested_by: number;
+  requested_by_name: string | null;
   special_remarks: string | null;
   delivery_location_id: string | null;
   expected_delivery_date: string | null;
-  /** The supplier and agreed unit price the requester named (owner 2026-10-08,
-      方案 C); the PC Order is seeded from them. Optional. */
+  /** The supplier the requester named (方案 C); the PC Order's Creditor is seeded from it. Optional. */
   supplier_id: string | null;
-  unit_price_sen: number | null;
   status: ProductRequestStatus;
   decision_note: string | null;
   decided_by: string | null;
@@ -52,16 +61,14 @@ export type ProductRequest = {
   pco_id: string | null;
   created_at: string;
   updated_at: string;
+  lines: ProductRequestLine[];
   /** The PC Order raised from it, when one was. */
   pco: { id: string; pcNumber: string; status: string; expectedAt: string | null } | null;
   deliveryLocation: { id: string; code: string; name: string } | null;
-  model: { id: string; modelCode: string; name: string } | null;
   supplier: { id: string; code: string; name: string } | null;
 };
 
-export type ProductRequestInput = {
-  requestType: ProductRequestType;
-  application: ProductRequestApplication;
+export type ProductRequestLineInput = {
   itemCode: string | null;
   proposedModelName: string | null;
   category: string;
@@ -70,12 +77,30 @@ export type ProductRequestInput = {
   seatSize: string | null;
   legSize: string | null;
   qty: number;
+  unitPriceSen: number | null;
+  remarks: string | null;
+};
+
+export type ProductRequestInput = {
+  requestType: ProductRequestType;
+  application: ProductRequestApplication;
   specialRemarks: string | null;
   deliveryLocationId: string | null;
   expectedDeliveryDate: string | null;
   supplierId: string | null;
-  unitPriceSen: number | null;
+  lines: ProductRequestLineInput[];
 };
+
+/** An empty line, as the form starts one. */
+export const emptyRequestLine = (): ProductRequestLineInput => ({
+  itemCode: null, proposedModelName: null, category: 'SOFA', compartment: null, fabricCode: null, seatSize: null, legSize: null, qty: 1, unitPriceSen: null, remarks: null,
+});
+
+/** A stored line, back in the shape the form edits. */
+export const lineToInput = (l: ProductRequestLine): ProductRequestLineInput => ({
+  itemCode: l.item_code, proposedModelName: l.proposed_model_name, category: l.category, compartment: l.compartment,
+  fabricCode: l.fabric_code, seatSize: l.seat_size, legSize: l.leg_size, qty: l.qty, unitPriceSen: l.unit_price_sen, remarks: l.remarks,
+});
 
 /** The supplier picker for a requester (a salesperson holds no procurement
     area, so /suppliers is closed to them): ACTIVE suppliers, id / code / name. */
@@ -102,20 +127,32 @@ export const APPLICATION_LABEL: Record<ProductRequestApplication, string> = { SH
 export const requesterMayChange = (r: Pick<ProductRequest, 'status'>): boolean => r.status === 'REQUESTED' || r.status === 'REJECTED';
 /** Waiting for the Purchaser. */
 export const awaitsPurchaser = (r: Pick<ProductRequest, 'status'>): boolean => r.status === 'REQUESTED';
-/** Approved and asking for a Model the catalogue has not got yet — the Purchaser builds it first. */
-export const needsModel = (r: Pick<ProductRequest, 'status' | 'item_code'>): boolean => r.status === 'APPROVED' && !r.item_code;
-/** Approved, its SKU known — a PC Order may be raised from it. */
-export const mayRaisePco = (r: Pick<ProductRequest, 'status' | 'item_code'>): boolean => r.status === 'APPROVED' && !!r.item_code;
+/** The lines still asking for a Model the catalogue has not got yet. */
+export const linesNeedingModel = (r: Pick<ProductRequest, 'lines'>): ProductRequestLine[] => r.lines.filter((l) => !l.item_code);
+/** Approved and some line asks for a Model the catalogue has not got yet — the Purchaser builds it first. */
+export const needsModel = (r: Pick<ProductRequest, 'status' | 'lines'>): boolean => r.status === 'APPROVED' && linesNeedingModel(r).length > 0;
+/** Approved, every line's SKU known — a PC Order may be raised from it. */
+export const mayRaisePco = (r: Pick<ProductRequest, 'status' | 'lines'>): boolean => r.status === 'APPROVED' && r.lines.length > 0 && linesNeedingModel(r).length === 0;
 /** The Purchaser may close it. */
 export const mayClose = (r: Pick<ProductRequest, 'status'>): boolean => r.status === 'APPROVED' || r.status === 'PCO_ISSUED';
 
-/** The product, in one line: the SKU code, or the proposed Model name marked new. */
-export const productText = (r: Pick<ProductRequest, 'item_code' | 'proposed_model_name'>): string =>
-  r.item_code ? r.item_code : `${r.proposed_model_name ?? '—'} (new)`;
+/** One line's product, in a word: the SKU code, or the proposed Model name marked new. */
+export const lineProductText = (l: Pick<ProductRequestLine, 'item_code' | 'proposed_model_name'>): string =>
+  l.item_code ? l.item_code : `${l.proposed_model_name ?? '—'} (new)`;
 
-/** The spec, in one line: compartment · fabric · seat · leg. */
-export const specText = (r: Pick<ProductRequest, 'compartment' | 'fabric_code' | 'seat_size' | 'leg_size'>): string =>
-  [r.compartment, r.fabric_code, r.seat_size ? `seat ${r.seat_size}` : null, r.leg_size ? `leg ${r.leg_size}` : null].filter(Boolean).join(' · ') || '—';
+/** The request's products, in one line: the first product, then how many more. */
+export const productText = (r: Pick<ProductRequest, 'lines'>): string => {
+  if (r.lines.length === 0) return '—';
+  const first = lineProductText(r.lines[0]);
+  return r.lines.length === 1 ? first : `${first} +${r.lines.length - 1} more`;
+};
+
+/** Every unit on the request. */
+export const totalQty = (r: Pick<ProductRequest, 'lines'>): number => r.lines.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+
+/** One line's spec: compartment · fabric · seat · leg. */
+export const specText = (l: Pick<ProductRequestLine, 'compartment' | 'fabric_code' | 'seat_size' | 'leg_size'>): string =>
+  [l.compartment, l.fabric_code, l.seat_size ? `seat ${l.seat_size}` : null, l.leg_size ? `leg ${l.leg_size}` : null].filter(Boolean).join(' · ') || '—';
 
 type ListAnswer = { requests: ProductRequest[]; approver: boolean; mayRequest: boolean };
 
@@ -145,6 +182,7 @@ export const useCreateProductRequest = () => {
   });
 };
 
+/** A change to the header, and — when `lines` is sent — the whole set of lines replaced. */
 export const useUpdateProductRequest = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -168,7 +206,7 @@ export const useApproveProductRequest = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, note }: { id: string; note?: string | null }) =>
-      authedFetch<{ ok: true; needsModel: boolean }>(`/product-requests/${id}/approve`, { method: 'POST', body: JSON.stringify({ note: note ?? null }) }),
+      authedFetch<{ ok: true; needsModel: boolean; pendingModels: number }>(`/product-requests/${id}/approve`, { method: 'POST', body: JSON.stringify({ note: note ?? null }) }),
     onSuccess: () => invalidate(qc),
     onError: writeFailedAs('The request was not approved'),
   });
@@ -184,15 +222,15 @@ export const useRejectProductRequest = () => {
   });
 };
 
-/** The Purchaser builds the new Model and its first SKU from an approved
-    request. The SKU code defaults on the server to `<MODEL>-<compartment>` for
-    a sofa with a compartment, else the model code. */
+/** The Purchaser builds one line's new Model and its first SKU from an
+    approved request. The SKU code defaults on the server to
+    `<MODEL>-<compartment>` for a sofa with a compartment, else the model code. */
 export const useCreateModelFromRequest = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, modelCode, skuCode, name }: { id: string; modelCode: string; skuCode?: string | null; name?: string | null }) =>
-      authedFetch<{ ok: true; model: { id: string; modelCode: string; created: boolean }; sku: { id: string; code: string }; request: ProductRequest }>(
-        `/product-requests/${id}/create-model`, { method: 'POST', body: JSON.stringify({ modelCode, skuCode: skuCode ?? null, name: name ?? null }) },
+    mutationFn: ({ id, lineId, modelCode, skuCode, name }: { id: string; lineId: string; modelCode: string; skuCode?: string | null; name?: string | null }) =>
+      authedFetch<{ ok: true; model: { id: string; modelCode: string; created: boolean }; sku: { id: string; code: string }; lineId: string; request: ProductRequest }>(
+        `/product-requests/${id}/lines/${lineId}/create-model`, { method: 'POST', body: JSON.stringify({ modelCode, skuCode: skuCode ?? null, name: name ?? null }) },
       ),
     onSuccess: () => {
       invalidate(qc);

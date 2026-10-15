@@ -1,32 +1,36 @@
 // ----------------------------------------------------------------------------
-// ProductRequests — a request for a new product or a repack (owner 2026-10-06:
+// ProductRequests — a request for new products or repacks (owner 2026-10-06:
 // to request new product / repack product — Application, Model, Compartment,
 // Fabric, Sofa size, Leg size, Special remarks, Delivery location, Expected
 // delivery date; 要审批, Purchaser 批; Sales 都能提; 然后这个会连接 purchase
-// consignment order).
+// consignment order. 2026-10-15, 方案 A: a request is a header plus LINES, the
+// shape a Purchase Consignment Order has, so dozens of showroom pieces go in
+// one request and come out as one PC Order).
 //
 // One page, two readers:
-//   • a salesperson raises a request — an existing SKU, or a Model the
-//     catalogue does not have yet, in a fabric, seat size and leg size, for a
-//     use, delivered where and by when — and watches it move: Requested →
+//   • a salesperson raises a request — each line an existing SKU, or a Model
+//     the catalogue does not have yet, in a fabric, seat size and leg size —
+//     for a use, delivered where and by when — and watches it move: Requested →
 //     Approved → PC Order raised → Closed. A rejected one says why; they fix
 //     it and send it again, or withdraw it.
 //   • the Purchaser (scm.product_request.approve) sees every request, approves
-//     or rejects it, builds the new Model + SKU from it, raises the Purchase
-//     Consignment Order from it (PC Order New, ?fromProductRequest=) and closes
-//     it. Every rule is the server's; this page only asks.
+//     or rejects it as a whole, builds each new-Model line's Model + SKU,
+//     raises the Purchase Consignment Order from it (PC Order New,
+//     ?fromProductRequest=) and closes it. Every rule is the server's; this
+//     page only asks.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { activeOptions, maintPickerValues } from '@2990s/shared';
 import {
-  APPLICATION_LABEL, REQUEST_STATUS, REQUEST_TYPE_LABEL, awaitsPurchaser, mayClose, mayRaisePco, needsModel, pcoNewFromRequestPath, productText,
-  requesterMayChange, specText, useApproveProductRequest, useCloseProductRequest, useCreateModelFromRequest, useCreateProductRequest,
+  APPLICATION_LABEL, REQUEST_STATUS, REQUEST_TYPE_LABEL, awaitsPurchaser, emptyRequestLine, lineProductText, lineToInput, linesNeedingModel,
+  mayClose, mayRaisePco, needsModel, pcoNewFromRequestPath, productText, requesterMayChange, specText, totalQty,
+  useApproveProductRequest, useCloseProductRequest, useCreateModelFromRequest, useCreateProductRequest,
   useProductRequest, useProductRequestSupplierOptions, useProductRequests, useRejectProductRequest, useUpdateProductRequest, useWithdrawProductRequest,
-  type ProductRequest, type ProductRequestApplication, type ProductRequestInput, type ProductRequestType,
+  type ProductRequest, type ProductRequestApplication, type ProductRequestInput, type ProductRequestLine, type ProductRequestLineInput, type ProductRequestType,
 } from '../../vendor/scm/lib/product-request-queries';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
@@ -48,6 +52,11 @@ import styles from './SalesOrderDetail.module.css';
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)' };
 const linkBtn: React.CSSProperties = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--c-orange)', textDecoration: 'underline' };
+/* The line tables draw their own skin: SalesOrderDetail's .table pins
+   nth-child widths for the sales-line layout, which these columns are not. */
+const lineTable: React.CSSProperties = { width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-12)' };
+const th: React.CSSProperties = { fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', textAlign: 'left', padding: '4px 6px', background: '#e3e6e0', borderBottom: '2px solid #d6d9d2', whiteSpace: 'nowrap' };
+const td: React.CSSProperties = { padding: '4px 6px', borderBottom: '1px solid var(--line, #ece9e2)', verticalAlign: 'top' };
 
 const StatusChip = ({ r }: { r: Pick<ProductRequest, 'status'> }) => (
   <span style={{ fontSize: 'var(--fs-11)', fontWeight: 600, color: REQUEST_STATUS[r.status].tone, whiteSpace: 'nowrap' }}>{REQUEST_STATUS[r.status].label}</span>
@@ -89,7 +98,7 @@ export const ProductRequests = () => {
   const detailQ = useProductRequest(openId);
   const detail = detailQ.data?.request ?? null;
   const [form, setForm] = useState<{ mode: 'new' } | { mode: 'edit'; req: ProductRequest } | null>(null);
-  const [buildFor, setBuildFor] = useState<ProductRequest | null>(null);
+  const [buildFor, setBuildFor] = useState<{ request: ProductRequest; line: ProductRequestLine } | null>(null);
   const withdraw = useWithdrawProductRequest();
   const approve = useApproveProductRequest();
   const reject = useRejectProductRequest();
@@ -100,10 +109,11 @@ export const ProductRequests = () => {
     { key: 'date', label: 'Date', render: (r) => fmtDateOrDash(r.created_at), getValue: (r) => r.created_at, exportFormat: 'date' },
     { key: 'type', label: 'Type', render: (r) => REQUEST_TYPE_LABEL[r.request_type], getValue: (r) => REQUEST_TYPE_LABEL[r.request_type] },
     ...(approver ? [{ key: 'by', label: 'Requested by', render: (r: ProductRequest) => r.requested_by_name ?? '—', getValue: (r: ProductRequest) => r.requested_by_name ?? '' }] : []),
-    { key: 'product', label: 'Model / SKU', render: (r) => <span style={mono}>{productText(r)}</span>, getValue: (r) => productText(r) },
-    { key: 'spec', label: 'Spec', width: '260px', render: (r) => specText(r), getValue: (r) => specText(r) },
-    { key: 'qty', label: 'Qty', align: 'right', render: (r) => r.qty, getValue: (r) => r.qty },
+    { key: 'product', label: 'Products', render: (r) => <span style={mono}>{productText(r)}</span>, getValue: (r) => r.lines.map(lineProductText).join('; ') },
+    { key: 'lines', label: 'Lines', align: 'right', render: (r) => r.lines.length, getValue: (r) => r.lines.length },
+    { key: 'qty', label: 'Qty', align: 'right', render: (r) => totalQty(r), getValue: (r) => totalQty(r) },
     { key: 'application', label: 'For', render: (r) => APPLICATION_LABEL[r.application], getValue: (r) => APPLICATION_LABEL[r.application] },
+    { key: 'supplier', label: 'Supplier', render: (r) => r.supplier?.name ?? '—', getValue: (r) => r.supplier?.name ?? '' },
     { key: 'where', label: 'Deliver to', render: (r) => r.deliveryLocation?.name ?? '—', getValue: (r) => r.deliveryLocation?.name ?? '' },
     { key: 'when', label: 'Expected', render: (r) => fmtDateOrDash(r.expected_delivery_date), getValue: (r) => r.expected_delivery_date, exportFormat: 'date' },
     { key: 'status', label: 'Status', render: (r) => (
@@ -123,22 +133,23 @@ export const ProductRequests = () => {
     withdraw.mutate(r.id);
   };
   const onApprove = async (r: ProductRequest) => {
+    const pending = linesNeedingModel(r).length;
     const ok = await askConfirm({
       title: `Approve ${r.request_no}?`,
-      body: r.item_code
-        ? `${r.item_code} × ${r.qty} — a Purchase Consignment Order can then be raised from it.`
-        : `${r.proposed_model_name ?? 'The new Model'} is not in the catalogue yet — after approving, build the Model and SKU from the request, then raise the Purchase Consignment Order.`,
+      body: pending === 0
+        ? `${r.lines.length} line${r.lines.length === 1 ? '' : 's'}, ${totalQty(r)} pcs — a Purchase Consignment Order can then be raised from it.`
+        : `${pending} line${pending === 1 ? '' : 's'} ask${pending === 1 ? 's' : ''} for a Model the catalogue does not have yet — after approving, build the Model and SKU on each of those lines, then raise the Purchase Consignment Order.`,
       confirmLabel: 'Approve',
     });
     if (!ok) return;
-    approve.mutate({ id: r.id }, { onSuccess: (res) => { if (res.needsModel) void notify({ title: 'Approved', body: 'Build the Model and SKU next — the request has a button for it.' }); } });
+    approve.mutate({ id: r.id }, { onSuccess: (res) => { if (res.needsModel) void notify({ title: 'Approved', body: `Build the Model and SKU on ${res.pendingModels} line${res.pendingModels === 1 ? '' : 's'} next — each line has a button for it.` }); } });
   };
   const onReject = async (r: ProductRequest) => {
     const note = await askPrompt({
       title: `Reject ${r.request_no}?`,
       body: `${r.requested_by_name ?? 'The requester'} reads your reason, fixes the request and can send it again.`,
       confirmLabel: 'Reject',
-      input: { label: 'Why it is rejected', placeholder: 'e.g. 5530 already comes in this fabric — pick that SKU', required: true },
+      input: { label: 'Why it is rejected', placeholder: 'e.g. line 2: 5530 already comes in this fabric — pick that SKU', required: true },
     });
     if (!note) return;
     reject.mutate({ id: r.id, note });
@@ -183,7 +194,7 @@ export const ProductRequests = () => {
             rows={listQ.data ? visible : null}
             loading={listQ.isLoading}
             error={listQ.isError ? `The requests could not be loaded — ${listQ.error instanceof Error ? listQ.error.message : 'something went wrong.'}` : null}
-            emptyLabel={rows.length > 0 ? 'No request in this view — pick another filter.' : (approver ? 'No product request has been raised yet.' : 'You have not raised a product request yet — New request asks the Purchaser for a new product or a repack.')}
+            emptyLabel={rows.length > 0 ? 'No request in this view — pick another filter.' : (approver ? 'No product request has been raised yet.' : 'You have not raised a product request yet — New request asks the Purchaser for new products or a repack.')}
             getRowKey={(r) => r.id}
             getRowStyle={(r) => (r.status === 'WITHDRAWN' || r.status === 'CLOSED' ? { opacity: 0.55 } : undefined)}
           />
@@ -194,7 +205,7 @@ export const ProductRequests = () => {
         <Modal
           title={`${detail.request_no} · ${productText(detail)}`}
           onClose={() => setOpenId(null)}
-          width="min(820px, 100%)"
+          width="min(1080px, 100%)"
           ariaLabel={`Product request ${detail.request_no}`}
           actions={(
             <>
@@ -210,9 +221,6 @@ export const ProductRequests = () => {
               )}
               {approver && awaitsPurchaser(detail) && (
                 <Button variant="ghost" size="sm" onClick={() => void onReject(detail)} disabled={reject.isPending}>Reject…</Button>
-              )}
-              {approver && needsModel(detail) && (
-                <Button variant="primary" size="sm" onClick={() => setBuildFor(detail)}>Create Model + SKU</Button>
               )}
               {approver && mayRaisePco(detail) && (
                 <Button variant="primary" size="sm" onClick={() => navigate(pcoNewFromRequestPath(detail.id))}>Raise PC Order</Button>
@@ -233,41 +241,37 @@ export const ProductRequests = () => {
           )}
           {needsModel(detail) && approver && (
             <div style={{ padding: 'var(--space-3)', borderRadius: 8, background: 'var(--c-cream, #faf8f3)', fontSize: 'var(--fs-13)' }}>
-              {detail.proposed_model_name} is not in the catalogue yet. Build the Model and its first SKU from this request, then raise the Purchase Consignment Order — a consignment receive books stock by SKU code.
+              {linesNeedingModel(detail).length === 1 ? 'One line asks' : `${linesNeedingModel(detail).length} lines ask`} for a Model the catalogue does not have yet. Build the Model and its first SKU on each of those lines, then raise the Purchase Consignment Order — a consignment receive books stock by SKU code.
             </div>
           )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
             <Meta label="Requested by" value={`${detail.requested_by_name ?? '—'} · ${fmtDateOrDash(detail.created_at)}`} />
             <Meta label="Type" value={REQUEST_TYPE_LABEL[detail.request_type]} />
             <Meta label="Application" value={APPLICATION_LABEL[detail.application]} />
-            <Meta label="Model / SKU" value={<span style={mono}>{productText(detail)}{detail.model ? <span style={soft}> · Model {detail.model.modelCode}</span> : null}</span>} />
-            <Meta label="Category" value={mfgCategoryLabel(detail.category)} />
-            <Meta label="Compartment" value={detail.compartment ?? '—'} />
-            <Meta label="Fabric" value={detail.fabric_code ?? '—'} />
-            <Meta label="Sofa size" value={detail.seat_size ?? '—'} />
-            <Meta label="Leg size" value={detail.leg_size ?? '—'} />
-            <Meta label="Qty" value={detail.qty} />
             <Meta label="Delivery location" value={detail.deliveryLocation ? `${detail.deliveryLocation.name} (${detail.deliveryLocation.code})` : '—'} />
             <Meta label="Expected delivery" value={fmtDateOrDash(detail.expected_delivery_date)} />
             <Meta label="Supplier" value={detail.supplier ? `${detail.supplier.name} (${detail.supplier.code})` : '—'} />
-            <Meta label="Unit price" value={detail.unit_price_sen != null ? fmtSen(detail.unit_price_sen) : '—'} />
             {detail.special_remarks && <Meta label="Special remarks" value={detail.special_remarks} />}
             {detail.status !== 'REJECTED' && detail.decided_by && (
               <Meta label="Decided by" value={`${detail.decided_by}${detail.decided_at ? ` · ${fmtDateOrDash(detail.decided_at)}` : ''}${detail.decision_note ? ` · ${detail.decision_note}` : ''}`} />
             )}
             <Meta label="PC Order" value={detail.pco ? <>{detail.pco.pcNumber} <span style={soft}>· {detail.pco.status.toLowerCase().replace('_', ' ')}</span></> : '—'} />
           </div>
+          <LinesTable
+            request={detail}
+            onBuild={approver && detail.status === 'APPROVED' ? (line) => setBuildFor({ request: detail, line }) : null}
+          />
         </Modal>
       )}
 
       {buildFor && (
-        <Modal title={`Create Model + SKU — ${buildFor.request_no}`} onClose={() => setBuildFor(null)} width="min(560px, 100%)" ariaLabel="Create Model and SKU">
-          <BuildModelForm request={buildFor} onDone={() => setBuildFor(null)} onCancel={() => setBuildFor(null)} />
+        <Modal title={`Create Model + SKU — ${buildFor.request.request_no} line ${buildFor.line.line_no}`} onClose={() => setBuildFor(null)} width="min(560px, 100%)" ariaLabel="Create Model and SKU">
+          <BuildModelForm request={buildFor.request} line={buildFor.line} onDone={() => setBuildFor(null)} onCancel={() => setBuildFor(null)} />
         </Modal>
       )}
 
       {form && (
-        <Modal title={form.mode === 'new' ? 'New product request' : `Edit ${form.req.request_no}`} onClose={() => setForm(null)} width="min(760px, 100%)"
+        <Modal title={form.mode === 'new' ? 'New product request' : `Edit ${form.req.request_no}`} onClose={() => setForm(null)} width="min(1180px, 100%)"
           ariaLabel={form.mode === 'new' ? 'New product request' : `Edit ${form.req.request_no}`}>
           <RequestForm initial={form.mode === 'edit' ? form.req : null} onDone={(id) => { setForm(null); setOpenId(id); }} onCancel={() => setForm(null)} />
         </Modal>
@@ -276,27 +280,76 @@ export const ProductRequests = () => {
   );
 };
 
-/* ── The Purchaser builds the new Model + its first SKU ─────────────────── */
-function BuildModelForm({ request, onDone, onCancel }: { request: ProductRequest; onDone: () => void; onCancel: () => void }) {
+/* ── The request's lines, read-only, with the per-line build button ───────── */
+function LinesTable({ request, onBuild }: { request: ProductRequest; onBuild: ((line: ProductRequestLine) => void) | null }) {
+  const priced = request.lines.some((l) => l.unit_price_sen != null);
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={lineTable} aria-label={`Lines of ${request.request_no}`}>
+        <thead>
+          <tr>
+            <th style={th}>#</th>
+            <th style={th}>Model / SKU</th>
+            <th style={th}>Category</th>
+            <th style={th}>Spec</th>
+            <th style={{ ...th, textAlign: 'right' }}>Qty</th>
+            {priced && <th style={{ ...th, textAlign: 'right' }}>Unit price</th>}
+            <th style={th}>Remarks</th>
+            {onBuild && <th style={th} />}
+          </tr>
+        </thead>
+        <tbody>
+          {request.lines.map((l) => (
+            <tr key={l.id}>
+              <td style={{ ...td, ...soft }}>{l.line_no}</td>
+              <td style={{ ...td, ...mono }}>{lineProductText(l)}{l.model ? <span style={soft}> · Model {l.model.modelCode}</span> : null}</td>
+              <td style={td}>{mfgCategoryLabel(l.category)}</td>
+              <td style={td}>{specText(l)}</td>
+              <td style={{ ...td, textAlign: 'right' }}>{l.qty}</td>
+              {priced && <td style={{ ...td, textAlign: 'right' }}>{l.unit_price_sen != null ? fmtSen(l.unit_price_sen) : '—'}</td>}
+              <td style={td}>{l.remarks ?? '—'}</td>
+              {onBuild && (
+                <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                  {!l.item_code && <Button variant="primary" size="sm" onClick={() => onBuild(l)}>Create Model + SKU</Button>}
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td style={{ ...td, borderBottom: 'none' }} colSpan={4}><span style={soft}>{request.lines.length} line{request.lines.length === 1 ? '' : 's'}</span></td>
+            <td style={{ ...td, borderBottom: 'none', textAlign: 'right', fontWeight: 600 }}>{totalQty(request)}</td>
+            <td style={{ ...td, borderBottom: 'none' }} colSpan={(priced ? 1 : 0) + 1 + (onBuild ? 1 : 0)} />
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+/* ── The Purchaser builds one line's new Model + its first SKU ─────────────── */
+function BuildModelForm({ request, line, onDone, onCancel }: { request: ProductRequest; line: ProductRequestLine; onDone: () => void; onCancel: () => void }) {
   const build = useCreateModelFromRequest();
   const notify = useNotify();
   const [modelCode, setModelCode] = useState('');
   const [skuCode, setSkuCode] = useState('');
-  const [name, setName] = useState(request.proposed_model_name ?? '');
+  const [name, setName] = useState(line.proposed_model_name ?? '');
   const code = modelCode.trim().toUpperCase().replace(/\s+/g, '-');
-  const comp = (request.compartment ?? '').trim().toUpperCase().replace(/\s+/g, '-');
-  const defaultSku = request.category === 'SOFA' && comp ? `${code}-${comp}` : code;
+  const comp = (line.compartment ?? '').trim().toUpperCase().replace(/\s+/g, '-');
+  const defaultSku = line.category === 'SOFA' && comp ? `${code}-${comp}` : code;
   const save = async () => {
     if (!code) { void notify({ title: 'Not yet complete', body: 'Give the new Model a code.', tone: 'error' }); return; }
     try {
-      const res = await build.mutateAsync({ id: request.id, modelCode: code, skuCode: skuCode.trim() || null, name: name.trim() || null });
-      void notify({ title: `${res.sku.code} created`, body: `Model ${res.model.modelCode} · the SKU is in the catalogue but not on POS until someone turns it on. Raise the Purchase Consignment Order next.` });
+      const res = await build.mutateAsync({ id: request.id, lineId: line.id, modelCode: code, skuCode: skuCode.trim() || null, name: name.trim() || null });
+      const left = linesNeedingModel(res.request).length;
+      void notify({ title: `${res.sku.code} created`, body: `Model ${res.model.modelCode} · the SKU is in the catalogue but not on POS until someone turns it on. ${left === 0 ? 'Every line has its SKU — raise the Purchase Consignment Order next.' : `${left} line${left === 1 ? '' : 's'} still need${left === 1 ? 's' : ''} a Model.`}` });
       onDone();
     } catch { /* the mutation's own onError told the user */ }
   };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-      <div style={soft}>Requested: {request.proposed_model_name} · {mfgCategoryLabel(request.category)}{request.compartment ? ` · ${request.compartment}` : ''}</div>
+      <div style={soft}>Line {line.line_no}: {line.proposed_model_name} · {mfgCategoryLabel(line.category)}{line.compartment ? ` · ${line.compartment}` : ''} · ×{line.qty}</div>
       <label className={styles.field}>
         <span className={styles.fieldLabel}>Model code *</span>
         <input className={styles.fieldInput} value={modelCode} onChange={(e) => setModelCode(e.target.value)} aria-label="Model code" placeholder="e.g. 5530" style={mono} />
@@ -318,65 +371,71 @@ function BuildModelForm({ request, onDone, onCancel }: { request: ProductRequest
 }
 
 /* ── New / edit ─────────────────────────────────────────────────────────── */
+type DraftLine = ProductRequestLineInput & { rid: string; newModel: boolean };
+const draftLine = (from: ProductRequestLineInput | null): DraftLine => ({
+  rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+  newModel: !!from && !from.itemCode,
+  ...(from ?? emptyRequestLine()),
+});
+
 export function RequestForm({ initial, onDone, onCancel }: { initial: ProductRequest | null; onDone: (id: string) => void; onCancel: () => void }) {
   const notify = useNotify();
   const create = useCreateProductRequest();
   const update = useUpdateProductRequest();
-  const [v, setV] = useState<ProductRequestInput>(() => ({
+  const [v, setV] = useState<Omit<ProductRequestInput, 'lines'>>(() => ({
     requestType: initial?.request_type ?? 'NEW_PRODUCT',
     application: initial?.application ?? 'CUSTOMER_ORDER',
-    itemCode: initial?.item_code ?? null,
-    proposedModelName: initial?.proposed_model_name ?? null,
-    category: initial?.category ?? 'SOFA',
-    compartment: initial?.compartment ?? null,
-    fabricCode: initial?.fabric_code ?? null,
-    seatSize: initial?.seat_size ?? null,
-    legSize: initial?.leg_size ?? null,
-    qty: initial?.qty ?? 1,
     specialRemarks: initial?.special_remarks ?? null,
     deliveryLocationId: initial?.delivery_location_id ?? null,
     expectedDeliveryDate: initial?.expected_delivery_date ?? null,
     supplierId: initial?.supplier_id ?? null,
-    unitPriceSen: initial?.unit_price_sen ?? null,
   }));
-  /* Existing SKU, or a Model the catalogue has not got — a repack is always existing. */
-  const [newModel, setNewModel] = useState<boolean>(() => !!initial && !initial.item_code);
-  const set = (patch: Partial<ProductRequestInput>) => setV((prev) => ({ ...prev, ...patch }));
+  const [lines, setLines] = useState<DraftLine[]>(() => (initial && initial.lines.length > 0 ? initial.lines.map((l) => draftLine(lineToInput(l))) : [draftLine(null)]));
+  const set = (patch: Partial<Omit<ProductRequestInput, 'lines'>>) => setV((prev) => ({ ...prev, ...patch }));
+  const setLine = (rid: string, patch: Partial<DraftLine>) => setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
   const isRepack = v.requestType === 'REPACK';
-  const existing = isRepack || !newModel;
 
   const skus = useMfgProducts();
   const supplierOptions = useProductRequestSupplierOptions().data?.suppliers ?? [];
   const maint = useMaintenanceConfig('master').data?.data ?? null;
   const fabrics = useFabricTrackings().data ?? [];
   const warehouses = useWarehouses().data ?? [];
-  const skuList = useMemo(() => sortByText((skus.data ?? []).filter((p) => !existing || !v.category || String(p.category).toUpperCase() === v.category || !!v.itemCode)), [skus.data, existing, v.category, v.itemCode]);
-  const isSofa = v.category === 'SOFA';
-  const compartments = isSofa ? maintPickerValues(maint?.sofaCompartments ?? [], v.compartment ?? '') : [];
-  const seatSizes = isSofa ? sortByNumeric(maintPickerValues(maint?.sofaSizes ?? [], v.seatSize ?? '')) : [];
-  const legSizes = sortByNumeric(activeOptions(isSofa ? (maint?.sofaLegHeights ?? []) : (maint?.legHeights ?? []), v.legSize ?? '')).map((o) => o.value);
-  const pickableFabrics = sortByText(fabrics.filter((f) => f.is_active !== false || f.fabric_code === v.fabricCode).map((f) => ({ ...f, name: fabricOptionLabel(f) })));
+  const skuList = useMemo(() => sortByText(skus.data ?? []), [skus.data]);
+  const compartments = maintPickerValues(maint?.sofaCompartments ?? [], '');
+  const seatSizes = sortByNumeric(maintPickerValues(maint?.sofaSizes ?? [], ''));
+  const sofaLegs = sortByNumeric(activeOptions(maint?.sofaLegHeights ?? [], '')).map((o) => o.value);
+  const otherLegs = sortByNumeric(activeOptions(maint?.legHeights ?? [], '')).map((o) => o.value);
+  const pickableFabrics = useMemo(() => sortByText(fabrics.filter((f) => f.is_active !== false).map((f) => ({ ...f, name: fabricOptionLabel(f) }))), [fabrics]);
 
-  const onItemCode = (code: string) => {
+  const onItemCode = (rid: string, code: string) => {
     const sku = (skus.data ?? []).find((p) => p.code === code);
-    set({ itemCode: code || null, proposedModelName: null, ...(sku ? { category: String(sku.category).toUpperCase() } : {}) });
+    setLine(rid, { itemCode: code || null, proposedModelName: null, ...(sku ? { category: String(sku.category).toUpperCase() } : {}) });
   };
-
-  const missing = [
-    existing && !(v.itemCode ?? '').trim() ? (isRepack ? 'the SKU being re-packed' : 'the SKU') : null,
-    !existing && !(v.proposedModelName ?? '').trim() ? 'the new Model\'s name' : null,
-    v.qty > 0 ? null : 'the quantity',
-  ].filter(Boolean) as string[];
+  /* The line's product, as the server reads it: a SKU for an existing one, a
+     name for a new Model — a repack is always existing. */
+  const lineBody = (l: DraftLine): ProductRequestLineInput => {
+    const existing = isRepack || !l.newModel;
+    return {
+      itemCode: existing ? (l.itemCode ?? '').trim() || null : null,
+      proposedModelName: existing ? null : (l.proposedModelName ?? '').trim() || null,
+      category: l.category, compartment: l.compartment, fabricCode: l.fabricCode, seatSize: l.seatSize, legSize: l.legSize,
+      qty: l.qty, unitPriceSen: l.unitPriceSen, remarks: l.remarks?.trim() || null,
+    };
+  };
+  const missing = lines.flatMap((l, i) => {
+    const b = lineBody(l);
+    const n = i + 1;
+    return [
+      !b.itemCode && !b.proposedModelName ? `line ${n}: ${isRepack ? 'the SKU being re-packed' : l.newModel ? "the new Model's name" : 'the SKU'}` : null,
+      b.qty > 0 ? null : `line ${n}: the quantity`,
+    ].filter(Boolean) as string[];
+  });
   const saving = create.isPending || update.isPending;
 
   const save = async () => {
+    if (lines.length === 0) { void notify({ title: 'Not yet complete', body: 'Add at least one product line.', tone: 'error' }); return; }
     if (missing.length > 0) { void notify({ title: 'Not yet complete', body: `Still needed: ${missing.join(', ')}.`, tone: 'error' }); return; }
-    const body: ProductRequestInput = {
-      ...v,
-      itemCode: existing ? (v.itemCode ?? '').trim() || null : null,
-      proposedModelName: existing ? null : (v.proposedModelName ?? '').trim() || null,
-      specialRemarks: v.specialRemarks?.trim() || null,
-    };
+    const body: ProductRequestInput = { ...v, specialRemarks: v.specialRemarks?.trim() || null, lines: lines.map(lineBody) };
     try {
       const res = initial ? await update.mutateAsync({ id: initial.id, ...body }) : await create.mutateAsync(body);
       onDone(res.request.id);
@@ -384,13 +443,7 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
   };
 
   const grid = (min: number): React.CSSProperties => ({ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${min}px, 1fr))`, gap: 'var(--space-3)' });
-  const pickerInput = (label: string, key: keyof ProductRequestInput, options: string[], placeholder: string) => (
-    <label className={styles.field}>
-      <span className={styles.fieldLabel}>{label}</span>
-      <input className={styles.fieldInput} list={`pr-${String(key)}`} value={(v[key] as string | null) ?? ''} onChange={(e) => set({ [key]: e.target.value || null } as Partial<ProductRequestInput>)} aria-label={label} placeholder={placeholder} />
-      <datalist id={`pr-${String(key)}`}>{options.map((o) => <option key={o} value={o} />)}</datalist>
-    </label>
-  );
+  const cell: React.CSSProperties = { fontSize: 'var(--fs-12)', padding: '4px 6px', border: '1px solid #d6d9d2', borderRadius: 6, background: '#fff', width: '100%', minWidth: 0 };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -402,12 +455,12 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 'var(--fs-13)' }}>
           {(['NEW_PRODUCT', 'REPACK'] as ProductRequestType[]).map((t) => (
             <label key={t} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <input type="radio" name="pr-type" checked={v.requestType === t} onChange={() => { set({ requestType: t }); if (t === 'REPACK') setNewModel(false); }} aria-label={REQUEST_TYPE_LABEL[t]} />
-              {REQUEST_TYPE_LABEL[t]}{t === 'REPACK' ? <span style={soft}> — re-pack an existing SKU (service)</span> : null}
+              <input type="radio" name="pr-type" checked={v.requestType === t} onChange={() => { set({ requestType: t }); if (t === 'REPACK') setLines((prev) => prev.map((l) => ({ ...l, newModel: false }))); }} aria-label={REQUEST_TYPE_LABEL[t]} />
+              {REQUEST_TYPE_LABEL[t]}{t === 'REPACK' ? <span style={soft}> — re-pack existing SKUs (service)</span> : null}
             </label>
           ))}
         </div>
-        <label className={styles.field}>
+        <label className={styles.field} style={{ maxWidth: 320 }}>
           <span className={styles.fieldLabel}>Application *</span>
           <select className={styles.fieldInput} value={v.application} onChange={(e) => set({ application: e.target.value as ProductRequestApplication })} aria-label="Application">
             {(Object.keys(APPLICATION_LABEL) as ProductRequestApplication[]).map((a) => <option key={a} value={a}>{APPLICATION_LABEL[a]}</option>)}
@@ -415,61 +468,102 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
         </label>
       </FormSection>
 
-      <FormSection n={2} title="Model" required>
-        {!isRepack && (
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 'var(--fs-13)' }}>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <input type="radio" name="pr-model-kind" checked={!newModel} onChange={() => setNewModel(false)} aria-label="Existing SKU" /> Existing SKU
-            </label>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <input type="radio" name="pr-model-kind" checked={newModel} onChange={() => { setNewModel(true); set({ itemCode: null }); }} aria-label="New Model" /> New Model — not in the catalogue yet
-            </label>
-          </div>
-        )}
-        <div style={grid(200)}>
-          {existing ? (
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>SKU *</span>
-              <input className={styles.fieldInput} list="pr-skus" value={v.itemCode ?? ''} onChange={(e) => onItemCode(e.target.value)} aria-label="SKU" placeholder="Type or pick a SKU code…" style={mono} />
-              <datalist id="pr-skus">{skuList.map((p) => <option key={p.id} value={p.code}>{p.name} · {mfgCategoryLabel(p.category)}</option>)}</datalist>
-            </label>
-          ) : (
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>New Model name *</span>
-              <input className={styles.fieldInput} value={v.proposedModelName ?? ''} onChange={(e) => set({ proposedModelName: e.target.value || null })} aria-label="New Model name" placeholder="e.g. Aurora 2-seater" />
-            </label>
-          )}
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Category</span>
-            <select className={styles.fieldInput} value={v.category} onChange={(e) => set({ category: e.target.value })} aria-label="Category" disabled={existing && !!v.itemCode}>
-              {MFG_PRODUCT_CATEGORIES.map((c) => <option key={c} value={c}>{mfgCategoryLabel(c)}</option>)}
-            </select>
-          </label>
-          {isSofa && pickerInput('Compartment', 'compartment', compartments, 'e.g. 3S, LHF, Console')}
+      <FormSection n={2} title="Products" required>
+        <div style={soft}>One line per product. {isRepack ? 'A repack names the SKU being re-packed.' : 'Pick an existing SKU, or name a Model the catalogue does not have yet.'}</div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={lineTable} aria-label="Product lines">
+            <thead>
+              <tr>
+                <th style={th}>#</th>
+                <th style={{ ...th, minWidth: 260 }}>Model / SKU</th>
+                <th style={{ ...th, minWidth: 110 }}>Category</th>
+                <th style={{ ...th, minWidth: 90 }}>Compartment</th>
+                <th style={{ ...th, minWidth: 130 }}>Fabric</th>
+                <th style={{ ...th, minWidth: 70 }}>Size</th>
+                <th style={{ ...th, minWidth: 70 }}>Leg</th>
+                <th style={{ ...th, minWidth: 64 }}>Qty</th>
+                <th style={{ ...th, minWidth: 100 }}>Unit price</th>
+                <th style={{ ...th, minWidth: 140 }}>Remarks</th>
+                <th style={th} />
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l, i) => {
+                const n = i + 1;
+                const existing = isRepack || !l.newModel;
+                const isSofa = l.category === 'SOFA';
+                return (
+                  <tr key={l.rid}>
+                    <td style={{ ...td, ...soft }}>{n}</td>
+                    <td style={td}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {!isRepack && (
+                          <select style={{ ...cell, fontSize: 'var(--fs-11)' }} value={l.newModel ? 'new' : 'existing'} aria-label={`Product kind line ${n}`}
+                            onChange={(e) => { const nm = e.target.value === 'new'; setLine(l.rid, { newModel: nm, ...(nm ? { itemCode: null } : { proposedModelName: null }) }); }}>
+                            <option value="existing">Existing SKU</option>
+                            <option value="new">New Model — not in the catalogue yet</option>
+                          </select>
+                        )}
+                        {existing ? (
+                          <input style={{ ...cell, ...mono }} list="pr-skus" value={l.itemCode ?? ''} onChange={(e) => onItemCode(l.rid, e.target.value)} aria-label={`SKU line ${n}`} placeholder="Type or pick a SKU code…" />
+                        ) : (
+                          <input style={cell} value={l.proposedModelName ?? ''} onChange={(e) => setLine(l.rid, { proposedModelName: e.target.value || null })} aria-label={`New Model name line ${n}`} placeholder="e.g. Aurora 2-seater" />
+                        )}
+                      </div>
+                    </td>
+                    <td style={td}>
+                      <select style={cell} value={l.category} onChange={(e) => setLine(l.rid, { category: e.target.value })} aria-label={`Category line ${n}`} disabled={existing && !!l.itemCode}>
+                        {MFG_PRODUCT_CATEGORIES.map((c) => <option key={c} value={c}>{mfgCategoryLabel(c)}</option>)}
+                      </select>
+                    </td>
+                    <td style={td}>
+                      {isSofa && <input style={cell} list="pr-compartments" value={l.compartment ?? ''} onChange={(e) => setLine(l.rid, { compartment: e.target.value || null })} aria-label={`Compartment line ${n}`} placeholder="3S, LHF…" />}
+                    </td>
+                    <td style={td}>
+                      <input style={{ ...cell, ...mono }} list="pr-fabrics" value={l.fabricCode ?? ''} onChange={(e) => setLine(l.rid, { fabricCode: e.target.value || null })} aria-label={`Fabric line ${n}`} placeholder="Fabric code…" />
+                    </td>
+                    <td style={td}>
+                      <input style={cell} list={isSofa ? 'pr-seat-sizes' : undefined} value={l.seatSize ?? ''} onChange={(e) => setLine(l.rid, { seatSize: e.target.value || null })} aria-label={`${isSofa ? 'Sofa size' : 'Size'} line ${n}`} placeholder={isSofa ? '22' : 'Queen'} />
+                    </td>
+                    <td style={td}>
+                      <input style={cell} list={isSofa ? 'pr-leg-sofa' : 'pr-leg-other'} value={l.legSize ?? ''} onChange={(e) => setLine(l.rid, { legSize: e.target.value || null })} aria-label={`Leg size line ${n}`} placeholder="4" />
+                    </td>
+                    <td style={td}>
+                      <NumberInput value={l.qty} sign="unsigned" decimal={false} onValueChange={(q) => setLine(l.rid, { qty: q ?? 0 })} aria-label={`Qty line ${n}`} style={{ ...cell, textAlign: 'right' }} />
+                    </td>
+                    <td style={td}>
+                      <MoneyInput bare valueSen={l.unitPriceSen ?? 0} onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen != null && sen > 0 ? sen : null })} selectOnFocus aria-label={`Unit price line ${n}`} style={{ ...cell, textAlign: 'right' }} />
+                    </td>
+                    <td style={td}>
+                      <input style={cell} value={l.remarks ?? ''} onChange={(e) => setLine(l.rid, { remarks: e.target.value || null })} aria-label={`Remarks line ${n}`} maxLength={500} placeholder="deeper seat, no piping…" />
+                    </td>
+                    <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                      <button type="button" onClick={() => setLines((prev) => prev.filter((x) => x.rid !== l.rid))} aria-label={`Remove line ${n}`} title="Remove line"
+                        style={{ ...linkBtn, color: 'var(--fg-muted)', textDecoration: 'none', display: 'inline-flex' }} disabled={lines.length === 1}>
+                        <Trash2 size={14} strokeWidth={1.75} />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <datalist id="pr-skus">{skuList.map((p) => <option key={p.id} value={p.code}>{p.name} · {mfgCategoryLabel(p.category)}</option>)}</datalist>
+        <datalist id="pr-fabrics">{pickableFabrics.map((f) => <option key={f.id} value={f.fabric_code}>{f.name}</option>)}</datalist>
+        <datalist id="pr-compartments">{compartments.map((o) => <option key={o} value={o} />)}</datalist>
+        <datalist id="pr-seat-sizes">{seatSizes.map((o) => <option key={o} value={o} />)}</datalist>
+        <datalist id="pr-leg-sofa">{sofaLegs.map((o) => <option key={o} value={o} />)}</datalist>
+        <datalist id="pr-leg-other">{otherLegs.map((o) => <option key={o} value={o} />)}</datalist>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Button variant="secondary" size="sm" onClick={() => setLines((prev) => [...prev, draftLine(null)])}>
+            <Plus size={14} strokeWidth={1.75} /> Add line
+          </Button>
+          <span style={soft}>{lines.length} line{lines.length === 1 ? '' : 's'} · {lines.reduce((s, l) => s + (l.qty || 0), 0)} pcs</span>
         </div>
       </FormSection>
 
-      <FormSection n={3} title="Spec">
-        <div style={grid(180)}>
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Fabric</span>
-            <input className={styles.fieldInput} list="pr-fabrics" value={v.fabricCode ?? ''} onChange={(e) => set({ fabricCode: e.target.value || null })} aria-label="Fabric" placeholder="Type or pick a fabric code…" style={mono} />
-            <datalist id="pr-fabrics">{pickableFabrics.map((f) => <option key={f.id} value={f.fabric_code}>{f.name}</option>)}</datalist>
-          </label>
-          {pickerInput(isSofa ? 'Sofa size (seat)' : 'Size', 'seatSize', seatSizes, isSofa ? 'e.g. 22' : 'e.g. Queen')}
-          {pickerInput('Leg size', 'legSize', legSizes, 'e.g. 4')}
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Qty *</span>
-            <NumberInput value={v.qty} sign="unsigned" decimal={false} onValueChange={(n) => set({ qty: n ?? 0 })} className={styles.fieldInput} aria-label="Qty" style={{ textAlign: 'right' }} />
-          </label>
-        </div>
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>Special remarks</span>
-          <textarea className={styles.fieldInput} rows={2} value={v.specialRemarks ?? ''} onChange={(e) => set({ specialRemarks: e.target.value || null })} aria-label="Special remarks" maxLength={2000} placeholder="e.g. deeper seat, no piping, firm cushion" />
-        </label>
-      </FormSection>
-
-      <FormSection n={4} title="Delivery">
+      <FormSection n={3} title="Delivery">
         <div style={grid(200)}>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Delivery location</span>
@@ -484,11 +578,15 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
               style={{ background: '#fff', border: '1px solid #d6d9d2', borderRadius: 8 }} />
           </label>
         </div>
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Special remarks</span>
+          <textarea className={styles.fieldInput} rows={2} value={v.specialRemarks ?? ''} onChange={(e) => set({ specialRemarks: e.target.value || null })} aria-label="Special remarks" maxLength={2000} placeholder="Anything the Purchaser should know about the whole request" />
+        </label>
       </FormSection>
 
       {/* 方案 C (owner 2026-10-08): the requester names the supplier and the agreed
-          price; the Purchaser records them and the PC Order is seeded from them. */}
-      <FormSection n={5} title="Supplier and price (if agreed)">
+          prices; the Purchaser records them and the PC Order is seeded from them. */}
+      <FormSection n={4} title="Supplier (if agreed)">
         <div style={grid(200)}>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Supplier</span>
@@ -497,10 +595,7 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
               {supplierOptions.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
             </select>
           </label>
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Unit price (MYR)</span>
-            <MoneyInput bare valueSen={v.unitPriceSen ?? 0} onCommit={(sen) => set({ unitPriceSen: sen != null && sen > 0 ? sen : null })} inputClassName={styles.fieldInput} selectOnFocus aria-label="Unit price" />
-          </label>
+          <div style={{ ...soft, alignSelf: 'end', paddingBottom: 8 }}>The agreed unit price goes on each line above.</div>
         </div>
       </FormSection>
 
