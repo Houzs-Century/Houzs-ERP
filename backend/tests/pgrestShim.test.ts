@@ -280,3 +280,33 @@ describe("pgrest-shim — 2026-08-01 growth: the recomputeSoStockAllocation surf
     expect(sb.__gaps.length).toBe(1);
   });
 });
+
+describe("pgrest-shim — 2026-10-15 growth: a filtered delete, for the bank fee-pair repair", () => {
+  test("delete() with filters emits a filtered DELETE and keeps data:null — applyRegroup removing a joined fee row", async () => {
+    const { sql, calls } = fakeSql([]);
+    const sb = pgrestShim(sql as never);
+    const res = await sb.from("acc_bank_statement_lines").delete()
+      .eq("company_id", 2).eq("statement_id", 15).eq("state", "OPEN").in("id", [368]);
+    expect(res).toEqual({ data: null, error: null });
+    expect(calls[0].text).toBe('DELETE FROM "scm"."acc_bank_statement_lines" WHERE "company_id" = $1 AND "statement_id" = $2 AND "state" = $3 AND "id" IN ($4)');
+    expect(calls[0].params).toEqual([2, 15, "OPEN", 368]);
+  });
+
+  test("delete().select() hands back what was removed (RETURNING), as update does", async () => {
+    const { sql, calls } = fakeSql([{ id: 368 }]);
+    const sb = pgrestShim(sql as never);
+    const { data } = await sb.from("acc_bank_statement_lines").delete().eq("id", 368).select("id");
+    expect(data).toEqual([{ id: 368 }]);
+    expect(calls[0].text).toBe('DELETE FROM "scm"."acc_bank_statement_lines" WHERE "id" = $1 RETURNING "id"');
+  });
+
+  test("a delete with no filter is a recorded gap and runs nothing — never an emptied table", async () => {
+    const { sql, calls } = fakeSql([]);
+    const sb = pgrestShim(sql as never);
+    const res = await sb.from("acc_bank_statement_lines").delete();
+    expect(res.data).toBeNull();
+    expect(String(res.error?.message)).toMatch(/GAP/);
+    expect(calls).toHaveLength(0);
+    expect(sb.__gaps.length).toBe(1);
+  });
+});

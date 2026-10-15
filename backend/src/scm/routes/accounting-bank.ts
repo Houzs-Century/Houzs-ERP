@@ -35,7 +35,8 @@ import {
   loadRecognitionRules, loadPayableBatches, loadPayoutAdvices, loadAccountLedger,
   loadLiveMonthLock, loadLineMonth, loadClaimedElsewhere, claimedSetFor, jeNosOf, loadLinesForRepeats } from '../../acc/bank';
 import { lockedRefusal, lockMonthOf } from '../../acc/bank-lock';
-import { postBatchReceipt, undoBatchReceipt } from '../../acc/settlement';
+import { undoBatchReceipt } from '../../acc/settlement';
+import { postBankCredit } from '../../acc/bank-receive';
 import { withJournalRefs } from '../../acc/journal-refs';
 import { fmtSen } from '../shared/format';
 
@@ -280,7 +281,7 @@ export const bankUpload = guard(async (c) => {
   if (!batches.ok) return c.json({ error: 'load_failed', reason: batches.reason }, 500);
   if (!payouts.ok) return c.json({ error: 'load_failed', reason: payouts.reason }, 500);
 
-  const movements = groupBankMovements(parsed.lines);
+  const movements = groupBankMovements(parsed.lines, rules.rules);
   const decisions = matchBankMovements({
     movements, rules: rules.rules, batches: batches.batches, payouts: payouts.payouts,
   });
@@ -910,68 +911,15 @@ export const bankLineReceipt = guard(async (c) => {
     }
   }
 
-  /* The DATE comes off the bank statement, not off the request: it is what the
-     bank says, and the whole point of uploading the file is that nobody has to
-     retype it. */
-  const receivedOn = String(line.booked_on).slice(0, 10);
-  const bankRef = line.reference ?? null;
-  const posted: Array<{ batchId: number; receiptId: number; jeNo?: string; outstandingSen: number; chargeSen: number }> = [];
-
-  /* WHICH BANK the money is in — the statement's own account, not the
-     acquirer's configured one. The owner asked exactly this: 不确定 maybank 对
-     其他的卡机. An acquirer set up to pay into Hong Leong whose credit turns up
-     on the Maybank statement really is money in Maybank, and booking it to Hong
-     Leong would leave Maybank's reconciliation permanently short by that
-     amount. The statement is evidence; the configuration is a guess made before
-     the money moved. */
-  const { data: stmtRaw, error: stmtRdErr } = await sb.from('acc_bank_statements')
-    .select('account_code').eq('id', line.statement_id).eq('company_id', co.companyId).maybeSingle();
-  if (stmtRdErr) return c.json({ error: 'load_failed', reason: stmtRdErr.message }, 500);
-  const bankAccountCode = (stmtRaw as { account_code?: string } | null)?.account_code ?? null;
-
-  for (const a of allocations) {
-    const r = await postBatchReceipt(sb, co.companyId, a.batchId, {
-      receivedOn, amountSen: a.amountSen, bankRef, bankAccountCode, userName: userName(c),
-      charge: charge && charge.batchId === a.batchId ? { amountSen: charge.amountSen, accountCode: charge.accountCode, note: charge.note } : null,
-    });
-    if (!r.ok) {
-      /* A refusal partway through must not leave half a payout booked. Every
-         receipt already written is reversed — through the engine, so the
-         contra entries exist — before the refusal is returned. */
-      const undone: string[] = [];
-      for (const done of posted) {
-        const back = await undoBatchReceipt(sb, co.companyId, done.receiptId);
-        if (!back.ok) undone.push(`${done.jeNo ?? done.receiptId}: ${back.reason}`);
-      }
-      return c.json({
-        error: r.status,
-        message: r.reason
-          + (undone.length > 0
-            ? ` — AND ${undone.length} earlier share(s) could not be taken back: ${undone.join('; ')}. Check the ledger before retrying.`
-            : posted.length > 0 ? ` The other ${posted.length} share(s) were taken back, so nothing is half-booked.` : ''),
-      }, 409);
-    }
-    posted.push({ batchId: a.batchId, receiptId: r.receiptId, jeNo: r.jeNo, outstandingSen: r.outstandingSen, chargeSen: r.chargeSen });
-  }
-
-  /* Point every receipt back at the movement it was read from. */
-  for (const p of posted) {
-    await sb.from('acc_settlement_receipts').update({ bank_line_id: lineId }).eq('id', p.receiptId);
-  }
-
-  const { error: upErr } = await sb.from('acc_bank_statement_lines').update({
-    state: 'POSTED',
-    /* One entry number when there is one, all of them when the credit was
-       split — the operator asks "which JE" and both answers are true. */
-    posted_je_no: posted.map((p) => p.jeNo).filter(Boolean).join(', ') || null,
-    updated_at: new Date().toISOString(),
-  }).eq('id', lineId).eq('company_id', co.companyId);
-  if (upErr) {
-    return c.json({
-      error: 'save_failed',
-      reason: `${upErr.message} (the receipt(s) WERE posted — the statement line did not record it)`,
-    }, 500);
-  }
+  /* The booking itself is shared with the gated repair that books a gross-and-fee
+     pair joined after its upload (acc/bank-receive.ts). */
+  const booked = await postBankCredit(
+    sb, co.companyId,
+    { id: lineId, booked_on: String(line.booked_on), reference: (line.reference as string | null) ?? null, statement_id: Number(line.statement_id) },
+    allocations, charge, userName(c),
+  );
+  if (!booked.ok) return c.json(booked.body, booked.status);
+  const posted = booked.posted;
 
   return c.json({
     ok: true,

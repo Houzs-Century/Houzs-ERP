@@ -75,9 +75,9 @@
 //   * `!inner` is required. A plain `rel(...)` embed is a GAP, because a LEFT
 //     embed changes which parents come back and no caller here wants one.
 //
-// NOT a general client. One level of embedding only, no `.rpc()`, no deletes —
-// the day a canonical function needs one, the gap list names it and the shim
-// grows a tested method.
+// NOT a general client. One level of embedding only, and a delete only with a
+// filter (2026-10-15). The day a canonical function needs more, the gap list
+// names it and the shim grows a tested method.
 const IDENT = /^[a-z_][a-z0-9_]*$/;
 /* PostgREST's EMBEDDED-FILTER spelling — `.not('so.status', 'in', ...)`,
    `.gt('po_items.received_qty', 0)`. It filters the parent by a column of an
@@ -289,6 +289,31 @@ export function pgrestShim(sql, schema = "scm", opts = {}) {
           await sql.unsafe(insertText, params);
           return { data: null, error: null };
         }
+        if (state.mode === "delete") {
+          /* 2026-10-15 growth (settle-bank-fee-pairs.mjs). acc/bank-regroup.ts
+             applyRegroup removes the fee row it joined into its credit, and
+             postBatchReceipt / postJournal remove what they wrote when a later
+             step is refused. A delete needs at least one filter: a bare
+             delete() would empty the table, and no canonical function means
+             that. .select() asks for RETURNING exactly as update does. */
+          const where = buildWhere();
+          if (!where) return gap(`delete() with no filter — refusing to empty the table`);
+          if (state.cols !== "*" || state.single) {
+            const retCols = state.cols === "*" ? "*" : String(state.cols).split(",").map((cName) => q(cName.trim())).join(", ");
+            const rows = await sql.unsafe(`DELETE FROM ${target}${where} RETURNING ${retCols}`, params);
+            if (state.single === "maybe") {
+              if (rows.length > 1) return { data: null, error: { message: `maybeSingle: ${rows.length} rows` } };
+              return { data: rows[0] ?? null, error: null };
+            }
+            if (state.single === "single") {
+              if (rows.length !== 1) return { data: null, error: { message: `single: ${rows.length} rows` } };
+              return { data: rows[0], error: null };
+            }
+            return { data: [...rows], error: null };
+          }
+          await sql.unsafe(`DELETE FROM ${target}${where}`, params);
+          return { data: null, error: null };
+        }
         if (state.mode === "update") {
           const entries = Object.entries(state.updateObj ?? {});
           if (entries.length === 0) return { data: null, error: null };
@@ -470,6 +495,7 @@ export function pgrestShim(sql, schema = "scm", opts = {}) {
       select(cols) { state.cols = cols ?? "*"; return proxied; },
       update(obj) { state.mode = "update"; state.updateObj = obj; return proxied; },
       insert(rows) { state.mode = "insert"; state.insertRows = rows; return proxied; },
+      delete() { state.mode = "delete"; return proxied; },
       upsert(rows, opts) { state.mode = "upsert"; state.insertRows = rows; state.upsertOnConflict = opts?.onConflict; return proxied; },
       eq(col, v) { state.filters.push({ op: "eq", col, v }); return proxied; },
       /* PostgREST's neq is SQL's <>, NULL semantics and all: a row whose column

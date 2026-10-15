@@ -144,6 +144,66 @@ describe('joining a credit to the charge taken back against it', () => {
   });
 });
 
+/* Maybank's statement PDF prints no reference (owner 2026-10-15, 2990's
+   September: 这一笔RM4048.00是要扣RM18.22的 … 转full amount给我们再扣). The pair
+   joins on what the acquirer rule proves instead — the same acquirer, merchant,
+   words and day — and nothing a rule cannot vouch for ever does. */
+describe('a gross-and-fee pair with no reference — joined on the acquirer rule', () => {
+  const pdf = (over: Partial<BankLine>) => line({
+    bookedOn: '2026-09-07', reference: null, description: 'DR/CARD SALES M/N 2649949 D 9', ...over,
+  });
+  const REPORT: PayableBatch = {
+    id: 96, acquirerCode: 'MBB', fileName: '027032649949_DVS04E_1_20260906.CSV',
+    periodFrom: '2026-09-06', periodTo: '2026-09-06', payableSen: 402978, outstandingSen: 402978,
+  };
+
+  it("joins 2990's real pair into the one payout its report is owed, and decides it", () => {
+    const movements = groupBankMovements([pdf({ lineNo: 11, amountSen: 404800 }), pdf({ lineNo: 13, amountSen: -1822 })], RULES);
+    expect(movements).toHaveLength(1);
+    expect(movements[0]).toMatchObject({ amountSen: 402978, chargeSen: 1822, reference: null });
+    expect(movements[0]!.lines.map((l) => l.lineNo)).toEqual([11, 13]);
+    const [d] = matchBankMovements({ movements, rules: RULES, batches: [REPORT] });
+    expect(d).toMatchObject({ kind: 'PAYOUT', batchId: 96, acquirerCode: 'MBB', merchantNo: '2649949' });
+  });
+
+  it('keeps them apart when no rules are given — the reference-only behaviour', () => {
+    expect(groupBankMovements([pdf({ amountSen: 404800 }), pdf({ amountSen: -1822 })])).toHaveLength(2);
+  });
+
+  it('never joins lines no rule recognises: a transfer in and a transfer out stay two', () => {
+    expect(groupBankMovements([
+      line({ reference: null, description: 'FUND TRANSFER', amountSen: 300000 }),
+      line({ reference: null, description: 'FUND TRANSFER', amountSen: -50000 }),
+    ], RULES)).toHaveLength(2);
+  });
+
+  it('never joins on a rule that names no merchant', () => {
+    expect(groupBankMovements([
+      line({ reference: null, description: 'Book Transfer Third AEON CREDIT SERVICE', amountSen: 326246 }),
+      line({ reference: null, description: 'Book Transfer Third AEON CREDIT SERVICE', amountSen: -500 }),
+    ], RULES)).toHaveLength(2);
+  });
+
+  it('never joins two merchants, two days, or two different prints', () => {
+    expect(groupBankMovements([pdf({ amountSen: 404800 }), pdf({ amountSen: -1822, description: 'DR/CARD SALES M/N 2649964 D 9' })], RULES)).toHaveLength(2);
+    expect(groupBankMovements([pdf({ amountSen: 404800 }), pdf({ amountSen: -1822, bookedOn: '2026-09-08' })], RULES)).toHaveLength(2);
+    expect(groupBankMovements([pdf({ amountSen: 404800 }), pdf({ amountSen: -1822, description: 'DR/CARD SALES M/N 2649949 REVERSAL' })], RULES)).toHaveLength(2);
+  });
+
+  it('never joins two credits of one merchant on one day, and never a debit bigger than its credit', () => {
+    expect(groupBankMovements([pdf({ amountSen: 404800 }), pdf({ amountSen: 100000 }), pdf({ amountSen: -1822 })], RULES)).toHaveLength(3);
+    expect(groupBankMovements([pdf({ amountSen: 1000 }), pdf({ amountSen: -5000 })], RULES)).toHaveLength(2);
+  });
+
+  it('a line WITH a reference still joins only on its reference', () => {
+    const movements = groupBankMovements([
+      pdf({ amountSen: 87500, reference: 'D90200808' }),
+      pdf({ amountSen: -394, reference: null }),
+    ], RULES);
+    expect(movements).toHaveLength(2);
+  });
+});
+
 describe('recognising whose money it is', () => {
   it('reads the acquirer, the trading day and the merchant number off the line', () => {
     const seen = recogniseAcquirer(RULES, {

@@ -27,6 +27,16 @@
 // share its reference and its date. Two credits are never joined, whatever they
 // share. That is exactly the gross-and-fee shape and nothing else.
 //
+// Maybank's statement PDF prints NO reference (owner 2026-10-15, 2990's
+// September: 这一笔RM4048.00是要扣RM18.22的 … 转full amount给我们再扣):
+//     2026-09-07  +4,048.00  DR/CARD SALES M/N 2649949 D 9
+//     2026-09-07     -18.22  DR/CARD SALES M/N 2649949 D 9
+// — one report's gross and its fee. Lines without a reference join on what the
+// ACQUIRER RULE proves about them instead: the same acquirer, the same merchant
+// number, the same words, the same day. A line no rule recognises, or whose rule
+// names no merchant, never joins, so "Fund Transfer" in and "Fund Transfer" out
+// stay two movements.
+//
 // ── 2. Which acquirer a line belongs to is CONFIG, not code. ──
 // The brief is explicit that every acquirer's "how do I recognise this money on
 // the bank statement" rule must exist the moment the acquirer does — 系统3 had
@@ -61,24 +71,37 @@ export type BankMovement = {
   chargeSen: number;
 };
 
+/** What two lines must share to be read as one movement — null when nothing a
+    line carries can be shared safely (see the header). A reference and the day
+    when there is a reference; otherwise the acquirer, merchant, words and day
+    the recognition rules prove. */
+function joinKey(l: BankLine, rules: BankRecognitionRule[]): string | null {
+  if (l.reference) return `ref|${l.reference}|${l.bookedOn}`;
+  if (rules.length === 0) return null;
+  const seen = recogniseAcquirer(rules, l);
+  if (!seen?.merchantNo) return null;
+  const words = l.description.toUpperCase().replace(/\s+/g, ' ').trim();
+  return `mn|${seen.acquirerCode}|${seen.merchantNo}|${words}|${l.bookedOn}`;
+}
+
 /**
  * Join a credit with the charge(s) the bank took back against it.
  *
  * Only that shape. See the header: two credits sharing a reference are two
- * payouts, and the real file contains both traps.
+ * payouts, and the real file contains both traps. `rules` lets lines with no
+ * reference join on the acquirer and merchant they are recognised as; without
+ * rules such lines stand alone.
  */
-export function groupBankMovements(lines: BankLine[]): BankMovement[] {
+export function groupBankMovements(lines: BankLine[], rules: BankRecognitionRule[] = []): BankMovement[] {
   const single = (l: BankLine): BankMovement => ({
     lines: [l], bookedOn: l.bookedOn, description: l.description,
     reference: l.reference, amountSen: l.amountSen, chargeSen: 0,
   });
 
-  /* Index by reference+date, but only where there IS a reference — a blank one
-     is not a thing two lines can have in common. */
   const buckets = new Map<string, BankLine[]>();
   for (const l of lines) {
-    if (!l.reference) continue;
-    const key = `${l.reference}|${l.bookedOn}`;
+    const key = joinKey(l, rules);
+    if (!key) continue;
     const at = buckets.get(key);
     if (at) at.push(l); else buckets.set(key, [l]);
   }
