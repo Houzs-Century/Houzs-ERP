@@ -46,7 +46,7 @@ import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { parseProvenanceNote } from '../shared/transfer-vocabulary';
-import { chunkIn } from '../lib/paginate-all';
+import { chunkIn, paginateAll } from '../lib/paginate-all';
 import type { Env, Variables } from '../env';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { fmtSen } from '../shared/format';
@@ -541,6 +541,17 @@ documentFlow.get('/:type/:id', async (c) => {
   // here and threaded into both the consignment builder and the SO-root filter.
   const cid = activeCompanyId(c);
 
+  /* Every id-list read below goes through here: batched by URL bytes AND paged
+     past the 1000-row cap (chunkIn). A failed batch is logged and returned in the
+     response as `degraded`, so a map built on a partial read says so instead of
+     painting "Not created" over a real receipt. Callers `.order('id')` + `.range`. */
+  const degraded: string[] = [];
+  const readIn = async (label: string, ids: readonly string[], make: (b: string[], from: number, to: number) => PromiseLike<any>): Promise<any[]> => {
+    const { data, error } = await chunkIn<any>(ids, make);
+    if (error) { degraded.push(label); console.error(`[document-flow] ${label} read failed:`, error.message); }
+    return data;
+  };
+
   // Consignment docs form their own self-contained family graph.
   if (CONSIGNMENT_TYPES.includes(type)) {
     return c.json(await buildConsignmentFlow(sb, c, type, id, cid ?? null));
@@ -606,25 +617,24 @@ documentFlow.get('/:type/:id', async (c) => {
       if (poHdr) {
         nodes.set(poKey, { key: poKey, type: 'po', id: expandPoId, label: poHdr.po_number ?? expandPoId, status: poHdr.status ?? null, isAnchor: poKey === anchorKey });
       }
-      const { data: poLines } = await scopeToCompany(sb.from('purchase_order_items').select('id, qty').eq('purchase_order_id', expandPoId), c);
+      const poLines = await readIn('orphan purchase_order_items', [expandPoId], (b, f, t) =>
+        scopeToCompany(sb.from('purchase_order_items').select('id, qty').in('purchase_order_id', b), c).order('id').range(f, t));
       const poItemQty = new Map<string, { poId: string; qty: number }>();
-      for (const l of (poLines ?? []) as any[]) poItemQty.set(l.id, { poId: expandPoId, qty: Number(l.qty ?? 0) });
+      for (const l of poLines) poItemQty.set(l.id, { poId: expandPoId, qty: Number(l.qty ?? 0) });
       const poItemIds = [...poItemQty.keys()];
 
       /* GRNs reached by this PO's LINES (a supplier multi-receive headers one PO
          but receives many) ∪ the header FK, so a cross-PO receipt shows and a
          receipt-less header GRN still does. Mirrors the main builder's section 6. */
-      const grnLines = poItemIds.length
-        ? (await sb.from('grn_items').select('grn_id, purchase_order_item_id, qty').in('purchase_order_item_id', poItemIds)).data ?? []
-        : [];
+      const grnLines = await readIn('orphan grn_items', poItemIds, (b, f, t) =>
+        sb.from('grn_items').select('id, grn_id, purchase_order_item_id, qty').in('purchase_order_item_id', b).order('id').range(f, t));
       const grnById = new Map<string, any>();
       const { data: grnHdrs } = await scopeToCompany(sb.from('grns').select('id, grn_number, status, purchase_order_id').eq('purchase_order_id', expandPoId), c);
       for (const g of (grnHdrs ?? []) as any[]) grnById.set(g.id, g);
       const missingGrnIds = uniq((grnLines as any[]).map((l) => l.grn_id)).filter((gid) => !grnById.has(gid));
-      if (missingGrnIds.length) {
-        const { data: grnByLine, error: grnByLineErr } = await scopeToCompany(sb.from('grns').select('id, grn_number, status, purchase_order_id').in('id', missingGrnIds), c);
-        // Advisory map: a failed header fetch just omits those line-linked GRN nodes.
-        if (!grnByLineErr) for (const g of (grnByLine ?? []) as any[]) if (!grnById.has(g.id)) grnById.set(g.id, g);
+      for (const g of await readIn('orphan grns(by line)', missingGrnIds, (b, f, t) =>
+        scopeToCompany(sb.from('grns').select('id, grn_number, status, purchase_order_id').in('id', b), c).order('id').range(f, t))) {
+        if (!grnById.has(g.id)) grnById.set(g.id, g);
       }
       const grnIds = [...grnById.keys()];
       const poGrnCoverage = derivePoGrnCoverage(poItemQty, grnLines as any[]);
@@ -646,35 +656,36 @@ documentFlow.get('/:type/:id', async (c) => {
       if (grnIds.length) {
         /* Multi-GRN PIs — same union as the main builder: a PI reaches this
            family through its LINES even when its header names another note. */
-        const { data: myGrnItems } = await sb.from('grn_items').select('id, grn_id').in('grn_id', grnIds);
-        const myGrnItemIds = ((myGrnItems ?? []) as Array<{ id: string }>).map((r) => r.id);
-        const grnIdByItem = new Map(((myGrnItems ?? []) as Array<{ id: string; grn_id: string }>).map((r) => [r.id, r.grn_id]));
-        const { data: piLineLinks } = myGrnItemIds.length
-          ? await sb.from('purchase_invoice_items').select('purchase_invoice_id, grn_item_id').in('grn_item_id', myGrnItemIds)
-          : { data: [] as any[] };
+        const myGrnItems = await readIn('orphan grn_items(by grn)', grnIds, (b, f, t) =>
+          sb.from('grn_items').select('id, grn_id').in('grn_id', b).order('id').range(f, t));
+        const myGrnItemIds = (myGrnItems as Array<{ id: string }>).map((r) => r.id);
+        const grnIdByItem = new Map((myGrnItems as Array<{ id: string; grn_id: string }>).map((r) => [r.id, r.grn_id]));
+        const piLineLinks = await readIn('orphan purchase_invoice_items', myGrnItemIds, (b, f, t) =>
+          sb.from('purchase_invoice_items').select('id, purchase_invoice_id, grn_item_id').in('grn_item_id', b).order('id').range(f, t));
         const notesByPi = new Map<string, Set<string>>();
-        for (const l of ((piLineLinks ?? []) as any[])) {
+        for (const l of piLineLinks) {
           const gid = l.grn_item_id ? grnIdByItem.get(l.grn_item_id) : undefined;
           if (!gid) continue;
           const set = notesByPi.get(l.purchase_invoice_id) ?? new Set<string>();
           set.add(gid);
           notesByPi.set(l.purchase_invoice_id, set);
         }
-        const { data: pisByHeader } = await sb.from('purchase_invoices').select('id, invoice_number, status, grn_id').in('grn_id', grnIds);
-        const seen = new Set((pisByHeader ?? []).map((p: any) => p.id));
+        const pisByHeader = await readIn('orphan purchase_invoices(header)', grnIds, (b, f, t) =>
+          sb.from('purchase_invoices').select('id, invoice_number, status, grn_id').in('grn_id', b).order('id').range(f, t));
+        const seen = new Set(pisByHeader.map((p: any) => p.id));
         const extraIds = [...notesByPi.keys()].filter((pid) => !seen.has(pid));
-        const { data: pisByLine } = extraIds.length
-          ? await sb.from('purchase_invoices').select('id, invoice_number, status, grn_id').in('id', extraIds)
-          : { data: [] as any[] };
-        for (const p of [...((pisByHeader ?? []) as any[]), ...((pisByLine ?? []) as any[])]) {
+        const pisByLine = await readIn('orphan purchase_invoices(by line)', extraIds, (b, f, t) =>
+          sb.from('purchase_invoices').select('id, invoice_number, status, grn_id').in('id', b).order('id').range(f, t));
+        for (const p of [...pisByHeader, ...pisByLine]) {
           const k = keyOf('pi', p.id);
           nodes.set(k, { key: k, type: 'pi', id: p.id, label: p.invoice_number ?? p.id, status: p.status ?? null, isAnchor: false });
           const notes = notesByPi.get(p.id);
           if (notes?.size) for (const gid of notes) addEdge(keyOf('grn', gid), k, 'full');
           else if (p.grn_id) addEdge(keyOf('grn', p.grn_id), k, 'full');
         }
-        const { data: prs } = await sb.from('purchase_returns').select('id, return_number, status, grn_id').in('grn_id', grnIds);
-        for (const p of (prs ?? []) as any[]) {
+        const prs = await readIn('orphan purchase_returns', grnIds, (b, f, t) =>
+          sb.from('purchase_returns').select('id, return_number, status, grn_id').in('grn_id', b).order('id').range(f, t));
+        for (const p of prs) {
           const k = keyOf('pr', p.id);
           nodes.set(k, { key: k, type: 'pr', id: p.id, label: p.return_number ?? p.id, status: p.status ?? null, isAnchor: false });
           if (p.grn_id) addEdge(keyOf('grn', p.grn_id), k, 'full');
@@ -697,7 +708,7 @@ documentFlow.get('/:type/:id', async (c) => {
         }));
       }
     }
-    return c.json({ nodes: [...nodes.values()], edges, rootSos, amendments: [], poAmendments });
+    return c.json({ nodes: [...nodes.values()], edges, rootSos, amendments: [], poAmendments, degraded });
   }
 
   // ── 1. SO headers + lines ───────────────────────────────────────────────
@@ -862,9 +873,8 @@ documentFlow.get('/:type/:id', async (c) => {
   //       authoritative record, not a guess — so note-linked POs are surfaced as
   //       REAL nodes, and their GRN/PI chain expands (grn_items line link ∪ the
   //       header FK) below exactly like a so_item_id-linked PO's does.
-  const poItemLinks = soItemIds.length
-    ? (await sb.from('purchase_order_items').select('id, purchase_order_id, so_item_id, qty').in('so_item_id', soItemIds)).data ?? []
-    : [];
+  const poItemLinks = await readIn('purchase_order_items(by so item)', soItemIds, (b, f, t) =>
+    sb.from('purchase_order_items').select('id, purchase_order_id, so_item_id, qty').in('so_item_id', b).order('id').range(f, t));
 
   /* (b) Note-recorded links. Notes exist in BOTH shapes and both are real:
      the writer stamps the SO doc number VERBATIM (mfg-purchase-orders.ts:
@@ -888,9 +898,10 @@ documentFlow.get('/:type/:id', async (c) => {
   const noteEdges: Array<{ soDoc: string; poId: string }> = [];
   const notePoIds: string[] = [];
   if (cid != null && bareTokens.length) {
-    const { data: notedPos } = await sb.from('purchase_orders')
-      .select('id, notes').eq('company_id', cid).not('notes', 'is', null);
-    for (const p of (notedPos ?? []) as any[]) {
+    const { data: notedPos, error: notedErr } = await paginateAll<any>((f, t) => sb.from('purchase_orders')
+      .select('id, notes').eq('company_id', cid).not('notes', 'is', null).order('id').range(f, t));
+    if (notedErr) { degraded.push('purchase_orders(notes)'); console.error('[document-flow] purchase_orders(notes) read failed:', notedErr.message); }
+    for (const p of notedPos ?? []) {
       const note = String(p.notes ?? '');
       let matched = false;
       for (let i = 0; i < rootSos.length; i++) {
@@ -915,15 +926,14 @@ documentFlow.get('/:type/:id', async (c) => {
      its real provenance. Bounded by notePoIds (POs whose note already matched a
      root SO), so this adds one small read only when notes matched at all. */
   if (notePoIds.length) {
-    const { data: fkRows, error: fkErr } = await sb.from('purchase_order_items')
-      .select('purchase_order_id')
-      .in('purchase_order_id', uniq(notePoIds))
-      .not('so_item_id', 'is', null);
+    const fkRows = await readIn('purchase_order_items(fk-over-note)', uniq(notePoIds), (b, f, t) =>
+      sb.from('purchase_order_items').select('id, purchase_order_id').in('purchase_order_id', b)
+        .not('so_item_id', 'is', null).order('id').range(f, t));
     /* On a read failure leave the note edges untouched rather than guess — the
        map is advisory and this FK-over-note guard is an enhancement, not a
        correctness gate. */
-    if (!fkErr) {
-      const fkLinkedPoIds = new Set((fkRows ?? []).map((r: any) => r.purchase_order_id as string));
+    if (!degraded.includes('purchase_order_items(fk-over-note)')) {
+      const fkLinkedPoIds = new Set(fkRows.map((r: any) => r.purchase_order_id as string));
       if (fkLinkedPoIds.size) {
         const kept = noteEdges.filter((e) => !fkLinkedPoIds.has(e.poId));
         noteEdges.length = 0;
@@ -936,8 +946,9 @@ documentFlow.get('/:type/:id', async (c) => {
 
   const poIds = uniq([...(poItemLinks as any[]).map((l) => l.purchase_order_id), ...notePoIds]);
   if (poIds.length) {
-    const { data: pos } = await sb.from('purchase_orders').select('id, po_number, status').in('id', poIds);
-    for (const p of (pos ?? []) as any[]) {
+    const pos = await readIn('purchase_orders', poIds, (b, f, t) =>
+      sb.from('purchase_orders').select('id, po_number, status').in('id', b).order('id').range(f, t));
+    for (const p of pos) {
       const k = keyOf('po', p.id);
       nodes.set(k, { key: k, type: 'po', id: p.id, label: p.po_number ?? p.id, status: p.status ?? null, isAnchor: k === anchorKey });
     }
@@ -965,27 +976,23 @@ documentFlow.get('/:type/:id', async (c) => {
      ones: a note-linked PO contributes no so_item_id line, and a supplier
      multi-receive headers one PO while receiving many, so both the header FK and
      the grn_items line link are real and only their UNION is complete. */
-  const allPoItemRows = poIds.length
-    ? (await sb.from('purchase_order_items').select('id, purchase_order_id, qty').in('purchase_order_id', poIds)).data ?? []
-    : [];
+  const allPoItemRows = await readIn('purchase_order_items', poIds, (b, f, t) =>
+    sb.from('purchase_order_items').select('id, purchase_order_id, qty').in('purchase_order_id', b).order('id').range(f, t));
   const poItemQtyAll = new Map<string, { poId: string; qty: number }>();
-  for (const r of (allPoItemRows as any[])) poItemQtyAll.set(r.id, { poId: r.purchase_order_id, qty: Number(r.qty ?? 0) });
+  for (const r of allPoItemRows) poItemQtyAll.set(r.id, { poId: r.purchase_order_id, qty: Number(r.qty ?? 0) });
   const allPoItemIds = [...poItemQtyAll.keys()];
-  const grnLineLinks = allPoItemIds.length
-    ? (await sb.from('grn_items').select('id, grn_id, purchase_order_item_id, qty').in('purchase_order_item_id', allPoItemIds)).data ?? []
-    : [];
-  const grnByHeader = poIds.length
-    ? (await sb.from('grns').select('id, grn_number, status, purchase_order_id').in('purchase_order_id', poIds)).data ?? []
-    : [];
+  const grnLineLinks = await readIn('grn_items', allPoItemIds, (b, f, t) =>
+    sb.from('grn_items').select('id, grn_id, purchase_order_item_id, qty').in('purchase_order_item_id', b).order('id').range(f, t));
+  const grnByHeader = await readIn('grns(header)', poIds, (b, f, t) =>
+    sb.from('grns').select('id, grn_number, status, purchase_order_id').in('purchase_order_id', b).order('id').range(f, t));
   const grnById = new Map<string, any>();
-  for (const g of (grnByHeader as any[])) grnById.set(g.id, g);
+  for (const g of grnByHeader) grnById.set(g.id, g);
   // A GRN reached only by line link (its header names another PO) still needs
   // its header row for the node label/status.
   const missingGrnIds = uniq((grnLineLinks as any[]).map((l) => l.grn_id)).filter((gid) => !grnById.has(gid));
-  if (missingGrnIds.length) {
-    const { data: grnByLine, error: grnByLineErr } = await sb.from('grns').select('id, grn_number, status, purchase_order_id').in('id', missingGrnIds);
-    // Advisory map: a failed header fetch just omits those line-linked GRN nodes.
-    if (!grnByLineErr) for (const g of (grnByLine ?? []) as any[]) if (!grnById.has(g.id)) grnById.set(g.id, g);
+  for (const g of await readIn('grns(by line)', missingGrnIds, (b, f, t) =>
+    sb.from('grns').select('id, grn_number, status, purchase_order_id').in('id', b).order('id').range(f, t))) {
+    if (!grnById.has(g.id)) grnById.set(g.id, g);
   }
   const grnItemMeta = new Map<string, { grnId: string; qty: number }>();
   for (const l of (grnLineLinks as any[])) grnItemMeta.set(l.id, { grnId: l.grn_id, qty: Number(l.qty ?? 0) });
@@ -1020,11 +1027,10 @@ documentFlow.get('/:type/:id', async (c) => {
        FK — a header-only match still appears (e.g. a PI whose lines were all
        deleted), and a PI whose header points at another family's note is no
        longer invisible here. */
-    const piLineLinks = grnItemIds.length
-      ? (await sb.from('purchase_invoice_items').select('purchase_invoice_id, grn_item_id, qty').in('grn_item_id', grnItemIds)).data ?? []
-      : [];
+    const piLineLinks = await readIn('purchase_invoice_items', grnItemIds, (b, f, t) =>
+      sb.from('purchase_invoice_items').select('id, purchase_invoice_id, grn_item_id, qty').in('grn_item_id', b).order('id').range(f, t));
     const grnToPi = new Map<string, { childQty: number; parentItems: Set<string> }>();
-    for (const l of (piLineLinks as any[])) {
+    for (const l of piLineLinks) {
       const gm = l.grn_item_id ? grnItemMeta.get(l.grn_item_id) : undefined;
       if (!gm) continue;
       const k = `${gm.grnId}|${l.purchase_invoice_id}`;
@@ -1033,14 +1039,14 @@ documentFlow.get('/:type/:id', async (c) => {
       agg.parentItems.add(l.grn_item_id);
       grnToPi.set(k, agg);
     }
-    const piIdsFromLines = uniq((piLineLinks as any[]).map((l) => l.purchase_invoice_id));
-    const { data: pisByHeader } = await sb.from('purchase_invoices').select('id, invoice_number, status, grn_id').in('grn_id', grnIds);
-    const knownPiIds = new Set((pisByHeader ?? []).map((p: any) => p.id));
+    const piIdsFromLines = uniq(piLineLinks.map((l: any) => l.purchase_invoice_id));
+    const pisByHeader = await readIn('purchase_invoices(header)', grnIds, (b, f, t) =>
+      sb.from('purchase_invoices').select('id, invoice_number, status, grn_id').in('grn_id', b).order('id').range(f, t));
+    const knownPiIds = new Set(pisByHeader.map((p: any) => p.id));
     const missingPiIds = piIdsFromLines.filter((pid) => !knownPiIds.has(pid));
-    const { data: pisByLine } = missingPiIds.length
-      ? await sb.from('purchase_invoices').select('id, invoice_number, status, grn_id').in('id', missingPiIds)
-      : { data: [] as any[] };
-    const pis = [...((pisByHeader ?? []) as any[]), ...((pisByLine ?? []) as any[])];
+    const pisByLine = await readIn('purchase_invoices(by line)', missingPiIds, (b, f, t) =>
+      sb.from('purchase_invoices').select('id, invoice_number, status, grn_id').in('id', b).order('id').range(f, t));
+    const pis = [...pisByHeader, ...pisByLine];
     for (const p of pis) {
       const k = keyOf('pi', p.id);
       nodes.set(k, { key: k, type: 'pi', id: p.id, label: p.invoice_number ?? p.id, status: p.status ?? null, isAnchor: k === anchorKey });
@@ -1066,14 +1072,13 @@ documentFlow.get('/:type/:id', async (c) => {
   // mirroring how a Delivery Return hangs off its DO. Coverage compares returned
   // qty to the GRN line qty.
   if (grnIds.length) {
-    const { data: prByHeader } = await sb.from('purchase_returns')
-      .select('id, return_number, status, grn_id').in('grn_id', grnIds);
-    const prIds = uniq((prByHeader ?? []).map((p: any) => p.id));
-    const prLineLinks = prIds.length
-      ? (await sb.from('purchase_return_items').select('purchase_return_id, grn_item_id, qty_returned').in('purchase_return_id', prIds)).data ?? []
-      : [];
+    const prByHeader = await readIn('purchase_returns', grnIds, (b, f, t) =>
+      sb.from('purchase_returns').select('id, return_number, status, grn_id').in('grn_id', b).order('id').range(f, t));
+    const prIds = uniq(prByHeader.map((p: any) => p.id));
+    const prLineLinks = await readIn('purchase_return_items', prIds, (b, f, t) =>
+      sb.from('purchase_return_items').select('id, purchase_return_id, grn_item_id, qty_returned').in('purchase_return_id', b).order('id').range(f, t));
     const grnToPr = new Map<string, { childQty: number; parentItems: Set<string> }>(); // `${grnId}|${prId}`
-    for (const l of (prLineLinks as any[])) {
+    for (const l of prLineLinks) {
       const gm = l.grn_item_id ? grnItemMeta.get(l.grn_item_id) : undefined;
       if (!gm) continue;
       const k = `${gm.grnId}|${l.purchase_return_id}`;
@@ -1082,7 +1087,7 @@ documentFlow.get('/:type/:id', async (c) => {
       agg.parentItems.add(l.grn_item_id);
       grnToPr.set(k, agg);
     }
-    for (const p of (prByHeader ?? []) as any[]) {
+    for (const p of prByHeader) {
       const k = keyOf('pr', p.id);
       nodes.set(k, { key: k, type: 'pr', id: p.id, label: p.return_number ?? p.id, status: p.status ?? null, isAnchor: k === anchorKey });
       if (p.grn_id) {
@@ -1140,7 +1145,7 @@ documentFlow.get('/:type/:id', async (c) => {
     }));
   }
 
-  return c.json({ nodes: [...nodes.values()], edges, rootSos, amendments, poAmendments });
+  return c.json({ nodes: [...nodes.values()], edges, rootSos, amendments, poAmendments, degraded });
 });
 
 export default documentFlow;
