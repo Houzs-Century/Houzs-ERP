@@ -7,6 +7,9 @@ const EARTH_KM = 6371;
 // ponytail: a hop faster than this is treated as a GPS jump and skipped; a
 // road-snapped distance (map-matching API) if straight-line km proves too low.
 const MAX_KMH = 150;
+// ponytail: a hop under this is parked-GPS drift (288 fixes/day x a few metres
+// adds phantom km); an ignition-aware filter if crawling traffic gets lost.
+const MIN_HOP_KM = 0.05;
 
 function haversineKm(a: Fix, b: Fix): number {
   const rad = Math.PI / 180;
@@ -25,7 +28,7 @@ export function kmFromFixes(fixes: Fix[]): number {
   for (let i = 1; i < sorted.length; i++) {
     const d = haversineKm(sorted[i - 1], sorted[i]);
     const hours = (Date.parse(sorted[i].recorded_at) - Date.parse(sorted[i - 1].recorded_at)) / 3_600_000;
-    if (hours <= 0 || d / hours > MAX_KMH) continue;
+    if (hours <= 0 || d < MIN_HOP_KM || d / hours > MAX_KMH) continue;
     km += d;
   }
   return Math.round(km * 10) / 10;
@@ -36,8 +39,10 @@ export function costSen(km: number, costPerKmSen: number | null): number | null 
   return costPerKmSen == null ? null : Math.round(km * costPerKmSen);
 }
 
-/** The UTC window for one Malaysia (UTC+8) calendar day. */
-export function myDayWindow(date: string): { from: string; to: string } {
+/** The UTC window for one Malaysia (UTC+8) calendar day; null for a date that
+ *  does not exist (2026-13-45 passes a shape check). */
+export function myDayWindow(date: string): { from: string; to: string } | null {
   const start = Date.parse(`${date}T00:00:00+08:00`);
+  if (Number.isNaN(start)) return null;
   return { from: new Date(start).toISOString(), to: new Date(start + 86_400_000).toISOString() };
 }

@@ -366,8 +366,9 @@ lorries.get('/positions/latest', async (c) => {
 // 15 Oct 2026 only (the poller's start), so earlier days return no rows.
 lorries.get('/km-cost', async (c) => {
   const date = c.req.query('date') ?? new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
-  if (!ISO_DATE.test(date)) return c.json({ error: 'invalid_date', reason: 'date must be YYYY-MM-DD' }, 400);
-  const { from, to } = myDayWindow(date);
+  const day = ISO_DATE.test(date) ? myDayWindow(date) : null;
+  if (!day) return c.json({ error: 'invalid_date', reason: 'date must be YYYY-MM-DD' }, 400);
+  const { from, to } = day;
   const sb = c.get('supabase');
   // ~288 fixes per lorry per day, so this is several pages past the 1000-row cap.
   const { data, error } = await paginateAll<Fix & { lorry_id: string }>((f, t) => sb.from('lorry_positions')

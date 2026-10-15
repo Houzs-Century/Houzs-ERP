@@ -12,6 +12,9 @@ describe('kmFromFixes', () => {
     // 3.0 -> 3.5 in 5 min is ~667 km/h; the hop back also jumps.
     expect(kmFromFixes([fix(3.0, 0), fix(3.5, 5), fix(3.01, 10)])).toBe(0);
   });
+  it('ignores parked-GPS drift under 50 m', () => {
+    expect(kmFromFixes([fix(3.0, 0), fix(3.0003, 5), fix(3.0, 10)])).toBe(0);
+  });
   it('is 0 for fewer than two fixes', () => {
     expect(kmFromFixes([])).toBe(0);
     expect(kmFromFixes([fix(3.0, 0)])).toBe(0);
@@ -27,4 +30,5 @@ describe('myDayWindow', () => {
   it('a Malaysia day starts 16:00 UTC the day before', () => {
     expect(myDayWindow('2026-10-15')).toEqual({ from: '2026-10-14T16:00:00.000Z', to: '2026-10-15T16:00:00.000Z' });
   });
+  it('null for a date that does not exist', () => expect(myDayWindow('2026-13-45')).toBeNull());
 });
