@@ -690,7 +690,6 @@ export type SendDeliveryMessagesBody = {
   docNos: string[];
   kind?: SendMessageKind;
   driverInfo?: { driverName: string; driverContact: string; driverIc: string; carPlate: string; deliveryTime: string };
-  postpone?: { reason: string; newDate: string };
 };
 export function useSendDeliveryMessages() {
   const qc = useQueryClient();
