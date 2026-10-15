@@ -70,20 +70,16 @@ export const extractBillsHandler = async (c: any) => {
     }
   }
 
-  /* HC-0006: keep each uploaded original + its scan_files row BEFORE the read.
+  /* HC-0006: keep each uploaded original + its scan_files row, started with the reads so it adds no wait.
      A fromRequest read is skipped: its files are already kept by the request. */
-  if (typeof body.fromRequest !== 'string' || !body.fromRequest.trim()) {
-    const uploadedBy = (c.get('user') as { id?: string } | undefined)?.id ?? null;
-    for (const b of bills) {
-      for (const f of b.files) {
-        const bytes = base64ToBytes(String(f.dataBase64 ?? ''));
-        if (!bytes) continue;
-        await keepScanFile(c.env, c.get('supabase'), {
-          kind: 'pv', companyId: co.companyId, buf: bytes.buffer as ArrayBuffer, mime: String(f.mime ?? ''), uploadedBy, key: null,
-        });
-      }
-    }
-  }
+  const uploadedBy = (c.get('user') as { id?: string } | undefined)?.id ?? null;
+  const skipKeep = typeof body.fromRequest === 'string' && body.fromRequest.trim() !== '';
+  const kept = skipKeep ? Promise.resolve([]) : Promise.all(bills.flatMap((b) => b.files.map((f: { mime?: unknown; dataBase64?: unknown }) => {
+    const bytes = base64ToBytes(String(f.dataBase64 ?? ''));
+    return bytes ? keepScanFile(c.env, c.get('supabase'), {
+      kind: 'pv', companyId: co.companyId, buf: bytes.buffer as ArrayBuffer, mime: String(f.mime ?? ''), uploadedBy, key: null,
+    }) : null;
+  })));
   timer.mark('upload');
   /* Suppliers once for the whole batch — matching is per bill, in code. */
   const sb = c.get('supabase');
@@ -115,13 +111,18 @@ export const extractBillsHandler = async (c: any) => {
   };
 
   timer.mark('prep');
-  const read: Array<Awaited<ReturnType<typeof extractOneBill>>> = [];
-  for (const [i, b] of bills.entries()) {
-    const files = (b.files as Array<{ name?: unknown; mime?: unknown; dataBase64?: unknown }>).map((f) => ({
-      name: String(f.name ?? `file-${i}`), mime: String(f.mime ?? ''), dataBase64: String(f.dataBase64 ?? ''),
-    }));
-    read.push(await extractOneBill(apiKey, files));
-  }
+  /* Bills are read together, four at a time: serial reads were the batch's whole wait. */
+  const read: Array<Awaited<ReturnType<typeof extractOneBill>>> = new Array(bills.length);
+  let nextBill = 0;
+  await Promise.all(Array.from({ length: Math.min(4, bills.length) }, async () => {
+    for (let i = nextBill++; i < bills.length; i = nextBill++) {
+      const files = (bills[i]!.files as Array<{ name?: unknown; mime?: unknown; dataBase64?: unknown }>).map((f) => ({
+        name: String(f.name ?? `file-${i}`), mime: String(f.mime ?? ''), dataBase64: String(f.dataBase64 ?? ''),
+      }));
+      read[i] = await extractOneBill(apiKey, files);
+    }
+  }));
+  await kept; // originals are kept alongside the reads; keepScanFile never throws
   timer.mark('model');
 
   /* The events the bills could be for (owner 2026-09-30: ocr 要有办法 detect
