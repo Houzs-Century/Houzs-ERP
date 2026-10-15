@@ -8,19 +8,21 @@
    arrive. Seen on HC-0108 (Sim, 15 Oct): PO-9630 RECEIVED with line
    5535-L(RHF) at received 0 of 1.
 
-   THE RULE IS THE APP'S OWN. postGrnAndRollup (grns.ts) derives both numbers
-   from live GRN lines on every receipt:
-     received_qty = SUM(max(0, qty_accepted - returned_qty)) over GRN lines
-                    whose GRN is not DRAFT or CANCELLED;
-     status       = every line received >= qty ? RECEIVED
-                  : any line received > 0     ? PARTIALLY_RECEIVED
-                  : SUBMITTED.
-   This script applies exactly that rule to the RECEIVED POs it disagrees
-   with, and to nothing else. ON_HOLD and CANCELLED are never touched.
+   THE RULE IS THE APP'S OWN, applied to the line counts AS STORED.
+   postGrnAndRollup (grns.ts) sets the header from the lines on every receipt:
+     every line received_qty >= qty ? RECEIVED
+     : any line received_qty > 0    ? PARTIALLY_RECEIVED
+     : SUBMITTED.
+   received_qty itself is NOT recounted here. The first plan (15 Oct) showed
+   many RECEIVED lines whose received_qty has no ERP GRN line behind it
+   (receipts that predate ERP GRNs); recounting from GRN lines would zero those
+   and reopen goods that really arrived. Only the header that contradicts its
+   own stored lines is wrong, so only the header is written.
+   ON_HOLD and CANCELLED are never touched.
 
    MODE=plan (default) lists every such PO with the short lines and writes
-   nothing. MODE=apply needs CONFIRM="I HAVE REVIEWED THE DRY-RUN", fixes one
-   PO per transaction, then re-reads each PO on a fresh connection.
+   nothing. MODE=apply needs CONFIRM="I HAVE REVIEWED THE DRY-RUN", writes one
+   PO header at a time, then re-reads each PO on a fresh connection.
 
    RE-RUN: inert. Keyed on status = 'RECEIVED' with a line short of qty, which
    the repair turns into PARTIALLY_RECEIVED or SUBMITTED. */
@@ -41,33 +43,25 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
   process.exit(2);
 }
 
-/* One row per line of every RECEIVED PO that has a line short of qty, with the
-   live receipt the app would recount it to. */
+/* One row per line of every RECEIVED PO that has a line short of qty. */
 const SHORT_POS = `
-  WITH live AS (
-    SELECT poi.id, poi.purchase_order_id, poi.item_code, poi.qty::numeric AS qty,
-           COALESCE(poi.received_qty, 0)::numeric AS received_qty,
-           COALESCE((SELECT SUM(GREATEST(0, gi.qty_accepted - COALESCE(gi.returned_qty, 0)))
-                       FROM scm.grn_items gi JOIN scm.grns g ON g.id = gi.grn_id
-                      WHERE gi.purchase_order_item_id = poi.id
-                        AND g.status NOT IN ('DRAFT', 'CANCELLED')), 0)::numeric AS live_qty
-      FROM scm.purchase_order_items poi
-  )
   SELECT po.id::text AS po_id, po.po_number, po.received_at,
-         l.id::text AS line_id, l.item_code, l.qty, l.received_qty, l.live_qty
-    FROM scm.purchase_orders po JOIN live l ON l.purchase_order_id = po.id
+         poi.id::text AS line_id, poi.item_code, poi.qty::numeric AS qty,
+         COALESCE(poi.received_qty, 0)::numeric AS received_qty
+    FROM scm.purchase_orders po JOIN scm.purchase_order_items poi ON poi.purchase_order_id = po.id
    WHERE po.company_id = $1 AND po.status = 'RECEIVED'
-     AND EXISTS (SELECT 1 FROM live s WHERE s.purchase_order_id = po.id AND s.live_qty < s.qty)
-   ORDER BY po.po_number, l.item_code`;
+     AND EXISTS (SELECT 1 FROM scm.purchase_order_items s
+                  WHERE s.purchase_order_id = po.id AND COALESCE(s.received_qty, 0) < s.qty)
+   ORDER BY po.po_number, poi.item_code`;
 
 function group(rows) {
   const pos = new Map();
   for (const r of rows) {
     if (!pos.has(r.po_id)) pos.set(r.po_id, { id: r.po_id, no: r.po_number, receivedAt: r.received_at, lines: [] });
-    pos.get(r.po_id).lines.push({ id: r.line_id, code: r.item_code, qty: Number(r.qty), recv: Number(r.received_qty), live: Number(r.live_qty) });
+    pos.get(r.po_id).lines.push({ id: r.line_id, code: r.item_code, qty: Number(r.qty), recv: Number(r.received_qty) });
   }
   for (const p of pos.values()) {
-    p.status = p.lines.some((l) => l.live > 0) ? 'PARTIALLY_RECEIVED' : 'SUBMITTED';
+    p.status = p.lines.some((l) => l.recv > 0) ? 'PARTIALLY_RECEIVED' : 'SUBMITTED';
   }
   return [...pos.values()];
 }
@@ -80,9 +74,8 @@ async function main() {
   for (const p of pos) {
     note(`  ${p.no}  RECEIVED -> ${p.status}  (received_at ${p.receivedAt?.toISOString?.() ?? p.receivedAt ?? '-'})`);
     for (const l of p.lines) {
-      const flag = l.live < l.qty ? 'SHORT' : 'ok   ';
-      const drift = l.recv !== l.live ? `  received_qty ${l.recv} -> ${l.live}` : '';
-      note(`      ${flag} ${String(l.code ?? '-').padEnd(24)} ${l.live} of ${l.qty}${drift}`);
+      const flag = l.recv < l.qty ? 'SHORT' : 'ok   ';
+      note(`      ${flag} ${String(l.code ?? '-').padEnd(24)} ${l.recv} of ${l.qty}`);
     }
   }
   if (!pos.length) { note(`\nNothing to repair.`); await sql.end({ timeout: 5 }); return; }
@@ -96,18 +89,11 @@ async function main() {
   note(`\n=== REPAIRING ${pos.length} PO(S) ===`);
   let wrote = 0;
   for (const p of pos) {
-    const done = await sql.begin(async (tx) => {
-      for (const l of p.lines) {
-        if (l.recv !== l.live) {
-          await tx.unsafe(`UPDATE scm.purchase_order_items SET received_qty = $2 WHERE id = $1`, [l.id, l.live]);
-        }
-      }
-      /* The status guard makes a PO someone changed since the plan read a no-op. */
-      return tx.unsafe(
-        `UPDATE scm.purchase_orders SET status = $2, received_at = NULL, updated_at = now()
-          WHERE id = $1 AND company_id = $3 AND status = 'RECEIVED'
-         RETURNING id`, [p.id, p.status, CO]);
-    });
+    /* The status guard makes a PO someone changed since the plan read a no-op. */
+    const done = await sql.unsafe(
+      `UPDATE scm.purchase_orders SET status = $2, received_at = NULL, updated_at = now()
+        WHERE id = $1 AND company_id = $3 AND status = 'RECEIVED'
+       RETURNING id`, [p.id, p.status, CO]);
     wrote += done.length;
     note(`  ${done.length ? 'OK  ' : 'SKIP'} ${p.no} -> ${p.status}`);
   }
