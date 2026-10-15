@@ -1119,11 +1119,15 @@ export function DeliveryPlanningBoard({
       filterType: 'date', dateValue: (o) => (o.row_type !== 'so' ? null : o.processing_date),
     },
     {
-      key: 'customer_delivery_date', label: 'Expected Delivery Date', width: 150, sortable: true,
-      accessor: (o) => detail(fmtDateOrDash(o.customer_delivery_date)),
-      searchValue: (o) => o.customer_delivery_date ?? '',
-      sortFn: (a, b) => String(a.customer_delivery_date ?? '').localeCompare(String(b.customer_delivery_date ?? '')),
-      filterType: 'date', dateValue: (o) => o.customer_delivery_date,
+      /* BUG-51 repoint (owner 2026-10-15): the REAL AutoCount sales-exemption
+         expiry, not the customer delivery date. SO rows only; blank off-book and
+         on synthetic rows. Grid key kept as customer_delivery_date so saved
+         layouts keep the column. */
+      key: 'customer_delivery_date', label: 'Sales Exemption Expiry Date', width: 170, sortable: true,
+      accessor: (o) => detail(fmtDateOrDash(o.ac_sales_exemption_expiry)),
+      searchValue: (o) => o.ac_sales_exemption_expiry ?? '',
+      sortFn: (a, b) => String(a.ac_sales_exemption_expiry ?? '').localeCompare(String(b.ac_sales_exemption_expiry ?? '')),
+      filterType: 'date', dateValue: (o) => o.ac_sales_exemption_expiry,
     },
     /* Amendment dates (migration 0199). "Amended" (the date WE confirmed / the
        proposed delivery date) default-SHOWS — it's the firm date the board commits

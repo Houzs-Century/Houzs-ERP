@@ -205,3 +205,61 @@ describe('GET /delivery-planning — cross-company means GRANTED companies', () 
     expect((body.orders ?? []).length).toBe(2);
   });
 });
+
+/* BUG-51 repoint (owner 2026-10-15): the board's "Sales Exemption Expiry Date"
+   column shows the REAL AutoCount exemption expiry (public.sales_orders.expiry_date,
+   via linked_ac_docno), not the customer delivery date. Self-contained harness (its
+   own fake DB with the AutoCount mirror) so the shared harness above — whose SOs
+   carry no linked_ac_docno and so never hit the mirror read — stays untouched. */
+describe('GET /delivery-planning — Sales Exemption Expiry Date column', () => {
+  const soLinked = (docNo: string, linkedAc: string | null): Row => ({
+    doc_no: docNo, company_id: 1, debtor_code: 'C1', debtor_name: 'A Customer',
+    status: 'CONFIRMED', delivery_state: null, customer_state: 'Selangor', customer_country: 'Malaysia',
+    customer_delivery_date: '2026-09-01', processing_date: '2026-08-20',
+    local_total_sen: 100_000, balance_sen: 0, linked_ac_docno: linkedAc,
+  });
+  const line = (docNo: string, id: string): Row => ({
+    id, doc_no: docNo, item_code: 'SOFA-1', item_group: 'SOFA', qty: 1, cancelled: false,
+    stock_status: 'READY', line_no: 1, created_at: '2026-08-01T00:00:00.000Z',
+  });
+  const build = () => {
+    const sb = fakeSb({
+      warehouses: [],
+      mfg_sales_orders: [
+        soLinked('HC-SO-2608-001', 'SO-000111'), // linked, book has an expiry
+        soLinked('HC-SO-2608-002', 'SO-000222'), // linked, book has NO expiry
+        soLinked('HC-SO-2608-003', null),        // not in AutoCount at all
+      ],
+      mfg_sales_order_items: [line('HC-SO-2608-001', 'li-1'), line('HC-SO-2608-002', 'li-2'), line('HC-SO-2608-003', 'li-3')],
+      delivery_order_items: [],
+      delivery_orders: [],
+      /* The AutoCount mirror (public schema). SO-000111 carries the exemption
+         expiry; SO-000222 is in the book but carries none. */
+      sales_orders: [
+        { doc_no: 'SO-000111', company_id: 1, expiry_date: '2026-12-31' },
+        { doc_no: 'SO-000222', company_id: 1, expiry_date: null },
+      ],
+    });
+    const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+    app.use('*', async (c, next) => {
+      c.set('supabase', sb as unknown as Variables['supabase']);
+      c.set('companyId', 1 as Variables['companyId']);
+      c.set('allowedCompanyIds', [1] as Variables['allowedCompanyIds']);
+      c.set('user', { id: 'u1' } as unknown as Variables['user']);
+      c.set('houzsUser', { id: 9, name: 'Tester', permissions_set: new Set(['*']) } as unknown as Variables['houzsUser']);
+      await next();
+    });
+    app.get('/delivery-planning', deliveryPlanningBoardHandler);
+    return app;
+  };
+
+  it('shows the real AutoCount exemption expiry, blank off-book or when the book has none', async () => {
+    const res = await build().request('/delivery-planning');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { orders?: Array<{ so_doc_no: string; ac_sales_exemption_expiry?: string | null }> };
+    const byDoc = Object.fromEntries((body.orders ?? []).map((o) => [o.so_doc_no, o.ac_sales_exemption_expiry ?? null]));
+    expect(byDoc['HC-SO-2608-001']).toBe('2026-12-31'); // the real exemption date, NOT the delivery date 2026-09-01
+    expect(byDoc['HC-SO-2608-002']).toBeNull();          // linked but the book carries no expiry
+    expect(byDoc['HC-SO-2608-003']).toBeNull();          // not in AutoCount
+  });
+});

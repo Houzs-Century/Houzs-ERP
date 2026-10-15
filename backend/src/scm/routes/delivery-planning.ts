@@ -73,6 +73,7 @@ import { attachLineCategories } from '../lib/so-readiness-category';
 import { deriveBranding } from '../lib/so-display-branding';
 /* chunkIn on every id/doc-no filter: the list rides in the URL and an unbounded one is refused. */
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { attachBoardAcExemptionExpiry } from '../lib/ac-exemption-expiry';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
 import { effectiveSoDelivery } from '../shared';
@@ -467,7 +468,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
            has no `id` column: selecting it makes PostgREST reject the whole query and
            the board 500s. Identity here is doc_no; every join below keys on it. */
-        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, amend_reason_from_customer, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref, customer_so_no, delivery_message_status, disposal_request, dp_remark')
+        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, amend_reason_from_customer, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref, customer_so_no, delivery_message_status, disposal_request, dp_remark, linked_ac_docno')
         .neq('status', 'DRAFT')
         .neq('status', 'CANCELLED')
         .order('customer_delivery_date', { ascending: true, nullsFirst: false }),
@@ -1512,6 +1513,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   }
 
   const poNosByDoc = await planningPoNosByDoc(sb, soRows); // "PO No." column: POs raised from the SO, walked per company (lib/planning-po-nos.ts)
+  await attachBoardAcExemptionExpiry(sb, c, soRows, orders); // BUG-51 repoint: the board's exemption-expiry column (shared lib keeps the route under its size ceiling)
   const allOrders = [...orders.map((o) => ({ ...o, po_nos: poNosByDoc.get(o.so_doc_no) ?? [] })), ...assrOrders, ...dpBoardRows, ...projectOrders];
 
   /* 7c. PER-ASSIGNEE ROW SCOPE. For a self-scoped caller (Driver/Helper), keep
