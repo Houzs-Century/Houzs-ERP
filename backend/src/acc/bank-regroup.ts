@@ -46,6 +46,12 @@ export type RegroupPair = {
   decision: StoredDecision;
 };
 
+/** YYYY-MM-DD, whether the client hands a date column back as text (PostgREST)
+    or as a Date (postgres.js, which the repair script reads through). The first
+    plan run on production printed "Mon Sep 07" — String(Date) cut to ten
+    characters — and a receipt dated that is refused as no date at all. */
+const isoDay = (v: unknown): string => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? '').slice(0, 10));
+
 /** The pairs a statement's rows hold that the upload would now join. Reads only. */
 export function planRegroup(
   rows: StoredLine[], rules: BankRecognitionRule[], batches: PayableBatch[], payouts: PayoutAdviceForMatch[],
@@ -65,7 +71,7 @@ export function planRegroup(
   const lines = open
     .filter((r) => !clash.has(Number(r.line_no ?? 0)))
     .map((r) => ({
-      lineNo: Number(r.line_no ?? 0), bookedOn: String(r.booked_on).slice(0, 10), description: String(r.description ?? ''),
+      lineNo: Number(r.line_no ?? 0), bookedOn: isoDay(r.booked_on), description: String(r.description ?? ''),
       reference: r.reference ?? null, amountSen: Number(r.amount_sen), balanceSen: null,
     }));
   const joined = groupBankMovements(lines, rules).filter((m) => m.lines.length > 1);
