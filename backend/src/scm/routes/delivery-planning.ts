@@ -73,7 +73,7 @@ import { attachLineCategories } from '../lib/so-readiness-category';
 import { deriveBranding } from '../lib/so-display-branding';
 /* chunkIn on every id/doc-no filter: the list rides in the URL and an unbounded one is refused. */
 import { paginateAll, chunkIn } from '../lib/paginate-all';
-import { acExemptionExpiryByDoc } from '../lib/ac-exemption-expiry';
+import { attachBoardAcExemptionExpiry } from '../lib/ac-exemption-expiry';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
 import { effectiveSoDelivery } from '../shared';
@@ -441,9 +441,6 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     agent: string | null; salesperson_id: string | null; salespersonId?: string | null; venue: string | null;
     customer_state: string | null; customer_country: string | null;
     customer_delivery_date: string | null; processing_date: string | null;
-    // BUG-51 repoint (owner 2026-10-15): the linked AutoCount book doc no, used to
-    // look up the REAL sales-exemption expiry for the board's column. dual-read.
-    linked_ac_docno: string | null; linkedAcDocno?: string | null;
     so_date: string | null; address1: string | null; address2: string | null;
     postcode: string | null; building_type: string | null;
     local_total_sen: number | null; balance_sen: number | null;
@@ -489,37 +486,6 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
 
   if (docNos.length === 0) {
     return c.json({ orders: [], counts: emptyCounts(), regions: regionCfg.regions });
-  }
-
-  /* BUG-51 column repoint (owner 2026-10-15): the board's "Sales Exemption Expiry
-     Date" column shows the REAL AutoCount exemption-expiry UDF
-     (public.sales_orders.expiry_date), keyed by each SO's linked book doc no. Blank
-     off-book and on synthetic rows. The AutoCount mirror lives in the `public`
-     schema (this client defaults to `scm`) and is HOUZS-only, so the read widens to
-     the caller's granted companies like the SO read above; 2990 orders carry no
-     linked_ac_docno and contribute nothing. Does NOT touch the ERP's own
-     sales_exemption_expiry (the frozen original delivery date). */
-  const acExemptionByDoc = new Map<string, string>();
-  {
-    const linkedAcByDoc = new Map<string, string>();
-    for (const r of soRows) {
-      const dn = String(r.doc_no ?? '');
-      const ac = (r.linkedAcDocno ?? r.linked_ac_docno ?? '').trim();
-      if (dn && ac) linkedAcByDoc.set(dn, ac);
-    }
-    const acDocNos = [...new Set(linkedAcByDoc.values())];
-    if (acDocNos.length > 0) {
-      const { data: acRows, error: acErr } = await chunkIn<{ doc_no: string | null; expiry_date: string | null }>(
-        acDocNos,
-        (batch, from, to) =>
-          scopeToAllowedCompanies(
-            sb.schema('public').from('sales_orders').select('doc_no, expiry_date').in('doc_no', batch).order('doc_no'),
-            c,
-          ).range(from, to),
-      );
-      noteDegradedRead('ac_exemption_expiry', acErr);
-      for (const [dn, v] of acExemptionExpiryByDoc(linkedAcByDoc, acRows ?? [])) acExemptionByDoc.set(dn, v);
-    }
   }
 
   /* 2b. LIVE balance per SO — same source-of-truth as the SO list Balance column
@@ -987,9 +953,6 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       so_date: r.so_date ?? null,
       // ORIGINAL date (the customer's pick — never overwritten) stays here.
       customer_delivery_date: customerDD,
-      /* BUG-51 repoint: the REAL AutoCount sales-exemption expiry for the board's
-         column (blank when this order is not in AutoCount). */
-      ac_sales_exemption_expiry: acExemptionByDoc.get(docNo) ?? null,
       // Amendment dates: the customer's requested new date and the date WE
       // confirmed. The Original column above is unchanged.
       amend_date_from_customer: amendDateFromCustomer,
@@ -1173,7 +1136,6 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           // The trigger date maps into the board date fields so it lands in the
           // schedule / Days-Left column exactly like an SO's effective date.
           customer_delivery_date: leg.date,
-          ac_sales_exemption_expiry: null, // synthetic row — not an AutoCount SO
           amend_date_from_customer: null,
           amended_delivery_date: leg.date,
           amend_reason: null, amend_reason_from_customer: null,
@@ -1343,7 +1305,6 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         })(),
         so_date: null,
         customer_delivery_date: date,
-        ac_sales_exemption_expiry: null, // synthetic row — not an AutoCount SO
         amend_date_from_customer: null,
         amended_delivery_date: date,
         amend_reason: null, amend_reason_from_customer: null,
@@ -1485,7 +1446,6 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           })(),
           so_date: null,
           customer_delivery_date: leg.date,
-          ac_sales_exemption_expiry: null, // synthetic row — not an AutoCount SO
           amend_date_from_customer: null,
           amended_delivery_date: leg.date,
           amend_reason: null, amend_reason_from_customer: null,
@@ -1553,6 +1513,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   }
 
   const poNosByDoc = await planningPoNosByDoc(sb, soRows); // "PO No." column: POs raised from the SO, walked per company (lib/planning-po-nos.ts)
+  await attachBoardAcExemptionExpiry(sb, c, soRows, orders); // BUG-51 repoint: the board's exemption-expiry column (shared lib keeps the route under its size ceiling)
   const allOrders = [...orders.map((o) => ({ ...o, po_nos: poNosByDoc.get(o.so_doc_no) ?? [] })), ...assrOrders, ...dpBoardRows, ...projectOrders];
 
   /* 7c. PER-ASSIGNEE ROW SCOPE. For a self-scoped caller (Driver/Helper), keep
