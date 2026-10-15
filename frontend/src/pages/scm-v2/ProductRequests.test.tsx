@@ -1,7 +1,7 @@
 /* Product request (owner 2026-10-06; 2026-10-15 方案 A: header + lines) — the
    Product Requests page. Pinned:
      • a salesperson raises a request with SEVERAL lines — each an existing SKU
-       or a new Model by name, fabric / size / leg, qty, agreed price — plus the
+       or a new Model by name, fabric / size / leg, qty — plus the
        use, where and when, and it is sent with the fields the server reads;
      • a repack line is always an existing SKU; a new product line may name a
        new Model; a line can be added and removed;
@@ -95,7 +95,6 @@ describe('Product Requests — the requester', () => {
     /* Line 1: a Model the catalogue has not got. */
     fireEvent.change(within(dialog).getByLabelText('Product kind line 1'), { target: { value: 'new' } });
     fireEvent.change(within(dialog).getByLabelText('New Model name line 1'), { target: { value: 'Aurora 2-seater' } });
-    fireEvent.change(within(dialog).getByLabelText('Compartment line 1'), { target: { value: '2S' } });
     fireEvent.change(within(dialog).getByLabelText('Fabric line 1'), { target: { value: 'LIN-01' } });
     fireEvent.change(within(dialog).getByLabelText('Sofa size line 1'), { target: { value: '22' } });
     fireEvent.change(within(dialog).getByLabelText('Leg size line 1'), { target: { value: '4' } });
@@ -118,7 +117,7 @@ describe('Product Requests — the requester', () => {
     expect(createAsync.mock.calls[0][0]).toMatchObject({
       requestType: 'NEW_PRODUCT', application: 'SAMPLE', specialRemarks: 'For the corner', deliveryLocationId: 'wh-kl', supplierId: 'sup-1',
       lines: [
-        { itemCode: null, proposedModelName: 'Aurora 2-seater', category: 'SOFA', compartment: '2S', fabricCode: 'LIN-01', seatSize: '22', legSize: '4', qty: 1, unitPriceSen: null, remarks: 'Deeper seat' },
+        { itemCode: null, proposedModelName: 'Aurora 2-seater', category: 'SOFA', compartment: null, fabricCode: 'LIN-01', seatSize: '22', legSize: '4', qty: 1, unitPriceSen: null, remarks: 'Deeper seat' },
         { itemCode: '5530-3S', proposedModelName: null, category: 'SOFA', qty: 3 },
       ],
     });
