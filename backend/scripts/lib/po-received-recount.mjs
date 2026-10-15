@@ -66,3 +66,14 @@ export function poStatusFromLines(currentStatus, lines) {
   const any = lines.some((l) => Number(l.receivedQty ?? 0) > 0);
   return fully ? 'RECEIVED' : any ? 'PARTIALLY_RECEIVED' : 'SUBMITTED';
 }
+
+/** Each touched PO's status move once `fixes` land. `pos` is PO id ->
+ *  { status, lines: [{ poItemId, qty, receivedQty }] } as read now. */
+export function planPoStatuses(fixes, pos) {
+  const newQtyById = new Map(fixes.map((f) => [f.poItemId, f.newReceivedQty]));
+  return [...new Set(fixes.map((f) => f.poId))].map((poId) => {
+    const p = pos.get(poId);
+    const after = p.lines.map((l) => ({ ...l, receivedQty: newQtyById.get(l.poItemId) ?? l.receivedQty }));
+    return { poId, from: p.status, to: poStatusFromLines(p.status, after), fully: after.every((l) => l.receivedQty >= l.qty) };
+  });
+}
