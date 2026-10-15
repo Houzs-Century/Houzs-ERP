@@ -117,16 +117,16 @@ async function main() {
     itemIds.length ? sql`
       SELECT di.so_item_id, d.id, d.do_number, d.status
         FROM scm.delivery_order_items di JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
-       WHERE di.so_item_id IN ${sql(itemIds)} AND upper(coalesce(d.status, '')) <> 'CANCELLED'` : [],
+       WHERE di.so_item_id IN ${sql(itemIds)} AND upper(coalesce(d.status::text, '')) <> 'CANCELLED'` : [],
     itemIds.length ? sql`
       SELECT si.so_item_id, s.invoice_number, s.status
         FROM scm.sales_invoice_items si JOIN scm.sales_invoices s ON s.id = si.sales_invoice_id
-       WHERE si.so_item_id IN ${sql(itemIds)} AND upper(coalesce(s.status, '')) <> 'CANCELLED'` : [],
+       WHERE si.so_item_id IN ${sql(itemIds)} AND upper(coalesce(s.status::text, '')) <> 'CANCELLED'` : [],
     sql`SELECT delivery_order_id, invoice_number, status FROM scm.sales_invoices
-         WHERE so_doc_no IN ${sql(docNos)} AND upper(coalesce(status, '')) <> 'CANCELLED'`,
+         WHERE so_doc_no IN ${sql(docNos)} AND upper(coalesce(status::text, '')) <> 'CANCELLED'`,
     sql`SELECT dr.delivery_order_id, dr.status FROM scm.delivery_returns dr
           JOIN scm.delivery_orders d ON d.id = dr.delivery_order_id
-         WHERE d.so_doc_no IN ${sql(docNos)} AND upper(coalesce(dr.status, '')) <> 'CANCELLED'`,
+         WHERE d.so_doc_no IN ${sql(docNos)} AND upper(coalesce(dr.status::text, '')) <> 'CANCELLED'`,
   ]);
 
   for (const bucket of ["TO_ZERO", "MOVED"]) {
