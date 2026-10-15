@@ -540,7 +540,6 @@ scanPayment.post('/extract', async (c) => {
     });
 
     const bodyText = await resp.text();
-    await kept; // kept alongside the model read; never throws
     timer.mark('model');
     if (!resp.ok) {
       errorMsg = `Anthropic ${resp.status}: ${bodyText.slice(0, 500)}`;
@@ -567,6 +566,7 @@ scanPayment.post('/extract', async (c) => {
   } catch (e) {
     errorMsg = `Network/fetch error: ${(e as Error).message}`;
   }
+  await kept; // kept alongside the model read, also when it threw; never throws
 
   if (!parsed) {
     timer.done(c.env, null, 'error');
