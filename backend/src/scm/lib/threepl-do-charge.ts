@@ -9,7 +9,7 @@
 import { computeDeliveryCost, type DeliveryFacts, type RateCardSpec } from './delivery-rate-card';
 import { deriveSetCount, type SetLine } from './set-count';
 
-export function doFacts(lines: readonly SetLine[], zone: string | null): DeliveryFacts {
+export function doFacts(lines: readonly SetLine[], zone: string | null, address: string | null): DeliveryFacts {
   const live = lines.filter((l) => !l.cancelled);
   const itemCount = live
     .filter((l) => String(l.category).toUpperCase() !== 'SOFA')
@@ -21,6 +21,7 @@ export function doFacts(lines: readonly SetLine[], zone: string | null): Deliver
     customerCount: 1,
     destinationZone: zone,
     destinationZones: zone ? [zone] : [],
+    addressText: address,
   };
 }
 
