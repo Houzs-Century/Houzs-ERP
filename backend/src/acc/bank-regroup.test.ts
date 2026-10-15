@@ -47,6 +47,13 @@ describe('planRegroup — what the upload would now join', () => {
     expect(pairs[0]!.decision).toMatchObject({ kind: 'PAYOUT', matched_batch_id: 96, acquirer_code: 'MBB', merchant_no: '2649949' });
   });
 
+  it('reads the day whether it comes back as text or as a Date (the repair script reads through postgres.js)', () => {
+    const asDates = ROWS().map((r) => ({ ...r, booked_on: new Date('2026-09-07T00:00:00Z') }));
+    const pairs = planRegroup(asDates as never, RULES, [REPORT], []);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]!.bookedOn).toBe('2026-09-07');
+  });
+
   it('leaves a decided row, an already-joined row and a repeat alone', () => {
     const posted = ROWS().map((r) => (r.id === 368 ? { ...r, state: 'IGNORED' } : r));
     expect(planRegroup(posted as never, RULES, [REPORT], [])).toEqual([]);
