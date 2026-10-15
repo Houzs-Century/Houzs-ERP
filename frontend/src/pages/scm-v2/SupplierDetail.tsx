@@ -1254,7 +1254,7 @@ const SofaSkuMappingsTable = ({
     ...heights.map<GridColumn<BindingRow>>((h) => ({
       key: `h-${h}`,
       label: seatHeightLabel(h),
-      width: 110,
+      width: 130,
       align: 'right',
       accessor: (b) => (
         <CellStop>
@@ -1366,7 +1366,7 @@ const BedframeSkuMappingsTable = ({
     ...(['P1', 'P2'] as const).map<GridColumn<BindingRow>>((tier) => ({
       key: `price-${tier}`,
       label: tier === 'P1' ? 'Price 1' : 'Price 2',
-      width: 120,
+      width: 130,
       align: 'right',
       accessor: (b) => (
         <CellStop>
