@@ -25,6 +25,7 @@ import { approvalCodesByOrder } from './so-list-approval-codes';
 import { attachLineCategories } from './so-readiness-category';
 import { canViewScmFinance } from './houzs-perms';
 import { chunkIn } from './paginate-all';
+import { acExemptionExpiryByDoc } from './ac-exemption-expiry';
 import { migratedSoListGate } from './migrated-so-readonly';
 import { pgrestIn } from './pgrest-in-list';
 import { readinessLinesByDoc } from './so-line-effective-stock';
@@ -40,28 +41,10 @@ import { derivePlanningState } from '../routes/delivery-planning';
 export type SoListRow = { doc_no?: string } & Record<string, unknown>;
 export type SoDeliverableMap = Awaited<ReturnType<typeof soDeliverableRemaining>>;
 
-/* BUG-51 column repoint (owner 2026-10-15). Map each SO doc_no to the REAL
-   AutoCount sales-exemption expiry: its linked book doc no (`linked_ac_docno`)
-   resolved through the AutoCount mirror rows (`public.sales_orders`, one per book
-   doc, carrying `expiry_date` = AutoCount's SalesExemptionExpiryDate UDF). A SO is
-   ABSENT from the result when it has no AutoCount link or the mirror carries no
-   expiry for it — the SO list then shows the column blank, which is correct (most
-   orders are not SST-exempt). Pure, so the keying is tested without the view and
-   mirror reads around it. Never reads the ERP's own `sales_exemption_expiry`
-   (the frozen original delivery date — untouched by this change). */
-export function acExemptionExpiryByDoc(
-  linkedAcByDoc: Map<string, string>,
-  mirrorRows: Array<{ doc_no: string | null; expiry_date: string | null }>,
-): Map<string, string> {
-  const expiryByAcDoc = new Map<string, string>();
-  for (const a of mirrorRows) if (a.doc_no && a.expiry_date) expiryByAcDoc.set(a.doc_no, a.expiry_date);
-  const out = new Map<string, string>();
-  for (const [docNo, acDoc] of linkedAcByDoc) {
-    const v = expiryByAcDoc.get(acDoc);
-    if (v) out.set(docNo, v);
-  }
-  return out;
-}
+/* The SO list "Sales Exemption Expiry Date" keying lives in ONE home now
+   (lib/ac-exemption-expiry.ts), shared with the Delivery Planning board. Re-exported
+   here so earlier importers keep resolving it from this module. */
+export { acExemptionExpiryByDoc };
 
 export async function buildSoListRows(
   sb: Variables['supabase'],

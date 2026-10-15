@@ -121,6 +121,11 @@ export type PlanningOrder = {
   so_date: string | null;
   /* The customer's ORIGINAL delivery date — never overwritten (migration 0199). */
   customer_delivery_date: string | null;
+  /* The REAL AutoCount sales-exemption expiry (public.sales_orders.expiry_date,
+     keyed by linked_ac_docno), server-derived for SO rows; null off-book and on
+     synthetic (ASSR/DP/project) rows. Drives the board's "Sales Exemption Expiry
+     Date" column (owner 2026-10-15). */
+  ac_sales_exemption_expiry?: string | null;
   /* Amendment dates (migration 0199): the customer's requested NEW date and the
      date WE confirmed (the proposed/amended delivery date). effective = amended ??
      original, what Days Left / OVERDUE actually use. */
