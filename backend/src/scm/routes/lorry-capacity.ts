@@ -57,7 +57,7 @@ import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { paginateAll } from '../lib/paginate-all';
-import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
+import { activeCompanySql, activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { tripsFromDoCrew, plateKey, type DoDay } from '../lib/lorry-capacity-do';
 import { kmFromFixes, costSen, myDayWindow, type Fix } from '../lib/lorry-km';
 
@@ -344,11 +344,11 @@ lorryCapacity.get('/', async (c) => {
 
     /* 4d. PMS project setup / dismantle windows with a lorry (420 of the 421
           lorry rows on the board, 15 Oct 2026). Same raw-SQL read as the board's
-          project rows; fleet is company-shared there too, so not scoped. */
+          project rows, scoped to the active company. */
     const proj = await c.env.DB.prepare(
       `SELECT setup_lorry_id, setup_start_at, dismantle_lorry_id, dismantle_start_at
          FROM projects WHERE archived_at IS NULL
-          AND (setup_lorry_id IS NOT NULL OR dismantle_lorry_id IS NOT NULL)`,
+          AND (setup_lorry_id IS NOT NULL OR dismantle_lorry_id IS NOT NULL)${activeCompanySql(c)}`,
     ).all<Record<string, unknown>>();
     const legs: DoDay[] = [];
     for (const p of proj.results ?? []) {
