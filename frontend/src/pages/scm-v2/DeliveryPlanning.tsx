@@ -287,6 +287,7 @@ export const DeliveryPlanning = () => {
   const [sendingRows, setSendingRows] = useState<PlanningOrder[] | null>(null);
   const [sendKind, setSendKind] = useState<SendMessageKind>('delivery');
   const [sendMenuOpen, setSendMenuOpen] = useState(false);
+  const [bulkMenuOpen, setBulkMenuOpen] = useState(false);
   const openSendModal = (kind: SendMessageKind) => {
     const docs = new Set(selectedSoDocNos());
     if (docs.size === 0) return;
@@ -434,26 +435,58 @@ export const DeliveryPlanning = () => {
         msgStatuses={msgStatuses}
         onRowDoubleClick={openRow}
         bulkExtras={
-          <>
-            {/* Schedule — open the resizable scheduling drawer for the selected SO
-                orders (Phase 2). SO-only, like the other bulk actions. */}
+          /* The heavier actions (Schedule drawer, Transfer to Delivery Order)
+             live in one "Actions" menu so the bulk bar is not a wall of buttons
+             (owner 2026-10-15); the quick Set Status / Colour stay inline in the
+             bar. Same dropdown pattern as Send Message above. */
+          <div style={{ position: 'relative' }}>
             <Button
               variant="secondary"
               disabled={selectedSoDocNos().length === 0}
-              onClick={() => setScheduling(true)}
-              title={selectedSoDocNos().length === 0 ? 'Select one or more sales orders first' : 'Schedule the selected orders onto a trip'}
+              onClick={() => setBulkMenuOpen((v) => !v)}
+              title={selectedSoDocNos().length === 0 ? 'Select one or more sales orders first' : 'Scheduling and delivery-order actions'}
             >
-              <CalendarClock size={14} strokeWidth={1.75} />
-              <span>Schedule ({selectedSoDocNos().length})</span>
+              Actions ({selectedSoDocNos().length})
+              <ChevronDown size={14} strokeWidth={1.75} />
             </Button>
-
-            {canConvertToDo && (
-              <Button variant="secondary" disabled={convertSos.isPending} onClick={() => void convertSelected()}>
-                <Truck size={14} strokeWidth={1.75} />
-                <span>{convertSos.isPending ? 'Transferring…' : `Transfer ${sel.size} to Delivery Order`}</span>
-              </Button>
+            {bulkMenuOpen && (
+              <>
+                <div onClick={() => setBulkMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+                <div
+                  role="menu"
+                  style={{
+                    position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 41, minWidth: 240,
+                    background: '#fff', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
+                    boxShadow: '0 8px 28px rgba(34, 31, 32, 0.14)', padding: 4,
+                  }}
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { setBulkMenuOpen(false); setScheduling(true); }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: 'pointer', textAlign: 'left', fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <CalendarClock size={14} strokeWidth={1.75} /> Schedule ({selectedSoDocNos().length})
+                  </button>
+                  {canConvertToDo && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={convertSos.isPending}
+                      onClick={() => { setBulkMenuOpen(false); void convertSelected(); }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: convertSos.isPending ? 'default' : 'pointer', textAlign: 'left', fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)', opacity: convertSos.isPending ? 0.6 : 1 }}
+                      onMouseEnter={(e) => { if (!convertSos.isPending) e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <Truck size={14} strokeWidth={1.75} /> {convertSos.isPending ? 'Transferring…' : `Transfer ${sel.size} to Delivery Order`}
+                    </button>
+                  )}
+                </div>
+              </>
             )}
-          </>
+          </div>
         }
         contextMenu={(row) => {
           if (isProject(row)) return [];
