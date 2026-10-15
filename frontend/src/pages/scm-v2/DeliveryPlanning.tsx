@@ -311,7 +311,7 @@ export const DeliveryPlanning = () => {
         if (res.sent.length) parts.push(`Sent ${res.sent.length} message${res.sent.length === 1 ? '' : 's'} (${res.sent.reduce((n, g) => n + g.docNos.length, 0)} orders).`);
         if (res.failed.length) parts.push(`Failed ${res.failed.length}: ${res.failed.map((f) => `${f.phone} (${f.error})`).join('; ')}.`);
         if (res.skipped.length) parts.push(`Skipped ${res.skipped.length}: ${res.skipped.map((sk) => `${sk.docNo} (${SKIP_LABEL[sk.reason] ?? sk.reason})`).join(', ')}.`);
-        notify({
+        void notify({
           title: res.failed.length ? 'Postpone finished with failures' : res.sent.length ? 'Postpone notice sent' : 'Nothing sent',
           body: parts.join(' ') || 'Nothing to send.',
           tone: res.failed.length ? 'error' : 'info',
