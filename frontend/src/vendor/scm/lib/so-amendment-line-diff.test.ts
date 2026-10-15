@@ -21,6 +21,7 @@ import {
   amendmentLineIsChange,
   amendmentLineSig,
   amendmentRequestedUnitPriceSen,
+  amendmentPriceFields,
   amendmentUnrenderedAxes,
   amendmentVariantSummaries,
   amendmentVariants,
@@ -473,5 +474,18 @@ describe('edit-view fills are not changes (HC-0103)', () => {
     expect(storedLineRemark(null, { remark: 'Backrest change to 8069' })).toBe('Backrest change to 8069');
     expect(storedLineRemark('column wins', { remark: 'blob' })).toBe('column wins');
     expect(storedLineRemark(undefined, null)).toBe('');
+  });
+});
+
+/* HC-0095 — the apply honours a requested 0 only with zeroPriceIntended. */
+describe('amendmentPriceFields', () => {
+  it('a typed 0 carries the claim', () => {
+    expect(amendmentPriceFields({ unitPriceSen: 0, priceAuthored: true })).toEqual({ newUnitPriceSen: 0, zeroPriceIntended: true });
+  });
+  it('a seeded 0 sends nothing', () => {
+    expect(amendmentPriceFields({ unitPriceSen: 0, priceAuthored: false })).toEqual({});
+  });
+  it('a real price is sent without the claim', () => {
+    expect(amendmentPriceFields({ unitPriceSen: 850000 })).toEqual({ newUnitPriceSen: 850000 });
   });
 });
