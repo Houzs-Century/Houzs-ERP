@@ -76,6 +76,17 @@ describe('linkScanFiles', () => {
     expect(tables.scan_files[0]!.document_id).toBeNull();
   });
 
+  test('the same bytes scanned twice link one file per document, not both to the first', async () => {
+    const tables = { scan_files: [
+      file({ id: 'N', kind: 'pv', storage_key: 'scan-files/pv/N', sha256: 'dd' }),
+      file({ id: 'O', kind: 'pv', storage_key: 'scan-files/pv/O', sha256: 'dd' }),
+    ] };
+    const db = fakeDb(tables);
+    await linkScanFiles(db, { companyId: 1, kind: 'pv', documentId: 'PV-1', keys: [], sha256: 'dd' });
+    await linkScanFiles(db, { companyId: 1, kind: 'pv', documentId: 'PV-2', keys: [], sha256: 'dd' });
+    expect(tables.scan_files.map((r) => r.document_id)).toEqual(['PV-1', 'PV-2']);
+  });
+
   test('a payment links through its slip: same bytes, same sha256', async () => {
     const tables = {
       pending_slip_uploads: [{ r2_key: 'slips/2026/10/S1.jpg', company_id: 1, content_hash: 'cafe' }],
