@@ -59,16 +59,8 @@ export interface DriverInfoInput {
   deliveryTime: string;
 }
 
-export interface PostponeInput {
-  /** Printed after "due to" — "lorry breakdown". */
-  reason: string;
-  /** yyyy-mm-dd (the board's date input). */
-  newDate: string;
-}
-
 export interface SendExtras {
   driverInfo?: DriverInfoInput;
-  postpone?: PostponeInput;
 }
 
 /** The SO header columns a kind may read for its attributes. */
@@ -77,6 +69,9 @@ export interface KindSoRow {
   delivery_address1?: unknown; delivery_address2?: unknown; delivery_address3?: unknown; delivery_address4?: unknown;
   address1?: unknown; address2?: unknown; address3?: unknown; address4?: unknown;
   postcode?: unknown; city?: unknown; customer_state?: unknown;
+  // Postpone reads these straight off the board: the staff-picked Amend Reason
+  // and the "Delivery Date" (amended_delivery_date) they set as the new date.
+  amend_reason?: unknown; amended_delivery_date?: unknown; customer_delivery_date?: unknown;
 }
 
 /** ISO yyyy-mm-dd → the templates' yyyy/mm/dd; '' when blank. */
@@ -147,13 +142,21 @@ export function kindAttributes(
     }
 
     case 'postpone': {
-      const p = extras?.postpone;
-      if (!p) return { attributes: {}, skip: 'postpone_required' };
+      // Inline, from the board (owner 2026-10-15): the reason is the row's
+      // Amend Reason and the proposed new date is its "Delivery Date"
+      // (amended_delivery_date) — no modal re-entry. The current date the
+      // notice quotes is the original (customer_delivery_date), falling back to
+      // the effective date. An order missing either the reason or the new date
+      // is skipped, not sent with a blank.
+      const reason = clean(first.amend_reason);
+      const newDate = clean(first.amended_delivery_date).slice(0, 10);
+      if (!reason || !newDate) return { attributes: {}, skip: 'postpone_needs_reason_date' };
+      const current = clean(first.customer_delivery_date).slice(0, 10) || clean(effectiveDate).slice(0, 10);
       return {
         attributes: {
-          client_delivery_date: templateDate(effectiveDate),
-          amend_date_reason_2: clean(p.reason),
-          new_delivery_date: templateDate(p.newDate),
+          client_delivery_date: templateDate(current),
+          amend_date_reason_2: reason,
+          new_delivery_date: templateDate(newDate),
         },
       };
     }
