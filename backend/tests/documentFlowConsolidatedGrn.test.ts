@@ -34,9 +34,17 @@ function guard(b: any, st = { big: false, ranged: false }): any {
   });
 }
 
-function harness(tables: Record<string, Row[]>, failTable?: string) {
+/* `failCalls` fails the Nth (1-based) from(table) request, so one batch of a
+   multi-batch read can fail while its siblings succeed. */
+function harness(tables: Record<string, Row[]>, failTable?: string, failCalls?: { table: string; nth: number[] }) {
   const db = makeFakePostgrest(tables, []);
-  const sb = { from: (t: string) => guard(db.from(t) as any, { big: t === failTable, ranged: false }) };
+  let calls = 0;
+  const sb = {
+    from: (t: string) => {
+      const hit = failCalls?.table === t && failCalls.nth.includes(++calls);
+      return guard(db.from(t) as any, { big: t === failTable || hit, ranged: false });
+    },
+  };
   const app = new Hono();
   app.use('*', async (c, next) => {
     c.set('supabase' as never, sb as never);
@@ -75,8 +83,8 @@ function family(fill: number, soRooted = true, last = false) {
     purchase_order_items: [item('a-0', 'po-A', so), ...bLines],
     grns: [{ id: 'grn-1', company_id: CO, grn_number: 'HC-GRN-2610-063', status: 'RECEIVED', purchase_order_id: 'po-A' }],
     grn_items: [
-      { id: 'gi-a', grn_id: 'grn-1', purchase_order_item_id: 'a-0', qty: 1 },
-      ...bLines.map((l, i) => ({ id: uuid(5000 + i), grn_id: 'grn-1', purchase_order_item_id: l.id, qty: 1 })),
+      { id: 'gi-a', company_id: CO, grn_id: 'grn-1', purchase_order_item_id: 'a-0', qty: 1 },
+      ...bLines.map((l, i) => ({ id: uuid(5000 + i), company_id: CO, grn_id: 'grn-1', purchase_order_item_id: l.id, qty: 1 })),
     ],
   } as Record<string, Row[]>;
 }
@@ -114,5 +122,65 @@ describe('PO map: a consolidated GRN reaches every PO whose LINES it received', 
   test('orphan PO (no SO link), many ids: edge still appears (orphan branch)', async () => {
     const f = await flow(harness(family(MAX_IN * 3, false)), '/document-flow/po/po-B');
     expect(hasEdge(f, 'po:po-B', 'grn:grn-1')).toBe(true);
+  });
+
+  test('anchor resolution chunks: PO-B with > MAX_IN distinct so_item_ids still resolves the SO root and the GRN', async () => {
+    const t = family(0);
+    const n = MAX_IN * 2 + 5;
+    t.mfg_sales_order_items = [
+      ...t.mfg_sales_order_items!,
+      ...Array.from({ length: n }, (_, i) => ({ id: uuid(9000 + i), doc_no: 'SO-1', company_id: CO, qty: 1 })),
+    ];
+    // PO-B carries only the many SO lines; its sole lead to SO-1 is this big IN list.
+    t.purchase_order_items = [
+      t.purchase_order_items![0]!,
+      ...Array.from({ length: n }, (_, i) => ({ id: uuid(8000 + i), company_id: CO, purchase_order_id: 'po-B', so_item_id: uuid(9000 + i), qty: 1 })),
+    ];
+    t.grn_items = [{ id: 'gi-b', company_id: CO, grn_id: 'grn-1', purchase_order_item_id: uuid(8000), qty: 1 }];
+    const f = await flow(harness(t), '/document-flow/po/po-B');
+    expect(hasEdge(f, 'po:po-B', 'grn:grn-1')).toBe(true);
+    expect((f as any).rootSos).toEqual(['SO-1']);
+    expect((f as any).degraded).toEqual([]);
+  });
+
+  test('a failed fk-over-note read keeps the note edge and reports degraded', async () => {
+    const t = family(2, false);
+    t.mfg_sales_orders = [{ doc_no: 'SO-1', company_id: CO, status: 'CONFIRMED' }];
+    t.mfg_sales_order_items = [{ id: 'soi-1', doc_no: 'SO-1', company_id: CO, qty: 2 }];
+    t.purchase_orders = t.purchase_orders!.map((p) => (p.id === 'po-A' ? { ...p, notes: 'From SOs: SO-1' } : p));
+    const f = await flow(harness(t, 'purchase_order_items'), '/document-flow/so/SO-1');
+    expect((f as any).degraded).toContain('purchase_order_items(fk-over-note)');
+    expect(hasEdge(f, 'so:SO-1', 'po:po-A')).toBe(true);
+  });
+
+  test('consignment response carries degraded: [] like every other family', async () => {
+    const res = await harness({}).request('/document-flow/cso/NONE');
+    expect(((await res.json()) as any).degraded).toEqual([]);
+  });
+
+  test('batch 2 of 4 fails (and its retry): degraded, and no coverage is derived from the partial rows', async () => {
+    // 232 PO lines -> 4 batches of 76; calls 1-4 are the read, 5-8 its retry.
+    const f = await flow(harness(family(MAX_IN * 3), undefined, { table: 'grn_items', nth: [2, 6] }), '/document-flow/po/po-B');
+    expect((f as any).degraded).toContain('grn_items');
+    expect(hasEdge(f, 'po:po-A', 'grn:grn-1')).toBe(true); // header-FK fallback, not a partial "coverage"
+    expect(hasEdge(f, 'po:po-B', 'grn:grn-1')).toBe(false);
+  });
+
+  test('a transient batch failure is retried and not reported', async () => {
+    const f = await flow(harness(family(MAX_IN * 3), undefined, { table: 'grn_items', nth: [2] }), '/document-flow/po/po-B');
+    expect((f as any).degraded).toEqual([]);
+    expect(hasEdge(f, 'po:po-B', 'grn:grn-1')).toBe(true);
+  });
+
+  test('orphan branch: a failed grn_items read is surfaced in degraded', async () => {
+    const f = await flow(harness(family(2, false), 'grn_items'), '/document-flow/po/po-B');
+    expect(f.nodes.map((n) => n.key)).toContain('po:po-B');
+    expect((f as any).degraded).toContain('orphan grn_items');
+  });
+
+  test('a failed purchase_orders notes scan is surfaced in degraded', async () => {
+    const t = family(2);
+    const f = await flow(harness(t, 'purchase_orders'), '/document-flow/so/SO-1');
+    expect((f as any).degraded).toContain('purchase_orders(notes)');
   });
 });
