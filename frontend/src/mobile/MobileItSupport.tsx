@@ -383,6 +383,7 @@ function RequestList({ tab, onTab, search, onSearch, onOpen }: {
             <span style={{ marginLeft: "auto" }}><StatusBadge status={r.status} /></span>
           </div>
           <div style={{ fontSize: 14, fontWeight: r.unread ? 800 : 600, color: "var(--ink)", overflowWrap: "anywhere" }}>{r.title}</div>
+          <div style={{ fontSize: 11.5, color: "var(--mut2)" }}>Submitted {formatDateTime(r.created_at)}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, color: "var(--mut2)", width: "100%" }}>
             <span className={`badge ${TONE_CLASS[itUrgencyTone(r.priority)]}`}>{itUrgencyText(r.priority)}</span>
             <span style={{ flex: 1, minWidth: 0 }}>{r.assignee_name ?? "Not picked up yet"}</span>

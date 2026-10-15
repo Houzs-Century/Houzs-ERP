@@ -70,6 +70,7 @@ describe("IT Support on a phone — my requests", () => {
     expect(screen.getByText("New reply")).toBeTruthy();
     expect(screen.getByText("Waiting for you")).toBeTruthy();
     expect(screen.getByText("High")).toBeTruthy();
+    expect(screen.getByText(/^Submitted /)).toBeTruthy();
   });
 
   it("All / Active / Resolved split the list with counts from every request, and the search narrows it", async () => {
