@@ -17,7 +17,8 @@ import {
 import { BILL_FILL_LABEL, billFactsOf, billOffer, fillFromBill, filledFromBill, needsEvent, useRequestBillRead, type BillOffer } from '../../vendor/scm/lib/request-bill-read';
 import { BillReadPanel } from '../../vendor/scm/components/RequestBill';
 import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
-import { docFileMime, fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
 import { useEventLabels } from '../../vendor/scm/lib/event-queries';
 import { EventSelect, eventCellText } from '../../vendor/scm/components/EventSelect';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';

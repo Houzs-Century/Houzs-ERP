@@ -37,7 +37,8 @@ import { BillInstalments, BillMatchesNote, BillReadPanel, billFactsLine } from "
 import { OfficialDocChip } from "../vendor/scm/components/OfficialDoc";
 import { useUploadOfficialDoc } from "../vendor/scm/lib/official-doc-queries";
 import { EventSuggestions } from "../vendor/scm/components/EventSuggestions";
-import { docFileMime, fileToBase64, PV_FILE_ACCEPT } from "../vendor/scm/lib/payment-voucher-queries";
+import { fileToBase64, PV_FILE_ACCEPT } from "../vendor/scm/lib/payment-voucher-queries";
+import { docFileMime } from "../vendor/scm/lib/doc-file-mime";
 import { useEventLabels } from "../vendor/scm/lib/event-queries";
 import { EventSelect, eventCellText } from "../vendor/scm/components/EventSelect";
 import { MoneyInput } from "../vendor/scm/components/MoneyInput";

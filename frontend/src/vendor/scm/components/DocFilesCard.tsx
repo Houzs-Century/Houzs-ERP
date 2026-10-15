@@ -16,7 +16,8 @@ import { Button } from '@2990s/design-system';
 import { fmtDate } from '../../shared/format';
 import { useConfirm } from './ConfirmDialog';
 import { useNotify } from './NotifyDialog';
-import { docFileMime, fileToBase64, PV_FILE_ACCEPT, type PvFile, type PvFilePayload } from '../lib/payment-voucher-queries';
+import { fileToBase64, PV_FILE_ACCEPT, type PvFile, type PvFilePayload } from '../lib/payment-voucher-queries';
+import { docFileMime } from '../lib/doc-file-mime';
 import styles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 
 export type DocFilesCardProps = {

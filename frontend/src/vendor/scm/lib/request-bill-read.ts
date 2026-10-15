@@ -11,7 +11,8 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { useReadRequestBill, type PaymentRequestInput, type ReadBillResult } from './payment-request-queries';
-import { docFileMime, fileToBase64 } from './payment-voucher-queries';
+import { fileToBase64 } from './payment-voucher-queries';
+import { docFileMime } from './doc-file-mime';
 
 export type BillRead = Extract<ReadBillResult, { ok: true }>;
 export type BillReadState =

@@ -41,7 +41,8 @@ import {
   type CreditAllocation, type CreditNote, type CreditNoteLine, type CreditNoteLineInput, type KnockOffTarget, type NoteKind, type NoteStatus, type ScnScan,
 } from '../../vendor/scm/lib/credit-note-queries';
 import { FormKnockOff, NoteKnockOff, pickSen, pickTargets, type KnockOffPick } from './CreditNoteKnockOff';
-import { docFileMime, fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';

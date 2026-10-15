@@ -40,7 +40,8 @@ import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useAuth } from "../auth/AuthContext";
 import { fmtDateOrDash } from "../vendor/shared/format";
-import { docFileMime, fileToBase64, PV_FILE_ACCEPT } from "../vendor/scm/lib/payment-voucher-queries";
+import { fileToBase64, PV_FILE_ACCEPT } from "../vendor/scm/lib/payment-voucher-queries";
+import { docFileMime } from "../vendor/scm/lib/doc-file-mime";
 import { takePickedFiles } from "../vendor/scm/lib/pick-files";
 
 type View = { t: "list" } | { t: "new" } | { t: "edit"; req: ProductRequest } | { t: "detail"; id: string };

@@ -1,11 +1,11 @@
 /* The MIME a picked file is sent as (owner 2026-10-15: attach 不到 pdf) — the
    extension decides when the browser gives no type or one the server refuses. */
 import { describe, expect, test } from 'vitest';
-import { docFileMime, PV_FILE_ACCEPT } from './payment-voucher-queries';
+import { DOC_FILE_ACCEPT, docFileMime } from './doc-file-mime';
 
 describe('docFileMime', () => {
   test('a type the server takes is kept', () => {
-    for (const t of PV_FILE_ACCEPT.split(',')) expect(docFileMime({ name: 'x.bin', type: t })).toBe(t);
+    for (const t of DOC_FILE_ACCEPT.split(',')) expect(docFileMime({ name: 'x.bin', type: t })).toBe(t);
   });
   test('no type: the extension decides', () => {
     expect(docFileMime({ name: 'Quotation OCT.PDF', type: '' })).toBe('application/pdf');

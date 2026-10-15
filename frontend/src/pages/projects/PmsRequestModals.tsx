@@ -22,7 +22,8 @@ import { RequestForm, type RequestSeed } from '../scm-v2/PaymentRequestForm';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useUploadOfficialDoc } from '../../vendor/scm/lib/official-doc-queries';
-import { docFileMime, fileToBase64 } from '../../vendor/scm/lib/payment-voucher-queries';
+import { fileToBase64 } from '../../vendor/scm/lib/payment-voucher-queries';
+import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import type { TaskAttachment } from './types';
 

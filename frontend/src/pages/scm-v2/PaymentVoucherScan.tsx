@@ -47,7 +47,8 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { useNavigate } from 'react-router-dom';
 import { Camera, FileText, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { docFileMime, useExtractBills, fileToBase64, type ExtractedBill, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useExtractBills, fileToBase64, type ExtractedBill, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
 import { useBillMatches } from '../../vendor/scm/lib/payment-request-queries';
 import { BillMatchesNote } from '../../vendor/scm/components/RequestBill';
 import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
