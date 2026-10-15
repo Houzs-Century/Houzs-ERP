@@ -287,8 +287,8 @@ scanLorryInvoice.post('/extract', async (c) => {
   }
 
   const buf = await file.arrayBuffer();
-  // HC-0006: keep the original + its scan_files row BEFORE the read.
-  const scanFileKey = await keepScanFile(c.env, c.get('supabase'), {
+  // HC-0006: keep the original + its scan_files row, started with the read so it adds no wait.
+  const keptKey = keepScanFile(c.env, c.get('supabase'), {
     kind: 'workshop', companyId: activeCompanyId(c), buf, mime: mime || (isPdf ? 'application/pdf' : 'image/jpeg'),
     uploadedBy: (c.get('user') as { id?: string } | undefined)?.id ?? null, key: null,
   });
@@ -360,6 +360,7 @@ scanLorryInvoice.post('/extract', async (c) => {
       : `Could not reach the reader: ${e instanceof Error ? e.message : 'unknown error'}`;
   }
 
+  const scanFileKey = await keptKey; // kept alongside the model read; never throws
   timer.mark('parse');
   if (!parsed) {
     timer.done(c.env, null, 'error');
