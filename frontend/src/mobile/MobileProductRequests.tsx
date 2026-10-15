@@ -41,6 +41,7 @@ import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useAuth } from "../auth/AuthContext";
 import { fmtDateOrDash } from "../vendor/shared/format";
 import { docFileMime, fileToBase64, PV_FILE_ACCEPT } from "../vendor/scm/lib/payment-voucher-queries";
+import { takePickedFiles } from "../vendor/scm/lib/pick-files";
 
 type View = { t: "list" } | { t: "new" } | { t: "edit"; req: ProductRequest } | { t: "detail"; id: string };
 type Filter = "all" | "waiting" | "approved" | "closed";
@@ -453,7 +454,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
             </div>
           ))}
           <input ref={pickRef} type="file" accept={PV_FILE_ACCEPT} multiple style={{ display: "none" }} aria-label="Pick files to attach"
-            onChange={(e) => { setPendingFiles((prev) => [...prev, ...Array.from(e.target.files ?? [])]); e.target.value = ""; }} />
+            onChange={(e) => { const picked = takePickedFiles(e.target); setPendingFiles((prev) => [...prev, ...picked]); }} />
           <button type="button" className="btn" style={{ background: "var(--bg)", color: "var(--ink)" }} onClick={() => pickRef.current?.click()}>Attach a quotation, photo or drawing</button>
         </>
       )}

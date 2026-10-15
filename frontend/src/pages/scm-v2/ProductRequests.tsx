@@ -40,6 +40,7 @@ import { sortByNumeric, sortByText } from '../../vendor/scm/lib/sort-options';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { docFileMime, fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { takePickedFiles } from '../../vendor/scm/lib/pick-files';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { useConfirm, usePrompt } from '../../vendor/scm/components/ConfirmDialog';
@@ -628,7 +629,7 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
             {/* A real button, not a link-styled label: the owner missed the link (2026-10-15: 没有反应). */}
             <div>
               <input ref={pickRef} type="file" multiple accept={PV_FILE_ACCEPT} aria-label="Pick files to attach" style={{ display: 'none' }}
-                onChange={(e) => { setPending((prev) => [...prev, ...Array.from(e.target.files ?? [])]); e.target.value = ''; }} />
+                onChange={(e) => { const picked = takePickedFiles(e.target); setPending((prev) => [...prev, ...picked]); }} />
               <Button variant="secondary" size="sm" onClick={() => pickRef.current?.click()}>
                 <Paperclip size={14} strokeWidth={1.75} /> Attach file…
               </Button>
