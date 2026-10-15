@@ -42,13 +42,16 @@
 //   lib/chat-request-patch.ts — never the schedule. See that module.
 //
 //   { callback_id?: string,          // idempotency; chat's own step id
-//     event: "confirm" | "amend" | "postage_confirm" | "postage_amend",
+//     event: "confirm" | "amend" | "postage_confirm" | "postage_amend"
+//            | "property",             // the Property Details form answers
 //     ref: string,                   // the number the customer was shown: our
 //                                    // doc_no OR the AutoCount linked_ac_docno
 //     refs?: string,                 // the whole bundle, comma-joined (refs_all)
 //     phone?: string,
 //     delivery_date?: string,        // amend only — what the customer asked for
 //     reason?: string,               // amend only — Renovation Delay / Date Unavailable
+//     house_type?, delivery_purpose?, need_disposal?, disposal_item?: string,
+//                                    // property only — the form's four answers
 //     note?: string }                // free text, optional
 // ---------------------------------------------------------------------------
 
@@ -149,6 +152,11 @@ app.post("/", async (c) => {
     reason?: string;
     address?: string;
     note?: string;
+    // event "property": the Property Details form answers.
+    house_type?: string;
+    delivery_purpose?: string;
+    need_disposal?: string;
+    disposal_item?: string;
   } | null = null;
   try {
     body = await c.req.json();
@@ -179,6 +187,21 @@ app.post("/", async (c) => {
   const requestedAddress = String(body.address ?? "").trim().slice(0, 300) || null;
   const reason = String(body.reason ?? "").trim().slice(0, 200) || null;
   const note = String(body.note ?? "").trim().slice(0, 500) || null;
+  // event "property": the four Property Details answers, each bounded; null
+  // when this is not a property callback. Connect's interpolator leaves an
+  // UNSET attribute as its literal "{key}" (an answer the customer skipped, e.g.
+  // the disposal item when they said No) — treat that exact shape as blank so
+  // the placeholder never lands in a column.
+  const propField = (v: unknown, max: number): string | null => {
+    const t = String(v ?? "").trim().slice(0, max);
+    return !t || /^\{[a-z0-9_]+\}$/i.test(t) ? null : t;
+  };
+  const property = event === "property" ? {
+    houseType: propField(body.house_type, 60),
+    deliveryPurpose: propField(body.delivery_purpose, 60),
+    needDisposal: propField(body.need_disposal, 20),
+    disposalItem: propField(body.disposal_item, 200),
+  } : null;
 
   const sb = getSupabaseService(c.env);
 
@@ -255,6 +278,7 @@ app.post("/", async (c) => {
         phone,
         requestedDate,
         reason,
+        property,
         note: requestedAddress ? `${note ?? ""}${note ? " | " : ""}address: ${requestedAddress}` : note,
       }));
     } catch (e) {
