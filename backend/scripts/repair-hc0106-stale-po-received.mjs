@@ -19,11 +19,12 @@
 // The code path is closed; this repairs the rows it left behind.
 //
 // THE REPAIR. lib/po-received-recount.mjs decides, with recomputePoReceived's
-// own rule. A PO line is corrected only when its PO is not an AutoCount cutover
-// order, a DRAFT / CANCELLED GRN line points at it, and it reports more than
-// its live GRNs received. The PO status is re-derived from its lines, and the
-// SO allocation re-walk is requested through the Worker's queue row (the same
-// upsert as stock-allocation-queue.ts); the five-minute cron runs it.
+// own rule; lib/po-received-recount-sql.mjs reads and writes. A PO line is
+// corrected only when its PO is not an AutoCount cutover order, a DRAFT /
+// CANCELLED GRN line points at it, and it reports more than its live GRNs
+// received. The PO status is re-derived from its lines, and the SO allocation
+// re-walk is requested through the Worker's queue row (the same upsert as
+// stock-allocation-queue.ts); the five-minute cron runs it.
 //
 // ERP ONLY. Nothing is queued to AutoCount.
 //
@@ -39,7 +40,8 @@
 // ---------------------------------------------------------------------------
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { planStaleReceived, poStatusFromLines } from "./lib/po-received-recount.mjs";
+import { planPoStatuses, planStaleReceived } from "./lib/po-received-recount.mjs";
+import { readPoLines, readStaleState, writeRepair } from "./lib/po-received-recount-sql.mjs";
 
 const APPLY = (process.env.MODE || "plan").toLowerCase() === "apply";
 const CONFIRM_PHRASE = "RECOUNT CANCELLED GRN PO LINES";
@@ -62,51 +64,9 @@ const log = (m = "") => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}
 const bad = (m) => console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : `ERROR ${m}`);
 const sql = postgres(DATABASE_URL, { ssl: "require", prepare: false, max: 1 });
 
-/** Every PO line with at least one DRAFT / CANCELLED GRN line, plus all the GRN
- *  lines on those PO lines, plus the SO line each one is bound to. */
-async function readState(db) {
-  const poLines = await db`
-    SELECT poi.id::text AS "poItemId", po.id::text AS "poId", po.po_number AS "poNumber",
-           po.status AS "poStatus", po.linked_ac_docno AS "linkedAcDocno",
-           poi.item_code AS "itemCode", poi.qty::float8 AS qty,
-           COALESCE(poi.received_qty, 0)::float8 AS "receivedQty",
-           si.doc_no AS "soDocNo", si.stock_status AS "soStockStatus"
-      FROM scm.purchase_order_items poi
-      JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id
-      LEFT JOIN scm.mfg_sales_order_items si ON si.id = poi.so_item_id
-     WHERE po.company_id = ${COMPANY_ID}
-       AND EXISTS (SELECT 1 FROM scm.grn_items gi JOIN scm.grns g ON g.id = gi.grn_id
-                    WHERE gi.purchase_order_item_id = poi.id
-                      AND UPPER(COALESCE(g.status, '')) IN ('DRAFT', 'CANCELLED'))`;
-  const ids = poLines.map((p) => p.poItemId);
-  const grnLines = ids.length === 0 ? [] : await db`
-    SELECT gi.purchase_order_item_id::text AS "poItemId", g.grn_number AS "grnNumber",
-           g.status AS "grnStatus", COALESCE(gi.qty_accepted, 0)::float8 AS "qtyAccepted",
-           COALESCE(gi.returned_qty, 0)::float8 AS "returnedQty"
-      FROM scm.grn_items gi JOIN scm.grns g ON g.id = gi.grn_id
-     WHERE gi.purchase_order_item_id = ANY(${ids}::uuid[])`;
-  return { poLines, grnLines };
-}
-
-async function poLinesOf(db, poIds) {
-  if (poIds.length === 0) return new Map();
-  const rows = await db`
-    SELECT po.id::text AS "poId", po.status AS "poStatus", po.received_at AS "receivedAt",
-           poi.id::text AS "poItemId", poi.qty::float8 AS qty,
-           COALESCE(poi.received_qty, 0)::float8 AS "receivedQty"
-      FROM scm.purchase_orders po JOIN scm.purchase_order_items poi ON poi.purchase_order_id = po.id
-     WHERE po.id = ANY(${poIds}::uuid[]) AND po.company_id = ${COMPANY_ID}`;
-  const out = new Map();
-  for (const r of rows) {
-    if (!out.has(r.poId)) out.set(r.poId, { status: r.poStatus, receivedAt: r.receivedAt, lines: [] });
-    out.get(r.poId).lines.push(r);
-  }
-  return out;
-}
-
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "PLAN (writes nothing)"} company=${COMPANY_ID}`);
-  const { poLines, grnLines } = await readState(sql);
+  const { poLines, grnLines } = await readStaleState(sql, COMPANY_ID);
   log(`PO lines with a DRAFT / CANCELLED GRN line: ${poLines.length}`);
   const skippedAc = poLines.filter((p) => p.linkedAcDocno);
   if (skippedAc.length) {
@@ -121,13 +81,7 @@ async function main() {
   }
 
   const poIds = [...new Set(fixes.map((f) => f.poId))];
-  const pos = await poLinesOf(sql, poIds);
-  const newQtyById = new Map(fixes.map((f) => [f.poItemId, f.newReceivedQty]));
-  const poPlan = poIds.map((poId) => {
-    const p = pos.get(poId);
-    const after = p.lines.map((l) => ({ ...l, receivedQty: newQtyById.get(l.poItemId) ?? l.receivedQty }));
-    return { poId, from: p.status, to: poStatusFromLines(p.status, after), fully: after.every((l) => l.receivedQty >= l.qty) };
-  });
+  const poPlan = planPoStatuses(fixes, await readPoLines(sql, COMPANY_ID, poIds));
 
   log(`\n=== ${fixes.length} PO LINE(S) TO CORRECT ===`);
   for (const f of fixes) {
@@ -147,29 +101,7 @@ async function main() {
   }
 
   const token = randomUUID();
-  await sql.begin(async (tx) => {
-    for (const f of fixes) {
-      const back = await tx`
-        UPDATE scm.purchase_order_items SET received_qty = ${f.newReceivedQty}
-         WHERE id = ${f.poItemId}::uuid AND COALESCE(received_qty, 0) = ${f.receivedQty}
-        RETURNING id`;
-      if (back.length !== 1) throw new Error(`${f.poNumber} ${f.itemCode} changed since it was read; nothing written`);
-    }
-    for (const p of poPlan) {
-      if (!p.to) continue;
-      await tx`
-        UPDATE scm.purchase_orders
-           SET status = ${p.to}, updated_at = now(),
-               received_at = CASE WHEN ${p.fully} THEN COALESCE(received_at, now()) ELSE NULL END
-         WHERE id = ${p.poId}::uuid AND company_id = ${COMPANY_ID}
-           AND status NOT IN ('CANCELLED', 'ON_HOLD')`;
-    }
-    await tx`
-      INSERT INTO scm.stock_allocation_recompute_queue (job_key, request_token, requested_at, reason)
-      VALUES ('GLOBAL', ${token}, now(), ${"HC-0106: cancelled GRN receipt taken off its PO line"})
-      ON CONFLICT (job_key) DO UPDATE SET request_token = EXCLUDED.request_token,
-        requested_at = EXCLUDED.requested_at, reason = EXCLUDED.reason`;
-  });
+  await sql.begin((tx) => writeRepair(tx, COMPANY_ID, fixes, poPlan, token, "HC-0106: cancelled GRN receipt taken off its PO line"));
   log(`written: ${fixes.length} PO line(s), ${poPlan.filter((p) => p.to).length} PO status(es), allocation re-walk requested (token ${token}).`);
   await sql.end({ timeout: 5 });
 
@@ -177,7 +109,7 @@ async function main() {
   let failed = false;
   try {
     log("\n=== VERIFIED ON A FRESH CONNECTION ===");
-    const again = await readState(check);
+    const again = await readStaleState(check, COMPANY_ID);
     const left = planStaleReceived(again.poLines, again.grnLines);
     if (left.length) { failed = true; bad(`${left.length} line(s) still over-report: ${left.map((f) => `${f.poNumber} ${f.itemCode}`).join("; ")}`); }
     for (const f of fixes) {
@@ -186,7 +118,7 @@ async function main() {
       if (!ok) failed = true;
       log(`  ${ok ? "OK " : "BAD"} ${f.poNumber} ${f.itemCode} received_qty reads ${row?.receivedQty ?? "(missing)"} (want ${f.newReceivedQty})`);
     }
-    const posAfter = await poLinesOf(check, poIds);
+    const posAfter = await readPoLines(check, COMPANY_ID, poIds);
     for (const p of poPlan) {
       const now = posAfter.get(p.poId);
       const want = p.to ?? p.from;
