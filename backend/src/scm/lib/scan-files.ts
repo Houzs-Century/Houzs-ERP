@@ -73,10 +73,24 @@ export async function linkScanFiles(
   f: { companyId: number | null; kind: ScanFileKind; documentId: string; keys: string[]; sha256: string | null },
 ): Promise<void> {
   if (!f.companyId || !f.documentId || (f.keys.length === 0 && !f.sha256)) return;
-  let q = sb.from('scan_files').update({ document_id: f.documentId })
-    .eq('company_id', f.companyId).eq('kind', f.kind).is('document_id', null);
-  q = f.keys.length > 0 ? q.in('storage_key', f.keys) : q.eq('sha256', f.sha256);
   try {
+    let q = sb.from('scan_files').update({ document_id: f.documentId })
+      .eq('company_id', f.companyId).eq('kind', f.kind).is('document_id', null);
+    if (f.keys.length > 0) {
+      q = q.in('storage_key', f.keys);
+    } else {
+      /* The same photo scanned twice leaves two unlinked rows with one sha256:
+         link the newest only, so the second document still finds its own. */
+      const { data: row, error: pickErr } = await sb.from('scan_files').select('id')
+        .eq('company_id', f.companyId).eq('kind', f.kind).is('document_id', null).eq('sha256', f.sha256)
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (pickErr) {
+        console.warn(`[scan-files ${f.kind}] link lookup failed:`, f.documentId, pickErr.message);
+        return;
+      }
+      if (!row) return;
+      q = q.eq('id', (row as { id: string }).id);
+    }
     const { error } = await q;
     if (error) console.warn(`[scan-files ${f.kind}] link failed:`, f.documentId, error.message);
   } catch (e) {
