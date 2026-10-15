@@ -36,6 +36,8 @@ export async function keepScanFile(
     console.warn(`[scan-files ${f.kind}] no file store bound — original not kept`);
     return null;
   }
+  /* The hash and the put are independent: run them together. */
+  const shaP = f.companyId ? sha256Hex(f.buf) : Promise.resolve('');
   try {
     await bucket.put(key, f.buf, { httpMetadata: { contentType: f.mime } });
   } catch (e) {
@@ -52,7 +54,7 @@ export async function keepScanFile(
       company_id: f.companyId,
       kind: f.kind,
       storage_key: key,
-      sha256: await sha256Hex(f.buf),
+      sha256: await shaP,
       mime: f.mime || 'application/octet-stream',
       size_bytes: f.buf.byteLength,
       uploaded_by: f.uploadedBy ?? null,
