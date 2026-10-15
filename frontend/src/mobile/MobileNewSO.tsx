@@ -72,7 +72,7 @@ import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
 import { MobileSavedPhotoThumb, StagedPhotoThumb } from "./MobileSavedPhotoThumb";
-import { zeroPriceClaim } from "../vendor/scm/lib/zeroPriceClaim";
+import { priceBoxAuthored, zeroPriceClaim } from "../vendor/scm/lib/zeroPriceClaim";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { mobileLineAddHeaders } from "./mobile-so-line-save";
 import { uploadSoItemPhotoWithLease } from "./mobile-so-concurrency";
@@ -3169,7 +3169,7 @@ function LineCard({
               placeholder="0.00"
               disabled={!canEditPrice}
               title={!canEditPrice ? "Price follows the SKU Master sell price — admin can override" : undefined}
-              onChange={(e) => { setPriceTyping(true); onChange({ price: e.target.value, priceAuthored: true }); }}
+              onChange={(e) => { setPriceTyping(true); onChange({ price: e.target.value, priceAuthored: priceBoxAuthored(e.target.value) }); }}
               onBlur={() => setPriceTyping(false)}
             />
           </Field>

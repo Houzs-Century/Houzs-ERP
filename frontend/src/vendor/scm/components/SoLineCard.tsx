@@ -64,6 +64,7 @@ import { sortByNumeric } from '../lib/sort-options';
 import { posRemarkSpecialOf } from '../lib/pos-remark-special';
 import { seedFollowerVariants } from '../lib/so-variant-cascade';
 import { pickDefaultVariants } from '../../shared/model-default-variants';
+import { priceBoxAuthored } from '../lib/zeroPriceClaim';
 import { useAnchoredPanel, anchoredPanelStyle } from '../../../lib/anchoredPanel';
 import { useNotify } from './NotifyDialog';
 import { SpecialOrders } from './SpecialOrders';
@@ -1024,7 +1025,7 @@ const SoLineCardInner = ({
               onChange({ discountSen: feeDiscountForAmount(feeGrossSen, Math.round(n * 100)) });
               return;
             }
-            onChange({ unitPriceSen: Math.round(Number(t) * 100) || 0, priceAuthored: true });
+            onChange({ unitPriceSen: Math.round(Number(t) * 100) || 0, priceAuthored: priceBoxAuthored(t) });
           }}
           onBlur={() => { setPriceTyping(false); setPriceText((amountCellSen / 100).toFixed(2)); }}
         />
