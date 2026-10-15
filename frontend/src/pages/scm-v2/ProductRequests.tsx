@@ -20,7 +20,7 @@
 //     page only asks.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Paperclip, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
@@ -40,6 +40,8 @@ import { sortByNumeric, sortByText } from '../../vendor/scm/lib/sort-options';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
+import { takePickedFiles } from '../../vendor/scm/lib/pick-files';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { useConfirm, usePrompt } from '../../vendor/scm/components/ConfirmDialog';
@@ -412,6 +414,7 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
   /* Files picked before the request exists; uploaded one by one once it does
      (a new request only — an existing one attaches on its own card). */
   const [pending, setPending] = useState<File[]>([]);
+  const pickRef = useRef<HTMLInputElement>(null);
   const [v, setV] = useState<Omit<ProductRequestInput, 'lines'>>(() => ({
     requestType: initial?.request_type ?? 'NEW_PRODUCT',
     application: initial?.application ?? 'CUSTOMER_ORDER',
@@ -469,7 +472,7 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
       const res = initial ? await update.mutateAsync({ id: initial.id, ...body }) : await create.mutateAsync(body);
       for (const f of pending) {
         try {
-          const file: PvFilePayload = { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) };
+          const file: PvFilePayload = { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) };
           await upload.mutateAsync({ id: res.request.id, file });
         } catch { /* the mutation's own onError told the user; the request stands — attach again on it */ }
       }
@@ -624,11 +627,14 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
                 </button>
               </div>
             ))}
-            <label style={{ alignSelf: 'flex-start', fontSize: 'var(--fs-12)', color: 'var(--c-orange)', cursor: 'pointer', fontWeight: 600 }}>
-              Attach file…
-              <input type="file" multiple accept={PV_FILE_ACCEPT} aria-label="Pick files to attach" style={{ display: 'none' }}
-                onChange={(e) => { setPending((prev) => [...prev, ...Array.from(e.target.files ?? [])]); e.target.value = ''; }} />
-            </label>
+            {/* A real button, not a link-styled label: the owner missed the link (2026-10-15: 没有反应). */}
+            <div>
+              <input ref={pickRef} type="file" multiple accept={PV_FILE_ACCEPT} aria-label="Pick files to attach" style={{ display: 'none' }}
+                onChange={(e) => { const picked = takePickedFiles(e.target); setPending((prev) => [...prev, ...picked]); }} />
+              <Button variant="secondary" size="sm" onClick={() => pickRef.current?.click()}>
+                <Paperclip size={14} strokeWidth={1.75} /> Attach file…
+              </Button>
+            </div>
           </div>
         </FormSection>
       )}

@@ -41,6 +41,8 @@ import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useAuth } from "../auth/AuthContext";
 import { fmtDateOrDash } from "../vendor/shared/format";
 import { fileToBase64, PV_FILE_ACCEPT } from "../vendor/scm/lib/payment-voucher-queries";
+import { docFileMime } from "../vendor/scm/lib/doc-file-mime";
+import { takePickedFiles } from "../vendor/scm/lib/pick-files";
 
 type View = { t: "list" } | { t: "new" } | { t: "edit"; req: ProductRequest } | { t: "detail"; id: string };
 type Filter = "all" | "waiting" | "approved" | "closed";
@@ -164,7 +166,7 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
     setFileError(null);
     for (const f of [...(list ?? [])]) {
       try {
-        await upload.mutateAsync({ id: r.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+        await upload.mutateAsync({ id: r.id, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
       } catch (e) {
         setFileError(`${f.name} did not attach — ${e instanceof Error ? e.message : "try again"}.`);
         break;
@@ -359,7 +361,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
       const res = initial ? await update.mutateAsync({ id: initial.id, ...body }) : await create.mutateAsync(body);
       for (const f of pendingFiles) {
         try {
-          await upload.mutateAsync({ id: res.request.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+          await upload.mutateAsync({ id: res.request.id, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
         } catch { /* the mutation's own onError told the user; attach again on the request */ }
       }
       onDone(res.request.id);
@@ -453,7 +455,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
             </div>
           ))}
           <input ref={pickRef} type="file" accept={PV_FILE_ACCEPT} multiple style={{ display: "none" }} aria-label="Pick files to attach"
-            onChange={(e) => { setPendingFiles((prev) => [...prev, ...Array.from(e.target.files ?? [])]); e.target.value = ""; }} />
+            onChange={(e) => { const picked = takePickedFiles(e.target); setPendingFiles((prev) => [...prev, ...picked]); }} />
           <button type="button" className="btn" style={{ background: "var(--bg)", color: "var(--ink)" }} onClick={() => pickRef.current?.click()}>Attach a quotation, photo or drawing</button>
         </>
       )}

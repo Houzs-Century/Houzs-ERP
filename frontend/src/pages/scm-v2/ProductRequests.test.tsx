@@ -198,7 +198,12 @@ describe('Product Requests — files (owner 2026-10-15)', () => {
     fireEvent.change(within(dialog).getByLabelText('SKU line 1'), { target: { value: '5530-3S' } });
     const picker = within(dialog).getByLabelText('Pick files to attach') as HTMLInputElement;
     const quote = new File(['%PDF-1.4 q'], 'quotation.pdf', { type: 'application/pdf' });
-    fireEvent.change(picker, { target: { files: [quote] } });
+    /* A real browser empties `files` the moment `value` is reset to '' — the
+       handler must read the list BEFORE resetting (owner 2026-10-15: 选了 PDF 之后是空的). */
+    let served: File[] = [quote];
+    Object.defineProperty(picker, 'files', { configurable: true, get: () => served });
+    Object.defineProperty(picker, 'value', { configurable: true, get: () => '', set: (v: string) => { if (v === '') served = []; } });
+    fireEvent.change(picker);
     expect(within(dialog).getByText('quotation.pdf')).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Send to the Purchaser' }));
     await waitFor(() => expect(uploadAsync).toHaveBeenCalledTimes(1));

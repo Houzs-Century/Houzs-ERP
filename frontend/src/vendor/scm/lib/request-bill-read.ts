@@ -12,6 +12,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { useReadRequestBill, type PaymentRequestInput, type ReadBillResult } from './payment-request-queries';
 import { fileToBase64 } from './payment-voucher-queries';
+import { docFileMime } from './doc-file-mime';
 
 export type BillRead = Extract<ReadBillResult, { ok: true }>;
 export type BillReadState =
@@ -30,7 +31,7 @@ export function useRequestBillRead() {
     if (files.length === 0) { setState({ status: 'idle' }); return null; }
     setState({ status: 'reading' });
     try {
-      const payload = await Promise.all(files.map(async (f) => ({ name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) })));
+      const payload = await Promise.all(files.map(async (f) => ({ name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) })));
       const res = await read.mutateAsync({ files: payload });
       if (mine !== seq.current) return null;
       if (!res.ok) { setState({ status: 'failed', reason: res.reason }); return null; }

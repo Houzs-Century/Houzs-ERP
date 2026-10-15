@@ -35,6 +35,7 @@ import { BillInstalments, BillMatchesNote, billFactsLine } from '../../vendor/sc
 import { OfficialDocActions, OfficialDocChip } from '../../vendor/scm/components/OfficialDoc';
 import { useUploadOfficialDoc } from '../../vendor/scm/lib/official-doc-queries';
 import { fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
 import { useEventLabels } from '../../vendor/scm/lib/event-queries';
 import { eventCellText } from '../../vendor/scm/components/EventSelect';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
@@ -375,7 +376,7 @@ function BalanceForm({ request, onDone, onCancel }: { request: PaymentRequest; o
         payPct: pctValue != null && total != null && pctOf(total, pctValue) === amount ? pctValue : null,
       });
       for (const f of files) {
-        const payload: PvFilePayload = { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) };
+        const payload: PvFilePayload = { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) };
         try { await official.mutateAsync({ requestId: res.request.id, file: payload }); } catch (e) {
           void notify({ title: `${f.name} did not attach`, body: e instanceof Error ? e.message : 'Upload it from the request — 补正式单.', tone: 'error' });
         }
@@ -440,7 +441,7 @@ function OfficialDocPanel({ request, finance, mayUpload }: { request: PaymentReq
   const pick = async (list: FileList | null) => {
     for (const f of [...(list ?? [])]) {
       try {
-        const res = await upload.mutateAsync({ requestId: request.id, file: { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) } });
+        const res = await upload.mutateAsync({ requestId: request.id, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
         void notify({
           title: 'Official invoice uploaded',
           body: res.note ?? (res.received.length > 0 ? `Finance checks it on ${res.received.map((d) => d.number ?? d.kind).join(', ')}.` : 'It is kept with the request and its payment.'),

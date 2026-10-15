@@ -38,6 +38,7 @@ import { OfficialDocChip } from "../vendor/scm/components/OfficialDoc";
 import { useUploadOfficialDoc } from "../vendor/scm/lib/official-doc-queries";
 import { EventSuggestions } from "../vendor/scm/components/EventSuggestions";
 import { fileToBase64, PV_FILE_ACCEPT } from "../vendor/scm/lib/payment-voucher-queries";
+import { docFileMime } from "../vendor/scm/lib/doc-file-mime";
 import { useEventLabels } from "../vendor/scm/lib/event-queries";
 import { EventSelect, eventCellText } from "../vendor/scm/components/EventSelect";
 import { MoneyInput } from "../vendor/scm/components/MoneyInput";
@@ -181,7 +182,7 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
     setFileError(null);
     for (const f of [...(list ?? [])]) {
       try {
-        await upload.mutateAsync({ id: r.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+        await upload.mutateAsync({ id: r.id, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
       } catch (e) {
         setFileError(`${f.name} did not attach — ${e instanceof Error ? e.message : "try again"}.`);
         break;
@@ -192,7 +193,7 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
     setFileError(null);
     for (const f of [...(list ?? [])]) {
       try {
-        await official.mutateAsync({ requestId: r.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+        await official.mutateAsync({ requestId: r.id, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
       } catch (e) {
         setFileError(`${f.name} did not upload — ${e instanceof Error ? e.message : "try again"}.`);
         break;
@@ -389,7 +390,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
       const res = initial ? await update.mutateAsync({ id: initial.id, ...body }) : await create.mutateAsync(body);
       for (const f of files) {
         try {
-          await upload.mutateAsync({ id: res.request.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+          await upload.mutateAsync({ id: res.request.id, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
         } catch {
           /* The request stands; the detail screen says the bill is missing and takes it again. */
           break;
@@ -500,7 +501,7 @@ function BalanceScreen({ request, onBack, onDone }: { request: PaymentRequest; o
       });
       for (const f of files) {
         try {
-          await official.mutateAsync({ requestId: res.request.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+          await official.mutateAsync({ requestId: res.request.id, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
         } catch { break; }
       }
       onDone(res.request.id);

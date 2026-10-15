@@ -7,6 +7,7 @@
 // settlement).
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { DOC_FILE_ACCEPT } from './doc-file-mime';
 import { API_URL, authedFetch, humanApiError } from './authed-fetch';
 import { readAuthToken } from '../../../lib/authToken';
 import { companyHeader } from '../../../lib/activeCompany';
@@ -290,7 +291,7 @@ export type PvFile = {
 export type PvFilePayload = { name: string; mime: string; dataBase64: string };
 /* What a voucher file may be — the server's PV_FILE_MIMES (pv-files.ts),
    as an <input accept>. */
-export const PV_FILE_ACCEPT = 'image/jpeg,image/png,image/webp,application/pdf';
+export const PV_FILE_ACCEPT = DOC_FILE_ACCEPT;
 
 export const usePvFiles = (pvId: string | null) => useQuery({
   queryKey: ['pv-files', pvId],

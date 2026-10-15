@@ -25,6 +25,7 @@ import { Save, Trash2, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, usePvReservations, NO_RESERVATIONS, useExtractBills, useUploadPvFile, useRefundSource, useExtractRequestBill, fileToBase64, type BillExtraction, type ExtractedBill, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useAccounts, useAccountRoles, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
@@ -259,7 +260,7 @@ export const PaymentVoucherNew = () => {
     setScanNote('Reading the bill…');
     try {
       const files = await Promise.all([...list].map(async (f) => ({
-        name: f.name, mime: f.type || 'application/pdf',
+        name: f.name, mime: docFileMime(f),
         dataBase64: await fileToBase64(f),
       })));
       const res = await extract.mutateAsync([{ files }]);

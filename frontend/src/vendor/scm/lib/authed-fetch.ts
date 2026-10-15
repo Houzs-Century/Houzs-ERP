@@ -77,8 +77,12 @@ export const API_URL =
    They get the scan wait, and since they WRITE NOTHING a timeout says so
    instead of warning of a duplicate save. */
 export const BILL_READER_PATH = /\/payment-vouchers\/extract$|\/credit-notes\/scan$|\/payment-requests\/read-bill$|\/stock-takes\/[^/]+\/read-sheet$/;
+/* A document's file upload (POST …/files, …/official-doc) carries the whole
+   file as base64 in one body — up to 27 MB for the 20 MB cap — which a slow
+   office uplink does not finish in 30 s (owner 2026-10-15: attach 不到 pdf). */
+export const FILE_UPLOAD_PATH = /\/files$|\/official-doc$/;
 function timeoutSignal(path: string): AbortSignal | undefined {
-  const ms = /\/scan-/.test(path) || BILL_READER_PATH.test(path) ? 120_000 : 30_000;
+  const ms = /\/scan-/.test(path) || BILL_READER_PATH.test(path) || FILE_UPLOAD_PATH.test(path) ? 120_000 : 30_000;
   try { return AbortSignal.timeout(ms); } catch { return undefined; } // pre-2022 browsers
 }
 
