@@ -179,6 +179,9 @@ type AmendmentLineRow = {
   new_variants: Record<string, unknown> | null;
   new_qty: number | null;
   new_unit_price_sen: number | null;
+  /* HC-0095 — the operator TYPED the requested 0. False on every row before the
+     column, so a queued seeded 0 cannot zero a priced line on approval. */
+  zero_price_intended: boolean | null;
   /* Mig 0280 — the requested REMARK. NULL = the request does not touch it (every
      row created before 0280, and every line whose remark did not move); '' = a
      real request to clear it. The `!= null` test at the write is the ONE gate,
@@ -347,7 +350,7 @@ export async function applySoAmendment(
   const { data: lineRows, error: lineErr } = await sb
     .from('so_amendment_lines')
     .select('id, sales_order_item_id, change_type, new_item_code, new_variants, ' +
-      'new_qty, new_unit_price_sen, new_remark, new_discount_sen, old_snapshot')
+      'new_qty, new_unit_price_sen, zero_price_intended, new_remark, new_discount_sen, old_snapshot')
     .eq('amendment_id', amendmentId);
   if (lineErr) throw new Error(`applySoAmendment: amendment lines load failed: ${lineErr.message}`);
   const amendmentLines = (lineRows ?? []) as AmendmentLineRow[];
@@ -707,9 +710,14 @@ export async function applySoAmendment(
        replaces with the catalogue figure, exactly as before, and on a migrated
        order the 'including-zero' protection preserves. That is the property that
        makes this fix incapable of authoring a price without an approval: with
-       `approval === null` an unvalidated payload number is never even read. */
-    const clientUnit = (approval !== null && diff.new_unit_price_sen != null)
-      ? Number(diff.new_unit_price_sen)
+       `approval === null` an unvalidated payload number is never even read.
+       HC-0095: a requested 0 counts only when the operator claimed it
+       (zero_price_intended), the amendment twin of unitAfterLineEdit. An
+       unclaimed 0 is an unpriced SKU's seed and keeps the stored price. */
+    const requestedUnit = diff.new_unit_price_sen;
+    const clientUnit = (approval !== null && requestedUnit != null
+        && (Number(requestedUnit) !== 0 || diff.zero_price_intended === true))
+      ? Number(requestedUnit)
       : Number(row.unit_price_sen ?? 0);
 
     /* amendTrust — see where it is derived. MIGRATED: 'including-zero', so the

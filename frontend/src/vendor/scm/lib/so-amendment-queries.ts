@@ -135,6 +135,8 @@ export type CreateAmendmentLine = {
   newVariants?: unknown;
   newQty?: number;
   newUnitPriceSen?: number;
+  /* HC-0095 — sent with a TYPED 0 only; the apply ignores a 0 without it. */
+  zeroPriceIntended?: true;
   /* mig 0280 — the line's REMARK. Omit when the request does not touch it; ''
      is a real request to clear it. Before 0280 this had no column and the
      submit dropped it in silence (owner 2026-08-11, 2990-SO-2608-016). */

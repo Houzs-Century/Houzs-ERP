@@ -11,7 +11,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch, type SaveProblem } from "../vendor/scm/lib/authed-fetch";
 import { lineWriteFailure, lineWriteSaveMessage, type LineWriteFailure } from "../vendor/scm/lib/line-write-failures";
-import { amendmentVariants, amendmentVariantsKey, amendmentRequestedUnitPriceSen, storedLineRemark } from "../vendor/scm/lib/so-amendment-line-diff";
+import { amendmentVariants, amendmentVariantsKey, amendmentRequestedUnitPriceSen, amendmentPriceFields, storedLineRemark } from "../vendor/scm/lib/so-amendment-line-diff";
 import { photoLabel, photoUploadFailure, photoUploadFailureMessage, unmatchedLinePhotos, type PhotoUploadFailure } from "../vendor/scm/lib/photo-upload-failures";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
 import { notifySaveProblems, SaveProblemsList, saveProblemsTitle } from "../vendor/scm/components/SaveProblemsList";
@@ -1872,7 +1872,7 @@ export function MobileNewSO({
         // The remark rides newRemark below, never inside the variants an approval writes back.
         newVariants: amendmentVariants(buildVariants(l)) ?? undefined,
         newQty: num(l.qty) || 1,
-        ...(requestedPriceSen(l) != null ? { newUnitPriceSen: requestedPriceSen(l) as number } : {}), // omitted = null on the row = keep the stored price
+        ...amendmentPriceFields({ unitPriceSen: toSen(l.price), priceAuthored: l.priceAuthored }), // omitted = null on the row = keep the stored price
         /* mig 0280 — send the remark only when it MOVED (desktop parity): a null
            new_remark is "not requested", which is what keeps the apply from
            rewriting a remark this session never touched. */
