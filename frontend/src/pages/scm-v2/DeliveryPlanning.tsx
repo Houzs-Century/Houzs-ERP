@@ -39,7 +39,7 @@ import { NewDpOrderDrawer } from '../../vendor/scm/components/NewDpOrderDrawer';
 import { SetJobDateDrawer } from '../../vendor/scm/components/SetJobDateDrawer';
 import { ScheduleDpOrderDrawer } from '../../vendor/scm/components/ScheduleDpOrderDrawer';
 import { ScheduleTripDrawer } from '../../vendor/scm/components/ScheduleTripDrawer';
-import { SendDeliveryMessageModal, type SendMessageKind } from '../../vendor/scm/components/SendDeliveryMessageModal';
+import { SendDeliveryMessageModal, KIND_AFTER_STATUS, SKIP_LABEL, type SendMessageKind } from '../../vendor/scm/components/SendDeliveryMessageModal';
 import {
   DeliveryPlanningBoard,
   regionTabsFrom,
@@ -63,7 +63,10 @@ import {
   useCancelDpOrder,
   useScheduleDelivery,
   useDeliveryMessageStatuses,
+  useSendDeliveryMessages,
+  useUpdateDeliveryFields,
   type PlanningOrder,
+  type SendDeliveryMessagesResult,
 } from '../../vendor/scm/lib/delivery-planning-queries';
 import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
 import { useLorries } from '../../vendor/scm/lib/lorries-queries';
@@ -292,6 +295,34 @@ export const DeliveryPlanning = () => {
     setSendingRows(allOrders.filter((o) => o.row_type === 'so' && docs.has(o.so_doc_no)));
   };
 
+  /* Postpone sends with NO modal (owner 2026-10-15): the reason and the new
+     date are the row's own Amend Reason + Delivery Date, so there is nothing to
+     ask — the backend reads them per order and skips any missing either. Fire,
+     move the status on the ones that went, and report the summary. */
+  const sendMsg = useSendDeliveryMessages();
+  const updateFields = useUpdateDeliveryFields();
+  const sendPostponeDirect = () => {
+    const docNos = selectedSoDocNos();
+    if (docNos.length === 0 || sendMsg.isPending) return;
+    void sendMsg.mutate({ docNos, kind: 'postpone' }, {
+      onSuccess: (res: SendDeliveryMessagesResult) => {
+        const after = KIND_AFTER_STATUS['postpone'];
+        if (after) for (const g of res.sent) for (const id of g.docNos) void updateFields.mutate({ type: 'so', id, deliveryMessageStatus: after });
+        const parts: string[] = [];
+        if (res.sent.length) parts.push(`Sent ${res.sent.length} message${res.sent.length === 1 ? '' : 's'} (${res.sent.reduce((n, g) => n + g.docNos.length, 0)} orders).`);
+        if (res.failed.length) parts.push(`Failed ${res.failed.length}: ${res.failed.map((f) => `${f.phone} (${f.error})`).join('; ')}.`);
+        if (res.skipped.length) parts.push(`Skipped ${res.skipped.length}: ${res.skipped.map((sk) => `${sk.docNo} (${SKIP_LABEL[sk.reason] ?? sk.reason})`).join(', ')}.`);
+        void notify({
+          title: res.failed.length ? 'Postpone finished with failures' : res.sent.length ? 'Postpone notice sent' : 'Nothing sent',
+          body: parts.join(' ') || 'Nothing to send.',
+          tone: res.failed.length ? 'error' : 'info',
+        });
+        setSel(new Set());
+      },
+      onError: (err) => notify({ title: 'Send failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
+    });
+  };
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -342,7 +373,7 @@ export const DeliveryPlanning = () => {
                         key={k}
                         type="button"
                         role="menuitem"
-                        onClick={() => { setSendMenuOpen(false); openSendModal(k); }}
+                        onClick={() => { setSendMenuOpen(false); if (k === 'postpone') sendPostponeDirect(); else openSendModal(k); }}
                         style={{ display: 'block', width: '100%', padding: '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: 'pointer', textAlign: 'left' }}
                         onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
                         onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
