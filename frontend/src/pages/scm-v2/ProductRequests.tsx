@@ -39,7 +39,7 @@ import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { sortByNumeric, sortByText } from '../../vendor/scm/lib/sort-options';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
-import { fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { docFileMime, fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { useConfirm, usePrompt } from '../../vendor/scm/components/ConfirmDialog';
@@ -469,7 +469,7 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
       const res = initial ? await update.mutateAsync({ id: initial.id, ...body }) : await create.mutateAsync(body);
       for (const f of pending) {
         try {
-          const file: PvFilePayload = { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) };
+          const file: PvFilePayload = { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) };
           await upload.mutateAsync({ id: res.request.id, file });
         } catch { /* the mutation's own onError told the user; the request stands — attach again on it */ }
       }

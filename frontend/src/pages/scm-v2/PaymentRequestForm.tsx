@@ -17,7 +17,7 @@ import {
 import { BILL_FILL_LABEL, billFactsOf, billOffer, fillFromBill, filledFromBill, needsEvent, useRequestBillRead, type BillOffer } from '../../vendor/scm/lib/request-bill-read';
 import { BillReadPanel } from '../../vendor/scm/components/RequestBill';
 import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
-import { fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { docFileMime, fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { useEventLabels } from '../../vendor/scm/lib/event-queries';
 import { EventSelect, eventCellText } from '../../vendor/scm/components/EventSelect';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
@@ -166,7 +166,7 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
         : await create.mutateAsync(body);
       const id = res.request.id;
       for (const f of files) {
-        const payload: PvFilePayload = { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) };
+        const payload: PvFilePayload = { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) };
         try { await upload.mutateAsync({ id, file: payload }); } catch (e) {
           void notify({ title: `${f.name} did not attach`, body: e instanceof Error ? e.message : 'Attach it from the request.', tone: 'error' });
         }

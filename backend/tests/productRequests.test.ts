@@ -343,20 +343,23 @@ describe('product request — its files (owner 2026-10-15: 需要可以 attach �
     expect(R2.store.has(String(row.file_key))).toBe(true);
     /* Not an image or a PDF: refused. */
     expect((await amy(`/product-requests/${id}/files`, 'POST', { ...PDF, mime: 'text/plain' })).body.error).toBe('bad_mime');
+    /* The two spellings some tools write read as the real one (owner 2026-10-15: attach 不到 pdf). */
+    expect((await amy(`/product-requests/${id}/files`, 'POST', { ...PDF, fileName: 'scan.pdf', mime: 'application/x-pdf' })).status).toBe(201);
+    expect(sb.tables.product_request_files.at(-1)!.mime).toBe('application/pdf');
     /* Another Sales caller: the request is not theirs to see, so neither are its files. */
     const ben = as(sb, BEN);
     expect((await ben(`/product-requests/${id}/files`)).status).toBe(404);
     expect((await ben(`/product-requests/${id}/files`, 'POST', PDF)).status).toBe(404);
     /* The Purchaser reads the list and adds a photo. */
     const purchaser = as(sb, PURCHASER);
-    expect(((await purchaser(`/product-requests/${id}/files`)).body.files as Row[]).map((f) => f.file_name)).toEqual(['quotation.pdf']);
+    expect(((await purchaser(`/product-requests/${id}/files`)).body.files as Row[]).map((f) => f.file_name)).toEqual(['quotation.pdf', 'scan.pdf']);
     expect((await purchaser(`/product-requests/${id}/files`, 'POST', { fileName: 'photo.jpg', mime: 'image/jpeg', dataBase64: btoa('jpg') })).status).toBe(201);
     /* A storekeeper holds neither key nor Sales position: refused outright. */
     expect((await as(sb, NOBODY)(`/product-requests/${id}/files`, 'POST', PDF)).status).toBe(403);
     /* The requester removes their own file while the request waits. */
     const fileId = String(row.id);
     expect((await amy(`/product-requests/${id}/files/${fileId}`, 'DELETE')).status).toBe(200);
-    expect(sb.tables.product_request_files).toHaveLength(1);
+    expect(sb.tables.product_request_files).toHaveLength(2);
     expect(R2.store.has(String(row.file_key))).toBe(false);
   });
 

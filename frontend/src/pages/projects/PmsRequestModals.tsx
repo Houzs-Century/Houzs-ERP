@@ -22,7 +22,7 @@ import { RequestForm, type RequestSeed } from '../scm-v2/PaymentRequestForm';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useUploadOfficialDoc } from '../../vendor/scm/lib/official-doc-queries';
-import { fileToBase64 } from '../../vendor/scm/lib/payment-voucher-queries';
+import { docFileMime, fileToBase64 } from '../../vendor/scm/lib/payment-voucher-queries';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import type { TaskAttachment } from './types';
 
@@ -141,7 +141,7 @@ function Inner(props: PmsModalProps) {
       const notes: string[] = [];
       let differs = false;
       for (const f of files) {
-        const res = await upload.mutateAsync({ requestId: props.requestId, file: { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) } });
+        const res = await upload.mutateAsync({ requestId: props.requestId, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
         /* The reader's note: the official invoice differs from the proforma it follows. */
         if (res.note) { notes.push(res.note); differs = true; }
         else if (res.received.length > 0) notes.push(`Finance checks it on ${res.received.map((d) => d.number ?? d.kind).join(', ')}.`);

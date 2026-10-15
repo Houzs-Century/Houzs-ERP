@@ -40,7 +40,7 @@ import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useAuth } from "../auth/AuthContext";
 import { fmtDateOrDash } from "../vendor/shared/format";
-import { fileToBase64, PV_FILE_ACCEPT } from "../vendor/scm/lib/payment-voucher-queries";
+import { docFileMime, fileToBase64, PV_FILE_ACCEPT } from "../vendor/scm/lib/payment-voucher-queries";
 
 type View = { t: "list" } | { t: "new" } | { t: "edit"; req: ProductRequest } | { t: "detail"; id: string };
 type Filter = "all" | "waiting" | "approved" | "closed";
@@ -164,7 +164,7 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
     setFileError(null);
     for (const f of [...(list ?? [])]) {
       try {
-        await upload.mutateAsync({ id: r.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+        await upload.mutateAsync({ id: r.id, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
       } catch (e) {
         setFileError(`${f.name} did not attach — ${e instanceof Error ? e.message : "try again"}.`);
         break;
@@ -359,7 +359,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
       const res = initial ? await update.mutateAsync({ id: initial.id, ...body }) : await create.mutateAsync(body);
       for (const f of pendingFiles) {
         try {
-          await upload.mutateAsync({ id: res.request.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+          await upload.mutateAsync({ id: res.request.id, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
         } catch { /* the mutation's own onError told the user; attach again on the request */ }
       }
       onDone(res.request.id);

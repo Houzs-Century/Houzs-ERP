@@ -41,7 +41,7 @@ import {
   type CreditAllocation, type CreditNote, type CreditNoteLine, type CreditNoteLineInput, type KnockOffTarget, type NoteKind, type NoteStatus, type ScnScan,
 } from '../../vendor/scm/lib/credit-note-queries';
 import { FormKnockOff, NoteKnockOff, pickSen, pickTargets, type KnockOffPick } from './CreditNoteKnockOff';
-import { fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { docFileMime, fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
@@ -140,7 +140,7 @@ export const CreditNotes = () => {
     if (picked.length === 0) return;
     setScanError(null);
     try {
-      const pages: PvFilePayload[] = await Promise.all(picked.map(async (f) => ({ name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) })));
+      const pages: PvFilePayload[] = await Promise.all(picked.map(async (f) => ({ name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) })));
       const r = await scan.mutateAsync(pages);
       setForm({ mode: 'new', values: fromScan(r), scan: r, files: picked });
     } catch (e) { setScanError(errText(e)); }
@@ -383,7 +383,7 @@ const NoteForm = ({ mode, id, initial, scan, scanFiles, onClose, onSaved }: { mo
         /* The scanned pages go with the note they became. */
         for (const f of scanFiles ?? []) {
           try {
-            await uploadFile.mutateAsync({ noteId, file: { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) } });
+            await uploadFile.mutateAsync({ noteId, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
           } catch (e) { setAttachError(`${f.name} did not attach — ${errText(e)}`); }
         }
       } else if (id) {

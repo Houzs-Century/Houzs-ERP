@@ -95,7 +95,8 @@ export function makeDocFileHandlers(spec: DocFilesSpec) {
     let body: any;
     try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
     const fileName = String(body.fileName ?? '').trim() || 'bill';
-    const mime = String(body.mime ?? '').trim().toLowerCase();
+    /* Two spellings some tools write (owner 2026-10-15: attach 不到 pdf) read as the real one. */
+    const mime = String(body.mime ?? '').trim().toLowerCase().replace(/^application\/x-pdf$/, 'application/pdf').replace(/^image\/jpg$/, 'image/jpeg');
     const b64 = String(body.dataBase64 ?? '');
     if (!DOC_FILE_MIMES.has(mime)) {
       return c.json({ error: 'bad_mime', message: `${mime || '(none)'} is not an image or a PDF.` }, 400);
