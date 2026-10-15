@@ -262,6 +262,8 @@ export const LorryCapacity = () => {
     { key: 'delivery_revenue', label: 'Delivery Revenue', align: 'right', getValue: (l) => l.delivery_revenue_sen ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.delivery_revenue_sen)}</span> },
     { key: 'revenue_per_order', label: 'Revenue/Order', align: 'right', getValue: (l) => l.revenue_per_order_sen ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.revenue_per_order_sen)}</span> },
     { key: 'revenue_per_trip', label: 'Revenue/Trip', align: 'right', getValue: (l) => l.revenue_per_trip_sen ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.revenue_per_trip_sen)}</span> },
+    { key: 'km', label: 'GPS km', align: 'right', getValue: (l) => l.km, render: (l) => numOrDash(l.km, 1) },
+    { key: 'running_cost', label: 'Running Cost', align: 'right', getValue: (l) => l.running_cost_sen ?? null, render: (l) => <span className={styles.money}>{centiOrDash(l.running_cost_sen)}</span> },
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [toggleInHouse, setRepair, from, to, notify]);
 
