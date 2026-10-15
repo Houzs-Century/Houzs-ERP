@@ -370,6 +370,7 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
     inServiceDate: (lorry as Record<string, unknown>).in_service_date as string ?? '',
     purchaseDate: lorry.purchase_date ?? '',
     price: lorry.purchase_price_sen != null ? String(lorry.purchase_price_sen / 100) : '',
+    perKm: lorry.cost_per_km_sen != null ? String(lorry.cost_per_km_sen / 100) : '',
     roadTaxExpiry: lorry.road_tax_expiry ?? '',
     insuranceExpiry: lorry.insurance_expiry ?? '',
     puspakomExpiry: lorry.puspakom_expiry ?? '',
@@ -380,6 +381,8 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
   const save = () => {
     const rm = form.price.trim();
     if (rm && !Number.isFinite(Number(rm))) { notify({ title: 'Purchase price must be a number.', tone: 'error' }); return; }
+    const perKm = form.perKm.trim();
+    if (perKm && !(Number(perKm) >= 0)) { notify({ title: 'Running cost per km must be a number, 0 or more.', tone: 'error' }); return; }
     update.mutate({
       id: lorry.id,
       model: form.model.trim() || null,
@@ -390,6 +393,7 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
       // RM → cents. Math.round because 1234.56 * 100 is 123455.99999 in binary
       // floating point and a truncation would quietly lose a sen per lorry.
       purchasePriceSen: rm ? Math.round(Number(rm) * 100) : null,
+      costPerKmSen: perKm ? Math.round(Number(perKm) * 100) : null,
       roadTaxExpiry: form.roadTaxExpiry || null,
       insuranceExpiry: form.insuranceExpiry || null,
       puspakomExpiry: form.puspakomExpiry || null,
@@ -413,6 +417,7 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
           <Fact label="In service" value={fmtDateField(lorry, 'in_service_date')} />
           <Fact label="Purchased" value={lorry.purchase_date ? formatDate(lorry.purchase_date) : '—'} />
           <Fact label="Purchase price" value={lorry.purchase_price_sen != null ? fmtSen(lorry.purchase_price_sen) : '—'} />
+          <Fact label="Running cost / km" value={lorry.cost_per_km_sen != null ? fmtSen(lorry.cost_per_km_sen) : 'Not set'} />
         </dl>
       </section>
     );
@@ -430,6 +435,8 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
         <Field label="First day in service" type="date" value={form.inServiceDate} onChange={(v) => set('inServiceDate', v)} />
         <Field label="Purchase date" type="date" value={form.purchaseDate} onChange={(v) => set('purchaseDate', v)} />
         <Field label="Purchase price (RM)" value={form.price} onChange={(v) => set('price', v)} placeholder="e.g. 128000" />
+        {/* Fuel, tyres, service, driver: whatever the company counts as running cost, per km. Times the Velocity km on the Live Map. */}
+        <Field label="Running cost per km (RM)" value={form.perKm} onChange={(v) => set('perKm', v)} placeholder="e.g. 0.85" />
         {/* The expiry dates are typed from the document, never computed from the
             cadence — see vendor/shared/lorry-compliance.ts. */}
         <Field label="Road tax expiry" type="date" value={form.roadTaxExpiry} onChange={(v) => set('roadTaxExpiry', v)} />
