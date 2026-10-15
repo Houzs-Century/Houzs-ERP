@@ -704,16 +704,26 @@ export function useSendDeliveryMessages() {
 }
 
 /* Latest send status per SO doc — drives the board's "Message" column. POST
-   (not GET) because a full board is ~600 doc numbers, far past URL limits. */
+   (not GET) because a full board is ~2,000 doc numbers, far past URL limits.
+   The endpoint takes at most STATUS_BATCH per call, so the list is split. */
 export type DeliveryMessageStatus = { success: boolean; http_code: number | null; created_at: string };
+export const STATUS_BATCH = 1000;
+export function batchDocNos(docNos: string[]): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < docNos.length; i += STATUS_BATCH) out.push(docNos.slice(i, i + STATUS_BATCH));
+  return out;
+}
 export function useDeliveryMessageStatuses(docNos: string[]) {
   return useQuery({
     queryKey: ['delivery-messages', 'statuses', docNos.join(',')],
     enabled: docNos.length > 0,
-    queryFn: () =>
-      authedFetch<{ statuses: Record<string, DeliveryMessageStatus> }>(`/delivery-messages/statuses`, {
-        method: 'POST', body: JSON.stringify({ docNos }),
-      }).then((r) => r.statuses),
+    queryFn: async () => {
+      const parts = await Promise.all(batchDocNos(docNos).map((batch) =>
+        authedFetch<{ statuses: Record<string, DeliveryMessageStatus> }>(`/delivery-messages/statuses`, {
+          method: 'POST', body: JSON.stringify({ docNos: batch }),
+        })));
+      return Object.assign({}, ...parts.map((r) => r.statuses)) as Record<string, DeliveryMessageStatus>;
+    },
     staleTime: 30_000,
   });
 }
