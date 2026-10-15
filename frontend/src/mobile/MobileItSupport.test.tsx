@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { api } = vi.hoisted(() => ({
@@ -37,6 +38,14 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
+/** The screen inside a query client, which carries the Profile tab's IT Support count. */
+function show(onBack: () => void = () => {}) {
+  const qc = new QueryClient();
+  vi.spyOn(qc, "invalidateQueries");
+  render(<QueryClientProvider client={qc}><MobileItSupport onBack={onBack} /></QueryClientProvider>);
+  return qc;
+}
+
 describe("IT Support on a phone — reaching it", () => {
   it("/it-support opens the phone screen, not the desktop-only dead end", () => {
     expect(destinationScreen("/it-support", "IT Support")).toEqual({ t: "it-support" });
@@ -54,17 +63,40 @@ describe("IT Support on a phone — reaching it", () => {
 describe("IT Support on a phone — my requests", () => {
   it("lists the caller's requests with the unread mark and the state in the reporter's words", async () => {
     api.get.mockResolvedValue({ tickets: [ROW] });
-    render(<MobileItSupport onBack={() => {}} />);
+    show();
     expect(await screen.findByText("Delivery order will not save")).toBeTruthy();
     expect(api.get.mock.calls[0][0]).toBe("/api/it-support/tickets");
     expect(api.get.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
     expect(screen.getByText("New reply")).toBeTruthy();
     expect(screen.getByText("Waiting for you")).toBeTruthy();
+    expect(screen.getByText("High")).toBeTruthy();
+  });
+
+  it("All / Active / Resolved split the list with counts from every request, and the search narrows it", async () => {
+    const done = { ...ROW, code: "HC-0002", status: "closed", title: "Printer offline", unread: false, priority: "low", assignee_name: null };
+    api.get.mockResolvedValue({ tickets: [ROW, done] });
+    show();
+    await screen.findByText("Delivery order will not save");
+    expect(screen.getByText("Printer offline")).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Resolved 1" }));
+    expect(screen.queryByText("Delivery order will not save")).toBeNull();
+    expect(screen.getByText("Printer offline")).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Active 1" }));
+    expect(screen.getByText("Delivery order will not save")).toBeTruthy();
+    expect(screen.queryByText("Printer offline")).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "All 2" }));
+    fireEvent.change(screen.getByLabelText("Search my requests"), { target: { value: "printer" } });
+    expect(screen.queryByText("Delivery order will not save")).toBeNull();
+    expect(screen.getByText("Printer offline")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "All 2" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Search my requests"), { target: { value: "nothing like this" } });
+    expect(screen.getByText("No requests match.")).toBeTruthy();
   });
 
   it("a list that failed to load is a failure with the server's sentence, never an empty list", async () => {
     api.get.mockRejectedValueOnce(new Error("IT Support is not connected on this system yet. Please tell IT directly for now."));
-    render(<MobileItSupport onBack={() => {}} />);
+    show();
     expect(await screen.findByText("We couldn't load your IT requests.")).toBeTruthy();
     expect(screen.getByText(/not connected on this system yet/)).toBeTruthy();
     expect(screen.queryByText("Nothing sent to IT yet.")).toBeNull();
@@ -76,7 +108,7 @@ describe("IT Support on a phone — my requests", () => {
   it("Back leaves the screen from the list, and returns to the list from a request", async () => {
     const onBack = vi.fn();
     api.get.mockResolvedValueOnce({ tickets: [ROW] }).mockResolvedValue(detail("waiting_reporter"));
-    render(<MobileItSupport onBack={onBack} />);
+    show(onBack);
     fireEvent.click(await screen.findByText("Delivery order will not save"));
     expect(await screen.findByText("Which lorry was it?")).toBeTruthy();
     fireEvent.click(screen.getByText(/All my requests/));
@@ -90,7 +122,7 @@ describe("IT Support on a phone — report, reply, confirm", () => {
   it("refuses a blank title without calling the server, then sends the form and opens the new request", async () => {
     api.get.mockResolvedValueOnce({ tickets: [] }).mockResolvedValue(detail("open"));
     api.postForm.mockResolvedValue({ code: "HC-0007" });
-    render(<MobileItSupport onBack={() => {}} />);
+    show();
     await screen.findByText("Nothing sent to IT yet.");
     fireEvent.click(screen.getByText("Report a problem"));
     fireEvent.click(screen.getByText("Send"));
@@ -105,6 +137,7 @@ describe("IT Support on a phone — report, reply, confirm", () => {
     expect(form.get("title")).toBe("Cannot print DO");
     expect(form.get("type")).toBe("bug");
     expect(form.get("priority")).toBe("medium");
+    expect(Number.isNaN(Date.parse(String(form.get("occurred_at"))))).toBe(false);
     expect(await screen.findByText("IT request")).toBeTruthy();
   });
 
@@ -112,9 +145,12 @@ describe("IT Support on a phone — report, reply, confirm", () => {
     api.get.mockResolvedValueOnce({ tickets: [ROW] }).mockResolvedValue(detail("resolved"));
     api.postForm.mockResolvedValue({ ok: true });
     api.post.mockResolvedValue({ ok: true });
-    render(<MobileItSupport onBack={() => {}} />);
+    const qc = show();
     fireEvent.click(await screen.findByText("Delivery order will not save"));
     await screen.findByText("Which lorry was it?");
+    // Opening it marked it seen on the hub: the Profile count is read again.
+    expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["it-support", "unread-count"] });
+    expect(screen.getByText(/Something is not working · High · Handled by Samuel/)).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("Reply to IT"), { target: { value: "Lorry 3" } });
     fireEvent.click(screen.getByText("Send reply"));

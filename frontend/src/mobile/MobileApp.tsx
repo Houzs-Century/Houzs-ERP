@@ -31,6 +31,7 @@ import { MobileModuleList, MODULE_CONFIGS, FORM_MEMBERS_EDIT } from "./MobileMod
 import { MobileInvitations } from "./MobileInvitations";
 import { mobileDestinationMatches, resolveMobileRoute, type MobileRoute } from "./mobileRoute";
 import { useItSupportConnected, withoutUnconnectedItSupport } from "../hooks/useItSupportConnected";
+import { useItSupportUnread } from "../hooks/useAmendmentApprovals";
 import type { FlowDocNav, FlowNav } from "./relationship-map-model";
 import type { SearchNav } from "./MobileSearch";
 import type { MobileScanPrefill } from "./MobileScan";
@@ -611,6 +612,8 @@ function MobileAppInner() {
   // service case without opening the screen (B2).
   const annUnread = useAnnouncementUnread();
   const itConnected = useItSupportConnected();
+  // The Profile tab pill also counts IT replies: IT Support lives under Profile.
+  const profileUnread = annUnread + useItSupportUnread();
 
   // Single-source the mobile gating on the SHARED per-node predicate the desktop
   // Sidebar + MobileTabBar filter with (components/navFilter.makeNavVisible), so
@@ -1135,14 +1138,14 @@ function MobileAppInner() {
           <button
             className={`tab${tab === "profile" ? " on" : ""}`}
             onClick={() => setTab("profile")}
-            aria-label={annUnread > 0 ? `Profile, ${annUnread} unread notification${annUnread > 1 ? "s" : ""}` : "Profile"}
+            aria-label={profileUnread > 0 ? `Profile, ${profileUnread} unread` : "Profile"}
           >
             <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="3.7" /><path d="M4.8 20a7.2 7.2 0 0 1 14.4 0" /></svg>
             {/* App-wide unread badge — same red count pill as the Profile >
                 Announcements row (owner B2); the un-acked system-notice count. */}
-            {annUnread > 0 && (
+            {profileUnread > 0 && (
               <span aria-hidden style={{ position: "absolute", top: 4, left: "calc(50% + 5px)", minWidth: 16, height: 16, padding: "0 4px", borderRadius: 8, background: "#c0392b", color: "#fff", fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, boxSizing: "border-box" }}>
-                {annUnread > 9 ? "9+" : annUnread}
+                {profileUnread > 9 ? "9+" : profileUnread}
               </span>
             )}
             <span className="tl">Profile</span>

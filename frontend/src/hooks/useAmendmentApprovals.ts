@@ -23,9 +23,11 @@
 // later — the "审批后就根据目前需要的单号改变" half of the ask.
 // ─────────────────────────────────────────────────────────────────────────
 
+import { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { useItSupportConnected } from "./useItSupportConnected";
 
 /** Shared keys so every reader hits one fetch, and any writer can invalidate. */
 export const AMENDMENT_APPROVALS_KEY = ["scm", "amendment-approvals"] as const;
@@ -39,13 +41,18 @@ export const PAYMENT_BACKDATE_APPROVALS_KEY = ["scm", "payment-backdate-approval
    voucher and AP invoice writes that answer or re-open a request. */
 export const PAYMENT_REQUESTS_WAITING_KEY = ["payment-requests", "waiting-count"] as const;
 const PAYMENT_REQUESTS_WAITING_PATH = "/api/scm/payment-requests/waiting-count";
+/* IT Support: the person's requests IT has answered since they last opened them.
+   Opening one marks it seen on the hub, so the request screens refresh this key. */
+export const IT_SUPPORT_UNREAD_KEY = ["it-support", "unread-count"] as const;
+const IT_SUPPORT_UNREAD_PATH = "/api/it-support/unread-count";
 
 interface PendingCountResponse {
   count: number;
 }
 
 /** The two badge sources a nav entry can name. Mirrored by NavTab["badge"]. */
-export type ApprovalBadgeSource = "amendment-approvals" | "po-amendment-approvals" | "payment-backdate-approvals" | "payment-requests-waiting";
+export type ApprovalBadgeSource =
+  | "amendment-approvals" | "po-amendment-approvals" | "payment-backdate-approvals" | "payment-requests-waiting" | "it-support-replies";
 
 /** What the count is, in the entry's tooltip ("Payment Requests · 3 waiting for Finance"). */
 export const BADGE_MEANING: Record<ApprovalBadgeSource, string> = {
@@ -53,6 +60,7 @@ export const BADGE_MEANING: Record<ApprovalBadgeSource, string> = {
   "po-amendment-approvals": "awaiting your approval",
   "payment-backdate-approvals": "awaiting your approval",
   "payment-requests-waiting": "waiting for Finance",
+  "it-support-replies": "with a new reply from IT",
 };
 
 /**
@@ -91,6 +99,7 @@ function usePendingCount(
 export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
   const { user, can } = useAuth();
   const enabled = !!user?.id;
+  const itConnected = useItSupportConnected();
   return {
     "amendment-approvals": usePendingCount(
       AMENDMENT_APPROVALS_KEY,
@@ -114,7 +123,22 @@ export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
       PAYMENT_REQUESTS_WAITING_PATH,
       enabled && can("scm.payment_voucher.create"),
     ),
+    /* Everyone reports to IT; nobody is polled where the hub is not connected. */
+    "it-support-replies": usePendingCount(IT_SUPPORT_UNREAD_KEY, IT_SUPPORT_UNREAD_PATH, enabled && itConnected),
   };
+}
+
+/** The IT Support count alone, for the phone, which has no sidebar. Shares the sidebar's query. */
+export function useItSupportUnread(): number {
+  const { user } = useAuth();
+  const connected = useItSupportConnected();
+  return usePendingCount(IT_SUPPORT_UNREAD_KEY, IT_SUPPORT_UNREAD_PATH, !!user?.id && connected);
+}
+
+/** Re-read the IT Support count now: a request was just opened, which marks it seen on the hub. */
+export function useRefreshItSupportUnread(): () => void {
+  const qc = useQueryClient();
+  return useCallback(() => void qc.invalidateQueries({ queryKey: IT_SUPPORT_UNREAD_KEY }), [qc]);
 }
 
 /** The requests waiting for Finance, read fresh — the Payment Vouchers page's
