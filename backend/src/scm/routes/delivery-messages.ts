@@ -76,10 +76,6 @@ const sendSchema = z.object({
     carPlate: z.string().trim().max(20).default(''),
     deliveryTime: z.string().trim().min(1).max(60),
   }).optional(),
-  postpone: z.object({
-    reason: z.string().trim().min(1).max(120),
-    newDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  }).optional(),
 });
 
 /* ── POST /send — one Houzs Connect call per customer phone ────────────────── */
@@ -97,13 +93,12 @@ deliveryMessages.post('/send', async (c) => {
   if (!parsed.success) return c.json({ error: 'invalid_body', reason: parsed.error.message }, 400);
   const docNos = [...new Set(parsed.data.docNos)];
   const kind = parsed.data.kind;
-  const extras: SendExtras = { driverInfo: parsed.data.driverInfo, postpone: parsed.data.postpone };
+  const extras: SendExtras = { driverInfo: parsed.data.driverInfo };
   if (kind === 'driver_info' && !extras.driverInfo) {
     return c.json({ error: 'invalid_body', reason: 'Driver Info needs the driver, contact, plate and time.' }, 400);
   }
-  if (kind === 'postpone' && !extras.postpone) {
-    return c.json({ error: 'invalid_body', reason: 'Postpone needs the reason and the proposed date.' }, 400);
-  }
+  // Postpone needs no request field: it reads the row's Amend Reason + Delivery
+  // Date (kindAttributes), and skips any order missing either.
 
   const sb = c.get('supabase');
   const user = c.get('user') as { id?: string } | null;
@@ -112,7 +107,7 @@ deliveryMessages.post('/send', async (c) => {
   // Address columns feed the Postage kind only; the rest read nothing extra.
   const { data: rowsRaw, error: readErr } = await scopeToAllowedCompanies(
     sb.from('mfg_sales_orders')
-      .select('doc_no, debtor_name, phone, branding, customer_delivery_date, amended_delivery_date, delivery_address1, delivery_address2, delivery_address3, delivery_address4, address1, address2, address3, address4, postcode, city, customer_state')
+      .select('doc_no, debtor_name, phone, branding, customer_delivery_date, amended_delivery_date, amend_reason, delivery_address1, delivery_address2, delivery_address3, delivery_address4, address1, address2, address3, address4, postcode, city, customer_state')
       .in('doc_no', docNos),
     c,
   );

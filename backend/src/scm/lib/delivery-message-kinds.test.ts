@@ -70,12 +70,21 @@ describe('kindAttributes', () => {
     });
   });
 
-  it('postpone prints the current date, the reason and the proposed date', () => {
-    expect(kindAttributes('postpone', row, '2026-10-08', 0, undefined).skip).toBe('postpone_required');
-    const r = kindAttributes('postpone', row, '2026-10-08', 0, { postpone: { reason: 'lorry breakdown', newDate: '2026-10-12' } });
+  it('postpone reads the reason and new date off the board row; skips when either is missing', () => {
+    // No Amend Reason / no new Delivery Date on the row -> skipped, not sent blank.
+    expect(kindAttributes('postpone', row, '2026-10-08', 0, undefined).skip).toBe('postpone_needs_reason_date');
+    expect(kindAttributes('postpone', { ...row, amend_reason: 'Our strict quality control checks' }, '2026-10-08', 0, undefined).skip)
+      .toBe('postpone_needs_reason_date');
+    const r = kindAttributes(
+      'postpone',
+      { ...row, amend_reason: 'Our strict quality control checks', amended_delivery_date: '2026-10-12', customer_delivery_date: '2026-10-08' },
+      '2026-10-08',
+      0,
+      undefined,
+    );
     expect(r.attributes).toEqual({
       client_delivery_date: '2026/10/08',
-      amend_date_reason_2: 'lorry breakdown',
+      amend_date_reason_2: 'Our strict quality control checks',
       new_delivery_date: '2026/10/12',
     });
   });
