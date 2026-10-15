@@ -336,11 +336,43 @@ export const amendmentVariants = (v: unknown): Record<string, unknown> | null =>
   return Object.keys(rest).length === 0 ? null : rest;
 };
 
+const canonicalJson = (o: unknown): string => {
+  if (o == null) return 'null';
+  if (typeof o !== 'object') return JSON.stringify(o);
+  if (Array.isArray(o)) return `[${o.map(canonicalJson).join(',')}]`;
+  const rec = o as Record<string, unknown>;
+  return `{${Object.keys(rec).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(rec[k])}`).join(',')}}`;
+};
+
+const DEFAULT_LEG_RE = /^\s*default\s*$/i;
+
+/** Whether two variants blobs ask for a different item — the client's copy of
+    the server's variantsForCompare (amendment-noop-lines.ts). Beyond the remark
+    side channel and key order, it ignores what the edit view FILLS on a saved
+    line when it opens: the recomputed bedframe totalHeight (derived from divan +
+    leg + gap, which are compared) and a blank sofa leg set to "Default". Both
+    made a payment-only save raise a Purchaser amendment (HC-0103). */
+export const amendmentVariantsKey = (v: unknown): string => {
+  const rest = amendmentVariants(v);
+  if (!rest) return 'null';
+  delete rest.totalHeight;
+  if (typeof rest.legHeight === 'string' && DEFAULT_LEG_RE.test(rest.legHeight)) delete rest.legHeight;
+  return Object.keys(rest).length === 0 ? 'null' : canonicalJson(rest);
+};
+
+/** The stored line's remark as the edit view seeds it: the column, else the copy
+    an older write left in variants.remark (HC-SO-2609-321/A2). */
+export const storedLineRemark = (remark: string | null | undefined, variants: unknown): string => {
+  if (remark != null) return remark;
+  const v = variants as Record<string, unknown> | null | undefined;
+  return v && typeof v === 'object' && typeof v.remark === 'string' ? v.remark : '';
+};
+
 export const amendmentLineSig = (d: AmendmentSigDraft): string => JSON.stringify({
   itemCode:     d.itemCode,
   qty:          d.qty,
   unitPriceSen: d.unitPriceSen,
-  variants:     d.variants ?? null,
+  variants:     amendmentVariantsKey(d.variants),
   remark:       d.remark ?? '',
   discountSen:  Math.round(d.discountSen ?? 0),
 });
