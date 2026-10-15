@@ -40,6 +40,29 @@ import { derivePlanningState } from '../routes/delivery-planning';
 export type SoListRow = { doc_no?: string } & Record<string, unknown>;
 export type SoDeliverableMap = Awaited<ReturnType<typeof soDeliverableRemaining>>;
 
+/* BUG-51 column repoint (owner 2026-10-15). Map each SO doc_no to the REAL
+   AutoCount sales-exemption expiry: its linked book doc no (`linked_ac_docno`)
+   resolved through the AutoCount mirror rows (`public.sales_orders`, one per book
+   doc, carrying `expiry_date` = AutoCount's SalesExemptionExpiryDate UDF). A SO is
+   ABSENT from the result when it has no AutoCount link or the mirror carries no
+   expiry for it — the SO list then shows the column blank, which is correct (most
+   orders are not SST-exempt). Pure, so the keying is tested without the view and
+   mirror reads around it. Never reads the ERP's own `sales_exemption_expiry`
+   (the frozen original delivery date — untouched by this change). */
+export function acExemptionExpiryByDoc(
+  linkedAcByDoc: Map<string, string>,
+  mirrorRows: Array<{ doc_no: string | null; expiry_date: string | null }>,
+): Map<string, string> {
+  const expiryByAcDoc = new Map<string, string>();
+  for (const a of mirrorRows) if (a.doc_no && a.expiry_date) expiryByAcDoc.set(a.doc_no, a.expiry_date);
+  const out = new Map<string, string>();
+  for (const [docNo, acDoc] of linkedAcByDoc) {
+    const v = expiryByAcDoc.get(acDoc);
+    if (v) out.set(docNo, v);
+  }
+  return out;
+}
+
 export async function buildSoListRows(
   sb: Variables['supabase'],
   c: Context<{ Bindings: Env; Variables: Variables }>,
@@ -328,12 +351,47 @@ export async function buildSoListRows(
        status are already on the view rows (`r`). */
     const overrideByDoc = new Map<string, string | null>();
     const amendedDDByDoc = new Map<string, string | null>();
+    /* BUG-51 column repoint (owner 2026-10-15): the SO list "Sales Exemption
+       Expiry Date" column shows the REAL AutoCount exemption-expiry UDF, keyed by
+       the order's linked book doc no — NOT the ERP's own `sales_exemption_expiry`
+       (the frozen original delivery date, which stays untouched). Collect each
+       order's `linked_ac_docno` here (already on this base read) for the mirror
+       read below. */
+    const linkedAcByDoc = new Map<string, string>();
     {
       const baseRows = await baseRowsProm;
-      for (const b of baseRows as unknown as Array<{ doc_no: string | null; delivery_state?: string | null; deliveryState?: string | null; amended_delivery_date?: string | null; amendedDeliveryDate?: string | null }>) {
+      for (const b of baseRows as unknown as Array<{ doc_no: string | null; delivery_state?: string | null; deliveryState?: string | null; amended_delivery_date?: string | null; amendedDeliveryDate?: string | null; linked_ac_docno?: string | null; linkedAcDocno?: string | null }>) {
         if (!b.doc_no) continue;
         overrideByDoc.set(b.doc_no, b.deliveryState ?? b.delivery_state ?? null);
         amendedDDByDoc.set(b.doc_no, b.amendedDeliveryDate ?? b.amended_delivery_date ?? null);
+        const ac = (b.linkedAcDocno ?? b.linked_ac_docno ?? '').trim();
+        if (ac) linkedAcByDoc.set(b.doc_no, ac);
+      }
+    }
+    /* The AutoCount exemption-expiry (public.sales_orders.expiry_date, mirrored
+       from AutoCount's SalesExemptionExpiryDate UDF) for every linked book doc on
+       the page — ONE batched read of the mirror, which lives in the `public`
+       schema (the SCM client defaults to `scm`). company-scoped: the mirror is
+       HOUZS-only and 2990 orders carry no linked_ac_docno, so a 2990 page reads
+       nothing. */
+    const acExemptionByDoc = new Map<string, string>();
+    {
+      const acDocNos = [...new Set(linkedAcByDoc.values())];
+      if (acDocNos.length > 0) {
+        const { data: acRows, error: acErr } = await chunkIn<{ doc_no: string | null; expiry_date: string | null }>(
+          acDocNos,
+          (batch, from, to) =>
+            scopeToCompany(
+              sb.schema('public').from('sales_orders').select('doc_no, expiry_date').in('doc_no', batch).order('doc_no'),
+              c,
+            ).range(from, to),
+        );
+        /* A mirror blip must not masquerade as "no order is exempt": observe it and
+           leave the column blank for this paint rather than show every row empty as
+           if it were fact. Non-fatal — the column is display-only, so it never 500s
+           the list. */
+        if (acErr) console.warn('[so-list] AutoCount exemption-expiry read failed, column left blank:', acErr.message);
+        else for (const [docNo, v] of acExemptionExpiryByDoc(linkedAcByDoc, acRows ?? [])) acExemptionByDoc.set(docNo, v);
       }
     }
     const planningToday = todayMyt();
@@ -430,6 +488,9 @@ export async function buildSoListRows(
       const pm = paymentMethods.get(docNo);
       (r as Record<string, unknown>).payment_methods_summary = pm ? [...pm].sort().join(' + ') : '';
       (r as Record<string, unknown>).approval_codes_summary = approvalCodes.get(docNo) ?? '';
+      /* BUG-51 repoint: the REAL AutoCount sales-exemption expiry for the SO list
+         column (blank when the order is not in AutoCount). */
+      (r as Record<string, unknown>).ac_sales_exemption_expiry = acExemptionByDoc.get(docNo) ?? null;
       if (!perGroup) {
         (r as Record<string, unknown>).ready_categories = [];
         (r as Record<string, unknown>).is_fully_ready = false;

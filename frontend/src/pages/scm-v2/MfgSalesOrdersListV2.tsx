@@ -108,7 +108,6 @@ import { capability } from "../../auth/capabilities";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { customerRefOf } from '../../lib/customer-ref';
-import { soExemptionExpiryOf } from '../../lib/so-exemption-expiry';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Minimal row shape the listing needs. The full SoRow (in MfgSalesOrdersList
@@ -191,6 +190,11 @@ type SoRow = HoldFields & {
   source_po_adj?: boolean;
   processing_date: string | null;
   customer_delivery_date: string | null;
+  /* The REAL AutoCount sales-exemption expiry (public.sales_orders.expiry_date,
+     keyed by the order's linked book doc no), server-derived in so-list-rows.ts.
+     Null for orders not in AutoCount. Drives the "Sales Exemption Expiry Date"
+     column; distinct from the ERP's frozen sales_exemption_expiry (BUG-51). */
+  ac_sales_exemption_expiry?: string | null;
   // ── Phase 2 FINANCE: cost / margin / per-category subtotals + deposit. The
   //    backend OMITS these keys entirely for non-finance callers
   //    (canViewScmFinance), so every one is optional. margin_pct_basis is
@@ -1486,8 +1490,11 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "sales_exemption_expiry", group: "Basic", label: SO_LABELS.salesExemptionExpiryDate, width: "150px", defaultHidden: true, disableSort: true, exportFormat: "date",
-      getValue: (r) => soExemptionExpiryOf(r) ?? "",
-      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(soExemptionExpiryOf(r))}</span>,
+      /* BUG-51 repoint (owner 2026-10-15): the REAL AutoCount sales-exemption
+         expiry, not the frozen original delivery date. Blank for orders not in
+         AutoCount. Grid key kept as-is so saved layouts keep the column. */
+      getValue: (r) => r.ac_sales_exemption_expiry ?? "",
+      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.ac_sales_exemption_expiry)}</span>,
     },
     {
       key: "sales_location",
