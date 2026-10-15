@@ -487,7 +487,13 @@ const RulesEditor = ({ cardId, rules, zones }: { cardId: string; rules: RateRule
         {needsPosition && <RMLikeInput label={form.ruleType === 'OVERAGE' ? 'Cap N' : 'Position (3=3rd+)'} value={form.tierPosition} onChange={(v) => set('tierPosition', v)} width={110} />}
         {needsBracket && <RMLikeInput label="Comp min" value={form.bracketMin} onChange={(v) => set('bracketMin', v)} width={90} />}
         {needsBracket && <RMLikeInput label="Comp max (blank=+)" value={form.bracketMax} onChange={(v) => set('bracketMax', v)} width={130} />}
-        {needsZone && <SelectField label="Zone" value={form.zone} onChange={(v) => set('zone', v)} options={zones.map((z) => [z, z])} />}
+        {needsZone && (
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Zone or town</span>
+            <input className={styles.fieldInput} list="rate-zone-list" value={form.zone} onChange={(e) => set('zone', e.target.value)} placeholder="KL, JOHOR, or a town e.g. RAWANG" />
+            <datalist id="rate-zone-list">{zones.map((z) => <option key={z} value={z} />)}</datalist>
+          </label>
+        )}
         <RMLikeInput label="Amount (RM)" value={form.amountRM} onChange={(v) => set('amountRM', v)} width={110} />
         <Button variant="secondary" size="md" onClick={addRule} disabled={create.isPending}><Plus {...ICON} /><span>Add rule</span></Button>
       </div>
@@ -572,7 +578,7 @@ const CalculatorPanel = ({ cardId, basis, zones, rules }: { cardId: string; basi
                 return (
                   <div key={f.key} style={{ opacity: priced ? 1 : 0.45 }} title={priced ? undefined : `This card has no ${RULE_LABEL[f.rule!]} rule, so this input cannot change the total.`}>
                     {f.key === 'zone'
-                      ? <SelectField label="Destination zone" value={facts.zone} onChange={(v) => set('zone', v)} options={[['', 'In-town'], ...zones.map((z) => [z, z] as [string, string])]} />
+                      ? <SelectField label="Destination zone" value={facts.zone} onChange={(v) => set('zone', v)} options={[['', 'In-town'], ...[...new Set([...zones, ...rules.filter((r) => r.ruleType === 'OUTSTATION' && r.zone).map((r) => r.zone as string)])].map((z) => [z, z] as [string, string])]} />
                       : <RMLikeInput label={f.key === 'count' ? (basis === 'ITEM' ? 'Items' : 'Sets') : f.label} value={facts[f.key]} onChange={(v) => set(f.key, v)} />}
                   </div>
                 );

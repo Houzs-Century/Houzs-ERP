@@ -16,19 +16,19 @@ describe('a 3PL charge priced per DO (HC-0031)', () => {
     const f = doFacts([
       { category: 'BEDFRAME', qty: 2 }, { category: 'MATTRESS', qty: 2 },
       { category: 'SOFA', qty: 1, cancelled: true },
-    ], null);
+    ], null, null);
     expect(f.setCount).toBe(2);
     expect(f.itemCount).toBe(4);
     expect(f.dropCount).toBe(1);
   });
 
   test('expected = the card for that one DO, zone surcharge included', () => {
-    const f = doFacts([{ category: 'BEDFRAME', qty: 2 }, { category: 'MATTRESS', qty: 2 }], 'JOHOR');
+    const f = doFacts([{ category: 'BEDFRAME', qty: 2 }, { category: 'MATTRESS', qty: 2 }], 'JOHOR', null);
     expect(expectedSen(perSet, f)).toBe(10000 + 6000 + 5000);
   });
 
   test('no card means no system amount, so no variance (not a fake RM0 match)', () => {
-    expect(expectedSen(null, doFacts([], null))).toBeNull();
+    expect(expectedSen(null, doFacts([], null, null))).toBeNull();
     expect(varianceSen(12000, null)).toBeNull();
     expect(varianceSen(12000, 10000)).toBe(2000);
     expect(varianceSen(9000, 10000)).toBe(-1000);
