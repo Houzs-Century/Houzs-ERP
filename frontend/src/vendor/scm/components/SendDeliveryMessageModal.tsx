@@ -66,7 +66,7 @@ const KIND_TITLE: Record<SendMessageKind, string> = {
    of each kind (the sheet-era vocabulary, delivery-planning-queries
    MESSAGE_STATUSES; owner 2026-09-22 for the delivery send). null = the send
    does not move the status. Fire-and-forget per successfully-sent doc. */
-const KIND_AFTER_STATUS: Record<SendMessageKind, string | null> = {
+export const KIND_AFTER_STATUS: Record<SendMessageKind, string | null> = {
   delivery: 'Pending Customer Reply (D)',
   amend: 'Pending Reschedule (A)',
   postpone: 'Done Postpone Reason',
@@ -79,7 +79,7 @@ const KIND_AFTER_STATUS: Record<SendMessageKind, string | null> = {
   delivery_completed: null,
 };
 
-const SKIP_LABEL: Record<string, string> = {
+export const SKIP_LABEL: Record<string, string> = {
   not_found: 'order not found',
   no_phone: 'no usable phone',
   no_balance: 'nothing owed',
