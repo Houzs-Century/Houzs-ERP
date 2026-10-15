@@ -13,7 +13,7 @@ describe('tripsFromDoCrew', () => {
       { lorryId: null, lorryPlate: 'VRH9058', date: '2026-10-16T00:00:00Z' },
     ], idByPlate, new Map());
     expect([...out.get('L1')!.dates].sort()).toEqual(['2026-10-15', '2026-10-16']);
-    expect(out.get('L1')!.deliveries).toBe(3);
+    expect(out.get('L1')!.jobs).toBe(3);
   });
 
   test('skips a lorry-date that already has a real trip, and DOs with no lorry or date', () => {
