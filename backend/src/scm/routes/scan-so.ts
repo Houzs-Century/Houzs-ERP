@@ -381,11 +381,13 @@ async function loadVenueNames(db: D1Database): Promise<string[]> {
 /* HC-0006 speed: the catalogue is ~10 paginated reads and changes rarely, so one
    isolate keeps it for a minute. Scans in that window skip the reads and reuse
    the same object, which also keeps the cached prompt prefix byte-identical.
-   A failed load is not kept. */
+   A failed or empty load is not kept. */
 const CATALOG_TTL_MS = 60_000;
-const catalogCache = new Map<string, { at: number; p: Promise<Catalog> }>();
-function loadCatalog(sb: SupabaseClient, db: D1Database, companyId?: number | null): Promise<Catalog> {
-  return ttlCached(catalogCache, String(companyId ?? 'all'), CATALOG_TTL_MS, () => loadCatalogFresh(sb, db, companyId));
+const catalogCache = new Map<string, { at: number; v: Catalog }>();
+function loadCatalog(sb: SupabaseClient, db: D1Database, companyId: number | null): Promise<Catalog> {
+  return ttlCached(catalogCache, String(companyId ?? 'all'), CATALOG_TTL_MS, () => loadCatalogFresh(sb, db, companyId),
+    // an empty SKU or venue list is a failed read that fails soft: never keep it
+    (cat) => cat.skus.length > 0 && cat.venues.length > 0);
 }
 async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: number | null): Promise<Catalog> {
   // PostgREST's default 1000-row cap silently truncates the OCR validation
@@ -694,7 +696,7 @@ async function warmCatalogCache(
   if (!apiKey) return { ok: false, reason: 'no_key' };
   let catalog: Catalog;
   try {
-    catalog = await loadCatalog(sb, db, companyId);
+    catalog = await loadCatalog(sb, db, companyId ?? null);
   } catch (e) {
     return { ok: false, reason: `catalog_load_failed: ${(e as Error).message}` };
   }
@@ -2910,7 +2912,7 @@ scanSo.post('/extract', async (c) => {
   // operator already has on the SKU master screens). env.DB carries the venue
   // master read (public.project_venues — unreachable by the scm client).
   const sb = c.get('supabase');
-  const catalog = await loadCatalog(sb, c.env.DB, activeCompanyId(c));
+  const catalog = await loadCatalog(sb, c.env.DB, activeCompanyId(c) ?? null);
 
   // Company name for the prompt anchor comes from the central Branding config
   // (stable → the cached prefix below stays byte-identical to /warm + cron).
@@ -4240,7 +4242,6 @@ scanSo.post('/enqueue', async (c) => {
   //    Each kept photo also gets its scm.scan_files row (HC-0006) via keepScanFile.
   const imageKeys: string[] = [];
   if (c.env.SO_ITEM_PHOTOS) {
-    /* HC-0006 speed: the photos are independent, so they go up together. */
     const keys = await Promise.all(allFiles.map((f, i) => keepScanFile(c.env, svc, {
       kind: 'so', companyId: activeCompanyId(c), buf: f.buffer,
       mime: f.mime, uploadedBy: user.id, key: `scan-jobs/${jobId}/${i}`,
