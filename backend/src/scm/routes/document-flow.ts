@@ -644,7 +644,7 @@ documentFlow.get('/:type/:id', async (c) => {
          but receives many) ∪ the header FK, so a cross-PO receipt shows and a
          receipt-less header GRN still does. Mirrors the main builder's section 6. */
       const grnLinesRes = await readRes('orphan grn_items', poItemIds, (b, f, t) =>
-        scopeToCompany(sb.from('grn_items').select('id, grn_id, purchase_order_item_id, qty').in('purchase_order_item_id', b), c).order('id').range(f, t));
+        scopeToCompany(sb.from('grn_items').select('id, grn_id, purchase_order_item_id, qty:qty_accepted').in('purchase_order_item_id', b), c).order('id').range(f, t));
       const grnLines = grnLinesRes.data;
       const grnById = new Map<string, any>();
       const { data: grnHdrs } = await scopeToCompany(sb.from('grns').select('id, grn_number, status, purchase_order_id').eq('purchase_order_id', expandPoId), c);
@@ -1000,7 +1000,7 @@ documentFlow.get('/:type/:id', async (c) => {
   for (const r of allPoItemRows) poItemQtyAll.set(r.id, { poId: r.purchase_order_id, qty: Number(r.qty ?? 0) });
   const allPoItemIds = [...poItemQtyAll.keys()];
   const grnLineRes = await readRes('grn_items', allPoItemIds, (b, f, t) =>
-    sb.from('grn_items').select('id, grn_id, purchase_order_item_id, qty').in('purchase_order_item_id', b).order('id').range(f, t));
+    sb.from('grn_items').select('id, grn_id, purchase_order_item_id, qty:qty_accepted').in('purchase_order_item_id', b).order('id').range(f, t));
   const grnByHeader = await readIn('grns(header)', poIds, (b, f, t) =>
     sb.from('grns').select('id, grn_number, status, purchase_order_id').in('purchase_order_id', b).order('id').range(f, t));
   const grnById = new Map<string, any>();
