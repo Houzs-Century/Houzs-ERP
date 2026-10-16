@@ -11,6 +11,7 @@ import { cn } from "../lib/utils";
 import { fmtDate, fmtSen, todayMY } from "../vendor/shared/format";
 import { formatCurrency } from "../lib/utils";
 import type { ProfitabilityResponse } from "./projects/financeViewModel";
+import { ManagementWatch, type WatchInputs } from "./overview/ManagementWatch";
 
 // ── Types for the data this page aggregates ──────────────────
 interface InboxItem {
@@ -73,12 +74,12 @@ export function Overview() {
      that module (OFF-NOT-HIDE, as above). */
   const today = todayMY();
   const monthFrom = `${today.slice(0, 7)}-01`;
-  const proc = useQuery<{ open: { poCount: number; remainingSen: number; late5Lines: number } }>("/api/scm/procurement-overview#home",
+  const proc = useQuery<{ open: { poCount: number; remainingSen: number; late5Lines: number; late5Suppliers: number; worstDaysLate: number }; leadByCategory: NonNullable<WatchInputs["procurement"]>["leadByCategory"] }>("/api/scm/procurement-overview#home",
     () => api.get(`/api/scm/procurement-overview?from=${monthFrom}&to=${today}`),
     [monthFrom, today],
     { enabled: pageAccess("scm.procurement.po") !== "none" },
   );
-  const logi = useQuery<{ runsToday: number; weeks: { doCount: number; current: boolean }[]; deliveredOwingOver30: { count: number; balanceSen: number } }>("/api/scm/logistic-overview",
+  const logi = useQuery<NonNullable<WatchInputs["logistic"]> & { runsToday: number; weeks: { doCount: number; current: boolean }[] }>("/api/scm/logistic-overview",
     () => api.get("/api/scm/logistic-overview"),
     [],
     { enabled: pageAccess("scm.transportation.drivers") !== "none" },
@@ -88,6 +89,12 @@ export function Overview() {
     [monthFrom, today],
     { enabled: !!user?.project_finance_viewer },
   );
+  const gaps = useQuery<NonNullable<WatchInputs["projectGaps"]>>("/api/projects/data-gaps",
+    () => api.get("/api/projects/data-gaps"),
+    [],
+    { enabled: !!user?.project_finance_viewer && pageAccess("projects.finances") !== "none" },
+  );
+  const watchInputs: WatchInputs = { logistic: logi.data ?? null, procurement: proc.data ?? null, service: assr.data ?? null, projectGaps: gaps.data ?? null };
   const pct = (part: number, whole: number) => (whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : "—");
   const pt = pnl.data?.totals;
   const po = proc.data?.open;
@@ -199,7 +206,10 @@ export function Overview() {
         ))}
       </div>
 
-      {/* ── Two columns: needs-me feed + pipeline/P&L ───────────── */}
+      {/* ── What every module overview found, ranked ──────────── */}
+      <ManagementWatch inputs={watchInputs} loading={logi.loading || proc.loading || gaps.loading || assr.loading} />
+
+      {/* ── Two columns: needs-me feed + P&L this month ─────────── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.3fr_1fr]">
         {/* Needs me */}
         <div className="rounded-xl border border-border bg-surface p-4 shadow-stone sm:p-5">
@@ -244,26 +254,8 @@ export function Overview() {
           )}
         </div>
 
-        {/* Across the modules + P&L this month, each opening its Overview. */}
+        {/* P&L this month, opening Project Overview on the month. */}
         <div className="space-y-4">
-          <div className="rounded-xl border border-border bg-surface p-4 shadow-stone sm:p-5">
-            <h2 className="mb-3 text-[15px] font-bold text-ink">Across the modules</h2>
-            <ul className="divide-y divide-border-subtle text-[13px]">
-              {[
-                { label: "Delivered, owing over 30 days", value: logi.data ? `${logi.data.deliveredOwingOver30.count} orders · ${fmtSen(logi.data.deliveredOwingOver30.balanceSen)}` : null, to: "/scm/logistic-overview" },
-                { label: "PO lines 5+ days late", value: po ? `${po.late5Lines} lines` : null, to: "/scm/procurement-overview" },
-                { label: "Service cases past SLA", value: assr.data ? `${assr.data.breach_count} cases` : null, to: "/assr?view=metrics" },
-                { label: "Projects starting in 30 days", value: projects.data ? `${projects.data.upcoming_30d} projects` : null, to: "/projects?view=calendar" },
-              ].filter((r) => r.value !== null).map((r) => (
-                <li key={r.label}>
-                  <button onClick={() => navigate(r.to)} className="group flex w-full items-center gap-3 py-2 text-left">
-                    <span className="min-w-0 flex-1 truncate text-ink-secondary group-hover:text-primary">{r.label}</span>
-                    <span className="font-semibold tabular-nums text-ink">{r.value}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
           <button onClick={() => navigate(`/projects?view=finances&af_from=${monthFrom}&af_to=${today.slice(0, 8)}${new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 0)).getUTCDate()}`)}
             className="block w-full rounded-xl border border-primary/30 bg-primary-soft p-4 text-left shadow-stone sm:p-5">
             <div className="font-mono text-[10px] font-bold uppercase tracking-brand text-primary-ink">Project P&amp;L this month</div>
