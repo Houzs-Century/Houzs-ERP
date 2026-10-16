@@ -142,7 +142,7 @@ export async function acknowledge(db: D1Database, messageRowId: string, userId: 
     .prepare(`UPDATE email_message_acks SET acked_at = ? WHERE message_id = ? AND user_id = ? AND acked_at IS NULL`)
     .bind(new Date().toISOString(), messageRowId, userId)
     .run();
-  return Number(res.meta.changes ?? 0) > 0;
+  return Number(res.meta.changes) > 0;
 }
 
 /** Which messages on a thread carry this person's owed acknowledgement: the
