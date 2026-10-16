@@ -255,4 +255,21 @@ describe('Product Requests — the Purchaser', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Raise PC Order' }));
     expect(await screen.findByText('PC Order New opened')).toBeTruthy();
   });
+
+  test('a built line links its SKU code to the new catalogue Model; an unbuilt line stays plain text', () => {
+    requests = [base({ id: 'r1', request_no: 'HC-PDR-2610-001', status: 'APPROVED', lines: [
+      line({ id: 'l1', line_no: 1, item_code: 'AURORA-2S', proposed_model_name: 'Aurora', model_id: 'm1', model: { id: 'm1', modelCode: 'AURORA', name: 'Aurora' } }),
+      line({ id: 'l2', line_no: 2, item_code: null, proposed_model_name: 'Nimbus', model: null }),
+    ] })];
+    approver = true;
+    draw();
+    openDetail('HC-PDR-2610-001');
+    const dialog = screen.getByRole('dialog', { name: 'Product request HC-PDR-2610-001' });
+    /* The built line's code is a link straight to the Model it created. */
+    const link = within(dialog).getByRole('link', { name: 'AURORA-2S' });
+    expect(link.getAttribute('href')).toBe('/scm/product-models/m1');
+    /* The line still to be built shows its name as plain text, not a link. */
+    expect(within(dialog).queryByRole('link', { name: 'Nimbus (new)' })).toBeNull();
+    expect(within(dialog).getAllByText('Nimbus (new)', { exact: false }).length).toBeGreaterThan(0);
+  });
 });
