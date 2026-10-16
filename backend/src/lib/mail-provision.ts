@@ -303,12 +303,14 @@ export async function changePersonalMailboxAliasAtomically(
       throw error;
     }
     const updateResult = results[revokeOffset + 2];
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- a short batch result must read as "not updated", not throw
     if (Number(updateResult?.meta?.changes ?? 0) !== 1) {
       throw new Error("email alias changed concurrently; reload and try again");
     }
     const mailboxResult = results[revokeOffset + 3];
     const finalMailboxId = shouldProvision
-      ? ((mailboxResult?.results?.[0] as { id?: string } | undefined)?.id ?? null)
+      ? // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- same: a missing row means "not provisioned"
+        ((mailboxResult?.results?.[0] as { id?: string } | undefined)?.id ?? null)
       : null;
     if (shouldProvision && !finalMailboxId) {
       throw new Error("mail alias provisioning committed without an owned mailbox");

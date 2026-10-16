@@ -38,6 +38,8 @@ import {
 import { parseRecipients, firstInvalid } from "../pages/MailCenter/mail-recipients";
 import { MobileMessageAcks, MobileNeedsAck, MobilePendingAcks, MobileReadBy } from "./MobileMailAcks";
 import type { AckState, ThreadReaders } from "../pages/MailCenter/mail-acks";
+import { MobileVisibility } from "./MobileMailPersonal";
+import { useMailVisibility } from "../pages/MailCenter/mail-sidebar";
 import "./mobile.css";
 import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../vendor/shared/format";
 
@@ -147,6 +149,7 @@ type Folder =
   | "inbox"
   | "starred"
   | "sent"
+  | "sentbyme"
   | "autosent"
   | "drafts"
   | "archive"
@@ -160,6 +163,7 @@ const FOLDERS: [Folder, string][] = [
   ["inbox", "Inbox"],
   ["starred", "Starred"],
   ["sent", "Sent"],
+  ["sentbyme", "Sent by me"],
   ["autosent", "Auto-sent"],
   ["drafts", "Drafts"],
   ["archive", "Archive"],
@@ -224,6 +228,7 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
   const { user } = useAuth();
   const [folder, setFolder] = useState<Folder>("inbox");
   const [mailbox, setMailbox] = useState<string>("all"); // "all" or an address
+  const myAddress = useMailVisibility()?.myAddress ?? null;
   const [q, setQ] = useState("");
   /* The label the list is narrowed to, or null for all. Applying a label was
      already possible from the phone and LISTING by one was not, so "Urgent"
@@ -289,6 +294,7 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
     else if (folder === "archive") params.set("status", "closed");
     else if (folder === "starred") params.set("starred", "1");
     else if (folder === "sent") params.set("sent", "1");
+    else if (folder === "sentbyme") params.set("sentBy", "me");
     else if (folder === "trash") params.set("status", "trashed");
     if (mailbox !== "all") params.set("mailbox", mailbox);
     if (labelFilter) params.set("label", labelFilter);
@@ -476,13 +482,15 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
           className="cal-sel"
           style={{ marginBottom: 9 }}
         >
+          {myAddress && <option value={myAddress}>My mailbox · {myAddress}</option>}
           <option value="all">All mailboxes</option>
-          {activeAddresses.map((a) => (
+          {activeAddresses.filter((a) => a.address.toLowerCase() !== myAddress).map((a) => (
             <option key={a.id} value={a.address}>
               {a.address}
             </option>
           ))}
         </select>
+        <MobileVisibility />
 
         <div className="searchbar" style={{ marginBottom: 9 }}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--mut2)" strokeWidth="2" strokeLinecap="round">
