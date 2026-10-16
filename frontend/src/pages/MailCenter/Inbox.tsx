@@ -50,6 +50,7 @@ import {
 } from "../../lib/activeCompany";
 import { ComposeDialog } from "./Compose";
 import { MailThread } from "./Thread";
+import { PendingAcks } from "./mail-acks";
 import {
   subscribe as subscribeLocal,
   getSnapshot as getLocalSnapshot,
@@ -1507,6 +1508,7 @@ export function MailInbox() {
             <FolderItem icon={Layers} label="All mail" active={folder === "all"}
               onClick={() => { setFolder("all"); setLabelFilter(null); }} />
           </nav>
+          <PendingAcks onOpen={setSelectedId} />
 
           {/* LABELS */}
           <div className="space-y-0.5">

@@ -20,6 +20,7 @@ import { useBranding } from "../../hooks/useBranding";
 import { saveDraft, deleteDraftBestEffort, type MailDraft } from "./mail-local";
 import { pickDefaultFromAddress } from "./mail-from-default";
 import { sentToast } from "./mail-delivery";
+import { NEEDS_ACK_HINT } from "./mail-acks";
 // To / Cc / Bcc parsing + validation, shared with the phone's composer.
 import { parseRecipients, firstInvalid } from "./mail-recipients";
 import {
@@ -125,6 +126,7 @@ export function ComposeDialog({
   const [cc, setCc] = useState("");
   const [bcc, setBcc] = useState("");
   const [showCopies, setShowCopies] = useState(false);
+  const [needsAck, setNeedsAck] = useState(false);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [touchedTo, setTouchedTo] = useState(false);
@@ -148,6 +150,7 @@ export function ComposeDialog({
       setSending(false);
       setFiles([]);
       setAttachError(null);
+      setNeedsAck(false);
     }
     wasOpen.current = open;
   }, [open, initialDraft]);
@@ -245,6 +248,7 @@ export function ComposeDialog({
           subject: subject.trim(),
           text: body,
           ...(files.length > 0 ? { attachments: attachmentPayload(files) } : {}),
+          ...(needsAck ? { needsAck: true } : {}),
         },
       );
       if (!payload?.ok) {
@@ -530,6 +534,13 @@ export function ComposeDialog({
                   <Save className="h-4 w-4" />
                   Save draft
                 </button>
+                <label
+                  title={NEEDS_ACK_HINT}
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-secondary hover:text-ink"
+                >
+                  <input type="checkbox" checked={needsAck} disabled={sending} onChange={(e) => setNeedsAck(e.target.checked)} />
+                  Needs acknowledgement
+                </label>
               </>
             )}
             <button
