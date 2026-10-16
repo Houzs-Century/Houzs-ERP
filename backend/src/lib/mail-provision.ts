@@ -321,3 +321,90 @@ export async function changePersonalMailboxAliasAtomically(
     };
   }
 }
+
+/** "first.last" from a display name (ASCII letters and digits only); one word
+ *  stays one word. null when nothing usable is left. */
+export function defaultPersonalLocalPart(name: string | null | undefined): string | null {
+  const words = (name ?? "")
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  if (words.length === 0) return null;
+  return words.length === 1 ? words[0] : `${words[0]}.${words[words.length - 1]}`;
+}
+
+/** Another person's alias or login, a mailbox someone else owns, or a
+ *  department mailbox. An unowned inbound-created row is free to claim. */
+export async function isPersonalAddressTaken(db: D1Database, address: string, userId: number | null): Promise<boolean> {
+  const lc = address.trim().toLowerCase();
+  const me = userId ?? 0;
+  const row = await db
+    .prepare(
+      `SELECT 1 AS hit FROM users
+        WHERE id <> ? AND (lower(COALESCE(email_alias, '')) = ? OR lower(email) = ?)
+       UNION ALL
+       SELECT 1 FROM email_addresses
+        WHERE lower(address) = ?
+          AND ((assigned_user_id IS NOT NULL AND assigned_user_id <> ?)
+               OR (assigned_dept IS NOT NULL AND trim(assigned_dept) <> ''))
+       LIMIT 1`,
+    )
+    .bind(me, lc, lc, lc, me)
+    .first<{ hit: number }>();
+  return !!row;
+}
+
+/** The first free first.last@domain, then first.last2 … first.last9. */
+export async function freePersonalAddress(env: Env, userId: number | null, name: string | null | undefined): Promise<string | null> {
+  const local = defaultPersonalLocalPart(name);
+  if (!local) return null;
+  const domain = await companyMailboxDomain(env);
+  for (let n = 1; n <= 9; n++) {
+    const candidate = `${local}${n === 1 ? "" : n}@${domain}`;
+    if (!(await isPersonalAddressTaken(env.DB, candidate, userId))) return candidate;
+  }
+  return null;
+}
+
+/** A newly provisioned address waits until someone adds it in Google
+ *  Workspace (R2); one that has already received mail is live. */
+export async function markMailHostPending(db: D1Database, mailboxId: string): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE email_addresses
+          SET mail_host_status = CASE WHEN EXISTS (
+                SELECT 1 FROM email_threads t
+                 WHERE lower(t.mailbox_address) = lower(email_addresses.address)
+                   AND t.last_inbound_at IS NOT NULL) THEN 'live' ELSE 'pending' END
+        WHERE id = ? AND mail_host_status IS NULL`,
+    )
+    .bind(mailboxId)
+    .run();
+}
+
+/** Invite / accept-invite: give the person their address through the atomic
+ *  helper. No `requested` = keep the current address, else the default first.last. */
+export async function provisionPersonalMailbox(
+  env: Env,
+  userId: number,
+  requested?: string,
+): Promise<string | null> {
+  const user = await env.DB.prepare(`SELECT name, email_alias FROM users WHERE id = ? LIMIT 1`)
+    .bind(userId)
+    .first<{ name: string | null; email_alias: string | null }>();
+  if (!user) return null;
+  const current = user.email_alias?.trim().toLowerCase() || null;
+  let next: string | null;
+  if (requested) {
+    next = requested.trim().toLowerCase();
+  } else {
+    if (current) return current;
+    next = await freePersonalAddress(env, userId, user.name);
+  }
+  if (!next || next === current) return current;
+  const change = await changePersonalMailboxAliasAtomically(env, userId, current, next, user.name);
+  if (change?.mailbox_id) await markMailHostPending(env.DB, change.mailbox_id);
+  return next;
+}
