@@ -375,6 +375,8 @@ export async function ingestInboundEmail(
       .bind(sentAt, snippet, now, threadId)
       .run();
   }
+  // DEV-03 R2: mail reaching a personal address proves it exists in Google.
+  await db.prepare(`UPDATE email_addresses SET mail_host_status = 'live', mail_host_confirmed_at = ? WHERE lower(address) = ? AND mail_host_status = 'pending'`).bind(now, mailbox.toLowerCase()).run();
 
   const msgId = crypto.randomUUID();
   await db
@@ -601,7 +603,7 @@ type MailScopeLevel = (typeof MAIL_SCOPE_LEVELS)[number];
 
 // A user is a Mail Center admin (sees all) if they hold the "*" wildcard or the
 // mail_center.manage permission.
-function isMailAdmin(user: AuthUser | undefined): boolean {
+export function isMailAdmin(user: AuthUser | undefined): boolean {
   if (!user) return false;
   const granted = user.permissions_set ?? user.permissions;
   return (
@@ -609,7 +611,7 @@ function isMailAdmin(user: AuthUser | undefined): boolean {
   );
 }
 
-async function getMailScope(c: Context<{ Bindings: Env }>): Promise<{
+export async function getMailScope(c: Context<{ Bindings: Env }>): Promise<{
   isAdmin: boolean;
   userId: number | null;
   addresses: string[];
@@ -751,7 +753,7 @@ async function getMailScope(c: Context<{ Bindings: Env }>): Promise<{
 // The caller's OWN outward alias (users.email_alias), lowercased — their personal
 // sending identity under the free-alias model. A member may send FROM this even
 // when it isn't a shared/dept mailbox in their getMailScope set. "" when none.
-async function ownAliasFor(
+export async function ownAliasFor(
   c: Context<{ Bindings: Env }>,
 ): Promise<string> {
   const user = c.get("user");
@@ -834,6 +836,7 @@ app.get("/threads", async (c) => {
   const q = c.req.query("q");
   const starredOnly = c.req.query("starred") === "1";
   const sentOnly = c.req.query("sent") === "1";
+  const sentByMe = c.req.query("sentBy") === "me";
   const label = c.req.query("label");
   const mailboxesCsv = c.req.query("mailboxes");
 
@@ -889,6 +892,10 @@ app.get("/threads", async (c) => {
   }
   // Sent folder: the thread has at least one outbound message (mirrors the
   // has_outbound flag below, but as a WHERE filter).
+  if (sentByMe) {
+    where.push("EXISTS (SELECT 1 FROM email_messages m WHERE m.thread_id = t.id AND m.direction = 'outbound' AND m.sent_by_user_id = ?)");
+    binds.push(scope.userId ?? 0);
+  }
   if (sentOnly) {
     where.push(
       "EXISTS (SELECT 1 FROM email_messages m WHERE m.thread_id = t.id AND m.direction = 'outbound')",

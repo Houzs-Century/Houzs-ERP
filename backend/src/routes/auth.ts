@@ -24,6 +24,7 @@ import { defaultCompanyCodeForHost } from "../middleware/companyContext";
 import { validatePasswordStrength } from "../services/passwordStrength";
 import { verifyTotp, consumeBackupCode } from "../services/totp";
 import { checkRateLimit, clearRateLimit, clientIp } from "../middleware/rateLimit";
+import { provisionPersonalMailbox } from "../lib/mail-provision";
 
 /**
  * Auth routes — UNAUTHENTICATED entry points.
@@ -580,6 +581,14 @@ app.post("/accept-invite", async (c) => {
   )
     .bind(inv.id)
     .run();
+
+  // An invite from before DEV-03, or one sent without a name, has no address
+  // yet; the name is known now. The account is already live, so best-effort.
+  try {
+    await provisionPersonalMailbox(c.env, user.id);
+  } catch (e) {
+    console.error("[auth] accept-invite mailbox provisioning failed:", e);
+  }
 
   const token = await createSession(c.env, user.id);
   const sessionPass = await mintSessionPass(c.env, token, Date.now());

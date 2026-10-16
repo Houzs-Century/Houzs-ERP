@@ -56,6 +56,10 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   AliasMailboxCollisionError,
   changePersonalMailboxAliasAtomically,
+  companyMailboxDomain,
+  isPersonalAddressTaken,
+  markMailHostPending,
+  provisionPersonalMailbox,
   type PersonalMailboxAliasChange,
 } from "../lib/mail-provision";
 
@@ -668,6 +672,8 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
     // this a new salesperson was created with no way to sign into the tablet
     // until an admin went back and used Members → Set PIN.
     pos_pin?: string;
+    // Company mail address (DEV-03): blank = first.last@ the company domain.
+    email_alias?: string | null;
   }>();
 
   const db = getDb(c.env);
@@ -787,6 +793,17 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
     return c.json({ error: "A user with that email already exists" }, 409);
   }
 
+  const requestedAlias = body.email_alias?.trim().toLowerCase() || undefined;
+  if (requestedAlias) {
+    const domain = await companyMailboxDomain(c.env);
+    if (!/^[a-z0-9._-]+@/.test(requestedAlias) || !requestedAlias.endsWith(`@${domain}`)) {
+      return c.json({ error: `The company email must be an address on @${domain}.` }, 400);
+    }
+    if (await isPersonalAddressTaken(c.env.DB, requestedAlias, existing[0]?.id ?? null)) {
+      return c.json({ error: `${requestedAlias} is already used by someone else.` }, 409);
+    }
+  }
+
   // Create or refresh the placeholder user. Name is preset here ("the
   // Position concept") so the invitee lands with their identity already
   // set; they can still adjust it when accepting.
@@ -862,6 +879,16 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
       : [1];
   if (userId) await setUserCompanies(c, userId, inviteCompanyIds);
 
+  // The account is already committed; a mailbox failure is reported, not fatal.
+  let emailAlias: string | null = null;
+  if (userId) {
+    try {
+      emailAlias = await provisionPersonalMailbox(c.env, userId, requestedAlias);
+    } catch (e) {
+      console.error("[users] invite mailbox provisioning failed:", e);
+    }
+  }
+
   // Keep the Sales Team roster in lockstep at CREATE time too — not just on the
   // later department-change PATCH. A member invited straight into a Sales
   // department otherwise never gets a sales_reps row (the roster is what the PMS
@@ -902,6 +929,7 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
     return c.json({
       active: true,
       email,
+      email_alias: emailAlias,
       ...(posPin ? { pos_pin_set: posPinSet } : {}),
     });
   }
@@ -970,6 +998,7 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
     invite_url,
     email_sent: sendResult.status === "sent",
     email_status: sendResult.status,
+    email_alias: emailAlias,
     ...(posPin ? { pos_pin_set: posPinSet } : {}),
   });
 });
@@ -1421,6 +1450,7 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
       }
       throw error;
     }
+    if (personalMailboxAliasChange?.mailbox_id) await markMailHostPending(c.env.DB, personalMailboxAliasChange.mailbox_id);
   }
   // The atomic helper already wrote users.email_alias together with the mail
   // entitlement rows. Keep the remaining Drizzle update from writing it again.
