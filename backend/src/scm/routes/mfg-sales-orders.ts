@@ -5188,6 +5188,25 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
 
     if (voucherPlan) await applySoCancelVouchers(sbx, docNo, voucherPlan);
 
+    /* The allocation recompute only walks live SOs, so a cancelled order's
+       lines kept READY + their claimed sofa batch forever. Release them here.
+       SERVICE lines are READY from birth (nothing to allocate) and stay so. */
+    if (isCancel) {
+      const { data: liveLines, error: lineErr } = await scopeToCompanyId(sbx.from('mfg_sales_order_items')
+        .select('id, item_code, item_group'), co.companyId)
+        .eq('doc_no', docNo).eq('cancelled', false);
+      if (lineErr) throw new Error(`so-cancel line read failed: ${lineErr.message}`);
+      const goodsIds = ((liveLines ?? []) as Array<{ id: string; item_code: string | null; item_group: string | null }>)
+        .filter((l) => !isServiceLine({ itemGroup: l.item_group, itemCode: l.item_code }))
+        .map((l) => l.id);
+      if (goodsIds.length > 0) {
+        const { error: relErr } = await scopeToCompanyId(sbx.from('mfg_sales_order_items')
+          .update({ stock_status: 'PENDING', stock_qty_ready: 0, allocated_batch_no: null }), co.companyId)
+          .eq('doc_no', docNo).in('id', goodsIds);
+        if (relErr) throw new Error(`so-cancel allocation release failed: ${relErr.message}`);
+      }
+    }
+
     // Audit row — best-effort on the ordinary path. Inside the cancel's atomic
     // command recordSoAudit throws instead, so a cancel can never commit the
     // voiding without the trail that explains it.
