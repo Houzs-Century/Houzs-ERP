@@ -32,7 +32,8 @@ const DAY = 86400000;
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
 const dd = (d: string) => d.slice(5).replace("-", "/");
 const AVG_SALES_PER_RUN_TARGET_SEN = 30000_00;
-const rm = (sen: number) => fmtSen(sen).replace(/\.\d\d$/, "");
+// Money reads like AutoCount everywhere: "RM 15,000.00" (owner 2026-09-15).
+const rm = fmtSen;
 const n = (v: number) => v.toLocaleString();
 const pctFmt = (x: number) => `${x.toFixed(1)}%`;
 
@@ -114,7 +115,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
             <Bullet label="Phone completeness" actual={m.phoneComplete != null ? m.phoneComplete * 100 : null} target={100} max={100} format={pctFmt} higherIsBetter />
             <Bullet label="Ready orders with a confirmed date" actual={m.ready ? (m.confirmed / m.ready) * 100 : null} target={100} max={100} format={pctFmt} higherIsBetter />
             <Bullet label="Overdue share" actual={statusTotal ? ((counts?.OVERDUE ?? 0) / statusTotal) * 100 : null} target={5} max={20} format={pctFmt} higherIsBetter={false} />
-            <Bullet label={`Avg sales per run · ${thisMonth}`} actual={avgPerRun != null ? avgPerRun / 100 : null} target={AVG_SALES_PER_RUN_TARGET_SEN / 100} max={60000} format={(x) => `RM ${Math.round(x).toLocaleString()}`} higherIsBetter />
+            <Bullet label={`Avg sales per run · ${thisMonth}`} actual={avgPerRun} target={AVG_SALES_PER_RUN_TARGET_SEN} max={AVG_SALES_PER_RUN_TARGET_SEN * 2} format={fmtSen} higherIsBetter />
           </div>
           {avgPerRun == null && <p className="mt-2 text-[11px] text-ink-muted">Avg sales per run fills in once lorry runs are planned in Delivery Time Arrangement.</p>}
         </Panel>

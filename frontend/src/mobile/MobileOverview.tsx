@@ -2,7 +2,8 @@
 // pages are already laid out for a narrow screen — tiles two-up, charts sized
 // by their container, tables scrolling inside their panel — so the phone shows
 // the same page under the mobile header rather than a second copy of it.
-import { lazy, Suspense } from "react";
+import { lazy } from "react";
+import { LazySlot } from "../components/LazySlot";
 
 const LogisticOverview = lazy(() => import("../pages/scm-v2/LogisticOverview").then((m) => ({ default: m.LogisticOverview })));
 const ProcurementOverview = lazy(() => import("../pages/scm-v2/ProcurementOverview").then((m) => ({ default: m.ProcurementOverview })));
@@ -30,9 +31,9 @@ export function MobileOverview({ kind, onBack }: { kind: OverviewKind; onBack: (
         </div>
       </header>
       <div className="scroll hz-scroll" style={{ padding: 12, paddingBottom: 40 }}>
-        <Suspense fallback={<div style={{ padding: 24, textAlign: "center", fontSize: 12 }}>Loading…</div>}>
+        <LazySlot resetKey={`overview:${kind}`} fallback={<div style={{ padding: 24, textAlign: "center", fontSize: 12 }}>Loading…</div>}>
           {kind === "logistic" ? <LogisticOverview embedded /> : <ProcurementOverview embedded />}
-        </Suspense>
+        </LazySlot>
       </div>
     </div>
   );

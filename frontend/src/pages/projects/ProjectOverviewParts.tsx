@@ -10,10 +10,8 @@ import { api } from "../../api/client";
 import type { ProfitabilityResponse } from "./financeViewModel";
 
 const pct = (part: number, whole: number) => (whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : "—");
-const rmShort = (v: number) => {
-  const a = Math.abs(v); const sign = v < 0 ? "-" : "";
-  return a >= 1e6 ? `${sign}RM ${(a / 1e6).toFixed(2)}M` : a >= 1e3 ? `${sign}RM ${Math.round(a / 1e3)}K` : `${sign}RM ${Math.round(a)}`;
-};
+// Money reads like AutoCount everywhere: "RM 15,000.00" (owner 2026-09-15).
+const money = formatCurrency;
 const monthLabel = (k: string) => `${k.slice(2, 4)}/${k.slice(5, 7)}`;
 
 /** Sales, COGS, GP, rental, other cost and NP, each with its share of sales. */
@@ -69,7 +67,7 @@ export function ProjectOverviewCharts({ d, onDrill }: { d: ProfitabilityResponse
     const shown = s.length > 10 ? [...s.slice(0, 5), ...s.slice(-5)] : s;
     return shown.map((r) => ({
       key: r.key, label: `${r.key} · ${r.count}`, value: r.profit, color: r.profit < 0 ? TONE.bad : TONE.good,
-      right: <>{rmShort(r.profit)}<span className="ml-1.5 text-[11px] text-ink-muted">{r.margin != null ? `${r.margin.toFixed(0)}%` : ""}</span></>,
+      right: <>{money(r.profit)}<span className="ml-1.5 text-[11px] text-ink-muted">{r.margin != null ? `${r.margin.toFixed(0)}%` : ""}</span></>,
       onClick: () => onDrill(dim, r.key),
     }));
   };
@@ -77,32 +75,32 @@ export function ProjectOverviewCharts({ d, onDrill }: { d: ProfitabilityResponse
     <div className="mb-4 space-y-4">
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel title="Sales by brand" hint={`${d.by_brand.length} brands`}>
-          <Donut size={124} format={rmShort} center={{ value: rmShort(d.totals.income), label: "sales" }}
+          <Donut size={124} format={money} center={{ value: String(d.by_brand.length), label: "brands" }}
             data={d.by_brand.slice().sort((a, b) => b.income - a.income).map((r) => ({ label: r.key, value: r.income, color: null }))} />
         </Panel>
         <Panel title="Where each ringgit of sales goes">
-          <SplitBar format={rmShort} parts={[
+          <SplitBar format={money} parts={[
             { label: "COGS", value: d.totals.cogs, color: PALETTE[1]! },
             { label: "Rental", value: d.totals.rental, color: PALETTE[2]! },
             { label: "Other cost", value: Math.max(0, d.totals.cost - d.totals.rental), color: PALETTE[3]! },
             { label: "Net profit", value: Math.max(0, d.totals.profit), color: TONE.good },
           ]} />
           <div className="mt-4 text-[12px] font-semibold text-ink">Sales by event type</div>
-          <div className="mt-1.5"><SplitBar format={rmShort} parts={d.by_event_type.map((r) => ({ label: r.key, value: r.income, color: null }))} /></div>
+          <div className="mt-1.5"><SplitBar format={money} parts={d.by_event_type.map((r) => ({ label: r.key, value: r.income, color: null }))} /></div>
         </Panel>
       </div>
         <Panel title="Monthly P&L" hint="bars: sales, COGS, other cost · line: NP %">
-          <Columns height={220} stacked={false} format={rmShort} highlight={null} labels={months.map((m) => monthLabel(m.key))}
+          <Columns height={220} stacked={false} format={money} highlight={null} labels={months.map((m) => monthLabel(m.key))}
             series={[{ name: "Sales", color: PALETTE[0]! }, { name: "COGS", color: PALETTE[1]! }, { name: "Other cost", color: PALETTE[2]! }]}
             values={[months.map((m) => m.income), months.map((m) => m.cogs), months.map((m) => m.cost)]}
             line={{ name: "NP %", color: TONE.bad, values: months.map((m) => (m.income > 0 ? (m.profit / m.income) * 100 : null)), format: (x) => `${x.toFixed(1)}%` }} />
         </Panel>
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel title="Net profit by organizer" hint="best 5 and worst 5 · click to open below">
-          <HBars format={rmShort} empty="No organizer in this period." rows={ranked(d.by_organizer, "organizer")} />
+          <HBars format={money} empty="No organizer in this period." rows={ranked(d.by_organizer, "organizer")} />
         </Panel>
         <Panel title="Net profit by venue" hint="best 5 and worst 5 · click to open below">
-          <HBars format={rmShort} empty="No venue in this period." rows={ranked(d.by_venue, "venue")} />
+          <HBars format={money} empty="No venue in this period." rows={ranked(d.by_venue, "venue")} />
         </Panel>
       </div>
     </div>
@@ -124,7 +122,7 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
   const g = q.data;
   if (q.error) return <div className="mb-4 rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not check the event books: {q.error}</div>;
   if (!g || (g.noSales.count === 0 && g.noCogs.count === 0 && g.noCommission.count === 0)) return null;
-  const sen = (s: number) => rmShort(s / 100);
+  const sen = (s: number) => money(s / 100);
   return (
     <div className="mb-4">
       <Panel title="Books not complete" hint={`events that ended ${g.from} – ${g.to} · these make the figures on this page read wrong`}>
@@ -132,8 +130,8 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
           <div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               <Tile label="No sales keyed" value={`${g.noSales.count} / ${g.ended}`} note={`${sen(g.noSales.soSen)} of Sales Orders opened at them`} tone={g.noSales.count ? "bad" : "good"} trend={null} onClick={null} />
-              <Tile label="Sales, no COGS" value={String(g.noCogs.count)} note={`${rmShort(g.noCogs.salesAffected)} sales · GP overstated`} tone={g.noCogs.count ? "warn" : "good"} trend={null} onClick={null} />
-              <Tile label="Sales, no commission" value={String(g.noCommission.count)} note={`${rmShort(g.noCommission.salesAffected)} sales · NP overstated`} tone={g.noCommission.count ? "warn" : "good"} trend={null} onClick={null} />
+              <Tile label="Sales, no COGS" value={String(g.noCogs.count)} note={`${money(g.noCogs.salesAffected)} sales · GP overstated`} tone={g.noCogs.count ? "warn" : "good"} trend={null} onClick={null} />
+              <Tile label="Sales, no commission" value={String(g.noCommission.count)} note={`${money(g.noCommission.salesAffected)} sales · NP overstated`} tone={g.noCommission.count ? "warn" : "good"} trend={null} onClick={null} />
             </div>
             <div className="mt-3">
               <Columns height={160} stacked format={(x) => `${x} events`} highlight={null} line={null}
@@ -148,10 +146,10 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
               <thead><tr><Th left>Event</Th><Th>Ended</Th><Th>Cost booked</Th><Th>Sales Orders</Th></tr></thead>
               <tbody>{g.noSales.rows.slice(0, 10).map((r) => (
                 <tr key={r.id} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
-                  <Td left className="max-w-[260px] truncate text-primary">{r.name}</Td><Td>{r.endDate.slice(5)}</Td><Td>{rmShort(r.cost)}</Td><Td>{sen(r.soSen)}</Td>
+                  <Td left className="max-w-[260px] truncate text-primary">{r.name}</Td><Td>{r.endDate.slice(5)}</Td><Td>{money(r.cost)}</Td><Td>{sen(r.soSen)}</Td>
                 </tr>))}</tbody>
             </table>
-            {g.noSales.count > 10 && <p className="mt-1 text-[11px] text-ink-muted">10 of {g.noSales.count}. Cost already booked on them: {rmShort(g.noSales.costBooked)}.</p>}
+            {g.noSales.count > 10 && <p className="mt-1 text-[11px] text-ink-muted">10 of {g.noSales.count}. Cost already booked on them: {money(g.noSales.costBooked)}.</p>}
           </div>
         </div>
       </Panel>

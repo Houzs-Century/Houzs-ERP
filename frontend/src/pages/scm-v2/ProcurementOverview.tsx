@@ -33,7 +33,8 @@ const BUCKETS: Array<{ k: Bucket; label: string; tone: string }> = [
   { k: "due8plus", label: "Due in 8+ days", tone: "text-synced" },
 ];
 const BUCKET_COLOR = [TONE.bad, TONE.warn, "#8fb3ae", TONE.good];
-const rm = (sen: number) => fmtSen(sen).replace(/\.\d\d$/, "");
+// Money reads like AutoCount everywhere: "RM 15,000.00" (owner 2026-09-15).
+const rm = fmtSen;
 const CAT_LABEL: Record<string, string> = { MATTRESS: "Mattress", BEDFRAME: "Bedframe", SOFA: "Sofa", ACCESSORY: "Accessories", DINING: "Dining", OTHERS: "Others" };
 const VERDICT: Record<string, [string, string]> = { too_short: ["Set too short", "bg-err/10 text-err"], ok: ["About right", "bg-synced/10 text-synced"], can_shorten: ["Can shorten", "bg-warning-text/10 text-warning-text"], not_enough_data: ["Too few receipts", "bg-surface-2 text-ink-muted"] };
 
@@ -112,7 +113,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
       {d && (
         <div className="grid gap-4 lg:grid-cols-3">
           <Panel title="Still owed by category" hint="quantity to come × PO price">
-            <Donut size={124} format={rm} center={{ value: rm(d.open.remainingSen), label: "owed" }}
+            <Donut size={124} format={rm} center={{ value: String(d.open.lineCount), label: "open lines" }}
               data={d.overdueByCategory.slice().sort((a, b) => b.remainingSen - a.remainingSen).map((r) => ({ label: CAT_LABEL[r.key] ?? r.key, value: r.remainingSen, color: null }))} />
           </Panel>
           <Panel title="How late, by category" hint={basis === "original" ? "against the first promised date" : "against the latest promised date"}>

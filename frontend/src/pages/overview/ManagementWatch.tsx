@@ -5,6 +5,7 @@
 // read contributes nothing (its data is null).
 import { useNavigate } from "react-router-dom";
 import { fmtSen } from "../../vendor/shared/format";
+import { formatCurrency } from "../../lib/utils";
 import { TONE } from "../../components/scm-v2/Charts";
 
 export interface WatchInputs {
@@ -29,8 +30,9 @@ export interface WatchInputs {
 type Level = "bad" | "warn";
 interface Item { level: Level; title: string; figure: string; why: string; to: string }
 
-const rm = (sen: number) => fmtSen(sen).replace(/\.\d\d$/, "");
-const rmRinggit = (v: number) => rm(Math.round(v * 100));
+// Money reads like AutoCount everywhere: "RM 15,000.00" (owner 2026-09-15).
+const rm = fmtSen;
+const rmRinggit = formatCurrency;
 
 export function watchItems(w: WatchInputs): Item[] {
   const out: Item[] = [];
