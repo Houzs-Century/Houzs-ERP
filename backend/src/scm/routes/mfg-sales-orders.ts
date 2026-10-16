@@ -144,7 +144,7 @@ import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
 /* "A PO is already out for this SO" — the second road to the same soft lock
    (owner 2026-08-12, 2990 only). See lib/so-po-lock.ts. */
-import { soHasLivePo, soPoLocked } from '../lib/so-po-lock';
+import { soHasLivePo, soHasUnreceivedPo, soPoLocked } from '../lib/so-po-lock';
 import { deliveryBroughtForward, deliveryNeedsPurchaserOk, processingDateFrozenByPo, PROCESSING_DATE_PO_LOCKED, PROCESSING_DATE_PO_OVERRIDE_KEY } from '../shared/so-po-date-rule';
 import { notifySoAmendmentPurchaserOkNeeded } from '../../services/amendmentNotify';
 import { monthBoundsMy, rangeBoundsMy, todayMyt, mytDateOf } from '../lib/my-time';
@@ -11298,7 +11298,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     const nextDeliv = 'customerDeliveryDate' in headerChanges ? ymd(headerChanges['customerDeliveryDate']) : curDeliv;
     const procMoves = 'processingDate' in headerChanges && curProc !== '' && nextProc !== curProc;
     const delivForward = 'customerDeliveryDate' in headerChanges && deliveryBroughtForward(curDeliv, nextDeliv);
-    const hasLivePo = (procMoves || delivForward) && await soHasLivePo(sb, docNo);
+    const hasLivePo = procMoves && await soHasLivePo(sb, docNo);
     if (processingDateFrozenByPo({ storedProc: curProc, nextProc, hasLivePo })) {
       if (!hasHouzsPerm(c, PROCESSING_DATE_PO_OVERRIDE_KEY)) return c.json(PROCESSING_DATE_PO_LOCKED, 409);
       usesPoDateOverride = true;
@@ -11306,7 +11306,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     needsPurchaserOk = deliveryNeedsPurchaserOk({
       storedDeliv: curDeliv,
       nextDeliv: 'customerDeliveryDate' in headerChanges ? nextDeliv : null,
-      hasLivePo,
+      hasUnreceivedPo: delivForward && await soHasUnreceivedPo(sb, docNo),
     });
     const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
     /* Same predicate as every other write path (shared/so-processing-date), with

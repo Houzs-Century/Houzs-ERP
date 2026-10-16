@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   deliveryBroughtForward,
   deliveryNeedsPurchaserOk,
+  poAwaitingSupplier,
   processingDateFrozenByPo,
   PROCESSING_DATE_PO_LOCKED,
   PURCHASER_OK_REQUIRED,
@@ -27,20 +28,32 @@ describe('processingDateFrozenByPo', () => {
 
 describe('deliveryNeedsPurchaserOk', () => {
   test('postponing is Logistic alone', () => {
-    expect(deliveryNeedsPurchaserOk({ storedDeliv: '2026-10-20', nextDeliv: '2026-10-30', hasLivePo: true })).toBe(false);
+    expect(deliveryNeedsPurchaserOk({ storedDeliv: '2026-10-20', nextDeliv: '2026-10-30', hasUnreceivedPo: true })).toBe(false);
   });
   test('bringing it forward under a PO needs the Purchaser', () => {
-    expect(deliveryNeedsPurchaserOk({ storedDeliv: '2026-10-20', nextDeliv: '2026-10-15', hasLivePo: true })).toBe(true);
+    expect(deliveryNeedsPurchaserOk({ storedDeliv: '2026-10-20', nextDeliv: '2026-10-15', hasUnreceivedPo: true })).toBe(true);
   });
   test('bringing it forward with no PO stays Logistic alone', () => {
-    expect(deliveryNeedsPurchaserOk({ storedDeliv: '2026-10-20', nextDeliv: '2026-10-15', hasLivePo: false })).toBe(false);
+    expect(deliveryNeedsPurchaserOk({ storedDeliv: '2026-10-20', nextDeliv: '2026-10-15', hasUnreceivedPo: false })).toBe(false);
+  });
+  test('HC-0114: bringing it forward once every PO is received stays Logistic alone', () => {
+    expect(deliveryNeedsPurchaserOk({ storedDeliv: '2026-10-20', nextDeliv: '2026-10-17', hasUnreceivedPo: false })).toBe(false);
   });
   test('a request that does not touch the Delivery Date needs nothing', () => {
-    expect(deliveryNeedsPurchaserOk({ storedDeliv: '2026-10-20', nextDeliv: null, hasLivePo: true })).toBe(false);
+    expect(deliveryNeedsPurchaserOk({ storedDeliv: '2026-10-20', nextDeliv: null, hasUnreceivedPo: true })).toBe(false);
   });
   test('a first date or a cleared date is not "earlier"', () => {
     expect(deliveryBroughtForward('', '2026-10-15')).toBe(false);
     expect(deliveryBroughtForward('2026-10-20', '')).toBe(false);
+  });
+});
+
+describe('poAwaitingSupplier', () => {
+  test.each(['DRAFT', 'SUBMITTED', 'PARTIALLY_RECEIVED', 'ON_HOLD', null])('%s is still owed by the supplier', (st) => {
+    expect(poAwaitingSupplier(st)).toBe(true);
+  });
+  test.each(['RECEIVED', 'received', 'CANCELLED'])('%s is not', (st) => {
+    expect(poAwaitingSupplier(st)).toBe(false);
   });
 });
 

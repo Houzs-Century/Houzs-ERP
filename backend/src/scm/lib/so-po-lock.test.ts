@@ -4,7 +4,7 @@
 // through a minimal fake PostgREST client — same shape as
 // so-converted-po.test.ts, which walks the same SO→PO chain.
 import { describe, expect, test } from 'vitest';
-import { soHasLivePo, soPoLocked } from './so-po-lock';
+import { soHasLivePo, soHasUnreceivedPo, soPoLocked } from './so-po-lock';
 
 type Row = Record<string, unknown>;
 
@@ -176,5 +176,35 @@ describe('soHasLivePo (BUG-101: any company)', () => {
   test('fails closed on a read error', async () => {
     const sb = fakeSb({ mfg_sales_order_items: [soItem('si-1', HOUZS)] }, 'purchase_order_items');
     expect(await soHasLivePo(sb, HOUZS)).toBe(true);
+  });
+});
+
+describe('soHasUnreceivedPo (HC-0114: Delivery Date brought forward)', () => {
+  const sbWith = (...statuses: string[]) => fakeSb({
+    mfg_sales_order_items: statuses.map((_, i) => soItem(`si-${i}`, HOUZS)),
+    purchase_order_items: statuses.map((_, i) => poItem(`si-${i}`, `po-${i}`)),
+    purchase_orders: statuses.map((st, i) => po(`po-${i}`, st)),
+  });
+
+  test('HC-SO-012039: every PO received answers false, though the PO is still live', async () => {
+    const sb = sbWith('RECEIVED');
+    expect(await soHasUnreceivedPo(sb, HOUZS)).toBe(false);
+    expect(await soHasLivePo(sb, HOUZS)).toBe(true);
+  });
+
+  test('one PO still partly received answers true', async () => {
+    expect(await soHasUnreceivedPo(sbWith('RECEIVED', 'PARTIALLY_RECEIVED'), HOUZS)).toBe(true);
+  });
+
+  test('received + cancelled answers false', async () => {
+    expect(await soHasUnreceivedPo(sbWith('RECEIVED', 'CANCELLED'), HOUZS)).toBe(false);
+  });
+
+  test('fails closed on a read error', async () => {
+    const sb = fakeSb({
+      mfg_sales_order_items: [soItem('si-1', HOUZS)],
+      purchase_order_items: [poItem('si-1', 'po-1')],
+    }, 'purchase_orders');
+    expect(await soHasUnreceivedPo(sb, HOUZS)).toBe(true);
   });
 });
