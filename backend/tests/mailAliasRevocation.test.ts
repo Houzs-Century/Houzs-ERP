@@ -6,7 +6,7 @@ import { getUserBySession } from "../src/services/auth";
 import {
   AliasMailboxCollisionError,
   changePersonalMailboxAliasAtomically,
-} from "../src/routes/users";
+} from "../src/lib/mail-provision";
 import type { Env } from "../src/types";
 
 const liveEnv = { ...env, RESEND_API_KEY: "re_test_key" } as unknown as Env;
@@ -23,6 +23,12 @@ const sources = import.meta.glob("../src/routes/users.ts", {
   eager: true,
 }) as Record<string, string>;
 const usersRouteSource = Object.values(sources)[0] ?? "";
+const provisionSources = import.meta.glob("../src/lib/mail-provision.ts", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+}) as Record<string, string>;
+const provisionSource = Object.values(provisionSources)[0] ?? "";
 
 function auth(tokenValue: string): HeadersInit {
   return {
@@ -147,8 +153,8 @@ afterAll(async () => {
 
 describe("personal Mail Center alias revocation", () => {
   it("does not use PostgreSQL reserved current_user as an unquoted CTE name", () => {
-    expect(usersRouteSource).not.toMatch(/\bWITH\s+current_user\s+AS\s*\(/i);
-    expect(usersRouteSource).toMatch(/\bWITH\s+target_user\s+AS\s*\(/i);
+    expect(provisionSource).not.toMatch(/\bWITH\s+current_user\s+AS\s*\(/i);
+    expect(provisionSource).toMatch(/\bWITH\s+target_user\s+AS\s*\(/i);
   });
 
   test("the production users PATCH commits mailbox reconciliation before remaining user fields", () => {
