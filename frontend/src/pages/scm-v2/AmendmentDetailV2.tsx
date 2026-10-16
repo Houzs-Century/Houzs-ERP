@@ -694,7 +694,7 @@ export function AmendmentDetailV2() {
     if (
       !(await askConfirm({
         title: `Purchaser OK for ${amendmentNo ?? "this amendment"}?`,
-        body: "This order already has a Purchase Order and the Delivery Date moves earlier. "
+        body: "This order has a Purchase Order not fully received yet and the Delivery Date moves earlier. "
           + "Check with the supplier that the goods can be ready in time BEFORE you OK it. "
           + "Nothing is applied yet — Logistic approves it next.",
         confirmLabel: "Purchaser OK",
@@ -1063,8 +1063,8 @@ export function AmendmentDetailV2() {
                         </p>
                       ) : (
                         <p className="text-[12px] text-ink-muted">
-                          The Delivery Date moves earlier and this order already has a Purchase
-                          Order. A Purchaser must OK it before Logistic approves.
+                          The Delivery Date moves earlier and this order has a Purchase Order not
+                          fully received yet. A Purchaser must OK it before Logistic approves.
                         </p>
                       )}
                       {awaitingPurchaserOk && canPurchaserOk && (
