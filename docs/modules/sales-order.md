@@ -180,6 +180,7 @@ Desktop / mobile parity
 - `?status=all` means no filter (`effectiveStatusFilter`). A page past the end returns an empty page with the real count. A failed status-count read returns 500 `status_counts_failed`, never zeros.
 - List search must cover every field the Reference column can show (`ref`, `customer_so_no`).
 - Stored `stock_status` goes stale after best-effort triggers. An unfinished sweep queues a retry row, but a Worker that dies before the sweep leaves nothing. New routes should use `scheduleStockAllocationAfterCommand`.
+- A failed read in the sweep throws before any line is written, so the sweep ends `ok: false` with a queued retry. The PO-receipt read that lights bound lines did not check its error until 2026-10-16; a failure there wrote every bound READY line PENDING under `ok: true` (READY audit F3).
 - Photos: `/photos/:key/signed` can't sign in production, so use `useSoLinePhoto` / `useScmLinePhoto`. Migrated sofa photos sit on the first compartment only, by design. Never store the R2 token as an Actions secret (the repo is public).
 - `description2` is rebuilt from variants on every edit. AutoCount's original line text lives in `remark` under `账本原文: `; don't add a second place for it.
 - A migrated order's city may be blank. AutoCount `InvAddr4` holds the State; never copy it into city.
