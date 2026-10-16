@@ -81,11 +81,11 @@ describe("SO CREATE now states the intent — desktop and mobile", () => {
 
 describe("the authored signal comes from the price box, on both surfaces", () => {
   it("the desktop line card records a typed price", () => {
-    expect(lineCard()).toMatch(/onChange\(\{ unitPriceSen: [\s\S]{0,60}?priceAuthored: true \}\)/);
+    expect(lineCard()).toMatch(/onChange\(\{ unitPriceSen: [\s\S]{0,60}?priceAuthored: priceBoxAuthored\(t\) \}\)/);
   });
 
   it("the mobile line card records a typed price", () => {
-    expect(mobileNewSo()).toMatch(/onChange\(\{ price: e\.target\.value, priceAuthored: true \}\)/);
+    expect(mobileNewSo()).toMatch(/onChange\(\{ price: e\.target\.value, priceAuthored: priceBoxAuthored\(e\.target\.value\) \}\)/);
   });
 
   it("a line seeded from a PERSISTED row is authored by construction", () => {
