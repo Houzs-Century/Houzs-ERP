@@ -101,6 +101,7 @@ import { mrp } from "./routes/mrp";
 import { mrpLeadTimes } from "./routes/mrp-lead-times";
 import { mrpSupplierLeadTimes } from "./routes/mrp-supplier-lead-times";
 import { outstanding } from "./routes/outstanding";
+import { procurementOverview } from "./routes/procurement-overview";
 import { unbilledDeliveries } from "./routes/unbilled-deliveries";
 import { localities } from "./routes/localities";
 import { sgPostcode } from "./routes/sg-postcode";
@@ -771,6 +772,9 @@ scm.route("/mrp-supplier-lead-times", mrpSupplierLeadTimes);
 // Ported 2026-06-20 — Outstanding dashboard (v_*_outstanding views), MY
 // State/City/Postcode reference (my_localities). /fabric-library already
 // mounted above — its GET list was added to the existing route, not remounted.
+// Procurement Overview (owner 2026-10-16): the PO side of procurement.
+scm.use("/procurement-overview/*", scmAreaGuard("scm.procurement.po"));
+scm.route("/procurement-overview", procurementOverview);
 scm.use("/outstanding/*", scmAreaGuard("scm.finance.outstanding"));
 scm.route("/outstanding", outstanding);
 // Delivered-but-not-invoiced, aged (read-only). The money answer to the same
