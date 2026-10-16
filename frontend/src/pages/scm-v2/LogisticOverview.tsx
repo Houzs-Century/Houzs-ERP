@@ -36,7 +36,8 @@ const rm = (sen: number) => fmtSen(sen).replace(/\.\d\d$/, "");
 const n = (v: number) => v.toLocaleString();
 const pctFmt = (x: number) => `${x.toFixed(1)}%`;
 
-export function LogisticOverview() {
+/** `embedded`: inside the phone shell, which draws its own header. */
+export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const today = todayMY();
   const navigate = useNavigate();
   const board = useDeliveryPlanning({ region: "ALL", state: "ALL" });
@@ -78,7 +79,7 @@ export function LogisticOverview() {
   const nextWeek = h ? weeks.find((w) => w.from === addDays(h.thisMonday, 7)) : undefined;
   const runsToday = day.data?.trips ?? [];
   const status: Array<[string, string, string]> = [
-    ["PENDING_DELIVERY", "Pending delivery", TONE.main], ["PENDING_SCHEDULE", "Pending schedule", TONE.warn],
+    ["PENDING_DELIVERY", "Pending delivery", PALETTE[2]!], ["PENDING_SCHEDULE", "Pending schedule", TONE.warn],
     ["OVERDUE", "Overdue", TONE.bad], ["DELIVERED", "Delivered", TONE.good],
   ];
   const statusTotal = status.reduce((a, [k]) => a + (counts?.[k] ?? 0), 0);
@@ -88,8 +89,8 @@ export function LogisticOverview() {
 
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Supply chain · Transportation" title="Logistic Overview"
-        description="What needs action, where every order stands, the weekly logistic report and today's runs — straight from the orders and delivery orders." />
+      {!embedded && <PageHeader eyebrow="Supply chain · Transportation" title="Logistic Overview"
+        description="What needs action, where every order stands, the weekly logistic report and today's runs — straight from the orders and delivery orders." />}
       {(board.error || hist.error) && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {((board.error ?? hist.error) as Error).message}</div>}
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

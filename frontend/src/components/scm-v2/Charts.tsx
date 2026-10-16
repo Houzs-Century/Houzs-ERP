@@ -40,7 +40,7 @@ export function Donut({ data, format, center, size }: { data: Slice[]; format: F
           </g>
         )}
       </svg>
-      <ul className="min-w-[150px] flex-1 space-y-1 text-[12px]">
+      <ul className="min-w-0 basis-full space-y-1 text-[12px] sm:basis-auto sm:min-w-[150px] sm:flex-1">
         {rows.length === 0 && <li className="text-ink-muted">No data in this period.</li>}
         {rows.map((d, i) => (
           <li key={d.label} className="flex items-center gap-2">

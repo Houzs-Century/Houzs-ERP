@@ -745,8 +745,8 @@ export default function App() {
         {/* Vendored 2990's Purchase Order pages. /new + /from-so precede /:id so
             the literal segments match before the param route. Each page is wrapped
             in <Scm2990Shell> for the Notify/Confirm/dialog-service providers. */}
-        <Route path="/scm/logistic-overview" element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmLogisticOverview /></Scm2990Shell></ScmGuard>} />
-        <Route path="/scm/procurement-overview" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmProcurementOverview /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/logistic-overview" element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmLogisticOverview embedded={false} /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/procurement-overview" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmProcurementOverview embedded={false} /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrdersV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders/new" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrderNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders/from-so" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrderFromSoV2 /></Scm2990Shell></ScmGuard>} />

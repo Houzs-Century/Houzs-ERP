@@ -37,7 +37,8 @@ const rm = (sen: number) => fmtSen(sen).replace(/\.\d\d$/, "");
 const CAT_LABEL: Record<string, string> = { MATTRESS: "Mattress", BEDFRAME: "Bedframe", SOFA: "Sofa", ACCESSORY: "Accessories", DINING: "Dining", OTHERS: "Others" };
 const VERDICT: Record<string, [string, string]> = { too_short: ["Set too short", "bg-err/10 text-err"], ok: ["About right", "bg-synced/10 text-synced"], can_shorten: ["Can shorten", "bg-warning-text/10 text-warning-text"], not_enough_data: ["Too few receipts", "bg-surface-2 text-ink-muted"] };
 
-export function ProcurementOverview() {
+/** `embedded`: inside the phone shell, which draws its own header. */
+export function ProcurementOverview({ embedded }: { embedded: boolean }) {
   const today = todayMY();
   const [gran, setGran] = useState<Gran>("M");
   const [anchor, setAnchor] = useState(`${today.slice(0, 7)}-01`);
@@ -94,8 +95,8 @@ export function ProcurementOverview() {
 
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Supply chain · Procurement" title="Procurement Overview"
-        description="Open purchase orders and how late they are, the PO raised and supplier bills received in the period, and how long each category really takes to arrive." />
+      {!embedded && <PageHeader eyebrow="Supply chain · Procurement" title="Procurement Overview"
+        description="Open purchase orders and how late they are, the PO raised and supplier bills received in the period, and how long each category really takes to arrive." />}
 
       <PeriodPicker gran={gran} anchor={anchor} today={today} onChange={(g, a2) => { setGran(g); setAnchor(a2); }} note="Open PO and lateness are as of today; PO raised and bills follow the period." />
 
