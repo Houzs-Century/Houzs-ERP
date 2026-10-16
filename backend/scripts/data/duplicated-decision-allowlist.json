@@ -137,7 +137,7 @@
     },
     {
       "check": "D1",
-      "key": "APAD,CROSS_BORDER,INSURANCE,PUSPAKOM,ROAD_TAX|backend/src/scm/lib/fleet-availability.ts backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx",
+      "key": "GERAN,INSURANCE,PUSPAKOM,ROAD_TAX|backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: COMPLIANCE_DOC_TYPES, COMPLIANCE_DOC_LABELS, DOC_TYPES, DOC_LABEL. Cost of divergence is a blank chip, not a wrong number."
     },
     {
@@ -1589,6 +1589,11 @@
       "check": "D1",
       "key": "HIGH,LOW,MEDIUM,URGENT|backend/src/routes/itSupport.ts frontend/src/lib/itSupport.ts",
       "why": "The four urgency levels are the Houzs IT Hub's own vocabulary, not a Century rule: the relay (routes/itSupport.ts PRIORITIES) refuses any other value before the hub does, and the list (lib/itSupport.ts URGENCY_ORDER) only sorts and labels what the hub sends back, an unknown level sorting last. The hub owns the set; divergence costs a sort position, never a lost request."
+    },
+    {
+      "check": "D2",
+      "key": "GERAN,INSURANCE,PUSPAKOM,ROAD_TAX ~ INSURANCE,PUSPAKOM,ROAD_TAX",
+      "why": "Not the same question. The four are the kinds an in-house lorry keeps on file; the three are the kinds that EXPIRE (a flat expiry column each, and required for an in-house lorry). Geran has no expiry, so it is deliberately in the first and not the second."
     }
   ]
 }

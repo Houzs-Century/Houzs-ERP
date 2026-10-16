@@ -16,6 +16,7 @@ import { api } from "../api/client";
 import { cn } from "../lib/utils";
 import { fmtDate, fmtDateTime } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
+import { PlanServiceForm } from "./fleet/PlanServiceForm";
 
 // ---------------------------------------------------------------------------
 // Fleet Health — the Phase-1 desktop ops screen for Fleet Maintenance &
@@ -30,15 +31,17 @@ import { DateField } from "../vendor/scm/components/DateField";
 // pills follow the app's tone vocabulary. No dark standalone theme.
 // ---------------------------------------------------------------------------
 
-export const DOC_TYPES = ["PUSPAKOM", "ROAD_TAX", "INSURANCE", "APAD", "CROSS_BORDER"] as const;
+/* Owner, 2026-10-15: APAD / cross-border are not needed; the Geran (registration
+   card) is. Geran has no expiry — kept on file, never reminds. */
+export const DOC_TYPES = ["PUSPAKOM", "ROAD_TAX", "INSURANCE", "GERAN"] as const;
 export type DocType = (typeof DOC_TYPES)[number];
 export const DOC_LABEL: Record<DocType, string> = {
   PUSPAKOM: "PUSPAKOM",
   ROAD_TAX: "Road Tax / LKM",
   INSURANCE: "Insurance",
-  APAD: "APAD permit",
-  CROSS_BORDER: "Cross-border",
+  GERAN: "Geran (registration card)",
 };
+const NO_EXPIRY: ReadonlySet<DocType> = new Set<DocType>(["GERAN"]);
 
 export type Tone = "crit" | "warn" | "ok" | "info" | "neutral";
 
@@ -858,7 +861,7 @@ export function PlansSection({ plans, currentKm, vehicleId, components, onChange
       )}
 
       {plans.map((p) => (
-        <PlanRow key={p.id} p={p} currentKm={currentKm} onEdit={canWrite ? () => { setEditing(p); setAdding(false); } : undefined} />
+        <PlanRow key={p.id} p={p} currentKm={currentKm} onEdit={canWrite ? () => { setEditing(p); setAdding(false); } : undefined} onServiced={canWrite ? onChanged : undefined} />
       ))}
 
       {canWrite && (adding || editing) && (
@@ -897,10 +900,6 @@ function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
   const [component, setComponent] = useState(plan?.component ?? free[0]?.value ?? components[0]?.value ?? "");
   const [intervalKm, setIntervalKm] = useState(plan?.intervalKm != null ? String(plan.intervalKm) : "");
   const [intervalMonths, setIntervalMonths] = useState(plan?.intervalMonths != null ? String(plan.intervalMonths) : "");
-  const [lastDoneKm, setLastDoneKm] = useState(plan?.lastDoneKm != null ? String(plan.lastDoneKm) : "");
-  const [lastDoneDate, setLastDoneDate] = useState(plan?.lastDoneDate ?? "");
-  const [workshop, setWorkshop] = useState(plan?.workshop ?? "");
-  const [estCost, setEstCost] = useState(plan?.estCostSen != null ? (plan.estCostSen / 100).toFixed(2) : "");
   const [active, setActive] = useState(plan?.active ?? true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -918,15 +917,10 @@ function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
     if (busy || !ok) return;
     setBusy(true); setErr(null);
     try {
-      const rm = estCost.trim() === "" ? null : Number(estCost);
       await api.post(`/api/fleet-maintenance/vehicles/${vehicleId}/plans`, {
         component,
         intervalKm: num(intervalKm),
         intervalMonths: num(intervalMonths),
-        lastDoneKm: num(lastDoneKm),
-        lastDoneDate: lastDoneDate || null,
-        workshop: workshop.trim() || null,
-        estCostSen: rm != null && Number.isFinite(rm) ? Math.round(rm * 100) : null,
         active,
       });
       onSaved();
@@ -955,27 +949,11 @@ function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
           <label className={FIELD_LABEL}>Every … months</label>
           <input className={FIELD_CLS} inputMode="numeric" value={intervalMonths} onChange={(e) => setIntervalMonths(e.target.value)} placeholder="6" />
         </div>
-        <div>
-          <label className={FIELD_LABEL}>Last done at (km)</label>
-          <input className={FIELD_CLS} inputMode="numeric" value={lastDoneKm} onChange={(e) => setLastDoneKm(e.target.value)} />
-        </div>
-        <div>
-          <label className={FIELD_LABEL}>Last done on</label>
-          <DateField fullWidth className={FIELD_CLS} value={lastDoneDate} onChange={(iso) => setLastDoneDate(iso)}/>
-        </div>
-        <div>
-          <label className={FIELD_LABEL}>Workshop</label>
-          <input className={FIELD_CLS} value={workshop} onChange={(e) => setWorkshop(e.target.value)} placeholder="Optional" />
-        </div>
-        <div>
-          <label className={FIELD_LABEL}>Estimated cost (RM)</label>
-          <input className={FIELD_CLS} inputMode="decimal" value={estCost} onChange={(e) => setEstCost(e.target.value)} placeholder="Optional" />
-        </div>
       </div>
 
       <p className="mt-2 text-[10.5px] leading-snug text-ink-muted">
-        Give at least one interval. With both, the plan falls due on whichever comes first. Leave
-        &ldquo;last done&rdquo; blank and it reads as never done.
+        The rule only: give at least one interval; with both, it falls due on whichever comes first.
+        When the service is done, use &ldquo;Record service&rdquo; on the plan.
       </p>
 
       <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-[12px] text-ink">
@@ -1008,7 +986,8 @@ function planProgress(p: PlanView, currentKm: number | null): number {
   return Math.max(0, Math.min(1, Math.max(...fracs)));
 }
 
-function PlanRow({ p, currentKm, onEdit }: { p: PlanView; currentKm: number | null; onEdit?: () => void }) {
+function PlanRow({ p, currentKm, onEdit, onServiced }: { p: PlanView; currentKm: number | null; onEdit?: () => void; onServiced?: () => void }) {
+  const [servicing, setServicing] = useState(false);
   const pct = Math.round(planProgress(p, currentKm) * 100);
   const barColor = p.tone === "crit" ? "bg-err" : p.tone === "warn" ? "bg-warning-text" : "bg-synced";
   const interval = [p.intervalKm ? `${p.intervalKm.toLocaleString()} km` : null, p.intervalMonths ? `${p.intervalMonths} mo` : null].filter(Boolean).join(" / ");
@@ -1024,8 +1003,11 @@ function PlanRow({ p, currentKm, onEdit }: { p: PlanView; currentKm: number | nu
           {!p.active && <span className="ml-2 text-[10px] font-normal text-ink-muted">inactive</span>}
         </span>
         <span className="flex items-center gap-2">
+          {onServiced && !servicing && (
+            <button type="button" onClick={() => setServicing(true)} className="text-[10.5px] font-semibold text-primary hover:underline">Record service</button>
+          )}
           {onEdit && (
-            <button type="button" onClick={onEdit} className="text-[10.5px] text-primary hover:underline">Edit</button>
+            <button type="button" onClick={onEdit} className="text-[10.5px] text-primary hover:underline">Edit rule</button>
           )}
           <Pill tone={p.tone}>{p.overdue ? "Overdue" : p.dueSoon ? "Due soon" : "OK"}</Pill>
         </span>
@@ -1043,6 +1025,11 @@ function PlanRow({ p, currentKm, onEdit }: { p: PlanView; currentKm: number | nu
           {fmtPlanRemaining(p)}
         </span>
       </div>
+      {p.lastDoneDate && <div className="mt-1 text-[10.5px] text-ink-muted">Last serviced {p.lastDoneDate}{p.lastDoneKm != null ? ` at ${p.lastDoneKm.toLocaleString()} km` : ""}</div>}
+      {servicing && onServiced && (
+        <PlanServiceForm planId={p.id} componentLabel={p.componentLabel} currentKm={currentKm}
+          onCancel={() => setServicing(false)} onSaved={() => { setServicing(false); onServiced(); }} />
+      )}
     </div>
   );
 }
@@ -2006,7 +1993,7 @@ export function AddRenewalForm({ lorryId, docType, onSaved }: {
   };
 
   const save = async () => {
-    if (!expiryDate) { setErr("An expiry date is what the reminders count down to - it is required."); return; }
+    if (!expiryDate && !NO_EXPIRY.has(docType)) { setErr("An expiry date is what the reminders count down to - it is required."); return; }
     setBusy(true);
     setErr(null);
     try {
@@ -2016,7 +2003,7 @@ export function AddRenewalForm({ lorryId, docType, onSaved }: {
         {
           docType,
           issueDate: issueDate || null,
-          expiryDate,
+          expiryDate: expiryDate || null,
           documentRef: documentRef || null,
           costSen: cost.trim() === "" ? null : Math.round(Number(cost) * 100),
           owner: owner || null,
@@ -2055,7 +2042,7 @@ export function AddRenewalForm({ lorryId, docType, onSaved }: {
     <div className="mt-2 space-y-2 rounded-md border border-border bg-surface p-2.5">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <RenewalField label="Issue date"><DateField fullWidth value={issueDate} onChange={(iso) => setIssueDate(iso)} className={RENEWAL_FIELD_CLS}/></RenewalField>
-        <RenewalField label="Expiry date *"><DateField fullWidth value={expiryDate} onChange={(iso) => setExpiryDate(iso)} className={RENEWAL_FIELD_CLS} /></RenewalField>
+        {!NO_EXPIRY.has(docType) && <RenewalField label="Expiry date *"><DateField fullWidth value={expiryDate} onChange={(iso) => setExpiryDate(iso)} className={RENEWAL_FIELD_CLS} /></RenewalField>}
         <RenewalField label="Document no"><input type="text" value={documentRef} onChange={(e) => setDocumentRef(e.target.value)} className={RENEWAL_FIELD_CLS} /></RenewalField>
         <RenewalField label="Cost (RM)"><input type="number" min="0" step="0.01" value={cost} onChange={(e) => setCost(e.target.value)} className={RENEWAL_FIELD_CLS} /></RenewalField>
         <RenewalField label="Owner"><input type="text" value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="Who renews it" className={RENEWAL_FIELD_CLS} /></RenewalField>
