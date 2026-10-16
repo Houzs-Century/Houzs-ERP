@@ -22,6 +22,9 @@ export type SubmittedAmendmentLine = {
   newVariants?: unknown;
   newQty?: number | null;
   newUnitPriceSen?: number | null;
+  /* HC-0095 — true only when the operator TYPED the 0 in newUnitPriceSen. An
+     unclaimed 0 is "no price found" and the apply keeps the stored price. */
+  zeroPriceIntended?: boolean;
   /* Migration 0280 — the line's REMARK: the free-text instruction an operator
      types for whoever executes the line ("Please take back Cody Bedframe (King
      Size) 2 units"). undefined/null = this request does not touch the remark;
@@ -45,6 +48,7 @@ export type AmendmentLineRow = {
   new_variants: unknown;
   new_qty: number | null;
   new_unit_price_sen: number | null;
+  zero_price_intended: boolean;
   new_remark: string | null;
   new_discount_sen: number | null;
   old_snapshot: Record<string, unknown> | null;
@@ -126,6 +130,7 @@ export async function buildAmendmentLineRows(
       new_variants:        l.newVariants ?? null,
       new_qty:             l.newQty ?? null,
       new_unit_price_sen:  l.newUnitPriceSen ?? null,
+      zero_price_intended: l.newUnitPriceSen === 0 && l.zeroPriceIntended === true,
       /* undefined (key absent) and null both mean "not requested" — normalised
          to NULL so applySoAmendment's `!= null` test is the ONE gate on whether
          the remark is written. '' survives as a real request to clear it. */

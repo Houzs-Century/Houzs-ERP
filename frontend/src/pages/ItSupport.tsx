@@ -452,6 +452,11 @@ function RequestList({ tab, onTab, onOpen, onNew }: {
       getValue: (r) => r.assignee_name ?? "Not picked up yet",
     },
     {
+      key: "created_at", label: "Submitted", width: "160px",
+      render: (r) => <span className="whitespace-nowrap text-ink-muted" title={relativeTime(r.created_at)}>{formatDateTime(r.created_at)}</span>,
+      getValue: (r) => r.created_at, searchValue: (r) => formatDateTime(r.created_at),
+    },
+    {
       key: "updated_at", label: "Last update", width: "160px",
       render: (r) => <span className="whitespace-nowrap text-ink-muted" title={relativeTime(r.updated_at)}>{formatDateTime(r.updated_at)}</span>,
       getValue: (r) => r.updated_at, searchValue: (r) => formatDateTime(r.updated_at),

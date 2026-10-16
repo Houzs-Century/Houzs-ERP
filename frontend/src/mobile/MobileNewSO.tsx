@@ -11,7 +11,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch, type SaveProblem } from "../vendor/scm/lib/authed-fetch";
 import { lineWriteFailure, lineWriteSaveMessage, type LineWriteFailure } from "../vendor/scm/lib/line-write-failures";
-import { amendmentVariants, amendmentVariantsKey, amendmentRequestedUnitPriceSen, storedLineRemark } from "../vendor/scm/lib/so-amendment-line-diff";
+import { amendmentVariants, amendmentVariantsKey, amendmentRequestedUnitPriceSen, amendmentPriceFields, storedLineRemark } from "../vendor/scm/lib/so-amendment-line-diff";
 import { photoLabel, photoUploadFailure, photoUploadFailureMessage, unmatchedLinePhotos, type PhotoUploadFailure } from "../vendor/scm/lib/photo-upload-failures";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
 import { notifySaveProblems, SaveProblemsList, saveProblemsTitle } from "../vendor/scm/components/SaveProblemsList";
@@ -72,7 +72,7 @@ import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
 import { MobileSavedPhotoThumb, StagedPhotoThumb } from "./MobileSavedPhotoThumb";
-import { zeroPriceClaim } from "../vendor/scm/lib/zeroPriceClaim";
+import { priceBoxAuthored, zeroPriceClaim } from "../vendor/scm/lib/zeroPriceClaim";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { mobileLineAddHeaders } from "./mobile-so-line-save";
 import { uploadSoItemPhotoWithLease } from "./mobile-so-concurrency";
@@ -1872,7 +1872,7 @@ export function MobileNewSO({
         // The remark rides newRemark below, never inside the variants an approval writes back.
         newVariants: amendmentVariants(buildVariants(l)) ?? undefined,
         newQty: num(l.qty) || 1,
-        ...(requestedPriceSen(l) != null ? { newUnitPriceSen: requestedPriceSen(l) as number } : {}), // omitted = null on the row = keep the stored price
+        ...amendmentPriceFields({ unitPriceSen: toSen(l.price), priceAuthored: l.priceAuthored }), // omitted = null on the row = keep the stored price
         /* mig 0280 — send the remark only when it MOVED (desktop parity): a null
            new_remark is "not requested", which is what keeps the apply from
            rewriting a remark this session never touched. */
@@ -3169,7 +3169,7 @@ function LineCard({
               placeholder="0.00"
               disabled={!canEditPrice}
               title={!canEditPrice ? "Price follows the SKU Master sell price — admin can override" : undefined}
-              onChange={(e) => { setPriceTyping(true); onChange({ price: e.target.value, priceAuthored: true }); }}
+              onChange={(e) => { setPriceTyping(true); onChange({ price: e.target.value, priceAuthored: priceBoxAuthored(e.target.value) }); }}
               onBlur={() => setPriceTyping(false)}
             />
           </Field>

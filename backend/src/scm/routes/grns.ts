@@ -869,14 +869,22 @@ export async function recomputePoReceived(
     //    sent back to the supplier (returned_qty, migration 0106): a returned
     //    qty no longer counts as received, so the PO line re-opens and a
     //    replacement shipment can be received against it. Clamped ≥ 0.
-    const { data: glines } = await sb.from('grn_items')
+    /* A FAILED READ STOPS THE RECOUNT before anything is written (READY audit
+       F2, 2026-10-16). Unchecked, a failed grn_items read looked like "no
+       receipts" and wrote received_qty 0 over real receipts, and a failed grns
+       read counted CANCELLED / DRAFT lines as received — both reported ok, so
+       no RECOUNT_FAILED row was left. The stored count stays as it was and the
+       caller records the failure. */
+    const { data: glines, error: glinesErr } = await sb.from('grn_items')
       .select('purchase_order_item_id, qty_accepted, returned_qty, grn_id')
       .in('purchase_order_item_id', ids);
+    if (glinesErr) return { ok: false, reason: `GRN line read failed: ${glinesErr.message ?? 'unknown'}` };
     const rows = (glines ?? []) as Array<{ purchase_order_item_id: string; qty_accepted: number; returned_qty: number; grn_id: string }>;
     const grnIds = [...new Set(rows.map((r) => r.grn_id).filter(Boolean))];
     const cancelled = new Set<string>();
     if (grnIds.length > 0) {
-      const { data: gs } = await sb.from('grns').select('id, status').in('id', grnIds);
+      const { data: gs, error: gsErr } = await sb.from('grns').select('id, status').in('id', grnIds);
+      if (gsErr) return { ok: false, reason: `GRN status read failed: ${gsErr.message ?? 'unknown'}` };
       for (const g of (gs ?? []) as Array<{ id: string; status: string }>) {
         // DRAFT GRNs have committed no receipt, so their lines must NOT count
         // toward a PO line's received_qty (same treatment as CANCELLED). The
@@ -904,20 +912,23 @@ export async function recomputePoReceived(
     }
 
     // 2. Re-evaluate each touched PO's status from its (now-recounted) lines.
-    const { data: poiRows } = await sb.from('purchase_order_items')
+    const { data: poiRows, error: poiErr } = await sb.from('purchase_order_items')
       .select('purchase_order_id').in('id', ids);
+    if (poiErr) return { ok: false, reason: `PO line read failed: ${poiErr.message ?? 'unknown'}` };
     const poIds = [...new Set(((poiRows ?? []) as Array<{ purchase_order_id: string }>)
       .map((r) => r.purchase_order_id).filter(Boolean))];
     for (const poId of poIds) {
-      const { data: lines } = await sb.from('purchase_order_items')
+      const { data: lines, error: linesErr } = await sb.from('purchase_order_items')
         .select('qty, received_qty').eq('purchase_order_id', poId);
+      if (linesErr) return { ok: false, reason: `PO line read failed for ${poId}: ${linesErr.message ?? 'unknown'}` };
       const ll = (lines ?? []) as Array<{ qty: number; received_qty: number }>;
       if (ll.length === 0) continue;
       const anyReceived = ll.some((l) => (l.received_qty ?? 0) > 0);
       const fully = ll.every((l) => (l.received_qty ?? 0) >= l.qty);
       const newStatus = fully ? 'RECEIVED' : anyReceived ? 'PARTIALLY_RECEIVED' : 'SUBMITTED';
-      const { data: head } = await sb.from('purchase_orders')
+      const { data: head, error: headErr } = await sb.from('purchase_orders')
         .select('received_at').eq('id', poId).maybeSingle();
+      if (headErr) return { ok: false, reason: `PO header read failed for ${poId}: ${headErr.message ?? 'unknown'}` };
       const prevReceivedAt = (head as { received_at: string | null } | null)?.received_at ?? null;
       const patch: Record<string, unknown> = { status: newStatus, updated_at: new Date().toISOString() };
       // Stamp received_at on first full receipt, preserve it if already set, clear on regression.

@@ -402,6 +402,18 @@ export const amendmentRequestedUnitPriceSen = (
   d: { unitPriceSen: number; priceAuthored?: boolean },
 ): number | null => (d.unitPriceSen === 0 && d.priceAuthored !== true ? null : d.unitPriceSen);
 
+/* HC-0095 — the price half of an amendment line's payload. A requested 0 can
+   only be an authored one (see above), so it carries `zeroPriceIntended`; the
+   apply refuses a 0 without it and keeps the stored price, which also covers a
+   0 queued by an older bundle. */
+export const amendmentPriceFields = (
+  d: { unitPriceSen: number; priceAuthored?: boolean },
+): { newUnitPriceSen?: number; zeroPriceIntended?: true } => {
+  const sen = amendmentRequestedUnitPriceSen(d);
+  if (sen == null) return {};
+  return sen === 0 ? { newUnitPriceSen: 0, zeroPriceIntended: true } : { newUnitPriceSen: sen };
+};
+
 /** True when the line requests at least one field change. */
 export const amendmentLineIsChange = (l: DiffableAmendmentLine): boolean => {
   const f = amendmentLineChangedFields(l);

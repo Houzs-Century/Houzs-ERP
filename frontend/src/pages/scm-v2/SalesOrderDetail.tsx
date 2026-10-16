@@ -113,7 +113,7 @@ import {
   amendmentLineFieldKinds,
   amendmentOldSnapshot,
   amendmentVariantSummaries,
-  visibleAmendmentLines, amendmentLineSig, amendmentVariantsKey, amendmentRequestedUnitPriceSen} from '../../vendor/scm/lib/so-amendment-line-diff';
+  visibleAmendmentLines, amendmentLineSig, amendmentVariantsKey, amendmentRequestedUnitPriceSen, amendmentPriceFields} from '../../vendor/scm/lib/so-amendment-line-diff';
 import { routeField, type AmendmentFieldKind } from '../../vendor/scm/lib/amendment-routing';
 import { fetchSoSlipUrl, fetchScanSlipImageBlobUrl } from '../../vendor/scm/lib/slip';
 import {
@@ -1083,7 +1083,7 @@ export const SalesOrderDetail = () => {
         newVariants: draft.variants ?? undefined,
         newQty: draft.qty,
         // Omitted (null on the row) when no price is requested: the apply keeps the stored price.
-        ...(requestedUnitSen != null ? { newUnitPriceSen: requestedUnitSen } : {}),
+        ...amendmentPriceFields(draft),
         /* mig 0280 — the line's remark rides the amendment. Sent ONLY when it
            actually moved: null/absent means "not requested", which is what stops
            the apply from rewriting a remark this session never touched. */

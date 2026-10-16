@@ -16,7 +16,7 @@ A PO moves NO inventory at any status; stock IN happens at GRN post. What it mov
 - Hold `PATCH /:id/hold` (shared `document-hold-routes.ts`): sets the marker `on_hold / hold_reason / held_at / held_by`; status is unchanged. List shows real pill + Hold chip; On Hold tab reads the flag.
 - No document-level delete. CANCELLED is terminal (reopen aside). Line delete and allocation delete still exist.
 - List tabs (`lib/po-status-buckets.ts`): draft, open (SUBMITTED), partial, received, cancelled, on_hold, and `outstanding` = SUBMITTED + PARTIALLY_RECEIVED — a roll-up that overlaps open + partial, so tab counts do not sum to all.
-- Revisions: a PO is revised IN PLACE — `revision` bumps, prior version snapshotted to `scm.po_revisions`; number shows as `<po_number>_R<revision-1>` (`poDisplayNumber`) on screen and print. Two engines: `reviseBoundPo` (SO-amendment follow-up, lines re-derived by `rederivePoLineFromSoLine`) and `applyPoAmendment` (`/po-amendments` router).
+- Revisions: a PO is revised IN PLACE — `revision` bumps, prior version snapshotted to `scm.po_revisions`; number shows as `<po_number>_R<revision-1>` (`poDisplayNumber`) on screen and print. Two engines: `reviseBoundPo` (SO-amendment follow-up, lines re-derived by `rederivePoLineFromSoLine`; the unit cost re-derives only when the line's code or variants move, otherwise the PO's own price is kept) and `applyPoAmendment` (`/po-amendments` router).
 - Pre-DO, every PO <-> SO pairing is floating (MRP pooled allocator); `so_item_id` and allocation slices are procurement PROVENANCE. At DO creation the live allocator (`do-live-allocator.ts`) binds `committed_po_batch_no`; post-DO records are anchored history.
 
 ## Permissions

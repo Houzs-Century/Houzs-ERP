@@ -324,7 +324,7 @@ describe('applySoAmendment — an APPROVED amendment carries the approved unit p
 describe('applySoAmendment — an approved RM 0 is a price, not a missing price', () => {
   it('a line an approver signed down to RM 0 stays at 0', async () => {
     const store = baseStore();
-    store.so_amendment_lines = [specLine({ new_unit_price_sen: 0 })];
+    store.so_amendment_lines = [specLine({ new_unit_price_sen: 0, zero_price_intended: true })];
 
     await apply(store);
 
@@ -390,7 +390,7 @@ describe('applySoAmendment — an approved RM 0 is a price, not a missing price'
        approve-so gate constructs — so an unapproved apply cannot author a 0
        any more than it could author RM 50. */
     const store = baseStore();
-    store.so_amendment_lines = [specLine({ new_unit_price_sen: 0 })];
+    store.so_amendment_lines = [specLine({ new_unit_price_sen: 0, zero_price_intended: true })];
 
     await apply(store, null);
 
@@ -521,7 +521,7 @@ describe('applySoAmendment — a SPEC swap to an UNPRICED SKU keeps the stored p
     const store = baseStore({ linkedAcDocNo: 'AC-SO-0001' });
     store.mfg_products.push(unpriced());
     store.mfg_sales_order_items = [soLine({ unit_price_sen: 850000, total_sen: 850000, balance_sen: 850000 })];
-    store.so_amendment_lines = [swapLine({ new_unit_price_sen: 0 })];
+    store.so_amendment_lines = [swapLine({ new_unit_price_sen: 0, zero_price_intended: true })];
 
     await apply(store);
 
@@ -533,11 +533,57 @@ describe('applySoAmendment — a SPEC swap to an UNPRICED SKU keeps the stored p
     const store = baseStore();
     store.mfg_products.push(unpriced());
     store.mfg_sales_order_items = [soLine({ unit_price_sen: 850000, total_sen: 850000, balance_sen: 850000 })];
-    store.so_amendment_lines = [swapLine({ new_unit_price_sen: 0 })];
+    store.so_amendment_lines = [swapLine({ new_unit_price_sen: 0, zero_price_intended: true })];
 
     await apply(store);
 
     expect(lineOf(store).unit_price_sen).toBe(0);
+  });
+});
+
+/* HC-0095 (15 Oct 2026): a 0 the operator did not type (an unpriced SKU's seed,
+   sent by a pre-#4591 bundle or queued before it) zeroed priced lines on
+   approval. Only a claimed 0 may land; an unclaimed one keeps the stored price. */
+describe('applySoAmendment — an UNCLAIMED requested 0 keeps the stored price', () => {
+  const unpriced = () => product({ code: 'MAT-2', name: 'Mattress (unpriced)', sell_price_sen: null, base_price_sen: null });
+  const zeroSwap = (over: Partial<Row> = {}) => specLine({
+    new_item_code: 'MAT-2', new_unit_price_sen: 0,
+    old_snapshot: { item_code: 'ACC-1', itemGroup: 'accessory', qty: 1, unitPriceSen: 850000 },
+    ...over,
+  });
+  const priced = () => [soLine({ unit_price_sen: 850000, total_sen: 850000, balance_sen: 850000 })];
+
+  it('MIGRATED: stored 850000, unclaimed 0 -> 850000', async () => {
+    const store = baseStore({ linkedAcDocNo: 'AC-SO-0001' });
+    store.mfg_products.push(unpriced());
+    store.mfg_sales_order_items = priced();
+    store.so_amendment_lines = [zeroSwap({ zero_price_intended: false })];
+
+    await apply(store);
+
+    expect(lineOf(store)).toMatchObject({ item_code: 'MAT-2', unit_price_sen: 850000, total_sen: 850000 });
+  });
+
+  it('NATIVE: stored 850000, unclaimed 0 -> 850000', async () => {
+    const store = baseStore();
+    store.mfg_products.push(unpriced());
+    store.mfg_sales_order_items = priced();
+    store.so_amendment_lines = [zeroSwap({ zero_price_intended: false })];
+
+    await apply(store);
+
+    expect(lineOf(store).unit_price_sen).toBe(850000);
+  });
+
+  it('a row with no flag at all (queued before the column) is unclaimed too', async () => {
+    const store = baseStore();
+    store.mfg_products.push(unpriced());
+    store.mfg_sales_order_items = priced();
+    store.so_amendment_lines = [zeroSwap()];
+
+    await apply(store);
+
+    expect(lineOf(store).unit_price_sen).toBe(850000);
   });
 });
 
@@ -728,7 +774,7 @@ describe('applySoAmendment — the two halves of a split SKU-swap-with-price (DE
 
   it('the price half moves only the price: code, qty and spec stay as they are', async () => {
     const store = swapStore('SO-013490');
-    store.so_amendment_lines = [specLine({ new_item_code: null, new_qty: null, new_variants: null, new_unit_price_sen: 0 })];
+    store.so_amendment_lines = [specLine({ new_item_code: null, new_qty: null, new_variants: null, new_unit_price_sen: 0, zero_price_intended: true })];
 
     await apply(store, PRICE_APPROVED);
 

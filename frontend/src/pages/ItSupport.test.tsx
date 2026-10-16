@@ -80,6 +80,7 @@ describe("IT Support — my requests", () => {
     open("/it-support");
     expect(await screen.findByText("Printer offline")).toBeTruthy();
     expect(screen.getAllByText("High")).toHaveLength(2);
+    expect(screen.getByText("Submitted")).toBeTruthy();
     fireEvent.click(screen.getByText("Resolved"));
     expect(screen.getByTestId("where").textContent).toBe("/it-support?tab=resolved");
     expect(screen.queryByText("Delivery order will not save")).toBeNull();

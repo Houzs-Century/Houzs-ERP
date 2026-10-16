@@ -130,7 +130,8 @@ export type InventoryProductTotal = {
        surplus_qty         = available_qty − unscheduled_qty
        non_selling_qty     = on-hand standing in a showroom / display / service
                              warehouse — doing its job, not idle
-       sellable_surplus_qty= surplus_qty − non_selling_qty, floored at 0; the
+       sellable_surplus_qty= ON-HAND owned − all open demand − owned non_selling,
+                             floored at 0 (incoming never counts); the
                              dead-stock signal, and the ONLY one the Dead/Spare
                              badge may read
        oldest_lot_at       = oldest open FIFO lot → age of the stock */
@@ -504,6 +505,13 @@ export function lotAssignedQty(l: StockLotLike): number {
 export function lotFreeQty(l: StockLotLike): number {
   const qty = l.qty_remaining ?? 0;
   return l.free_qty != null ? Math.max(0, Math.round(l.free_qty)) : qty;
+}
+
+/* Is this lot a dead-stock candidate? The server's verdict (is_dead_stock also
+   excludes showroom / display / service warehouses); an older payload without it
+   falls back to free owned units. */
+export function lotIsDeadStock(l: StockLotLike & { is_dead_stock?: boolean }): boolean {
+  return l.is_dead_stock ?? (!l.is_consignment && lotFreeQty(l) > 0);
 }
 
 export function buildStockBreakdown<T extends StockLotLike>(
