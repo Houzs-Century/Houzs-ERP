@@ -332,7 +332,16 @@ function LinesTable({ request, onBuild }: { request: ProductRequest; onBuild: ((
           {request.lines.map((l) => (
             <tr key={l.id}>
               <td style={{ ...td, ...soft }}>{l.line_no}</td>
-              <td style={{ ...td, ...mono }}>{lineProductText(l)}{l.model ? <span style={soft}> · Model {l.model.modelCode}</span> : null}</td>
+              <td style={{ ...td, ...mono }}>
+                {/* Once the line is built, its SKU code links through to the new
+                    catalogue Model (owner 2026-10-16: link 去新建好的 code). The
+                    product page is a desktop-only route; the route guard handles a
+                    viewer who may not open it, as the PC Order cross-link does. */}
+                {l.model?.id
+                  ? <Link to={`/scm/product-models/${l.model.id}`} style={{ color: 'var(--c-orange)' }}>{lineProductText(l)}</Link>
+                  : lineProductText(l)}
+                {l.model ? <span style={soft}> · Model {l.model.modelCode}</span> : null}
+              </td>
               <td style={td}>{mfgCategoryLabel(l.category)}</td>
               <td style={td}>{specText(l)}</td>
               <td style={{ ...td, textAlign: 'right' }}>{l.qty}</td>
