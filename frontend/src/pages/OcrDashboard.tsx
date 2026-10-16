@@ -16,6 +16,7 @@ import { monthLabel } from "./AiUsage";
 
 type DocTypeStats = {
   documentType: string;
+  label: string;
   scans: number;
   pending: number;
   failed: number;
@@ -44,13 +45,6 @@ export type OcrReport = {
   problems: ProblemScan[];
 };
 
-const DOC_LABEL: Record<string, string> = {
-  SO: "Sales slip (SO)",
-  GR: "Supplier delivery order (GR)",
-  PI: "Supplier invoice (PI)",
-};
-const docLabel = (t: string) => DOC_LABEL[t] ?? t;
-
 /** Fewer reviewed scans than this is not enough to judge. */
 const MIN_SAMPLE = 5;
 
@@ -63,7 +57,7 @@ function thisMonthMyt(): string {
 }
 
 const DOC_COLUMNS: Column<DocTypeStats>[] = [
-  { key: "doc", label: "Document", getValue: (r) => r.documentType, render: (r) => <span className="font-semibold text-ink">{docLabel(r.documentType)}</span> },
+  { key: "doc", label: "Document", getValue: (r) => r.documentType, render: (r) => <span className="font-semibold text-ink">{r.label}</span> },
   { key: "scans", label: "Scans", align: "right", getValue: (r) => r.scans, render: (r) => r.scans },
   {
     key: "accuracy", label: "Accuracy", align: "right", getValue: (r) => (r.accuracy?.reviewed ? r.accuracy.clean / r.accuracy.reviewed : -1),
@@ -90,7 +84,7 @@ const DOC_COLUMNS: Column<DocTypeStats>[] = [
   { key: "p90", label: "Slowest 10%", align: "right", getValue: (r) => r.p90Sec ?? -1, render: (r) => secs(r.p90Sec) },
 ];
 
-const PROBLEM_COLUMNS: Column<ProblemScan>[] = [
+const problemColumns = (docLabel: (t: string) => string): Column<ProblemScan>[] => [
   {
     key: "at", label: "When", getValue: (r) => r.at,
     render: (r) => <span className="whitespace-nowrap text-ink-muted">{new Date(r.at).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", dateStyle: "medium", timeStyle: "short" })}</span>,
@@ -125,6 +119,8 @@ export function OcrDashboard() {
   const q = useQuery<OcrReport>(url, () => api.get(url));
   const r = q.data;
   const reviewed = r?.fieldMisses.reviewed ?? 0;
+  const labels = new Map(r?.docTypes.map((d) => [d.documentType, d.label]));
+  const docLabel = (t: string) => labels.get(t) ?? t;
 
   return (
     <div className="space-y-5">
@@ -204,7 +200,7 @@ export function OcrDashboard() {
               {r.problems.length === 0 ? (
                 <div className="py-6 text-center text-[12px] text-ink-muted">No problem scans this month.</div>
               ) : (
-                <DataTable<ProblemScan> tableId="ocr-problems" columns={PROBLEM_COLUMNS} rows={r.problems} getRowKey={(p) => p.id} />
+                <DataTable<ProblemScan> tableId="ocr-problems" columns={problemColumns(docLabel)} rows={r.problems} getRowKey={(p) => p.id} />
               )}
             </div>
           </>

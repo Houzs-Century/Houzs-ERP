@@ -13,8 +13,8 @@ import { OcrDashboard, pct, type OcrReport } from "./OcrDashboard";
 afterEach(cleanup);
 beforeEach(() => { apiGet.mockReset(); });
 
-const stats = (documentType: string, over: Partial<OcrReport["docTypes"][number]>) => ({
-  documentType, scans: 10, pending: 0, failed: 0, discarded: 0, awaiting: 0, clean: 0, corrected: 0, imported: 0,
+const stats = (documentType: string, label: string, over: Partial<OcrReport["docTypes"][number]>) => ({
+  documentType, label, scans: 10, pending: 0, failed: 0, discarded: 0, awaiting: 0, clean: 0, corrected: 0, imported: 0,
   accuracy: null, avgSec: 12.34, p90Sec: 20, ...over,
 });
 
@@ -22,8 +22,8 @@ const REPORT: OcrReport = {
   month: "2026-09",
   model: "claude-sonnet-4-6",
   docTypes: [
-    stats("SO", { clean: 9, corrected: 1, failed: 2, accuracy: { clean: 9, reviewed: 10 } }),
-    stats("PI", { imported: 10 }),
+    stats("SO", "Sales slip (SO)", { clean: 9, corrected: 1, failed: 2, accuracy: { clean: 9, reviewed: 10 } }),
+    stats("PI", "Supplier invoice (PI)", { imported: 10 }),
   ],
   fieldMisses: { reviewed: 10, fields: [{ field: "Product code", count: 1 }] },
   problems: [

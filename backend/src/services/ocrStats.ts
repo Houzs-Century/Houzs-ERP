@@ -9,6 +9,7 @@ import type { Env } from "../types";
 import { getDb } from "../db/client";
 import { mytMonthRangeUtc } from "./agent-console";
 import { CLAUDE_MODEL } from "../scm/lib/scan-ocr";
+import { SCAN_DOCUMENT_TYPES, SCAN_DOCUMENT_TYPE_LABEL, isScanDocumentType } from "../scm/lib/scan-document-type";
 
 export type ScanOutcome = "pending" | "failed" | "discarded" | "clean" | "corrected" | "awaiting" | "imported";
 
@@ -110,6 +111,7 @@ export function changedFields(extracted: unknown, corrected: unknown): string[] 
 
 export interface DocTypeStats {
   documentType: string;
+  label: string;
   scans: number;
   pending: number;
   failed: number;
@@ -141,7 +143,6 @@ export interface OcrReport {
   problems: ProblemScan[];
 }
 
-const DOC_ORDER = ["SO", "GR", "PI"];
 const PROBLEM_LIMIT = 30;
 const iso = (v: string | Date) => new Date(v).toISOString();
 
@@ -162,7 +163,7 @@ export function buildOcrReport(month: string, rows: ScanRow[]): OcrReport {
     let s = byType.get(t);
     if (!s) {
       s = {
-        documentType: t, scans: 0, pending: 0, failed: 0, discarded: 0, awaiting: 0, clean: 0, corrected: 0, imported: 0,
+        documentType: t, label: isScanDocumentType(t) ? SCAN_DOCUMENT_TYPE_LABEL[t] : t, scans: 0, pending: 0, failed: 0, discarded: 0, awaiting: 0, clean: 0, corrected: 0, imported: 0,
         accuracy: null, avgSec: null, p90Sec: null,
       };
       byType.set(t, s);
@@ -193,7 +194,8 @@ export function buildOcrReport(month: string, rows: ScanRow[]): OcrReport {
     }
   }
 
-  const rank = (t: string) => (DOC_ORDER.includes(t) ? DOC_ORDER.indexOf(t) : DOC_ORDER.length);
+  const order: readonly string[] = SCAN_DOCUMENT_TYPES;
+  const rank = (t: string) => (order.includes(t) ? order.indexOf(t) : order.length);
   return {
     month,
     model: CLAUDE_MODEL,
