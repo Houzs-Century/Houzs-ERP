@@ -3015,6 +3015,10 @@ function LineCard({
   const v = line.variants;
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const [priceTyping, setPriceTyping] = useState(false);
+  /* An emptied box requests no new price, so the line keeps (and shows) the
+     price it had when this edit began; `blankText` is what the box shows. */
+  const priceBeforeEdit = useRef<Pick<LineItem, "price" | "priceAuthored">>({ price: "0.00", priceAuthored: false });
+  const [blankText, setBlankText] = useState<string | null>(null);
 
   /* Per-SKU allowed_options (Modular ON/OFF), resolved by code. */
   const allowQ = useModelAllowedOptionsByCode(line.itemCode || undefined);
@@ -3165,12 +3169,18 @@ function LineCard({
               /* DEV-62 (Adrian): any RM 0, new or saved, shows as the placeholder
                  so typing a price does not start with deleting "0.00". A 0 shows
                  only while being typed, so "0" / "0.5" can still be keyed in. */
-              value={toSen(line.price) === 0 && !priceTyping ? "" : line.price}
+              value={blankText ?? (toSen(line.price) === 0 && !priceTyping ? "" : line.price)}
               placeholder="0.00"
               disabled={!canEditPrice}
               title={!canEditPrice ? "Price follows the SKU Master sell price — admin can override" : undefined}
-              onChange={(e) => { setPriceTyping(true); onChange({ price: e.target.value, priceAuthored: priceBoxAuthored(e.target.value) }); }}
-              onBlur={() => setPriceTyping(false)}
+              onChange={(e) => {
+                const t = e.target.value;
+                if (!priceTyping) priceBeforeEdit.current = { price: line.price, priceAuthored: line.priceAuthored };
+                setPriceTyping(true);
+                if (priceBoxAuthored(t)) { setBlankText(null); onChange({ price: t, priceAuthored: true }); }
+                else { setBlankText(t); onChange(priceBeforeEdit.current); }
+              }}
+              onBlur={() => { setPriceTyping(false); setBlankText(null); }}
             />
           </Field>
         </div>
