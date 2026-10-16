@@ -4,7 +4,7 @@ The fabric COST ledger and per-context price tiers. Backs the Fabric Converter t
 
 ## Statuses and flow
 
-`scm.fabric_trackings` holds one cost/stock row per fabric code (`price_sen`, `soh_sen`, `po_outstanding_sen`, usage and shortage columns — snapshotted at seed time, not live-recomputed). A create or import also best-effort MIRRORS into the selling library (`scm.fabric_library` = series, `scm.fabric_colours` = colour) so the fabric becomes pickable on POS — mirror upserts are INSERT-ONLY (`ignoreDuplicates: true`) so a Master-Admin's tier edit in the selling library is never clobbered by a tracking-side write.
+`scm.fabric_trackings` holds one cost/stock row per fabric code (`price_sen`, `soh_sen`, `po_outstanding_sen`, usage and shortage columns — snapshotted at seed time, not live-recomputed). A create or import also best-effort MIRRORS into the selling library (`scm.fabric_library` = series, `scm.fabric_colours` = colour) so the fabric becomes pickable on POS — mirror upserts are INSERT-ONLY (`ignoreDuplicates: true`) so a Master-Admin's tier edit in the selling library is never clobbered by a tracking-side write. The mirror's series comes from `seriesOf`, which must agree with `backend/scripts/lib/fabric-code.mjs` (`fabricSeriesParity.test.ts`): `HG1313-01` is series HG1313 and a glued `KN01` is series KN.
 
 | Method | Path | Notes |
 |---|---|---|

@@ -104,10 +104,14 @@ const TIER_FIELD_TO_COL: Record<string, string> = {
    SF-AT and "ALPINE-5311-13" is ALPINE-5311; splitting on the first dash calls
    them SF and ALPINE and mirrors the colour into the wrong series. Matches how
    normalize-fabric-codes.mjs derives it, so a fabric created here and a fabric
-   normalised there land in the same place. */
-const seriesOf = (code: string): string => {
+   normalised there land in the same place. A code with NO separator - "KN01" -
+   is letters plus a one or two digit colour number, so its series is KN (the
+   lib's SPLIT_GLUED). Without that branch every KN colour became a series of
+   its own and the picker showed six one-chip KN groups. "PU1910" stays whole:
+   nobody can tell PU+1910 from PU19+10. fabricSeriesParity.test.ts pins this. */
+export const seriesOf = (code: string): string => {
   const v = (code || '').trim().toUpperCase();
-  const m = /^(.+)[\s-]+\d{1,3}$/.exec(v);
+  const m = /^(.+)[\s-]+\d{1,3}$/.exec(v) ?? /^([A-Z]{2,})\d{1,2}$/.exec(v);
   const head = (m ? m[1] : v.split('-')[0]) || v;
   return head.replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '') || v;
 };
