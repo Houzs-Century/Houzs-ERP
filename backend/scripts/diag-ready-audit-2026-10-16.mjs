@@ -88,7 +88,105 @@ const BASE = `
     GROUP BY gi.purchase_order_item_id
   )`;
 
-try {
+/* PART=2: the follow-up questions round one raised. STALE re-derives the
+   allocator's bound verdict (own receipt, processing date, selling warehouse)
+   and compares it with the stored one. */
+const BOUND_CALC = `
+  calc AS (
+    SELECT b.*, coalesce(d.q,0) AS delivered, coalesce(r.q,0) AS returned, coalesce(v.q,0) AS received,
+           b.qty - coalesce(d.q,0) + coalesce(r.q,0) AS remaining,
+           lower(coalesce(w.type::text,'')) IN ('showroom','display','service') AS non_selling,
+           w.code AS wh_code
+    FROM bound b LEFT JOIN dlv d ON d.so_item_id = b.id
+    LEFT JOIN ret r ON r.so_item_id = b.id LEFT JOIN rcv v ON v.so_item_id = b.id
+    LEFT JOIN scm.warehouses w ON w.id = b.warehouse_id
+  )`;
+async function partTwo() {
+  await section('STALE-A bound lines whose own PO receipt covers them, gates open, but stored is not READY', `
+    WITH ${BASE}, ${BOUND_CALC}
+    SELECT company_id, doc_no, so_status, item_code, grp, qty, received, delivered, remaining, stored,
+           stock_qty_ready, wh_code
+    FROM calc
+    WHERE remaining > 0 AND received >= remaining AND has_pdate AND NOT non_selling AND stored <> 'READY'
+    ORDER BY company_id, doc_no`);
+  await section('STALE-A2 same lines but held back by a gate (no processing date / non-selling warehouse), by gate', `
+    WITH ${BASE}, ${BOUND_CALC}
+    SELECT company_id, has_pdate, non_selling, stored, count(*)::int AS n
+    FROM calc WHERE remaining > 0 AND received >= remaining AND stored <> 'READY'
+    GROUP BY 1,2,3,4 ORDER BY 1,2,3,4`);
+  await section('STALE-B company-1 bound lines stored READY without an own receipt covering them (sofa batch excluded)', `
+    WITH ${BASE}, ${BOUND_CALC}
+    SELECT doc_no, so_status, item_code, grp, qty, received, delivered, remaining, stored, has_pdate, wh_code
+    FROM calc
+    WHERE company_id = 1 AND remaining > 0 AND stored = 'READY' AND received < remaining
+      AND allocated_batch_no IS NULL
+    ORDER BY doc_no`);
+  await section('STALE-B2 company-1 bound READY lines with a gate closed (should have been forced PENDING)', `
+    WITH ${BASE}, ${BOUND_CALC}
+    SELECT doc_no, so_status, item_code, stored, has_pdate, non_selling, wh_code
+    FROM calc WHERE company_id = 1 AND remaining > 0 AND stored = 'READY' AND (NOT has_pdate OR non_selling)
+    ORDER BY doc_no`);
+  await section('F6 summary: cutover lines a recount would rewrite, by linked SO line', `
+    WITH ${BASE}
+    SELECT (so.id IS NOT NULL) AS live_so_line,
+           (so.grp IN ('bedframe','sofa','fabric_accessory') OR (so.grp='mattress' AND so.item_code ~* '\\(SP\\)\\s*$')) AS so_bound,
+           so.stored AS so_line_status, count(*)::int AS lines, count(DISTINCT po.id)::int AS pos
+    FROM scm.purchase_order_items poi
+    JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id
+    LEFT JOIN live_grn l ON l.poi_id = poi.id
+    LEFT JOIN lines so ON so.id = poi.so_item_id
+    WHERE po.status::text <> 'CANCELLED' AND po.linked_ac_docno IS NOT NULL
+      AND coalesce(poi.received_qty,0) > coalesce(l.q,0)
+    GROUP BY 1,2,3 ORDER BY 1,2,3`);
+  await section('F6 live READY SO lines that would lose their receipt on a recount', `
+    WITH ${BASE}
+    SELECT po.po_number, poi.item_code, poi.qty, poi.received_qty AS stored, coalesce(l.q,0) AS grn,
+           so.doc_no, so.stored AS so_line_status
+    FROM scm.purchase_order_items poi
+    JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id
+    LEFT JOIN live_grn l ON l.poi_id = poi.id
+    JOIN lines so ON so.id = poi.so_item_id
+    WHERE po.status::text <> 'CANCELLED' AND po.linked_ac_docno IS NOT NULL
+      AND coalesce(poi.received_qty,0) > coalesce(l.q,0)
+      AND (so.grp IN ('bedframe','sofa','fabric_accessory') OR (so.grp='mattress' AND so.item_code ~* '\\(SP\\)\\s*$'))
+    ORDER BY po.po_number`);
+  await section('OR2 the 9 doubled receipts: both GRN rows side by side', `
+    WITH ${BASE},
+    over AS (
+      SELECT poi.id FROM scm.purchase_order_items poi JOIN live_grn l ON l.poi_id = poi.id
+      JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id
+      WHERE po.status::text <> 'CANCELLED' AND l.q > poi.qty
+    )
+    SELECT g.grn_number, g.linked_ac_gr_docno, g.created_at, g.received_at::date AS received_on,
+           g.purchase_order_id IS NOT NULL AS header_po, gi.linked_ac_dtlkey, gi.invoiced_qty,
+           (SELECT count(*)::int FROM scm.grn_items x WHERE x.grn_id = g.id) AS grn_lines
+    FROM over o JOIN scm.grn_items gi ON gi.purchase_order_item_id = o.id
+    JOIN scm.grns g ON g.id = gi.grn_id ORDER BY g.grn_number`);
+  await section('SC5 SO lines on the sofa clean-up POs (HC-0108) and HC-PO-010086', `
+    SELECT s.doc_no, so.status::text AS so_status, s.item_code, s.qty, s.stock_status::text AS stored, s.cancelled,
+           s.created_at::date AS line_created,
+           (SELECT string_agg(po.po_number || ':' || poi.item_code || ' rcv ' || coalesce(poi.received_qty,0), ', ')
+              FROM scm.purchase_order_items poi JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id
+             WHERE poi.so_item_id = s.id) AS po_lines
+    FROM scm.mfg_sales_order_items s JOIN scm.mfg_sales_orders so ON so.doc_no = s.doc_no
+    WHERE s.doc_no IN (
+      SELECT DISTINCT x.doc_no FROM scm.mfg_sales_order_items x
+      JOIN scm.purchase_order_items poi ON poi.so_item_id = x.id
+      JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id
+      WHERE po.po_number IN ('HC-PO-009630','HC-PO-009718','HC-PO-009940','HC-PO-010086'))
+    ORDER BY s.doc_no, s.line_no`);
+  await section('SC6 HC-PO-010086 lines', `
+    SELECT po.po_number, po.status::text AS po_status, poi.item_code, poi.qty, poi.received_qty,
+           poi.unit_price_sen, poi.created_at::date AS line_created, poi.so_item_id IS NOT NULL AS so_linked
+    FROM scm.purchase_orders po JOIN scm.purchase_order_items poi ON poi.purchase_order_id = po.id
+    WHERE po.po_number = 'HC-PO-010086' ORDER BY poi.created_at`);
+}
+
+try { main: {
+  if (process.env.PART === '2') {
+    await partTwo();
+    break main;
+  }
   const [{ transaction_read_only: ro }] = await sql.begin('read only', (tx) => tx.unsafe('SHOW transaction_read_only'));
   console.log(`transaction read-only: ${ro}`);
   if (ro !== 'on') { console.error('the read-only transaction did not take; stopping'); process.exit(2); }
@@ -277,6 +375,6 @@ try {
     LEFT JOIN scm.mfg_sales_order_items s ON s.id = poi.so_item_id
     WHERE po.po_number IN ('HC-PO-009630','HC-PO-009718','HC-PO-009940')
     ORDER BY po.po_number, poi.item_code`);
-} finally {
+} } finally {
   await sql.end();
 }
