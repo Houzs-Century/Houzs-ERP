@@ -74,7 +74,7 @@ async function main() {
     });
 
     // Fresh connection: the read must not ride the writer's session.
-    const verify = connect();
+    const verify = postgres(DSN, { ssl: DSN.includes('sslmode=disable') ? false : 'require', prepare: false, max: 1 });
     try {
       const after = await snapshot(verify, lorry.id);
       note(`after: ${JSON.stringify(after)}`);
