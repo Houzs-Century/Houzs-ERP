@@ -290,7 +290,11 @@ jobs:
           # so STAGING_E2E_EMAIL and the seeded owner still sign in. Everything else
           # becomes a stable, non-dialable token (same input -> same token, so joins
           # by phone still line up inside staging).
+          # Replica mode: append-only guards (scm.pos_sofa_combo_audit.actor_email)
+          # refuse UPDATE, and the whole mask rolls back on the first refusal —
+          # run 38877909066 left staging UNMASKED that way.
           /usr/lib/postgresql/17/bin/psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At <<'SQL'
+          set session_replication_role = replica;
           do $$
           declare r record; n bigint; total bigint := 0;
           begin
