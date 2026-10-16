@@ -100,6 +100,7 @@ import supplierPortal from "./routes/supplierPortal";
 // read/reply/compose/label/address/access/scope router.
 import mailCenter from "./routes/mail-center";
 import mailInbound from "./routes/mail-inbound";
+import mailAcks from "./routes/mail-acks";
 // 2990 → Houzs LIVE SO mirror receiver. PRE-AUTH (secret-guarded, called by the
 // 2990 DB via pg_net, no user JWT) — mounted at the top level, outside /api/scm.
 import { soMirror } from "./scm/routes/so-mirror";
@@ -146,6 +147,7 @@ import { brandShare } from "./routes/brandShare";
 import { drainEmailOutbox } from "./services/email";
 import { backfillOutboundMessageIds } from "./lib/mail-threading";
 import { pollVelocity } from "./scm/lib/velocity-poll";
+import { runMailAckEscalation } from "./lib/mail-acks";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
 import { runAssrAlerts, runAssrDailyDigest } from "./services/assrAlerts";
@@ -538,6 +540,7 @@ app.route("/api/inbox", inbox);
 // ownership; alias/access/scope-level admin gate on mail_center.manage inside
 // the handlers (owner passes via "*"). The pre-auth /api/mail-center/inbound
 // route is mounted above, before the auth gate, and is not shadowed by this.
+app.route("/api/mail-center", mailAcks);
 app.route("/api/mail-center", mailCenter);
 // Announcements — the banner GET, the LIST GET and the ack POST are open to
 // every authed user (the route handles it internally: the list is audience- and
@@ -927,6 +930,15 @@ export default {
               console.log(`[cron ann-escalation] ${JSON.stringify(r)}`);
           })
           .catch((e) => console.error("[cron ann-escalation]", e))
+      );
+      // Mail Center: the same 48h window for a mail that asked for
+      // acknowledgement; once per message.
+      ctx.waitUntil(
+        runMailAckEscalation(env)
+          .then((r) => {
+            if (r.chased > 0) console.log(`[cron mail-ack-escalation] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron mail-ack-escalation]", e))
       );
       ctx.waitUntil(
         track("lead-time-schedule", () => runScheduledLeadTimeActivations(env))
