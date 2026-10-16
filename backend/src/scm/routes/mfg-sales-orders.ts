@@ -1,7 +1,6 @@
 // /mfg-sales-orders — B2B sales orders (HOUZS pattern).
 // Separate from retail `orders` (POS) — different lifecycle, different ID format.
 
-import { startEarly } from '../lib/start-early';
 import { isSoLineOverDelivered } from '../lib/so-remaining-by-item';
 import { activeSoEditLease, soCallerUserId, soHeaderLeaseIntent, soLineWriteLeaseMatches, soEditLeaseExpiryIso, soEditLeaseRefusal, soEditLeaseTakeoverAllowed, type SoEditLeaseRow } from '../lib/so-edit-lease';
 import { Hono } from 'hono';
@@ -2610,31 +2609,39 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      unit price from (product, fabric, variants). Drift > 0.5% rejects
      the request with HTTP 400. Manual override path (mfgSoPriceOverrides)
      stays intact at PATCH /:docNo/items/:itemId/override. */
-  /* HC-0006 speed: the nine reads below don't depend on each other, so they all
-     start here and run together (one round trip instead of nine in a row). Each
-     is still AWAITED in its old place and order, so every early return and every
-     error surfaces exactly as before. */
+  /* HC-0006 speed: these eight reads don't depend on each other, so they run
+     together (one round trip instead of eight in a row). None of them throws —
+     each returns its failure as data — so every refusal below still comes out
+     exactly as before. loadSellingSofaCombos CAN throw, so it stays awaited in its
+     old place, after the allowed-options refusal. */
   const itemCodes = items.map((it) => String(it?.itemCode ?? ''));
-  const configP = startEarly(loadMaintenanceConfig(sb));
-  const specialAddonsP = startEarly(loadSpecialAddons(sb));
-  const pmP = startEarly(loadProductsAndModels(sb, itemCodes, companyId));
-  const combosP = startEarly(loadSellingSofaCombos(sb, c));
-  const fabricAddonP = startEarly(loadFabricTierAddonConfig(sb, companyId));
-  const modelOverridesP = startEarly(loadModelFabricTierOverrides(sb));
-  const compartmentOverridesP = startEarly(loadCompartmentFabricTierOverrides(sb));
-  const dropdownErrP = startEarly(validateSoDropdownFields(sb, body, companyId));
-  const productRowByCodeP = startEarly(loadProductsByCodes(sb, itemCodes, companyId));
-  const cachedConfig = await configP;
-  // Special Add-ons (migration 0134) — fetched once; each line's specials pool is
-  // built from these so POS add-ons price from special_addons, not the legacy pool.
-  const cachedSpecialAddons = await specialAddonsP;
+  const [
+    cachedConfig,
+    // Special Add-ons (migration 0134) — fetched once; each line's specials pool is
+    // built from these so POS add-ons price from special_addons, not the legacy pool.
+    cachedSpecialAddons,
+    { byCode: pmByCode, lookupError: pmErr },
+    cachedFabricAddonConfig,  // migration 0124 — fabric-tier Δ (SoCreateContext → local companyId)
+    cachedModelOverrides,  // migration 0175 — per-Model Δ
+    cachedCompartmentOverrides,  // migration 0025 — per-compartment Δ
+    dropdownErr,
+    productRowByCode,
+  ] = await Promise.all([
+    loadMaintenanceConfig(sb),
+    loadSpecialAddons(sb),
+    loadProductsAndModels(sb, itemCodes, companyId),
+    loadFabricTierAddonConfig(sb, companyId),
+    loadModelFabricTierOverrides(sb),
+    loadCompartmentFabricTierOverrides(sb),
+    validateSoDropdownFields(sb, body, companyId),
+    loadProductsByCodes(sb, itemCodes, companyId),
+  ]);
   /* PR #216 — allowed_options pre-flight. Run BEFORE the pricing recompute
      so a disallowed variant returns the precise field/value/allowed
      payload instead of getting silently re-priced. Batched (Loo 2026-06-06):
      2 `in()` queries for the whole order instead of 2 × lines — per-line
      loads helped a 6-item order blow the CF Workers subrequest cap.
      First violation across all lines short-circuits the request. */
-  const { byCode: pmByCode, lookupError: pmErr } = await pmP;
   /* A code missing from the map because the READ FAILED is not a code the
      catalog has nothing to say about — the loop below would read the resulting
      nulls as "allowed" and create the order. Refuse instead. */
@@ -2654,20 +2661,15 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       return c.json({ ...err, lineIdx: i, itemCode: code }, 400);
     }
   }
-  const cachedCombos = await combosP;  // Phase 4b — sofa selling recompute
-  const cachedFabricAddonConfig = await fabricAddonP;  // migration 0124 — fabric-tier Δ (SoCreateContext → local companyId)
-  const cachedModelOverrides = await modelOverridesP;  // migration 0175 — per-Model Δ
-  const cachedCompartmentOverrides = await compartmentOverridesP;  // migration 0025 — per-compartment Δ
+  const cachedCombos = await loadSellingSofaCombos(sb, c);  // Phase 4b — sofa selling recompute
 
   /* Loo 2026-06-05 — maintained-dropdown 409 gate. Runs BEFORE any side
      effect (customer upsert, PWP claims) so a rejected request leaves
      nothing behind. */
-  const dropdownErr = await dropdownErrP;
   if (dropdownErr) return c.json(dropdownErr, 409);
 
   // Subrequest diet (Loo 2026-06-06) — one `in()` query for every line's
   // product row instead of one query per line.
-  const productRowByCode = await productRowByCodeP;
   const lineProducts = items.map((it) => productRowByCode.get(String(it.itemCode ?? '').trim()) ?? null);
   /* PWP Code Voucher (migration 0130) — code-driven grant + atomic claim. A
      reward line earns its per-SKU pwp_price_sen ONLY if it carries a valid

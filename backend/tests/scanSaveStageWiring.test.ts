@@ -25,35 +25,32 @@ describe('scan job: sample save runs alongside postProcessSlip', () => {
 
   test('the duplicate check still waits for the sample id (it excludes its own sample)', () => {
     // From the job's sample await on: the dup check comes before the draft create.
-    const job = scanSoSrc.slice(scanSoSrc.indexOf('await savedP'));
+    const job = scanSoSrc.slice(scanSoSrc.indexOf("timer.mark('save', 'sample')"));
     const dup = job.indexOf('findDuplicateSo(svc, { imageSha256, excludeSampleId: sampleId');
     expect(dup).toBeGreaterThanOrEqual(0);
     expect(dup).toBeLessThan(job.indexOf('createDraftSalesOrder('));
   });
 });
 
-describe('SO create: the nine independent reads start together', () => {
+describe('SO create: the eight independent reads run together', () => {
   const core = between(soSrc, 'async function createSalesOrderCore', 'const lineProducts');
+  const group = between(core, 'await Promise.all([', ']);');
   const loaders = [
-    'loadMaintenanceConfig(sb)', 'loadSpecialAddons(sb)', 'loadProductsAndModels(', 'loadSellingSofaCombos(sb, c)',
-    'loadFabricTierAddonConfig(', 'loadModelFabricTierOverrides(sb)', 'loadCompartmentFabricTierOverrides(sb)',
-    'validateSoDropdownFields(', 'loadProductsByCodes(',
+    'loadMaintenanceConfig(sb)', 'loadSpecialAddons(sb)', 'loadProductsAndModels(', 'loadFabricTierAddonConfig(',
+    'loadModelFabricTierOverrides(sb)', 'loadCompartmentFabricTierOverrides(sb)', 'validateSoDropdownFields(', 'loadProductsByCodes(',
   ];
 
-  test('each is started with startEarly before the first of them is awaited', () => {
-    const firstAwait = core.indexOf('await configP');
+  test('each is in the one Promise.all, and none is awaited on its own again', () => {
     for (const l of loaders) {
-      const at = core.indexOf(`startEarly(${l}`);
-      expect(at, l).toBeGreaterThanOrEqual(0);
-      expect(at, l).toBeLessThan(firstAwait);
+      expect(group, l).toContain(l);
       expect(core, `${l} is awaited one by one again`).not.toContain(`await ${l}`);
     }
   });
 
-  test('the early refusals are still checked in their old order', () => {
-    const order = ['await configP', 'await pmP', 'if (pmErr)', 'await combosP', 'await dropdownErrP', 'if (dropdownErr)', 'await productRowByCodeP'];
-    const at = order.map((s) => core.indexOf(s));
+  test('the sofa-combo read (it can throw) stays out of the group, after the allowed-options refusal', () => {
+    expect(group).not.toContain('loadSellingSofaCombos');
+    const at = ['if (pmErr)', 'checkAllowedOptions(', 'await loadSellingSofaCombos(sb, c)', 'if (dropdownErr)'].map((x) => core.indexOf(x));
     expect(at.every((i) => i >= 0)).toBe(true);
-    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect([...at].sort((x, y) => x - y)).toEqual(at);
   });
 });

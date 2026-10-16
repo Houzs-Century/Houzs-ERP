@@ -58,7 +58,6 @@ import { scanTimer } from '../lib/scan-timing';
 import { readSlipWithAliases } from '../lib/scan-field-aliases';
 import { ttlCached } from '../lib/ttl-cache';
 import { keepScanFile, linkScanFiles } from '../lib/scan-files';
-import { startEarly } from '../lib/start-early';
 import { variantNotAllowedSentence } from '../lib/allowed-options-check';
 // Document-type-agnostic OCR transport, shared with the GR/PI scanners.
 import {
@@ -3845,7 +3844,7 @@ async function runScanJob(
     // each other, so they run together. The sample keeps the model's raw read — a
     // copy taken before postProcessSlip edits `parsed` in place — as when it ran first.
     const rawParsed = parsed ? structuredClone(parsed) : null;
-    const savedP = startEarly((async () => {
+    const [{ imageSha256, sampleId, imageKey, receiptImageKey }] = await Promise.all([(async () => {
       const imageSha256 = job.firstBuffer ? await sha256Hex(job.firstBuffer) : null;
       const sampleSalesperson = job.salesperson || normalizeRepKey(rawParsed?.salesRep) || null;
       const { sampleId } = await insertScanSample(svc, {
@@ -3859,12 +3858,7 @@ async function runScanJob(
       if (sampleId) await touch({ sample_id: sampleId });
       const keys = await storeScanImages(env.SO_ITEM_PHOTOS, svc, sampleId, job.uploadedImages, rawParsed);
       return { imageSha256, sampleId, ...keys };
-    })());
-    if (parsed) {
-      await postProcessSlip(parsed, svc, env.GOOGLE_MAPS_API_KEY, catalog);
-      timer.mark('parse');
-    }
-    const { imageSha256, sampleId, imageKey, receiptImageKey } = await savedP;
+    })(), parsed && postProcessSlip(parsed, svc, env.GOOGLE_MAPS_API_KEY, catalog).then(() => timer.mark('parse'))]);
     timer.mark('save', 'sample'); // only the part of the sample save that outlasted postProcessSlip
 
     // Owner 2026-07-04: EVERY scan ends as a draft the rep can open — success,
@@ -4006,7 +4000,7 @@ async function runScanJob(
     if (outcome.status === 201 && typeof docNo === 'string' && docNo !== '') {
       // HC-0006 T7. Never throws; runs alongside the payment pass (it links the 'so' rows,
       // the payment pass the 'payment' rows) and is awaited before the job reads done.
-      const linked = startEarly(linkScanFiles(svc, { companyId: job.companyId, kind: 'so', documentId: docNo, keys: job.imageKeys, sha256: null }));
+      const linked = linkScanFiles(svc, { companyId: job.companyId, kind: 'so', documentId: docNo, keys: job.imageKeys, sha256: null });
       // Shell/blank draft — there is no reliable OCR payment to book. Record the
       // plain "please complete" note so the Orders-open toast tells the rep, and
       // stop here (no receipt-payment pass on a draft the model couldn't read).
