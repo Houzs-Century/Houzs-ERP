@@ -37,8 +37,27 @@ export type PnlScope = "all" | "sales" | "projects" | "service" | "po";
 // columns; the backend still accepts it for direct callers but the UI
 // only exposes yearly + monthly.
 export type PnlGranularity = "yearly" | "monthly";
+/** What the toggle shows. Quarterly is three monthly buckets added up here
+ *  (owner, 2026-10-17: monthly / quarterly / yearly on every overview). */
+type PnlView = PnlGranularity | "quarterly";
 
-interface PnlBucket {
+export function toQuarters(buckets: PnlBucket[]): PnlBucket[] {
+  const out = new Map<string, PnlBucket>();
+  for (const b of buckets) {
+    const q = Math.ceil(Number(b.start.slice(5, 7)) / 3);
+    const key = `${b.start.slice(0, 4)}-Q${q}`;
+    const cur = out.get(key);
+    if (!cur) { out.set(key, { ...b, key, label: `Q${q}`, by_source: { ...b.by_source } }); continue; }
+    cur.endExclusive = b.endExclusive > cur.endExclusive ? b.endExclusive : cur.endExclusive;
+    cur.start = b.start < cur.start ? b.start : cur.start;
+    cur.revenue += b.revenue; cur.cost += b.cost; cur.gross += b.gross;
+    cur.by_source.sales_revenue += b.by_source.sales_revenue; cur.by_source.project_cost += b.by_source.project_cost;
+    cur.by_source.service_cost += b.by_source.service_cost; cur.by_source.po_cost += b.by_source.po_cost;
+  }
+  return [...out.values()];
+}
+
+export interface PnlBucket {
   key: string;            // "2024" | "2024-03" | "2024-W12"
   label: string;          // display label
   start: string;          // ISO YYYY-MM-DD
@@ -146,15 +165,16 @@ export function PnlCalendar({
   compact,
 }: Props) {
   const [year, setYear] = useState<number>(defaultYear ?? new Date().getUTCFullYear());
-  const [granularity, setGranularity] = useState<PnlGranularity>(defaultGranularity);
+  const [granularity, setGranularity] = useState<PnlView>(defaultGranularity);
+  const fetchGran: PnlGranularity = granularity === "quarterly" ? "monthly" : granularity;
   const [openBucket, setOpenBucket] = useState<PnlBucket | null>(null);
 
   const q = useQuery<PnlResponse>("/api/finance/pnl?year=:&scope=:&granularity=:",
-    () => api.get(`/api/finance/pnl?year=${year}&scope=${scope}&granularity=${granularity}`),
-    [year, scope, granularity]
+    () => api.get(`/api/finance/pnl?year=${year}&scope=${scope}&granularity=${fetchGran}`),
+    [year, scope, fetchGran]
   );
 
-  const d = q.data;
+  const d = q.data && granularity === "quarterly" ? { ...q.data, buckets: toQuarters(q.data.buckets) } : q.data;
   const showRevenue = scope === "all" || scope === "sales";
   const showCost =
     scope === "all" || scope === "projects" || scope === "service" || scope === "po";
@@ -177,8 +197,10 @@ export function PnlCalendar({
   const gridClass =
     granularity === "yearly"
       ? "grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5"
+      : granularity === "quarterly"
+      ? "grid grid-cols-2 gap-2 lg:grid-cols-4"
       : "grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4";
-  const skeletonCount = granularity === "yearly" ? 5 : 12;
+  const skeletonCount = granularity === "yearly" ? 5 : granularity === "quarterly" ? 4 : 12;
 
   return (
     <section
@@ -209,7 +231,7 @@ export function PnlCalendar({
         <div className="flex items-center gap-2">
           {/* Granularity toggle */}
           <div className="inline-flex rounded-md border border-border bg-surface p-0.5">
-            {(["yearly", "monthly"] as PnlGranularity[]).map((g) => (
+            {(["yearly", "quarterly", "monthly"] as PnlView[]).map((g) => (
               <button
                 key={g}
                 onClick={() => setGranularity(g)}
@@ -497,7 +519,7 @@ function BucketDetailPanel({
 }: {
   bucket: PnlBucket;
   scope: PnlScope;
-  granularity: PnlGranularity;
+  granularity: PnlView;
   onClose: () => void;
 }) {
   const navigate = useNavigate();

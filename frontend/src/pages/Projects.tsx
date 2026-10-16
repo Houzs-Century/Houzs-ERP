@@ -1783,8 +1783,8 @@ function ProjectsFinancesView() {
       {tab === "pnl" && (
         <PnlCalendar
           scope="projects"
-          title="Project Cost — Monthly"
-          subtitle="Total project cost (COGS + other cost lines) across all projects, grouped by month."
+          title="Project Cost"
+          subtitle="Total project cost (COGS + other cost lines) across all projects, by month, quarter or year."
         />
       )}
     </div>
@@ -2222,6 +2222,7 @@ function FinanceListView() {
         </div>
       )}
 
+      <ProjectPeriodBar dateFrom={dateFrom} dateTo={dateTo} onRange={(f, t) => patchParams({ date_from: f, date_to: t, page: "1" })} />
       {/* Filters */}
       <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-6">
         <FilterField label="From">
