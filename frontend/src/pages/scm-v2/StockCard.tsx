@@ -21,7 +21,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, Boxes, ArrowDownLeft, ArrowUpRight, ChevronDown, ChevronRight, Search,
+  ArrowDownLeft, ArrowUpRight, ChevronDown, ChevronRight, Search,
 } from 'lucide-react';
 import {
   useInventoryMovements,
@@ -43,6 +43,8 @@ import {
   type MovementFilter,
   type MovementType,
 } from './stockMovementFilter';
+import { PageHeader } from '../../components/Layout';
+import { StatCard } from '../../components/StatCard';
 import styles from './Inventory.module.css';
 import chrome from './SalesOrderDetail.module.css';
 
@@ -317,58 +319,33 @@ export const StockCard = () => {
      2026-07-25. Same shared transform mobile's Stock Card uses, so there is one
      split and one owned-value sum for all three surfaces. */
   const bd = useMemo(() => buildStockBreakdown(lots), [lots]);
+  const scopedTo = warehouseId ? warehouses.find((x) => x.id === warehouseId)?.code ?? null : null;
 
   return (
-    <div className={chrome.page}>
-      {/* ── Header ─────────────────────────────────────────────────────── */}
-      <div className={chrome.headerRow}>
-        <div className={chrome.titleBlock}>
-          <Link to="/scm/inventory" className={chrome.backBtn}>
-            <ArrowLeft {...ICON} />
-            <span>Inventory</span>
-          </Link>
-          <div>
-            <h1 className={chrome.title}>
-              <Boxes size={20} strokeWidth={1.75} style={{ color: 'var(--c-burnt)' }} />
-              Stock Card · <span className={styles.codeChip} style={{ fontSize: 'var(--fs-18)' }}>{itemCode}</span>
-            </h1>
-            <p className={chrome.subtitle}>
-              {productName ?? 'No movements yet for this SKU.'}
-              {warehouseId && warehouses.length > 0 && (() => {
-                const w = warehouses.find((x) => x.id === warehouseId);
-                return w ? ` · scoped to ${w.code}` : null;
-              })()}
-            </p>
-          </div>
-        </div>
-      </div>
+    <div className="space-y-4">
+      <PageHeader
+        back="/scm/inventory"
+        eyebrow="Stock Card"
+        title={itemCode}
+        titleSize="sm"
+        description={`${productName ?? 'No movements yet for this SKU.'}${scopedTo ? ` · scoped to ${scopedTo}` : ''}`}
+      />
 
-      {/* ── Stats ──────────────────────────────────────────────────────── */}
-      <div className={styles.statGrid}>
-        <div className={styles.statCard}>
-          <span className={styles.statLabel}>Current Qty</span>
-          <span className={styles.statValue}>{fmtQty(totalQty)}</span>
-        </div>
-        <div className={styles.statCard}>
-          <span className={styles.statLabel}>Warehouses</span>
-          <span className={styles.statValue}>{warehouseCount}</span>
-        </div>
-        <div className={styles.statCard}>
-          <span className={styles.statLabel}>Last Movement</span>
-          <span className={styles.statValue} style={{ fontSize: 'var(--fs-16)' }}>
-            {lastMovementAt ? fmtDate(lastMovementAt) : '—'}
-          </span>
-          <span className={styles.statCaption}>{lastMovementAt ? fmtDateTime(lastMovementAt) : 'No activity yet'}</span>
-        </div>
-        <div className={styles.statCard}>
-          <span className={styles.statLabel}>Owned Value</span>
-          <span className={styles.statValue}>{fmtRm(bd.ownedValueSen)}</span>
-          <span className={styles.statCaption}>
-            {bd.consignmentQty > 0
-              ? `Consignment (not owned) · ${fmtQty(bd.consignmentQty)} units`
-              : 'FIFO, consignment excluded'}
-          </span>
-        </div>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <StatCard label="Current Qty" value={fmtQty(totalQty)} />
+        <StatCard label="Warehouses" value={warehouseCount} />
+        <StatCard
+          label="Last Movement"
+          value={lastMovementAt ? fmtDate(lastMovementAt) : '—'}
+          subtitle={lastMovementAt ? fmtDateTime(lastMovementAt) : 'No activity yet'}
+        />
+        <StatCard
+          label="Owned Value"
+          value={fmtRm(bd.ownedValueSen)}
+          subtitle={bd.consignmentQty > 0
+            ? `Consignment (not owned) · ${fmtQty(bd.consignmentQty)} units`
+            : 'FIFO, consignment excluded'}
+        />
       </div>
 
       {/* ── Warehouse filter pills (All-mode only — once a warehouse is
@@ -556,7 +533,7 @@ export const StockCard = () => {
           </>
         )}
         {!movementsQ.isLoading && movementsQ.error ? (
-          <div className={styles.bannerWarn} style={{ margin: 'var(--space-3)' }}>
+          <div className="m-3 rounded-lg border border-err/40 bg-err/10 px-4 py-3 text-[13px] text-err">
             <strong>Failed to load.</strong>{' '}
             {movementsQ.error instanceof Error
               ? movementsQ.error.message
