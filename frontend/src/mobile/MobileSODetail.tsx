@@ -95,6 +95,7 @@ import { MobileLineRemark } from "./MobileLineRemark";
 import "./mobile.css";
 
 import { isFocLine } from '../vendor/scm/lib/foc-line';
+import { soConfirmDateNote } from '../lib/soConfirmDateNote';
 /* Shapes are the subset of the /mfg-sales-orders/:docNo + /:docNo/payments
    responses the mobile detail screen reads. The backend camelCases nothing —
    these are the raw snake_case columns. */
@@ -1294,7 +1295,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
               <div style={{ display: "flex", gap: 9 }}>
                 <button className="btn-ghost" style={{ flex: 1, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => onEdit?.(docNo)}>Edit Draft</button>
-                <button className="btn" style={{ flex: 1.3, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => setStatus("CONFIRMED")}>{busy ? "Working…" : "Create Sales Order"}</button>
+                <button className="btn" style={{ flex: 1.3, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={async () => { const note = soConfirmDateNote(h.processing_date, h.customer_delivery_date); if (note && !(await confirm({ title: `Confirm ${docNo}?`, body: note, confirmLabel: "Create Sales Order" }))) return; void setStatus("CONFIRMED"); }}>{busy ? "Working…" : "Create Sales Order"}</button>
               </div>
               {onAddLine && <button className="btn-ghost" style={{ opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => onAddLine(docNo)}>+ {ADD_LINE_LABEL}</button>}
               {/* Discard draft — the escape hatch for a junk draft (esp. a bad

@@ -36,6 +36,14 @@ describe('every writer of a live status asks liveStatusForProcessingDate', () =>
     expect(SO).toContain('if (isConfirm) {\n    const confirmProblems = await soConfirmProblemsForDoc(sb, docNo);');
   });
 
+  test('HC-0113: a DRAFT confirm moves a past Processing Date to the confirm day, and logs it', () => {
+    expect(SO).toContain('const roll = processingDateOnConfirm({ processingDate: storedProc, deliveryDate: datedRow?.customer_delivery_date, todayMY: todayMyt() });');
+    expect(SO).toContain('if (!roll.ok) return c.json(validationFailedBody([roll.problem]), 422);');
+    expect(SO).toContain('toStatus = liveStatusForProcessingDate(roll.write ?? storedProc);');
+    expect(SO).toContain('if (confirmProcRoll) patch[SO_PROCESSING_DATE_COLUMN] = confirmProcRoll.to;');
+    expect(SO).toContain("...(confirmProcRoll ? [{ field: 'processingDate', from: confirmProcRoll.from, to: confirmProcRoll.to }] : []),");
+  });
+
   test("the stock sweep's regress out of READY_TO_SHIP follows the date too", () => {
     expect(ALLOC).toContain('const regressTo = liveStatusForProcessingDate(order.processing_date);');
     expect(countOf(ALLOC, "{ status: 'CONFIRMED' }")).toBe(0);
