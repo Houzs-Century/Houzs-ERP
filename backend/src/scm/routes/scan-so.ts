@@ -58,6 +58,7 @@ import { scanTimer } from '../lib/scan-timing';
 import { readSlipWithAliases } from '../lib/scan-field-aliases';
 import { ttlCached } from '../lib/ttl-cache';
 import { keepScanFile, linkScanFiles } from '../lib/scan-files';
+import { startEarly } from '../lib/start-early';
 import { variantNotAllowedSentence } from '../lib/allowed-options-check';
 // Document-type-agnostic OCR transport, shared with the GR/PI scanners.
 import {
@@ -3840,21 +3841,31 @@ async function runScanJob(
     const parsed = call.parsed;
 
     // Learning pool + slip/receipt provenance — identical to /extract.
-    const imageSha256 = job.firstBuffer ? await sha256Hex(job.firstBuffer) : null;
-    const sampleSalesperson = job.salesperson || normalizeRepKey(parsed?.salesRep) || null;
-    const { sampleId } = await insertScanSample(svc, {
-      imageSha256,
-      salesperson: sampleSalesperson,
-      parsed,
-      errorMsg: call.errorMsg,
-      claudeText: call.claudeText,
-      documentType: job.documentType,
-    });
-    if (sampleId) await touch({ sample_id: sampleId });
-    const { imageKey, receiptImageKey } = await storeScanImages(
-      env.SO_ITEM_PHOTOS, svc, sampleId, job.uploadedImages, parsed,
-    );
-    timer.mark('save');
+    // HC-0006 speed: this and postProcessSlip (geocode + catalogue check) don't need
+    // each other, so they run together. The sample keeps the model's raw read — a
+    // copy taken before postProcessSlip edits `parsed` in place — as when it ran first.
+    const rawParsed = parsed ? structuredClone(parsed) : null;
+    const savedP = startEarly((async () => {
+      const imageSha256 = job.firstBuffer ? await sha256Hex(job.firstBuffer) : null;
+      const sampleSalesperson = job.salesperson || normalizeRepKey(rawParsed?.salesRep) || null;
+      const { sampleId } = await insertScanSample(svc, {
+        imageSha256,
+        salesperson: sampleSalesperson,
+        parsed: rawParsed,
+        errorMsg: call.errorMsg,
+        claudeText: call.claudeText,
+        documentType: job.documentType,
+      });
+      if (sampleId) await touch({ sample_id: sampleId });
+      const keys = await storeScanImages(env.SO_ITEM_PHOTOS, svc, sampleId, job.uploadedImages, rawParsed);
+      return { imageSha256, sampleId, ...keys };
+    })());
+    if (parsed) {
+      await postProcessSlip(parsed, svc, env.GOOGLE_MAPS_API_KEY, catalog);
+      timer.mark('parse');
+    }
+    const { imageSha256, sampleId, imageKey, receiptImageKey } = await savedP;
+    timer.mark('save', 'sample'); // only the part of the sample save that outlasted postProcessSlip
 
     // Owner 2026-07-04: EVERY scan ends as a draft the rep can open — success,
     // duplicate, OR unreadable. A scan that could not be turned into a full
@@ -3872,9 +3883,6 @@ async function runScanJob(
       body = buildEmptyShellBody({ imageKey: slipKey, receiptImageKey });
       shellNote = 'The scan could not read this slip, so this draft is blank. Please open it and fill in the order from the photo.';
     } else {
-      await postProcessSlip(parsed, svc, env.GOOGLE_MAPS_API_KEY, catalog);
-      timer.mark('parse');
-
       // Multi-receipt manifest (migration 0141) — record WHICH uploads the OCR
       // classified as payment receipts (the durable audit trail of "the
       // receipts this scan turned into payments"). Keys are the enqueue-time R2
@@ -3891,6 +3899,7 @@ async function runScanJob(
       // surfaces it in the toast) and the SO note is prefixed below.
       const dup = await findDuplicateSo(svc, { imageSha256, excludeSampleId: sampleId, parsed }, job.companyId ?? undefined);
       if (dup) { dupDocNo = dup.docNo; await touch({ duplicate_of: dup.docNo }); }
+      timer.mark('save', 'dup');
 
       // allowShell → always returns a body; missing required fields become
       // placeholders and the body is tagged `_scanShell`.
@@ -3992,26 +4001,32 @@ async function runScanJob(
       }));
       outcome = await replay(body);
     }
+    timer.mark('save', 'create');
     const docNo = (outcome.body as { docNo?: unknown }).docNo;
     if (outcome.status === 201 && typeof docNo === 'string' && docNo !== '') {
-      await linkScanFiles(svc, { companyId: job.companyId, kind: 'so', documentId: docNo, keys: job.imageKeys, sha256: null }); // HC-0006 T7
+      // HC-0006 T7. Never throws; runs alongside the payment pass (it links the 'so' rows,
+      // the payment pass the 'payment' rows) and is awaited before the job reads done.
+      const linked = startEarly(linkScanFiles(svc, { companyId: job.companyId, kind: 'so', documentId: docNo, keys: job.imageKeys, sha256: null }));
       // Shell/blank draft — there is no reliable OCR payment to book. Record the
       // plain "please complete" note so the Orders-open toast tells the rep, and
       // stop here (no receipt-payment pass on a draft the model couldn't read).
       if (shellNote) {
         // Write both the SO-specific and generic link column (same doc_no for SO).
-        await touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo, error: shellNote });
-        await postScanNotice(env, {
-          houzsUserId: job.houzsUserId,
-          category: 'WARNING',
-          title: `Scan saved as a draft — ${docNo}`,
-          body: shellNote,
-        });
+        await linked;
+        await Promise.all([
+          touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo, error: shellNote }),
+          postScanNotice(env, {
+            houzsUserId: job.houzsUserId,
+            category: 'WARNING',
+            title: `Scan saved as a draft — ${docNo}`,
+            body: shellNote,
+          }),
+        ]);
         return;
       }
       // Past the shell paths, a null parse has already returned above — narrow
       // `parsed` to non-null for the receipt-payment pass (defensive fallback).
-      if (!parsed) { await touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo }); return; }
+      if (!parsed) { await linked; await touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo }); return; }
       // Payments from receipt OCR — one ledger row per classified payment
       // receipt, via the SAME recordSoPaymentRow core the interactive route
       // uses. GUARD: never fail the job — the DRAFT stands; a failure only
@@ -4039,24 +4054,27 @@ async function runScanJob(
         console.error('[scan-job] receipt payment recording threw:', job.id, (e as Error).message);
         paymentNote = 'Draft created; the payment could not be recorded — please add it on the order.';
       }
-      await touch({
-        status: 'done',
-        so_doc_no: docNo,
-        linked_doc_no: docNo,
-        ...(paymentNote ? { error: paymentNote } : {}),
-      });
+      await linked;
       // Private "your scan is a draft now" notice. Duplicate/payment caveats
       // ride in the body + bump it to WARNING so it stands out.
       const noticeExtras = [
         dupDocNo ? `This looks like a possible duplicate of ${dupDocNo}.` : null,
         paymentNote,
       ].filter(Boolean);
-      await postScanNotice(env, {
-        houzsUserId: job.houzsUserId,
-        category: dupDocNo || paymentNote ? 'WARNING' : 'GENERAL',
-        title: `Sales order saved — ${docNo}`,
-        body: [`Your scan was saved as a draft. Open it from your Orders to review.`, ...noticeExtras].join(' '),
-      });
+      await Promise.all([
+        touch({
+          status: 'done',
+          so_doc_no: docNo,
+          linked_doc_no: docNo,
+          ...(paymentNote ? { error: paymentNote } : {}),
+        }),
+        postScanNotice(env, {
+          houzsUserId: job.houzsUserId,
+          category: dupDocNo || paymentNote ? 'WARNING' : 'GENERAL',
+          title: `Sales order saved — ${docNo}`,
+          body: [`Your scan was saved as a draft. Open it from your Orders to review.`, ...noticeExtras].join(' '),
+        }),
+      ]);
       return;
     }
     console.error(
@@ -4074,7 +4092,7 @@ async function runScanJob(
     console.error('[scan-job] pipeline threw:', job.id, e);
     await fail(JOB_MSG.fallback);
   } finally {
-    timer.mark('save');
+    timer.mark('save', 'tail');
     timer.done(env, job.id, outcome);
   }
 }
