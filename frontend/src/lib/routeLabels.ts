@@ -35,6 +35,7 @@ const ROUTE_LABELS: Array<[RegExp, string]> = [
   [/^\/agents$/, "Agent Console"],
   [/^\/system-health$/, "System Health"],
   [/^\/ai-usage$/, "AI Usage"],
+  [/^\/ocr$/, "OCR"],
   [/^\/reports\/fair-report$/, "Sales Report"],
   // The Supply Chain hub is a single-segment route, so it never reaches the
   // /scm/* segment table below (which needs a 2nd segment). Curate it here —

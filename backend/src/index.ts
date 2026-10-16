@@ -21,6 +21,7 @@ import logs from "./routes/logs";
 import auditRoutes from "./routes/audit";
 import systemHealthRoutes from "./routes/systemHealth";
 import aiUsageRoutes from "./routes/aiUsage";
+import ocrDashboardRoutes from "./routes/ocrDashboard";
 // Self-hosted client error reporting (no Sentry): the SPA's global reporter
 // POSTs batched uncaught errors here; the daily 02:00 cron mails IT a digest.
 import clientErrors from "./routes/clientErrors";
@@ -444,6 +445,7 @@ app.route("/api/logs", logs);
 app.route("/api/audit", auditRoutes);
 app.route("/api/admin/health", systemHealthRoutes);
 app.route("/api/admin/ai-usage", aiUsageRoutes);
+app.route("/api/admin/ocr", ocrDashboardRoutes);
 // Behind the /api/* auth gate: intake needs a session (identity is stamped from
 // it, never from the body); the /summary read is super-admin inside the router.
 app.route("/api/client-errors", clientErrors);

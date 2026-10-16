@@ -70,6 +70,7 @@ const PosAdmin = lazy(() => import("./pages/PosAdmin").then((m) => ({ default: m
 const Team = lazy(() => import("./pages/Team").then((m) => ({ default: m.Team })));
 const SystemHealth = lazy(() => import("./pages/SystemHealth").then((m) => ({ default: m.SystemHealth })));
 const AiUsage = lazy(() => import("./pages/AiUsage").then((m) => ({ default: m.AiUsage })));
+const OcrDashboard = lazy(() => import("./pages/OcrDashboard").then((m) => ({ default: m.OcrDashboard })));
 const AutoCountSync = lazy(() => import("./pages/AutoCountSync").then((m) => ({ default: m.AutoCountSync })));
 const VenturePortalFeed = lazy(() => import("./pages/VenturePortalFeed").then((m) => ({ default: m.VenturePortalFeed })));
 const ChangeLog = lazy(() => import("./pages/ChangeLog").then((m) => ({ default: m.ChangeLog })));
@@ -625,6 +626,14 @@ export default function App() {
           element={
             <ItPagesGuard>
               <AiUsage />
+            </ItPagesGuard>
+          }
+        />
+        <Route
+          path="/ocr"
+          element={
+            <ItPagesGuard>
+              <OcrDashboard />
             </ItPagesGuard>
           }
         />

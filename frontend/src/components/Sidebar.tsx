@@ -67,7 +67,7 @@ import {
   History,
   Wand2,
   CalendarOff,
-  type LucideIcon, Landmark, CreditCard, Banknote, Receipt, Server, Sparkles } from "lucide-react";
+  type LucideIcon, Landmark, CreditCard, Banknote, Receipt, Server, Sparkles, ScanLine } from "lucide-react";
 import { cn } from "../lib/utils";
 import { booleanRecordPreference, useIdentityPreference } from "../hooks/useIdentityPreference";
 import { useAuth } from "../auth/AuthContext";
@@ -1028,6 +1028,14 @@ export const NAV_TABS: NavTab[] = [
     label: "IT Support",
     icon: LifeBuoy,
     badge: "it-support-replies",
+  },
+  // Under IT Support (owner's ask); IT pages only, like System Health and AI Usage.
+  {
+    section: "system",
+    to: "/ocr",
+    label: "OCR",
+    icon: ScanLine,
+    requireCapability: "it.pages.view",
   },
   {
     section: "system",
