@@ -304,7 +304,7 @@ const VIEW_HEADER: Record<
     description: "Service & Warranty Requests — Managed end-to-end.",
   },
   metrics: {
-    title: "Quality Metrics",
+    title: "Quality Overview",
     description: "Performance breakdown — SLA, supplier ratings, resolution times.",
   },
   lead_time: {
@@ -402,7 +402,7 @@ export function ServiceCases() {
         <HubGrid
           cards={[
             { key: "cases", label: "Service Cases", description: VIEW_HEADER.cases.description, icon: ClipboardList, onClick: () => navigate("/assr?view=cases") },
-            { key: "metrics", label: "Quality Metrics", description: VIEW_HEADER.metrics.description, icon: ShieldCheck, onClick: () => navigate("/assr?view=metrics") },
+            { key: "metrics", label: "Quality Overview", description: VIEW_HEADER.metrics.description, icon: ShieldCheck, onClick: () => navigate("/assr?view=metrics") },
             ...(canManageService
               ? [{ key: "settings", label: "Service Maintenance", description: "Picker lists, SLA lead-time targets and module defaults.", icon: Wrench, onClick: () => navigate("/assr?view=settings") }]
               : []),

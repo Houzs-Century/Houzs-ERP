@@ -309,6 +309,15 @@ export const NAV_TABS: NavTab[] = [
     salesRepTo: "/my-cases",
     children: [
       {
+        // Owner 2026-10-16: each module opens with its overview, listed first.
+        to: "/assr?view=metrics",
+        label: "Quality Overview",
+        icon: ShieldCheck,
+        perm: "service_cases.read",
+        pageAccess: "service_cases.metrics",
+        hideForSalesRep: true,
+      },
+      {
         to: "/assr?view=cases",
         label: "Service Cases",
         icon: ClipboardList,
@@ -322,14 +331,6 @@ export const NAV_TABS: NavTab[] = [
         // director (assrVisibleUserIds unrestricted). hideForSalesRep still
         // wins for a NON-director rep (checked first), so reps keep My-Cases-only.
         showForDirector: true,
-      },
-      {
-        to: "/assr?view=metrics",
-        label: "Quality Metrics",
-        icon: ShieldCheck,
-        perm: "service_cases.read",
-        pageAccess: "service_cases.metrics",
-        hideForSalesRep: true,
       },
       {
         // Lead Time Portal merged into Service Maintenance as a tab.

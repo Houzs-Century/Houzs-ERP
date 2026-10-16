@@ -526,6 +526,8 @@ export function FleetHealth() {
   };
 
   const all = dash.data?.vehicles ?? [];
+  // Lorries that cannot go out (fleet-status canDispatch: only AVAILABLE / SERVICE_DUE can).
+  const grounded = all.filter((v) => v.status !== "AVAILABLE" && v.status !== "SERVICE_DUE");
   const regionOptions = useMemo(() => {
     const present = [...new Set(all.map((v) => v.region).filter((r): r is string => !!r))].sort();
     return ["ALL", ...present];
@@ -597,19 +599,31 @@ export function FleetHealth() {
         </span>
       </div>
 
-      {/* KPI ribbon */}
+      {/* KPI ribbon — four cards (owner, 2026-10-16: the eight small tiles read as
+          clutter). The first names which lorry cannot go out and why. */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatCard label="Expired documents" value={kpis?.expiredDocs ?? 0} tone="error" rail="bg-err" pending={dash.loading} onClick={() => setParam("status", "COMPLIANCE_BLOCKED")} active={statusFilter === "COMPLIANCE_BLOCKED"} />
-        <StatCard label="Expiring ≤ 30 days" value={kpis?.expiring30 ?? 0} tone="warning" rail="bg-warning-text" pending={dash.loading} />
-        <StatCard label="Cannot dispatch" value={kpis?.cantDispatch ?? 0} subtitle={`of ${kpis?.fleetSize ?? 0} lorries`} tone="error" rail="bg-err" pending={dash.loading} />
-        <StatCard label="Service due" value={kpis?.serviceDue ?? 0} subtitle={kpis?.serviceOverdue ? `${kpis.serviceOverdue} overdue` : "on plan"} tone="warning" rail="bg-warning-text" pending={dash.loading} onClick={() => setParam("status", "SERVICE_DUE")} active={statusFilter === "SERVICE_DUE"} />
-      </div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatCard label="Expiring ≤ 60 days" value={kpis?.expiring60 ?? 0} pending={dash.loading} />
-        <StatCard label="Expiring ≤ 90 days" value={kpis?.expiring90 ?? 0} pending={dash.loading} />
-        <StatCard label="Active breakdowns" value={kpis?.activeBreakdowns ?? 0} subtitle={kpis?.openWorkOrders ? `${kpis.openWorkOrders} open work order${kpis.openWorkOrders === 1 ? "" : "s"}` : "no open work orders"} tone={kpis?.activeBreakdowns ? "error" : "default"} pending={dash.loading} onClick={() => setParam("status", "BREAKDOWN")} active={statusFilter === "BREAKDOWN"} />
         <StatCard
-          label="This-month repairs"
+          label="Cannot dispatch"
+          value={`${kpis?.cantDispatch ?? 0} of ${kpis?.fleetSize ?? 0}`}
+          subtitle={grounded.length ? grounded.slice(0, 3).map((v) => `${v.plate} · ${v.statusLabel}`).join(", ") + (grounded.length > 3 ? ` +${grounded.length - 3}` : "") : "Every lorry can go out"}
+          tone={kpis?.cantDispatch ? "error" : "default"} rail={kpis?.cantDispatch ? "bg-err" : undefined} pending={dash.loading}
+          onClick={() => setParam("status", "COMPLIANCE_BLOCKED")} active={statusFilter === "COMPLIANCE_BLOCKED"}
+        />
+        <StatCard
+          label="Documents"
+          value={kpis?.expiredDocs ? `${kpis.expiredDocs} expired` : "None expired"}
+          subtitle={`Due in 30 days ${kpis?.expiring30 ?? 0} · 60 days ${kpis?.expiring60 ?? 0} · 90 days ${kpis?.expiring90 ?? 0}`}
+          tone={kpis?.expiredDocs ? "error" : kpis?.expiring30 ? "warning" : "default"} pending={dash.loading}
+        />
+        <StatCard
+          label="Breakdowns & service"
+          value={`${kpis?.activeBreakdowns ?? 0} breakdown${kpis?.activeBreakdowns === 1 ? "" : "s"}`}
+          subtitle={`${kpis?.openWorkOrders ?? 0} open work order${kpis?.openWorkOrders === 1 ? "" : "s"} · service due ${kpis?.serviceDue ?? 0}${kpis?.serviceOverdue ? ` (${kpis.serviceOverdue} overdue)` : ""}`}
+          tone={kpis?.activeBreakdowns ? "error" : kpis?.serviceOverdue ? "warning" : "default"} pending={dash.loading}
+          onClick={() => setParam("status", "BREAKDOWN")} active={statusFilter === "BREAKDOWN"}
+        />
+        <StatCard
+          label="Repairs this month"
           value={kpis?.repairSpendThisMonthSen != null ? money(kpis.repairSpendThisMonthSen) : "—"}
           subtitle={kpis?.costliestVehicle ? `Costliest ${kpis.costliestVehicle} ${money(kpis.costliestVehicleSen ?? 0)}` : "No repairs logged"}
           pending={dash.loading}
