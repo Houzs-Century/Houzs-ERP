@@ -17,6 +17,7 @@ import { cn } from "../lib/utils";
 import { fmtDate, fmtDateTime } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 import { PlanServiceForm } from "./fleet/PlanServiceForm";
+import { NewInHouseLorry } from "./fleet/NewInHouseLorry";
 
 // ---------------------------------------------------------------------------
 // Fleet Health — the Phase-1 desktop ops screen for Fleet Maintenance &
@@ -514,6 +515,7 @@ export function FleetHealth() {
     },
   ];
 
+  const [addingLorry, setAddingLorry] = useState(false);
   const dash = useQuery<DashboardPayload>("/api/fleet-maintenance/dashboard", () => api.get("/api/fleet-maintenance/dashboard"));
 
   const setParam = (key: string, value: string) => {
@@ -563,15 +565,13 @@ export function FleetHealth() {
         title="Fleet Health"
         description="Lorry compliance, expiry reminders and dispatch readiness. Status is derived from compliance, service mileage and the out-of-service flag — not set by hand."
         actions={
-          <Button
-            variant="secondary"
-            icon={<RefreshCw size={14} className={dash.loading ? "animate-spin" : undefined} />}
-            onClick={() => dash.reload()}
-          >
-            Refresh
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="secondary" icon={<RefreshCw size={14} className={dash.loading ? "animate-spin" : undefined} />} onClick={() => dash.reload()}>Refresh</Button>
+            <Button variant="primary" onClick={() => setAddingLorry(true)}>New lorry</Button>
+          </div>
         }
       />
+      {addingLorry && <NewInHouseLorry onClose={() => setAddingLorry(false)} onCreated={() => dash.reload()} />}
 
       {/* Region toggle */}
       <div className="flex flex-wrap items-center gap-2">
