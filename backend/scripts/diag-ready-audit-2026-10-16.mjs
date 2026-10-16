@@ -30,8 +30,11 @@ const show = (title, rows) => {
   for (const r of rows.slice(0, LIST_MAX)) console.log('  ' + JSON.stringify(r));
   if (rows.length > LIST_MAX) console.log(`  ... ${rows.length - LIST_MAX} more`);
 };
-const section = async (title, run) => {
-  try { show(title, await run()); }
+/* Every query runs inside its own READ ONLY transaction: the database refuses
+   any write in it, and a transaction-level mode survives the connection pooler
+   (a session-level SET would not). */
+const section = async (title, query) => {
+  try { show(title, await sql.begin('read only', (tx) => tx.unsafe(query))); }
   catch (e) { console.log(`\n=== ${title}: QUERY FAILED: ${e.message}`); }
 };
 
