@@ -38,7 +38,7 @@ import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import type { UseQueryResult } from '@tanstack/react-query';
 import type { DetailListingFilters, DetailListingRow } from '../../vendor/scm/lib/reports-queries';
-import styles from '../../pages/scm-v2/SalesOrderDetailListing.module.css';
+import styles from './DetailListingShell.module.css';
 import { PrintPreviewModal, usePrintPreview } from './PrintPreviewModal';
 import { fmtDate, fmtDateTime } from '../../vendor/shared/format';
 import { todayMyt } from '../../vendor/scm/lib/dates';
