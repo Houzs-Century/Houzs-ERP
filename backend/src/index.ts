@@ -65,6 +65,7 @@ import fleet from "./routes/fleet";
 // fleet.read/fleet.write permission alone; it uses the SCM supabase client via
 // supabaseAuth. Distinct from routes/fleet.ts (the crew picker).
 import fleetMaintenance from "./scm/routes/fleet-maintenance";
+import { fleetWorkOrderPhotos } from "./scm/routes/fleet-work-order-photos";
 import { fleetPlanService } from "./scm/routes/fleet-plan-service";
 import fleetWorkOrderFiles from "./scm/routes/fleet-work-order-files";
 // `routes/lorries.ts` removed 2026-06-28 — old Houzs Fleet lorries CRUD retired
@@ -493,6 +494,7 @@ app.route("/api/sales", sales);
 app.route("/api/finance", finance);
 app.route("/api/stockitems", stockItems);
 app.route("/api/fleet", fleet);
+app.route("/api/fleet-maintenance", fleetWorkOrderPhotos);
 // Mounted first: its auth is per-route, and fleet-maintenance.ts is at its file-size ceiling.
 app.route("/api/fleet-maintenance", fleetPlanService);
 app.route("/api/fleet-maintenance", fleetMaintenance);
