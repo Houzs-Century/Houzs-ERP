@@ -21,6 +21,7 @@ import {
 } from "../MailCenter/mail-actions";
 import type { TeamMember, Department } from "../../types";
 import { Eyebrow, SegmentedTabs, buildDeptNodes, FIELD_SELECT_CLS } from "./teamShared";
+import { MailHostPending } from "./MailHostPending";
 
 /* Mailboxes — design handoff screen 07, on the existing Mail Center data.
  * Personal mailboxes are tied to members, department mailboxes sit in their
@@ -367,6 +368,7 @@ export function TeamMailboxesV2() {
       />
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        {canManage && <MailHostPending />}
         <div className="rounded-lg border border-border bg-surface p-4 shadow-stone">
           <Eyebrow>Domains</Eyebrow>
           <div className="mt-3 flex flex-col gap-2 text-[12.5px]">
