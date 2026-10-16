@@ -26,6 +26,7 @@ import { useBranding } from "../../hooks/useBranding";
 import { cn } from "../../lib/utils";
 import { pickDefaultFromAddress } from "./mail-from-default";
 import { deliveryLabel, sentToast, type DeliveryStatus } from "./mail-delivery";
+import { MessageAcks, NEEDS_ACK_HINT, ReadByLine, type AckState, type ThreadReaders } from "./mail-acks";
 import {
   MAIL_ATTACH_MAX_COUNT,
   MAIL_ATTACH_MAX_TOTAL_BYTES,
@@ -107,6 +108,8 @@ type MailMessage = {
   createdAt: string;
   deliveryStatus?: DeliveryStatus;
   attachments?: MailAttachment[];
+  acks?: AckState[];
+  ackRequestId?: string | null;
 };
 
 type MailThread = {
@@ -125,6 +128,7 @@ type MailThread = {
 
 type ThreadDetail = {
   thread: MailThread;
+  readers?: ThreadReaders;
   messages: MailMessage[];
 };
 
@@ -220,6 +224,7 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
      time rather than a remembered preference. The backend rebuilds the list
      from the newest inbound message's To + Cc, minus our own mailbox. */
   const [replyAll, setReplyAll] = useState(false);
+  const [needsAck, setNeedsAck] = useState(false);
   const [sending, setSending] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [assigning, setAssigning] = useState(false);
@@ -386,11 +391,13 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
       const res = await api.post<{ queued?: boolean }>(`${url}/reply`, {
         text,
         ...(replyAll ? { replyAll: true } : {}),
+        ...(needsAck ? { needsAck: true } : {}),
         ...(replyFrom ? { fromAddress: replyFrom } : {}),
         ...(files.length > 0 ? { attachments: attachmentPayload(files) } : {}),
       });
       setReplyText("");
       setReplyAll(false);
+      setNeedsAck(false);
       setFiles([]);
       setAttachError(null);
       toast.success(sentToast(res.queued, "Reply sent."));
@@ -564,6 +571,7 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                   {thread.assignedToName}
                 </span>
               )}
+              <ReadByLine readers={data.readers} />
             </div>
 
             {/* Labels */}
@@ -744,6 +752,7 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                           </div>
                         </div>
                       )}
+                      <MessageAcks acks={m.acks} ackRequestId={m.ackRequestId} onAcked={reload} />
                     </div>
                   </div>
                 </div>
@@ -870,6 +879,18 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                       onChange={(e) => setReplyAll(e.target.checked)}
                     />
                     Reply all
+                  </label>
+                  <label
+                    title={NEEDS_ACK_HINT}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-secondary hover:text-ink"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={needsAck}
+                      disabled={sending}
+                      onChange={(e) => setNeedsAck(e.target.checked)}
+                    />
+                    Needs acknowledgement
                   </label>
                   <button
                     disabled={sending || !replyText.trim()}

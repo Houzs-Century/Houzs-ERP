@@ -12,6 +12,10 @@ Threading: a reply carries `In-Reply-To` / `References` built from the thread's 
 
 A message with several recipients is always ONE provider call carrying arrays — never one call per recipient — so a mid-loop failure and its retry cannot deliver a second copy to whoever already received it.
 
+Read state is per person (`email_thread_reads`, one row per thread and person; `read_at` NULL = marked unread). Opening a thread or marking it unread changes only the caller's row. A thread is unread for a person when `email_threads.last_inbound_at` is after their `read_at`, so a colleague's reply does not make it unread again. A person with no row yet falls back to the old shared `email_threads.unread` flag. The thread detail returns `readers`: the mailbox's owner and grantees ("Read by 2 of 3") plus anyone else who read it through a wider scope.
+
+Needs acknowledgement: compose / reply with `needsAck: true` writes one `email_message_acks` row per active staff member on To / Cc (matched by login email, `email_alias` or an assigned mailbox), never the sender and never Bcc, and posts a bell notice (`source = 'mail_ack'`). No staff on To / Cc is a 400 before anything is sent. The recipient acknowledges with `POST /messages/:id/ack` and sees what they owe at `GET /acks/pending`; neither needs mailbox scope, since both act only on the caller's own rows. The `*/30` cron (`runMailAckEscalation`) tells the people still owing and their `manager_id` once per message after `ACK_OVERDUE_HOURS` (48), then stamps `ack_escalated_at`.
+
 Reply-all precedence: an explicit `to` from the caller always wins; otherwise To becomes the newest INBOUND message's `from_address` (falling back to the thread's `counterparty_email` only when there is no inbound message at all); when `replyAll: true` and the caller sent no `cc`, Cc is rebuilt from that inbound message's To+Cc, minus the caller's own mailbox-scope addresses and minus anyone already on To. Bcc is never reconstructed (it was blind, it stays blind) and never stored on the message row — only the provider and the ops-only outbox row ever see it.
 
 ## Permissions
@@ -34,7 +38,8 @@ Reply-all precedence: an explicit `to` from the caller always wins; otherwise To
 ## Gotchas
 
 - `outboxRetry: false` is for paths that tell the operator "not sent" and expect them to resend (PO / DO document emails); a retry there would be a second copy.
-- `email_messages` is PG-only; tests that hit the Mail Center routes create it inline, so a new column must be added to those fixtures too.
+- `email_messages`, `email_thread_reads`, `email_message_acks` and `announcements` are PG-only; tests that hit the Mail Center routes create them inline, so a new column must be added to those fixtures too.
+- `GET /threads` binds the caller's user id FIRST (for the `email_thread_reads` join) and the WHERE binds after it; the paginated COUNT has no join and binds only the WHERE values.
 - A member whose only sending identity is their `email_alias` (no `email_addresses` row) gets an EMPTY `/addresses` response from the mailbox-scope endpoint — the client must offer the alias explicitly rather than assume the list is complete.
 - `replyAll` and `defaultFrom` are required (non-optional) props on the mobile reply/compose components on purpose — an omitted `replyAll` silently answers only one person on a mail that copied several, and an omitted `defaultFrom` silently falls back to the alphabetically first mailbox.
 - A new label's colour must come from `LABEL_PALETTE`, never a hand-picked hex — the backend maps anything outside its own nine-colour allow-list to brand brown, so an off-palette colour is stored differently from what the picker showed.
@@ -45,6 +50,7 @@ Reply-all precedence: an explicit `to` from the caller always wins; otherwise To
 - `backend/src/routes/mail-center.ts` — threads, messages, compose, reply.
 - `backend/src/services/email.ts` — `sendEmail`, `recipientList`, outbound queue.
 - `backend/src/lib/mail-threading.ts` — threading headers, Message-ID backfill, company-scoped reference lookup, outbound message insert.
+- `backend/src/lib/mail-reads.ts` — per-person unread SQL and "read by" list; `backend/src/lib/mail-acks.ts` + `routes/mail-acks.ts` — acknowledgement requests, the recipient's routes and the overdue cron.
 - `backend/src/scm/lib/companyScope.ts` — the company-scope helper family.
-- `frontend/src/pages/MailCenter/` — `Inbox.tsx`, `Thread.tsx`, `Compose.tsx`, and the shared modules (`mail-recipients.ts`, `mail-attach-files.ts`, `mail-from-default.ts`, `mail-labels.ts`, `mail-actions.ts`).
-- `frontend/src/mobile/MobileMailCenter.tsx` — mobile surface.
+- `frontend/src/pages/MailCenter/` — `Inbox.tsx`, `Thread.tsx`, `Compose.tsx`, and the shared modules (`mail-recipients.ts`, `mail-attach-files.ts`, `mail-from-default.ts`, `mail-labels.ts`, `mail-actions.ts`, `mail-acks.tsx`).
+- `frontend/src/mobile/MobileMailCenter.tsx` — mobile surface; `MobileMailAcks.tsx` — its read-by / acknowledgement pieces.

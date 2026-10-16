@@ -36,6 +36,8 @@ import {
   MAIL_ATTACH_MAX_TOTAL_BYTES,
 } from "../pages/MailCenter/mail-attachments";
 import { parseRecipients, firstInvalid } from "../pages/MailCenter/mail-recipients";
+import { MobileMessageAcks, MobileNeedsAck, MobilePendingAcks, MobileReadBy } from "./MobileMailAcks";
+import type { AckState, ThreadReaders } from "../pages/MailCenter/mail-acks";
 import "./mobile.css";
 import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../vendor/shared/format";
 
@@ -122,9 +124,11 @@ type Message = {
   createdAt: string;
   deliveryStatus?: DeliveryStatus;
   attachments?: Attachment[];
+  acks?: AckState[];
+  ackRequestId?: string | null;
 };
 
-type ThreadDetail = { thread: Thread; messages: Message[] };
+type ThreadDetail = { thread: Thread; readers?: ThreadReaders; messages: Message[] };
 
 // A colleague a thread can be handed to. Shape as GET /api/users serves it.
 type UserOption = { id: string | number; name?: string; email?: string };
@@ -553,6 +557,7 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
           </div>
         )}
         {folder === "autosent" && <OutboxList q={debouncedQ.trim()} />}
+        {usesThreadList && <MobilePendingAcks onOpen={setOpenId} />}
         {!listBusy && !error && usesThreadList && threads.length === 0 && (
           <div className="empty">
             <div className="empty-t">No messages</div>
@@ -918,6 +923,7 @@ function MailThread({
             </select>
           </div>
         )}
+        <MobileReadBy readers={data?.readers} />
       </header>
 
       <div className="scroll" style={{ padding: 14 }}>
@@ -926,7 +932,7 @@ function MailThread({
         {!loading && !error && messages.length === 0 && <Muted>No messages in this thread.</Muted>}
         {!loading &&
           !error &&
-          messages.map((m) => <MessageBubble key={m.id} m={m} />)}
+          messages.map((m) => <MessageBubble key={m.id} m={m} onAcked={reload} />)}
       </div>
 
       {thread && (
@@ -1030,7 +1036,7 @@ function LabelPicker({
   );
 }
 
-function MessageBubble({ m }: { m: Message }) {
+function MessageBubble({ m, onAcked }: { m: Message; onAcked: () => void }) {
   const out = m.direction === "outbound";
   const who = out ? m.fromName || "You" : m.fromName || m.fromAddress || "Sender";
   const atts = m.attachments ?? [];
@@ -1071,6 +1077,7 @@ function MessageBubble({ m }: { m: Message }) {
             ))}
           </div>
         )}
+        <MobileMessageAcks acks={m.acks} ackRequestId={m.ackRequestId} onAcked={onAcked} />
       </div>
     </div>
   );
@@ -1197,6 +1204,7 @@ function MailReply({
   const [files, setFiles] = useState<OutboundAttachment[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [needsAck, setNeedsAck] = useState(false);
   const subject = /^re:/i.test(thread?.subject ?? "") ? thread?.subject ?? "" : `Re: ${thread?.subject ?? ""}`;
 
   const send = async () => {
@@ -1210,6 +1218,7 @@ function MailReply({
       const res = await api.post<{ queued?: boolean }>(`/api/mail-center/threads/${thread.id}/reply`, {
         text: text.trim(),
         ...(replyAll ? { replyAll: true } : {}),
+        ...(needsAck ? { needsAck: true } : {}),
         fromAddress: from || undefined,
         ...(files.length > 0 ? { attachments: attachmentPayload(files) } : {}),
       });
@@ -1244,6 +1253,7 @@ function MailReply({
         onFiles={setFiles}
         onError={setAttachError}
       />
+      <MobileNeedsAck checked={needsAck} onChange={setNeedsAck} disabled={sending} />
     </ComposeShell>
   );
 }
@@ -1378,6 +1388,7 @@ function MailCompose({
   const [subject, setSubject] = useState(seed?.subject ?? "");
   const [text, setText] = useState(seed?.body ?? "");
   const [sending, setSending] = useState(false);
+  const [needsAck, setNeedsAck] = useState(false);
 
   // Same shared parser desktop uses: comma/semicolon separated, trimmed,
   // de-duplicated case-insensitively — and the same shape check on each entry.
@@ -1419,6 +1430,7 @@ function MailCompose({
         subject: subject.trim(),
         text: text.trim(),
         ...(files.length > 0 ? { attachments: attachmentPayload(files) } : {}),
+        ...(needsAck ? { needsAck: true } : {}),
       });
       toast.success(sentToast(res.queued, "Email sent."));
       onSent();
@@ -1474,6 +1486,7 @@ function MailCompose({
         onFiles={setFiles}
         onError={setAttachError}
       />
+      <MobileNeedsAck checked={needsAck} onChange={setNeedsAck} disabled={sending} />
     </ComposeShell>
   );
 }
