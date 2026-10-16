@@ -7,6 +7,7 @@ import { DataTable, type Column } from "../components/DataTable";
 import { PodPhotoAlbum } from "../components/scm-v2/PodPhotoAlbum";
 import { Button } from "../components/Button";
 import { StatCard } from "../components/StatCard";
+import { FleetHealthCharts } from "./FleetHealthCharts";
 import { ResizableDetailDrawer } from "../components/ResizableDetailDrawer";
 import { ListSkeleton } from "../components/Skeleton";
 import { RepairDocumentImport } from "../components/RepairDocumentImport";
@@ -629,6 +630,8 @@ export function FleetHealth() {
           pending={dash.loading}
         />
       </div>
+
+      <FleetHealthCharts vehicles={all} kpis={kpis ?? null} />
 
       {/* Reminders strip */}
       {reminders.length > 0 && (
