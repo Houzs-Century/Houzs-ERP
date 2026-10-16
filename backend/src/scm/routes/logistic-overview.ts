@@ -4,8 +4,9 @@
    is the Delivery Planning read the page already loads.
 
    Returns: the last 8 weeks plus this week and next (DOs issued, delivered,
-   lorry runs), the last 12 months of DO volume, and delivered orders that still
-   owe money (the sheet's "Overdue balance > 30 days").
+   lorry runs), the last 12 months of DO volume, delivered orders that still
+   owe money (the sheet's "Overdue balance > 30 days"), and DOs never closed
+   or carrying no cost.
    Company scope: every read is scoped to the active company. */
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
@@ -91,8 +92,28 @@ logisticOverview.get('/', async (c) => {
     if (age > 30) overdue30 = { count: overdue30.count + 1, balanceSen: overdue30.balanceSen + bal, oldestDays: Math.max(overdue30.oldestDays, age) };
   }
 
+  /* Two process gaps management should see: DOs loaded more than a week ago
+     and never closed as delivered (the POD step skipped, so "delivered" and
+     "owing" read low), and DOs carrying no cost (their margin reads 100%). */
+  const weekAgo = iso(Date.parse(`${today}T00:00:00Z`) - 7 * DAY);
+  const monthAgo = iso(Date.parse(`${today}T00:00:00Z`) - 30 * DAY);
+  const notClosed = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('delivery_orders')
+    .select('do_date, local_total_sen').eq('status', 'LOADED').lt('do_date', weekAgo), c).order('id').range(f, t));
+  if (notClosed.error) return fail('unclosed delivery orders', notClosed.error);
+  const noCost = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('delivery_orders')
+    .select('local_total_sen').gte('do_date', iso(Date.parse(`${today}T00:00:00Z`) - 90 * DAY))
+    .neq('status', 'CANCELLED').gt('local_total_sen', 0).or('total_cost_sen.is.null,total_cost_sen.eq.0'), c).order('id').range(f, t));
+  if (noCost.error) return fail('delivery orders without cost', noCost.error);
+  const doNotClosed = { count: 0, amountSen: 0, over30: 0, over30Sen: 0 };
+  for (const d of notClosed.data ?? []) {
+    doNotClosed.count += 1; doNotClosed.amountSen += num(d.local_total_sen);
+    if (String(d.do_date ?? '') < monthAgo) { doNotClosed.over30 += 1; doNotClosed.over30Sen += num(d.local_total_sen); }
+  }
+  const doNoCost = { count: (noCost.data ?? []).length, amountSen: (noCost.data ?? []).reduce((a, d) => a + num(d.local_total_sen), 0) };
+
   return c.json({
     today, thisMonday,
+    doNotClosed, doNoCost,
     runsToday: (trips.data ?? []).filter((t) => String(t.trip_date ?? '').slice(0, 10) === today).length,
     weeks,
     months: [...months.values()].sort((a, b) => a.month.localeCompare(b.month)),
