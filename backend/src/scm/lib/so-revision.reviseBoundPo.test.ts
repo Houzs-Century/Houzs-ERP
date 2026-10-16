@@ -182,7 +182,7 @@ describe('reviseBoundPo — REMOVE reconciles the orphaned PO line', () => {
     const store = baseStore();
     store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', qty: 2 })];
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 2, line_total_sen: 2000 }),
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', unit_price_sen: 1000, qty: 2, line_total_sen: 2000 }),
       poLine({ id: 'POI-2', so_item_id: null, item_code: 'BF-2', material_name: 'Bed Two', qty: 1, line_total_sen: 1500 }),
     ];
     const c1 = await cost(store, 'BF-1');
@@ -203,7 +203,7 @@ describe('reviseBoundPo — REMOVE reconciles the orphaned PO line', () => {
     const store = baseStore();
     store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', qty: 2 })];
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 2, line_total_sen: 2000 }),
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', unit_price_sen: 1000, qty: 2, line_total_sen: 2000 }),
       poLine({ id: 'POI-2', so_item_id: null, item_code: 'BF-2', material_name: 'Bed Two', qty: 1, received_qty: 1, line_total_sen: 1500 }),
     ];
     const c1 = await cost(store, 'BF-1');
@@ -225,7 +225,7 @@ describe('reviseBoundPo — REMOVE reconciles the orphaned PO line', () => {
     const store = baseStore();
     store.mfg_sales_order_items = [];   // both lines removed → SO empty, POX fully orphaned
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: null, item_code: 'BF-1', qty: 1, line_total_sen: 1000 }),
+      poLine({ id: 'POI-1', so_item_id: null, item_code: 'BF-1', unit_price_sen: 1000, qty: 1, line_total_sen: 1000 }),
       poLine({ id: 'POI-2', so_item_id: null, item_code: 'BF-2', qty: 1, line_total_sen: 1500 }),
     ];
 
@@ -241,7 +241,7 @@ describe('reviseBoundPo — REMOVE reconciles the orphaned PO line', () => {
     const store = baseStore();
     store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', qty: 2 })];
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 2, line_total_sen: 2000 }),
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', unit_price_sen: 1000, qty: 2, line_total_sen: 2000 }),
       poLine({ id: 'POI-2', so_item_id: null, item_code: 'BF-2', qty: 1, line_total_sen: 1500 }),
     ];
     const c1 = await cost(store, 'BF-1');
@@ -266,7 +266,7 @@ describe('reviseBoundPo — a surviving line keeps the PO delivery date', () => 
     store.purchase_orders[0].expected_at = '2026-07-01';
     store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', qty: 2, line_delivery_date: '2026-08-01' })];
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 1, delivery_date: '2026-07-01' }),
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', unit_price_sen: 1000, qty: 1, delivery_date: '2026-07-01' }),
     ];
 
     await reviseBoundPo(fakeSb(store), AMD, 'user-1');
@@ -289,7 +289,7 @@ describe('reviseBoundPo — ADD reconciles the missing PO line', () => {
       soLine({ id: 'L3', item_code: 'BF-3', qty: 2, warehouse_id: 'WH1', line_delivery_date: '2026-08-01', description: 'Bed Three' }),
     ];
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 1, line_total_sen: 1000 }),
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', unit_price_sen: 1000, qty: 1, line_total_sen: 1000 }),
     ];
     // DEV-69 (12c): the owner's lead table, so an added line's date is the
     // customer date minus 7 days, as Create PO sets it.
@@ -429,7 +429,7 @@ describe('reviseBoundPo — a scoped confirm on a MULTI-PO sales order still sur
       soLine({ id: 'L3', item_code: 'BF-3', qty: 2, warehouse_id: 'WH1', description: 'Bed Three' }),
     ];
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: 'L1', purchase_order_id: 'POX', item_code: 'BF-1', qty: 1, line_total_sen: 1000 }),
+      poLine({ id: 'POI-1', so_item_id: 'L1', purchase_order_id: 'POX', item_code: 'BF-1', unit_price_sen: 1000, qty: 1, line_total_sen: 1000 }),
       poLine({ id: 'POI-2', so_item_id: 'L2', purchase_order_id: 'POY', item_code: 'BF-2', qty: 1, warehouse_id: 'WH2', line_total_sen: 1500 }),
     ];
     // Surviving lines re-derive cleanly; BF-3 (the ADD) is bound per test.
@@ -493,7 +493,7 @@ describe('reviseBoundPo — unchanged contracts still hold', () => {
     store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', qty: 1 })];
     store.so_revisions = [{ amendment_id: AMD, revision: 1, snapshot: { lines: [{ id: 'L1' }], poLinks: { L1: ['POI-1'] } } }];
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 5, received_qty: 3, line_total_sen: 5000 }),
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', unit_price_sen: 1000, qty: 5, received_qty: 3, line_total_sen: 5000 }),
     ];
 
     await expect(reviseBoundPo(fakeSb(store), AMD, 'user-1')).rejects.toMatchObject({ code: 'received_floor' });
@@ -686,5 +686,50 @@ describe('reviseBoundPo — a code change re-derives the supplier code from the 
     expect(l2.item_code).toBe('9058-CNR');
     expect(l2.supplier_sku).toBeNull();   // never the old piece's code
     expect(res.warnings.some((w) => w.includes('SOFA MAYBATCH CNR') && w.includes('PO-2607-001'))).toBe(true);
+  });
+});
+
+/* HC-0095 (Mr Lim, 2026-10-15). Approving the PO half of an amendment re-derived
+   EVERY surviving line on the PO, so a supplier price the purchaser negotiated
+   on the PO (800 against a 1000 list cost) reset on a line the amendment never
+   touched, and on a line whose qty alone changed. */
+describe('reviseBoundPo — a negotiated PO price survives an amendment that leaves its spec alone', () => {
+  function negotiatedStore(l1Variants: Record<string, unknown> | null): Record<string, Row[]> {
+    const store = baseStore();
+    store.so_revisions = [{
+      amendment_id: AMD, revision: 1, po_id: null,
+      snapshot: { lines: [{ id: 'L1' }, { id: 'L3' }], poLinks: { L1: ['POI-1'], L3: ['POI-3'] } },
+    }];
+    store.mfg_sales_order_items = [
+      soLine({ id: 'L1', item_code: 'BF-1', qty: 3, variants: l1Variants }),
+      soLine({ id: 'L3', item_code: 'BF-3', qty: 1 }),
+    ];
+    store.purchase_order_items = [
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 2, unit_price_sen: 800, line_total_sen: 1600, variants: { size: 'Q' } }),
+      poLine({ id: 'POI-3', so_item_id: 'L3', item_code: 'BF-3', qty: 1, unit_price_sen: 1200, line_total_sen: 1200 }),
+    ];
+    return store;
+  }
+
+  it('keeps the unit price on a qty change and on an untouched line, re-totalling the qty', async () => {
+    const store = negotiatedStore({ size: 'Q' });
+    await reviseBoundPo(fakeSb(store), AMD, 'user-1');
+    const l1 = store.purchase_order_items.find((i) => i.id === 'POI-1')!;
+    const l3 = store.purchase_order_items.find((i) => i.id === 'POI-3')!;
+    expect(l1.unit_price_sen).toBe(800);
+    expect(l1.qty).toBe(3);
+    expect(l1.line_total_sen).toBe(2400);
+    expect(l3.unit_price_sen).toBe(1200);
+    expect(store.purchase_orders[0].subtotal_sen).toBe(2400 + 1200);
+  });
+
+  it('re-prices from the binding when the variants change', async () => {
+    const store = negotiatedStore({ size: 'K' });
+    const c1 = await cost(store, 'BF-1');
+    await reviseBoundPo(fakeSb(store), AMD, 'user-1');
+    const l1 = store.purchase_order_items.find((i) => i.id === 'POI-1')!;
+    expect(c1).not.toBe(800);
+    expect(l1.unit_price_sen).toBe(c1);
+    expect(store.purchase_order_items.find((i) => i.id === 'POI-3')!.unit_price_sen).toBe(1200);
   });
 });

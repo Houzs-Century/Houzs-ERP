@@ -12,6 +12,7 @@
    -------------------------------------------------------------------------- */
 
 import { buildVariantSummary } from '../shared';
+import { variantsForCompare } from './amendment-noop-lines';
 import { deriveMfgPoUnitCost } from './po-pricing';
 import { supplierSkuFor } from './po-line-supplier-sku';
 
@@ -51,7 +52,7 @@ export async function rederivePoLineFromSoLine(
   // supplier binding is keyed on).
   const { data: existing, error: exErr } = await sb
     .from('purchase_order_items')
-    .select('item_code, material_name, discount_sen, photo_urls, supplier_sku')
+    .select('item_code, material_name, discount_sen, photo_urls, supplier_sku, unit_price_sen, variants')
     .eq('id', args.poLineId)
     .maybeSingle();
   if (exErr) throw new Error(`reviseBoundPo: PO line load failed: ${exErr.message}`);
@@ -77,12 +78,23 @@ export async function rederivePoLineFromSoLine(
     (revised.description || '').trim()
     || String((existing as { material_name?: string } | null)?.material_name ?? '').trim()
     || itemCode;
-  const unitPriceSen = await deriveMfgPoUnitCost(sb, {
-    supplierId: po.supplier_id ?? '',
-    itemCode:   itemCode,
-    itemGroup,
-    variants:   variants ?? null,
-  });
+  /* HC-0095 (Mr Lim, 2026-10-15): the cost follows the SPEC, not the approval.
+     reviseBoundPo re-derives every surviving line on the PO, so re-pricing a
+     line whose code and variants did not move reset a price the purchaser had
+     negotiated on the PO to the binding's list cost. Only a line whose code or
+     variants this patch changes is re-priced; a qty-only change keeps the
+     unit price and re-totals. */
+  const ex = existing as { item_code?: string | null; unit_price_sen?: number | null; variants?: unknown } | null;
+  const specMoved = itemCode !== String(ex?.item_code ?? '').trim()
+    || variantsForCompare(variants ?? null) !== variantsForCompare(ex?.variants ?? null);
+  const unitPriceSen = !specMoved && ex?.unit_price_sen != null
+    ? Number(ex.unit_price_sen)
+    : await deriveMfgPoUnitCost(sb, {
+      supplierId: po.supplier_id ?? '',
+      itemCode:   itemCode,
+      itemGroup,
+      variants:   variants ?? null,
+    });
 
   /* Re-carry the SO line's CURRENT photos, preserving the PO's OWN uploads
      (`po-items/...`). The INSERT already carries an ADDED line's photos
