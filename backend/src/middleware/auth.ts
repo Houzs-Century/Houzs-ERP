@@ -235,7 +235,9 @@ export function requirePermission(perm: string): MiddlewareHandler<{ Bindings: E
 export function requireItPages(): MiddlewareHandler<{ Bindings: Env }> {
   return async (c, next) => {
     const user = c.get("user");
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- typed as set, but unset if a route forgets authMiddleware
     if (!user) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- tests and scripts build AuthUser without permissions_set
     if (!canViewItPages(user.permissions_set ?? user.permissions)) {
       return c.json({ error: "You don't have permission to do that." }, 403);
     }
