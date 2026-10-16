@@ -871,7 +871,11 @@ export function useScheduleDelivery() {
         tone: 'error',
       });
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['delivery-planning'] });
+      void qc.invalidateQueries({ queryKey: ['fleet-day'] });
+      void qc.invalidateQueries({ queryKey: ['scm-trips'] });
+    },
   });
 }
 
@@ -904,6 +908,9 @@ export function useAssignDoCrew() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['delivery-planning'] });
       qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
+      // The run and its other DOs follow a DO crew edit (server side).
+      void qc.invalidateQueries({ queryKey: ['fleet-day'] });
+      void qc.invalidateQueries({ queryKey: ['scm-trips'] });
     },
   });
 }

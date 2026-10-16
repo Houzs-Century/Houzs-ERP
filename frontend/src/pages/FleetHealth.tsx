@@ -4,6 +4,7 @@ import { useSearchParams, Link, useNavigate } from "react-router-dom";
 import { Truck, RefreshCw, X, AlertTriangle, ChevronRight, FileUp } from "lucide-react";
 import { PageHeader } from "../components/Layout";
 import { DataTable, type Column } from "../components/DataTable";
+import { PodPhotoAlbum } from "../components/scm-v2/PodPhotoAlbum";
 import { Button } from "../components/Button";
 import { StatCard } from "../components/StatCard";
 import { ResizableDetailDrawer } from "../components/ResizableDetailDrawer";
@@ -1702,6 +1703,11 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
         {wo.warrantyUntil && <span>Warranty to {wo.warrantyUntil}</span>}
       </div>
       {/* Parts table */}
+      {(wo.photoRefs?.length ?? 0) > 0 && (
+        <div className="mt-3">
+          <PodPhotoAlbum paths={(wo.photoRefs ?? []).map((_, n) => `/api/fleet-maintenance/work-orders/${wo.id}/photo/${n}`)} fileStem={`WO-${wo.woNo ?? wo.id}`} />
+        </div>
+      )}
       {wo.parts.length > 0 && (
         <table className="mt-2 w-full border-collapse text-[11px]">
           <thead>

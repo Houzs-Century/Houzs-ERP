@@ -26,6 +26,8 @@ in the ordered stage table but is a legal value everywhere else. Both
 `completed` and `voided` stamp `closed_at`; only `completed` stamps
 `completion_date` and feeds the CSAT survey.
 
+A crew POD on the delivery run (scm/routes/delivery-job-progress.ts) attaches its photos as `completion` and makes one move, only from the leg's own step: pickup -> Pending Supplier Pickup, inspection -> QC Issue Result, delivery (Delivery stage) -> completed with the survey (`services/assrCompletionSurvey.ts`, shared with the manual transition).
+
 Sub-statuses exist inside two stages only: Under Verification
 (`pending_inspection` / `qc_issue_result`); Pickup/Return has **three** legs —
 enters on `pending_customer_pickup` (collect from customer), then
