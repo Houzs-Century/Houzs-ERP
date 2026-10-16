@@ -157,7 +157,7 @@ import {
   type FinanceByProjectResponse,
   FINANCE_STAGE_OPTIONS,
 } from "./projects/financeViewModel";
-import { ProjectOverviewHeadline, ProjectPeriodBar } from "./projects/ProjectOverviewParts";
+import { ProjectOverviewHeadline, ProjectPeriodBar, ProjectOverviewCharts, ProjectDataGapsPanel } from "./projects/ProjectOverviewParts";
 
 interface ProjectDetail {
   project: ProjectRow & {
@@ -2601,6 +2601,8 @@ function ProjectsAnalyticsView() {
       {d && (
         <>
           <ProjectOverviewHeadline totals={d.totals} />
+          <ProjectDataGapsPanel onOpen={(id) => navigate(`/projects/${id}`)} />
+          <ProjectOverviewCharts d={d} onDrill={(dim, key) => drillState.toggleValue(dim, key)} />
 
           {/* Breakdowns — two columns. Each row expands in place (Layer 2) to
               the projects behind it, and each project navigates to its page

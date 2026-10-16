@@ -87,7 +87,8 @@ export function Columns({ labels, series, values, format, stacked, line, highlig
   const y = (v: number) => padT + (H - padB - padT) * (1 - v / max);
   const lineVals = line?.values ?? [];
   const lmax = Math.max(1, ...lineVals.map((v) => v ?? 0));
-  const ly = (v: number) => padT + (H - padB - padT) * (1 - v / lmax);
+  const lmin = Math.min(0, ...lineVals.map((v) => v ?? 0));
+  const ly = (v: number) => padT + (H - padB - padT) * (1 - (v - lmin) / (lmax - lmin));
   const step = Math.max(1, Math.ceil((n * 44) / W));
   return (
     <div ref={ref}>
