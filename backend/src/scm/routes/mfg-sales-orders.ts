@@ -37,7 +37,7 @@ import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../li
 import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
 import { soStatusAfterProcessingDateChange } from '../lib/so-proceed-status-change';
-import { liveStatusForProcessingDate } from '../shared/so-proceeded-status';
+import { liveStatusForProcessingDate, processingDateOnConfirm } from '../shared/so-proceeded-status';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
 import { exemptionExpirySeed } from '../lib/so-exemption-expiry';
 import { soIsMigrated, withSoMigratedReadonly } from '../lib/migrated-so-readonly';
@@ -5058,13 +5058,20 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      Submitted, past the header-save rule that would have moved it (it fires on
      null -> date, and the date was already there). 171 orders on 2026-10-13.
      The confirm gate above still judges the CONFIRM; only the landing differs. */
+  let confirmProcRoll: { from: string | null; to: string } | null = null;
   if (isConfirm) {
-    const { data: dated, error: datedErr } = await scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_PROCESSING_DATE_COLUMN), co.companyId)
+    const { data: dated, error: datedErr } = await scopeToCompanyId(sb.from('mfg_sales_orders').select(`${SO_PROCESSING_DATE_COLUMN}, customer_delivery_date`), co.companyId)
       .eq('doc_no', docNo).maybeSingle();
     /* A failed read is not "no date": confirming into Submitted on a blip would
        file a proceeded order under the wrong tab, which is the defect itself. */
     if (datedErr) return c.json({ error: 'load_failed', reason: datedErr.message }, 500);
-    toStatus = liveStatusForProcessingDate((dated as Record<string, string | null> | null)?.[SO_PROCESSING_DATE_COLUMN] ?? null);
+    const datedRow = dated as Record<string, string | null> | null;
+    const storedProc = datedRow?.[SO_PROCESSING_DATE_COLUMN] ?? null;
+    /* HC-0113 — see processingDateOnConfirm. */
+    const roll = processingDateOnConfirm({ processingDate: storedProc, deliveryDate: datedRow?.customer_delivery_date, todayMY: todayMyt() });
+    if (!roll.ok) return c.json(validationFailedBody([roll.problem]), 422);
+    if (roll.write) confirmProcRoll = { from: storedProc, to: roll.write };
+    toStatus = liveStatusForProcessingDate(roll.write ?? storedProc);
   }
   /* ── Stock-location gate on the DRAFT -> live transition (owner 2026-08-13,
      company 1 only) — the SAME invariant the create path enforces. This is the
@@ -5078,6 +5085,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
     if (locationProblem) return c.json(validationFailedBody([locationProblem]), 422);
   }
   const patch: Record<string, unknown> = { status: toStatus, version: currentVersion + 1, updated_at: new Date().toISOString() };
+  if (confirmProcRoll) patch[SO_PROCESSING_DATE_COLUMN] = confirmProcRoll.to;
   if (toStatus === 'IN_PRODUCTION') {
     /* Column bound to the constant — see "WHY A CONSTANT" in
        shared/so-processing-date.ts. */
@@ -5225,6 +5233,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
       actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
       fieldChanges: [
         { field: 'status', from: fromStatus, to: toStatus },
+        ...(confirmProcRoll ? [{ field: 'processingDate', from: confirmProcRoll.from, to: confirmProcRoll.to }] : []),
         ...(voucherPlan ? soCancelVoucherAuditChanges(voucherPlan) : []),
       ],
       statusSnapshot: toStatus,
