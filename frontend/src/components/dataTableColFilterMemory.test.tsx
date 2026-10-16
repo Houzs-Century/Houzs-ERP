@@ -7,13 +7,16 @@ import { act, cleanup, render } from "@testing-library/react";
 import {
   primeInVisitColFilters,
   resetInVisitColFilters,
+  useInVisitClientSearch,
   useInVisitColFilters,
+  useKeptColFilters,
   type ColFilters,
 } from "./dataTableColFilterMemory";
 
 afterEach(() => {
   cleanup();
   resetInVisitColFilters();
+  localStorage.clear();
 });
 
 type Api = { value: ColFilters; set: (v: ColFilters) => void };
@@ -73,5 +76,87 @@ describe("useInVisitColFilters", () => {
     // idKey gains its c<company>: prefix → the hook re-reads the scoped bucket.
     view.rerender(<Probe idKey="c1:k5" />);
     expect(view.getByTestId("v").textContent).toBe(JSON.stringify({ status: ["Closed"] }));
+  });
+});
+
+type SearchApi = { value: string; set: (v: string) => void };
+let searchApi: SearchApi;
+
+function SearchProbe({ idKey, enabled = true }: { idKey: string; enabled?: boolean }) {
+  const [value, set] = useInVisitClientSearch(idKey, enabled);
+  searchApi = { value, set };
+  return <span data-testid="s">{value}</span>;
+}
+
+describe("useInVisitClientSearch", () => {
+  it("keeps the text across a remount this visit, and drops it on reset", () => {
+    const first = render(<SearchProbe idKey="s1" />);
+    act(() => searchApi.set("ali"));
+    expect(first.getByTestId("s").textContent).toBe("ali");
+    first.unmount();
+
+    const second = render(<SearchProbe idKey="s1" />);
+    expect(second.getByTestId("s").textContent).toBe("ali");
+    second.unmount();
+
+    resetInVisitColFilters();
+    const third = render(<SearchProbe idKey="s1" />);
+    expect(third.getByTestId("s").textContent).toBe("");
+  });
+
+  it("is per mount when disabled, and never reads what an enabled table stored", () => {
+    const first = render(<SearchProbe idKey="s2" />);
+    act(() => searchApi.set("ali"));
+    first.unmount();
+    const second = render(<SearchProbe idKey="s2" enabled={false} />);
+    expect(second.getByTestId("s").textContent).toBe("");
+  });
+});
+
+let keptApi: Api;
+
+function KeptProbe({ idKey, enabled = true }: { idKey: string; enabled?: boolean }) {
+  const [value, set] = useKeptColFilters(idKey, enabled);
+  keptApi = { value, set };
+  return <span data-testid="k">{JSON.stringify(value)}</span>;
+}
+
+describe("useKeptColFilters", () => {
+  it("writes dt:funnels:<idKey>, reads it back on a fresh mount, removes it when cleared", () => {
+    const first = render(<KeptProbe idKey="k1" />);
+    act(() => keptApi.set({ status: ["Open"] }));
+    expect(JSON.parse(localStorage.getItem("dt:funnels:k1") ?? "null")).toEqual({ status: ["Open"] });
+    first.unmount();
+
+    const second = render(<KeptProbe idKey="k1" />);
+    expect(second.getByTestId("k").textContent).toBe(JSON.stringify({ status: ["Open"] }));
+    act(() => keptApi.set({}));
+    expect(localStorage.getItem("dt:funnels:k1")).toBeNull();
+  });
+
+  it("reads a damaged or foreign value as no filter", () => {
+    localStorage.setItem("dt:funnels:k2", "{not json");
+    expect(render(<KeptProbe idKey="k2" />).getByTestId("k").textContent).toBe("{}");
+    cleanup();
+    localStorage.setItem("dt:funnels:k3", JSON.stringify({ status: "Open", n: [1], ok: ["A"], empty: [] }));
+    expect(render(<KeptProbe idKey="k3" />).getByTestId("k").textContent).toBe(JSON.stringify({ ok: ["A"] }));
+  });
+
+  it("touches no storage while disabled", () => {
+    localStorage.setItem("dt:funnels:k4", JSON.stringify({ status: ["Open"] }));
+    const view = render(<KeptProbe idKey="k4" enabled={false} />);
+    expect(view.getByTestId("k").textContent).toBe("{}");
+    act(() => keptApi.set({ status: ["Closed"] }));
+    expect(JSON.parse(localStorage.getItem("dt:funnels:k4") ?? "null")).toEqual({ status: ["Open"] });
+  });
+
+  it("re-reads the new key when the idKey moves (company resolves after mount)", () => {
+    localStorage.setItem("dt:funnels:c1:k5", JSON.stringify({ status: ["Closed"] }));
+    const view = render(<KeptProbe idKey="k5" />);
+    expect(view.getByTestId("k").textContent).toBe("{}");
+    view.rerender(<KeptProbe idKey="c1:k5" />);
+    expect(view.getByTestId("k").textContent).toBe(JSON.stringify({ status: ["Closed"] }));
+    // The empty pre-scoping value must not have been written over the scoped key.
+    expect(JSON.parse(localStorage.getItem("dt:funnels:c1:k5") ?? "null")).toEqual({ status: ["Closed"] });
   });
 });

@@ -38,7 +38,6 @@ import {
   useMfgSalesOrderDetail,
   useUpdateMfgSalesOrderHeader,
   useUpdateMfgSalesOrderStatus,
-  useDeleteMfgSalesOrder,
   useAddMfgSalesOrderItem,
   useUpdateMfgSalesOrderItem,
   useDeleteMfgSalesOrderItem,
@@ -97,7 +96,7 @@ import { DocumentRelationshipMapModal, DocumentChoiceDialog } from '../../compon
 import { useSoRelationshipMap } from './so-relationship-map';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { SoLockBanner } from './SoLockBanner';
-import { soAfterDoMode, afterDoEditableLine, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoSave } from '../../vendor/scm/lib/so-after-do-client';
+import { soAfterDoMode, soPriceAfterDoOn, afterDoEditableLine, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoSave } from '../../vendor/scm/lib/so-after-do-client';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from '../../vendor/scm/lib/amendment-approver';
@@ -114,7 +113,7 @@ import {
   amendmentLineFieldKinds,
   amendmentOldSnapshot,
   amendmentVariantSummaries,
-  visibleAmendmentLines, amendmentLineSig} from '../../vendor/scm/lib/so-amendment-line-diff';
+  visibleAmendmentLines, amendmentLineSig, amendmentVariantsKey, amendmentRequestedUnitPriceSen, amendmentPriceFields} from '../../vendor/scm/lib/so-amendment-line-diff';
 import { routeField, type AmendmentFieldKind } from '../../vendor/scm/lib/amendment-routing';
 import { fetchSoSlipUrl, fetchScanSlipImageBlobUrl } from '../../vendor/scm/lib/slip';
 import {
@@ -160,9 +159,11 @@ import {
 } from './so-version-conflict';
 import { RevisionsTab } from './so-revisions-tab';
 import styles from './SalesOrderDetail.module.css';
+import { PriceAfterDoModal } from './PriceAfterDoModal';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { HoldChip } from "../../vendor/scm/components/HoldChip";
 import { CancelRequestPanel } from "../../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "./use-cancel-request-action";
+import { useDiscardDraftAction } from "./use-discard-draft-action";
 
 import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
 import { useAddLineHandoff } from '../../vendor/scm/lib/useAddLineHandoff';
@@ -324,6 +325,9 @@ type SoHeader = {
      only). Feeds soProcLockActive, which is why the line/State/Postcode freeze
      below fires with no processing date involved. */
   po_locked?: boolean;
+  /* BUG-101 — a live PO (any company) freezes the Processing Date: no move, no
+     clear, by amendment or directly. Only the Delivery Date can be requested. */
+  processing_date_po_locked?: boolean;
   has_children?: boolean; downstream_fully_frozen?: boolean; // a live DO/SI exists / every line is on one (shared/so-line-freeze.ts)
   has_open_amendment?: boolean;
   open_amendment?: { id: string; status: string; amendment_no: string; lane?: string | null } | null;
@@ -456,6 +460,8 @@ const draftFromItem = (it: SoItem): SoLineDraft => ({
   uom:            it.uom ?? 'UNIT',
   qty:            it.qty ?? 1,
   unitPriceSen: it.unit_price_sen ?? 0,
+  // The persisted price IS this line's price, 0 included; a product re-pick clears it.
+  priceAuthored: true,
   discountSen:  it.discount_sen ?? 0,
   unitCostSen:  it.unit_cost_sen ?? 0,
   // 2026-06-08 (Loo) — canonicalise POS-vocabulary sofa keys (depth →
@@ -508,7 +514,7 @@ export const SalesOrderDetail = () => {
   const updateHeader = useUpdateMfgSalesOrderHeader();
   const updateStatus = useUpdateMfgSalesOrderStatus();
   const requestCancel = useCancelRequestAction('so');
-  const deleteDraft = useDeleteMfgSalesOrder();
+  const deleteDraft = useDiscardDraftAction();
   const askConfirm = useConfirm();
   const submitDialog = useAmendmentSubmitDialog();
   const notify = useNotify();
@@ -644,6 +650,7 @@ export const SalesOrderDetail = () => {
     return out;
   }, [items, editingDrafts, addingDrafts]);
   const [overriding, setOverriding] = useState<SoItem | null>(null);
+  const [repricing, setRepricing] = useState<SoItem | null>(null);
   const [unlockOverride, setUnlockOverride] = useState(false), [afterDoTargetId, setAfterDoTargetId] = useState<string | null>(null), afterDoRef = useRef<AfterDoSave | null>(null); // DEV-32
   // PR-D — History panel toggle. Commander asked for the HOOKKA-style
   // floating right-side history drawer.
@@ -1054,15 +1061,20 @@ export const SalesOrderDetail = () => {
       /* Fall back to the item's own pristine draft when the seed is missing, so a
          line can never be recorded just because its snapshot went absent. */
       const orig = originalDraftsRef.current[it.id] ?? draftFromItem(it);
-      if (amendmentLineSig(draft) === amendmentLineSig(orig)) continue; // nothing amendable moved
+      /* A SEEDED 0 (an unpriced SKU re-pick, priceAuthored false) requests no
+         price: the line keeps its stored one, so the signature and the QTY/SPEC
+         test both read it as the stored price (HC-SO-013490, billed RM 0). */
+      const requestedUnitSen = amendmentRequestedUnitPriceSen(draft);
+      const effective = { ...draft, unitPriceSen: requestedUnitSen ?? orig.unitPriceSen };
+      if (amendmentLineSig(effective) === amendmentLineSig(orig)) continue; // nothing amendable moved
       /* QTY vs SPEC — compared against the same pristine draft the signature
          used, so both sides are canonicalised alike (an `it`-derived fallback
          would compare canonicalised drafts to a raw blob and mis-classify a
          POS-created sofa line as SPEC). */
       const qtyOnly =
         draft.itemCode === orig.itemCode
-        && JSON.stringify(draft.variants ?? null) === JSON.stringify(orig.variants ?? null)
-        && draft.unitPriceSen === orig.unitPriceSen
+        && amendmentVariantsKey(draft.variants) === amendmentVariantsKey(orig.variants)
+        && effective.unitPriceSen === orig.unitPriceSen
         && draft.qty !== orig.qty;
       out.push({
         salesOrderItemId: it.id,
@@ -1070,7 +1082,8 @@ export const SalesOrderDetail = () => {
         newItemCode: draft.itemCode || undefined,
         newVariants: draft.variants ?? undefined,
         newQty: draft.qty,
-        newUnitPriceSen: draft.unitPriceSen,
+        // Omitted (null on the row) when no price is requested: the apply keeps the stored price.
+        ...amendmentPriceFields(draft),
         /* mig 0280 — the line's remark rides the amendment. Sent ONLY when it
            actually moved: null/absent means "not requested", which is what stops
            the apply from rewriting a remark this session never touched. */
@@ -1492,9 +1505,9 @@ export const SalesOrderDetail = () => {
       uom:            d.uom,
       qty:            d.qty,
       unitPriceSen: d.unitPriceSen,
-      /* This line ALREADY EXISTS: its 0 is the price it carries, so re-sending
-         it must not silently re-price it (a qty-only edit sends the price too). */
-      ...zeroPriceClaim(d.unitPriceSen, true),
+      /* A persisted 0 or a typed 0 is claimed; the 0 a product re-pick seeds
+         (no sell price) is not, so the server keeps the stored price (BUG-63). */
+      ...zeroPriceClaim(d.unitPriceSen, d.priceAuthored === true),
       discountSen:  d.discountSen,
       unitCostSen:  d.unitCostSen,
       variants:       d.variants,
@@ -1596,6 +1609,7 @@ export const SalesOrderDetail = () => {
   const downstreamLocked = soDownstreamHardLocked(header), migratedLocked = soMigratedReadonly(header);
   const isLocked = migratedLocked || isSoLocked(header.status, downstreamLocked, unlockOverride); // migrated is OUTSIDE isSoLocked: Override must not reach it
   const afterDo = soAfterDoMode(header, { can, override: unlockOverride, migrated: migratedLocked }); // DEV-32: Logistics edits charges + customer details after the DO
+  const priceAfterDo = soPriceAfterDoOn(header, { can, migrated: migratedLocked }); // DEV-70: a delivered line's price, through its $ dialog
   /* The one thing a hard-locked SO still accepts: a new salesperson. Same
      permission the API enforces (mfg-sales-orders.ts PATCH), so the Edit button
      it re-enables can never open an order the server would refuse to save. */
@@ -1744,22 +1758,9 @@ export const SalesOrderDetail = () => {
      anything but a DRAFT. On success the SO is gone, so we leave the page for the
      SO list rather than render a detail for a deleted order. */
   const handleDiscardDraft = async () => {
-    if (!(await askConfirm({
-      title: `Discard draft ${header.doc_no}?`,
-      body: 'This permanently deletes this draft order and everything on it. It cannot be undone. (Confirmed orders are cancelled, not discarded.)',
-      confirmLabel: 'Discard draft', danger: true,
-    }))) return;
-    try {
-      await deleteDraft.mutateAsync({ docNo: header.doc_no });
-      notify({ title: 'Draft discarded' });
-      navigate('/scm/sales-orders');
-    } catch (e) {
-      notify({
-        title: 'Could not discard this draft',
-        body: `${e instanceof Error ? e.message : String(e)} Nothing was changed — please try again.`,
-        tone: 'error',
-      });
-    }
+    /* Confirm + words + refusal handling live in ./use-discard-draft-action,
+       shared with the read-only page, the list menu and the quick view. */
+    if (await deleteDraft.discard(header.doc_no)) navigate('/scm/sales-orders');
   };
   const deliverPrintPdf = (action: PdfAction) => {
     /* Followup #81 — Wait for the payments query before generating; legacy
@@ -1955,7 +1956,7 @@ export const SalesOrderDetail = () => {
                 dropdown. The heavy door stays for everything else. */}
             {!isEditing ? (
               <Button variant="primary"
-                onClick={enterEdit} disabled={migratedLocked || (isLocked && !canAttributeOther && !afterDo.on)}>
+                onClick={enterEdit} disabled={migratedLocked || (isLocked && !canAttributeOther && !afterDo.on && !priceAfterDo)}>
                 <Pencil {...ICON} />
                 <span>Edit</span>
               </Button>
@@ -2268,11 +2269,15 @@ export const SalesOrderDetail = () => {
                         locked SO goes through the amendment's line diff instead,
                         which carries newUnitPriceSen. Off, not render-then-deny. */}
                     {frozen && <span style={FROZEN_LINE_LABEL_STYLE}>{FROZEN_LINE_LABEL}</span>}
-                    <button type="button" className={styles.iconBtn} title="Override price"
-                      disabled={overrideLocked || frozen}
-                      onClick={() => !overrideLocked && !frozen && setOverriding(it)}>
-                      <DollarSign {...SM_ICON} />
-                    </button>
+                    {frozen && priceAfterDo
+                      ? <button type="button" className={styles.iconBtn} title="Change price after DO" onClick={() => setRepricing(it)}><DollarSign {...SM_ICON} /></button>
+                      : (
+                      <button type="button" className={styles.iconBtn} title="Override price"
+                        disabled={overrideLocked || frozen}
+                        onClick={() => !overrideLocked && !frozen && setOverriding(it)}>
+                        <DollarSign {...SM_ICON} />
+                      </button>
+                    )}
                   </div>
                   <SoLineCard
                     index={idx}
@@ -2637,6 +2642,7 @@ export const SalesOrderDetail = () => {
           onClose={() => setOverriding(null)}
         />
       )}
+      {repricing && <PriceAfterDoModal item={repricing} docNo={header.doc_no} currency={header.currency} onClose={() => setRepricing(null)} />}
 
       {/* Phase 1-C — Amendment before/after diff modal ("view changes"). */}
       {viewingAmendmentId && (
@@ -2822,6 +2828,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
      super_admin row), so mirror the API and gate on the flat permission key
      the PATCH enforces (mfg-sales-orders.ts). Owner + IT Admin pass via `*`. */
   const canRemoveProcessingDate = can('scm.so.remove_processing_date');
+  const canOverridePoProcessingDate = can('scm.so.override_po_processing_date');
 
   /* Task #118 — DB-backed dropdowns (was hardcoded). Falls back to the
      migration 0081 seed list when loading or when the DB has zero rows
@@ -3122,6 +3129,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   const processingLocked =
     originalProcessing !== '' && originalProcessing < today && !amendmentMode &&
     !canRemoveProcessingDate;
+  const processingPoLocked = originalProcessing !== '' && header.processing_date_po_locked === true && !canOverridePoProcessingDate;
 
   /* Owner 2026-07-05 — the SO PROCESS lock fires only once the SO has a
      Processing Date (which IS what being proceeded means) AND that day has
@@ -3444,14 +3452,19 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 fullWidth
                 className={styles.fieldInput}
                 value={form.processingDate}
-                disabled={scheduleDisabled || processingLocked}
-                title={processingLocked ? 'Processing date has passed — locked.' : undefined}
-                min={processingLocked ? undefined : today}
+                disabled={scheduleDisabled || processingLocked || processingPoLocked}
+                title={processingPoLocked
+                  ? 'This order already has a Purchase Order — only a Purchaser can change the Processing Date.'
+                  : processingLocked ? 'Processing date has passed — locked.' : undefined}
+                min={processingLocked || processingPoLocked ? undefined : today}
                 onChange={(iso) => set('processingDate', iso)}
                 style={datesXor && !form.processingDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
               />
               {/* Remove-Processing-Date gate: the direct clear is Super-Admin-only (2026-07-09); anyone else REQUESTS it for the Purchaser (2026-09-30). */}
-              <RequestProcessingDateRemoval docNo={header.doc_no} surface="desktop" hint={originalProcessing !== '' && !inputsDisabled && !processingLocked && !canRemoveProcessingDate && !amendmentMode} show={originalProcessing !== '' && !locked && !processingLocked && !canRemoveProcessingDate && !amendmentMode} />
+              <RequestProcessingDateRemoval docNo={header.doc_no} surface="desktop" hint={originalProcessing !== '' && !inputsDisabled && !processingLocked && !canRemoveProcessingDate && !amendmentMode} show={originalProcessing !== '' && !locked && !processingLocked && !processingPoLocked && !canRemoveProcessingDate && !amendmentMode} />
+              {processingPoLocked && !scheduleDisabled && (
+                <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>Has a Purchase Order — only a Purchaser can change this date.</span>
+              )}
             </label>
             <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Delivery Date</span>

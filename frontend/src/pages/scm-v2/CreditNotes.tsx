@@ -27,6 +27,7 @@ import { Button } from '@2990s/design-system';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { PageHeader } from '../../components/Layout';
 import { DataTable, type Column } from '../../components/DataTable';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { DateField } from '../../vendor/scm/components/DateField';
@@ -41,6 +42,7 @@ import {
 } from '../../vendor/scm/lib/credit-note-queries';
 import { FormKnockOff, NoteKnockOff, pickSen, pickTargets, type KnockOffPick } from './CreditNoteKnockOff';
 import { fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
@@ -139,7 +141,7 @@ export const CreditNotes = () => {
     if (picked.length === 0) return;
     setScanError(null);
     try {
-      const pages: PvFilePayload[] = await Promise.all(picked.map(async (f) => ({ name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) })));
+      const pages: PvFilePayload[] = await Promise.all(picked.map(async (f) => ({ name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) })));
       const r = await scan.mutateAsync(pages);
       setForm({ mode: 'new', values: fromScan(r), scan: r, files: picked });
     } catch (e) { setScanError(errText(e)); }
@@ -220,6 +222,7 @@ export const CreditNotes = () => {
         error={listQ.isError ? `The list did not load — ${errText(listQ.error)}` : null}
         emptyLabel="No note yet. New note raises one."
         getRowKey={(n) => n.id}
+        getRowClassName={(n) => cancelledRowClass(n.status)}
         onRowClick={(n) => setOpenId(n.id)}
         selection={{
           selectedIds: ticked,
@@ -251,7 +254,7 @@ export const CreditNotes = () => {
 };
 
 const NOTE_COLUMNS: Column<CreditNote>[] = [
-  { key: 'number', label: 'Number', render: (n) => <span style={{ fontFamily: 'var(--font-mono)' }}>{n.note_number}</span>, getValue: (n) => n.note_number },
+  { key: 'number', label: 'Number', render: (n) => <span className={cancelledDocNoClass(n.status)} style={{ fontFamily: 'var(--font-mono)' }}>{n.note_number}</span>, getValue: (n) => n.note_number },
   { key: 'kind', label: 'Kind', render: (n) => n.kind, getValue: (n) => n.kind },
   { key: 'date', label: 'Date', render: (n) => fmtDateOrDash(n.note_date), getValue: (n) => n.note_date, exportFormat: 'date' },
   { key: 'party', label: 'Party', render: (n) => n.party_name ?? n.party_code ?? '—', getValue: (n) => n.party_name ?? n.party_code ?? '' },
@@ -381,7 +384,7 @@ const NoteForm = ({ mode, id, initial, scan, scanFiles, onClose, onSaved }: { mo
         /* The scanned pages go with the note they became. */
         for (const f of scanFiles ?? []) {
           try {
-            await uploadFile.mutateAsync({ noteId, file: { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) } });
+            await uploadFile.mutateAsync({ noteId, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
           } catch (e) { setAttachError(`${f.name} did not attach — ${errText(e)}`); }
         }
       } else if (id) {

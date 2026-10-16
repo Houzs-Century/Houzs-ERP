@@ -121,14 +121,22 @@ export type PlanningOrder = {
   so_date: string | null;
   /* The customer's ORIGINAL delivery date — never overwritten (migration 0199). */
   customer_delivery_date: string | null;
+  /* The REAL AutoCount sales-exemption expiry (public.sales_orders.expiry_date,
+     keyed by linked_ac_docno), server-derived for SO rows; null off-book and on
+     synthetic (ASSR/DP/project) rows. Drives the board's "Sales Exemption Expiry
+     Date" column (owner 2026-10-15). */
+  ac_sales_exemption_expiry?: string | null;
   /* Amendment dates (migration 0199): the customer's requested NEW date and the
      date WE confirmed (the proposed/amended delivery date). effective = amended ??
      original, what Days Left / OVERDUE actually use. */
   amend_date_from_customer: string | null;
   amended_delivery_date: string | null;
-  /* HC "Amend Client Date Reason" (migration 0201) — free-text reason paired
-     with the amend dates above. */
+  /* HC "Amend Client Date Reason" (migration 0201) — OUR reason for moving the
+     date (the AMEND_REASONS presets, printed by the Postpone notice). */
   amend_reason: string | null;
+  /* The CUSTOMER's reason for asking to move it (the WhatsApp amend tap:
+     "Renovation Delay" / "Date Unavailable"). Read-only on the board. */
+  amend_reason_from_customer?: string | null;
   effective_delivery_date: string | null;
   processing_date: string | null;
   /* Owner 2026-08-12 (2990 only) — a live PO already claims one of this SO's
@@ -678,9 +686,19 @@ export type SendDeliveryMessagesResult = {
   failed: Array<{ phone: string; docNos: string[]; error: string }>;
   skipped: Array<{ docNo: string; reason: string }>;
 };
+/* Mirrors backend scm/lib/delivery-message-kinds.ts MESSAGE_KINDS. */
+export type SendMessageKind =
+  | 'delivery' | 'amend'
+  | 'reminder_1' | 'reminder_2' | 'reminder_3'
+  | 'driver_info' | 'delivery_completed' | 'balance_reminder' | 'postpone' | 'postage';
+export type SendDeliveryMessagesBody = {
+  docNos: string[];
+  kind?: SendMessageKind;
+  driverInfo?: { driverName: string; driverContact: string; driverIc: string; carPlate: string; deliveryTime: string };
+};
 export function useSendDeliveryMessages() {
   const qc = useQueryClient();
-  return useMutation<SendDeliveryMessagesResult, Error, { docNos: string[] }>({
+  return useMutation<SendDeliveryMessagesResult, Error, SendDeliveryMessagesBody>({
     mutationFn: (body) =>
       authedFetch<SendDeliveryMessagesResult>(`/delivery-messages/send`, {
         method: 'POST', body: JSON.stringify(body),
@@ -690,16 +708,26 @@ export function useSendDeliveryMessages() {
 }
 
 /* Latest send status per SO doc — drives the board's "Message" column. POST
-   (not GET) because a full board is ~600 doc numbers, far past URL limits. */
+   (not GET) because a full board is ~2,000 doc numbers, far past URL limits.
+   The endpoint takes at most STATUS_BATCH per call, so the list is split. */
 export type DeliveryMessageStatus = { success: boolean; http_code: number | null; created_at: string };
+export const STATUS_BATCH = 1000;
+export function batchDocNos(docNos: string[]): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < docNos.length; i += STATUS_BATCH) out.push(docNos.slice(i, i + STATUS_BATCH));
+  return out;
+}
 export function useDeliveryMessageStatuses(docNos: string[]) {
   return useQuery({
     queryKey: ['delivery-messages', 'statuses', docNos.join(',')],
     enabled: docNos.length > 0,
-    queryFn: () =>
-      authedFetch<{ statuses: Record<string, DeliveryMessageStatus> }>(`/delivery-messages/statuses`, {
-        method: 'POST', body: JSON.stringify({ docNos }),
-      }).then((r) => r.statuses),
+    queryFn: async () => {
+      const parts = await Promise.all(batchDocNos(docNos).map((batch) =>
+        authedFetch<{ statuses: Record<string, DeliveryMessageStatus> }>(`/delivery-messages/statuses`, {
+          method: 'POST', body: JSON.stringify({ docNos: batch }),
+        })));
+      return Object.assign({}, ...parts.map((r) => r.statuses)) as Record<string, DeliveryMessageStatus>;
+    },
     staleTime: 30_000,
   });
 }
@@ -843,7 +871,11 @@ export function useScheduleDelivery() {
         tone: 'error',
       });
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['delivery-planning'] });
+      void qc.invalidateQueries({ queryKey: ['fleet-day'] });
+      void qc.invalidateQueries({ queryKey: ['scm-trips'] });
+    },
   });
 }
 
@@ -876,6 +908,9 @@ export function useAssignDoCrew() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['delivery-planning'] });
       qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
+      // The run and its other DOs follow a DO crew edit (server side).
+      void qc.invalidateQueries({ queryKey: ['fleet-day'] });
+      void qc.invalidateQueries({ queryKey: ['scm-trips'] });
     },
   });
 }

@@ -207,7 +207,7 @@
 .hz-m .cal-bar-focus { background-color: color-mix(in srgb,var(--bar) 28%,white); outline: 2px solid var(--bar); outline-offset: 1px; box-shadow: inset 3px 0 0 var(--bar); animation: cal-bar-pulse 1.1s ease-in-out 2; }
 @keyframes cal-bar-pulse { 0%,100% { outline-color: var(--bar); } 50% { outline-color: transparent; } }
 .hz-m .wk { position: relative; border: 1px solid #d6d9d2; border-bottom: none; background-image: repeating-linear-gradient(to right,transparent 0,transparent calc(14.2857% - 1px),#eceee9 calc(14.2857% - 1px),#eceee9 14.2857%); padding-bottom: 6px; }
-.hz-m .wk .nums { display: grid; grid-template-columns: repeat(7,1fr); }
+.hz-m .wk .nums { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); }
 .hz-m .wk .nums div { font-size: 11px; font-weight: 700; color: #11140f; padding: 4px 0 0 6px; min-height: 18px; }
 /* Day numbers that carry events are tappable — a subtle teal disc hints they
    open the day-detail sheet (projects/tasks/holidays on that date). */
@@ -260,6 +260,11 @@
 .hz-m .fld-i::placeholder { color: #9aa093; }
 .hz-m .fld-i:focus { border-color: #16695f; box-shadow: 0 0 0 2px rgba(22,105,95,.15); }
 .hz-m .fld-i:disabled { background: #f4f6f3; color: #767b6e; }
+.hz-m .qty-step { display: flex; align-items: stretch; gap: 4px; }
+.hz-m .qty-step .fld-i { text-align: center; min-width: 0; }
+.hz-m .qty-step button { flex: none; width: 30px; border: 1px solid rgba(34,31,32,.14); border-radius: 9px; background: #f4f6f3; color: #0c3f39; font-size: 16px; font-weight: 700; line-height: 1; padding: 0; }
+.hz-m .qty-step button:active { background: #e3ebe7; }
+.hz-m .qty-step button:disabled { color: #b9bdb3; }
 /* An EMPTY <input type=date> collapses on iOS Safari — the shadow
    ::-webkit-date-and-time-value has no text to give it a box, so the control
    renders shorter and narrower than the text inputs beside it. Owner sighting

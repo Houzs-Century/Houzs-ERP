@@ -107,6 +107,7 @@ import { useFocusFromUrl } from "../hooks/useFocusFromUrl";
 import { useAuth } from "../auth/AuthContext";
 import { isSalesStaff } from "../auth/salesAccess";
 import { api, buildQuery } from "../api/client";
+import { downloadAllPagesCSV } from "../lib/csv";
 import { formatPhone } from "../vendor/shared/phone";
 import { uploadAssrAttachment } from "../lib/assrAttachmentUpload";
 import {
@@ -128,6 +129,7 @@ import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, a
 import { ASSR_ISSUE_CATEGORIES, ASSR_NOTE_AUDIENCES, assrNoteIsCustomerVisible, assrMergedPoText, type AssrNoteAudience } from "../vendor/scm/lib/assr/case-fields";
 import { AssrOrderPoLine } from "../components/AssrOrderPoLine";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
+import { ANOTHER_RETURN_HINT } from "../vendor/scm/lib/assr/returns";
 import type {
   Paginated,
   AssrCase,
@@ -502,17 +504,8 @@ function CasesView({
   const list = useQuery<Paginated<AssrCase>>("assr-list",
     (signal) =>
       api.get(
-        `/api/assr${buildQuery({
-          stage: stage === "ALL" ? undefined : stage,
-          search,
-          page,
-          per_page: perPage,
-          archived_only: showArchived ? 1 : undefined,
-          exclude_stage: excludeStageParam,
-          assigned_to: myCases && user?.id ? user.id : undefined,
-          creditor_code: creditorFilter || undefined,
-          ...sortParams,
-        })}`,
+        // Same filter as Board / Calendar and Export.
+        `/api/assr${buildQuery({ ...caseFilters, page, per_page: perPage, ...sortParams })}`,
         { signal },
       ),
     [stage, search, page, perPage, showArchived, excludeStageParam, myCases, user?.id, creditorFilter, sort?.key, sort?.dir],
@@ -1152,6 +1145,11 @@ function CasesView({
         udfTable="assr"
         udfTableLabel="Service Cases"
         exportName="service-cases"
+        onExport={(cols) =>
+          void downloadAllPagesCSV("service-cases", cols, (pg, per) =>
+            api.get<Paginated<AssrCase>>(`/api/assr${buildQuery({ ...caseFilters, page: pg, per_page: per, ...sortParams })}`),
+          ).catch((e) => toast.error(`Export failed: ${e?.message || e}`))
+        }
         search={{
           value: search,
           onChange: (v) => { setPage(1); setSearch(v); },
@@ -3873,19 +3871,24 @@ function DetailContent({
                       onSaved={() => detail.reload()}
                       toast={toast}
                     />
-                    <ItemRemarkInput
-                      caseId={id}
-                      item={item}
-                      field="supplier_remark"
-                      label="Supplier"
-                      placeholder="Supplier remark — prints on the supplier copy"
-                      disabled={c.stage === "completed" || !!c.archived_at}
-                      onSaved={() => detail.reload()}
-                      toast={toast}
-                    />
+                    {supplierReturns.length === 0 && (
+                      <ItemRemarkInput
+                        caseId={id}
+                        item={item}
+                        field="supplier_remark"
+                        label="Supplier"
+                        placeholder="Supplier remark — prints on the supplier copy"
+                        disabled={c.stage === "completed" || !!c.archived_at}
+                        onSaved={() => detail.reload()}
+                        toast={toast}
+                      />
+                    )}
                   </div>
                 ))}
               </div>
+            )}
+            {supplierReturns.length > 0 && items.length > 0 && !c.archived_at && (
+              <div className="mt-1.5 text-[10.5px] leading-snug text-ink-muted">{ANOTHER_RETURN_HINT}</div>
             )}
             {c.stage !== "completed" && !showAddItem && (
               <button

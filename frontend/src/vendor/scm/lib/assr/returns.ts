@@ -60,6 +60,14 @@ export function roundLabel(roundNo: number): string {
   return `Return to Supplier #${roundNo}`;
 }
 
+/** BUG-92 (Farra 2026-10-08/09): once a case has a return, the supplier paper
+ *  prints the return's Reason as the item remark, so the per-item Supplier
+ *  remark box is hidden and the Reason is the one field to type in. Editing a
+ *  remark and reprinting keeps the old Return No., so a second service has to
+ *  be a new return to get its own number. */
+export const ANOTHER_RETURN_HINT =
+  "The supplier copy prints this return's Reason as the remark. Sending it to the supplier again? Use + Add Supplier Return and type the new Reason there; it gets a new Return No.";
+
 /** The trip's printable Supplier Return Note (supplier copy, this trip only). */
 export function returnNotePath(caseId: number, roundId: number): string {
   return `/api/assr-print/${caseId}?variant=supplier&round=${roundId}`;

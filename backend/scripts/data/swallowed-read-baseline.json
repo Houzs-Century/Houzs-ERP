@@ -198,7 +198,7 @@
       "catches": 0
     },
     "backend/src/scm/lib/so-stock-allocation.ts": {
-      "reads": 2,
+      "reads": 1,
       "catches": 0
     },
     "backend/src/scm/lib/so-warehouse.ts": {
@@ -262,7 +262,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/document-flow.ts": {
-      "reads": 56,
+      "reads": 47,
       "catches": 0
     },
     "backend/src/scm/routes/dp-orders.ts": {
@@ -282,7 +282,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/grns.ts": {
-      "reads": 49,
+      "reads": 44,
       "catches": 0
     },
     "backend/src/scm/routes/helpers.ts": {
@@ -398,7 +398,7 @@
       "catches": 1
     },
     "backend/src/scm/routes/so-amendments.ts": {
-      "reads": 9,
+      "reads": 8,
       "catches": 0
     },
     "backend/src/scm/routes/so-dropdown-options.ts": {
@@ -410,7 +410,7 @@
       "catches": 3
     },
     "backend/src/scm/routes/stock-takes.ts": {
-      "reads": 8,
+      "reads": 6,
       "catches": 0
     },
     "backend/src/scm/routes/stock-transfers.ts": {

@@ -162,6 +162,20 @@ describe('the export read follows the list filters', () => {
     expect(allLines(desc.body).map((l) => l.supplier_sku)).toEqual(['B-1', 'B-2', 'A-1']);
   });
 
+  it('drops fully received lines on the Outstanding tab only (DEV-66)', async () => {
+    const partial = po({ status: 'PARTIALLY_RECEIVED' });
+    const done = line(partial, { supplier_sku: 'DONE', qty: 1, received_qty: 1 });
+    const open = line(partial, { line_no: 2, supplier_sku: 'OPEN', qty: 2, received_qty: 1 });
+    const tables = { pos: [partial], lines: [done, open] };
+
+    const outstanding = (await get(harness(tables), '?status=outstanding')).body;
+    expect(allLines(outstanding).map((l) => l.supplier_sku)).toEqual(['OPEN']);
+    expect(outstanding.lineCount).toBe(1);
+
+    const partialTab = (await get(harness(tables), '?status=partial')).body;
+    expect(allLines(partialTab).map((l) => l.supplier_sku)).toEqual(['DONE', 'OPEN']);
+  });
+
   it('keeps a purchase order with no lines, with an empty line list', async () => {
     const empty = po();
     const { body } = await get(harness({ pos: [empty], lines: [] }));

@@ -41,11 +41,34 @@
 // was marked changed (pushVenturePortalCatalogueOnChange) — the marks are
 // statement triggers, so a Modular save, a new SKU on the Products page and a
 // one-shot SKU minted by a sales-order save all count, whichever route did it.
+//
+// SO DOES SALES ATTENDING (2026-10-12), after the catalogue: the portal scores
+// each salesperson at the booth the PMS lists them at. Those edits are made
+// under /api/projects/*, so the kick is mounted there too (backend/src/index.ts)
+// — a write there also lets a project's re-queued orders leave at once.
 // ----------------------------------------------------------------------------
 import type { Context, Next } from 'hono';
 import type { Env } from '../env';
 import { kickVenturePortalDrain } from './venture-portal-outbox';
 import { pushVenturePortalCatalogueOnChange } from './venture-portal-catalogue';
+import { pushVenturePortalAttendanceOnChange } from './venture-portal-attendance';
+
+/**
+ * What runs after the order drain, in order: the catalogue, then Sales
+ * Attending. Each in its own catch, so one failing never stops the other.
+ */
+export async function venturePortalAfterDrain(env: Env): Promise<void> {
+  for (const [tag, step] of [
+    ['catalogue', pushVenturePortalCatalogueOnChange],
+    ['attendance', pushVenturePortalAttendanceOnChange],
+  ] as const) {
+    try {
+      await step(env);
+    } catch (e) {
+      console.error(`[vp-kick] the ${tag} step failed`, String((e as Error | undefined)?.message ?? e));
+    }
+  }
+}
 
 /**
  * Hono middleware — mount once, ahead of the SCM sub-routers.
@@ -84,7 +107,7 @@ export function venturePortalKick() {
         ctx = null;
       }
 
-      kickVenturePortalDrain(c.env, ctx, (env) => pushVenturePortalCatalogueOnChange(env));
+      kickVenturePortalDrain(c.env, ctx, venturePortalAfterDrain);
     } catch (e) {
       console.error('[vp-kick] middleware', String((e as Error | undefined)?.message ?? e));
     }

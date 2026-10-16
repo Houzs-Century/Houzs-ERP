@@ -87,8 +87,12 @@ export function useCreatePurchaseConsignmentOrder() {
       notes?: string;
       items?: NewPoItem[];
       purchaseLocationId?: string | null;
+      /** The product request this order is raised from (owner 2026-10-06); the
+          server refuses one not APPROVED or without a SKU, and marks it
+          PCO_ISSUED once the order stands (requestClaimed on the answer). */
+      productRequestId?: string;
     }) =>
-      authedFetch<{ id: string; poNumber: string }>(`/purchase-consignment-orders`,
+      authedFetch<{ id: string; pcNumber: string; poNumber?: string; productRequestId?: string; requestClaimed?: boolean | null }>(`/purchase-consignment-orders`,
         idempotentInit(idempotencyKey, {
           method: 'POST',
           body: JSON.stringify(body),
@@ -162,15 +166,21 @@ export function useDeletePurchaseConsignmentOrderItem() {
    DELETE /purchase-consignment-orders/:id. Both the hook and the endpoint are
    gone (owner rule 2026-08-11: 不可以删只可以 cancel). CANCELLED is terminal
    and the record stays. */
+export interface cancelPurchaseConsignmentOrderParameters {
+  id: string,
+  reason: string
+}
+
+
 export function useCancelPurchaseConsignmentOrder() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) =>
-      authedFetch<{ purchaseOrder: { id: string; status: PoStatus; cancelled_at: string } }>(
+    mutationFn: ({id, reason}: cancelPurchaseConsignmentOrderParameters) =>
+      authedFetch<{ purchaseOrder: { id: string; status: PoStatus; cancelled_at: string; cancel_reason: string } }>(
         `/purchase-consignment-orders/${id}/cancel`,
-        { method: 'PATCH' },
+        { method: 'PATCH', body: JSON.stringify({ cancel_reason: reason })}
       ),
-    onSuccess: (_, id) => {
+    onSuccess: (_, {id}) => {
       qc.invalidateQueries({ queryKey: ['pc-order'] });
       qc.invalidateQueries({ queryKey: ['pc-order-detail', id] });
     },

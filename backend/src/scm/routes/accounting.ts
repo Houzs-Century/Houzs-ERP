@@ -28,7 +28,7 @@ import { safeRate, toMyrSen } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { postJournal, reverseJournal } from '../../acc/engine';
-import { backfillSoPayments, paymentEntryDisagreements, unbookedPayments } from '../../acc/payments';
+import { CONVERT_SOURCE, backfillSoPayments, paymentEntryDisagreements, unbookedPayments } from '../../acc/payments';
 import { computeDailyBank, type PendingVoucherRow } from '../../acc/daily-bank';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
@@ -48,12 +48,14 @@ import {
   bankSetup, bankUpload, bankStatements, bankStatementDetail,
   bankRulesList, bankRuleCreate, bankRuleUpdate,
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo, bankLinesMatchGroup, bankStatementPeriod, bankStatementAutoMatch,
+  bankStatementRepeats,
 } from './accounting-bank';
 import { bankMonths, bankMonthDetail, bankMonthClosing } from './accounting-bank-months';
 import { bankLocks, bankMonthLock, bankMonthUnlock } from './accounting-bank-locks';
 import { paymentCorrections } from './accounting-payment-corrections';
 import { unmatchedPaymentsHandler } from './accounting-unmatched-payments';
 import { arAgingHandler, apAgingHandler } from './accounting-aging';
+import { productProfitHandler } from './accounting-product-profit';
 import { bankConfigList, bankConfigSave } from './accounting-bank-config';
 import { payoutUpload, payoutList, payoutCharge, payoutChargeUndo, chargeAccountsHandler } from './accounting-payouts';
 import {
@@ -186,6 +188,10 @@ accounting.delete('/reports/layout', reportLayoutReset);
    expense in place of one ledger account, the rest as booked (owner
    2026-09-12; docs/bugs/0835). Handlers in accounting-performance.ts. */
 accounting.get('/reports/performance', performanceReport);
+/* The monthly product profit ranking (owner 2026-10-05): every product the
+   month sold, by model, with its own cost and its share of the gifts.
+   accounting-product-profit.ts; acc/product-profit.ts. */
+accounting.get('/product-profit', productProfitHandler);
 /* The Forecast P&L (owner 2026-09-21): a planning grid beside the statements; nothing posts. */
 accounting.get('/forecast', forecastGetHandler);
 accounting.put('/forecast', forecastPutHandler);
@@ -227,6 +233,8 @@ accounting.get('/bank/statements/:id', bankStatementDetail);
 accounting.post('/bank/statements/:id/period', bankStatementPeriod);
 /* The obvious matches, run over a statement uploaded before the rule (docs/bugs/0814). */
 accounting.post('/bank/statements/:id/auto-match', bankStatementAutoMatch);
+/* What an earlier file of the account already recorded, left out (owner 2026-10-14). */
+accounting.post('/bank/statements/:id/repeats', bankStatementRepeats);
 /* The same reconciliation asked of a MONTH rather than a file — registered
    BEFORE nothing and after the file doors deliberately: `/bank/months` cannot
    collide with `/bank/statements/:id`, and keeping the two families apart is
@@ -1247,13 +1255,16 @@ export const controlCheckHandler = async (c: any) => {
     /* What LEGITIMATELY moves each control account: the document that books it
        plus everything that settles it. AR moves on invoices AND on customer
        payments (SOPAY/SIPAY, phase 2A), on the deposit invoice a payment
-       raises (DI, Dr AR), on the credit note a refund raises against it (CN)
-       and on the Customer Refund voucher itself (PV, Dr AR); AP moves on
-       purchase invoices AND on the payment vouchers that settle them.
-       Anything else on the account is the finding. */
+       raises (DI, Dr AR), on the credit note a refund raises against it (CN),
+       on the Customer Refund voucher itself (PV, Dr AR) and on a CONVERSION
+       (SOCONV — acc/payments.ts CONVERT_SOURCE: a customer's money moved from
+       one order to another, Dr and Cr AR for the same party, netting to nil;
+       owner 2026-10-06 saw its two lines as findings); AP moves on purchase
+       invoices AND on the payment vouchers that settle them. Anything else on
+       the account is the finding. */
     const family = role === 'AR'
       ? new Set(['SI', 'SI_REVERSAL', 'SOPAY', 'SOPAY_REVERSAL', 'SIPAY', 'SIPAY_REVERSAL',
-        'DI', 'DI_REVERSAL', 'CN', 'CN_REVERSAL', 'PV', 'PV_REVERSAL'])
+        'DI', 'DI_REVERSAL', 'CN', 'CN_REVERSAL', 'PV', 'PV_REVERSAL', CONVERT_SOURCE, `${CONVERT_SOURCE}_REVERSAL`])
       : role === 'AR_OTHER'
         ? new Set(['ODB', 'ODB_REVERSAL', 'ODR', 'ODR_REVERSAL'])
         /* API = the AP invoice (docs/bugs/0654): it credits 400 or 405 by the

@@ -5,13 +5,16 @@
    other debtor 就好, 开 other debtor 的 bill 就直接在 ar invoice 页面) — the
    debtor picked first, then the bill form; a bill opens in a pop-out over the
    list with Print / Edit / Copy / Cancel; the party filter narrows and Print
-   listing prints what is shown; `?debtor=` opens on one debtor. The server
+   listing prints what is shown; `?debtor=` opens on one debtor. Since
+   2026-10-06 (owner: ar invoice 点不开、没有办法 print) a click anywhere on a
+   row opens it — a sales invoice as the page it prints, with Print, Save PDF
+   and its full page — and ticked rows print as ONE document. The server
    half is backend/tests/arInvoices.test.ts (+ otherDebtors.test.ts for the
    bill's writes). */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, test, vi } from 'vitest';
+import { beforeAll, describe, expect, test, vi } from 'vitest';
 
 const createBillAsync = vi.fn(async (_b: unknown) => ({ ok: true, bill: { billNumber: 'HC-ODB-2609-002', totalSen: 45000 } }));
 const updateBillAsync = vi.fn(async (_b: unknown) => ({ ok: true, bill: { id: 'b1', billNumber: 'HC-ODB-2609-001', totalSen: 65000 }, reposted: true, jeNo: 'HC-JE-2609-031' }));
@@ -45,6 +48,32 @@ vi.mock('../../vendor/scm/lib/ar-invoice-listing-pdf', () => ({
   generateArListingPdf: (rows: unknown, filter: unknown) => listingAsync(rows, filter),
 }));
 vi.mock('../../vendor/scm/lib/debtor-bill-pdf', () => ({ generateDebtorBillPdf: (d: unknown, o: unknown) => pdfMock(d, o) }));
+/* A sales invoice opened over the list: its detail, the page it prints, Print / Save PDF. */
+const SI_DETAIL = {
+  salesInvoice: { id: 'si-1', invoice_number: 'HC-SI-2609-001', debtor_name: 'TAN AH KOW', status: 'SENT', total_sen: 440000 },
+  items: [{ item_code: 'BED-1', description: 'Bedroom set', qty: 1, unit_price_sen: 440000, line_total_sen: 440000 }],
+};
+vi.mock('../../vendor/scm/lib/sales-invoice-queries', () => ({
+  useSalesInvoiceDetail: (id: string | null) => ({ data: id === 'si-1' ? SI_DETAIL : undefined, isLoading: false, isError: false, error: null }),
+}));
+const siPdf = vi.fn(async (_h: unknown, _i: unknown, _o: unknown) => {});
+const siBlob = vi.fn(async (_h: unknown, _i: unknown) => new Blob(['%PDF-1.4'], { type: 'application/pdf' }));
+vi.mock('../../vendor/scm/lib/sales-invoice-pdf', () => ({
+  generateSalesInvoicePdf: (h: unknown, i: unknown, o: unknown) => siPdf(h, i, o),
+  salesInvoicePdfBlob: (h: unknown, i: unknown) => siBlob(h, i),
+}));
+/* Ticked rows: one document, delivered through the shared exit. */
+const arBlob = vi.fn(async (_rows: unknown, _names: unknown) => new Blob(['%PDF-1.4'], { type: 'application/pdf' }));
+vi.mock('../../vendor/scm/lib/ar-invoice-print', () => ({ arInvoicesPdfBlob: (rows: unknown, names: unknown) => arBlob(rows, names) }));
+const deliverBlob = vi.fn();
+vi.mock('../../vendor/scm/lib/pdf-common', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/pdf-common')>()),
+  deliverPdfBlob: (...args: unknown[]) => deliverBlob(...args),
+}));
+beforeAll(() => {
+  /* jsdom has no object URLs; the pop-out's page is a blob in an iframe. */
+  Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:si-1'), revokeObjectURL: vi.fn() });
+});
 vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   /* The real pure helpers stay (postableAccounts — docs/bugs/0693); only the hooks are stubbed. */
   ...(await importOriginal<typeof import('../../vendor/scm/lib/accounting-queries')>()),
@@ -91,11 +120,12 @@ const setAmount = (scope: HTMLElement, label: string, rm: string) => {
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 describe('both kinds on one list', () => {
-  test('a sales invoice mirrors with a link to its own page and the SI list\'s outstanding; a bill shows its debtor', () => {
+  test('a sales invoice mirrors with its number as a link-styled button and the SI list\'s outstanding; a bill shows its debtor', () => {
     draw();
     expect(screen.getByText('Sales Invoice')).toBeTruthy();
     expect(screen.getAllByText('Debtor Bill')).toHaveLength(2);
-    expect(screen.getByText('HC-SI-2609-001').closest('a')!.getAttribute('href')).toBe('/scm/sales-invoices/si-1');
+    /* The number reads as the link it is — it no longer looks like plain text. */
+    expect(screen.getByText('HC-SI-2609-001').tagName).toBe('BUTTON');
     const siRow = screen.getByText('HC-SI-2609-001').closest('tr')!;
     expect(siRow.textContent).toContain('TAN AH KOW');
     expect(siRow.textContent).toContain('300-C001');
@@ -129,6 +159,44 @@ describe('both kinds on one list', () => {
     expect(screen.getByText('HC-ODB-2608-003')).toBeTruthy();
     expect(screen.queryByText('HC-ODB-2609-001')).toBeNull();
     expect(screen.queryByText('HC-SI-2609-001')).toBeNull();
+  });
+});
+
+/* 点不开、没有办法 print (owner 2026-10-06). */
+describe('every row opens, and prints', () => {
+  test('a click anywhere on a sales invoice row opens it over the list as the page it prints — Print, Save PDF, and its full page', async () => {
+    siPdf.mockClear(); siBlob.mockClear();
+    draw();
+    fireEvent.click(within(screen.getByText('HC-SI-2609-001').closest('tr')!).getByText('Bedroom set'));
+    const d = screen.getByRole('dialog', { name: 'Sales invoice HC-SI-2609-001' });
+    await waitFor(() => expect(within(d).getByTitle('Sales invoice HC-SI-2609-001 as printed').getAttribute('src')).toBe('blob:si-1'));
+    expect(siBlob.mock.calls[0]).toEqual([SI_DETAIL.salesInvoice, SI_DETAIL.items]);
+    fireEvent.click(within(d).getByText('Print'));
+    await waitFor(() => expect(siPdf).toHaveBeenCalledWith(SI_DETAIL.salesInvoice, SI_DETAIL.items, { action: 'print' }));
+    fireEvent.click(within(d).getByText('Save PDF'));
+    await waitFor(() => expect(siPdf).toHaveBeenCalledWith(SI_DETAIL.salesInvoice, SI_DETAIL.items, { action: 'save' }));
+    expect(within(d).getByText('Open full page').closest('a')!.getAttribute('href')).toBe('/scm/sales-invoices/si-1');
+  });
+
+  test("a click on a debtor bill's row — not only its number — opens its pop-out", () => {
+    draw();
+    fireEvent.click(within(screen.getByText('HC-ODB-2609-001').closest('tr')!).getByText('转租九月'));
+    expect(within(dialog()).getByText('转租')).toBeTruthy();
+  });
+
+  test('ticked rows print as ONE document in the order the table shows them', async () => {
+    arBlob.mockClear(); deliverBlob.mockClear();
+    draw();
+    fireEvent.click(screen.getByLabelText('Tick HC-SI-2609-001'));
+    fireEvent.click(screen.getByLabelText('Tick HC-ODB-2609-001'));
+    expect(screen.getByText('2 ticked')).toBeTruthy();
+    fireEvent.click(screen.getByText('Print 2'));
+    await waitFor(() => expect(deliverBlob).toHaveBeenCalled());
+    const [rows, names] = arBlob.mock.calls[0]!;
+    expect((rows as Array<{ invoiceNumber: string }>).map((r) => r.invoiceNumber)).toEqual(['HC-ODB-2609-001', 'HC-SI-2609-001']);
+    expect((names as (c: string) => string | null)('700-0000')).toBe('Other Income');
+    expect(deliverBlob.mock.calls[0]![1]).toMatch(/^ar-invoices-\d{4}-\d{2}-\d{2}\.pdf$/);
+    expect(deliverBlob.mock.calls[0]![2]).toBe('print');
   });
 });
 

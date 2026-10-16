@@ -15,10 +15,11 @@ import { X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import type { Account } from '../../vendor/scm/lib/accounting-queries';
-import {
-  useExtractBills, fileToBase64, PV_FILE_ACCEPT, type BillExtraction, type ExtractedBill, type VendorMemory, type PvFilePayload,
-} from '../../vendor/scm/lib/payment-voucher-queries';
+import { useExtractBills, fileToBase64, PV_FILE_ACCEPT, type BillExtraction, type ExtractedBill, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
+import { BillMatchesNote } from '../../vendor/scm/components/RequestBill';
+import { useBillMatches } from '../../vendor/scm/lib/payment-request-queries';
 import { SupplierFinanceReminder } from '../../vendor/scm/components/SupplierFinanceReminder';
 import { EventSelect } from '../../vendor/scm/components/EventSelect';
 import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
@@ -35,7 +36,7 @@ import styles from './SalesOrderDetail.module.css';
 /** projectId: the event the line's money is for (owner 2026-09-30, 5a) — null = none. */
 export type ApFormLine = { rid: number; description: string; debitAccountCode: string; amountSen: number; projectId: number | null };
 /** officialDocOwed: booked on a proforma or quotation — the official invoice is still owed (欠正式单, item 3). */
-export type ApFormValues = { supplierId: string; supplierRef: string; invoiceDate: string; dueDate: string; description: string; lines: ApFormLine[]; officialDocOwed?: boolean };
+export type ApFormValues = { supplierId: string; supplierRef: string; invoiceDate: string; dueDate: string; description: string; lines: ApFormLine[]; officialDocOwed?: boolean; officialDocNote?: string };
 export type ApFormMode = 'new' | 'edit' | 'copy';
 /** What the routes take — POST / for new and copy, PATCH /:id for edit. */
 export type ApFormSubmit = {
@@ -45,6 +46,8 @@ export type ApFormSubmit = {
   paymentRequestId?: string;
   /** 欠正式单 (item 3): sent only when ticked. */
   officialDocOwed?: boolean;
+  /** Finance's remark on what to follow up (owner 2026-10-08) — with the tick only. */
+  officialDocNote?: string;
 };
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
@@ -57,7 +60,7 @@ export const toSubmit = (v: ApFormValues): ApFormSubmit => ({
   invoiceDate: v.invoiceDate,
   dueDate: v.dueDate || null,
   ...(v.description.trim() ? { notes: v.description.trim() } : {}),
-  ...(v.officialDocOwed ? { officialDocOwed: true } : {}),
+  ...(v.officialDocOwed ? { officialDocOwed: true, ...(v.officialDocNote?.trim() ? { officialDocNote: v.officialDocNote.trim() } : {}) } : {}),
   lines: v.lines
     .filter((l) => l.debitAccountCode && l.amountSen > 0)
     .map((l) => ({
@@ -151,10 +154,14 @@ const iconBtn: React.CSSProperties = { border: 'none', background: 'none', curso
 
 export const ApInvoiceForm = ({
   mode, initial, suppliers, suppliersLoading = false, lineAccounts, posted = false, paidSen = 0, saving, onSubmit, onCancel,
-  initialFiles, initialNote, initialEventSuggestions,
+  initialFiles, initialNote, initialEventSuggestions, selfId = null, requestId = null,
 }: {
   mode: ApFormMode;
   initial: ApFormValues;
+  /** The bill being edited, and the 申请付款 it answers — never their own
+      "same bill" (owner 2026-10-05: 提醒也加 — a warning, never a block). */
+  selfId?: string | null;
+  requestId?: string | null;
   suppliers: Array<{ id: string; code: string; name: string }>;
   suppliersLoading?: boolean;
   lineAccounts: Account[];
@@ -207,6 +214,10 @@ export const ApInvoiceForm = ({
     if (next) setLandOn(next.rid); else addLine(true);
   };
 
+  /* The same bill — its printed number AND date — already asked for, vouchered
+     or entered (lib/bill-matches.ts). Said under the bill's own fields. */
+  const sameBill = useBillMatches(v.supplierRef, v.invoiceDate, requestId, selfId);
+
   const total = v.lines.reduce((s, l) => s + (l.amountSen > 0 ? l.amountSen : 0), 0);
   const belowPaid = posted && total < paidSen;
   const supplierLocked = posted && paidSen > 0;
@@ -233,7 +244,7 @@ export const ApInvoiceForm = ({
     if (!list || list.length === 0) return;
     setScanNote('Reading the bill…');
     try {
-      const files = await Promise.all([...list].map(async (f) => ({ name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) })));
+      const files = await Promise.all([...list].map(async (f) => ({ name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) })));
       const res = await extract.mutateAsync([{ files }]);
       const bill = res.bills.at(0);
       if (!bill) { setScanNote('The bill could not be read.'); return; }
@@ -309,6 +320,13 @@ export const ApInvoiceForm = ({
             Proforma / quotation — official invoice owed · 欠正式单
           </label>
         )}
+        {mode !== 'edit' && v.officialDocOwed && (
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Remark — what to follow up (optional)</span>
+            <input className={styles.fieldInput} value={v.officialDocNote ?? ''} onChange={(e) => set({ officialDocNote: e.target.value })} maxLength={500}
+              aria-label="Official invoice remark" placeholder="e.g. Proforma only — ask for the tax invoice" />
+          </label>
+        )}
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Invoice date *</span>
           <DateField fullWidth className={styles.fieldInput} value={v.invoiceDate} onChange={(iso) => set({ invoiceDate: iso })} aria-label="AP invoice date" />
@@ -318,6 +336,7 @@ export const ApInvoiceForm = ({
           <DateField fullWidth className={styles.fieldInput} value={v.dueDate} onChange={(iso) => set({ dueDate: iso })} aria-label="AP invoice due date" />
         </label>
       </div>
+      <BillMatchesNote matches={sameBill.data?.matches} />
       <label className={styles.field}>
         <span className={styles.fieldLabel}>Description</span>
         <input className={styles.fieldInput} value={v.description} onChange={(e) => set({ description: e.target.value })} aria-label="AP invoice description"

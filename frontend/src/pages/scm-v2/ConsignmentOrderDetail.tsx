@@ -341,8 +341,8 @@ export const ConsignmentOrderDetail = () => {
       let changed = false;
       const out: Record<string, SoLineDraft> = {};
       for (const [id, d] of Object.entries(prev)) {
-        if (!d.lineDeliveryDateOverridden && d.lineDeliveryDate !== next) {
-          out[id] = { ...d, lineDeliveryDate: next };
+        if (d.lineDeliveryDateOverridden || d.lineDeliveryDate !== next) {
+          out[id] = { ...d, lineDeliveryDate: next, lineDeliveryDateOverridden: false };
           changed = true;
         } else {
           out[id] = d;
@@ -351,8 +351,8 @@ export const ConsignmentOrderDetail = () => {
       return changed ? out : prev;
     });
     setAddingDraft((prev) =>
-      prev && !prev.lineDeliveryDateOverridden && prev.lineDeliveryDate !== next
-        ? { ...prev, lineDeliveryDate: next }
+      prev && (prev.lineDeliveryDateOverridden || prev.lineDeliveryDate !== next)
+        ? { ...prev, lineDeliveryDate: next, lineDeliveryDateOverridden: false }
         : prev,
     );
   }, []);
@@ -489,10 +489,8 @@ export const ConsignmentOrderDetail = () => {
     // The raw detail response carries the category-total fields the SO PDF
     // needs (the typed subset above omits them). Consignment has no payments.
     return import('../../vendor/scm/lib/sales-order-pdf')
-      .then(({ generateSalesOrderPdf }) =>
-        generateSalesOrderPdf(header as never, items as never, [], action, [], {
-          docTitle: 'CONSIGNMENT ORDER', docNoLabel: 'CO No', docNoun: 'consignment order',
-        }))
+      .then(({ generateSalesOrderPdf, CONSIGNMENT_ORDER_PDF_OPTS }) =>
+        generateSalesOrderPdf(header as never, items as never, [], action, [], CONSIGNMENT_ORDER_PDF_OPTS))
       .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
   };
   const print = usePrintPreview(deliverPrintPdf);

@@ -111,6 +111,11 @@ export interface DeliveryFacts {
    * used unchanged — the single-drop case is unaffected.
    */
   destinationZones?: readonly (string | null | undefined)[] | null;
+  /** The delivery address(es), free text. An OUTSTATION rule may name a TOWN
+   *  instead of a postcode zone (3PL quotes price by town: "Rawang RM22.50",
+   *  "Seremban RM40"); it applies when that town appears as a word here. Two
+   *  towns in one Klang Valley postcode zone could not be told apart otherwise. */
+  addressText?: string | null;
   disposeCount?: number | null;
   setupCount?: number | null;
   dismantleCount?: number | null;
@@ -216,11 +221,14 @@ export function chargingUnitLabel(card: Pick<RateCardSpec, 'basis' | 'aggregatio
 export function farthestZone(
   rules: readonly RateRuleSpec[],
   ruleType: 'OUTSTATION' | 'OUTSTATION_TRIP',
-  facts: Pick<DeliveryFacts, 'destinationZone' | 'destinationZones'>,
+  facts: Pick<DeliveryFacts, 'destinationZone' | 'destinationZones' | 'addressText'>,
 ): string | null {
-  const candidates = (facts.destinationZones && facts.destinationZones.length > 0)
-    ? facts.destinationZones
-    : [facts.destinationZone];
+  const candidates = [
+    ...((facts.destinationZones && facts.destinationZones.length > 0)
+      ? facts.destinationZones
+      : [facts.destinationZone]),
+    ...townsInAddress(rules, ruleType, facts.addressText),
+  ];
 
   let best: { zone: string; amount: number } | null = null;
   for (const raw of candidates) {
@@ -233,6 +241,26 @@ export function farthestZone(
     if (!best || amount > best.amount) best = { zone: z, amount };
   }
   return best ? best.zone : null;
+}
+
+/** Rule zones (towns) that appear as a whole word in the address. A postcode
+ *  zone name that happens to appear (MELAKA in "Jalan Melaka") just adds a
+ *  candidate that farthestZone already weighs — the highest charge still wins. */
+// ponytail: plain word match on the address text; a town column on the SO if spellings drift ("Sri Petaling" vs "Seri Petaling").
+export function townsInAddress(
+  rules: readonly RateRuleSpec[],
+  ruleType: 'OUTSTATION' | 'OUTSTATION_TRIP',
+  addressText: string | null | undefined,
+): string[] {
+  const text = ` ${String(addressText ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ')} `;
+  if (!text.trim()) return [];
+  return rules
+    .filter((r) => r.ruleType === ruleType && r.zone)
+    .map((r) => String(r.zone).toUpperCase())
+    .filter((zone) => {
+      const town = zone.replace(/[^A-Z0-9]+/g, ' ').trim();
+      return town && text.includes(` ${town} `);
+    });
 }
 
 /** How the caller is pricing: one DROP, or a whole TRIP. */

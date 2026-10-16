@@ -25,6 +25,7 @@ import { Save, Trash2, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, usePvReservations, NO_RESERVATIONS, useExtractBills, useUploadPvFile, useRefundSource, useExtractRequestBill, fileToBase64, type BillExtraction, type ExtractedBill, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useAccounts, useAccountRoles, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
@@ -52,6 +53,7 @@ import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { fmtDate } from '../../vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { BackToPile } from '../../vendor/scm/components/BackToPile';
 import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
 
 import { fmtMoneySen, fmtSen } from '../../vendor/shared/format';
@@ -157,6 +159,7 @@ export const PaymentVoucherNew = () => {
   }, [rolesQ.data, moneyAccounts]);
   const [voucherDate, setVoucherDate]             = useState<string>(() => todayMyt());
   const [notes, setNotes]                         = useState<string>('');
+  const [bankChargeSen, setBankChargeSen]         = useState<number>(0);
   /* The bill's own number and date (owner 2026-10-01: 同一张单 — the same pair on
      another request, voucher or AP invoice is said out loud, never refused). */
   const [billRef, setBillRef]                     = useState<string>('');
@@ -164,6 +167,8 @@ export const PaymentVoucherNew = () => {
   /* 欠正式单 (item 3): paid on a proforma or quotation — the official invoice is
      still owed. Finance's tick, pre-ticked when the reader read either word. */
   const [officialOwed, setOfficialOwed]           = useState<boolean>(false);
+  /* Finance's remark on what to follow up (owner 2026-10-08) — sent with the tick. */
+  const [officialNote, setOfficialNote]           = useState<string>('');
   const takeProvisional = (kind: BillExtraction['documentKind']) => { if (kind === 'proforma' || kind === 'quotation') setOfficialOwed(true); };
   /* One bill's pair: a voucher paying several bills ("A, B") keeps none. */
   const takeBillPair = (no: string | null | undefined, date: string | null | undefined) => {
@@ -255,7 +260,7 @@ export const PaymentVoucherNew = () => {
     setScanNote('Reading the bill…');
     try {
       const files = await Promise.all([...list].map(async (f) => ({
-        name: f.name, mime: f.type || 'application/pdf',
+        name: f.name, mime: docFileMime(f),
         dataBase64: await fileToBase64(f),
       })));
       const res = await extract.mutateAsync([{ files }]);
@@ -308,7 +313,9 @@ export const PaymentVoucherNew = () => {
   const [refundDocInput, setRefundDocInput] = useState<string>('');
   const [refundDocNo, setRefundDocNo]       = useState<string>('');
   const [refundAmountSen, setRefundAmountSen] = useState<number | null>(null);
-  const refundQ = useRefundSource(refundType, isRefund ? refundDocNo : '');
+  /* Answering a refund request (owner 2026-10-14): its own amount is not held against it. */
+  const refundForRequest = isRefund ? searchParams.get('fromRequest') : null;
+  const refundQ = useRefundSource(refundType, isRefund ? refundDocNo : '', null, refundForRequest);
   const refundSrc = isRefund && refundQ.data ? refundQ.data.source : null;
   /* The amount opens at the headroom (a full refund is the common case) and
      follows a re-load; a typed figure stays until the document changes. */
@@ -379,6 +386,18 @@ export const PaymentVoucherNew = () => {
     const bank = [r.bank_name, r.bank_account_no, r.bank_account_name].filter(Boolean).join(' ');
     /* The requester's note comes along (owner 2026-10-02: 多一个第五给他们写note). */
     setNotes(`Payment request ${r.request_no} — ${r.purpose}${bank ? ` · pay to ${bank}` : ''}${r.note ? ` · Note: ${r.note}` : ''}`);
+    /* A refund request (owner 2026-10-14): the Customer Refund on its own order —
+       the order named and fixed, the amount asked, the customer's bank in the
+       notes above; there is no bill to read. */
+    if (isRefund) {
+      const doc = r.refund_source_doc_no ?? '';
+      setRefundType('SO');
+      setRefundDocInput(doc);
+      setRefundDocNo(doc);
+      setRefundAmountSen(r.amount_sen);
+      setScanNote(`Answering ${r.request_no} from ${r.requested_by_name ?? 'the requester'} — a refund of ${fmtRm(r.amount_sen)} on ${doc}. Pay it to the customer's bank in the notes.`);
+      return;
+    }
     /* An AP Payment answering a balance (item 2) pays the bill's AP invoice:
        its lines come from the tick below, not from the request. */
     if (isAp) {
@@ -400,7 +419,7 @@ export const PaymentVoucherNew = () => {
   const requestRead = useRef(false);
   useEffect(() => {
     const r = requestQ.data?.request;
-    if (!fromRequest || isAp || requestRead.current || !r) return;
+    if (!fromRequest || isAp || isRefund || requestRead.current || !r) return;
     requestRead.current = true;
     const who = r.requested_by_name ?? 'the requester';
     const asked = `Answering ${r.request_no} from ${who} — its bill is attached to this voucher when you save.`;
@@ -721,6 +740,7 @@ export const PaymentVoucherNew = () => {
         creditAccountCode,
         voucherDate,
         notes:             notes || undefined,
+        bankChargeSen,
         // Multi-currency (Phase 1-A) — resolved currency + rate. MYR forces 1
         // (server enforces too); a blank/invalid foreign rate → 1.
         currency,
@@ -731,7 +751,7 @@ export const PaymentVoucherNew = () => {
         ...(sendAllocations.length > 0 ? { allocations: sendAllocations } : {}),
         ...(fromRequest ? { paymentRequestId: fromRequest } : {}),
         ...(showBill ? { billRef: billRef.trim() || null, billDate: billDate || null } : {}),
-        ...(showBill && officialOwed ? { officialDocOwed: true } : {}),
+        ...(showBill && officialOwed ? { officialDocOwed: true, ...(officialNote.trim() ? { officialDocNote: officialNote.trim() } : {}) } : {}),
       });
       /* Attach the scanned bill AFTER the voucher exists — sequentially, so
          sort_no (= print order) is the scan order. A failed upload never
@@ -776,6 +796,8 @@ export const PaymentVoucherNew = () => {
         title={isRefund ? 'New Customer Refund' : isAp ? 'New AP Payment' : 'New Payment Voucher'}
         actions={
           <div className={styles.actions}>
+            {/* The pile kept while this tab lives (owner 2026-10-06): the bills not yet opened. */}
+            <BackToPile target="pv" />
             <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{SAVE_HOTKEY_HINT}</span>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/payment-vouchers')}>
               <X {...ICON} /> Cancel
@@ -862,6 +884,12 @@ export const PaymentVoucherNew = () => {
               />
             </label>
             <label className={styles.field}>
+              <span className={styles.fieldLabel}>Bank Charges (MYR, not in total)</span>
+              <MoneyInput bare valueSen={bankChargeSen} aria-label="Bank charges"
+                onCommit={(sen) => setBankChargeSen(Math.max(0, sen ?? 0))}
+                inputClassName={styles.fieldInput} selectOnFocus />
+            </label>
+            <label className={styles.field}>
               <span className={styles.fieldLabel}>Notes</span>
               <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Internal notes" className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
             </label>
@@ -882,6 +910,13 @@ export const PaymentVoucherNew = () => {
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', alignSelf: 'end' }}>
                 <input type="checkbox" checked={officialOwed} onChange={(e) => setOfficialOwed(e.target.checked)} aria-label="Official invoice owed" />
                 Proforma / quotation — official invoice owed · 欠正式单
+              </label>
+            )}
+            {showBill && officialOwed && (
+              <label className={styles.field} style={{ gridColumn: '1 / -1' }}>
+                <span className={styles.fieldLabel}>Remark — what to follow up (optional)</span>
+                <input className={styles.fieldInput} value={officialNote} onChange={(e) => setOfficialNote(e.target.value)} maxLength={500}
+                  aria-label="Official invoice remark" placeholder="e.g. Proforma only — ask MITEC for the tax invoice" />
               </label>
             )}
             {showBill && (billMatchesQ.data?.matches.length ?? 0) > 0 && (
@@ -957,14 +992,19 @@ export const PaymentVoucherNew = () => {
             </span>
           </div>
           <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+            {/* Answering a refund request (owner 2026-10-14): which, and for whom. */}
+            {refundForRequest && scanNote && (
+              <p style={{ color: 'var(--c-orange)', fontSize: 'var(--fs-13)' }}>{scanNote}</p>
+            )}
             <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', gap: 8 }}>
-                <Button variant={refundType === 'SO' ? 'primary' : 'secondary'} onClick={() => { setRefundType('SO'); setRefundDocNo(''); }}>Sales Order</Button>
-                <Button variant={refundType === 'SI' ? 'primary' : 'secondary'} onClick={() => { setRefundType('SI'); setRefundDocNo(''); }}>Sales Invoice</Button>
+                <Button variant={refundType === 'SO' ? 'primary' : 'secondary'} disabled={!!refundForRequest} onClick={() => { setRefundType('SO'); setRefundDocNo(''); }}>Sales Order</Button>
+                <Button variant={refundType === 'SI' ? 'primary' : 'secondary'} disabled={!!refundForRequest} onClick={() => { setRefundType('SI'); setRefundDocNo(''); }}>Sales Invoice</Button>
               </div>
               <label className={styles.field} style={{ flex: '1 1 260px' }}>
                 <span className={styles.fieldLabel}>{refundType === 'SO' ? 'Sales Order no. *' : 'Sales Invoice no. *'}</span>
-                <input type="text" value={refundDocInput} aria-label="Refunded document"
+                {/* A request's refund stays on its own order — the server refuses another. */}
+                <input type="text" value={refundDocInput} aria-label="Refunded document" readOnly={!!refundForRequest}
                   onChange={(e) => setRefundDocInput(e.target.value)}
                   onBlur={() => setRefundDocNo(refundDocInput.trim())}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); setRefundDocNo(refundDocInput.trim()); } }}
@@ -998,16 +1038,20 @@ export const PaymentVoucherNew = () => {
                         <td style={{ padding: '6px 8px' }}>{p.method}</td>
                         <td style={{ padding: '6px 8px' }}>{p.provider ?? '—'}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(p.amountSen)}</td>
-                        <td style={{ padding: '6px 8px' }}>{p.booked ? '✓ booked' : p.method === 'imported' ? 'AutoCount era' : 'not booked'}</td>
+                        <td style={{ padding: '6px 8px' }}>{p.booked ? '✓ booked' : p.method === 'imported' ? (refundSrc.type === 'SO' ? 'from AutoCount — counts' : 'AutoCount era') : 'not booked'}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', fontSize: 'var(--fs-13)', borderTop: '1px solid var(--line)', paddingTop: 'var(--space-3)' }}>
-                  <span>Booked here <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.bookedSen)}</b></span>
+                  <span>Paid <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.bookedSen)}</b>{(refundSrc.importedSen ?? 0) > 0 ? <span style={{ color: 'var(--fg-muted)' }}> (incl. {fmtRm(refundSrc.importedSen ?? 0)} from AutoCount)</span> : null}</span>
                   <span>Already on refund vouchers <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.refundedSen)}</b>
                     {refundSrc.refunds.map((r) => <span key={r.id}> · <a href={`/scm/payment-vouchers/${r.id}`} style={{ color: 'var(--c-orange)' }}>{r.pvNumber}</a></span>)}
                   </span>
+                  {/* Other refund requests still waiting hold their money (owner 2026-10-14). */}
+                  {(refundSrc.requestedSen ?? 0) > 0 && (
+                    <span>Waiting on {refundForRequest ? 'other ' : ''}refund requests <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.requestedSen ?? 0)}</b></span>
+                  )}
                   <span>Refundable <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.refundableSen)}</b></span>
                 </div>
                 {/* The deposit-invoice half (docs/bugs/0860): said before the
@@ -1075,7 +1119,7 @@ export const PaymentVoucherNew = () => {
           <EventSuggestions suggestions={eventSuggestions} current={defaultEvent}
             onUse={(id) => { setDefaultEvent(id); setLines((prev) => prev.map((x) => ({ ...x, projectId: id }))); }} />
           {lines.map((l, idx) => (
-            <div key={l.rid} data-line={l.rid}
+            <div data-grid-row key={l.rid} data-line={l.rid}
               onKeyDown={(e) => { if (e.key === 'Insert') { e.preventDefault(); addLineAndLand(); } }}
               style={{
                 background: 'var(--c-paper)', border: '1px solid var(--line)',

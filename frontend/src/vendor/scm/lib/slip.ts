@@ -140,6 +140,13 @@ export async function fetchPaymentSlipUrl(
   );
 }
 
+/** The slip a payment BACKDATE REQUEST carries (GET
+ *  /payment-backdate-requests/:id/slip-url) — the admin inbox drawer reads it
+ *  before deciding. Admin only on the server, like the inbox. */
+export async function fetchBackdateRequestSlipUrl(requestId: string): Promise<SlipUrlResponse> {
+  return fetchSlipAsObjectUrl(`/payment-backdate-requests/${encodeURIComponent(requestId)}/slip-url`);
+}
+
 /** Authed GET of a scanned "Original Slip" image (GET /scan-so/slip-image?key=…)
  *  as a blob → object URL the SO detail page hands to <img src>. Mirrors the
  *  bearer-token proxy fetch used for payment slips; the caller is responsible

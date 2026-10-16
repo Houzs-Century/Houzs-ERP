@@ -48,6 +48,7 @@ import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { generateApListingPdf } from '../../vendor/scm/lib/ap-invoice-listing-pdf';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { Modal } from '../../vendor/scm/components/Modal';
+import { BackToPile } from '../../vendor/scm/components/BackToPile';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -57,6 +58,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { DataTable, type Column } from '../../components/DataTable';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { ApInvoiceForm, emptyApForm, formFromExtraction, formFromRequest, scanNoteFor, type ApFormMode, type ApFormSubmit, type ApFormValues } from './ApInvoiceForm';
 import { eventCellText } from '../../vendor/scm/components/EventSelect';
 import { useEventLabels, type EventSuggestion } from '../../vendor/scm/lib/event-queries';
@@ -306,8 +308,8 @@ export const ApInvoices = () => {
     {
       key: 'number', label: 'No.',
       render: (r) => r.kind === 'PI'
-        ? <Link to={`/scm/purchase-invoices/${r.id}`} style={{ color: 'inherit', ...mono }}>{r.invoiceNumber}</Link>
-        : <button type="button" onClick={() => setDetailId(r.id)} style={{ ...linkBtn, ...mono }}>{r.invoiceNumber}</button>,
+        ? <Link to={`/scm/purchase-invoices/${r.id}`} className={cancelledDocNoClass(r.status)} style={{ color: 'inherit', ...mono }}>{r.invoiceNumber}</Link>
+        : <button type="button" onClick={() => setDetailId(r.id)} className={cancelledDocNoClass(r.status)} style={{ ...linkBtn, ...mono }}>{r.invoiceNumber}</button>,
       getValue: (r) => r.invoiceNumber,
     },
     {
@@ -345,6 +347,8 @@ export const ApInvoices = () => {
             {/* The pile: many supplier bills at once, read and split one AP
                 invoice each (owner 2026-09-08: scan bill 的按钮可以直接做在
                 + new ap invoice 附近吗). */}
+            {/* The pile kept while this tab lives (owner 2026-10-06): the bills not yet opened. */}
+            <BackToPile target="ap" />
             <button type="button" onClick={() => navigate('/scm/ap-invoices/scan')} style={linkBtn}>
               <Camera {...ICON} /> Scan bills
             </button>
@@ -387,6 +391,7 @@ export const ApInvoices = () => {
               ? 'No supplier invoices match this filter — pick another supplier or kind.'
               : 'No supplier invoices here yet — purchase invoices show once posted on the Procurement side; raise an AP invoice for a non-stock bill.'}
             getRowKey={(r) => `${r.kind}-${r.id}`}
+            getRowClassName={(r) => cancelledRowClass(r.status)}
             getRowStyle={(r) => (r.status === 'CANCELLED' ? { opacity: 0.55 } : undefined)}
             onFilteredRowsChange={setShownRows}
           />
@@ -477,6 +482,8 @@ export const ApInvoices = () => {
             lineAccounts={lineAccounts}
             posted={form.posted}
             paidSen={form.paidSen}
+            selfId={form.mode === 'edit' ? (form.invoiceId ?? null) : null}
+            requestId={form.request?.id ?? null}
             saving={create.isPending || update.isPending || uploadFile.isPending}
             onSubmit={submitForm}
             onCancel={() => setForm(null)}

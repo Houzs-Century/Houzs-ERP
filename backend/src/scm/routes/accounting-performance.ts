@@ -7,7 +7,9 @@
    the other income (owner 2026-09-12: performance GL 要放 other income) — as
    the ledger booked it by journal date; net. Computed live on every read.
    GET /accounting/reports/performance?from&to;
-   POST /accounting/reports/performance/settings {rateBp, account}.
+   POST /accounting/reports/performance/settings {rateBp, account, also}.
+   `also`: the other accounts the rate covers (owner 2026-10-06: 2990's
+   transport is inside the 16%), each with the accounts under it.
    The arithmetic is acc/performance-pnl.ts; see accounting.md. */
 
 import type { Context } from 'hono';
@@ -19,7 +21,7 @@ import { SO_NOT_AN_ORDER } from '../shared/so-deliverable-states';
 import { loadAccounts, loadSums, sectionResolver, type AccountRow, type SumRow } from './accounting-reports';
 import { allowedIds, resolveLayout, type ResolvedLayout } from './accounting-report-layouts';
 import {
-  buildPerformanceReport, loadPerformanceSettings, performanceLayout, savePerformanceSettings,
+  accountsUnder, buildPerformanceReport, loadPerformanceSettings, normaliseAlso, performanceLayout, savePerformanceSettings,
   type PerfExpense, type PerfLine, type PerfOrder, type PerformanceLayout, type PerformanceReport, type PerformanceSettings,
 } from '../../acc/performance-pnl';
 
@@ -123,7 +125,11 @@ export async function buildPerformance(companyId: number, from: string, to: stri
   /* The account part on the report's own layout (docs/bugs/0912). */
   const laid = await src.layout();
   if (!laid.ok) return { ok: false, reason: laid.reason };
-  const report = buildPerformanceReport({ from, to, orders, lines, expenses, otherIncome, settings: st.settings, account: acct.account });
+  /* The other accounts the rate covers, with every account under them in the chart. */
+  const alsoCodes = accountsUnder(st.settings.also, accs.accounts);
+  const nameOf = new Map(accs.accounts.map((a) => [a.account_code, a.account_name ?? null]));
+  const alsoNamed = st.settings.also.map((code) => ({ code, name: nameOf.get(code) ?? null }));
+  const report = buildPerformanceReport({ from, to, orders, lines, expenses, otherIncome, settings: st.settings, account: acct.account, alsoCodes, alsoNamed });
   return { ok: true, report: { ...report, layout: performanceLayout(report, laid.layout, companyId, laid.stored) } };
 }
 
@@ -148,7 +154,7 @@ export const savePerformanceSettingsHandler = async (c: Ctx): Promise<Response> 
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  let body: { rateBp?: unknown; account?: unknown };
+  let body: { rateBp?: unknown; account?: unknown; also?: unknown };
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const rateBp = Number(body.rateBp);
   if (!Number.isInteger(rateBp) || rateBp < 0 || rateBp > 10000) {
@@ -158,7 +164,11 @@ export const savePerformanceSettingsHandler = async (c: Ctx): Promise<Response> 
   if (account === '' || account.length > 32) {
     return c.json({ error: 'account_required', message: 'Name the ledger account the rate stands in for (900-O001).' }, 400);
   }
-  const saved = await savePerformanceSettings(c.get('supabase'), co.companyId, { rateBp, account }, who(c));
+  const also = normaliseAlso(body.also ?? [], account);
+  if (also.length > 40 || also.some((code) => code.length > 32 || !/^[A-Z0-9-]+$/.test(code))) {
+    return c.json({ error: 'bad_also', message: 'The other accounts the rate covers are account codes (900-T004), at most 40.' }, 400);
+  }
+  const saved = await savePerformanceSettings(c.get('supabase'), co.companyId, { rateBp, account, also }, who(c));
   if (!saved.ok) return c.json({ error: 'save_failed', reason: saved.reason }, 500);
-  return c.json({ ok: true, settings: { rateBp, account } });
+  return c.json({ ok: true, settings: { rateBp, account, also } });
 };

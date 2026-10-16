@@ -35,8 +35,10 @@ import { baseKeyOf, deleteThumbFor, putOptionalThumb } from '../../services/phot
 import type { Env, Variables } from '../env';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { categorySwapAllowed } from '../shared/category-swap';
+import { invalidModelDefault } from '../shared/model-default-variants';
 import { moveModelCategory } from '../lib/model-category-move';
 import { MFG_PRODUCT_CATEGORIES } from './mfg-products';
+import { isSingleSkuCategory } from '../shared/product-categories';
 
 export const productModels = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -166,9 +168,14 @@ const CreateBody = z.object({
   active:         z.boolean().optional(),
 });
 
+const MODEL_CODE_MAX = 32;
+
 const PatchBody = z.object({
   branding:       z.string().trim().max(80).nullable().optional(),
-  modelCode:      z.string().trim().min(1).max(32).optional(),
+  // The 32-character limit is checked in the handler, and only for a CHANGED
+  // code: imported models carry longer codes, and the edit screen sends the
+  // code back on every save, so a schema limit made those models uneditable.
+  modelCode:      z.string().trim().min(1).max(200).optional(),
   name:           z.string().trim().min(1).max(200).optional(),
   // category: any other category (shared/category-swap.ts), and it moves the
   // model's SKUs with it so none is orphaned in the other category.
@@ -176,10 +183,12 @@ const PatchBody = z.object({
   description:    z.string().trim().max(500).nullable().optional(),
   photoUrl:       z.string().trim().url().nullable().optional(),
   allowedOptions: z.record(z.unknown()).optional(),
+  // Keyed like a line's variants; checked against allowed_options below.
+  defaultVariants: z.record(z.string().trim().min(1)).optional(),
   active:         z.boolean().optional(),
 });
 
-const COLS = 'id, branding, model_code, name, category, description, photo_url, allowed_options, active, created_at, updated_at';
+const COLS = 'id, branding, model_code, name, category, description, photo_url, allowed_options, default_variants, active, created_at, updated_at';
 
 // ── GET / ──────────────────────────────────────────────────────────────────
 export const listProductModelsHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
@@ -490,6 +499,7 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
   if (parsed.data.description !== undefined)    u.description     = parsed.data.description;
   if (parsed.data.photoUrl !== undefined)       u.photo_url       = parsed.data.photoUrl;
   if (parsed.data.allowedOptions !== undefined) u.allowed_options = parsed.data.allowedOptions;
+  if (parsed.data.defaultVariants !== undefined) u.default_variants = parsed.data.defaultVariants;
   if (parsed.data.active !== undefined)         u.active          = parsed.data.active;
   if (parsed.data.category !== undefined)       u.category        = parsed.data.category;
 
@@ -506,9 +516,16 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
   // just ACTIVATED (sofa auto-SKU rule below — Chairman 2026-06-02).
   const { data: before } = await scopeToCompanyId(supabase
     .from('product_models')
-    .select('allowed_options, category')
+    .select('allowed_options, category, model_code')
     .eq('id', id), co.companyId)
     .maybeSingle();
+  const beforeCode = (before as { model_code?: string } | null)?.model_code ?? null;
+  if (u.model_code !== undefined && u.model_code !== beforeCode && String(u.model_code).length > MODEL_CODE_MAX) {
+    return c.json({
+      error: 'model_code_too_long',
+      reason: `Model code can be at most ${MODEL_CODE_MAX} characters.`,
+    }, 400);
+  }
   const beforeCategory = (before as { category?: string } | null)?.category ?? null;
   if (u.category !== undefined && u.category === beforeCategory) delete u.category;
   if (u.category !== undefined && !categorySwapAllowed(beforeCategory, String(u.category))) {
@@ -518,6 +535,16 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
     }, 409);
   }
   if (Object.keys(u).length === 0) return c.json({ error: 'empty_patch' }, 400);
+  if (parsed.data.defaultVariants !== undefined) {
+    const bad = invalidModelDefault(
+      String(u.category ?? beforeCategory ?? ''),
+      parsed.data.defaultVariants,
+      parsed.data.allowedOptions ?? (before as { allowed_options?: unknown } | null)?.allowed_options ?? null,
+    );
+    if (bad) {
+      return c.json({ error: 'default_not_allowed', message: `The default for ${bad} is not one of this Model's allowed options.` }, 400);
+    }
+  }
   // The category moves through the helper Import SKUs also uses, so the model's SKUs always follow it.
   const newCategory = u.category === undefined ? undefined : String(u.category);
   delete u.category;
@@ -943,7 +970,7 @@ productModels.post('/:id/generate-skus', async (c) => {
         size_label: label,
       });
     }
-  } else if (model.category === 'ACCESSORY' || model.category === 'SERVICE') {
+  } else if (isSingleSkuCategory(model.category)) {
     // No variant axis — the Model itself IS the single SKU. Generate exactly one
     // row whose code is the model code (Wei Siang 2026-06-09: accessories /
     // services have no sizes, but must still produce one sellable SKU so they

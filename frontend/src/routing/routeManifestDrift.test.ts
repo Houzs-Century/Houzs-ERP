@@ -94,8 +94,17 @@ describe("executable route contract", () => {
     // proforma still owing the official invoice (payment-request item 3).
     // 168 since 2026-10-02: /scm/supplier-maintenance — Finance's own supplier
     // list in Money out (owed, bank, the ones Finance keeps to itself).
-    // 169 since 2026-10-05: /ai-usage — IT-only monthly AI cost (DEV-35).
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(169);
+    // 169 since 2026-10-06: /scm/product-requests — a salesperson asks for a new
+    // product or a repack; the Purchaser approves and raises the PC Order from it.
+    // 171 since 2026-10-07: /scm/stock-adjustments/:id and /:id/edit — a stock
+    // adjustment became a numbered document you can open and edit (BUG-66).
+    // 172 since 2026-10-13: /it-support — report a problem to IT and follow it;
+    // the requests live in the Houzs IT Hub.
+    // 173 since 2026-10-14: /scm/lorry-live-map — where each tracked lorry is (DEV-42).
+    // 174 since 2026-10-14: /pos-admin — the Houzs POS Admin menu (items, labels,
+    // cashiers, events, terminals, sync status, import backup; PR #4635).
+    // 175: /ai-usage — IT-only monthly AI cost (DEV-35).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(175);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -141,8 +150,13 @@ describe("executable route contract", () => {
     // 175 since 2026-09-30 — /scm/payment-backdate-requests; same.
     // 176 since 2026-10-01 — /scm/official-docs; see the staff-route count above.
     // 177 since 2026-10-02 — /scm/supplier-maintenance; see the staff-route count above.
-    // 178 since 2026-10-05 — /ai-usage; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(178);
+    // 178 since 2026-10-06 — /scm/product-requests; see the staff-route count above.
+    // 180 since 2026-10-07 — /scm/stock-adjustments/:id and /:id/edit (BUG-66).
+    // 181 since 2026-10-13 — /it-support; see the staff-route count above.
+    // 182 since 2026-10-14 — /scm/lorry-live-map (DEV-42).
+    // 183 since 2026-10-14 — /pos-admin; see the staff-route count above.
+    // 184 — /ai-usage (DEV-35).
+    expect(ROUTE_CONTRACT).toHaveLength(184);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
@@ -183,15 +197,19 @@ describe("mobile route drift gate", () => {
     // read one back.
     // 39 since 2026-09-30: /scm/payment-requests, Sales & Finance's last row —
     // 申请付款; the PIC at a fair asks Finance to pay, a photo of the bill in hand.
-    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(39);
+    // 40 since 2026-10-06: /scm/product-requests, beside Payment Requests — a
+    // salesperson on the floor asks for a new product or a repack.
+    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(40);
     // 6 since 2026-09-10: /roles, the rebuilt Roles & Permissions screen, reached
     // from a Profile row (gated via the Team hub tab).
     // 7 since 2026-09-17: /titles, the phone Titles editor (position_policy),
     // the last desktop-only Roles & Permissions surface to reach the phone.
-    expect(PROFILE_ORG_ITEMS).toHaveLength(7);
-    expect(allMobile).toHaveLength(46);
-    expect(new Set(allMobile.map((item) => item.to)).size).toBe(46);
-    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(45);
+    // 8 since 2026-10-13: /it-support, report a problem to IT from the phone;
+    // the row shows only where IT Support is connected, as on desktop.
+    expect(PROFILE_ORG_ITEMS).toHaveLength(8);
+    expect(allMobile).toHaveLength(48);
+    expect(new Set(allMobile.map((item) => item.to)).size).toBe(48);
+    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(47);
   });
 
   it("maps every declared mobile row to a real screen, never a placeholder stub", () => {

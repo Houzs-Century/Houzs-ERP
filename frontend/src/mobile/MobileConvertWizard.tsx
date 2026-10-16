@@ -157,6 +157,7 @@ type SoDeliverableLine = {
   soItemId: string; docNo: string; itemCode: string; description: string | null;
   itemGroup: string | null; variants: unknown;
   qty: number; remaining: number; unitPriceSen: number; debtorName: string | null;
+  notReady: { reason: string } | null;
 };
 type DoInvoiceableLine = {
   doItemId: string; doNumber: string; itemCode: string; description: string | null;
@@ -214,6 +215,8 @@ type PickLine = {
      row then omits the line entirely (mobile convention, see
      MobileModuleDetail.tsx:491 — no "Standard" filler on a phone). */
   variantLine: string;
+  /** SO→DO only: why this line's stock is not READY; it starts unticked (BUG-59). */
+  notReadyReason: string | null;
   origQty: number;       // the source line's ordered qty (0 when the GET omits it)
   remaining: number;     // outstanding qty still convertible
   unitPriceSen: number;
@@ -380,6 +383,7 @@ export function MobileConvertWizard({
             lineId: l.soItemId,
             label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
             variantLine: variantLineOf(l),
+            notReadyReason: null,
             origQty: Number(l.qty) || 0,
             remaining: Number(l.remainingQty) || 0,
             unitPriceSen: Number(l.unitPriceSen) || 0,
@@ -395,10 +399,11 @@ export function MobileConvertWizard({
           lineId: l.soItemId,
           label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
           variantLine: variantLineOf(l),
+          notReadyReason: l.notReady?.reason ?? null,
           origQty: Number(l.qty) || 0,
           remaining: Number(l.remaining) || 0,
           unitPriceSen: Number(l.unitPriceSen) || 0,
-          checked: true,
+          checked: !l.notReady,
           qty: String(Number(l.remaining) || 0),
         }));
       }
@@ -412,6 +417,7 @@ export function MobileConvertWizard({
         lineId: l.doItemId,
         label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
         variantLine: variantLineOf(l),
+        notReadyReason: null,
         origQty: Number(l.remaining) || 0,
         remaining: Number(l.remaining) || 0,
         unitPriceSen: Number(l.unitPriceSen) || 0,
@@ -969,6 +975,9 @@ function LinesStep({
                       "BF-01 / SEAT 24 / LEG …" is the same ambiguity again. */}
                   {l.variantLine && (
                     <span style={{ display: "block", marginTop: 2, fontSize: 11, color: "#767b6e" }}><span>{DESCRIPTION_2_LABEL}: </span><span>{l.variantLine}</span></span>
+                  )}
+                  {l.notReadyReason && (
+                    <span style={{ display: "block", marginTop: 3, fontSize: 11, fontWeight: 600, color: "#a16a2e" }}>Not ready: {l.notReadyReason}</span>
                   )}
                   {/* Spec #convert meta: "Outstanding ×{outstanding} of {qty}". */}
                   <span className="tnum" style={{ display: "block", marginTop: 3, fontSize: 11, color: "#767b6e" }}>

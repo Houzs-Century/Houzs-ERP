@@ -34,6 +34,7 @@
  */
 import { LOCATION_MAP } from "../services/autocount-master-maps";
 import { bookSpellingOrOwn } from "../services/autocount-writeback";
+import { tidy } from "../services/autocount-address-fit";
 import { sheetRegion, sheetStateSpelling, type DeliverySheetRecord } from "./delivery-sheet-feed";
 
 export type AssrLegKind = "INSPECT" | "PICKUP" | "DELIVERY";
@@ -48,6 +49,7 @@ export type AssrFeedRow = {
   ref_no: string | null;
   po_no: string | null;
   status: string | null;
+  stage: string | null;
   customer_name: string | null;
   phone: string | null;
   location: string | null;
@@ -63,6 +65,11 @@ export type AssrFeedRow = {
   customer_pickup_at: string | null;
   delivery_by: string | null;
   do_date: string | null;
+  /** The linked Sales Order's country and town — `assr_cases` has none of its own. */
+  customer_country: string | null;
+  so_postcode: string | null;
+  so_city: string | null;
+  so_state: string | null;
   last_modified_text: string;
 };
 
@@ -92,14 +99,27 @@ export type AssrLegRecord = DeliverySheetRecord & { Kind: AssrLegKind };
  * (42883), and the route surfaced that as a 502 the first time the sheet
  * actually pulled this feed. The pg fixture mirrors the TEXT column so the cast
  * is under test.
+ *
+ * `customer_country` comes from the linked Sales Order: a Singapore case's
+ * address line 3 often lacks the word (locality-master addresses read "600314
+ * Jurong East"), so the region needs the SO's country (BUG-52's leg twin).
+ * Exact doc_no first, then the AutoCount number. The same order also lends its
+ * postcode / city / state: a case often holds its whole address in addr1 with
+ * addr3 / addr4 blank (ASSR/2610-013), so the sheet's Address 3 / Address 4
+ * came out empty; caseTownLines fills ONLY the blank ones, and not at all when
+ * the case names a different postcode (a service address is not always the
+ * delivery address). This note lives HERE, not as a
+ * `--` comment in the SQL: toPgPlaceholders reads an apostrophe in a SQL comment
+ * as an open string and then leaves ?1 / ?2 unconverted.
  */
-export const FEED_ASSR_LEGS_SQL = `
+const ASSR_FEED_SELECT = `
 SELECT assr_no,
        doc_no,
        complained_date,
        ref_no,
        po_no,
        status,
+       stage,
        customer_name,
        phone,
        location,
@@ -109,23 +129,60 @@ SELECT assr_no,
        inspection_by, inspection_visit_at,
        pickup_by, customer_pickup_at,
        delivery_by, do_date,
+       so.customer_country, so.so_postcode, so.so_city, so.so_state,
        updated_at::text AS last_modified_text
   FROM assr_cases
+  LEFT JOIN LATERAL (
+       SELECT o.customer_country, o.postcode AS so_postcode, o.city AS so_city, o.customer_state AS so_state
+         FROM scm.mfg_sales_orders o
+        WHERE o.doc_no = assr_cases.doc_no OR o.linked_ac_docno = assr_cases.doc_no
+        ORDER BY (o.doc_no = assr_cases.doc_no) DESC
+        LIMIT 1) so ON TRUE
  WHERE closed_at IS NULL
-   AND archived_at IS NULL
+   AND archived_at IS NULL`;
+
+const ASSR_FEED_PAGE = `
+   AND updated_at::timestamptz > ?1::timestamptz
+ ORDER BY updated_at::timestamptz, assr_no
+ LIMIT ?2`;
+
+export const FEED_ASSR_LEGS_SQL = `${ASSR_FEED_SELECT}
    AND (
         (inspection_by = 'own'      AND inspection_visit_at IS NOT NULL) OR
         (pickup_by     = 'customer' AND customer_pickup_at  IS NOT NULL) OR
         (delivery_by   = 'own'      AND do_date             IS NOT NULL)
-       )
-   AND updated_at::timestamptz > ?1::timestamptz
- ORDER BY updated_at::timestamptz, assr_no
- LIMIT ?2`;
+       )${ASSR_FEED_PAGE}`;
+
+/**
+ * Same binds and cursor as FEED_ASSR_LEGS_SQL, WITHOUT the own-team gate.
+ *
+ * BUG-54: a leg row reaches the sheet from the sheet's own ASSR linkage too
+ * (ASSRDeliverySync.gs copies the case's phone once, when it makes the row), so
+ * a case whose leg is not yet own-team AND dated was never re-sent and a phone
+ * corrected in the ERP stayed stale on the sheet (ASSR/2608-064: inspection
+ * 'own', no visit date). This feed only REFRESHES contact cells on rows the
+ * sheet already has; the Apps Script never appends from it, so the owner's
+ * own-team gate on which legs enter the sheet is unchanged.
+ */
+export const FEED_ASSR_CONTACTS_SQL = `${ASSR_FEED_SELECT}${ASSR_FEED_PAGE}`;
 
 const blankToNull = (v: string | null | undefined): string | null => {
   const s = (v ?? "").trim();
   return s ? s : null;
 };
+
+/** Address lines 3 / 4 for a leg: the case's own, else the linked order's
+ *  "<postcode> <city>" / state, unless the case's address names a postcode the
+ *  order does not have (then the order's town would describe another place). */
+export function caseTownLines(row: AssrFeedRow): [string | null, string | null] {
+  const own3 = tidy(row.addr3);
+  const own4 = tidy(row.addr4);
+  const postcode = tidy(row.so_postcode);
+  const named = [row.addr1, row.addr2, row.addr3, row.addr4].flatMap((v) => (tidy(v) ?? "").match(/\b\d{5,6}\b/g) ?? []);
+  if (named.length > 0 && (postcode == null || !named.includes(postcode))) return [own3, own4];
+  const town = [postcode, tidy(row.so_city)].filter(Boolean).join(" ") || null;
+  return [own3 ?? town, own4 ?? tidy(row.so_state)];
+}
 
 /** The fields shared by every leg of one case — the customer, the address and
  *  the region the leg routes to. `SalesLocation` is book-normalised exactly as
@@ -133,7 +190,7 @@ const blankToNull = (v: string | null | undefined): string | null => {
  *  Sales Order for that customer would. */
 function legBase(row: AssrFeedRow): Omit<AssrLegRecord, "Kind" | "DocNo" | "TransferTo" | "Remark2" | "SalesExemptionExpiryDate"> {
   const salesLocation = bookSpellingOrOwn(row.location, LOCATION_MAP);
-  const addr3 = blankToNull(row.addr3);
+  const [addr3, rawAddr4] = caseTownLines(row);
   return {
     ErpDocNo: row.assr_no,
     // Farra parity: col D the complaint date, col AA the case PO. Ref (col E) and
@@ -155,14 +212,14 @@ function legBase(row: AssrFeedRow): Omit<AssrLegRecord, "Kind" | "DocNo" | "Tran
     InvAddr1: blankToNull(row.addr1),
     InvAddr2: blankToNull(row.addr2),
     InvAddr3: addr3,
-    InvAddr4: sheetStateSpelling(row.addr4),
+    InvAddr4: sheetStateSpelling(rawAddr4),
     Attention: null,
     SOUDF_VENUE: null,
     Status: "PENDING",
     // Readiness is an SO concept; an ASSR leg's entry condition is the own-team
     // gate, already applied by the SQL — so it is never withheld for readiness.
     Ready: false,
-    Region: sheetRegion(salesLocation, addr3),
+    Region: sheetRegion(salesLocation, addr3, row.customer_country),
     LastModified: row.last_modified_text,
   };
 }
@@ -188,25 +245,59 @@ const LEG_KEY_WORD: Record<AssrLegKind, "INSPECTION" | "PICKUP" | "SERVICE"> = {
   DELIVERY: "SERVICE",
 };
 
+/** The sheet's col B key for one leg. The S/O carries it; the ASSR number is the
+ *  fallback only if a case somehow has no doc_no (NOT NULL in the schema). */
+function legKey(row: AssrFeedRow, kind: AssrLegKind): string {
+  return `${blankToNull(row.doc_no) ?? row.assr_no}-${LEG_KEY_WORD[kind]}`;
+}
+
+/** BUG-95: stages where the item is already back from the customer. Any edit
+ *  stamps updated_at and re-sends the case, and the sheet appends a missing key,
+ *  so a done pickup / inspection leg came back as a new row when Farra moved the
+ *  case to Pending Delivery/Service. There is no "pickup done" field; the stage
+ *  is the only marker. */
+const PAST_PICKUP_STAGES = new Set(["pending_item_ready", "pending_delivery_service", "completed", "voided"]);
+
 export function toAssrLegRecords(row: AssrFeedRow): AssrLegRecord[] {
   const base = legBase(row);
-  // The S/O carries the leg key; fall back to the ASSR number only if a case
-  // somehow has no doc_no (NOT NULL in the schema, so this is belt-and-braces).
-  const keyDoc = blankToNull(row.doc_no) ?? row.assr_no;
   const ref = blankToNull(row.ref_no);
-  const legKey = (kind: AssrLegKind): string => `${keyDoc}-${LEG_KEY_WORD[kind]}`;
   // col E (Ref) mirrors the Farra refTag: "<ref>-<word>", or the bare word when
   // the case has no reference. col F (SOUDF_BRANDING) is the bare word.
   const legRef = (kind: AssrLegKind): string => (ref ? `${ref}-${LEG_KEY_WORD[kind]}` : LEG_KEY_WORD[kind]);
   const legs: AssrLegRecord[] = [];
-  if (row.inspection_by === "own" && blankToNull(row.inspection_visit_at)) {
-    legs.push({ ...base, Kind: "INSPECT", DocNo: legKey("INSPECT"), TransferTo: row.assr_no, Ref: legRef("INSPECT"), SOUDF_BRANDING: LEG_KEY_WORD.INSPECT, Remark2: "SERVICE INSPECTION", SalesExemptionExpiryDate: row.inspection_visit_at });
+  const pickupPast = PAST_PICKUP_STAGES.has(row.stage ?? "");
+  if (!pickupPast && row.inspection_by === "own" && blankToNull(row.inspection_visit_at)) {
+    legs.push({ ...base, Kind: "INSPECT", DocNo: legKey(row, "INSPECT"), TransferTo: row.assr_no, Ref: legRef("INSPECT"), SOUDF_BRANDING: LEG_KEY_WORD.INSPECT, Remark2: "SERVICE INSPECTION", SalesExemptionExpiryDate: row.inspection_visit_at });
   }
-  if (row.pickup_by === "customer" && blankToNull(row.customer_pickup_at)) {
-    legs.push({ ...base, Kind: "PICKUP", DocNo: legKey("PICKUP"), TransferTo: row.assr_no, Ref: legRef("PICKUP"), SOUDF_BRANDING: LEG_KEY_WORD.PICKUP, Remark2: "SERVICE PICKUP", SalesExemptionExpiryDate: row.customer_pickup_at });
+  if (!pickupPast && row.pickup_by === "customer" && blankToNull(row.customer_pickup_at)) {
+    legs.push({ ...base, Kind: "PICKUP", DocNo: legKey(row, "PICKUP"), TransferTo: row.assr_no, Ref: legRef("PICKUP"), SOUDF_BRANDING: LEG_KEY_WORD.PICKUP, Remark2: "SERVICE PICKUP", SalesExemptionExpiryDate: row.customer_pickup_at });
   }
   if (row.delivery_by === "own" && blankToNull(row.do_date)) {
-    legs.push({ ...base, Kind: "DELIVERY", DocNo: legKey("DELIVERY"), TransferTo: row.assr_no, Ref: legRef("DELIVERY"), SOUDF_BRANDING: LEG_KEY_WORD.DELIVERY, Remark2: "SERVICE DELIVERY", SalesExemptionExpiryDate: row.do_date });
+    legs.push({ ...base, Kind: "DELIVERY", DocNo: legKey(row, "DELIVERY"), TransferTo: row.assr_no, Ref: legRef("DELIVERY"), SOUDF_BRANDING: LEG_KEY_WORD.DELIVERY, Remark2: "SERVICE DELIVERY", SalesExemptionExpiryDate: row.do_date });
   }
   return legs;
+}
+
+/** One case's contact cells, for the rows the sheet already carries. `Keys` are
+ *  every leg key the case could own; the Apps Script writes only to a row whose
+ *  col B is one of them AND whose col C is `AssrNo` (several cases can share an
+ *  S/O, so the key alone could name another customer's row). */
+export type AssrContactRecord = Pick<DeliverySheetRecord, "DebtorName" | "Phone1" | "InvAddr1" | "InvAddr2" | "InvAddr3" | "InvAddr4" | "LastModified"> & {
+  AssrNo: string;
+  Keys: string[];
+};
+
+export function toAssrContactRecord(row: AssrFeedRow): AssrContactRecord {
+  const base = legBase(row);
+  return {
+    AssrNo: row.assr_no,
+    Keys: (["INSPECT", "PICKUP", "DELIVERY"] as const).map((k) => legKey(row, k)),
+    DebtorName: base.DebtorName,
+    Phone1: base.Phone1,
+    InvAddr1: base.InvAddr1,
+    InvAddr2: base.InvAddr2,
+    InvAddr3: base.InvAddr3,
+    InvAddr4: base.InvAddr4,
+    LastModified: base.LastModified,
+  };
 }

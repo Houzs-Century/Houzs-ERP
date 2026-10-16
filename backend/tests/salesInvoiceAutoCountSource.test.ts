@@ -288,3 +288,27 @@ describe('exactly one outbox row per created invoice, whatever the shape', () =>
     expect(outboxFor(t)).toHaveLength(1);
   });
 });
+
+describe('an invoice raised straight off a Sales Order cannot bill it twice (DEV-76)', () => {
+  const soTables = () => ({
+    ...baseTables(),
+    mfg_sales_orders: [{ doc_no: 'HC-SO-1', company_id: CO_A }],
+  });
+
+  test('the first SO invoice is created, the second is refused', async () => {
+    const t = soTables();
+    const { app } = harness(t);
+    expect((await create(app, { soDocNo: 'HC-SO-1', items: [line('ADHOC', null)] })).status).toBe(201);
+    const again = await create(app, { soDocNo: 'HC-SO-1', items: [line('ADHOC', null)] });
+    expect(again.status).toBe(409);
+    expect(((await again.json()) as { error: string }).error).toBe('so_already_invoiced');
+  });
+
+  test('a cancelled invoice does not block, and a DO-sourced invoice is exempt', async () => {
+    const t = soTables();
+    t.sales_invoices!.push({ id: 'si-x', invoice_number: 'HC-SI-X', so_doc_no: 'HC-SO-1', status: 'CANCELLED', company_id: CO_A });
+    const { app } = harness(t);
+    expect((await create(app, { soDocNo: 'HC-SO-1', items: [line('ADHOC', null)] })).status).toBe(201);
+    expect((await create(app, { soDocNo: 'HC-SO-1', deliveryOrderId: 'do-a', items: [line('M1', 'doi-a')] })).status).toBe(201);
+  });
+});

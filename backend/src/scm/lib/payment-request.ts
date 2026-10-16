@@ -28,6 +28,10 @@
 //                    paid it is matched on a bank statement
 // A request points at ONE live document at a time; a cancelled one lets
 // Finance make the next, of either kind.
+//
+// A REFUND request (owner 2026-10-14, lib/refund-request.ts) is raised from a
+// Sales Order's money panel; it needs no bill, and only a Customer Refund
+// voucher on that order answers it.
 // ----------------------------------------------------------------------------
 
 import { hasHouzsPerm } from './houzs-perms';
@@ -181,15 +185,38 @@ export async function liveAnswerOf(c: any, req: Row): Promise<{ answer: { kind: 
   return { answer: null };
 }
 
+/** The document answering a request, as its create door describes it: a
+    voucher (with the body it was sent — its purpose and refund source) or an
+    AP invoice. */
+export type AnswerDraft = { kind: AnswerKind; body?: Record<string, unknown> };
+
+/** A refund request (owner 2026-10-14, lib/refund-request.ts) is answered by a
+    Customer Refund voucher on its own order — and only a refund request is
+    answered by one. Pure: the refusal to send, or null. */
+export function refundAnswerRefusal(req: Row, answer: AnswerDraft): { error: string; message: string } | null {
+  const refundOf = req.refund_source_doc_no ? String(req.refund_source_doc_no) : null;
+  const isRefundVoucher = answer.kind === 'PV' && String(answer.body?.purpose ?? '').trim().toUpperCase() === 'CUSTOMER_REFUND';
+  if (refundOf) {
+    const sameOrder = isRefundVoucher
+      && String(answer.body?.refundSourceType ?? '').trim().toUpperCase() === 'SO'
+      && String(answer.body?.refundSourceDocNo ?? '').trim() === refundOf;
+    return sameOrder ? null : { error: 'refund_request_needs_refund', message: `${req.request_no} asks for a refund on ${refundOf} — answer it with a Customer Refund on ${refundOf}.` };
+  }
+  return isRefundVoucher
+    ? { error: 'request_not_a_refund', message: `${req.request_no} is not a refund request — answer it with a payment voucher or an AP invoice.` }
+    : null;
+}
+
 /* Called by the create door of the voucher and of the AP invoice, BEFORE the
    document is written: the request must be this company's and still waiting —
-   one with a live answer is refused by name. */
-export async function paymentRequestLinkGuard(c: any, rawId: unknown): Promise<{ request: Row | null } | { resp: Response }> {
+   one with a live answer is refused by name — and a refund request takes a
+   refund on its own order (refundAnswerRefusal). */
+export async function paymentRequestLinkGuard(c: any, rawId: unknown, answer: AnswerDraft = { kind: 'PV' }): Promise<{ request: Row | null } | { resp: Response }> {
   const id = typeof rawId === 'string' ? rawId.trim() : '';
   if (!id) return { request: null };
   const sb = c.get('supabase');
   const { data: req, error } = await scopeToCompany(sb.from('acc_payment_requests')
-    .select('id, company_id, request_no, status, pv_id, ap_invoice_id, bill_no, bill_date, parent_request_id').eq('id', id), c).maybeSingle();
+    .select('id, company_id, request_no, status, pv_id, ap_invoice_id, bill_no, bill_date, parent_request_id, refund_source_type, refund_source_doc_no').eq('id', id), c).maybeSingle();
   if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
   if (!req) return { resp: c.json({ error: 'request_not_found', message: 'That payment request is not in the company you are working in.' }, 404) };
   if (req.status === 'WITHDRAWN' || req.status === 'REJECTED') {
@@ -202,6 +229,11 @@ export async function paymentRequestLinkGuard(c: any, rawId: unknown): Promise<{
       return { resp: c.json({ error: 'request_has_voucher', message: `${req.request_no} is already answered by ${live.answer.number} — open that ${live.answer.kind === 'PV' ? 'voucher' : 'AP invoice'} instead.` }, 409) };
     }
   }
+  const wrongAnswer = refundAnswerRefusal(req, answer);
+  if (wrongAnswer) return { resp: c.json(wrongAnswer, 409) };
+  /* A refund request goes without a file (owner 2026-10-14: 退款申请不一定要附件) —
+     the order and its payments are the evidence. */
+  if (req.refund_source_doc_no) return { request: req };
   /* 申请一定要有 (owner 2026-10-01): no bill, no payment — Finance returns it.
      A balance carries the bill of the request it was raised from (item 2). */
   const owners = [String(req.id), ...(req.parent_request_id ? [String(req.parent_request_id)] : [])];

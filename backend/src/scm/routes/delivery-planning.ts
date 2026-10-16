@@ -73,6 +73,7 @@ import { attachLineCategories } from '../lib/so-readiness-category';
 import { deriveBranding } from '../lib/so-display-branding';
 /* chunkIn on every id/doc-no filter: the list rides in the URL and an unbounded one is refused. */
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { attachBoardAcExemptionExpiry } from '../lib/ac-exemption-expiry';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
 import { effectiveSoDelivery } from '../shared';
@@ -85,12 +86,13 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardUnionSql, assrOpenCaseGuardSql } from '../lib/assr-board-scope';
+import { assrBoardUnionSql, assrOpenCaseGuardSql, ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
 import { mintDpNoForLorry } from '../lib/dp-no-mint';
 import { resolveDeliveryScope, scopeMatchesAssignment, type DeliveryScope, type CrewAssignment } from '../lib/deliveryScope';
+import { fetchDoCrewAssignment, doPodContextHandler, ownServiceAndProjectRowKeys } from './delivery-pod-context';
 import { deriveArrangementStage } from '../lib/arrangement-stage';
 /* Option B side map (/geo): zone derivation + set counting + cache-first
    geocoding reuse the EXISTING single-owner modules — the zone map + fallback
@@ -101,6 +103,8 @@ import { zoneForAddress } from '../lib/zone-classify';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress, geocodeAddressCached, normalizeAddress } from '../lib/geocode';
 import { dateOrNull } from '../lib/date-coerce';
+import { echoTripCrew } from '../lib/trip-crew-echo';
+import { latestLiveDoIdForSo, applyScheduleCrew, assignSoCrew, setAssrLegCrew, staleRunOfSo, hasSeatPatch } from '../lib/trip-crew-sync';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { planningPoNosByDoc } from '../lib/planning-po-nos';
 
@@ -362,29 +366,6 @@ async function applyDeliveryRowScope<T extends { row_type: string; so_doc_no: st
 /* A single DO's crew assignment (header driver_id + delivery_order_crew ids),
    for the write-ownership check on the driver-facing step/POD endpoints. Returns
    an empty assignment (matches no self scope) when the DO or its crew is absent. */
-export async function fetchDoCrewAssignment(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  sb: any,
-  doId: string,
-): Promise<CrewAssignment> {
-  const [doRes, crewRes] = await Promise.all([
-    sb.from('delivery_orders').select('driver_id').eq('id', doId).maybeSingle(),
-    sb.from('delivery_order_crew').select('driver_1_id, driver_2_id, helper_1_id, helper_2_id').eq('do_id', doId).maybeSingle(),
-  ]);
-  const d = (doRes?.data ?? {}) as Record<string, unknown>;
-  const cr = (crewRes?.data ?? {}) as Record<string, unknown>;
-  return {
-    driverIds: [
-      (d.driverId ?? d.driver_id) as string | null,
-      (cr.driver1Id ?? cr.driver_1_id) as string | null,
-      (cr.driver2Id ?? cr.driver_2_id) as string | null,
-    ],
-    helperIds: [
-      (cr.helper1Id ?? cr.helper_1_id) as string | null,
-      (cr.helper2Id ?? cr.helper_2_id) as string | null,
-    ],
-  };
-}
 
 /* Plain-language 403 for a field-crew caller acting on a job that is not theirs. */
 const NOT_YOUR_JOB = "You can only update a delivery job assigned to you.";
@@ -447,8 +428,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     // amended_delivery_date drives the effective countdown. dual-read camelCase.
     amend_date_from_customer: string | null; amended_delivery_date: string | null;
     amendDateFromCustomer?: string | null; amendedDeliveryDate?: string | null;
-    // HC "Amend Client Date Reason". dual-read camelCase below.
-    amend_reason: string | null; amendReason?: string | null;
+    // HC "Amend Client Date Reason" — amend_reason is OUR postpone reason (staff
+    // preset); amend_reason_from_customer is the customer's WhatsApp amend tap.
+    amend_reason: string | null; amendReason?: string | null; amend_reason_from_customer: string | null; amendReasonFromCustomer?: string | null;
     // HC SO-context raw-data fields. dual-read camelCase below.
     possession_date: string | null; house_type: string | null;
     replacement_disposal: string | null; referral: string | null; ref: string | null; customer_so_no: string | null;
@@ -466,7 +448,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
            has no `id` column: selecting it makes PostgREST reject the whole query and
            the board 500s. Identity here is doc_no; every join below keys on it. */
-        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref, customer_so_no, delivery_message_status, disposal_request, dp_remark')
+        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, amend_reason_from_customer, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref, customer_so_no, delivery_message_status, disposal_request, dp_remark, linked_ac_docno')
         .neq('status', 'DRAFT')
         .neq('status', 'CANCELLED')
         .order('customer_delivery_date', { ascending: true, nullsFirst: false }),
@@ -955,8 +937,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       // confirmed. The Original column above is unchanged.
       amend_date_from_customer: amendDateFromCustomer,
       amended_delivery_date: amendedDD,
-      // HC "Amend Client Date Reason" — paired with the amend dates. dual-read.
-      amend_reason: r.amendReason ?? r.amend_reason ?? null,
+      // HC "Amend Client Date Reason" — OUR postpone reason (dual-read), then the
+      // customer's own WhatsApp amend tap reason, kept apart.
+      amend_reason: r.amendReason ?? r.amend_reason ?? null, amend_reason_from_customer: r.amendReasonFromCustomer ?? r.amend_reason_from_customer ?? null,
       // EFFECTIVE date (amended ?? original) — what the countdown actually uses.
       effective_delivery_date: effectiveDD,
       processing_date: procDate,
@@ -1135,7 +1118,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           customer_delivery_date: leg.date,
           amend_date_from_customer: null,
           amended_delivery_date: leg.date,
-          amend_reason: null,
+          amend_reason: null, amend_reason_from_customer: null,
           effective_delivery_date: leg.date,
           processing_date: leg.date,
           /* Synthetic job row — its so_doc_no is a ROW KEY, not a real SO doc
@@ -1304,7 +1287,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         customer_delivery_date: date,
         amend_date_from_customer: null,
         amended_delivery_date: date,
-        amend_reason: null,
+        amend_reason: null, amend_reason_from_customer: null,
         effective_delivery_date: date,
         processing_date: date,
         /* Synthetic DP job row — so_doc_no is `DP:<id>`, not a real SO doc
@@ -1367,6 +1350,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   } catch (e) {
     console.warn(`[delivery-planning] DP-order union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
+  await echoTripCrew(sb, dpBoardRows).catch((e: Error) => console.warn(`[delivery-planning] DP crew echo skipped: ${e.message.slice(0, 120)}`));
 
   /* ── PMS project SETUP / DISMANTLE union (READ-ONLY mirror) ───────────────────
      The fleet (drivers / lorries) is SHARED across deliveries, service cases AND
@@ -1445,7 +1429,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           customer_delivery_date: leg.date,
           amend_date_from_customer: null,
           amended_delivery_date: leg.date,
-          amend_reason: null,
+          amend_reason: null, amend_reason_from_customer: null,
           effective_delivery_date: leg.date,
           processing_date: leg.date,
           /* Synthetic job row — its so_doc_no is a ROW KEY, not a real SO doc
@@ -1510,6 +1494,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   }
 
   const poNosByDoc = await planningPoNosByDoc(sb, soRows); // "PO No." column: POs raised from the SO, walked per company (lib/planning-po-nos.ts)
+  await attachBoardAcExemptionExpiry(sb, c, soRows, orders); // BUG-51 repoint: the board's exemption-expiry column (shared lib keeps the route under its size ceiling)
   const allOrders = [...orders.map((o) => ({ ...o, po_nos: poNosByDoc.get(o.so_doc_no) ?? [] })), ...assrOrders, ...dpBoardRows, ...projectOrders];
 
   /* 7c. PER-ASSIGNEE ROW SCOPE. For a self-scoped caller (Driver/Helper), keep
@@ -1518,10 +1503,14 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         is skipped and their board is byte-identical to before. A row's assignment:
           · SO row  → the latest DO's header driver_id + crew driver/helper ids.
           · DP row  → its trip's driver_id / helper_1_id / helper_2_id.
-          · ASSR / DO-less SO → no assignment (empty) → never matches a self scope. */
-  const scopedOrders = await applyDeliveryRowScope(sb, scope, allOrders, {
+          · ASSR leg → its stop's trip crew; project leg → the project's crew users
+            (ownServiceAndProjectRowKeys). DO-less SO → never matches a self scope. */
+  const scopedBase = new Set(await applyDeliveryRowScope(sb, scope, allOrders, {
     doByDoc, doDriverById, crewIdsByDo, dpTripIdByKey,
-  });
+  }));
+  const ownExtra = scope.mode === 'all' ? null
+    : await ownServiceAndProjectRowKeys(sb, c.env, scope, Number(c.get('houzsUser')?.id), allOrders);
+  const scopedOrders = allOrders.filter((o) => scopedBase.has(o) || !!ownExtra?.has(o.so_doc_no));
 
   /* 8. Counts per state — computed over the REGION-filtered set so the state
         tab badges reflect the active region. The state filter is applied AFTER
@@ -1887,6 +1876,8 @@ deliveryPlanning.get('/:docNo/lines', async (c) => {
   return c.json({ items: items ?? [] });
 });
 
+deliveryPlanning.get('/do/:doRef/pod', doPodContextHandler);
+
 /* Region match: ALL → everything; else a configured region code → orders whose
    region set (customer-state buckets) includes it. validCodes is the active
    region master from the config; an unknown param is a defensive no-op (so an
@@ -2157,7 +2148,7 @@ const scheduleSchema = z.object({
   // ASSR ONLY (type='assr'): which driving date the board row represents, so the
   // scheduleDate write-back targets the matching assr_cases column
   // (customer_pickup_at vs do_date). Ignored for so | do.
-  jobKind: z.enum(['customer_pickup', 'delivery', 'inspection']).nullable().optional(),
+  jobKind: z.enum(ASSR_BOARD_LEGS).nullable().optional(),
   // ── Optional trip wiring ───────────────────────────────────────────────────
   // Scheduling an order onto a trip. Either tripId (append to an existing trip)
   // OR {lorryId, driverId, tripDate?} (find-or-create a trip for that lorry+date).
@@ -2258,7 +2249,8 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
      trip_stops are scm → the supabase client. */
   if (type === 'assr') {
     const assrWantsTrip = p.tripId != null || p.lorryId != null;
-    if (p.scheduleDate === undefined && !assrWantsTrip) return c.json({ error: 'no_changes' }, 400);
+    const assrCrewOnly = !assrWantsTrip && hasSeatPatch(p);
+    if (p.scheduleDate === undefined && !assrWantsTrip && !assrCrewOnly) return c.json({ error: 'no_changes' }, 400);
     const caseId = Number(id);
     if (!Number.isFinite(caseId)) return c.json({ error: 'bad_id', reason: 'assr id must be numeric' }, 400);
     const jobKind: 'customer_pickup' | 'delivery' | 'inspection' =
@@ -2299,6 +2291,11 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
     // P3: wire the leg onto a trip when a lorry/trip was chosen. Best-effort +
     // REPORTED — the date write already committed (same rule as the SO/DO path).
     const sb = c.get('supabase');
+    if (assrCrewOnly) {
+      const legTrip = await setAssrLegCrew(sb, caseId, jobKind, p).catch((e: Error) => ({ error: e.message }));
+      if (legTrip && typeof legTrip === 'object') return c.json({ error: 'crew_save_failed', reason: legTrip.error }, 500);
+      if (!legTrip && p.scheduleDate === undefined) return c.json({ error: 'no_trip', reason: 'Pick a lorry for this job first; the driver rides with the lorry run.' }, 409);
+    }
     const wiring: TripWiring = assrWantsTrip
       ? await scheduleAssrOntoTrip(c, sb, caseId, jobKind, p)
       : { state: 'NOT_REQUESTED' };
@@ -2319,6 +2316,12 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
   if (p.deliveryState !== undefined) updates.delivery_state = p.deliveryState;
   // A trip-only schedule (no date/state) is still a valid change — only 400 when
   // there's NOTHING to do at all.
+  const coId = activeCompanyId(c) ?? null;
+  const crew = type === 'so' && !wantsTrip && hasSeatPatch(p) && coId != null
+    ? await assignSoCrew(c.get('supabase'), coId, id, p, (c.get('user') as { id?: string } | null)?.id ?? null).catch((e: Error) => ({ error: e.message })) : undefined;
+  if (crew === null) return c.json({ error: 'no_delivery_order', reason: 'Create a delivery order first, then assign the crew.' }, 409);
+  if (crew && 'error' in crew) return c.json({ error: 'crew_save_failed', reason: crew.error }, 500);
+  if (Object.keys(updates).length === 1 && crew) return c.json({ ok: true, crew });
   if (Object.keys(updates).length === 1 && !wantsTrip) return c.json({ error: 'no_changes' }, 400);
 
   const sb = c.get('supabase');
@@ -2390,8 +2393,9 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
   if (!data) return c.json({ error: 'not_found' }, 404);
 
   // ── Trip wiring — find-or-create a trip, append a stop.
-  const wiring: TripWiring = wantsTrip
-    ? await scheduleOntoTrip(c, sb, type, id, p)
+  const carry = type === 'so' && !wantsTrip && p.scheduleDate ? await staleRunOfSo(sb, coId, id, p.scheduleDate) : null;
+  const wiring: TripWiring = wantsTrip || carry
+    ? await scheduleOntoTrip(c, sb, type, id, { ...p, ...carry })
     : { state: 'NOT_REQUESTED' };
 
   /* `trip` keeps its exact wire shape — the board reads it, and a failure still
@@ -2512,6 +2516,7 @@ async function scheduleOntoTrip(
     let customerName: string | null = null;
     let address: string | null = null;
     let tripWarehouseId: string | null = p.warehouseId ?? null;
+    let orderDate: string | null = null;
 
     if (type === 'do') {
       doId = id;
@@ -2532,10 +2537,12 @@ async function scheduleOntoTrip(
          schedule. An SO therefore has no UUID to put in trip_stops.so_id — it stays
          null, and the stop reaches its SO through the DO (do_id) instead. */
       const { data: soRow } = await sb.from('mfg_sales_orders')
-        .select('local_total_sen, debtor_name, address1, address2').eq('doc_no', id).maybeSingle();
+        .select('local_total_sen, debtor_name, address1, address2, amended_delivery_date, customer_delivery_date').eq('doc_no', id).maybeSingle();
       if (soRow) {
         const r = soRow as Record<string, unknown>;
         soId = null;
+        doId = await latestLiveDoIdForSo(sb, activeCompanyId(c) ?? null, id);
+        orderDate = dateOrNull((r.amended_delivery_date ?? r.customer_delivery_date ?? null) as string | null);
         revenueSen = Number((r.localTotalSen ?? r.local_total_sen) ?? 0);
         customerName = (r.debtorName ?? r.debtor_name ?? null) as string | null;
         address = [r.address1, r.address2].filter(Boolean).join(', ') || null;
@@ -2547,7 +2554,7 @@ async function scheduleOntoTrip(
        PLANNED trip for (lorry, date) or create one. */
     /* `??` is nullish: a blank tripDate/scheduleDate walked into trips.trip_date
        (`DATE NOT NULL`, mig 0053). Blank now falls to today like an absent key. */
-    const tripDate = dateOrNull(p.tripDate) ?? dateOrNull(p.scheduleDate) ?? todayMyt();
+    const tripDate = dateOrNull(p.tripDate) ?? dateOrNull(p.scheduleDate) ?? orderDate ?? todayMyt();
     let tripId = p.tripId ?? null;
     if (!tripId && p.lorryId) {
       const { data: found } = await sb.from('trips').select('id, trip_no')
@@ -2708,8 +2715,7 @@ async function scheduleOntoTrip(
       }
     }
 
-    /* (removed) delivery_leg trip-linking — the leg feature was removed; the
-       order surfaces on the trip via its trip_stops row above. */
+    await applyScheduleCrew(sb, tripIdStr, p, user?.id ?? null);
 
     /* Echo the trip_no for the response. */
     const { data: tNo } = await sb.from('trips').select('id, trip_no').eq('id', tripIdStr).maybeSingle();
@@ -2718,20 +2724,8 @@ async function scheduleOntoTrip(
        the echo read came back empty, so this stays WIRED — the wiring is what is
        being reported, not the label. */
 
-    /* SAY WHEN NO STOP WAS WRITTEN. The insert above is guarded by
-       `!already && (doId || soId)`, and on the SO-DIRECT path BOTH are null —
-       doId because there is no DO, soId because it is set to null right above
-       (scm.mfg_sales_orders has a TEXT doc_no PK and no uuid, while
-       trip_stops.so_id is a uuid). So scheduling an SO straight from the board
-       creates no stop at all, and this returned WIRED anyway: the dispatcher
-       saw success, the driver's sheet stayed empty, and lorry capacity counted
-       nothing.
-
-       The stop is NOT invented — there is genuinely no key to file it under,
-       and guessing one would put a job on a route that cannot be traced back
-       to its order. What changes is that the answer stops lying. The existing
-       fields are untouched so no caller breaks; a caller that reads
-       stopCreated can now tell the operator the job still needs its DO. */
+    /* SAY WHEN NO STOP WAS WRITTEN: an SO with no live DO has no key to file a
+       stop under, so the caller is told the job still needs its DO. */
     const stopCreated = Boolean(already) || Boolean(doId || soId);
     return {
       state: 'WIRED',

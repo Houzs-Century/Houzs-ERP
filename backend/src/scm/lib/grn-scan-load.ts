@@ -11,8 +11,10 @@
 
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { isDocumentHeld } from './document-hold';
+import { lineExportDescription2 } from './line-export-description2';
+import { paginateAll } from './paginate-all';
 import { RECEIVABLE_PO_STATUSES } from './source-document-gates';
-import type { OpenPoLine, SupplierRef, SupplierSkuBinding } from './grn-scan-match';
+import type { OpenPoLine, PoStatusRef, SupplierRef, SupplierSkuBinding } from './grn-scan-match';
 
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
@@ -23,25 +25,39 @@ export async function loadOpenPoLines(
   svc: SupabaseClient,
   companyId: number | null,
 ): Promise<OpenPoLine[]> {
-  let q = svc
-    .from('purchase_order_items')
-    .select(`
-      id, purchase_order_id, item_code, material_name, supplier_sku, qty, received_qty,
-      po:purchase_orders!inner ( id, po_number, supplier_id, status, on_hold, company_id )
-    `)
-    .in('purchase_orders.status', RECEIVABLE_PO_STATUSES as unknown as string[]);
-  if (companyId != null) q = q.eq('company_id', companyId);
-  const { data, error } = await q.limit(5000);
+  const { data, error } = await paginateAll((from, to) => {
+    let q = svc
+      .from('purchase_order_items')
+      .select(`
+        id, purchase_order_id, item_code, material_name, supplier_sku, qty, received_qty, warehouse_id,
+        item_group, variants, description2,
+        po:purchase_orders!inner ( id, po_number, supplier_id, status, on_hold, company_id, purchase_location_id )
+      `)
+      .in('purchase_orders.status', RECEIVABLE_PO_STATUSES as unknown as string[]);
+    if (companyId != null) q = q.eq('company_id', companyId);
+    return q.order('id').range(from, to);
+  });
   if (error) throw new Error(`load open PO lines failed: ${error.message}`);
 
   type Row = {
     id: string; purchase_order_id: string; item_code: string | null;
     material_name: string | null; supplier_sku: string | null;
-    qty: number | null; received_qty: number | null;
-    po: { id: string; po_number: string; supplier_id: string | null; status: string | null; on_hold: boolean | null } | null;
+    qty: number | null; received_qty: number | null; warehouse_id: string | null;
+    item_group: string | null; variants: unknown; description2: string | null;
+    po: { id: string; po_number: string; supplier_id: string | null; status: string | null; on_hold: boolean | null; purchase_location_id: string | null } | null;
   };
+  const rows = (data ?? []) as unknown as Row[];
+  // The line's own warehouse overrides the PO header's (outstanding-po-lines.ts).
+  const whOf = (r: Row): string | null => r.warehouse_id ?? r.po?.purchase_location_id ?? null;
+  const whIds = [...new Set(rows.map(whOf).filter((x): x is string => Boolean(x)))];
+  const codeById = new Map<string, string>();
+  if (whIds.length > 0) {
+    const { data: whs, error: whErr } = await svc.from('warehouses').select('id, code').in('id', whIds);
+    if (whErr) throw new Error(`load PO warehouses failed: ${whErr.message}`);
+    for (const w of whs as Array<{ id: string; code: string | null }>) if (w.code) codeById.set(w.id, w.code);
+  }
   const out: OpenPoLine[] = [];
-  for (const r of ((data ?? []) as unknown as Row[])) {
+  for (const r of rows) {
     if (!r.po || isDocumentHeld(r.po)) continue; // held PO is not receivable
     const remaining = (r.qty ?? 0) - (r.received_qty ?? 0);
     if (remaining <= 0) continue; // nothing left to receive on this line
@@ -54,6 +70,8 @@ export async function loadOpenPoLines(
       materialName: r.material_name ?? null,
       supplierSku: r.supplier_sku ?? null,
       remaining,
+      locationCode: codeById.get(whOf(r) ?? '') ?? null,
+      description2: lineExportDescription2(r.item_group, r.variants, r.description2),
     });
   }
   return out;
@@ -65,11 +83,13 @@ export async function loadSupplierBindings(
   svc: SupabaseClient,
   companyId: number | null,
 ): Promise<SupplierSkuBinding[]> {
-  let q = svc
-    .from('supplier_material_bindings')
-    .select('supplier_sku, ac_item_code, item_code');
-  if (companyId != null) q = q.eq('company_id', companyId);
-  const { data, error } = await q.limit(20000);
+  const { data, error } = await paginateAll((from, to) => {
+    let q = svc
+      .from('supplier_material_bindings')
+      .select('supplier_sku, ac_item_code, item_code');
+    if (companyId != null) q = q.eq('company_id', companyId);
+    return q.order('id').range(from, to);
+  });
   if (error) throw new Error(`load supplier bindings failed: ${error.message}`);
   type Row = { supplier_sku: string | null; ac_item_code: string | null; item_code: string | null };
   const out: SupplierSkuBinding[] = [];
@@ -87,10 +107,30 @@ export async function loadSuppliers(
   svc: SupabaseClient,
   companyId: number | null,
 ): Promise<SupplierRef[]> {
-  let q = svc.from('suppliers').select('id, code, name');
-  if (companyId != null) q = q.eq('company_id', companyId);
-  const { data, error } = await q.limit(5000);
+  const { data, error } = await paginateAll((from, to) => {
+    let q = svc.from('suppliers').select('id, code, name');
+    if (companyId != null) q = q.eq('company_id', companyId);
+    return q.order('id').range(from, to);
+  });
   if (error) throw new Error(`load suppliers failed: ${error.message}`);
   type Row = { id: string; code: string | null; name: string | null };
-  return (data as unknown as Row[]).map((r) => ({ id: r.id, code: r.code, name: r.name }));
+  return ((data ?? []) as unknown as Row[]).map((r) => ({ id: r.id, code: r.code, name: r.name }));
+}
+
+// Every PO number in the company with its status, open or not, so a delivery
+// order row whose PO is not open can say why ("already fully received").
+export async function loadPoStatuses(
+  svc: SupabaseClient,
+  companyId: number | null,
+): Promise<PoStatusRef[]> {
+  const { data, error } = await paginateAll((from, to) => {
+    let q = svc.from('purchase_orders').select('po_number, status');
+    if (companyId != null) q = q.eq('company_id', companyId);
+    return q.order('id').range(from, to);
+  });
+  if (error) throw new Error(`load PO statuses failed: ${error.message}`);
+  type Row = { po_number: string | null; status: string | null };
+  return ((data ?? []) as unknown as Row[])
+    .filter((r) => r.po_number)
+    .map((r) => ({ poNumber: r.po_number as string, status: r.status ?? '' }));
 }

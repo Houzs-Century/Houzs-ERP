@@ -22,7 +22,8 @@ import {
 } from "./autocount-pull-rules.mjs";
 
 /** A working day: checkpoint fresh, rows arriving. */
-const healthy = { checkpoint: "2026-08-19 04:00:00", behind: 0, d7: 120, d30: 480, total: 3281 };
+const healthy = { checkpoint: "2026-08-19 04:00:00", behind: 0, d7: 120, d30: 480, total: 3281,
+  runs: { total: 576, failed: 0, quiet: 0 } };
 
 test("a healthy pull is silent", () => {
   const r = decide(healthy);
@@ -35,7 +36,8 @@ test("THE ACTUAL INCIDENT fires: checkpoint frozen at the cutover, mirror taking
      was never true and the checkpoint never advanced — while the job reported
      normal-looking runs every five minutes for months. If this case does not
      alarm, the sentinel is decoration. */
-  const r = decide({ checkpoint: "2026-05-01 00:00:00", behind: 110, d7: 0, d30: 0, total: 3281 });
+  const r = decide({ checkpoint: "2026-05-01 00:00:00", behind: 110, d7: 0, d30: 0, total: 3281,
+    runs: { total: 576, failed: 576, quiet: 0 } });
   assert.equal(r.code, ALARM);
   assert.equal(r.alarms.length, 2, "both the frozen checkpoint AND the dead arrival rate");
   assert.ok(r.alarms.some((a) => /pull_checkpoint is 110 days behind/.test(a)));
@@ -126,4 +128,13 @@ test("a genuinely stale checkpoint still alarms, offset or not", () => {
 
   assert.equal(decide({ ...healthy, behind: 2.0 }).code, OK, "at the limit is fine");
   assert.equal(decide({ ...healthy, behind: 2.6 }).code, ALARM, "past it is not");
+});
+
+test("a quiet AutoCount is not a stuck pull: every run clean and empty", () => {
+  /* 2026-10-06: checkpoint 3 days behind, every run SKIPPED "No modifications
+     since checkpoint". Nothing failed, so there is no row to find. */
+  const quiet = { ...healthy, behind: 3, runs: { total: 576, failed: 0, quiet: 576 } };
+  assert.equal(decide(quiet).code, OK);
+  assert.equal(decide({ ...quiet, runs: { total: 576, failed: 1, quiet: 575 } }).code, ALARM, "one failed run still alarms");
+  assert.match(decide({ ...quiet, runs: { total: 0, failed: 0, quiet: 0 } }).alarms[0], /NO pull run/);
 });

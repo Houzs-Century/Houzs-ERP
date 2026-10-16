@@ -21,7 +21,8 @@ import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
-import { parseBankStatement, movementFingerprint } from '../../acc/bank-parse';
+import { parseBankStatement } from '../../acc/bank-parse';
+import { REPEAT_KIND, pairRepeats, repeatNote, repeatsAmong } from '../../acc/bank-repeats';
 import { readPdfContent, pdfDigits, parsePdfStatement } from '../../acc/bank-parse-pdf';
 import { monthWindow } from '../../acc/bank-month';
 import {
@@ -32,9 +33,10 @@ import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-r
 import {
   loadBankConfigs, loadBankConfig, parseConfigFrom,
   loadRecognitionRules, loadPayableBatches, loadPayoutAdvices, loadAccountLedger,
-  loadLiveMonthLock, loadLineMonth, loadClaimedElsewhere, claimedSetFor, jeNosOf } from '../../acc/bank';
+  loadLiveMonthLock, loadLineMonth, loadClaimedElsewhere, claimedSetFor, jeNosOf, loadLinesForRepeats } from '../../acc/bank';
 import { lockedRefusal, lockMonthOf } from '../../acc/bank-lock';
-import { postBatchReceipt, undoBatchReceipt } from '../../acc/settlement';
+import { undoBatchReceipt } from '../../acc/settlement';
+import { postBankCredit } from '../../acc/bank-receive';
 import { withJournalRefs } from '../../acc/journal-refs';
 import { fmtSen } from '../shared/format';
 
@@ -279,7 +281,7 @@ export const bankUpload = guard(async (c) => {
   if (!batches.ok) return c.json({ error: 'load_failed', reason: batches.reason }, 500);
   if (!payouts.ok) return c.json({ error: 'load_failed', reason: payouts.reason }, 500);
 
-  const movements = groupBankMovements(parsed.lines);
+  const movements = groupBankMovements(parsed.lines, rules.rules);
   const decisions = matchBankMovements({
     movements, rules: rules.rules, batches: batches.batches, payouts: payouts.payouts,
   });
@@ -300,51 +302,18 @@ export const bankUpload = guard(async (c) => {
      reconciles every few days and again at month end (2026-09-08: 可能隔几天我
      就做一次), so overlapping exports are the ordinary case, not a mistake.
 
-     Keyed on the movement's FINGERPRINT (bank-parse.ts movementFingerprint):
-     its day, its amount and its WORDS in any order — not its text, because the
-     same transaction reads "Fund transfer RACHEL NG" on Hong Leong's monthly
-     statement and "RACHEL NG Fund transfer" on its any-day export. COUNTED, not
-     just seen: two identical transfers on one day are two movements, and a
-     longer export carrying one more of them than an earlier one contributes
-     exactly that one. */
-  const seenBefore = new Map<string, { count: number; where: string }>();
-  {
-    const { data: mine, error: mErr } = await sb.from('acc_bank_statements')
-      .select('id').eq('company_id', co.companyId).eq('account_code', accountCode);
-    if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
-    const ids = ((mine ?? []) as Array<{ id: number }>).map((s) => Number(s.id));
-    if (ids.length > 0) {
-      const { data, error: seenErr } = await sb.from('acc_bank_statement_lines')
-        .select('booked_on, description, reference, amount_sen, state, posted_je_no, statement_id')
-        .eq('company_id', co.companyId).in('statement_id', ids);
-      if (seenErr) return c.json({ error: 'load_failed', reason: seenErr.message }, 500);
-      for (const r of (data ?? []) as Array<Record<string, any>>) {
-        const key = movementFingerprint({
-          bookedOn: String(r.booked_on).slice(0, 10), amountSen: Number(r.amount_sen ?? 0),
-          description: String(r.description ?? ''), reference: (r.reference as string | null) ?? null,
-        });
-        const at = seenBefore.get(key) ?? { count: 0, where: '' };
-        at.count += 1;
-        at.where = r.posted_je_no
-          ? String(r.posted_je_no)
-          : `statement ${r.statement_id}${String(r.state) === 'OPEN' ? ' (still open there)' : String(r.state) === 'IGNORED' ? ' (ignored there)' : ''}`;
-        seenBefore.set(key, at);
-      }
-    }
-  }
-  /* Which of THIS file's movements are repeats — decided once, in file order,
-     so the first occurrences of a repeated fingerprint are the ones that match
-     what was seen and any beyond that count are new. */
-  const usedNow = new Map<string, number>();
-  const alreadyRecorded = decisions.map((d) => {
-    const key = movementFingerprint(d.movement);
-    const seen = seenBefore.get(key);
-    if (!seen) return null;
-    const used = usedNow.get(key) ?? 0;
-    if (used >= seen.count) return null;
-    usedNow.set(key, used + 1);
-    return seen.where;
-  });
+     The same movement, however each file printed it (acc/bank-repeats.ts): the
+     same day and amount, and one print's WORDS all inside the other's — "Fund
+     transfer RACHEL NG" on Hong Leong's monthly statement is "RACHEL NG Fund
+     transfer" on its any-day export, and since 2026-10-14 the monthly file's
+     "Cr Adv-Interbank GIRO at KLM" is the export's "Cr Adv-Interbank GIRO".
+     Paired one to one, in file order: two identical transfers on one day are
+     two movements, and a longer export carrying one more of them than an
+     earlier one contributes exactly that one. A line already filed as a repeat
+     is a copy and is never an earlier print. */
+  const earlier = await loadLinesForRepeats(sb, co.companyId, accountCode);
+  if (!earlier.ok) return c.json({ error: 'load_failed', reason: earlier.reason }, 500);
+  const alreadyRecorded = pairRepeats(earlier.lines.filter((l) => l.kind !== REPEAT_KIND), decisions.map((d) => d.movement));
 
   const fileHash = await sha256Hex(content);
   const { data: stmtRow, error: stmtErr } = await sb.from('acc_bank_statements').insert({
@@ -382,12 +351,7 @@ export const bankUpload = guard(async (c) => {
          PROVEN identical, and the person who uploaded the file is the one who
          can say. What the screen owes him is the truth about why it is here. */
       const d = already
-        ? {
-          ...raw,
-          kind: 'DUPLICATE' as const,
-          clue: `This movement is already recorded — ${already} on a statement uploaded earlier.`
-            + ' Leave it out unless the bank really paid twice.',
-        }
+        ? { ...raw, kind: REPEAT_KIND, clue: repeatNote(already) }
         : raw;
       return {
       statement_id: statementId,
@@ -606,6 +570,45 @@ export const bankStatementAutoMatch = guard(async (c) => {
   const r = await applyObviousMatches(sb, co.companyId, statement);
   if (!r.ok) return c.json({ error: 'match_failed', reason: r.reason, message: `The obvious matches could not be applied: ${r.reason}` }, 500);
   return c.json({ ok: true, matched: r.matched, jeNos: r.jeNos, contraPairs: r.contraPairs });
+});
+
+/* ── POST /bank/statements/:id/repeats — what an earlier file already recorded ──
+   The upload's own rule for a statement already in (owner 2026-10-14: B，做 —
+   2990's Hong Leong month-end statement came in after the any-day export and
+   brought 42 of its movements back as still to decide, printed with "at KLM").
+   Each OPEN movement here that repeats one on a file of this account uploaded
+   BEFORE it (acc/bank-repeats.ts repeatsAmong) is filed the way a fresh upload
+   files it: a repeat, left out, its line naming where the movement is recorded.
+   Undo puts any one back. A closed month refuses, as every write here does. */
+export const bankStatementRepeats = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id)) return c.json({ error: 'bad_id' }, 400);
+  const sb = c.get('supabase');
+  const { data: stmt, error } = await sb.from('acc_bank_statements')
+    .select('id, account_code, period_from, period_to').eq('id', id).eq('company_id', co.companyId).maybeSingle();
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (!stmt) return c.json({ error: 'not_found' }, 404);
+  const statement = stmt as { id: number; account_code: string; period_from: string; period_to: string };
+  for (const edge of new Set([String(statement.period_from).slice(0, 10), String(statement.period_to).slice(0, 10)])) {
+    const shut = await refuseIfLocked(c, co.companyId, statement.account_code, edge, 'leaving out repeated movements on this statement');
+    if (shut) return shut;
+  }
+  const all = await loadLinesForRepeats(sb, co.companyId, statement.account_code);
+  if (!all.ok) return c.json({ error: 'load_failed', reason: all.reason }, 500);
+  const found = repeatsAmong(all.lines);
+  const mine = all.lines.filter((l) => l.statementId === id && found.has(l.id));
+  const leftOut: number[] = [];
+  for (const l of mine) {
+    /* Only while still OPEN: a movement decided in the meantime stays decided. */
+    const { data: done, error: upErr } = await sb.from('acc_bank_statement_lines')
+      .update({ kind: REPEAT_KIND, state: 'IGNORED', note: repeatNote(found.get(l.id)!), updated_at: new Date().toISOString() })
+      .eq('id', l.id).eq('company_id', co.companyId).eq('state', 'OPEN').select('id').maybeSingle();
+    if (upErr) return c.json({ error: 'save_failed', reason: upErr.message, leftOut: leftOut.length }, 500);
+    if (done) leftOut.push(l.id);
+  }
+  return c.json({ ok: true, leftOut: leftOut.length, lineIds: leftOut });
 });
 
 /* ── POST /bank/statements/:id/period — this file is the month's statement ──
@@ -908,68 +911,15 @@ export const bankLineReceipt = guard(async (c) => {
     }
   }
 
-  /* The DATE comes off the bank statement, not off the request: it is what the
-     bank says, and the whole point of uploading the file is that nobody has to
-     retype it. */
-  const receivedOn = String(line.booked_on).slice(0, 10);
-  const bankRef = line.reference ?? null;
-  const posted: Array<{ batchId: number; receiptId: number; jeNo?: string; outstandingSen: number; chargeSen: number }> = [];
-
-  /* WHICH BANK the money is in — the statement's own account, not the
-     acquirer's configured one. The owner asked exactly this: 不确定 maybank 对
-     其他的卡机. An acquirer set up to pay into Hong Leong whose credit turns up
-     on the Maybank statement really is money in Maybank, and booking it to Hong
-     Leong would leave Maybank's reconciliation permanently short by that
-     amount. The statement is evidence; the configuration is a guess made before
-     the money moved. */
-  const { data: stmtRaw, error: stmtRdErr } = await sb.from('acc_bank_statements')
-    .select('account_code').eq('id', line.statement_id).eq('company_id', co.companyId).maybeSingle();
-  if (stmtRdErr) return c.json({ error: 'load_failed', reason: stmtRdErr.message }, 500);
-  const bankAccountCode = (stmtRaw as { account_code?: string } | null)?.account_code ?? null;
-
-  for (const a of allocations) {
-    const r = await postBatchReceipt(sb, co.companyId, a.batchId, {
-      receivedOn, amountSen: a.amountSen, bankRef, bankAccountCode, userName: userName(c),
-      charge: charge && charge.batchId === a.batchId ? { amountSen: charge.amountSen, accountCode: charge.accountCode, note: charge.note } : null,
-    });
-    if (!r.ok) {
-      /* A refusal partway through must not leave half a payout booked. Every
-         receipt already written is reversed — through the engine, so the
-         contra entries exist — before the refusal is returned. */
-      const undone: string[] = [];
-      for (const done of posted) {
-        const back = await undoBatchReceipt(sb, co.companyId, done.receiptId);
-        if (!back.ok) undone.push(`${done.jeNo ?? done.receiptId}: ${back.reason}`);
-      }
-      return c.json({
-        error: r.status,
-        message: r.reason
-          + (undone.length > 0
-            ? ` — AND ${undone.length} earlier share(s) could not be taken back: ${undone.join('; ')}. Check the ledger before retrying.`
-            : posted.length > 0 ? ` The other ${posted.length} share(s) were taken back, so nothing is half-booked.` : ''),
-      }, 409);
-    }
-    posted.push({ batchId: a.batchId, receiptId: r.receiptId, jeNo: r.jeNo, outstandingSen: r.outstandingSen, chargeSen: r.chargeSen });
-  }
-
-  /* Point every receipt back at the movement it was read from. */
-  for (const p of posted) {
-    await sb.from('acc_settlement_receipts').update({ bank_line_id: lineId }).eq('id', p.receiptId);
-  }
-
-  const { error: upErr } = await sb.from('acc_bank_statement_lines').update({
-    state: 'POSTED',
-    /* One entry number when there is one, all of them when the credit was
-       split — the operator asks "which JE" and both answers are true. */
-    posted_je_no: posted.map((p) => p.jeNo).filter(Boolean).join(', ') || null,
-    updated_at: new Date().toISOString(),
-  }).eq('id', lineId).eq('company_id', co.companyId);
-  if (upErr) {
-    return c.json({
-      error: 'save_failed',
-      reason: `${upErr.message} (the receipt(s) WERE posted — the statement line did not record it)`,
-    }, 500);
-  }
+  /* The booking itself is shared with the gated repair that books a gross-and-fee
+     pair joined after its upload (acc/bank-receive.ts). */
+  const booked = await postBankCredit(
+    sb, co.companyId,
+    { id: lineId, booked_on: String(line.booked_on), reference: (line.reference as string | null) ?? null, statement_id: Number(line.statement_id) },
+    allocations, charge, userName(c),
+  );
+  if (!booked.ok) return c.json(booked.body, booked.status);
+  const posted = booked.posted;
 
   return c.json({
     ok: true,

@@ -17,11 +17,10 @@
 // wrong key). Do not hand-edit one without the other.
 //
 // MATCHING MIRRORS HONO. A mount written `/x/*` covers `/x` and `/x/...`; a
-// mount written without the wildcard (`/inventory/adjustments`) matches that
-// exact path only — which is what Hono does, and is why `/inventory/adjustments`
-// resolves to `scm.warehouse.adjustments` while `/inventory/adjustments/9`
-// falls through to `scm.warehouse.inventory` exactly as the guards do today.
-// Longest prefix wins; on equal length the exact mount wins.
+// mount written without the wildcard matches that exact path only — which is
+// what Hono does. Longest prefix wins, so `/inventory/adjustments/9` resolves
+// to `scm.warehouse.adjustments` ahead of `/inventory/*`; on equal length the
+// exact mount wins.
 //
 // A PATH WITH NO AREA IS NOT LIFTABLE. `areaForPath` returns null for every
 // router mounted without a guard (SCM_UNGUARDED_PREFIXES below), and the freeze
@@ -72,7 +71,7 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/purchase-consignment-orders/*", "scm.consignment.po_orders"],
   ["/purchase-consignment-receives/*", "scm.consignment.po_receives"],
   ["/purchase-consignment-returns/*", "scm.consignment.po_returns"],
-  ["/inventory/adjustments", "scm.warehouse.adjustments"],
+  ["/inventory/adjustments/*", "scm.warehouse.adjustments"],
   ["/inventory/*", "scm.warehouse.inventory"],
   ["/warehouse/*", "scm.warehouse.inventory"],
   ["/loading-list/*", "scm.warehouse.inventory"],
@@ -98,6 +97,7 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/addons/*", "scm.procurement.products"],
   ["/drivers/*", "scm.transportation.drivers"],
   ["/delivery-planning/*", "scm.transportation.drivers"],
+  ["/delivery-jobs/*", "scm.transportation.drivers"],
   ["/delivery-planning-regions/*", "scm.transportation.drivers"],
   ["/delivery-planning-row-marks/*", "scm.transportation.drivers"],
   ["/delivery-planning-row-order/*", "scm.transportation.drivers"],
@@ -105,6 +105,7 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/threepl-companies/*", "scm.transportation.drivers"],
   ["/delivery-zones/*", "scm.transportation.drivers"],
   ["/delivery-rate-cards/*", "scm.transportation.drivers"],
+  ["/threepl-do-charges/*", "scm.transportation.drivers"],
   ["/driver-leave/*", "scm.transportation.drivers"],
   ["/trips/*", "scm.transportation.drivers"],
   ["/dp-orders/*", "scm.transportation.drivers"],
@@ -127,6 +128,10 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/scan-gr/*", "scm.procurement.grn"],
   ["/scan-pi/*", "scm.procurement.pi"],
   ["/scan-payment/*", "scm.sales.orders"],
+  ["/scan-files/so/*", "scm.sales.orders"],
+  ["/scan-files/payment/*", "scm.sales.orders"],
+  ["/scan-files/pv/*", "scm.finance.accounting"],
+  ["/scan-files/workshop/*", "scm.transportation.drivers"],
   ["/slips/*", "scm.sales.orders"],
 ] as const;
 
@@ -173,6 +178,11 @@ export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
      Finance to pay a bill. Authorization is the flat scm.payment_request.create
      key (own requests) or scm.payment_voucher.create (Finance) inside the route. */
   "/payment-requests",
+  /* Product request (2026-10-06): a salesperson holds no consignment or
+     procurement area and the Purchaser no sales area. Authorization is a Sales
+     caller or the flat scm.product_request.create key (own requests) and
+     scm.product_request.approve (the Purchaser) inside the route. */
+  "/product-requests",
   "/hr",
   "/localities",
   // SG postcode -> address via OneMap (2026-09-11): a shared reference lookup
@@ -233,9 +243,9 @@ export function areaLabel(area: string): string {
   return SCM_AREA_LABELS[area] ?? area;
 }
 
-/* Longest-first so the first hit is the most specific mount; the exact
-   `/inventory/adjustments` sorts ahead of `/inventory/*` at equal base length
-   because a non-wildcard mount is the narrower claim. Computed once. */
+/* Longest-first so the first hit is the most specific mount; on equal base
+   length a non-wildcard mount sorts first because it is the narrower claim.
+   Computed once. */
 const MATCHERS = SCM_AREA_MOUNTS.map(([prefix, area]) => {
   const wildcard = prefix.endsWith("/*");
   const base = wildcard ? prefix.slice(0, -2) : prefix;

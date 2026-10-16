@@ -17,8 +17,13 @@
 
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { Plus, Edit3, PackageCheck } from 'lucide-react';
 import { Button } from '@2990s/design-system';
+import { Button as DrawerButton } from '../../components/Button';
+import {
+  QuickViewShell, DrawerMetaGrid, DrawerMeta, DrawerSection, DrawerKV, DrawerPartyCard,
+  DrawerLines, DrawerLineRow, DrawerLineItem, DrawerTotals, DrawerTotal, drawerErrorText, type DrawerTone,
+} from './QuickViewDrawerParts';
 import { buildVariantSummary, fmtDateOrDash, fmtMoneySen, fmtQty, fmtSen } from '@2990s/shared';
 import {
   usePurchaseConsignmentOrders,
@@ -31,9 +36,11 @@ import {
   type Currency,
 } from '../../vendor/scm/lib/suppliers-queries';
 import { poStatusLabel } from '../../vendor/scm/lib/po-status';
+import { warehouseLabel } from '../../vendor/scm/lib/warehouse-label';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
-import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
+import { usePrompt } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import styles from './Suppliers.module.css';
@@ -42,10 +49,11 @@ import { FilterPills } from '../../components/FilterPills';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-type StatusFilter = 'all' | 'outstanding';
+type StatusFilter = 'all' | 'outstanding' | 'cancelled';
 const STATUS_CHIPS: { value: StatusFilter; label: string }[] = [
   { value: 'outstanding', label: 'Outstanding' },
   { value: 'all', label: 'All' },
+  { value: 'cancelled', label: 'Cancelled' }
 ];
 
 const fmtMoney = (centi: number, currency: Currency): string =>
@@ -67,6 +75,8 @@ const summarizeItems = (items: PoHeaderRow['items']): string | null => {
   return extra > 0 ? `${shown} · +${extra} more` : shown;
 };
 
+const locationOf = (po: PoHeaderRow): string => warehouseLabel(po.purchase_location) ?? '';
+
 const PC_ORDER_LIST_STORAGE_KEY = 'pc-order-list.layout.v1';
 
 const buildColumns = (): GridColumn<PoHeaderRow>[] => [
@@ -75,7 +85,7 @@ const buildColumns = (): GridColumn<PoHeaderRow>[] => [
     // Backend (purchase-consignment-orders list) returns pc_number, not the
     // PO's po_number — the PoHeaderRow type is shared with real POs, so read
     // pc_number with a po_number fallback.
-    accessor: (po) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{pcNo(po)}</span>,
+    accessor: (po) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }} className={cancelledDocNoClass(po.status)}>{pcNo(po)}</span>,
     searchValue: (po) => pcNo(po),
     /* Accessor is JSX → export the raw doc-no string or the cell exports blank. */
     exportValue: (po) => pcNo(po),
@@ -140,6 +150,14 @@ const buildColumns = (): GridColumn<PoHeaderRow>[] => [
     filterType: 'date', dateValue: (po) => po.expected_at,
   },
   {
+    key: 'purchase_location', label: 'Purchase Location', width: 170, sortable: true, groupable: true,
+    accessor: (po) => locationOf(po) || '—',
+    searchValue: (po) => locationOf(po),
+    filterValue: (po) => locationOf(po) || '—',
+    groupValue: (po) => locationOf(po) || '(none)',
+    sortFn: (a, b) => locationOf(a).localeCompare(locationOf(b)),
+  },
+  {
     key: 'currency', label: 'Currency', width: 90, sortable: true, groupable: true,
     accessor: (po) => po.currency,
     searchValue: (po) => po.currency,
@@ -170,30 +188,147 @@ const buildColumns = (): GridColumn<PoHeaderRow>[] => [
   },
 ];
 
+/* Status TONE for the drawer badge: every line received = success, cancelled
+   = error, draft = neutral, anything still open = warning. A function, not a
+   status map, so the po_status vocabulary keeps its one home (po-status.ts).
+   LABEL is poStatusLabel. */
+const pcoTone = (s: string): DrawerTone =>
+  s === 'RECEIVED' ? 'success' : s === 'CANCELLED' ? 'error' : s === 'DRAFT' ? 'neutral' : 'warning';
+const PCO_LINE_COLS = 'grid-cols-[minmax(0,1fr)_44px_96px]';
+
+/* Quick-view drawer — row click opens the same right slide-over the Sales
+   Order / Purchase Order lists have. Lines ride the SAME detail query the
+   expand chevron uses. */
+export function PurchaseConsignmentOrderDrawer({
+  row, onClose, onOpenFull, onEdit, onReceive, onCancel,
+}: {
+  row: PoHeaderRow | null;
+  onClose: () => void;
+  onOpenFull: () => void;
+  onEdit: () => void;
+  onReceive: () => void;
+  onCancel: () => void;
+}) {
+  const detailQ = usePurchaseConsignmentOrderDetail(row?.id ?? null);
+  const items = detailQ.data?.items ?? [];
+  const status = row?.status ?? '';
+  const hasChildren = Boolean(row?.has_children);
+  const canReceive = status === 'SUBMITTED' || status === 'PARTIALLY_RECEIVED';
+  const canCancel = status !== 'CANCELLED' && status !== 'RECEIVED' && !hasChildren;
+  const currency: Currency = row?.currency ?? 'MYR';
+  const lineSum = items.reduce((sum, it) => sum + it.line_total_sen, 0);
+  const subtotalSen = items.length > 0 ? lineSum : row?.subtotal_sen ?? 0;
+
+  return (
+    <QuickViewShell
+      open={Boolean(row)}
+      onClose={onClose}
+      ariaLabel={row ? `Purchase consignment order ${pcNo(row)}` : 'Purchase consignment order details'}
+      docNo={row ? pcNo(row) : ''}
+      docLabel="Purchase Consignment Order"
+      statusLabel={row ? poStatusLabel(row.status) : ''}
+      statusTone={pcoTone(status)}
+      onOpenFull={onOpenFull}
+      footer={row && (
+        <>
+          {!hasChildren && <DrawerButton variant="ghost" icon={<Edit3 size={14} />} onClick={onEdit}>Edit</DrawerButton>}
+          {canCancel && <DrawerButton variant="ghost" className="text-err" onClick={onCancel}>Cancel</DrawerButton>}
+          <div className="flex-1" />
+          {canReceive && (
+            <DrawerButton variant="primary" icon={<PackageCheck size={14} />} onClick={onReceive}>Receive Goods</DrawerButton>
+          )}
+        </>
+      )}
+    >
+      {row && (
+        <>
+          <div className="text-[19px] font-bold text-ink">{row.supplier?.name ?? '—'}</div>
+          <div className="mt-1.5 text-[12.5px] text-ink-muted">Ordered {fmtDateOrDash(row.po_date)}</div>
+
+          <DrawerMetaGrid>
+            <DrawerMeta k="Supplier code" v={row.supplier?.code ?? '—'} mono />
+            <DrawerMeta k="Order date" v={fmtDateOrDash(row.po_date)} />
+            <DrawerMeta k="Expected" v={fmtDateOrDash(row.expected_at)} />
+            <DrawerMeta k="Currency" v={row.currency} />
+            <DrawerMeta k="Purchase location" v={locationOf(row) || '—'} />
+            <DrawerMeta k="Lines" v={String(items.length || row.items?.length || 0)} />
+          </DrawerMetaGrid>
+
+          <DrawerSection>Supplier</DrawerSection>
+          <DrawerPartyCard name={row.supplier?.name ?? '—'} code={row.supplier?.code}>
+            <DrawerKV k="Contact" v={row.supplier?.contact_person || '—'} />
+            <DrawerKV k="Phone" v={row.supplier?.phone || '—'} />
+            <DrawerKV k="Email" v={row.supplier?.email || '—'} />
+            <DrawerKV k="Address" v={row.supplier?.address || '—'} />
+            {row.notes ? <DrawerKV k="Notes" v={row.notes} /> : null}
+          </DrawerPartyCard>
+
+          <DrawerSection>Order lines</DrawerSection>
+          <DrawerLines
+            cols={PCO_LINE_COLS}
+            headings={[{ label: 'Item' }, { label: 'Qty', right: true }, { label: 'Amount', right: true }]}
+            loading={detailQ.isLoading}
+            error={drawerErrorText(detailQ)}
+            empty={items.length === 0}
+          >
+            {items.map((it) => {
+              const manual = (it.description ?? '').trim();
+              const summary = buildVariantSummary(it.item_group ?? null, it.variants ?? null);
+              return (
+                <DrawerLineRow key={it.id} cols={PCO_LINE_COLS}>
+                  <DrawerLineItem
+                    pill={<ItemGroupPill group={it.item_group ?? null} />}
+                    primary={it.item_code}
+                    secondary={manual || summary || it.material_name}
+                  />
+                  <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtQty(it.qty)}</span>
+                  <span className="text-right font-money text-[12.5px] font-semibold text-ink">{fmtMoney(it.line_total_sen, currency)}</span>
+                </DrawerLineRow>
+              );
+            })}
+          </DrawerLines>
+
+          <DrawerTotals>
+            <DrawerTotal k="Subtotal" v={fmtMoney(subtotalSen, currency)} />
+            {row.tax_sen ? <DrawerTotal k="Tax" v={fmtMoney(row.tax_sen, currency)} /> : null}
+            <DrawerTotal k="Total" v={fmtMoney(row.total_sen, currency)} strong />
+          </DrawerTotals>
+        </>
+      )}
+    </QuickViewShell>
+  );
+}
+
 export const PurchaseConsignmentOrders = () => {
   const [status, setStatus] = useState<StatusFilter>('outstanding');
+  /* Row click → quick-view drawer. */
+  const [selected, setSelected] = useState<PoHeaderRow | null>(null);
   const navigate = useNavigate();
   const cancelPo = useCancelPurchaseConsignmentOrder();
-  const askConfirm = useConfirm();
+  const askPrompt = usePrompt();
   const notify = useNotify();
 
   const { data, isLoading, error } = usePurchaseConsignmentOrders();
   const rows = useMemo(() => {
     const all = data ?? [];
     if (status === 'all') return all;
+    if (status === 'cancelled') return all.filter((r) => r.status === 'CANCELLED');
     return all.filter((r) => r.status === 'SUBMITTED' || r.status === 'PARTIALLY_RECEIVED');
   }, [data, status]);
 
   const columns = useMemo(() => buildColumns(), []);
 
   const doCancelPo = async (po: PoHeaderRow) => {
-    if (!(await askConfirm({
-      title: `Cancel ${pcNo(po)}?`,
-      body: 'It will stop proceeding.',
-      confirmLabel: 'Cancel order',
+    const reason = await askPrompt({
+      title: `Cancel ${pcNo(po)}?`, 
+      body: 'It will stop proceeding.', 
+      confirmLabel: 'Cancel order', 
       danger: true,
-    }))) return;
-    cancelPo.mutate(po.id, {
+      input: { label: 'Why it is cancelled', required: true },
+    });
+    if (reason === null) return;
+    cancelPo.mutate({id:po.id, reason}, {
+      onSuccess: () => setSelected(null),
       onError: (e) => notify({ title: 'Cancel failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
     });
   };
@@ -238,9 +373,11 @@ export const PurchaseConsignmentOrders = () => {
         storageKey={PC_ORDER_LIST_STORAGE_KEY}
         exportName="Purchase Consignment Orders"
         rowKey={(po) => po.id}
+        getRowClassName={(po) => cancelledRowClass(po.status)}
         searchPlaceholder="Search P/CO no, supplier, code…"
         loadedSearchLimit={1000}
         groupBanner={false}
+        onRowClick={(po) => setSelected(po)}
         onRowDoubleClick={(po) => navigate(`/scm/purchase-consignment-orders/${po.id}`)}
         expandable={{
           renderExpansion: (po) => <ExpandedLines po={po} />,
@@ -265,6 +402,15 @@ export const PurchaseConsignmentOrders = () => {
         }}
         isLoading={isLoading}
         emptyMessage='No orders yet — click "New Purchase Consignment Order" to start.'
+      />
+
+      <PurchaseConsignmentOrderDrawer
+        row={selected}
+        onClose={() => setSelected(null)}
+        onOpenFull={() => selected && navigate(`/scm/purchase-consignment-orders/${selected.id}`)}
+        onEdit={() => selected && navigate(`/scm/purchase-consignment-orders/${selected.id}?edit=1`)}
+        onReceive={() => selected && navigate(`/scm/purchase-consignment-receives/new?fromPcOrder=${selected.id}`)}
+        onCancel={() => selected && void doCancelPo(selected)}
       />
     </div>
   );

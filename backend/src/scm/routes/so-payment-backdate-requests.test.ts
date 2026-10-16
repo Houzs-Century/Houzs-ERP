@@ -63,7 +63,7 @@ const get = async (who: Who, path: string): Promise<{ status: number; body: J }>
 const today = todayMyt();
 const OLD = shiftIsoDay(today, -20);
 const payment = (over: Record<string, unknown> = {}) => ({
-  paidAt: OLD, method: 'cash', amountSen: 50000, reason: 'Balance collected on delivery, slip found late', ...over,
+  paidAt: OLD, method: 'cash', amountSen: 50000, reason: 'Balance collected on delivery, slip found late', uploadSessionId: 'sess-1', ...over,
 });
 const rows = () => tables.so_payment_backdate_requests!;
 
@@ -74,7 +74,12 @@ beforeEach(() => {
       { doc_no: 'SO-OTHER', status: 'CONFIRMED', company_id: 2, salesperson_id: 11 },
     ],
     so_payment_backdate_requests: [],
-    pending_slip_uploads: [{ upload_session_id: 'sess-1', r2_key: 'slips/x.jpg', status: 'uploaded' }],
+    /* One uploaded slip per request a test raises — a session is promoted by
+       the request that claims it, so a second request needs its own. */
+    pending_slip_uploads: [
+      { upload_session_id: 'sess-1', r2_key: 'slips/x.jpg', status: 'uploaded' },
+      { upload_session_id: 'sess-2', r2_key: 'slips/y.jpg', status: 'uploaded' },
+    ],
   };
   sb = fakeSb(tables);
   record.mockClear(); soAudit.mockClear(); notify.mockClear();
@@ -91,6 +96,13 @@ describe('raising a request', () => {
     expect(record).not.toHaveBeenCalled();
     expect(tables.pending_slip_uploads![0]).toMatchObject({ status: 'promoted' });
     expect(notify).toHaveBeenCalledWith(expect.anything(), 'raised', expect.objectContaining({ docNo: 'SO-1', amount: 'RM 500.00', requesterUserId: 11, companyId: CO }));
+  });
+
+  it('needs the slip — Admin verifies it with Finance before approving (owner 2026-10-13)', async () => {
+    const r = await post(SALES, '/mfg-sales-orders/SO-1/payment-backdate-requests', payment({ uploadSessionId: null }));
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('slip_required');
+    expect(rows()).toHaveLength(0);
   });
 
   it('needs a reason', async () => {
@@ -128,7 +140,7 @@ describe('raising a request', () => {
 describe('who sees the requests', () => {
   beforeEach(async () => {
     await post(SALES, '/mfg-sales-orders/SO-1/payment-backdate-requests', payment());
-    await post(OTHER, '/mfg-sales-orders/SO-1/payment-backdate-requests', payment({ amountSen: 1000 }));
+    await post(OTHER, '/mfg-sales-orders/SO-1/payment-backdate-requests', payment({ amountSen: 1000, uploadSessionId: 'sess-2' }));
   });
 
   it('the sidebar count is the open requests for an admin, 0 for anyone else', async () => {
@@ -150,6 +162,42 @@ describe('who sees the requests', () => {
     const all = await get(ADMIN, '/mfg-sales-orders/SO-1/payment-backdate-requests');
     expect(all.body.requests).toHaveLength(2);
     expect(all.body.isAdmin).toBe(true);
+  });
+});
+
+describe('the slip behind a request (inbox drawer)', () => {
+  /* The R2 binding the route serves from: one object under the key the
+     request carries, nothing else. */
+  const bucket = { get: vi.fn(async (key: string) => (key === 'slips/x.jpg'
+    ? { body: 'JPEG-BYTES', httpMetadata: { contentType: 'image/jpeg' } }
+    : null)) };
+  const envWithSlips = { SLIPS: bucket } as unknown as Env;
+  const slip = (who: Who, id: string) => app(who).request(`/payment-backdate-requests/${id}/slip-url`, undefined, envWithSlips);
+
+  it('an admin gets the bytes inline; a non-admin is refused like the inbox', async () => {
+    await post(SALES, '/mfg-sales-orders/SO-1/payment-backdate-requests', payment({ uploadSessionId: 'sess-1' }));
+    const id = String(rows()[0]!.id);
+    expect((await slip(SALES, id)).status).toBe(403);
+    const res = await slip(ADMIN, id);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/jpeg');
+    expect(res.headers.get('content-disposition')).toBe('inline');
+    expect(await res.text()).toBe('JPEG-BYTES');
+    expect(bucket.get).toHaveBeenCalledWith('slips/x.jpg');
+  });
+
+  it('a request parked without a slip (before the rule) says so instead of 404-ing', async () => {
+    await post(SALES, '/mfg-sales-orders/SO-1/payment-backdate-requests', payment());
+    rows()[0]!.slip_key = null;
+    const res = await slip(ADMIN, String(rows()[0]!.id));
+    expect(res.status).toBe(400);
+    expect((await res.json() as J).error).toBe('no_slip_attached');
+  });
+
+  it('a request of another company is not found', async () => {
+    await post(SALES, '/mfg-sales-orders/SO-1/payment-backdate-requests', payment({ uploadSessionId: 'sess-1' }));
+    rows()[0]!.company_id = 2;
+    expect((await slip(ADMIN, String(rows()[0]!.id))).status).toBe(404);
   });
 });
 
@@ -180,6 +228,16 @@ describe('deciding', () => {
     expect(record).toHaveBeenCalledTimes(1);
   });
 
+  it('a request parked without a slip cannot be approved — reject it, the requester re-sends with the slip', async () => {
+    rows()[0]!.slip_key = null;
+    const r = await post(ADMIN, `/payment-backdate-requests/${id}/approve`);
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe('no_slip_attached');
+    expect(record).not.toHaveBeenCalled();
+    expect(rows()[0]).toMatchObject({ status: 'REQUESTED' });
+    expect((await post(ADMIN, `/payment-backdate-requests/${id}/reject`, { note: 'No slip attached — send again with the slip' })).status).toBe(200);
+  });
+
   it('a failed booking hands the request back', async () => {
     record.mockResolvedValueOnce({ payment: null, errorMessage: 'boom' });
     const r = await post(ADMIN, `/payment-backdate-requests/${id}/approve`);
@@ -204,7 +262,7 @@ describe('deciding', () => {
   });
 
   it('nobody decides their own request — and the approve-only key still has to request its own late slip', async () => {
-    const r = await post(LOGISTIC, '/mfg-sales-orders/SO-1/payment-backdate-requests', payment({ amountSen: 700 }));
+    const r = await post(LOGISTIC, '/mfg-sales-orders/SO-1/payment-backdate-requests', payment({ amountSen: 700, uploadSessionId: 'sess-2' }));
     expect(r.status).toBe(201);
     const own = r.body.request.id as string;
     expect((await post(LOGISTIC, `/payment-backdate-requests/${own}/approve`)).body.error).toBe('own_request');

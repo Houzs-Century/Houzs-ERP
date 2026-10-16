@@ -9,7 +9,7 @@
 // on a phone with bad signal and must not lose one. A workshop invoice is one
 // document, uploaded at a desk, and the operator is looking at the screen
 // waiting for it. So this mirrors scan-payment.ts: ONE synchronous /extract, no
-// job row, no queue, no learning. It EXTRACTS AND RETURNS — it writes nothing.
+// job row, no queue, no learning. It EXTRACTS AND RETURNS — it writes nothing but the kept original (scm.scan_files, HC-0006).
 // Creating the work order stays the caller's explicit second step, because an
 // OCR pass that silently books a RM22,208.50 repair is not something anyone
 // asked for.
@@ -35,6 +35,9 @@ import type { Env } from '../../types';
 import type { Variables } from '../env';
 import { supabaseAuth } from '../middleware/auth';
 import { recordAi, requestAiTag } from '../../services/aiUsage';
+import { scanTimer } from '../lib/scan-timing';
+import { keepScanFile } from '../lib/scan-files';
+import { activeCompanyId } from '../lib/companyScope';
 
 export const scanLorryInvoice = new Hono<{ Bindings: Env; Variables: Variables }>();
 scanLorryInvoice.use('*', supabaseAuth);
@@ -263,6 +266,7 @@ scanLorryInvoice.post('/extract', async (c) => {
     return c.json({ error: 'anthropic_key_missing', reason: 'Document reading is not configured on this environment.' }, 503);
   }
 
+  const timer = scanTimer('workshop');
   let form: FormData;
   try { form = await c.req.formData(); } catch {
     return c.json({ error: 'invalid_upload', reason: 'Could not read the uploaded file.' }, 400);
@@ -283,7 +287,14 @@ scanLorryInvoice.post('/extract', async (c) => {
     return c.json({ error: 'unsupported_file', reason: `Unsupported file type "${file.name}". Use PDF / JPEG / PNG / WEBP.` }, 400);
   }
 
-  const data = toBase64(await file.arrayBuffer());
+  const buf = await file.arrayBuffer();
+  // HC-0006: keep the original + its scan_files row, started with the read so it adds no wait.
+  const keptKey = keepScanFile(c.env, c.get('supabase'), {
+    kind: 'workshop', companyId: activeCompanyId(c), buf, mime: mime || (isPdf ? 'application/pdf' : 'image/jpeg'),
+    uploadedBy: (c.get('user') as { id?: string } | undefined)?.id ?? null, key: null,
+  });
+  timer.mark('upload');
+  const data = toBase64(buf);
   const fileBlock = isPdf
     ? { type: 'document' as const, source: { type: 'base64' as const, media_type: 'application/pdf' as const, data } }
     : {
@@ -329,6 +340,7 @@ scanLorryInvoice.post('/extract', async (c) => {
     }));
 
     const bodyText = await resp.text();
+    timer.mark('model');
     if (!resp.ok) {
       errorMsg = `Anthropic ${resp.status}: ${bodyText.slice(0, 300)}`;
     } else {
@@ -350,11 +362,19 @@ scanLorryInvoice.post('/extract', async (c) => {
       : `Could not reach the reader: ${e instanceof Error ? e.message : 'unknown error'}`;
   }
 
-  if (!parsed) return c.json({ error: 'extract_failed', reason: errorMsg ?? 'Could not read the document.' }, 502);
+  const scanFileKey = await keptKey; // kept alongside the model read; never throws
+  timer.mark('parse');
+  if (!parsed) {
+    timer.done(c.env, null, 'error');
+    return c.json({ error: 'extract_failed', reason: errorMsg ?? 'Could not read the document.' }, 502);
+  }
 
   const check = reconcile(parsed);
+  timer.done(c.env, null, 'ok');
   return c.json({
     document: parsed,
+    /* The kept original; the work-order create links it (HC-0006 T7). */
+    scanFileKey,
     /* Everything below is DERIVED for the review screen. The record is not
        written here — the operator confirms first. */
     totals: {

@@ -64,9 +64,6 @@ import {
 import type { AmendmentFieldKind } from "../../vendor/scm/lib/amendment-routing";
 import { humanApiError } from "../../vendor/scm/lib/authed-fetch";
 import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
-/* The 2990 bridge's staff row — the vocabulary po_amendments.requested_by is
-   written in (a scm.staff uuid), so this is what "did I raise this?" compares. */
-import { useAuth as useScmAuth } from "../../vendor/scm/lib/auth";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { PrintPreviewModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
@@ -165,7 +162,7 @@ function RevisionHero({
         <div className="mt-4 rounded-md border border-err/40 bg-err/10 px-3 py-2 text-[12px] text-err">
           <div className="font-semibold">
             {resolution === "WITHDRAWN"
-              ? "This request was withdrawn by the person who raised it."
+              ? "This request was withdrawn."
               : "This amendment was rejected — the Purchase Order keeps its prior revision."}
           </div>
           {rejectionReason && (
@@ -240,7 +237,6 @@ export function PoAmendmentDetailV2() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { can } = useHouzsAuth();
-  const { staff: currentStaff } = useScmAuth();
   const askConfirm = useConfirm();
   const askPrompt = usePrompt();
   const notify = useNotify();
@@ -332,12 +328,9 @@ export function PoAmendmentDetailV2() {
 
   const canApprove = can("scm.po_amendment.approve");
   const canReject = canApprove;
-  /* Withdraw — the requester's own escape hatch. Matched on the amendment's
-     requested_by staff uuid against the caller's own; the server re-checks. */
-  const isRequester =
-    asStr(amendment?.requested_by) != null
-    && currentStaff?.id != null
-    && String(amendment?.requested_by) === String(currentStaff.id);
+  /* Withdraw — the requester's own escape hatch. The server says whether the
+     caller raised it (see AmendmentDetailV2); it also re-checks on withdraw. */
+  const isRequester = data?.viewerIsRequester === true;
   const canWithdraw = status === "REQUESTED" && (isRequester || canApprove);
 
   const approve = useApprovePoAmendment();

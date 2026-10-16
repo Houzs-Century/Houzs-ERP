@@ -356,6 +356,34 @@ describe('a venue id with no name is not a request to blank the venue', () => {
     expect(row.venue).toBe('');
     expect(row.venue_id).toBeNull();
   });
+
+  /* Owner 2026-10-05 (Weisiang): "venue is a compulsory, either sales from
+     showroom or sales from any project". Confirm already demands a venue; an
+     edit must not take it away again. Drafts above still may. */
+  test('a confirmed order cannot have its venue cleared', async () => {
+    const { app, row } = withVenue();
+    row.status = 'CONFIRMED';
+
+    const res = await patchHeader(app, { venue: '', venueId: '', version: 1 });
+
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({
+      error: 'validation_failed',
+      problems: [expect.objectContaining({ code: 'venue_required', field: 'Venue' })],
+    });
+    expect(row).toMatchObject({ venue: '2990s PJ', version: 1 });
+  });
+
+  test('a legacy confirmed order with no venue can still be edited elsewhere', async () => {
+    const { app, row } = withVenue();
+    row.status = 'CONFIRMED';
+    row.venue = null;
+
+    const res = await patchHeader(app, { note: 'still editable', version: 1 });
+
+    expect(res.status).toBe(200);
+    expect(row.note).toBe('still editable');
+  });
 });
 
 /* Owner 2026-08-31, HC-SO-013393: "我要 remove 掉我的 processing date 跟 delivery
@@ -656,5 +684,46 @@ describe('an edit that picks a fair EVENT records that event', () => {
     onFair(placeOnly.row, { project_id: 500, fair_date: '2026-08-08' });
     await patchWithFairs(placeOnly.app, { venue: 'IOI CITY MALL', version: 1 });
     expect(placeOnly.row).toMatchObject({ venue: 'IOI CITY MALL', project_id: null, fair_match: 'PENDING', fair_date: null });
+  });
+});
+
+/* HC-0094 (Chew, IT Hub, 2026-10-13): "Manual edit also will not recognized back
+   to project". Changing the venue to a place alone used to drop the link to
+   PENDING and wait for the nightly pass; it now runs the create-time detection
+   (venue + date + brand) against the fairs that already exist. */
+describe('a venue edit re-detects the fair at once', () => {
+  const fairDb = (fairs: Row[]) => ({
+    DB: {
+      prepare: () => ({
+        bind: (venue: unknown) => ({
+          all: async () => ({ results: fairs.filter((f) => f.venue === venue) }),
+        }),
+      }),
+    },
+  });
+  const MV = { venue: 'MID VALLEY', organizer: 'MLE', startdate: '2026-10-10', enddate: '2026-10-12', status: 'Confirmed' };
+
+  test('a place with one booth of the order brand links to that existing project', async () => {
+    const { app, row } = harness();
+    Object.assign(row, { venue: 'PJ SHOWROOM', so_date: '2026-10-12', branding: 'DUNLOPILLO', project_id: null, fair_match: 'NO_FAIR' });
+    const res = await app.request('/mfg-sales-orders/SO-CAS-1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ venue: 'MID VALLEY', version: 1 }),
+    }, fairDb([{ id: 20, brand: 'AKEMI', ...MV }, { id: 21, brand: 'DUNLOPILLO', ...MV }]));
+    expect(res.status).toBe(200);
+    expect(row).toMatchObject({ venue: 'MID VALLEY', project_id: 21, fair_match: 'PICKED' });
+  });
+
+  test('a place with no fair yet stays PENDING for the reconcile', async () => {
+    const { app, row } = harness();
+    Object.assign(row, { venue: 'PJ SHOWROOM', so_date: '2026-10-12', branding: 'DUNLOPILLO', project_id: 9, fair_match: 'PICKED' });
+    const res = await app.request('/mfg-sales-orders/SO-CAS-1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ venue: 'MID VALLEY', version: 1 }),
+    }, fairDb([]));
+    expect(res.status).toBe(200);
+    expect(row).toMatchObject({ venue: 'MID VALLEY', project_id: null, fair_match: 'PENDING' });
   });
 });

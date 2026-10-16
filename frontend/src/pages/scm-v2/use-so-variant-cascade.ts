@@ -63,6 +63,7 @@ export function useSoVariantCascade(args: {
       ...editIds.map((id) => ({
         category: editingDrafts[id]!.itemGroup,
         variants: editingDrafts[id]!.variants,
+        persisted: true,
       })),
       ...addingDrafts.map((row) => ({
         category: row.draft.itemGroup,

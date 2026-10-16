@@ -172,6 +172,9 @@ outstanding.get("/po-lines", async (c) => {
       q = q.eq("is_outstanding", false);
     }
     // else 'all' → no is_outstanding filter, return both
+    // A chasing list has nothing to chase on a fully received line, so 'all'
+    // drops it too (DEV-43); 'completed' is exactly those lines, so it keeps them.
+    if (outstandingParam !== "false") q = q.gt("remaining_qty", 0);
     if (from) q = q.gte("po_date", from);
     if (to) q = q.lte("po_date", to);
     return q.range(pFrom, pTo);

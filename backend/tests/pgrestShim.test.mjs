@@ -69,7 +69,7 @@ test("an unimplemented method still gaps loudly rather than guessing", async () 
   const sql = fakeSql([]);
   const sb = pgrestShim(sql);
   assert.throws(
-    () => sb.from("inventory_lots").select("id").like("code", "A%"),
+    () => sb.from("inventory_lots").select("id").ilike("code", "A%"),
     /pgrest-shim GAP/,
   );
 });

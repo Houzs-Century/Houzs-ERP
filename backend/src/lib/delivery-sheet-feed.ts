@@ -17,7 +17,7 @@ import { bookSpellingOrOwn, resolveAcAgent } from "../services/autocount-writeba
 import { soTownLines } from "../services/autocount-address-fit";
 import { summariseReadiness } from "../scm/lib/so-readiness";
 import { SO_DELIVERED_OR_BEYOND } from "../scm/shared/so-deliverable-states";
-import { canonicalizeMyState } from "../scm/lib/canonical-state";
+import { canonicalizeMyState, isCanonicalMyState } from "../scm/lib/canonical-state";
 
 /** One head row, as the feed SQL below returns it. Every date is `::text`
  *  because postgres.js leaves `date` columns as strings but turns
@@ -49,6 +49,7 @@ export type FeedHeadRow = {
   postcode: string | null;
   city: string | null;
   customer_state: string | null;
+  customer_country: string | null;
   venue: string | null;
   status: string;
   do_numbers: string | null;
@@ -150,7 +151,7 @@ const FEED_BASE_SQL = `
          so.processing_date::text AS processing_date,
          so.customer_delivery_date::text AS customer_delivery_date,
          so.address1, so.address2, so.address3, so.address4,
-         so.postcode, so.city, so.customer_state, so.venue,
+         so.postcode, so.city, so.customer_state, so.customer_country, so.venue,
          so.status::text AS status,
          dos.do_numbers, pos.po_numbers,
          GREATEST(so.updated_at, pay.last_paid_at, dos.last_do_at) AS last_modified
@@ -341,8 +342,16 @@ const blankToNull = (v: string | null | undefined): string | null => {
 };
 
 /** Same rule as the Apps Script and services/autocount.ts routeRegion, plus
- *  HQ (the 2023-era Balakong code) on the West side. */
-export function sheetRegion(salesLocation: string | null, addr3: string | null): DeliverySheetRecord["Region"] {
+ *  HQ (the 2023-era Balakong code) on the West side. A native ERP order picks
+ *  Singapore from the locality master (state "West", city "Jurong East",
+ *  customer_country "Singapore") and is sold from KL, so the word never reaches
+ *  addr3 and the country decides (BUG-52, HC12842). */
+export function sheetRegion(
+  salesLocation: string | null,
+  addr3: string | null,
+  country: string | null = null,
+): DeliverySheetRecord["Region"] {
+  if ((country ?? "").trim().toUpperCase() === "SINGAPORE") return "SG";
   if ((addr3 ?? "").toUpperCase().includes("SINGAPORE")) return "SG";
   const loc = (salesLocation ?? "").toUpperCase();
   if (loc === "KL" || loc === "PG" || loc === "HQ") return "WEST";
@@ -391,10 +400,27 @@ export function resolveSheetRemark2(remark2Header: string | null, lines: Readonl
   return header && !isSheetReady(header) && derived && isSheetReady(derived) ? derived : (header ?? derived);
 }
 
+/** Address lines 3 / 4 for the SHEET, whose Address 4 is the STATE column the
+ *  dispatch team filters on. An imported order's four lines are the account
+ *  book's 40-character wrap of one address, so line 4 can be a leftover
+ *  ("Jaya Selangor" on SO-010791, the tail of "47820 Petaling Jaya Selangor")
+ *  while the order's own state field is right. When line 4 is not a state and
+ *  the state field is, the leftover rejoins line 3 and the state takes line 4.
+ *  A line 4 that IS a state is left alone even where it differs from the field. */
+export function sheetTownLines(addr3: string | null, rawAddr4: string | null, customerState: string | null): [string | null, string | null] {
+  const line4 = blankToNull(rawAddr4);
+  const state = blankToNull(customerState);
+  const isState = (v: string) => isCanonicalMyState(canonicalizeMyState(v));
+  if (line4 && state && !isState(line4) && isState(state)) {
+    return [[blankToNull(addr3), line4].filter(Boolean).join(" "), sheetStateSpelling(state)];
+  }
+  return [addr3, sheetStateSpelling(rawAddr4)];
+}
+
 export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow>): DeliverySheetRecord {
   const salesLocation = bookSpellingOrOwn(row.sales_location, LOCATION_MAP);
-  const [addr3, rawAddr4] = soTownLines(row);
-  const addr4 = sheetStateSpelling(rawAddr4);
+  const [townLine, rawAddr4] = soTownLines(row);
+  const [addr3, addr4] = sheetTownLines(townLine, rawAddr4, row.customer_state);
   const remark2 = resolveSheetRemark2(row.remark2, lines);
   return {
     DocNo: row.linked_ac_docno ?? row.doc_no,
@@ -427,7 +453,7 @@ export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow
     SOUDF_VENUE: blankToNull(row.venue),
     Status: row.status,
     Ready: isSheetReady(remark2),
-    Region: sheetRegion(salesLocation, addr3),
+    Region: sheetRegion(salesLocation, addr3, row.customer_country),
     LastModified: row.last_modified_text,
   };
 }

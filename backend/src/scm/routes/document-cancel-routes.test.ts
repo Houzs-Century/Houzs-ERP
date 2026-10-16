@@ -656,3 +656,74 @@ describe('the guard runs before supabaseAuth: identify the caller from `user` to
     expect((await body(res)).error).toBe('caller_unknown');
   });
 });
+
+/* DEV-40 (owner 2026-10-06): the SO Amendment queue lists SO cancellations
+ * beside the amendments, so a scoped salesperson sees only the ones they or
+ * their downline raised, or that sit on an order they or their downline own.
+ * Approvers hold scm.so.view_all and keep the whole inbox; DO / PO rows are not
+ * on that queue and are untouched. */
+describe('the inbox, for a scoped salesperson', () => {
+  const MANAGER: Who = { id: 60, name: 'Stanley', perms: ['scm.access'] };
+  const REP_A: Who = { id: 61, name: 'Adrian', perms: ['scm.access'] };
+  const REP_B: Who = { id: 62, name: 'Ben', perms: ['scm.access'] };
+  const ORG = [
+    { id: MANAGER.id, manager_id: null },
+    { id: REP_A.id, manager_id: MANAGER.id },
+    { id: REP_B.id, manager_id: null },
+  ];
+  const SCOPED_ENV = {
+    DB: {
+      prepare: () => ({
+        bind: (...ids: unknown[]) => ({
+          all: async () => ({
+            results: ORG.filter((u) => u.manager_id != null && ids.map(Number).includes(u.manager_id)).map((u) => ({ id: u.id })),
+          }),
+        }),
+      }),
+    },
+  } as unknown as Env;
+  const inbox = async (who: Who) =>
+    ((await body(await app(who).request('/cancel-requests?scope=all', undefined, SCOPED_ENV))).requests as Array<{ doc_number: string }>)
+      .map((r) => r.doc_number).sort();
+  const request = (docType: string, key: string, by: number) => ({
+    company_id: CO, doc_type: docType, doc_key: key, doc_number: key, status: 'REQUESTED',
+    reason: 'x', requested_by: by, requested_by_name: 'x', requested_at: '2026-10-06T00:00:00Z',
+  });
+
+  beforeEach(() => {
+    tables.staff = [
+      { id: 'staff-a', user_id: REP_A.id },
+      { id: 'staff-b', user_id: REP_B.id },
+      { id: 'staff-mgr', user_id: MANAGER.id },
+    ];
+    tables.mfg_sales_orders.push(
+      // Rep A's own order, an imported OPEN order sold by rep B, and one shared with rep A.
+      { doc_no: 'SO-A', status: 'CONFIRMED', company_id: CO, salesperson_id: 'staff-a', access_staff_ids: ['staff-a'] },
+      { doc_no: 'SO-OPEN', status: 'CONFIRMED', company_id: CO, salesperson_id: 'staff-b', access_staff_ids: ['staff-b'], open_to_all: true },
+      { doc_no: 'SO-SHARED', status: 'CONFIRMED', company_id: CO, salesperson_id: 'staff-b', access_staff_ids: ['staff-b', 'staff-a'] },
+    );
+    tables.document_cancel_requests.push(
+      request('SO', 'SO-A', REQUESTER.id),
+      request('SO', 'SO-OPEN', REP_B.id),
+      request('SO', 'SO-SHARED', REQUESTER.id),
+      request('SO', 'SO-1', REP_A.id),
+      request('PO', 'PO-1', NOBODY.id),
+    );
+  });
+
+  it('sees requests on own and shared orders and the ones they raised, never an open order they have no part in', async () => {
+    expect(await inbox(REP_A)).toEqual(['PO-1', 'SO-1', 'SO-A', 'SO-SHARED']);
+  });
+
+  it('the order\'s own salesperson sees a request someone else raised on it', async () => {
+    expect(await inbox(REP_B)).toEqual(['PO-1', 'SO-OPEN', 'SO-SHARED']);
+  });
+
+  it('a manager sees their downline\'s', async () => {
+    expect(await inbox(MANAGER)).toEqual(['PO-1', 'SO-1', 'SO-A', 'SO-SHARED']);
+  });
+
+  it('a view-all caller still sees every request', async () => {
+    expect(await inbox(NOBODY)).toEqual(['PO-1', 'SO-1', 'SO-A', 'SO-OPEN', 'SO-SHARED']);
+  });
+});

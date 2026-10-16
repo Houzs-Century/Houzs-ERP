@@ -50,7 +50,7 @@ describe('the Finance sidebar', () => {
       '/scm/unmatched-payments',
     ]) expect(tos, `${to} is still reachable`).toContain(to);
     /* The Accounting page's tabs, now reachable by name. */
-    for (const tab of ['je', 'gl', 'tb', 'close', 'check', 'pnl', 'bs', 'rp', 'ar', 'ap', 'corrections', 'collection', 'charges', 'groups', 'performance']) {
+    for (const tab of ['je', 'gl', 'tb', 'close', 'check', 'pnl', 'bs', 'rp', 'ar', 'ap', 'corrections', 'collection', 'charges', 'groups', 'performance', 'products']) {
       expect(tos, `tab ${tab} is deep-linked`).toContain(`/scm/accounting?tab=${tab}`);
     }
     expect(new Set(tos).size, 'no destination twice').toBe(tos.length);
@@ -70,6 +70,6 @@ describe('the Finance sidebar', () => {
   it('puts the reports together, the Corrections report among them', () => {
     const reports = finance?.children?.find((g) => g.label === 'Reports');
     const labels = (reports?.children ?? []).map((t) => t.label);
-    expect(labels).toEqual(expect.arrayContaining(['P&L', 'Balance Sheet', 'Cash Flow', 'AR Aging', 'AP Aging', 'Corrections', 'Sales Report']));
+    expect(labels).toEqual(expect.arrayContaining(['P&L', 'Balance Sheet', 'Cash Flow', 'AR Aging', 'AP Aging', 'Corrections', 'Sales Report', 'Product Profit']));
   });
 });

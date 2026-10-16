@@ -26,6 +26,8 @@ in the ordered stage table but is a legal value everywhere else. Both
 `completed` and `voided` stamp `closed_at`; only `completed` stamps
 `completion_date` and feeds the CSAT survey.
 
+A crew POD on the delivery run (scm/routes/delivery-job-progress.ts) attaches its photos as `completion` and makes one move, only from the leg's own step: pickup -> Pending Supplier Pickup, inspection -> QC Issue Result, delivery (Delivery stage) -> completed with the survey (`services/assrCompletionSurvey.ts`, shared with the manual transition).
+
 Sub-statuses exist inside two stages only: Under Verification
 (`pending_inspection` / `qc_issue_result`); Pickup/Return has **three** legs —
 enters on `pending_customer_pickup` (collect from customer), then
@@ -63,6 +65,12 @@ just `completed`.
   AND visibility scope explicitly — an **unresolved** scope (`undefined`,
   pre-migration/cold start) skips the check; an **empty** scope (`[]`, no
   grants) must 404. Never collapse the two.
+- A case's `company_id` is stamped at CREATE from its order, not the creator's
+  switcher (owner 2026-10-05): `scmSoCompanyId` matches `doc_no` OR
+  `linked_ac_docno`, else reads the number (`HC-SO-`/`SO-<digits>` = HOUZS,
+  `2990-SO-` = 2990, via `docPrefixForCode`). Only a non-order doc (display
+  stock, free text) falls back to the switcher. Editing `doc_no` re-stamps it
+  the same way (`patchAssrCase`); a non-order doc keeps the company.
 - `complained_date` is server-stamped at create and immutable after —
   deliberately absent from `PATCH_FIELDS`.
 - `items[]` is NOT required at create — a case need not be about a defective

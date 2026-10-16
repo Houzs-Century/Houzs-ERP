@@ -196,11 +196,9 @@ const brandTone = brandingToneForLabel;
 
 function SplitDropdown({
   onFromSo,
-  onImport,
   onDuplicate,
 }: {
   onFromSo: () => void;
-  onImport: () => void;
   onDuplicate: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -235,16 +233,6 @@ function SplitDropdown({
               }}
             >
               New from Sales Order
-            </button>
-            <button
-              type="button"
-              className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
-              onClick={() => {
-                setOpen(false);
-                onImport();
-              }}
-            >
-              Import from file
             </button>
             <button
               type="button"
@@ -857,6 +845,7 @@ export function MfgDeliveryOrdersListV2() {
   const apiStatus = status === "all" ? undefined : status;
 
   const { data, isLoading, isFetching, isPlaceholderData, error } = useMfgDeliveryOrdersPaged({
+    enabled: true,
     page,
     pageSize,
     status: apiStatus,
@@ -989,7 +978,6 @@ export function MfgDeliveryOrdersListV2() {
   // Wired actions
   const goNewDo = () => navigate("/scm/delivery-orders/new");
   const goFromSo = () => navigate("/scm/delivery-orders/from-so");
-  const goImport = () => navigate("/scm/delivery-orders?import=1");
   const goDuplicate = () => navigate("/scm/delivery-orders?duplicate=1");
   const goSoList = () => navigate("/scm/sales-orders");
   const goPlanning = () => navigate("/scm/delivery-planning");
@@ -1617,7 +1605,6 @@ export function MfgDeliveryOrdersListV2() {
                     </Button>
                     <SplitDropdown
                       onFromSo={goFromSo}
-                      onImport={goImport}
                       onDuplicate={goDuplicate}
                     />
                   </div>

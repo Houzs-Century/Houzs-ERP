@@ -9,7 +9,10 @@
 //
 //     Deleted as dead code on 2026-08-18 (#2422); the POS 404'd in production.
 //     Restored 2026-08-19 (#2459). Before removing it again, grep the POS repo.
-//     POS call sites: apps/pos/src/lib/sales-analysis-queries.ts:22,31
+//     POS call sites: apps/pos/src/lib/sales-lines-queries.ts (GET /lines — the
+//     Marketing section's Sales analysis); apps/pos/src/lib/sales-analysis-queries.ts
+//     (GET / and PUT /targets — the earlier Sales Analysis page, which the
+//     Marketing section replaces).
 // ============================================================================
 // /sales-analysis — read-only analytics for the Sales Analysis page.
 //
@@ -40,6 +43,8 @@
 //     area targets are live) — its presence is NOT a reason to re-add the
 //     buckets. The vendored core keeps its demographics code untouched so it
 //     stays byte-comparable with 2990, where the capture exists.
+//     GET /lines reads race / gender / birthday off the ORDER header instead,
+//     where mig 0162 captures them at the POS handover.
 //   • Row-cap safety — reads page through paginateAll/chunkIn (Houzs convention,
 //     mirrors reports.ts) instead of 2990's `.limit(100000)`, which PostgREST
 //     silently truncates at 1000 rows.
@@ -50,8 +55,9 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
-import { canWriteScmConfig, canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
+import { canWriteScmConfig, canViewAllSales, canViewScmFinance, isPosMarketingCaller } from '../lib/houzs-perms';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { foldSalesLines, type SalesLinesItem, type SalesLinesOrder, type SalesLinesProduct } from '../lib/sales-lines';
 import {
   summarizeOverview, monthlyTrend, collapseToPurchases,
   foldProductUnits, buildProductsSection, classifySofaBuild, isFabricUpgrade,
@@ -504,6 +510,115 @@ salesAnalysis.get('/', async (c) => {
   // NOT the raw vendored `products`, which the response no longer carries.
   gateSaFinance(c, { overview, monthly, customers, products: productsOut });
   return c.json({ period, includeTest, overview, monthly, customers, targets, products: productsOut });
+});
+
+/* GET /lines — every sold line, for the 2990 POS Marketing > Sales analysis,
+   which filters by day, showroom and customer profile on the tablet. The
+   customer's race / gender / age come off the ORDER header (mig 0162: captured
+   at the POS handover, never shown on the SO); the age is sent, not the
+   birthday. So do the name on the order and its city, for the tablet's
+   customer list — never the phone or the address. Admits the all-sales tier
+   and the POS marketing account. MARGIN
+   rides canViewScmFinance, as on GET / (gateSaFinance): a finance caller gets
+   `marginSen` per row, everyone else gets no such key — never a zero. */
+salesAnalysis.get('/lines', async (c) => {
+  const sb = c.get('supabase');
+  if (!canViewAllSales(c) && !isPosMarketingCaller(c)) {
+    return c.json({ error: 'forbidden', reason: 'sales_lines_requires_scm.so.view_all_or_pos_marketing' }, 403);
+  }
+  const includeTest = c.req.query('includeTest') === 'true'; // no-op in Houzs (no is_test column)
+
+  type OrderRow = {
+    doc_no: string; so_date: string; venue: string | null; customer_id: string | null; debtor_name: string | null;
+    customer_race: string | null; customer_birthday: string | null; customer_gender: string | null;
+    customer_state: string | null; city: string | null;
+  };
+  const { data: orderRows, error: ordErr } = await paginateAll<OrderRow>((from, to) => {
+    let q = sb
+      .from('mfg_sales_orders')
+      .select('doc_no, so_date, venue, customer_id, debtor_name, customer_race, customer_birthday, customer_gender, customer_state, city')
+      .eq('on_hold', false)
+      .not('status', 'in', '("DRAFT","ON_HOLD","CANCELLED")')
+      .order('doc_no')
+      .range(from, to);
+    q = scopeToCompany(q, c);
+    return q;
+  });
+  if (ordErr) return c.json({ error: 'load_failed', reason: ordErr.message }, 500);
+  const orders: SalesLinesOrder[] = (orderRows ?? []).map((r) => ({
+    docNo: r.doc_no, soDate: r.so_date, venue: r.venue, customerId: r.customer_id, customerName: r.debtor_name,
+    race: r.customer_race, birthday: r.customer_birthday, gender: r.customer_gender, state: r.customer_state, city: r.city,
+  }));
+
+  const { data: itemRows, error: itemErr } = await chunkIn<{
+    doc_no: string; line_no: number | null; item_code: string | null; item_group: string | null;
+    qty: number | null; total_sen: number | null; line_cost_sen: number | null; variants: Record<string, unknown> | null;
+  }>(orders.map((o) => o.docNo), (batch, from, to) => {
+    let q = sb
+      .from('mfg_sales_order_items')
+      .select('doc_no, line_no, item_code, item_group, qty, total_sen, line_cost_sen, variants')
+      // `neq` alone would also drop a line with no group (NULL <> 'service' is NULL).
+      .or('item_group.is.null,item_group.neq.service')
+      .not('item_code', 'like', 'SVC-%')
+      .eq('cancelled', false)
+      .in('doc_no', batch)
+      .order('id')
+      .range(from, to);
+    q = scopeToCompany(q, c);
+    return q;
+  });
+  if (itemErr) return c.json({ error: 'load_failed', reason: itemErr.message }, 500);
+  const items: SalesLinesItem[] = itemRows.map((r) => {
+    const v = (r.variants ?? {}) as Record<string, unknown>;
+    const cell = Number(v.cellIndex);
+    return {
+      docNo: r.doc_no, lineNo: r.line_no ?? null, itemCode: (r.item_code ?? '').trim(), itemGroup: r.item_group ?? null,
+      qty: Number(r.qty) || 0, totalSen: Number(r.total_sen) || 0,
+      buildKey: typeof v.buildKey === 'string' && v.buildKey ? v.buildKey : null,
+      cellIndex: v.cellIndex != null && Number.isFinite(cell) ? cell : null,
+      costSen: r.line_cost_sen == null ? null : Number(r.line_cost_sen),
+    };
+  });
+
+  const codes = [...new Set(items.map((i) => i.itemCode).filter(Boolean))];
+  const productByCode = new Map<string, SalesLinesProduct>();
+  if (codes.length) {
+    const { data: prodRows, error: prodErr } = await chunkIn<{
+      code: string; category: string | null; model_id: string | null; size_code: string | null; size_label: string | null; base_model: string | null;
+    }>(codes, (batch, from, to) => {
+      let q = pgrestIn(sb
+        .from('mfg_products')
+        .select('code, category, model_id, size_code, size_label, base_model'), 'code', batch)
+        .order('code')
+        .range(from, to);
+      q = scopeToCompany(q, c);
+      return q;
+    });
+    if (prodErr) return c.json({ error: 'load_failed', reason: prodErr.message }, 500);
+    for (const p of prodRows) {
+      productByCode.set(p.code, {
+        category: String(p.category ?? ''), modelId: p.model_id ?? null,
+        sizeCode: p.size_code ?? null, sizeLabel: p.size_label ?? null, baseModel: p.base_model ?? null,
+      });
+    }
+  }
+
+  const modelIds = [...new Set([...productByCode.values()].map((p) => p.modelId).filter((x): x is string => !!x))];
+  const modelNameById = new Map<string, string>();
+  if (modelIds.length) {
+    const { data: modelRows, error: modelErr } = await chunkIn<{ id: string; name: string | null }>(
+      modelIds,
+      (batch, from, to) => {
+        let q = sb.from('product_models').select('id, name').in('id', batch).order('id').range(from, to);
+        q = scopeToCompany(q, c);
+        return q;
+      },
+    );
+    if (modelErr) return c.json({ error: 'load_failed', reason: modelErr.message }, 500);
+    for (const m of modelRows) if (m.name) modelNameById.set(m.id, m.name);
+  }
+
+  return c.json({ includeTest, lines: foldSalesLines(orders, items, productByCode, modelNameById, canViewScmFinance(c)) });
 });
 
 salesAnalysis.put('/targets', async (c) => {

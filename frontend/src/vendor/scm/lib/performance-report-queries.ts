@@ -3,7 +3,9 @@
    an adjustable rate of sales excluding service in place of one ledger
    account, every other expense as booked; net. Numbers come from
    GET /accounting/reports/performance, computed live; the rate and the
-   account are the company's settings. The server half is
+   account are the company's settings, with the other accounts the rate
+   also covers (owner 2026-10-06: 2990's transport is inside the 16%) —
+   those leave the expenses and print at nil. The server half is
    backend/src/scm/routes/accounting-performance.ts; see accounting.md. */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -12,7 +14,8 @@ import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import { fmtDateOrDash, fmtSenPlain } from '../../shared/format';
 import { flattenLaid, type LaidNode } from './report-layout';
 
-export type PerformanceSettings = { rateBp: number; account: string };
+/** `also`: the accounts the rate covers besides `account`, each with the accounts under it. */
+export type PerformanceSettings = { rateBp: number; account: string; also?: string[] };
 export type PerformanceGroup = { key: string; label: string; lines: number; salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null };
 export type PerformanceExpense = { code: string; name: string; amountSen: number };
 export type PerformanceReport = {
@@ -20,7 +23,15 @@ export type PerformanceReport = {
   orders: { counted: number; notDelivered: number; excludedDraft: number; excludedCancelled: number };
   groups: PerformanceGroup[];
   totals: { salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null; salesExServiceSen: number };
-  operatingExpense: { rateBp: number; baseSen: number; amountSen: number; account: string; accountName: string | null; accountFound: boolean; bookedSen: number };
+  operatingExpense: {
+    rateBp: number; baseSen: number; amountSen: number; account: string; accountName: string | null; accountFound: boolean; bookedSen: number;
+    /** The other accounts the rate covers, as the chart names them (name null = not in the chart). */
+    also?: Array<{ code: string; name: string | null }>;
+    /** What the ledger booked on those in the period — left out of the expenses too. */
+    alsoBookedSen?: number;
+  };
+  /** The covered accounts that booked something in the period — on the tree at nil. */
+  inRate?: PerformanceExpense[];
   otherIncome: PerformanceExpense[];
   otherIncomeSen: number;
   otherExpenses: PerformanceExpense[];
@@ -106,12 +117,17 @@ export const summaryLinesAtLevel = (lines: PerformanceSummaryLine[], level: numb
     computed operating expense replaced (owner: 在 performance P&L 要注明). */
 export const performanceNotes = (r: PerformanceReport): string[] => {
   const o = r.operatingExpense;
+  const also = o.also ?? [];
   const notes = [
     `Sales and cost of sales are taken from the sales orders dated ${fmtDateOrDash(r.from)} to ${fmtDateOrDash(r.to)} — every status except DRAFT and CANCELLED: ${r.orders.counted} orders, ${r.orders.notDelivered} of them not yet delivered. Cost of sales is each line's unit cost × quantity as recorded on the order.`,
     o.accountFound
       ? `Operating expense is ${ratePct(o.rateBp)} of sales excluding service / transport income (${fmtPerf(o.baseSen)}), in place of account ${o.account}${o.accountName ? ` ${o.accountName}` : ''}; the ${fmtPerf(o.bookedSen)} booked on that account in the period is left out. Other income and every other expense are as booked in the ledger, by journal date.`
       : `Operating expense is ${ratePct(o.rateBp)} of sales excluding service / transport income (${fmtPerf(o.baseSen)}). Account ${o.account} is not in this company's chart, so nothing was replaced: the computed figure is added to the expenses as booked. Other income and the expenses are as booked in the ledger, by journal date.`,
   ];
+  if (also.length > 0) {
+    const named = also.map((a) => `${a.code}${a.name ? ` ${a.name}` : ''}`).join(', ');
+    notes.push(`The rate also covers ${named} (with the accounts under them): the ${fmtPerf(o.alsoBookedSen ?? 0)} booked on those in the period is left out of the expenses too — they print at nil.`);
+  }
   const accessory = r.groups.find((g) => g.key === 'accessory');
   if (accessory && accessory.cogsSen > accessory.salesSen) notes.push('Accessory lines are largely free gifts — no sales against their cost — so a negative margin there is expected.');
   if (r.groups.some((g) => g.key === 'others')) notes.push('Others holds the lines outside the six groups (bedlines, carpets, diffusers …) so the total still ties to the orders.');

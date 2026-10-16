@@ -6,7 +6,20 @@
  * production, and that is worse than the gap it closes.
  */
 import { describe, expect, it } from 'vitest';
-import { statusAfterProcessingDateSet } from './so-proceeded-status';
+import { liveStatusForProcessingDate, statusAfterProcessingDateSet } from './so-proceeded-status';
+
+describe('liveStatusForProcessingDate — where a live order lands', () => {
+  it('lands IN_PRODUCTION when the order already carries a Processing Date', () => {
+    expect(liveStatusForProcessingDate('2026-10-20')).toBe('IN_PRODUCTION');
+  });
+
+  it('lands CONFIRMED when there is no date — blank and whitespace are no date', () => {
+    expect(liveStatusForProcessingDate(null)).toBe('CONFIRMED');
+    expect(liveStatusForProcessingDate(undefined)).toBe('CONFIRMED');
+    expect(liveStatusForProcessingDate('')).toBe('CONFIRMED');
+    expect(liveStatusForProcessingDate('   ')).toBe('CONFIRMED');
+  });
+});
 
 const call = (currentStatus: string | null, stored: string | null, next: string | null) =>
   statusAfterProcessingDateSet({ currentStatus, storedProcessingDate: stored, effectiveProcessingDate: next });

@@ -14,6 +14,7 @@ class Q {
   constructor(private rows: Row[]) {}
   select() { return this; }
   eq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) === String(val)); return this; }
+  in(col: string, vals: unknown[]) { this.preds.push((r) => vals.map(String).includes(String(r[col]))); return this; }
   update(p: Row) { this.patch = p; return this; }
   private run() {
     const hit = this.rows.filter((r) => this.preds.every((p) => p(r)));
@@ -137,5 +138,39 @@ describe('PATCH /product-models/:id — category change', () => {
     // The client's isPlain filter drops any string containing these — the whole
     // point of the fix is that the operator sees prose, not the driver's text.
     expect(body.message).not.toMatch(/violates|constraint|duplicate key/i);
+  });
+});
+
+/* Five imported mattress models carry codes longer than 32 characters (e.g.
+   "COOLSILK 2.0 NANO-G THE CONTINENTAL", 35). The edit screen sends the code
+   back on every save, so a schema-level limit refused every edit to them —
+   ticking a size included. The limit now applies only to a changed code. */
+describe('PATCH /product-models/:id — model code length', () => {
+  const LONG = 'COOLSILK 2.0 NANO-G THE CONTINENTAL';
+
+  test('an unchanged legacy code over 32 characters does not block the save', async () => {
+    const { data, patch } = setup('MATTRESS');
+    data.product_models[0].model_code = LONG;
+    data.mfg_products[0] = { ...data.mfg_products[0], size_code: 'Q', pos_active: false };
+    const res = await patch({ modelCode: LONG, allowedOptions: { sizes: ['K', 'Q', 'SK'] } });
+    expect(res.status).toBe(200);
+    expect(data.product_models[0]).toMatchObject({ model_code: LONG, allowed_options: { sizes: ['K', 'Q', 'SK'] } });
+    expect(data.mfg_products[0].pos_active).toBe(true);
+  });
+
+  test('a new code over 32 characters is refused with a plain reason and nothing is written', async () => {
+    const { data, patch } = setup('MATTRESS');
+    const res = await patch({ modelCode: LONG, allowedOptions: { sizes: ['K'] } });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('model_code_too_long');
+    expect(data.product_models[0]).toMatchObject({ model_code: 'BC04', allowed_options: {} });
+  });
+
+  test('a legacy code can be shortened', async () => {
+    const { data, patch } = setup('MATTRESS');
+    data.product_models[0].model_code = LONG;
+    const res = await patch({ modelCode: 'COOLSILK 2.0 NANO-G CONTINENTAL' });
+    expect(res.status).toBe(200);
+    expect(data.product_models[0].model_code).toBe('COOLSILK 2.0 NANO-G CONTINENTAL');
   });
 });

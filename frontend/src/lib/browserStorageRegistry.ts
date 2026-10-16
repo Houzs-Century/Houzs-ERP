@@ -62,6 +62,10 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   { id: "chunk-print-resume", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "chunk-print-resume (the print to reopen after that reload)", matches: exact("chunk-print-resume") },
   { id: "workspace-tabs", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.workspaceTabs.v1 (per-window strip; blob records its {user,company} owner)", matches: exact("houzs.workspaceTabs.v1") },
   { id: "scm-list-return", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.scmListReturn.v1 (per-section last filtered list URL, for detail Back)", matches: exact("houzs.scmListReturn.v1") },
+  // Peter 2026-10-14: the desktop Projects list saves <main>'s scrollTop when a
+  // row opens and restores it on detail Back — same detail-Back shape as
+  // scm-list-return above. Written then consumed; no identity/company data.
+  { id: "projects-list-scroll", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "projects:listScroll (desktop list scroll position, for detail Back)", matches: exact("projects:listScroll") },
   { id: "assr-list-filter", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.assrListFilter.v1 (per-tab Service Cases search + stage, for detail Back)", matches: exact("houzs.assrListFilter.v1") },
   // Owner 2026-08-24: "i want make it my filter didnt close until i manually
   // clear filter or close erp then filter will auto clear". Session-scoped for
@@ -142,6 +146,9 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "components/AssistantPanel.tsx",
   "components/assistantLauncherPosition.ts",
   "components/DataTable.tsx",
+  // `dt:funnels:<idKey>` — funnels a persistFilters="always" table keeps (the
+  // delivery boards, owner 2026-10-05); the dt: device-pref family above.
+  "components/dataTableColFilterMemory.ts",
   "components/IosInstallGuide.tsx",
   "components/PwaBanners.tsx",
   "components/pwaDismissal.ts",
@@ -205,6 +212,8 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "mobile/useIsMobile.ts",
   "pages/MailCenter/mail-local.ts",
   "pages/MailCenter/mail-prefs.ts",
+  // Projects list scroll memory for detail Back (projects-list-scroll family).
+  "pages/Projects.tsx",
   // Composer draft autosave (2026-09-05): "announcements:draft:u<user>",
   // written debounced while a notice is being written, cleared on post. A
   // half-written notice surviving a closed modal / reload is the point; the

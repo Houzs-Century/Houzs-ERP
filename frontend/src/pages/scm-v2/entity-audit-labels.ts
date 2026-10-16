@@ -29,7 +29,7 @@ const PV_FIELDS: Record<string, string> = {
   status: 'Status', payeeName: 'Payee', creditAccountCode: 'Credit account',
   voucherDate: 'Voucher date', supplierId: 'Supplier', purpose: 'Type',
   notes: 'Notes', currency: 'Currency', exchangeRate: 'Exchange rate',
-  totalSen: 'Total', allocatedSen: 'Allocated to invoices',
+  totalSen: 'Total', allocatedSen: 'Allocated to invoices', bankChargeSen: 'Bank charges',
   lineCount: 'Lines', jeNo: 'GL entry no', postedTotalSen: 'Posted total',
   reversalJeNo: 'Reversal GL entry no', reversalOk: 'Reversal succeeded',
   /* 2026-07-30 — "the payment defines the FX rate". A knock-off writes its rate onto
@@ -47,7 +47,7 @@ const PV_FIELDS: Record<string, string> = {
 export const PAYMENT_VOUCHER_AUDIT_LABELS: AuditLabelDictionary = {
   actions: PV_ACTIONS,
   fields: PV_FIELDS,
-  moneyFields: new Set(['totalSen', 'allocatedSen', 'postedTotalSen', 'appliedSen']),
+  moneyFields: new Set(['totalSen', 'allocatedSen', 'postedTotalSen', 'appliedSen', 'bankChargeSen']),
 };
 
 /* ── GRN — routes/grns.ts ─────────────────────────────────────────────────── */
@@ -129,4 +129,26 @@ const STOCK_TRANSFER_FIELDS: Record<string, string> = {
 export const STOCK_TRANSFER_AUDIT_LABELS: AuditLabelDictionary = {
   actions: STOCK_TRANSFER_ACTIONS,
   fields: STOCK_TRANSFER_FIELDS,
+};
+
+/* ── Stock Adjustment — routes/inventory-adjustments.ts ───────────────────── */
+
+const STOCK_ADJUSTMENT_ACTIONS: Record<string, string> = {
+  CREATE: 'Created adjustment',
+  UPDATE: 'Edited adjustment',
+};
+
+/* The single-line keys (itemCode, qtyDelta ...) are what adjustments recorded
+   before they became documents (BUG-66); their history still renders. */
+const STOCK_ADJUSTMENT_FIELDS: Record<string, string> = {
+  warehouseId: 'Warehouse', lines: 'Lines', lineCount: 'Line count', netQty: 'Net qty',
+  notes: 'Notes', itemCode: 'SKU', variantKey: 'Variant', batchNo: 'Batch',
+  qtyDelta: 'Qty', reasonCode: 'Reason',
+};
+
+/* unitCostSen is money; the panel strips it for callers without finance. */
+export const STOCK_ADJUSTMENT_AUDIT_LABELS: AuditLabelDictionary = {
+  actions: STOCK_ADJUSTMENT_ACTIONS,
+  fields: { ...STOCK_ADJUSTMENT_FIELDS, unitCostSen: 'Unit cost' },
+  moneyFields: new Set(['unitCostSen']),
 };

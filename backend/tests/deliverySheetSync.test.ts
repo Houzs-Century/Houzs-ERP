@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import app from "../src/routes/deliverySheetSync";
 import { isSheetReady, normSheetDate, parseFromDate, parseLimit, parseSince, sheetReadinessWording, toSheetRecord, type FeedHeadRow } from "../src/lib/delivery-sheet-feed";
 import { toOutstandingPoRecord, type PoFeedRow } from "../src/lib/delivery-sheet-po-feed";
-import { toAssrLegRecords, type AssrFeedRow } from "../src/lib/delivery-sheet-assr-feed";
+import { toAssrContactRecord, toAssrLegRecords, type AssrFeedRow } from "../src/lib/delivery-sheet-assr-feed";
 
 /* Phase 3's write leg goes through the PO editor's own writers (supplier-date
  * cascade, downstream lock, AutoCount enqueue), which need a Supabase client;
@@ -92,6 +92,7 @@ const HEAD: FeedHeadRow = {
   postcode: "43300",
   city: "Seri Kembangan",
   customer_state: "Selangor",
+  customer_country: "Malaysia",
   venue: "Balakong Showroom",
   status: "CONFIRMED",
   do_numbers: "HC-DO-2609-001",
@@ -161,6 +162,42 @@ describe("toSheetRecord — the AutoCount-named record the sheet writes", () => 
     expect(r.Remark2).toBe("READY (PARTIAL)");
   });
 
+  test("BUG-52 HC12842: a native Singapore order sold from KL routes SG on its country", () => {
+    const r = toSheetRecord(
+      { ...HEAD, doc_no: "HC-SO-2609-110", linked_ac_docno: "HC-SO-2609-110",
+        address1: "blk 314 jurong east st32", address2: "#06-233", address3: null, address4: null,
+        postcode: "600314", city: "Jurong East", customer_state: "West", customer_country: "Singapore" },
+      [],
+    );
+    expect(r.SalesLocation).toBe("KL");
+    expect(r.InvAddr3).toBe("600314 Jurong East");
+    expect(r.Region).toBe("SG");
+    expect(toSheetRecord({ ...HEAD, customer_country: null }, []).Region).toBe("WEST");
+  });
+
+  test("SO-010791: a book-wrapped line 4 that is not a state gives way to the order's state", () => {
+    const wrapped = { ...HEAD, address1: "A-12-13A, D'CLOVER RESIDENCES, DATARAN", address2: "SENTRAL DAMANSARA, NO.3, JALAN PJU 8/8B,",
+      address3: "SENTRAL DAMANSARA, PJU 8 47820 Petaling", address4: "Jaya Selangor",
+      postcode: "47820", city: "Petaling Jaya", customer_state: "Selangor" };
+    const r = toSheetRecord(wrapped, []);
+    expect(r.InvAddr4).toBe("Selangor");
+    expect(r.InvAddr3).toBe("SENTRAL DAMANSARA, PJU 8 47820 Petaling Jaya Selangor");
+  });
+
+  test("a line 4 that IS a state stays, whatever its spelling or the state field", () => {
+    const base = { ...HEAD, address3: "11900 Bayan Lepas", postcode: "11900", city: "Bayan Lepas" };
+    expect(toSheetRecord({ ...base, address4: "Pulau Pinang.", customer_state: "Penang" }, []).InvAddr4).toBe("Penang");
+    expect(toSheetRecord({ ...base, address4: "Sarawak", customer_state: "Penang" }, []).InvAddr4).toBe("Sarawak");
+    expect(toSheetRecord({ ...base, address4: "Sarawak", customer_state: "Penang" }, []).InvAddr3).toBe("11900 Bayan Lepas");
+  });
+
+  test("a non-state line 4 with no usable state field passes through unchanged", () => {
+    const r = toSheetRecord({ ...HEAD, address3: "L3", address4: "Taman Putra Prima", customer_state: null }, []);
+    expect([r.InvAddr3, r.InvAddr4]).toEqual(["L3", "Taman Putra Prima"]);
+    const sg = toSheetRecord({ ...HEAD, address3: "L3", address4: "Blk 9", customer_state: "West" }, []);
+    expect([sg.InvAddr3, sg.InvAddr4]).toEqual(["L3", "Blk 9"]);
+  });
+
   test("East Malaysia branches route EAST", () => {
     expect(toSheetRecord({ ...HEAD, sales_location: "SRW WAREHOUSE" }, []).Region).toBe("EAST");
   });
@@ -172,8 +209,8 @@ describe("toSheetRecord — the AutoCount-named record the sheet writes", () => 
     expect(toSheetRecord({ ...HEAD, address4: "Penang" }, []).InvAddr4).toBe("Penang");
     expect(toSheetRecord({ ...HEAD, address4: "P.PINANG" }, []).InvAddr4).toBe("Penang");
     expect(toSheetRecord({ ...HEAD, address4: "KL" }, []).InvAddr4).toBe("Kuala Lumpur");
-    // Not a state (a street line in address4) is left as typed.
-    expect(toSheetRecord({ ...HEAD, address4: "Lorong Lembah 3" }, []).InvAddr4).toBe("Lorong Lembah 3");
+    // Not a state (a street line in address4) is left as typed when the order has no state of its own.
+    expect(toSheetRecord({ ...HEAD, address4: "Lorong Lembah 3", customer_state: null }, []).InvAddr4).toBe("Lorong Lembah 3");
     expect(toAssrLegRecords({ ...ASSR, addr4: "Pulau Pinang" })[0]!.InvAddr4).toBe("Penang");
   });
 });
@@ -809,6 +846,7 @@ const ASSR: AssrFeedRow = {
   ref_no: "REF012",
   po_no: "PO-012",
   status: "In Progress",
+  stage: "pending_supplier_pickup",
   customer_name: "Wendy",
   phone: "60127712155",
   location: "KL WAREHOUSE",
@@ -824,6 +862,10 @@ const ASSR: AssrFeedRow = {
   customer_pickup_at: "2026-09-21",
   delivery_by: "own",
   do_date: "2026-09-25",
+  customer_country: null,
+  so_postcode: null,
+  so_city: null,
+  so_state: null,
   last_modified_text: "2026-09-17 09:09:28.123456+00",
 };
 
@@ -857,8 +899,37 @@ describe("toAssrLegRecords — one own-team leg per set date, in the sheet's rec
     expect(toAssrLegRecords({ ...ASSR, inspection_by: null, delivery_by: null }).map((l) => l.Kind)).toEqual(["PICKUP"]);
   });
 
+  test("BUG-95: once the item is back (Item Ready / Pending Delivery/Service), only the delivery-back leg is sent", () => {
+    for (const stage of ["pending_item_ready", "pending_delivery_service"]) {
+      expect(toAssrLegRecords({ ...ASSR, stage }).map((l) => l.DocNo)).toEqual(["SO-2609-012-SERVICE"]);
+    }
+    expect(toAssrLegRecords({ ...ASSR, stage: "pending_delivery_service", delivery_by: null })).toEqual([]);
+    for (const stage of ["under_verification", "pending_solution", "pending_supplier_pickup", null]) {
+      expect(toAssrLegRecords({ ...ASSR, stage }).map((l) => l.Kind)).toEqual(["INSPECT", "PICKUP", "DELIVERY"]);
+    }
+  });
+
   test("a Singapore address routes the legs to SG", () => {
     expect(toAssrLegRecords({ ...ASSR, addr3: "SINGAPORE 408600" })[0]!.Region).toBe("SG");
+  });
+
+  test("a case with its whole address in line 1 takes the order's postcode / city / state for lines 3 / 4", () => {
+    const row = { ...ASSR, addr1: "No. 5, Jalan SS2/12, Petaling Jaya, 47300, Selangor", addr2: null, addr3: null, addr4: null,
+      so_postcode: "47300", so_city: "Petaling Jaya", so_state: "Selangor" };
+    expect(toAssrLegRecords(row)[0]).toMatchObject({ InvAddr3: "47300 Petaling Jaya", InvAddr4: "Selangor" });
+  });
+
+  test("the order's town never overrides the case's own lines, nor fills when the case names another postcode", () => {
+    const own = { ...ASSR, addr3: "50450 Kuala Lumpur", addr4: "Wilayah Persekutuan", so_postcode: "47300", so_city: "Petaling Jaya", so_state: "Selangor" };
+    expect(toAssrLegRecords(own)[0]).toMatchObject({ InvAddr3: "50450 Kuala Lumpur" });
+    const elsewhere = { ...ASSR, addr1: "8 Jalan Ampang, 50450", addr3: null, addr4: null, so_postcode: "47300", so_city: "Petaling Jaya", so_state: "Selangor" };
+    expect(toAssrLegRecords(elsewhere)[0]).toMatchObject({ InvAddr3: null, InvAddr4: null });
+  });
+
+  test("a leg whose linked order is in Singapore routes to SG even when address line 3 lacks the word", () => {
+    const legs = toAssrLegRecords({ ...ASSR, location: "KL", addr3: "600314 Jurong East", customer_country: "Singapore" });
+    expect(legs.map((l) => l.Region)).toEqual(["SG", "SG", "SG"]);
+    expect(toAssrLegRecords({ ...ASSR, location: "KL", addr3: "600314 Jurong East" })[0]!.Region).toBe("WEST");
   });
 });
 
@@ -973,5 +1044,46 @@ describe("scm.sheet_sync_usage — the endpoint counter", () => {
     const res = await app.request("/so-since?since=2026-09-15%2000:00:00", { headers: { "X-Intake-Key": KEY } }, env(db));
     expect(res.status).toBe(200);
     expect(((await res.json()) as any).count).toBe(1);
+  });
+});
+
+/* BUG-54: ASSR/2608-064 had inspection 'own' but no visit date, so /assr-legs
+ * never re-sent it and a phone corrected in the ERP stayed stale on the sheet
+ * row the sheet's own linkage had made. /assr-contacts carries every open case. */
+describe("GET /assr-contacts", () => {
+  const UNDATED: AssrFeedRow = { ...ASSR, phone: "+60 1111888517", inspection_visit_at: null, pickup_by: null, customer_pickup_at: null, delivery_by: null, do_date: null };
+
+  test("a case with no own-team dated leg still sends its contact cells, keyed for every leg row it could own", () => {
+    expect(toAssrLegRecords(UNDATED)).toEqual([]);
+    expect(toAssrContactRecord(UNDATED)).toEqual({
+      AssrNo: "ASSR/2609-012",
+      Keys: ["SO-2609-012-INSPECTION", "SO-2609-012-PICKUP", "SO-2609-012-SERVICE"],
+      DebtorName: "Wendy",
+      Phone1: "+60 1111888517",
+      InvAddr1: "12 Jalan Satu",
+      InvAddr2: "Taman Dua",
+      InvAddr3: null,
+      InvAddr4: "Selangor",
+      LastModified: ASSR.last_modified_text,
+    });
+  });
+
+  test("wrong key 401 before any read; the feed is open cases only, with no own-team gate", async () => {
+    const bad = fakeDb(() => []);
+    expect((await app.request("/assr-contacts", { headers: { "X-Intake-Key": "wrong" } }, env(bad.db))).status).toBe(401);
+    expect(bad.seen).toHaveLength(0);
+
+    const { db, seen } = fakeDb((sql) => (/FROM assr_cases/.test(sql) ? [UNDATED] : []));
+    const res = await app.request("/assr-contacts?since=2026-09-01%2000:00:00&limit=100", { headers: { "X-Intake-Key": KEY } }, env(db));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.cases).toBe(1);
+    expect(body.records.map((r: any) => r.Phone1)).toEqual(["+60 1111888517"]);
+    expect(body.next_since).toBe(ASSR.last_modified_text);
+    const feed = seen.find((s) => /FROM assr_cases/.test(s.sql))!;
+    expect(feed.binds).toEqual(["2026-09-01 00:00:00", 100]);
+    expect(feed.sql).toContain("closed_at IS NULL");
+    expect(feed.sql).toContain("archived_at IS NULL");
+    expect(feed.sql).not.toMatch(/inspection_by\s*=/);
   });
 });

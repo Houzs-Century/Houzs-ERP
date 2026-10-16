@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { orderLineIdentity } from "@2990s/shared";
 import { invalidateDoShared, invalidateInventoryShared, invalidateSoShared } from "./sharedInvalidate";
 import {
@@ -10,7 +10,8 @@ import {
 import { uploadSlipFull, ALLOWED_SLIP_MIMES } from "../vendor/scm/lib/slip";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useAuth } from "../auth/AuthContext";
-import { canOperateDeliveryOrders } from "../auth/salesAccess";
+import { canOperateDeliveryOrders, canDriverCompleteDelivery } from "../auth/salesAccess";
+import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import "./mobile.css";
 
 /* Proof-of-Delivery (POD) — mobile driver screen for confirming a Delivery
@@ -84,6 +85,18 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
      users, so this is the defence-in-depth layer on the actions themselves. */
   const { user, can, pageAccess } = useAuth();
   const canOperate = canOperateDeliveryOrders(user, can, pageAccess);
+  /* The driver on the job (scm.do.dispatch) confirms their OWN delivery. The
+     DO list/detail reads need office access a driver does not hold, so a driver
+     reads through the crew-scoped /delivery-planning/do/:ref/pod instead, and the
+     server re-checks ownership on the status write. */
+  const isCrew = !canOperate && canDriverCompleteDelivery(user);
+  const canComplete = canOperate || isCrew;
+  const crewQ = useQuery({
+    queryKey: ["mfg-delivery-order-pod", docNo],
+    queryFn: () => authedFetch<{ deliveryOrder: DoHeader; items: DoItem[] }>(`/delivery-planning/do/${encodeURIComponent(docNo)}/pod`),
+    enabled: isCrew,
+    staleTime: 30_000,
+  });
 
   /* Resolve docNo (a DO number) → the DO row (carries the UUID every other route
      keys on). ASK THE SERVER FOR THE ONE DOCUMENT, don't scan the org's DOs on a
@@ -99,24 +112,26 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
      a second cache over the same URLs, invisible to invalidateDoShared — so a write
      from the desktop or the planning board left this screen stale, and this screen's
      own writes left theirs stale. One namespace, one logic layer. */
-  const listQ = useMfgDeliveryOrdersPaged({ page: 0, pageSize: DOC_NO_LOOKUP_ROWS, q: docNo });
+  const listQ = useMfgDeliveryOrdersPaged({ enabled: !isCrew, page: 0, pageSize: DOC_NO_LOOKUP_ROWS, q: docNo });
   const doId = useMemo(() => {
     const rows = listQ.data?.deliveryOrders;
     // No rows yet (pending, or the read failed) is NOT "no such DO" — leave it
     // null and let the render tell those two apart. See `notFound` below.
+    if (isCrew) return crewQ.data?.deliveryOrder.id ?? null;
     if (!rows) return null;
     return (rows.find((d: DoHeader) => (d.do_number ?? "") === docNo)?.id ?? null) as string | null;
-  }, [listQ.data, docNo]);
+  }, [listQ.data, docNo, isCrew, crewQ.data]);
 
-  const detailQ = useMfgDeliveryOrderDetail(doId);
+  const detailQ = useMfgDeliveryOrderDetail(isCrew ? null : doId);
+  const podData = isCrew ? crewQ.data : detailQ.data;
 
-  const h = detailQ.data?.deliveryOrder as DoHeader | undefined;
+  const h = podData?.deliveryOrder as DoHeader | undefined;
   /* CANCELLED lines are excluded from the driver checklist AND the "delivered
      X/N" count — desktop parity: DeliveryOrderDetailV2 filters `!l.cancelled`.
      Without this a cancelled line entered the tick-list and inflated N, so a
      fully-delivered DO could never read 100%. Filtering here fixes both the
      render and `deliveredCount`/`items.length` below in one place. */
-  const items = ((detailQ.data?.items ?? []) as DoItem[]).filter((l) => !l.cancelled);
+  const items = ((podData?.items ?? []) as DoItem[]).filter((l) => !l.cancelled);
 
   // Checklist — which line items the driver has ticked as delivered.
   const [ticked, setTicked] = useState<Record<string, boolean>>({});
@@ -128,9 +143,9 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
   const [sigClearNonce, setSigClearNonce] = useState(0);
   const [gps, setGps] = useState<{ lat: number; lng: number; accuracyM: number | null; atIso: string } | null>(null);
   const [gpsState, setGpsState] = useState<"idle" | "asking" | "ok" | "denied">("idle");
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  // A delivery takes several photos (goods off the lorry, installed, the signed note).
+  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [photoError, setPhotoError] = useState<string | null>(null);
-  const photoName = photoFile?.name ?? null;
 
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -142,7 +157,14 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
     // Defence-in-depth: the Confirm button is already withheld for a view-only
     // user, but the delivery write (stock + SO sync) must never fire without the
     // operate gate even if the button is somehow reached.
-    if (busy || !doId || !h || !canOperate) return;
+    if (busy || !doId || !h || !canComplete) return;
+    /* Every job closes with a photo (owner, 2026-10-07: 每个 Job 都必须上传 POD).
+       The customer signs the paper delivery note for now, so a photo of that
+       signed note is the POD; the on-screen signature stays optional. */
+    if (!photoFiles.length) {
+      setActionError("Take a POD photo first - a photo of the signed delivery note is fine.");
+      return;
+    }
     const notes: string[] = [];
     if (deliveredCount < items.length) {
       notes.push(`Only ${deliveredCount} of ${items.length} items are ticked.`);
@@ -172,11 +194,9 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
       // Upload the photo to R2 FIRST (shared slip Worker-proxy pipeline) so
       // its key rides the same PATCH. A failed upload aborts the whole action —
       // we never mark delivered while claiming a photo we didn't store.
-      let podKey: string | null = null;
-      if (photoFile) {
-        const { r2Key } = await uploadSlipFull({ file: photoFile });
-        podKey = r2Key;
-      }
+      const podKeys: string[] = [];
+      for (const f of photoFiles) podKeys.push((await uploadSlipFull({ file: f })).r2Key);
+      const podKey = podKeys[0];
       /* `hasSignature` — NOT the canvas — decides whether a signature is sent.
          An untouched pad is a sized, fully transparent bitmap, so
          `toDataURL("image/png")` returns a perfectly valid non-empty data URL
@@ -205,7 +225,8 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
         status: "DELIVERED",
         evidence: {
           signatureData: sig || undefined,
-          podKey: podKey ?? undefined,
+          podKey,
+          podKeys,
           /* Mig 0249. This reading was taken and thrown away on every delivery
              since this screen shipped — the header used to end "GPS stays
              client-side (no server column)". Sent only when the driver actually
@@ -263,13 +284,15 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
   // PAUSES). On isLoading the notFound branch then painted "could not be found"
   // in red before any fetch had run. detailQ is enabled:!!doId, and a disabled
   // query stays isPending forever, so its check must stay behind the doId guard.
-  const loading = listQ.isPending || (!!doId && detailQ.isPending);
+  const loading = isCrew ? crewQ.isPending : listQ.isPending || (!!doId && detailQ.isPending);
   // `!listQ.error` is load-bearing: without it a FAILED lookup (no rows, so no
   // doId) fell into this branch and told the driver the delivery "could not be
   // found" — stating as fact something we had not learned. A read that did not
   // answer must fall through to loadError below and say so.
-  const notFound = !listQ.isPending && !listQ.error && !doId;
-  const loadError = listQ.error || detailQ.error;
+  const notFound = isCrew
+    ? crewQ.isError && /not_found|could not be found/i.test(String(crewQ.error))
+    : !listQ.isPending && !listQ.error && !doId;
+  const loadError = isCrew ? (notFound ? null : crewQ.error) : listQ.error || detailQ.error;
   const pillLabel = cancelled ? "Cancelled" : delivered ? "Delivered" : "Arrived";
   // Header status badge → canonical .badge variant (spec: DISPATCHED/arrived =
   // brand, DELIVERED = green, cancelled = red).
@@ -360,34 +383,42 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
                   <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" />
                   <circle cx="12" cy="13" r="3" />
                 </svg>
-                {photoName ? "Retake photo" : "Take photo"}
+                {photoFiles.length ? "Add another photo" : "Take photo"}
                 <input
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
                   capture="environment"
+                  multiple
                   style={{ display: "none" }}
                   onChange={(e) => {
-                    const f = e.target.files?.[0] ?? null;
-                    if (!f) return;
+                    const picked = Array.from(e.target.files ?? []);
+                    e.target.value = "";
+                    if (!picked.length) return;
                     // Guard against the R2 pipeline's contract (jpeg/png/webp)
                     // up front so the operator learns before Confirm, not
                     // mid-upload. No size guard here any more: uploadSlipFull
                     // compresses photos (WO-7), so a raw 8 MB camera capture
                     // is EXPECTED input now — it leaves the phone at well
                     // under the 5 MiB slip ceiling.
-                    if (!ALLOWED_SLIP_MIMES.includes(f.type as (typeof ALLOWED_SLIP_MIMES)[number])) {
-                      setPhotoFile(null);
-                      setPhotoError("Please use a JPEG, PNG or WebP photo.");
+                    if (picked.some((f) => !ALLOWED_SLIP_MIMES.includes(f.type as (typeof ALLOWED_SLIP_MIMES)[number]))) {
+                      setPhotoError("Please use JPEG, PNG or WebP photos.");
                       return;
                     }
                     setPhotoError(null);
-                    setPhotoFile(f);
+                    setPhotoFiles((prev) => [...prev, ...picked].slice(0, 10));
                   }}
                 />
               </label>
-              <div style={{ flex: 1, borderRadius: 13, minHeight: 70, background: photoName ? "linear-gradient(135deg,#d7ded6,#c7d0c4)" : "linear-gradient(135deg,#eceee9,#e3e6e0)" }} />
+              <div style={{ flex: 1, borderRadius: 13, minHeight: 70, display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, color: "var(--mut)", background: photoFiles.length ? "linear-gradient(135deg,#d7ded6,#c7d0c4)" : "linear-gradient(135deg,#eceee9,#e3e6e0)" }}>
+                {photoFiles.length ? `${photoFiles.length} photo${photoFiles.length === 1 ? "" : "s"}` : "No photo yet"}
+              </div>
             </div>
-            {photoName && <div style={{ fontSize: 10.5, color: "var(--mut)", marginTop: 6 }} className="tnum">{photoName}</div>}
+            {photoFiles.map((f, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "var(--mut)", marginTop: 6 }}>
+                <span className="tnum">{i + 1}. {f.name}</span>
+                <button type="button" onClick={() => setPhotoFiles((prev) => prev.filter((_, j) => j !== i))} style={{ border: "none", background: "none", color: "var(--red)", fontFamily: "inherit", fontSize: 11, fontWeight: 700 }}>Remove</button>
+              </div>
+            ))}
             {photoError && <div style={{ fontSize: 10.5, color: "var(--red)", marginTop: 6 }}>{photoError}</div>}
 
             {/* Customer signature — design signature pad (canvas keeps the real capture). */}
@@ -432,14 +463,14 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
 
       {/* .actbar — primary confirm action (design POD footer) */}
       <footer className="actbar">
-        {!loading && !notFound && !loadError && h && !delivered && !cancelled && canOperate && (
+        {!loading && !notFound && !loadError && h && !delivered && !cancelled && canComplete && (
           <button type="button" className="btn" disabled={busy} onClick={confirmDelivered} style={{ opacity: busy ? 0.6 : 1, cursor: busy ? "default" : "pointer" }}>
             {busy ? "Working…" : "Confirm delivered →"}
           </button>
         )}
         {/* View-only (Sales cohort): confirming a delivery is the Office team's
             job. State it plainly instead of showing a button the backend 403s. */}
-        {!loading && !notFound && !loadError && h && !delivered && !cancelled && !canOperate && (
+        {!loading && !notFound && !loadError && h && !delivered && !cancelled && !canComplete && (
           <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--mut2)", padding: 6 }}>
             You can view this delivery, but confirming it is handled by the Office team.
           </div>

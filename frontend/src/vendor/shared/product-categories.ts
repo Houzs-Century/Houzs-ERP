@@ -32,6 +32,15 @@ export function isMfgProductCategory(c: string | null | undefined): c is MfgProd
   return (MFG_PRODUCT_CATEGORIES as readonly string[]).includes(String(c ?? ''));
 }
 
+/* A category with no size or compartment axis: each Model is exactly ONE SKU,
+   coded as the model code. Every category but SOFA / BEDFRAME / MATTRESS — a
+   new category lands here, so a Model of it is never born with no SKU (BUG-85:
+   2990's Sofa Accessory models AR01 / BC06 / BC06-MF / SB01 were). */
+export function isSingleSkuCategory(c: string | null | undefined): boolean {
+  const up = String(c ?? '').toUpperCase();
+  return isMfgProductCategory(up) && up !== 'SOFA' && up !== 'BEDFRAME' && up !== 'MATTRESS';
+}
+
 /** A category's label; an unknown value is shown as it is stored. */
 export function mfgCategoryLabel(c: string | null | undefined): string {
   const up = String(c ?? '').toUpperCase();

@@ -15,9 +15,8 @@ import { Camera, Flashlight, X } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { canOperateGoodsReceipts } from "../auth/salesAccess";
 import { useQrScanner } from "../lib/use-qr-scanner";
-import { useRacks } from "../vendor/scm/lib/warehouse-queries";
 import { useGrnItemRacks, useSetGrnLineRack } from "../vendor/scm/lib/grn-queries";
-import { grnRackEditable, grnRackOptions, grnRackSplitEditable, useGrnLineRackSplit } from "../vendor/scm/lib/grn-line-rack";
+import { grnRackEditable, grnRackSplitEditable, useGrnLineRackSplit, useGrnRackOptions } from "../vendor/scm/lib/grn-line-rack";
 import { rackScanRefusal, resolveRackScan } from "../vendor/scm/lib/rack-qr";
 
 type Header = Record<string, unknown> | null;
@@ -50,10 +49,10 @@ const SMALL_BTN = { height: 32, padding: "0 10px", borderRadius: 8, border: "1px
 
 function SplitRow({ grnId, header, line, onSaved }: { grnId: string; header: Header; line: Line; onSaved: () => void }) {
   const warehouseId = str(header?.warehouse_id);
-  const racksQ = useRacks({ warehouseId: warehouseId || undefined });
-  const racks = racksQ.data?.racks ?? [];
-  const options = grnRackOptions(racks);
-  const labelOf = (id: string) => options.find((o) => o.value === id)?.label ?? "?";
+  const racksQ = useGrnRackOptions(warehouseId || undefined);
+  const racks = racksQ.racks;
+  const options = racksQ.options;
+  const labelOf = (id: string) => racksQ.labelById.get(id) ?? "?";
   const qtyAccepted = Number(line.qty_accepted ?? 0) || 0;
   const split = useGrnLineRackSplit({ grnId, itemId: str(line.id), lineRackId: str(line.rack_id) || null, qtyAccepted });
   const [scanOpen, setScanOpen] = useState(false);
@@ -125,26 +124,26 @@ function SplitRow({ grnId, header, line, onSaved }: { grnId: string; header: Hea
 function RackRow({ grnId, header, line, onSaved }: { grnId: string; header: Header; line: Line; onSaved: () => void }) {
   const { can, pageAccess } = useAuth();
   const warehouseId = str(header?.warehouse_id);
-  const racksQ = useRacks({ warehouseId: warehouseId || undefined });
+  const racksQ = useGrnRackOptions(warehouseId || undefined);
   const setRack = useSetGrnLineRack();
   const splitQ = useGrnItemRacks(grnId);
   const [error, setError] = useState<string | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
 
-  const options = grnRackOptions(racksQ.data?.racks ?? []);
+  const options = racksQ.options;
   const postedSplit = (splitQ.data ?? []).filter((r) => r.grnItemId === str(line.id));
   if (postedSplit.length > 1) {
     return (
       <div style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 6 }}>
         <span style={LABEL_STYLE}>Racks</span>
         <span style={{ fontSize: 12, color: "#11140f" }}>
-          {postedSplit.map((r) => `${options.find((o) => o.value === r.rackId)?.label ?? "?"} × ${r.qty}`).join(" · ")}
+          {postedSplit.map((r) => `${racksQ.labelById.get(r.rackId) ?? "?"} × ${r.qty}`).join(" · ")}
         </span>
       </div>
     );
   }
   const current = str(line.rack_id);
-  const currentLabel = options.find((o) => o.value === current)?.label ?? "";
+  const currentLabel = racksQ.labelById.get(current) ?? "";
   const editable = grnRackEditable(str(header?.status)) && canOperateGoodsReceipts(can, pageAccess);
 
   const onChange = (rackId: string) => {
@@ -189,7 +188,7 @@ function RackRow({ grnId, header, line, onSaved }: { grnId: string; header: Head
       )}
       {scanOpen && (
         <RackScanPanel
-          racks={racksQ.data?.racks ?? []}
+          racks={racksQ.racks}
           onClose={() => setScanOpen(false)}
           onRack={(rackId) => { setScanOpen(false); onChange(rackId); }}
         />

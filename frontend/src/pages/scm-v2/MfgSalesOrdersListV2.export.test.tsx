@@ -146,6 +146,27 @@ describe("Sales Orders list: the ONE Export", () => {
     expect(h.written[0]).toMatch(/\.xlsx$/);
   });
 
+  /* BUG-51 repoint (owner 2026-10-15): the column shows the REAL AutoCount
+     sales-exemption expiry (ac_sales_exemption_expiry, keyed by the order's linked
+     book doc no). It is NOT the delivery date and NOT the ERP's frozen
+     sales_exemption_expiry, and it is blank for an order that is not in AutoCount. */
+  it("Sales Exemption Expiry Date shows the AutoCount exemption date, blank when the order is not in AutoCount", async () => {
+    h.authed.mockImplementation(async () => ({
+      salesOrders: [
+        so("HC-SO-013001", { ac_sales_exemption_expiry: "2026-12-31", customer_delivery_date: "2026-09-30", sales_exemption_expiry: "2026-08-20" }),
+        so("HC-SO-013002", { ac_sales_exemption_expiry: null, customer_delivery_date: "2026-09-30", sales_exemption_expiry: "2026-08-20" }),
+      ],
+      total: 2, lineCount: 4, next: null,
+    }));
+    const { body, cell } = await exportNow("/scm/sales-orders");
+    /* The real AutoCount value — never the delivery date (2026-09-30) or the
+       frozen original-delivery-date field (2026-08-20). */
+    expect(cell(body[0]!, "Sales Exemption Expiry Date")).toBe("2026-12-31");
+    /* Not in AutoCount -> blank, even though delivery date + frozen field are set.
+       An empty date cell exports as null; the point is it is NOT a real date. */
+    expect(cell(body[2]!, "Sales Exemption Expiry Date") ?? "").toBe("");
+  });
+
   it("asks the server with the list's tab, search and sort, and no page", async () => {
     await exportNow("/scm/sales-orders?status=confirmed&q=TAN&page=3");
     const path = h.authed.mock.calls.map((c) => String(c[0])).find((p) => p.startsWith("/mfg-sales-orders/export/rows"));

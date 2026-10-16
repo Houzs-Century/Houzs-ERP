@@ -26,7 +26,7 @@ import routerSrc from './purchase-invoices.ts?raw';
 
 const MAX_ROWS = 1000;
 
-const state = vi.hoisted(() => ({ sb: null as unknown }));
+const state: { sb: unknown } = { sb: null };
 /* supabaseAuth replaces whatever the caller set with the service client, so the
    fake is injected at that seam (same harness as purchaseInvoiceZeroPriceCreate). */
 vi.mock('../../db/supabase', () => ({ getSupabaseService: () => state.sb }));

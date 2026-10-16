@@ -35,7 +35,10 @@ import {
   MoreHorizontal,
   Wallet,
   Plus,
+  Trash2,
+  FileText,
 } from "lucide-react";
+import { DISCARD_DRAFT_LABEL, useDiscardDraftAction } from "./use-discard-draft-action";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
@@ -78,6 +81,7 @@ import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { useSoRelationshipMap } from "./so-relationship-map";
 import { PaymentsTable, type PaymentDraft } from "../../vendor/scm/components/PaymentsTable";
+import { ViewOriginalScan } from "../../vendor/scm/components/ViewOriginalScan";
 import { fetchSoSlipUrl } from "../../vendor/scm/lib/slip";
 import {
   completePaymentRetryDraft, consumePaymentRetryNavigationState,
@@ -96,6 +100,8 @@ import {
   soDownstreamHardLocked,
 } from "../../vendor/scm/lib/so-detail-gates";
 import { MigratedReadonlyBanner } from "../../vendor/scm/components/MigratedReadonlyBanner";
+import { soAfterDoMode, soPriceAfterDoOn } from "../../vendor/scm/lib/so-after-do-client";
+import type { AfterDoTarget } from "../../vendor/shared/so-after-do-edit";
 import { customerRefOf } from '../../lib/customer-ref';
 
 import { isFocLine } from '../../vendor/scm/lib/foc-line';
@@ -162,6 +168,8 @@ type SoHeader = {
   downstream_fully_frozen?: boolean | null;
   amendment_eligible?: boolean | null;
   has_open_amendment?: boolean | null;
+  after_do_targets?: AfterDoTarget[] | null;
+  after_do_invoiced?: boolean | null;
   customer_delivery_date: string | null;
   note: string | null;
   currency: string;
@@ -592,6 +600,7 @@ function SalesOrderDetailV2ReadOnly() {
   const coverage = useSoLineCoverage(docNo ?? null);
   const updateStatus = useUpdateMfgSalesOrderStatus();
   const requestCancel = useCancelRequestAction("so");
+  const discardDraft = useDiscardDraftAction();
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const staffRoster = useStaff();
   const notify = useNotify();
@@ -661,7 +670,14 @@ function SalesOrderDetailV2ReadOnly() {
      this door leads to exactly one dropdown. Without it, handing a delivered
      order to a resigning rep's replacement meant Override — which unlocks the
      whole order, addresses and lines included. */
-  const canAttributeOther = useHouzsAuth().can("scm.so.attribute_other");
+  const { can } = useHouzsAuth();
+  const canAttributeOther = can("scm.so.attribute_other");
+  /* DEV-56 — `scm.so.edit_after_do` (DEV-32) is spent behind Override, and
+     Override lives in the ?edit=1 editor. Asked as if Override were already on:
+     the question here is only whether the editor has anything to offer. */
+  const canEditAfterDo = salesOrder
+    ? soAfterDoMode(salesOrder, { can, override: true, migrated: false }).on
+    : false;
   /* CUTOVER: an order carried across from AutoCount is view-only (owner
      2026-09-08). It out-ranks the salesperson door above — `canAttributeOther`
      exists so a hard-locked order can still change hands, and re-attributing a
@@ -670,10 +686,16 @@ function SalesOrderDetailV2ReadOnly() {
      the operator is looking at; two locks with one sentence is how a refusal
      stops being actionable. */
   const migratedLocked = soMigratedReadonly(salesOrder);
-  const editDisabled = migratedLocked || (hardLocked && !canAttributeOther);
+  /* DEV-70 — a delivered line's price is changed from the editor's $ button. */
+  const canPriceAfterDo = salesOrder ? soPriceAfterDoOn(salesOrder, { can, migrated: migratedLocked }) : false;
+  const editDisabled = migratedLocked || (hardLocked && !canAttributeOther && !canEditAfterDo && !canPriceAfterDo);
   const lockedEditHint = migratedLocked
     ? soMigratedReadonlyReason(salesOrder)
-    : hardLocked && canAttributeOther
+    : hardLocked && canPriceAfterDo && !canEditAfterDo
+      ? "This order is locked by its Delivery Order — press Edit, then the $ button on a line, to change its unit price or discount."
+    : hardLocked && canEditAfterDo
+      ? "This order is locked by its Delivery Order — press Edit, then Override, to change the customer details or charge lines."
+      : hardLocked && canAttributeOther
       ? "This order is locked by a downstream Delivery Order / Sales Invoice — only the Salesperson can still be changed."
       : "This order is locked — it already has a downstream Delivery Order / Sales Invoice.";
   const editLabel = canAmend
@@ -742,6 +764,12 @@ function SalesOrderDetailV2ReadOnly() {
      the cancel itself (executeCancel) is run by CancelRequestPanel on the
      second signature, with every guard the status route always had. */
   const doCancel = () => { if (salesOrder) void requestCancel(salesOrder.doc_no, salesOrder.doc_no); };
+  /* Discard a DRAFT (owner 2026-10-13: 「这个draft - discard不到」 — this read-only
+     page offered Request cancellation and nothing else on a draft). The order
+     ceases to exist on success, so we leave for the list. */
+  const doDiscard = async () => {
+    if (salesOrder && (await discardDraft.discard(salesOrder.doc_no))) navigate("/scm/sales-orders");
+  };
   const executeCancel = () => {
     if (!salesOrder) return;
     updateStatus.mutate({ docNo: salesOrder.doc_no, status: "CANCELLED", expectedStatus: salesOrder.status });
@@ -1141,6 +1169,7 @@ function SalesOrderDetailV2ReadOnly() {
                 <span>SO date {fmtDate(salesOrder.so_date)}</span>
                 <Divider />
                 <span>{items.length} line{items.length === 1 ? "" : "s"}</span>
+                <ViewOriginalScan kind="so" documentId={salesOrder.doc_no} />
                 {refOf(salesOrder) !== "—" && (
                   <>
                     <Divider />
@@ -1219,12 +1248,34 @@ function SalesOrderDetailV2ReadOnly() {
                 Collect payment
               </Button>
             )}
+            {/* DEV-76: a charge-only order (no DO) is invoiced straight off the SO. */}
+            {!migratedLocked && salesOrder.status.toLowerCase() === "confirmed" && salesOrder.has_children === false && (
+              <Button
+                variant="secondary"
+                icon={<FileText size={14} />}
+                onClick={() => navigate(`/scm/sales-invoices/new?fromSo=${encodeURIComponent(salesOrder.doc_no)}`)}
+              >
+                Create Invoice
+              </Button>
+            )}
             {/* Cancel is a WRITE (PATCH /:docNo/status), and on a migrated order
                 it is refused. It is also the most destructive thing on this bar,
                 so it is disabled-with-a-reason rather than hidden: a salesperson
                 looking for it must find out WHY it cannot be used, not wonder
                 where it went. */}
-            {salesOrder.status?.toLowerCase() !== "cancelled" && (
+            {/* A DRAFT is discarded, not cancelled (owner 2026-07-20): DELETE,
+                no document number burnt, no dead CANCELLED row. The right-click
+                menu on the list still offers Request cancellation on a draft. */}
+            {salesOrder.status.toLowerCase() === "draft" ? (
+              <Button
+                variant="danger"
+                icon={<Trash2 size={14} />}
+                onClick={() => void doDiscard()}
+                disabled={discardDraft.isPending}
+              >
+                {discardDraft.isPending ? "Discarding…" : DISCARD_DRAFT_LABEL}
+              </Button>
+            ) : salesOrder.status?.toLowerCase() !== "cancelled" && (
               <Button
                 variant="danger"
                 icon={<XCircle size={14} />}
@@ -1241,7 +1292,7 @@ function SalesOrderDetailV2ReadOnly() {
               variant="secondary"
               icon={<Plus size={14} />}
               onClick={goAddLine}
-              disabled={editDisabled}
+              disabled={editDisabled || (hardLocked && !canEditAfterDo && !canAttributeOther)}
             >
               {ADD_LINE_LABEL}
             </Button>

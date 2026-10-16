@@ -70,6 +70,7 @@ import { useRacks } from "../../vendor/scm/lib/warehouse-queries";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
+import { DoProofOfDeliveryCard, doIsDelivered } from "./DoProofOfDeliveryCard";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { usePrompt } from "../../vendor/scm/components/PromptDialog";
@@ -151,6 +152,11 @@ type DoHeader = HoldFields & {
      delivery without noticing there was no evidence on the row. */
   signature_data?: string | null;
   pod_r2_key?: string | null;
+  departure_at?: string | null;
+  arrival_at?: string | null;
+  delivered_at?: string | null;
+  pod_lat?: number | null;
+  pod_lng?: number | null;
   lifecycle_state?: DoLifecycle;
   currency: string;
   created_at?: string;
@@ -1517,10 +1523,14 @@ export function DeliveryOrderDetailV2() {
                 />
                 <KeyDateRow
                   k="Delivered"
-                  v={effectiveOf(deliveryOrder) === "shipped" ? "Pending" : EFFECTIVE_TONE[effectiveOf(deliveryOrder)].label}
-                  muted={effectiveOf(deliveryOrder) === "shipped" || effectiveOf(deliveryOrder) === "draft"}
+                  v={doIsDelivered(deliveryOrder)
+                    ? (deliveryOrder.delivered_at ? fmtDate(deliveryOrder.delivered_at) : "Delivered")
+                    : effectiveOf(deliveryOrder) === "shipped" ? "Pending" : EFFECTIVE_TONE[effectiveOf(deliveryOrder)].label}
+                  muted={!doIsDelivered(deliveryOrder) && (effectiveOf(deliveryOrder) === "shipped" || effectiveOf(deliveryOrder) === "draft")}
                 />
               </AsideCard>
+
+              <DoProofOfDeliveryCard h={deliveryOrder} />
 
               <AsideCard title="People">
                 <PersonRow

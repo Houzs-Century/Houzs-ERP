@@ -174,6 +174,10 @@ export function splitAmendmentByLane<L>(
   lineIdentity: (line: L) => LineLaneIdentity,
   linePriceOnly: (line: L) => boolean,
   priceLaneEnabled: boolean,
+  /** DEV-70 — a product line moving its price AND its spec, as two halves: the
+   *  spec half (no price) to LINES, the price half to PRICE. `null` = not such
+   *  a line. Only asked on a price-lane company. */
+  splitPrice: (line: L) => { spec: L; price: L } | null,
 ): LaneSplit<L> {
   const mk = () => ({ headerChanges: {} as Record<string, string | null>, headerKeys: [] as string[], lines: [] as L[] });
   const perLane: LaneSplit<L>['perLane'] = { LINES: mk(), DELIVERY: mk(), PRICE: mk() };
@@ -200,6 +204,12 @@ export function splitAmendmentByLane<L>(
     // price-lane company: the sell price carries nothing for the PO to follow.
     // Service lines are already DELIVERY and never reach this branch.
     if (lane === 'LINES' && priceLaneEnabled && linePriceOnly(line)) lane = 'PRICE';
+    const halves = lane === 'LINES' && priceLaneEnabled ? splitPrice(line) : null;
+    if (halves) {
+      perLane.LINES.lines.push(halves.spec);
+      perLane.PRICE.lines.push(halves.price);
+      continue;
+    }
     perLane[lane].lines.push(line);
   }
 

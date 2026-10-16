@@ -21,6 +21,7 @@ import {
 import type { MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
 import { composeSupplierSku } from '../../vendor/scm/lib/supplier-sku-helpers';
 import styles from './SupplierDetail.module.css';
+import { readImportGrid, resolveImportHeaders } from '../../lib/import-sheet';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -186,50 +187,16 @@ export function exportBindingsCsv(
   URL.revokeObjectURL(url);
 }
 
-/** Minimal CSV parser — handles RFC4180 quoting + escaped quotes. Doesn't
- *  try to be clever about UTF-8 BOM or CRLF / mixed line endings; commander's
- *  workflow is "Export → edit in Excel → save → Import" which produces
- *  comma-separated UTF-8 with quoted strings. */
-/** Read the first sheet of an uploaded Excel workbook (.xlsx/.xls) into rows of
- *  string cells — so an exported CSV that the operator edited and let Excel
- *  re-save as a workbook still imports. CSV stays on parseCsv below. */
-async function readXlsxGrid(file: File): Promise<string[][]> {
-  const XLSX = await import('../../lib/xlsx-runtime');
-  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-  const first = wb.SheetNames[0];
-  const sheet = first ? wb.Sheets[first] : undefined;
-  if (!sheet) return [];
-  const aoa = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, defval: '' });
-  return aoa
-    .map((r) => (Array.isArray(r) ? r.map((c) => String(c ?? '')) : []))
-    .filter((r) => r.some((c) => c.trim().length > 0));
-}
+/* The importer's keys, and the one alias: `item_code` is the catalogue's name
+   for what this sheet calls internal_code. The wide matrix names are mixed case
+   (`bedframe_P1`), so a sheet's header is matched loosely and then written in
+   the key's own spelling (HC-0003 T5). */
+const BINDINGS_ALIASES: Readonly<Record<string, string>> = { item_code: 'internal_code' };
 
-function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = '';
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') { cell += '"'; i++; }
-        else { inQuotes = false; }
-      } else {
-        cell += ch;
-      }
-      continue;
-    }
-    if (ch === '"') { inQuotes = true; continue; }
-    if (ch === ',') { row.push(cell); cell = ''; continue; }
-    if (ch === '\r') { continue; }
-    if (ch === '\n') { row.push(cell); cell = ''; rows.push(row); row = []; continue; }
-    cell += ch;
-  }
-  // Flush trailing cell + row (no final newline).
-  if (cell.length > 0 || row.length > 0) { row.push(cell); rows.push(row); }
-  return rows.filter((r) => r.some((c) => c.trim().length > 0));
+export function bindingsHeader(raw: readonly string[], sofaHeights: readonly string[]): string[] {
+  const wide = ['unit_price_rm', 'bedframe_P1', 'bedframe_P2',
+    ...sofaHeights.flatMap((h) => SOFA_TIERS_FOR_EXPORT.map((t) => `sofa_${h}_${t}`))];
+  return resolveImportHeaders(raw, [...BINDINGS_LONG_HEADER, ...wide], BINDINGS_ALIASES);
 }
 
 /* ── Import format detection + per-format patch builders (#6 back-compat) ──
@@ -616,17 +583,9 @@ export const ImportBindingsDialog = ({
     setSummary(null);
     setPreview(null);
     try {
-      const fname = file.name.toLowerCase();
-      let rows: string[][];
-      if (fname.endsWith('.xlsx') || fname.endsWith('.xls')) {
-        rows = await readXlsxGrid(file);
-      } else {
-        let text = await file.text();
-        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // strip Excel UTF-8 BOM
-        rows = parseCsv(text);
-      }
+      const rows = (await readImportGrid(file)).filter((r) => r.some((c) => c.trim().length > 0));
       if (rows.length < 2) { setSummary('File has no data rows.'); return; }
-      const header = rows[0]!.map((h) => h.trim());
+      const header = bindingsHeader(rows[0]!, sofaHeights);
       if (header.indexOf('internal_code') < 0) { setSummary('Missing required column: internal_code'); return; }
       const dataRows = rows.slice(1);
 
@@ -636,6 +595,8 @@ export const ImportBindingsDialog = ({
         : buildWidePatches(dataRows, header, bindingByCode, productByCode, sofaHeights);
       const creates = buildCreates(dataRows, header, format, bindingByCode, productByCode, sofaHeights);
       setPreview({ format, updates: Array.from(patches.values()), creates });
+    } catch (e) {
+      setSummary(e instanceof Error ? e.message : String(e));
     } finally {
       setParsing(false);
     }

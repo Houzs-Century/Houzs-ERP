@@ -56,6 +56,7 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+import { loadRequestForPco, markRequestPcoIssued } from '../lib/product-request-link';
 import type { Env, Variables } from '../env';
 
 export const purchaseConsignmentOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -103,8 +104,10 @@ const VALID_STATUSES = new Set(['SUBMITTED', 'PARTIALLY_RECEIVED', 'RECEIVED', '
 const HEADER_COLS =
   'id, pc_number, supplier_id, status, po_date, expected_at, currency, ' +
   'subtotal_sen, tax_sen, total_sen, notes, submitted_at, received_at, ' +
-  'cancelled_at, created_at, created_by, updated_at, ' +
+  'cancelled_at, cancel_reason, created_at, created_by, updated_at, ' +
   'purchase_location_id, ' +
+  /* the product request this order was raised from (owner 2026-10-06) */
+  'source_product_request_id, ' +
   /* supplier-revised header delivery dates (migration 0181) */
   'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4';
 
@@ -129,7 +132,7 @@ purchaseConsignmentOrders.get('/', async (c) => {
   let q = supabase
     .from('purchase_consignment_orders')
     .select(
-      `${HEADER_COLS}, supplier:suppliers(id, code, name), items:purchase_consignment_order_items(item_code, material_name, qty)`,
+      `${HEADER_COLS}, supplier:suppliers(id, code, name), items:purchase_consignment_order_items(item_code, material_name, qty), purchase_location:warehouses!purchase_location_id(id, code, name)`,
     )
     .order('po_date', { ascending: false })
     .order('created_at', { ascending: false });
@@ -222,9 +225,20 @@ purchaseConsignmentOrders.get('/:id', async (c) => {
     .select('id', { head: true, count: 'exact' })
     .eq('purchase_consignment_order_id', id)
     .neq('status', 'CANCELLED');
+  /* The product request this order was raised from (owner 2026-10-06), as a
+     link the detail page shows. A failed read is said, not shown as "no
+     request": the detail would otherwise hide a link that exists. */
+  const sourceRequestId = (headerRes.data as Record<string, unknown>).source_product_request_id as string | null | undefined;
+  let productRequest: { id: string; requestNo: string; status: string } | null = null;
+  if (sourceRequestId) {
+    const { data: pr, error: prErr } = await scopeToCompany(supabase.from('product_requests').select('id, request_no, status').eq('id', sourceRequestId), c).maybeSingle();
+    if (prErr) return c.json({ error: 'load_failed', reason: prErr.message }, 500);
+    if (pr) productRequest = { id: String((pr as Record<string, unknown>).id), requestNo: String((pr as Record<string, unknown>).request_no), status: String((pr as Record<string, unknown>).status) };
+  }
   const purchaseConsignmentOrder = {
     ...(headerRes.data as Record<string, unknown>),
     has_children: (childCount ?? 0) > 0,
+    productRequest,
   };
 
   /* Per-line receive breakdown so the PC Order list expansion can show a
@@ -318,6 +332,20 @@ purchaseConsignmentOrders.post('/', async (c) => {
   const purchaseLocationId = body.purchaseLocationId as string | undefined;
   if (!purchaseLocationId) return c.json({ error: 'purchase_location_id_required' }, 400);
 
+  /* Raised from a product request (owner 2026-10-06, 然后这个会连接 purchase
+     consignment order): the request must be APPROVED and must already name a
+     SKU the catalogue has (a new Model is built first); once this order stands
+     the request reads PCO_ISSUED and points at it. */
+  const productRequestId = typeof body.productRequestId === 'string' && body.productRequestId.trim() ? body.productRequestId.trim() : null;
+  let sourceRequest: Record<string, any> | null = null;
+  if (productRequestId) {
+    const coForRequest = requireActiveCompanyId(c);
+    if (!coForRequest.ok) return c.json(coForRequest.refusal, 409);
+    const loaded = await loadRequestForPco(c.get('supabase'), coForRequest.companyId, productRequestId);
+    if (!loaded.ok) return c.json(loaded.body, loaded.status);
+    sourceRequest = loaded.request;
+  }
+
   // Allow blank-draft creation (no items) — add lines on the detail page.
   const items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
 
@@ -392,6 +420,7 @@ purchaseConsignmentOrders.post('/', async (c) => {
     total_sen: subtotal,
     created_by: user.id,
     purchase_location_id: purchaseLocationId,
+    source_product_request_id: sourceRequest ? String(sourceRequest.id) : null,
   };
   if (body.poDate) headerInsert.po_date = body.poDate;
 
@@ -434,7 +463,19 @@ purchaseConsignmentOrders.post('/', async (c) => {
     }
   }
 
-  return c.json({ id: header.id, pcNumber: header.pc_number }, 201);
+  /* The order stands; now the request reads PCO_ISSUED. Said, never undone: a
+     request another order claimed a moment ago leaves this order as it is and
+     the caller is told it is not linked. */
+  let requestClaimed: boolean | null = null;
+  if (sourceRequest) {
+    const co = requireActiveCompanyId(c);
+    if (co.ok) {
+      const marked = await markRequestPcoIssued(supabase, co.companyId, sourceRequest, header, c.get('houzsUser'));
+      requestClaimed = marked.claimed;
+    }
+  }
+
+  return c.json({ id: header.id, pcNumber: header.pc_number, ...(sourceRequest ? { productRequestId: String(sourceRequest.id), requestClaimed } : {}) }, 201);
 });
 
 /* ── PATCH header (po_date, expected_at, currency, notes, supplier, location) ── */
@@ -670,6 +711,10 @@ export const cancelPurchaseConsignmentOrderHandler = async (c: any) => {
   const supabase = c.get('supabase');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  let body: { cancel_reason?: unknown };
+  try { body = await c.req.json(); } catch { body = {}; }
+  const reason = String(body.cancel_reason ?? '').trim();
+  if (!reason) return c.json({ error: 'reason_required', message: 'Specify why this consignment order is cancelled.' }, 400);
 
   const { data: cur, error: readErr } = await scopeToCompanyId(supabase
     .from('purchase_consignment_orders')
@@ -698,14 +743,14 @@ export const cancelPurchaseConsignmentOrderHandler = async (c: any) => {
      response per cancel, instead of a second write silently restamping the time. */
   const { data: updRow, error: updErr } = await scopeToCompanyId(supabase
     .from('purchase_consignment_orders')
-    .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .update({ status: 'CANCELLED', cancel_reason: reason, cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('id', id).neq('status', 'CANCELLED'), co.companyId).select('id').maybeSingle();
   if (updErr) return c.json({ error: 'cancel_failed', reason: updErr.message }, 500);
   if (!updRow) return c.json({ purchaseConsignmentOrder: { id, status: 'CANCELLED' } });
 
   const { data: after } = await scopeToCompanyId(supabase
     .from('purchase_consignment_orders')
-    .select('id, status, cancelled_at')
+    .select('id, status, cancelled_at, cancel_reason')
     .eq('id', id), co.companyId)
     .maybeSingle();
   return c.json({ purchaseConsignmentOrder: after ?? { id, status: 'CANCELLED' } });

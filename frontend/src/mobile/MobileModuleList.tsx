@@ -798,7 +798,7 @@ function ListCard({ config, row, onOpen }: { config: ModuleConfig; row: any; onO
       <div className="card" onClick={open} style={{ ...cardStyle, ...(cancelled ? { opacity: 0.6 } : null) }}>
         <div className="card-b" style={{ padding: "12px 13px" }}>
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-            <span style={{ fontSize: 14, fontWeight: 800, color: "var(--ink)", flex: 1, minWidth: 0, whiteSpace: "normal" }}>{name}</span>
+            <span style={{ fontSize: 14, fontWeight: 800, color: "var(--ink)", flex: 1, minWidth: 0, whiteSpace: "normal", ...(cancelled ? { textDecoration: "line-through", textDecorationThickness: 1 } : null) }}>{name}</span>
             {status ? <span style={{ flex: "none" }}><Badge label={status} tone={statusTone} /></span> : null}
           </div>
           {(sub || brandText) && (
@@ -829,7 +829,7 @@ function ListCard({ config, row, onOpen }: { config: ModuleConfig; row: any; onO
   return (
     <div className="card" onClick={open} style={{ ...cardStyle, padding: "12px 13px", ...(cancelled ? { opacity: 0.6 } : null) }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
-        <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 800, color: "#11140f" }}>{name}</span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 800, color: "#11140f", ...(cancelled ? { textDecoration: "line-through", textDecorationThickness: 1 } : null) }}>{name}</span>
         {status ? <span style={{ flex: "none" }}><Badge label={status} tone={statusTone} /></span> : (() => {
           const rightRaw = config.right ? config.right(row) : "";
           const rightText = config.rightMoney ? `RM ${rm(rightRaw as unknown as number)}` : rightRaw;

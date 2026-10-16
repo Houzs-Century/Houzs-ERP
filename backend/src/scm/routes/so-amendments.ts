@@ -25,14 +25,14 @@ import {
   canLaneTransition, LANE_APPROVE_KEY, LANE_LABEL, type AmendmentLane,
 } from '../shared';
 import { applySoAmendment, reviseBoundPo, ReceivedFloorError } from '../lib/so-revision';
-import { chunkIn } from '../lib/paginate-all';
+import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { raisePoFollowUps } from '../lib/amendment-po-followup';
 import { DESK, judgeLaneHandover, judgeLaneMove } from '../lib/amendment-lane-handover';
 import { countCancelRequestsAwaitingSigner } from '../lib/cancel-pending-count';
 import { approveKeysFor } from '../shared/document-cancel';
 import { CANCEL_REQUESTS_TABLE } from './document-cancel-routes';
 import { hasHouzsPerm, holdsHouzsPermLiterally, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
-import { resolveSalesScopeIds, applySoScope, soDocOutOfScope, resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
+import { resolveSalesScopeIds, soOwnedInScope, readSoOwnership, resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
 import {
   notifySoAmendmentResolved,
   notifySoAmendmentHandedOver,
@@ -41,6 +41,8 @@ import {
 import { collectProcessingGateProblems } from '../shared/so-save-problems';
 import { canonicaliseSoHeaderChanges, soDateDay, soDatePairRefusal, withProcessingRemovalCascade } from '../shared/so-processing-date';
 import { recordSoAudit } from '../lib/so-audit';
+import { soHasLivePo } from '../lib/so-po-lock';
+import { deliveryBroughtForward, deliveryNeedsPurchaserOk, processingDateFrozenByPo, PROCESSING_DATE_PO_LOCKED, PROCESSING_DATE_PO_OVERRIDE_KEY, PURCHASER_OK_REQUIRED } from '../shared/so-po-date-rule';
 import { scopeToCompany, isMirroredDocNo, houzsOwns2990, MIRRORED_SO_READONLY, activeCompanyId, requireActiveCompanyId } from '../lib/companyScope';
 import {
   enqueueAmendmentCommand,
@@ -95,6 +97,8 @@ type AmendmentForWrite = {
      rejected notice (services/amendmentNotify.ts). */
   requested_by?: string | null;
   lane_flag_note?: string | null;
+  purchaser_ok_at?: string | null;
+  po_date_override_by?: string | null;
 };
 
 /** Lane of a loaded row — narrowed to the known lane values, else legacy. */
@@ -184,7 +188,7 @@ async function loadAmendmentForWrite(
 ): Promise<AmendmentWriteLoad> {
   const { data } = await scopeToCompany(
     sb.from('so_amendments')
-      .select('id, so_doc_no, amendment_no, status, version, lane, reason, apply_lease_token, apply_lease_expires_at, header_changes, requested_by, lane_flag_note')
+      .select('id, so_doc_no, amendment_no, status, version, lane, reason, apply_lease_token, apply_lease_expires_at, header_changes, requested_by, lane_flag_note, purchaser_ok_at, po_date_override_by')
       .eq('id', id),
     c,
   ).maybeSingle();
@@ -288,36 +292,40 @@ async function dispatchMirroredCommand(
    .limit(500) bounds the result so PostgREST's default 1000-row cap can't
    silently truncate — matches the SO/DO/GRN list convention.
 
-   Row-level scope (Owner 2026-07-16) — a salesperson must see the amendments
-   for THEIR OWN Sales Orders (they raise them), so the area guard admits them
-   (scmAreaGuard scm.sales.orders has an isSalesStaff bypass). But an amendment
-   carries no salesperson_id of its own, so without scoping a rep would see
-   EVERY rep's amendments. Filter the loaded amendments down to those whose
-   bound SO falls in the caller's own+downline sales scope — the SAME
-   self+downline tiering the SO list/detail uses. View-all callers (directors /
-   office / `*`) are unrestricted (resolveSalesScopeIds → null). */
+   Row-level scope — a scoped caller sees what they or their downline raised,
+   and what was raised on an order they or their downline own or were shared
+   (salesScope.soOwnedInScope; an order open to all does NOT count, DEV-40). View-all
+   callers (directors / office / `*`) are unrestricted (resolveSalesScopeIds →
+   null). The scoped path reads the company's whole queue and caps AFTER the
+   filter: capping first hid a rep's older requests behind 500 newer ones they
+   could not see. */
+const AMENDMENT_LIST_COLS = 'id, so_doc_no, amendment_no, status, lane, reason, lane_flag_note, requested_by, created_at, updated_at';
+const AMENDMENT_LIST_CAP = 500;
+
 soAmendments.get('/', async (c) => {
   const sb = c.get('supabase');
+  const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
   // scopeToCompany: isolate the list to the active company (mig 0080 company_id);
   // no-op pre-activation so single-company Houzs is unchanged.
-  const { data, error } = await scopeToCompany(sb.from('so_amendments')
-    .select('id, so_doc_no, amendment_no, status, lane, reason, lane_flag_note, requested_by, created_at, updated_at'), c)
-    .order('created_at', { ascending: false })
-    .limit(500);
+  const { data, error } = scopeIds
+    ? await paginateAll((from, to) => scopeToCompany(sb.from('so_amendments').select(AMENDMENT_LIST_COLS), c)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: true })
+      .range(from, to))
+    : await scopeToCompany(sb.from('so_amendments').select(AMENDMENT_LIST_COLS), c)
+      .order('created_at', { ascending: false })
+      .limit(AMENDMENT_LIST_CAP);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
-  let rows = (data ?? []) as Array<{ so_doc_no?: string | null }>;
-  const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
+  let rows = (data ?? []) as Array<{ so_doc_no?: string | null; requested_by?: string | null }>;
   if (scopeIds && rows.length > 0) {
-    // Resolve which of the listed amendments' SOs the caller may see — a single
-    // bounded query over the ≤500 doc_nos on the page (access_staff_ids ∩ scope,
-    // so an order SHARED with the caller lists its amendments too).
     const docNos = [...new Set(rows.map((r) => r.so_doc_no).filter((x): x is string => !!x))];
-    const { data: soRows } = await scopeToCompany(applySoScope(sb.from('mfg_sales_orders')
-      .select('doc_no')
-      .in('doc_no', docNos), scopeIds), c);
-    const allowed = new Set(((soRows ?? []) as Array<{ doc_no: string }>).map((r) => r.doc_no));
-    rows = rows.filter((r) => r.so_doc_no != null && allowed.has(r.so_doc_no));
+    const owned = await readSoOwnership(sb, docNos, (q) => scopeToCompany(q, c));
+    if (owned.error) return c.json({ error: 'load_failed', reason: owned.error }, 500);
+    rows = rows
+      .filter((r) => (r.requested_by != null && scopeIds.includes(r.requested_by))
+        || (r.so_doc_no != null && soOwnedInScope(scopeIds, owned.byDoc.get(r.so_doc_no))))
+      .slice(0, AMENDMENT_LIST_CAP);
   }
 
   /* Bound-PO enrichment (owner 2026-07-27 — "这个应该出现在 PO Amendment"): each
@@ -542,6 +550,8 @@ soAmendments.get('/:id', async (c) => {
       // Without rejection_reason the requester could not see why their request
       // was refused without someone opening the SO's history drawer for them.
       'rejected_by, rejected_at, rejection_reason, resolution, edited_at, edit_count, ' +
+        // BUG-101 — the Purchaser's OK on a Delivery Date brought forward.
+        'purchaser_ok_by, purchaser_ok_at, po_date_override_by, ' +
         // mig 0119 — the HEADER half of the request (Delivery Date / Processing
         // Date / State / Postcode) + its before-snapshot. NULL on a line-only
         // amendment. Without these the approver could not SEE a requested date
@@ -562,22 +572,26 @@ soAmendments.get('/:id', async (c) => {
   ]);
   if (amdRes.error) return c.json({ error: 'load_failed', reason: amdRes.error.message }, 500);
   if (!amdRes.data) return c.json({ error: 'not_found' }, 404);
-  const amendment = amdRes.data as unknown as { so_doc_no: string } & Record<string, unknown>;
+  // company-scope: prove the parent amendment — its read above is scopeToCompany'd and 404s first; the lines, bound POs and PO follow-ups below are its children, keyed by that id or its SO.
+  const amendment = amdRes.data as unknown as { so_doc_no: string; requested_by?: string | null } & Record<string, unknown>;
   const lines = (lineRes.data ?? []) as unknown as Array<Record<string, unknown>>;
 
-  // SO header summary — doc_no, status, revision (+ salesperson_id for the scope
+  // SO header summary — doc_no, status, revision (+ ownership for the scope
   // check below).
-  const { data: soRow } = await sb.from('mfg_sales_orders')
-    .select('doc_no, status, revision, salesperson_id, access_staff_ids, open_to_all')
-    .eq('doc_no', amendment.so_doc_no).maybeSingle();
+  const { data: soRow } = await scopeToCompany(sb.from('mfg_sales_orders')
+    .select('doc_no, status, revision, salesperson_id, access_staff_ids, customer_delivery_date')
+    .eq('doc_no', amendment.so_doc_no), c).maybeSingle();
   const salesOrder = (soRow ?? null) as
-    { doc_no: string; status: string; revision: number; salesperson_id?: number | string | null; access_staff_ids?: string[] | null; open_to_all?: boolean | null } | null;
+    { doc_no: string; status: string; revision: number; salesperson_id?: number | string | null; access_staff_ids?: string[] | null; customer_delivery_date?: string | null } | null;
 
-  /* Row-level scope (Owner 2026-07-16) — a scoped salesperson may open only an
-     amendment for a Sales Order in their own+downline scope; anything else 404s
-     (indistinguishable from a nonexistent id), mirroring the SO detail read.
-     View-all callers pass. */
-  if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: salesOrder?.salesperson_id, accessStaffIds: salesOrder?.access_staff_ids, openToAll: salesOrder?.open_to_all })) {
+  /* Row-level scope — the list's rule (GET / above): a scoped caller opens only
+     what they or their downline raised, or what sits on an order they or their
+     downline own or were shared. Anything else 404s, indistinguishable from a
+     nonexistent id. */
+  const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
+  if (scopeIds
+    && !(amendment.requested_by != null && scopeIds.includes(amendment.requested_by))
+    && !soOwnedInScope(scopeIds, salesOrder)) {
     return c.json({ error: 'not_found' }, 404);
   }
 
@@ -612,7 +626,28 @@ soAmendments.get('/:id', async (c) => {
     poFollowUps = (fuRows ?? []) as Array<Record<string, unknown>>;
   }
 
-  return c.json({ amendment, lines, salesOrder, purchaseOrders, poFollowUps });
+  /* Whether the caller raised this amendment, decided here because only the
+     server can: requested_by is a scm.staff uuid and the browser's scm-auth
+     bridge has no staff id, so the page's own compare was always false and the
+     requester never saw Withdraw (BUG-53 follow-up, HC-SO-011143/A1). Same
+     identity rule PATCH /:id/withdraw enforces. */
+  const callerStaffId = await resolveCallerStaffId(sb, c.get('houzsUser')?.id);
+  const viewerIsRequester = callerStaffId != null && amendment.requested_by != null
+    && callerStaffId === amendment.requested_by;
+
+  /* BUG-101 — does this Logistic request wait on a Purchaser's OK? Judged
+     against the order as it stands, exactly as the approve gate judges it. */
+  const requestedDeliv = canonicaliseSoHeaderChanges(
+    (amendment.header_changes ?? null) as Record<string, unknown> | null,
+  )?.['customerDeliveryDate'];
+  const purchaserOkRequired = amendment.lane === 'DELIVERY' && amendment.status === 'REQUESTED'
+    && deliveryNeedsPurchaserOk({
+      storedDeliv: soDateDay(salesOrder?.customer_delivery_date),
+      nextDeliv: requestedDeliv === undefined ? null : soDateDay(requestedDeliv as string | null),
+      hasLivePo: purchaseOrders.some((p) => String(p.status).toUpperCase() !== 'CANCELLED'),
+    });
+
+  return c.json({ amendment, lines, salesOrder, purchaseOrders, poFollowUps, viewerIsRequester, purchaserOkRequired });
 });
 
 /* ── PATCH /:id/supplier-confirm ───────────────────────────────────────────
@@ -828,6 +863,24 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
       }, 409);
     }
 
+    /* BUG-101 — the last write that can still say no, for requests raised
+       before the rule or before the PO: a live PO freezes the Processing Date,
+       and a Delivery Date brought forward waits for the Purchaser's OK. */
+    const origProc = ymd(cur.processing_date);
+    /* The exception travels on the row: the requester who held the override key
+       stamped it, so the Purchaser approving does not need the key too. */
+    const poDateOverridden = Boolean(amendment.po_date_override_by) || hasHouzsPerm(c, PROCESSING_DATE_PO_OVERRIDE_KEY);
+    const procMoves = 'processingDate' in headerChanges && origProc !== '' && nextProc !== origProc && !poDateOverridden;
+    const delivForward = lane === 'DELIVERY' && 'customerDeliveryDate' in headerChanges
+      && deliveryBroughtForward(ymd(cur.customer_delivery_date), nextDeliv);
+    const hasLivePo = (procMoves || (delivForward && !amendment.purchaser_ok_at)) && await soHasLivePo(sb, amendment.so_doc_no);
+    if (!poDateOverridden && processingDateFrozenByPo({ storedProc: origProc, nextProc, hasLivePo })) {
+      return c.json(PROCESSING_DATE_PO_LOCKED, 409);
+    }
+    if (delivForward && hasLivePo && !amendment.purchaser_ok_at) {
+      return c.json(PURCHASER_OK_REQUIRED, 409);
+    }
+
     /* ── The gate this path used to skip entirely (2026-07-31) ───────────────
        Approving an amendment can SET processing_date through
        header_changes, and until now the only thing checked here was the date
@@ -965,6 +1018,15 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     }).eq('id', id).eq('version', applyVersion + 1).eq('apply_lease_token', applyToken);
     // eslint-disable-next-line no-console
     console.error('[so-amendment] approve-so apply failed:', e);
+    /* HC-0004: the DB floor (mig 20261014T1420) refused a qty cut below what
+       live delivery orders already ship — one raced in after the freeze read. */
+    if (e instanceof Error && e.message.includes('so_line_over_delivered')) {
+      return c.json({
+        error: 'qty_below_delivered',
+        message: 'A Delivery Order has just shipped this Sales Order line. Its qty can no longer be cut below what was delivered. Refresh and check the order.',
+        reason: e.message,
+      }, 409);
+    }
     return c.json({
       error: 'apply_failed',
       reason: e instanceof Error ? e.message : 'Failed to apply the SO revision.',
@@ -1399,6 +1461,85 @@ soAmendments.patch('/:id/reject', async (c) => {
       salespersonUserId: audience.salespersonUserId,
     });
   }
+
+  return c.json({ amendment: updated });
+});
+
+/* ── PATCH /:id/purchaser-ok ───────────────────────────────────────────────
+   BUG-101 (owner 2026-10-12): a Logistic-lane request that brings the Delivery
+   Date forward on an order with a live PO needs the Purchaser too. The
+   Purchaser checks with the supplier and records the OK here; nothing is
+   applied. Logistic's approve then runs as usual. Gated on the Purchaser's
+   lane key. A Purchaser who disagrees tells Logistic, who rejects it. */
+soAmendments.patch('/:id/purchaser-ok', async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
+
+  if (!hasHouzsPerm(c, LANE_APPROVE_KEY.LINES)) {
+    return c.json({
+      error: 'purchaser_ok_forbidden',
+      message: 'Only a Purchaser can OK a Delivery Date brought forward.',
+    }, 403);
+  }
+  const loaded = await loadAmendmentForWrite(sb, id, c);
+  if (!loaded.ok) return c.json({ error: 'not_found' }, 404);
+  if (loaded.mirrored) return c.json(MIRRORED_SO_READONLY, 409);
+  const { amendment } = loaded;
+  if (laneOf(amendment) !== 'DELIVERY' || amendment.status !== 'REQUESTED') {
+    return c.json({
+      error: 'bad_transition',
+      message: 'Only an open Logistic amendment can take a Purchaser OK.',
+    }, 409);
+  }
+  if (amendment.purchaser_ok_at) {
+    return c.json({ error: 'already_ok', message: 'A Purchaser has already OK\'d this amendment.' }, 409);
+  }
+
+  const headerChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null) ?? {};
+  const { data: soRow, error: soErr } = await scopeToCompany(
+    sb.from('mfg_sales_orders').select('customer_delivery_date').eq('doc_no', amendment.so_doc_no),
+    c,
+  ).maybeSingle();
+  if (soErr) return c.json({ error: 'load_failed', reason: soErr.message }, 500);
+  const needed = 'customerDeliveryDate' in headerChanges && deliveryNeedsPurchaserOk({
+    storedDeliv: soDateDay((soRow as { customer_delivery_date?: unknown } | null)?.customer_delivery_date),
+    nextDeliv: soDateDay(headerChanges['customerDeliveryDate']),
+    hasLivePo: await soHasLivePo(sb, amendment.so_doc_no),
+  });
+  if (!needed) {
+    return c.json({
+      error: 'purchaser_ok_not_needed',
+      message: 'This amendment does not bring the Delivery Date forward on an order with a Purchase Order, so Logistic approves it alone.',
+    }, 409);
+  }
+
+  const now = new Date().toISOString();
+  const { data: updated, error: updErr } = await sb.from('so_amendments').update({
+    purchaser_ok_by: await gateActorStaffId(sb, c.get('houzsUser')?.id, user.id),
+    purchaser_ok_at: now,
+    version:         amendment.version + 1,
+    updated_at:      now,
+  }).eq('id', id)
+    .eq('company_id', co.companyId)
+    .eq('status', 'REQUESTED')
+    .eq('version', amendment.version)
+    .select('id, so_doc_no, amendment_no, status, purchaser_ok_by, purchaser_ok_at, version')
+    .maybeSingle();
+  if (updErr) return c.json({ error: 'update_failed', reason: updErr.message }, 500);
+  if (!updated) return c.json({ error: 'amendment_version_conflict' }, 409);
+
+  await recordSoAudit(sb, {
+    docNo: amendment.so_doc_no,
+    action: 'AMENDMENT_PURCHASER_OK',
+    actorId: user.id,
+    actorName: actorName(user),
+    fieldChanges: [
+      { field: 'amendment_id', to: amendment.id },
+      { field: 'customer_delivery_date', to: String(headerChanges['customerDeliveryDate'] ?? '') },
+    ],
+    note: `Purchaser OK for ${amendment.amendment_no ?? 'the amendment'}: Delivery Date brought forward to ${String(headerChanges['customerDeliveryDate'] ?? '')}. Waiting for Logistic approval.`,
+  });
 
   return c.json({ amendment: updated });
 });

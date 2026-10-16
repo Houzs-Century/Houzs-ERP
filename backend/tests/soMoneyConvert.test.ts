@@ -8,9 +8,9 @@
        receipt; the cancelled order's remaining goes down;
      • the ceilings: more than what is left, an order that is not cancelled,
        an order moving money to itself, an unknown source;
-     • REFUND from the panel: a Customer Refund voucher DRAFT for Finance —
-       the customer as payee, the default bank, the amount — and it takes
-       from the same remaining a conversion does;
+     • REFUND from the panel: a payment request for Finance (since 2026-10-14;
+       the whole flow is pinned in tests/soRefundRequest.test.ts) — and while
+       it waits it takes from the same remaining a conversion does;
      • un-convert: deleting the converted row reverses the transfer and the
        money is back on the cancelled order;
      • under the deposit-invoice switch: the moved amount comes off the old
@@ -229,31 +229,31 @@ describe('convert — a payment row on the new order', () => {
   });
 });
 
-describe('refund — a voucher draft for Finance from the panel', () => {
-  test('the draft: the customer as payee, the default bank, the amount; it takes from the same remaining', async () => {
+/* What the panel's Refund sends since 2026-10-14: the reason and the customer's bank are required. */
+const ASK = { reason: 'customer wants it back', bankName: 'Maybank', bankAccountNo: '5123 4567 8901', bankAccountName: 'AH MENG' };
+
+describe('refund — a payment request for Finance from the panel', () => {
+  test('the request: the customer as payee, the amount, no voucher; it takes from the same remaining', async () => {
     const { app, sb } = harness();
     expect((await convert(app, NEW, OLD, 30_000)).status).toBe(201);
-    const res = await app.request(`/mfg-sales-orders/${OLD}/money/refund`, json({ amountSen: 40_000, note: 'customer wants it back' }));
+    const res = await app.request(`/mfg-sales-orders/${OLD}/money/refund`, json({ amountSen: 40_000, ...ASK }));
     expect(res.status, await res.clone().text()).toBe(201);
-    const { pvNumber } = await res.json() as { id: string; pvNumber: string };
-    expect(pvNumber).toMatch(/Draft/);
-    const pv = sb.tables.payment_vouchers[0]!;
-    expect(pv).toMatchObject({ purpose: 'CUSTOMER_REFUND', status: 'DRAFT', refund_source_type: 'SO', refund_source_doc_no: OLD, payee_name: 'Ah Meng', credit_account_code: '310-0010', total_sen: 40_000, customer_id: 'cust-1' });
-    expect(String(pv.notes)).toContain(`Refund requested from ${OLD} by Sales A`);
-    expect(String(pv.notes)).toContain('customer wants it back');
-    expect(sb.tables.payment_voucher_lines.map((l) => [l.debit_account_code, l.amount_sen])).toEqual([['300-0000', 40_000]]);
+    const { requestNo } = await res.json() as { id: string; requestNo: string };
+    expect(requestNo).toMatch(/PRQ-/);
+    expect(sb.tables.payment_vouchers).toHaveLength(0);
+    expect(sb.tables.acc_payment_requests[0]).toMatchObject({ status: 'SUBMITTED', refund_source_doc_no: OLD, payee_name: 'Ah Meng', amount_sen: 40_000, purpose: 'customer wants it back', requested_by: 9 });
     const { money: old } = await money(app, OLD);
-    expect(old).toMatchObject({ bookedSen: 70_000, convertedSen: 30_000, refundedSen: 40_000, remainingSen: 0, open: false });
-    expect(old.refunds.map((r: Row) => [r.pvNumber, r.status, r.totalSen])).toEqual([[pvNumber, 'DRAFT', 40_000]]);
+    expect(old).toMatchObject({ bookedSen: 70_000, convertedSen: 30_000, refundedSen: 0, requestedSen: 40_000, remainingSen: 0, open: false });
+    expect(old.refundRequests.map((r: Row) => [r.requestNo, r.state, r.amountSen])).toEqual([[requestNo, 'WAITING', 40_000]]);
     /* Nothing is left for either exit. */
     expect((await convert(app, OTHER, OLD, 1)).status).toBe(409);
-    expect((await app.request(`/mfg-sales-orders/${OLD}/money/refund`, json({ amountSen: 1 }))).status).toBe(409);
+    expect((await app.request(`/mfg-sales-orders/${OLD}/money/refund`, json({ amountSen: 1, ...ASK }))).status).toBe(409);
   });
 
   test('a refund beyond what is left is refused with the figures', async () => {
     const { app } = harness();
     expect((await convert(app, NEW, OLD, 50_000)).status).toBe(201);
-    const res = await app.request(`/mfg-sales-orders/${OLD}/money/refund`, json({ amountSen: 20_001 }));
+    const res = await app.request(`/mfg-sales-orders/${OLD}/money/refund`, json({ amountSen: 20_001, ...ASK }));
     expect(res.status).toBe(409);
     const b = await res.json() as { error: string; message: string };
     expect(b.error).toBe('refund_exceeds_remaining');
@@ -411,7 +411,7 @@ describe('a LIVE order (owner 2026-09-16) — money may leave it above its depos
     expect(after).toMatchObject({ bookedSen: 100_000, convertedSen: 25_000, remainingSen: 75_000, movableSen: 0, open: true });
     expect(after.payments.map((p: Row) => p.id)).toEqual(['p4']);
     expect((await convert(app, OTHER, LIVE, 1)).status).toBe(409);
-    expect((await app.request(`/mfg-sales-orders/${LIVE}/money/refund`, json({ amountSen: 75_000, note: 'sofa arrived scratched' }))).status).toBe(201);
+    expect((await app.request(`/mfg-sales-orders/${LIVE}/money/refund`, json({ amountSen: 75_000, ...ASK, reason: 'sofa arrived scratched' }))).status).toBe(201);
   });
 
   test('un-convert takes the mirror with it; the mirror itself cannot be deleted or edited by hand', async () => {

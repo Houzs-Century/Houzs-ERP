@@ -1,6 +1,7 @@
 import { SELF, env } from "cloudflare:test";
 import { describe, expect, test, beforeEach, it } from "vitest";
 import { checklistRowDone } from "../src/services/checklistProgress";
+import { syncFinanceRollup } from "../src/services/projects";
 
 // A gated document (3D Design, Display Floor Plan, Stock In/Out) is completed by
 // APPROVAL and keeps status='pending', so progress must count approved as done —
@@ -284,5 +285,38 @@ describe("Projects module — smoke pack", () => {
       .bind(projectId)
       .first<{ total_sales: number | null }>();
     expect(finance?.total_sales ?? 0).toBe(1500);
+  });
+
+  test("Finance rollup — adding a rental line keeps a keyed-in lump-sum Total Sales", async () => {
+    const created = await api("POST", "/api/projects", adminBearer, {
+      name: "Lump-sum target",
+      brand: "AKEMI",
+      state: "SELANGOR",
+      venue: "TEST VENUE",
+    });
+    expect(created.status).toBe(201);
+    const projectId = created.json.id;
+    const totalSales = async () =>
+      (await env.DB.prepare(`SELECT total_sales FROM project_finance WHERE project_id = ?`)
+        .bind(projectId)
+        .first<{ total_sales: number | null }>())?.total_sales ?? 0;
+
+    expect((await api("PATCH", `/api/projects/${projectId}/finance`, adminBearer, { total_sales: 23714 })).status).toBeLessThan(400);
+    // Lines inserted directly: the D1 mirror's project_finance_lines has no
+    // company_id, so the line route can't write here; the roll-up is the unit.
+    const addLine = (kind: string, category: string, amount: number) =>
+      env.DB.prepare(
+        `INSERT INTO project_finance_lines (project_id, kind, category, description, amount, created_by)
+         VALUES (?, ?, ?, ?, ?, 1)`,
+      ).bind(projectId, kind, category, category, amount).run();
+
+    await addLine("cost", "rental", 15900);
+    await syncFinanceRollup(env, projectId);
+    expect(await totalSales()).toBe(23714);
+
+    // Once a real sales line exists the roll-up owns the figure again.
+    await addLine("income", "sales", 500);
+    await syncFinanceRollup(env, projectId);
+    expect(await totalSales()).toBe(500);
   });
 });

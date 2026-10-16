@@ -17,9 +17,13 @@
 // parseImportFile picks by extension so callers stay one line.
 // ----------------------------------------------------------------------------
 
-import type { FabricTrackingRow } from './fabric-queries';
+import type { FabricTier, FabricTrackingRow } from './fabric-queries';
+import { parseCSV } from '../../../lib/csv';
+import {
+  isWorkbookFile, normalizeImportHeader, readWorkbookSheets, resolveImportHeaders, UNREADABLE_WORKBOOK,
+} from '../../../lib/import-sheet';
 
-type ColKind = 'text' | 'int';
+type ColKind = 'text' | 'int' | 'tier';
 
 export type CsvColumn = {
   csv:    string;                   // header label
@@ -34,8 +38,8 @@ export const CSV_COLUMNS: CsvColumn[] = [
   { csv: 'fabric_description',      field: 'fabric_description',      apiKey: 'fabricDescription',    kind: 'text' },
   { csv: 'supplier_code',           field: 'supplier_code',           apiKey: 'supplierCode',         kind: 'text' },
   { csv: 'supplier',                field: 'supplier',                apiKey: 'supplier',             kind: 'text' },
-  { csv: 'sofa_price_tier',         field: 'sofa_price_tier',         apiKey: 'sofaPriceTier',        kind: 'text' },
-  { csv: 'bedframe_price_tier',     field: 'bedframe_price_tier',     apiKey: 'bedframePriceTier',    kind: 'text' },
+  { csv: 'sofa_price_tier',         field: 'sofa_price_tier',         apiKey: 'sofaPriceTier',        kind: 'tier' },
+  { csv: 'bedframe_price_tier',     field: 'bedframe_price_tier',     apiKey: 'bedframePriceTier',    kind: 'tier' },
   { csv: 'price_sen',             field: 'price_sen',             apiKey: 'priceSen',           kind: 'int' },
   { csv: 'soh_sen',               field: 'soh_sen',               apiKey: 'sohSen',             kind: 'int' },
   { csv: 'po_outstanding_sen',    field: 'po_outstanding_sen',    apiKey: 'poOutstandingSen',   kind: 'int' },
@@ -48,9 +52,27 @@ export const CSV_COLUMNS: CsvColumn[] = [
   { csv: 'lead_time_days',          field: 'lead_time_days',          apiKey: 'leadTimeDays',         kind: 'int' },
 ];
 
-const HEADER_TO_API: Record<string, CsvColumn> = Object.fromEntries(
+/* The table's own toolbar export (FabricsTable, "Fabrics-<date>.csv") writes the
+   on-screen labels and "Price 2", not these keys and PRICE_2. Staff export from
+   whichever button they see first, so that file must import too (BUG-88). */
+const TABLE_EXPORT_HEADERS: Record<string, string> = {
+  code:          'fabric_code',
+  description:   'fabric_description',
+  sofa_tier:     'sofa_price_tier',
+  bedframe_tier: 'bedframe_price_tier',
+};
+
+const HEADER_TO_API: Partial<Record<string, CsvColumn>> = Object.fromEntries(
   CSV_COLUMNS.map((c) => [c.csv, c]),
 );
+
+// "Price 2" / "PRICE_2" / "P2" / "2" -> PRICE_2; blank or the table's "—" -> null.
+// undefined = not a tier at all.
+function parseTier(raw: string): FabricTier | null | undefined {
+  if (raw === '' || raw === '—' || raw === '-') return null;
+  const m = /^(?:price[\s_]*|p)?([123])$/i.exec(raw);
+  return m ? (`PRICE_${m[1]}` as FabricTier) : undefined;
+}
 
 function csvEscape(v: unknown): string {
   if (v === null || v === undefined) return '';
@@ -65,60 +87,24 @@ export function toCsv(rows: FabricTrackingRow[]): string {
   return '﻿' + header + '\r\n' + body + '\r\n';
 }
 
-// Parse CSV text into a 2D grid. Handles quoted fields (including embedded
-// commas, CRLF, and "" escapes). Tolerant of mixed line endings.
-function parseGrid(text: string): string[][] {
-  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = '';
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') { cell += '"'; i++; continue; }
-        inQuotes = false;
-      } else {
-        cell += ch;
-      }
-      continue;
-    }
-    if (ch === '"' && cell === '') { inQuotes = true; continue; }
-    if (ch === ',') { row.push(cell); cell = ''; continue; }
-    if (ch === '\r') continue;
-    if (ch === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; continue; }
-    cell += ch;
-  }
-  if (cell !== '' || row.length > 0) { row.push(cell); rows.push(row); }
-  return rows;
-}
-
 export type ParsedImport = {
   rows:     Array<Record<string, unknown>>;
   errors:   string[];
   warnings: string[];
 };
 
-/* Header matching is tolerant of case AND of space-vs-underscore, so a
-   hand-made Excel sheet with "Fabric Code" maps to the same column as the
-   round-trip export's "fabric_code". Runs of whitespace/underscore collapse to
-   one underscore; the CSV_COLUMNS keys are already lower snake_case, so this is
-   identity on an exported file and only ever LOOSENS matching. */
-function normalizeHeader(h: string): string {
-  return h.trim().toLowerCase().replace(/[\s_]+/g, '_');
-}
-
 // Map a parsed grid (row 0 = headers, the rest = data) into the camelCase row
 // shape bulk-upsert expects. The single normalisation point for BOTH the CSV
 // and the Excel path — do not duplicate this logic in either caller.
 function parseGridRows(grid: string[][]): ParsedImport {
   if (grid.length < 1) return { rows: [], errors: ['The file is empty'], warnings: [] };
-  const header = (grid[0] ?? []).map(normalizeHeader);
+  /* Case and space-vs-underscore never matter (bugs/0605); the table export's
+     labels are aliases (BUG-88). */
+  const header = resolveImportHeaders(grid[0] ?? [], CSV_COLUMNS.map((c) => c.csv), TABLE_EXPORT_HEADERS);
   if (!header.includes('fabric_code')) {
-    return { rows: [], errors: ['Header must include a fabric_code column'], warnings: [] };
+    return { rows: [], errors: ['Header must include a fabric_code (or Code) column'], warnings: [] };
   }
-  const unknown = header.filter((h) => h && !HEADER_TO_API[h]);
+  const unknown = header.filter((h) => h && !HEADER_TO_API[h]).map(normalizeImportHeader);
   const warnings = unknown.length ? [`Ignoring unknown columns: ${unknown.join(', ')}`] : [];
 
   const rows: Array<Record<string, unknown>> = [];
@@ -145,6 +131,14 @@ function parseGridRows(grid: string[][]): ParsedImport {
           break;
         }
         obj[col.apiKey] = n;
+      } else if (col.kind === 'tier') {
+        const tier = parseTier(raw);
+        if (tier === undefined) {
+          errors.push(`Row ${r + 1}: ${col.csv} must be Price 1, Price 2 or Price 3 ("${raw}")`);
+          rowOk = false;
+          break;
+        }
+        obj[col.apiKey] = tier;
       } else {
         obj[col.apiKey] = raw === '' ? null : raw;
       }
@@ -160,38 +154,25 @@ function parseGridRows(grid: string[][]): ParsedImport {
 }
 
 export function parseCsv(text: string): ParsedImport {
-  return parseGridRows(parseGrid(text));
+  return parseGridRows(parseCSV(text));
 }
 
-// Excel (.xlsx/.xls/...) → the SAME row shape as parseCsv. First sheet only,
-// first row = headers. `raw: false` renders every cell as a string (dates,
-// numbers) so cell-typing matches the CSV path where everything arrives as
-// text and parseGridRows re-parses the int columns. SheetJS is loaded lazily
-// (the same lib the SKU/Products import already uses) so its parser chunk stays
-// out of the main bundle.
+// Excel -> the SAME row shape as parseCsv: first sheet, every cell as the text
+// Excel shows, so parseGridRows re-parses the int columns exactly as for CSV.
 export async function parseWorkbook(buffer: ArrayBuffer): Promise<ParsedImport> {
-  const XLSX = await import('../../../lib/xlsx-runtime');
-  const wb = XLSX.read(buffer, { type: 'array' });
-  const first = wb.SheetNames[0];
-  const sheet = first ? wb.Sheets[first] : undefined;
-  if (!sheet) return { rows: [], errors: ['The workbook has no sheets'], warnings: [] };
-  const aoa = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, defval: '' });
-  const grid = aoa.map((r) => (Array.isArray(r) ? r.map((c) => String(c ?? '')) : []));
-  return parseGridRows(grid);
+  const first = (await readWorkbookSheets(buffer, false)).at(0);
+  if (!first) return { rows: [], errors: ['The workbook has no sheets'], warnings: [] };
+  return parseGridRows(first.map((r) => (Array.isArray(r) ? r.map((c) => String(c ?? '')) : [])));
 }
 
-const WORKBOOK_EXT = /\.(xlsx|xls|xlsm|xlsb)$/i;
-
-// One entry point for the file picker: dispatch on extension so a caller does
-// not have to know CSV from Excel. A workbook that SheetJS cannot open (a
-// mislabelled or corrupt file) becomes a readable error rather than an
-// unhandled rejection.
+// One entry point for the file picker. A workbook SheetJS cannot open becomes a
+// readable error rather than an unhandled rejection.
 export async function parseImportFile(file: File): Promise<ParsedImport> {
-  if (WORKBOOK_EXT.test(file.name)) {
+  if (isWorkbookFile(file.name)) {
     try {
       return await parseWorkbook(await file.arrayBuffer());
     } catch {
-      return { rows: [], errors: ['This file could not be read as an Excel workbook. Re-save it as .xlsx or export to CSV and try again.'], warnings: [] };
+      return { rows: [], errors: [UNREADABLE_WORKBOOK], warnings: [] };
     }
   }
   return parseCsv(await file.text());

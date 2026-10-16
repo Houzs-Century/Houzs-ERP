@@ -5,7 +5,6 @@ import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
-import { useAuth as useScmAuth } from "../vendor/scm/lib/auth";
 import { useStaffLookup } from "../hooks/useStaffLookup";
 import {
   simplifiedAmendmentPill,
@@ -185,7 +184,6 @@ export function MobilePoAmendmentDetail({
 }) {
   const { data, isPending, error } = usePoAmendmentDetail(amendmentId);
   const { can } = useHouzsAuth();
-  const { staff: currentStaff } = useScmAuth();
   const { actorNameOf } = useStaffLookup();
   const askConfirm = useConfirm();
   const askPrompt = usePrompt();
@@ -231,9 +229,7 @@ export function MobilePoAmendmentDetail({
   const { label: pillLabel, tone } = simplifiedAmendmentPill(status);
 
   const canApprove = can("scm.po_amendment.approve");
-  const isRequester =
-    amendment?.requested_by != null && currentStaff?.id != null
-    && String(amendment.requested_by) === String(currentStaff.id);
+  const isRequester = data?.viewerIsRequester === true;
   const canWithdraw = status === "REQUESTED" && (isRequester || canApprove);
 
   const deliverPrintPdf = (action: PdfAction) => {

@@ -77,7 +77,7 @@ import { STOCK_BUCKETS, emptyBuckets, type StockBucket } from '../lib/stock-buck
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 const NO_PERM = { error: "You don't have permission to read the financial statements." };
 
-export type AccountRow = { account_code: string; account_name?: string | null; account_type: string; section: string | null };
+export type AccountRow = { account_code: string; account_name?: string | null; account_type: string; section: string | null; parent_code?: string | null };
 export type SumRow = { code: string; name: string; type: string; drSen: number; crSen: number };
 
 /** Sum the GL lines the books count per account inside [from, to] — posted,
@@ -121,7 +121,7 @@ export function sumGlRows(rows: Array<Record<string, unknown>>): SumRow[] {
 
 /** The chart of the active company, read once per report. */
 export async function loadAccounts(sb: any, companyId: number): Promise<{ ok: true; accounts: AccountRow[] } | { ok: false; reason: string }> {
-  const { data, error } = await sb.from('accounts').select('account_code, account_name, account_type, section').eq('company_id', companyId);
+  const { data, error } = await sb.from('accounts').select('account_code, account_name, account_type, section, parent_code').eq('company_id', companyId);
   if (error) return { ok: false, reason: String((error as { message?: string }).message ?? error) };
   return { ok: true, accounts: (data ?? []) as AccountRow[] };
 }

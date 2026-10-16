@@ -11,7 +11,7 @@ import {
 // Multi-company (Phase 0c): stamp the active company on every request. Returns
 // {} when no company is selected (single-company / pre-activation), so the
 // backend falls back to its hostname default and nothing changes.
-import { companyHeader } from "../lib/activeCompany";
+import { companyHeader, getActiveCompanyId } from "../lib/activeCompany";
 // The token's storage key + the read that knows about BOTH backing stores.
 // Shared with the vendored SCM fetch layer — see lib/authToken.
 // AUTH_TOKEN_KEY is no longer imported here: tokenStore below now delegates to
@@ -553,19 +553,23 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
  */
 function cachedGet<T>(path: string): Promise<T> {
   if (!cacheable(path)) return request<T>(path);
-  const hit = getCached<T>(path);
+  // The answer depends on this tab's X-Company-Id, so a read made before the tab
+  // adopted its company must not answer for it (BUG-111: a 2990 PO printed the
+  // Houzs letterhead). The suffix keeps prefix invalidation working.
+  const key = `${path}#co=${getActiveCompanyId() ?? ""}`;
+  const hit = getCached<T>(key);
   if (hit !== undefined) return Promise.resolve(hit);
-  const joined = getInflight<T>(path);
+  const joined = getInflight<T>(key);
   if (joined) return joined;
   // Capture the invalidation clock at request start. If a mutation invalidates
   // this resource family while the request is in flight, we must NOT cache the
   // (now-stale) response when it resolves.
   const startedEpoch = currentEpoch();
   const p = request<T>(path).then((data) => {
-    if (data !== undefined && !invalidatedSince(path, startedEpoch)) setCached(path, data);
+    if (data !== undefined && !invalidatedSince(path, startedEpoch)) setCached(key, data);
     return data;
   });
-  setInflight(path, p);
+  setInflight(key, p);
   return p;
 }
 
@@ -714,26 +718,34 @@ export const api = {
   },
 
   /**
-   * Fetches a protected asset (e.g. R2-backed POD photo) as a blob URL,
-   * because <img src> can't pass the Authorization header.
+   * Fetches a protected asset (e.g. R2-backed POD photo) as a Blob — the bytes
+   * themselves, for a caller that sends them on (a PMS row's bill becoming a
+   * payment request's, owner 2026-10-08).
    */
-  async fetchBlobUrl(path: string, typeHint?: string | null): Promise<string> {
+  async fetchBlob(path: string, typeHint?: string | null): Promise<Blob> {
     const token = tokenStore.get();
     const res = await binaryFetch(`${baseUrl}${path}`, {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(), ...companyHeader() },
     }, BINARY_GET_TIMEOUT_MS);
     if (!res.ok) throw new HttpError(res.status, res.statusText, requestIdFromResponse(res));
     return consumeCorrelated(res, async () => {
-      let blob = await res.blob();
+      const blob = await res.blob();
       // R2 hands back files it stored without a content type as
       // application/octet-stream, and window.open()/an <iframe> on such a blob
       // DOWNLOADS a PDF instead of rendering it. When the caller knows the real
       // type (from the file extension), re-type the blob so an inline view views.
-      if (typeHint && (!blob.type || blob.type === "application/octet-stream")) {
-        blob = blob.slice(0, blob.size, typeHint);
-      }
-      return URL.createObjectURL(blob);
+      return typeHint && (!blob.type || blob.type === "application/octet-stream")
+        ? blob.slice(0, blob.size, typeHint)
+        : blob;
     });
+  },
+
+  /**
+   * The same asset as a blob URL, because <img src> can't pass the
+   * Authorization header.
+   */
+  async fetchBlobUrl(path: string, typeHint?: string | null): Promise<string> {
+    return URL.createObjectURL(await api.fetchBlob(path, typeHint));
   },
 
   /**

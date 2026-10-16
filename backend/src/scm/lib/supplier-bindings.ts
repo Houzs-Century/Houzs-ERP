@@ -95,3 +95,19 @@ export async function readMfgProductBindings<T = Record<string, unknown>>(
       .range(from, to);
   });
 }
+
+/**
+ * The binding an ADDED sales-order line joins an open purchase order through.
+ * `bindings` is one code's rows in reader order (main supplier first), so the
+ * main supplier wins whenever it already has a PO on the order; otherwise an
+ * ALTERNATE bound supplier that does. HC-SO-013385/A1 (BUG-57): 9028-1NA was
+ * added to a VERANO set whose PO is DORSETTLOFT, bound for that code as an
+ * alternate; its main supplier (HOOKKA INDUSTRIES) had no PO there, so the line
+ * reached no PO at all. Undefined = no bound supplier has a PO on the order.
+ */
+export function pickAddLineBinding<B extends { supplier_id: string }>(
+  bindings: readonly B[],
+  boundSupplierIds: ReadonlySet<string>,
+): B | undefined {
+  return bindings.find((b) => boundSupplierIds.has(b.supplier_id));
+}

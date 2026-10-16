@@ -12,6 +12,7 @@ import { FreshMount } from "../lib/freshMount";
 import { useIdempotencyKey } from "../lib/idempotency";
 import { MobileSkuPicker, type PickedSku } from "./MobileSkuPicker";
 import { DateField } from "../vendor/scm/components/DateField";
+import { variantKeyLabel } from "../vendor/scm/lib/variant-key-label";
 
 /* ------------------------------------------------------------------ *
  * Mobile New Stock Transfer — From -> To (must differ) + date + notes,
@@ -23,10 +24,9 @@ import { DateField } from "../vendor/scm/components/DateField";
 
 type LineDraft = { _key: string; itemCode: string; productName: string; variantKey?: string; qty: number; notes?: string };
 
-// Humanise a variant_key ("fabriccode=bf-16|gap=16|legheight=2") into a compact
-// bucket label. '' = the unclassified / plain-SKU bucket.
-const humanizeVariantKey = (k: string): string =>
-  k ? k.split("|").map((s) => s.replace("=", " ")).join(" · ") : "(unclassified)";
+// Humanise a variant_key into a bucket label — the one shared rule the desktop
+// picker and the PDFs read. '' = the unclassified / plain-SKU bucket.
+const humanizeVariantKey = (k: string): string => variantKeyLabel(k, "(unclassified)");
 
 // Sentinel for "no bucket picked yet" — distinct from '' (a real unclassified bucket).
 const UNPICKED = "__UNPICKED__";
@@ -82,6 +82,13 @@ function MobileTransferLine({
           </option>
         ))}
       </select>
+      {/* The picked bucket in full: buckets often differ only at the end of the
+          label, which the closed select cuts off (owner 2026-10-06). */}
+      {line.variantKey !== undefined && (
+        <div style={{ marginTop: 4, fontSize: 11, color: "var(--fg-muted)", overflowWrap: "anywhere" }}>
+          {humanizeVariantKey(line.variantKey)}
+        </div>
+      )}
       <div className="qtyrow">
         <div className="stepper">
           <button onClick={() => setQty(line._key, line.qty - 1)} aria-label="Decrease">−</button>

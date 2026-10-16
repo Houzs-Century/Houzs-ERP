@@ -76,6 +76,11 @@ describe('performanceSheet', () => {
     expect(notes[2]).toContain('free gifts');
     const missing = performanceNotes({ ...r, operatingExpense: { ...r.operatingExpense, accountFound: false, accountName: null, bookedSen: 0 } });
     expect(missing[1]).toContain('Account 900-O001 is not in this company\'s chart, so nothing was replaced');
+    /* No covered account (Houzs): no sentence about them. */
+    expect(notes.some((n) => n.includes('also covers'))).toBe(false);
+    /* 2990's transport is inside the rate (owner 2026-10-06): one sentence names it and what was left out. */
+    const covered = performanceNotes({ ...r, operatingExpense: { ...r.operatingExpense, also: [{ code: '900-T004', name: 'TRANSPORTATION FEE' }], alsoBookedSen: 1260720 } });
+    expect(covered[2]).toBe('The rate also covers 900-T004 TRANSPORTATION FEE (with the accounts under them): the 12,607.20 booked on those in the period is left out of the expenses too — they print at nil.');
   });
 
   it('fmtPerf brackets a negative and keeps the thousands', () => {

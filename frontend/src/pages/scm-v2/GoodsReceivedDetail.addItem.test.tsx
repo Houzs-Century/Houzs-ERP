@@ -55,6 +55,7 @@ vi.mock('../../vendor/scm/lib/inventory-queries', () => ({
 
 vi.mock('../../vendor/scm/lib/warehouse-queries', () => ({
   useRacks: () => ({ data: { racks: [] } }),
+  useCrossCompanyRacks: () => ({ data: undefined }),
 }));
 
 vi.mock('../../vendor/scm/lib/mfg-products-queries', () => ({

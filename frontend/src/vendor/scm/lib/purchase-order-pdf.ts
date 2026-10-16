@@ -46,10 +46,11 @@ import {
   sortLinesByStoredLineNo,
   sortSoLinesByGroupRank,
 } from '@2990s/shared/so-line-display';
-import { drawSofaLayout } from './sofa-layout-pdf';
+import { drawSofaLayout, layoutDepth } from './sofa-layout-pdf';
 import { COMPANY, amountInWordsMyr, deliverPdf, drawInfoColumns, ensurePdfCjkFont, fmtDocDate, fmtDocStamp, safeName, type PdfAction } from './pdf-common';
 import { supplierBlock } from './pdf-party-blocks';
 import { poDisplayNumber } from './po-status';
+import { ensureBrandingForActiveCompany } from '../../../hooks/useBranding';
 import {
   loadSupplierDocData,
   supplierCodeFor,
@@ -58,6 +59,7 @@ import {
 } from './supplier-doc-data';
 import { loadSofaCompartmentArtForPrint } from './sales-order-queries';
 import { splitBackendSofa } from './sofa-walk-order';
+import { DRAWER_DIAGRAM_H, drawDrawerDiagram, drawerSidesOf } from './po-drawer-diagram';
 import {
   blobToSquarePdfImage,
   buildPhotoGroups,
@@ -177,6 +179,26 @@ const fmtMoney = (centi: number, currency: string): string => fmtMoneySen(centi,
 const fmtAmount = (centi: number): string =>
   (centi / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+/** DEV-65 (Sim 2026-10-09): delivery under 2 weeks after the PO date prints
+    "URGENT", under 1 week "TOP URGENT". Compared on MYT calendar days, the
+    same days the PDF prints. */
+export function poUrgencyLabel(
+  poDate: string | null | undefined,
+  deliveryDate: string | null | undefined,
+): 'TOP URGENT' | 'URGENT' | null {
+  const toUtcDay = (d: string | null | undefined): number | null => {
+    const m = /^(\d{4})\/(\d{2})\/(\d{2})$/.exec(fmtDocDate(d));
+    return m ? Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!) : null;
+  };
+  const from = toUtcDay(poDate);
+  const to = toUtcDay(deliveryDate);
+  if (from === null || to === null) return null;
+  const days = (to - from) / 86_400_000;
+  if (days < 7) return 'TOP URGENT';
+  if (days < 14) return 'URGENT';
+  return null;
+}
+
 /* A sofa is split into per-MODULE PO lines. Each line's `variants` carries that
    ONE module's spatial slot at the TOP LEVEL (x / y / rot + cellIndex), its module
    code lives in `item_code` ("{MODEL}-2A(RHF)"), and a shared `summary` string
@@ -188,7 +210,7 @@ const SOFA_MODULE_IDS_BY_LEN = SOFA_MODULES.map((m) => m.id).sort((a, b) => b.le
 function sofaCellFromLine(
   variants: Record<string, unknown> | null | undefined,
   itemCode: string | null | undefined,
-): { cell: Cell; depth: Depth; groupKey: string; idx: number } | null {
+): { cell: Cell; depths: unknown[]; groupKey: string; idx: number } | null {
   if (!variants || typeof variants !== 'object') return null;
   const v = variants as Record<string, unknown>;
   const x = v.x;
@@ -201,11 +223,12 @@ function sofaCellFromLine(
   const moduleId = SOFA_MODULE_IDS_BY_LEN.find((id) => code.endsWith(id)) ?? null;
   if (!moduleId || !findModule(moduleId)) return null;
   const rot: 0 | 90 | 180 | 270 = v.rot === 90 || v.rot === 180 || v.rot === 270 ? v.rot : 0;
-  const depthRaw = v.depth;
-  const depth: Depth = typeof depthRaw === 'string' && depthRaw.trim() ? depthRaw : '24';
   const groupKey = typeof v.summary === 'string' && v.summary.trim() ? v.summary.trim() : '';
   const idx = typeof v.cellIndex === 'number' && Number.isFinite(v.cellIndex) ? v.cellIndex : 0;
-  return { cell: { moduleId, x, y, rot }, depth, groupKey, idx };
+  // The summary's depth was written with the x/y ("2A(LHF) + L(RHF) · 28\" · ...").
+  const summaryDepth = /·\s*(\d+)(?:"|″)/.exec(groupKey)?.[1];
+  const depths = [v.depth, v.seatHeight, summaryDepth, '24'];
+  return { cell: { moduleId, x, y, rot }, depths, groupKey, idx };
 }
 
 /* Resolve a sofa MODULE id (+ the BASE model it belongs to) from a
@@ -282,11 +305,13 @@ async function renderPurchaseOrderInto(
   autoTable: AutoTableFn,
   header: PoHeader,
   items: PoItem[],
-  opts?: { docTitle?: string; sofaPhotos?: Record<string, string> },
+  opts?: { docTitle?: string; sofaPhotos?: Record<string, string>; purchaseLocation?: string | null },
 ): Promise<{ supplierName: string }> {
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 10; // tighter left/right than the SO's 14 (owner 2026-06-19)
   const docTitle = opts?.docTitle ?? 'PURCHASE ORDER';
+
+  await ensureBrandingForActiveCompany();
 
   /* Print-time lookups (all fail-soft): supplier SKU bindings + Fabric
      Converter colour map + the FULL supplier master record (the PO detail
@@ -416,6 +441,23 @@ async function renderPurchaseOrderInto(
   // Your Ref No above).
   const singleSourceSo = (!lineSoDocs.length && noteSoDocTokens.length === 1) ? noteSoDocTokens[0]! : '';
 
+  const effDelivery = effectiveDelivery(
+    header.expected_at,
+    header.supplier_delivery_date_2,
+    header.supplier_delivery_date_3,
+    header.supplier_delivery_date_4,
+  );
+  const poDetailRows: Array<[string, string]> = [
+    // _R suffix (owner 2026-07-27) — the printed number shows the revision.
+    ['PO No', poDisplayNumber(header.po_number, header.revision)],
+    ['Your Ref No', yourRef],
+    ['Date', fmtDocDate(header.po_date)],
+    /* Migration 0180 — print the EFFECTIVE (latest revised) delivery date. */
+    ['Delivery Date', effDelivery ? fmtDocDate(effDelivery) : ''],
+    /* PC Order only (DEV-57): a PO prints its location under DELIVER TO. */
+    ...(opts?.purchaseLocation ? [['Purchase Location', opts.purchaseLocation] as [string, string]] : []),
+  ];
+  const infoTop = y;
   y = drawInfoColumns(doc, y,
     /* Canonical supplier block — Company, Code, Address, Tel, Fax, Email,
        Attn, Terms — via the shared helper. formatPhone the tel like every
@@ -435,27 +477,30 @@ async function renderPurchaseOrderInto(
       attention: sFull.attention ?? s.contact_person,
       paymentTerms: sFull.payment_terms ?? header.supplier?.payment_terms ?? null,
     }),
-    {
-      title: 'PO DETAILS',
-      rows: [
-        // _R suffix (owner 2026-07-27) — the printed number shows the revision.
-        ['PO No', poDisplayNumber(header.po_number, header.revision)],
-        ['Your Ref No', yourRef],
-        ['Date', fmtDocDate(header.po_date)],
-        /* Migration 0180 — print the EFFECTIVE (latest revised) delivery date. */
-        ['Delivery Date', (() => {
-          const eff = effectiveDelivery(
-            header.expected_at,
-            header.supplier_delivery_date_2,
-            header.supplier_delivery_date_3,
-            header.supplier_delivery_date_4,
-          );
-          return eff ? fmtDocDate(eff) : '';
-        })()],
-      ],
-    },
+    { title: 'PO DETAILS', rows: poDetailRows },
     margin,
   );
+
+  /* Boxed under the PO DETAILS rows; the row geometry mirrors drawInfoColumns
+     (first baseline +4.6, 4 per row, blank rows skipped). Judged on OUR
+     delivery date, not the supplier ETA: an order that was urgent stays urgent
+     however far the supplier postpones (Sim 2026-10-12). */
+  const urgency = poUrgencyLabel(header.po_date, header.expected_at);
+  if (urgency) {
+    const printedRows = poDetailRows.filter(([, v]) => v.trim()).length;
+    const boxX = pageW / 2 + 2;
+    const boxY = infoTop + 4.6 + printedRows * 4 - 1;
+    const boxW = 50;
+    const boxH = 8;
+    const prevLineWidth = doc.getLineWidth();
+    doc.setDrawColor(220, 38, 38); doc.setLineWidth(0.5);
+    doc.rect(boxX, boxY, boxW, boxH);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(220, 38, 38);
+    doc.text(urgency, boxX + boxW / 2, boxY + boxH / 2 + 1.4, { align: 'center' });
+    doc.setTextColor(0); doc.setDrawColor(0); doc.setLineWidth(prevLineWidth);
+    doc.setFont('helvetica', 'normal');
+    y = Math.max(y, boxY + boxH + 4);
+  }
 
   /* Deliver To — the purchase-location warehouse + its FULL address, wrapped
      full-width so the supplier sees exactly where to ship (owner 2026-06-19;
@@ -553,6 +598,7 @@ async function renderPurchaseOrderInto(
     doc.setTextColor(0);
   };
 
+  const drawerSides = orderedItems.map((it) => drawerSidesOf(it.variants));
   autoTable(doc, {
     startY: y,
     head: [[
@@ -583,6 +629,16 @@ async function renderPurchaseOrderInto(
     },
     margin: { left: margin, right: margin, top: 16 },
     didDrawPage: (data) => drawPageHeader(data.pageNumber),
+    // DEV-74: drawer lines get a pull-out picture under the description.
+    didParseCell: (data) => {
+      if (data.section !== 'body' || data.column.index !== 2 || drawerSides[data.row.index]!.length === 0) return;
+      data.cell.styles.cellPadding = { top: 1.5, right: 1.5, bottom: 1.5 + DRAWER_DIAGRAM_H, left: 1.5 };
+    },
+    didDrawCell: (data) => {
+      if (data.section !== 'body' || data.column.index !== 2) return;
+      const sides = drawerSides[data.row.index]!;
+      if (sides.length > 0) drawDrawerDiagram(doc, sides, data.cell.x + 1.5, data.cell.y + data.cell.height - DRAWER_DIAGRAM_H - 1);
+    },
   });
 
   let lastY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 5;
@@ -647,7 +703,7 @@ async function renderPurchaseOrderInto(
   type DistinctSofa = { cells: Cell[]; depth: Depth; model: string; soNo: string };
   const sofaGroups = new Map<
     string,
-    { parts: Array<{ cell: Cell; idx: number }>; depth: Depth; model: string; soNo: string }
+    { parts: Array<{ cell: Cell; idx: number }>; depths: unknown[]; model: string; soNo: string }
   >();
   /* Geometry-less backend sofa lines, grouped by SO no + base model, modules
      kept in line (= display) order for a deterministic left→right layout. */
@@ -673,7 +729,7 @@ async function renderPurchaseOrderInto(
         const model = (part.groupKey ? (part.groupKey.split('·')[0] ?? '').trim() : '')
           || (it.material_name ?? '').trim()
           || (it.item_code ?? '').trim();
-        g = { parts: [], depth: part.depth, model, soNo };
+        g = { parts: [], depths: part.depths, model, soNo };
         sofaGroups.set(gk, g);
       }
       g.parts.push({ cell: part.cell, idx: part.idx });
@@ -714,7 +770,7 @@ async function renderPurchaseOrderInto(
     // L(LHF) + 1A(P)(RHF) + 1NA. g.model (summary → material_name → item_code)
     // stays the fallback for a group whose cells somehow carry no code.
     const caption = cells.map((c) => c.moduleId).filter(Boolean).join(' + ') || g.model;
-    distinctSofas.push({ cells, depth: g.depth, model: caption, soNo: g.soNo });
+    distinctSofas.push({ cells, depth: layoutDepth(cells, g.depths), model: caption, soNo: g.soNo });
   }
   for (const [fk, g] of fallbackGroups) {
     if (geometryKeys.has(fk)) continue; // already drawn from real geometry
@@ -880,7 +936,7 @@ function finalizePoPdf(doc: JsPdf): void {
 export async function generatePurchaseOrderPdf(
   header: PoHeader,
   items: PoItem[],
-  opts?: { docTitle?: string; action?: PdfAction; sofaPhotos?: Record<string, string> },
+  opts?: { docTitle?: string; action?: PdfAction; sofaPhotos?: Record<string, string>; purchaseLocation?: string | null },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;

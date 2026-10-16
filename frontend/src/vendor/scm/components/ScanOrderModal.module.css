@@ -309,6 +309,16 @@
   color: #8a6914;
   margin-top: 2px;
 }
+.docLink {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 700;
+  color: var(--c-teal, #2f5d4f);
+  text-decoration: underline;
+  cursor: pointer;
+}
 .chipTeal {
   background: rgba(47, 93, 79, 0.12);
   color: var(--c-secondary-a, #2f5d4f);

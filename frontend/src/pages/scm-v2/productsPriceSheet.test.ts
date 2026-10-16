@@ -2,7 +2,7 @@
 // amount reads the way AutoCount prints it) — never sen, never a bare "1535".
 // docs/bugs/0928-datagrid-export-wrote-money-as-rm-text-or-blank-cells-and-ha.md
 import { describe, expect, test } from 'vitest';
-import { priceSheetRinggit } from './Products';
+import { priceSheetRinggit } from './products-import-headers';
 
 describe('priceSheetRinggit', () => {
   test('two decimals, ringgit, blank when unset', () => {

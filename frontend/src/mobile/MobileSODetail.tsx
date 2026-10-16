@@ -1,3 +1,4 @@
+import { ViewOriginalScan } from "../vendor/scm/components/ViewOriginalScan";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { formatDate } from "../lib/utils";
 import { NonSellingWarehouseNoteMobile, SourcePosRowMobile, soStockPillMobile } from "./source-chips";
@@ -78,13 +79,6 @@ import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPr
 import type { PdfAction } from "../vendor/scm/lib/pdf-common";
 import { amendmentPrintedStatus, soAmendmentToPdfInput } from "../vendor/scm/lib/amendment-pdf-map";
 import { useStaffLookup } from "../hooks/useStaffLookup";
-/* The 2990 bridge's staff row — the vocabulary so_amendments.requested_by is
-   written in (a scm.staff uuid). Desktop AmendmentDetailV2 compares it to decide
-   "did I raise this?"; mirrored here so the mobile withdraw gate matches exactly
-   (the Houzs bridge has no staff id, so isRequester is inert on BOTH surfaces —
-   the effective gate is canReject — but the logic is kept identical so a future
-   bridge fix lands on both at once). */
-import { useAuth as useScmAuth } from "../vendor/scm/lib/auth";
 import {
   buildAmendmentDecisionHistory,
   isRejectDecision,
@@ -211,6 +205,7 @@ type SoItem = {
   stock_state?: "stock" | "po" | "shortage" | null;
   coverage_po?: string | null; coverage_eta?: string | null;
   bound_source_pos?: string[];
+  bound_source_po_etas?: Record<string, string>;
   shipped_source_pos?: string[];
   shipped_source_adj?: boolean;
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
@@ -509,18 +504,13 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
          requester OR anyone who could reject — desktop `status === "REQUESTED"
          && (isRequester || canReject)`.
      The server re-checks both; these gates only decide whether to show the
-     control. `requested_by` (a scm.staff uuid) comes off the shared amendment
-     detail (useAmendmentDetail — same query key the diff sheet warms). The
-     scm-auth bridge has no staff id on Houzs, so isRequester is inert here
-     exactly as on desktop (the effective gate is canReject), but the shape is
-     kept identical so a future bridge fix lands on both surfaces at once. */
-  const { staff: scmStaff } = useScmAuth();
+     control. Whether the caller raised it comes from the SERVER
+     (viewerIsRequester on the shared amendment detail — useAmendmentDetail,
+     same query key the diff sheet warms): the browser has no scm.staff id to
+     compare requested_by against, so a local compare was always false. */
   const openAmendmentDetail = useAmendmentDetail(hasOpenAmendment && openAmendment ? openAmendment.id : null);
   const amendmentStatus = (openAmendment?.status ?? "").toUpperCase();
-  const amendmentRequestedBy =
-    (openAmendmentDetail.data?.amendment as { requested_by?: string | null } | undefined)?.requested_by ?? null;
-  const isAmendmentRequester =
-    amendmentRequestedBy != null && scmStaff?.id != null && String(amendmentRequestedBy) === String(scmStaff.id);
+  const isAmendmentRequester = openAmendmentDetail.data?.viewerIsRequester === true;
   /* Two-lane rework (2026-07-27): a lane row (open_amendment.lane set) has ONE
      approver key — LINES → purchasing, DELIVERY → logistics — and its whole
      life is REQUESTED → applied. The legacy chain keys below stay for
@@ -794,6 +784,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
         </div>
         <div className="eyebrow" style={{ marginTop: 7, display: "flex", alignItems: "center", gap: 6, minWidth: 0, flexWrap: "wrap" }}>
           <span className="money" style={{ flex: "none" }}>{h?.doc_no ?? docNo}</span>
+          {h?.doc_no && <ViewOriginalScan kind="so" documentId={h.doc_no} />}
           {(h?.customer_so_no || h?.ref || h?.po_doc_no) && (<><span style={{ opacity: .5, flex: "none" }}>·</span><span className="money" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{h?.customer_so_no || h?.ref || h?.po_doc_no}</span></>)}
         </div>
         <div className="scr-title">{h?.debtor_name || "—"}</div>
@@ -1136,6 +1127,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                     <SourcePosRowMobile
                       pos={(it.bound_source_pos && it.bound_source_pos.length > 0) ? it.bound_source_pos : (it.shipped_source_pos ?? [])}
                       adj={it.shipped_source_adj}
+                      etas={it.bound_source_pos && it.bound_source_pos.length > 0 ? Object.fromEntries(Object.entries(it.bound_source_po_etas ?? {}).map(([po, d]) => [po, dl(d)])) : undefined}
                       ready={(it.bound_source_pos && it.bound_source_pos.length > 0) ? [] : ((it.delivered_qty ?? 0) > 0 && (it.remaining_qty ?? null) === 0 ? [] : (it.ready_source_pos ?? []))}
                       incoming={(it.bound_source_pos && it.bound_source_pos.length > 0) ? null : (it.stock_state === "po" && it.coverage_po ? { po: it.coverage_po, eta: it.coverage_eta ? dl(it.coverage_eta) : null } : null)}
                     />
@@ -2020,8 +2012,9 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
                             <div className="money" style={{ fontSize: 12.5, fontWeight: 700, color: "#0c3f39", ...mEmphIf(chg.itemCode) }}>{l.new_item_code ?? old.itemCode ?? "—"}</div>
                             <div className="money" style={{ fontSize: 11, color: "var(--mut)", marginTop: 2 }}>
                               <span style={mEmphIf(chg.qty)}>Qty {l.new_qty ?? old.qty ?? "—"}</span>
-                              {typeof l.new_unit_price_sen === "number" ? (
-                                <>{" · "}<span style={mEmphIf(chg.unitPrice)}>RM {rm(l.new_unit_price_sen)}</span></>
+                              {/* A null requested price keeps the stored one (desktop parity): show it unchanged. */}
+                              {typeof (l.new_unit_price_sen ?? old.unitPriceSen) === "number" ? (
+                                <>{" · "}<span style={mEmphIf(chg.unitPrice)}>RM {rm((l.new_unit_price_sen ?? old.unitPriceSen) as number)}</span></>
                               ) : ""}
                             </div>
                             {newSummary ? <div style={{ fontSize: 10.5, color: "var(--mut2)", marginTop: 2, ...mEmphIf(chg.variants) }}>{newSummary}</div> : null}

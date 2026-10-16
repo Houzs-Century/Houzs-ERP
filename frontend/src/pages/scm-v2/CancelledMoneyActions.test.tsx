@@ -82,22 +82,34 @@ describe('CancelledMoneyActions', () => {
     expect(navigateSpy).toHaveBeenCalledWith(`/scm/sales-orders/new?copyFrom=${encodeURIComponent('2990-SO-2609-060')}&convert=${encodeURIComponent('2990-SO-2609-060:25000,2990-SO-2608-028:143300')}`);
   });
 
-  it('Refund raises one draft per ticked order with one note, then clears the ticks', async () => {
-    refundMutate.mockResolvedValue([{ docNo: '2990-SO-2608-028', pvNumber: '2990Draft-2609-010' }, { docNo: '2990-SO-2607-024', pvNumber: '2990Draft-2609-011' }]);
+  /* A payment request per order since 2026-10-14: each order its customer's bank, one reason, all required. */
+  it('Refund sends one request per ticked order — each with its customer\'s bank, one reason — then clears the ticks', async () => {
+    refundMutate.mockResolvedValue([{ docNo: '2990-SO-2608-028', requestNo: '2990-PRQ-2610-001' }, { docNo: '2990-SO-2607-024', requestNo: '2990-PRQ-2610-002' }]);
     const onDone = vi.fn();
     render(wrap(<CancelledMoneyActions ticked={[T('2990-SO-2608-028'), T('2990-SO-2607-024')]} onDone={onDone} />));
     fireEvent.click(screen.getByRole('button', { name: 'Refund' }));
     const first = screen.getByLabelText('Refund from 2990-SO-2608-028') as HTMLInputElement;
     fireEvent.change(first, { target: { value: '433.00' } });
     fireEvent.blur(first);
-    fireEvent.change(screen.getByLabelText('Refund note'), { target: { value: 'Customer changed her mind' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Raise 2 refund drafts' }));
+    fireEvent.change(screen.getByLabelText('Refund reason'), { target: { value: 'Customer changed her mind' } });
+    const send = screen.getByRole('button', { name: 'Send 2 refund requests' }) as HTMLButtonElement;
+    expect(send.disabled).toBe(true);
+    expect(screen.getByText(/Still needed on 2990-SO-2608-028/)).toBeTruthy();
+    const bank = (doc: string, name: string, no: string, holder: string) => {
+      fireEvent.change(screen.getByLabelText(`Customer's bank for ${doc}`), { target: { value: name } });
+      fireEvent.change(screen.getByLabelText(`Account number for ${doc}`), { target: { value: no } });
+      fireEvent.change(screen.getByLabelText(`Name on the account for ${doc}`), { target: { value: holder } });
+    };
+    bank('2990-SO-2608-028', 'Public Bank', '6123 4567 89', 'LARDING CHEN');
+    bank('2990-SO-2607-024', 'Maybank', '5123 4567 8901', 'YAP KAH HENG');
+    expect(send.disabled).toBe(false);
+    fireEvent.click(send);
     await waitFor(() => expect(refundMutate).toHaveBeenCalledWith([
-      { docNo: '2990-SO-2608-028', amountSen: 43_300, note: 'Customer changed her mind' },
-      { docNo: '2990-SO-2607-024', amountSen: 336_500, note: 'Customer changed her mind' },
+      { docNo: '2990-SO-2608-028', amountSen: 43_300, reason: 'Customer changed her mind', bankName: 'Public Bank', bankAccountNo: '6123 4567 89', bankAccountName: 'LARDING CHEN' },
+      { docNo: '2990-SO-2607-024', amountSen: 336_500, reason: 'Customer changed her mind', bankName: 'Maybank', bankAccountNo: '5123 4567 8901', bankAccountName: 'YAP KAH HENG' },
     ]));
     await waitFor(() => expect(onDone).toHaveBeenCalled());
-    expect(notifySpy).toHaveBeenCalledWith(expect.objectContaining({ title: '2 refund drafts raised for Finance' }));
+    expect(notifySpy).toHaveBeenCalledWith(expect.objectContaining({ title: '2 refund requests sent to Finance' }));
   });
 
   it('a live order at its floor can still be refunded (no floor there) but has nothing to convert', () => {

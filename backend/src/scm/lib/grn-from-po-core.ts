@@ -150,9 +150,12 @@ export async function createDraftGrnsFromPoItemsCore(
      the several purchase orders this bucket actually received. */
   type Bucket = { supplierId: string; primaryPoId: string; poIds: Set<string>; poNumbers: Set<string>; warehouseId: string | null; currency: string | null; lines: Array<{ row: ItemRow; qty: number }> };
   const buckets = new Map<string, Bucket>();
+  // Also split by ship-to warehouse: posting books every line into the GRN
+  // header's warehouse, so a delivery order naming a Sarawak PO and a KL PO
+  // must not land on one GRN. The manual picker already locks one warehouse.
   for (const p of picks) {
     const row = byId.get(p.poItemId)!;
-    const key = row.po.supplier_id;
+    const key = `${row.po.supplier_id}|${row.po.purchase_location_id ?? ''}`;
     const cur = buckets.get(key) ?? {
       supplierId: row.po.supplier_id, primaryPoId: row.po.id, poIds: new Set<string>(), poNumbers: new Set<string>(),
       warehouseId: row.po.purchase_location_id, currency: row.po.currency ?? null, lines: [],
@@ -205,6 +208,14 @@ export async function createDraftGrnsFromPoItemsCore(
         ? `Received from ${[...bucket.poNumbers].join(', ')} · ${body.notes}`
         : `Received from ${[...bucket.poNumbers].join(', ')}`,
       created_by: user.id,
+      /* Explicit, never the column default: scm.grns.status defaults to
+         'POSTED' in production, so an insert that omits it lands a header that
+         reads "inventory received" while no IN was written and no PO
+         received_qty rolled up. The scan queue never posts, so its GRNs stayed
+         in that state and could not be cancelled (the reversal guard finds no
+         stock to take back). The HTTP convert posts right after this insert;
+         postGrnAndRollup flips DRAFT -> POSTED. */
+      status: 'DRAFT',
     };
     /* Audit (ported from 2990 b30f0bb1) — the GRN suffix is an in-memory counter
        off a non-locking COUNT snapshot, so a CONCURRENT multi-GRN receive can

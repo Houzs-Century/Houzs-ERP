@@ -17,9 +17,15 @@ go through `/api/scm/grns`.
   all funnel through the one chokepoint `postGrnAndRollup` (`grns.ts`), which flips
   status first (atomic CAS on the observed status) and only then recounts the PO's
   `received_qty`, so this GRN's own lines are included.
-- `CANCELLED`: `PATCH /:id/cancel`. A DRAFT short-circuits (flip only, nothing to
-  reverse). A POSTED GRN reverses the IN per line and is blocked if the stock was
-  already consumed downstream.
+- `CANCELLED`: `PATCH /:id/cancel`. A DRAFT writes no stock OUT. A POSTED GRN
+  reverses the IN per line and is blocked if the stock was already consumed
+  downstream. Both recount the PO's `received_qty` and queue the SO allocation
+  re-walk (a bound SO line is lit by its PO's `received_qty`).
+- The recount (`recomputePoReceived`) stops before writing when any of its reads
+  fails and returns `{ ok: false, reason }`; the stored `received_qty` and PO
+  status stay as they were. Post records it as `RECOUNT_FAILED` on the GRN's audit
+  trail, cancel returns it in `cancelErrors`. Before 2026-10-16 a failed read was
+  taken as "no receipts" and wrote 0 (READY audit F2).
 - `CLOSED`: nothing in the backend writes this anymore; it is a read-only legacy
   terminal that still blocks a re-post.
 - `ON_HOLD` is a marker beside the status, not a status overwrite (`PATCH /:id/hold`).
@@ -65,6 +71,12 @@ go through `/api/scm/grns`.
 
 - All stock/status mutation goes through `postGrnAndRollup`; the flip is a CAS on
   the *observed* status, never a blind `.neq('status', 'CLOSED')` update.
+- A from-PO convert makes one GRN per supplier AND PO ship-to warehouse: posting
+  books every line into the header warehouse, so two warehouses never share a GRN.
+- Delivery-order scan: a PO printed with its location in place of `HC-PO`
+  (`SRW-2610-021`) counts only when that PO ships to a warehouse whose code starts
+  with that location. With no item match it drafts everything the named POs still
+  owe; for 2+ POs only when the delivery order's qty per PO equals what each owes.
 - `PATCH /:id` (header) and all three create paths must scope by company on both
   the read and the write — the service-role client bypasses RLS, so the app-level
   predicate is the only isolation; use `maybeSingle()` on the scoped update, not
@@ -139,7 +151,13 @@ go through `/api/scm/grns`.
   (`rack_already_moved`) rather than placing the goods twice. Both surfaces:
   desktop Edit mode (`GoodsReceivedDetail`) and the phone receipt detail
   (`MobileGrnLineRack`, saves on pick); who may change it and the option list
-  live in the shared `vendor/scm/lib/grn-line-rack.ts`. The phone's create
+  live in the shared `vendor/scm/lib/grn-line-rack.ts` (`useGrnRackOptions`:
+  this company's racks of the receipt's warehouse, plain labels for reading a
+  saved pick back, and picker labels carrying the OTHER companies' stock on the
+  same shelf — "Rack L5.1 · HC 6 pcs" — from `GET /warehouse/cross-company`,
+  because a shelf that reads EMPTY on this company's board may be full of the
+  other company's goods; see warehouses.md on one building, one record per
+  company). The phone's create
   forms still have no rack — set it on the detail after creating. Creating a GRN on
   the phone — the PO convert wizard or the manual form, draft or not — opens the
   new receipt's card (`MobileApp` on the GRN `id` the create returns), so the
@@ -157,7 +175,8 @@ go through `/api/scm/grns`.
   replaces one line's split (DRAFT only, `409 grn_not_draft` otherwise; racks
   must be in the GRN's warehouse; total may be LESS than `qty_accepted` while
   scanning, never more). `PATCH /:id/post` refuses `409 rack_split_incomplete`
-  until every split line's racks add up to `qty_accepted`; posting then places
+  until every split line's racks add up to `qty_accepted` (a line with no rack at
+  all is fine: racks are optional at Post, owner decision); posting then places
   one rack row per share (`planGrnPlacements` in `lib/grn-line-racks.ts`, read
   by `grn-rack-sync.ts`). `grn_items.rack_id` = the one rack when a split uses
   one, NULL when several — a reader that only knows `rack_id` never names one

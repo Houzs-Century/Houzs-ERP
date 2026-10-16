@@ -12,6 +12,7 @@
 
 import {
   editFairPick,
+  fairKeyPart,
   linkedFairOf,
   lookbackWindow,
   resolveFair,
@@ -332,6 +333,62 @@ export async function fairLinkForEdit(args: {
     brand: typeof brand === 'string' ? brand : null,
   });
   return { project_id: fair.projectId, fair_match: fair.projectId != null ? 'PICKED' : fair.match };
+}
+
+/**
+ * Re-run fair detection after an order's BRAND changed (a line added, swapped or
+ * removed, or an approved amendment) — HC-0094: "manual edit also will not
+ * recognized back to project". Create decides the booth from the brand once;
+ * without this a corrected brand left the order on the old booth, or unlinked
+ * until the nightly pass.
+ *
+ * - Not linked (PENDING / AMBIGUOUS / UNMATCHED): the same venue + date + brand
+ *   detection create runs, now, against the existing fairs.
+ * - Linked to a booth of the OLD brand: move to the NEW brand's booth at the
+ *   SAME event (venue, organizer, period), only when exactly one fits. The
+ *   event is what a person picks; the booth always came from the brand.
+ * - Anything else is left alone: NO_FAIR, a legacy NULL verdict, and a link
+ *   whose booth brand never matched the order (a person settled it on the
+ *   pending screen against the brand, or the PMS binding set it).
+ *
+ * Null = write nothing. Best-effort: a failed read is null, never a guess.
+ */
+export async function redetectFairAfterBrandChange(args: {
+  db: FairDb;
+  companySql: string;
+  order: { venue: string | null; soDate: string; projectId: number | null; fairMatch: string | null };
+  oldBrand: string | null;
+  newBrand: string | null;
+}): Promise<{ project_id: number | null; fair_match: FairMatch } | null> {
+  const { order } = args;
+  try {
+    if (order.projectId == null) {
+      if (order.fairMatch !== 'PENDING' && order.fairMatch !== 'AMBIGUOUS' && order.fairMatch !== 'UNMATCHED') return null;
+      const fair = await resolveFairForSave({
+        db: args.db, companySql: args.companySql, venue: order.venue, organizer: null,
+        picked: null, soDate: order.soDate, brand: args.newBrand,
+      });
+      return { project_id: fair.projectId, fair_match: fair.projectId != null ? 'PICKED' : fair.match };
+    }
+    if (order.fairMatch !== 'PICKED' || !fairKeyPart(args.newBrand)) return null;
+    const rows = await args.db
+      .prepare(`SELECT ${FAIR_COLUMNS} FROM projects p WHERE p.id = ?${args.companySql}`)
+      .bind(order.projectId)
+      .all<Record<string, unknown>>();
+    const raw = rows.results?.[0];
+    if (!raw) return null;
+    const linked = toFairRow(raw);
+    if (!linked.venue || !linked.startDate) return null;
+    if (fairKeyPart(linked.brand) !== fairKeyPart(args.oldBrand)) return null;
+    const candidates = await loadFairsForEvent(args.db, args.companySql, {
+      venue: linked.venue, organizer: linked.organizer ?? '', startDate: linked.startDate, endDate: linked.endDate,
+    });
+    const fair = resolveFair({ candidates, brand: args.newBrand, organizer: null });
+    if (fair.projectId == null || fair.projectId === order.projectId) return null;
+    return { project_id: fair.projectId, fair_match: 'PICKED' };
+  } catch {
+    return null;
+  }
 }
 
 /**

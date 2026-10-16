@@ -1,9 +1,10 @@
 /* 欠正式单 (owner 2026-10-01, payment-request item 3) — Finance's list of the
    payments made on a proforma or quotation that still owe the official invoice.
    Pinned: the owed and the to-check rows, who asked and how long it has waited,
-   the reader's note, and Finance's marks (checked, clear). */
+   the reader's note, and Finance's marks (checked, clear) — and Finance's
+   remark on what to follow up (owner 2026-10-08). */
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 
@@ -15,6 +16,9 @@ vi.mock('../../vendor/scm/lib/official-doc-queries', async (importOriginal) => (
   useOfficialDocs: () => ({ data: { rows }, isLoading: false, isError: false, error: null }),
   useMarkOfficialDoc: () => ({ mutate: markOfficial, isPending: false }),
 }));
+/* The remark is asked in the in-app prompt (the SCM shell's provider in the app). */
+const promptFn = vi.fn(async (): Promise<string | null> => 'Ask MITEC for the tax invoice');
+vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ usePrompt: () => promptFn, useConfirm: () => async () => true }));
 
 import { OfficialDocs } from './OfficialDocs';
 
@@ -25,6 +29,24 @@ const row = (over: Row): Row => ({
 });
 
 describe('Official invoices owed', () => {
+  test('Finance writes the remark — what to follow up — on an owed payment, and changes it; Cancel leaves it', async () => {
+    rows = [row({ request: null })];
+    markOfficial.mockClear();
+    const { unmount } = render(<MemoryRouter><OfficialDocs /></MemoryRouter>);
+    fireEvent.click(screen.getByText('Add a remark'));
+    await waitFor(() => expect(markOfficial).toHaveBeenCalledWith({ kind: 'PV', id: 'pv-1', state: 'OWED', note: 'Ask MITEC for the tax invoice' }));
+    expect(promptFn).toHaveBeenCalledWith(expect.objectContaining({ input: expect.objectContaining({ label: 'Remark — what to follow up (optional)' }) }));
+    unmount();
+    /* A remark already there: offered to change, shown in the prompt; Cancel marks nothing. */
+    rows = [row({ request: null, note: 'Proforma only' })];
+    markOfficial.mockClear();
+    promptFn.mockResolvedValueOnce(null);
+    render(<MemoryRouter><OfficialDocs /></MemoryRouter>);
+    fireEvent.click(screen.getByText('Change the remark'));
+    await waitFor(() => expect(promptFn).toHaveBeenLastCalledWith(expect.objectContaining({ body: 'Now: Proforma only' })));
+    expect(markOfficial).not.toHaveBeenCalled();
+  });
+
   test('owed first; to check with the reader\'s note; Finance checks one off', () => {
     rows = [
       row({}),

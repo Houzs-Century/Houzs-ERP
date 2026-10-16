@@ -80,11 +80,15 @@ export type PoLineHeader = PoEstimateDates & { id: string; purchase_location_id?
  * headers must already have been read under the company scope; the line read
  * and the sales-order lookup carry the company predicate themselves (a parent
  * id is not company scope, CLAUDE.md R105 b).
+ *
+ * `outstandingOnly` (the Outstanding tab, DEV-66) keeps only lines with
+ * Remaining Qty > 0, as AutoCount's PO outstanding listing does.
  */
 export async function attachPoLines<H extends PoLineHeader>(
   sbIn: unknown,
   c: CompanyScopeCtx,
   headers: H[],
+  opts: { outstandingOnly?: boolean } = {},
 ): Promise<{ error: string | null; rows: Array<H & { lines: PoListLine[] }>; lineCount: number }> {
   const sb = sbIn as Sb;
   const ids = [...new Set(headers.map((h) => h.id))];
@@ -149,10 +153,10 @@ export async function attachPoLines<H extends PoLineHeader>(
         warehouseLabel(l.warehouse_id ? wh.byId.get(l.warehouse_id) : null) ?? warehouseLabel(headerWarehouse),
         LOCATION_MAP,
       ),
-    }));
+    })).filter((l) => !opts.outstandingOnly || l.remaining_qty > 0);
     return { ...h, lines };
   });
-  return { error: null, rows, lineCount: all.length };
+  return { error: null, rows, lineCount: rows.reduce((n, r) => n + r.lines.length, 0) };
 }
 
 export type PoExportRows =
@@ -186,7 +190,7 @@ export async function buildPoExportRows(
   // fuller line-linked set (see stampPoListGrns).
   const stamped = await stampPoListGrns(sb, read.data ?? [], false);
   if (stamped.error) return { error: `GRNs: ${stamped.error}` };
-  const withLines = await attachPoLines(sb, c, stamped.rows);
+  const withLines = await attachPoLines(sb, c, stamped.rows, { outstandingOnly: filters.status === 'outstanding' });
   if (withLines.error) return { error: withLines.error };
   return {
     error: null,

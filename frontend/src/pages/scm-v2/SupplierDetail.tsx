@@ -96,6 +96,7 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import styles from './SupplierDetail.module.css';
 import { exportBindingsCsv, ImportBindingsDialog } from './SupplierBindingsCsv';
+import { UnmappedModelSkus } from './UnmappedModelSkus';
 import { EffectiveDatedHistory } from '../../vendor/scm/components/EffectiveDatedHistory';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { statusLabel } from '../../vendor/scm/lib/status-pill';
@@ -669,7 +670,8 @@ const SupplierSkuPricingPanel = ({
      Needs a new supplier_material_binding_prices child table (or JSONB
      price_tiers column on supplier_material_bindings) — out of scope for
      this PR per task brief. */
-  const products = useMfgProducts();
+  // fresh: a compartment SKU made a minute ago must show in the unmapped notice.
+  const products = useMfgProducts({ fresh: true });
 
   const CATEGORY_ORDER: readonly string[] = [
     'BEDFRAME_SIZES',
@@ -792,6 +794,9 @@ const SupplierSkuPricingPanel = ({
           sofaHeights={sofaHeights}
           onClose={() => setImporting(false)}
         />
+      )}
+      {open && (
+        <UnmappedModelSkus supplierId={id} bindings={bindings} products={products.data ?? []} />
       )}
       {open && (bindings.length === 0 ? (
         <div className={styles.cardBody}>
@@ -1212,6 +1217,11 @@ const SOFA_TIER_CHIPS: { value: 'P1' | 'P2' | 'P3'; label: string }[] = [
 
 const SOFA_HEIGHT_FALLBACK = ['24', '26', '28', '30', '32', '35'];
 
+/** Column header for a seat-height. Pool values are free text: a bare number
+ *  gains its inch mark, anything typed with one (`25"`) or a word (`DEFAULT`)
+ *  shows as typed, so the header never reads `25""`. */
+export const seatHeightLabel = (h: string): string => (/^\d+(\.\d+)?$/.test(h.trim()) ? `${h.trim()}"` : h);
+
 const SofaSkuMappingsTable = ({
   supplierId,
   bindings,
@@ -1243,8 +1253,8 @@ const SofaSkuMappingsTable = ({
     ...bindingHeadColumns(supplierId, update),
     ...heights.map<GridColumn<BindingRow>>((h) => ({
       key: `h-${h}`,
-      label: `${h}"`,
-      width: 110,
+      label: seatHeightLabel(h),
+      width: 130,
       align: 'right',
       accessor: (b) => (
         <CellStop>
@@ -1292,6 +1302,7 @@ const SofaSkuMappingsTable = ({
           <button
             key={c.value}
             type="button"
+            aria-pressed={selectedTier === c.value}
             onClick={() => setSelectedTier(c.value)}
             style={{
               fontFamily: 'var(--font-button)',
@@ -1308,7 +1319,7 @@ const SofaSkuMappingsTable = ({
             {c.label}
           </button>
         ))}
-        <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-10)', color: 'var(--fg-soft)' }}>
+        <span style={{ marginInlineStart: 'var(--space-2)', fontSize: 'var(--fs-10)', color: 'var(--fg-soft)' }}>
           Cost per (seat-height × tier). Empty cell = "no price set".
         </span>
       </div>
@@ -1355,7 +1366,7 @@ const BedframeSkuMappingsTable = ({
     ...(['P1', 'P2'] as const).map<GridColumn<BindingRow>>((tier) => ({
       key: `price-${tier}`,
       label: tier === 'P1' ? 'Price 1' : 'Price 2',
-      width: 120,
+      width: 130,
       align: 'right',
       accessor: (b) => (
         <CellStop>

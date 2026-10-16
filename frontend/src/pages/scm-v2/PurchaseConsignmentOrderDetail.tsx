@@ -49,6 +49,7 @@ import {
   type SupplierRow,
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useMfgProducts, useMaintenanceConfig } from '../../vendor/scm/lib/mfg-products-queries';
+import { withMasterPickerPools } from '../../vendor/scm/lib/picker-maint';
 import { useFabricTrackingsLite } from '../../vendor/scm/lib/fabric-queries';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import {
@@ -57,7 +58,7 @@ import {
   type PoPriceMatrix,
 } from '@2990s/shared/mfg-pricing';
 import { PcLineCard, emptyPcLine, type PcLineDraft } from '../../vendor/scm/components/PcLineCard';
-import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+import { useConfirm, usePrompt } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipMapButton';
@@ -132,6 +133,7 @@ export const PurchaseConsignmentOrderDetail = () => {
   const addItem = useAddPurchaseConsignmentOrderItem();
   const updateItem = useUpdatePurchaseConsignmentOrderItem();
   const deleteItem = useDeletePurchaseConsignmentOrderItem();
+  const askPrompt = usePrompt();
   const askConfirm = useConfirm();
   const notify = useNotify();
 
@@ -158,10 +160,13 @@ export const PurchaseConsignmentOrderDetail = () => {
     poSupplierId ? `supplier:${poSupplierId}` : '',
     { enabled: Boolean(poSupplierId) },
   );
-  const masterMaintQ = useMaintenanceConfig('master', {
-    enabled: !poSupplierId || !supplierMaintQ.data?.data,
-  });
+  const masterMaintQ = useMaintenanceConfig('master');
   const maint = supplierMaintQ.data?.data ?? masterMaintQ.data?.data ?? null;
+  /* Dropdown options follow master; the supplier overlay only prices them (BUG-60). */
+  const pickerMaint = useMemo(
+    () => withMasterPickerPools(maint, masterMaintQ.data?.data ?? null),
+    [maint, masterMaintQ.data?.data],
+  );
   const fabrics = useFabricTrackingsLite().data ?? [];
 
   const categoryForCode = (code: string): string | undefined =>
@@ -269,9 +274,12 @@ export const PurchaseConsignmentOrderDetail = () => {
      exist until the record has loaded. */
   const deliverPrintPdf = (action: PdfAction) => {
     if (!po) return;
+    /* The PO generator prints po_number, which a PCO record does not carry (DEV-57). */
+    const pdfHeader = { ...po, po_number: pcNo };
+    const purchaseLocation = warehousesForLines.find((w) => w.id === po.purchase_location_id)?.code ?? null;
     return import('../../vendor/scm/lib/purchase-order-pdf')
       .then(({ generatePurchaseOrderPdf }) =>
-        generatePurchaseOrderPdf(po as never, items as never, { docTitle: 'PURCHASE CONSIGNMENT ORDER', action }))
+        generatePurchaseOrderPdf(pdfHeader as never, items as never, { docTitle: 'PURCHASE CONSIGNMENT ORDER', purchaseLocation, action }))
       .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
   };
   const print = usePrintPreview(deliverPrintPdf);
@@ -519,13 +527,15 @@ export const PurchaseConsignmentOrderDetail = () => {
             {(po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (
               <Button variant="ghost" size="md"
                 onClick={async () => {
-                  if (!(await askConfirm({
-                    title: `Cancel ${pcNo}?`,
-                    body: 'This sets status to CANCELLED — line items + linked docs stay for audit.',
-                    confirmLabel: 'Cancel PO',
-                    danger: true,
-                  }))) return;
-                  cancel.mutate(po.id, {
+                 const reason = await askPrompt({
+                  title: `Cancel ${pcNo}?`, 
+                  body: 'It will stop proceeding.', 
+                  confirmLabel: 'Cancel PO', 
+                  danger: true,
+                  input: { label: 'Why it is cancelled', required: true },
+                });
+                if (reason === null) return;
+                  cancel.mutate({id:po.id, reason}, {
                     onError: (err) => notify({ title: 'Cancel failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
                   });
                 }}
@@ -612,7 +622,7 @@ export const PurchaseConsignmentOrderDetail = () => {
                 bindings={bindings}
                 allSkus={allSkus}
                 warehouses={warehousesForLines}
-                maint={maint}
+                maint={pickerMaint}
                 fabrics={fabrics}
                 onChange={(patch) => patchLine(l.rid, patch)}
                 onPickBinding={(b) => pickBinding(l.rid, b)}
@@ -771,9 +781,25 @@ const SupplierCard = ({
                 const wh = warehouses.find((w) => w.id === po.purchase_location_id);
                 return wh ? wh.code : null;
               })()} />
-            <div style={{ gridColumn: 'span 2' }}>
+
+          <div style={{ gridColumn: 'span 2' }}>
               <InfoCell label="Notes" value={po.notes || null} />
+          </div>
+          {po.status === 'CANCELLED' && (
+            <div style={{ gridColumn: 'span 2' }}>
+              <InfoCell label="Cancel reason" value={po.cancel_reason || null} />
             </div>
+          )}
+            {/* Raised from a product request (owner 2026-10-06) — the request it answers. */}
+            {(() => {
+              const pr = (po as { productRequest?: { id: string; requestNo: string; status: string } | null }).productRequest;
+              return pr ? (
+                <div>
+                  <div style={{ fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--fg-muted)' }}>From Product Request</div>
+                  <Link to="/scm/product-requests" style={{ fontFamily: 'var(--font-mono)', color: 'var(--c-orange)' }}>{pr.requestNo}</Link>
+                </div>
+              ) : null;
+            })()}
           </div>
         ) : (
         <div className={styles.formGrid4}>

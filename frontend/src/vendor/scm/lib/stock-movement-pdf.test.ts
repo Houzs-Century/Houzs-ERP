@@ -482,6 +482,36 @@ describe('Stock Take PDF', () => {
     expect(footers.length).toBe(doc.getNumberOfPages());
   });
 
+  /* Owner 2026-10-06: a 704-line Category take printed to 40+ pages. The sheet
+     is one line per row now, and an OPEN sheet carries a blank RACK column to
+     write where the goods actually sit. */
+  test('an OPEN 704-line count sheet is compact and has a Rack column', async () => {
+    const many = Array.from({ length: 704 }, (_, i) => ({
+      item_code: `AKEMI APEX MATT (${i})`,
+      product_name: `AKEMI APEX MATTRESS (183X190X30CM) WITH A LONG NAME ${i}`,
+      variant_key: '', variant_label: null,
+      system_qty: 0, counted_qty: null, variance: null, notes: null,
+    }));
+    const { doc, draws } = await renderTake({ ...TAKE_HEADER, status: 'OPEN', posted_at: null }, many);
+    expect(doc.getNumberOfPages()).toBeLessThanOrEqual(18);
+    const text = draws.map((d) => d.text);
+    expect(text).toContain('Rack');
+    expect(text).not.toContain('Variance');
+  });
+
+  test('the printed variant is the short form', async () => {
+    const { printVariant } = await import('./stock-take-pdf');
+    expect(printVariant('fabriccode pc151-01 · gap 12" · divanheight 10" · legheight 1" · special hb fully covered'))
+      .toBe('pc151-01 · gap 12" · divan 10" · leg 1" · hb fully covered');
+  });
+
+  test('a POSTED sheet shows Variance in place of Rack', async () => {
+    const { draws } = await renderTake(TAKE_HEADER, TAKE_LINES);
+    const text = draws.map((d) => d.text);
+    expect(text).toContain('Variance');
+    expect(text).not.toContain('Rack');
+  });
+
   test('a scope with a value spells the value out', async () => {
     const { draws } = await renderTake(
       { ...TAKE_HEADER, scope_type: 'CODE_PREFIX', scope_value: 'CODY' },

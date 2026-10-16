@@ -108,6 +108,7 @@ import {
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { SoLineCard, emptySoLine, missingRequiredVariants, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
+import { pickDefaultVariants } from '../../vendor/shared/model-default-variants';
 /* FIX (d) scan fabric seed — resolve a scanned fabric code (e.g. "BO315-22")
    to the SAME fabric_colours / fabric_library rows SoLineCard's pickFabricColour
    uses, so the matched colour rides onto the seeded line's variants instead of
@@ -125,6 +126,7 @@ import {
   missingMethodSubField, parseInstallmentMonths, slipDateProblem, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
 import { useOrdersWithMoney } from '../../vendor/scm/lib/so-money-queries';
+import { SLIP_REQUIRED_REASON, slipMissingProblem } from '../../vendor/scm/lib/payment-slip-gate';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
 import { consoleAttachOptions, fmtMoneySen } from '@2990s/shared';
@@ -477,14 +479,9 @@ export const SalesOrderNew = () => {
         onlineType:             p.onlineTypeValue || '',
         approvalCode:           p.approvalCode || '',
         amountSen:            p.depositSen > 0 ? p.depositSen : 0,
-        /* Bug #3 (2026-06-24) — the card receipt scanned in the modal IS this
-           deposit's slip. Tag the draft with the receipt's R2 key so the save
-           records the deposit through the SO-create proof (receiptImageKey on
-           the header) rather than the per-payment slip route. This used to be
-           what satisfied the slip-required guard; that guard is gone (Owner
-           2026-08-13) but the ROUTING still matters — without the tag the row
-           would post as an ordinary payment and the receipt would never land
-           on it. */
+        /* Bug #3 (2026-06-24) — the scanned card receipt IS this deposit's slip (it satisfies
+           slipMissingProblem). The tag routes the row through the SO-create proof (receiptImageKey
+           on the header) rather than the per-payment slip route; untagged, the receipt lands on nothing. */
         receiptImageKey:        payload.receiptImageKey || '',
       }]);
     }
@@ -717,11 +714,10 @@ export const SalesOrderNew = () => {
 
   /* Desktop sofa multi-add (MobileSkuPicker.onPickMany parity). SoLineCard's
      multi-select commits the FIRST tick to the current line and hands the REST
-     here — each becomes a fresh line seeded exactly like a single pick: real
-     itemGroup, SKU sell price, and the same category variant inherit (so a
-     second, third… sofa in the same shot follows LINE 1's seat/leg the way a
-     manually-added follower line would; the per-sofa colour sync stays scoped
-     to real split builds). */
+     here — each seeded exactly like a single pick: real itemGroup, SKU sell
+     price, Model default variants under the same category inherit (a second
+     sofa in the same shot follows LINE 1's seat/leg like a manually-added
+     follower; the per-sofa colour sync stays scoped to real split builds). */
   const addProducts = (rows: MfgProductRow[]) => {
     if (rows.length === 0) return;
     setLines((prev) => {
@@ -734,7 +730,7 @@ export const SalesOrderNew = () => {
           itemGroup:      category,
           description:    p.name,
           unitPriceSen: p.sell_price_sen ?? 0,
-          variants:       seedFollowerVariants(inheritVariantsByCategory[category]),
+          variants: { ...pickDefaultVariants(p.category, p.model_default_variants, p.allowed_options), ...seedFollowerVariants(inheritVariantsByCategory[category]) },
           overriddenKeys: [],
         };
       });
@@ -1231,10 +1227,8 @@ export const SalesOrderNew = () => {
           accountSheet:    d.accountSheet || null,
           approvalCode:    d.approvalCode || null,
           collectedBy:     d.collectedBy  || null,
-          /* Null when the operator attached none — the slip is OPTIONAL
-             (Owner 2026-08-13) and the route records a slip-less payment.
-             A row is posted on its AMOUNT alone; never filter this list on the
-             slip, or the payment silently never books. */
+          /* The slip is required (owner 2026-10-13) but gated BEFORE the save (slipMissingExtras);
+             a row is posted on its AMOUNT alone — never filter on the slip, or the payment silently never books. */
           uploadSessionId: d.slipUploadSessionId,
         };
         /* Task #122 (cascade) — replay the L2 picks per method so the
@@ -1461,9 +1455,15 @@ export const SalesOrderNew = () => {
       ? [{ code: 'slip_date_out_of_window', message: problems[0]!, field: 'Payment date' }]
       : [];
   }, [paymentDrafts, can]);
+  /* The proof (owner 2026-10-13, lib/payment-slip-required): every keyed row carries its slip
+     before the order is saved (the rows post AFTER the create). A scanned receipt or a converted row needs none. */
+  const slipMissingExtras = useMemo<SaveProblem[]>(() => {
+    const missing = paymentDrafts.filter((d) => d.amountSen > 0 && slipMissingProblem(d) !== null).length;
+    return missing > 0 ? [{ code: 'slip_required', message: `${missing} payment${missing === 1 ? ' has' : 's have'} no slip attached. ${SLIP_REQUIRED_REASON}`, field: 'Payment slip' }] : [];
+  }, [paymentDrafts]);
   const blockingProblems = useMemo(
-    () => [...backendLiveProblems, ...scannedExtras, ...slipDateExtras],
-    [backendLiveProblems, scannedExtras, slipDateExtras],
+    () => [...backendLiveProblems, ...scannedExtras, ...slipMissingExtras, ...slipDateExtras],
+    [backendLiveProblems, scannedExtras, slipDateExtras, slipMissingExtras],
   );
   const openBlockingList = () => {
     void notify({ title: saveProblemsTitle(blockingProblems.length), body: <SaveProblemsList problems={blockingProblems} />, tone: 'error' });
@@ -1531,7 +1531,7 @@ export const SalesOrderNew = () => {
       // failure must not block the operator, and the create call below is the
       // authoritative gate that surfaces any real refusal.
     }
-    const problems = [...serverProblems, ...scannedExtras, ...slipDateExtras];
+    const problems = [...serverProblems, ...scannedExtras, ...slipMissingExtras, ...slipDateExtras];
     if (problems.length > 0) {
       void notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: 'error' });
       return;
@@ -1575,11 +1575,9 @@ export const SalesOrderNew = () => {
        exactly `paymentIntents()` — what flushPaymentDrafts is about to post,
        which by its own filter excludes the receipt-backed deposit the create
        body already carries — so this can neither claim money the client is not
-       about to record nor count the same ringgit twice. It used to ALSO demand
-       a slip session; once the slip became optional (Owner 2026-08-13) that
-       would have re-opened the very deadlock this field exists to close, a
-       slip-less deposit counting as RM0 against a Processing Date the operator
-       can see is paid for. */
+       about to record nor count the same ringgit twice. Never the slip: a
+       slip filter here once counted a deposit as RM0 against a Processing Date
+       the operator could see was paid for. */
     const pendingDepositSen = paymentIntents()
       .reduce((sum, d) => sum + d.amountSen, 0);
 

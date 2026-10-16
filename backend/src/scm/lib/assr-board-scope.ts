@@ -40,6 +40,15 @@ import type { CompanyScopeCtx } from './companyScope';
 /** The board's Service-Case (ASSR) union — OPEN cases carrying a driving date
  *  (customer pickup, own-team inspection visit, or delivery-back), restricted to
  *  the caller's granted companies. */
+/** The legs a Service Case runs on the delivery board — one row each, keyed
+ *  `<assr_no>#<leg>` — and the leg a crew completes through /delivery-jobs. */
+export const ASSR_BOARD_LEGS = ['customer_pickup', 'delivery', 'inspection'] as const;
+
+/** The trip stop type a Service Case leg rides -> that leg. */
+export const ASSR_LEG_BY_STOP: Record<string, string> = {
+  PICKUP: 'customer_pickup', INSPECTION: 'inspection', DELIVERY: 'delivery', SERVICE: 'delivery',
+};
+
 export function assrBoardUnionSql(c: CompanyScopeCtx): string {
   return `SELECT id            AS id,
               assr_no       AS assr_no,

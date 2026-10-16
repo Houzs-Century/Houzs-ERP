@@ -63,13 +63,15 @@ import { CATEGORY_BADGE } from '../lib/category-badges';
 import { sortByNumeric } from '../lib/sort-options';
 import { posRemarkSpecialOf } from '../lib/pos-remark-special';
 import { seedFollowerVariants } from '../lib/so-variant-cascade';
+import { pickDefaultVariants } from '../../shared/model-default-variants';
+import { priceBoxAuthored } from '../lib/zeroPriceClaim';
 import { useAnchoredPanel, anchoredPanelStyle } from '../../../lib/anchoredPanel';
 import { useNotify } from './NotifyDialog';
 import { SpecialOrders } from './SpecialOrders';
 import styles from './SoLineCard.module.css';
 import { DateField } from "./DateField";
 import { DiscountInput } from './DiscountInput';
-import { NumberInput } from './NumberInput';
+import { NumberInput, cleanNumericText } from './NumberInput';
 import { dropOneMultiPick, isSofaGroup, multiPickCount, tapMultiPick } from '../lib/sofa-piece-lines';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -376,6 +378,10 @@ const SoLineCardInner = ({
      from the canonical centi only when it changes from outside, e.g. a
      product pick resets it to 0. */
   const [priceText, setPriceText] = useState((amountCellSen / 100).toFixed(2));
+  const [priceTyping, setPriceTyping] = useState(false);
+  /* The price the line had when this edit of the box began: an emptied box
+     requests no new price, so the line shows (and keeps) this one. */
+  const priceBeforeEdit = useRef<Pick<SoLineDraft, 'unitPriceSen' | 'priceAuthored'>>({ unitPriceSen: 0 });
   /* Load the full catalog ONCE (cached 5 min) and filter it LOCALLY — the picker
      no longer fires a `/mfg-products?search=` request per keystroke, so typing
      stays instant even while the Worker is slow or dropping connections (owner
@@ -476,6 +482,7 @@ const SoLineCardInner = ({
   // operator's in-progress typing untouched. On a fee line the canonical value
   // is the NET, so a rebuilt discount lands here too.
   useEffect(() => {
+    if (!priceBoxAuthored(priceText)) return; // a box emptied mid-edit stays empty
     const parsed = Math.round(Number(priceText) * 100) || 0;
     if (parsed !== amountCellSen) setPriceText((amountCellSen / 100).toFixed(2));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -492,6 +499,11 @@ const SoLineCardInner = ({
        lib/so-variant-cascade so the never-inherited keys are stripped in one
        place. PR #147 — reset overriddenKeys on a fresh pick. */
     const seedVariants = seedFollowerVariants(inheritVariantsByCategory?.[category]);
+    /* Model default variants pre-fill under the inherited ones, only where
+       this document specifies the build (same gate as the sofa Leg default). */
+    const defaults = seedSofaLegDefault
+      ? pickDefaultVariants(p.category, p.model_default_variants, p.allowed_options)
+      : {};
     onChange({
       itemCode:       p.code,
       itemGroup:      category,
@@ -503,7 +515,9 @@ const SoLineCardInner = ({
          never auto-populates). The server recompute stays authoritative at
          save; sofa module / seat-height pools land their exact figure there. */
       unitPriceSen: p.sell_price_sen ?? 0,
-      variants:       seedVariants,
+      // A seeded price is not a typed one: its 0 must not be claimed as free (BUG-63).
+      priceAuthored:  false,
+      variants:       { ...defaults, ...seedVariants },
       overriddenKeys: [],
     });
     setSearch(p.name);
@@ -699,9 +713,13 @@ const SoLineCardInner = ({
      RM 0 on Backend-keyed lines. Now takes the full FabricColourRow straight
      from the combobox's selection (identical shape to the old library row), so
      the written variant payload is byte-for-byte what the <select> produced. */
+  const fabricSeries = useMemo(
+    () => new Map((fabricLibQ.data ?? []).map((f) => [f.id, f.label] as [string, string])),
+    [fabricLibQ.data],
+  );
   const pickFabricColour = (c: FabricColourRow) => {
     const colourId = c.colourId;
-    const seriesLabel = (fabricLibQ.data ?? []).find((f) => f.id === c.fabricId)?.label ?? null;
+    const seriesLabel = fabricSeries.get(c.fabricId) ?? null;
     setVariants({
       fabricCode: colourId,
       colourId,
@@ -797,7 +815,7 @@ const SoLineCardInner = ({
   const menuPos = useAnchoredPanel(pickerWrapRef, showPicker && isEditing, SUGGEST_LIST_MAX_H);
 
   return (
-    <div className={styles.card}>
+    <div data-grid-row className={styles.card}>
       {/* ── Main single row ────────────────────────────────────────── */}
       <div className={styles.row}>
         {/* 1. No # */}
@@ -962,10 +980,13 @@ const SoLineCardInner = ({
           onChange={(e) => onChange({ remark: e.target.value })}
         />
 
-        {/* 4. Qty */}
+        {/* 4. Qty — DEV-62 (Adrian): qty is a small count, so it gets the
+             up/down arrows; the Unit Price beside it is typed. */}
         <NumberInput
           sign="unsigned"
           decimal={false}
+          step={1}
+          min={1}
           className={styles.numericInput}
           value={draft.qty === 0 ? null : draft.qty}
           disabled={!isEditing}
@@ -978,10 +999,16 @@ const SoLineCardInner = ({
              amount cell is impossible to miss between the qty and date
              columns that sit either side of it. */}
         <input
-          type="number"
-          step="0.01"
+          type="text"
+          inputMode="decimal"
           className={styles.priceInput}
-          value={priceText}
+          /* DEV-62 (Adrian, PC + saved lines): any RM 0 shows as the
+             placeholder so typing a price does not start with deleting
+             "0.00". A 0 shows only while being typed, so "0" / "0.5" can
+             still be keyed in. A fee line keeps its 0.00: there it means
+             the fee is waived. */
+          value={!isFeeLine && amountCellSen === 0 && !priceTyping ? '' : priceText}
+          placeholder="0.00"
           disabled={!isEditing || !canEditPrice}
           title={
             !canEditPrice ? 'Price follows the SKU Master sell price — admin can override'
@@ -989,8 +1016,10 @@ const SoLineCardInner = ({
               : undefined
           }
           onChange={(e) => {
-            const t = e.target.value;
+            const t = cleanNumericText(e.target.value, 'signed', true);
+            if (!priceTyping) priceBeforeEdit.current = { unitPriceSen: draft.unitPriceSen, priceAuthored: draft.priceAuthored };
             setPriceText(t);
+            setPriceTyping(true);
             if (isFeeLine) {
               /* A BLANK box is mid-edit, not "waive the fee". `Number('')` is
                  0, which would read as charge-nothing and discount the whole
@@ -1001,9 +1030,11 @@ const SoLineCardInner = ({
               onChange({ discountSen: feeDiscountForAmount(feeGrossSen, Math.round(n * 100)) });
               return;
             }
-            onChange({ unitPriceSen: Math.round(Number(t) * 100) || 0, priceAuthored: true });
+            onChange(priceBoxAuthored(t)
+              ? { unitPriceSen: Math.round(Number(t) * 100), priceAuthored: true }
+              : priceBeforeEdit.current);
           }}
-          onBlur={() => setPriceText((amountCellSen / 100).toFixed(2))}
+          onBlur={() => { setPriceTyping(false); setPriceText((amountCellSen / 100).toFixed(2)); }}
         />
 
         {/* 6. Discount — owner 2026-09-12: the sales side had no discount field
@@ -1108,6 +1139,8 @@ const SoLineCardInner = ({
             <FabricColourCombobox
               label="Fabrics" required={variantsRequired}
               value={String(draft.variants.fabricCode ?? '')}
+              colourLabel={String(draft.variants.colourLabel ?? '')}
+              fabricSeries={fabricSeries}
               disabled={!isEditing}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
@@ -1171,6 +1204,8 @@ const SoLineCardInner = ({
             <FabricColourCombobox
               label="Fabrics" required={variantsRequired}
               value={String(draft.variants.fabricCode ?? '')}
+              colourLabel={String(draft.variants.colourLabel ?? '')}
+              fabricSeries={fabricSeries}
               disabled={!isEditing}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
@@ -1187,6 +1222,8 @@ const SoLineCardInner = ({
             <FabricColourCombobox
               label="Fabrics" required={variantsRequired}
               value={String(draft.variants.fabricCode ?? '')}
+              colourLabel={String(draft.variants.colourLabel ?? '')}
+              fabricSeries={fabricSeries}
               disabled={!isEditing}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
@@ -1544,12 +1581,16 @@ const VariantSelect = ({
    ────────────────────────────────────────────────────────────────────── */
 
 const FabricColourCombobox = ({
-  label, value, onSelect, disabled = false, required = false, pool, inactiveCodes, itemCode,
+  label, value, colourLabel, fabricSeries, onSelect, disabled = false, required = false, pool, inactiveCodes, itemCode,
 }: {
   label:    string;
+  /** draft.variants.colourLabel — shown after the code when closed, as the phone's FabricField does. */
+  colourLabel: string;
+  /** fabric_library id → series label, for the dropdown's second line. */
+  fabricSeries: Map<string, string>;
   /** The line's SKU — the server applies its Model's pool before the 50 cap. */
   itemCode: string | null;
-  /** Selected colour code (draft.variants.fabricCode). Shown verbatim when closed. */
+  /** Selected colour code (draft.variants.fabricCode). Shown (plus colourLabel) when closed. */
   value:    string;
   /** Non-empty = restrict to these colour codes (Model allowed_options.fabrics). */
   pool?:    string[] | null;
@@ -1589,6 +1630,7 @@ const FabricColourCombobox = ({
   const menuPos = useAnchoredPanel(wrapRef, open && !disabled, SUGGEST_LIST_MAX_H);
 
   const invalid = required && !value;
+  const shown = value && colourLabel && colourLabel !== value ? `${value} — ${colourLabel}` : value;
 
   return (
     <label className={styles.variantField}>
@@ -1598,7 +1640,7 @@ const FabricColourCombobox = ({
           className={styles.select}
           /* Closed → show the selected code (NEVER blank a saved fabric).
              Open  → show the operator's live search term. */
-          value={open ? search : value}
+          value={open ? search : shown}
           placeholder={value ? undefined : 'Type 2+ chars to search…'}
           disabled={disabled}
           /* Owner 2026-08-09 — like the native Divan/Gap selects, opening must
@@ -1608,7 +1650,7 @@ const FabricColourCombobox = ({
           onBlur={() => setTimeout(() => setOpen(false), 150)}
           onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
           style={invalid && !disabled ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
-          title={value || undefined}
+          title={shown || undefined}
         />
         {menuPos && createPortal(
           <ul
@@ -1616,18 +1658,24 @@ const FabricColourCombobox = ({
             style={{ ...anchoredPanelStyle(menuPos), right: 'auto', marginTop: 0 }}
           >
             {results.length > 0 ? (
-              /* Owner 2026-06-23: show ONLY the fabric code — the code IS the
-                 fabric's identity. onMouseDown + preventDefault keeps the input
-                 focused so the portal doesn't blur-close before the pick lands. */
-              results.map((c) => (
-                <li
-                  key={c.colourId}
-                  className={styles.suggestItem}
-                  onMouseDown={(e) => { e.preventDefault(); onSelect(c); setSearch(''); setOpen(false); }}
-                >
-                  {c.colourId}
-                </li>
-              ))
+              /* The code leads (it IS the fabric's identity, owner 2026-06-23);
+                 series and colour name follow on a second line, as on the
+                 phone's fabric sheet (DEV-61). onMouseDown + preventDefault
+                 keeps the input focused so the portal doesn't blur-close before
+                 the pick lands. */
+              results.map((c) => {
+                const meta = [fabricSeries.get(c.fabricId) ?? '', c.label ?? ''].filter(Boolean).join(' · ');
+                return (
+                  <li
+                    key={c.colourId}
+                    className={styles.suggestItem}
+                    onMouseDown={(e) => { e.preventDefault(); onSelect(c); setSearch(''); setOpen(false); }}
+                  >
+                    <div className={styles.suggestItemCode}>{c.colourId}</div>
+                    {meta && <div className={styles.suggestItemMeta}>{meta}</div>}
+                  </li>
+                );
+              })
             ) : (
               <li className={styles.suggestItem} style={{ color: 'var(--fg-muted)', cursor: 'default' }}>
                 {trimmed.length < 2

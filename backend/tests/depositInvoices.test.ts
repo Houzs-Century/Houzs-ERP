@@ -14,7 +14,10 @@
        invoice_noted (owner 2026-09-21: closed-DI guard 做);
      • the routes: the list and its status filter, the switch (a start day is
        required to switch on), the backlog count and button, cancel with a
-       reason, post again, and the permission gate.
+       reason, post again, and the permission gate;
+     • the print sheets (owner 2026-10-06: the Sales Invoice's A4 layout): in
+       the order asked, each with its order's address, phone, e-mail and total
+       and what had been received on it by THAT deposit.
    Same fake-PostgREST harness as tests/creditNotes.test.ts. */
 
 import { Hono } from 'hono';
@@ -312,6 +315,35 @@ describe('the routes', () => {
     expect(await twice.json()).toMatchObject({ ok: true, status: 'already_cancelled' });
     const postCancelled = await json(app, `/deposit-invoices/${id}/post`, 'POST', {});
     expect(postCancelled.status).toBe(409);
+  });
+
+  test('the print sheets: in the order asked, each with its order and what had been received by that deposit', async () => {
+    const pays = [
+      payment('p-1', { paid_at: '2026-09-05', created_at: '2026-09-05T03:00:00Z' }),
+      payment('p-2', { amount_sen: 50_000, paid_at: '2026-09-06', created_at: '2026-09-06T03:00:00Z' }),
+      payment('p-3', { amount_sen: 30_000, paid_at: '2026-09-09', created_at: '2026-09-09T03:00:00Z' }),
+    ];
+    const { app, sb } = harness({ settings: [ON], payments: pays });
+    Object.assign((sb.tables.mfg_sales_orders as Row[])[0]!, {
+      ship_to_address: null, address1: '12 Jalan Satu', address2: null, address3: null, address4: null, postcode: '47300',
+      city: 'Petaling Jaya', customer_state: 'Selangor', phone: '0123456789', email: 'larding@example.com', local_total_sen: 336_500,
+    });
+    for (const p of pays) await bookSoPaymentBestEffort(sb, p, 'payment');
+    const [d1, d2] = dis(sb);
+    const res = await json(app, `/deposit-invoices/sheets?ids=${String(d2!.id)},${String(d1!.id)},not-an-invoice`, 'GET');
+    expect(res.status).toBe(200);
+    const { sheets } = await res.json() as { sheets: Array<Row & { order: Row | null }> };
+    /* As asked — an id that is no invoice here is skipped. */
+    expect(sheets.map((x) => x.di_number)).toEqual(['2990-DI-2609-002', '2990-DI-2609-001']);
+    /* By DI-002 (p-2): p-1 and p-2 had been received — never the later p-3. */
+    expect(sheets[0]!.order).toMatchObject({
+      address1: '12 Jalan Satu', postcode: '47300', city: 'Petaling Jaya', customer_state: 'Selangor',
+      phone: '0123456789', email: 'larding@example.com', total_sen: 336_500, paid_to_date_sen: 150_000,
+    });
+    expect(sheets[1]!.order).toMatchObject({ paid_to_date_sen: 100_000 });
+    expect(await (await json(app, '/deposit-invoices/sheets', 'GET')).json()).toEqual({ sheets: [] });
+    const many = Array.from({ length: 201 }, (_, i) => `id-${i}`).join(',');
+    expect((await json(app, `/deposit-invoices/sheets?ids=${many}`, 'GET')).status).toBe(400);
   });
 
   test('the switch, the backlog button, post and cancel answer 403 without the PV keys; reading does not', async () => {

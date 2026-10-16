@@ -60,6 +60,7 @@ import { advanceSoGeneration } from './so-generation';
 import { enqueueStockAllocationRecompute } from './stock-allocation-queue';
 import { SO_TERMINAL_STATES_PGREST } from '../shared/so-terminal-states';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
+import { liveStatusForProcessingDate } from '../shared/so-proceeded-status';
 import { loadNonSellingWarehouses, warehouseCanPromise } from './non-selling-warehouse';
 import { pgrestIn } from './pgrest-in-list';
 
@@ -724,7 +725,7 @@ async function runSoStockAllocation(
          that could answer differently. Reading a superset and intersecting is
          exact — `dedicatedReady` is only ever consulted for bound line ids. */
       const boundIds = new Set([...boundNeeds.map((n) => n.id), ...sofaLineRecs.map((s) => s.id)]);
-      const { data: poLinkRows } = await paginateAll<{
+      const { data: poLinkRows, error: poLinkError } = await paginateAll<{
         id: string; po_items: Array<{ qty: number; received_qty: number | null }> | null;
       }>((from, to) => sb
         .from('mfg_sales_order_items')
@@ -734,6 +735,12 @@ async function runSoStockAllocation(
         .gt('po_items.received_qty', 0)
         .order('id')
         .range(from, to));
+      /* Unchecked until the READY audit (F3, 2026-10-16): a failed read looked
+         like "no PO has received anything", so every bound READY line was
+         written PENDING and READY_TO_SHIP orders regressed, under ok:true with
+         no retry. Throwing here, before step 8 writes anything, turns it into
+         the wrapper's queued retry like the other reads in this function. */
+      if (poLinkError) throw new Error(`allocation PO-receipt load failed: ${poLinkError.message}`);
       for (const r of poLinkRows ?? []) {
         if (!boundIds.has(r.id)) continue;
         for (const p of r.po_items ?? []) {
@@ -1148,10 +1155,14 @@ async function runSoStockAllocation(
           deferredDocNos.push(`${docNo}:${advanced.reason}`);
         }
       } else if (!r.isShipReady && cur === 'READY_TO_SHIP') {
-        const regressed = await advanceSoGeneration(sb, docNo, { status: 'CONFIRMED' }, { status: cur });
+        /* Back to where the date says it belongs: a proceeded order that loses
+           its stock is still proceeded (shared/so-proceeded-status.ts), so it
+           regresses to IN_PRODUCTION, not to Submitted. */
+        const regressTo = liveStatusForProcessingDate(order.processing_date);
+        const regressed = await advanceSoGeneration(sb, docNo, { status: regressTo }, { status: cur });
         if (regressed.applied) {
           ordersRegressed += 1;
-          await auditAutoStatus(cur, 'CONFIRMED', r.mainCount + r.accCount === 0
+          await auditAutoStatus(cur, regressTo, r.mainCount + r.accCount === 0
             ? 'Auto-regressed: the order has no stock-bearing lines — not ship-able'
             : 'Auto-regressed: a main product line is no longer READY (stock re-allocated)');
         } else {

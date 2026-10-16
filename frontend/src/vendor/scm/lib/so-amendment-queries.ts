@@ -99,10 +99,21 @@ export type AmendmentDetail = {
        they replace. NULL/absent on a line-only amendment. */
     header_changes?: SoAmendmentHeaderChanges | null;
     old_header_snapshot?: SoAmendmentHeaderChanges | null;
+    /* BUG-101 — the Purchaser's OK on a Delivery Date brought forward. */
+    purchaser_ok_by?: string | null;
+    purchaser_ok_at?: string | null;
+    /* BUG-101 — the requester changed a PO-frozen Processing Date under
+       scm.so.override_po_processing_date. */
+    po_date_override_by?: string | null;
   };
   lines: AmendmentLine[];
   salesOrder: { doc_no: string; status: string; revision: number } | null;
   purchaseOrders: Array<{ id: string; po_number: string; status: string }>;
+  /** The caller raised this amendment (server-resolved staff identity). */
+  viewerIsRequester?: boolean;
+  /** BUG-101 — an open Logistic request that brings the Delivery Date forward on
+   *  an order with a live PO: a Purchaser must OK it before Logistic approves. */
+  purchaserOkRequired?: boolean;
 };
 
 /* SO revision snapshot row — one per approved SO revision (so_revisions).
@@ -124,6 +135,8 @@ export type CreateAmendmentLine = {
   newVariants?: unknown;
   newQty?: number;
   newUnitPriceSen?: number;
+  /* HC-0095 — sent with a TYPED 0 only; the apply ignores a 0 without it. */
+  zeroPriceIntended?: true;
   /* mig 0280 — the line's REMARK. Omit when the request does not touch it; ''
      is a real request to clear it. Before 0280 this had no column and the
      submit dropped it in silence (owner 2026-08-11, 2990-SO-2608-016). */
@@ -431,6 +444,17 @@ export const useRejectAmendment = () => {
       authedFetch<{ amendment: AmendmentRow }>(`/so-amendments/${id}/reject`, {
         method: 'PATCH', body: JSON.stringify({ reason }),
       }),
+    onSuccess: (_, vars) => invalidateAmendmentSideEffects(qc, vars.id),
+  });
+};
+
+/* BUG-101 — the Purchaser's OK on a Delivery Date brought forward. Applies
+   nothing; Logistic's approve can run once it is recorded. */
+export const usePurchaserOk = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id }: { id: string }) =>
+      authedFetch<{ amendment: AmendmentRow }>(`/so-amendments/${id}/purchaser-ok`, { method: 'PATCH' }),
     onSuccess: (_, vars) => invalidateAmendmentSideEffects(qc, vars.id),
   });
 };

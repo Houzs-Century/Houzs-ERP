@@ -65,6 +65,7 @@ import {
 import { useAuth } from '../../auth/AuthContext';
 import styles from './SalesOrderDetailListing.module.css';
 import { customerRefOf } from '../../lib/customer-ref';
+import { soExemptionExpiryOf } from '../../lib/so-exemption-expiry';
 import { soListStatusWord } from '../../vendor/scm/lib/so-line-export-columns';
 
 /* Bump the storage key when migrating to the Houzs layout — the previous
@@ -441,9 +442,9 @@ const buildColumns = (canFinance: boolean): GridColumn<SoDetailListingRow>[] => 
     },
     /* 28 */ {
       key: 'tax_expiry', label: 'Tax Exemption Expiry', width: 150, sortable: true,
-      accessor: (r) => fmtDateOrDash(r.sales_exemption_expiry),
-      searchValue: (r) => r.sales_exemption_expiry ?? '',
-      filterType: 'date', dateValue: (r) => r.sales_exemption_expiry,
+      accessor: (r) => fmtDateOrDash(soExemptionExpiryOf(r)),
+      searchValue: (r) => soExemptionExpiryOf(r) ?? '',
+      filterType: 'date', dateValue: (r) => soExemptionExpiryOf(r),
     },
     /* 29 */ {
       key: 'note', label: 'Note', width: 160, sortable: true,

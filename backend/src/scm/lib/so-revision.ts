@@ -45,7 +45,7 @@ import {
 } from './mfg-pricing-recompute';
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { deriveMfgPoUnitCost } from './po-pricing';
-import { readMfgProductBindings } from './supplier-bindings';
+import { pickAddLineBinding, readMfgProductBindings } from './supplier-bindings';
 import { rederivePoLineFromSoLine, type RevisedSoLine } from './po-line-rederive';
 import {
   rederiveDeliveryFee,
@@ -54,17 +54,26 @@ import {
   deriveWarehouseIdFromState,
 } from '../routes/mfg-sales-orders';
 import { activeCompanyId, isMirroredDocNo, houzsOwns2990 } from './companyScope';
+import { scopeToCompanyIdOrOpen } from './companyScope';
 import { todayMyt } from './my-time';
 import { dateOrNull } from './date-coerce';
 import { soWarehouseIdForDoc } from './so-warehouse';
 import { variantsForCompare } from './amendment-noop-lines';
 import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine } from './po-line-order';
+import {
+  LEAD_OVERRIDE_SELECT, LEAD_TIME_SELECT, NO_BUFFERS, loadLeadTimeBase, loadSupplierCategoryOverrides,
+  resolveLeadDays, subtractCalendarDays, type LeadBuffers, type LeadOverrides, type LeadTimeBase,
+} from './lead-time';
+import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import { soIsMigratedShape } from './so-is-migrated';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
 import { soAmendableHeaderFields } from '../shared/so-field-policy';
 import { canonicaliseSoHeaderChanges, soDateYmd, withProcessingRemovalCascade } from '../shared/so-processing-date';
 import { soStatusAfterProcessingDateChange } from './so-proceed-status-change';
+import { syncSoDeliveredFromDo } from './so-delivery-sync';
+import { restampHeaderBranding } from './derive-line-branding';
 import { readSoLineFreeze, soLineWriteRefusal } from './downstream-lock';
+import { isPoLineOverReceived } from './qty-cap';
 import { SO_IDENTITY_LOCK_COLS } from '../shared/so-identity-lock';
 
 /* The routable field atoms an SO amendment moves — lines + header — for the audit
@@ -170,6 +179,9 @@ type AmendmentLineRow = {
   new_variants: Record<string, unknown> | null;
   new_qty: number | null;
   new_unit_price_sen: number | null;
+  /* HC-0095 — the operator TYPED the requested 0. False on every row before the
+     column, so a queued seeded 0 cannot zero a priced line on approval. */
+  zero_price_intended: boolean | null;
   /* Mig 0280 — the requested REMARK. NULL = the request does not touch it (every
      row created before 0280, and every line whose remark did not move); '' = a
      real request to clear it. The `!= null` test at the write is the ONE gate,
@@ -338,7 +350,7 @@ export async function applySoAmendment(
   const { data: lineRows, error: lineErr } = await sb
     .from('so_amendment_lines')
     .select('id, sales_order_item_id, change_type, new_item_code, new_variants, ' +
-      'new_qty, new_unit_price_sen, new_remark, new_discount_sen, old_snapshot')
+      'new_qty, new_unit_price_sen, zero_price_intended, new_remark, new_discount_sen, old_snapshot')
     .eq('amendment_id', amendmentId);
   if (lineErr) throw new Error(`applySoAmendment: amendment lines load failed: ${lineErr.message}`);
   const amendmentLines = (lineRows ?? []) as AmendmentLineRow[];
@@ -698,9 +710,14 @@ export async function applySoAmendment(
        replaces with the catalogue figure, exactly as before, and on a migrated
        order the 'including-zero' protection preserves. That is the property that
        makes this fix incapable of authoring a price without an approval: with
-       `approval === null` an unvalidated payload number is never even read. */
-    const clientUnit = (approval !== null && diff.new_unit_price_sen != null)
-      ? Number(diff.new_unit_price_sen)
+       `approval === null` an unvalidated payload number is never even read.
+       HC-0095: a requested 0 counts only when the operator claimed it
+       (zero_price_intended), the amendment twin of unitAfterLineEdit. An
+       unclaimed 0 is an unpriced SKU's seed and keeps the stored price. */
+    const requestedUnit = diff.new_unit_price_sen;
+    const clientUnit = (approval !== null && requestedUnit != null
+        && (Number(requestedUnit) !== 0 || diff.zero_price_intended === true))
+      ? Number(requestedUnit)
       : Number(row.unit_price_sen ?? 0);
 
     /* amendTrust — see where it is derived. MIGRATED: 'including-zero', so the
@@ -970,6 +987,9 @@ export async function applySoAmendment(
     // eslint-disable-next-line no-console
     console.error('[so-amendment] rederiveDeliveryFee failed (non-fatal):', e);
   }
+  /* An approved product change can change the brand (HC-0095): re-derive the
+     header and its fair booth exactly as a direct line edit does. Non-fatal. */
+  if (c) await restampHeaderBranding(sb, docNo, c);
 
   // (5) Bump the SO's revision + updated_at.
   let bump = sb
@@ -1023,6 +1043,12 @@ export async function applySoAmendment(
       routingSummary ? `routing ${routingSummary}` : null,
     ].filter(Boolean).join('; ') || 'no diffs'}`,
   });
+
+  /* An approved ADD on a DELIVERED order is goods still to ship — the same
+     re-open the direct add-line route runs (DELIVERED -> READY_TO_SHIP). Only
+     when a line was actually added: a price or header amendment changes no
+     coverage and must not pay for the reconciler's reads. */
+  if (addedLineIds.length > 0) await syncSoDeliveredFromDo(sb, [docNo], userId);
 
   return { soDocNo: docNo, revision: nextRevision, addedLineIds };
 }
@@ -1116,7 +1142,7 @@ export async function snapshotPo(
      • ADD a missing line — when an amendment ADDs an SO line, no PO line exists
        for it (item sold but never ordered → stock shortfall). We insert one on
        the live bound PO whose supplier matches the added line's main-supplier
-       binding, priced with the SAME deriveMfgPoUnitCost and carrying the same
+       binding (else an alternate binding's, pickAddLineBinding), priced with the SAME deriveMfgPoUnitCost and carrying the same
        per-line warehouse/date the create path stamps. If no open bound PO belongs
        to that supplier (or the SKU has no supplier bound), we do NOT invent a new
        PO here — raising one is the create path's decision — and warn instead.
@@ -1165,6 +1191,19 @@ export class ReceivedFloorError extends Error {
     this.revisedQty = revisedQty;
     this.receivedQty = receivedQty;
   }
+}
+
+/** HC-0004: the DB floor (mig 20261014T1430) refused a PO line qty cut below
+ *  what live GRNs received — a GRN posted after the floor read above. Same
+ *  ReceivedFloorError, so the callers' existing 409 answers it. */
+export function receivedFloorFromDb(
+  err: { code?: string | null; message?: string } | null,
+  poItemId: string,
+  revisedQty: number,
+): ReceivedFloorError | null {
+  if (!isPoLineOverReceived(err)) return null;
+  const m = /would have ([\d.]+) received/.exec(err?.message ?? '');
+  return new ReceivedFloorError(poItemId, revisedQty, m ? Number(m[1]) : NaN);
 }
 
 export async function reviseBoundPo(
@@ -1361,8 +1400,9 @@ export async function reviseBoundPo(
   }
 
   /* (10) Resolve each newly ADDED line (one with no PO line yet) to its supplier
-     and its target bound PO. Supplier = the SKU's main-supplier binding, scoped
-     to the SO's company. Target PO = a live bound PO on this SO whose supplier
+     and its target bound PO. Supplier = the SKU's main-supplier binding, or —
+     when the main supplier has no PO here — an alternate bound supplier that
+     does (pickAddLineBinding), scoped to the SO's company. Target PO = a live bound PO on this SO whose supplier
      matches, preferring one whose warehouse matches the line's (mirrors the
      create path's (warehouse, supplier) bucket). No matching open PO, or no
      supplier bound at all, is NOT auto-resolved by inventing a PO here — it is
@@ -1374,7 +1414,7 @@ export async function reviseBoundPo(
     const codes = [...new Set(
       addedNeedingPo.map((id) => revisedById.get(id)?.item_code).filter((x): x is string => Boolean(x)),
     )];
-    const mainBindingByCode = new Map<string, { supplierId: string; supplierSku: string | null }>();
+    const bindingsByCode = new Map<string, Array<{ supplier_id: string; supplier_sku: string | null }>>();
     if (codes.length > 0) {
       /* Through the SHARED reader (lib/supplier-bindings.ts): chunked, paged and
          TOTALLY ordered. The order matters more than the size does here — the
@@ -1391,17 +1431,18 @@ export async function reviseBoundPo(
       if (bErr) throw new Error(`reviseBoundPo: added-line supplier binding load failed: ${bErr.message}`);
       // is_main_supplier DESC → the first row seen per code is its main supplier.
       for (const b of (bRows ?? []) as Array<{ item_code: string; supplier_id: string; supplier_sku: string | null }>) {
-        if (!mainBindingByCode.has(b.item_code)) {
-          mainBindingByCode.set(b.item_code, { supplierId: b.supplier_id, supplierSku: b.supplier_sku ?? null });
-        }
+        const arr = bindingsByCode.get(b.item_code) ?? [];
+        arr.push(b);
+        bindingsByCode.set(b.item_code, arr);
       }
     }
+    const boundSupplierIds = new Set(livePos.map((p) => p.supplier_id).filter((x): x is string => Boolean(x)));
     for (const soItemId of addedNeedingPo) {
       const line = revisedById.get(soItemId)!;
       const itemCode = line.item_code ?? '';
       const label = (line.description || itemCode || 'a new item').trim();
-      const binding = itemCode ? mainBindingByCode.get(itemCode) : undefined;
-      if (!binding) {
+      const codeBindings = itemCode ? (bindingsByCode.get(itemCode) ?? []) : [];
+      if (codeBindings.length === 0) {
         /* No supplier bound at all — this line can reach NO purchase order, so it
            warns regardless of how many bound POs the recompute scoped. The
            sibling-PO case (a line whose supplier owns a PO this confirm did not
@@ -1414,20 +1455,21 @@ export async function reviseBoundPo(
         warnings.push(`A newly added item (${label}) has no supplier set, so it could not be added to a purchase order. Set its main supplier, then raise a purchase order for it.`);
         continue;
       }
-      // Supplier match is resolved against the FULL bound set (livePos), so an
-      // empty `forSupplier` means no open PO on this SO carries this supplier —
+      // Supplier match is resolved against the FULL bound set (livePos), so no
+      // pick means no open PO on this SO carries any supplier bound for the code —
       // a genuine gap, not a scoping artefact — and warns regardless of scope.
-      const forSupplier = livePos.filter((p) => p.supplier_id === binding.supplierId);
-      const target = forSupplier.find((p) => p.purchase_location_id && p.purchase_location_id === line.warehouse_id)
-        ?? forSupplier[0];
-      if (!target) {
+      const binding = pickAddLineBinding(codeBindings, boundSupplierIds);
+      if (!binding) {
         warnings.push(`A newly added item (${label}) is from a supplier that has no open purchase order on this sales order, so a purchase order still needs to be raised for it.`);
         continue;
       }
+      const forSupplier = livePos.filter((p) => p.supplier_id === binding.supplier_id);
+      const target = forSupplier.find((p) => p.purchase_location_id && p.purchase_location_id === line.warehouse_id)
+        ?? forSupplier[0]!;
       // Out-of-scope target = a sibling PO's line; its own confirm inserts it.
       if (!livePoIds.has(target.id)) continue;
       const arr = addedByPo.get(target.id) ?? [];
-      arr.push({ soItemId, line, supplierSku: binding.supplierSku });
+      arr.push({ soItemId, line, supplierSku: binding.supplier_sku ?? null });
       addedByPo.set(target.id, arr);
     }
   }
@@ -1451,6 +1493,29 @@ export async function reviseBoundPo(
   // (12) Per live bound PO: snapshot, re-derive surviving lines, delete orphaned
   //      lines (warn if received), insert added lines, recompute totals, bump,
   //      audit.
+  /* DEV-69 (12c): an ADDED line gets the date Create PO gives it, customer date
+     minus lead days (mfg-purchase-orders.ts, lib/lead-time.ts), not the raw
+     customer date. The lead tables load once per company, only when a PO
+     actually gains a line, and THROW on a read error like the create path: a
+     zero lead day from a failed read would ask the supplier to deliver ON the
+     customer's own date. The approve route returns 500 and the operator retries. */
+  type Lead = { base: LeadTimeBase; overrides: LeadOverrides; buffers: LeadBuffers };
+  const leadByCompany = new Map<number | null, Promise<Lead>>();
+  const leadFor = (companyId: number | null): Promise<Lead> => {
+    let p = leadByCompany.get(companyId);
+    if (!p) {
+      p = (async () => ({
+        base: await loadLeadTimeBase(
+          scopeToCompanyIdOrOpen(sb.from('mrp_category_lead_times').select(LEAD_TIME_SELECT), companyId)),
+        overrides: await loadSupplierCategoryOverrides(
+          scopeToCompanyIdOrOpen(sb.from('mrp_supplier_category_lead_times').select(LEAD_OVERRIDE_SELECT), companyId)),
+        buffers: c?.env?.DB ? await loadLeadBuffers(c.env.DB) : NO_BUFFERS,
+      }))();
+      leadByCompany.set(companyId, p);
+    }
+    return p;
+  };
+
   const perPo: ReviseBoundPoResult['perPo'] = [];
   for (const po of scopedPos) {
     const nextRevision = await snapshotPo(sb, po.id, amendmentId, userId, c);
@@ -1467,7 +1532,10 @@ export async function reviseBoundPo(
       });
       warnings.push(...lineWarnings);
       const { error: updErr } = await sb.from('purchase_order_items').update(patch).eq('id', pi.id);
-      if (updErr) throw new Error(`reviseBoundPo: PO line update failed for ${pi.id}: ${updErr.message}`);
+      if (updErr) {
+        throw receivedFloorFromDb(updErr, pi.id, Number(patch.qty))
+          ?? new Error(`reviseBoundPo: PO line update failed for ${pi.id}: ${updErr.message}`);
+      }
       linesRederived += 1;
     }
 
@@ -1504,6 +1572,15 @@ export async function reviseBoundPo(
       })),
     );
     let nextLineNo = await nextPoLineNo(sb, po.id);
+    const lead = addsForPo.length > 0 ? await leadFor(po.company_id) : null;
+    // The learned supplier buffer is keyed on the supplier's business code; only
+    // look it up when the owner has approved any (empty today).
+    let supplierCode: string | null = null;
+    if (lead && po.supplier_id && Object.keys(lead.buffers.supplierBufferDays).length > 0) {
+      const { data: sup, error: supErr } = await sb.from('suppliers').select('code').eq('id', po.supplier_id).maybeSingle();
+      if (supErr) throw new Error(`reviseBoundPo: supplier code read failed for PO ${po.id}: ${supErr.message}`);
+      supplierCode = (sup as { code?: string | null } | null)?.code ?? null;
+    }
     for (const { add } of addsForPo) {
       const line = add.line;
       const qty = line.qty != null ? Math.max(1, line.qty) : 1;
@@ -1514,6 +1591,13 @@ export async function reviseBoundPo(
         itemCode:   line.item_code ?? '',
         itemGroup,
         variants:   variants ?? null,
+      });
+      const leadDays = resolveLeadDays(lead!.base, lead!.overrides, lead!.buffers, {
+        warehouseId: line.warehouse_id ?? null,
+        category: itemGroup ?? null,
+        supplierId: po.supplier_id,
+        supplierCode,
+        deliveryDate: line.line_delivery_date ?? null,
       });
       const { error: insErr } = await sb.from('purchase_order_items').insert({
         ...(po.company_id != null ? { company_id: po.company_id } : {}),
@@ -1526,7 +1610,7 @@ export async function reviseBoundPo(
         qty,
         unit_price_sen:  unitPriceSen,
         line_total_sen:  qty * unitPriceSen,
-        delivery_date:     line.line_delivery_date,
+        delivery_date:     subtractCalendarDays(line.line_delivery_date, leadDays.total),
         warehouse_id:      line.warehouse_id,
         item_group:        itemGroup,
         variants,

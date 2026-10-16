@@ -11,13 +11,17 @@ import { todayMyt } from '../lib/my-time';
 import { extractOneBill, matchSupplier, normalizeVendor, BILL_IMAGE_MIMES, BILL_MODEL, MAX_BILLS_PER_CALL, MAX_FILES_PER_BILL, MAX_BILL_FILE_BYTES } from '../../acc/bill-extract';
 import { requestAiTag } from '../../services/aiUsage';
 import { toBase64 } from '../lib/scan-ocr';
+import { scanTimer } from '../lib/scan-timing';
+import { keepScanFile } from '../lib/scan-files';
+import { base64ToBytes } from '../../services/mail-parse';
 
 /* ── Bill OCR — read incoming bills into voucher pre-fills (2026-09-02) ──────
    我想要把ocr 功能放去payment 那边. Each `bills` entry is ONE document (its
    files are its pages — the human said so at upload; the server never guesses
    whether two files are one bill). One vision call per bill, supplier matched
    server-side, and NOTHING written: the answer pre-fills a form a person
-   still checks, saves, and sends through the untouched approval cycle. */
+   still checks, saves, and sends through the untouched approval cycle. The one
+   write is the kept original (scm.scan_files, HC-0006). */
 export const extractBillsHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.create')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
@@ -29,6 +33,7 @@ export const extractBillsHandler = async (c: any) => {
     return c.json({ error: 'anthropic_key_missing', reason: 'Run: npx wrangler secret put ANTHROPIC_API_KEY' }, 503);
   }
 
+  const timer = scanTimer('pv');
   let body: any;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   /* { fromRequest } — the bill a payment request carries, read when Finance
@@ -66,6 +71,17 @@ export const extractBillsHandler = async (c: any) => {
     }
   }
 
+  /* HC-0006: keep each uploaded original + its scan_files row, started with the reads so it adds no wait.
+     A fromRequest read is skipped: its files are already kept by the request. */
+  const uploadedBy = (c.get('user') as { id?: string } | undefined)?.id ?? null;
+  const skipKeep = typeof body.fromRequest === 'string' && body.fromRequest.trim() !== '';
+  const kept = skipKeep ? Promise.resolve([]) : Promise.all(bills.flatMap((b) => b.files.map((f: { mime?: unknown; dataBase64?: unknown }) => {
+    const bytes = base64ToBytes(String(f.dataBase64 ?? ''));
+    return bytes ? keepScanFile(c.env, c.get('supabase'), {
+      kind: 'pv', companyId: co.companyId, buf: bytes.buffer as ArrayBuffer, mime: String(f.mime ?? ''), uploadedBy, key: null,
+    }) : null;
+  })));
+  timer.mark('upload');
   /* Suppliers once for the whole batch — matching is per bill, in code. */
   const sb = c.get('supabase');
   const { data: supRaw, error: supErr } = await scopeToCompany(
@@ -95,13 +111,20 @@ export const extractBillsHandler = async (c: any) => {
     return null;
   };
 
-  const read: Array<Awaited<ReturnType<typeof extractOneBill>>> = [];
-  for (const [i, b] of bills.entries()) {
-    const files = (b.files as Array<{ name?: unknown; mime?: unknown; dataBase64?: unknown }>).map((f) => ({
-      name: String(f.name ?? `file-${i}`), mime: String(f.mime ?? ''), dataBase64: String(f.dataBase64 ?? ''),
-    }));
-    read.push(await extractOneBill(apiKey, files, requestAiTag(c, 'bill_extract', BILL_MODEL)));
-  }
+  timer.mark('prep');
+  /* Bills are read together, four at a time: serial reads were the batch's whole wait. */
+  const read: Array<Awaited<ReturnType<typeof extractOneBill>>> = new Array(bills.length);
+  let nextBill = 0;
+  await Promise.all(Array.from({ length: Math.min(4, bills.length) }, async () => {
+    for (let i = nextBill++; i < bills.length; i = nextBill++) {
+      const files = (bills[i]!.files as Array<{ name?: unknown; mime?: unknown; dataBase64?: unknown }>).map((f) => ({
+        name: String(f.name ?? `file-${i}`), mime: String(f.mime ?? ''), dataBase64: String(f.dataBase64 ?? ''),
+      }));
+      read[i] = await extractOneBill(apiKey, files, requestAiTag(c, 'bill_extract', BILL_MODEL));
+    }
+  }));
+  await kept; // originals are kept alongside the reads; keepScanFile never throws
+  timer.mark('model');
 
   /* The events the bills could be for (owner 2026-09-30: ocr 要有办法 detect
      相关的 event) — read ONCE for the batch, only when a bill printed an event,
@@ -137,6 +160,8 @@ export const extractBillsHandler = async (c: any) => {
         : [],
     };
   });
+  timer.mark('parse');
+  timer.done(c.env, null, read.some((r) => r.ok) ? 'ok' : 'error');
   return c.json({ bills: out });
 };
 

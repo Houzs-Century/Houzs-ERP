@@ -6,7 +6,9 @@
 // 然后在 performance P&L 要注明 … 放 finance report, CSV, PDF, 每组显示 gross
 // profit 和 %; docs/bugs/0835). The numbers come from
 // GET /accounting/reports/performance, computed live on every read; the rate
-// and the account it stands in for are the company's settings, edited here.
+// and the account it stands in for are the company's settings, edited here —
+// with the other accounts the rate also covers (owner 2026-10-06: 2990's
+// transport is inside the 16%; Houzs names none).
 // Excel and PDF export the tables AS SHOWN — the same lines the screen draws,
 // folded to the same level (owner 2026-09-19: 显示什么就 export 什么). The account part below the groups sits on the report's
 // own layout (docs/bugs/0912): categories with subtotals, L1..Ln buttons,
@@ -46,6 +48,8 @@ const chevron: React.CSSProperties = { background: 'none', border: 'none', paddi
 const nameBtn: React.CSSProperties = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'inherit' };
 const good = 'var(--c-secondary-a, #2F5D4F)';
 const input: React.CSSProperties = { padding: '4px 8px', fontSize: 'var(--fs-13)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 6 };
+/** The codes typed into "also covering": comma or space apart, upper case, each once. */
+const codesOf = (text: string): string[] => [...new Set(text.split(/[\s,]+/).map((c) => c.trim().toUpperCase()).filter(Boolean))];
 
 export const PerformanceTab = () => {
   const [from, setFrom] = useState(monthStart());
@@ -53,9 +57,10 @@ export const PerformanceTab = () => {
   const q = usePerformanceReport(from, to);
   const r = q.data;
   const save = useSavePerformanceSettings();
-  const [draft, setDraft] = useState<{ ratePct: string; account: string } | null>(null);
+  const [draft, setDraft] = useState<{ ratePct: string; account: string; also: string } | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const v = draft ?? { ratePct: r ? (r.settings.rateBp / 100).toFixed(2) : '', account: r?.settings.account ?? '' };
+  const v = draft ?? { ratePct: r ? (r.settings.rateBp / 100).toFixed(2) : '', account: r?.settings.account ?? '', also: (r?.settings.also ?? []).join(', ') };
+  const alsoNamed = r?.operatingExpense.also ?? [];
   const [level, setLevel] = useState<Level>('all');
   const tree = useReportTree(level);
   const [editing, setEditing] = useState(false);
@@ -72,8 +77,12 @@ export const PerformanceTab = () => {
     const rateBp = Math.round(Number(v.ratePct) * 100);
     if (v.ratePct.trim() === '' || !Number.isFinite(rateBp) || rateBp < 0 || rateBp > 10000) { setNote('The rate must be between 0% and 100%.'); return; }
     if (v.account.trim() === '') { setNote('Name the account the rate stands in for.'); return; }
-    save.mutate({ rateBp, account: v.account.trim() }, {
-      onSuccess: (res) => { setDraft(null); setNote(`Saved — ${(res.settings.rateBp / 100).toFixed(2)}% in place of ${res.settings.account}.`); },
+    save.mutate({ rateBp, account: v.account.trim(), also: codesOf(v.also) }, {
+      onSuccess: (res) => {
+        setDraft(null);
+        const also = res.settings.also ?? [];
+        setNote(`Saved — ${(res.settings.rateBp / 100).toFixed(2)}% in place of ${res.settings.account}${also.length > 0 ? `, also covering ${also.join(', ')}` : ''}.`);
+      },
       onError: (e) => setNote(errText(e)),
     });
   };
@@ -106,6 +115,20 @@ export const PerformanceTab = () => {
         {r && (r.operatingExpense.accountFound
           ? <span style={soft}>{r.operatingExpense.accountName}</span>
           : <span style={{ ...soft, color: danger }}>not in this company's chart</span>)}
+        <span>also covering</span>
+        <input value={v.also} onChange={(e) => setDraft({ ...v, also: e.target.value })} placeholder="none — e.g. 900-T004, 900-T008"
+          aria-label="Accounts the rate also covers" title="Their booked amounts are inside the rate: they leave the expenses and print at nil (with the accounts under them)."
+          style={{ ...input, width: 220, fontFamily: 'var(--font-mono)' }} />
+        {alsoNamed.length > 0 && (
+          <span style={soft} aria-label="Covered accounts">
+            {alsoNamed.map((a, i) => (
+              <Fragment key={a.code}>
+                {i > 0 && ', '}
+                {a.name ?? <span style={{ color: danger }}>{a.code} not in this company's chart</span>}
+              </Fragment>
+            ))}
+          </span>
+        )}
         <Button size="sm" disabled={draft == null || save.isPending} onClick={saveSettings}>{save.isPending ? 'Saving…' : 'Save'}</Button>
         {note && <span style={{ ...soft, color: note.startsWith('Saved') ? good : danger }}>{note}</span>}
       </section>

@@ -35,7 +35,6 @@ const mfgSalesOrders = soRouterSource();
 const SO_SIDE: Array<[string, string]> = [
   ['mfg-sales-orders.ts', mfgSalesOrders],
   ['mfg-sales-orders-list-enrichment.ts', listEnrichment],
-  ['so-amendments.ts', soAmendments],
 ];
 
 const DOWNSTREAM: Array<[string, string]> = [
@@ -80,6 +79,18 @@ describe('shared Sales Orders — the SO side honours sharing', () => {
       }
       if (gates.length > 0) expect(source).toContain('access_staff_ids');
     }
+  });
+});
+
+/* SO AMENDMENTS (DEV-40, owner 2026-10-06) honour sharing but NOT open_to_all:
+ * the two SO helpers above OR in the open flag, which put every rep's
+ * amendments on every rep's queue. The router scopes through soOwnedInScope
+ * instead; reaching back for an open-to-all helper reopens the leak in silence. */
+describe('SO amendments — sharing yes, open-to-all no', () => {
+  it('so-amendments.ts scopes through soOwnedInScope, never the open-to-all helpers', () => {
+    const lines = code(soAmendments);
+    expect(lines.some((l) => l.includes('soOwnedInScope('))).toBe(true);
+    expect(lines.filter((l) => /applySoScope|soDocOutOfScope\(|open_to_all/.test(l))).toEqual([]);
   });
 });
 

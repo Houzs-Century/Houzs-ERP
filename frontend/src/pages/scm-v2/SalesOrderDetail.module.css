@@ -464,6 +464,34 @@
 .table thead th:nth-child(10),
 .table tbody td:nth-child(10) { width: 96px; min-width: 96px; }
 
+/* A table that is NOT the SO line layout opts out of the column widths above
+   (they are keyed by position: SO col 2 = Qty at 56px). Stock Transfer's col 2
+   is the variant bucket and Stock Adjustment's is the product name; both were
+   squeezed to 56px and cut their text. Widths come from the page's own <th>. */
+.table.tableOwnWidths thead th:nth-child(n),
+.table.tableOwnWidths tbody td:nth-child(n) {
+  width: auto;
+  min-width: 0;
+}
+/* A long line table whose column header stays on screen while the page
+   scrolls (Stock Take count sheet). The page scrolls in <main>, so top: 0 is
+   the top of the content area; the card around it must not be overflow:hidden
+   (that makes the card the scroll box and the header never moves). */
+.stickyHead thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+/* The picked variant bucket, in full, under its select (Stock Transfer). */
+.bucketPicked {
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  color: var(--fg-muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .table tbody td {
   padding: 6px var(--space-2);
   border-bottom: 1px solid #d6d9d2;
@@ -940,3 +968,120 @@
   }
 }
 
+
+/* Header + action-row chrome restored: the 2026-07-16 reskin (#611) deleted
+   these when SalesOrderDetail moved to inline Tailwind, but ~40 other scm-v2
+   pages still read them and rendered unstyled. Pre-reskin rules, verbatim. */
+.headerRow {
+  position: sticky;
+  top: 48px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding: var(--space-3) 0;
+  background: #eef0ec;
+  border-bottom: 1px solid #cdd1c8;
+}
+
+.titleBlock {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.backBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: var(--font-button);
+  font-size: var(--fs-13);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: var(--space-2) var(--space-3);
+  background: var(--c-paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--c-ink);
+  text-decoration: none;
+  cursor: pointer;
+}
+.backBtn:hover { background: var(--c-cream); }
+
+.title {
+  /* PR — commander 2026-05-27: "字体小一点 走系统风格".
+     Step the page title down to fs-15 (was fs-16) so the SO-XXXX header
+     reads like a list-row anchor rather than a hero. Total badge moves out
+     of the title via TITLE_TOTAL_STYLE override below — we shrink it to
+     match. */
+  font-family: var(--font-title);
+  font-size: var(--fs-15, 15px);
+  font-weight: 700;
+  color: var(--c-ink);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  /* Phone (Houzs 2026-06-24) — the action group (Total rail + status pill +
+     History + RelationshipMap + Print) is wider than a phone viewport and was
+     overflowing the right edge. Allow it to wrap so the extra buttons drop onto
+     a new line under the title instead of pushing the page sideways. Harmless
+     on desktop — there's always enough width there for one row. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  /* Nick 2026-07-09 — "整个画面占全部, 目前只有一半". When .actions wraps to
+     its own row inside .headerRow, `space-between` collapses to flex-start
+     for a single-item row → actions ended up left-aligned with 400+ px of
+     dead space on the right. margin-left: auto keeps it flush right even
+     after wrap so the header uses the full page width. */
+  margin-left: auto;
+}
+
+/* PR — commander 2026-05-27 followup. Total badge moved out of the page
+   title <h1> into its own right-rail meta block sitting next to the action
+   group. Renders as a small "eyebrow" label above the amount so it reads
+   like a KPI tile, not another headline. */
+.totalRail {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  line-height: 1.1;
+  margin-right: var(--space-2);
+}
+.totalRailLabel {
+  font-family: var(--font-button);
+  font-size: var(--fs-10);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.totalRailValue {
+  font-family: var(--font-mark);
+  font-size: var(--fs-15);
+  font-weight: 600;
+  font-stretch: 80%;
+  color: var(--c-burnt);
+  font-variant-numeric: tabular-nums;
+}
+
+/* "Added during the count" tag on StockTakeDetail lines. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(47, 93, 79, 0.12);
+  color: var(--c-secondary-a, #2F5D4F);
+  font-weight: 600;
+  white-space: nowrap;
+}

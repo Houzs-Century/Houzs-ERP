@@ -1042,7 +1042,7 @@ export function PurchaseOrdersListV2() {
       : "";
     notify({
       title: n > 0
-        ? `Supplier Date ${res.slot} set on ${n} ${n === 1 ? "PO" : "POs"}`
+        ? `Supplier Date ${[...new Set(res.updated.map((u) => u.slot))].sort().join("/")} set on ${n} ${n === 1 ? "PO" : "POs"}`
         : "No purchase orders were updated",
       body: `${n > 0 ? `Header ${scope} now reads ${res.date}.` : ""}${skippedNote}`.trim()
         || "Nothing matched — check the picked purchase orders.",
@@ -1235,6 +1235,7 @@ export function PurchaseOrdersListV2() {
       getValue: (r) => r.po_date,
       filterCounts: facets?.po_date,
       filterLabel: (v) => (v === "—" ? v : fmtDate(v)),
+      newestFirst: true,
       exportFormat: "date",
       render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.po_date)}</span>,
     },
@@ -1713,6 +1714,7 @@ export function PurchaseOrdersListV2() {
       <PoBulkSupplierDateModal
         open={bulkDateOpen}
         poIds={[...selectedIds]}
+        pos={rows.filter((r) => selectedIds.has(r.id))}
         onClose={() => setBulkDateOpen(false)}
         onDone={(res) => void onBulkDateDone(res)}
       />

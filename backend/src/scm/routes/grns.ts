@@ -16,7 +16,7 @@ import { noteGrnScanAccepted } from '../lib/grn-scan-review';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { grnHasDownstream } from '../lib/downstream-lock';
-import { qtyCapRefusal } from '../lib/qty-cap';
+import { isPoLineOverReceived, qtyCapRefusal } from '../lib/qty-cap';
 import { enqueueConvert, recordParentlessCreate, enqueueCancel, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { sourcePoIdsForGrn } from '../lib/convert-parent';
 import { queueAcGrnEdit } from '../lib/ac-grn-outbox';
@@ -446,6 +446,8 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
     posted_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }).eq('id', grnId), companyId).eq('status', preStatus).select('id, status, posted_at').maybeSingle();
+  // HC-0004: the DB cap (mig 20261014T1600) refused a post past a PO line's qty.
+  if (isPoLineOverReceived(error)) return { ok: false, reason: 'qty_exceeds_remaining', status: 409 };
   if (error) return { ok: false, reason: error.message, status: 500 };
   // Lost the race: another confirm advanced the row between the read and the
   // flip. That call owns the stock write; this one must not duplicate it.
@@ -867,14 +869,22 @@ export async function recomputePoReceived(
     //    sent back to the supplier (returned_qty, migration 0106): a returned
     //    qty no longer counts as received, so the PO line re-opens and a
     //    replacement shipment can be received against it. Clamped ≥ 0.
-    const { data: glines } = await sb.from('grn_items')
+    /* A FAILED READ STOPS THE RECOUNT before anything is written (READY audit
+       F2, 2026-10-16). Unchecked, a failed grn_items read looked like "no
+       receipts" and wrote received_qty 0 over real receipts, and a failed grns
+       read counted CANCELLED / DRAFT lines as received — both reported ok, so
+       no RECOUNT_FAILED row was left. The stored count stays as it was and the
+       caller records the failure. */
+    const { data: glines, error: glinesErr } = await sb.from('grn_items')
       .select('purchase_order_item_id, qty_accepted, returned_qty, grn_id')
       .in('purchase_order_item_id', ids);
+    if (glinesErr) return { ok: false, reason: `GRN line read failed: ${glinesErr.message ?? 'unknown'}` };
     const rows = (glines ?? []) as Array<{ purchase_order_item_id: string; qty_accepted: number; returned_qty: number; grn_id: string }>;
     const grnIds = [...new Set(rows.map((r) => r.grn_id).filter(Boolean))];
     const cancelled = new Set<string>();
     if (grnIds.length > 0) {
-      const { data: gs } = await sb.from('grns').select('id, status').in('id', grnIds);
+      const { data: gs, error: gsErr } = await sb.from('grns').select('id, status').in('id', grnIds);
+      if (gsErr) return { ok: false, reason: `GRN status read failed: ${gsErr.message ?? 'unknown'}` };
       for (const g of (gs ?? []) as Array<{ id: string; status: string }>) {
         // DRAFT GRNs have committed no receipt, so their lines must NOT count
         // toward a PO line's received_qty (same treatment as CANCELLED). The
@@ -902,20 +912,23 @@ export async function recomputePoReceived(
     }
 
     // 2. Re-evaluate each touched PO's status from its (now-recounted) lines.
-    const { data: poiRows } = await sb.from('purchase_order_items')
+    const { data: poiRows, error: poiErr } = await sb.from('purchase_order_items')
       .select('purchase_order_id').in('id', ids);
+    if (poiErr) return { ok: false, reason: `PO line read failed: ${poiErr.message ?? 'unknown'}` };
     const poIds = [...new Set(((poiRows ?? []) as Array<{ purchase_order_id: string }>)
       .map((r) => r.purchase_order_id).filter(Boolean))];
     for (const poId of poIds) {
-      const { data: lines } = await sb.from('purchase_order_items')
+      const { data: lines, error: linesErr } = await sb.from('purchase_order_items')
         .select('qty, received_qty').eq('purchase_order_id', poId);
+      if (linesErr) return { ok: false, reason: `PO line read failed for ${poId}: ${linesErr.message ?? 'unknown'}` };
       const ll = (lines ?? []) as Array<{ qty: number; received_qty: number }>;
       if (ll.length === 0) continue;
       const anyReceived = ll.some((l) => (l.received_qty ?? 0) > 0);
       const fully = ll.every((l) => (l.received_qty ?? 0) >= l.qty);
       const newStatus = fully ? 'RECEIVED' : anyReceived ? 'PARTIALLY_RECEIVED' : 'SUBMITTED';
-      const { data: head } = await sb.from('purchase_orders')
+      const { data: head, error: headErr } = await sb.from('purchase_orders')
         .select('received_at').eq('id', poId).maybeSingle();
+      if (headErr) return { ok: false, reason: `PO header read failed for ${poId}: ${headErr.message ?? 'unknown'}` };
       const prevReceivedAt = (head as { received_at: string | null } | null)?.received_at ?? null;
       const patch: Record<string, unknown> = { status: newStatus, updated_at: new Date().toISOString() };
       // Stamp received_at on first full receipt, preserve it if already set, clear on regression.
@@ -1637,6 +1650,7 @@ grns.post('/', async (c) => {
     if (postRes.zeroCost) {
       return refuseZeroCostReceipt(c, postRes.zeroCost, { nothingWritten: true });
     }
+    if (postRes.reason === 'qty_exceeds_remaining') return c.json({ error: 'qty_exceeds_remaining', message: 'Another receipt already covers this Purchase Order line. Refresh and check the remaining qty.' }, 409);
     return c.json({ error: 'post_failed', reason: postRes.reason }, (postRes.status ?? 409) as 409 | 500);
   }
   // Migration 0101 — populate header money rollups from the inserted lines.
@@ -1848,7 +1862,11 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
     };
   });
   const { error: iErr } = await sb.from('grn_items').insert(stampCompany(rows, c));
-  if (iErr) { await sb.from('grns').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
+  if (iErr) {
+    await sb.from('grns').delete().eq('id', h.id);
+    if (isPoLineOverReceived(iErr)) return c.json({ error: 'qty_exceeds_remaining', message: 'Another receipt already covers these Purchase Order lines. Refresh the picker and try again.', reason: iErr.message }, 409);
+    return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500);
+  }
 
   /* Post-insert over-receipt verification — the outstanding-qty prefill above is
      a read-then-write race with concurrent receives. Re-sum live received per PO
@@ -2063,6 +2081,7 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
   // out so the 409 below keeps the add-line error shape.
   const overReceipt = coreRes.overReceipt;
   let zeroCostRefusal: ZeroCostRefusal | null = null;
+  let dbCapRefused = false;
 
   for (const draft of coreRes.created) {
     // Immediately post — rolls up received_qty, flips PO status, writes inventory.
@@ -2076,6 +2095,14 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
       await sb.from('grn_items').delete().eq('grn_id', draft.id);
       await sb.from('grns').delete().eq('id', draft.id);
       zeroCostRefusal = postRes.zeroCost;
+      continue;
+    }
+    // HC-0004: the DB cap refused the post (a concurrent receipt took the qty).
+    // Same rollback; nothing of this bucket was posted.
+    if (!postRes.ok && postRes.reason === 'qty_exceeds_remaining') {
+      await scopeToCompanyId(sb.from('grn_items').delete().eq('grn_id', draft.id), draft.companyId);
+      await scopeToCompanyId(sb.from('grns').delete().eq('id', draft.id), draft.companyId);
+      dbCapRefused = true;
       continue;
     }
     if (!postRes.ok) {
@@ -2133,6 +2160,9 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
 
   // If any bucket over-received (race), surface a 409 with the add-line error
   // shape. Buckets that received cleanly were already committed + reported.
+  if (dbCapRefused && !overReceipt) {
+    return c.json({ error: 'qty_exceeds_remaining', message: 'Another receipt already covers these Purchase Order lines. Refresh the picker and try again.', created }, 409);
+  }
   if (overReceipt) {
     return c.json({
       error: 'qty_exceeds_remaining',
@@ -2220,10 +2250,35 @@ export const cancelGrnCommand = async (
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: id, action: 'CANCEL', companyId: activeCompanyId(c) });
   if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
-  /* LEAK GUARD (CRITICAL): a DRAFT GRN committed NOTHING (no inventory IN, no
-     PO received-rollup), so cancelling one must NOT reverse anything — the
-     inventory OUT + PO recount below would over-reverse (drive stock negative /
-     wrongly re-open a PO). Short-circuit: just flip DRAFT → CANCELLED. */
+  /* Both exits run this. The recount counts only POSTED/CLOSED lines, so it can
+     never over-reverse; it is what un-receives a PO line, and received_qty is
+     what lights a bound SO line (bedframe/sofa), so the re-walk follows it even
+     when no stock moved. */
+  const recountPoAndRewalk = async (poItemIds: Array<string | null>) => {
+    /* recomputePoReceived RETURNS its outcome and never throws, so discarding the
+       result — and relying on the catch — left POs holding received goods with
+       received_qty untouched, traced only by a console line nobody keeps. */
+    try {
+      const recount = await recomputePoReceived(sb, poItemIds);
+      if (!recount.ok) {
+        cancelErrors.push(
+          `PO recount FAILED: ${recount.reason ?? 'unknown'}. The GRN is cancelled but its PO lines ` +
+          'still show the goods as received — reopen and re-save the PO, or run the recount.',
+        );
+      }
+    } catch (e) {
+      cancelErrors.push(`PO recount threw: ${(e as Error)?.message ?? 'unknown'}`);
+    }
+    /* DURABLE and outside the catch: a failed enqueue must fail the cancel,
+       because "PO un-received, allocation never re-walked" is the exact state
+       this transaction exists to make unreachable. grn.md 7c. */
+    await scheduleStockAllocationAfterCommand(c, sb, `grn-cancel:${id}`);
+  };
+
+  /* LEAK GUARD (CRITICAL): a DRAFT GRN wrote no inventory IN, so the stock OUT
+     below would drive on-hand negative. Flip DRAFT → CANCELLED without it. The
+     PO recount still runs (BUG-64): a GRN put back to DRAFT by hand after it
+     was POSTED leaves a stale received_qty that only the recount clears. */
   if (head.status === 'DRAFT') {
     const { data } = await scopeToCompanyId(sb.from('grns')
       .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
@@ -2241,7 +2296,15 @@ export const cancelGrnCommand = async (
       note: 'Draft GRN — nothing was received, so nothing was reversed',
       fieldChanges: statusChange('DRAFT', 'CANCELLED'),
     });
-    return c.json({ grn: data ?? { id, status: 'CANCELLED' } });
+    const { data: draftLines, error: draftLinesErr } = await sb.from('grn_items')
+      .select('purchase_order_item_id').eq('grn_id', id);
+    if (draftLinesErr) {
+      cancelErrors.push(`PO recount skipped: could not read the GRN lines (${draftLinesErr.message}).`);
+    } else {
+      await recountPoAndRewalk(((draftLines ?? []) as Array<{ purchase_order_item_id: string | null }>)
+        .map((l) => l.purchase_order_item_id));
+    }
+    return c.json({ grn: data ?? { id, status: 'CANCELLED' }, ...(cancelErrors.length ? { cancelErrors } : {}) });
   }
 
   // GRN child-lock: can't cancel a GRN that has a downstream PI/PR — the child
@@ -2312,10 +2375,6 @@ export const cancelGrnCommand = async (
   });
 
   // (a) Inventory OUT per line — negate the original GRN IN. Best-effort.
-  /* Set only where the reversal was actually attempted, so the DURABLE enqueue
-     below can sit OUTSIDE this best-effort catch and still fire on exactly the
-     condition the old inline recompute did. */
-  let stockReversed = false;
   try {
     // MIGRATED: nothing was posted, so nothing un-posts.
     const warehouseId = migratedNoStock
@@ -2338,16 +2397,9 @@ export const cancelGrnCommand = async (
             'The GRN is cancelled but its received stock is still on hand — run /inventory/reconcile.',
           );
         }
-        stockReversed = true;
       }
     }
   } catch { /* best-effort: never un-cancel on a movement failure */ }
-  /* DURABLE: GRN cancel pulled stock back out, so other READY SOs that relied
-     on it may need to regress. The request commits with the OUT above, and it
-     is NOT inside that best-effort catch — a failed enqueue must fail the
-     cancel, because "stock pulled back, allocation never re-walked" is the
-     exact state this transaction exists to make unreachable. grn.md 7c. */
-  if (stockReversed) await scheduleStockAllocationAfterCommand(c, sb, `grn-cancel:${id}`);
 
   // (a2) Physical rack reversal — pull every rack item this GRN placed +
   //      log a STOCK_OUT, mirroring the inventory OUT above. Best-effort.
@@ -2363,21 +2415,8 @@ export const cancelGrnCommand = async (
 
   // (b) Recount received_qty on each linked PO item from live GRN lines — this
   //     cancelled GRN's lines now drop out, auto-releasing the PO + re-evaluating
-  //     its status.
-  /* recomputePoReceived RETURNS its outcome and never throws, so discarding the
-     result — and relying on the catch — left POs holding received goods with
-     received_qty untouched, traced only by a console line nobody keeps. */
-  try {
-    const recount = await recomputePoReceived(sb, lineList.map((it) => it.purchase_order_item_id));
-    if (!recount.ok) {
-      cancelErrors.push(
-        `PO recount FAILED: ${recount.reason ?? 'unknown'}. The GRN is cancelled but its PO lines ` +
-        'still show the goods as received — reopen and re-save the PO, or run the recount.',
-      );
-    }
-  } catch (e) {
-    cancelErrors.push(`PO recount threw: ${(e as Error)?.message ?? 'unknown'}`);
-  }
+  //     its status, then re-walk SO allocation.
+  await recountPoAndRewalk(lineList.map((it) => it.purchase_order_item_id));
 
   const { data } = await sb.from('grns').select(HEADER).eq('id', id).maybeSingle();
 
@@ -2776,6 +2815,7 @@ grns.post('/:id/items', async (c) => {
   /* co.companyId, not activeCompanyId(c): the parent GRN was proved above, so
      the line is stamped with the header's owner, not with the switcher. */
   const { data, error } = await sb.from('grn_items').insert({ ...row, company_id: co.companyId }).select(ITEM).single();
+  if (isPoLineOverReceived(error)) return c.json({ error: 'qty_exceeds_remaining', poItemId: addLinePoItemId, requested: qtyReceived, reason: error?.message }, 409);
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
 
   /* Bug #3/#11 — POST-INSERT over-receipt verification. The pre-check above is a
@@ -3099,6 +3139,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
   if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
   const { error } = await scopeToCompanyId(sb.from('grn_items').update(coerceEmptyDates(updates)).eq('id', itemId), co.companyId);
+  if (isPoLineOverReceived(error)) return c.json({ error: 'qty_exceeds_remaining', poItemId: (prev as { purchase_order_item_id: string | null }).purchase_order_item_id, requested: qtyReceived, reason: error?.message }, 409);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row.

@@ -28,6 +28,7 @@
 
 import type { Env } from "../../types";
 import { subtreeUserIds } from "../../services/orgScope";
+import { chunkIn } from "./paginate-all";
 
 /* An all-zeros uuid no scm.staff row ever carries (the seeded system row is
    …-000000000001). Returned instead of an EMPTY scope list because
@@ -170,6 +171,53 @@ export async function soDocOutOfScope(
   const access = (doc.accessStaffIds ?? []).filter((x): x is string => !!x);
   if (access.length > 0) return !access.some((a) => ids.includes(String(a)));
   return doc.salespersonId == null || !ids.includes(String(doc.salespersonId));
+}
+
+/* ── SO amendments + SO cancellation requests: who may SEE a request ─────────
+   Owner 2026-10-06 (DEV-40, Nico): 「sales person only see own request, like
+   sales order」. A scoped caller sees a request that they or their downline
+   RAISED, or one on an order that they or their downline OWN or were SHARED —
+   so the order's salesperson always sees what was asked of their order.
+
+   `open_to_all` deliberately does NOT reach these. It opens the ~2,580
+   AutoCount-imported orders so anyone can LOOK AN ORDER UP; inherited here it
+   put every rep's amendments on every rep's queue (Adrian, a Sales Executive,
+   saw all 201). That is why these helpers exist beside applySoScope /
+   soDocOutOfScope instead of reusing them.                                    */
+
+export type SoOwnership = {
+  salesperson_id?: number | string | null;
+  access_staff_ids?: readonly (string | null)[] | null;
+};
+
+/** Does the order belong to the scope — owned or shared, never open_to_all.
+ *  An empty `access_staff_ids` falls back to `salesperson_id`, the same rule
+ *  soDocOutOfScope applies. A missing order belongs to nobody. */
+export function soOwnedInScope(scopeIds: readonly string[], so: SoOwnership | null | undefined): boolean {
+  if (!so) return false;
+  const access = (so.access_staff_ids ?? []).filter((x): x is string => !!x);
+  if (access.length > 0) return access.some((a) => scopeIds.includes(String(a)));
+  return so.salesperson_id != null && scopeIds.includes(String(so.salesperson_id));
+}
+
+/** Ownership columns of the given orders, keyed by doc_no. `inCompany` applies
+ *  the caller's company predicate. A failed read is returned, never swallowed:
+ *  an empty map would quietly hide a rep's own requests from them. */
+export async function readSoOwnership(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped throughout this module.
+  sb: any,
+  docNos: readonly string[],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same untyped builder, passed through companyScope.
+  inCompany: (q: any) => any,
+): Promise<{ byDoc: Map<string, SoOwnership>; error: string | null }> {
+  const byDoc = new Map<string, SoOwnership>();
+  if (docNos.length === 0) return { byDoc, error: null };
+  const { data, error } = await chunkIn<SoOwnership & { doc_no: string }>([...docNos], (batch, from, to) =>
+    inCompany(sb.from("mfg_sales_orders").select("doc_no, salesperson_id, access_staff_ids").in("doc_no", batch))
+      .range(from, to));
+  if (error) return { byDoc, error: error.message };
+  for (const r of data) byDoc.set(r.doc_no, r);
+  return { byDoc, error: null };
 }
 
 /**

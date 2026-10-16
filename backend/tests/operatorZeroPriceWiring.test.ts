@@ -36,7 +36,7 @@ describe("operator-zero wiring", () => {
      price, because only the PATCH had the mode wired. A single decision cannot
      drift between the two the way two copies did. */
   test('the mode is selected in exactly ONE place: the shared helper', () => {
-    expect(RECOMPUTE.match(/'operator-zero'/g) ?? []).toHaveLength(3); // the type, the helper, the trust condition
+    expect(RECOMPUTE.match(/'operator-zero'/g) ?? []).toHaveLength(4); // the type, the helper, the trust condition, unitAfterLineEdit (BUG-63)
     expect(SO.match(/'operator-zero'/g) ?? []).toHaveLength(0);
   });
 
@@ -88,7 +88,9 @@ describe("operator-zero wiring", () => {
   test('the RM 0 claim is made only AT zero, from ONE shared helper', () => {
     expect(CLAIM).toMatch(/unitPriceSen === 0 && authored \? \{ zeroPriceIntended: true \} : \{\}/);
     expect(EDITOR).not.toMatch(/const zeroPriceClaim\s*=/);
-    expect(EDITOR.match(/zeroPriceClaim\(d\.unitPriceSen, true\)/g) ?? []).toHaveLength(2);
+    // Staged ADD claims every 0; the line PATCH only an authored one (BUG-63).
+    expect(EDITOR.match(/zeroPriceClaim\(d\.unitPriceSen, true\)/g) ?? []).toHaveLength(1);
+    expect(EDITOR.match(/zeroPriceClaim\(d\.unitPriceSen, d\.priceAuthored === true\)/g) ?? []).toHaveLength(1);
   });
 
   /* The migrated-document arm must stay exclusive to migrated documents: it

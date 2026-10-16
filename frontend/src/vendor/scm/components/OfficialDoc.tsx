@@ -6,9 +6,16 @@
 // upload (POST /payment-requests/:id/official-doc). Checked is offered on OWED
 // too (owner 2026-10-01, 漏洞 2): the official invoice may reach Finance another
 // way, and a payment that answers no request has nobody to upload it.
+// Marking it owed asks for Finance's remark — what to follow up — and the
+// remark can be rewritten while still owed (owner 2026-10-08: 可能是performa
+// invoice, 所以finance 这样也要可以remark 要follow up actual invoice); the
+// requester reads it on the request and on the PMS row it came from.
 // ----------------------------------------------------------------------------
 
 import { OFFICIAL_LABEL, isOfficialState, useMarkOfficialDoc } from '../lib/official-doc-queries';
+import { usePrompt } from './ConfirmDialog';
+
+const REMARK_INPUT = { label: 'Remark — what to follow up (optional)', placeholder: 'e.g. Proforma only — ask MITEC for the tax invoice' };
 
 const linkBtn: React.CSSProperties = {
   background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--c-orange)', textDecoration: 'underline', fontSize: 'var(--fs-12, 12px)',
@@ -27,12 +34,24 @@ export function OfficialDocChip({ state, note }: { state: string | null | undefi
 /** Finance's marks on one payment — a voucher (PV) or an AP invoice (API). */
 export function OfficialDocActions({ kind, id, state, note }: { kind: 'PV' | 'API'; id: string; state: string | null | undefined; note?: string | null }) {
   const mark = useMarkOfficialDoc();
+  const askPrompt = usePrompt();
+  /* Owed, with Finance's remark: blank keeps the one there (or none). */
+  const markOwed = async (title: string) => {
+    const remark = await askPrompt({ title, body: note ? `Now: ${note}` : undefined, confirmLabel: 'Save', input: REMARK_INPUT });
+    if (remark == null) return;
+    mark.mutate({ kind, id, state: 'OWED', note: remark || null });
+  };
   return (
     <span style={{ display: 'inline-flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
       <OfficialDocChip state={state} note={note} />
       {!state && (
-        <button type="button" style={linkBtn} disabled={mark.isPending} onClick={() => mark.mutate({ kind, id, state: 'OWED' })}>
+        <button type="button" style={linkBtn} disabled={mark.isPending} onClick={() => void markOwed('Official invoice owed · 欠正式单')}>
           Mark: official invoice owed · 欠正式单
+        </button>
+      )}
+      {state === 'OWED' && (
+        <button type="button" style={linkBtn} disabled={mark.isPending} onClick={() => void markOwed('Remark — what to follow up')}>
+          {note ? 'Change the remark' : 'Add a remark'}
         </button>
       )}
       {(state === 'RECEIVED' || state === 'OWED') && (

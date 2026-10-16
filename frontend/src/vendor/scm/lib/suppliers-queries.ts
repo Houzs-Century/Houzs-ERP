@@ -182,6 +182,7 @@ export type PoHeaderRow = PoHoldFields & {
   submitted_at: string | null;
   received_at: string | null;
   cancelled_at: string | null;
+  cancel_reason?: string | null;
   /** Mig 0080 — bumped on every approved revision (SO-amendment follow-up or
    *  standalone PO amendment). Display shows `_R{revision-1}` when > 1. */
   revision?: number | null;
@@ -283,6 +284,7 @@ export type PoItemRow = {
   /** PR #77 — per-line delivery date + ship-to warehouse (both inherit from
       PO header when null). */
   delivery_date?: string | null;
+  line_delivery_date_overridden?: boolean | null;
   warehouse_id?: string | null;
   /** Mig 0026 — supplier-revised per-line delivery dates. All optional; the
       supplier pushes the date back. Effective line date = MAX over non-null of
@@ -836,6 +838,8 @@ export type NewPoItem = {
   variants?: Record<string, unknown>;
   /* PR #77 — per-line ship-to overrides; both null = inherit from PO header */
   deliveryDate?: string | null;
+  /** true = the user set this line's date by hand; the header date cascade leaves it alone. */
+  lineDeliveryDateOverridden?: boolean;
   warehouseId?: string | null;
   /* Mig 0026 — supplier-revised per-line delivery dates (optional). */
   supplierDeliveryDate2?: string | null;

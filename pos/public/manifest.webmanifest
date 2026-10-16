@@ -1,0 +1,16 @@
+{
+  "name": "Houzs POS",
+  "short_name": "Houzs POS",
+  "description": "Cash & carry booth sales for Houzs Century fairs. Works offline; syncs to the ERP.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#13201c",
+  "theme_color": "#13201c",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

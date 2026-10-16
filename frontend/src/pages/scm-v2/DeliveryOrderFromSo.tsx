@@ -35,6 +35,7 @@ import { useDeliverableSoLines, type DeliverableSoLine } from '../../vendor/scm/
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
+import { SoStockPill } from '../../components/SoSourceChips';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { soRefOfCamelStamp } from '../../lib/so-ref-search';
@@ -161,14 +162,15 @@ export const DeliveryOrderFromSo = () => {
      screen is a ready-to-review draft rather than a filtered list to re-tick by
      hand. Copies GrnFromPo, the one convert that already worked. Nothing ships
      and no stock moves here — Continue only carries the picks to the New DO
-     form. */
+     form. Lines whose stock is not READY stay unticked (BUG-59, Azza: deliver
+     the ready lines now, the rest on a later DO). */
   const prefilled = useRef(false);
   useEffect(() => {
     if (prefilled.current) return;
     if (scope.keys.size === 0) return;
     if (linesQ.isLoading) return;
     prefilled.current = true;
-    const mine = rows.filter((r) => r.remaining > 0);
+    const mine = rows.filter((r) => r.remaining > 0 && !r.notReady);
     const first = mine[0];
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mine[0] is typed non-optional without noUncheckedIndexedAccess; an empty scope match is real
     if (!first) return;
@@ -298,6 +300,16 @@ export const DeliveryOrderFromSo = () => {
         />
       ),
       searchValue: (r) => `${r.description ?? ''} ${r.description2 ?? ''}`.trim(),
+    },
+    {
+      key: 'stock', label: 'Stock', width: 90, sortable: true, groupable: true,
+      accessor: (r) => (
+        <span title={r.notReady?.reason}>
+          <SoStockPill line={{ item_group: r.itemGroup, stock_status_effective: r.notReady?.status ?? 'READY' }} />
+        </span>
+      ),
+      searchValue: (r) => r.notReady?.status ?? 'READY',
+      groupValue: (r) => r.notReady?.status ?? 'READY',
     },
     {
       key: 'qty', label: 'SO Qty', width: 70, align: 'right', sortable: true,
@@ -453,6 +465,14 @@ export const DeliveryOrderFromSo = () => {
           <Link to="/scm/delivery-orders/from-so" style={{ color: 'var(--c-burnt)', textDecoration: 'underline' }}>
             Show all Sales Orders
           </Link>
+        </p>
+      )}
+      {/* HC-0102 (Azza, 2026-10-14): a not-READY line starts unticked (BUG-59)
+          but is NOT locked — say so, or it reads as "can't be delivered". */}
+      {scope.keys.size > 0 && rows.some((r) => r.notReady) && (
+        <p style={{ margin: '0 0 var(--space-2)', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+          Lines whose Stock is not READY start unticked. Tick any of them to include it in this
+          Delivery Order — you will be asked to confirm before it is created.
         </p>
       )}
       {lockedCustomerName && (

@@ -9,7 +9,7 @@
        returns the request with a note it must give. */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 
 type Req = Record<string, unknown>;
@@ -23,6 +23,8 @@ const base = (over: Req): Req => ({
 let requests: Req[] = [];
 let isFinance = false;
 let hasEvents: boolean | undefined;
+/* Whether the caller may raise a request here (owner 2026-10-14, option A); undefined = an older server. */
+let mayRaise: boolean | undefined;
 /* What the bill reader read off the bill being attached (item 1, 2026-10-01). */
 const plainRead = (over: Req = {}): Req => ({
   ok: true, bill: { billNo: 'MLE-0925', billDate: '2026-09-01', totalSen: 850_000, vendorName: 'MLE EVENTS SDN BHD' },
@@ -48,7 +50,7 @@ vi.mock('../../vendor/scm/lib/official-doc-queries', async (importOriginal) => (
 }));
 vi.mock('../../vendor/scm/lib/payment-request-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/payment-request-queries')>()),
-  usePaymentRequests: () => ({ data: { requests, finance: isFinance, hasEvents }, isLoading: false, isError: false, error: null }),
+  usePaymentRequests: () => ({ data: { requests, finance: isFinance, hasEvents, mayRaise }, isLoading: false, isError: false, error: null }),
   useReadRequestBill: () => ({ mutateAsync: readAsync, isPending: false }),
   useRequestBalance: () => ({ mutateAsync: balanceAsync, isPending: false }),
   usePaymentRequest: (id: string | null) => ({ data: id ? { request: requests.find((r) => r.id === id), finance: isFinance } : undefined, isLoading: false }),
@@ -82,8 +84,8 @@ vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => vi
 
 import { PaymentRequests } from './PaymentRequests';
 
-const draw = () => render(
-  <MemoryRouter initialEntries={['/scm/payment-requests']}>
+const draw = (path = '/scm/payment-requests') => render(
+  <MemoryRouter initialEntries={[path]}>
     <Routes>
       <Route path="/scm/payment-requests" element={<PaymentRequests />} />
       <Route path="/scm/payment-vouchers/new" element={<div>PV New opened</div>} />
@@ -91,6 +93,28 @@ const draw = () => render(
     </Routes>
   </MemoryRouter>,
 );
+
+/* Links into the page (owner 2026-10-08): the Payment Vouchers reminder lands on
+   「Waiting for Finance」; a PMS row's request number opens that request. */
+describe('links into the page', () => {
+  test('?filter=waiting opens on 「Waiting for Finance」; ?open= opens one request; anything else is All', () => {
+    isFinance = true; hasEvents = undefined;
+    requests = [
+      base({}),
+      base({ id: 'r2', request_no: 'HC-PRQ-2609-002', status: 'VOUCHERED', stage: 'PAID', voucher: { id: 'pv-9', pvNumber: 'HC-PV-2609-014', status: 'POSTED', approvedAt: '2026-09-12T03:00:00Z', postedAt: '2026-09-12T03:00:00Z', bankConfirmed: false } }),
+    ];
+    const first = draw('/scm/payment-requests?filter=waiting');
+    expect(screen.getByRole('button', { name: /^Waiting for Finance/ }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByText('HC-PRQ-2609-001')).toBeTruthy();
+    expect(screen.queryByText('HC-PRQ-2609-002')).toBeNull();
+    first.unmount();
+    const second = draw('/scm/payment-requests?open=r2');
+    expect(screen.getByRole('dialog', { name: 'Payment request HC-PRQ-2609-002' })).toBeTruthy();
+    second.unmount();
+    draw('/scm/payment-requests?filter=nonsense');
+    expect(screen.getByRole('button', { name: 'All' }).getAttribute('aria-pressed')).toBe('true');
+  });
+});
 
 describe('the requester', () => {
   test('raises a request with the event and the payee\'s bank; the bill is read, and attaches after it is sent', async () => {
@@ -466,5 +490,71 @@ describe('⑤ the note to Finance', () => {
     draw();
     fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
     expect(within(screen.getByRole('dialog')).getByText('Two instalments agreed with the organiser.')).toBeTruthy();
+  });
+});
+
+/* Owner 2026-10-14 (sales order 的 refund request 可以让他跑去 payment request … 我可能
+   还会拒绝 … 同时也要确定他在申请人的payment request … A，做): the Refund button on a
+   Sales Order raises a request; Finance approves it with a Customer Refund on that
+   order or rejects it; the salesperson reads their own here without the key. */
+describe('a refund request', () => {
+  const refund = (over: Req = {}): Req => base({
+    id: 'r9', request_no: 'HC-PRQ-2610-009', requested_by: 22, requested_by_name: 'Nancy', payee_name: 'NG WAN JUN', amount_sen: 336_500,
+    due_date: null, purpose: 'Customer want cancel this bill', project_id: null, bank_name: 'Maybank', bank_account_no: '5123 4567 8901',
+    bank_account_name: 'NG WAN JUN', refund_source_type: 'SO', refund_source_doc_no: 'HC-SO-2610-144', ...over,
+  });
+  const Where = () => { const l = useLocation(); return <div>At {l.pathname}{l.search}</div>; };
+  const drawWhere = () => render(
+    <MemoryRouter initialEntries={['/scm/payment-requests']}>
+      <Routes>
+        <Route path="/scm/payment-requests" element={<PaymentRequests />} />
+        <Route path="/scm/payment-vouchers/new" element={<Where />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  test('Finance: tagged with its order; approved with a Customer Refund on it — no AP invoice — or rejected with why', async () => {
+    requests = [refund()]; isFinance = true; mayRaise = true; promptFn.mockClear(); returnAsync.mockClear();
+    const first = drawWhere();
+    expect(screen.getByText('Refund · HC-SO-2610-144')).toBeTruthy();
+    fireEvent.click(screen.getByText('HC-PRQ-2610-009'));
+    const d = screen.getByRole('dialog');
+    expect(within(d).getByText('HC-SO-2610-144').closest('a')?.getAttribute('href')).toBe('/scm/sales-orders/HC-SO-2610-144');
+    expect(within(d).getByText('Customer want cancel this bill')).toBeTruthy();
+    expect(within(d).getByText("Customer's bank")).toBeTruthy();
+    expect(within(d).queryByText('Make AP invoice')).toBeNull();
+    expect(within(d).queryByText(/Request the balance/)).toBeNull();
+    fireEvent.click(within(d).getByText('Reject…'));
+    await waitFor(() => expect(returnAsync).toHaveBeenCalledWith({ id: 'r9', note: 'Attach the organiser invoice' }));
+    expect(JSON.stringify(promptFn.mock.calls[0]![0])).toContain('Reject HC-PRQ-2610-009');
+    fireEvent.click(within(d).getByText('Make refund voucher'));
+    expect(screen.getByText('At /scm/payment-vouchers/new?type=refund&fromRequest=r9')).toBeTruthy();
+    first.unmount();
+  });
+
+  test('the salesperson without the key: their refund here, no New request, no Edit — Withdraw while it waits', () => {
+    requests = [refund()]; isFinance = false; mayRaise = false;
+    draw();
+    expect(screen.queryByText('New request')).toBeNull();
+    fireEvent.click(screen.getByText('HC-PRQ-2610-009'));
+    const d = screen.getByRole('dialog');
+    expect(within(d).queryByText('Edit')).toBeNull();
+    expect(within(d).getByText('Withdraw')).toBeTruthy();
+    expect(within(d).getByText('No file — a refund request needs none.')).toBeTruthy();
+  });
+
+  test('rejected, it reads Rejected with Finance\'s reason; with nothing raised the page says where refunds come from', () => {
+    requests = [refund({ status: 'REJECTED', stage: 'RETURNED', finance_note: 'Convert to a new order instead', decided_by: 'Chew' })]; isFinance = false; mayRaise = false;
+    const first = draw();
+    expect(screen.getAllByText('Rejected · 已拒绝').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByText('HC-PRQ-2610-009'));
+    const d = screen.getByRole('dialog');
+    expect(within(d).getByText(/Rejected by Chew/)).toBeTruthy();
+    expect(within(d).queryByText('Withdraw')).toBeNull();
+    first.unmount();
+    requests = [];
+    draw();
+    expect(screen.getByText('Your refund requests show here — send one with Refund on a Sales Order.')).toBeTruthy();
+    mayRaise = undefined;
   });
 });

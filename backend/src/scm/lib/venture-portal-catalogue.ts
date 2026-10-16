@@ -37,7 +37,7 @@ import { classifyVpResponse, readVpConfig } from './venture-portal-outbox';
 /* The SCM PostgREST client is untyped at every call site in this tree; a typed
    signature here would describe a contract nothing else keeps. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
-type ScmClient = SupabaseClient<any, any, any>;
+export type ScmClient = SupabaseClient<any, any, any>;
 
 /** The size budget for one POST. The portal runs on Vercel, whose request body
  *  limit is 4.5 MB; three leaves room for the headers and for growth. */
@@ -90,12 +90,13 @@ export const VP_CATALOGUE_URL_PROBLEM =
   'vp.url is not an https URL ending in /sales-orders, so the /products receiver cannot be derived';
 
 /**
- * The catalogue receiver, derived from the order feed's: a trailing
- * /sales-orders becomes /products. Anything else answers null — the two
+ * A receiver beside the order feed's, derived from it: a trailing
+ * /sales-orders becomes /<endpoint>. Anything else answers null — the
  * endpoints are one deployment's siblings, and a URL of any other shape is one
- * this code would only be guessing about.
+ * this code would only be guessing about. Shared by the catalogue (/products)
+ * and the Sales Attending push (/sales-attending, venture-portal-attendance.ts).
  */
-export function vpCatalogueUrl(salesOrdersUrl: string): string | null {
+export function vpSiblingUrl(salesOrdersUrl: string, endpoint: 'products' | 'sales-attending'): string | null {
   let u: URL;
   try {
     u = new URL(salesOrdersUrl.trim());
@@ -107,8 +108,13 @@ export function vpCatalogueUrl(salesOrdersUrl: string): string | null {
   if (u.protocol !== 'https:' || u.search !== '' || u.hash !== '') return null;
   const m = /^(.*)\/sales-orders\/?$/.exec(u.pathname);
   if (!m) return null;
-  u.pathname = `${m[1]}/products`;
+  u.pathname = `${m[1]}/${endpoint}`;
   return u.toString();
+}
+
+/** The catalogue receiver: the order feed's vp.url with /sales-orders → /products. */
+export function vpCatalogueUrl(salesOrdersUrl: string): string | null {
+  return vpSiblingUrl(salesOrdersUrl, 'products');
 }
 
 /**
@@ -181,6 +187,44 @@ export function vpCatalogueVerdict(
 }
 
 /**
+ * The state row a push records for one company — the catalogue's and the
+ * Sales Attending push's alike, so the two records cannot drift. PURE.
+ * `delivered_digest` follows the verdict (see vpCatalogueVerdict); `parts` is
+ * null for a push that is always one post (its table has no last_parts).
+ */
+export function vpPushStateRow(input: {
+  companyId: number;
+  digest: string;
+  verdict: { outcome: VpCatalogueOutcome; delivered: 'replace' | 'keep' | 'clear' };
+  httpStatus: number | null;
+  note: string | null;
+  bytes: number;
+  parts: number | null;
+  portalResult: unknown;
+  now: string;
+}): Record<string, unknown> {
+  const row: Record<string, unknown> = {
+    company_id: input.companyId,
+    last_digest: input.digest,
+    last_outcome: input.verdict.outcome,
+    last_attempt_at: input.now,
+    last_http_status: input.httpStatus,
+    last_error: input.note,
+    last_bytes: input.bytes,
+    updated_at: input.now,
+  };
+  if (input.parts !== null) row.last_parts = input.parts;
+  if (input.verdict.delivered === 'replace') {
+    row.delivered_digest = input.digest;
+    row.delivered_at = input.now;
+    row.portal_result = input.portalResult;
+  } else if (input.verdict.delivered === 'clear') {
+    row.delivered_digest = null;
+  }
+  return row;
+}
+
+/**
  * Cut a body into POSTs of at most `maxBytes`, never splitting a section. PURE.
  *
  * Every part is a complete delivery on its own — companyId, full: true, the
@@ -225,7 +269,10 @@ export function planVpCatalogueParts(
   return groups.map(make);
 }
 
-function inScope(scope: FeedScope, companyId: number): boolean {
+/* The four helpers below are exported for the Sales Attending push
+   (venture-portal-attendance.ts), which is gated, posted and answered the same
+   way — one copy of each, not two that drift. */
+export function inScope(scope: FeedScope, companyId: number): boolean {
   if (scope === 'off') return false;
   if (scope === 'all') return true;
   return scope.includes(companyId);
@@ -233,7 +280,7 @@ function inScope(scope: FeedScope, companyId: number): boolean {
 
 /** The companies a scope covers. `all` is every company the ERP knows; null
  *  means the list could not be read, which is not the same as "none". */
-async function companiesFor(sb: ScmClient, scope: Exclude<FeedScope, 'off'>): Promise<number[] | null> {
+export async function companiesFor(sb: ScmClient, scope: Exclude<FeedScope, 'off'>): Promise<number[] | null> {
   if (scope !== 'all') return [...scope];
   /* public.companies is the companies MASTER; the SCM client is pinned to the
      scm schema, so it has to be asked for by name (scm/lib/doc-no.ts). */
@@ -245,7 +292,7 @@ async function companiesFor(sb: ScmClient, scope: Exclude<FeedScope, 'off'>): Pr
 }
 
 /** The portal's own word for what it did, kept as JSON when it is JSON. */
-function portalAnswer(text: string): unknown {
+export function portalAnswer(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
@@ -258,7 +305,7 @@ function portalAnswer(text: string): unknown {
  * status 0 so it is retried. The secret goes in the header the order feed
  * uses, and is never logged or returned.
  */
-async function postPart(
+export async function postPart(
   url: string,
   secret: string,
   body: string,
@@ -447,24 +494,10 @@ export async function pushVenturePortalCatalogue(
     result.httpStatus = statuses[statuses.length - 1] ?? null;
     result.note = verdict.outcome === 'sent' ? null : `${verdict.note}${failureText ? ` — ${failureText}` : ''}`;
 
-    const row: Record<string, unknown> = {
-      company_id: companyId,
-      last_digest: digest,
-      last_outcome: verdict.outcome,
-      last_attempt_at: now,
-      last_http_status: result.httpStatus,
-      last_error: result.note,
-      last_bytes: result.bytes,
-      last_parts: result.parts,
-      updated_at: now,
-    };
-    if (verdict.delivered === 'replace') {
-      row.delivered_digest = digest;
-      row.delivered_at = now;
-      row.portal_result = answers;
-    } else if (verdict.delivered === 'clear') {
-      row.delivered_digest = null;
-    }
+    const row = vpPushStateRow({
+      companyId, digest, verdict, httpStatus: result.httpStatus, note: result.note,
+      bytes: result.bytes, parts: result.parts, portalResult: answers, now,
+    });
     /* A lost write leaves the previous record in place, so the next run sees a
        digest it never recorded as delivered and normally sends again. It is
        reported in the result and the log, not retried here. */

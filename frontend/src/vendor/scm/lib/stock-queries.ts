@@ -132,28 +132,99 @@ export function useInventoryMovements(opts?: {
   });
 }
 
+/* ── Stock Adjustment DOCUMENT (BUG-66) ──────────────────────────────────
+   A numbered header (`HC-SA-YYMM-NNN`) with its current lines. qty is SIGNED:
+   + found / recount up, - write-off. */
+export type StockAdjustmentLine = {
+  id: string;
+  line_no: number;
+  item_code: string;
+  product_name: string | null;
+  item_group: string | null;
+  variants: Record<string, unknown> | null;
+  description2: string | null;
+  variant_key: string;
+  batch_no: string | null;
+  qty: number;
+  reason_code: string | null;
+  notes: string | null;
+};
+
+export type StockAdjustmentDoc = {
+  id: string;
+  adjustment_no: string;
+  warehouse_id: string;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  lines: StockAdjustmentLine[];
+};
+
+/** One line as the create / edit body carries it. On an INCREASE the backend
+    derives variant_key from `variants` unless `variantKey` is sent (an edited
+    line that kept its variants sends the key it is stored under); on a
+    DECREASE `variantKey` + `batchNo` name the bucket the stock comes out of. */
+export type StockAdjustmentLineInput = {
+  itemCode: string;
+  productName?: string;
+  qty: number;
+  reasonCode: string;
+  notes?: string;
+  itemGroup?: string | null;
+  variants?: Record<string, unknown> | null;
+  batchNo?: string | null;
+  variantKey?: string | null;
+};
+
+export function useStockAdjustments(opts?: { warehouseId?: string; dateFrom?: string; dateTo?: string }) {
+  return useQuery({
+    queryKey: ['inventory', 'adjustments', opts ?? {}],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (opts?.warehouseId) params.set('warehouseId', opts.warehouseId);
+      if (opts?.dateFrom) params.set('dateFrom', opts.dateFrom);
+      if (opts?.dateTo) params.set('dateTo', opts.dateTo);
+      return authedFetch<{ adjustments: StockAdjustmentDoc[] }>(
+        `/inventory/adjustments${params.toString() ? `?${params.toString()}` : ''}`,
+      ).then((r) => r.adjustments);
+    },
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
+  });
+}
+
+export function useStockAdjustmentDoc(id: string | null) {
+  return useQuery({
+    queryKey: ['inventory', 'adjustments', 'one', id],
+    queryFn: () => authedFetch<{ adjustment: StockAdjustmentDoc }>(`/inventory/adjustments/${id}`).then((r) => r.adjustment),
+    enabled: Boolean(id),
+    retry: retryUnlessClientError,
+  });
+}
+
 export function useStockAdjustment() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: {
-      warehouseId: string;
-      itemCode: string;
-      productName?: string;
-      qtyDelta: number;
-      reasonCode: string;
-      notes?: string;
-      // Variant + batch (sofa/bedframe). On INCREASE the backend computes the
-      // variant_key from `variants`; on DECREASE the picker supplies the exact
-      // existing bucket via `variantKey` + `batchNo`.
-      itemGroup?: string | null;
-      variants?: Record<string, unknown> | null;
-      batchNo?: string | null;
-      variantKey?: string | null;
-    }) => authedFetch<{ movement: { id: string } }>(`/inventory/adjustments`, {
-      method: 'POST', body: JSON.stringify(body),
-    }),
+    mutationFn: (body: { warehouseId: string; notes?: string; lines: StockAdjustmentLineInput[] }) =>
+      authedFetch<{ id: string; adjustmentNo: string }>(`/inventory/adjustments`, {
+        method: 'POST', body: JSON.stringify(body),
+      }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['inventory'] });
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
+    },
+  });
+}
+
+export function useUpdateStockAdjustment(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { notes?: string | null; lines?: StockAdjustmentLineInput[] }) =>
+      authedFetch<{ adjustment: Omit<StockAdjustmentDoc, 'lines'>; movedBuckets: number }>(`/inventory/adjustments/${id}`, {
+        method: 'PATCH', body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
     },
   });
 }
@@ -425,6 +496,10 @@ export type StockTakeRow = {
   created_by: string | null;
   /* Phase 1 (mig 0270): the person responsible for the count + blind flag. */
   assignee_staff_id?: string | null;
+  /* Round 1 (mig 20261006T1500): EVERY counter — a record, not a post gate. */
+  assignee_staff_ids?: string[] | null;
+  /* Built with "only SKUs with stock" (zero buckets left off the sheet). */
+  nonzero_only?: boolean;
   blind?: boolean;
   line_count?: number;
   /* null on a BLIND take that is still OPEN when the viewer is not a
@@ -449,6 +524,13 @@ export type StockTakeLine = {
   /* Phase 1 (mig 0270): WHO entered the counted qty (scm.staff uuid) and WHEN. */
   counted_by?: string | null;
   counted_at?: string | null;
+  /* Round 1: added with Add line during the count (not in the snapshot). */
+  added_on_count?: boolean;
+  /* Round 2: the rack the counter found the goods on (moved there at post). */
+  rack_id?: string | null;
+  /* Best-known unit cost (sen) the post would value this variance at; null =
+     no cost basis, or withheld on a blind take. */
+  est_unit_cost_sen?: number | null;
 };
 
 /* Server-decided viewer facts (one shared logic layer — the frontend must not
@@ -504,8 +586,10 @@ export function useStockTakeDetail(id: string | null) {
 
 export type CreateStockTakeInput = {
   warehouseId: string;
-  /* Phase 1: required — the person responsible for this count (scm.staff uuid). */
-  assigneeStaffId: string;
+  /* Who is counting (scm.staff uuids, at least one) — a record of the counters. */
+  assigneeStaffIds: string[];
+  /* Leave zero-qty buckets off the sheet; combines with Category / Prefix. */
+  nonzeroOnly?: boolean;
   takeDate?: string;
   scopeType: StockTakeScopeType;
   scopeValue?: string | null;
@@ -537,6 +621,8 @@ export type StockTakeLineUpdate = {
   id: string;
   countedQty?: number | null;
   notes?: string | null;
+  /* Round 2: a rack of the take's warehouse; null clears. */
+  rackId?: string | null;
 };
 
 export function useUpdateStockTakeLines() {
@@ -562,6 +648,9 @@ export function usePostStockTake() {
         take: StockTakeRow;
         movementsWritten: number;
         movementErrors?: string[];
+        racksMoved?: number;
+        racksSkipped?: string[];
+        rackError?: string;
       }>(`/stock-takes/${id}/post`, { method: 'PATCH', body: '{}' }),
     onSuccess: (_data, id) => {
       qc.invalidateQueries({ queryKey: ['stock-takes'] });
@@ -614,3 +703,83 @@ export function useDeleteStockTake() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['stock-takes'] }),
   });
 }
+
+/* Every counter on a take — the list, else the single legacy column. Mirrors
+   assigneesOf in backend/src/scm/routes/stock-takes.ts. */
+export const stockTakeAssignees = (t: Pick<StockTakeRow, 'assignee_staff_id' | 'assignee_staff_ids'>): string[] =>
+  t.assignee_staff_ids && t.assignee_staff_ids.length > 0
+    ? t.assignee_staff_ids
+    : t.assignee_staff_id ? [t.assignee_staff_id] : [];
+
+/* Edit an OPEN take's header (round 1): assignees and notes. */
+export function useUpdateStockTakeHeader() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; assigneeStaffIds?: string[]; notes?: string | null }) =>
+      authedFetch<{ take: StockTakeRow }>(`/stock-takes/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: ['stock-takes'] });
+      void qc.invalidateQueries({ queryKey: ['stock-takes', vars.id] });
+    },
+  });
+}
+
+export type StockTakeBucketOption = { variantKey: string; variantLabel: string | null; qtyHere: number };
+
+/* The variant buckets a SKU is known in, for Add line (on-hand at this take's warehouse). */
+export function useStockTakeBucketOptions(takeId: string | null, itemCode: string) {
+  const code = itemCode.trim();
+  return useQuery({
+    queryKey: ['stock-takes', takeId, 'bucket-options', code],
+    queryFn: () => authedFetch<{ options: StockTakeBucketOption[] }>(
+      `/stock-takes/${encodeURIComponent(takeId ?? '')}/bucket-options?itemCode=${encodeURIComponent(code)}`,
+    ).then((r) => r.options),
+    enabled: Boolean(takeId && code),
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
+  });
+}
+
+/* Add a line found during the count (round 1). */
+export function useAddStockTakeLine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; itemCode: string; variantKey: string; countedQty: number }) =>
+      authedFetch<{ line: StockTakeLine }>(`/stock-takes/${id}/lines`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: ['stock-takes', vars.id] });
+    },
+  });
+}
+
+/* Round 2: the racks the Rack column can name (this company's racks of the take's warehouse). */
+export function useStockTakeRacks(takeId: string | null) {
+  return useQuery({
+    queryKey: ['stock-takes', takeId, 'racks'],
+    queryFn: () => authedFetch<{ racks: Array<{ id: string; rack: string; zone: string | null }> }>(
+      `/stock-takes/${encodeURIComponent(takeId ?? '')}/racks`,
+    ).then((r) => r.racks),
+    enabled: Boolean(takeId),
+    staleTime: 60_000,
+    retry: retryUnlessClientError,
+  });
+}
+
+export type SheetProposal = {
+  lineId: string; no: number | null; itemCode: string; variantLabel: string | null;
+  counted: number | null; rackText: string | null; rackId: string | null; unclear: boolean;
+};
+export type SheetUnmatched = {
+  no: number | null; itemCode: string | null; counted: number | null; rackText: string | null;
+  reason: 'not_on_sheet' | 'ambiguous_code' | 'duplicate_row' | 'no_code';
+};
+export type SheetRead = {
+  takeNoRead: string | null; takeNoMatches: boolean | null;
+  proposals: SheetProposal[]; unmatched: SheetUnmatched[];
+};
+
+/* Round 2: read ONE photographed page of the counted paper sheet. Writes nothing. */
+export const readStockTakeSheet = (takeId: string, file: { name: string; mime: string; dataBase64: string }) =>
+  authedFetch<SheetRead>(`/stock-takes/${encodeURIComponent(takeId)}/read-sheet`, {
+    method: 'POST', body: JSON.stringify({ files: [file] }),
+  });

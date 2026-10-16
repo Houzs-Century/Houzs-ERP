@@ -17,6 +17,7 @@ import {
 import { formatPhone } from "../scm/shared/phone";
 import { fmtDate, fmtDateTime } from "../scm/shared/format";
 import { assrStageLabel } from "../scm/shared/assr-stage-labels";
+import { assrMergedPoText } from "../scm/shared/assr-case-pos";
 import { assrSubStatusLabelOf } from "../scm/shared/assr-sub-statuses";
 
 // Formal service-case document modeled on a standard Malaysian business
@@ -1132,7 +1133,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       <div class="lc">HP</div><div class="vc mono">${esc(cs.phone || "—")}</div>
       <div class="lc">Ref No</div><div class="vc mono">${esc(cs.ref_no || "—")}</div>
       <div class="lc">Delivered Date</div><div class="vc mono">${fmtDate((cs as any).do_date)}</div>
-      <div class="lc">PO No</div><div class="vc mono">${esc(cs.po_no || "—")}</div>
+      <div class="lc">PO No</div><div class="vc mono">${esc(assrMergedPoText(cs) || "—")}</div>
       <div class="lc">SO No</div><div class="vc mono">${esc(cs.doc_no || "—")}</div>
       <div class="lc">Inspection Date</div><div class="vc mono">${fmtDate((cs as any).sched_inspection_date)}</div>
       <div class="lc">Pickup Date</div><div class="vc mono">${fmtDate((cs as any).sched_pickup_date)}</div>
@@ -1192,13 +1193,23 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
 
     ${isSupplier ? (() => {
       // ── Supplier Service Order (design handoff). ──
+      /* BUG-92 (Farra 2026-10-08): the per-item Supplier remark is one note for
+         the whole case, so on a 2nd/3rd return it still said trip 1's problem
+         while the Reason row said this trip's. Once the trip has a Reason, that
+         is the only instruction the supplier sees. A trip without one keeps the
+         old remark so papers already in flight do not go blank. */
+      const tripReason = String((trip || currentReturn)?.reason ?? "").trim();
+      const supRemark = (it: any, i: number): string =>
+        tripReason ? (i === 0 ? tripReason : "")
+        : it.supplier_remark ? it.supplier_remark
+        : i === 0 && cs.action_remark ? cs.action_remark : "";
       const supItems = (items as any[]).map((it, i) => `
         <div class="itable" style="grid-template-columns: 10mm 1fr 12mm 12mm 1.4fr;">
           <span class="td">${i + 1}</span>
           <span class="td code">${esc([it.item_code, it.item_description].filter(Boolean).join(" — "))}</span>
           <span class="td">${esc(it.qty ?? 1)}</span>
           <span class="td">${esc(it.qty_carton ?? 1)}</span>
-          <span class="td remark">${it.supplier_remark ? esc(it.supplier_remark) : i === 0 && cs.action_remark ? esc(cs.action_remark) : ""}</span>
+          <span class="td remark">${esc(supRemark(it, i))}</span>
         </div>`);
       const photos = inlinedImages.slice(0, 5).map((a, i) => `
         <div class="ph"><img src="${a.data_url}" alt="${esc(a.file_name || "")}" /><span class="tag">IMG_${String(i + 1).padStart(2, "0")}</span></div>`);
@@ -1240,7 +1251,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     <!-- creditor box -->
     <div class="credit-box">
       <div class="cell"><div class="k">Supplier (Creditor)</div><div class="v">${esc(trip?.creditor_name || trip?.creditor_code || (cs as any).creditor_name || (cs as any).creditor_code || "—")}</div></div>
-      <div class="cell"><div class="k">PO Number</div><div class="v">${esc(cs.po_no || "—")}</div></div>
+      <div class="cell"><div class="k">PO Number</div><div class="v">${esc(assrMergedPoText(cs) || "—")}</div></div>
       <div class="cell"><div class="k">Target Completion</div><div class="v">${supplierTargetIso ? fmtDate(supplierTargetIso) : "—"}</div></div>
     </div>
 

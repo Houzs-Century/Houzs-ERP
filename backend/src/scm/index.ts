@@ -57,6 +57,7 @@ import { accEvents } from "./routes/acc-events";
 import { officialDocs } from "./routes/official-docs";
 import { supplierMaintenance } from "./routes/supplier-maintenance";
 import { paymentRequests } from "./routes/payment-requests";
+import { productRequests } from "./routes/product-requests";
 import { receipts } from "./routes/receipts";
 import { entityAuditLog } from "./routes/entity-audit-log";
 import { changeLog } from "./routes/change-log";
@@ -117,8 +118,10 @@ import { scanGr } from "./routes/scan-gr";
 import { scanPi } from "./routes/scan-pi";
 import { scanPayment } from "./routes/scan-payment";
 import { scanLorryInvoice } from "./routes/scan-lorry-invoice";
+import { scanFilesSo, scanFilesPayment, scanFilesPv, scanFilesWorkshop } from "./routes/scan-files";
 import { slips } from "./routes/slips";
 import { deliveryPlanning } from "./routes/delivery-planning";
+import { deliveryJobProgress } from "./routes/delivery-job-progress";
 import { deliveryPlanningRegions } from "./routes/delivery-planning-regions";
 import { deliveryPlanningRowMarks } from "./routes/delivery-planning-row-marks";
 import { deliveryPlanningRowOrder } from "./routes/delivery-planning-row-order";
@@ -126,6 +129,7 @@ import { deliveryResidenceRules } from "./routes/delivery-residence-rules";
 import { threeplCompanies } from "./routes/threepl-companies";
 import { deliveryZones } from "./routes/delivery-zones";
 import { deliveryRateCards } from "./routes/delivery-rate-cards";
+import { threeplDoCharges } from "./routes/threepl-do-charges";
 import { driverLeave } from "./routes/driver-leave";
 import { trips } from "./routes/trips";
 import { tripScanToken } from "./routes/trip-scan-token";
@@ -496,6 +500,11 @@ scm.use(
           hasPositionCapability(u, "scm.do.dispatch")
         );
       }
+      // Driver "Arrived" — PATCH .../arrival only; the handler re-checks the
+      // verb, the caller's own job and that the DO is on the road.
+      if (c.req.method === "PATCH" && c.req.path.endsWith("/arrival")) {
+        return hasPositionCapability(u, "scm.do.dispatch");
+      }
       // Ops-lead revert — POST .../revert only, on the editable scm.do.revert
       // capability. The handler re-checks the verb and reverses stock itself.
       if (c.req.method === "POST" && c.req.path.endsWith("/revert")) {
@@ -571,7 +580,10 @@ scm.route("/purchase-consignment-returns", purchaseConsignmentReturns);
 // fire BOTH and re-couple the two, defeating the split.) The reads the
 // adjustment form needs (warehouses, buckets, movements) stay under /inventory
 // on `scm.warehouse.inventory`.
-scm.use("/inventory/adjustments", scmAreaGuard("scm.warehouse.adjustments"));
+// Wildcard since BUG-66 (2026-10-07): the router now serves /:id too, and an
+// exact-path guard would leave those paths behind supabaseAuth alone, because
+// this router answers before the broad /inventory/* guard is reached.
+scm.use("/inventory/adjustments/*", scmAreaGuard("scm.warehouse.adjustments"));
 scm.route("/inventory/adjustments", inventoryAdjustments);
 // openReadPaths /inventory/warehouses (2026-07-19, fix/so-maintenance-403) —
 // GET /inventory/warehouses is the warehouse PICKLIST (id / code / name /
@@ -733,6 +745,12 @@ scm.route("/currencies", currencies);
 // which requireScmAccess admits for this prefix alone. Each handler checks that
 // key or Finance's scm.payment_voucher.create, and a requester sees their own.
 scm.route("/payment-requests", paymentRequests);
+// Product request (owner 2026-10-06) — NO area guard, for the same reason: a
+// salesperson (Sales 都能提) holds no consignment or procurement area and the
+// Purchaser holds no sales area. requireScmAccess admits a Sales caller and the
+// two flat scm.product_request.* keys for this prefix alone; each handler checks
+// the caller, and a requester sees their own requests only.
+scm.route("/product-requests", productRequests);
 // HR / Commission (port of 2990 apps/api routes/hr.ts + migration 0123). The
 // only place commission is calculated — the last thing keeping 2990's apps/api
 // alive. NO scmAreaGuard: an L2 area key is a PAGE key, and there is no HR page
@@ -808,6 +826,21 @@ scm.route("/drivers", drivers);
 // Mounted under the existing transportation area key; owner/* bypasses, no lockout.
 // Finer per-route L2 keys (planning / fleet / trips) can be added later.
 scm.use("/delivery-planning/*", scmAreaGuard("scm.transportation.drivers"));
+// The crew's On the way / Arrived / POD on a non-DO job. writeBypass — a driver
+// or helper holds view on transportation plus scm.do.dispatch, not edit; the
+// handlers admit only the caller's OWN job (delivery scope) unless scope is 'all'.
+scm.use(
+  "/delivery-jobs/*",
+  scmAreaGuard("scm.transportation.drivers", {
+    writeBypass: (c) =>
+      c.req.method === "POST" &&
+      hasPositionCapability(
+        c.get("user") as unknown as Parameters<typeof hasPositionCapability>[0],
+        "scm.do.dispatch",
+      ),
+  }),
+);
+scm.route("/delivery-jobs", deliveryJobProgress);
 scm.route("/delivery-planning", deliveryPlanning);
 // openRead (2026-07-19, fix/so-maintenance-403) — this router is pure REFERENCE
 // data: the region master (code / name / sortOrder / active) and the per-state →
@@ -850,6 +883,10 @@ scm.route("/delivery-zones", deliveryZones);
 // and it does NOT touch the FIFO money-path.
 scm.use("/delivery-rate-cards/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/delivery-rate-cards", deliveryRateCards);
+// HC-0031 - the 3PL invoice keyed in after delivery, tallied per DO against the
+// rate cards above. Same Transportation area gate.
+scm.use("/threepl-do-charges/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/threepl-do-charges", threeplDoCharges);
 // Fleet A3 (mig 0206) — driver-leave admin. The date-ranged absences the A2
 // auto-assigner reads to skip on-leave drivers. Same Transportation area gate as
 // the rest of the TMS fleet masters: read = view, record/delete = edit.
@@ -969,6 +1006,16 @@ scm.route("/scan-pi", scanPi);
 // /scan-payment/extract returns 503 anthropic_key_missing when absent.
 scm.use("/scan-payment/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
 scm.route("/scan-payment", scanPayment);
+/* Original scans (HC-0006 T7) — one router per kind, each behind the area
+   guard of the document it belongs to. */
+scm.use("/scan-files/so/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
+scm.route("/scan-files/so", scanFilesSo);
+scm.use("/scan-files/payment/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
+scm.route("/scan-files/payment", scanFilesPayment);
+scm.use("/scan-files/pv/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/scan-files/pv", scanFilesPv);
+scm.use("/scan-files/workshop/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/scan-files/workshop", scanFilesWorkshop);
 // Ported 2026-06-24 — payment-slip upload session (init → upload → confirm).
 // PRODUCES the pending_slip_uploads row that the SO-create + add-payment
 // handlers (mfg-sales-orders.ts) CONSUME by upload_session_id; without it the
@@ -979,7 +1026,22 @@ scm.route("/scan-payment", scanPayment);
 // the SLIPS R2 binding, now bound in wrangler.toml (prod + staging).
 // writeLevel view: staging an upload only produces the caller's own pending
 // slip row — a view-level sales rep can attach slips to their own draft.
-scm.use("/slips/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
+// writeBypass — the driver's POD photo rides this same upload pipeline (MobilePOD
+// → uploadSlipFull), and a driver holds scm.do.dispatch, not scm.sales.orders.
+// An upload session only stores an image under the caller's own staff id; it
+// attaches to nothing until a route that checks its own access consumes the key.
+scm.use(
+  "/slips/*",
+  scmAreaGuard("scm.sales.orders", {
+    writeLevel: "view",
+    writeBypass: (c) =>
+      c.req.method === "POST" &&
+      hasPositionCapability(
+        c.get("user") as unknown as Parameters<typeof hasPositionCapability>[0],
+        "scm.do.dispatch",
+      ),
+  }),
+);
 scm.route("/slips", slips);
 
 export default scm;

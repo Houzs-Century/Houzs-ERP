@@ -16,6 +16,7 @@
 //   PATCH /mfg-purchase-orders/:id/reopen     — flip CANCELLED → SUBMITTED
 // ----------------------------------------------------------------------------
 
+import { isPoLineOverReceived } from '../lib/qty-cap';
 import { Hono } from 'hono';
 import { PO_STATUS_BUCKETS } from '../lib/po-status-buckets';
 import { HELD_OR_TERM, isDocumentHeld } from '../lib/document-hold';
@@ -29,12 +30,7 @@ import {
   splitSofaCode, sofaHeightKey, effectiveSoDelivery,
   type SofaComboRow, type SofaPriceTier,
 } from '../shared';
-import {
-  computeMfgPoUnitCost,
-  type MfgFabricTier,
-  type MaintenanceConfig,
-  type PoPriceMatrix,
-} from '../shared/mfg-pricing';
+import { computeMfgPoUnitCost, type MfgFabricTier, type MaintenanceConfig, type PoPriceMatrix } from '../shared/mfg-pricing';
 import { orderSofaModuleRowsWithinBuilds, sortLinesByStoredLineNo, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine, stampPoLineNos } from '../lib/po-line-order';
 import { poConvertLineRows } from '../lib/po-convert-line';
@@ -46,7 +42,7 @@ import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../l
 import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { loadOutstandingSoLines } from '../lib/outstanding-so-lines';
 import { poHasDownstream } from '../lib/downstream-lock';
-import { cascadePoSupplierDate, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade';
+import { cascadePoSupplierDate, pickSupplierDateSlot, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade';
 import { description2InputsChanged } from '../lib/po-line-description2';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
@@ -365,7 +361,7 @@ const ITEM_COLS =
   'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
   'custom_specials, line_suffix, special_order_price_sen, variants, ' +
   /* PR #77 — per-line delivery date + ship-to warehouse */
-  'delivery_date, warehouse_id, ' +
+  'delivery_date, line_delivery_date_overridden, warehouse_id, ' +
   /* Migration 0180 — supplier-revised per-line delivery dates. Effective line
      date = MAX over non-null of [delivery_date, _2, _3, _4]. */
   'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, ' +
@@ -482,7 +478,7 @@ mfgPurchaseOrders.get('/', async (c) => {
        Date, ...) — the same read the export uses (lib/po-line-export.ts), so the
        screen and the file agree cell for cell. The legacy unpaged path does not
        carry them: its callers never render a line column. */
-    const withLines = await attachPoLines(supabase, c, stamped.rows);
+    const withLines = await attachPoLines(supabase, c, stamped.rows, { outstandingOnly: status === 'outstanding' });
     if (withLines.error) return c.json({ error: 'lines_read_failed', reason: withLines.error }, 500);
     return c.json({ purchaseOrders: withLines.rows, total, page, pageSize, statusCounts });
   }
@@ -2080,6 +2076,25 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       .filter((it) => (it.itemGroup ?? '').trim().toLowerCase() === 'sofa')
       .map((it) => it.soDocNo),
   );
+  /* 1 PO = 1 batch (owner 2026-10-05, 「不能跨批次 1PO = 1batch 不能分开」): one
+     order's sofa set must land in ONE purchase order. The grouping below keys
+     on supplier, so modules resolved to two suppliers would become two POs —
+     two dye lots that can never ship as one set. Refused before any write. */
+  const sofaSupplierBySo = new Map<string, Set<string>>();
+  for (const it of soItems) {
+    if ((it.itemGroup ?? '').trim().toLowerCase() !== 'sofa') continue;
+    const set = sofaSupplierBySo.get(it.soDocNo) ?? new Set<string>();
+    set.add(effectiveBindingFor(it)!.supplier_id);
+    sofaSupplierBySo.set(it.soDocNo, set);
+  }
+  const splitSofaSets = [...sofaSupplierBySo.entries()].filter(([, s]) => s.size > 1).map(([d]) => d);
+  if (splitSofaSets.length > 0) {
+    return c.json({
+      error: 'sofa_set_supplier_split',
+      reason: `A sofa set ships from one batch, so every module of one order goes on ONE purchase order. Pick one supplier for all modules of: ${splitSofaSets.join(', ')}.`,
+      soDocNos: splitSofaSets,
+    }, 409);
+  }
   for (const it of soItems) {
     const b = effectiveBindingFor(it)!;
     const effectiveSupplierId = b.supplier_id;
@@ -2466,6 +2481,7 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
     .select(PO_AUDIT_SELECT).eq('id', id), co.companyId).maybeSingle();
   if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
+  const prevExpectedAt = before.expected_at ?? null;
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   for (const [from, to] of PO_AUDIT_FIELDS) {
@@ -2523,6 +2539,22 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
       console.error('[mfg-po PATCH] header date cascade failed', { id, col, error: e });
     }
   }
+
+  /* Owner 2026-10-06, last edit wins (as SO) — a header Delivery Date change moves
+     every line, hand-set ones included (flag resets), except a fully received one. JS
+     filter: PostgREST cannot compare two columns. Keyed on the date CHANGING:
+     the editor re-sends the whole header. Best-effort, as above. */
+  if (updates['expected_at'] !== undefined && (updates['expected_at'] ?? null) !== prevExpectedAt) {
+    const { data: lines, error: readErr } = await scopeToCompanyId(sb.from('purchase_order_items')
+      .select('id, qty, received_qty').eq('purchase_order_id', id), co.companyId);
+    const openIds = ((lines ?? []) as Array<{ id: string; qty: number; received_qty: number | null }>)
+      .filter((l) => (l.received_qty ?? 0) < l.qty)
+      .map((l) => l.id);
+    const { error: lineErr } = readErr ? { error: readErr } : openIds.length === 0 ? { error: null }
+      : await scopeToCompanyId(sb.from('purchase_order_items')
+        .update({ delivery_date: updates['expected_at'], line_delivery_date_overridden: false }).in('id', openIds), co.companyId);
+    if (lineErr) console.error('[mfg-po PATCH] delivery date line cascade failed', { id, error: lineErr });
+  }
   await queueAcPoEdit(c, id);
 
   return c.json({ purchaseOrder: data });
@@ -2552,8 +2584,8 @@ const BULK_SUPPLIER_DATE_MAX = 100;
 /* Request validation, split out so it can be tested without a Hono context or
    a database. Rejects with the exact {status, payload} the handler returns. */
 export type BulkSupplierDateRequest = {
-  slot: SupplierDateSlot;
-  col: (typeof SUPPLIER_DATE_SLOT_COL)[SupplierDateSlot];
+  slot: SupplierDateSlot | 'next';
+  col: (typeof SUPPLIER_DATE_SLOT_COL)[SupplierDateSlot] | null;
   date: string;
   poIds: string[];
   applyToLines: boolean;
@@ -2563,9 +2595,9 @@ export function parseBulkSupplierDateBody(
   body: Record<string, unknown>,
 ): { ok: true; req: BulkSupplierDateRequest }
   | { ok: false; status: 400; payload: { error: string; reason: string } } {
-  const slot = Number(body.slot) as SupplierDateSlot;
-  if (!(slot in SUPPLIER_DATE_SLOT_COL)) {
-    return { ok: false, status: 400, payload: { error: 'invalid_slot', reason: 'slot must be 2, 3 or 4.' } };
+  const slot = body.slot === 'next' ? 'next' : Number(body.slot) as SupplierDateSlot;
+  if (slot !== 'next' && !(slot in SUPPLIER_DATE_SLOT_COL)) {
+    return { ok: false, status: 400, payload: { error: 'invalid_slot', reason: 'slot must be 2, 3, 4 or "next".' } };
   }
 
   /* Both halves matter: the shape check rejects "2026-8-3" / free text, and the
@@ -2597,7 +2629,7 @@ export function parseBulkSupplierDateBody(
     ok: true,
     req: {
       slot,
-      col: SUPPLIER_DATE_SLOT_COL[slot],
+      col: slot === 'next' ? null : SUPPLIER_DATE_SLOT_COL[slot],
       date,
       poIds,
       // Default ON: the operator picked POs to move the date on, and leaving
@@ -2618,7 +2650,7 @@ mfgPurchaseOrders.post('/bulk-supplier-date', async (c) => {
   if (!parsed.ok) return c.json(parsed.payload, parsed.status);
   const { slot, date, poIds, applyToLines } = parsed.req;
 
-  const updated: Array<{ id: string; poNumber: string | null }> = [];
+  const updated: Array<{ id: string; poNumber: string | null; slot: SupplierDateSlot }> = [];
   const skipped: Array<{ id: string; poNumber: string | null; reason: string }> = [];
 
   for (const id of poIds) {
@@ -2631,11 +2663,13 @@ mfgPurchaseOrders.post('/bulk-supplier-date', async (c) => {
 
     const childLock = await poHasDownstream(sb, id);
     if (childLock) { skipped.push({ id, poNumber, reason: childLock.message }); continue; }
+    const pick = pickSupplierDateSlot(slot, before);
+    if (!pick.ok) { skipped.push({ id, poNumber, reason: pick.reason }); continue; }
 
     /* Header + every line + the audit row, in lib/po-supplier-date-cascade.ts —
        the one writer the PO line import's estimate dates share. */
     const written = await cascadePoSupplierDate(sb, {
-      companyId: co.companyId, poId: id, before, slot, date, applyToLines, actor: c.get('houzsUser') ?? null, note: null,
+      companyId: co.companyId, poId: id, before, slot: pick.slot, date, applyToLines, actor: c.get('houzsUser') ?? null, note: null,
     });
     if (!written.ok) { skipped.push({ id, poNumber, reason: written.reason }); continue; }
     /* ERP -> AutoCount edit, ONE PER PO THAT ACTUALLY MOVED — inside the loop
@@ -2649,7 +2683,7 @@ mfgPurchaseOrders.post('/bulk-supplier-date', async (c) => {
        detail field — so the account book's own promised dates were left behind
        by every bulk date change the ERP has ever made. */
     await queueAcPoEdit(c, id);
-    updated.push({ id, poNumber });
+    updated.push({ id, poNumber, slot: pick.slot });
   }
 
   return c.json({ slot, date, applyToLines, updated, skipped });
@@ -2968,6 +3002,8 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
     unit_cost_sen: Number(it.unitCostSen ?? 0),
     // PR #77 — per-line ship-to. Both nullable; empty = inherit from header.
     delivery_date: dateOrNull(it.deliveryDate),
+    /* Hand-set only when the editor says so: a new line seeded from the header date follows it. */
+    line_delivery_date_overridden: it.lineDeliveryDateOverridden === true,
     // Migration 0180 — per-line supplier-revised dates (nullable, default NULL).
     supplier_delivery_date_2: dateOrNull(it.supplierDeliveryDate2),
     supplier_delivery_date_3: dateOrNull(it.supplierDeliveryDate3),
@@ -3102,6 +3138,15 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
   ] as const) {
     if (it[from] !== undefined) updates[to] = it[from];
   }
+  /* Owner 2026-10-06 — a user-saved line date is hand-set, and the header
+     cascade then leaves it alone. Only a CHANGED date counts: the editor
+     re-sends every field of a changed line. An explicit flag (the editor sends
+     false for a date it copied from the header) wins. */
+  if (it.lineDeliveryDateOverridden !== undefined) {
+    updates['line_delivery_date_overridden'] = it.lineDeliveryDateOverridden === true;
+  } else if (it.deliveryDate !== undefined && dateOrNull(it.deliveryDate) !== (prev.delivery_date ?? null)) {
+    updates['line_delivery_date_overridden'] = true;
+  }
   /* Commander 2026-05-28 — Description 2 is server-owned: recompute from the
      effective itemGroup + variants, but ONLY when one of them moves
      (lib/po-line-description2.ts says why a date save must not rebuild it). */
@@ -3148,6 +3193,8 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
   }
 
   const { error } = await scopeToCompanyId(sb.from('purchase_order_items').update(coerceEmptyDates(updates)).eq('id', itemId), co.companyId);
+  // HC-0004: the DB floor (mig 20261014T1430) refused a cut below what a GRN, posted after the lock read above, received.
+  if (isPoLineOverReceived(error)) return c.json({ error: 'received_floor', message: 'A goods received note has just received this line. Its qty can no longer be cut below what was received. Refresh and check the order.', reason: error!.message }, 409);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row. qty,

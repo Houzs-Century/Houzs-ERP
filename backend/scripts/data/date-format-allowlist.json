@@ -296,6 +296,11 @@
       "file": "frontend/src/pages/projects/OutstandingReminders.tsx",
       "text": "const label = d.toLocaleDateString(\"en-GB\", { month: \"short\", year: \"numeric\", timeZone: \"UTC\" });",
       "why": "A MONTH-NAME LABEL for the Reminder view's month picker ('Oct 2026'), case 2 in the README — it names a period, it is not a date a user reads as DD/MM/YYYY. The underlying filter value stays the YYYY-MM ISO string; this only spells the dropdown option text. Explicit timeZone: UTC so the label never shifts with the device clock."
+    },
+    {
+      "file": "backend/src/scm/lib/delivery-message-kinds.ts",
+      "text": "return String(iso ?? '').slice(0, 10).replace(/-/g, '/');",
+      "why": "templateDate: the WhatsApp template VARIABLE value, not a display in this app. Connect's approved Meta templates (hc_order_driver_info, hc_order_postpone_reason, the delivery openers) print the date exactly as sent and were approved showing YYYY/MM/DD — the same shape delivery-messages.ts payloadDate has always sent for delivery_date_N. Changing it here changes what the customer reads inside an approved template; it is the template owner's call, not this gate's."
     }
   ]
 }

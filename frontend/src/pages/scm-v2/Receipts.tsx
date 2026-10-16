@@ -40,6 +40,7 @@ import {
 } from '../../vendor/scm/lib/accounting-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
 import { DateField } from '../../vendor/scm/components/DateField';
@@ -89,7 +90,7 @@ const buildReceiptColumns = (h: {
   {
     key: 'number', label: 'No.', width: 180, sortable: true,
     accessor: (r) => (
-      <span style={{ fontFamily: 'var(--font-mono)' }}>
+      <span className={cancelledDocNoClass(r.status)} style={{ fontFamily: 'var(--font-mono)' }}>
         {r.kind === 'DEBTOR'
           ? <Link to={`/scm/ar-invoices?debtor=${r.debtorId ?? ''}`} style={{ color: 'inherit' }}>{r.number}</Link>
           : r.kind === 'CUSTOMER'
@@ -473,6 +474,7 @@ export const Receipts = () => {
         emptyMessage={`Nothing came in ${month ? 'this month' : 'yet'} (searched general + other-debtor + customer receipts).`}
         onFilteredRowsChange={setVisible}
         defaultSort={NEWEST_FIRST}
+        getRowClassName={(r) => cancelledRowClass(r.status)}
         rowStyle={(r) => (r.status === 'CANCELLED' ? { opacity: 0.55 } : undefined)}
         groupBanner={false}
         toolbar={(

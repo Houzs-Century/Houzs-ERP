@@ -122,3 +122,17 @@ export function nonSellingWarehouseNotice(w: {
   return `${where} is ${kind}, so its stock is never promised to a customer. `
     + 'To sell this piece, raise a stock transfer into a selling warehouse first.';
 }
+
+/** Dead stock is ON-HAND selling stock nobody is claiming. Owner, 2026-10-15:
+ *  an incoming PO is not stock, so a SKU with nothing on hand is never dead
+ *  (KABBIN-2A(LHF): 0 owned + 5 incoming vs 4 scheduled read "Dead 1"), and
+ *  owned units parked in a showroom / display / service warehouse are out. */
+export function deadStockQty(ownedOnHand: number, openDemand: number, ownedNonSelling: number): number {
+  return Math.max(0, ownedOnHand - openDemand - ownedNonSelling);
+}
+
+/** The same rule per open lot (the drawer / reservations feed): free OWNED units
+ *  outside a non-selling warehouse (XAMMAR-2A(RHF) at KL SERVICE is not dead). */
+export function isDeadStockLot(isConsignment: boolean, freeQty: number, warehouseType: string | null): boolean {
+  return !isConsignment && freeQty > 0 && !isNonSellingWarehouseType(warehouseType);
+}

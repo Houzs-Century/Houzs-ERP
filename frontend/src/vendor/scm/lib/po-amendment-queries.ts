@@ -111,6 +111,8 @@ export type PoAmendmentDetail = {
     supplier_id?: string | null;
     expected_at?: string | null;
   } | null;
+  /** The caller raised this amendment (server-resolved staff identity). */
+  viewerIsRequester?: boolean;
 };
 
 /* Create payload line — matches POST /po-amendments body.lines[]. */

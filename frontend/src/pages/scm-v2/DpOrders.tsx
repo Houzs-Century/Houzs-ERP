@@ -15,6 +15,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
+import { JobDetailPanel, type JobPanelTarget } from '../../components/scm-v2/JobDetailPanel';
 import { CalendarClock, Plus, XCircle } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { DataTable, type Column } from '../../components/DataTable';
@@ -36,6 +37,7 @@ import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -64,7 +66,11 @@ const asScheduleTarget = (r: DpOrderRow): ScheduleDpOrderTarget => ({
   customer_delivery_date: null,
 });
 
+/* A DP order is always a job on the run: its panel shows the timeline and POD. */
+const dpPanel = (r: DpOrderRow): JobPanelTarget => ({ kind: 'job', ref: { sourceType: 'dp', sourceId: r.id, leg: r.job_type }, title: r.party_name });
+
 export const DpOrders = () => {
+  const [jobPanel, setJobPanel] = useState<JobPanelTarget | null>(null);
   const list = useDpOrders();
   const cancelDp = useCancelDpOrder();
   const notify = useNotify();
@@ -132,7 +138,7 @@ export const DpOrders = () => {
       key: 'dp_no', label: 'DP No', width: '150px',
       getValue: (r) => r.dp_no ?? '',
       render: (r) => r.dp_no
-        ? <span style={{ fontFamily: 'var(--font-mono, monospace)', whiteSpace: 'nowrap' }}>{r.dp_no}</span>
+        ? <span style={{ fontFamily: 'var(--font-mono, monospace)', whiteSpace: 'nowrap' }} className={cancelledDocNoClass(r.status)}>{r.dp_no}</span>
         : <span style={{ color: 'var(--fg-muted)' }}>—</span>,
     },
     {
@@ -261,7 +267,10 @@ export const DpOrders = () => {
         )}
       />
 
+      <JobDetailPanel target={jobPanel} onClose={() => setJobPanel(null)} />
       <DataTable<DpOrderRow>
+        onRowClick={(r) => setJobPanel(dpPanel(r))}
+        onRowDoubleClick={(r) => setJobPanel(dpPanel(r))}
         tableId="scm-dp-orders"
         exportName="dp-orders"
         rows={list.isLoading ? null : rows}
@@ -269,6 +278,7 @@ export const DpOrders = () => {
         error={list.error ? (list.error instanceof Error ? list.error.message : 'Failed to load DP orders.') : undefined}
         emptyLabel={searchTerm ? 'No DP orders match this search.' : 'No DP orders yet. Create one with “New DP order”.'}
         getRowKey={(r) => r.id}
+        getRowClassName={(r) => cancelledRowClass(r.status)}
         search={{
           value: searchTerm,
           onChange: setSearchTerm,

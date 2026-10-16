@@ -74,7 +74,7 @@
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 
-import { ALARM, CANNOT_ANSWER, OK, decide, normaliseBehind } from "./lib/autocount-pull-rules.mjs";
+import { ALARM, CANNOT_ANSWER, OK, STALE_CHECKPOINT_DAYS, decide, normaliseBehind } from "./lib/autocount-pull-rules.mjs";
 
 function resolveUrl() {
   if (process.env.SENTINEL_HOUZS_DB_URL) return process.env.SENTINEL_HOUZS_DB_URL;
@@ -144,7 +144,19 @@ try {
   const total = Number(rate[0].total);
   notes.push(`rows with a timestamp: ${total} | touched 7d: ${d7} | 30d: ${d30}`);
 
-  verdict = decide({ checkpoint, behind, d7, d30, total });
+  // Incremental runs only: PULL_ALL_* never moves the checkpoint.
+  const log = await pg`
+    SELECT
+      count(*)                                     AS total,
+      count(*) FILTER (WHERE status = 'FAILED')    AS failed,
+      count(*) FILTER (WHERE status = 'SKIPPED')   AS quiet
+    FROM execution_logs
+   WHERE type IN ('PULL_SCHEDULED', 'PULL_MANUAL')
+     AND started_at::timestamptz >= now() - make_interval(days => ${STALE_CHECKPOINT_DAYS})`;
+  const runs = { total: Number(log[0].total), failed: Number(log[0].failed), quiet: Number(log[0].quiet) };
+  notes.push(`pull runs ${STALE_CHECKPOINT_DAYS}d: ${runs.total} | failed: ${runs.failed} | empty: ${runs.quiet}`);
+
+  verdict = decide({ checkpoint, behind, d7, d30, total, runs });
 } catch (e) {
   console.error(`autocount-pull-sentinel: query failed — ${e.message}`);
   console.error("CANNOT ANSWER. A sentinel that cannot see must not report green.");

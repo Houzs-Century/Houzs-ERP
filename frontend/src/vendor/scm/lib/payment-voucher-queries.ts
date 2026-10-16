@@ -7,6 +7,7 @@
 // settlement).
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { DOC_FILE_ACCEPT } from './doc-file-mime';
 import { API_URL, authedFetch, humanApiError } from './authed-fetch';
 import { readAuthToken } from '../../../lib/authToken';
 import { companyHeader } from '../../../lib/activeCompany';
@@ -39,9 +40,13 @@ export type PaymentVoucherRow = Record<string, unknown> & {
   voucher_date: string | null;
   payee_name: string;
   total_sen?: number;
+  /** DEV-75: recorded only — not in total_sen, posts nothing. */
+  bank_charge_sen?: number | null;
   currency?: string;
   exchange_rate?: string | number | null;
   credit_account_code?: string;
+  /** The header's Notes, as Finance typed them — the list shows them (owner 2026-10-14). */
+  notes?: string | null;
   supplier?: { id: string; code: string; name: string } | null;
   /* The owner's four layers (2026-09-02). No marks: raw Draft. submitted:
      Prepared (still editable). checked: locked, on Daily Bank's pending.
@@ -101,7 +106,13 @@ export const useCreatePaymentVoucher = () => {
     mutationFn: ({ idempotencyKey, ...body }: { idempotencyKey?: string } & Record<string, unknown>) =>
       authedFetch<{ id: string; pvNumber: string }>(`/payment-vouchers`,
         idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['payment-vouchers'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      /* A bill now vouchered is another's same bill (the pile says so on return). */
+      void qc.invalidateQueries({ queryKey: ['payment-request-bill-matches'] });
+      /* A voucher answering a request takes it off Finance's waiting count. */
+      void qc.invalidateQueries({ queryKey: ['payment-requests'] });
+    },
   });
 };
 
@@ -174,6 +185,8 @@ export const useCancelPaymentVoucher = () => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
       void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
+      /* A cancelled voucher puts its request back on Finance's waiting count. */
+      void qc.invalidateQueries({ queryKey: ['payment-requests'] });
     },
   });
 };
@@ -278,7 +291,7 @@ export type PvFile = {
 export type PvFilePayload = { name: string; mime: string; dataBase64: string };
 /* What a voucher file may be — the server's PV_FILE_MIMES (pv-files.ts),
    as an <input accept>. */
-export const PV_FILE_ACCEPT = 'image/jpeg,image/png,image/webp,application/pdf';
+export const PV_FILE_ACCEPT = DOC_FILE_ACCEPT;
 
 export const usePvFiles = (pvId: string | null) => useQuery({
   queryKey: ['pv-files', pvId],
@@ -401,8 +414,9 @@ export const usePvReservations = (supplierId: string | null, excludePvId: string
    The document a refund refunds — 认单为主: the operator names the Sales
    Order (any status) or the Sales Invoice (CANCELLED only), and the server
    answers with the customer, every payment it collected (booked = reached
-   this ledger), the refunds already on it and the headroom. */
-export type RefundPayment = { id: string; paidOn: string; method: string; provider: string | null; amountSen: number; booked: boolean };
+   this ledger; imported = brought over from AutoCount, which counts on an
+   order too — owner 2026-10-05), the refunds already on it and the headroom. */
+export type RefundPayment = { id: string; paidOn: string; method: string; provider: string | null; amountSen: number; booked: boolean; imported?: boolean };
 export type RefundVoucherRow = { id: string; pvNumber: string; status: string; voucherDate: string; totalSen: number };
 export type RefundSource = {
   type: 'SO' | 'SI';
@@ -410,9 +424,15 @@ export type RefundSource = {
   status: string | null;
   customer: { name: string | null; phone: string | null; customerId: string | null; debtorCode: string | null };
   payments: RefundPayment[];
+  /** What the document was paid: booked here plus, on an order, brought over from AutoCount. */
   bookedSen: number;
+  /** The part of it brought over from AutoCount (optional against an older server). */
+  importedSen?: number;
   refunds: RefundVoucherRow[];
   refundedSen: number;
+  /** Refund requests on the order still waiting for Finance (owner 2026-10-14)
+      — spoken for, all but the one being answered. Optional against an older server. */
+  requestedSen?: number;
   refundableSen: number;
   /** Deposit invoices still standing on the order, and what is left on them
       (docs/bugs/0860). Optional only for the minute a newer screen reads an
@@ -422,11 +442,13 @@ export type RefundSource = {
   reason: string | null;
 };
 
-export const useRefundSource = (type: 'SO' | 'SI', docNo: string, excludePvId: string | null = null) => useQuery({
-  queryKey: ['pv-refund-source', type, docNo.trim(), excludePvId],
+/** `excludeRequestId` — the refund request this voucher answers: its own amount
+    is not held against it (owner 2026-10-14). */
+export const useRefundSource = (type: 'SO' | 'SI', docNo: string, excludePvId: string | null = null, excludeRequestId: string | null = null) => useQuery({
+  queryKey: ['pv-refund-source', type, docNo.trim(), excludePvId, excludeRequestId],
   enabled: docNo.trim().length > 0,
   retry: false,
   queryFn: () => authedFetch<{ source: RefundSource }>(
-    `/payment-vouchers/refund-source?type=${type}&docNo=${encodeURIComponent(docNo.trim())}${excludePvId ? `&excludePvId=${encodeURIComponent(excludePvId)}` : ''}`,
+    `/payment-vouchers/refund-source?type=${type}&docNo=${encodeURIComponent(docNo.trim())}${excludePvId ? `&excludePvId=${encodeURIComponent(excludePvId)}` : ''}${excludeRequestId ? `&excludeRequestId=${encodeURIComponent(excludeRequestId)}` : ''}`,
   ),
 });

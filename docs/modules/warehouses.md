@@ -18,6 +18,8 @@
 
 Racks (`scm.warehouse_racks`) live one level under a warehouse, unique per `(warehouse_id, rack)`; a rack can carry a `zone` override of its default number-based zone grouping. A cross-company, read-only view backs an "All Companies" rack tab and the mobile rack-lookup screen — there is no cross-company write; editing, stock and zone stay per-company.
 
+One building is one `scm.warehouses` record PER COMPANY with the same `code` (KL WAREHOUSE under HOUZS and under 2990), and a shelf is one rack row per record, so a shelf both companies receive on must carry the label under each record. `POST /warehouse/racks` (single or seed) takes `alsoSiblingCompanies: true` to fan the label out to the other allowed companies' active warehouses of the same code as well, each row stamped with THAT warehouse's `company_id` (`lib/rack-sibling-warehouses.ts`); the desktop New rack / Seed racks "Apply to" has the matching checkbox. Rename and delete stay per record. On 2026-10-05 2990's KL WAREHOUSE was seeded with HOUZS's 76 labels (Rack L1.1–L21.2, R1.1–R17.2) so 2990 receipts can be racked on the shared shelves; a rack added later to one company without the checkbox is a shelf the other cannot pick.
+
 `stock_bucket` (mig 20260921T2000; null / `customer` / `display` / `service`) names the CLOSING STOCK the month-end close books a warehouse's goods on; blank follows the type (warehouse, others → customer; showroom, display → display; service → service — `backend/src/scm/lib/stock-bucket.ts`). HOUZS's two Cash & Carry segment locations carry `customer` (owner 2026-09-21). Set it on the warehouse form.
 
 ## Rules that must not break
