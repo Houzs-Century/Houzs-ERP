@@ -735,7 +735,7 @@ export default {
          orders are waiting for, and its own failure is caught here, never
          there. The unchanged case is one md5 round trip. */
       const vpCatalogue = vpOrderDrain
-        .then(() => pushVenturePortalCatalogue(env, { force: false }))
+        .then(() => track("vp-catalogue", () => pushVenturePortalCatalogue(env, { force: false })))
         .then((r) => {
           /* failed = the portal refused the catalogue (400/413/422) and it
              will not be sent again until it changes or a person forces it;
@@ -758,7 +758,7 @@ export default {
          rejects. The unchanged case is one md5 round trip. */
       ctx.waitUntil(
         vpCatalogue
-          .then(() => track("vp-attendance", () => pushVenturePortalAttendance(env, { force: false })))
+          .then(() => pushVenturePortalAttendance(env, { force: false }))
           .then((r) => {
             if (
               r.skipped === "attendance_url_unknown"
