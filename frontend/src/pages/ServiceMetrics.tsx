@@ -9,6 +9,7 @@ import { Panel } from "../components/Panel";
 import { ListSkeleton } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
 import { useQuery } from "../hooks/useQuery";
+import { Donut, type Slice } from "../components/scm-v2/Charts";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { cn, formatDate } from "../lib/utils";
@@ -105,6 +106,30 @@ const PERIOD_LABEL: Record<string, string> = {
 // Full-width section divider — bold uppercase title + trailing rule.
 // Groups the dashboard into scannable bands (Live / Period / Trends …)
 // instead of one long flat scroll.
+/** Categories typed in different case ("Product defect" / "Product Defect")
+ *  are one category. The first spelling seen names it. */
+export function mergeByLabel(rows: Slice[]): Slice[] {
+  const out = new Map<string, Slice>();
+  for (const r of rows) {
+    const k = r.label.trim().toLowerCase();
+    const cur = out.get(k);
+    out.set(k, cur ? { ...cur, value: cur.value + r.value } : { ...r, label: r.label.trim() });
+  }
+  return [...out.values()];
+}
+
+/** A breakdown as a donut, in the same frame as DashboardBreakdown. */
+function DonutPanel({ title, data }: { title: string; data: Slice[] }) {
+  const total = data.reduce((a, d) => a + d.value, 0);
+  return (
+    <div className="rounded-lg border border-border bg-surface px-5 py-5 shadow-stone">
+      <div className="mb-4 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">{title}</div>
+      <Donut size={112} format={(n) => n.toLocaleString()} center={{ value: total.toLocaleString(), label: "cases" }}
+        data={data.slice().sort((a, b) => b.value - a.value)} />
+    </div>
+  );
+}
+
 function SectionHeader({
   icon,
   title,
@@ -396,18 +421,13 @@ export function ServiceMetrics() {
       {/* ── Breakdowns ── */}
       <SectionHeader icon={<PieChart size={15} />} title="Breakdowns" />
       <DashboardPanels cols={3}>
-        <DashboardBreakdown
+        <DonutPanel
           title="Service Issue Categories"
-          items={
-            m?.issue_categories?.map((r) => ({
-              label: r.category || "Other",
-              count: r.count,
-            })) ?? []
-          }
+          data={mergeByLabel(m?.issue_categories?.map((r) => ({ label: r.category || "Other", value: r.count, color: null })) ?? [])}
         />
-        <DashboardBreakdown
+        <DonutPanel
           title="Resolution Method Mix"
-          items={m?.resolutions.map((r) => ({ label: resolutionLabel(r.method === "unset" ? null : r.method), count: r.count })) ?? []}
+          data={m?.resolutions.map((r) => ({ label: r.method === "unset" ? "Not recorded" : resolutionLabel(r.method), value: r.count, color: r.method === "unset" ? "#c9cdc4" : null })) ?? []}
         />
         <DashboardBreakdown
           title="NCR Categories (root-cause)"
@@ -783,9 +803,12 @@ function StageFunnel({ data }: { data: AssrSummaryV31["stage_funnel"] }) {
       breached: row?.breached ?? 0,
     };
   });
-  const max = Math.max(...rows.map((r) => r.total), 1);
-  const totalOpen = rows.reduce((acc, r) => acc + r.total, 0);
-  const totalBreached = rows.reduce((acc, r) => acc + r.breached, 0);
+  /* Completed is the end of the pipe, not a place cases wait: it is drawn for
+     scale but counts in neither "open", the shares, nor the bottleneck. */
+  const openRows = rows.filter((r) => r.stage !== "completed");
+  const max = Math.max(...openRows.map((r) => r.total), 1);
+  const totalOpen = openRows.reduce((acc, r) => acc + r.total, 0);
+  const totalBreached = openRows.reduce((acc, r) => acc + r.breached, 0);
 
   return (
     <div>
@@ -803,10 +826,11 @@ function StageFunnel({ data }: { data: AssrSummaryV31["stage_funnel"] }) {
 
       <div className="space-y-1">
         {rows.map((r) => {
-          const widthPct = (r.total / max) * 100;
+          const done = r.stage === "completed";
+          const widthPct = Math.min(100, (r.total / max) * 100);
           const breachShare = r.total > 0 ? (r.breached / r.total) * 100 : 0;
           const sharePct = totalOpen > 0 ? Math.round((r.total / totalOpen) * 100) : 0;
-          const isPeak = r.total > 0 && r.total === max;
+          const isPeak = !done && r.total > 0 && r.total === max;
           return (
             <div
               key={r.stage}
@@ -862,7 +886,7 @@ function StageFunnel({ data }: { data: AssrSummaryV31["stage_funnel"] }) {
               </div>
 
               <div className="text-right font-mono text-[10px] text-ink-muted">
-                {r.total > 0 ? `${sharePct}%` : "—"}
+                {done ? "done" : r.total > 0 ? `${sharePct}%` : "—"}
               </div>
             </div>
           );
