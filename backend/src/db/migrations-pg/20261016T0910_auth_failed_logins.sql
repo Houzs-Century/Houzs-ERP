@@ -1,4 +1,4 @@
--- 20261005T1100_auth_failed_logins.sql
+-- 20261016T0910_auth_failed_logins.sql
 -- REVERSAL: DROP TABLE IF EXISTS public.auth_failed_logins;
 --   Revert the code first: services/failedLogins.ts writes it (from
 --   routes/auth.ts /login and /totp/login) and routes/systemHealthLogins.ts

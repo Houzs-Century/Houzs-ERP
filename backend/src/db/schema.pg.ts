@@ -1140,7 +1140,7 @@ export const companies = pgTable("companies", {
   created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// ── auth_failed_logins (mig 20261005T1100; DEV-35) ─────────
+// ── auth_failed_logins (mig 20261016T0910; DEV-35) ─────────
 // One row per failed sign-in. Never holds the attempted password or code.
 export const auth_failed_logins = pgTable("auth_failed_logins", {
   id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
@@ -1151,7 +1151,7 @@ export const auth_failed_logins = pgTable("auth_failed_logins", {
   reason: text("reason").notNull(),
 });
 
-// ── job_runs (mig 20261005T1000): one row per scheduled job run ──
+// ── job_runs (mig 20261016T0900): one row per scheduled job run ──
 export const job_runs = pgTable("job_runs", {
   id: uuid("id").primaryKey(),
   job: text("job").notNull(),

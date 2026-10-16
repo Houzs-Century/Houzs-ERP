@@ -1,4 +1,4 @@
--- 20261005T1000_job_runs.sql
+-- 20261016T0900_job_runs.sql
 -- REVERSAL: DROP TABLE IF EXISTS public.job_runs;
 --   Revert the code first: services/jobRuns.ts writes a row per scheduled job
 --   from scheduled() in index.ts, and routes/systemHealthJobs.ts reads them for

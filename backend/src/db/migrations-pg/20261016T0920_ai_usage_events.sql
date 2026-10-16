@@ -1,4 +1,4 @@
--- 20261005T1200_ai_usage_events.sql
+-- 20261016T0920_ai_usage_events.sql
 -- REVERSAL: DROP TABLE IF EXISTS public.ai_usage_events;
 --   Additive log table; nothing reads it except the IT "AI Usage" page
 --   (routes/aiUsage.ts). The recorder (services/aiUsage.ts) swallows a failed
