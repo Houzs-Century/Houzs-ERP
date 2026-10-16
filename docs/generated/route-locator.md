@@ -585,16 +585,16 @@ Total: 1487 route registrations across 206 files.
 - L437  GET    /
 - L440  GET    /valuation
 - L515  GET    /products
-- L927  GET    /breakdown/:itemCode
-- L985  GET    /movements
-- L1049  GET    /lots/:itemCode
-- L1066  GET    /batches
-- L1168  GET    /cogs
-- L1195  GET    /value
-- L1220  GET    /analytics
-- L1390  GET    /reconcile
-- L1419  GET    /buckets/:itemCode
-- L1481  GET    /reservations
+- L928  GET    /breakdown/:itemCode
+- L986  GET    /movements
+- L1050  GET    /lots/:itemCode
+- L1067  GET    /batches
+- L1169  GET    /cogs
+- L1196  GET    /value
+- L1221  GET    /analytics
+- L1391  GET    /reconcile
+- L1420  GET    /buckets/:itemCode
+- L1482  GET    /reservations
 
 ## backend/src/scm/routes/payment-requests.ts  (17)
 - L279  GET    /
@@ -616,22 +616,22 @@ Total: 1487 route registrations across 206 files.
 - L731  POST   /:id/return
 
 ## backend/src/scm/routes/grns.ts  (16)
-- L971  GET    /
-- L1134  GET    /outstanding-po-items
-- L1238  GET    /:id
-- L1307  GET    /:id/linked
-- L1376  POST   /
-- L1913  POST   /from-pos
-- L2030  PATCH  /:id/post
-- L2167  POST   /from-po-items
-- L2427  PATCH  /:id/cancel
-- L2438  PATCH  /:id
-- L2675  POST   /:id/items
-- L2933  PATCH  /:id/items/:itemId
-- L3237  PATCH  /:id/items/:itemId/rack
-- L3238  GET    /:id/racks
-- L3239  PUT    /:id/items/:itemId/racks
-- L3253  DELETE /:id/items/:itemId
+- L982  GET    /
+- L1145  GET    /outstanding-po-items
+- L1249  GET    /:id
+- L1318  GET    /:id/linked
+- L1387  POST   /
+- L1924  POST   /from-pos
+- L2041  PATCH  /:id/post
+- L2178  POST   /from-po-items
+- L2438  PATCH  /:id/cancel
+- L2449  PATCH  /:id
+- L2686  POST   /:id/items
+- L2944  PATCH  /:id/items/:itemId
+- L3248  PATCH  /:id/items/:itemId/rack
+- L3249  GET    /:id/racks
+- L3250  PUT    /:id/items/:itemId/racks
+- L3264  DELETE /:id/items/:itemId
 
 ## backend/src/scm/routes/product-models.ts  (16)
 - L99  GET    /:id/photo/:key
@@ -1359,11 +1359,11 @@ Total: 1487 route registrations across 206 files.
 - L225  DELETE /special/:id
 
 ## backend/src/scm/routes/delivery-planning.ts  (5)
-- L1543  GET    /
-- L1572  GET    /geo
-- L1873  GET    /:docNo/lines
-- L1931  PATCH  /:type/:id/fields
-- L2241  PATCH  /:type/:id/schedule
+- L1545  GET    /
+- L1574  GET    /geo
+- L1875  GET    /:docNo/lines
+- L1933  PATCH  /:type/:id/fields
+- L2243  PATCH  /:type/:id/schedule
 
 ## backend/src/scm/routes/dp-orders.ts  (5)
 - L272  POST   /
@@ -1590,9 +1590,9 @@ Total: 1487 route registrations across 206 files.
 - L108  PATCH  /:id
 
 ## backend/src/scm/routes/lorry-capacity.ts  (3)
-- L139  GET    /
-- L481  PATCH  /lorries/:id/in-house
-- L533  PUT    /lorries/:id/repair-days
+- L220  GET    /
+- L487  PATCH  /lorries/:id/in-house
+- L539  PUT    /lorries/:id/repair-days
 
 ## backend/src/scm/routes/model-free-gifts.ts  (3)
 - L62  GET    /

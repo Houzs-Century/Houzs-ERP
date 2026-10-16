@@ -226,7 +226,76 @@ async function partThree() {
     ORDER BY doc_no`);
 }
 
+/* PART=4: the detail a repair needs for the three HC-0108 sofa POs and the
+   nine doubled migration receipts. */
+const PIECE_POS = `('HC-PO-009630','HC-PO-009718','HC-PO-009940')`;
+async function partFour() {
+  await section('P1 PO lines on the three sofa POs', `
+    SELECT po.po_number, po.status::text AS po_status, po.id AS po_id, poi.id AS poi_id, poi.line_no, poi.item_code,
+           poi.qty, poi.received_qty, poi.unit_price_sen, poi.line_total_sen, poi.linked_ac_dtlkey,
+           poi.created_at, poi.so_item_id, poi.warehouse_id
+    FROM scm.purchase_orders po JOIN scm.purchase_order_items poi ON poi.purchase_order_id = po.id
+    WHERE po.po_number IN ${PIECE_POS} ORDER BY po.po_number, poi.line_no`);
+  await section('P2 GRN lines on those PO lines', `
+    SELECT po.po_number, poi.item_code AS po_item, g.grn_number, g.status::text AS grn_status,
+           g.migrated_no_stock, g.linked_ac_gr_docno, gi.id AS gi_id, gi.item_code, gi.qty_received, gi.qty_accepted,
+           gi.returned_qty, gi.invoiced_qty, gi.unit_price_sen, gi.line_total_sen, gi.linked_ac_dtlkey,
+           (SELECT count(*)::int FROM scm.inventory_movements m WHERE m.source_doc_type = 'GRN' AND m.source_doc_id = g.id) AS moves
+    FROM scm.purchase_orders po JOIN scm.purchase_order_items poi ON poi.purchase_order_id = po.id
+    JOIN scm.grn_items gi ON gi.purchase_order_item_id = poi.id JOIN scm.grns g ON g.id = gi.grn_id
+    WHERE po.po_number IN ${PIECE_POS} ORDER BY po.po_number, g.grn_number`);
+  await section('P3 SO lines linked to those POs, with their DO lines', `
+    SELECT s.doc_no, so.status::text AS so_status, s.id AS so_item_id, s.line_no, s.item_code, s.qty,
+           s.stock_status::text AS stored, s.linked_ac_dtlkey, s.created_at::date AS created,
+           d.do_number, d.status::text AS do_status, d.migrated_no_stock AS do_migrated, di.id AS di_id, di.qty AS do_qty,
+           (SELECT count(*)::int FROM scm.inventory_movements m WHERE m.source_doc_type = 'DO' AND m.source_doc_id = d.id) AS do_moves
+    FROM scm.mfg_sales_order_items s JOIN scm.mfg_sales_orders so ON so.doc_no = s.doc_no
+    LEFT JOIN scm.delivery_order_items di ON di.so_item_id = s.id
+    LEFT JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
+    WHERE s.doc_no IN ('HC-SO-012046','HC-SO-012913','HC-SO-013224') AND s.cancelled = false
+    ORDER BY s.doc_no, s.line_no`);
+  await section('G1 the doubled receipts: both headers and every line on each', `
+    WITH over AS (
+      SELECT poi.id FROM scm.purchase_order_items poi
+      JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id
+      WHERE po.po_number IN ('HC-PO-009431','HC-PO-009557','HC-PO-009680','HC-PO-009791','HC-PO-009820',
+                             'HC-PO-009824','HC-PO-009847','HC-PO-009903','HC-PO-009934')
+    ), grn AS (
+      SELECT DISTINCT gi.grn_id FROM scm.grn_items gi JOIN over o ON o.id = gi.purchase_order_item_id
+    )
+    SELECT g.grn_number, g.status::text AS grn_status, g.migrated_no_stock, g.linked_ac_gr_docno,
+           g.received_at::date AS received_on, g.created_at, hp.po_number AS header_po, g.total_sen,
+           gi.id AS gi_id, lp.po_number AS line_po, gi.item_code, gi.qty_accepted, gi.returned_qty, gi.invoiced_qty,
+           gi.linked_ac_dtlkey, gi.line_total_sen,
+           (SELECT count(*)::int FROM scm.purchase_invoice_items pii WHERE pii.grn_item_id = gi.id) AS pi_lines,
+           (SELECT count(*)::int FROM scm.purchase_return_items pri WHERE pri.grn_item_id = gi.id) AS pr_lines,
+           (SELECT count(*)::int FROM scm.inventory_movements m WHERE m.source_doc_type = 'GRN' AND m.source_doc_id = g.id) AS moves,
+           (SELECT count(*)::int FROM scm.autocount_outbox ob WHERE ob.doc_id = g.id::text OR ob.doc_no = g.grn_number) AS outbox
+    FROM grn JOIN scm.grns g ON g.id = grn.grn_id
+    LEFT JOIN scm.purchase_orders hp ON hp.id = g.purchase_order_id
+    JOIN scm.grn_items gi ON gi.grn_id = g.id
+    LEFT JOIN scm.purchase_order_items lpi ON lpi.id = gi.purchase_order_item_id
+    LEFT JOIN scm.purchase_orders lp ON lp.id = lpi.purchase_order_id
+    ORDER BY g.grn_number, gi.item_code`);
+  await section('G2 every 2026-08-28 migrated receipt with no AutoCount GR link, by company / status', `
+    SELECT g.company_id, g.status::text AS grn_status, g.migrated_no_stock, count(*)::int AS grns
+    FROM scm.grns g
+    WHERE g.created_at::date = '2026-08-28' AND g.linked_ac_gr_docno IS NULL
+    GROUP BY 1,2,3 ORDER BY 1,2,3`);
+  await section('G3 2026-08-28 unlinked receipts whose PO line also has a 2026-09-20 linked receipt', `
+    SELECT count(DISTINCT g.id)::int AS doubled_grns, count(DISTINCT gi.purchase_order_item_id)::int AS po_lines
+    FROM scm.grns g JOIN scm.grn_items gi ON gi.grn_id = g.id
+    WHERE g.created_at::date = '2026-08-28' AND g.linked_ac_gr_docno IS NULL AND g.status::text <> 'CANCELLED'
+      AND EXISTS (SELECT 1 FROM scm.grn_items gi2 JOIN scm.grns g2 ON g2.id = gi2.grn_id
+                  WHERE gi2.purchase_order_item_id = gi.purchase_order_item_id AND g2.id <> g.id
+                    AND g2.linked_ac_gr_docno IS NOT NULL AND g2.status::text <> 'CANCELLED')`);
+}
+
 try { main: {
+  if (process.env.PART === '4') {
+    await partFour();
+    break main;
+  }
   if (process.env.PART === '3') {
     await partThree();
     break main;
