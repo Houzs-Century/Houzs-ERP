@@ -1,7 +1,7 @@
 // Small SVG charts for the module Overview pages (owner, 2026-10-17: mix pie,
 // bar and report formats so problems stand out). No chart library: each chart
 // is a few shapes, sized by its container, with the exact figure on hover.
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
 
 export const PALETTE = ["#16695f", "#a16a2e", "#4f7cac", "#c2603d", "#7a8f3c", "#8a5a9e", "#3d9c94", "#b8913f", "#6b7a8f", "#a34d6d"];
@@ -57,12 +57,27 @@ export function Donut({ data, format, center, size }: { data: Slice[]; format: F
 
 export interface Series { name: string; color: string }
 
+/** The container's width in px, so a chart draws at real size and its text stays readable. */
+function useWidth(fallback: number) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [w, setW] = useState(fallback);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => { if (e) setW(Math.max(200, Math.round(e.contentRect.width))); });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, w] as const;
+}
+
 /** Vertical columns per period, side by side or stacked, with an optional line on top. */
 export function Columns({ labels, series, values, format, stacked, line, highlight, height }: {
   labels: string[]; series: Series[]; values: number[][]; format: Fmt; stacked: boolean;
   line: { name: string; color: string; values: Array<number | null>; format: Fmt } | null; highlight: number | null; height: number;
 }) {
-  const W = 600; const H = height; const padL = 8; const padB = 22; const padT = 10;
+  const [ref, W] = useWidth(420);
+  const H = height; const padL = 8; const padB = 22; const padT = 10;
   const n = labels.length;
   const totals = labels.map((_, i) => (stacked ? values.reduce((a, s) => a + Math.max(0, s[i] ?? 0), 0) : Math.max(0, ...values.map((s) => s[i] ?? 0))));
   const max = Math.max(1, ...totals);
@@ -73,10 +88,10 @@ export function Columns({ labels, series, values, format, stacked, line, highlig
   const lineVals = line?.values ?? [];
   const lmax = Math.max(1, ...lineVals.map((v) => v ?? 0));
   const ly = (v: number) => padT + (H - padB - padT) * (1 - v / lmax);
-  const step = n > 14 ? Math.ceil(n / 12) : 1;
+  const step = Math.max(1, Math.ceil((n * 44) / W));
   return (
-    <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label="Column chart">
+    <div ref={ref}>
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="block" role="img" aria-label="Column chart">
         {[0.25, 0.5, 0.75, 1].map((f) => <line key={f} x1={padL} x2={W} y1={y(max * f)} y2={y(max * f)} stroke="#eceee8" strokeWidth="1" />)}
         {labels.map((lab, i) => {
           const x0 = padL + i * slot + (slot - groupW) / 2;
