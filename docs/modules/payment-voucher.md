@@ -49,6 +49,11 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   every failure is logged and stepped over.
 - A negative or fractional amount is refused (400), never silently clamped to
   0.
+- **Bank Charges** (`bank_charge_sen`, header, MYR sen) is not in `total_sen`.
+  On post it adds Dr `900-B001` / Cr the PV's bank to the same journal, in MYR
+  as keyed (never through the exchange rate); a cancel's contra reverses it.
+  900-B001 not an active expense leaf of the company = post refused 409
+  `bank_charge_account`. Negative/fractional refused 400 `bank_charge_invalid`.
 - An allocation names a PI **or** an AP invoice, never both or neither
   (`allocation_two_targets` / `allocation_pi_required`).
 - An invoice a saved unposted (Draft/Prepared/Checked) voucher already applies
@@ -129,6 +134,22 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   (`PaymentRequestsWaiting.tsx` → `/scm/payment-requests?filter=waiting`) and the
   red count on Money out › Payment Requests; Finance sees that entry only — the
   Workspace one is the requester's (`hidePerm`).
+- A Sales Order's Refund button raises a payment request, not a voucher (owner
+  2026-10-14; `backend/src/scm/lib/refund-request.ts`): the customer as payee,
+  the reason and the customer's bank required, a file not;
+  `refund_source_type`/`refund_source_doc_no` name the order. While it waits
+  (submitted, or its voucher cancelled) it holds that much of the order's money
+  — in `ordersMoney` and in the refund headroom (`loadRefundSource`) alike.
+  Only a Customer Refund voucher on that order answers it
+  (`refundAnswerRefusal`: `refund_request_needs_refund`, and
+  `request_not_a_refund` the other way round), and its own amount is left out
+  of the headroom (`excludeRequestId`; PV New `?type=refund&fromRequest=`);
+  Finance's Return is the rejection. It is never edited
+  (`refund_request_fixed`) and takes no balance (`refund_no_balance`). Its
+  requester reads it on Payment Requests without the key — every caller reads
+  their own requests there, a Sales caller reaches the router
+  (`requireScmAccess`), and the list says `mayRaise` so the page offers New
+  request only to the key and Finance.
 - Finance's 欠正式单 remark (what to follow up) rides the mark: written with the
   tick on PV New / the AP invoice form (`officialDocNote`) or on the detail
   (`POST /official-docs/:kind/:id` with `note`), at most 500 characters; a

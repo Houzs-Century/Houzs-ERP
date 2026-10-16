@@ -177,6 +177,43 @@ export async function notifySoAmendmentRaised(
   }
 }
 
+/** BUG-101 (owner 2026-10-12): a Logistic-lane request that brings the Delivery
+ *  Date forward on an order with a live PO waits for a Purchaser's OK before
+ *  Logistic can approve it. The Purchaser is not that lane's audience, so
+ *  without this card nobody on that desk would know to look. */
+export async function notifySoAmendmentPurchaserOkNeeded(
+  env: Env,
+  opts: {
+    amendmentNo: string;
+    soDocNo: string;
+    companyId?: number | string | null;
+    requesterName?: string | null;
+    requesterUserId?: number | null;
+  },
+): Promise<void> {
+  try {
+    const requester = Number(opts.requesterUserId) || 0;
+    const by = (opts.requesterName ?? "").trim();
+    const purchasers = await usersHoldingPermission(env, LANE_APPROVE_PERM.LINES, {
+      companyId: opts.companyId ?? null,
+    });
+    const audience = cleanIds(await withUpline(env, purchasers)).filter((id) => id !== requester);
+    if (audience.length === 0) return;
+    await postPersonalNotice(env, {
+      userIds: audience,
+      category: "GENERAL",
+      title: `SO amendment ${opts.amendmentNo} needs Purchaser OK`,
+      body:
+        `Amendment ${opts.amendmentNo} on Sales Order ${opts.soDocNo}${by ? ` (raised by ${by})` : ""} ` +
+        "brings the Delivery Date forward and the order already has a Purchase Order. " +
+        "Check with the supplier, then give the Purchaser OK so Logistic can approve it.",
+      source: SO_SOURCE,
+    });
+  } catch (e) {
+    console.error("[amendment-notify] SO purchaser-OK notify failed:", (e as Error).message);
+  }
+}
+
 /** An APPROVER said a request was not theirs to sign, and it MOVED to the other
  *  desk (owner 2026-09-17, option B). The receiving desk gets a to-do card —
  *  the request now waits on THEM — carrying the note that explains why it

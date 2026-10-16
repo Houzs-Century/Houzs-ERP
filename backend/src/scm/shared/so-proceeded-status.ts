@@ -42,6 +42,25 @@
 export const PROCEED_FROM_STATUS = 'CONFIRMED';
 export const PROCEED_TO_STATUS = 'IN_PRODUCTION';
 
+/* THE DATE DECIDES WHERE A LIVE ORDER LANDS, not only where it MOVES.
+
+   The two transition rules above fire on a header SAVE that adds or clears the
+   date. Three other writers put an order into CONFIRMED and none of them asked
+   about the date: the create (a New Sales Order filled in with its Processing
+   Date), the confirm of a DRAFT (the scan review screen fills the date BEFORE
+   Confirm), and the stock sweep's regress out of READY_TO_SHIP. Measured on
+   production 2026-10-13: 171 of 2,569 Submitted orders carried a Processing
+   Date — proceeded by the owner's rule, filed under Submitted by the route.
+
+   This is the landing rule those writers share: a date means IN_PRODUCTION,
+   no date means CONFIRMED. It answers for a status that is being written
+   anyway; it never decides WHETHER to write one. */
+export function liveStatusForProcessingDate(
+  processingDate: string | null | undefined,
+): typeof PROCEED_FROM_STATUS | typeof PROCEED_TO_STATUS {
+  return (processingDate ?? '').trim() ? PROCEED_TO_STATUS : PROCEED_FROM_STATUS;
+}
+
 export function statusAfterProcessingDateSet(input: {
   /** The order's status BEFORE this save. */
   currentStatus: string | null | undefined;

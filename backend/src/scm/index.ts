@@ -118,6 +118,7 @@ import { scanGr } from "./routes/scan-gr";
 import { scanPi } from "./routes/scan-pi";
 import { scanPayment } from "./routes/scan-payment";
 import { scanLorryInvoice } from "./routes/scan-lorry-invoice";
+import { scanFilesSo, scanFilesPayment, scanFilesPv, scanFilesWorkshop } from "./routes/scan-files";
 import { slips } from "./routes/slips";
 import { deliveryPlanning } from "./routes/delivery-planning";
 import { deliveryJobProgress } from "./routes/delivery-job-progress";
@@ -128,6 +129,7 @@ import { deliveryResidenceRules } from "./routes/delivery-residence-rules";
 import { threeplCompanies } from "./routes/threepl-companies";
 import { deliveryZones } from "./routes/delivery-zones";
 import { deliveryRateCards } from "./routes/delivery-rate-cards";
+import { threeplDoCharges } from "./routes/threepl-do-charges";
 import { driverLeave } from "./routes/driver-leave";
 import { trips } from "./routes/trips";
 import { tripScanToken } from "./routes/trip-scan-token";
@@ -881,6 +883,10 @@ scm.route("/delivery-zones", deliveryZones);
 // and it does NOT touch the FIFO money-path.
 scm.use("/delivery-rate-cards/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/delivery-rate-cards", deliveryRateCards);
+// HC-0031 - the 3PL invoice keyed in after delivery, tallied per DO against the
+// rate cards above. Same Transportation area gate.
+scm.use("/threepl-do-charges/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/threepl-do-charges", threeplDoCharges);
 // Fleet A3 (mig 0206) — driver-leave admin. The date-ranged absences the A2
 // auto-assigner reads to skip on-leave drivers. Same Transportation area gate as
 // the rest of the TMS fleet masters: read = view, record/delete = edit.
@@ -1000,6 +1006,16 @@ scm.route("/scan-pi", scanPi);
 // /scan-payment/extract returns 503 anthropic_key_missing when absent.
 scm.use("/scan-payment/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
 scm.route("/scan-payment", scanPayment);
+/* Original scans (HC-0006 T7) — one router per kind, each behind the area
+   guard of the document it belongs to. */
+scm.use("/scan-files/so/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
+scm.route("/scan-files/so", scanFilesSo);
+scm.use("/scan-files/payment/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
+scm.route("/scan-files/payment", scanFilesPayment);
+scm.use("/scan-files/pv/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/scan-files/pv", scanFilesPv);
+scm.use("/scan-files/workshop/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/scan-files/workshop", scanFilesWorkshop);
 // Ported 2026-06-24 — payment-slip upload session (init → upload → confirm).
 // PRODUCES the pending_slip_uploads row that the SO-create + add-payment
 // handlers (mfg-sales-orders.ts) CONSUME by upload_session_id; without it the

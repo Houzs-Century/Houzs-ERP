@@ -26,6 +26,7 @@ import type { Env, Variables } from '../env';
 import { activeCompanyId, scopeToAllowedCompanies } from '../lib/companyScope';
 import { supabaseAuth } from '../middleware/auth';
 import { effectiveSoDelivery, type SoDeliveryDateRow } from '../shared';
+import { normalizePhone } from '../shared/phone';
 import {
   KIND_AUTOMATION,
   MESSAGE_KINDS,
@@ -50,13 +51,11 @@ export const deliveryMessages = new Hono<{ Bindings: Env; Variables: Variables }
 // without it has no c.get('supabase') and 500s on the first query).
 deliveryMessages.use('*', supabaseAuth);
 
-/** Digits-only, then '+'-prefixed — the sheet-era fix: the first BulkSend
- *  failed until the phone carried the '+'. Returns null for an empty/blank
- *  phone so the caller can skip (and report) the row instead of sending into
- *  the void. */
-function normalizePhone(raw: unknown): string | null {
-  const digits = String(raw ?? '').replace(/\D/g, '');
-  return digits.length >= 8 ? `+${digits}` : null;
+/** The shared E.164 normaliser, so a stored "+6060..." (pre-#4582 header) or
+ *  "0176..." is sent as "+60176...", not to a number that does not exist
+ *  (HC-0096). Null for a blank phone so the caller can skip (and report) it. */
+export function blastPhone(raw: unknown): string | null {
+  return normalizePhone(raw == null ? null : String(raw));
 }
 
 /** ISO YYYY-MM-DD → the template payload's YYYY/MM/DD. */
@@ -77,10 +76,6 @@ const sendSchema = z.object({
     carPlate: z.string().trim().max(20).default(''),
     deliveryTime: z.string().trim().min(1).max(60),
   }).optional(),
-  postpone: z.object({
-    reason: z.string().trim().min(1).max(120),
-    newDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  }).optional(),
 });
 
 /* ── POST /send — one Houzs Connect call per customer phone ────────────────── */
@@ -98,13 +93,12 @@ deliveryMessages.post('/send', async (c) => {
   if (!parsed.success) return c.json({ error: 'invalid_body', reason: parsed.error.message }, 400);
   const docNos = [...new Set(parsed.data.docNos)];
   const kind = parsed.data.kind;
-  const extras: SendExtras = { driverInfo: parsed.data.driverInfo, postpone: parsed.data.postpone };
+  const extras: SendExtras = { driverInfo: parsed.data.driverInfo };
   if (kind === 'driver_info' && !extras.driverInfo) {
     return c.json({ error: 'invalid_body', reason: 'Driver Info needs the driver, contact, plate and time.' }, 400);
   }
-  if (kind === 'postpone' && !extras.postpone) {
-    return c.json({ error: 'invalid_body', reason: 'Postpone needs the reason and the proposed date.' }, 400);
-  }
+  // Postpone needs no request field: it reads the row's Amend Reason + Delivery
+  // Date (kindAttributes), and skips any order missing either.
 
   const sb = c.get('supabase');
   const user = c.get('user') as { id?: string } | null;
@@ -113,7 +107,7 @@ deliveryMessages.post('/send', async (c) => {
   // Address columns feed the Postage kind only; the rest read nothing extra.
   const { data: rowsRaw, error: readErr } = await scopeToAllowedCompanies(
     sb.from('mfg_sales_orders')
-      .select('doc_no, debtor_name, phone, branding, customer_delivery_date, amended_delivery_date, delivery_address1, delivery_address2, delivery_address3, delivery_address4, address1, address2, address3, address4, postcode, city, customer_state')
+      .select('doc_no, debtor_name, phone, branding, customer_delivery_date, amended_delivery_date, amend_reason, delivery_address1, delivery_address2, delivery_address3, delivery_address4, address1, address2, address3, address4, postcode, city, customer_state')
       .in('doc_no', docNos),
     c,
   );
@@ -127,7 +121,7 @@ deliveryMessages.post('/send', async (c) => {
   for (const docNo of docNos) {
     const r = byDoc.get(docNo);
     if (!r) { skipped.push({ docNo, reason: 'not_found' }); continue; }
-    const phone = normalizePhone(r.phone);
+    const phone = blastPhone(r.phone);
     if (!phone) { skipped.push({ docNo, reason: 'no_phone' }); continue; }
     const arr = byPhone.get(phone) ?? [];
     arr.push(r);

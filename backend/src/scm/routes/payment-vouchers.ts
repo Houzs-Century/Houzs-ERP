@@ -51,7 +51,8 @@ import { docMonthTag, mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-
 import { isDocumentHeld } from '../lib/document-hold';
 import { dateOrNull } from '../lib/date-coerce';
 import { postJournal, reverseJournal } from '../../acc/engine';
-import { apControlRole, pvLines, customerRefundLines, resolveRoles } from '../../acc/rules';
+import { apControlRole, pvLines, pvBankChargeLines, customerRefundLines, resolveRoles, PV_BANK_CHARGE_ACCOUNT } from '../../acc/rules';
+import { checkExpenseLeaf } from '../../acc/charge-account';
 import { customerPartyCode } from '../../acc/payments';
 import { refundSourceHandler, refundCreateGuard, refundOwnControl, bookRefundCredit, refundHookInput } from '../lib/pv-refund';
 import { refundDepositInvoicesBestEffort, releaseRefundNotesBestEffort } from '../../acc/deposit-refunds';
@@ -97,10 +98,11 @@ const PV_AUDIT_FIELDS: Array<[string, string]> = [
   ['totalSen', 'total_sen'],
   ['billRef', 'bill_ref'],
   ['billDate', 'bill_date'],
+  ['bankChargeSen', 'bank_charge_sen'],
 ];
 
 const HEADER =
-  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by, refund_source_type, refund_source_doc_no, customer_id, debtor_code, bill_ref, bill_date, official_doc, official_doc_note, official_doc_at, official_doc_by';
+  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by, refund_source_type, refund_source_doc_no, customer_id, debtor_code, bill_ref, bill_date, official_doc, official_doc_note, official_doc_at, official_doc_by, bank_charge_sen';
 
 const LINE = 'id, pv_id, line_no, description, debit_account_code, amount_sen, created_at, project_id';
 
@@ -592,7 +594,7 @@ export const createPaymentVoucherHandler = async (c: any) => {
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   return createPaymentVoucherCore(c, body);
 };
-/** The voucher raised from a body already in hand — the door above, and lib/so-money's refund draft (docs/bugs/0927). */
+/** The voucher raised from a body already in hand — the door above (a refund from an order's money panel is a payment request since 2026-10-14). */
 export const createPaymentVoucherCore = async (c: any, body: Record<string, unknown>) => {
   const payeeName = (body.payeeName as string | undefined)?.trim();
   if (!payeeName) return c.json({ error: 'payee_required' }, 400);
@@ -620,7 +622,7 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
   const eventErr = await pvLineEventRefusal(c, body.purpose, built.rows); // lib/event-tags.ts
   if (eventErr) return eventErr;
   /* 申请付款: the request this voucher answers, still waiting (lib/payment-request.ts). */
-  const prq = await paymentRequestLinkGuard(c, body.paymentRequestId);
+  const prq = await paymentRequestLinkGuard(c, body.paymentRequestId, { kind: 'PV', body });
   if ('resp' in prq) return prq.resp;
 
   /* The AP split (owner 2026-09-03): a 405-x supplier's paper belongs to
@@ -663,6 +665,10 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
   if (allocBuilt.total > built.total) {
     return c.json({ error: 'allocations_exceed_total', allocated: allocBuilt.total, total: built.total }, 400);
   }
+
+  /* DEV-75: the bank's charge, recorded on the header only — not in total_sen, not on the GL. */
+  const bankChargeSen = parseAmountSen(body.bankChargeSen);
+  if (bankChargeSen === null) return c.json({ error: 'bank_charge_invalid' }, 400);
 
   const sb = c.get('supabase'); const user = c.get('user');
 
@@ -709,6 +715,7 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
       purpose,
       notes:               (body.notes as string | undefined) ?? null,
       total_sen:         built.total,
+      bank_charge_sen:     bankChargeSen,
       status:              'DRAFT',
       created_by:          user.id,
       ...(refund && refund.ok ? refund.fields : {}),
@@ -839,6 +846,11 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   }
   if (body.supplierId !== undefined) updates.supplier_id = (body.supplierId as string | null) || null;
   if (body.notes !== undefined) updates.notes = (body.notes as string | null) ?? null;
+  if (body.bankChargeSen !== undefined) {
+    const v = parseAmountSen(body.bankChargeSen);
+    if (v === null) return c.json({ error: 'bank_charge_invalid' }, 400);
+    updates.bank_charge_sen = v;
+  }
   Object.assign(updates, pvBillUpdates(body), officialOwedUpdates(body, officialActor(c), before));
   // PV→PI settlement (0202) — purpose is editable while DRAFT.
   if (body.purpose !== undefined) updates.purpose = normalizePurpose(body.purpose);
@@ -1015,7 +1027,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
     id: string; pv_number: string; voucher_date: string; payee_name: string;
     credit_account_code: string; total_sen: number; currency: string | null;
     exchange_rate: string | number | null; status: string; purpose: string | null;
-    company_id: number | null;
+    company_id: number | null; bank_charge_sen: number | null;
     supplier: { code: string | null; name: string | null } | null;
   };
   if (pv.status === 'CANCELLED') return c.json({ error: 'cannot_post', message: 'Voucher is cancelled' }, 409);
@@ -1078,6 +1090,15 @@ export const postPaymentVoucherHandler = async (c: any) => {
     ? (await resolveRoles(sb, companyId))[apControlRole(supplier.code)]
     : null;
 
+  /* DEV-75: the header's Bank Charges ride the same journal (Finance, 2026-10-14:
+     900-B001). Refused rather than posted without the fee when the account is
+     not a usable expense leaf here. */
+  const feeSen = Number(pv.bank_charge_sen ?? 0);
+  if (feeSen > 0) {
+    const okFee = await checkExpenseLeaf(sb, co.companyId, PV_BANK_CHARGE_ACCOUNT, 'a bank charge');
+    if (!okFee.ok) return c.json({ error: 'bank_charge_account', message: `Bank charges cannot post: ${okFee.reason}` }, okFee.status === 'load_failed' ? 500 : 409);
+  }
+
   const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_VOUCHER', entityId: id, action: 'POST', companyId });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
@@ -1097,9 +1118,10 @@ export const postPaymentVoucherHandler = async (c: any) => {
     sourceType: 'PV',
     sourceDocNo: pv.pv_number,
     narration: isRefund(pv.purpose) ? `Customer refund ${pv.pv_number} — ${pv.payee_name} (${refundPv.refund_source_doc_no ?? '?'})` : `Payment voucher ${pv.pv_number} — ${pv.payee_name}`,
-    lines: isRefund(pv.purpose)
+    lines: (isRefund(pv.purpose)
       ? customerRefundLines({ ...pv, refund_source_doc_no: refundPv.refund_source_doc_no ?? null }, (await resolveRoles(sb, companyId)).AR, { code: customerPartyCode(refundPv.debtor_code, refundPv.customer_id), name: pv.payee_name }, totalSen)
-      : pvLines(pv, debitLegs, supplier, apControlCode),
+      : pvLines(pv, debitLegs, supplier, apControlCode)
+    ).concat(pvBankChargeLines(pv, feeSen)),
   });
   if (!r.ok) {
     if (r.status === 'je_insert_failed') return c.json({ error: 'je_insert_failed', reason: r.reason }, 500);

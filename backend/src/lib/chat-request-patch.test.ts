@@ -14,8 +14,18 @@ describe("chatRequestPatch — what a WhatsApp tap may write on the SO", () => {
     expect(chatRequestPatch("amend", "15/10/2026", "Renovation Delay")).toEqual({
       delivery_message_status: "Pending Reschedule (D)",
       amend_date_from_customer: "2026-10-15",
-      amend_reason: "Renovation Delay",
+      amend_reason_from_customer: "Renovation Delay",
     });
+  });
+
+  it("amend: the customer's reason lands in ITS column, never in the staff's amend_reason", () => {
+    // amend_reason is the board's preset list ("Our strict quality control
+    // checks" …), the reason WE give when postponing; a customer tap used to
+    // overwrite it (2026-10-14).
+    const p = chatRequestPatch("amend", "15/10/2026", "Date Unavailable");
+    expect(p.amend_reason_from_customer).toBe("Date Unavailable");
+    expect(p).not.toHaveProperty("amend_reason");
+    expect(CHAT_FORBIDDEN_SO_COLUMNS as readonly string[]).toContain("amend_reason");
   });
 
   it("amend: a Flow DatePicker YYYY-MM-DD is accepted as-is", () => {
@@ -25,7 +35,7 @@ describe("chatRequestPatch — what a WhatsApp tap may write on the SO", () => {
   it("amend: an unparseable date is NOT written, the rest still is", () => {
     const p = chatRequestPatch("amend", "next tuesday", "Renovation Delay");
     expect(p.amend_date_from_customer).toBeUndefined();
-    expect(p.amend_reason).toBe("Renovation Delay");
+    expect(p.amend_reason_from_customer).toBe("Renovation Delay");
     expect(p.delivery_message_status).toBe("Pending Reschedule (D)");
   });
 
@@ -36,6 +46,31 @@ describe("chatRequestPatch — what a WhatsApp tap may write on the SO", () => {
 
   it("confirm: only the message status moves", () => {
     expect(chatRequestPatch("confirm", null, null)).toEqual({ delivery_message_status: "Done Scheduling" });
+  });
+
+  it("property: the form answers fill the board's house / disposal columns, no status moves", () => {
+    expect(
+      chatRequestPatch("property", null, null, {
+        houseType: "Condo",
+        deliveryPurpose: "Move-in New House",
+        needDisposal: "Yes",
+        disposalItem: "old sofa",
+      }),
+    ).toEqual({
+      house_type: "Condo",
+      replacement_disposal: "Move-in New House",
+      disposal_request: "old sofa",
+    });
+  });
+
+  it("property: No disposal records 'No'; a blank answer is not written", () => {
+    expect(chatRequestPatch("property", null, null, { houseType: "Landed", needDisposal: "No", disposalItem: "" })).toEqual({
+      house_type: "Landed",
+      disposal_request: "No",
+    });
+    const p = chatRequestPatch("property", null, null, { houseType: "  " });
+    expect(p).not.toHaveProperty("house_type");
+    expect(p).not.toHaveProperty("delivery_message_status");
   });
 
   it("never names a schedule or lifecycle column", () => {
@@ -67,7 +102,7 @@ describe("chatRequestFieldChanges — the audit trail entry", () => {
     const patch = chatRequestPatch("amend", "15/10/2026", "Renovation Delay");
     const changes = chatRequestFieldChanges(patch, {
       amend_date_from_customer: null,
-      amend_reason: "Renovation Delay",
+      amend_reason_from_customer: "Renovation Delay",
       delivery_message_status: "To Send Delivery Date",
     });
     expect(changes).toEqual([

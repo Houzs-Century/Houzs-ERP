@@ -29,6 +29,7 @@ export const AP_INVOICE_FILES: DocFilesSpec = {
   keyPrefix: 'ap-invoice-files',
   /* The keys that raise the bill (routes/ap-invoices.ts create) attach to it. */
   writePerms: ['scm.payment_voucher.create', 'scm.payment_voucher.write'],
+  scanKind: null,
   load: async (c: any) => {
     const sb = c.get('supabase');
     const { data, error } = await scopeToCompany(

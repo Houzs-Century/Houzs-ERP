@@ -8,6 +8,12 @@ const { apiGet, apiPost, reload } = vi.hoisted(() => ({
   reload: vi.fn(),
 }));
 
+/* The sales-report layer needs the app's QueryClient and dialogs and is not
+   what these polling tests are about (projectChatSalesReport.test.tsx is); a
+   stub keeps it out of the request counts. */
+vi.mock("./projectChatSalesReport", () => ({
+  useChatSalesReport: () => ({ footerFor: () => null, afterSend: async () => {} }),
+}));
 vi.mock("../api/client", () => ({
   api: { get: apiGet, post: apiPost },
 }));

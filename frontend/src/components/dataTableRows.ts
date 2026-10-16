@@ -28,6 +28,7 @@ export type RowRuleColumn<T> = {
   /* Option counts from the server over EVERY matching row, not just the loaded
      page. When present they replace the page count (a server-filtered column). */
   filterCounts?: readonly (readonly [string, number])[];
+  newestFirst?: boolean;
   disableSort?: boolean;
 };
 
@@ -99,7 +100,7 @@ export function applyColumnFilters<T>(
 }
 
 /** The FACETED value list for one column's funnel, as `[value, count]` sorted
- *  naturally. Counts are taken over the rows that survive every OTHER active
+ *  naturally (a `newestFirst` date column: newest first). Counts are taken over the rows that survive every OTHER active
  *  column filter (this column's own filter is excluded), so the choices narrow
  *  as other filters are applied — pick Date = 23/9 and the Creditor funnel lists
  *  only creditors present that day (owner 2026-09-23: "越筛越少"). An option that
@@ -136,9 +137,12 @@ export function facetedFilterValues<T>(
     if (!counts.has(k)) counts.set(k, 0);
   }
   for (const v of selected) if (!counts.has(v)) counts.set(v, 0);
-  return [...counts.entries()]
-    .filter(([k, n]) => n > 0 || seededKeys.has(k) || selected.has(k))
-    .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }));
+  const list = [...counts.entries()].filter(([k, n]) => n > 0 || seededKeys.has(k) || selected.has(k));
+  // The date you want is nearly always a recent one (owner 2026-10-16). Blank stays last.
+  if (col.newestFirst) {
+    return list.sort((a, b) => (a[0] === "—" ? 1 : b[0] === "—" ? -1 : b[0].localeCompare(a[0])));
+  }
+  return list.sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }));
 }
 
 /** The grid's sort. On a `serverSort` table a server-sortable column is already

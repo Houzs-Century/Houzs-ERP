@@ -17,6 +17,7 @@ import { fmtDate } from '../../shared/format';
 import { useConfirm } from './ConfirmDialog';
 import { useNotify } from './NotifyDialog';
 import { fileToBase64, PV_FILE_ACCEPT, type PvFile, type PvFilePayload } from '../lib/payment-voucher-queries';
+import { docFileMime } from '../lib/doc-file-mime';
 import styles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 
 export type DocFilesCardProps = {
@@ -68,7 +69,7 @@ export const DocFilesCard = ({
     if (!list || list.length === 0) return;
     for (const f of [...list]) {
       try {
-        await onUpload({ name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) });
+        await onUpload({ name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) });
       } catch (e) {
         void notify({ title: `${f.name} did not attach`, body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
         break;

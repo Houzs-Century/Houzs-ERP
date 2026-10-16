@@ -175,6 +175,29 @@ describe("toSheetRecord — the AutoCount-named record the sheet writes", () => 
     expect(toSheetRecord({ ...HEAD, customer_country: null }, []).Region).toBe("WEST");
   });
 
+  test("SO-010791: a book-wrapped line 4 that is not a state gives way to the order's state", () => {
+    const wrapped = { ...HEAD, address1: "A-12-13A, D'CLOVER RESIDENCES, DATARAN", address2: "SENTRAL DAMANSARA, NO.3, JALAN PJU 8/8B,",
+      address3: "SENTRAL DAMANSARA, PJU 8 47820 Petaling", address4: "Jaya Selangor",
+      postcode: "47820", city: "Petaling Jaya", customer_state: "Selangor" };
+    const r = toSheetRecord(wrapped, []);
+    expect(r.InvAddr4).toBe("Selangor");
+    expect(r.InvAddr3).toBe("SENTRAL DAMANSARA, PJU 8 47820 Petaling Jaya Selangor");
+  });
+
+  test("a line 4 that IS a state stays, whatever its spelling or the state field", () => {
+    const base = { ...HEAD, address3: "11900 Bayan Lepas", postcode: "11900", city: "Bayan Lepas" };
+    expect(toSheetRecord({ ...base, address4: "Pulau Pinang.", customer_state: "Penang" }, []).InvAddr4).toBe("Penang");
+    expect(toSheetRecord({ ...base, address4: "Sarawak", customer_state: "Penang" }, []).InvAddr4).toBe("Sarawak");
+    expect(toSheetRecord({ ...base, address4: "Sarawak", customer_state: "Penang" }, []).InvAddr3).toBe("11900 Bayan Lepas");
+  });
+
+  test("a non-state line 4 with no usable state field passes through unchanged", () => {
+    const r = toSheetRecord({ ...HEAD, address3: "L3", address4: "Taman Putra Prima", customer_state: null }, []);
+    expect([r.InvAddr3, r.InvAddr4]).toEqual(["L3", "Taman Putra Prima"]);
+    const sg = toSheetRecord({ ...HEAD, address3: "L3", address4: "Blk 9", customer_state: "West" }, []);
+    expect([sg.InvAddr3, sg.InvAddr4]).toEqual(["L3", "Blk 9"]);
+  });
+
   test("East Malaysia branches route EAST", () => {
     expect(toSheetRecord({ ...HEAD, sales_location: "SRW WAREHOUSE" }, []).Region).toBe("EAST");
   });
@@ -186,8 +209,8 @@ describe("toSheetRecord — the AutoCount-named record the sheet writes", () => 
     expect(toSheetRecord({ ...HEAD, address4: "Penang" }, []).InvAddr4).toBe("Penang");
     expect(toSheetRecord({ ...HEAD, address4: "P.PINANG" }, []).InvAddr4).toBe("Penang");
     expect(toSheetRecord({ ...HEAD, address4: "KL" }, []).InvAddr4).toBe("Kuala Lumpur");
-    // Not a state (a street line in address4) is left as typed.
-    expect(toSheetRecord({ ...HEAD, address4: "Lorong Lembah 3" }, []).InvAddr4).toBe("Lorong Lembah 3");
+    // Not a state (a street line in address4) is left as typed when the order has no state of its own.
+    expect(toSheetRecord({ ...HEAD, address4: "Lorong Lembah 3", customer_state: null }, []).InvAddr4).toBe("Lorong Lembah 3");
     expect(toAssrLegRecords({ ...ASSR, addr4: "Pulau Pinang" })[0]!.InvAddr4).toBe("Penang");
   });
 });
@@ -823,6 +846,7 @@ const ASSR: AssrFeedRow = {
   ref_no: "REF012",
   po_no: "PO-012",
   status: "In Progress",
+  stage: "pending_supplier_pickup",
   customer_name: "Wendy",
   phone: "60127712155",
   location: "KL WAREHOUSE",
@@ -873,6 +897,16 @@ describe("toAssrLegRecords — one own-team leg per set date, in the sheet's rec
     expect(toAssrLegRecords({ ...ASSR, inspection_visit_at: null, pickup_by: null, delivery_by: null })).toEqual([]);
     // Only own-team pickup set → exactly the PICKUP leg.
     expect(toAssrLegRecords({ ...ASSR, inspection_by: null, delivery_by: null }).map((l) => l.Kind)).toEqual(["PICKUP"]);
+  });
+
+  test("BUG-95: once the item is back (Item Ready / Pending Delivery/Service), only the delivery-back leg is sent", () => {
+    for (const stage of ["pending_item_ready", "pending_delivery_service"]) {
+      expect(toAssrLegRecords({ ...ASSR, stage }).map((l) => l.DocNo)).toEqual(["SO-2609-012-SERVICE"]);
+    }
+    expect(toAssrLegRecords({ ...ASSR, stage: "pending_delivery_service", delivery_by: null })).toEqual([]);
+    for (const stage of ["under_verification", "pending_solution", "pending_supplier_pickup", null]) {
+      expect(toAssrLegRecords({ ...ASSR, stage }).map((l) => l.Kind)).toEqual(["INSPECT", "PICKUP", "DELIVERY"]);
+    }
   });
 
   test("a Singapore address routes the legs to SG", () => {

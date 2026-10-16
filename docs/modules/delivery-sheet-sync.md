@@ -4,6 +4,7 @@ Feeds the dispatch team's working Google Sheet ("HC Delivery Updated": tabs *Del
 
 ## Statuses and flow
 
+- Address 4 is the STATE column the dispatch team filters on. When an order's `address4` is not a Malaysian state but its `customer_state` is (an imported order's book-wrapped leftover, e.g. "Jaya Selangor"), the leftover rejoins Address 3 and the state takes Address 4 (`sheetTownLines`). An `address4` that IS a state stays, even where it differs from `customer_state`. Service-case legs do not use this rule.
 - The sheet keys every row on col B (Doc. No.), rows from row 4. A pull writes three column blocks using AutoCount's original field names (so the existing Apps Script and sheet columns did not need to change shape) — a Total/status/customer block, an address/remark block, and an Attention/Sync-Status block.
 - Col A (delivery message status) and columns Q..X are team-owned and are NEVER written by a pull — an `onEdit` in the sheet copies A→P and Q→O and marks the row PENDING; the next push sends PENDING rows back to the ERP.
 - `GET /so-since?since=&limit=` returns orders modified strictly after `since` (oldest first, page size ≤1000, default 300); the checkpoint (`next_since`) is the last record's `LastModified` and must be stored only after every row of that page has been written.

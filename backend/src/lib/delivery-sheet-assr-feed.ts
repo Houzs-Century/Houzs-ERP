@@ -49,6 +49,7 @@ export type AssrFeedRow = {
   ref_no: string | null;
   po_no: string | null;
   status: string | null;
+  stage: string | null;
   customer_name: string | null;
   phone: string | null;
   location: string | null;
@@ -118,6 +119,7 @@ SELECT assr_no,
        ref_no,
        po_no,
        status,
+       stage,
        customer_name,
        phone,
        location,
@@ -249,6 +251,13 @@ function legKey(row: AssrFeedRow, kind: AssrLegKind): string {
   return `${blankToNull(row.doc_no) ?? row.assr_no}-${LEG_KEY_WORD[kind]}`;
 }
 
+/** BUG-95: stages where the item is already back from the customer. Any edit
+ *  stamps updated_at and re-sends the case, and the sheet appends a missing key,
+ *  so a done pickup / inspection leg came back as a new row when Farra moved the
+ *  case to Pending Delivery/Service. There is no "pickup done" field; the stage
+ *  is the only marker. */
+const PAST_PICKUP_STAGES = new Set(["pending_item_ready", "pending_delivery_service", "completed", "voided"]);
+
 export function toAssrLegRecords(row: AssrFeedRow): AssrLegRecord[] {
   const base = legBase(row);
   const ref = blankToNull(row.ref_no);
@@ -256,10 +265,11 @@ export function toAssrLegRecords(row: AssrFeedRow): AssrLegRecord[] {
   // the case has no reference. col F (SOUDF_BRANDING) is the bare word.
   const legRef = (kind: AssrLegKind): string => (ref ? `${ref}-${LEG_KEY_WORD[kind]}` : LEG_KEY_WORD[kind]);
   const legs: AssrLegRecord[] = [];
-  if (row.inspection_by === "own" && blankToNull(row.inspection_visit_at)) {
+  const pickupPast = PAST_PICKUP_STAGES.has(row.stage ?? "");
+  if (!pickupPast && row.inspection_by === "own" && blankToNull(row.inspection_visit_at)) {
     legs.push({ ...base, Kind: "INSPECT", DocNo: legKey(row, "INSPECT"), TransferTo: row.assr_no, Ref: legRef("INSPECT"), SOUDF_BRANDING: LEG_KEY_WORD.INSPECT, Remark2: "SERVICE INSPECTION", SalesExemptionExpiryDate: row.inspection_visit_at });
   }
-  if (row.pickup_by === "customer" && blankToNull(row.customer_pickup_at)) {
+  if (!pickupPast && row.pickup_by === "customer" && blankToNull(row.customer_pickup_at)) {
     legs.push({ ...base, Kind: "PICKUP", DocNo: legKey(row, "PICKUP"), TransferTo: row.assr_no, Ref: legRef("PICKUP"), SOUDF_BRANDING: LEG_KEY_WORD.PICKUP, Remark2: "SERVICE PICKUP", SalesExemptionExpiryDate: row.customer_pickup_at });
   }
   if (row.delivery_by === "own" && blankToNull(row.do_date)) {

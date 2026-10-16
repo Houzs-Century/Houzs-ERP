@@ -17,7 +17,7 @@
    mounting the whole form, and what matters is precisely WHICH predicate feeds
    the guard and WHICH set it measures against — exactly what the text shows and
    what a mocked render would paper over. Same idiom, and the same reasoning, as
-   `vendor/scm/lib/so-slip-optional-contract.test.ts`. The RULE itself is unit
+   `vendor/scm/lib/so-slip-required-contract.test.ts`. The RULE itself is unit
    tested for real in `vendor/shared/so-variant-rule.test.ts`; the pair below
    re-states the two cases this guard turns on so the contract is readable here. */
 

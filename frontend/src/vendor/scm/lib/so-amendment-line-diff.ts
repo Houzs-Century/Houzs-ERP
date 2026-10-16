@@ -276,8 +276,9 @@ export function amendmentLineChangedFields(
        must not be flagged as a change. */
     itemCode: (l.new_item_code ?? old.itemCode ?? null) !== (old.itemCode ?? null),
     qty:      (l.new_qty ?? old.qty ?? null) !== (old.qty ?? null),
-    /* A null price is not a requested price — the surfaces render no price at
-       all on the Requesting side rather than falling back to the old one. */
+    /* A null price is not a requested price — the apply keeps the line's stored
+       price, and the surfaces render that stored price, unchanged, on the
+       Requesting side (amendmentRequestedUnitPriceSen is what sends null). */
     unitPrice: l.new_unit_price_sen != null
       && l.new_unit_price_sen !== (old.unitPriceSen ?? null),
     variants: variantsChanged(l),
@@ -335,14 +336,83 @@ export const amendmentVariants = (v: unknown): Record<string, unknown> | null =>
   return Object.keys(rest).length === 0 ? null : rest;
 };
 
+const canonicalJson = (o: unknown): string => {
+  if (o == null) return 'null';
+  if (typeof o !== 'object') return JSON.stringify(o);
+  if (Array.isArray(o)) return `[${o.map(canonicalJson).join(',')}]`;
+  const rec = o as Record<string, unknown>;
+  return `{${Object.keys(rec).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(rec[k])}`).join(',')}}`;
+};
+
+const DEFAULT_LEG_RE = /^\s*default\s*$/i;
+
+/** Whether two variants blobs ask for a different item — the client's copy of
+    the server's variantsForCompare (amendment-noop-lines.ts). Beyond the remark
+    side channel and key order, it ignores what the edit view FILLS on a saved
+    line when it opens: the recomputed bedframe totalHeight (derived from divan +
+    leg + gap, which are compared) and a blank sofa leg set to "Default". Both
+    made a payment-only save raise a Purchaser amendment (HC-0103). */
+export const amendmentVariantsKey = (v: unknown): string => {
+  const rest = amendmentVariants(v);
+  if (!rest) return 'null';
+  delete rest.totalHeight;
+  if (typeof rest.legHeight === 'string' && DEFAULT_LEG_RE.test(rest.legHeight)) delete rest.legHeight;
+  return Object.keys(rest).length === 0 ? 'null' : canonicalJson(rest);
+};
+
+/** The stored line's remark as the edit view seeds it: the column, else the copy
+    an older write left in variants.remark (HC-SO-2609-321/A2). */
+export const storedLineRemark = (remark: string | null | undefined, variants: unknown): string => {
+  if (remark != null) return remark;
+  const v = variants as Record<string, unknown> | null | undefined;
+  return v && typeof v === 'object' && typeof v.remark === 'string' ? v.remark : '';
+};
+
 export const amendmentLineSig = (d: AmendmentSigDraft): string => JSON.stringify({
   itemCode:     d.itemCode,
   qty:          d.qty,
   unitPriceSen: d.unitPriceSen,
-  variants:     d.variants ?? null,
+  variants:     amendmentVariantsKey(d.variants),
   remark:       d.remark ?? '',
   discountSen:  Math.round(d.discountSen ?? 0),
 });
+
+/* ── amendmentRequestedUnitPriceSen ── the price an amendment line ASKS for ──
+
+   HC-SO-013490 (2026-10-13): a SPEC swap to a SKU with no catalogue sell price
+   seeds the editor's price box with 0 and `priceAuthored: false` (SoLineCard
+   pickProduct, the phone's product pick). Both builders sent that 0 as
+   `newUnitPriceSen` on every changed line, and the apply, holding an approval,
+   read it as the approved price: the line was billed RM 0. 11 lines on 10
+   orders went that way in a month.
+
+   The direct line-edit road already refuses the same 0: zeroPriceClaim sends
+   `zeroPriceIntended` only for an AUTHORED 0, and an unclaimed 0 keeps the
+   stored price (unitAfterLineEdit). This is the amendment road's half of that
+   rule. An unauthored 0 is "I have no price", so the line requests NONE: the
+   builders omit `newUnitPriceSen`, so_amendment_lines records null, and
+   applySoAmendment keeps the stored price (`clientUnit = row.unit_price_sen`)
+   on native and migrated orders alike. A typed 0 (`priceAuthored` true, or an
+   existing line's persisted 0 carried through draftFromItem / lineFromItem)
+   is still a real request for RM 0.
+
+   `priceAuthored` is read as `=== true`, like every zeroPriceClaim call site:
+   an absent flag is NOT an authored price. */
+export const amendmentRequestedUnitPriceSen = (
+  d: { unitPriceSen: number; priceAuthored?: boolean },
+): number | null => (d.unitPriceSen === 0 && d.priceAuthored !== true ? null : d.unitPriceSen);
+
+/* HC-0095 — the price half of an amendment line's payload. A requested 0 can
+   only be an authored one (see above), so it carries `zeroPriceIntended`; the
+   apply refuses a 0 without it and keeps the stored price, which also covers a
+   0 queued by an older bundle. */
+export const amendmentPriceFields = (
+  d: { unitPriceSen: number; priceAuthored?: boolean },
+): { newUnitPriceSen?: number; zeroPriceIntended?: true } => {
+  const sen = amendmentRequestedUnitPriceSen(d);
+  if (sen == null) return {};
+  return sen === 0 ? { newUnitPriceSen: 0, zeroPriceIntended: true } : { newUnitPriceSen: sen };
+};
 
 /** True when the line requests at least one field change. */
 export const amendmentLineIsChange = (l: DiffableAmendmentLine): boolean => {

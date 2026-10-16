@@ -12,6 +12,7 @@ import { useCallback, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { authedFetch, humanApiError } from './authed-fetch';
 import { invalidateModuleShared } from '../../../mobile/sharedInvalidate';
+import { readWorkbookSheets } from '../../../lib/import-sheet';
 import {
   readPoLineImportSheet,
   type PoLineImportApplyBody,
@@ -23,19 +24,18 @@ import {
 
 export const PO_LINE_IMPORT_ACCEPT = '.xlsx,.xls,.csv';
 
-/** Read the first sheet that has a Line ID header. Dates stay as Excel serials or text; the shared parser reads both. */
+/** Read the first sheet that has a Line ID header. Cells stay typed (raw), so a
+ *  date is an Excel serial or text; the shared parser reads both. The header
+ *  aliases are the spec's legacyHeaders (po-line-import.ts). */
 export async function readPoLineImportFile(file: Blob): Promise<PoLineImportSheet> {
-  const XLSX = await import('../../../lib/xlsx-runtime');
-  let wb: ReturnType<typeof XLSX.read>;
+  let sheets: unknown[][][];
   try {
-    wb = XLSX.read(await file.arrayBuffer(), { type: 'array', raw: true });
+    sheets = await readWorkbookSheets(await file.arrayBuffer(), true);
   } catch {
     return { ok: false, error: 'This file could not be read as a spreadsheet. Import the .xlsx file exported from the Purchase Order lines.' };
   }
   let first: PoLineImportSheet | null = null;
-  for (const name of wb.SheetNames) {
-    const ws = wb.Sheets[name];
-    const matrix = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null }) as unknown[][];
+  for (const matrix of sheets) {
     const sheet = readPoLineImportSheet(matrix);
     if (sheet.ok) return sheet;
     first ??= sheet;

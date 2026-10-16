@@ -9,7 +9,7 @@
  * Revert any one of the three source fixes and the matching test fails on the
  * stranger's row still being on screen.
  */
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { convertToLink } from "../../lib/convertScope";
@@ -80,6 +80,27 @@ describe('DO → SI: "Transfer to Sales Invoice" lands on the note you came from
     invoiceableDoLines.mockReturnValue(loaded(TWO_DOS));
     at(convertToLink("doToSi", "do-1"), <SalesInvoiceFromDo />);
     expect(screen.getByText(/Continue with 1 line/)).toBeTruthy();
+  });
+
+  it("lets the operator tick a not-READY line by hand (HC-0102)", () => {
+    deliverableSoLines.mockReturnValue(loaded([
+      soLine({ soItemId: "s-1", notReady: null }),
+      soLine({ soItemId: "s-3", itemCode: "AERO-MP", notReady: { status: "PENDING", reason: "No stock has been set aside for this line yet." } }),
+    ]));
+    at(convertToLink("soToDo", "HC-SO-0001"), <DeliveryOrderFromSo />);
+    expect(screen.getByText(/Tick any of them to include it/)).toBeTruthy();
+    const boxes = screen.getAllByRole("checkbox", { name: "Select row" });
+    const off = boxes.find((b) => !(b as HTMLInputElement).checked)!;
+    expect((off as HTMLInputElement).disabled).toBe(false);
+    fireEvent.click(off);
+    expect(screen.getByText(/Continue with 2 lines/)).toBeTruthy();
+    // Unticking and re-ticking by clicking the ROW must work too.
+    fireEvent.click(off);
+    expect(screen.getByText(/Continue with 1 line$/)).toBeTruthy();
+    fireEvent.click(screen.getByText("AERO-MP").closest("tr")!);
+    expect(screen.getByText(/Continue with 2 lines/)).toBeTruthy();
+    fireEvent.click(screen.getByText("AERO-MP").closest("tr")!);
+    expect(screen.getByText(/Continue with 1 line$/)).toBeTruthy();
   });
 
   it("no parameter still opens the FULL picker", () => {

@@ -129,6 +129,11 @@ import { SoloSafeName, useCanSeeSoloOrganizer } from "./projects/SoloSafeName";
 import { STATUS_OPTIONS, ProjectStatusSelect } from "./projects/projectStatus";
 import { OrganizerPicker, VenuePicker } from "./projects/ProjectPickers";
 import { CreateProjectPanel } from "./projects/CreateProjectPanel";
+import { ProjectSalesOrdersBlock, useProjectSalesOrders } from "./projects/ProjectSalesOrdersBlock";
+import { ProjectPosSalesSection } from "./projects/ProjectPosSalesSection";
+import { ProjectSalesBillsBlock } from "./projects/ProjectSalesBillsBlock";
+import { useCanViewProjectSales, useProjectSalesBills } from "../hooks/useProjectSalesBills";
+import { fmtRmSen, notOpenedByRepId, type ProjectSalesBillsResponse } from "../lib/projectSalesBills";
 import { DateRangeFilter, MultiSelectFilter, SectionTaskBadges, ImportCsvPanel } from "./projects/ProjectsListParts";
 import { ProjectsCalendarView } from "./projects/ProjectsCalendarView";
 export { buildCalendarWindow, buildProjectsCalendarModel } from "./projects/calendarModel";
@@ -729,6 +734,27 @@ function ProjectsListView() {
     // the next page/filter loads instead of flashing an empty table.
     { keepPreviousData: true }
   );
+  // Peter 2026-10-14: opening an event and coming back landed the list at the
+  // TOP — <main> is the app's scroll container and this page remounts on
+  // return. Save its scrollTop when a row opens; restore once rows render.
+  const openProject = (id: number) => {
+    try {
+      sessionStorage.setItem("projects:listScroll", String(document.querySelector("main")?.scrollTop ?? 0));
+    } catch {}
+    navigate(`/projects/${id}`);
+  };
+  const hasRows = !!list.data;
+  useEffect(() => {
+    if (!hasRows) return;
+    try {
+      const v = sessionStorage.getItem("projects:listScroll");
+      if (v == null) return;
+      sessionStorage.removeItem("projects:listScroll");
+      const el = document.querySelector("main");
+      if (el) el.scrollTop = parseInt(v, 10) || 0;
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasRows]);
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
     requestTerm: search,
@@ -1515,7 +1541,7 @@ function ProjectsListView() {
               return (
                 <button
                   key={r.id}
-                  onClick={() => navigate(`/projects/${r.id}`)}
+                  onClick={() => openProject(r.id)}
                   className={cn(
                     "group relative flex w-full items-center gap-4 overflow-hidden rounded-xl border border-border bg-surface p-4 pl-5 text-left shadow-stone transition-all hover:-translate-y-px hover:border-primary hover:shadow-slab",
                     r.archived_at && "opacity-60",
@@ -1614,7 +1640,7 @@ function ProjectsListView() {
           emptyLabel="No projects yet"
           getRowKey={(r) => r.id}
           getRowClassName={(r) => (r.archived_at ? "opacity-60" : undefined)}
-          onRowClick={(r) => navigate(`/projects/${r.id}`)}
+          onRowClick={(r) => openProject(r.id)}
           serverSort
           onSortChange={handleSortChange}
         />
@@ -1654,7 +1680,7 @@ function ProjectsListView() {
                   {upcoming.map((r) => (
                     <li key={r.id}>
                       <button
-                        onClick={() => navigate(`/projects/${r.id}`)}
+                        onClick={() => openProject(r.id)}
                         className="group flex w-full items-center justify-between gap-2 text-left"
                       >
                         <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-ink group-hover:text-primary">
@@ -3291,6 +3317,11 @@ function ProjectDetailContent({
     }
   });
   const detail = useQuery<ProjectDetail>("/api/projects/:", () => api.get(`/api/projects/${id}`), [id]);
+  // The pasted sales report, read once here and shared by the Sales section
+  // (its block) and Sales Attending (the red number beside each name).
+  const salesGate = useCanViewProjectSales();
+  const billsQ = useProjectSalesBills(id, salesGate.canViewSales);
+  const notOpenedByRep = notOpenedByRepId(billsQ.data?.persons ?? []);
   // Users list — fetched once per open panel, reused for owner pickers
   // in the logistics section, checklist add form, and reassign dropdowns.
   const usersQ = useQuery<{ id: number; name: string }[]>("/api/users#unwrapped",
@@ -3626,14 +3657,14 @@ function ProjectDetailContent({
           <DefectActionsCtx.Provider value={defectActionsValue}>
           <DetailGrid>
             <DetailMain>
-              <ProjectSalesEntriesSection
-                projectId={id}
-                project={p}
-                canManage={can("sales.manage")}
-                currentTotalSales={detail.data?.finance?.total_sales ?? null}
-                onTotalSaved={() => detail.reload()}
-                toast={toast}
-              />
+              {eventTypes.find((t) => t.id === p.event_type_id)?.slug === "cash_carry" ? (
+                <ProjectPosSalesSection projectId={id} currentTotalSales={detail.data?.finance?.total_sales ?? null} onTotalSaved={() => detail.reload()} toast={toast} />
+              ) : (
+                <ProjectSalesEntriesSection
+                  projectId={id} project={p} canManage={can("sales.manage")} currentTotalSales={detail.data?.finance?.total_sales ?? null}
+                  bills={billsQ} onTotalSaved={() => detail.reload()} toast={toast}
+                />
+              )}
 
               <TasklistSections
                 projectId={id}
@@ -3704,6 +3735,7 @@ function ProjectDetailContent({
                 picUsersLoading={picUsersQ.loading}
                 canEditPic={canAssignPeople}
                 canEditAttending={canEditAttending}
+                notOpenedByRep={notOpenedByRep}
                 patch={patch}
                 onChanged={() => detail.reload()}
                 toast={toast}
@@ -3754,10 +3786,13 @@ function ProjectTeamSection({
   patch,
   onChanged,
   toast,
+  notOpenedByRep,
 }: {
   projectId: number;
   project: ProjectDetail["project"];
   attendees: SalesAttendee[];
+  /** sen still not opened per rep, from the pasted sales report — red beside the name. */
+  notOpenedByRep: Map<number, number>;
   picUsers: Array<{ id: number; name: string | null; email: string }>;
   picUsersLoading: boolean;
   /** Owner 2026-07-18: may this user (re)assign the PIC — open to every
@@ -3921,6 +3956,11 @@ function ProjectTeamSection({
                 <span className="font-medium text-ink">
                   {a.rep_name || a.user_name || `#${a.sales_rep_id}`}
                 </span>
+                {(notOpenedByRep.get(a.sales_rep_id) ?? 0) > 0 && (
+                  <span className="font-mono text-[10px] font-semibold text-err" title="Bills in the sales report not yet opened as Sales Orders">
+                    {fmtRmSen(notOpenedByRep.get(a.sales_rep_id))}
+                  </span>
+                )}
                 {a.rep_phone && (
                   <span className="font-mono text-[9px] text-ink-muted">
                     {formatPhone(a.rep_phone)}
@@ -8045,6 +8085,7 @@ function ProjectSalesEntriesSection({
   project,
   canManage,
   currentTotalSales,
+  bills,
   onTotalSaved,
   toast,
 }: {
@@ -8053,6 +8094,8 @@ function ProjectSalesEntriesSection({
   project: SoloMaskProject;
   canManage: boolean;
   currentTotalSales: number | null;
+  /** The pasted sales report, read by the detail page and shared with Sales Attending. */
+  bills: QueryState<ProjectSalesBillsResponse>;
   onTotalSaved: () => void;
   toast: ReturnType<typeof useToast>;
 }) {
@@ -8154,6 +8197,8 @@ function ProjectSalesEntriesSection({
     { enabled: canViewSales }
   );
   const udf = useUdf("sales_entries");
+  // The orders opened in the SO module for this fair — same gate as the list.
+  const soQuery = useProjectSalesOrders(projectId, canViewSales);
 
   async function submitEntry(e: SalesEntry) {
     try {
@@ -8203,7 +8248,7 @@ function ProjectSalesEntriesSection({
   if (!canViewSales) return null;
 
   return (
-    <PanelSection title={`Sales (${rows.length})`}>
+    <PanelSection title={`Sales (${rows.length + (soQuery.data?.totals.count ?? 0)})`}>
       {/* Toolbar: totals · status filter · new-sale */}
       <div className="mb-2 flex flex-col gap-3 rounded-md border border-border-subtle bg-bg/30 px-3 py-2 text-[10.5px] sm:flex-row sm:flex-wrap sm:items-center">
         {totals && (
@@ -8302,6 +8347,13 @@ function ProjectSalesEntriesSection({
           )}
         </div>
       </div>
+      <ProjectSalesBillsBlock
+        query={bills}
+        finalTotalRm={currentTotalSales}
+        canSetTotalSales={canSetTotalSales}
+        onSetTotalSales={async (rm) => { await api.patch(`/api/projects/${projectId}/finance`, { total_sales: rm }); toast.success("Total sales updated"); onTotalSaved(); }}
+      />
+      <ProjectSalesOrdersBlock query={soQuery} finalTotalRm={currentTotalSales} />
       {/* Quick Total Sales inline form — sets project_finance.total_sales
           directly (lump sum), no individual entries. */}
       {quickTotalOpen && (
@@ -8415,7 +8467,7 @@ function ProjectSalesEntriesSection({
       {!list.loading && rows.length === 0 && (
         <EmptyState
           compact
-          message="No sales drafted yet for this exhibition."
+          message="No sales entries drafted here yet."
           cta={
             canLogSale
               ? { label: "Draft your first sale", onClick: () => setCreating(true) }

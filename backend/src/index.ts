@@ -5,7 +5,7 @@ import { secureHeaders } from "hono/secure-headers";
 import type { Env } from "./types";
 import { GIT_SHA, resolveBuildSha } from "./build-info";
 import { restKeyClaims, restUrlRef } from "./db/rest-key-claims";
-import { auth, requirePermission, requireAnyPermission, requireScmAccess } from "./middleware/auth";
+import { auth, requirePermission, requireAnyPermission, requireScmAccess, requirePageAccessOrSalesView } from "./middleware/auth";
 import { TRANSIENT_CONN_RE } from "./db/d1-compat";
 // Ported 2990's SCM modules (furniture supply chain). Talk to the `scm` Postgres
 // schema via supabase-js; namespaced under /api/scm/*, owner-only during the port.
@@ -37,9 +37,15 @@ import companies from "./routes/companies";
 import tableLayouts from "./routes/tableLayouts";
 import notifications from "./routes/notifications";
 import pushDevices from "./routes/push";
+import itSupport from "./routes/itSupport";
 import { runPushFleetReminders } from "./services/pushFleetReminders";
 import presence from "./routes/presence";
 import projects from "./routes/projects";
+import { projectSalesOrders } from "./routes/project-sales-orders";
+import { projectSalesBills } from "./routes/project-sales-bills";
+import { projectPosSales } from "./routes/project-pos-sales";
+import { posAdmin } from "./routes/pos-admin";
+import { posDevice } from "./routes/pos-device";
 import projectsOutstanding from "./routes/projectsOutstanding";
 // Sales entries (/api/sales) is retained as a DEPENDENCY of Projects — the
 // Projects page embeds the sales-entry EntryPanel + submit/void/delete flow.
@@ -60,6 +66,7 @@ import fleet from "./routes/fleet";
 // supabaseAuth. Distinct from routes/fleet.ts (the crew picker).
 import fleetMaintenance from "./scm/routes/fleet-maintenance";
 import { fleetWorkOrderPhotos } from "./scm/routes/fleet-work-order-photos";
+import fleetWorkOrderFiles from "./scm/routes/fleet-work-order-files";
 // `routes/lorries.ts` removed 2026-06-28 — old Houzs Fleet lorries CRUD retired
 // in favour of scm.lorries (mounted at /api/scm/lorries). public.lorries data
 // was migrated by mig 0055 then the dead table dropped. /api/fleet/staff stays
@@ -95,6 +102,8 @@ import {
   reconcileVenturePortalOutbox,
 } from "./scm/lib/venture-portal-outbox";
 import { pushVenturePortalCatalogue } from "./scm/lib/venture-portal-catalogue";
+import { pushVenturePortalAttendance } from "./scm/lib/venture-portal-attendance";
+import { venturePortalKick } from "./scm/lib/venture-portal-kick";
 import { reconcilePendingFairs } from "./scm/lib/fair-reconcile";
 import { relinkHeldBackSweep } from "./scm/lib/autocount-relink-sweep";
 import { deliveryDateSweep } from "./scm/lib/autocount-delivery-date-sweep";
@@ -126,12 +135,14 @@ import { publicContractorCalendar } from "./routes/publicContractorCalendar";
 import { publicBrandCalendar } from "./routes/publicBrandCalendar";
 import { brandShare } from "./routes/brandShare";
 import { drainEmailOutbox } from "./services/email";
+import { pollVelocity } from "./scm/lib/velocity-poll";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
 import { runAssrAlerts, runAssrDailyDigest } from "./services/assrAlerts";
 import { runOverdueEscalation } from "./services/announcementEscalation";
 import { runScheduledLeadTimeActivations } from "./services/assrLeadTime";
 import { runProjectDueReminders } from "./services/projectReminders";
+import { runPosAlerts } from "./services/posAlerts";
 // Weekly OCR rule-distill (scan-so self-evolution). Run via the daily 02:00
 // slot gated to Sundays — no new cron trigger. getSupabaseService is the same
 // service client scan-so.ts uses internally (serviceClient(env)).
@@ -326,6 +337,9 @@ app.route("/api/sync/warehouse-mirror", warehouseMirror);
 // every OTHER route in the router re-applies `auth` on itself (set-pin,
 // verify-pin, sales-stats and the three admin-*-pin doors).
 app.route("/api/pos", pos);
+// Houzs POS booth terminals (NOT the 2990 tablet POS above): PRE-AUTH, every
+// route carries its own device-token guard (routes/pos-device.ts).
+app.route("/api/pos-device", posDevice);
 
 // Google Form intake webhook — PRE-AUTH like mail-inbound: called by
 // Google Apps Script (no staff session), self-guarded by the
@@ -410,6 +424,12 @@ app.use("/api/*", idempotency);
 // user staleness (items assigned to others) is likewise intentionally on TTL.
 app.use("/api/assr/*", inboxBustAfterWrite);
 app.use("/api/projects/*", inboxBustAfterWrite);
+// Venture Portal: a Sales Attending edit (POST / DELETE
+// /api/projects/:id/sales-attendees) reaches the portal in seconds, and so do
+// the orders a project's venue or date change re-queues. The same middleware
+// /api/scm/* mounts — it runs after the response and can never fail it
+// (scm/lib/venture-portal-kick.ts).
+app.use("/api/projects/*", venturePortalKick());
 
 // Mount the Lead Time Portal first so /api/assr/portal/* doesn't
 // fall through into the catch-all /:id handler on the main module.
@@ -440,6 +460,8 @@ app.route("/api/table-layouts", tableLayouts);
 app.route("/api/notifications", notifications);
 // Native-app push device registry (any signed-in user, own device only).
 app.route("/api/push", pushDevices);
+// IT Support: a proxy to the Houzs IT Hub (any signed-in user, own requests only).
+app.route("/api/it-support", itSupport);
 app.route("/api/presence", presence);
 // Mounted at the EXACT path BEFORE the projects router so its "/:id" catch-all
 // does not swallow "outstanding-tasks" as an id (owner/admin Reminder view).
@@ -448,12 +470,32 @@ app.route("/api/projects", projects);
 // The office side of a brand's share link (generate / revoke). Own file because
 // routes/projects.ts is at its size ceiling. See routes/brandShare.ts.
 app.route("/api/brand-share", brandShare);
+// The Sales Orders written at one exhibition, read from inside the project page.
+// Same read gate as GET /api/sales/entries so the section and its data admit the
+// same people; own prefix because routes/projects.ts is at its size ceiling and
+// the router carries the SCM bridge. See routes/project-sales-orders.ts.
+app.use("/api/project-sales-orders/*", requirePageAccessOrSalesView("sales"));
+app.route("/api/project-sales-orders", projectSalesOrders);
+// The evening sales report a project keeps, bill by bill, matched to the orders
+// opened since. Same read gate as the Sales section; saving is for the three
+// named people, checked inside. See routes/project-sales-bills.ts.
+app.use("/api/project-sales-bills/*", requirePageAccessOrSalesView("sales"));
+app.route("/api/project-sales-bills", projectSalesBills);
+// Houzs POS bills of one event (layout E9) — the Sales section's POS half, so
+// the same read gate as its Sales Orders and sales report.
+app.use("/api/project-pos-sales/*", requirePageAccessOrSalesView("sales"));
+app.route("/api/project-pos-sales", projectPosSales);
+// Houzs POS Admin (layouts E1-E5): owner / admin only, the whole menu behind
+// one key. NOT under /api/pos — that is the older 2990 tablet-POS auth.
+app.use("/api/pos-admin/*", requirePermission("pos.manage"));
+app.route("/api/pos-admin", posAdmin);
 app.route("/api/sales", sales);
 app.route("/api/finance", finance);
 app.route("/api/stockitems", stockItems);
 app.route("/api/fleet", fleet);
 app.route("/api/fleet-maintenance", fleetWorkOrderPhotos);
 app.route("/api/fleet-maintenance", fleetMaintenance);
+app.route("/api/fleet-work-order-files", fleetWorkOrderFiles);
 app.route("/api/settings", settings);
 app.route("/api/branding", branding);
 app.route("/api/inbox", inbox);
@@ -605,6 +647,14 @@ export default {
           })
           .catch((e) => console.error("[cron email-outbox]", e))
       );
+      // DEV-42: store live lorry positions from Velocity (no-op until the secret is set).
+      ctx.waitUntil(
+        pollVelocity(env)
+          .then((r) => {
+            if (!r.skipped) console.log(`[cron velocity] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron velocity]", e instanceof Error ? e.message : e))
+      );
       // AutoCount inbound SO pull (incremental, checkpoint-driven). getSince()
       // fetches every SO modified since the stored pull_checkpoint and upserts
       // the local `sales_orders` mirror — so the first run after re-enabling
@@ -672,25 +722,42 @@ export default {
          never rejects — so a megabyte upload can never hold a connection the
          orders are waiting for, and its own failure is caught here, never
          there. The unchanged case is one md5 round trip. */
+      const vpCatalogue = vpOrderDrain
+        .then(() => pushVenturePortalCatalogue(env, { force: false }))
+        .then((r) => {
+          /* failed = the portal refused the catalogue (400/413/422) and it
+             will not be sent again until it changes or a person forces it;
+             build_failed = the SQL did not answer. A catalogue already
+             parked (refused_unchanged) is on the status page, not re-logged
+             every five minutes. */
+          if (
+            r.skipped === "catalogue_url_unknown"
+            || r.companies.some((x) => x.action === "failed" || x.action === "build_failed")
+          ) {
+            console.error(`[cron vp-catalogue] FAILED ${JSON.stringify(r)}`);
+          } else if (r.companies.some((x) => x.action === "sent" || x.action === "retry")) {
+            console.log(`[cron vp-catalogue] ${JSON.stringify(r)}`);
+          }
+        })
+        .catch((e) => console.error("[cron vp-catalogue]", e));
+      ctx.waitUntil(vpCatalogue);
+      /* The SALES ATTENDING push (mig *_scm_vp_sales_attending.sql), same
+         switch, same key, after the catalogue has settled — vpCatalogue never
+         rejects. The unchanged case is one md5 round trip. */
       ctx.waitUntil(
-        vpOrderDrain
-          .then(() => pushVenturePortalCatalogue(env, { force: false }))
+        vpCatalogue
+          .then(() => pushVenturePortalAttendance(env, { force: false }))
           .then((r) => {
-            /* failed = the portal refused the catalogue (400/413/422) and it
-               will not be sent again until it changes or a person forces it;
-               build_failed = the SQL did not answer. A catalogue already
-               parked (refused_unchanged) is on the status page, not re-logged
-               every five minutes. */
             if (
-              r.skipped === "catalogue_url_unknown"
+              r.skipped === "attendance_url_unknown"
               || r.companies.some((x) => x.action === "failed" || x.action === "build_failed")
             ) {
-              console.error(`[cron vp-catalogue] FAILED ${JSON.stringify(r)}`);
+              console.error(`[cron vp-attendance] FAILED ${JSON.stringify(r)}`);
             } else if (r.companies.some((x) => x.action === "sent" || x.action === "retry")) {
-              console.log(`[cron vp-catalogue] ${JSON.stringify(r)}`);
+              console.log(`[cron vp-attendance] ${JSON.stringify(r)}`);
             }
           })
-          .catch((e) => console.error("[cron vp-catalogue]", e))
+          .catch((e) => console.error("[cron vp-attendance]", e))
       );
       /* Keyless-conversion backlog sweep. Ships DARK: no-op unless
          scm.app_config 'scm.autocount_relink_sweep' is 'plan' (report only) or
@@ -784,6 +851,16 @@ export default {
             if (r.requeued) console.warn(`[cron vp-reconcile] requeued=${r.requeued}`);
           })
           .catch((e) => console.error("[cron vp-reconcile]", e))
+      );
+      // Houzs POS watchdog (spec section 10): terminal alerts, their emails
+      // (once, then daily), auto-resolve, and the once-per-event summary.
+      ctx.waitUntil(
+        runPosAlerts(env)
+          .then((r) => {
+            if (r.opened || r.resolved || r.emailed || r.summaries || r.errors)
+              console.log(`[cron pos-alerts] opened=${r.opened} resolved=${r.resolved} emailed=${r.emailed} summaries=${r.summaries} errors=${r.errors}`);
+          })
+          .catch((e) => console.error("[cron pos-alerts]", e))
       );
       // ASSR/QMS v3.1 — per-stage alert scanner (half / approaching / breach).
       // Cheap: one query over open stage_history rows, idempotent via the

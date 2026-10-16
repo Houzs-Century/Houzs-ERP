@@ -81,6 +81,9 @@ function harness(permissions: string[]) {
       },
     ],
     mfg_so_audit_log: [],
+    /* One uploaded slip per POST — the slip is required (owner 2026-10-13) and
+       a session is promoted by the payment that claims it. */
+    pending_slip_uploads: Array.from({ length: 40 }, (_, i) => ({ upload_session_id: `sess-${i + 1}`, r2_key: `slips/${i + 1}.jpg`, status: 'uploaded' })),
     sales_invoices: [],
     sales_invoice_payments: [],
     staff: [],
@@ -101,11 +104,12 @@ function harness(permissions: string[]) {
   return { app, sb };
 }
 
+let slipSeq = 0;
 const record = (app: Hono, paidAt: string, over: Record<string, unknown> = {}) =>
   app.request(`/mfg-sales-orders/${SO}/payments`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ paidAt, method: 'cash', amountSen: 10_000, ...over }),
+    body: JSON.stringify({ paidAt, method: 'cash', amountSen: 10_000, uploadSessionId: `sess-${++slipSeq}`, ...over }),
   });
 
 describe('recording a payment', () => {

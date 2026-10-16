@@ -40,7 +40,7 @@ import { NewDpOrderDrawer } from '../../vendor/scm/components/NewDpOrderDrawer';
 import { SetJobDateDrawer } from '../../vendor/scm/components/SetJobDateDrawer';
 import { ScheduleDpOrderDrawer } from '../../vendor/scm/components/ScheduleDpOrderDrawer';
 import { ScheduleTripDrawer } from '../../vendor/scm/components/ScheduleTripDrawer';
-import { SendDeliveryMessageModal, type SendMessageKind } from '../../vendor/scm/components/SendDeliveryMessageModal';
+import { SendDeliveryMessageModal, KIND_AFTER_STATUS, SKIP_LABEL, type SendMessageKind } from '../../vendor/scm/components/SendDeliveryMessageModal';
 import {
   DeliveryPlanningBoard,
   regionTabsFrom,
@@ -64,7 +64,10 @@ import {
   useCancelDpOrder,
   useScheduleDelivery,
   useDeliveryMessageStatuses,
+  useSendDeliveryMessages,
+  useUpdateDeliveryFields,
   type PlanningOrder,
+  type SendDeliveryMessagesResult,
 } from '../../vendor/scm/lib/delivery-planning-queries';
 import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
 import { useLorries } from '../../vendor/scm/lib/lorries-queries';
@@ -289,11 +292,40 @@ export const DeliveryPlanning = () => {
   const [sendingRows, setSendingRows] = useState<PlanningOrder[] | null>(null);
   const [sendKind, setSendKind] = useState<SendMessageKind>('delivery');
   const [sendMenuOpen, setSendMenuOpen] = useState(false);
+  const [bulkMenuOpen, setBulkMenuOpen] = useState(false);
   const openSendModal = (kind: SendMessageKind) => {
     const docs = new Set(selectedSoDocNos());
     if (docs.size === 0) return;
     setSendKind(kind);
     setSendingRows(allOrders.filter((o) => o.row_type === 'so' && docs.has(o.so_doc_no)));
+  };
+
+  /* Postpone sends with NO modal (owner 2026-10-15): the reason and the new
+     date are the row's own Amend Reason + Delivery Date, so there is nothing to
+     ask — the backend reads them per order and skips any missing either. Fire,
+     move the status on the ones that went, and report the summary. */
+  const sendMsg = useSendDeliveryMessages();
+  const updateFields = useUpdateDeliveryFields();
+  const sendPostponeDirect = () => {
+    const docNos = selectedSoDocNos();
+    if (docNos.length === 0 || sendMsg.isPending) return;
+    void sendMsg.mutate({ docNos, kind: 'postpone' }, {
+      onSuccess: (res: SendDeliveryMessagesResult) => {
+        const after = KIND_AFTER_STATUS['postpone'];
+        if (after) for (const g of res.sent) for (const id of g.docNos) void updateFields.mutate({ type: 'so', id, deliveryMessageStatus: after });
+        const parts: string[] = [];
+        if (res.sent.length) parts.push(`Sent ${res.sent.length} message${res.sent.length === 1 ? '' : 's'} (${res.sent.reduce((n, g) => n + g.docNos.length, 0)} orders).`);
+        if (res.failed.length) parts.push(`Failed ${res.failed.length}: ${res.failed.map((f) => `${f.phone} (${f.error})`).join('; ')}.`);
+        if (res.skipped.length) parts.push(`Skipped ${res.skipped.length}: ${res.skipped.map((sk) => `${sk.docNo} (${SKIP_LABEL[sk.reason] ?? sk.reason})`).join(', ')}.`);
+        void notify({
+          title: res.failed.length ? 'Postpone finished with failures' : res.sent.length ? 'Postpone notice sent' : 'Nothing sent',
+          body: parts.join(' ') || 'Nothing to send.',
+          tone: res.failed.length ? 'error' : 'info',
+        });
+        setSel(new Set());
+      },
+      onError: (err) => notify({ title: 'Send failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
+    });
   };
 
   return (
@@ -346,7 +378,7 @@ export const DeliveryPlanning = () => {
                         key={k}
                         type="button"
                         role="menuitem"
-                        onClick={() => { setSendMenuOpen(false); openSendModal(k); }}
+                        onClick={() => { setSendMenuOpen(false); if (k === 'postpone') sendPostponeDirect(); else openSendModal(k); }}
                         style={{ display: 'block', width: '100%', padding: '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: 'pointer', textAlign: 'left' }}
                         onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
                         onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
@@ -410,26 +442,58 @@ export const DeliveryPlanning = () => {
         onRowClick={(o) => setJobPanel(panelTargetOf(o))}
         onRowDoubleClick={openRow}
         bulkExtras={
-          <>
-            {/* Schedule — open the resizable scheduling drawer for the selected SO
-                orders (Phase 2). SO-only, like the other bulk actions. */}
+          /* The heavier actions (Schedule drawer, Transfer to Delivery Order)
+             live in one "Actions" menu so the bulk bar is not a wall of buttons
+             (owner 2026-10-15); the quick Set Status / Colour stay inline in the
+             bar. Same dropdown pattern as Send Message above. */
+          <div style={{ position: 'relative' }}>
             <Button
               variant="secondary"
               disabled={selectedSoDocNos().length === 0}
-              onClick={() => setScheduling(true)}
-              title={selectedSoDocNos().length === 0 ? 'Select one or more sales orders first' : 'Schedule the selected orders onto a trip'}
+              onClick={() => setBulkMenuOpen((v) => !v)}
+              title={selectedSoDocNos().length === 0 ? 'Select one or more sales orders first' : 'Scheduling and delivery-order actions'}
             >
-              <CalendarClock size={14} strokeWidth={1.75} />
-              <span>Schedule ({selectedSoDocNos().length})</span>
+              Actions ({selectedSoDocNos().length})
+              <ChevronDown size={14} strokeWidth={1.75} />
             </Button>
-
-            {canConvertToDo && (
-              <Button variant="secondary" disabled={convertSos.isPending} onClick={() => void convertSelected()}>
-                <Truck size={14} strokeWidth={1.75} />
-                <span>{convertSos.isPending ? 'Transferring…' : `Transfer ${sel.size} to Delivery Order`}</span>
-              </Button>
+            {bulkMenuOpen && (
+              <>
+                <div onClick={() => setBulkMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+                <div
+                  role="menu"
+                  style={{
+                    position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 41, minWidth: 240,
+                    background: '#fff', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
+                    boxShadow: '0 8px 28px rgba(34, 31, 32, 0.14)', padding: 4,
+                  }}
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { setBulkMenuOpen(false); setScheduling(true); }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: 'pointer', textAlign: 'left', fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <CalendarClock size={14} strokeWidth={1.75} /> Schedule ({selectedSoDocNos().length})
+                  </button>
+                  {canConvertToDo && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={convertSos.isPending}
+                      onClick={() => { setBulkMenuOpen(false); void convertSelected(); }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: convertSos.isPending ? 'default' : 'pointer', textAlign: 'left', fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)', opacity: convertSos.isPending ? 0.6 : 1 }}
+                      onMouseEnter={(e) => { if (!convertSos.isPending) e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <Truck size={14} strokeWidth={1.75} /> {convertSos.isPending ? 'Transferring…' : `Transfer ${sel.size} to Delivery Order`}
+                    </button>
+                  )}
+                </div>
+              </>
             )}
-          </>
+          </div>
         }
         contextMenu={(row) => {
           if (isProject(row)) return [];

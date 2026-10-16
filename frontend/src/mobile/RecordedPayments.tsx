@@ -50,6 +50,7 @@ import {
 } from "../vendor/scm/lib/so-dropdown-options-queries";
 import { paymentMethodCodeForValue, PAYMENT_METHOD_CODE_TO_VALUE } from "../vendor/scm/lib/payment-methods";
 import { missingMethodSubField, slipDateProblem } from "../vendor/scm/components/PaymentsTable";
+import { slipMissingProblem } from "../vendor/scm/lib/payment-slip-gate";
 import { paymentSlipDateWindow } from "../vendor/scm/lib/payment-slip-date";
 import { BACKDATE_REASON_ASK, REQUEST_HINT, slipDateNeedsRequest, useRaiseBackdateRequest } from "../vendor/scm/lib/payment-backdate-queries";
 import { BackdateRequestsPanel } from "../vendor/scm/components/BackdateRequestsPanel";
@@ -257,8 +258,8 @@ function PaymentSlipPreview({ docNo, paymentId }: { docNo: string; paymentId: st
 /* ── Add / Edit Payment sheet ────────────────────────────────────────────────
    Records ONE payment through POST /:docNo/payments — the SAME endpoint + body
    shape MobileNewSO.recordNewPayments uses — or PATCHes an existing row
-   (edit mode). Slip is OPTIONAL (owner 2026-07-13, and since 2026-08-13 on the
-   new-SO path too, which is what renamed that function). No pricing logic here;
+   (edit mode). The slip is REQUIRED on a new payment (owner 2026-10-13,
+   lib/payment-slip-required). No pricing logic here;
    the backend recomputes the balance and derives the Account Sheet. Design = the
    shared .hz-m bottom sheet + fld / fld-i / fld-l classes. */
 export function AddPaymentSheet({
@@ -394,10 +395,11 @@ export function AddPaymentSheet({
         convertedFromDocNo: convertFrom,
       })
     : null;
-  /* Owner 2026-07-13 — the slip is OPTIONAL now; recording needs only an
-     amount > 0 (+ method/date + the method's own sub-fields). The slip upload
-     stays available for when one IS on hand. */
-  const canSave = amtOk && !missingSubField && (!slipProblem || needsRequest) && !busy && slipPhase !== "uploading";
+  /* The proof (owner 2026-10-13, lib/payment-slip-required): a NEW payment
+     saves — or goes to an admin as a request — only with its slip attached. An
+     edit keeps the slip the booked row has; a converted row needs none. */
+  const slipMissing = isEdit ? null : slipMissingProblem({ methodLabel: method, slipUploadSessionId: slipSession || null });
+  const canSave = amtOk && !missingSubField && !slipMissing && (!slipProblem || needsRequest) && !busy && slipPhase !== "uploading";
 
   const save = async () => {
     if (!canSave) return;
@@ -415,7 +417,7 @@ export function AddPaymentSheet({
       approvalCode: approval.trim() || null,
       collectedBy: collectedBy || null,
     };
-    // Slip is optional — only send the session when one was actually uploaded.
+    // The slip session rides with every new keyed row (canSave holds until it is uploaded); a converted row carries none.
     if (!isEdit && slipSession && code !== CONVERTED_METHOD) body.uploadSessionId = slipSession;
     if (code === "merchant") { body.merchantProvider = bank || null; body.installmentMonths = planToMonths(plan); }
     else if (code === "installment") { body.merchantProvider = bank || null; body.installmentMonths = planToMonths(plan); }
@@ -576,12 +578,12 @@ export function AddPaymentSheet({
             {isEdit && editPayment && slipKeyOf(editPayment) && (
               <PaymentSlipPreview docNo={docNo} paymentId={editPayment.id} />
             )}
-            {/* Owner 2026-07-13 — slip is OPTIONAL. Uploader stays available for
-                when a receipt IS on hand; no "required" gate. Hidden in edit
-                mode (the slip isn't changed by an edit). */}
+            {/* The proof is required on a NEW payment (owner 2026-10-13); Save
+                waits on the upload. Hidden in edit mode (the slip isn't changed
+                by an edit). */}
             {!isEdit && (
               <div className="fld">
-                <span className="fld-l" style={{ color: "#9aa093" }}>Slip (optional)</span>
+                <span className="fld-l" style={{ color: "#9aa093" }}>{method === CONVERT_LABEL ? "Slip" : "Slip (required)"}</span>
                 <input ref={fileRef} type="file" accept="image/*,application/pdf" style={{ display: "none" }} onChange={(e) => { void onPickSlip(e.target.files?.[0] ?? null); e.target.value = ""; }} />
                 <button
                   type="button"
@@ -605,6 +607,9 @@ export function AddPaymentSheet({
             )}
             {/* Plain-language block reason (owner standing rule) — say what is
                 missing instead of only greying Save out. */}
+            {slipMissing && amtOk && !missingSubField && slipPhase !== "uploading" && (
+              <div style={{ fontSize: 11.5, color: "#a16a2e", textAlign: "center" }}>{slipMissing}</div>
+            )}
             {missingSubField && (
               <div style={{ fontSize: 11.5, color: "#a16a2e", textAlign: "center" }}>
                 {method === CONVERT_LABEL ? "Pick the order the money comes from." : `Choose the ${missingSubField} for this ${method.toLowerCase()} payment.`}

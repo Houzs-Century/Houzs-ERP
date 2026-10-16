@@ -20,11 +20,21 @@
  *
  * BYTE-IDENTICAL COPIES: backend/src/scm/shared/so-after-do-edit.ts (the SO
  * routes) and frontend/src/vendor/shared/so-after-do-edit.ts (desktop + phone).
- * Refereed by frontend/src/vendor/shared/so-line-freeze.canonical.test.ts. */
+ * Refereed by frontend/src/vendor/shared/so-line-freeze.canonical.test.ts.
+ *
+ * DEV-70 (syasya, 2026-10-12, Samuel's answers 2026-10-13): a second, narrower
+ * door. A caller holding `scm.so.edit_price_after_do` may change the UNIT PRICE
+ * and DISCOUNT of ANY line a live Delivery Order carries (product lines too);
+ * qty, product and specification stay frozen. Every DO line carrying it follows,
+ * and so does every live Sales Invoice line billing those DO lines, issued or
+ * not: its totals, paid status and revenue entry are re-derived (Nico,
+ * 2026-10-13, option B). Not through a DO with a live Delivery Return, never on
+ * an order invoiced without a DO. */
 
 import { isServiceLine } from './service-sku';
 
 export const SO_EDIT_AFTER_DO_PERMISSION = 'scm.so.edit_after_do';
+export const SO_EDIT_PRICE_AFTER_DO_PERMISSION = 'scm.so.edit_price_after_do';
 
 /** SO header column -> the Delivery Order column it is copied into (null = the
  *  DO has no such column; the SO change still saves). address3/4 fold into the
@@ -51,14 +61,33 @@ export const SO_AFTER_DO_CUSTOMER_COLS: Readonly<Record<string, string | null>> 
 };
 
 /** A live Delivery Order of the order, as the detail payload carries it.
- *  `locked` = it has a live Sales Invoice or Delivery Return. */
-export type AfterDoTarget = { id: string; do_number: string | null; status: string | null; locked: boolean };
+ *  `locked` = it has a live Sales Invoice or Delivery Return; `returned` = a
+ *  live Delivery Return alone (the one that also stops a price change). */
+export type AfterDoTarget = { id: string; do_number: string | null; status: string | null; locked: boolean; returned?: boolean };
 
 export type AfterDoRefusal = { error: string; message: string; [k: string]: unknown };
 
 export const AFTER_DO_FORBIDDEN: AfterDoRefusal = {
   error: 'forbidden_edit_after_do',
   message: 'Changing a Sales Order after its Delivery Order needs the "Edit SO after DO" permission.',
+};
+
+export const AFTER_DO_PRICE_FORBIDDEN: AfterDoRefusal = {
+  error: 'forbidden_edit_price_after_do',
+  message: 'Changing a line price after its Delivery Order needs the "Edit SO line price after DO" permission.',
+};
+
+export function afterDoPriceReturnedRefusal(doNumbers: ReadonlyArray<string>): AfterDoRefusal {
+  return {
+    error: 'after_do_price_returned',
+    message: `${doNumbers.join(', ')} has a Delivery Return. Cancel the return first to change this price.`,
+    doNumbers: [...doNumbers],
+  };
+}
+
+export const AFTER_DO_PRICE_NOT_DELIVERED: AfterDoRefusal = {
+  error: 'after_do_price_not_on_do',
+  message: 'No open Delivery Order carries this line. Change its price with Edit instead.',
 };
 
 export const AFTER_DO_SERVICE_ONLY: AfterDoRefusal = {
@@ -151,4 +180,14 @@ export function pickAfterDoTarget(targets: ReadonlyArray<AfterDoTarget>, request
 /** A charge line: the only kind the permission adds or edits after the DO. */
 export function afterDoLineAllowed(line: { itemCode?: string | null; itemGroup?: string | null; category?: string | null }): boolean {
   return isServiceLine({ itemCode: line.itemCode ?? null, itemGroup: line.itemGroup ?? null, category: line.category ?? null });
+}
+
+/** The part of an SO line's discount one of its DO lines carries. A DO line of
+ *  a partly delivered line holds fewer units, so it takes its share; the last
+ *  DO line takes the rounding remainder so the shares add up to the SO figure. */
+export function doLineDiscountShares(discountSen: number, soQty: number, doQtys: ReadonlyArray<number>): number[] {
+  if (doQtys.length === 0 || !(soQty > 0)) return doQtys.map(() => 0);
+  const shares = doQtys.map((q) => Math.round(discountSen * q / soQty));
+  if (doQtys.reduce((s, q) => s + q, 0) >= soQty) shares[shares.length - 1] = discountSen - shares.slice(0, -1).reduce((s, v) => s + v, 0);
+  return shares;
 }

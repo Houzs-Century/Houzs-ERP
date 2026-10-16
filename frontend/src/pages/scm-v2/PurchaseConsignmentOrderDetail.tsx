@@ -58,7 +58,7 @@ import {
   type PoPriceMatrix,
 } from '@2990s/shared/mfg-pricing';
 import { PcLineCard, emptyPcLine, type PcLineDraft } from '../../vendor/scm/components/PcLineCard';
-import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+import { useConfirm, usePrompt } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipMapButton';
@@ -133,6 +133,7 @@ export const PurchaseConsignmentOrderDetail = () => {
   const addItem = useAddPurchaseConsignmentOrderItem();
   const updateItem = useUpdatePurchaseConsignmentOrderItem();
   const deleteItem = useDeletePurchaseConsignmentOrderItem();
+  const askPrompt = usePrompt();
   const askConfirm = useConfirm();
   const notify = useNotify();
 
@@ -526,13 +527,15 @@ export const PurchaseConsignmentOrderDetail = () => {
             {(po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (
               <Button variant="ghost" size="md"
                 onClick={async () => {
-                  if (!(await askConfirm({
-                    title: `Cancel ${pcNo}?`,
-                    body: 'This sets status to CANCELLED — line items + linked docs stay for audit.',
-                    confirmLabel: 'Cancel PO',
-                    danger: true,
-                  }))) return;
-                  cancel.mutate(po.id, {
+                 const reason = await askPrompt({
+                  title: `Cancel ${pcNo}?`, 
+                  body: 'It will stop proceeding.', 
+                  confirmLabel: 'Cancel PO', 
+                  danger: true,
+                  input: { label: 'Why it is cancelled', required: true },
+                });
+                if (reason === null) return;
+                  cancel.mutate({id:po.id, reason}, {
                     onError: (err) => notify({ title: 'Cancel failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
                   });
                 }}
@@ -778,9 +781,15 @@ const SupplierCard = ({
                 const wh = warehouses.find((w) => w.id === po.purchase_location_id);
                 return wh ? wh.code : null;
               })()} />
-            <div style={{ gridColumn: 'span 2' }}>
+
+          <div style={{ gridColumn: 'span 2' }}>
               <InfoCell label="Notes" value={po.notes || null} />
+          </div>
+          {po.status === 'CANCELLED' && (
+            <div style={{ gridColumn: 'span 2' }}>
+              <InfoCell label="Cancel reason" value={po.cancel_reason || null} />
             </div>
+          )}
             {/* Raised from a product request (owner 2026-10-06) — the request it answers. */}
             {(() => {
               const pr = (po as { productRequest?: { id: string; requestNo: string; status: string } | null }).productRequest;

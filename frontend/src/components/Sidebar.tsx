@@ -16,6 +16,7 @@ import {
   ClipboardList,
   Zap,
   Settings as SettingsIcon,
+  Store,
   PanelLeftClose,
   PanelLeftOpen,
   ChevronDown,
@@ -62,6 +63,7 @@ import {
   Map,
   MapPinned,
   Megaphone,
+  LifeBuoy,
   History,
   Wand2,
   CalendarOff,
@@ -71,6 +73,7 @@ import { booleanRecordPreference, useIdentityPreference } from "../hooks/useIden
 import { useAuth } from "../auth/AuthContext";
 import type { CapabilityKey } from "../auth/capabilities";
 import { makeNavFilter } from "./navFilter";
+import { useItSupportConnected, withoutUnconnectedItSupport } from "../hooks/useItSupportConnected";
 import { CompanyMark } from "./CompanyMark";
 import { PresencePanel } from "./PresencePanel";
 import { GlobalSearchTrigger } from "./GlobalSearch";
@@ -262,12 +265,18 @@ export const NAV_TABS: NavTab[] = [
   // without it no longer sees an entry the route and the server refuse.
   // Finance (scm.payment_voucher.create, `*` included) keeps only the Money out
   // entry — the same page twice was noise (owner 2026-10-08).
+  // Since 2026-10-14 (option A) the refund a salesperson asks for from a Sales
+  // Order is a payment request of their own: Sales staff and anyone who works
+  // Sales Orders see this entry to read their own requests — without the key
+  // the page offers no New request, and the server raises nothing for them.
   {
     section: "workspace",
     to: "/scm/payment-requests",
     label: "Payment Requests",
     icon: HandCoins,
     anyPerm: ["*", "scm.payment_request.create"],
+    anyAccess: ["scm.sales.orders"],
+    showForSales: true,
     hidePerm: "scm.payment_voucher.create",
   },
   // Sales Entries — Nico 2026-07-09: "sales entries 我不要了". Sidebar
@@ -453,14 +462,18 @@ export const NAV_TABS: NavTab[] = [
         icon: History,
         salesRepOnly: true,
       },
-      // Rep-only Product Request leaf (owner 2026-10-06: Sales 都能提). Same shape
-      // and same reasoning as the Amendments leaf above: the office path sits in
-      // the Consignment subgroup, which a rep never sees.
+      // Product Request leaf for EVERY Sales position, director included (owner
+      // 2026-10-06: Sales 都能提; 2026-10-13: the Sales Director saw no entry —
+      // salesRepOnly cut directors and the Consignment child needs an area a
+      // director does not hold). showForSales admits Sales by org field; the
+      // anyPerm admits a non-Sales holder of the create key. The office path is
+      // the Consignment child below, hidden from Sales so nobody sees two rows.
       {
         to: "/scm/product-requests",
         label: "Product Request",
         icon: Sofa,
-        salesRepOnly: true,
+        showForSales: true,
+        anyPerm: ["scm.product_request.create"],
       },
       // Rep-only Delivery Orders + Sales Invoices leaves (owner rule 2026-07-16):
       // a salesperson must be able to find the DO / invoice generated from their
@@ -535,7 +548,7 @@ export const NAV_TABS: NavTab[] = [
           // Product request (owner 2026-10-06): what a Purchase Consignment Order
           // is raised from. The office / Purchaser path; a rep reaches it via the
           // rep-only leaf above. Either flat key shows it too, like PO Amendments.
-          { to: "/scm/product-requests", label: "Product Request", icon: Sofa, anyPerm: ["*", "scm.access", "scm.product_request.create", "scm.product_request.approve"], anyAccess: ["scm.consignment.po_orders", "scm.procurement.po", "scm.procurement.products"], hideForSalesRep: true },
+          { to: "/scm/product-requests", label: "Product Request", icon: Sofa, anyPerm: ["*", "scm.access", "scm.product_request.create", "scm.product_request.approve"], anyAccess: ["scm.consignment.po_orders", "scm.procurement.po", "scm.procurement.products"], hideForSales: true },
           { to: "/scm/purchase-consignment-receives", label: "Purchase Consignment Receive", icon: PackageOpen, anyPerm: ["*", "scm.access"], anyAccess: ["scm.consignment.po_receives"] },
           { to: "/scm/purchase-consignment-returns", label: "Purchase Consignment Return", icon: Reply, anyPerm: ["*", "scm.access"], anyAccess: ["scm.consignment.po_returns"] },
         ],
@@ -579,6 +592,7 @@ export const NAV_TABS: NavTab[] = [
           // Maintenance (2026-08-02): it is reference-data upkeep on the in-house
           // lorries, not a daily dispatch view. The lorry/driver REGISTRY
           // (/scm/fleet) is in Maintenance too.
+          { to: "/scm/lorry-live-map", label: "Lorry Live Map", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/lorry-capacity", label: "Lorry Capacity", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/driver-leave", label: "Crew Leave", icon: CalendarOff, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           /* "Drivers" (/scm/drivers) retired 2026-07-17 — it duplicated the Drivers
@@ -997,12 +1011,32 @@ export const NAV_TABS: NavTab[] = [
     icon: Bot,
     anyPerm: ["*"],
   },
+  // No gate, like Announcements: every signed-in user reports problems to IT
+  // and reads only their OWN requests (the server takes the reporter from the
+  // session — backend routes/itSupport.ts), so a permission here would only be
+  // a way to lock someone out of asking for help. The row is dropped at render
+  // where this environment is not connected to the IT Hub (see visibleTabs).
+  {
+    section: "system",
+    to: "/it-support",
+    label: "IT Support",
+    icon: LifeBuoy,
+    badge: "it-support-replies",
+  },
   {
     section: "system",
     to: "/settings",
     label: "Settings",
     icon: SettingsIcon,
     perm: "settings.manage",
+  },
+  // Houzs POS Admin (the cash & carry booth app's ERP side): owner / admin.
+  {
+    section: "system",
+    to: "/pos-admin",
+    label: "POS Admin",
+    icon: Store,
+    anyPerm: ["*", "pos.manage"],
   },
 ];
 
@@ -1101,8 +1135,12 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
   // MenuModal (MobileTabBar) filters identically and can never drift.
   const filterTab = makeNavFilter({ user, can, pageAccess });
 
-  const visibleTabs = NAV_TABS.map(filterTab).filter(
-    (t): t is NavTab => t !== null,
+  // IT Support is listed only where this environment is connected to the IT
+  // Hub; production has no row until its two secrets are set.
+  const itSupportConnected = useItSupportConnected();
+  const visibleTabs = withoutUnconnectedItSupport(
+    NAV_TABS.map(filterTab).filter((t): t is NavTab => t !== null),
+    itSupportConnected,
   );
 
   // Recursive renderer for tabs — handles plain links and nested groups.

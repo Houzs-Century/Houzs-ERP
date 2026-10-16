@@ -72,7 +72,24 @@ export type PaymentRequest = {
   /** The PMS row it was raised from (owner 2026-10-08) — an event's CONTRACT
       row; null when raised on this page. Its event is fixed. */
   checklist_item_id?: number | null;
+  /** A REFUND request (owner 2026-10-14): the Sales Order whose money goes back
+      to the customer — raised by the order's Refund button, answered only by a
+      Customer Refund voucher on it, never edited. Null on any other request. */
+  refund_source_type?: 'SO' | null;
+  refund_source_doc_no?: string | null;
 };
+
+/** A refund raised from a Sales Order's money panel. */
+export const isRefundRequest = (r: Pick<PaymentRequest, 'refund_source_doc_no'>): boolean => !!r.refund_source_doc_no;
+
+/** The stage in words — a refund Finance returned was rejected (owner: 我可能还会拒绝). */
+export const stageLabel = (r: Pick<PaymentRequest, 'stage' | 'refund_source_doc_no'>): string =>
+  isRefundRequest(r) && r.stage === 'RETURNED' ? 'Rejected · 已拒绝' : STAGE[r.stage].label;
+
+/** Where Finance answers a request with a voucher: a refund opens New Customer
+    Refund on its order; anything else the plain voucher. */
+export const makeVoucherHref = (r: Pick<PaymentRequest, 'id' | 'refund_source_doc_no'>): string =>
+  `/scm/payment-vouchers/new?${isRefundRequest(r) ? 'type=refund&' : ''}fromRequest=${encodeURIComponent(r.id)}`;
 
 /** A bill's instalments and its figures (server: lib/payment-request.ts familyFigures). */
 export type BillFamily = {
@@ -173,8 +190,10 @@ export const NO_EVENT_REASON_MIN = 5;
 export const usePaymentRequests = (mine = false) => useQuery({
   queryKey: ['payment-requests', mine ? 'mine' : 'all'],
   /* hasEvents: whether the company runs events (2990 does not) — the form
-     hides the Event field without them. */
-  queryFn: () => authedFetch<{ requests: PaymentRequest[]; finance: boolean; hasEvents?: boolean }>(`/payment-requests${mine ? '?mine=1' : ''}`),
+     hides the Event field without them. mayRaise: whether the caller may raise
+     a request here — a salesperson reads their refund requests without the key
+     (owner 2026-10-14, option A); absent from an older server. */
+  queryFn: () => authedFetch<{ requests: PaymentRequest[]; finance: boolean; mayRaise?: boolean; hasEvents?: boolean }>(`/payment-requests${mine ? '?mine=1' : ''}`),
   staleTime: 15_000,
 });
 
@@ -244,6 +263,9 @@ export const usePaymentRequest = (id: string | null) => useQuery({
 const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['payment-requests'] });
   void qc.invalidateQueries({ queryKey: ['payment-request'] });
+  /* A refund request holds its order's money (owner 2026-10-14) — withdrawn or
+     returned, the order's money panel reads it back. */
+  void qc.invalidateQueries({ queryKey: ['so-money'] });
 };
 
 export const useCreatePaymentRequest = () => {

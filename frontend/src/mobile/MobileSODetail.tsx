@@ -1,3 +1,4 @@
+import { ViewOriginalScan } from "../vendor/scm/components/ViewOriginalScan";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { formatDate } from "../lib/utils";
 import { NonSellingWarehouseNoteMobile, SourcePosRowMobile, soStockPillMobile } from "./source-chips";
@@ -783,6 +784,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
         </div>
         <div className="eyebrow" style={{ marginTop: 7, display: "flex", alignItems: "center", gap: 6, minWidth: 0, flexWrap: "wrap" }}>
           <span className="money" style={{ flex: "none" }}>{h?.doc_no ?? docNo}</span>
+          {h?.doc_no && <ViewOriginalScan kind="so" documentId={h.doc_no} />}
           {(h?.customer_so_no || h?.ref || h?.po_doc_no) && (<><span style={{ opacity: .5, flex: "none" }}>·</span><span className="money" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{h?.customer_so_no || h?.ref || h?.po_doc_no}</span></>)}
         </div>
         <div className="scr-title">{h?.debtor_name || "—"}</div>
@@ -2010,8 +2012,9 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
                             <div className="money" style={{ fontSize: 12.5, fontWeight: 700, color: "#0c3f39", ...mEmphIf(chg.itemCode) }}>{l.new_item_code ?? old.itemCode ?? "—"}</div>
                             <div className="money" style={{ fontSize: 11, color: "var(--mut)", marginTop: 2 }}>
                               <span style={mEmphIf(chg.qty)}>Qty {l.new_qty ?? old.qty ?? "—"}</span>
-                              {typeof l.new_unit_price_sen === "number" ? (
-                                <>{" · "}<span style={mEmphIf(chg.unitPrice)}>RM {rm(l.new_unit_price_sen)}</span></>
+                              {/* A null requested price keeps the stored one (desktop parity): show it unchanged. */}
+                              {typeof (l.new_unit_price_sen ?? old.unitPriceSen) === "number" ? (
+                                <>{" · "}<span style={mEmphIf(chg.unitPrice)}>RM {rm((l.new_unit_price_sen ?? old.unitPriceSen) as number)}</span></>
                               ) : ""}
                             </div>
                             {newSummary ? <div style={{ fontSize: 10.5, color: "var(--mut2)", marginTop: 2, ...mEmphIf(chg.variants) }}>{newSummary}</div> : null}

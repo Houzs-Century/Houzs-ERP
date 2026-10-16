@@ -88,3 +88,27 @@ export function refsOrNull(v: unknown): { ok: true; value: string[] | null } | {
   const out = v.map((x) => String(x).trim()).filter(Boolean);
   return { ok: true, value: out.length ? out : null };
 }
+
+/* -- Work-order files (HC-0031) ---------------------------------------------
+   lorry_work_orders has carried invoice_refs / quote_refs / photo_refs (R2 keys,
+   mig 0204) since it was built, but nothing ever uploaded a file into them. The
+   key is SERVER-MINTED under the work order's own prefix, and the file name
+   rides inside it so the screen can show it without another column. */
+export const WORK_ORDER_FILE_KINDS = { invoice: 'invoice_refs', quote: 'quote_refs', photo: 'photo_refs' } as const;
+export type WorkOrderFileKind = keyof typeof WORK_ORDER_FILE_KINDS;
+
+export function isWorkOrderFileKind(v: unknown): v is WorkOrderFileKind {
+  return typeof v === 'string' && Object.prototype.hasOwnProperty.call(WORK_ORDER_FILE_KINDS, v);
+}
+
+/** fleet/work-orders/<woId>/<kind>/<ms>-<safe name>.<ext> */
+export function workOrderFileKey(woId: string, kind: WorkOrderFileKind, ext: string, name: string | null, nowMs: number): string {
+  const stem = (name ?? '').replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60);
+  return `fleet/work-orders/${woId}/${kind}/${nowMs}${stem ? `-${stem}` : ''}.${ext}`;
+}
+
+/** True only for a key minted for THIS work order - the delete route refuses
+ *  anything else, so a crafted key cannot remove another object. */
+export function isWorkOrderFileKeyOf(key: string, woId: string): boolean {
+  return key.startsWith(`fleet/work-orders/${woId}/`) && !key.includes('..');
+}

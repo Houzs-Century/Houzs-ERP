@@ -86,6 +86,11 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "sales.write",  resource: "Sales Entries", verb: "write",  label: "Edit sales entries",   description: "Create and edit own draft sales entries, submit for review" },
   { key: "sales.manage", resource: "Sales Entries", verb: "manage", label: "Manage sales entries", description: "Edit any entry, configure fields, void entries, push to AutoCount" },
 
+  // Houzs POS (the cash & carry booth app) — the ERP's POS Admin menu: items,
+  // barcode labels, cashiers, events, settings, sync status, reports. Owner +
+  // IT Admin cover it via "*"; this key lets another role in.
+  { key: "pos.manage", resource: "POS Admin", verb: "manage", label: "Manage POS", description: "The POS Admin menu: POS items, barcode labels, cashiers, events, SST / receipt / printer / general settings, sync status and the POS sales report" },
+
   // Supply Chain — ported 2990's furniture SCM (/api/scm). Single coarse
   // gate: holding scm.access (or "*") unlocks every SCM module. Owner +
   // IT Admin already cover it via "*"; this lets non-admin roles in too.
@@ -100,12 +105,15 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "scm.so.attribute_other",  resource: "Supply Chain", verb: "manage", label: "Attribute SO to another rep",  description: "Create or edit a SCM Sales Order on behalf of another salesperson (stamp a different salesperson_id)" },
   // DEV-32 (Syu 2026-10-01) — for Logistics. Rule: scm/shared/so-after-do-edit.ts.
   { key: "scm.so.edit_after_do",    resource: "Supply Chain", verb: "manage", label: "Edit SO after DO",             description: "After a Delivery Order is raised, change the SO customer details and add or edit charge lines (transport, storage, misc); the change is copied onto the DO. Not once the DO has an invoice or return." },
+  // DEV-70 (syasya 2026-10-12) — price of a line already on a DO. Rule: scm/shared/so-after-do-edit.ts.
+  { key: "scm.so.edit_price_after_do", resource: "Supply Chain", verb: "manage", label: "Edit SO line price after DO", description: "After a Delivery Order is raised, change the unit price and discount of any SO line it carries (qty, product and specification stay locked); the DO line follows. Not once the DO has an invoice or return." },
   // Port of 2990 gate #717 — clearing an already-set Processing Date pulls the
   // SO back out of the Proceed lane (and, once the day has elapsed, undoes the
   // lock that says "this is what we PO to the supplier"). 2990 restricts it to
   // super_admin; Houzs has no live staff_role (the SCM bridge pins every caller
   // to one super_admin row), so gate on this admin-level key instead. Owner + IT
   // Admin cover it via "*"; grant the ROLE it belongs to under Team > Roles & Permissions.
+  { key: "scm.so.override_po_processing_date", resource: "Supply Chain", verb: "manage", label: "Change Processing Date under a PO", description: "Move or clear the Processing Date of a Sales Order that already has a Purchase Order (BUG-101: Purchaser only, never sales)" },
   { key: "scm.so.remove_processing_date", resource: "Supply Chain", verb: "manage", label: "Remove SO Processing Date", description: "Clear an already-set Processing Date on a SCM Sales Order (admin-level; pulls the order back out of the Proceed lane)" },
   // Owner 2026-09-23 — a keyed-in payment's transaction-slip date must fall in
   // the last 14 days (scm/shared/payment-slip-date.ts owns the window). This key

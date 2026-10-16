@@ -8,6 +8,7 @@ import { DataTable, type Column } from "../components/DataTable";
 import { Pagination } from "../components/Pagination";
 import { ListSkeleton } from "../components/Skeleton";
 import { useQuery } from "../hooks/useQuery";
+import { getActiveCompanyId } from "../lib/activeCompany";
 import { useToast } from "../hooks/useToast";
 import { useDialog } from "../hooks/useDialog";
 import { pageSizePreference, useIdentityPreference } from "../hooks/useIdentityPreference";
@@ -16,6 +17,7 @@ import { useAuth } from "../auth/AuthContext";
 import { api, buildQuery } from "../api/client";
 import { invalidate } from "../api/cache";
 import { relativeTime } from "../lib/utils";
+import { downloadAllPagesCSV } from "../lib/csv";
 import {
   type Branding,
   DEFAULT_BRANDING,
@@ -766,7 +768,9 @@ function BrandingTab() {
   const { can } = useAuth();
   const canEdit = can("settings.manage");
 
-  const q = useQuery<BrandingResponse>("/api/branding", () => api.get("/api/branding"));
+  // Same key as useBranding (company included), so q.reload() after a save
+  // refreshes the app chrome too.
+  const q = useQuery<BrandingResponse>("/api/branding", () => api.get("/api/branding"), [getActiveCompanyId()]);
   const [form, setForm] = useState<Branding | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -931,6 +935,7 @@ function BrandingTab() {
 // ── Activity Log ──────────────────────────────────────────────
 
 function ActivityLog() {
+  const toast = useToast();
   const [type, setType] = useState("");
   const [logStatus, setLogStatus] = useState("");
   const [page, setPage] = useState(1);
@@ -1036,6 +1041,11 @@ function ActivityLog() {
         udfTable="logs"
         udfTableLabel="Activity Log"
         exportName="activity-log"
+        onExport={(cols) =>
+          void downloadAllPagesCSV("activity-log", cols, (pg, per) =>
+            api.get<Paginated<ExecutionLog>>(`/api/logs${buildQuery({ type, status: logStatus, page: pg, per_page: per })}`),
+          ).catch((e) => toast.error(`Export failed: ${e?.message || e}`))
+        }
         columns={columns}
         rows={list.data?.data ?? null}
         loading={list.loading}

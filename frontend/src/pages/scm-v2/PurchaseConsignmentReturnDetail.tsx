@@ -176,6 +176,7 @@ export const PurchaseConsignmentReturnDetail = () => {
       refund_sen: refundTotal,
       credit_note_ref: pr.credit_note_ref ?? null,
       notes: pr.notes ?? null,
+      supplier_id: pr.supplier_id ?? null,
       supplier: pr.supplier ?? undefined,
     };
     const pdfItems = items.map((it) => ({
@@ -185,6 +186,9 @@ export const PurchaseConsignmentReturnDetail = () => {
       unit_price_sen: it.unit_price_sen,
       line_refund_sen: it.line_refund_sen ?? (it.qty_returned * it.unit_price_sen),
       reason: null,
+      item_group: it.item_group ?? null,
+      description: it.description ?? null,
+      variants: it.variants ?? null,
     }));
     return import('../../vendor/scm/lib/purchase-return-pdf')
       .then(({ generatePurchaseReturnPdf }) =>

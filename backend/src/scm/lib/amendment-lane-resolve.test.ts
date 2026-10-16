@@ -10,8 +10,10 @@
  *     as LINES, which is exactly the mis-route; the caller must refuse instead.
  *  3. THE PRICE CARVE-OUT (owner 2026-09-21) is 2990's alone and compares the
  *     requested values against the SAME stored row, so a price-only change lands
- *     on PRICE while a spec change (even one that also moves the price) stays on
- *     LINES.
+ *     on PRICE. A spec change that ALSO moves the price is split (DEV-70): the
+ *     spec half, with no price, on LINES; the price half on PRICE. Until
+ *     2026-10-13 it stayed whole on LINES, and a SKU correction signed by the
+ *     Purchaser took a set price to RM 0 (HC-SO-013490/A1, HC-SO-013497/A1).
  */
 import { describe, expect, it } from 'vitest';
 import { resolveAmendmentLaneSplit, summarizeLaneSplit } from './amendment-lane-resolve';
@@ -118,11 +120,41 @@ describe('resolveAmendmentLaneSplit — PRICE lane (2990, owner 2026-09-21)', ()
     expect(split!.perLane.PRICE.lines).toEqual([{ salesOrderItemId: 'li-bed', changeType: 'SPEC', newUnitPriceSen: 0 }]);
   });
 
-  it('keeps a change that also moves the SKU on LINES (not price-only)', async () => {
+  it('splits a SKU swap that also moves the price: the swap on LINES keeps the price, the price goes to PRICE (DEV-70)', async () => {
     const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 2, {}, [
-      { salesOrderItemId: 'li-bed', changeType: 'SPEC', newItemCode: 'CODY-(Q)', newUnitPriceSen: 0 },
+      { salesOrderItemId: 'li-bed', changeType: 'SPEC', newItemCode: 'CODY-(Q)', newQty: 2, newUnitPriceSen: 0 },
+    ], true);
+    expect(split!.lanes).toEqual(['LINES', 'PRICE']);
+    expect(split!.perLane.LINES.lines).toEqual([
+      { salesOrderItemId: 'li-bed', changeType: 'SPEC', newItemCode: 'CODY-(Q)', newQty: 2, newUnitPriceSen: null, newDiscountSen: null },
+    ]);
+    expect(split!.perLane.PRICE.lines).toEqual([
+      { salesOrderItemId: 'li-bed', changeType: 'SPEC', newItemCode: null, newVariants: null, newQty: null, newRemark: null, newUnitPriceSen: 0, newDiscountSen: null },
+    ]);
+  });
+
+  it('a spec change that resends the unchanged price is not split', async () => {
+    const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 2, {}, [
+      { salesOrderItemId: 'li-bed', changeType: 'SPEC', newItemCode: 'CODY-(Q)', newUnitPriceSen: 25000 },
     ], true);
     expect(split!.lanes).toEqual(['LINES']);
+    expect(split!.perLane.LINES.lines[0].newUnitPriceSen).toBe(25000);
+  });
+
+  it('only the discount moving with the spec: the price half carries the discount alone', async () => {
+    const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 2, {}, [
+      { salesOrderItemId: 'li-bed', changeType: 'SPEC', newQty: 2, newUnitPriceSen: 25000, newDiscountSen: 5000 },
+    ], true);
+    expect(split!.lanes).toEqual(['LINES', 'PRICE']);
+    expect(split!.perLane.PRICE.lines[0]).toMatchObject({ newUnitPriceSen: null, newDiscountSen: 5000, newQty: null });
+  });
+
+  it('is OFF when the price lane is not enabled: a SKU swap with a price stays whole on LINES', async () => {
+    const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 1, {}, [
+      { salesOrderItemId: 'li-bed', changeType: 'SPEC', newItemCode: 'CODY-(Q)', newUnitPriceSen: 0 },
+    ], false);
+    expect(split!.lanes).toEqual(['LINES']);
+    expect(split!.perLane.LINES.lines[0].newUnitPriceSen).toBe(0);
   });
 
   it('a service line stays DELIVERY even when only its price moved', async () => {

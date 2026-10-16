@@ -75,9 +75,9 @@
 //   * `!inner` is required. A plain `rel(...)` embed is a GAP, because a LEFT
 //     embed changes which parents come back and no caller here wants one.
 //
-// NOT a general client. One level of embedding only, no `.rpc()`, no deletes —
-// the day a canonical function needs one, the gap list names it and the shim
-// grows a tested method.
+// NOT a general client. One level of embedding only, and a delete only with a
+// filter (2026-10-15). The day a canonical function needs more, the gap list
+// names it and the shim grows a tested method.
 const IDENT = /^[a-z_][a-z0-9_]*$/;
 /* PostgREST's EMBEDDED-FILTER spelling — `.not('so.status', 'in', ...)`,
    `.gt('po_items.received_qty', 0)`. It filters the parent by a column of an
@@ -152,7 +152,9 @@ export function pgrestShim(sql, schema = "scm", opts = {}) {
   if (writeback !== "suppress" && writeback !== "enqueue") {
     throw new Error(`pgrestShim: writeback must be "suppress" or "enqueue", got ${JSON.stringify(writeback)}`);
   }
-  const gaps = [];
+  /* A `.schema(name)` child shares its parent's gap list, so a caller that
+     asserts "no gaps" after a run sees a gap hit through the other schema. */
+  const gaps = Array.isArray(opts.gaps) ? opts.gaps : [];
   const q = (id) => {
     if (EMBEDDED_FILTER.test(String(id))) {
       const msg = `pgrest-shim GAP: embedded filter "${id}" is not implemented — the shim has no embedded relations to filter on, so this read cannot be executed`;
@@ -267,7 +269,49 @@ export function pgrestShim(sql, schema = "scm", opts = {}) {
           const cols = [...new Set(rows.flatMap((r) => Object.keys(r ?? {})))];
           if (cols.length === 0) return { data: null, error: null };
           const tuples = rows.map((r) => `(${cols.map((cName) => p(Object.prototype.hasOwnProperty.call(r ?? {}, cName) ? r[cName] : null)).join(", ")})`);
-          await sql.unsafe(`INSERT INTO ${target} (${cols.map((cName) => q(cName)).join(", ")}) VALUES ${tuples.join(", ")}`, params);
+          const insertText = `INSERT INTO ${target} (${cols.map((cName) => q(cName)).join(", ")}) VALUES ${tuples.join(", ")}`;
+          /* insert(...).select(...).single() — the GL engine reads the journal
+             entry it just minted (acc/engine.ts postJournal). RETURNING serves
+             it exactly as the update path does; a bare insert keeps data:null. */
+          if (state.cols !== "*" || state.single) {
+            const retCols = state.cols === "*" ? "*" : String(state.cols).split(",").map((cName) => q(cName.trim())).join(", ");
+            const out = await sql.unsafe(`${insertText} RETURNING ${retCols}`, params);
+            if (state.single === "maybe") {
+              if (out.length > 1) return { data: null, error: { message: `maybeSingle: ${out.length} rows` } };
+              return { data: out[0] ?? null, error: null };
+            }
+            if (state.single === "single") {
+              if (out.length !== 1) return { data: null, error: { message: `single: ${out.length} rows` } };
+              return { data: out[0], error: null };
+            }
+            return { data: [...out], error: null };
+          }
+          await sql.unsafe(insertText, params);
+          return { data: null, error: null };
+        }
+        if (state.mode === "delete") {
+          /* 2026-10-15 growth (settle-bank-fee-pairs.mjs). acc/bank-regroup.ts
+             applyRegroup removes the fee row it joined into its credit, and
+             postBatchReceipt / postJournal remove what they wrote when a later
+             step is refused. A delete needs at least one filter: a bare
+             delete() would empty the table, and no canonical function means
+             that. .select() asks for RETURNING exactly as update does. */
+          const where = buildWhere();
+          if (!where) return gap(`delete() with no filter — refusing to empty the table`);
+          if (state.cols !== "*" || state.single) {
+            const retCols = state.cols === "*" ? "*" : String(state.cols).split(",").map((cName) => q(cName.trim())).join(", ");
+            const rows = await sql.unsafe(`DELETE FROM ${target}${where} RETURNING ${retCols}`, params);
+            if (state.single === "maybe") {
+              if (rows.length > 1) return { data: null, error: { message: `maybeSingle: ${rows.length} rows` } };
+              return { data: rows[0] ?? null, error: null };
+            }
+            if (state.single === "single") {
+              if (rows.length !== 1) return { data: null, error: { message: `single: ${rows.length} rows` } };
+              return { data: rows[0], error: null };
+            }
+            return { data: [...rows], error: null };
+          }
+          await sql.unsafe(`DELETE FROM ${target}${where}`, params);
           return { data: null, error: null };
         }
         if (state.mode === "update") {
@@ -451,6 +495,7 @@ export function pgrestShim(sql, schema = "scm", opts = {}) {
       select(cols) { state.cols = cols ?? "*"; return proxied; },
       update(obj) { state.mode = "update"; state.updateObj = obj; return proxied; },
       insert(rows) { state.mode = "insert"; state.insertRows = rows; return proxied; },
+      delete() { state.mode = "delete"; return proxied; },
       upsert(rows, opts) { state.mode = "upsert"; state.insertRows = rows; state.upsertOnConflict = opts?.onConflict; return proxied; },
       eq(col, v) { state.filters.push({ op: "eq", col, v }); return proxied; },
       /* PostgREST's neq is SQL's <>, NULL semantics and all: a row whose column
@@ -485,6 +530,10 @@ export function pgrestShim(sql, schema = "scm", opts = {}) {
       gte(col, v) { state.filters.push({ op: "cmp", cmp: ">=", col, v }); return proxied; },
       lt(col, v) { state.filters.push({ op: "cmp", cmp: "<", col, v }); return proxied; },
       lte(col, v) { state.filters.push({ op: "cmp", cmp: "<=", col, v }); return proxied; },
+      /* The doc-number minters' prefix scan (doc-no.ts nextJeNo:
+         .like('je_no', 'HC-JE-%')). The pattern is a parameter, so a caller
+         cannot inject through it; `%` and `_` keep their LIKE meaning. */
+      like(col, pattern) { state.filters.push({ op: "cmp", cmp: "LIKE", col, v: pattern }); return proxied; },
       not(col, op, v) {
         if (op === "is" && v === null) { state.filters.push({ op: "not-is-null", col }); return proxied; }
         if (op === "in" && typeof v === "string" && v.startsWith("(") && v.endsWith(")")) {
@@ -546,10 +595,29 @@ export function pgrestShim(sql, schema = "scm", opts = {}) {
 
   const client = {
     from,
-    rpc(name) {
-      const msg = `pgrest-shim GAP: .rpc("${name}") is not implemented — call the function with sql.unsafe instead`;
-      gaps.push(msg);
-      throw new Error(msg);
+    /* A real call, in this shim's schema, with the arguments bound BY NAME —
+       the same resolution PostgREST applies to `rpc(name, { p_a, p_b })`. The
+       GL engine mints its journal number through scm.next_doc_no_n this way
+       (doc-no.ts nextJeNo), and a thrown gap here left a restated invoice
+       with no entry. A scalar function answers with its value as `data`, a
+       set-returning one with the rows' values. Errors come back as
+       { error: { message } } — the caller checks `.error`, PostgREST-style. */
+    async rpc(name, args = {}) {
+      const keys = Object.keys(args ?? {});
+      const text = `SELECT "${schema}".${q(name)}(${keys.map((k, i) => `${q(k)} := $${i + 1}`).join(", ")}) AS result`;
+      try {
+        const rows = await sql.unsafe(text, keys.map((k) => args[k]));
+        return { data: rows.length === 1 ? rows[0].result : rows.map((r) => r.result), error: null };
+      } catch (e) {
+        return { data: null, error: { message: e instanceof Error ? e.message : String(e) } };
+      }
+    },
+    /* `.schema('public')` — the companies MASTER lives outside scm, and the
+       doc-number minters read it there (doc-no.ts jePrefixForCompany). The
+       child shares this shim's options and gap list. */
+    schema(name) {
+      if (!IDENT.test(String(name))) throw new Error(`pgrest-shim: unsafe schema "${name}"`);
+      return pgrestShim(sql, name, { ...opts, gaps });
     },
     __gaps: gaps,
   };

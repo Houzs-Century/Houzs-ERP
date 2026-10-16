@@ -174,7 +174,11 @@ describe('the requester raises, changes and withdraws their own request', () => 
     const fin = await as(w, FINANCE)('/payment-requests');
     expect(fin.body.finance).toBe(true);
     expect(fin.body.requests).toHaveLength(2);
-    expect((await as(w, NOBODY)('/payment-requests')).status).toBe(403);
+    /* Anyone reads their OWN (owner 2026-10-14, option A — a salesperson's refund
+       request); without the key nothing is raised here. */
+    const nobody = as(w, NOBODY);
+    expect((await nobody('/payment-requests')).body).toMatchObject({ requests: [], mayRaise: false });
+    expect((await nobody('/payment-requests', 'POST', RENTAL)).status).toBe(403);
   });
 
   test('the requester edits while it waits; Finance cannot edit it; a withdrawn request is closed', async () => {

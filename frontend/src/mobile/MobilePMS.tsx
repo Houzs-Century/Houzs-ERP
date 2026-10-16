@@ -38,6 +38,10 @@ import {
   type NotifyFn, type ConfirmFn, type PromptFn, type SetBusy,
 } from "./MobilePmsDocCard";
 import { floorPlanTileVisible } from "./MobilePmsFloorPlanTiles";
+import { MobilePmsSalesOrders } from "./MobilePmsSalesOrders";
+import { MobilePmsPosSales, useMobileProjectPosSales } from "./MobilePmsPosSales";
+import { MobilePmsSalesBills, useMobileProjectSalesBills, type MobileProjectSalesBillsQuery } from "./MobilePmsSalesBills";
+import { fmtRmSen, notOpenedByRepId } from "../lib/projectSalesBills";
 import { SoloSafeName, useCanSeeSoloOrganizer, isSoloMasked, shownProjectName } from "../pages/projects/SoloSafeName";
 
 /* ------------------------------------------------------------------ *
@@ -330,10 +334,14 @@ export function MobilePMS({ onBack, initialProjectId }: { onBack?: () => void; i
   // leaves PMS entirely; once the user visits the list, Back returns to it.
   const [direct, setDirect] = useState<boolean>(initialProjectId != null);
 
+  // Peter 2026-10-14: the list screen unmounts while a detail is open, so its
+  // scroll position died with it — remember it here and restore on return.
+  const listScroll = useRef(0);
+
   if (openId != null) {
     return <ProjectDetailView id={openId} onBack={() => (direct ? onBack?.() : setOpenId(null))} />;
   }
-  return <ProjectListView onOpen={(id) => { setDirect(false); setOpenId(id); }} onBack={onBack} />;
+  return <ProjectListView onOpen={(id) => { setDirect(false); setOpenId(id); }} onBack={onBack} scrollMemory={listScroll} />;
 }
 
 // ── List ──
@@ -373,7 +381,7 @@ const STAGE_FILTERS: [string, string][] = [
 
 const PMS_PAGE_SIZE = 30;
 
-function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onBack?: () => void }) {
+function ProjectListView({ onOpen, onBack, scrollMemory }: { onOpen: (id: number) => void; onBack?: () => void; scrollMemory?: { current: number } }) {
   const { can, user } = useAuth();
   // Owner 2026-07-21: the sales cohort's list rows show progress over THEIR
   // OWN deliverables (SALES PIC tasks) — the admin section chip ("CONTRACT
@@ -476,6 +484,15 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
     [data],
   );
   const totalCount = data?.pages[0]?.total ?? 0;
+  // Restore the remembered scroll ONCE rows have height again (they come from
+  // the query cache on return, so this fires on the first paint back).
+  const restoredScroll = useRef(false);
+  useEffect(() => {
+    if (restoredScroll.current || !scrollMemory?.current || rows.length === 0) return;
+    restoredScroll.current = true;
+    scrollRef.current?.scrollTo(0, scrollMemory.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows.length]);
   const searchTransition = useSearchResultTransition({
     inputTerm: q,
     requestTerm: debouncedQ,
@@ -562,7 +579,7 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
         </div>
       </header>
 
-      <div ref={scrollRef} className="scroll" style={{ padding: 14, paddingBottom: 120 }}>
+      <div ref={scrollRef} className="scroll" style={{ padding: 14, paddingBottom: 120 }} onScroll={(e) => { if (scrollMemory) scrollMemory.current = e.currentTarget.scrollTop; }}>
 
         {isLoading && <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "26px 0" }}>Loading…</div>}
         {error && <div style={{ textAlign: "center", color: "#b23a3a", fontSize: 12, padding: "26px 0" }}>Couldn't load projects. Pull to retry.</div>}
@@ -925,6 +942,10 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   // (isSalesExecMgr) HOLDS the log-sale action but has canFinancial=false, so
   // nesting it under the finance gate lost the action for the person who owns it.
   const canViewSales = salesAccess !== "none" || isSalesStaff || isDirectorPos;
+  // The pasted sales report — the Sales panel's block and the red number
+  // beside each name under Sales Attending read the same query.
+  const billsQ = useMobileProjectSalesBills(id, canViewSales);
+  const notOpenedByRep = notOpenedByRepId(billsQ.data?.persons ?? []);
   // ── Owner 2026-07-23 card respec — the remaining two cohorts go card-based ──
   // cohortMgmt = management dept / directors / owner / BD; cohortOps = the
   // office/ops staff left over (Nancy, Farra, Sim, Syu, Syasya, logistic
@@ -1295,6 +1316,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                   projectId={id}
                   attendees={data.sales_attendees ?? []}
                   options={salesReps}
+                  notOpenedByRep={notOpenedByRep}
                   canWrite={canEditAttending}
                   busy={busy}
                   setBusy={setBusy}
@@ -1578,6 +1600,8 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               <SalesPanel
                 projectId={id}
                 incomeLines={data.finance_lines}
+                finalTotalRm={data.finance?.total_sales ?? null}
+                bills={billsQ}
                 canLogSale={canLogSale}
                 busy={busy}
                 setBusy={setBusy}
@@ -1613,11 +1637,13 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
 
 // ── Sales attending (add via picker + remove) ──
 function SalesAttending({
-  projectId, attendees, options, canWrite, busy, setBusy, notify, confirm, reload,
+  projectId, attendees, options, notOpenedByRep, canWrite, busy, setBusy, notify, confirm, reload,
 }: {
   projectId: number;
   attendees: SalesAttendee[];
   options: SalesRepOption[];
+  /** sen still not opened per rep, from the pasted sales report — red beside the name. */
+  notOpenedByRep: Map<number, number>;
   canWrite: boolean;
   busy: boolean;
   setBusy: SetBusy;
@@ -1716,6 +1742,9 @@ function SalesAttending({
             <div key={s.sales_rep_id} style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderTop: i === 0 ? "none" : "1px solid #eceee9" }}>
               <span className="money" style={{ fontSize: 10, color: "#9aa093" }}>{s.rep_code || "—"}</span>
               <span style={{ fontSize: 12.5, fontWeight: 600, color: "#11140f", flex: 1, minWidth: 0 }}>{s.rep_name || s.user_name || "—"}</span>
+              {(notOpenedByRep.get(s.sales_rep_id) ?? 0) > 0 && (
+                <span className="money" style={{ fontSize: 11, fontWeight: 700, color: "#b42318" }}>{fmtRmSen(notOpenedByRep.get(s.sales_rep_id))}</span>
+              )}
               {canWrite && (
                 <button aria-label="Remove" className="tinybtn" disabled={busy} style={{ padding: "3px 7px", color: "#a13a34", fontWeight: 700 }} onClick={() => remove(s)}>×</button>
               )}
@@ -1737,10 +1766,14 @@ function SalesAttending({
 // a sales-only user therefore sees the log action with an empty list and still
 // no P&L.
 function SalesPanel({
-  projectId, incomeLines, canLogSale, busy, setBusy, prompt, notify, reload,
+  projectId, incomeLines, finalTotalRm, bills, canLogSale, busy, setBusy, prompt, notify, reload,
 }: {
   projectId: number;
   incomeLines?: FinanceLine[];
+  /** project_finance.total_sales (RM) — null when finance is stripped or unset. */
+  finalTotalRm: number | null;
+  /** The pasted sales report, read by the detail view and shared with Sales Attending. */
+  bills: MobileProjectSalesBillsQuery;
   canLogSale: boolean;
   busy: boolean;
   setBusy: SetBusy;
@@ -1748,6 +1781,9 @@ function SalesPanel({
   notify: NotifyFn;
   reload: () => void;
 }) {
+  // The POS bills of a Cash & Carry fair; also tells the panel to drop the
+  // SO / sales-report blocks that project type has none of.
+  const posQ = useMobileProjectPosSales(projectId, true);
   // Quick-log a sale at the project (POST /api/sales/entries { quick_log }).
   // Lands as a draft sales entry; surfaces as a synthetic income line.
   const logSale = async () => {
@@ -1786,6 +1822,13 @@ function SalesPanel({
         <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
       </summary>
       <div className="pbody">
+        {/* The Houzs POS bills of a Cash & Carry fair (layout E9) stand in for
+            the sales report and the SO block, which that project type has none of. */}
+        <MobilePmsPosSales query={posQ} />
+        {/* The orders opened in the SO module for this fair — the desktop
+            block's phone half, same read and arithmetic. */}
+        {!posQ.data?.pos_enabled && <MobilePmsSalesBills query={bills} />}
+        {!posQ.data?.pos_enabled && <MobilePmsSalesOrders projectId={projectId} finalTotalRm={finalTotalRm} />}
         <div style={{ display: "flex", alignItems: "center", margin: "0 0 6px" }}>
           <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093" }}>Sales entries</span>
           {canLogSale && <button className="tinybtn" style={{ marginLeft: "auto", color: "#16695f", borderColor: "#bcdcd7" }} disabled={busy} onClick={logSale}>+ Log sale</button>}

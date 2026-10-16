@@ -6,6 +6,7 @@ import { describe, expect, test } from 'vitest';
 
 import {
   dateOrNull, floatOrNull, intOrNull, iso, normPlate, numOrNull, refsOrNull, tsOrNull,
+  WORK_ORDER_FILE_KINDS, isWorkOrderFileKind, isWorkOrderFileKeyOf, workOrderFileKey,
 } from './fleet-coerce';
 
 /** Every `*OrNull` coercer shares the not-supplied rule. Asserted for all of
@@ -114,5 +115,25 @@ describe('normPlate', () => {
   test('null and undefined normalise to empty, not to "NULL"', () => {
     expect(normPlate(null)).toBe('');
     expect(normPlate(undefined)).toBe('');
+  });
+});
+
+describe('work-order file keys (HC-0031)', () => {
+  test('the key sits under the work order, by kind, with a cleaned file name', () => {
+    expect(workOrderFileKey('wo1', 'invoice', 'pdf', 'Inv #77 (T Force).PDF', 1700))
+      .toBe('fleet/work-orders/wo1/invoice/1700-Inv_77_T_Force.pdf');
+    expect(workOrderFileKey('wo1', 'photo', 'jpg', null, 5)).toBe('fleet/work-orders/wo1/photo/5.jpg');
+  });
+  test('only the three kinds map to a refs column', () => {
+    expect(isWorkOrderFileKind('quote')).toBe(true);
+    expect(isWorkOrderFileKind('toString')).toBe(false);
+    expect(WORK_ORDER_FILE_KINDS.photo).toBe('photo_refs');
+  });
+  test('a key is accepted only for its own work order', () => {
+    const k = workOrderFileKey('wo1', 'quote', 'png', 'q', 1);
+    expect(isWorkOrderFileKeyOf(k, 'wo1')).toBe(true);
+    expect(isWorkOrderFileKeyOf(k, 'wo2')).toBe(false);
+    expect(isWorkOrderFileKeyOf('fleet/work-orders/wo1/../wo2/x.pdf', 'wo1')).toBe(false);
+    expect(isWorkOrderFileKeyOf('fleet/compliance/l/d/1.pdf', 'wo1')).toBe(false);
   });
 });

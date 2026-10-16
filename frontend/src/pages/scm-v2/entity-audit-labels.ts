@@ -29,7 +29,7 @@ const PV_FIELDS: Record<string, string> = {
   status: 'Status', payeeName: 'Payee', creditAccountCode: 'Credit account',
   voucherDate: 'Voucher date', supplierId: 'Supplier', purpose: 'Type',
   notes: 'Notes', currency: 'Currency', exchangeRate: 'Exchange rate',
-  totalSen: 'Total', allocatedSen: 'Allocated to invoices',
+  totalSen: 'Total', allocatedSen: 'Allocated to invoices', bankChargeSen: 'Bank charges',
   lineCount: 'Lines', jeNo: 'GL entry no', postedTotalSen: 'Posted total',
   reversalJeNo: 'Reversal GL entry no', reversalOk: 'Reversal succeeded',
   /* 2026-07-30 — "the payment defines the FX rate". A knock-off writes its rate onto
@@ -47,7 +47,7 @@ const PV_FIELDS: Record<string, string> = {
 export const PAYMENT_VOUCHER_AUDIT_LABELS: AuditLabelDictionary = {
   actions: PV_ACTIONS,
   fields: PV_FIELDS,
-  moneyFields: new Set(['totalSen', 'allocatedSen', 'postedTotalSen', 'appliedSen']),
+  moneyFields: new Set(['totalSen', 'allocatedSen', 'postedTotalSen', 'appliedSen', 'bankChargeSen']),
 };
 
 /* ── GRN — routes/grns.ts ─────────────────────────────────────────────────── */

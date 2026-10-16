@@ -37,6 +37,8 @@ export type LorryCapacityRow = {
   delivery_revenue_sen: number;
   revenue_per_order_sen: number | null;
   revenue_per_trip_sen: number | null;
+  km: number;                          // GPS km in range (Velocity fixes)
+  running_cost_sen: number | null;     // km x RM/km; null when no rate set
 };
 
 export type LorryCapacityTotals = {

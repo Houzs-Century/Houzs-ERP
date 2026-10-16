@@ -24,7 +24,7 @@ const PCO = {
   po_date: '2026-10-07',
   expected_at: null,
   currency: 'MYR',
-  notes: null,
+  notes: 'Deliver before noon',
   total_sen: 0,
 };
 /* Stable references: the page's effects key on these, so a fresh object per
@@ -59,6 +59,7 @@ vi.mock('../../vendor/scm/lib/inventory-queries', () => ({
 }));
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({
   useConfirm: () => async () => true,
+  usePrompt: () => async () => 'test reason',
 }));
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({
   useNotify: () => vi.fn(),
@@ -92,5 +93,17 @@ describe('PurchaseConsignmentOrderDetail — Print PDF', () => {
     const [header, , opts] = h.genMock.mock.calls[0]!;
     expect(header.po_number).toBe('2990-PCR-2610-001');
     expect(opts).toMatchObject({ docTitle: 'PURCHASE CONSIGNMENT ORDER', purchaseLocation: '2990S MINI PUCHONG', action: 'save' });
+  });
+
+  it('shows Notes on an open order, and no Cancel reason cell (DEV-72 dropped Notes once)', async () => {
+    render(
+      <MemoryRouter initialEntries={['/scm/pc-orders/P1']}>
+        <Routes>
+          <Route path="/scm/pc-orders/:id" element={<PurchaseConsignmentOrderDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('Deliver before noon')).toBeTruthy();
+    expect(screen.queryByText(/Cancel reason/i)).toBeNull();
   });
 });

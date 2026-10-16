@@ -467,6 +467,14 @@ export const DeliveryOrderFromSo = () => {
           </Link>
         </p>
       )}
+      {/* HC-0102 (Azza, 2026-10-14): a not-READY line starts unticked (BUG-59)
+          but is NOT locked — say so, or it reads as "can't be delivered". */}
+      {scope.keys.size > 0 && rows.some((r) => r.notReady) && (
+        <p style={{ margin: '0 0 var(--space-2)', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+          Lines whose Stock is not READY start unticked. Tick any of them to include it in this
+          Delivery Order — you will be asked to confirm before it is created.
+        </p>
+      )}
       {lockedCustomerName && (
         <p style={{ margin: '0 0 var(--space-2)', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
           One customer per Delivery Order — locked to <strong>{lockedCustomerName}</strong>. Other

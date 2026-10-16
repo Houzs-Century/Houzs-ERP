@@ -7,7 +7,7 @@
  * kept; ADD / REMOVE are always kept; a failed read is null, not "keep all". */
 import { describe, expect, it } from 'vitest';
 import {
-  amendmentLineIsNoop, amendmentLinePriceOnly, dropNoopAmendmentLines, variantsForCompare, canonicalJson,
+  amendmentLineIsNoop, amendmentLinePriceOnly, dropNoopAmendmentLines, variantsForCompare, canonicalJson, splitPriceFromSpec, type StoredLine,
 } from './amendment-noop-lines';
 
 const stored = {
@@ -67,6 +67,39 @@ describe('amendmentLineIsNoop', () => {
   it('ADD and REMOVE are whole-line changes, never no-ops', () => {
     expect(amendmentLineIsNoop({ changeType: 'ADD', newItemCode: 'JAGER-(K)' }, stored)).toBe(false);
     expect(amendmentLineIsNoop({ salesOrderItemId: 'li-bed', changeType: 'REMOVE' }, stored)).toBe(false);
+  });
+});
+
+describe('edit-view fills are not changes (HC-0103)', () => {
+  it('HC-SO-012826/A1: a blank sofa leg filled with "Default" is a no-op; a real leg is kept', () => {
+    const sofa: StoredLine = {
+      id: 'li', item_code: '9058-1NA', qty: 1, unit_price_sen: 0, remark: 'compartment corrected 2026-09-04', discount_sen: 0,
+      variants: { colourId: 'NICCA-02', fabricId: 'NICCA', specials: ['Change 8030 Backcushion', 'Nylon Fabric'], seatHeight: '24' },
+    };
+    const sent = { salesOrderItemId: 'li', changeType: 'SPEC', newItemCode: '9058-1NA', newQty: 1, newUnitPriceSen: 0 };
+    expect(amendmentLineIsNoop({ ...sent, newVariants: { ...sofa.variants as object, legHeight: 'Default' } }, sofa)).toBe(true);
+    expect(amendmentLineIsNoop({ ...sent, newVariants: { ...sofa.variants as object, legHeight: '6"' } }, sofa)).toBe(false);
+  });
+
+  it('HC-SO-011077/A1: a recomputed bedframe totalHeight is a no-op; a moved divan is kept', () => {
+    const bed: StoredLine = {
+      id: 'li', item_code: 'TRION (A)-(K)', qty: 1, unit_price_sen: 0, remark: '账本原文: TBC/8”divan+1”legs/10” gaps', discount_sen: 0,
+      variants: { gap: '10"', divanHeight: '8"', legHeight: '1"', fabricCode: 'PC151-10', totalHeight: '9"' },
+    };
+    const sent = { salesOrderItemId: 'li', changeType: 'SPEC', newItemCode: 'TRION (A)-(K)', newQty: 1, newUnitPriceSen: 0 };
+    expect(amendmentLineIsNoop({ ...sent, newVariants: { ...bed.variants as object, totalHeight: '19"' } }, bed)).toBe(true);
+    expect(amendmentLineIsNoop({ ...sent, newVariants: { ...bed.variants as object, divanHeight: '10"', totalHeight: '21"' } }, bed)).toBe(false);
+  });
+
+  it('HC-SO-2609-321/A2: a remark moved from variants.remark to the column is a no-op; an edited one is kept', () => {
+    const line: StoredLine = {
+      id: 'li', item_code: '9058-L(RHF)', qty: 1, unit_price_sen: 0, remark: null, discount_sen: 0,
+      variants: { remark: 'Backrest change to 8069', colourId: 'NICCA-07', legHeight: 'Default' },
+    };
+    const sent = { salesOrderItemId: 'li', changeType: 'SPEC', newItemCode: '9058-L(RHF)', newQty: 1, newUnitPriceSen: 0,
+      newVariants: { colourId: 'NICCA-07', legHeight: 'Default' } };
+    expect(amendmentLineIsNoop({ ...sent, newRemark: 'Backrest change to 8069' }, line)).toBe(true);
+    expect(amendmentLineIsNoop({ ...sent, newRemark: 'Backrest change to 8030' }, line)).toBe(false);
   });
 });
 
@@ -138,5 +171,31 @@ describe('dropNoopAmendmentLines', () => {
 
   it('answers null when the read fails, never "keep everything"', async () => {
     expect(await dropNoopAmendmentLines(makeSb([], true), 'HC-SO-1', [{ salesOrderItemId: 'li-bed', changeType: 'SPEC' }])).toBeNull();
+  });
+});
+
+describe('splitPriceFromSpec (DEV-70)', () => {
+  /* HC-SO-013490/A1's King mattress line: the set price sat on it. */
+  const cur: StoredLine = { id: 'li', item_code: 'AKEMI SOLITUDE MATT (K)', qty: 1, unit_price_sen: 850000, variants: null, remark: null, discount_sen: 0 };
+
+  it('a SKU swap that re-fills the price splits into a price-less spec half and a price-only half', () => {
+    const halves = splitPriceFromSpec({ salesOrderItemId: 'li', changeType: 'SPEC', newItemCode: 'HAPPI SLEEP SOLITUDE MATT (K)', newQty: 1, newUnitPriceSen: 0 }, cur);
+    expect(halves).toEqual({
+      spec: { salesOrderItemId: 'li', changeType: 'SPEC', newItemCode: 'HAPPI SLEEP SOLITUDE MATT (K)', newQty: 1, newUnitPriceSen: null, newDiscountSen: null },
+      price: { salesOrderItemId: 'li', changeType: 'SPEC', newItemCode: null, newVariants: null, newQty: null, newRemark: null, newUnitPriceSen: 0, newDiscountSen: null },
+    });
+  });
+
+  it('a price-only change is not split (it goes to PRICE whole)', () => {
+    expect(splitPriceFromSpec({ salesOrderItemId: 'li', changeType: 'SPEC', newUnitPriceSen: 800000 }, cur)).toBeNull();
+  });
+
+  it('a spec change that resends the stored price is not split', () => {
+    expect(splitPriceFromSpec({ salesOrderItemId: 'li', changeType: 'SPEC', newItemCode: 'X', newUnitPriceSen: 850000 }, cur)).toBeNull();
+  });
+
+  it('ADD and REMOVE are whole-line changes, never split', () => {
+    expect(splitPriceFromSpec({ changeType: 'ADD', newItemCode: 'X', newUnitPriceSen: 0 }, cur)).toBeNull();
+    expect(splitPriceFromSpec({ salesOrderItemId: 'li', changeType: 'REMOVE' }, cur)).toBeNull();
   });
 });

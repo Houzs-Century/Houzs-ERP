@@ -98,7 +98,12 @@ describe("executable route contract", () => {
     // product or a repack; the Purchaser approves and raises the PC Order from it.
     // 171 since 2026-10-07: /scm/stock-adjustments/:id and /:id/edit — a stock
     // adjustment became a numbered document you can open and edit (BUG-66).
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(171);
+    // 172 since 2026-10-13: /it-support — report a problem to IT and follow it;
+    // the requests live in the Houzs IT Hub.
+    // 173 since 2026-10-14: /scm/lorry-live-map — where each tracked lorry is (DEV-42).
+    // 174 since 2026-10-14: /pos-admin — the Houzs POS Admin menu (items, labels,
+    // cashiers, events, terminals, sync status, import backup; PR #4635).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(174);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -146,7 +151,10 @@ describe("executable route contract", () => {
     // 177 since 2026-10-02 — /scm/supplier-maintenance; see the staff-route count above.
     // 178 since 2026-10-06 — /scm/product-requests; see the staff-route count above.
     // 180 since 2026-10-07 — /scm/stock-adjustments/:id and /:id/edit (BUG-66).
-    expect(ROUTE_CONTRACT).toHaveLength(180);
+    // 181 since 2026-10-13 — /it-support; see the staff-route count above.
+    // 182 since 2026-10-14 — /scm/lorry-live-map (DEV-42).
+    // 183 since 2026-10-14 — /pos-admin; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(183);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
@@ -194,10 +202,12 @@ describe("mobile route drift gate", () => {
     // from a Profile row (gated via the Team hub tab).
     // 7 since 2026-09-17: /titles, the phone Titles editor (position_policy),
     // the last desktop-only Roles & Permissions surface to reach the phone.
-    expect(PROFILE_ORG_ITEMS).toHaveLength(7);
-    expect(allMobile).toHaveLength(47);
-    expect(new Set(allMobile.map((item) => item.to)).size).toBe(47);
-    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(46);
+    // 8 since 2026-10-13: /it-support, report a problem to IT from the phone;
+    // the row shows only where IT Support is connected, as on desktop.
+    expect(PROFILE_ORG_ITEMS).toHaveLength(8);
+    expect(allMobile).toHaveLength(48);
+    expect(new Set(allMobile.map((item) => item.to)).size).toBe(48);
+    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(47);
   });
 
   it("maps every declared mobile row to a real screen, never a placeholder stub", () => {

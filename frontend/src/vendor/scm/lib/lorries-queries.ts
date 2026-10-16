@@ -67,6 +67,7 @@ export type LorryRow = {
   model?: string | null;
   purchase_date?: string | null;
   purchase_price_sen?: number | null;
+  cost_per_km_sen?: number | null;
   purchase_invoice_key?: string | null;
   purchase_invoice_name?: string | null;
   purchase_invoice_mime?: string | null;
@@ -121,6 +122,7 @@ export type NewLorry = {
   registrationDate?: string | null;
   inServiceDate?: string | null;
   purchasePriceSen?: number | null;
+  costPerKmSen?: number | null;
   roadTaxExpiry?: string | null;
   insuranceExpiry?: string | null;
   puspakomExpiry?: string | null;
@@ -229,17 +231,6 @@ export function useLorryServiceRecords(lorryId: string | null) {
   });
 }
 
-export function useCreateLorryServiceRecord() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: NewLorryServiceRecord) =>
-      authedFetch<{ record: LorryServiceRecord }>(`/lorry-service-records`, {
-        method: 'POST', body: JSON.stringify(body),
-      }),
-    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['lorry-service-records', v.lorryId] }),
-  });
-}
-
 export function useUpdateLorryServiceRecord(lorryId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -314,5 +305,46 @@ export function useUploadServiceInvoice(lorryId: string) {
       );
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['lorry-service-records', lorryId] }),
+  });
+}
+
+/* DEV-42: latest Velocity tracker fix per lorry (last 24 h), as GET /lorries/positions/latest emits it. */
+export type LorryPosition = {
+  lorry_id: string;
+  plate: string;
+  lat: number;
+  lng: number;
+  speed_kmh: number | null;
+  heading: number | null;
+  ignition: boolean | null;
+  street: string | null;
+  recorded_at: string;
+  received_at: string;
+};
+
+/* The server stores a fix every 5 min; polling each minute shows it within one cycle. */
+/* Own-lorry running cost for a Malaysia day, as GET /lorries/km-cost emits it.
+   cost_sen is null when the lorry has no RM/km set. */
+export type LorryKmCost = {
+  lorry_id: string;
+  plate: string;
+  km: number;
+  cost_per_km_sen: number | null;
+  cost_sen: number | null;
+};
+
+export function useLorryKmCost() {
+  return useQuery({
+    queryKey: ['lorries', 'km-cost', 'today'],
+    queryFn: () => authedFetch<{ lorries: LorryKmCost[] }>('/lorries/km-cost').then((r) => r.lorries),
+    refetchInterval: 5 * 60_000,
+  });
+}
+
+export function useLorryPositions() {
+  return useQuery({
+    queryKey: ['lorries', 'positions', 'latest'],
+    queryFn: () => authedFetch<{ positions: LorryPosition[] }>('/lorries/positions/latest').then((r) => r.positions),
+    refetchInterval: 60_000,
   });
 }

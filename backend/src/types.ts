@@ -118,6 +118,9 @@ export type Env = {
   // so Connect authenticates with its own credential.
   CONNECT_SERVICE_TOKEN: string;
   GOOGLE_MAPS_API_KEY?: string;
+  // DEV-42 lorry GPS (scm/lib/velocity-poll.ts). Either unset -> the poll is a no-op.
+  VELOCITY_REFRESH_TOKEN?: string;
+  VELOCITY_CUSTOMER_ID?: string;
   // Email (Resend). Leave RESEND_API_KEY unset to run in no-op mode —
   // send() will log + skip, never throw.
   RESEND_API_KEY?: string;
@@ -198,6 +201,12 @@ export type Env = {
   // receiver). The 2990 DB (pg_net) sends it as `x-sync-secret`. Set via
   // `wrangler secret put SYNC_SECRET`. Unset => the receiver 401s (fail-closed).
   SYNC_SECRET?: string;
+  // IT Support (routes/itSupport.ts). The requests live in the Houzs IT Hub;
+  // IT_HUB_URL is its origin. Each company has its own hub key, in the secret
+  // named IT_HUB_API_KEY_<company code> (read by name in the route, so they are
+  // not listed here), set with `wrangler secret put`. The address or the active
+  // company's key unset => the routes answer 501 and the menu row is hidden.
+  IT_HUB_URL?: string;
   // Houzs → 2990 Product Maintenance push (scm/routes/maintenance-push.ts).
   // The push writes 2990's public.maintenance_config_history DIRECTLY with
   // 2990's service-role key — an owner-granted, table-scoped exception to D2

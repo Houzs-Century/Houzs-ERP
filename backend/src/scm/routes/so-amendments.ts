@@ -41,6 +41,8 @@ import {
 import { collectProcessingGateProblems } from '../shared/so-save-problems';
 import { canonicaliseSoHeaderChanges, soDateDay, soDatePairRefusal, withProcessingRemovalCascade } from '../shared/so-processing-date';
 import { recordSoAudit } from '../lib/so-audit';
+import { soHasLivePo } from '../lib/so-po-lock';
+import { deliveryBroughtForward, deliveryNeedsPurchaserOk, processingDateFrozenByPo, PROCESSING_DATE_PO_LOCKED, PROCESSING_DATE_PO_OVERRIDE_KEY, PURCHASER_OK_REQUIRED } from '../shared/so-po-date-rule';
 import { scopeToCompany, isMirroredDocNo, houzsOwns2990, MIRRORED_SO_READONLY, activeCompanyId, requireActiveCompanyId } from '../lib/companyScope';
 import {
   enqueueAmendmentCommand,
@@ -95,6 +97,8 @@ type AmendmentForWrite = {
      rejected notice (services/amendmentNotify.ts). */
   requested_by?: string | null;
   lane_flag_note?: string | null;
+  purchaser_ok_at?: string | null;
+  po_date_override_by?: string | null;
 };
 
 /** Lane of a loaded row — narrowed to the known lane values, else legacy. */
@@ -184,7 +188,7 @@ async function loadAmendmentForWrite(
 ): Promise<AmendmentWriteLoad> {
   const { data } = await scopeToCompany(
     sb.from('so_amendments')
-      .select('id, so_doc_no, amendment_no, status, version, lane, reason, apply_lease_token, apply_lease_expires_at, header_changes, requested_by, lane_flag_note')
+      .select('id, so_doc_no, amendment_no, status, version, lane, reason, apply_lease_token, apply_lease_expires_at, header_changes, requested_by, lane_flag_note, purchaser_ok_at, po_date_override_by')
       .eq('id', id),
     c,
   ).maybeSingle();
@@ -546,6 +550,8 @@ soAmendments.get('/:id', async (c) => {
       // Without rejection_reason the requester could not see why their request
       // was refused without someone opening the SO's history drawer for them.
       'rejected_by, rejected_at, rejection_reason, resolution, edited_at, edit_count, ' +
+        // BUG-101 — the Purchaser's OK on a Delivery Date brought forward.
+        'purchaser_ok_by, purchaser_ok_at, po_date_override_by, ' +
         // mig 0119 — the HEADER half of the request (Delivery Date / Processing
         // Date / State / Postcode) + its before-snapshot. NULL on a line-only
         // amendment. Without these the approver could not SEE a requested date
@@ -573,10 +579,10 @@ soAmendments.get('/:id', async (c) => {
   // SO header summary — doc_no, status, revision (+ ownership for the scope
   // check below).
   const { data: soRow } = await scopeToCompany(sb.from('mfg_sales_orders')
-    .select('doc_no, status, revision, salesperson_id, access_staff_ids')
+    .select('doc_no, status, revision, salesperson_id, access_staff_ids, customer_delivery_date')
     .eq('doc_no', amendment.so_doc_no), c).maybeSingle();
   const salesOrder = (soRow ?? null) as
-    { doc_no: string; status: string; revision: number; salesperson_id?: number | string | null; access_staff_ids?: string[] | null } | null;
+    { doc_no: string; status: string; revision: number; salesperson_id?: number | string | null; access_staff_ids?: string[] | null; customer_delivery_date?: string | null } | null;
 
   /* Row-level scope — the list's rule (GET / above): a scoped caller opens only
      what they or their downline raised, or what sits on an order they or their
@@ -629,7 +635,19 @@ soAmendments.get('/:id', async (c) => {
   const viewerIsRequester = callerStaffId != null && amendment.requested_by != null
     && callerStaffId === amendment.requested_by;
 
-  return c.json({ amendment, lines, salesOrder, purchaseOrders, poFollowUps, viewerIsRequester });
+  /* BUG-101 — does this Logistic request wait on a Purchaser's OK? Judged
+     against the order as it stands, exactly as the approve gate judges it. */
+  const requestedDeliv = canonicaliseSoHeaderChanges(
+    (amendment.header_changes ?? null) as Record<string, unknown> | null,
+  )?.['customerDeliveryDate'];
+  const purchaserOkRequired = amendment.lane === 'DELIVERY' && amendment.status === 'REQUESTED'
+    && deliveryNeedsPurchaserOk({
+      storedDeliv: soDateDay(salesOrder?.customer_delivery_date),
+      nextDeliv: requestedDeliv === undefined ? null : soDateDay(requestedDeliv as string | null),
+      hasLivePo: purchaseOrders.some((p) => String(p.status).toUpperCase() !== 'CANCELLED'),
+    });
+
+  return c.json({ amendment, lines, salesOrder, purchaseOrders, poFollowUps, viewerIsRequester, purchaserOkRequired });
 });
 
 /* ── PATCH /:id/supplier-confirm ───────────────────────────────────────────
@@ -845,6 +863,24 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
       }, 409);
     }
 
+    /* BUG-101 — the last write that can still say no, for requests raised
+       before the rule or before the PO: a live PO freezes the Processing Date,
+       and a Delivery Date brought forward waits for the Purchaser's OK. */
+    const origProc = ymd(cur.processing_date);
+    /* The exception travels on the row: the requester who held the override key
+       stamped it, so the Purchaser approving does not need the key too. */
+    const poDateOverridden = Boolean(amendment.po_date_override_by) || hasHouzsPerm(c, PROCESSING_DATE_PO_OVERRIDE_KEY);
+    const procMoves = 'processingDate' in headerChanges && origProc !== '' && nextProc !== origProc && !poDateOverridden;
+    const delivForward = lane === 'DELIVERY' && 'customerDeliveryDate' in headerChanges
+      && deliveryBroughtForward(ymd(cur.customer_delivery_date), nextDeliv);
+    const hasLivePo = (procMoves || (delivForward && !amendment.purchaser_ok_at)) && await soHasLivePo(sb, amendment.so_doc_no);
+    if (!poDateOverridden && processingDateFrozenByPo({ storedProc: origProc, nextProc, hasLivePo })) {
+      return c.json(PROCESSING_DATE_PO_LOCKED, 409);
+    }
+    if (delivForward && hasLivePo && !amendment.purchaser_ok_at) {
+      return c.json(PURCHASER_OK_REQUIRED, 409);
+    }
+
     /* ── The gate this path used to skip entirely (2026-07-31) ───────────────
        Approving an amendment can SET processing_date through
        header_changes, and until now the only thing checked here was the date
@@ -982,6 +1018,15 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     }).eq('id', id).eq('version', applyVersion + 1).eq('apply_lease_token', applyToken);
     // eslint-disable-next-line no-console
     console.error('[so-amendment] approve-so apply failed:', e);
+    /* HC-0004: the DB floor (mig 20261014T1420) refused a qty cut below what
+       live delivery orders already ship — one raced in after the freeze read. */
+    if (e instanceof Error && e.message.includes('so_line_over_delivered')) {
+      return c.json({
+        error: 'qty_below_delivered',
+        message: 'A Delivery Order has just shipped this Sales Order line. Its qty can no longer be cut below what was delivered. Refresh and check the order.',
+        reason: e.message,
+      }, 409);
+    }
     return c.json({
       error: 'apply_failed',
       reason: e instanceof Error ? e.message : 'Failed to apply the SO revision.',
@@ -1416,6 +1461,85 @@ soAmendments.patch('/:id/reject', async (c) => {
       salespersonUserId: audience.salespersonUserId,
     });
   }
+
+  return c.json({ amendment: updated });
+});
+
+/* ── PATCH /:id/purchaser-ok ───────────────────────────────────────────────
+   BUG-101 (owner 2026-10-12): a Logistic-lane request that brings the Delivery
+   Date forward on an order with a live PO needs the Purchaser too. The
+   Purchaser checks with the supplier and records the OK here; nothing is
+   applied. Logistic's approve then runs as usual. Gated on the Purchaser's
+   lane key. A Purchaser who disagrees tells Logistic, who rejects it. */
+soAmendments.patch('/:id/purchaser-ok', async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
+
+  if (!hasHouzsPerm(c, LANE_APPROVE_KEY.LINES)) {
+    return c.json({
+      error: 'purchaser_ok_forbidden',
+      message: 'Only a Purchaser can OK a Delivery Date brought forward.',
+    }, 403);
+  }
+  const loaded = await loadAmendmentForWrite(sb, id, c);
+  if (!loaded.ok) return c.json({ error: 'not_found' }, 404);
+  if (loaded.mirrored) return c.json(MIRRORED_SO_READONLY, 409);
+  const { amendment } = loaded;
+  if (laneOf(amendment) !== 'DELIVERY' || amendment.status !== 'REQUESTED') {
+    return c.json({
+      error: 'bad_transition',
+      message: 'Only an open Logistic amendment can take a Purchaser OK.',
+    }, 409);
+  }
+  if (amendment.purchaser_ok_at) {
+    return c.json({ error: 'already_ok', message: 'A Purchaser has already OK\'d this amendment.' }, 409);
+  }
+
+  const headerChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null) ?? {};
+  const { data: soRow, error: soErr } = await scopeToCompany(
+    sb.from('mfg_sales_orders').select('customer_delivery_date').eq('doc_no', amendment.so_doc_no),
+    c,
+  ).maybeSingle();
+  if (soErr) return c.json({ error: 'load_failed', reason: soErr.message }, 500);
+  const needed = 'customerDeliveryDate' in headerChanges && deliveryNeedsPurchaserOk({
+    storedDeliv: soDateDay((soRow as { customer_delivery_date?: unknown } | null)?.customer_delivery_date),
+    nextDeliv: soDateDay(headerChanges['customerDeliveryDate']),
+    hasLivePo: await soHasLivePo(sb, amendment.so_doc_no),
+  });
+  if (!needed) {
+    return c.json({
+      error: 'purchaser_ok_not_needed',
+      message: 'This amendment does not bring the Delivery Date forward on an order with a Purchase Order, so Logistic approves it alone.',
+    }, 409);
+  }
+
+  const now = new Date().toISOString();
+  const { data: updated, error: updErr } = await sb.from('so_amendments').update({
+    purchaser_ok_by: await gateActorStaffId(sb, c.get('houzsUser')?.id, user.id),
+    purchaser_ok_at: now,
+    version:         amendment.version + 1,
+    updated_at:      now,
+  }).eq('id', id)
+    .eq('company_id', co.companyId)
+    .eq('status', 'REQUESTED')
+    .eq('version', amendment.version)
+    .select('id, so_doc_no, amendment_no, status, purchaser_ok_by, purchaser_ok_at, version')
+    .maybeSingle();
+  if (updErr) return c.json({ error: 'update_failed', reason: updErr.message }, 500);
+  if (!updated) return c.json({ error: 'amendment_version_conflict' }, 409);
+
+  await recordSoAudit(sb, {
+    docNo: amendment.so_doc_no,
+    action: 'AMENDMENT_PURCHASER_OK',
+    actorId: user.id,
+    actorName: actorName(user),
+    fieldChanges: [
+      { field: 'amendment_id', to: amendment.id },
+      { field: 'customer_delivery_date', to: String(headerChanges['customerDeliveryDate'] ?? '') },
+    ],
+    note: `Purchaser OK for ${amendment.amendment_no ?? 'the amendment'}: Delivery Date brought forward to ${String(headerChanges['customerDeliveryDate'] ?? '')}. Waiting for Logistic approval.`,
+  });
 
   return c.json({ amendment: updated });
 });

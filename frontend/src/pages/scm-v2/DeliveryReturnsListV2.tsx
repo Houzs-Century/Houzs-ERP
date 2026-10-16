@@ -213,11 +213,9 @@ const statusFor = (
 
 function SplitDropdown({
   onFromDo,
-  onImport,
   onDuplicate,
 }: {
   onFromDo: () => void;
-  onImport: () => void;
   onDuplicate: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -252,16 +250,6 @@ function SplitDropdown({
               }}
             >
               New from Delivery Order
-            </button>
-            <button
-              type="button"
-              className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
-              onClick={() => {
-                setOpen(false);
-                onImport();
-              }}
-            >
-              Import from file
             </button>
             <button
               type="button"
@@ -883,7 +871,6 @@ export function DeliveryReturnsListV2() {
   // Wired actions
   const goNewDr = () => navigate("/scm/delivery-returns/new");
   const goFromDo = () => navigate("/scm/delivery-returns/from-do");
-  const goImport = () => navigate("/scm/delivery-returns?import=1");
   const goDuplicate = () => navigate("/scm/delivery-returns?duplicate=1");
   const goDoList = () => navigate("/scm/delivery-orders");
   const goInvoiceList = () => navigate("/scm/sales-invoices");
@@ -1518,7 +1505,6 @@ export function DeliveryReturnsListV2() {
                   </Button>
                   <SplitDropdown
                     onFromDo={goFromDo}
-                    onImport={goImport}
                     onDuplicate={goDuplicate}
                   />
                 </div>

@@ -686,3 +686,44 @@ describe('an edit that picks a fair EVENT records that event', () => {
     expect(placeOnly.row).toMatchObject({ venue: 'IOI CITY MALL', project_id: null, fair_match: 'PENDING', fair_date: null });
   });
 });
+
+/* HC-0094 (Chew, IT Hub, 2026-10-13): "Manual edit also will not recognized back
+   to project". Changing the venue to a place alone used to drop the link to
+   PENDING and wait for the nightly pass; it now runs the create-time detection
+   (venue + date + brand) against the fairs that already exist. */
+describe('a venue edit re-detects the fair at once', () => {
+  const fairDb = (fairs: Row[]) => ({
+    DB: {
+      prepare: () => ({
+        bind: (venue: unknown) => ({
+          all: async () => ({ results: fairs.filter((f) => f.venue === venue) }),
+        }),
+      }),
+    },
+  });
+  const MV = { venue: 'MID VALLEY', organizer: 'MLE', startdate: '2026-10-10', enddate: '2026-10-12', status: 'Confirmed' };
+
+  test('a place with one booth of the order brand links to that existing project', async () => {
+    const { app, row } = harness();
+    Object.assign(row, { venue: 'PJ SHOWROOM', so_date: '2026-10-12', branding: 'DUNLOPILLO', project_id: null, fair_match: 'NO_FAIR' });
+    const res = await app.request('/mfg-sales-orders/SO-CAS-1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ venue: 'MID VALLEY', version: 1 }),
+    }, fairDb([{ id: 20, brand: 'AKEMI', ...MV }, { id: 21, brand: 'DUNLOPILLO', ...MV }]));
+    expect(res.status).toBe(200);
+    expect(row).toMatchObject({ venue: 'MID VALLEY', project_id: 21, fair_match: 'PICKED' });
+  });
+
+  test('a place with no fair yet stays PENDING for the reconcile', async () => {
+    const { app, row } = harness();
+    Object.assign(row, { venue: 'PJ SHOWROOM', so_date: '2026-10-12', branding: 'DUNLOPILLO', project_id: 9, fair_match: 'PICKED' });
+    const res = await app.request('/mfg-sales-orders/SO-CAS-1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ venue: 'MID VALLEY', version: 1 }),
+    }, fairDb([]));
+    expect(res.status).toBe(200);
+    expect(row).toMatchObject({ venue: 'MID VALLEY', project_id: null, fair_match: 'PENDING' });
+  });
+});

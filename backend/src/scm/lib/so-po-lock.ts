@@ -81,6 +81,22 @@ export async function soPoLocked(
   docNo: string | null | undefined,
 ): Promise<boolean> {
   if (!docNo || !isMirroredDocNo(docNo)) return false;
+  return soHasLivePo(sb, docNo);
+}
+
+/**
+ * True when a live (non-CANCELLED) Purchase Order claims any line of this SO,
+ * for ANY company. The whole-SO lock above stays 2990's; this narrower question
+ * is what a Houzs order's Processing Date is frozen by (BUG-101, owner
+ * 2026-10-12): once the supplier has a PO, the Processing Date cannot move and
+ * only the Delivery Date may be amended. Fails closed like soPoLocked.
+ */
+export async function soHasLivePo(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  docNo: string | null | undefined,
+): Promise<boolean> {
+  if (!docNo) return false;
 
   try {
     const { data: lineRows, error: lineErr } = await sb

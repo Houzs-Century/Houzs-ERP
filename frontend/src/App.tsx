@@ -64,7 +64,9 @@ const Sales = lazy(() => import("./pages/Sales").then((m) => ({ default: m.Sales
 const Profile = lazy(() => import("./pages/Profile").then((m) => ({ default: m.Profile })));
 const Notifications = lazy(() => import("./pages/Notifications").then((m) => ({ default: m.Notifications })));
 const Announcements = lazy(() => import("./pages/Announcements").then((m) => ({ default: m.Announcements })));
+const ItSupport = lazy(() => import("./pages/ItSupport").then((m) => ({ default: m.ItSupport })));
 const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
+const PosAdmin = lazy(() => import("./pages/PosAdmin").then((m) => ({ default: m.PosAdmin })));
 const Team = lazy(() => import("./pages/Team").then((m) => ({ default: m.Team })));
 const SystemHealth = lazy(() => import("./pages/SystemHealth").then((m) => ({ default: m.SystemHealth })));
 const AutoCountSync = lazy(() => import("./pages/AutoCountSync").then((m) => ({ default: m.AutoCountSync })));
@@ -169,6 +171,7 @@ const ScmThreePLCompaniesV2 = lazy(() => import("./pages/scm-v2/ThreePLCompanies
 const ScmFleetV2 = lazy(() => import("./pages/scm-v2/Fleet").then((m) => ({ default: m.Fleet })));
 const ScmDeliveryMaintenanceV2 = lazy(() => import("./pages/scm-v2/DeliveryMaintenance").then((m) => ({ default: m.DeliveryMaintenance })));
 const ScmLorryCapacityV2 = lazy(() => import("./pages/scm-v2/LorryCapacity").then((m) => ({ default: m.LorryCapacity })));
+const ScmLorryLiveMap = lazy(() => import("./pages/scm-v2/LorryLiveMap").then((m) => ({ default: m.LorryLiveMap })));
 // Fleet Module A4 — day-view map + printable driver run-sheet (read/render over trips).
 const ScmFleetDayV2 = lazy(() => import("./pages/scm-v2/FleetDay").then((m) => ({ default: m.FleetDay })));
 const ScmFleetRunSheetV2 = lazy(() => import("./pages/scm-v2/FleetRunSheet").then((m) => ({ default: m.FleetRunSheet })));
@@ -278,6 +281,7 @@ function Guard({
   anyPerm,
   anyAccess,
   allowSalesDirector = false,
+  allowSales = false,
   children,
 }: {
   perm?: string;
@@ -297,9 +301,15 @@ function Guard({
    *  spelling of "admit the Sales Director too" and the next route that needs it
    *  must not invent a second one. */
   allowSalesDirector?: boolean;
+  /** ADDITIVE: a Sales-department user (auth/salesAccess.isSalesStaff) passes —
+   *  the same spelling as ScmGuard's and PageGuard's allowSales. Set on
+   *  /scm/payment-requests (owner 2026-10-14): a salesperson reads the refund
+   *  they asked for there; the server shows them their own requests only. */
+  allowSales?: boolean;
   children: React.ReactNode;
 }) {
   const { can, pageAccess, user } = useAuth();
+  if (allowSales && isSalesStaff(user)) return <>{children}</>;
   // OR across all provided gates — pass if ANY is satisfied. (Previously each
   // gate could only DENY; with anyAccess the gates are alternatives, so a
   // grant on any one is sufficient.)
@@ -577,6 +587,9 @@ export default function App() {
         {/* Agent console — owner/IT only (wildcard). Runtime governance for the
             agent fleet: pause/kill, autonomy gates, proposals + findings, the
             learned-tuning approvals, and the per-agent teaching notebook. */}
+        {/* Houzs POS Admin (layouts E1-E9): owner / admin, the same key the
+            /api/pos-admin routes read. */}
+        <Route path="/pos-admin" element={<Guard anyPerm={["*", "pos.manage"]}><PosAdmin /></Guard>} />
         <Route path="/agents" element={<Guard anyPerm={["*"]}><Agents /></Guard>} />
         {/* No permission gate: the Assistant is open to every authenticated staff
             member, and what each may SEE is scoped server-side per position
@@ -651,6 +664,10 @@ export default function App() {
             keys off `canWrite` = announcements.write / Sales Director, which the
             backend re-checks. ── */}
         <Route path="/announcements" element={<Announcements />} />
+        {/* IT Support — report a problem to IT and follow it. Not guarded, like
+            Announcements: every signed-in user has it, and /api/it-support
+            answers each caller with their OWN requests only. */}
+        <Route path="/it-support" element={<ItSupport />} />
         {/* Fleet Health — Fleet Maintenance & Compliance Phase 1 dashboard.
             Gated on the flat fleet.read permission; fleet.write covers the
             mutations (backend re-checks). Desktop ops screen. */}
@@ -763,8 +780,10 @@ export default function App() {
         <Route path="/scm/ar-invoices" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmArInvoicesV2 /></Scm2990Shell></ScmGuard>} />
         {/* 申请付款 (owner 2026-09-30): a flat-key door, not an SCM area — a sales PIC
             asking Finance to pay a bill holds no Finance area; Finance comes in on
-            the voucher key. The server shows a requester their own requests only. */}
-        <Route path="/scm/payment-requests" element={<Guard anyPerm={["*", "scm.payment_request.create", "scm.payment_voucher.create"]}><Scm2990Shell><ScmPaymentRequestsV2 /></Scm2990Shell></Guard>} />
+            the voucher key. The server shows a requester their own requests only.
+            Since 2026-10-14 (option A) Sales staff and anyone working Sales Orders
+            come in too: the refund they ask for from an order is their request. */}
+        <Route path="/scm/payment-requests" element={<Guard anyPerm={["*", "scm.payment_request.create", "scm.payment_voucher.create"]} anyAccess={["scm.sales.orders"]} allowSales><Scm2990Shell><ScmPaymentRequestsV2 /></Scm2990Shell></Guard>} />
         {/* Product request (owner 2026-10-06): Sales 都能提 (allowSales), the Purchaser
             批 (any scm.* grant, like the cancel-requests inbox) — the router shows a
             requester their own requests only. */}
@@ -841,6 +860,7 @@ export default function App() {
         <Route path="/scm/fleet"                     element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-maintenance"      element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryMaintenanceV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/lorry-capacity"            element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmLorryCapacityV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/lorry-live-map"            element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmLorryLiveMap /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/fleet-day"                 element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetDayV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/fleet-run-sheet"           element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetRunSheetV2 /></Scm2990Shell></ScmGuard>} />
         {/* Supply Chain Hub — section landing page (main app layout, NOT the 2990 shell). */}
