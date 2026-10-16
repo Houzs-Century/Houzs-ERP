@@ -370,6 +370,13 @@ export const NAV_TABS: NavTab[] = [
     pageAccess: "projects",
     children: [
       {
+        to: "/projects?view=finances",
+        label: "Project Overview",
+        icon: DollarSign,
+        pageAccess: "projects.finances",
+        requireFinanceViewer: true,
+      },
+      {
         to: "/projects?view=list",
         label: "Project List",
         icon: ClipboardList,
@@ -380,13 +387,6 @@ export const NAV_TABS: NavTab[] = [
         label: "Calendar",
         icon: Calendar,
         pageAccess: "projects.calendar",
-      },
-      {
-        to: "/projects?view=finances",
-        label: "Finances",
-        icon: DollarSign,
-        pageAccess: "projects.finances",
-        requireFinanceViewer: true,
       },
       {
         to: "/projects?view=maintenance",

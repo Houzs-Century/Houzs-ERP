@@ -157,6 +157,7 @@ import {
   type FinanceByProjectResponse,
   FINANCE_STAGE_OPTIONS,
 } from "./projects/financeViewModel";
+import { ProjectOverviewHeadline, ProjectPeriodBar } from "./projects/ProjectOverviewParts";
 
 interface ProjectDetail {
   project: ProjectRow & {
@@ -485,7 +486,7 @@ export function Projects() {
       [
         { key: "list", label: "Project List", description: "All projects — status, brand, dates, PIC, budget.", icon: ClipboardList, v: "list" },
         { key: "calendar", label: "Calendar", description: "Projects & tasks on a month timeline.", icon: Calendar, v: "calendar" },
-        { key: "finances", label: "Finances", description: "Revenue, spend and margin across projects.", icon: DollarSign, v: "finances" },
+        { key: "finances", label: "Project Overview", description: "Sales, COGS, GP and NP across projects.", icon: DollarSign, v: "finances" },
         { key: "maintenance", label: "Project Maintenance", description: "Templates, checklists and defaults.", icon: Wrench, v: "maintenance" },
       ] as const
     ).filter(
@@ -1749,10 +1750,10 @@ function ProjectsFinancesView() {
   );
   const rawTab = params.get("tab") as FinanceTab | null;
   const tab: FinanceTab =
-    rawTab && FINANCE_TABS.includes(rawTab) ? rawTab : "list";
+    rawTab && FINANCE_TABS.includes(rawTab) ? rawTab : "analytics";
   function setTab(next: FinanceTab) {
     const p = new URLSearchParams(params);
-    if (next === "list") p.delete("tab");
+    if (next === "analytics") p.delete("tab");
     else p.set("tab", next);
     setParams(p, { replace: true });
   }
@@ -1766,13 +1767,13 @@ function ProjectsFinancesView() {
         value={tab}
         onChange={setTab}
         options={[
-          { value: "list", label: "List" },
-          { value: "analytics", label: "Analytics" },
+          { value: "analytics", label: "Overview" },
+          { value: "list", label: "Finance lines" },
           { value: "pnl", label: "P&L" },
         ]}
       />
       <PageHeader
-        eyebrow="Operations · Projects · Finances"
+        eyebrow="Operations · Projects · Project Overview"
         title={FINANCE_TAB_HEADER[tab].title}
         description={FINANCE_TAB_HEADER[tab].description}
       />
@@ -2484,14 +2485,6 @@ function ProjectsAnalyticsView() {
   );
 
   const d = q.data;
-  // Owner P&L model shares: COGS runs ~48-50% of revenue for this business,
-  // gross margin = GP / Revenue, net margin = NP / Revenue (from the server).
-  const totals = d?.totals;
-  const cogsPctOfRevenue =
-    totals && totals.income > 0 ? (totals.cogs / totals.income) * 100 : null;
-  const grossMarginPct =
-    totals && totals.income > 0 ? (totals.gp / totals.income) * 100 : null;
-
   // Active filters forwarded to every drill-down query, so a group's project
   // list stays inside the same scope the group table was computed under.
   const drillFilters: ProfitabilityFilters = {
@@ -2517,6 +2510,10 @@ function ProjectsAnalyticsView() {
         )}
       </div>
 
+      <ProjectPeriodBar dateFrom={dateFrom} dateTo={dateTo} onRange={(f, t) => setParams((prev) => {
+        const next = new URLSearchParams(prev); next.set("af_from", f); next.set("af_to", t);
+        for (const k of ["dim", "dv", "dm"]) next.delete(k); return next;
+      })} />
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <div>
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
@@ -2603,51 +2600,7 @@ function ProjectsAnalyticsView() {
 
       {d && (
         <>
-          {/* Headline — the owner's P&L waterfall:
-              Revenue − COGS = GP;  GP − Cost = NP. */}
-          <DashboardGrid cols={5}>
-            <StatCard
-              label="Revenue"
-              value={formatCurrency(d.totals.income)}
-              subtitle="Total sales + other income"
-            />
-            <StatCard
-              label="COGS"
-              value={formatCurrency(d.totals.cogs)}
-              subtitle={
-                cogsPctOfRevenue != null
-                  ? `${cogsPctOfRevenue.toFixed(0)}% of revenue`
-                  : "Cost of goods sold"
-              }
-              tone="error"
-            />
-            <StatCard
-              label="Gross profit"
-              value={formatCurrency(d.totals.gp)}
-              subtitle={
-                grossMarginPct != null
-                  ? `${grossMarginPct.toFixed(1)}% gross margin`
-                  : "Revenue − COGS"
-              }
-              tone={d.totals.gp >= 0 ? "success" : "error"}
-            />
-            <StatCard
-              label="Cost"
-              value={formatCurrency(d.totals.cost)}
-              subtitle="Rental, setup, transport, commission…"
-              tone="error"
-            />
-            <StatCard
-              label="Net profit"
-              value={formatCurrency(d.totals.profit)}
-              subtitle={
-                d.totals.margin_pct != null
-                  ? `${d.totals.margin_pct.toFixed(1)}% net margin`
-                  : "GP − Cost"
-              }
-              tone={d.totals.profit >= 0 ? "success" : "error"}
-            />
-          </DashboardGrid>
+          <ProjectOverviewHeadline totals={d.totals} />
 
           {/* Breakdowns — two columns. Each row expands in place (Layer 2) to
               the projects behind it, and each project navigates to its page
