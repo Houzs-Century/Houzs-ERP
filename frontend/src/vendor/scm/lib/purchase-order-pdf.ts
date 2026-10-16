@@ -59,7 +59,7 @@ import {
 } from './supplier-doc-data';
 import { loadSofaCompartmentArtForPrint } from './sales-order-queries';
 import { splitBackendSofa } from './sofa-walk-order';
-import { DRAWER_DIAGRAM_H, drawDrawerDiagram, drawerSidesOf } from './po-drawer-diagram';
+import { DRAWER_DIAGRAM_H, drawDrawerDiagram, drawerSidesOf, frontDrawerCountOf } from './po-drawer-diagram';
 import {
   blobToSquarePdfImage,
   buildPhotoGroups,
@@ -637,7 +637,11 @@ async function renderPurchaseOrderInto(
     didDrawCell: (data) => {
       if (data.section !== 'body' || data.column.index !== 2) return;
       const sides = drawerSides[data.row.index]!;
-      if (sides.length > 0) drawDrawerDiagram(doc, sides, data.cell.x + 1.5, data.cell.y + data.cell.height - DRAWER_DIAGRAM_H - 1);
+      if (sides.length === 0) return;
+      drawDrawerDiagram(
+        doc, sides, data.cell.x + 1.5, data.cell.y + data.cell.height - DRAWER_DIAGRAM_H - 1,
+        frontDrawerCountOf(orderedItems[data.row.index]!.item_code),
+      );
     },
   });
 
