@@ -182,7 +182,55 @@ async function partTwo() {
     WHERE po.po_number = 'HC-PO-010086' ORDER BY poi.created_at`);
 }
 
+/* PART=3: did F3 (a whole batch of orders knocked out of READY_TO_SHIP at one
+   instant) or F2 (a recount that failed) ever happen? Status-change rows the
+   allocator writes, bucketed by minute. */
+async function partThree() {
+  await section('H1 automatic READY_TO_SHIP regressions per day, last 75 days', `
+    SELECT created_at::date AS day, count(*)::int AS regressed, count(DISTINCT doc_no)::int AS orders
+    FROM scm.mfg_so_status_changes
+    WHERE changed_by IS NULL AND from_status::text = 'READY_TO_SHIP' AND notes ILIKE 'Auto-regressed%'
+      AND created_at > now() - interval '75 days'
+    GROUP BY 1 ORDER BY 1`);
+  await section('H2 minutes where 5+ orders were auto-regressed at once, and how many came back within 24h', `
+    WITH reg AS (
+      SELECT doc_no, created_at, date_trunc('minute', created_at) AS m
+      FROM scm.mfg_so_status_changes
+      WHERE changed_by IS NULL AND from_status::text = 'READY_TO_SHIP' AND notes ILIKE 'Auto-regressed%'
+        AND created_at > now() - interval '75 days'
+    ), burst AS (SELECT m FROM reg GROUP BY m HAVING count(DISTINCT doc_no) >= 5)
+    SELECT r.m AS minute, count(DISTINCT r.doc_no)::int AS orders,
+           count(DISTINCT r.doc_no) FILTER (WHERE EXISTS (
+             SELECT 1 FROM scm.mfg_so_status_changes a
+             WHERE a.doc_no = r.doc_no AND a.changed_by IS NULL AND a.to_status::text = 'READY_TO_SHIP'
+               AND a.created_at > r.created_at AND a.created_at < r.created_at + interval '24 hours'))::int AS back_within_24h,
+           min(r.doc_no) AS sample_doc
+    FROM reg r JOIN burst b ON b.m = r.m
+    GROUP BY r.m ORDER BY r.m`);
+  await section('H3 orders that bounced READY_TO_SHIP -> regressed -> READY_TO_SHIP within 24h, per day', `
+    SELECT r.created_at::date AS day, count(*)::int AS bounces, count(DISTINCT r.doc_no)::int AS orders
+    FROM scm.mfg_so_status_changes r
+    WHERE r.changed_by IS NULL AND r.from_status::text = 'READY_TO_SHIP' AND r.notes ILIKE 'Auto-regressed%'
+      AND r.created_at > now() - interval '75 days'
+      AND EXISTS (SELECT 1 FROM scm.mfg_so_status_changes a
+                  WHERE a.doc_no = r.doc_no AND a.changed_by IS NULL AND a.to_status::text = 'READY_TO_SHIP'
+                    AND a.created_at > r.created_at AND a.created_at < r.created_at + interval '24 hours')
+    GROUP BY 1 ORDER BY 1`);
+  await section('H4 PO recount failures recorded on GRNs (RECOUNT_FAILED), all time', `
+    SELECT created_at::date AS day, entity_doc_no, left(note, 200) AS note
+    FROM scm.entity_audit_log WHERE action = 'RECOUNT_FAILED' ORDER BY created_at`);
+  await section('H5 the 14 bound lines waiting only for a Processing Date', `
+    WITH ${BASE}, ${BOUND_CALC}
+    SELECT doc_no, so_status, item_code, qty, received, stored, wh_code
+    FROM calc WHERE remaining > 0 AND received >= remaining AND stored <> 'READY' AND NOT has_pdate
+    ORDER BY doc_no`);
+}
+
 try { main: {
+  if (process.env.PART === '3') {
+    await partThree();
+    break main;
+  }
   if (process.env.PART === '2') {
     await partTwo();
     break main;
