@@ -137,6 +137,7 @@ export type InventoryProductTotal = {
        oldest_lot_at       = oldest open FIFO lot → age of the stock */
   incoming_qty: number;
   incoming_pos: InventoryIncomingPo[];
+  demand_sos: InventoryDemandSo[];
   committed_scheduled: number;
   unscheduled_qty: number;
   reserved_total: number;
@@ -161,6 +162,16 @@ export type InventoryProductTotal = {
 export type InventoryIncomingPo = {
   po_number: string;
   eta: string | null;
+  qty: number;
+};
+
+/* One open Sales Order claiming a SKU — the SO(s) behind Scheduled (delivery_date
+   set) and Unscheduled (delivery_date null), net of delivered (HC-0115). */
+export type InventoryDemandSo = {
+  doc_no: string;
+  debtor_name: string | null;
+  so_date: string | null;
+  delivery_date: string | null;
   qty: number;
 };
 

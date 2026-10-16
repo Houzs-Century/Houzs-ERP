@@ -18,6 +18,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AsOfSection } from './InventoryAsOf';
+import { DemandSoPanel } from './InventoryDemandSoPanel';
 import {
   Search, ArrowUpRight, ArrowDownLeft, Star, X, Plus,
   Warehouse as WarehouseIcon, ChevronRight, ChevronDown,
@@ -507,7 +508,7 @@ const BalancesTab = ({
       </div>
 
       <p className={styles.eyebrow}>
-        {isLoading || searching ? 'Loading…' : `${visibleRows.length} SKU rows · click a row for the per-warehouse breakdown · chevron for variants`}
+        {isLoading || searching ? 'Loading…' : `${visibleRows.length} SKU rows · click a row for the per-warehouse breakdown · chevron for SOs, POs and variants`}
       </p>
       <SearchProgress active={searching} label={search.trim() ? searchTransition.statusText : 'Loading inventory…'} />
       <SearchScopeHint
@@ -547,6 +548,7 @@ const BalancesTab = ({
           render: (r) => (
             <>
               <IncomingPoPanel pos={r.incoming_pos} />
+              <DemandSoPanel sos={r.demand_sos} />
               <SkuVariantPanel code={r.item_code} />
             </>
           ),
@@ -713,7 +715,7 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     render: (r) => (
       <span
         className={`${styles.numCell} ${r.unscheduled_qty > 0 ? '' : styles.numCellZero}`}
-        title="Unscheduled = open Sales-Order demand with no delivery date yet (future / uncertain). Not subtracted from Available, but eats into Spare."
+        title="Unscheduled = open Sales-Order demand with no delivery date yet (future / uncertain). Not subtracted from Available, but eats into Spare. Open the row chevron for the SOs."
       >
         {r.unscheduled_qty > 0 ? fmtQty(r.unscheduled_qty) : '—'}
       </span>
