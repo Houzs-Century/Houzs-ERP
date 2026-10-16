@@ -177,7 +177,13 @@ jobs:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
         run: |
           set -euo pipefail
+          # 20260926T1800 put BEFORE TRUNCATE guards on scm.pos_sofa_combos(_audit)
+          # so nothing in production can wipe 2990 POS combos. Staging is about to
+          # be reloaded from production's own rows, so the guard is bypassed here
+          # the same way the restore step bypasses FKs/triggers. Run 38877264320
+          # died on it (rolled back, staging untouched).
           /usr/lib/postgresql/17/bin/psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At <<'SQL'
+          set session_replication_role = replica;
           do $$
           declare stmt text;
           begin
