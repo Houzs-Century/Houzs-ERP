@@ -3,7 +3,7 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 import { writeFileSync } from 'node:fs';
-import { drawerSidesOf } from './po-drawer-diagram';
+import { drawerSidesOf, frontDrawerCountOf } from './po-drawer-diagram';
 
 vi.mock('./sales-order-queries', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -60,15 +60,32 @@ describe('drawerSidesOf', () => {
   });
 });
 
+// HC-0112 (Sim 2026-10-16): Single / Super Single only fit one front drawer.
+describe('frontDrawerCountOf', () => {
+  it.each([
+    ['CELENE(A)-(S)', 1],
+    ['CELENE(A)-(SS)', 1],
+    ['NB-NBG06 (SS)', 1],
+    ['CELENE(A)-(Q)', 2],
+    ['CELENE(A)-(K)', 2],
+    ['CELENE(A)-(SK)', 2],
+    ['CELENE(A)-(SP)', 2],
+    [null, 2],
+  ] as const)('%s -> %i', (code, want) => {
+    expect(frontDrawerCountOf(code)).toBe(want);
+  });
+});
+
 describe('purchase-order-pdf drawer picture', () => {
-  it('a LEFT drawer line prints the pull-out-left picture', async () => {
+  it('a LEFT drawer line prints the LEFT DRAWER picture', async () => {
     const { pdf, raw } = await render({ specials: ['Left Drawer'] });
-    expect(raw).toContain('(PULL OUT LEFT)');
+    expect(raw).toContain('(LEFT DRAWER)');
+    expect(raw).not.toContain('PULL OUT');
     if (process.env.DRAWER_PDF_OUT) writeFileSync(process.env.DRAWER_PDF_OUT, pdf);
   });
 
   it('a line without a drawer prints no picture', async () => {
     const { raw } = await render({ specials: ['HB Fully Cover'] });
-    expect(raw).not.toContain('PULL OUT');
+    expect(raw).not.toContain('DRAWER)');
   });
 });
