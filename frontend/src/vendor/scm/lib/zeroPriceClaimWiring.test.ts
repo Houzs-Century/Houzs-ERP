@@ -85,7 +85,7 @@ describe("the authored signal comes from the price box, on both surfaces", () =>
   });
 
   it("the mobile line card records a typed price", () => {
-    expect(mobileNewSo()).toMatch(/if \(priceBoxAuthored\(t\)\) \{ setBlankText\(null\); onChange\(\{ price: t, priceAuthored: true \}\); \}\s*else \{ setBlankText\(t\); onChange\(priceBeforeEdit\.current\); \}/);
+    expect(mobileNewSo()).toMatch(/if \(priceBoxAuthored\(t\)\) \{ setBlankText\(null\); onChange\(\{ price: t, priceAuthored: true \}\); \} else \{ setBlankText\(t\); onChange\(priceBeforeEdit\.current\); \}/);
   });
 
   it("a line seeded from a PERSISTED row is authored by construction", () => {
