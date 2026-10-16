@@ -15,7 +15,7 @@
 //   APPLY=1 npx tsx scripts/ab-scan-model-gemini.mjs    call both models, write the report JSON
 //   npx tsx scripts/ab-scan-model-gemini.mjs --selftest
 // Env: DATABASE_URL (prod Postgres; every query runs in a READ ONLY transaction), ANTHROPIC_API_KEY and
-//   GEMINI_API_KEY (from ~/.houzs-ab.env, else process env); optional N=30, GEMINI_MODEL, GEMINI_THINKING (thinking budget, e.g. 0), OUT=path.
+//   GEMINI_API_KEY, all from ~/.houzs-ab.env, else process env; optional N=30, GEMINI_MODEL, GEMINI_THINKING (thinking budget, e.g. 0), OUT=path.
 //   R2 reads go through `wrangler r2 object get` (wrangler login). Keys are never printed.
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, appendFileSync, rmSync, readFileSync, mkdtempSync, writeFileSync, existsSync } from 'node:fs';
@@ -81,16 +81,13 @@ if (process.argv.includes('--selftest')) { selftest(); process.exit(0); }
 // API keys: C:\Users\User\.houzs-ab.env (KEY=value lines) first, then process env. Values never printed.
 const KEY_FILE = path.join(homedir(), '.houzs-ab.env');
 const fileEnv = existsSync(KEY_FILE) ? parseEnv(readFileSync(KEY_FILE, 'utf8')) : null;
-for (const k of ['ANTHROPIC_API_KEY', 'GEMINI_API_KEY']) if (fileEnv?.[k]?.trim()) process.env[k] = fileEnv[k].trim();
+for (const k of ['DATABASE_URL', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY']) if (fileEnv?.[k]?.trim()) process.env[k] = fileEnv[k].trim();
 const APPLY = process.env.APPLY === '1';
-if (APPLY) {
-  const noKey = ['ANTHROPIC_API_KEY', 'GEMINI_API_KEY'].filter((k) => !process.env[k]?.trim());
-  if (noKey.length) {
-    console.error(fileEnv ? `${KEY_FILE} has no value for: ${noKey.map((k) => `${k}=`).join(', ')}` : `${KEY_FILE} not found; add lines: ${noKey.map((k) => `${k}=`).join(', ')}`);
-    process.exit(2);
-  }
+const noKey = ['DATABASE_URL', ...(APPLY ? ['ANTHROPIC_API_KEY', 'GEMINI_API_KEY'] : [])].filter((k) => !process.env[k]?.trim());
+if (noKey.length) {
+  console.error(fileEnv ? `${KEY_FILE} has no value for: ${noKey.map((k) => `${k}=`).join(', ')}` : `${KEY_FILE} not found; add lines: ${noKey.map((k) => `${k}=`).join(', ')}`);
+  process.exit(2);
 }
-if (!process.env.DATABASE_URL) { console.error('Set DATABASE_URL first'); process.exit(2); }
 const N = Math.max(1, Math.min(100, Number(process.env.N || 30)));
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const GEMINI_THINKING = process.env.GEMINI_THINKING;
@@ -100,6 +97,8 @@ const OUT = process.env.OUT || path.join(HERE, '..', '..', 'docs', 'pipeline', '
 // ---------- read-only DB + Supabase/D1 shims over it ----------
 const { default: postgres } = await import('postgres');
 const sql = postgres(process.env.DATABASE_URL, { max: 2, prepare: false, connection: { search_path: 'scm,public' } });
+// Every query in its own READ ONLY transaction: a session-level SET would not survive the transaction-mode
+// pooler (each transaction may land on a different server connection); BEGIN READ ONLY always applies.
 const ro = (text, params = []) => sql.begin('read only', (tx) => tx.unsafe(text, params));
 const ident = (s) => '"' + String(s).replace(/"/g, '""') + '"';
 
