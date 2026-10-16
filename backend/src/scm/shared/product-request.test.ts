@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
-  canTransition, nextStatus, requesterMayChange, awaitsPurchaser, productRefusal, pcoFromRequestRefusal,
-  defaultSkuCode, requestVariants, PRODUCT_REQUEST_STATUSES, type ProductRequestStatus, type ProductRequestAction,
+  canTransition, nextStatus, requesterMayChange, awaitsPurchaser, productRefusal, linesRefusal, pcoFromRequestRefusal,
+  defaultSkuCode, requestVariants, PRODUCT_REQUEST_STATUSES, PRODUCT_REQUEST_MAX_LINES, type ProductRequestStatus, type ProductRequestAction,
 } from './product-request';
 
 describe('product request — state machine', () => {
@@ -44,29 +44,38 @@ describe('product request — state machine', () => {
   });
 });
 
-describe('product request — the product line', () => {
-  test('a repack names an existing SKU', () => {
-    expect(productRefusal({ request_type: 'REPACK', item_code: null, proposed_model_name: 'Aurora' })?.error).toBe('item_code_required');
-    expect(productRefusal({ request_type: 'REPACK', item_code: '5530-3S', proposed_model_name: null })).toBeNull();
+describe('product request — the product lines', () => {
+  test('a repack names an existing SKU on every line, and the refusal says which line', () => {
+    expect(productRefusal('REPACK', { item_code: null, proposed_model_name: 'Aurora' }, 2)).toMatchObject({ error: 'item_code_required', message: expect.stringContaining('Line 2') });
+    expect(productRefusal('REPACK', { item_code: '5530-3S', proposed_model_name: null }, 1)).toBeNull();
   });
-  test('a new product names an existing SKU or a new Model, never neither', () => {
-    expect(productRefusal({ request_type: 'NEW_PRODUCT', item_code: null, proposed_model_name: null })?.error).toBe('product_required');
-    expect(productRefusal({ request_type: 'NEW_PRODUCT', item_code: '  ', proposed_model_name: ' ' })?.error).toBe('product_required');
-    expect(productRefusal({ request_type: 'NEW_PRODUCT', item_code: null, proposed_model_name: 'Aurora 2-Seater' })).toBeNull();
-    expect(productRefusal({ request_type: 'NEW_PRODUCT', item_code: '5530-3S', proposed_model_name: null })).toBeNull();
+  test('a new product line names an existing SKU or a new Model, never neither', () => {
+    expect(productRefusal('NEW_PRODUCT', { item_code: null, proposed_model_name: null }, 1)?.error).toBe('product_required');
+    expect(productRefusal('NEW_PRODUCT', { item_code: '  ', proposed_model_name: ' ' }, 3)).toMatchObject({ error: 'product_required', message: expect.stringContaining('Line 3') });
+    expect(productRefusal('NEW_PRODUCT', { item_code: null, proposed_model_name: 'Aurora 2-Seater' }, 1)).toBeNull();
+    expect(productRefusal('NEW_PRODUCT', { item_code: '5530-3S', proposed_model_name: null }, 1)).toBeNull();
+  });
+  test('a request has at least one line and at most the cap (方案 A: a showroom, not a catalogue)', () => {
+    expect(linesRefusal(0)?.error).toBe('lines_required');
+    expect(linesRefusal(1)).toBeNull();
+    expect(linesRefusal(PRODUCT_REQUEST_MAX_LINES)).toBeNull();
+    expect(linesRefusal(PRODUCT_REQUEST_MAX_LINES + 1)?.error).toBe('too_many_lines');
   });
 });
 
 describe('product request — raising the PC Order', () => {
   const base = { request_no: 'HC-PDR-2610-001' };
+  const sku = { item_code: '5530-3S' };
   test('refused until approved, and refused again once issued', () => {
-    expect(pcoFromRequestRefusal({ ...base, status: 'REQUESTED', item_code: '5530-3S' })?.error).toBe('request_not_approved');
-    expect(pcoFromRequestRefusal({ ...base, status: 'PCO_ISSUED', item_code: '5530-3S' })?.error).toBe('request_already_issued');
-    expect(pcoFromRequestRefusal({ ...base, status: 'CLOSED', item_code: '5530-3S' })?.error).toBe('request_not_approved');
+    expect(pcoFromRequestRefusal({ ...base, status: 'REQUESTED', lines: [sku] })?.error).toBe('request_not_approved');
+    expect(pcoFromRequestRefusal({ ...base, status: 'PCO_ISSUED', lines: [sku] })?.error).toBe('request_already_issued');
+    expect(pcoFromRequestRefusal({ ...base, status: 'CLOSED', lines: [sku] })?.error).toBe('request_not_approved');
   });
-  test('refused while the new Model has no SKU yet — the order would carry a code the catalogue has not got', () => {
-    expect(pcoFromRequestRefusal({ ...base, status: 'APPROVED', item_code: null })?.error).toBe('model_not_created');
-    expect(pcoFromRequestRefusal({ ...base, status: 'APPROVED', item_code: 'AURORA-2S' })).toBeNull();
+  test("refused while ANY line's new Model has no SKU yet — the order would carry a code the catalogue has not got", () => {
+    expect(pcoFromRequestRefusal({ ...base, status: 'APPROVED', lines: [sku, { item_code: null }] })).toMatchObject({ error: 'model_not_created', message: expect.stringContaining('a Model') });
+    expect(pcoFromRequestRefusal({ ...base, status: 'APPROVED', lines: [{ item_code: null }, { item_code: ' ' }] })).toMatchObject({ error: 'model_not_created', message: expect.stringContaining('2 Models') });
+    expect(pcoFromRequestRefusal({ ...base, status: 'APPROVED', lines: [] })?.error).toBe('lines_required');
+    expect(pcoFromRequestRefusal({ ...base, status: 'APPROVED', lines: [sku, { item_code: 'AURORA-2S' }] })).toBeNull();
   });
   test('a sofa SKU code carries its compartment; other categories take the model code', () => {
     expect(defaultSkuCode('aurora', 'SOFA', '2s')).toBe('AURORA-2S');

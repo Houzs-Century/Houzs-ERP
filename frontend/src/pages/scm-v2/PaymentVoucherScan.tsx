@@ -48,6 +48,7 @@ import { useNavigate } from 'react-router-dom';
 import { Camera, FileText, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useExtractBills, fileToBase64, type ExtractedBill, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
 import { useBillMatches } from '../../vendor/scm/lib/payment-request-queries';
 import { BillMatchesNote } from '../../vendor/scm/components/RequestBill';
 import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
@@ -178,7 +179,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
     try {
       files = await Promise.all(rids.map(async (rid) => {
         const f = byRid.get(rid)!;
-        return { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) };
+        return { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) };
       }));
     } catch (e) {
       land(runId, { index, ok: false, reason: e instanceof Error ? e.message : 'The file could not be read from disk.' });

@@ -15,15 +15,20 @@
  * ?fromRequest=) or an AP invoice (AP Invoices ?fromRequest=); on the phone
  * Finance can read requests and return one with its note.
  *
+ * A REFUND request (owner 2026-10-14) is raised by a Sales Order's Refund
+ * button — a salesperson's too: they hold no key, read their own here (option
+ * A), raise nothing else, and may withdraw one while it waits. It is never
+ * edited; Finance approves or rejects it on the computer.
+ *
  * Gate: the menu row points at /scm/payment-requests, whose NAV_TABS entries
- * (Sidebar.tsx — the requester's key, or Finance's voucher key) MobileApp's
+ * (Sidebar.tsx — the requester's key, Finance's voucher key, or Sales) MobileApp's
  * allowed() resolves, so phone and desktop are gated by one declaration.
  * ------------------------------------------------------------------------- */
 
 import { useMemo, useRef, useState } from "react";
 import {
-  NO_EVENT_REASON_MIN, STAGE, answerText, awaitsFinance, fetchPaymentRequestFileBlobUrl, financeWorking, hasInstalments, mayAskBalance, pctOf, requestPaid, useCreatePaymentRequest, useDeletePaymentRequestFile,
-  usePaymentRequest, usePaymentRequestFiles, usePaymentRequests, useRequestBalance, useReturnPaymentRequest, useUpdatePaymentRequest,
+  NO_EVENT_REASON_MIN, STAGE, answerText, awaitsFinance, fetchPaymentRequestFileBlobUrl, financeWorking, hasInstalments, isRefundRequest, mayAskBalance, pctOf, requestPaid, stageLabel,
+  useCreatePaymentRequest, useDeletePaymentRequestFile, usePaymentRequest, usePaymentRequestFiles, usePaymentRequests, useRequestBalance, useReturnPaymentRequest, useUpdatePaymentRequest,
   useUploadPaymentRequestFile, useWithdrawPaymentRequest,
   type PaymentRequest, type PaymentRequestInput,
 } from "../vendor/scm/lib/payment-request-queries";
@@ -33,6 +38,7 @@ import { OfficialDocChip } from "../vendor/scm/components/OfficialDoc";
 import { useUploadOfficialDoc } from "../vendor/scm/lib/official-doc-queries";
 import { EventSuggestions } from "../vendor/scm/components/EventSuggestions";
 import { fileToBase64, PV_FILE_ACCEPT } from "../vendor/scm/lib/payment-voucher-queries";
+import { docFileMime } from "../vendor/scm/lib/doc-file-mime";
 import { useEventLabels } from "../vendor/scm/lib/event-queries";
 import { EventSelect, eventCellText } from "../vendor/scm/components/EventSelect";
 import { MoneyInput } from "../vendor/scm/components/MoneyInput";
@@ -78,7 +84,7 @@ const Note = ({ children }: { children: React.ReactNode }) => (
   <div style={{ padding: "18px 4px", fontSize: 12.5, color: "var(--mut)", textAlign: "center" }}>{children}</div>
 );
 const StageText = ({ r }: { r: PaymentRequest }) => (
-  <span style={{ fontSize: 11.5, fontWeight: 600, color: STAGE[r.stage].tone }}>{STAGE[r.stage].label}</span>
+  <span style={{ fontSize: 11.5, fontWeight: 600, color: STAGE[r.stage].tone }}>{stageLabel(r)}</span>
 );
 
 /* ── The list ─────────────────────────────────────────────────────────────── */
@@ -86,6 +92,8 @@ function RequestListScreen({ onBack, onNew, onOpen }: { onBack: () => void; onNe
   const q = usePaymentRequests(false);
   const rows = useMemo(() => q.data?.requests ?? [], [q.data]);
   const finance = q.data?.finance ?? false;
+  /* Option A (owner 2026-10-14): a salesperson reads their refund requests here, raises nothing else. */
+  const mayRaise = q.data?.mayRaise ?? true;
   const labels = useEventLabels(rows.map((r) => r.project_id), EVENTS_PATH);
   const [filter, setFilter] = useState<Filter>("all");
   const shown = rows.filter((r) =>
@@ -100,7 +108,9 @@ function RequestListScreen({ onBack, onNew, onOpen }: { onBack: () => void; onNe
   const body = () => {
     if (q.isLoading) return <Note>Loading requests…</Note>;
     if (q.isError) return <Note>Could not load the requests. Pull down or try again.</Note>;
-    if (rows.length === 0) return <Note>{finance ? "No payment request has been raised yet." : "You have not asked Finance to pay anything yet — tap New request."}</Note>;
+    if (rows.length === 0) {
+      return <Note>{finance ? "No payment request has been raised yet." : mayRaise ? "You have not asked Finance to pay anything yet — tap New request." : "Your refund requests show here — send one with Refund on a Sales Order."}</Note>;
+    }
     if (shown.length === 0) return <Note>No request in this view.</Note>;
     return shown.map((r) => (
       <button key={r.id} type="button" className="so-row" onClick={() => onOpen(r.id)} style={{ textAlign: "left", width: "100%" }}>
@@ -111,6 +121,7 @@ function RequestListScreen({ onBack, onNew, onOpen }: { onBack: () => void; onNe
         <div style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 2 }}>
           {r.request_no} · {fmtDateOrDash(r.created_at)}{finance && r.requested_by_name ? ` · ${r.requested_by_name}` : ""}
         </div>
+        {isRefundRequest(r) && <div style={{ fontSize: 11, fontWeight: 600, color: "var(--brand-d)", marginTop: 2 }}>Refund · {r.refund_source_doc_no}</div>}
         <div style={{ fontSize: 11.5, marginTop: 2 }}>{r.purpose}</div>
         {r.project_id != null && <div style={{ fontSize: 11, color: "var(--mut)", marginTop: 2 }}>{eventCellText(labels.data, r.project_id)}</div>}
         <div style={{ marginTop: 4 }}><StageText r={r} />{answerText(r) ? <span style={{ fontSize: 11, color: "var(--mut)" }}> · {answerText(r)}</span> : null}</div>
@@ -121,7 +132,7 @@ function RequestListScreen({ onBack, onNew, onOpen }: { onBack: () => void; onNe
 
   return (
     <Shell eyebrow="Payments · 申请付款" title="Payment requests" onBack={onBack}
-      footer={<button className="btn" style={{ flex: 1 }} onClick={onNew}>New request</button>}>
+      footer={mayRaise ? <button className="btn" style={{ flex: 1 }} onClick={onNew}>New request</button> : undefined}>
       <div className="chips" style={{ flex: "none" }}>
         {chips.map(([k, label]) => (
           <button key={k} className={`chip${filter === k ? " on" : ""}`} aria-pressed={filter === k} onClick={() => setFilter(k)}>{label}</button>
@@ -138,6 +149,8 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
   const q = usePaymentRequest(id);
   const r = q.data?.request ?? null;
   const finance = q.data?.finance ?? false;
+  /* Option A (owner 2026-10-14): without the key a requester attaches nothing. */
+  const mayRaise = usePaymentRequests(false).data?.mayRaise ?? true;
   const labels = useEventLabels(r ? [r.project_id] : [], EVENTS_PATH);
   const files = usePaymentRequestFiles(id);
   const upload = useUploadPaymentRequestFile();
@@ -157,16 +170,19 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
   if (!r) return <Shell eyebrow="Payment request" title="Not found" onBack={onBack}><Note>This request could not be opened.</Note></Shell>;
 
   const mine = Number(r.requested_by) === Number(user?.id);
-  const mayChange = mine && (r.status === "SUBMITTED" || r.status === "REJECTED");
-  const mayAttach = (mine || finance) && r.status !== "WITHDRAWN" && r.status !== "VOUCHERED";
+  const refund = isRefundRequest(r);
+  /* A refund request (owner 2026-10-14) is never edited — withdrawn while it waits. */
+  const mayChange = mine && !refund && (r.status === "SUBMITTED" || r.status === "REJECTED");
+  const mayWithdraw = mayChange || (mine && refund && r.status === "SUBMITTED");
+  const mayAttach = (finance || (mine && mayRaise)) && r.status !== "WITHDRAWN" && r.status !== "VOUCHERED";
   /* 申请付余额 (item 2): the next instalment of the same bill. */
-  const mayBalance = (mine || finance) && mayAskBalance(r);
+  const mayBalance = (mine || finance) && !refund && mayAskBalance(r);
 
   const addFiles = async (list: FileList | null) => {
     setFileError(null);
     for (const f of [...(list ?? [])]) {
       try {
-        await upload.mutateAsync({ id: r.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+        await upload.mutateAsync({ id: r.id, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
       } catch (e) {
         setFileError(`${f.name} did not attach — ${e instanceof Error ? e.message : "try again"}.`);
         break;
@@ -177,7 +193,7 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
     setFileError(null);
     for (const f of [...(list ?? [])]) {
       try {
-        await official.mutateAsync({ requestId: r.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+        await official.mutateAsync({ requestId: r.id, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
       } catch (e) {
         setFileError(`${f.name} did not upload — ${e instanceof Error ? e.message : "try again"}.`);
         break;
@@ -197,7 +213,9 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
     if (await askConfirm({ title: `Withdraw ${r.request_no}?`, body: "Finance will not pay it.", confirmLabel: "Withdraw", danger: true })) withdraw.mutate(r.id);
   };
   const onReturn = async () => {
-    const note = await askPrompt({ title: `Return ${r.request_no}?`, body: "The requester reads your note and sends it again.", confirmLabel: "Send back", input: { label: "Why it goes back", required: true } });
+    const note = await askPrompt(refund
+      ? { title: `Reject ${r.request_no} · 拒绝?`, body: `The money stays on ${r.refund_source_doc_no}; the requester reads your reason.`, confirmLabel: "Reject", input: { label: "Why it is rejected", required: true } }
+      : { title: `Return ${r.request_no}?`, body: "The requester reads your note and sends it again.", confirmLabel: "Send back", input: { label: "Why it goes back", required: true } });
     if (note) sendBack.mutate({ id: r.id, note });
   };
 
@@ -210,27 +228,30 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
 
   return (
     <Shell eyebrow={`Payment request · ${r.request_no}`} title={r.payee_name} onBack={onBack}
-      footer={(mayChange || mayBalance || (finance && awaitsFinance(r))) ? (
+      footer={(mayChange || mayWithdraw || mayBalance || (finance && awaitsFinance(r))) ? (
         <>
           {mayChange && <button className="btn" style={{ flex: 1 }} onClick={() => onEdit(r)}>{r.status === "REJECTED" ? "Fix and send again" : "Edit"}</button>}
-          {mayChange && <button className="btn" style={{ flex: 1, background: "var(--bg)", color: "var(--ink)" }} onClick={() => void onWithdraw()} disabled={withdraw.isPending}>Withdraw</button>}
-          {!mayChange && finance && awaitsFinance(r) && <button className="btn" style={{ flex: 1 }} onClick={() => void onReturn()} disabled={sendBack.isPending}>Return…</button>}
+          {mayWithdraw && <button className="btn" style={{ flex: 1, background: "var(--bg)", color: "var(--ink)" }} onClick={() => void onWithdraw()} disabled={withdraw.isPending}>Withdraw</button>}
+          {!mayWithdraw && finance && awaitsFinance(r) && <button className="btn" style={{ flex: 1 }} onClick={() => void onReturn()} disabled={sendBack.isPending}>{refund ? "Reject…" : "Return…"}</button>}
           {!mayChange && mayBalance && <button className="btn" style={{ flex: 1 }} onClick={() => onBalance(r)}>申请付余额 · Balance</button>}
         </>
       ) : undefined}>
       <div><StageText r={r} /></div>
       {r.stage === "RETURNED" && r.finance_note && (
-        <div className="st-warn" role="status">Returned by {r.decided_by ?? "Finance"}: {r.finance_note}</div>
+        <div className="st-warn" role="status">{refund ? "Rejected" : "Returned"} by {r.decided_by ?? "Finance"}: {r.finance_note}</div>
       )}
       {finance && awaitsFinance(r) && (
-        <div style={{ fontSize: 11.5, color: "var(--mut)" }}>Answer it on the computer — Payment Requests › Make voucher or Make AP invoice.</div>
+        <div style={{ fontSize: 11.5, color: "var(--mut)" }}>
+          {refund ? "Approve it on the computer — Payment Requests › Make refund voucher." : "Answer it on the computer — Payment Requests › Make voucher or Make AP invoice."}
+        </div>
       )}
+      {refund && row("Refund on", r.refund_source_doc_no)}
       {row("Amount", <b>{fmtSen(r.amount_sen)}</b>)}
-      {row("Pay by", fmtDateOrDash(r.due_date))}
-      {row("Event", eventCellText(labels.data, r.project_id))}
-      {row("For", r.purpose)}
+      {!refund && row("Pay by", fmtDateOrDash(r.due_date))}
+      {!refund && row("Event", eventCellText(labels.data, r.project_id))}
+      {row(refund ? "Reason" : "For", r.purpose)}
       {r.note && row("Note · 备注", r.note)}
-      {row("The bill", r.bill_no || r.bill_date || r.bill_total_sen != null ? billFactsLine({ billNo: r.bill_no, billDate: r.bill_date, totalSen: r.bill_total_sen }) : "— not read")}
+      {!refund && row("The bill", r.bill_no || r.bill_date || r.bill_total_sen != null ? billFactsLine({ billNo: r.bill_no, billDate: r.bill_date, totalSen: r.bill_total_sen }) : "— not read")}
       {r.project_id == null && r.no_event_reason && row("No event — why", r.no_event_reason)}
       {hasInstalments(r.family) && <BillInstalments family={r.family} currentId={r.id} />}
       {mayChange && mayBalance && (
@@ -251,15 +272,15 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
           )}
         </div>
       )}
-      {row("Payee's bank", [r.bank_name, r.bank_account_no, r.bank_account_name].filter(Boolean).join(" · ") || "—")}
+      {row(refund ? "Customer's bank" : "Payee's bank", [r.bank_name, r.bank_account_no, r.bank_account_name].filter(Boolean).join(" · ") || "—")}
       {row("Requested by", `${r.requested_by_name ?? "—"} · ${fmtDateOrDash(r.created_at)}`)}
       {r.voucher && row("Voucher", `${r.voucher.pvNumber ?? "Draft"}${r.voucher.postedAt ? ` · paid ${fmtDateOrDash(r.voucher.approvedAt ?? r.voucher.postedAt)}` : ""}${r.voucher.bankConfirmed ? " · bank ✓" : ""}`)}
       {r.invoice && row("AP invoice", `${answerText(r) ?? ""}${r.invoice.bankConfirmed ? " · bank ✓" : ""}`)}
 
-      <div className="sc-sl"><span className="t">The bill</span><span className="ln" /></div>
+      <div className="sc-sl"><span className="t">{refund ? "Files" : "The bill"}</span><span className="ln" /></div>
       {fileError && <div className="st-warn" role="alert">{fileError}</div>}
       {(files.data?.files ?? []).length === 0 && (
-        <Note>{r.parent_request_id ? `The bill is on ${r.family?.rootNo ?? "the first request"} — nothing to upload again.` : "No bill attached yet."}</Note>
+        <Note>{refund ? "No file — a refund request needs none." : r.parent_request_id ? `The bill is on ${r.family?.rootNo ?? "the first request"} — nothing to upload again.` : "No bill attached yet."}</Note>
       )}
       {(files.data?.files ?? []).map((f) => (
         <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "#fff", borderRadius: 10, fontSize: 12.5 }}>
@@ -369,7 +390,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
       const res = initial ? await update.mutateAsync({ id: initial.id, ...body }) : await create.mutateAsync(body);
       for (const f of files) {
         try {
-          await upload.mutateAsync({ id: res.request.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+          await upload.mutateAsync({ id: res.request.id, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
         } catch {
           /* The request stands; the detail screen says the bill is missing and takes it again. */
           break;
@@ -480,7 +501,7 @@ function BalanceScreen({ request, onBack, onDone }: { request: PaymentRequest; o
       });
       for (const f of files) {
         try {
-          await official.mutateAsync({ requestId: res.request.id, file: { name: f.name, mime: f.type || "application/pdf", dataBase64: await fileToBase64(f) } });
+          await official.mutateAsync({ requestId: res.request.id, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
         } catch { break; }
       }
       onDone(res.request.id);

@@ -45,6 +45,14 @@
 // words to Finance, the form's fifth step — kept on the request (note), carried
 // into the voucher's or AP invoice's Notes when Finance answers. Finance's own
 // words when it returns a request stay finance_note.
+//
+// A REFUND request (owner 2026-10-14: sales order 的 refund request 可以让他跑去
+// payment request … 我可能还会拒绝 … A，做) is raised by a Sales Order's Refund
+// button (routes/so-money-routes.ts, lib/refund-request.ts) — by anyone who may
+// work the order, a salesperson without the key included. So READING is open to
+// every caller who reaches this router, their own requests only (option A: 只看到
+// 自己的退款申请); raising one here still takes the key or Finance's. A refund
+// request is never edited and takes no balance; Finance's Return is its refusal.
 
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
@@ -71,11 +79,16 @@ type Row = Record<string, any>;
 export const paymentRequests = new Hono<{ Bindings: Env; Variables: Variables }>();
 paymentRequests.use('*', supabaseAuth);
 
-const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee_name, amount_sen, due_date, purpose, project_id, bank_name, bank_account_no, bank_account_name, status, pv_id, ap_invoice_id, finance_note, decided_by, decided_at, created_at, updated_at, bill_no, bill_date, bill_total_sen, event_bill, no_event_reason, parent_request_id, installment_no, pay_pct, note, checklist_item_id';
+const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee_name, amount_sen, due_date, purpose, project_id, bank_name, bank_account_no, bank_account_name, status, pv_id, ap_invoice_id, finance_note, decided_by, decided_at, created_at, updated_at, bill_no, bill_date, bill_total_sen, event_bill, no_event_reason, parent_request_id, installment_no, pay_pct, note, checklist_item_id, refund_source_type, refund_source_doc_no';
 const NO_PERM = { error: "You don't have permission to do that." };
 
 const mayRequest = (c: any): boolean => hasHouzsPerm(c, PAYMENT_REQUEST_KEY);
+/** Raises a request here — the key, or Finance's own. */
 const mayOpen = (c: any): boolean => mayRequest(c) || isRequestFinance(c);
+/** Reads and withdraws their OWN requests: anyone signed in (a salesperson's
+    refund request, owner 2026-10-14 option A); Finance reads all. */
+const mayRead = (c: any): boolean => mayOpen(c) || callerUserId(c) != null;
+const isRefundRequest = (r: Row): boolean => !!r.refund_source_doc_no;
 
 const text = (v: unknown): string | null => {
   const s = typeof v === 'string' ? v.trim() : '';
@@ -243,7 +256,7 @@ async function hasEventsOf(c: any): Promise<boolean> {
 
 /* ── GET / ─────────────────────────────────────────────────────────────────── */
 export const listPaymentRequestsHandler = async (c: any): Promise<Response> => {
-  if (!mayOpen(c)) return c.json(NO_PERM, 403);
+  if (!mayRead(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const finance = isRequestFinance(c);
@@ -260,7 +273,8 @@ export const listPaymentRequestsHandler = async (c: any): Promise<Response> => {
   if ('resp' in families) return families.resp;
   const matched = await withBillMatches(c, co.companyId, families.rows);
   if ('resp' in matched) return matched.resp;
-  return c.json({ requests: matched.rows, finance, hasEvents: await hasEventsOf(c) });
+  /* mayRaise: whether this caller may raise a request here (New request). */
+  return c.json({ requests: matched.rows, finance, mayRaise: mayOpen(c), hasEvents: await hasEventsOf(c) });
 };
 paymentRequests.get('/', listPaymentRequestsHandler);
 
@@ -334,6 +348,7 @@ export const PAYMENT_REQUEST_FILES: DocFilesSpec = {
   fkColumn: 'request_id',
   keyPrefix: 'payment-request-files',
   writePerms: [PAYMENT_REQUEST_KEY, 'scm.payment_voucher.create'],
+  scanKind: null,
   load: async (c: any) => {
     const found = await loadVisible(c, c.req.param('id'));
     if ('resp' in found) return found;
@@ -359,7 +374,7 @@ paymentRequests.delete('/:id/files/:fileId', deletePaymentRequestFileHandler);
 
 /* ── GET /:id ──────────────────────────────────────────────────────────────── */
 export const getPaymentRequestHandler = async (c: any): Promise<Response> => {
-  if (!mayOpen(c)) return c.json(NO_PERM, 403);
+  if (!mayRead(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const found = await loadVisible(c, c.req.param('id'));
@@ -497,6 +512,11 @@ export const updatePaymentRequestHandler = async (c: any): Promise<Response> => 
   if (Number(before.requested_by) !== callerUserId(c)) {
     return c.json({ error: 'not_yours', message: 'Only the person who asked can change a request — Finance returns it instead.' }, 403);
   }
+  /* A refund request (owner 2026-10-14) stands as it was sent: what it holds of
+     the order's money was checked when it was raised. */
+  if (isRefundRequest(before)) {
+    return c.json({ error: 'refund_request_fixed', message: `${before.request_no} is a refund on ${before.refund_source_doc_no} — it is not changed. ${before.status === 'SUBMITTED' ? 'Withdraw it and send' : 'Send'} a new one from the order.` }, 409);
+  }
   if (!requesterMayChange(String(before.status))) {
     return c.json({ error: 'request_locked', message: `${before.request_no} is ${before.status === 'WITHDRAWN' ? 'withdrawn' : 'answered by Finance'} — it can no longer change.` }, 409);
   }
@@ -561,6 +581,9 @@ export const requestBalanceHandler = async (c: any): Promise<Response> => {
   if (me == null) return c.json({ error: 'no_user', message: 'Sign in again — the request needs to know who is asking.' }, 409);
   const found = await loadVisible(c, c.req.param('id'));
   if ('resp' in found) return found.resp;
+  if (isRefundRequest(found.req)) {
+    return c.json({ error: 'refund_no_balance', message: `${found.req.request_no} is a refund on ${found.req.refund_source_doc_no} — a refund takes no balance; send another from the order.` }, 409);
+  }
   const sb = c.get('supabase');
   const rootId = familyRootId(found.req);
   let root = found.req;
@@ -642,7 +665,7 @@ paymentRequests.post('/:id/official-doc', uploadOfficialDocHandler);
 
 /* ── POST /:id/withdraw ────────────────────────────────────────────────────── */
 export const withdrawPaymentRequestHandler = async (c: any): Promise<Response> => {
-  if (!mayOpen(c)) return c.json(NO_PERM, 403);
+  if (!mayRead(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const found = await loadVisible(c, c.req.param('id'));

@@ -42,6 +42,9 @@ export type OpenPoLine = {
   // Code of the warehouse the line ships into (line, else PO header), e.g.
   // "SRW WAREHOUSE". Null when the PO names none.
   locationCode: string | null;
+  // The line's spec as the PO page prints it ("PC151-01 / DIVAN 8\" + LEG 2\" /
+  // GAP 11\""), split on " / ". Breaks a tie between same-code lines (DEV-68).
+  description2?: string | null;
 };
 
 // A supplier_material_bindings row, narrowed to the mapping this matcher needs:
@@ -132,10 +135,11 @@ export function normalizeSupplierName(v: string | null | undefined): string {
 
 /**
  * Resolve a printed PO number to ONE of `pos`, or null. Exact (normalised)
- * first. Suppliers also print our number without the company prefix
- * ("PO-2609-223", "2609-251", "PO-010080" for HC-PO-...), so a unique tail match
- * counts too when `allowTail`, and only with at least 6 digits: a bare "251"
- * never matches. More than one candidate is null, never guessed.
+ * first, then our whole number behind a label ("PO-HC-PO-2609-169"). Suppliers
+ * also print our number without the company prefix ("PO-2609-223", "2609-251",
+ * "PO-010080" for HC-PO-...), so a unique tail match counts too when
+ * `allowTail`, and only with at least 6 digits: a bare "251" never matches.
+ * More than one candidate is null, never guessed.
  */
 export function resolvePrintedPo<T extends { poNumber: string }>(
   printed: string | null | undefined,
@@ -150,6 +154,13 @@ export function resolvePrintedPo<T extends { poNumber: string }>(
   };
   const exact = pos.filter((r) => normalizeCode(r.poNumber) === p);
   if (exact.length > 0) return unique(exact);
+  // Our whole number behind a printed label ("PO-HC-PO-2609-169", BUG-108) is
+  // as certain as exact: the company prefix is part of what matched.
+  const labelled = pos.filter((r) => {
+    const n = normalizeCode(r.poNumber);
+    return n.length > 0 && p.endsWith(n);
+  });
+  if (labelled.length > 0) return unique(labelled);
   if (!allowTail || (p.match(/\d/g)?.length ?? 0) < 6) return null;
   return unique(pos.filter((r) => normalizeCode(r.poNumber).endsWith(p)));
 }
@@ -328,12 +339,12 @@ export function matchGrnScanToPoLines(
       unmatched.push({ line: sl, reason: 'no_open_po_line', candidatePoItemIds: [] });
       continue;
     }
-    if (hitList.length > 1) {
+    const hit = hitList.length === 1 ? hitList[0] : pickBySpec(sl.description, hitList);
+    if (!hit) {
       // Ambiguous — refuse to guess which PO line this delivery row clears.
       unmatched.push({ line: sl, reason: 'ambiguous', candidatePoItemIds: hitList.map((l) => l.poItemId) });
       continue;
     }
-    const hit = hitList[0];
     const remaining = remainingById.get(hit.poItemId) ?? 0;
     if (remaining <= 0) {
       unmatched.push({ line: sl, reason: 'nothing_remaining', candidatePoItemIds: [hit.poItemId] });
@@ -418,6 +429,25 @@ const PO_STATUS_WHY: Record<string, string> = {
 };
 
 // Why a printed PO is not one we can receive against, from its live status.
+// Same item code on several PO lines (DEV-68: HC-PO-2609-320 holds HOK-1013-(Q)
+// in fabric PC151-01 AND PC151-02). Score each line by how many of its spec
+// segments that the OTHER candidates lack are printed on the delivery row,
+// whole words only ("GAP 1" never matches "GAP 11"). One clear top score wins;
+// a tie or no spec on the row stays null, never guessed.
+// ponytail: segment counting, not a spec parser; tighten if a wrong pick shows up.
+export function pickBySpec(printed: string | null | undefined, hits: OpenPoLine[]): OpenPoLine | null {
+  const words = (s: string): string => ` ${s.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean).join(' ')} `;
+  const row = words(printed ?? '');
+  if (row.trim() === '') return null;
+  const segs = hits.map((h) => [...new Set((h.description2 ?? '').split(' / ').map(words).filter((w) => w.trim() !== ''))]);
+  const scores = segs.map((mine) => mine
+    .filter((s) => !segs.every((other) => other.includes(s))) // only what tells the lines apart
+    .filter((s) => row.includes(s)).length);
+  const top = Math.max(...scores);
+  if (top <= 0 || scores.filter((s) => s === top).length > 1) return null;
+  return hits[scores.indexOf(top)];
+}
+
 function poNotOpenWhy(l: ScannedGrnLine, allPos: PoStatusRef[]): string {
   const po = resolvePrintedPo(l.poNo, allPos, true);
   if (!po) return `PO ${l.poNo ?? '?'} is not one of our POs`;

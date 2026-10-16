@@ -17,7 +17,7 @@ import { bookSpellingOrOwn, resolveAcAgent } from "../services/autocount-writeba
 import { soTownLines } from "../services/autocount-address-fit";
 import { summariseReadiness } from "../scm/lib/so-readiness";
 import { SO_DELIVERED_OR_BEYOND } from "../scm/shared/so-deliverable-states";
-import { canonicalizeMyState } from "../scm/lib/canonical-state";
+import { canonicalizeMyState, isCanonicalMyState } from "../scm/lib/canonical-state";
 
 /** One head row, as the feed SQL below returns it. Every date is `::text`
  *  because postgres.js leaves `date` columns as strings but turns
@@ -400,10 +400,27 @@ export function resolveSheetRemark2(remark2Header: string | null, lines: Readonl
   return header && !isSheetReady(header) && derived && isSheetReady(derived) ? derived : (header ?? derived);
 }
 
+/** Address lines 3 / 4 for the SHEET, whose Address 4 is the STATE column the
+ *  dispatch team filters on. An imported order's four lines are the account
+ *  book's 40-character wrap of one address, so line 4 can be a leftover
+ *  ("Jaya Selangor" on SO-010791, the tail of "47820 Petaling Jaya Selangor")
+ *  while the order's own state field is right. When line 4 is not a state and
+ *  the state field is, the leftover rejoins line 3 and the state takes line 4.
+ *  A line 4 that IS a state is left alone even where it differs from the field. */
+export function sheetTownLines(addr3: string | null, rawAddr4: string | null, customerState: string | null): [string | null, string | null] {
+  const line4 = blankToNull(rawAddr4);
+  const state = blankToNull(customerState);
+  const isState = (v: string) => isCanonicalMyState(canonicalizeMyState(v));
+  if (line4 && state && !isState(line4) && isState(state)) {
+    return [[blankToNull(addr3), line4].filter(Boolean).join(" "), sheetStateSpelling(state)];
+  }
+  return [addr3, sheetStateSpelling(rawAddr4)];
+}
+
 export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow>): DeliverySheetRecord {
   const salesLocation = bookSpellingOrOwn(row.sales_location, LOCATION_MAP);
-  const [addr3, rawAddr4] = soTownLines(row);
-  const addr4 = sheetStateSpelling(rawAddr4);
+  const [townLine, rawAddr4] = soTownLines(row);
+  const [addr3, addr4] = sheetTownLines(townLine, rawAddr4, row.customer_state);
   const remark2 = resolveSheetRemark2(row.remark2, lines);
   return {
     DocNo: row.linked_ac_docno ?? row.doc_no,

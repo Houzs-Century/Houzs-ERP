@@ -200,8 +200,9 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
   const eventErr = await unknownEventRefusal(c, built.lines.map((l) => l.projectId));
   if (eventErr) return eventErr;
   /* 申请付款 answered by a bill (owner 2026-09-30, 6.1): the request must still
-     be waiting — one with a live voucher or AP invoice is refused by name. */
-  const prq = await paymentRequestLinkGuard(c, body.paymentRequestId);
+     be waiting — one with a live voucher or AP invoice is refused by name, and
+     a refund request takes a refund voucher, never a bill. */
+  const prq = await paymentRequestLinkGuard(c, body.paymentRequestId, { kind: 'API' });
   if ('resp' in prq) return prq.resp;
 
   const sb = c.get('supabase');

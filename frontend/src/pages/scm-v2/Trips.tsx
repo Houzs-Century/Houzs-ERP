@@ -33,6 +33,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useRef, useState } from 'react';
+import { JobDetailPanel, panelTargetOf, rowDocumentPath, type JobPanelTarget } from '../../components/scm-v2/JobDetailPanel';
 import { useNavigate } from 'react-router-dom';
 import { Route as RouteIcon, MapPin, CalendarClock, CalendarCheck, Wand2, Map as MapIcon } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
@@ -64,6 +65,7 @@ import {
 import {
   useDeliveryPlanning,
   useScheduleDelivery,
+  useUpdateDeliveryFields,
   timeArrangementOf,
   ARRANGEMENT_STAGE_LABEL,
   type TimeArrangement,
@@ -122,6 +124,8 @@ const etaLabel = (s: number | null | undefined): string => {
 
 export function Trips() {
   const navigate = useNavigate();
+  // Single click opens the job panel; double click goes to the document.
+  const [jobPanel, setJobPanel] = useState<JobPanelTarget | null>(null);
   const notify = useNotify();
   const askConfirm = useConfirm();
 
@@ -158,6 +162,7 @@ export function Trips() {
   /* Shared write path + option lists for the board's inline cells + bulk bar
      (the manual crew path stays on the board everywhere). */
   const sched = useScheduleDelivery();
+  const updateFields = useUpdateDeliveryFields();
   const { data: drivers = [] } = useDrivers();
   const { data: lorries = [] } = useLorries();
 
@@ -328,6 +333,12 @@ export function Trips() {
           legDistanceM: s.legDistanceM ?? undefined,
           legDurationS: s.legDurationS ?? undefined,
         });
+        /* The estimated window becomes the order's Time Slot (what Delivery Planning
+           and the driver's phone show) unless someone already typed one. */
+        const est = estWindowOf(s);
+        if (est && !pendingOrders.find((o) => o.so_doc_no === s.ref)?.time_range) {
+          await updateFields.mutateAsync({ type: 'so', id: s.ref, timeRange: est });
+        }
         ok += 1;
       } catch { failed += 1; }
     }
@@ -463,6 +474,7 @@ export function Trips() {
         )}
       </div>
 
+      <JobDetailPanel target={jobPanel} onClose={() => setJobPanel(null)} />
       <DeliveryPlanningBoard
         orders={boardRows}
         counts={pending.data?.counts ?? {}}
@@ -494,7 +506,7 @@ export function Trips() {
            Columns-panel choice turns it off) + two-way linkage (Option B). */
         visibleColumnsOverride={mapOpen && mapCompact ? MAP_ESSENTIAL_COLUMNS_TIME : null}
         onUserAdjustColumns={() => { if (mapOpen && mapCompact) setMapCompact(false); }}
-        onRowClick={(o) => { if (mapOpen && o.row_type === 'so') setSelectedPin(o.so_doc_no); }}
+        onRowClick={(o) => { if (mapOpen && o.row_type === 'so') setSelectedPin(o.so_doc_no); setJobPanel(panelTargetOf(o)); }}
         scrollToRow={scrollTo}
         /* Default queue order on entry (owner 2026-08-07/08): arranged date
            OLDEST first, then state, then postcode, then run time. A clicked
@@ -503,7 +515,7 @@ export function Trips() {
         emptyMessage={timeSide === 'PENDING_TIME'
           ? 'No date-confirmed orders waiting for a time — confirm dates in Delivery Date Arrangement.'
           : 'No orders on a trip yet.'}
-        onRowDoubleClick={(o) => { if (o.row_type === 'so') navigate('/scm/sales-orders/' + o.so_doc_no); }}
+        onRowDoubleClick={(o) => { const to = rowDocumentPath(o); if (to) navigate(to); else setJobPanel(panelTargetOf(o)); }}
         bulkExtras={
           <>
             {/* Depart time for the proposed sequences — the one genuine input. */}

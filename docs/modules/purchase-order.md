@@ -16,7 +16,7 @@ A PO moves NO inventory at any status; stock IN happens at GRN post. What it mov
 - Hold `PATCH /:id/hold` (shared `document-hold-routes.ts`): sets the marker `on_hold / hold_reason / held_at / held_by`; status is unchanged. List shows real pill + Hold chip; On Hold tab reads the flag.
 - No document-level delete. CANCELLED is terminal (reopen aside). Line delete and allocation delete still exist.
 - List tabs (`lib/po-status-buckets.ts`): draft, open (SUBMITTED), partial, received, cancelled, on_hold, and `outstanding` = SUBMITTED + PARTIALLY_RECEIVED — a roll-up that overlaps open + partial, so tab counts do not sum to all.
-- Revisions: a PO is revised IN PLACE — `revision` bumps, prior version snapshotted to `scm.po_revisions`; number shows as `<po_number>_R<revision-1>` (`poDisplayNumber`) on screen and print. Two engines: `reviseBoundPo` (SO-amendment follow-up, lines re-derived by `rederivePoLineFromSoLine`) and `applyPoAmendment` (`/po-amendments` router).
+- Revisions: a PO is revised IN PLACE — `revision` bumps, prior version snapshotted to `scm.po_revisions`; number shows as `<po_number>_R<revision-1>` (`poDisplayNumber`) on screen and print. Two engines: `reviseBoundPo` (SO-amendment follow-up, lines re-derived by `rederivePoLineFromSoLine`; the unit cost re-derives only when the line's code or variants move, otherwise the PO's own price is kept) and `applyPoAmendment` (`/po-amendments` router).
 - Pre-DO, every PO <-> SO pairing is floating (MRP pooled allocator); `so_item_id` and allocation slices are procurement PROVENANCE. At DO creation the live allocator (`do-live-allocator.ts`) binds `committed_po_batch_no`; post-DO records are anchored history.
 
 ## Permissions
@@ -34,6 +34,7 @@ A PO moves NO inventory at any status; stock IN happens at GRN post. What it mov
 Locks and required fields
 - Any non-cancelled GRN on the PO -> header PATCH, line add/edit/delete and cancel all 409 (`poHasDownstream`, `lib/downstream-lock.ts`); convert-to-GRN stays allowed. Same rule AutoCount applies to transferred documents.
 - UI lock `purchaseOrderLinesLocked` (`vendor/scm/lib/line-add-lock.ts`): editable only in DRAFT / SUBMITTED / PARTIALLY_RECEIVED with no children; used by desktop editor and phone — never inline a copy.
+- `POST /bulk-supplier-date` never overwrites a filled Supplier Date 2-4 (`pickSupplierDateSlot`); `slot: 'next'` takes each PO's first empty slot. The header PATCH is the correction path; line import and delivery-sheet sync are not gated.
 - Create requires `supplierId` and `purchaseLocationId` (400); `expectedAt` blank defaults to today (MYT).
 - No PO may reach SUBMITTED (confirm, reopen) while header `purchase_location_id` is blank and any line lacks `warehouse_id`.
 - Send-to-supplier refused for DRAFT and CANCELLED (`poSendRefusalForStatus`); re-send is allowed, with a 60 s double-click window.

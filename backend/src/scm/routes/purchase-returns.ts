@@ -118,7 +118,7 @@ async function recomputePrTotals(sb: any, prId: string) {
    released back to a GRN line. base = qty_accepted (you can return up to what
    was accepted); remaining = qty_accepted - returned_qty. Mirrors
    adjustGrnInvoicedQty in purchase-invoices.ts. */
-async function adjustGrnReturnedQty(sb: any, grnItemId: string, _delta?: number) {
+export async function adjustGrnReturnedQty(sb: any, grnItemId: string, _delta?: number) {
   if (!grnItemId) return;
   /* RECOUNT-from-live (Wei Siang 2026-06-03 audit fix) — returned_qty is the SUM
      of qty_returned across LIVE (non-cancelled) purchase_return_items for this GRN
@@ -155,14 +155,20 @@ async function adjustGrnReturnedQty(sb: any, grnItemId: string, _delta?: number)
        reads as "no return here is cancelled", so a cancelled PR's qty is counted
        as still returned and the GRN line stays consumed against a return that
        was voided. */
-    const { data: prs, error: prsErr } = await sb.from('purchase_returns').select('id, status').in('id', prIds);
+    const { data: prs, error: prsErr } = await sb.from('purchase_returns').select('id, status, kind').in('id', prIds);
     if (prsErr) {
       /* eslint-disable-next-line no-console */
       console.error('[adjustGrnReturnedQty] PR status read failed — returned_qty left unchanged:', grnItemId, prsErr.message);
       return;
     }
-    for (const p of (prs ?? []) as Array<{ id: string; status: string }>) {
-      if ((p.status ?? '').toUpperCase() === 'CANCELLED') cancelled.add(p.id);
+    /* A REPAIR return keeps the goods on the books (they move to the repair
+       warehouse and come back), so it does not consume the receipt: counting it
+       re-opened the PO as unreceived while the unit sat in KL SERVICE
+       (2990-PRT-2610-001 / 2990-PO-2607-018). Only a CREDIT return does.
+       ponytail: a REPAIR line no longer shrinks the returnable pool either, so
+       the same unit could be raised twice; cap repairs on their own if that bites. */
+    for (const p of (prs ?? []) as Array<{ id: string; status: string; kind: string | null }>) {
+      if ((p.status ?? '').toUpperCase() === 'CANCELLED' || p.kind === 'REPAIR') cancelled.add(p.id);
     }
   }
   let returned = 0;

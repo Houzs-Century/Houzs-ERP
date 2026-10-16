@@ -21,6 +21,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState, useEffect, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useUpdateTrip } from '../lib/trips-queries';
 import { buildVariantSummary, fmtSen, fmtDate, fmtDateOrDash, fmtDateTime } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
 import { DataGridCompat, type GridColumn, type GridContextMenuItem } from '../../../components/DataGridCompat';
@@ -309,7 +310,7 @@ function DeliveryDateEditCell({ order, sched }: { order: PlanningOrder; sched: S
 /* Amend Reason inline editor (owner 2026-09-22) — pick a preset reason or keep a
    free-text one. SO rows only; writes amend_reason via useUpdateDeliveryFields. */
 function AmendReasonEditCell({ order, updateFields }: { order: PlanningOrder; updateFields: UpdateFieldsMutation }) {
-  if (isAssr(order) || isDp(order) || isProject(order)) return <NotApplicable />;
+  if (isAssr(order) || (isDp(order) && !order.trip_id) || isProject(order)) return <NotApplicable />;
   const current = order.amend_reason ?? '';
   return (
     <select
@@ -383,7 +384,7 @@ function DriverPickCell({ order, drivers, sched, writeSeat, pending }: {
   const chosen = crewComboValue(items, currentName);
   const [val, setVal] = useState(chosen);
   useEffect(() => { setVal(chosen); }, [chosen]);
-  if (isDp(order)) return <NotApplicable />;
+  if (isDp(order) && !order.trip_id) return <NotApplicable />;
   if (isProject(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.driver_1_name || '—'}</span>;
   const assrLeg = isAssr(order);
   return (
@@ -418,8 +419,8 @@ function LorryPickCell({ order, lorries, sched, writeSeat, pending }: {
   const chosen = crewComboValue(items, currentPlate);
   const [val, setVal] = useState(chosen);
   useEffect(() => { setVal(chosen); }, [chosen]);
-  if (isDp(order)) return <NotApplicable />;
-  if (isProject(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.lorry_plate || '—'}</span>;
+  if (isDp(order) && !order.trip_id) return <NotApplicable />;
+  if (isProject(order) || isDp(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.lorry_plate || '—'}</span>;
   const assrLeg = isAssr(order);
   return (
     <span {...stopRow} style={{ display: 'inline-flex', minWidth: 150 }}>
@@ -758,10 +759,18 @@ export function DeliveryPlanningBoard({
      the store the board reads and the one that captures the driver's IC/contact.
      Helpers are fetched here (like updateFields) rather than threaded as a prop. */
   const assignCrew = useAssignDoCrew();
+  const updateTrip = useUpdateTrip();
   const helpers = useHelpers().data ?? [];
   /* One inline pick → one seat on the row's latest DO; the backend keeps the
      other seats. No DO yet → nothing to write, so say so and leave the picker. */
   const writeCrewSeat: CrewSeatWrite = (order, seat) => {
+    /* A DP job has no DO: its crew IS its run's crew (the server copies it to
+       the run's DOs, and the driver's phone follows the run). */
+    if (isDp(order) && order.trip_id) {
+      updateTrip.mutate({ id: order.trip_id, ...(seat.driver1Id !== undefined ? { driverId: seat.driver1Id } : {}),
+        ...(seat.helper1Id !== undefined ? { helper1Id: seat.helper1Id } : {}), ...(seat.helper2Id !== undefined ? { helper2Id: seat.helper2Id } : {}) });
+      return true;
+    }
     const doId = latestDoId(order.delivery_orders);
     if (!doId) {
       void notify({ title: 'Create a delivery order first', body: 'This order has no delivery order yet, so crew cannot be saved. Create a DO first.' });
@@ -770,7 +779,7 @@ export function DeliveryPlanningBoard({
     assignCrew.mutate({ doId, ...seat });
     return true;
   };
-  const crewPending = assignCrew.isPending || sched.isPending;
+  const crewPending = assignCrew.isPending || sched.isPending || updateTrip.isPending;
   /* Manual colour marks (owner 2026-09-26): a Map<rowKey, colour token>, painted
      from the row context menu on the main page and tinted onto the row below. */
   const rowMarks = useDeliveryRowMarks().data;
@@ -812,82 +821,6 @@ export function DeliveryPlanningBoard({
     return split;
   }, [orders]);
 
-  /* ── Bulk-edit bar state ────────────────────────────────────────────────────
-     One field at a time: Status | Delivery date | Driver | Lorry. The second
-     control's TYPE depends on the chosen field; `bulkValue` holds its raw value
-     (state code / YYYY-MM-DD / driver id / lorry id). Apply fans out one
-     useScheduleDelivery call per selected SO (capped concurrency), then clears
-     the selection and reports a summary via the in-app NotifyDialog. */
-  type BulkField = 'STATUS' | 'DATE' | 'DRIVER' | 'LORRY';
-  const [bulkField, setBulkField] = useState<BulkField>('STATUS');
-  const [bulkValue, setBulkValue] = useState<string>('');
-  const [bulkBusy, setBulkBusy] = useState(false);
-
-  /* Reset the value control whenever the field type changes (a date value makes
-     no sense once the field is Driver, etc.). */
-  const changeBulkField = (f: BulkField) => { setBulkField(f); setBulkValue(''); };
-
-  const applyBulk = async () => {
-    const docNos = selectedSoDocNos();
-    if (docNos.length === 0 || bulkBusy) return;
-
-    /* Build the single-field patch + a human label for the confirm/summary. */
-    const patch: Partial<Parameters<typeof sched.mutateAsync>[0]> = {};
-    let valueLabel = '';
-    if (bulkField === 'STATUS') {
-      if (!bulkValue) return;
-      patch.deliveryState = bulkValue as DeliveryState;
-      valueLabel = DELIVERY_STATE_LABEL[bulkValue as DeliveryState];
-    } else if (bulkField === 'DATE') {
-      patch.scheduleDate = bulkValue || null;   // empty → clear the amended date
-      valueLabel = bulkValue || '(cleared)';
-    } else if (bulkField === 'DRIVER') {
-      patch.driverId = bulkValue || null;
-      patch.driverNameOptimistic = bulkValue ? (drivers.find((d) => d.id === bulkValue)?.name ?? null) : null;
-      valueLabel = bulkValue ? (drivers.find((d) => d.id === bulkValue)?.name ?? bulkValue) : '(none)';
-    } else {
-      patch.lorryId = bulkValue || null;
-      patch.lorryPlateOptimistic = bulkValue ? (lorries.find((l) => l.id === bulkValue)?.plate ?? null) : null;
-      valueLabel = bulkValue ? (lorries.find((l) => l.id === bulkValue)?.plate ?? bulkValue) : '(none)';
-    }
-
-    const fieldLabel = bulkField === 'STATUS' ? 'Status' : bulkField === 'DATE' ? 'Delivery date' : bulkField === 'DRIVER' ? 'Driver' : 'Lorry';
-    if (!(await askConfirm({
-      title: `Set ${fieldLabel} on ${docNos.length} order${docNos.length === 1 ? '' : 's'}?`,
-      body: `${fieldLabel} → ${valueLabel} will be applied to every selected order.`,
-      confirmLabel: `Apply to ${docNos.length}`,
-    }))) return;
-
-    setBulkBusy(true);
-    let ok = 0;
-    const failed: string[] = [];
-    const LIMIT = 4;
-    try {
-      for (let i = 0; i < docNos.length; i += LIMIT) {
-        const batch = docNos.slice(i, i + LIMIT);
-        await Promise.all(batch.map(async (docNo) => {
-          try {
-            await sched.mutateAsync({ type: 'so', id: docNo, ...patch });
-            ok += 1;
-          } catch (e) {
-            failed.push(`${docNo} (${e instanceof Error ? e.message : 'Something went wrong.'})`);
-          }
-        }));
-      }
-    } finally {
-      setBulkBusy(false);
-    }
-    onClearSelection();
-    setBulkValue('');
-    const parts = [`${fieldLabel} set to ${valueLabel} on ${ok} order${ok === 1 ? '' : 's'}.`];
-    if (failed.length > 0) parts.push(`Failed ${failed.length}: ${failed.join('; ')}.`);
-    notify({
-      title: failed.length > 0 ? 'Bulk update finished with errors' : 'Bulk update complete',
-      body: parts.join(' '),
-      tone: failed.length > 0 ? 'error' : 'info',
-    });
-  };
-
   const columns = useMemo<GridColumn<PlanningOrder>[]>(() => {
     /* The DEFAULT header order (owner 2026-07-22 header tidy): identity →
        status → dates → fleet → documents → money, with every default-hidden
@@ -909,7 +842,7 @@ export function DeliveryPlanningBoard({
       'total_amount', 'balance_sen', 'stock_remark',
       // The delivery dates and the amend conversation
       'processing_date', 'customer_delivery_date', 'amended_delivery_date',
-      'amend_date_from_customer', 'amend_reason', 'time_confirmed',
+      'amend_date_from_customer', 'amend_reason_from_customer', 'amend_reason', 'time_confirmed',
       // Customer / house detail, then the address block
       'house_type', 'replacement_disposal', 'disposal_request',
       'po_nos', 'address', 'postcode', 'region',
@@ -1119,11 +1052,15 @@ export function DeliveryPlanningBoard({
       filterType: 'date', dateValue: (o) => (o.row_type !== 'so' ? null : o.processing_date),
     },
     {
-      key: 'customer_delivery_date', label: 'Expected Delivery Date', width: 150, sortable: true,
-      accessor: (o) => detail(fmtDateOrDash(o.customer_delivery_date)),
-      searchValue: (o) => o.customer_delivery_date ?? '',
-      sortFn: (a, b) => String(a.customer_delivery_date ?? '').localeCompare(String(b.customer_delivery_date ?? '')),
-      filterType: 'date', dateValue: (o) => o.customer_delivery_date,
+      /* BUG-51 repoint (owner 2026-10-15): the REAL AutoCount sales-exemption
+         expiry, not the customer delivery date. SO rows only; blank off-book and
+         on synthetic rows. Grid key kept as customer_delivery_date so saved
+         layouts keep the column. */
+      key: 'customer_delivery_date', label: 'Sales Exemption Expiry Date', width: 170, sortable: true,
+      accessor: (o) => detail(fmtDateOrDash(o.ac_sales_exemption_expiry)),
+      searchValue: (o) => o.ac_sales_exemption_expiry ?? '',
+      sortFn: (a, b) => String(a.ac_sales_exemption_expiry ?? '').localeCompare(String(b.ac_sales_exemption_expiry ?? '')),
+      filterType: 'date', dateValue: (o) => o.ac_sales_exemption_expiry,
     },
     /* Amendment dates (migration 0199). "Amended" (the date WE confirmed / the
        proposed delivery date) default-SHOWS — it's the firm date the board commits
@@ -1143,8 +1080,18 @@ export function DeliveryPlanningBoard({
       sortFn: (a, b) => String(a.amend_date_from_customer ?? '').localeCompare(String(b.amend_date_from_customer ?? '')),
       filterType: 'date', dateValue: (o) => o.amend_date_from_customer,
     },
-    /* HC "Amend Client Date Reason" (migration 0201) — free-text reason paired
-       with the amend dates above. default-HIDES (off in the Columns menu). */
+    /* The customer's own reason for asking to move the date — what they tapped
+       in the WhatsApp amend flow. Read-only: /api/chat-callback writes it. */
+    {
+      key: 'amend_reason_from_customer', label: 'Customer Amend Reason', width: 170,
+      accessor: (o) => detail(o.amend_reason_from_customer || '—'),
+      searchValue: (o) => o.amend_reason_from_customer ?? '',
+      exportValue: (o) => o.amend_reason_from_customer ?? '',
+    },
+    /* HC "Amend Client Date Reason" (migration 0201) — OUR reason for moving
+       the date: a preset from AMEND_REASONS (or free text), chosen by staff
+       and printed by the Postpone notice after "due to". A customer's tap
+       never writes here (it has its own column above). */
     {
       key: 'amend_reason', label: 'Amend Reason', width: 220,
       accessor: (o) => <AmendReasonEditCell order={o} updateFields={updateFields} />,
@@ -1558,83 +1505,6 @@ export function DeliveryPlanningBoard({
       {selectedKeys.size > 0 && (
         <div className={styles.bulkBar}>
           <span className={styles.bulkCount}>{selectedKeys.size} selected</span>
-          <span className={styles.bulkSep}>·</span>
-          <span className={styles.bulkLabel}>Set</span>
-          <select
-            className={styles.bulkControl}
-            style={{ minWidth: 130 }}
-            value={bulkField}
-            disabled={bulkBusy}
-            onChange={(e) => changeBulkField(e.target.value as typeof bulkField)}
-            aria-label="Bulk-edit field"
-          >
-            <option value="STATUS">Status</option>
-            <option value="DATE">Delivery date</option>
-            <option value="DRIVER">Driver</option>
-            <option value="LORRY">Lorry</option>
-          </select>
-          <span className={styles.bulkLabel}>&rarr;</span>
-          {/* Value control — type depends on the field. */}
-          {bulkField === 'STATUS' && (
-            <select
-              className={styles.bulkControl}
-              value={bulkValue}
-              disabled={bulkBusy}
-              onChange={(e) => setBulkValue(e.target.value)}
-              aria-label="New status"
-            >
-              <option value="">Choose status…</option>
-              {DELIVERY_STATES.map((s) => (
-                <option key={s} value={s}>{DELIVERY_STATE_LABEL[s]}</option>
-              ))}
-            </select>
-          )}
-          {bulkField === 'DATE' && (
-            <DateField
-              fullWidth
-              className={styles.bulkControl}
-              value={bulkValue}
-              disabled={bulkBusy}
-              onChange={(iso) => setBulkValue(iso)}
-              aria-label="New delivery date"
-            />
-          )}
-          {bulkField === 'DRIVER' && (
-            <select
-              className={styles.bulkControl}
-              value={bulkValue}
-              disabled={bulkBusy}
-              onChange={(e) => setBulkValue(e.target.value)}
-              aria-label="New driver"
-            >
-              <option value="">Unassign / choose driver…</option>
-              {drivers.map((d) => (
-                <option key={d.id} value={d.id}>{d.name}</option>
-              ))}
-            </select>
-          )}
-          {bulkField === 'LORRY' && (
-            <select
-              className={styles.bulkControl}
-              value={bulkValue}
-              disabled={bulkBusy}
-              onChange={(e) => setBulkValue(e.target.value)}
-              aria-label="New lorry"
-            >
-              <option value="">Unassign / choose lorry…</option>
-              {lorries.map((l) => (
-                <option key={l.id} value={l.id}>{l.plate}</option>
-              ))}
-            </select>
-          )}
-          <Button
-            variant="primary"
-            disabled={bulkBusy || (bulkField === 'STATUS' && !bulkValue)}
-            onClick={() => void applyBulk()}
-          >
-            {bulkBusy ? 'Applying…' : 'Apply'}
-          </Button>
-
           {/* Colour marks (owner 2026-09-26): paint every selected row a palette
               colour, or clear it. Shared with the per-row right-click palette. */}
           <span className={styles.bulkSep}>·</span>

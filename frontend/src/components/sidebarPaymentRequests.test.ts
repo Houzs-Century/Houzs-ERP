@@ -54,4 +54,13 @@ describe("Payment Requests in the sidebar", () => {
     expect(owner).toHaveLength(1);
     expect(owner[0]?.badge).toBe("payment-requests-waiting");
   });
+
+  /* Option A (owner 2026-10-14): the refund a salesperson asks for from a Sales
+     Order is a request of their own, read on this page without the key. */
+  it("a salesperson without the key sees the Workspace entry; someone else without it does not", () => {
+    const rep = { ...person([]), position_name: "Sales Executive", department_name: "Sales Department" } as AuthUser;
+    expect(paymentRequestEntries(rep)).toEqual([{ section: "workspace", badge: undefined }]);
+    const warehouse = { ...person(["scm.access"]), position_name: "Storekeeper", department_name: "Warehouse" } as AuthUser;
+    expect(paymentRequestEntries(warehouse)).toEqual([]);
+  });
 });

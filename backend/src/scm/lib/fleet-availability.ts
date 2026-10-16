@@ -21,6 +21,7 @@ import {
   canDispatch,
   currentDocsByType,
   VEHICLE_STATUS_LABELS,
+  COMPLIANCE_DOC_TYPES,
   type ComplianceDocType,
   type ComplianceDocInput,
   type PuspakomResult,
@@ -171,7 +172,7 @@ export async function loadAvailableLorries(
       issueDate: iso(dual(d, 'issueDate', 'issue_date')),
     })));
     const statusDocs: ComplianceDocInput[] = [];
-    for (const type of ['PUSPAKOM', 'ROAD_TAX', 'INSURANCE', 'APAD', 'CROSS_BORDER'] as ComplianceDocType[]) {
+    for (const type of COMPLIANCE_DOC_TYPES) {
       const picked = currentVault.get(type);
       if (picked) {
         const full = vaultRows.find((d) =>

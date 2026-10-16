@@ -54,6 +54,9 @@ export interface Column<T, L = never> {
   filterCounts?: readonly (readonly [string, number])[];
   /** How the filter menu shows a value (e.g. 2026-09-22 -> 22/09/2026). */
   filterLabel?: (value: string) => string;
+  /** A date column whose filter menu lists values newest first and labels its
+   *  sorts "Oldest → Newest" / "Newest → Oldest". Values must be ISO dates. */
+  newestFirst?: boolean;
   /** Excluded from the column chooser AND pinned to the front (unreorderable). */
   alwaysVisible?: boolean;
   /** Opt-out of sort for columns that have getValue but aren't meaningfully

@@ -13,6 +13,11 @@
 //     an AP invoice (AP Invoices, ?fromRequest=) — the bill booked first, paid
 //     later by an AP Payment (owner 2026-09-30, 6.1). Either carries the bill
 //     across and reads it on opening (6.2). Or Finance returns it with the why.
+//   • A REFUND request (owner 2026-10-14) is raised by a Sales Order's Refund
+//     button — by a salesperson too, who holds no key and reads only their own
+//     here (option A: no New request for them). Finance approves it with a
+//     Customer Refund on that order (PV New ?type=refund&fromRequest=) or
+//     rejects it (the Return, worded as such); it is never edited.
 // The stage is the server's reading of that document, never a field typed here.
 // ----------------------------------------------------------------------------
 
@@ -21,8 +26,8 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
-  STAGE, answerText, awaitsFinance, billMatchText, fetchPaymentRequestFileBlobUrl, financeWorking, hasInstalments, mayAskBalance, pctOf, requestPaid, useDeletePaymentRequestFile,
-  usePaymentRequest, usePaymentRequestFiles, usePaymentRequests, useRequestBalance, useReturnPaymentRequest,
+  STAGE, answerText, awaitsFinance, billMatchText, fetchPaymentRequestFileBlobUrl, financeWorking, hasInstalments, isRefundRequest, makeVoucherHref, mayAskBalance, pctOf, requestPaid,
+  stageLabel, useDeletePaymentRequestFile, usePaymentRequest, usePaymentRequestFiles, usePaymentRequests, useRequestBalance, useReturnPaymentRequest,
   useUploadPaymentRequestFile, useWithdrawPaymentRequest,
   type PaymentRequest,
 } from '../../vendor/scm/lib/payment-request-queries';
@@ -30,6 +35,7 @@ import { BillInstalments, BillMatchesNote, billFactsLine } from '../../vendor/sc
 import { OfficialDocActions, OfficialDocChip } from '../../vendor/scm/components/OfficialDoc';
 import { useUploadOfficialDoc } from '../../vendor/scm/lib/official-doc-queries';
 import { fileToBase64, PV_FILE_ACCEPT, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
 import { useEventLabels } from '../../vendor/scm/lib/event-queries';
 import { eventCellText } from '../../vendor/scm/components/EventSelect';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
@@ -48,10 +54,11 @@ import { EVENTS_PATH, RequestForm } from './PaymentRequestForm';
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)' };
 const linkBtn: React.CSSProperties = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--c-orange)', textDecoration: 'underline' };
+const refundTag: React.CSSProperties = { marginLeft: 6, padding: '1px 6px', borderRadius: 999, border: '1px solid var(--c-orange)', color: 'var(--c-orange)', fontSize: 'var(--fs-11)', fontWeight: 600 };
 
 const StageChip = ({ r }: { r: PaymentRequest }) => (
   <span style={{ fontSize: 'var(--fs-11)', fontWeight: 600, color: STAGE[r.stage].tone, whiteSpace: 'nowrap' }}>
-    {STAGE[r.stage].label}{answerText(r) ? <span style={{ ...soft, fontWeight: 400 }}> · {answerText(r)}</span> : null}
+    {stageLabel(r)}{answerText(r) ? <span style={{ ...soft, fontWeight: 400 }}> · {answerText(r)}</span> : null}
   </span>
 );
 
@@ -113,13 +120,15 @@ export const PaymentRequests = () => {
         <button type="button" onClick={() => setOpenId(r.id)} style={{ ...linkBtn, ...mono }}>{r.request_no}</button>
         {/* An instalment of a bill (item 2): which one. */}
         {(r.installment_no ?? 1) > 1 && <span style={{ ...soft, marginLeft: 6 }}>#{r.installment_no} · balance</span>}
+        {/* A refund raised from a Sales Order (owner 2026-10-14). */}
+        {isRefundRequest(r) && <span style={refundTag}>Refund · {r.refund_source_doc_no}</span>}
         {/* 同一张单: the same bill number and date on another live document. */}
         {(r.billMatches?.length ?? 0) > 0 && (
           <span title={`Same bill: ${(r.billMatches ?? []).map(billMatchText).join(' | ')}`} aria-label="Same bill elsewhere"
             style={{ marginLeft: 6, color: 'var(--c-festive-b, #B8331F)', fontWeight: 700 }}>⚠ same bill</span>
         )}
       </span>
-    ), getValue: (r) => r.request_no },
+    ), getValue: (r) => (isRefundRequest(r) ? `${r.request_no} Refund ${r.refund_source_doc_no ?? ''}` : r.request_no) },
     { key: 'date', label: 'Date', render: (r) => fmtDateOrDash(r.created_at), getValue: (r) => r.created_at, exportFormat: 'date' },
     ...(finance ? [{ key: 'by', label: 'Requested by', render: (r: PaymentRequest) => r.requested_by_name ?? '—', getValue: (r: PaymentRequest) => r.requested_by_name ?? '' }] : []),
     { key: 'payee', label: 'Pay to', render: (r) => r.payee_name, getValue: (r) => r.payee_name },
@@ -132,11 +141,17 @@ export const PaymentRequests = () => {
         <StageChip r={r} />
         <OfficialDocChip state={r.officialDoc?.state} note={r.officialDoc?.note} />
       </span>
-    ), getValue: (r) => STAGE[r.stage].label },
+    ), getValue: (r) => stageLabel(r) },
   ], [finance, labelsQ.data]);
 
+  /* Option A (owner 2026-10-14): a salesperson reads their refund requests here
+     without the key — and raises nothing else. An older server says nothing. */
+  const mayRaise = listQ.data?.mayRaise ?? true;
   const mine = (r: PaymentRequest) => Number(r.requested_by) === me;
   const requesterMayChange = (r: PaymentRequest) => mine(r) && (r.status === 'SUBMITTED' || r.status === 'REJECTED');
+  /* A refund request is never edited; it is withdrawn while it waits. */
+  const mayEdit = (r: PaymentRequest) => requesterMayChange(r) && !isRefundRequest(r);
+  const mayWithdraw = (r: PaymentRequest) => requesterMayChange(r) && (!isRefundRequest(r) || r.status === 'SUBMITTED');
 
   const onWithdraw = async (r: PaymentRequest) => {
     const ok = await askConfirm({ title: `Withdraw ${r.request_no}?`, body: 'Finance will not pay it. You can raise a new request later.', confirmLabel: 'Withdraw', danger: true });
@@ -144,12 +159,21 @@ export const PaymentRequests = () => {
     withdraw.mutate(r.id); // a refusal reaches the user through the mutation's own onError
   };
   const onReturn = async (r: PaymentRequest) => {
-    const note = await askPrompt({
-      title: `Return ${r.request_no} to ${r.requested_by_name ?? 'the requester'}?`,
-      body: 'They read your note, fix the request and send it again.',
-      confirmLabel: 'Send back',
-      input: { label: 'Why it goes back', placeholder: 'e.g. Attach the organiser invoice, not the quotation', required: true },
-    });
+    /* A refund Finance returns is rejected (owner 2026-10-14: 我可能还会拒绝) —
+       the money goes back to the order and the requester reads why. */
+    const note = await askPrompt(isRefundRequest(r)
+      ? {
+        title: `Reject ${r.request_no} · 拒绝?`,
+        body: `The money stays on ${r.refund_source_doc_no}; ${r.requested_by_name ?? 'the requester'} reads your reason there and here.`,
+        confirmLabel: 'Reject',
+        input: { label: 'Why it is rejected', placeholder: 'e.g. Customer agreed to convert to a new order instead', required: true },
+      }
+      : {
+        title: `Return ${r.request_no} to ${r.requested_by_name ?? 'the requester'}?`,
+        body: 'They read your note, fix the request and send it again.',
+        confirmLabel: 'Send back',
+        input: { label: 'Why it goes back', placeholder: 'e.g. Attach the organiser invoice, not the quotation', required: true },
+      });
     if (!note) return;
     sendBack.mutate({ id: r.id, note }); // a refusal reaches the user through the mutation's own onError
   };
@@ -174,9 +198,11 @@ export const PaymentRequests = () => {
             </label>
           )}
           <span style={{ flex: 1 }} />
-          <Button variant="primary" size="sm" onClick={() => setForm({ mode: 'new' })}>
-            <Plus size={16} strokeWidth={1.75} /> New request
-          </Button>
+          {mayRaise && (
+            <Button variant="primary" size="sm" onClick={() => setForm({ mode: 'new' })}>
+              <Plus size={16} strokeWidth={1.75} /> New request
+            </Button>
+          )}
         </div>
         <div className={styles.cardBody}>
           <DataTable<PaymentRequest>
@@ -186,7 +212,10 @@ export const PaymentRequests = () => {
             rows={listQ.data ? visible : null}
             loading={listQ.isLoading}
             error={listQ.isError ? `The requests could not be loaded — ${listQ.error instanceof Error ? listQ.error.message : 'something went wrong.'}` : null}
-            emptyLabel={rows.length > 0 ? 'No request in this view — pick another filter.' : (finance ? 'No payment request has been raised yet.' : 'You have not raised a payment request yet — New request asks Finance to pay a bill.')}
+            emptyLabel={rows.length > 0 ? 'No request in this view — pick another filter.'
+              : finance ? 'No payment request has been raised yet.'
+                : mayRaise ? 'You have not raised a payment request yet — New request asks Finance to pay a bill.'
+                  : 'Your refund requests show here — send one with Refund on a Sales Order.'}
             getRowKey={(r) => r.id}
             getRowStyle={(r) => (r.stage === 'WITHDRAWN' ? { opacity: 0.55 } : undefined)}
           />
@@ -202,19 +231,21 @@ export const PaymentRequests = () => {
           actions={(
             <>
               <StageChip r={detail} />
-              {requesterMayChange(detail) && (
+              {mayEdit(detail) && (
                 <Button variant="secondary" size="sm" onClick={() => setForm({ mode: 'edit', req: detail })}>{detail.status === 'REJECTED' ? 'Fix and send again' : 'Edit'}</Button>
               )}
-              {requesterMayChange(detail) && (
+              {mayWithdraw(detail) && (
                 <Button variant="ghost" size="sm" onClick={() => void onWithdraw(detail)} disabled={withdraw.isPending}>Withdraw</Button>
               )}
               {/* Two answers (owner 2026-09-30, 6.1): pay now with a voucher, or
-                  book the supplier's bill first as an AP invoice and pay it later. */}
+                  book the supplier's bill first as an AP invoice and pay it later.
+                  A refund takes only the Customer Refund on its order (2026-10-14). */}
               {finance && awaitsFinance(detail) && (
-                <Button variant="primary" size="sm" title="Pay now — a payment voucher, the bill attached"
-                  onClick={() => navigate(`/scm/payment-vouchers/new?fromRequest=${encodeURIComponent(detail.id)}`)}>Make voucher</Button>
+                <Button variant="primary" size="sm"
+                  title={isRefundRequest(detail) ? `Approve — a Customer Refund on ${detail.refund_source_doc_no}, the customer's bank in its notes` : 'Pay now — a payment voucher, the bill attached'}
+                  onClick={() => navigate(makeVoucherHref(detail))}>{isRefundRequest(detail) ? 'Make refund voucher' : 'Make voucher'}</Button>
               )}
-              {finance && awaitsFinance(detail) && (
+              {finance && awaitsFinance(detail) && !isRefundRequest(detail) && (
                 <Button variant="secondary" size="sm" title="Book the supplier's bill first — an AP invoice, paid later by an AP Payment"
                   onClick={() => navigate(`/scm/ap-invoices?fromRequest=${encodeURIComponent(detail.id)}`)}>Make AP invoice</Button>
               )}
@@ -227,10 +258,10 @@ export const PaymentRequests = () => {
                 </Button>
               )}
               {finance && awaitsFinance(detail) && (
-                <Button variant="ghost" size="sm" onClick={() => void onReturn(detail)} disabled={sendBack.isPending}>Return…</Button>
+                <Button variant="ghost" size="sm" onClick={() => void onReturn(detail)} disabled={sendBack.isPending}>{isRefundRequest(detail) ? 'Reject…' : 'Return…'}</Button>
               )}
               {/* 申请付余额 (item 2): the next instalment of the same bill — no second upload. */}
-              {(finance || mine(detail)) && mayAskBalance(detail) && (
+              {(finance || mine(detail)) && !isRefundRequest(detail) && mayAskBalance(detail) && (
                 <Button variant="secondary" size="sm" onClick={() => setBalanceOf(detail)}>Request the balance · 申请付余额</Button>
               )}
               {finance && detail.voucher && (
@@ -244,24 +275,29 @@ export const PaymentRequests = () => {
         >
           {detail.stage === 'RETURNED' && detail.finance_note && (
             <div style={{ padding: 'var(--space-3)', borderRadius: 8, background: 'var(--c-cream, #faf8f3)', color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-13)' }}>
-              Returned by {detail.decided_by ?? 'Finance'}{detail.decided_at ? ` on ${fmtDateOrDash(detail.decided_at)}` : ''}: {detail.finance_note}
+              {isRefundRequest(detail) ? 'Rejected' : 'Returned'} by {detail.decided_by ?? 'Finance'}{detail.decided_at ? ` on ${fmtDateOrDash(detail.decided_at)}` : ''}: {detail.finance_note}
             </div>
           )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
             <Meta label="Requested by" value={`${detail.requested_by_name ?? '—'} · ${fmtDateOrDash(detail.created_at)}`} />
-            <Meta label="Pay to" value={detail.payee_name} />
+            {isRefundRequest(detail) && (
+              <Meta label="Refund on" value={<Link to={`/scm/sales-orders/${encodeURIComponent(detail.refund_source_doc_no ?? '')}`} style={{ ...mono, color: 'var(--c-orange)' }}>{detail.refund_source_doc_no}</Link>} />
+            )}
+            <Meta label={isRefundRequest(detail) ? 'Refund to' : 'Pay to'} value={detail.payee_name} />
             <Meta label="Amount" value={<b>{fmtSen(detail.amount_sen)}</b>} />
-            <Meta label="Pay by" value={fmtDateOrDash(detail.due_date)} />
-            <Meta label="Event" value={eventCellText(labelsQ.data, detail.project_id)} />
-            <Meta label="For" value={detail.purpose} />
+            {!isRefundRequest(detail) && <Meta label="Pay by" value={fmtDateOrDash(detail.due_date)} />}
+            {!isRefundRequest(detail) && <Meta label="Event" value={eventCellText(labelsQ.data, detail.project_id)} />}
+            <Meta label={isRefundRequest(detail) ? 'Reason' : 'For'} value={detail.purpose} />
             {detail.note && <Meta label="Note · 备注" value={detail.note} />}
-            <Meta label="The bill" value={detail.bill_no || detail.bill_date || detail.bill_total_sen != null
-              ? billFactsLine({ billNo: detail.bill_no, billDate: detail.bill_date, totalSen: detail.bill_total_sen })
-              : '— not read'} />
+            {!isRefundRequest(detail) && (
+              <Meta label="The bill" value={detail.bill_no || detail.bill_date || detail.bill_total_sen != null
+                ? billFactsLine({ billNo: detail.bill_no, billDate: detail.bill_date, totalSen: detail.bill_total_sen })
+                : '— not read'} />
+            )}
             {detail.project_id == null && detail.no_event_reason && (
               <Meta label="No event — why" value={detail.no_event_reason} />
             )}
-            <Meta label="Payee's bank" value={[detail.bank_name, detail.bank_account_no, detail.bank_account_name].filter(Boolean).join(' · ') || '—'} />
+            <Meta label={isRefundRequest(detail) ? "Customer's bank" : "Payee's bank"} value={[detail.bank_name, detail.bank_account_no, detail.bank_account_name].filter(Boolean).join(' · ') || '—'} />
             <Meta label="Answered by" value={detail.voucher
               ? <>{detail.voucher.pvNumber ?? 'Draft voucher'}{detail.voucher.postedAt ? <span style={soft}> · paid {fmtDateOrDash(detail.voucher.approvedAt ?? detail.voucher.postedAt)}</span> : null}{detail.voucher.bankConfirmed ? <span style={soft}> · bank ✓</span> : null}</>
               : detail.invoice
@@ -270,14 +306,16 @@ export const PaymentRequests = () => {
           </div>
           {hasInstalments(detail.family) && <BillInstalments family={detail.family} currentId={detail.id} />}
           {/* 欠正式单 (item 3): the payment owes its official invoice — the requester uploads it here; Finance checks it. */}
-          {(detail.officialDoc || (finance && (detail.voucher || detail.invoice))) && (
+          {/* A refund pays the customer back — no supplier's official invoice to owe. */}
+          {!isRefundRequest(detail) && (detail.officialDoc || (finance && (detail.voucher || detail.invoice))) && (
             <OfficialDocPanel request={detail} finance={finance} mayUpload={finance || mine(detail)} />
           )}
           <BillMatchesNote matches={detail.billMatches} />
           {detail.parent_request_id && (
             <div style={soft}>The bill is on {detail.family?.rootNo ?? 'the first request'} — it travels with the payment; nothing to upload again.</div>
           )}
-          <RequestFilesCard request={detail} canWrite={finance || requesterMayChange(detail)} />
+          {/* A refund needs no file (owner 2026-10-14); a requester without the key attaches none. */}
+          <RequestFilesCard request={detail} canWrite={finance || (requesterMayChange(detail) && mayRaise)} />
         </Modal>
       )}
 
@@ -338,7 +376,7 @@ function BalanceForm({ request, onDone, onCancel }: { request: PaymentRequest; o
         payPct: pctValue != null && total != null && pctOf(total, pctValue) === amount ? pctValue : null,
       });
       for (const f of files) {
-        const payload: PvFilePayload = { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) };
+        const payload: PvFilePayload = { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) };
         try { await official.mutateAsync({ requestId: res.request.id, file: payload }); } catch (e) {
           void notify({ title: `${f.name} did not attach`, body: e instanceof Error ? e.message : 'Upload it from the request — 补正式单.', tone: 'error' });
         }
@@ -403,7 +441,7 @@ function OfficialDocPanel({ request, finance, mayUpload }: { request: PaymentReq
   const pick = async (list: FileList | null) => {
     for (const f of [...(list ?? [])]) {
       try {
-        const res = await upload.mutateAsync({ requestId: request.id, file: { name: f.name, mime: f.type || 'application/pdf', dataBase64: await fileToBase64(f) } });
+        const res = await upload.mutateAsync({ requestId: request.id, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
         void notify({
           title: 'Official invoice uploaded',
           body: res.note ?? (res.received.length > 0 ? `Finance checks it on ${res.received.map((d) => d.number ?? d.kind).join(', ')}.` : 'It is kept with the request and its payment.'),
@@ -441,7 +479,7 @@ function RequestFilesCard({ request, canWrite }: { request: PaymentRequest; canW
       locked={request.status === 'VOUCHERED'}
       closed={request.status === 'WITHDRAWN'}
       lockedNote=" · kept with the voucher or AP invoice Finance made"
-      emptyNote="No bill attached yet — attach the invoice or quotation Finance should pay."
+      emptyNote={isRefundRequest(request) ? 'No file — a refund request needs none.' : 'No bill attached yet — attach the invoice or quotation Finance should pay.'}
       removeBody="The file leaves this request."
       attachAriaLabel="Attach the bill"
       uploading={upload.isPending}

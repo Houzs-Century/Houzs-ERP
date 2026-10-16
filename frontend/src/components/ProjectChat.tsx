@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Send } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -6,6 +6,7 @@ import { useNotifications } from "../hooks/useNotifications";
 import type { useToast } from "../hooks/useToast";
 import { cn, relativeTime } from "../lib/utils";
 import { Avatar } from "./Avatar";
+import { useChatSalesReport } from "./projectChatSalesReport";
 
 // ── Types ────────────────────────────────────────────────────
 // Mirrors the ActivityRow shape that /api/projects/:id/activity
@@ -55,6 +56,15 @@ export function ProjectChat({
 }: ProjectChatProps) {
   const { user: me } = useAuth();
   const notifs = useNotifications();
+  // The sales report the chat carries (owner 2026-10-14) — what each message
+  // counts for, voiding a wrong paste, Total Sales from a summary:
+  // projectChatSalesReport.tsx.
+  const salesReport = useChatSalesReport({
+    projectId,
+    toast,
+    onTotalSet: () => onPosted?.(),
+    onVoided: (id) => dropMessage(id),
+  });
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -74,6 +84,15 @@ export function ProjectChat({
   const projectIdRef = useRef(projectId);
   const requestGenerationRef = useRef(0);
   const refreshRef = useRef<() => void>(() => {});
+
+  /* A voided message is archived server-side; the poller only fetches rows
+     newer than the newest it holds, so it would never learn this one left. */
+  function dropMessage(id: number) {
+    const next = new Map(liveByIdRef.current);
+    next.delete(id);
+    liveByIdRef.current = next;
+    setLiveById(next);
+  }
 
   // Re-seed when the parent sends a fresh activity prop (e.g. after
   // a stage change triggers a full detail reload). New IDs get added;
@@ -213,6 +232,7 @@ export function ProjectChat({
       await api.post(`/api/projects/${projectId}/notes`, { note });
       setDraft("");
       onPosted?.();
+      void salesReport.afterSend(note);
       // Mark as read right away — our own send shouldn't light up our bell.
       api.post(`/api/projects/${projectId}/read`, {}).catch(() => {});
       refreshRef.current();
@@ -323,7 +343,7 @@ export function ProjectChat({
               5 * 60 * 1000;
           const grouped = !!(samePerson && withinWindow);
           return (
-            <ChatBubble key={a.id} a={a} isMine={isMine} grouped={grouped} />
+            <ChatBubble key={a.id} a={a} isMine={isMine} grouped={grouped} footer={salesReport.footerFor(a)} />
           );
         })}
       </div>
@@ -399,10 +419,13 @@ function ChatBubble({
   a,
   isMine,
   grouped,
+  footer,
 }: {
   a: ActivityRow;
   isMine: boolean;
   grouped: boolean;
+  /** An action drawn under the bubble — today the Save as sales report button. */
+  footer?: ReactNode;
 }) {
   const name = a.user_name || "Unknown";
   return (
@@ -447,6 +470,7 @@ function ChatBubble({
         >
           {a.note}
         </div>
+        {footer}
         <span
           className="mt-0.5 px-0.5 font-mono text-[9.5px] text-ink-muted"
           title={a.created_at}
@@ -480,6 +504,8 @@ function actionLabel(action: string): string {
       return "Sales attending added";
     case "sales_attendee_remove":
       return "Sales attending removed";
+    case "sales_report_voided":
+      return "Message voided";
     case "archived":
       return "Archived";
     case "restored":

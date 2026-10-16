@@ -240,3 +240,192 @@ describe("unionSoLineChips — the SO list PO No. union (defect 2026-08-02-A)", 
     expect(out.has("SO-1")).toBe(false);
   });
 });
+
+// ── BUG-103 — an un-batched line names its OWN SO line's received PO ─────────
+// HC-DO-2610-154 shipped 3 CODY-(Q) for HC-SO-013109. Plain FIFO consumed the 1
+// unit of HC-PO-2609-187 (raised for HC-SO-010769) plus 2 un-numbered AutoCount
+// cutover units, so the DO printed 2609-187 while the warehouse had the goods
+// under HC-PO-009812, the PO raised for this SO line.
+import { preferReceivedBoundPo, traceDoShipmentSources } from "../src/scm/lib/source-po-trace";
+
+describe("preferReceivedBoundPo", () => {
+  const received = new Map([
+    ["so-cody", [{ itemCode: "CODY-(Q)", poNumber: "HC-PO-009812" }]],
+  ]);
+
+  test("a FIFO bucket whose line has a received bound PO names that PO, not the consumed lot's", () => {
+    const out = preferReceivedBoundPo(
+      new Map([["do-154::CODY-(Q)::v", bt(["HC-PO-2609-187"])]]),
+      new Set(),
+      [{ bucket: "do-154::CODY-(Q)::v", itemCode: "CODY-(Q)", soItemId: "so-cody" }],
+      received,
+    );
+    expect(out.get("do-154::CODY-(Q)::v")).toEqual(bt(["HC-PO-009812"]));
+  });
+
+  test("a batched bucket (sofa dye lot / drop-ship) keeps the ledger answer", () => {
+    const out = preferReceivedBoundPo(
+      new Map([["do-1::CODY-(Q)::v", bt(["PO-BATCH"])]]),
+      new Set(["do-1::CODY-(Q)::v"]),
+      [{ bucket: "do-1::CODY-(Q)::v", itemCode: "CODY-(Q)", soItemId: "so-cody" }],
+      received,
+    );
+    expect(out.get("do-1::CODY-(Q)::v")).toEqual(bt(["PO-BATCH"]));
+  });
+
+  test("a line with no received bound PO keeps the ledger answer", () => {
+    const out = preferReceivedBoundPo(
+      new Map([["do-1::A::", bt(["PO-FIFO"], 1)]]),
+      new Set(),
+      [{ bucket: "do-1::A::", itemCode: "A", soItemId: "so-unbound" }],
+      received,
+    );
+    expect(out.get("do-1::A::")).toEqual(bt(["PO-FIFO"], 1));
+  });
+
+  test("a bound PO for a different item (substituted line) does not count", () => {
+    const out = preferReceivedBoundPo(
+      new Map([["do-1::OTHER::", bt(["PO-FIFO"])]]),
+      new Set(),
+      [{ bucket: "do-1::OTHER::", itemCode: "OTHER", soItemId: "so-cody" }],
+      received,
+    );
+    expect(out.get("do-1::OTHER::")).toEqual(bt(["PO-FIFO"]));
+  });
+
+  test("a bucket shared by two SO lines switches only when BOTH have a received PO", () => {
+    const bucket = "do-1::CODY-(Q)::v";
+    const both = preferReceivedBoundPo(
+      new Map([[bucket, bt(["PO-FIFO"])]]),
+      new Set(),
+      [
+        { bucket, itemCode: "CODY-(Q)", soItemId: "so-cody" },
+        { bucket, itemCode: "CODY-(Q)", soItemId: "so-cody-2" },
+      ],
+      new Map([...received, ["so-cody-2", [{ itemCode: "CODY-(Q)", poNumber: "HC-PO-2609-187" }]]]),
+    );
+    expect(both.get(bucket)).toEqual(bt(["HC-PO-2609-187", "HC-PO-009812"]));
+
+    const one = preferReceivedBoundPo(
+      new Map([[bucket, bt(["PO-FIFO"])]]),
+      new Set(),
+      [
+        { bucket, itemCode: "CODY-(Q)", soItemId: "so-cody" },
+        { bucket, itemCode: "CODY-(Q)", soItemId: "so-unbound" },
+      ],
+      received,
+    );
+    expect(one.get(bucket)).toEqual(bt(["PO-FIFO"]));
+  });
+});
+
+/* Minimal PostgREST stand-in: enough of select/eq/in/gt/not for the forward
+   trace's reads, filtering the seeded rows the way the real query would. */
+function fakeSb(tables: Record<string, Array<Record<string, unknown>>>) {
+  return {
+    from(table: string) {
+      const preds: Array<(r: Record<string, unknown>) => boolean> = [];
+      const q = {
+        select: () => q,
+        eq: (c: string, v: unknown) => { preds.push((r) => r[c] === v); return q; },
+        in: (c: string, vs: unknown[]) => { preds.push((r) => vs.includes(r[c])); return q; },
+        gt: (c: string, v: number) => { preds.push((r) => Number(r[c]) > v); return q; },
+        not: (c: string) => { preds.push((r) => r[c] != null); return q; },
+        then: (res: (v: { data: unknown[]; error: null }) => unknown) =>
+          res({ data: (tables[table] ?? []).filter((r) => preds.every((p) => p(r))), error: null }),
+      };
+      return q;
+    },
+  };
+}
+
+describe("traceDoShipmentSources — HC-DO-2610-154", () => {
+  const cody = { item_code: "CODY-(Q)", item_group: "bedframe", variants: null };
+  const seed = (extra: Record<string, Array<Record<string, unknown>>> = {}) => fakeSb({
+    inventory_movements: [],
+    inventory_lot_consumptions: [
+      { source_doc_type: "DO", source_doc_id: "do-154", lot_id: "lot-187", item_code: "CODY-(Q)", variant_key: "", qty_consumed: 1 },
+      { source_doc_type: "DO", source_doc_id: "do-154", lot_id: "lot-ac", item_code: "CODY-(Q)", variant_key: "", qty_consumed: 2 },
+    ],
+    inventory_lots: [
+      { id: "lot-187", batch_no: "HC-PO-2609-187", source_doc_type: "GRN", source_doc_id: "grn-1" },
+      { id: "lot-ac", batch_no: null, source_doc_type: "AC_CUTOVER", source_doc_id: null },
+    ],
+    delivery_orders: [{ id: "do-154", company_id: 1 }],
+    delivery_order_items: [{ delivery_order_id: "do-154", so_item_id: "so-013109-cody", ...cody }],
+    purchase_order_items: [
+      { so_item_id: "so-013109-cody", item_code: "CODY-(Q)", purchase_order_id: "po-9812", received_qty: 3 },
+      { so_item_id: "so-010769-cody", item_code: "CODY-(Q)", purchase_order_id: "po-187", received_qty: 1 },
+    ],
+    purchase_orders: [
+      { id: "po-9812", po_number: "HC-PO-009812", status: "RECEIVED" },
+      { id: "po-187", po_number: "HC-PO-2609-187", status: "RECEIVED" },
+    ],
+    ...extra,
+  });
+
+  test("the CODY line and the DO rollup name HC-PO-009812", async () => {
+    const out = await traceDoShipmentSources(seed(), ["do-154"]);
+    expect(out.byBucket.get("do-154::CODY-(Q)::")).toEqual(bt(["HC-PO-009812"]));
+    expect(out.byDo.get("do-154")).toEqual(bt(["HC-PO-009812"]));
+  });
+
+  test("before the SO's own PO has received anything, the FIFO answer stands", async () => {
+    const out = await traceDoShipmentSources(seed({
+      purchase_order_items: [
+        { so_item_id: "so-013109-cody", item_code: "CODY-(Q)", purchase_order_id: "po-9812", received_qty: 0 },
+      ],
+    }), ["do-154"]);
+    expect(out.byBucket.get("do-154::CODY-(Q)::")).toEqual(bt(["HC-PO-2609-187"]));
+  });
+
+  test("2990 (company 2) pools: the FIFO answer stands", async () => {
+    const out = await traceDoShipmentSources(seed({
+      delivery_orders: [{ id: "do-154", company_id: 2 }],
+    }), ["do-154"]);
+    expect(out.byBucket.get("do-154::CODY-(Q)::")).toEqual(bt(["HC-PO-2609-187"]));
+  });
+
+  test("a cancelled bound PO does not count", async () => {
+    const out = await traceDoShipmentSources(seed({
+      purchase_orders: [{ id: "po-9812", po_number: "HC-PO-009812", status: "CANCELLED" }],
+    }), ["do-154"]);
+    expect(out.byBucket.get("do-154::CODY-(Q)::")).toEqual(bt(["HC-PO-2609-187"]));
+  });
+});
+
+describe("traceDoShipmentSources — only company-1 hard-bound lines switch", () => {
+  const base = (line: Record<string, unknown>) => fakeSb({
+    inventory_movements: [],
+    inventory_lot_consumptions: [
+      { source_doc_type: "DO", source_doc_id: "do-1", lot_id: "lot-x", item_code: "X", variant_key: "", qty_consumed: 1 },
+    ],
+    inventory_lots: [{ id: "lot-x", batch_no: "PO-LEDGER", source_doc_type: "GRN", source_doc_id: "g" }],
+    delivery_orders: [{ id: "do-1", company_id: 1 }],
+    delivery_order_items: [{ delivery_order_id: "do-1", so_item_id: "so-1", item_code: "X", variants: null, committed_po_batch_no: null, ...line }],
+    purchase_order_items: [{ so_item_id: "so-1", item_code: "X", purchase_order_id: "po-own", received_qty: 1 }],
+    purchase_orders: [{ id: "po-own", po_number: "PO-OWN", status: "RECEIVED" }],
+  });
+
+  test("a sofa line", async () => {
+    const out = await traceDoShipmentSources(base({ item_group: "sofa" }), ["do-1"]);
+    expect(out.byBucket.get("do-1::X::")).toEqual(bt(["PO-LEDGER"]));
+  });
+
+  test("a bedframe shipped against a committed incoming PO keeps the ledger", async () => {
+    const out = await traceDoShipmentSources(base({ item_group: "bedframe", committed_po_batch_no: "PO-LEDGER" }), ["do-1"]);
+    expect(out.byBucket.get("do-1::X::")).toEqual(bt(["PO-LEDGER"]));
+  });
+
+  test("a standard mattress or accessory pools, so the FIFO answer stands", async () => {
+    for (const item_group of ["mattress", "accessory"]) {
+      const out = await traceDoShipmentSources(base({ item_group }), ["do-1"]);
+      expect(out.byBucket.get("do-1::X::")).toEqual(bt(["PO-LEDGER"]));
+    }
+  });
+
+  test("a sofa accessory (fabric_accessory) is hard-bound and switches", async () => {
+    const out = await traceDoShipmentSources(base({ item_group: "fabric_accessory" }), ["do-1"]);
+    expect(out.byBucket.get("do-1::X::")).toEqual(bt(["PO-OWN"]));
+  });
+});

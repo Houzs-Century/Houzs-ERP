@@ -122,6 +122,7 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   canonical-venue TS module, its PG migration function, the D1 parity file,
   and the backfill script — a DB trigger also re-applies it on any direct
   write, so a route bypass cannot reintroduce the alias.
+- A crew POD for a Setup/Dismantle leg on the delivery run files its photos as phase photos and ticks the open "Setup Image" / "Dismantle Image" row; it never changes `stage` (scm/routes/delivery-job-progress.ts).
 - A checklist item counts as **complete** for progress and the stage tracker
   when `status` is `done`/`na` **OR** `review_status = approved` — a gated
   document (3D Design, Display Floor Plan, Stock In/Out) is finished by approval
@@ -159,6 +160,32 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   `salesAccess.canSeeSoloOrganizer` (BD role, Owner position, weisiang). An
   exhibition's organizer shows to everybody. Display-only — the stored name,
   the list, the calendar and the API still carry the organizer.
+- The same Sales section also lists the Sales Orders hard-linked to the event
+  (`scm.mfg_sales_orders.project_id`) via `GET /api/project-sales-orders/:id`
+  (`routes/project-sales-orders.ts`; desktop `pages/projects/
+  ProjectSalesOrdersBlock.tsx`, mobile `MobilePmsSalesOrders.tsx`): same read
+  gate as the entries list, the SO module's own own/downline row scope
+  (`scoped: true` marks partial totals), CANCELLED excluded, DRAFT counted,
+  paid from the payment ledger via `so-outstanding.ts`. "Not yet opened" is
+  the lump-sum `total_sales` minus the SO total — a comparison, not a count
+  of slips.
+- The evening sales report (one bill per line: booklet no, amount, salesperson;
+  a "+ N(T)" transport or "(D)" disposal tail is kept apart) is DERIVED from the
+  project chat on every read — notes by the Owner position, Ummu or weisiang
+  (`canSaveSalesReport`, both sides), newest message winning per booklet number
+  (`GET /api/project-sales-bills/:id`, `routes/project-sales-bills.ts`; parser
+  `scm/shared/sales-report-parse.ts` mirrored to the frontend; rules in
+  `routes/lib/sales-report-bills.ts`). Void = archive the note (`POST
+  …/void/:activityId`, trail row `sales_report_voided`). A summary's Total line
+  IS Total Sales: set on post, and an empty Total Sales (null or 0) is filled from
+  the latest summary when a finance writer opens the event; a set figure is never
+  overwritten on view; voiding the summary it came from puts back the latest one
+  left (or empties it). Day lines that differ are shown, never used. Bills match orders
+  by booklet number (SO `customer_so_no` / `ref` tokens); one under another event
+  counts as opened, is listed with that event, and its rep is noticed on post
+  (`…/notify`, `source=sales_report_fair_mismatch`). The red amount beside a
+  name under Sales Attending is that rep's bills not yet opened.
+  `public.project_sales_bills` is unused (see tasks/TODO.md).
 
 ## Gotchas
 

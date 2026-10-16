@@ -64,6 +64,7 @@ import { sortByNumeric } from '../lib/sort-options';
 import { posRemarkSpecialOf } from '../lib/pos-remark-special';
 import { seedFollowerVariants } from '../lib/so-variant-cascade';
 import { pickDefaultVariants } from '../../shared/model-default-variants';
+import { priceBoxAuthored } from '../lib/zeroPriceClaim';
 import { useAnchoredPanel, anchoredPanelStyle } from '../../../lib/anchoredPanel';
 import { useNotify } from './NotifyDialog';
 import { SpecialOrders } from './SpecialOrders';
@@ -377,6 +378,10 @@ const SoLineCardInner = ({
      from the canonical centi only when it changes from outside, e.g. a
      product pick resets it to 0. */
   const [priceText, setPriceText] = useState((amountCellSen / 100).toFixed(2));
+  const [priceTyping, setPriceTyping] = useState(false);
+  /* The price the line had when this edit of the box began: an emptied box
+     requests no new price, so the line shows (and keeps) this one. */
+  const priceBeforeEdit = useRef<Pick<SoLineDraft, 'unitPriceSen' | 'priceAuthored'>>({ unitPriceSen: 0 });
   /* Load the full catalog ONCE (cached 5 min) and filter it LOCALLY — the picker
      no longer fires a `/mfg-products?search=` request per keystroke, so typing
      stays instant even while the Worker is slow or dropping connections (owner
@@ -477,6 +482,7 @@ const SoLineCardInner = ({
   // operator's in-progress typing untouched. On a fee line the canonical value
   // is the NET, so a rebuilt discount lands here too.
   useEffect(() => {
+    if (!priceBoxAuthored(priceText)) return; // a box emptied mid-edit stays empty
     const parsed = Math.round(Number(priceText) * 100) || 0;
     if (parsed !== amountCellSen) setPriceText((amountCellSen / 100).toFixed(2));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -996,7 +1002,13 @@ const SoLineCardInner = ({
           type="text"
           inputMode="decimal"
           className={styles.priceInput}
-          value={priceText}
+          /* DEV-62 (Adrian, PC + saved lines): any RM 0 shows as the
+             placeholder so typing a price does not start with deleting
+             "0.00". A 0 shows only while being typed, so "0" / "0.5" can
+             still be keyed in. A fee line keeps its 0.00: there it means
+             the fee is waived. */
+          value={!isFeeLine && amountCellSen === 0 && !priceTyping ? '' : priceText}
+          placeholder="0.00"
           disabled={!isEditing || !canEditPrice}
           title={
             !canEditPrice ? 'Price follows the SKU Master sell price — admin can override'
@@ -1005,7 +1017,9 @@ const SoLineCardInner = ({
           }
           onChange={(e) => {
             const t = cleanNumericText(e.target.value, 'signed', true);
+            if (!priceTyping) priceBeforeEdit.current = { unitPriceSen: draft.unitPriceSen, priceAuthored: draft.priceAuthored };
             setPriceText(t);
+            setPriceTyping(true);
             if (isFeeLine) {
               /* A BLANK box is mid-edit, not "waive the fee". `Number('')` is
                  0, which would read as charge-nothing and discount the whole
@@ -1016,9 +1030,11 @@ const SoLineCardInner = ({
               onChange({ discountSen: feeDiscountForAmount(feeGrossSen, Math.round(n * 100)) });
               return;
             }
-            onChange({ unitPriceSen: Math.round(Number(t) * 100) || 0, priceAuthored: true });
+            onChange(priceBoxAuthored(t)
+              ? { unitPriceSen: Math.round(Number(t) * 100), priceAuthored: true }
+              : priceBeforeEdit.current);
           }}
-          onBlur={() => setPriceText((amountCellSen / 100).toFixed(2))}
+          onBlur={() => { setPriceTyping(false); setPriceText((amountCellSen / 100).toFixed(2)); }}
         />
 
         {/* 6. Discount — owner 2026-09-12: the sales side had no discount field

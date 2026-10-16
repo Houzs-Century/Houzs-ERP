@@ -16,6 +16,7 @@
 //   PATCH /mfg-purchase-orders/:id/reopen     — flip CANCELLED → SUBMITTED
 // ----------------------------------------------------------------------------
 
+import { isPoLineOverReceived } from '../lib/qty-cap';
 import { Hono } from 'hono';
 import { PO_STATUS_BUCKETS } from '../lib/po-status-buckets';
 import { HELD_OR_TERM, isDocumentHeld } from '../lib/document-hold';
@@ -29,12 +30,7 @@ import {
   splitSofaCode, sofaHeightKey, effectiveSoDelivery,
   type SofaComboRow, type SofaPriceTier,
 } from '../shared';
-import {
-  computeMfgPoUnitCost,
-  type MfgFabricTier,
-  type MaintenanceConfig,
-  type PoPriceMatrix,
-} from '../shared/mfg-pricing';
+import { computeMfgPoUnitCost, type MfgFabricTier, type MaintenanceConfig, type PoPriceMatrix } from '../shared/mfg-pricing';
 import { orderSofaModuleRowsWithinBuilds, sortLinesByStoredLineNo, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine, stampPoLineNos } from '../lib/po-line-order';
 import { poConvertLineRows } from '../lib/po-convert-line';
@@ -46,7 +42,7 @@ import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../l
 import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { loadOutstandingSoLines } from '../lib/outstanding-so-lines';
 import { poHasDownstream } from '../lib/downstream-lock';
-import { cascadePoSupplierDate, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade';
+import { cascadePoSupplierDate, pickSupplierDateSlot, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade';
 import { description2InputsChanged } from '../lib/po-line-description2';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
@@ -2588,8 +2584,8 @@ const BULK_SUPPLIER_DATE_MAX = 100;
 /* Request validation, split out so it can be tested without a Hono context or
    a database. Rejects with the exact {status, payload} the handler returns. */
 export type BulkSupplierDateRequest = {
-  slot: SupplierDateSlot;
-  col: (typeof SUPPLIER_DATE_SLOT_COL)[SupplierDateSlot];
+  slot: SupplierDateSlot | 'next';
+  col: (typeof SUPPLIER_DATE_SLOT_COL)[SupplierDateSlot] | null;
   date: string;
   poIds: string[];
   applyToLines: boolean;
@@ -2599,9 +2595,9 @@ export function parseBulkSupplierDateBody(
   body: Record<string, unknown>,
 ): { ok: true; req: BulkSupplierDateRequest }
   | { ok: false; status: 400; payload: { error: string; reason: string } } {
-  const slot = Number(body.slot) as SupplierDateSlot;
-  if (!(slot in SUPPLIER_DATE_SLOT_COL)) {
-    return { ok: false, status: 400, payload: { error: 'invalid_slot', reason: 'slot must be 2, 3 or 4.' } };
+  const slot = body.slot === 'next' ? 'next' : Number(body.slot) as SupplierDateSlot;
+  if (slot !== 'next' && !(slot in SUPPLIER_DATE_SLOT_COL)) {
+    return { ok: false, status: 400, payload: { error: 'invalid_slot', reason: 'slot must be 2, 3, 4 or "next".' } };
   }
 
   /* Both halves matter: the shape check rejects "2026-8-3" / free text, and the
@@ -2633,7 +2629,7 @@ export function parseBulkSupplierDateBody(
     ok: true,
     req: {
       slot,
-      col: SUPPLIER_DATE_SLOT_COL[slot],
+      col: slot === 'next' ? null : SUPPLIER_DATE_SLOT_COL[slot],
       date,
       poIds,
       // Default ON: the operator picked POs to move the date on, and leaving
@@ -2654,7 +2650,7 @@ mfgPurchaseOrders.post('/bulk-supplier-date', async (c) => {
   if (!parsed.ok) return c.json(parsed.payload, parsed.status);
   const { slot, date, poIds, applyToLines } = parsed.req;
 
-  const updated: Array<{ id: string; poNumber: string | null }> = [];
+  const updated: Array<{ id: string; poNumber: string | null; slot: SupplierDateSlot }> = [];
   const skipped: Array<{ id: string; poNumber: string | null; reason: string }> = [];
 
   for (const id of poIds) {
@@ -2667,11 +2663,13 @@ mfgPurchaseOrders.post('/bulk-supplier-date', async (c) => {
 
     const childLock = await poHasDownstream(sb, id);
     if (childLock) { skipped.push({ id, poNumber, reason: childLock.message }); continue; }
+    const pick = pickSupplierDateSlot(slot, before);
+    if (!pick.ok) { skipped.push({ id, poNumber, reason: pick.reason }); continue; }
 
     /* Header + every line + the audit row, in lib/po-supplier-date-cascade.ts —
        the one writer the PO line import's estimate dates share. */
     const written = await cascadePoSupplierDate(sb, {
-      companyId: co.companyId, poId: id, before, slot, date, applyToLines, actor: c.get('houzsUser') ?? null, note: null,
+      companyId: co.companyId, poId: id, before, slot: pick.slot, date, applyToLines, actor: c.get('houzsUser') ?? null, note: null,
     });
     if (!written.ok) { skipped.push({ id, poNumber, reason: written.reason }); continue; }
     /* ERP -> AutoCount edit, ONE PER PO THAT ACTUALLY MOVED — inside the loop
@@ -2685,7 +2683,7 @@ mfgPurchaseOrders.post('/bulk-supplier-date', async (c) => {
        detail field — so the account book's own promised dates were left behind
        by every bulk date change the ERP has ever made. */
     await queueAcPoEdit(c, id);
-    updated.push({ id, poNumber });
+    updated.push({ id, poNumber, slot: pick.slot });
   }
 
   return c.json({ slot, date, applyToLines, updated, skipped });
@@ -3195,6 +3193,8 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
   }
 
   const { error } = await scopeToCompanyId(sb.from('purchase_order_items').update(coerceEmptyDates(updates)).eq('id', itemId), co.companyId);
+  // HC-0004: the DB floor (mig 20261014T1430) refused a cut below what a GRN, posted after the lock read above, received.
+  if (isPoLineOverReceived(error)) return c.json({ error: 'received_floor', message: 'A goods received note has just received this line. Its qty can no longer be cut below what was received. Refresh and check the order.', reason: error!.message }, 409);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row. qty,

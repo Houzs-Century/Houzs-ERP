@@ -97,6 +97,7 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/addons/*", "scm.procurement.products"],
   ["/drivers/*", "scm.transportation.drivers"],
   ["/delivery-planning/*", "scm.transportation.drivers"],
+  ["/delivery-jobs/*", "scm.transportation.drivers"],
   ["/delivery-planning-regions/*", "scm.transportation.drivers"],
   ["/delivery-planning-row-marks/*", "scm.transportation.drivers"],
   ["/delivery-planning-row-order/*", "scm.transportation.drivers"],
@@ -104,6 +105,7 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/threepl-companies/*", "scm.transportation.drivers"],
   ["/delivery-zones/*", "scm.transportation.drivers"],
   ["/delivery-rate-cards/*", "scm.transportation.drivers"],
+  ["/threepl-do-charges/*", "scm.transportation.drivers"],
   ["/driver-leave/*", "scm.transportation.drivers"],
   ["/trips/*", "scm.transportation.drivers"],
   ["/dp-orders/*", "scm.transportation.drivers"],
@@ -126,6 +128,10 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/scan-gr/*", "scm.procurement.grn"],
   ["/scan-pi/*", "scm.procurement.pi"],
   ["/scan-payment/*", "scm.sales.orders"],
+  ["/scan-files/so/*", "scm.sales.orders"],
+  ["/scan-files/payment/*", "scm.sales.orders"],
+  ["/scan-files/pv/*", "scm.finance.accounting"],
+  ["/scan-files/workshop/*", "scm.transportation.drivers"],
   ["/slips/*", "scm.sales.orders"],
 ] as const;
 

@@ -3222,7 +3222,7 @@ function DataTableInner<T, L>({
                   }}
                 >
                   <ArrowDownAZ size={13} className="shrink-0 text-ink-muted" />
-                  Sort A → Z
+                  {col.newestFirst ? "Sort Oldest → Newest" : "Sort A → Z"}
                 </button>
                 <button
                   type="button"
@@ -3234,7 +3234,7 @@ function DataTableInner<T, L>({
                   }}
                 >
                   <ArrowUpAZ size={13} className="shrink-0 text-ink-muted" />
-                  Sort Z → A
+                  {col.newestFirst ? "Sort Newest → Oldest" : "Sort Z → A"}
                 </button>
                 {/* Pin — owner 2026-07-24 "需要pin到headers". Freezes the
                     column to the left so it stays put while the rest scrolls

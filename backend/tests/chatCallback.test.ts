@@ -89,7 +89,7 @@ describe("the callback records the request, it does not schedule", () => {
     // and only through the canonical SO header write, never a raw .update(.
     expect(src).not.toMatch(/\.update\s*\(/);
     expect(src).toMatch(/advanceSoGeneration\(sb,\s*docNo,\s*requestPatch\)/);
-    expect(src).toMatch(/chatRequestPatch\(event,\s*requestedDate,\s*reason\)/);
+    expect(src).toMatch(/chatRequestPatch\(event,\s*requestedDate,\s*reason,\s*property\)/);
     // The route itself never touches the SO: it resolves refs and delegates.
     expect(route()).not.toMatch(/\.update\s*\(/);
     expect(route()).not.toMatch(/advanceSoGeneration/);

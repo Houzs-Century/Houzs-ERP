@@ -185,6 +185,21 @@ describe("the bill readers", () => {
     },
   );
 
+  /* A file upload (owner 2026-10-15: attach 不到 pdf) carries the whole file as
+     base64 in one body, so it gets the long wait too. */
+  test.each(["/product-requests/r1/files", "/payment-requests/r1/files", "/payment-vouchers/pv1/files", "/payment-requests/r1/official-doc"])(
+    "%s waits two minutes for the upload", async (path) => {
+      await withDeadline(async (deadline, asked) => {
+        const fetchMock = hangUntilAborted();
+        const pending = authedFetch(path, { method: "POST", body: "{}" });
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+        expect(asked).toEqual([120_000]);
+        deadline.abort(new DOMException("Timed out", "TimeoutError"));
+        await expect(pending).rejects.toThrow();
+      });
+    },
+  );
+
   test("a save keeps the 30-second wait and its duplicate warning", async () => {
     await withDeadline(async (deadline, asked) => {
       const fetchMock = hangUntilAborted();

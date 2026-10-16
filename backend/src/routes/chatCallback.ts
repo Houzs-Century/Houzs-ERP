@@ -42,13 +42,16 @@
 //   lib/chat-request-patch.ts — never the schedule. See that module.
 //
 //   { callback_id?: string,          // idempotency; chat's own step id
-//     event: "confirm" | "amend" | "postage_confirm" | "postage_amend",
+//     event: "confirm" | "amend" | "postage_confirm" | "postage_amend"
+//            | "property",             // the Property Details form answers
 //     ref: string,                   // the number the customer was shown: our
 //                                    // doc_no OR the AutoCount linked_ac_docno
 //     refs?: string,                 // the whole bundle, comma-joined (refs_all)
 //     phone?: string,
 //     delivery_date?: string,        // amend only — what the customer asked for
 //     reason?: string,               // amend only — Renovation Delay / Date Unavailable
+//     house_type?, delivery_purpose?, need_disposal?, disposal_item?: string,
+//                                    // property only — the form's four answers
 //     note?: string }                // free text, optional
 // ---------------------------------------------------------------------------
 
@@ -58,6 +61,7 @@ import { timingSafeEqualStr } from "../services/auth";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { CHAT_EVENTS, DOC_REF_RE, parseCallbackRefs, type ChatEvent } from "../lib/chat-request-patch";
+import { blastPhone } from "../scm/routes/delivery-messages";
 import { ChatTapLogFailed, recordChatTap, type ChatTapResult } from "../lib/chat-callback-record";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -105,13 +109,6 @@ async function chatCompany(
   }
 }
 
-/** Digits-only then '+'-prefixed, matching delivery-messages.normalizePhone so
- *  a callback's phone is comparable to the one the send logged. */
-function normalizePhone(raw: unknown): string | null {
-  const digits = String(raw ?? "").replace(/\D/g, "");
-  return digits.length >= 8 ? `+${digits}` : null;
-}
-
 /** Trim to a bounded, LIKE-safe token. The callback id is interpolated into an
  *  idempotency LIKE below, so anything that is not [A-Za-z0-9_-] is dropped
  *  rather than escaped — chat's own ids are already in that alphabet, and a
@@ -155,6 +152,11 @@ app.post("/", async (c) => {
     reason?: string;
     address?: string;
     note?: string;
+    // event "property": the Property Details form answers.
+    house_type?: string;
+    delivery_purpose?: string;
+    need_disposal?: string;
+    disposal_item?: string;
   } | null = null;
   try {
     body = await c.req.json();
@@ -173,7 +175,7 @@ app.post("/", async (c) => {
   if (!ref) return c.json({ error: "ref (SO doc_no) is required" }, 400);
 
   const callbackId = safeId(body.callback_id);
-  const phone = normalizePhone(body.phone);
+  const phone = blastPhone(body.phone);
   // Dates ride through as the customer's REQUEST, never as a schedule. Kept as
   // the raw string the flow sent: this row is evidence of what was asked for,
   // and reformatting it here would quietly lose "2026-09-30" vs "2026/09/30"
@@ -185,6 +187,21 @@ app.post("/", async (c) => {
   const requestedAddress = String(body.address ?? "").trim().slice(0, 300) || null;
   const reason = String(body.reason ?? "").trim().slice(0, 200) || null;
   const note = String(body.note ?? "").trim().slice(0, 500) || null;
+  // event "property": the four Property Details answers, each bounded; null
+  // when this is not a property callback. Connect's interpolator leaves an
+  // UNSET attribute as its literal "{key}" (an answer the customer skipped, e.g.
+  // the disposal item when they said No) — treat that exact shape as blank so
+  // the placeholder never lands in a column.
+  const propField = (v: unknown, max: number): string | null => {
+    const t = String(v ?? "").trim().slice(0, max);
+    return !t || /^\{[a-z0-9_]+\}$/i.test(t) ? null : t;
+  };
+  const property = event === "property" ? {
+    houseType: propField(body.house_type, 60),
+    deliveryPurpose: propField(body.delivery_purpose, 60),
+    needDisposal: propField(body.need_disposal, 20),
+    disposalItem: propField(body.disposal_item, 200),
+  } : null;
 
   const sb = getSupabaseService(c.env);
 
@@ -261,6 +278,7 @@ app.post("/", async (c) => {
         phone,
         requestedDate,
         reason,
+        property,
         note: requestedAddress ? `${note ?? ""}${note ? " | " : ""}address: ${requestedAddress}` : note,
       }));
     } catch (e) {

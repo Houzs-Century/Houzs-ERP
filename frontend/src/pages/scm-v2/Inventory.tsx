@@ -46,6 +46,7 @@ import {
   buildStockBreakdown,
   lotAssignedQty,
   lotFreeQty,
+  lotIsDeadStock,
   isMakeToOrderCategory,
   type CogsEntry,
   type InventoryBatch,
@@ -1160,7 +1161,7 @@ const renderAssignedFreeStatus = (r: InventoryReservation) => {
   const assigned = lotAssignedQty(r);
   const free = lotFreeQty(r);
   const mto = r.make_to_order ?? isMakeToOrderCategory(r.category);
-  const deadStock = !r.is_consignment && free > 0;
+  const deadStock = lotIsDeadStock(r);
   return (
     <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
       {assigned > 0 && (
@@ -1204,7 +1205,7 @@ const ReservationsTab = ({
   const rows = useMemo(() => all.filter((r) => {
     if (statusFilter === 'ASSIGNED' && lotAssignedQty(r) <= 0) return false;
     if (statusFilter === 'FREE' && lotFreeQty(r) <= 0) return false;
-    if (statusFilter === 'DEAD' && !(r.is_dead_stock ?? (!r.is_consignment && lotFreeQty(r) > 0))) return false;
+    if (statusFilter === 'DEAD' && !lotIsDeadStock(r)) return false;
     if (!q) return true;
     return r.item_code.toLowerCase().includes(q) ||
       (r.product_name ?? '').toLowerCase().includes(q) ||
@@ -1217,7 +1218,7 @@ const ReservationsTab = ({
     assignedQty: rows.reduce((s, r) => s + lotAssignedQty(r), 0),
     freeQty: rows.reduce((s, r) => s + lotFreeQty(r), 0),
     // Dead stock = free un-assigned units on OWNED lots (consignment excluded).
-    deadQty: rows.reduce((s, r) => s + ((r.is_dead_stock ?? (!r.is_consignment && lotFreeQty(r) > 0)) ? lotFreeQty(r) : 0), 0),
+    deadQty: rows.reduce((s, r) => s + (lotIsDeadStock(r) ? lotFreeQty(r) : 0), 0),
   }), [rows]);
 
   return (
@@ -1399,6 +1400,10 @@ const ProductBreakdownDrawer = ({
      mobile Stock Card uses — one logic layer, two presentations. */
   const lotRows = useMemo(() => reservations.data ?? [], [reservations.data]);
   const bd = useMemo(() => buildStockBreakdown(lotRows), [lotRows]);
+  // Free make-to-order units the server calls dead (service / showroom lots excluded).
+  const deadMtoQty = bd.ownedLots
+    .filter((l) => (l.make_to_order ?? isMakeToOrderCategory(l.category)) && lotIsDeadStock(l))
+    .reduce((s, l) => s + lotFreeQty(l), 0);
   /* Owned + consignment lots, one flat list tagged with which bucket each row
      came from — DataTable's groupBy needs one array, not two, to give this
      table the same column-filter/sort/freeze funnel every other DataTable in
@@ -1459,10 +1464,10 @@ const ProductBreakdownDrawer = ({
         {/* Dead-stock banner: free make-to-order (SOFA/BEDFRAME) on-hand stock is
             abnormal (built against an SO), so surface it prominently. Soft/absent
             for make-to-stock. */}
-        {!breakdownPending && bd.ownedFreeQty > 0 && bd.ownedLots.some((l) => (l.make_to_order ?? isMakeToOrderCategory(l.category)) && lotFreeQty(l) > 0) && (
+        {!breakdownPending && deadMtoQty > 0 && (
           <div className="mt-3 rounded-lg border border-err/40 bg-err/10 px-4 py-2.5 text-[13px] text-err">
             <strong className="font-semibold">Dead-stock candidate.</strong>{' '}
-            {fmtQty(bd.ownedFreeQty)} free (un-assigned) unit{bd.ownedFreeQty === 1 ? '' : 's'} on hand — this is a make-to-order SKU, so free stock has no Sales Order claiming it.
+            {fmtQty(deadMtoQty)} free (un-assigned) unit{deadMtoQty === 1 ? '' : 's'} on hand — this is a make-to-order SKU, so free stock has no Sales Order claiming it.
           </div>
         )}
 

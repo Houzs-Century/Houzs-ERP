@@ -35,6 +35,7 @@
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
+import { syncTripCrewToDos } from '../lib/trip-crew-sync';
 import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -754,6 +755,11 @@ export const patchTripHandler = async (c: any) => {
     return c.json({ error: 'update_failed', reason: error.message }, 500);
   }
   if (!data) return c.json({ error: 'not_found' }, 404);
+  // The run's crew lands on every DO it carries (Delivery Planning and the phones read the DO crew).
+  if (p.driverId !== undefined || p.helper1Id !== undefined || p.helper2Id !== undefined || p.lorryId !== undefined) {
+    const syncErr = await syncTripCrewToDos(sb, id, null, c.get('user')?.id ?? null).then(() => null, (e: Error) => String(e.message).slice(0, 160));
+    if (syncErr) return c.json({ trip: data, crewSyncError: syncErr });
+  }
   return c.json({ trip: data });
 };
 trips.patch('/:id', patchTripHandler);

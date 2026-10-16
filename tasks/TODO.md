@@ -4,6 +4,9 @@ One line per open item: what — waiting on — since. Delete the line when it i
 
 ## Waiting on owner
 - DEV-03 Mail Center: verify 2990shome.com in Resend (composing from it fails until then), and in Google Admin add each new personal address as an alias of one already-synced account; the ERP lists what is pending at the mail host once P3 ships — 2026-10-09
+- Houzs POS go-live: create the Cloudflare Pages project `houzs-pos` (direct upload) and attach `pos.houzscentury.com`, then merge PR #4635; `deploy-pos.yml` fails until the project exists — 2026-10-15
+- Houzs POS device QA (spec section 16, items 1 to 6, 9, 11): on a real tablet with the ESC/POS printer and the scanner after the deploy: install, Prepare, 3 days offline, hotspot sync, DATA LOST drill, 3-day pending drill, 58 / 80 mm prints, label scans — 2026-10-15
+- IT Support (`/it-support`, requests live in the Houzs IT Hub): each company files into its own hub system, keyed by the Worker secret `IT_HUB_API_KEY_<company code>` (`IT_HUB_API_KEY_HOUZS` = hub system HC, `IT_HUB_API_KEY_2990` = hub system 2990) plus `IT_HUB_URL`; issue a key in the hub repo with `node scripts/issue-api-key.mjs <HC|2990>`. The menu row shows only in a company whose key is set. The old single `IT_HUB_API_KEY` secret is no longer read: delete it once the two new ones are in. — 2026-10-13
 - Product request (新品 / 重新包装申请): after the PR deploys, grant `scm.product_request.approve` to the Procurement/Purchasing role in Team > Roles & Permissions — until then only the Owner / IT Admin (`*`) can approve; every Sales caller can already raise one — 2026-10-06
 - 2990 price-lane amendments: after this PR deploys, assign Kris (only) to the new "Sales Director (Price Approver)" role in Team > Roles — his login e-mail is PII, so the migration creates the role but does not reassign the user. Until then a 2990 price-only SO amendment stays on the Purchaser's queue — 2026-09-21
 - Outsourced transport in Members: remove the 3 invited accounts (JAN #94, SHAKTI #93, Cheah #92) in Team, then dedupe their Fleet driver rows under a 3PL company (all 0 trips, safe). Going forward the invite/profile Title picker now warns to build outsourced drivers in Fleet, not Members — 2026-09-17
@@ -28,7 +31,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - BUG-54 service case phone on the delivery sheet: paste `reference/ERPDeliverySync.gs` into the live "Delivery & Amend Updated" project and run `runErpAssrContactRefresh` once, then check Delivery Details R4124 col H — sheet trigger owner — 2026-10-05
 
 ## Dev
-- Product request: after `scm.product_requests` is on production, re-run `probe-product-code-columns.mjs` so the hand-added `product_requests.item_code` line in `tests/fixtures/product-code-columns.snapshot.json` is read back from production (it was written from the migration) — 2026-10-07
+- Product request: after `scm.product_request_lines` is on production, re-run `probe-product-code-columns.mjs` so the hand-added `product_request_lines.item_code` line in `tests/fixtures/product-code-columns.snapshot.json` is read back from production (it was written from the migration; it replaced the `product_requests.item_code` line of 2026-10-07) — 2026-10-15
 - AutoCount PO Doc No. repair: verify batch 3, then the last 243 rows, out of office hours — 2026-09-15
 - AutoCount: an edit composed before a rebuild is refused "line not found"; recompose once — 2026-09-15
 - AutoCount: size changes on 6 carried-over lines (4 orders) never reached the book; trace, then repair — 2026-09-15
@@ -38,6 +41,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Phone/desktop parity defects B-6, B-7, B-8, B-10 to B-13, MD-3, one PR each — 2026-09-14
 - Sales order list: right-click "Reopen" shows on cancelled orders but the server always refuses it — 2026-09-15
 - Photos over 2 MiB are dropped (4 documents) — 2026-09-14
+- Drop `public.project_sales_bills` (created by mig 20261014T1600, unused since the sales report is derived from the project chat; 38 saved rows are superseded by the chat they came from) — needs a migration with REVERSAL — 2026-10-14
 
 ## Plans in force
 - One table component (owner 2026-09-25): done 2026-09-27. Every list renders `components/DataTable.tsx`, with resize-one-column, wrap, freeze-up-to, Title Case headers, auto-fit, footer totals, Ctrl+C, export of the ticked rows, header descriptions (`lib/columnDescriptions.ts`), fixed overdue/owing highlights (`lib/tableHighlight.ts`), column filters in the URL (`cf.<tableId>`), and one display format (yyyy/mm/dd, "RM 1,234.00" incl. PDFs, readable status). Left: quantity separators on document detail line tables and create-from pickers (in progress); mobile card lists have no totals / freeze / copy by design.

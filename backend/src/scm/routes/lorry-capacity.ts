@@ -14,6 +14,10 @@
 //                    windows, each clipped to [from,to].
 //   available_days = max(0, working_days − repair_days).
 //   total_trips    = non-CANCELLED trips with trip_date in [from,to].
+//                    PLUS one per lorry-date with board jobs and no real trip:
+//                    DO crew lorries (deliveries +1 per DO) and PMS project
+//                    setup/dismantle lorries (setup_dismantle +1), lib/lorry-capacity-jobs.ts.
+//   km             = GPS km from lorry_positions; running_cost = km x cost_per_km_sen.
 //   work_days      = distinct trip_date count (the displayed Work Days column).
 //   delivery_days  = distinct trip_date where the trip has ≥1 DELIVERY stop.
 //   utilisation    = total_trips ÷ available_days  (CAN exceed 100% — multiple
@@ -48,12 +52,14 @@
 // Mounted at '/lorry-capacity'.
 // ----------------------------------------------------------------------------
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
-import { paginateAll } from '../lib/paginate-all';
-import { activeCompanyId } from '../lib/companyScope';
+import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { activeCompanySql, activeCompanyId, scopeToCompany } from '../lib/companyScope';
+import { tripsFromJobs, plateKey, type LorryJob } from '../lib/lorry-capacity-jobs';
+import { kmFromFixes, costSen, myDayWindow, type Fix } from '../lib/lorry-km';
 
 export const lorryCapacity = new Hono<{ Bindings: Env; Variables: Variables }>();
 lorryCapacity.use('*', supabaseAuth);
@@ -125,6 +131,87 @@ function safeDiv(num: number, den: number): number | null {
 
 type FleetFilter = 'all' | 'internal' | 'outsourced';
 
+type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
+type Loaded<T> = { data: T; error: string | null };
+
+/* DOs with a lorry on the Delivery Planning board (delivery_order_crew). Date =
+   the DO's customer_delivery_date. DOs are company data, so scoped. */
+async function loadDoJobs(c: Ctx, from: string, to: string): Promise<Loaded<LorryJob[]>> {
+  const sb = c.get('supabase');
+  const { data: dos, error: doErr } = await paginateAll<Record<string, unknown>>((lo, hi) =>
+    scopeToCompany(sb.from('delivery_orders')
+      .select('id, customer_delivery_date')
+      .gte('customer_delivery_date', from)
+      .lte('customer_delivery_date', to)
+      .not('status', 'in', '(DRAFT,CANCELLED)'), c)
+      .order('id')
+      .range(lo, hi),
+  );
+  if (doErr) return { data: [], error: doErr.message };
+  const dateByDo = new Map((dos ?? []).map((d) => [dual<string>(d, 'id'), dual<string | null>(d, 'customer_delivery_date')]));
+  const { data: crew, error: crewErr } = await chunkIn([...dateByDo.keys()], (batch, lo, hi) =>
+    sb.from('delivery_order_crew')
+      .select('do_id, lorry_id, lorry_plate')
+      .in('do_id', batch)
+      .order('do_id')
+      .range(lo, hi),
+  );
+  if (crewErr) return { data: [], error: crewErr.message };
+  return {
+    error: null,
+    data: crew.map((cr) => ({
+      lorryId: dual<string | null>(cr, 'lorry_id') ?? null,
+      lorryPlate: dual<string | null>(cr, 'lorry_plate') ?? null,
+      date: dateByDo.get(dual<string>(cr, 'do_id')) ?? null,
+      kind: 'delivery' as const,
+    })),
+  };
+}
+
+/* PMS project setup / dismantle windows with a lorry (420 of the 421 lorry rows
+   on the board, 15 Oct 2026). Same raw-SQL read as the board's project rows,
+   scoped to the active company. */
+async function loadProjectJobs(c: Ctx, from: string, to: string): Promise<Loaded<LorryJob[]>> {
+  const proj = await c.env.DB.prepare(
+    `SELECT setup_lorry_id, setup_start_at, dismantle_lorry_id, dismantle_start_at
+       FROM projects WHERE archived_at IS NULL
+        AND (setup_lorry_id IS NOT NULL OR dismantle_lorry_id IS NOT NULL)${activeCompanySql(c)}`,
+  ).all<Record<string, unknown>>();
+  const data: LorryJob[] = [];
+  for (const p of proj.results) {
+    for (const k of ['setup', 'dismantle'] as const) {
+      const lorryId = dual<string | number | null>(p, `${k}_lorry_id`);
+      const date = String(dual<string | null>(p, `${k}_start_at`) ?? '').slice(0, 10);
+      if (lorryId != null && date >= from && date <= to) data.push({ lorryId: String(lorryId), lorryPlate: null, date, kind: 'setupDismantle' });
+    }
+  }
+  return { data, error: null };
+}
+
+/* GPS km per lorry from the Velocity fixes (scm.lorry_positions, Malaysia days).
+   Fixes exist from 15 Oct 2026 only. Unified fleet like /lorries/km-cost. */
+async function loadKmByLorry(c: Ctx, from: string, to: string): Promise<Loaded<Map<string, number>>> {
+  const winFrom = myDayWindow(from)?.from;
+  const winTo = myDayWindow(to)?.to;
+  if (!winFrom || !winTo) return { data: new Map(), error: null };
+  // ponytail: reads every fix in range (~288 per tracked lorry per day); a daily km rollup table if many lorries get tracked.
+  const { data: fixes, error } = await paginateAll<Fix & { lorry_id: string }>((lo, hi) =>
+    c.get('supabase').from('lorry_positions')
+      .select('lorry_id, lat, lng, recorded_at')
+      .gte('recorded_at', winFrom).lt('recorded_at', winTo)
+      .order('recorded_at').order('id')
+      .range(lo, hi),
+  );
+  if (error) return { data: new Map(), error: error.message };
+  const byLorry = new Map<string, Fix[]>();
+  for (const f of fixes ?? []) {
+    const list = byLorry.get(f.lorry_id) ?? [];
+    list.push(f);
+    byLorry.set(f.lorry_id, list);
+  }
+  return { data: new Map([...byLorry].map(([lid, list]) => [lid, kmFromFixes(list)])), error: null };
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
    GET /lorry-capacity?from=&to=&fleet=all|internal|outsourced
    The dashboard. Per-lorry metrics + fleet summary cards + the working-day
@@ -152,7 +239,7 @@ lorryCapacity.get('/', async (c) => {
   /* 1. Lorries master (fleet-filtered). Active lorries only — the dashboard is a
         capacity view of the live fleet. */
   let lq = sb.from('lorries')
-    .select('id, plate, type, is_internal, active')
+    .select('id, plate, type, is_internal, active, cost_per_km_sen')
     .eq('active', true)
     .order('plate');
   if (fleet === 'internal') lq = lq.eq('is_internal', true);
@@ -174,6 +261,8 @@ lorryCapacity.get('/', async (c) => {
     services: number;
     setupDismantle: number;
     deliveryRevenueSen: number;
+    costPerKmSen: number | null;
+    km: number;
   };
   const byLorry = new Map<string, LorryAcc>();
   for (const r of (lorryRows ?? []) as Array<Record<string, unknown>>) {
@@ -192,6 +281,8 @@ lorryCapacity.get('/', async (c) => {
       services: 0,
       setupDismantle: 0,
       deliveryRevenueSen: 0,
+      costPerKmSen: dual<number | null>(r, 'cost_per_km_sen') ?? null,
+      km: 0,
     });
   }
 
@@ -286,6 +377,31 @@ lorryCapacity.get('/', async (c) => {
     }
   }
 
+  /* 4b. Board jobs (DO crew lorries + PMS project setup/dismantle lorries) count
+        as trips on lorry-dates with no real trip, see lib/lorry-capacity-jobs.ts.
+        4c. GPS km from the Velocity fixes. Independent reads, so run together. */
+  const realTripDates = new Map([...byLorry.values()].map((a) => [a.id, new Set(a.tripDates)]));
+  const [doJobs, projectJobs, km] = await Promise.all([
+    loadDoJobs(c, from, to),
+    loadProjectJobs(c, from, to),
+    loadKmByLorry(c, from, to),
+  ]);
+  for (const r of [doJobs, projectJobs, km]) if (r.error) return c.json({ error: 'load_failed', reason: r.error }, 500);
+  const idByPlate = new Map([...byLorry.values()].map((a) => [plateKey(a.plate), a.id]));
+  for (const [lorryId, t] of tripsFromJobs([...doJobs.data, ...projectJobs.data], idByPlate, realTripDates)) {
+    const acc = byLorry.get(lorryId);
+    if (!acc) continue;
+    acc.totalTrips += t.dates.size;
+    acc.deliveries += t.delivery;
+    acc.setupDismantle += t.setupDismantle;
+    for (const d of t.dates) acc.tripDates.add(d);
+    for (const d of t.deliveryDates) acc.deliveryTripDates.add(d);
+  }
+  for (const [lid, k] of km.data) {
+    const acc = byLorry.get(lid);
+    if (acc) acc.km = k;
+  }
+
   /* 5. Shape per-lorry metrics (formulas above). Money returned as cents; client
         divides by 100. Every displayed ratio rounded (counts integer; rates 1dp;
         utilisation as a 0..n fraction the client renders as a %). */
@@ -316,6 +432,8 @@ lorryCapacity.get('/', async (c) => {
       delivery_revenue_sen: a.deliveryRevenueSen,
       revenue_per_order_sen: revenuePerOrderSen == null ? null : Math.round(revenuePerOrderSen),
       revenue_per_trip_sen: revenuePerTripSen == null ? null : Math.round(revenuePerTripSen),
+      km: a.km,
+      running_cost_sen: costSen(a.km, a.costPerKmSen),
     };
   });
 

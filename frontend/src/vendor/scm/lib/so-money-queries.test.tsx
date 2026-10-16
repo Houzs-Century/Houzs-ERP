@@ -8,7 +8,7 @@ import type { ReactNode } from 'react';
 vi.mock('./authed-fetch', () => ({ authedFetch: vi.fn() }));
 
 import { authedFetch } from './authed-fetch';
-import { convertParamOf, convertPicksFrom, newOrderWithMoneyHref, useCancelledWithMoney, useOrderMoney, useRequestRefund } from './so-money-queries';
+import { EMPTY_BANK, convertParamOf, convertPicksFrom, newOrderWithMoneyHref, refundAskGaps, useCancelledWithMoney, useOrderMoney, useRequestRefund } from './so-money-queries';
 
 const mockedFetch = vi.mocked(authedFetch);
 const wrapper = ({ children }: { children: ReactNode }) => (
@@ -31,14 +31,21 @@ describe('the wire', () => {
     expect(mockedFetch).toHaveBeenCalledWith('/mfg-sales-orders/cancelled-with-money?phone=0123');
   });
 
-  test('the refund request POSTs the amount and the note', async () => {
-    mockedFetch.mockResolvedValueOnce({ id: 'pv1', pvNumber: '2990Draft-2609-003' });
+  test('the refund request POSTs the amount, the reason and the customer\'s bank, trimmed (owner 2026-10-14)', async () => {
+    mockedFetch.mockResolvedValueOnce({ id: 'r1', requestNo: '2990-PRQ-2610-001' });
     const { result } = renderHook(() => useRequestRefund('2990-SO-2607-010'), { wrapper });
-    await result.current.mutateAsync({ amountSen: 40_000, note: 'why' });
+    const r = await result.current.mutateAsync({ amountSen: 40_000, reason: ' why ', bankName: ' Maybank ', bankAccountNo: '5123 4567 8901 ', bankAccountName: 'AH MENG' });
+    expect(r.requestNo).toBe('2990-PRQ-2610-001');
     const [path, init] = mockedFetch.mock.calls[0]!;
     expect(path).toBe('/mfg-sales-orders/2990-SO-2607-010/money/refund');
     expect(init?.method).toBe('POST');
-    expect(JSON.parse(String(init?.body))).toEqual({ amountSen: 40_000, note: 'why' });
+    expect(JSON.parse(String(init?.body))).toEqual({ amountSen: 40_000, reason: 'why', bankName: 'Maybank', bankAccountNo: '5123 4567 8901', bankAccountName: 'AH MENG' });
+  });
+
+  test('what is still needed before a refund request may go', () => {
+    expect(refundAskGaps({ reason: '', ...EMPTY_BANK })).toEqual(['the reason', "the customer's bank", 'the account number', 'the name on the account']);
+    expect(refundAskGaps({ reason: 'x', bankName: 'Maybank', bankAccountNo: ' ', bankAccountName: 'AH MENG' })).toEqual(['the account number']);
+    expect(refundAskGaps({ reason: 'x', bankName: 'Maybank', bankAccountNo: '5123', bankAccountName: 'AH MENG' })).toEqual([]);
   });
 });
 

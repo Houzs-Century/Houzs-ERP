@@ -30,6 +30,8 @@ import { AndroidInstallGuide } from "../components/AndroidInstallGuide";
 import { MobileModuleList, MODULE_CONFIGS, FORM_MEMBERS_EDIT } from "./MobileModuleList";
 import { MobileInvitations } from "./MobileInvitations";
 import { mobileDestinationMatches, resolveMobileRoute, type MobileRoute } from "./mobileRoute";
+import { useItSupportConnected, withoutUnconnectedItSupport } from "../hooks/useItSupportConnected";
+import { useItSupportUnread } from "../hooks/useAmendmentApprovals";
 import type { FlowDocNav, FlowNav } from "./relationship-map-model";
 import type { SearchNav } from "./MobileSearch";
 import type { MobileScanPrefill } from "./MobileScan";
@@ -78,6 +80,7 @@ const MobileFairReport = lazy(() => import("./MobileFairReport").then((m) => ({ 
 const MobileAutoCountSync = lazy(() => import("./MobileAutoCountSync").then((m) => ({ default: m.MobileAutoCountSync })));
 const MobileVenturePortalFeed = lazy(() => import("./MobileVenturePortalFeed").then((m) => ({ default: m.MobileVenturePortalFeed })));
 const MobileChangeLog = lazy(() => import("./MobileChangeLog").then((m) => ({ default: m.MobileChangeLog })));
+const MobileItSupport = lazy(() => import("./MobileItSupport").then((m) => ({ default: m.MobileItSupport })));
 // SO Maintenance is the SAME desktop page (/scm/sales-orders/maintenance) — the
 // director-only State→Warehouse / Localities / SO-dropdown CRUD surface. Mobile
 // has no route table, so the vendored desktop page is mounted directly inside
@@ -149,13 +152,14 @@ type Screen =
   | { t: "payment-requests" }
   | { t: "product-requests" }
   | { t: "service"; startNew?: boolean }
-  | { t: "delivery-planning" }
+  | { t: "delivery-planning"; completedDoNumber?: string | null }
   | { t: "pms"; projectId?: number }
   | { t: "mail" }
   | { t: "roles" }
   | { t: "titles" }
   | { t: "announcements" }
   | { t: "inbox" }
+  | { t: "it-support" }
   /* A real mobile destination this user's position may not open. Reached only
      by URL — the menu never renders a row the user can't use. */
   | { t: "locked"; label: string }
@@ -186,6 +190,7 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/projects") return { t: "pms" };
   if (path === "/mail-center") return { t: "mail" };
   if (path === "/announcements") return { t: "announcements" };
+  if (path === "/it-support") return { t: "it-support" };
   if (path === "/activity-inbox") return { t: "inbox" };
   if (path === "/roles") return { t: "roles" };
   if (path === "/titles") return { t: "titles" };
@@ -506,6 +511,11 @@ export const PROFILE_ORG_ITEMS: MobileMenuItem[] = [
      to this user). So this row bypasses the desktop nav gate
      (announcements.read = the desktop ADMIN list/composer permission). */
   { to: "/announcements", label: "Announcements", alwaysShow: true },
+  /* Gated by its desktop NAV_TABS row (no permission: every signed-in user
+     reports problems and reads only their own requests). The Profile row is
+     also dropped where this environment is not connected to the IT Hub, as on
+     desktop; the screen stays reachable by its URL and says so itself. */
+  { to: "/it-support", label: "IT Support" },
   /* Team destinations follow the desktop redesign's NAV_TABS rows
      (?tab=directory / ?tab=departments2) so each mobile row keeps its exact
      query-bearing gate; the screens themselves stay the classic mobile
@@ -601,6 +611,9 @@ function MobileAppInner() {
   // the Profile > Announcements row, so a phone user sees a new broadcast or
   // service case without opening the screen (B2).
   const annUnread = useAnnouncementUnread();
+  const itConnected = useItSupportConnected();
+  // The Profile tab pill also counts IT replies: IT Support lives under Profile.
+  const profileUnread = annUnread + useItSupportUnread();
 
   // Single-source the mobile gating on the SHARED per-node predicate the desktop
   // Sidebar + MobileTabBar filter with (components/navFilter.makeNavVisible), so
@@ -1029,19 +1042,21 @@ function MobileAppInner() {
     overlay = <MobileDoHeaderEdit id={String(screen.row.id)} onBack={backToDoc} onSaved={backToDoc} />;
   }
   else if (screen.t === "pod") {
-    const leavePod = screen.from === "delivery-planning"
-      ? () => setScreen({ t: "delivery-planning" })
-      : back;
-    overlay = <MobilePOD docNo={screen.docNo} onBack={leavePod} onDone={leavePod} />;
+    const fromSheet = screen.from === "delivery-planning";
+    const leavePod = fromSheet ? () => setScreen({ t: "delivery-planning", completedDoNumber: null }) : back;
+    // Confirmed from the run-sheet: go back to it and on to the next stop.
+    const donePod = fromSheet ? () => setScreen({ t: "delivery-planning", completedDoNumber: screen.docNo }) : back;
+    overlay = <MobilePOD docNo={screen.docNo} onBack={leavePod} onDone={donePod} />;
   }
   else if (screen.t === "mileage-capture") overlay = <MobileMileageCapture onBack={back} />;
   else if (screen.t === "service") overlay = <MobileServiceCase onBack={back} startNew={screen.startNew} />;
-  else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber) => setScreen({ t: "pod", docNo: doNumber, from: "delivery-planning" })} />;
+  else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} completedDoNumber={screen.completedDoNumber ?? null} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber) => setScreen({ t: "pod", docNo: doNumber, from: "delivery-planning" })} />;
   else if (screen.t === "pms") overlay = <MobilePMS onBack={back} initialProjectId={screen.projectId} />;
   else if (screen.t === "mail") overlay = <MobileMailCenter onBack={back} />;
   else if (screen.t === "roles") overlay = can("roles.read") ? <MobileRoles onBack={back} /> : <TabLocked title="Roles" />;
   else if (screen.t === "titles") overlay = can("users.read") ? <MobileTitles onBack={back} /> : <TabLocked title="Titles" />;
   else if (screen.t === "announcements") overlay = <MobileAnnouncements onBack={back} />;
+  else if (screen.t === "it-support") overlay = <MobileItSupport onBack={back} />;
   else if (screen.t === "inbox") overlay = <MobileInbox onBack={back} onOpen={(n) => { const doc = (n as { doc_no?: string }).doc_no; if (doc) setScreen({ t: "so-detail", docNo: doc }); }} />;
   else if (screen.t === "locked") overlay = <UrlLocked label={screen.label} onHome={leaveUrlDeadEnd} />;
   else if (screen.t === "desktop-only") overlay = <DesktopOnly path={screen.path} onHome={leaveUrlDeadEnd} />;
@@ -1094,7 +1109,7 @@ function MobileAppInner() {
               focusProjectId={calJump?.projectId}
             />
           ) : <TabLocked title="Calendar" />)}
-          {tab === "profile" && <MobileProfile onLogout={logout} orgItems={profileOrgItems} onOpenOrg={openRoute} />}
+          {tab === "profile" && <MobileProfile onLogout={logout} orgItems={withoutUnconnectedItSupport(profileOrgItems, itConnected)} onOpenOrg={openRoute} />}
         </MobileCrashBoundary>
       </div>
 
@@ -1124,14 +1139,14 @@ function MobileAppInner() {
           <button
             className={`tab${tab === "profile" ? " on" : ""}`}
             onClick={() => setTab("profile")}
-            aria-label={annUnread > 0 ? `Profile, ${annUnread} unread notification${annUnread > 1 ? "s" : ""}` : "Profile"}
+            aria-label={profileUnread > 0 ? `Profile, ${profileUnread} unread` : "Profile"}
           >
             <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="3.7" /><path d="M4.8 20a7.2 7.2 0 0 1 14.4 0" /></svg>
             {/* App-wide unread badge — same red count pill as the Profile >
                 Announcements row (owner B2); the un-acked system-notice count. */}
-            {annUnread > 0 && (
+            {profileUnread > 0 && (
               <span aria-hidden style={{ position: "absolute", top: 4, left: "calc(50% + 5px)", minWidth: 16, height: 16, padding: "0 4px", borderRadius: 8, background: "#c0392b", color: "#fff", fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, boxSizing: "border-box" }}>
-                {annUnread > 9 ? "9+" : annUnread}
+                {profileUnread > 9 ? "9+" : profileUnread}
               </span>
             )}
             <span className="tl">Profile</span>

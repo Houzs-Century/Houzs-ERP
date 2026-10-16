@@ -61,6 +61,8 @@ import { paginateAll } from '../lib/paginate-all';
 import { getBranding } from '../../services/branding';
 import { slipBindings, expiresInOneHour } from '../lib/slip';
 import { buildSlipKey, type SlipMime } from '../lib/r2';
+import { scanTimer } from '../lib/scan-timing';
+import { keepScanFile } from '../lib/scan-files';
 
 // scm-scoped, loosely-typed client (matches scm/env.ts Variables.supabase).
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
@@ -410,6 +412,7 @@ async function persistReceiptAsSlip(
 // POST /scan-payment/extract
 // ===========================================================================
 scanPayment.post('/extract', async (c) => {
+  const timer = scanTimer('payment');
   const apiKey = c.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return c.json(
@@ -458,6 +461,13 @@ scanPayment.post('/extract', async (c) => {
   }
 
   const buf = await file.arrayBuffer();
+  // HC-0006: keep the original + its scan_files row, started with the read so it adds no wait; a
+  // failed read still leaves both.
+  const kept = keepScanFile(c.env, c.get('supabase'), {
+    kind: 'payment', companyId: activeCompanyId(c), buf, mime: mime || (isPdf ? 'application/pdf' : 'image/jpeg'),
+    uploadedBy: (c.get('user') as { id?: string } | undefined)?.id ?? null, key: null,
+  });
+  timer.mark('upload');
   const data = toBase64(buf);
   // Canonical slip mime for R2 storage (RECEIPT-AS-SLIP) — same coercion as
   // the Anthropic image block below, but always one of the 4 SlipMime values.
@@ -492,6 +502,7 @@ scanPayment.post('/extract', async (c) => {
   // Company name from the central Branding config (anchors the prompt).
   const branding = await getBranding(c.env);
   const systemPrompt = buildSystemPrompt(branding.companyName);
+  timer.mark('prep');
 
   let errorMsg: string | null = null;
   let parsed: ExtractedReceipt | null = null;
@@ -529,6 +540,7 @@ scanPayment.post('/extract', async (c) => {
     });
 
     const bodyText = await resp.text();
+    timer.mark('model');
     if (!resp.ok) {
       errorMsg = `Anthropic ${resp.status}: ${bodyText.slice(0, 500)}`;
     } else {
@@ -554,12 +566,15 @@ scanPayment.post('/extract', async (c) => {
   } catch (e) {
     errorMsg = `Network/fetch error: ${(e as Error).message}`;
   }
+  await kept; // kept alongside the model read, also when it threw; never throws
 
   if (!parsed) {
+    timer.done(c.env, null, 'error');
     return c.json({ error: 'extract_failed', reason: errorMsg ?? 'Extraction failed.' }, 502);
   }
 
   const warnings = validateReceipt(parsed, options);
+  timer.mark('parse');
 
   // RECEIPT-AS-SLIP: persist the receipt image as the payment row's slip and
   // hand back its session+key. Best-effort — never block the OCR result on it.
@@ -570,6 +585,8 @@ scanPayment.post('/extract', async (c) => {
   } catch {
     slip = null;
   }
+  timer.mark('save');
+  timer.done(c.env, null, 'ok');
 
   return c.json({
     success: true,

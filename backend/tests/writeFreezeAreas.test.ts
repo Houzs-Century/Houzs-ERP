@@ -95,16 +95,19 @@ describe('the areas the owner named resolve to the routers he means', () => {
     });
   }
 
-  it('sales orders is NINE routers, not just the SO API', () => {
+  it('sales orders is ELEVEN routers, not just the SO API', () => {
     /* The owner asks for "sales orders"; the key he must type also carries
        amendments, the salesperson handover, quotes, the PWP codes, the three
-       scan/slip intake routes and the payment backdate-request inbox. That is
+       scan/slip intake routes, the SO and payment original scans and the
+       payment backdate-request inbox. That is
        what the lift will actually open, and the runbook says so. */
     expect(prefixesForArea('scm.sales.orders').sort()).toEqual([
       '/mfg-sales-orders/*',
       '/payment-backdate-requests/*',
       '/pwp-codes/*',
       '/quotes/*',
+      '/scan-files/payment/*',
+      '/scan-files/so/*',
       '/scan-payment/*',
       '/scan-so/*',
       '/slips/*',

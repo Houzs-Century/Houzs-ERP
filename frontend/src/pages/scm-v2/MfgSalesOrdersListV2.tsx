@@ -43,7 +43,9 @@ import {
   CheckCircle2,
   Truck,
   RotateCcw,
+  Trash2,
 } from "lucide-react";
+import { DISCARD_DRAFT_LABEL, useDiscardDraftAction } from "./use-discard-draft-action";
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { salesOrderPrintChain } from "../../lib/printChain";
@@ -106,7 +108,6 @@ import { capability } from "../../auth/capabilities";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { customerRefOf } from '../../lib/customer-ref';
-import { soExemptionExpiryOf } from '../../lib/so-exemption-expiry';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Minimal row shape the listing needs. The full SoRow (in MfgSalesOrdersList
@@ -189,6 +190,11 @@ type SoRow = HoldFields & {
   source_po_adj?: boolean;
   processing_date: string | null;
   customer_delivery_date: string | null;
+  /* The REAL AutoCount sales-exemption expiry (public.sales_orders.expiry_date,
+     keyed by the order's linked book doc no), server-derived in so-list-rows.ts.
+     Null for orders not in AutoCount. Drives the "Sales Exemption Expiry Date"
+     column; distinct from the ERP's frozen sales_exemption_expiry (BUG-51). */
+  ac_sales_exemption_expiry?: string | null;
   // ── Phase 2 FINANCE: cost / margin / per-category subtotals + deposit. The
   //    backend OMITS these keys entirely for non-finance callers
   //    (canViewScmFinance), so every one is optional. margin_pct_basis is
@@ -260,15 +266,13 @@ const brandTone = (r: SoRow): BrandTone => brandingToneForCategory(r.first_item_
  *  redesign is showing off is the visual composition, not menu wizardry. */
 function SplitDropdown({
   onFromQuotation,
-  onImport,
   onDuplicate,
   canMaintain,
 }: {
   onFromQuotation: () => void;
-  onImport: () => void;
   onDuplicate: () => void;
-  /* SO Maintenance is director-only (owner 2026-07-15). Import-from-file and
-     Duplicate-last-SO both land on /scm/sales-orders/maintenance, so they are
+  /* SO Maintenance is director-only (owner 2026-07-15). Duplicate-last-SO
+     lands on /scm/sales-orders/maintenance, so it is
      hidden from a non-director (OFF, not hide — no menu entry, and the route
      itself Forbids). "New from quotation" stays for everyone. */
   canMaintain: boolean;
@@ -308,16 +312,6 @@ function SplitDropdown({
             </button>
             {canMaintain && (
               <>
-                <button
-                  type="button"
-                  className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
-                  onClick={() => {
-                    setOpen(false);
-                    onImport();
-                  }}
-                >
-                  Import from file
-                </button>
                 <button
                   type="button"
                   className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
@@ -443,6 +437,7 @@ function DetailDrawer({
   onEdit,
   onPrint,
   onConfirm,
+  onDiscard,
   onDeliver,
   onReopen,
   canDeliver,
@@ -454,6 +449,8 @@ function DetailDrawer({
   onEdit: () => void;
   onPrint: () => void;
   onConfirm: () => void;
+  /** DRAFT only: hard-delete it (use-discard-draft-action.ts). */
+  onDiscard: () => void;
   onDeliver: () => void;
   onReopen: () => void;
   /** Sales may raise the SO but not operate the DO (owner 2026-07-17). False
@@ -703,14 +700,27 @@ function DetailDrawer({
                 // "DRAFT"); normalise once so the CTA switch works regardless.
                 const s = (row.status || "").toLowerCase();
                 if (s === "draft") {
+                  /* Discard beside Confirm (owner 2026-10-13: 「这个draft - discard
+                     不到」 — the drawer offered no way to delete a junk draft).
+                     Ghost + red so it never competes with Confirm. */
                   return (
-                    <Button
-                      variant="primary"
-                      icon={<CheckCircle2 size={14} />}
-                      onClick={onConfirm}
-                    >
-                      Confirm
-                    </Button>
+                    <>
+                      <Button
+                        variant="ghost"
+                        icon={<Trash2 size={14} />}
+                        onClick={onDiscard}
+                        style={{ color: "var(--c-festive-b, #B8331F)" }}
+                      >
+                        {DISCARD_DRAFT_LABEL}
+                      </Button>
+                      <Button
+                        variant="primary"
+                        icon={<CheckCircle2 size={14} />}
+                        onClick={onConfirm}
+                      >
+                        Confirm
+                      </Button>
+                    </>
                   );
                 }
                 if (soCanRaiseDo(row.status, row.on_hold ?? null)) {
@@ -1119,6 +1129,7 @@ export function MfgSalesOrdersListV2() {
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const updateStatus = useUpdateMfgSalesOrderStatus();
   const requestCancel = useCancelRequestAction("so");
+  const { discard: discardDraft } = useDiscardDraftAction();
   const setHold = useSetDocumentHold("so");
 
   // The server already filtered (status + search) and sorted this page; the
@@ -1229,7 +1240,6 @@ export function MfgSalesOrdersListV2() {
   const goScanOrder = () => setShowScan(true);
   const goSoMaintenance = () => navigate("/scm/sales-orders/maintenance");
   const goFromQuotation = () => navigate("/scm/sales-orders/new/guided");
-  const goImport = () => navigate("/scm/sales-orders/maintenance?tab=import");
   const goDuplicate = () => navigate("/scm/sales-orders/maintenance?tab=duplicate");
   const goEdit = (r: SoRow) => navigate(`/scm/sales-orders/${r.doc_no}?edit=1`);
   const printDocument = usePrintDocument();
@@ -1239,6 +1249,9 @@ export function MfgSalesOrdersListV2() {
       { docNo: r.doc_no, status: "confirmed", expectedStatus: r.status },
       { onSuccess: () => setSelected(null) }
     );
+  /* Discard a DRAFT (DELETE /:docNo) — confirm + words in ./use-discard-draft-action.
+     The row no longer exists on success, so the drawer closes. */
+  const doDiscard = async (r: SoRow) => { if (await discardDraft(r.doc_no)) setSelected(null); };
   const doDeliver = (r: SoRow) => navigate(convertToLink('soToDo', r.doc_no));
   // Reopen a cancelled SO → CONFIRMED so it can proceed again (2990
   // MfgSalesOrdersList "Reopen SO" parity; reuses the status PATCH endpoint).
@@ -1292,7 +1305,7 @@ export function MfgSalesOrdersListV2() {
   const soContextMenu = salesOrderRowMenu<SoRow>({
     open: goFullPage, edit: goEdit, print: printDocument,
     confirm: doConfirm, transferToDo: doDeliver, reopen: doReopen,
-    setStatus: setSoStatus, close: doCloseSo, setHold: setSoHold, cancel: doCancelSo, canDeliver,
+    setStatus: setSoStatus, close: doCloseSo, setHold: setSoHold, cancel: doCancelSo, discard: (r) => void doDiscard(r), canDeliver,
   });
 
   // ─── Multi-select → batch "Print all" ─────────────────────────────────────
@@ -1477,8 +1490,11 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "sales_exemption_expiry", group: "Basic", label: SO_LABELS.salesExemptionExpiryDate, width: "150px", defaultHidden: true, disableSort: true, exportFormat: "date",
-      getValue: (r) => soExemptionExpiryOf(r) ?? "",
-      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(soExemptionExpiryOf(r))}</span>,
+      /* BUG-51 repoint (owner 2026-10-15): the REAL AutoCount sales-exemption
+         expiry, not the frozen original delivery date. Blank for orders not in
+         AutoCount. Grid key kept as-is so saved layouts keep the column. */
+      getValue: (r) => r.ac_sales_exemption_expiry ?? "",
+      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.ac_sales_exemption_expiry)}</span>,
     },
     {
       key: "sales_location",
@@ -1986,7 +2002,6 @@ export function MfgSalesOrdersListV2() {
                 </Button>
                 <SplitDropdown
                   onFromQuotation={goFromQuotation}
-                  onImport={goImport}
                   onDuplicate={goDuplicate}
                   canMaintain={canMaintain}
                 />
@@ -2253,6 +2268,7 @@ export function MfgSalesOrdersListV2() {
         onEdit={() => selected && goEdit(selected)}
         onPrint={() => selected && printDocument(salesOrderPrintChain(selected).own)}
         onConfirm={() => selected && doConfirm(selected)}
+        onDiscard={() => selected && void doDiscard(selected)}
         onDeliver={() => selected && doDeliver(selected)}
         onReopen={() => selected && void doReopen(selected)}
         canDeliver={canDeliver}

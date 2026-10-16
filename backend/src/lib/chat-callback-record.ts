@@ -16,7 +16,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { advanceSoGeneration } from "../scm/lib/so-generation";
 import { recordSoAudit } from "../scm/lib/so-audit";
-import { chatRequestFieldChanges, chatRequestPatch, type ChatEvent } from "./chat-request-patch";
+import { chatRequestFieldChanges, chatRequestPatch, type ChatEvent, type PropertyAnswers } from "./chat-request-patch";
 
 export interface ChatTapInput {
   /** Resolved company id (null only in the single-company / D1 state). */
@@ -31,6 +31,8 @@ export interface ChatTapInput {
   requestedDate: string | null;
   reason: string | null;
   note: string | null;
+  /** The Property Details form answers (event "property"); null otherwise. */
+  property?: PropertyAnswers | null;
 }
 
 export interface ChatTapResult {
@@ -58,7 +60,7 @@ type AuditClient = Parameters<typeof recordSoAudit>[0];
 type AnySchemaClient = SupabaseClient<any, any, any, any, any>;
 
 export async function recordChatTap(sb: AnySchemaClient, input: ChatTapInput): Promise<ChatTapResult> {
-  const { companyId, docNo, customerRef, callbackId, event, phone, requestedDate, reason, note } = input;
+  const { companyId, docNo, customerRef, callbackId, event, phone, requestedDate, reason, note, property } = input;
 
   // ── Idempotency ─────────────────────────────────────────────────────────
   // A webhook can fire twice for one tap. The id is matched against the exact
@@ -139,13 +141,13 @@ export async function recordChatTap(sb: AnySchemaClient, input: ChatTapInput): P
   // and a stale SO editor save gets its 409 instead of silently putting the
   // customer's answer back. Best-effort AFTER the log row: the row is the
   // record; a lease / conflict here is reported, not retried.
-  const requestPatch = chatRequestPatch(event, requestedDate, reason);
+  const requestPatch = chatRequestPatch(event, requestedDate, reason, property);
   let soRequest: ChatTapResult["so_request"] = { written: false, reason: "nothing_to_write" };
   if (Object.keys(requestPatch).length > 0) {
     try {
       let beforeQuery = sb
         .from("mfg_sales_orders")
-        .select("amend_date_from_customer, amend_reason, delivery_message_status, status")
+        .select("amend_date_from_customer, amend_reason_from_customer, delivery_message_status, house_type, replacement_disposal, disposal_request, status")
         .eq("doc_no", docNo);
       if (companyId != null) beforeQuery = beforeQuery.eq("company_id", companyId);
       const { data: beforeRow, error: beforeErr } = await beforeQuery.maybeSingle();

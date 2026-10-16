@@ -54,6 +54,10 @@ import {
   type ExtractedPayment,
 } from '../lib/scan-receipt-plan';
 import { safeScanDepositSen } from '../lib/scan-header-deposit';
+import { scanTimer } from '../lib/scan-timing';
+import { readSlipWithAliases } from '../lib/scan-field-aliases';
+import { ttlCached } from '../lib/ttl-cache';
+import { keepScanFile, linkScanFiles } from '../lib/scan-files';
 import { variantNotAllowedSentence } from '../lib/allowed-options-check';
 // Document-type-agnostic OCR transport, shared with the GR/PI scanners.
 import {
@@ -374,7 +378,18 @@ async function loadVenueNames(db: D1Database): Promise<string[]> {
   }
 }
 
-async function loadCatalog(sb: SupabaseClient, db: D1Database, companyId?: number | null): Promise<Catalog> {
+/* HC-0006 speed: the catalogue is ~10 paginated reads and changes rarely, so one
+   isolate keeps it for a minute. Scans in that window skip the reads and reuse
+   the same object, which also keeps the cached prompt prefix byte-identical.
+   A failed or empty load is not kept. */
+const CATALOG_TTL_MS = 60_000;
+const catalogCache = new Map<string, { at: number; v: Catalog }>();
+function loadCatalog(sb: SupabaseClient, db: D1Database, companyId: number | null): Promise<Catalog> {
+  return ttlCached(catalogCache, String(companyId ?? 'all'), CATALOG_TTL_MS, () => loadCatalogFresh(sb, db, companyId),
+    // an empty SKU or venue list is a failed read that fails soft: never keep it
+    (cat) => cat.skus.length > 0 && cat.venues.length > 0);
+}
+async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: number | null): Promise<Catalog> {
   // PostgREST's default 1000-row cap silently truncates the OCR validation
   // catalogue (mfg_products is 1141 ACTIVE SKUs live, my_localities 2933) — a
   // truncated catalogue makes the OCR reject valid SKUs/states as "unknown".
@@ -681,7 +696,7 @@ async function warmCatalogCache(
   if (!apiKey) return { ok: false, reason: 'no_key' };
   let catalog: Catalog;
   try {
-    catalog = await loadCatalog(sb, db, companyId);
+    catalog = await loadCatalog(sb, db, companyId ?? null);
   } catch (e) {
     return { ok: false, reason: `catalog_load_failed: ${(e as Error).message}` };
   }
@@ -2897,7 +2912,7 @@ scanSo.post('/extract', async (c) => {
   // operator already has on the SKU master screens). env.DB carries the venue
   // master read (public.project_venues — unreachable by the scm client).
   const sb = c.get('supabase');
-  const catalog = await loadCatalog(sb, c.env.DB, activeCompanyId(c));
+  const catalog = await loadCatalog(sb, c.env.DB, activeCompanyId(c) ?? null);
 
   // Company name for the prompt anchor comes from the central Branding config
   // (stable → the cached prefix below stays byte-identical to /warm + cron).
@@ -3704,9 +3719,9 @@ function buildDraftSoBodyFromSlip(
     // Delivery from the slip (today-or-later only); processing pinned to today.
     processingDate: scanProcDate,
     customerDeliveryDate: scanDelivDate,
-    emergencyContactPhone: (parsed.phones[1] ?? '').trim()
-      ? `+60${(parsed.phones[1] ?? '').replace(/\s+/g, '')}`
-      : null,
+    // BUG-114: phones[1] is already E.164 like phones[0]; "+60" in front of it
+    // stored the emergency contact as "+6060...".
+    emergencyContactPhone: normalizePhone(parsed.phones[1] ?? '') ?? null,
     /* Validated venue only — free-text slip location would bypass the venue
        master. validateSlip has already snapped this to an ACTIVE
        public.project_venues NAME (the master SO Maintenance shows and the
@@ -3774,6 +3789,8 @@ async function runScanJob(
     imageKeys: string[];
   },
 ): Promise<void> {
+  const timer = scanTimer('so');
+  let outcome: 'ok' | 'error' = 'ok';
   const svc = serviceClient(env);
   const touch = async (patch: Record<string, unknown>): Promise<void> => {
     try {
@@ -3787,6 +3804,7 @@ async function runScanJob(
     }
   };
   const fail = async (plainMsg: string): Promise<void> => {
+    outcome = 'error';
     await touch({ status: 'error', error: plainMsg });
     // A hard failure produced no draft — tell the rep privately so they know to
     // scan again (system faults only now; unreadable slips land a shell draft).
@@ -3813,7 +3831,12 @@ async function runScanJob(
     const branding = await getBranding(env);
     const cachedPrefix = buildCachedPrefix(catalog, branding.companyName);
     const inj = await loadPromptInjections(svc, job.salesperson);
-    const call = await callClaudeSlipExtract(apiKey, cachedPrefix, inj, job.fileBlocks);
+    timer.mark('prep');
+    // HC-0006 T8: this company's confirmed corrections, read before the model and applied to its output.
+    const call = await readSlipWithAliases(svc, job.companyId, (hint) => callClaudeSlipExtract(
+      apiKey, cachedPrefix, hint ? { ...inj, globalAliasText: [inj.globalAliasText, hint].filter(Boolean).join('\n\n') } : inj, job.fileBlocks,
+    ));
+    timer.mark('model');
     const parsed = call.parsed;
 
     // Learning pool + slip/receipt provenance — identical to /extract.
@@ -3831,6 +3854,7 @@ async function runScanJob(
     const { imageKey, receiptImageKey } = await storeScanImages(
       env.SO_ITEM_PHOTOS, svc, sampleId, job.uploadedImages, parsed,
     );
+    timer.mark('save');
 
     // Owner 2026-07-04: EVERY scan ends as a draft the rep can open — success,
     // duplicate, OR unreadable. A scan that could not be turned into a full
@@ -3849,6 +3873,7 @@ async function runScanJob(
       shellNote = 'The scan could not read this slip, so this draft is blank. Please open it and fill in the order from the photo.';
     } else {
       await postProcessSlip(parsed, svc, env.GOOGLE_MAPS_API_KEY, catalog);
+      timer.mark('parse');
 
       // Multi-receipt manifest (migration 0141) — record WHICH uploads the OCR
       // classified as payment receipts (the durable audit trail of "the
@@ -3969,6 +3994,7 @@ async function runScanJob(
     }
     const docNo = (outcome.body as { docNo?: unknown }).docNo;
     if (outcome.status === 201 && typeof docNo === 'string' && docNo !== '') {
+      await linkScanFiles(svc, { companyId: job.companyId, kind: 'so', documentId: docNo, keys: job.imageKeys, sha256: null }); // HC-0006 T7
       // Shell/blank draft — there is no reliable OCR payment to book. Record the
       // plain "please complete" note so the Orders-open toast tells the rep, and
       // stop here (no receipt-payment pass on a draft the model couldn't read).
@@ -4047,6 +4073,9 @@ async function runScanJob(
   } catch (e) {
     console.error('[scan-job] pipeline threw:', job.id, e);
     await fail(JOB_MSG.fallback);
+  } finally {
+    timer.mark('save');
+    timer.done(env, job.id, outcome);
   }
 }
 
@@ -4091,6 +4120,7 @@ scanSo.post('/enqueue', async (c) => {
   /* company-scope: the by-id reads the checker attributes to this handler are
      NOT in it — they belong to processScanQueueMessage, declared inside this
      handler's slice. Trace in docs/modules/scan-to-so.md section 7. */
+  const timer = scanTimer('so-enqueue');
   let formData: FormData;
   try {
     formData = await c.req.formData();
@@ -4209,19 +4239,14 @@ scanSo.post('/enqueue', async (c) => {
   // 2) Persist the uploaded photos to R2 (durability/audit) BEFORE responding
   //    — small puts, still fast. Best-effort: the pipeline runs off the
   //    in-memory buffers, so a failed put never blocks the job.
+  //    Each kept photo also gets its scm.scan_files row (HC-0006) via keepScanFile.
   const imageKeys: string[] = [];
   if (c.env.SO_ITEM_PHOTOS) {
-    for (let i = 0; i < allFiles.length; i += 1) {
-      const key = `scan-jobs/${jobId}/${i}`;
-      try {
-        await c.env.SO_ITEM_PHOTOS.put(key, allFiles[i].buffer, {
-          httpMetadata: { contentType: allFiles[i].mime },
-        });
-        imageKeys.push(key);
-      } catch (e) {
-        console.warn('[scan-so enqueue] R2 put failed:', key, (e as Error).message);
-      }
-    }
+    const keys = await Promise.all(allFiles.map((f, i) => keepScanFile(c.env, svc, {
+      kind: 'so', companyId: activeCompanyId(c), buf: f.buffer,
+      mime: f.mime, uploadedBy: user.id, key: `scan-jobs/${jobId}/${i}`,
+    })));
+    for (const key of keys) if (key) imageKeys.push(key);
     if (imageKeys.length > 0) {
       await svc
         .from('scan_jobs')
@@ -4229,6 +4254,9 @@ scanSo.post('/enqueue', async (c) => {
         .eq('id', jobId);
     }
   }
+
+  timer.mark('upload');
+  timer.done(c.env, jobId, 'ok');
 
   // 3) Hand the job to the Cloudflare Queue. The consumer (index.ts `queue()`)
   //    rebuilds EVERYTHING from the scan_jobs row + R2 photos, so the message

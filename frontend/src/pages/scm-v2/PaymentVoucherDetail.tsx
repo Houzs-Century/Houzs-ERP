@@ -18,6 +18,7 @@
 // the scm.payment_voucher.* flat permissions.
 // ----------------------------------------------------------------------------
 
+import { ViewOriginalScan } from '../../vendor/scm/components/ViewOriginalScan';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, Copy, History, Pencil, Plus, Printer, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
@@ -226,6 +227,7 @@ export const PaymentVoucherDetail = () => {
   const [creditAccountCode, setCreditAccountCode] = useState('');
   const [voucherDate, setVoucherDate]             = useState('');
   const [notes, setNotes]                         = useState('');
+  const [bankChargeSen, setBankChargeSen]         = useState(0);
   /* Multi-currency (Phase 1-A) — MYR per 1 unit of the PV currency, string-typed.
      Seeded from the voucher on enter-edit; shown only for a foreign currency. */
   const [exchangeRate, setExchangeRate]           = useState('1');
@@ -266,6 +268,7 @@ export const PaymentVoucherDetail = () => {
     setCreditAccountCode(pv.credit_account_code ?? '');
     setVoucherDate(pv.voucher_date ?? '');
     setNotes(pv.notes ?? '');
+    setBankChargeSen(Number(pv.bank_charge_sen ?? 0));
     setExchangeRate(String(pv.exchange_rate ?? '1'));
     /* Cleared on entering edit, never back-derived from the stored rate: the MYR
        field means "this is what I actually paid", and inventing it from a rate would
@@ -459,6 +462,7 @@ export const PaymentVoucherDetail = () => {
         creditAccountCode,
         voucherDate,
         notes:             notes || null,
+        bankChargeSen,
         // Multi-currency (Phase 1-A) — resolved currency + rate. MYR forces 1
         // (server enforces too); a blank/invalid foreign rate → 1.
         currency:          editCurrency,
@@ -541,6 +545,7 @@ export const PaymentVoucherDetail = () => {
         actions={
           <div className={styles.actions} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
             <StatusPill docType="pv" status={pv.status} />
+            <ViewOriginalScan kind="pv" documentId={String(pv.id)} />
             {/* History drawer toggle. Same header seat on every detail page, and
                 ungated: whoever may open the voucher may see who changed it. */}
             <Button variant="ghost" size="md" onClick={() => setHistoryOpen(true)}>
@@ -662,6 +667,7 @@ export const PaymentVoucherDetail = () => {
               <InfoCell label="Voucher Date" value={pv.voucher_date ? fmtDateOrDash(pv.voucher_date) : null} />
               <InfoCell label="Currency" value={viewCurrency} />
               {viewCurrency !== 'MYR' && <InfoCell label="Exchange Rate" value={`${pv.exchange_rate} (MYR per 1 ${viewCurrency})`} />}
+              <InfoCell label="Bank Charges" value={Number(pv.bank_charge_sen ?? 0) > 0 ? `${fmtRm(Number(pv.bank_charge_sen), 'MYR')} (not in total)` : null} />
               <InfoCell label="Notes" value={pv.notes ?? null} />
               {/* The bill's own number and date (item 1) and its official invoice (欠正式单, item 3). */}
               {(pv.bill_ref || pv.bill_date) && <InfoCell label="Bill" value={`${pv.bill_ref ?? '—'}${pv.bill_date ? ` · ${fmtDateOrDash(pv.bill_date)}` : ''}`} />}
@@ -744,6 +750,12 @@ export const PaymentVoucherDetail = () => {
                   </span>
                 </label>
               )}
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Bank Charges (MYR, not in total)</span>
+                <MoneyInput bare valueSen={bankChargeSen} aria-label="Bank charges"
+                  onCommit={(sen) => setBankChargeSen(Math.max(0, sen ?? 0))}
+                  inputClassName={styles.fieldInput} selectOnFocus />
+              </label>
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Notes</span>
                 <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />

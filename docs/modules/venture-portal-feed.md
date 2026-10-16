@@ -5,7 +5,8 @@ and cancellations — to the Venture Portal, which pays Revenue Department
 commission from it. Replaces a monthly hand-exported `.xlsx`. Used by whoever
 administers sync connections (Settings) and read by Finance/Revenue ops
 checking delivery status. The same switch and key also push the product
-catalogue, **items only** — see [Catalogue push](#catalogue-push-items-only).
+catalogue, **items only** — see [Catalogue push](#catalogue-push-items-only) —
+and the PMS's Sales Attending — see [Sales Attending push](#sales-attending-push).
 
 ## Statuses and flow
 
@@ -32,8 +33,9 @@ event (`project_id`, `fair_match`, `fair_date`) or editing `venue` /
 Outbox row: `pending → sent | failed | skipped`; parked `failed` at 6
 attempts. Three drain paths: (1) the saving request itself schedules a drain
 ~1.5s after its response (`kickVenturePortalDrain`, collapses a burst of
-edits into one delivery, sweeps up to 4×25=100 docs, re-sweeps only when a
-full batch left the queue); (2) the unchanged `*/5` cron
+edits into one delivery, sweeps up to 4×25=100 docs, re-sweeps when a full
+batch left the queue, or after the same wait when an order was saved again
+while in flight); (2) the unchanged `*/5` cron
 (`drainVenturePortalOutbox`) — the zero-loss guarantee; (3) the `*/30` cron
 (`reconcileVenturePortalOutbox`) requeues any in-scope order with no
 delivered row. **Trigger-written rows drain before backfill/RECONCILE rows**
@@ -68,9 +70,15 @@ non-2xx"):
 - **No payload column on the outbox.** This is a state mirror, not an
   operation log — the payload is rebuilt fresh at SEND time from the view,
   never stored at enqueue. Do not add a stored snapshot here.
-- **One PENDING row per document** (partial unique index, `ON CONFLICT (doc_no)
-  WHERE status='pending' DO NOTHING`) — ordering across repeated edits is
-  handled by rebuilding at send time, never by queuing a second pending row.
+- **One PENDING row per document** (partial unique index) — ordering across
+  repeated edits is handled by rebuilding at send time, never by queuing a
+  second pending row. A save that finds the pending row bumps its `revision`
+  (`ON CONFLICT (doc_no) WHERE status='pending' DO UPDATE`), and the drain marks
+  a row `sent` only while `revision` is still what it read before building the
+  payload; otherwise the row stays `pending` (`changed` in the drain summary)
+  and goes again. Never `DO NOTHING` here: a save landing between the build and
+  the mark would be folded into a delivery that never carried it, and nothing
+  would queue the order again.
 - The header comes from the **view** `mfg_sales_orders_with_payment_totals`,
   never the base table — `paid_total_sen` / `balance_sen_live` are computed
   there and the portal's deposit gate depends on `balance_sen_live` being
@@ -196,6 +204,45 @@ whatever the digest. Permissions: `POST /catalogue/send` (send now, even when
 unchanged) needs the manage keys; `GET /status` → `catalogue` shows each
 company's row.
 
+## Sales Attending push
+
+Who the PMS lists at each project (a brand's booth at a fair) goes to `POST
+<portal>/api/erp/v1/sales-attending`: the portal scores each salesperson's Fair
+result at the booth they are listed at, and pays outstation claims for it.
+Same switch, company scope, `vp.url` and `vp.secret` as the orders; the receiver
+is `vp.url` with its trailing `/sales-orders` replaced by `/sales-attending`
+(any other `vp.url` → nothing sent, `GET /status` → `attendance.urlProblem`).
+
+- **The body** (`scm.vp_build_attendance`, one POST per company): `companyId`,
+  `since`, `snapshotAt`, and `booths` — EVERY project of the company whose
+  `start_date` reads `YYYY-MM-DD` on or after `since`, with or without
+  anybody listed, cancelled ones included, ordered by start date then id. Each
+  booth: `projectId`, `code`, `name`, `brand`, `venue`, `organizer`,
+  `startDate`, `endDate`, `status`, `eventType` (the type's slug) and
+  `attendees` — each listed rep's `salesRepId`, `code`, `name` and
+  `salespersonId`, the `scm.staff` id of the rep's login (the id the order
+  feed sends as the salesperson; `null` without a login), ordered by name.
+  Named keys only.
+- **The window and the retire rule.** `since` = the first day of the month six
+  months back, in Malaysia. The portal retires any of its booths from `since`
+  on that a delivery does not list, so the body must always be the WHOLE
+  window — never filter it to booths with attendees or to changed rows.
+- **Cadence: live.** Statement triggers on `public.projects` (insert, delete,
+  and an update of a column the body sends), `public.project_sales_attendees`
+  (any write) and `public.sales_reps` (name, code, login, delete) mark
+  `scm.venture_portal_attendance_changes`; the mark function swallows its own
+  failure, so a PMS save never fails because of the portal. The write kick —
+  mounted on `/api/scm/*` and `/api/projects/*` — pushes after the order drain
+  and the catalogue while a mark is there; the `*/5` cron runs the same push
+  after the catalogue and stays the safety net.
+- **Digest and outcomes**: exactly the catalogue's —
+  `scm.vp_attendance_digest`, `scm.vp_attendance_snapshot` (the digest of the
+  body WITHOUT `snapshotAt`), `scm.venture_portal_attendance_state`, the same
+  decision, verdict and table above (one post, so "an earlier post was
+  accepted" never happens). There is no send-now button: a list the portal
+  refused waits for the next change. `GET /status` → `attendance` shows each
+  company's row.
+
 ## Where the code is
 
 - `backend/src/db/migrations-pg/20260912T1800_scm_venture_portal_outbox.sql`
@@ -218,10 +265,15 @@ company's row.
 - `backend/src/scm/lib/venture-portal-catalogue.ts` — the catalogue sender
   (URL, digest decision, section split, response verdict); its SQL is
   executed by `backend/tests-pg/vpCatalogueFeed.pg.test.ts`.
+- `backend/src/db/migrations-pg/*_scm_vp_sales_attending.sql` and
+  `backend/src/scm/lib/venture-portal-attendance.ts` — the Sales Attending
+  builder, digest, state, marks and sender (it reuses the catalogue's URL,
+  decision and verdict); the SQL is executed by
+  `backend/tests-pg/vpSalesAttending.pg.test.ts`.
 - `backend/src/scm/lib/venture-portal-outbox.ts` — sender, response
   taxonomy, reconcile, secret minting.
 - `backend/src/scm/lib/venture-portal-kick.ts` — the request-triggered drain
-  middleware; the catalogue step rides the same task.
+  middleware; the catalogue and Sales Attending steps ride the same task.
 - `backend/src/scm/lib/venture-portal-feed-flag.ts` — switch + company
   scope, cached, fails closed to off.
 - `backend/src/scm/routes/venture-portal-feed.ts` — the route surface.

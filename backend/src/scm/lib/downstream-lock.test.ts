@@ -35,6 +35,8 @@ function fakeSb(tables: Record<string, Row[]>) {
       },
       eq(col: string, val: unknown) { filters.push((r) => String(r[col]) === String(val)); return builder; },
       neq(col: string, val: unknown) { filters.push((r) => String(r[col]) !== String(val)); return builder; },
+      in(col: string, vals: unknown[]) { filters.push((r) => vals.map(String).includes(String(r[col]))); return builder; },
+      range() { return builder; },
       then(resolve: (v: unknown) => unknown) {
         const rs = rows();
         return Promise.resolve(
@@ -134,6 +136,30 @@ describe('DO and GRN', () => {
   test('an untouched DO is free', async () => {
     const sb = fakeSb({ delivery_returns: [], sales_invoices: [] });
     expect(await doHasDownstream(sb, 'do-1')).toBeNull();
+  });
+
+  /* HC-0004 T2. An SI raised from DO-A and DO-B stamps only DO-A on its header
+     (si-from-do.ts), so the header read alone let DO-B be cancelled while a
+     live invoice still bills its lines. */
+  test('an SI built from 2 DOs locks the SECOND DO through its lines', async () => {
+    const tables = {
+      delivery_returns: [],
+      sales_invoices: [{ id: 'si-1', delivery_order_id: 'do-a', status: 'SENT' }],
+      delivery_order_items: [
+        { id: 'dl-a1', delivery_order_id: 'do-a' },
+        { id: 'dl-b1', delivery_order_id: 'do-b' },
+      ],
+      sales_invoice_items: [
+        { id: 'sl-1', sales_invoice_id: 'si-1', do_item_id: 'dl-a1' },
+        { id: 'sl-2', sales_invoice_id: 'si-1', do_item_id: 'dl-b1' },
+      ],
+    };
+    expect((await doHasDownstream(fakeSb(tables), 'do-a'))?.error).toBe('do_has_downstream');
+    expect((await doHasDownstream(fakeSb(tables), 'do-b'))?.error).toBe('do_has_downstream');
+
+    // Once the SI is cancelled, DO-B is free again.
+    tables.sales_invoices[0]!.status = 'CANCELLED';
+    expect(await doHasDownstream(fakeSb(tables), 'do-b')).toBeNull();
   });
 
   /* GRN counts off grn_items.invoiced_qty / returned_qty, not a row count over

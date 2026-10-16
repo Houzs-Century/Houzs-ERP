@@ -103,6 +103,11 @@ export function isEditable(docType: LockedDocType, counts: DownstreamCounts): bo
   return downstreamVerdict(docType, counts) === null;
 }
 
+/** The DB half of the DO cancel lock (mig 20261014T1310 raises P0410 when a
+ *  live SI still bills the DO). Same 409 body as the app check. */
+export const doCancelDbRefusal = (err: { code?: string | null } | null | undefined): DownstreamRefusal | null =>
+  err?.code === 'P0410' ? REFUSALS.DO : null;
+
 /* ── A FAILED COUNT IS NOT ZERO ─────────────────────────────────────────────
    Every function below used to drop the PostgREST `error` and read `count ?? 0`
    / `data ?? []`. A read that FAILED then arrived at downstreamVerdict as "this
@@ -299,12 +304,34 @@ export async function poHasDownstream(sb: Sb, poId: string): Promise<DownstreamR
   return verdictFromReads('PO', [['grns', grns]]);
 }
 
-/** A DO locks on any live Delivery Return or Sales Invoice against it. */
+/** Live Sales Invoices that carry one of this DO's LINES (sales_invoice_items.
+ *  do_item_id). The header column sales_invoices.delivery_order_id names only
+ *  the FIRST DO of an SI raised from several (si-from-do.ts), and an append from
+ *  a DO does not change it, so the header alone lets an invoiced DO be cancelled
+ *  (HC-0004 T2). */
+const liveSiCountByDoLines = async (sb: Sb, doId: string): Promise<LiveCount> => {
+  const { data: lines, error } = await sb.from('delivery_order_items').select('id').eq('delivery_order_id', doId);
+  if (error) return { ok: false, reason: `delivery_order_items: ${error.message}` };
+  const lineIds = ((lines ?? []) as Array<{ id: string }>).map((l) => l.id);
+  const siLines = await chunkIn<{ sales_invoice_id: string }>(lineIds, (batch, from, to) =>
+    sb.from('sales_invoice_items').select('sales_invoice_id').in('do_item_id', batch).range(from, to));
+  if (siLines.error) return { ok: false, reason: `sales_invoice_items: ${siLines.error.message}` };
+  const st = await statusById(sb, 'sales_invoices', [...new Set(siLines.data.map((l) => l.sales_invoice_id).filter(Boolean))]);
+  if (!st.ok) return st;
+  return { ok: true, count: [...st.map.values()].filter((s) => String(s ?? '').trim().toUpperCase() !== 'CANCELLED').length };
+};
+
+/** A DO locks on any live Delivery Return or Sales Invoice against it — the SI
+ *  found by its header OR by any of its lines. */
 export async function doHasDownstream(sb: Sb, doId: string): Promise<DownstreamRefusal | null> {
-  const [deliveryReturns, salesInvoices] = await Promise.all([
+  const [deliveryReturns, siByHeader, siByLine] = await Promise.all([
     liveCount(sb, 'delivery_returns', 'delivery_order_id', doId),
     liveCount(sb, 'sales_invoices', 'delivery_order_id', doId),
+    liveSiCountByDoLines(sb, doId),
   ]);
+  const salesInvoices: LiveCount = !siByHeader.ok ? siByHeader
+    : !siByLine.ok ? siByLine
+    : { ok: true, count: Math.max(siByHeader.count, siByLine.count) };
   return verdictFromReads('DO', [['deliveryReturns', deliveryReturns], ['salesInvoices', salesInvoices]]);
 }
 

@@ -29,7 +29,7 @@ import { classifyHeaderKey, type AmendmentLane } from '../shared/amendment-lane'
 import { activeCompanyId, scopeToCompany } from './companyScope';
 import { catalogCategoriesByCode } from './validate-item-codes';
 import { poRelevant, serviceOnlyChange, type SoAmendLine, type SoLineIdentity } from './amendment-po-followup';
-import { amendmentLinePriceOnly, type StoredLine } from './amendment-noop-lines';
+import { amendmentLineIsNoop, amendmentLinePriceOnly, type StoredLine } from './amendment-noop-lines';
 import { isServiceLine } from '../shared/service-sku';
 
 export type LaneHandoverVerdict =
@@ -89,20 +89,35 @@ export async function judgeLaneMove(
   });
 
   const { data: lineRows, error: lineErr } = await sb.from('so_amendment_lines')
-    .select('sales_order_item_id, change_type, new_item_code, new_variants, new_qty, new_unit_price_sen')
+    .select('sales_order_item_id, change_type, new_item_code, new_variants, new_qty, new_unit_price_sen, new_remark, new_discount_sen')
     .eq('amendment_id', amendment.id);
   if (lineErr) return readFailed("this amendment's lines");
-  const changed = ((lineRows ?? []) as SoAmendLine[]).filter(poRelevant);
+  const poLines = ((lineRows ?? []) as Array<SoAmendLine & { new_remark: string | null; new_discount_sen: number | null }>).filter(poRelevant);
 
   let goods = 0;
-  if (changed.length > 0) {
-    const { data: soItems, error: soItemErr } = await sb.from('mfg_sales_order_items')
-      .select('id, item_code, item_group').eq('doc_no', amendment.so_doc_no);
+  if (poLines.length > 0) {
+    const { data: soItems, error: soItemErr } = await scopeToCompany(
+      sb.from('mfg_sales_order_items')
+        .select('id, item_code, item_group, qty, unit_price_sen, variants, remark, discount_sen').eq('doc_no', amendment.so_doc_no),
+      c,
+    );
     if (soItemErr) return readFailed("the order's lines");
     const identityById = new Map<string, SoLineIdentity>();
-    for (const r of (soItems ?? []) as Array<{ id: string } & SoLineIdentity>) {
+    const storedById = new Map<string, StoredLine>();
+    for (const r of (soItems ?? []) as Array<StoredLine & SoLineIdentity>) {
       identityById.set(r.id, { item_code: r.item_code, item_group: r.item_group });
+      storedById.set(r.id, r);
     }
+    /* A line that asks for nothing the order does not already hold (HC-0103: an
+       edit-view fill such as a "Default" sofa leg) is nothing for the PO to follow. */
+    const changed = poLines.filter((l) => {
+      const cur = l.sales_order_item_id ? storedById.get(l.sales_order_item_id) : undefined;
+      return !cur || !amendmentLineIsNoop({
+        salesOrderItemId: l.sales_order_item_id, changeType: l.change_type, newItemCode: l.new_item_code,
+        newVariants: l.new_variants, newQty: l.new_qty, newUnitPriceSen: l.new_unit_price_sen,
+        newRemark: l.new_remark, newDiscountSen: l.new_discount_sen,
+      }, cur);
+    });
     const categoryByCode = await catalogCategoriesByCode(sb, changed.map((l) => l.new_item_code), activeCompanyId(c));
     if (!categoryByCode) return readFailed('the catalogue');
     goods = changed.filter((l) => !serviceOnlyChange(

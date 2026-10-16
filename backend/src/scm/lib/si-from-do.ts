@@ -28,6 +28,7 @@ import { todayMyt } from './my-time';
 import { dateOrNull } from './date-coerce';
 import {
   doLineRemaining, doRemainingByItemId, findOverInvoicedDoItems, custKeyOf, remainingUnavailableResponse, siTransferRefusal,
+  isDoLineOverInvoiced,
 } from './do-line-remaining';
 import { deliveryMustMirrorAutoCount, refuseMigratedSources } from './migrated-chain';
 import { MIGRATED_DELIVERIES_NOT_INVOICED_IN_AUTOCOUNT } from './migrated-deliveries-not-invoiced.generated';
@@ -510,6 +511,8 @@ export async function createSalesInvoiceFromDoLines(sb: Db, input: SiFromDoInput
   const { error: iErr } = await sb.from('sales_invoice_items').insert(stamped);
   if (iErr) {
     await sb.from('sales_invoices').delete().eq('id', h.id);
+    // HC-0004: the DB cap (mig 20261014T1410) refused a line past its DO line.
+    if (isDoLineOverInvoiced(iErr)) return refuse(409, { error: 'race_conflict', message: 'Another operator just invoiced overlapping qty from this Delivery Order. Refresh and try again.', reason: iErr.message });
     return refuse(500, { error: 'items_insert_failed', reason: iErr.message });
   }
   /* Race-condition guard — same as the POST / path, and the SI counterpart of

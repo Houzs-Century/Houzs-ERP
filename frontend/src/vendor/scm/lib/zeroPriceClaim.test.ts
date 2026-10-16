@@ -17,7 +17,7 @@
  * surfaces, and the customer was invoiced for it.
  */
 import { describe, expect, it } from "vitest";
-import { zeroPriceClaim } from "./zeroPriceClaim";
+import { priceBoxAuthored, zeroPriceClaim } from "./zeroPriceClaim";
 
 describe("zeroPriceClaim", () => {
   it("claims a typed zero", () => {
@@ -43,5 +43,17 @@ describe("zeroPriceClaim", () => {
     expect(Object.keys({ unitPriceSen: 0, ...zeroPriceClaim(0, false) })).toEqual(["unitPriceSen"]);
     expect(Object.keys({ unitPriceSen: 0, ...zeroPriceClaim(0, true) }))
       .toEqual(["unitPriceSen", "zeroPriceIntended"]);
+  });
+});
+
+/* HC-0095: emptying the price box read as a TYPED RM 0, so an amendment asked
+ * for RM 0 with zeroPriceIntended and approval billed the line RM 0. */
+describe("priceBoxAuthored", () => {
+  it("a blank or non-numeric box is not an authored price", () => {
+    for (const t of ["", "  ", "-", ".", "abc"]) expect(priceBoxAuthored(t)).toBe(false);
+  });
+
+  it("a typed 0 is still an authored price", () => {
+    for (const t of ["0", "0.00", "0.", "250", "1,250.50"]) expect(priceBoxAuthored(t)).toBe(true);
   });
 });
