@@ -102,6 +102,7 @@ import { mrpLeadTimes } from "./routes/mrp-lead-times";
 import { mrpSupplierLeadTimes } from "./routes/mrp-supplier-lead-times";
 import { outstanding } from "./routes/outstanding";
 import { procurementOverview } from "./routes/procurement-overview";
+import { logisticOverview } from "./routes/logistic-overview";
 import { unbilledDeliveries } from "./routes/unbilled-deliveries";
 import { localities } from "./routes/localities";
 import { sgPostcode } from "./routes/sg-postcode";
@@ -775,6 +776,9 @@ scm.route("/mrp-supplier-lead-times", mrpSupplierLeadTimes);
 // Procurement Overview (owner 2026-10-16): the PO side of procurement.
 scm.use("/procurement-overview/*", scmAreaGuard("scm.procurement.po"));
 scm.route("/procurement-overview", procurementOverview);
+// Logistic Overview (owner 2026-10-16): weekly DO / delivered / runs history.
+scm.use("/logistic-overview/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/logistic-overview", logisticOverview);
 scm.use("/outstanding/*", scmAreaGuard("scm.finance.outstanding"));
 scm.route("/outstanding", outstanding);
 // Delivered-but-not-invoiced, aged (read-only). The money answer to the same
