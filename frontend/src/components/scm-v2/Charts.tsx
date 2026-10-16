@@ -64,7 +64,7 @@ function useWidth(fallback: number) {
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const ro = new ResizeObserver(([e]) => { if (e) setW(Math.max(200, Math.round(e.contentRect.width))); });
+    const ro = new ResizeObserver((entries) => { for (const e of entries) setW(Math.max(200, Math.round(e.contentRect.width))); });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
