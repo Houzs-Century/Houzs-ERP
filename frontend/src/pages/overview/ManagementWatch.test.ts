@@ -25,6 +25,6 @@ describe("management watchlist", () => {
       ...none,
       procurement: { open: { late5Lines: 0, late5Suppliers: 0, worstDaysLate: 0 }, leadByCategory: [{ key: "MATTRESS", current: 40, suggested: 22, verdict: "can_shorten" }, { key: "SOFA", current: 40, suggested: 38, verdict: "ok" }] },
     });
-    expect(item?.figure).toBe("MATTRESS 40 → 22 days");
+    expect(item.figure).toBe("MATTRESS 40 → 22 days");
   });
 });

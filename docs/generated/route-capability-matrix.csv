@@ -427,6 +427,7 @@ DELETE,/api/projects/contractors/:id/share-link,AUTHENTICATED_MIDDLEWARE,COMPANY
 POST,/api/projects/contractors/:id/share-link,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 GET,/api/projects/cost-rates,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""projects.finances"")",,NO,DECLARED_GATE,backend/src/routes/projects.ts
 PUT,/api/projects/cost-rates/:brand,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.manage"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
+GET,/api/projects/data-gaps,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePageAccess(""projects.finances"")","async (c, next) => { if (financeHiddenForUser(c.get(""user"") as unknown as AuthUser)) { return c.json({ error: ""You don't have permission to view financial information."" }, 403); } await next(); } + supabaseAuth",,,NO,DECLARED_GATE,backend/src/routes/projectDataGaps.ts
 DELETE,/api/projects/defects/:defectId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 PATCH,/api/projects/defects/:defectId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""projects.write"")",,YES,DECLARED_GATE,backend/src/routes/projects.ts
 GET,/api/projects/event-types,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/projects.ts
@@ -917,6 +918,7 @@ GET,/api/scm/localities,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireS
 POST,/api/scm/localities,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/localities.ts
 DELETE,/api/scm/localities/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/localities.ts
 PATCH,/api/scm/localities/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/localities.ts
+GET,/api/scm/logistic-overview,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/logistic-overview.ts
 GET,/api/scm/lorries,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/lorries.ts
 POST,/api/scm/lorries,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/lorries.ts
 PATCH,/api/scm/lorries/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.transportation.drivers"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/lorries.ts
@@ -1163,6 +1165,7 @@ POST,/api/scm/pos-pools/sofa-combos,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"au
 DELETE,/api/scm/pos-pools/sofa-combos/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/pos-pools.ts
 PUT,/api/scm/pos-pools/sofa-combos/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/pos-pools.ts
 GET,/api/scm/pos-pools/sofa-combos/history,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/pos-pools.ts
+GET,/api/scm/procurement-overview,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.po"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/procurement-overview.ts
 GET,/api/scm/product-models,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/product-models.ts
 POST,/api/scm/product-models,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/product-models.ts
 DELETE,/api/scm/product-models/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"", { openRead: true })",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/product-models.ts

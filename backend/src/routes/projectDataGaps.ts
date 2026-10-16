@@ -50,7 +50,7 @@ projectDataGaps.get("/", async (c) => {
       WHERE p.archived_at IS NULL
         AND substr(p.end_date, 1, 10) >= ? AND substr(p.end_date, 1, 10) <= ?${activeCompanySql(c, "p.company_id")}`,
   ).bind(from, to).all<Omit<GapProject, "soSen">>();
-  const projects = rows.results ?? [];
+  const projects = rows.results;
 
   const ids = projects.map((p) => String(p.id));
   const sos = await chunkIn<{ project_id: number; local_total_sen: number | null }>(ids, (b, f, t) =>
