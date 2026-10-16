@@ -170,8 +170,6 @@ const WORK_ORDER_STATE_LABEL: Record<WorkOrderState, string> = {
 type PartView = { id: string; name: string; partNo: string | null; qty: number; unitPriceSen: number; lineSen: number; serial: string | null };
 export type WorkOrderView = {
   id: string;
-  /** R2 keys of the work order's photos (reporter photos + a Lorry service POD). */
-  photoRefs?: string[];
   /** WO-#### (mig 0248) — OURS. quotationNo is the workshop's own number, off
    *  their document; it is not unique across vendors and is often absent. */
   woNo?: string | null;
