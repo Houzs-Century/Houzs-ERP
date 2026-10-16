@@ -21,6 +21,11 @@ go through `/api/scm/grns`.
   reverses the IN per line and is blocked if the stock was already consumed
   downstream. Both recount the PO's `received_qty` and queue the SO allocation
   re-walk (a bound SO line is lit by its PO's `received_qty`).
+- The recount (`recomputePoReceived`) stops before writing when any of its reads
+  fails and returns `{ ok: false, reason }`; the stored `received_qty` and PO
+  status stay as they were. Post records it as `RECOUNT_FAILED` on the GRN's audit
+  trail, cancel returns it in `cancelErrors`. Before 2026-10-16 a failed read was
+  taken as "no receipts" and wrote 0 (READY audit F2).
 - `CLOSED`: nothing in the backend writes this anymore; it is a read-only legacy
   terminal that still blocks a re-post.
 - `ON_HOLD` is a marker beside the status, not a status overwrite (`PATCH /:id/hold`).
