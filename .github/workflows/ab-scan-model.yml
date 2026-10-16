@@ -1,0 +1,66 @@
+name: HC-0006 scan model A/B (read-only)
+
+# Claude vs Gemini on the real sales-slip scan prompt, 30 operator-corrected slips.
+# Lives on chore/hc0006-model-ab only; not for main. Slip photos go to Google with the
+# owner's approval (YH, 16 Oct). The DB is read in READ ONLY transactions; nothing is written.
+# The log carries totals only; the per-slip table is a 3-day artifact.
+on:
+  push:
+    branches: [chore/hc0006-model-ab]
+  workflow_dispatch:
+    inputs:
+      n:
+        description: "Slips to test"
+        default: "30"
+      gemini_model:
+        description: "Gemini model id"
+        default: "gemini-2.5-flash"
+      gemini_thinking:
+        description: "Gemini thinking budget (blank = model default, 0 = off)"
+        default: ""
+
+concurrency:
+  group: ab-scan-model
+  cancel-in-progress: true
+
+jobs:
+  ab:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/ab-scan-model-gemini.mjs
+        env:
+          APPLY: "1"
+          N: ${{ inputs.n || '30' }}
+          GEMINI_MODEL: ${{ inputs.gemini_model || 'gemini-2.5-flash' }}
+          GEMINI_THINKING: ${{ inputs.gemini_thinking }}
+          OUT: ${{ runner.temp }}/hc0006-model-ab.json
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # R2 reads of the original slip files (wrangler r2 object get).
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hc0006-model-ab
+          path: |
+            ${{ runner.temp }}/hc0006-model-ab.json
+            ${{ runner.temp }}/hc0006-model-ab.md
+          retention-days: 3
+          if-no-files-found: ignore

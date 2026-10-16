@@ -181,7 +181,6 @@ try {
     slips.push({ ...c, keys, inj, prefix: catalogs.get(ck) });
   }
   console.log(`CONFIRMED samples with files: ${cands.length} (newest 200 max); skipped ${leaked} already in the few-shot block; using ${slips.length}`);
-  for (const s of slips) console.log(`  ${s.created_at.toISOString().slice(0, 10)} ${s.id} files=${s.keys.length} rep=${s.salesperson ?? '-'}`);
   if (!APPLY) { console.log('plan only: APPLY=1 to call the models'); process.exit(0); }
 
   // ---------- R2 files (wrangler) ----------
@@ -261,8 +260,7 @@ try {
       row[m] = { modelMs: Math.round(res.ms), totalMs: Math.round(res.ms + parseMs), ok: res.ok && !!slip, err: res.err, score: sc };
     }
     rows.push(row);
-    const f = (m) => `${m} ${(row[m].modelMs / 1000).toFixed(1)}s ${row[m].score.filter((x) => x.hit).length}/${row[m].score.length}${row[m].ok ? '' : ' FAIL ' + (row[m].err ?? 'parse')}`;
-    console.log(`${i + 1}/${slips.length} ${s.id} ${f('claude')} | ${f('gemini')}`);
+    console.log(`${i + 1}/${slips.length} done`);
   }
 
   const summary = {};
@@ -280,8 +278,19 @@ try {
     };
   }
   writeFileSync(OUT, JSON.stringify({ ranAt: new Date().toISOString(), summary, rows }, null, 2));
+  const sec = (ms) => (ms / 1000).toFixed(1);
+  const cell = (r, m) => `${sec(r[m].modelMs)} | ${sec(r[m].totalMs)} | ${r[m].score.filter((x) => x.hit).length}/${r[m].score.length}${r[m].ok ? '' : ' FAIL ' + (r[m].err ?? 'parse')}`;
+  const md = [`Claude = ${summary.claude.model}, Gemini = ${summary.gemini.model}. Times in seconds; hits = customer/code/qty/price fields correct.`, '',
+    '| # | sample | date | files | Claude model | Claude total | Claude hits | Gemini model | Gemini total | Gemini hits |',
+    '|---|---|---|---|---|---|---|---|---|---|',
+    ...rows.map((r, i) => `| ${i + 1} | ${r.id} | ${r.date} | ${r.files} | ${cell(r, 'claude')} | ${cell(r, 'gemini')} |`), '',
+    '| | Claude | Gemini |', '|---|---|---|',
+    ...[['model median / p90', (x) => `${sec(x.modelMs.median)} / ${sec(x.modelMs.p90)}`], ['total median / p90', (x) => `${sec(x.totalMs.median)} / ${sec(x.totalMs.p90)}`],
+      ['all fields', (x) => x.allFields], ['fixed fields', (x) => x.fixedFields], ...['customer', 'code', 'qty', 'price'].map((f) => [f, (x) => x.byField[f]]), ['failed', (x) => x.failed]]
+      .map(([k, f]) => `| ${k} | ${f(summary.claude)} | ${f(summary.gemini)} |`)].join('\n');
+  writeFileSync(OUT.replace(/\.json$/, '') + '.md', md + '\n');
+  // Totals only: no sample ids, slip text or customer names in the log.
   console.log(JSON.stringify(summary, null, 2));
-  console.log(`wrote ${OUT}`);
 } finally {
   await sql.end();
 }
