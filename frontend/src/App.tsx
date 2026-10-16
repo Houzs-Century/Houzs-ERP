@@ -69,6 +69,8 @@ const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m
 const PosAdmin = lazy(() => import("./pages/PosAdmin").then((m) => ({ default: m.PosAdmin })));
 const Team = lazy(() => import("./pages/Team").then((m) => ({ default: m.Team })));
 const SystemHealth = lazy(() => import("./pages/SystemHealth").then((m) => ({ default: m.SystemHealth })));
+const AiUsage = lazy(() => import("./pages/AiUsage").then((m) => ({ default: m.AiUsage })));
+const OcrDashboard = lazy(() => import("./pages/OcrDashboard").then((m) => ({ default: m.OcrDashboard })));
 const AutoCountSync = lazy(() => import("./pages/AutoCountSync").then((m) => ({ default: m.AutoCountSync })));
 const VenturePortalFeed = lazy(() => import("./pages/VenturePortalFeed").then((m) => ({ default: m.VenturePortalFeed })));
 const ChangeLog = lazy(() => import("./pages/ChangeLog").then((m) => ({ default: m.ChangeLog })));
@@ -442,6 +444,21 @@ function SoMaintenanceGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/** IT pages (System Health, AI usage): the server's `it.pages.view` answer. */
+function ItPagesGuard({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (capabilitiesUnresolved(user)) {
+    return (
+      <Forbidden
+        page="it.view"
+        reason="We couldn't load your permissions, so this page stayed shut. This is a system problem, not a change to your access — reload the page, and tell IT if it keeps happening."
+      />
+    );
+  }
+  if (!capability(user, "it.pages.view")) return <Forbidden page="it.view" />;
+  return <>{children}</>;
+}
+
 /**
  * Fair Report route guard — management + the Sales Director only, mirroring the
  * backend fairReportAccess cohort (auth/salesAccess.canViewFairReport =
@@ -599,9 +616,25 @@ export default function App() {
         <Route
           path="/system-health"
           element={
-            <PageGuard page="system_health">
+            <ItPagesGuard>
               <SystemHealth />
-            </PageGuard>
+            </ItPagesGuard>
+          }
+        />
+        <Route
+          path="/ai-usage"
+          element={
+            <ItPagesGuard>
+              <AiUsage />
+            </ItPagesGuard>
+          }
+        />
+        <Route
+          path="/ocr"
+          element={
+            <ItPagesGuard>
+              <OcrDashboard />
+            </ItPagesGuard>
           }
         />
         {/* AutoCount Sync — the read of scm.autocount_outbox. Gated on the same

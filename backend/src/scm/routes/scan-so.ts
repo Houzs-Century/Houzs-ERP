@@ -37,6 +37,7 @@ import { getSupabaseService } from '../../db/supabase';
 import { paginateAll } from '../lib/paginate-all';
 import { getBranding } from '../../services/branding';
 import { postPersonalNotice } from '../../services/personalNotice';
+import { recordAi, requestAiTag, type AiUsageTag } from '../../services/aiUsage';
 // Background scan job — the DRAFT SO is created through mfg-sales-orders'
 // factored create core (PRICING-CRITICAL; never reimplemented here), and each
 // scanned payment RECEIPT becomes a payments-ledger row through the same
@@ -691,7 +692,8 @@ async function warmCatalogCache(
   db: D1Database,
   apiKey: string | undefined,
   companyName: string,
-  companyId?: number | null,
+  companyId: number | null | undefined,
+  usage: AiUsageTag,
 ): Promise<WarmResult> {
   if (!apiKey) return { ok: false, reason: 'no_key' };
   let catalog: Catalog;
@@ -702,7 +704,7 @@ async function warmCatalogCache(
   }
   const cachedPrefix = buildCachedPrefix(catalog, companyName);
   try {
-    const resp = await anthropicFetchWithRetry({
+    const resp = await recordAi(usage, anthropicFetchWithRetry({
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -728,7 +730,7 @@ async function warmCatalogCache(
           },
         ],
       }),
-    });
+    }));
     const bodyText = await resp.text();
     if (!resp.ok) {
       return { ok: false, reason: `Anthropic ${resp.status}: ${bodyText.slice(0, 300)}` };
@@ -768,7 +770,8 @@ export async function warmCatalogCacheForCron(env: Env): Promise<WarmResult> {
      and the job now send a company-scoped catalogue, so the warmed prefix stops
      matching once the two companies' catalogues diverge) — never a correctness
      one. Fixing it needs a per-company warm loop; flagged, not done here.  */
-  return warmCatalogCache(getSupabaseService(env), env.DB, env.ANTHROPIC_API_KEY, branding.companyName, null);
+  return warmCatalogCache(getSupabaseService(env), env.DB, env.ANTHROPIC_API_KEY, branding.companyName, null,
+    { env, feature: 'cache_warm', model: CLAUDE_MODEL, companyId: null, userId: null, waitUntil: null });
 }
 
 // ===========================================================================
@@ -1746,9 +1749,10 @@ async function claudeDistillCall(
   apiKey: string,
   system: string,
   userPayload: string,
+  usage: AiUsageTag,
 ): Promise<{ text: string; error: string | null }> {
   try {
-    const resp = await anthropicFetchWithRetry({
+    const resp = await recordAi(usage, anthropicFetchWithRetry({
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -1763,7 +1767,7 @@ async function claudeDistillCall(
         system,
         messages: [{ role: 'user', content: [{ type: 'text', text: userPayload }] }],
       }),
-    });
+    }));
     const bodyText = await resp.text();
     if (!resp.ok) {
       return { text: '', error: `Anthropic ${resp.status}: ${bodyText.slice(0, 500)}` };
@@ -1802,14 +1806,15 @@ async function distillSalespersonRules(
   apiKey: string | undefined,
   salesperson: string,
   companyName: string,
+  usage: AiUsageTag,
 ): Promise<DistillResult> {
   const rep = normalizeRepKey(salesperson);
   if (!rep) return { status: 'error', reason: 'Missing salesperson.' };
   // Reserved keys route to their own cross-rep distillers, never a per-rep
   // rules pass: '__GLOBAL__' → shared alias dictionary,
   // '__GLOBAL_RULES__' → shared cross-rep rules blob.
-  if (rep.toUpperCase() === GLOBAL_RULES_KEY) return distillGlobalRules(svc, apiKey, companyName);
-  if (isGlobalKey(rep)) return distillGlobalAliases(svc, apiKey, companyName);
+  if (rep.toUpperCase() === GLOBAL_RULES_KEY) return distillGlobalRules(svc, apiKey, companyName, usage);
+  if (isGlobalKey(rep)) return distillGlobalAliases(svc, apiKey, companyName, usage);
   if (!apiKey) {
     return {
       status: 'error',
@@ -1848,7 +1853,7 @@ async function distillSalespersonRules(
     `from the diffs and write the rule block:\n\n` +
     pairExamplesText(samples);
 
-  const call = await claudeDistillCall(apiKey, buildDistillMetaPrompt(companyName), userPayload);
+  const call = await claudeDistillCall(apiKey, buildDistillMetaPrompt(companyName), userPayload, usage);
   let distilledText = call.text;
   const errorMsg = call.error;
 
@@ -1933,6 +1938,7 @@ async function distillGlobalAliases(
   svc: SupabaseClient,
   apiKey: string | undefined,
   companyName: string,
+  usage: AiUsageTag,
 ): Promise<DistillResult> {
   if (!apiKey) {
     return {
@@ -1969,7 +1975,7 @@ async function distillGlobalAliases(
     `dictionary from the diffs:\n\n` +
     pairExamplesText(samples);
 
-  const call = await claudeDistillCall(apiKey, buildGlobalAliasMetaPrompt(companyName), userPayload);
+  const call = await claudeDistillCall(apiKey, buildGlobalAliasMetaPrompt(companyName), userPayload, usage);
   let distilledText = call.text;
   if (call.error || !distilledText) {
     return { status: 'error', reason: call.error ?? 'Claude returned empty aliases.' };
@@ -2044,6 +2050,7 @@ async function distillGlobalRules(
   svc: SupabaseClient,
   apiKey: string | undefined,
   companyName: string,
+  usage: AiUsageTag,
 ): Promise<DistillResult> {
   if (!apiKey) {
     return {
@@ -2079,7 +2086,7 @@ async function distillGlobalRules(
     `extraction rules from the recurring diffs:\n\n` +
     pairExamplesText(samples);
 
-  const call = await claudeDistillCall(apiKey, buildGlobalRulesMetaPrompt(companyName), userPayload);
+  const call = await claudeDistillCall(apiKey, buildGlobalRulesMetaPrompt(companyName), userPayload, usage);
   let distilledText = call.text;
   if (call.error || !distilledText) {
     return { status: 'error', reason: call.error ?? 'Claude returned empty shared rules.' };
@@ -2124,13 +2131,14 @@ export async function distillAllSalespersonRules(
   svc: SupabaseClient,
   apiKey: string | undefined,
   companyName: string,
+  usage: AiUsageTag,
 ): Promise<{ distilled: number; skipped: number; errors: number; reps: number }> {
   const summary = { distilled: 0, skipped: 0, errors: 0, reps: 0 };
 
   // Shared alias dictionary first — it benefits every rep's scans and its
   // sample pool (all corrected rows) is a superset of any rep's.
   try {
-    const g = await distillGlobalAliases(svc, apiKey, companyName);
+    const g = await distillGlobalAliases(svc, apiKey, companyName, usage);
     if (g.status === 'distilled') summary.distilled += 1;
     else if (g.status === 'skipped') summary.skipped += 1;
     else {
@@ -2146,7 +2154,7 @@ export async function distillAllSalespersonRules(
   // reps), distilled from the same all-reps corrected pool. Error-isolated
   // like the alias pass so it can never block the per-rep loop below.
   try {
-    const gr = await distillGlobalRules(svc, apiKey, companyName);
+    const gr = await distillGlobalRules(svc, apiKey, companyName, usage);
     if (gr.status === 'distilled') summary.distilled += 1;
     else if (gr.status === 'skipped') summary.skipped += 1;
     else {
@@ -2199,7 +2207,7 @@ export async function distillAllSalespersonRules(
 
   for (const rep of reps) {
     try {
-      const res = await distillSalespersonRules(svc, apiKey, rep, companyName);
+      const res = await distillSalespersonRules(svc, apiKey, rep, companyName, usage);
       if (res.status === 'distilled') summary.distilled += 1;
       else if (res.status === 'skipped') summary.skipped += 1;
       else {
@@ -2279,7 +2287,7 @@ scanSo.post('/rules/:salesperson/distill', async (c) => {
   const rep = normalizeRepKey(c.req.param('salesperson'));
   if (!rep) return c.json({ error: 'bad_request', reason: 'Missing salesperson.' }, 400);
   const branding = await getBranding(c.env);
-  const res = await distillSalespersonRules(serviceClient(c.env), c.env.ANTHROPIC_API_KEY, rep, branding.companyName);
+  const res = await distillSalespersonRules(serviceClient(c.env), c.env.ANTHROPIC_API_KEY, rep, branding.companyName, requestAiTag(c, 'scan_so_distill', CLAUDE_MODEL));
   if (res.status === 'error') {
     return c.json({ error: 'distill_failed', reason: res.reason }, 500);
   }
@@ -2329,7 +2337,7 @@ scanSo.get('/slip-image', async (c) => {
 scanSo.post('/warm', async (c) => {
   const sb = c.get('supabase');
   const branding = await getBranding(c.env);
-  const result = await warmCatalogCache(sb, c.env.DB, c.env.ANTHROPIC_API_KEY, branding.companyName, activeCompanyId(c));
+  const result = await warmCatalogCache(sb, c.env.DB, c.env.ANTHROPIC_API_KEY, branding.companyName, activeCompanyId(c), requestAiTag(c, 'cache_warm', CLAUDE_MODEL));
   return c.json(result);
 });
 
@@ -2576,6 +2584,7 @@ async function callClaudeSlipExtract(
   cachedPrefix: string,
   inj: PromptInjections,
   fileBlocks: ContentBlock[],
+  usage: AiUsageTag,
 ): Promise<SlipExtractCall> {
   let errorMsg: string | null = null;
   let timedOut = false;
@@ -2585,7 +2594,7 @@ async function callClaudeSlipExtract(
   let cacheCreated = false;
 
   try {
-    const resp = await anthropicFetchWithRetry({
+    const resp = await recordAi(usage, anthropicFetchWithRetry({
       method: 'POST',
       // Outbound timeout (110s, under the Worker's wall-clock budget) so a hung
       // Anthropic call fails fast into the graceful 503 below instead of the
@@ -2635,7 +2644,7 @@ async function callClaudeSlipExtract(
           },
         ],
       }),
-    });
+    }));
 
     const bodyText = await resp.text();
     if (!resp.ok) {
@@ -2934,7 +2943,7 @@ scanSo.post('/extract', async (c) => {
   // ONE Claude vision call + JSON coercion — callClaudeSlipExtract, shared
   // with the background job (timeout / retry / cache semantics inside).
   const { parsed, errorMsg, timedOut, claudeText, cacheHit, cacheCreated } =
-    await callClaudeSlipExtract(apiKey, cachedPrefix, inj, fileBlocks);
+    await callClaudeSlipExtract(apiKey, cachedPrefix, inj, fileBlocks, requestAiTag(c, 'scan_so', CLAUDE_MODEL));
 
   // Persist the sample row (learning pool) — insertScanSample, shared with
   // the background job. salesperson = operator's pick, else the AI's salesRep
@@ -3835,6 +3844,7 @@ async function runScanJob(
     // HC-0006 T8: this company's confirmed corrections, read before the model and applied to its output.
     const call = await readSlipWithAliases(svc, job.companyId, (hint) => callClaudeSlipExtract(
       apiKey, cachedPrefix, hint ? { ...inj, globalAliasText: [inj.globalAliasText, hint].filter(Boolean).join('\n\n') } : inj, job.fileBlocks,
+      { env, feature: 'scan_so', model: CLAUDE_MODEL, companyId: job.companyId, userId: job.houzsUserId, waitUntil: null },
     ));
     timer.mark('model');
     const parsed = call.parsed;
@@ -4717,17 +4727,18 @@ scanSo.post('/samples/:id/confirm', async (c) => {
   // blocks/fails the confirm.
   const rep = repGiven || normalizeRepKey((updated[0] as { salesperson?: string | null }).salesperson);
   const distillCompanyName = (await getBranding(c.env)).companyName;
+  const distillUsage = { ...requestAiTag(c, 'scan_so_distill', CLAUDE_MODEL), waitUntil: null };
   const distillPromise = (async () => {
     if (rep && !isGlobalKey(rep)) {
       try {
-        const r = await distillSalespersonRules(svc, c.env.ANTHROPIC_API_KEY, rep, distillCompanyName);
+        const r = await distillSalespersonRules(svc, c.env.ANTHROPIC_API_KEY, rep, distillCompanyName, distillUsage);
         if (r.status === 'error') console.warn(`[scan-so distill] ${rep}: ${r.reason}`);
       } catch (e) {
         console.warn(`[scan-so distill] ${rep} threw:`, (e as Error).message);
       }
     }
     try {
-      const g = await distillGlobalAliases(svc, c.env.ANTHROPIC_API_KEY, distillCompanyName);
+      const g = await distillGlobalAliases(svc, c.env.ANTHROPIC_API_KEY, distillCompanyName, distillUsage);
       if (g.status === 'error') console.warn(`[scan-so distill] __GLOBAL__ aliases: ${g.reason}`);
     } catch (e) {
       console.warn('[scan-so distill] __GLOBAL__ aliases threw:', (e as Error).message);
@@ -4736,7 +4747,7 @@ scanSo.post('/samples/:id/confirm', async (c) => {
     // <3 samples without an API call) so each rep's correction lifts the
     // shared baseline for everyone. Sequential; never blocks the confirm.
     try {
-      const gr = await distillGlobalRules(svc, c.env.ANTHROPIC_API_KEY, distillCompanyName);
+      const gr = await distillGlobalRules(svc, c.env.ANTHROPIC_API_KEY, distillCompanyName, distillUsage);
       if (gr.status === 'error') console.warn(`[scan-so distill] __GLOBAL_RULES__: ${gr.reason}`);
     } catch (e) {
       console.warn('[scan-so distill] __GLOBAL_RULES__ threw:', (e as Error).message);

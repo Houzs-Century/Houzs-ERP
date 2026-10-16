@@ -16,6 +16,8 @@ import { requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
 import { resolveRoles } from '../../acc/rules';
 import { BILL_IMAGE_MIMES, MAX_BILL_FILE_BYTES, MAX_FILES_PER_BILL, matchSupplier, type BillFile } from '../../acc/bill-extract';
 import { extractOneCreditNote } from '../../acc/cn-extract';
+import { requestAiTag } from '../../services/aiUsage';
+import { BILL_MODEL } from '../../acc/bill-extract';
 import { pickCreditedDocs, scnAccountFor, spreadToTotal, type PurchaseDoc } from '../lib/scn-scan';
 import { fmtSen } from '../shared/format';
 
@@ -50,7 +52,7 @@ export const scanSupplierCreditNoteHandler = async (c: any): Promise<Response> =
     files.push({ name: String(f?.name ?? 'credit-note'), mime, dataBase64 });
   }
 
-  const read = await extractOneCreditNote(apiKey, files);
+  const read = await extractOneCreditNote(apiKey, files, requestAiTag(c, 'credit_note_extract', BILL_MODEL));
   if (!read.ok) return c.json({ error: 'read_failed', message: read.reason }, 502);
   const ex = read.extraction;
   const sb = c.get('supabase');

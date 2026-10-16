@@ -67,7 +67,7 @@ import {
   History,
   Wand2,
   CalendarOff,
-  type LucideIcon, Landmark, CreditCard, Banknote, Receipt } from "lucide-react";
+  type LucideIcon, Landmark, CreditCard, Banknote, Receipt, Server, Sparkles, ScanLine } from "lucide-react";
 import { cn } from "../lib/utils";
 import { booleanRecordPreference, useIdentityPreference } from "../hooks/useIdentityPreference";
 import { useAuth } from "../auth/AuthContext";
@@ -946,12 +946,18 @@ export const NAV_TABS: NavTab[] = [
       { to: "/team?tab=permissions", label: "Roles & Permissions", icon: ShieldCheck, perm: "roles.read", pageAccess: "team" },
     ],
   },
+  // IT pages (DEV-35). The header and both leaves carry the same capability, so
+  // nobody outside IT sees an empty group.
   {
     section: "system",
-    to: "/system-health",
-    label: "System Health",
-    icon: Activity,
-    pageAccess: "system_health",
+    label: "IT",
+    icon: Server,
+    groupId: "it",
+    requireCapability: "it.pages.view",
+    children: [
+      { to: "/system-health", label: "System Health", icon: Activity, requireCapability: "it.pages.view" },
+      { to: "/ai-usage", label: "AI Usage", icon: Sparkles, requireCapability: "it.pages.view" },
+    ],
   },
   // Next to System Health because it answers the same shape of question — "is
   // the thing that runs in the background still working" — and because the
@@ -1022,6 +1028,14 @@ export const NAV_TABS: NavTab[] = [
     label: "IT Support",
     icon: LifeBuoy,
     badge: "it-support-replies",
+  },
+  // Under IT Support (owner's ask); IT pages only, like System Health and AI Usage.
+  {
+    section: "system",
+    to: "/ocr",
+    label: "OCR",
+    icon: ScanLine,
+    requireCapability: "it.pages.view",
   },
   {
     section: "system",

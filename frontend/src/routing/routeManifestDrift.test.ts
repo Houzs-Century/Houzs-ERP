@@ -103,7 +103,9 @@ describe("executable route contract", () => {
     // 173 since 2026-10-14: /scm/lorry-live-map — where each tracked lorry is (DEV-42).
     // 174 since 2026-10-14: /pos-admin — the Houzs POS Admin menu (items, labels,
     // cashiers, events, terminals, sync status, import backup; PR #4635).
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(174);
+    // 175: /ai-usage — IT-only monthly AI cost (DEV-35).
+    // 176: /ocr — IT-only OCR accuracy (DEV-35).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(176);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -154,7 +156,9 @@ describe("executable route contract", () => {
     // 181 since 2026-10-13 — /it-support; see the staff-route count above.
     // 182 since 2026-10-14 — /scm/lorry-live-map (DEV-42).
     // 183 since 2026-10-14 — /pos-admin; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(183);
+    // 184 — /ai-usage (DEV-35).
+    // 185 — /ocr (DEV-35).
+    expect(ROUTE_CONTRACT).toHaveLength(185);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

@@ -68,6 +68,7 @@ describe("translateAnnouncement with bodyHtml", () => {
       body: "Meeting\n1. Bring the file",
       bodyHtml: RICH,
       apiKey: "k",
+      usage: null,
     });
     const userText = (sent as { messages: Array<{ content: Array<{ text: string }> }> })
       .messages[0].content[0].text;
@@ -91,7 +92,7 @@ describe("translateAnnouncement with bodyHtml", () => {
         }),
       ),
     );
-    const out = await translateAnnouncement({ title: "T", body: "B", apiKey: "k" });
+    const out = await translateAnnouncement({ title: "T", body: "B", apiKey: "k", usage: null });
     expect(out?.en).toEqual({ title: "T", body: "B" });
     expect("bodyHtml" in (out?.en ?? {})).toBe(false);
   });

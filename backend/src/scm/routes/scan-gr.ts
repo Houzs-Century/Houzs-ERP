@@ -30,6 +30,7 @@ import { resolveCallerStaffId } from '../lib/salesScope';
 import { postPersonalNotice } from '../../services/personalNotice';
 import { jobToJson } from './scan-so-serialize';
 import {
+  CLAUDE_MODEL,
   sha256Hex,
   parseScanFiles,
   loadScanJobFilesFromR2,
@@ -223,7 +224,8 @@ async function runGrnScanJob(
     if (!apiKey) { console.error('[scan-gr] ANTHROPIC_API_KEY missing'); return await fail(JOB_MSG.noKey); }
 
     const fewShot = await loadGrnFewShot(svc);
-    const call = await callClaudeGrExtract(apiKey, job.fileBlocks, fewShot);
+    const call = await callClaudeGrExtract(apiKey, job.fileBlocks, fewShot,
+      { env, feature: 'scan_gr', model: CLAUDE_MODEL, companyId: job.companyId, userId: job.houzsUserId, waitUntil: null });
     const parsed = call.parsed;
 
     const imageSha256 = job.firstBuffer ? await sha256Hex(job.firstBuffer) : null;
