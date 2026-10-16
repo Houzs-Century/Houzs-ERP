@@ -8,7 +8,9 @@ import { Button } from "../components/Button";
 import { Badge } from "../components/Badge";
 import { AckTrendCard, AnnouncementBannerStack, TeamPendingCard } from "../components/AnnouncementDashboard";
 import { cn } from "../lib/utils";
-import { fmtDate } from "../vendor/shared/format";
+import { fmtDate, fmtSen, todayMY } from "../vendor/shared/format";
+import { formatCurrency } from "../lib/utils";
+import type { ProfitabilityResponse } from "./projects/financeViewModel";
 
 // ── Types for the data this page aggregates ──────────────────
 interface InboxItem {
@@ -47,7 +49,7 @@ const SEV_BADGE: Record<string, { tone: "accent" | "warning" | "error" | "succes
 };
 
 export function Overview() {
-  const { user, can } = useAuth();
+  const { user, can, pageAccess } = useAuth();
   const navigate = useNavigate();
 
   // OFF-NOT-HIDE: the home dashboard's org-summary KPIs hit permission-gated
@@ -66,6 +68,30 @@ export function Overview() {
     [],
     { enabled: can("projects.read") },
   );
+
+  /* The module overviews' headline figures, each fetched only for a viewer of
+     that module (OFF-NOT-HIDE, as above). */
+  const today = todayMY();
+  const monthFrom = `${today.slice(0, 7)}-01`;
+  const proc = useQuery<{ open: { poCount: number; remainingSen: number; late5Lines: number } }>("/api/scm/procurement-overview#home",
+    () => api.get(`/api/scm/procurement-overview?from=${monthFrom}&to=${today}`),
+    [monthFrom, today],
+    { enabled: pageAccess("scm.procurement.po") !== "none" },
+  );
+  const logi = useQuery<{ runsToday: number; weeks: { doCount: number; current: boolean }[]; deliveredOwingOver30: { count: number; balanceSen: number } }>("/api/scm/logistic-overview",
+    () => api.get("/api/scm/logistic-overview"),
+    [],
+    { enabled: pageAccess("scm.transportation.drivers") !== "none" },
+  );
+  const pnl = useQuery<ProfitabilityResponse>("/api/projects/analytics/profitability#home",
+    () => api.get(`/api/projects/analytics/profitability?date_from=${monthFrom}&date_to=${today}&scope=all`),
+    [monthFrom, today],
+    { enabled: !!user?.project_finance_viewer },
+  );
+  const pct = (part: number, whole: number) => (whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : "—");
+  const pt = pnl.data?.totals;
+  const po = proc.data?.open;
+  const thisWeek = logi.data?.weeks.find((w) => w.current);
 
   const now = new Date();
   /* The WEEKDAY is a word by design; the date beside it is the one rule. */
@@ -102,10 +128,10 @@ export function Overview() {
   const review = num(inboxUnknown, c?.review_queue);
 
   const kpis: { label: string; value: string; sub: string }[] = [
-    { label: "Revenue MTD", value: "—", sub: "No source yet" },
-    { label: "Outstanding PO", value: "—", sub: "Pending SCM" },
+    { label: "Project sales MTD", value: pnl.loading ? "…" : pt ? formatCurrency(pt.income) : "—", sub: pt ? (pt.income === 0 ? `${pt.projects} projects · sales not keyed in yet` : `${pt.projects} projects · GP ${pct(pt.gp, pt.income)}`) : pnl.error ? "Couldn't load" : "Project finance viewers only" },
+    { label: "PO not received", value: proc.loading ? "…" : po ? fmtSen(po.remainingSen) : "—", sub: po ? `${po.poCount} POs · ${po.late5Lines} lines 5+ days late` : proc.error ? "Couldn't load" : "Procurement only" },
     { label: "Open Cases", value: assr.loading ? "…" : num(assrUnknown, assr.data?.active_count), sub: assrUnknown ? "Couldn't load" : `${slaRisk} SLA risks` },
-    { label: "Trips Today", value: "—", sub: "Logistics TBD" },
+    { label: "Runs today", value: logi.loading ? "…" : logi.data ? String(logi.data.runsToday) : "—", sub: thisWeek ? `${thisWeek.doCount} DO issued this week` : logi.error ? "Couldn't load" : "Logistics only" },
     { label: "Active Projects", value: projects.loading ? "…" : num(projectsUnknown, projects.data?.live_count), sub: projectsUnknown ? "Couldn't load" : `${projects.data?.upcoming_30d ?? 0} due this month` },
   ];
 
@@ -218,19 +244,34 @@ export function Overview() {
           )}
         </div>
 
-        {/* Pipeline + P&L (data sources pending — shown honestly) */}
+        {/* Across the modules + P&L this month, each opening its Overview. */}
         <div className="space-y-4">
           <div className="rounded-xl border border-border bg-surface p-4 shadow-stone sm:p-5">
-            <h2 className="mb-3 text-[15px] font-bold text-ink">Sales Pipeline</h2>
-            <div className="rounded-lg border border-dashed border-border bg-surface-2 px-4 py-6 text-center text-[12px] text-ink-muted">
-              No data yet — shows once the pipeline API is wired.
+            <h2 className="mb-3 text-[15px] font-bold text-ink">Across the modules</h2>
+            <ul className="divide-y divide-border-subtle text-[13px]">
+              {[
+                { label: "Delivered, owing over 30 days", value: logi.data ? `${logi.data.deliveredOwingOver30.count} orders · ${fmtSen(logi.data.deliveredOwingOver30.balanceSen)}` : null, to: "/scm/logistic-overview" },
+                { label: "PO lines 5+ days late", value: po ? `${po.late5Lines} lines` : null, to: "/scm/procurement-overview" },
+                { label: "Service cases past SLA", value: assr.data ? `${assr.data.breach_count} cases` : null, to: "/assr?view=metrics" },
+                { label: "Projects starting in 30 days", value: projects.data ? `${projects.data.upcoming_30d} projects` : null, to: "/projects?view=calendar" },
+              ].filter((r) => r.value !== null).map((r) => (
+                <li key={r.label}>
+                  <button onClick={() => navigate(r.to)} className="group flex w-full items-center gap-3 py-2 text-left">
+                    <span className="min-w-0 flex-1 truncate text-ink-secondary group-hover:text-primary">{r.label}</span>
+                    <span className="font-semibold tabular-nums text-ink">{r.value}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <button onClick={() => navigate(`/projects?view=finances&af_from=${monthFrom}&af_to=${today.slice(0, 8)}${new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 0)).getUTCDate()}`)}
+            className="block w-full rounded-xl border border-primary/30 bg-primary-soft p-4 text-left shadow-stone sm:p-5">
+            <div className="font-mono text-[10px] font-bold uppercase tracking-brand text-primary-ink">Project P&amp;L this month</div>
+            <div className="mt-1.5 font-display text-[30px] font-extrabold leading-none text-primary-ink">{pt ? formatCurrency(pt.profit) : "—"}</div>
+            <div className="mt-1.5 text-[11px] text-primary-ink/70">
+              {pt && pt.income === 0 && pt.cost > 0 ? `No sales keyed in yet this month; rental booked ${formatCurrency(pt.rental)} across ${pt.projects} projects.` : pt ? `Net profit ${pct(pt.profit, pt.income)} on sales ${formatCurrency(pt.income)} · COGS ${formatCurrency(pt.cogs)} · rental ${formatCurrency(pt.rental)}` : pnl.error ? "Couldn't load" : "Project finance viewers only"}
             </div>
-          </div>
-          <div className="rounded-xl border border-primary/30 bg-primary-soft p-4 shadow-stone sm:p-5">
-            <div className="font-mono text-[10px] font-bold uppercase tracking-brand text-primary-ink">P&amp;L This Month</div>
-            <div className="mt-1.5 font-display text-[30px] font-extrabold leading-none text-primary-ink">—</div>
-            <div className="mt-1.5 text-[11px] text-primary-ink/70">Shows once the finance API is wired</div>
-          </div>
+          </button>
         </div>
       </div>
     </div>

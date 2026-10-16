@@ -93,6 +93,7 @@ logisticOverview.get('/', async (c) => {
 
   return c.json({
     today, thisMonday,
+    runsToday: (trips.data ?? []).filter((t) => String(t.trip_date ?? '').slice(0, 10) === today).length,
     weeks,
     months: [...months.values()].sort((a, b) => a.month.localeCompare(b.month)),
     deliveredOwing: outstanding,
