@@ -102,4 +102,12 @@ describe("facetedFilterValues — server counts (filterCounts)", () => {
     expect(facetedFilterValues(rows, {}, serverCreditor, columns).map(([k]) => k)).toEqual(["DIGLANT"]);
     expect(facetedFilterValues(rows, { creditor: ["ARMANI"] }, serverCreditor, columns).map(([k]) => k)).toEqual(["ARMANI", "DIGLANT"]);
   });
+
+  test("a newestFirst date column lists newest first with the blank last; without the flag it stays A to Z", () => {
+    const counts: Array<[string, number]> = [["2024-04-19", 1], ["—", 1], ["2026-10-16", 3], ["2025-01-02", 2]];
+    const flagged: RowRuleColumn<Po> = { key: "date", getValue: (r) => r.date, filterCounts: counts, newestFirst: true };
+    const plain: RowRuleColumn<Po> = { key: "date", getValue: (r) => r.date, filterCounts: counts };
+    expect(names(facetedFilterValues(rows, {}, flagged, columns))).toEqual(["2026-10-16", "2025-01-02", "2024-04-19", "—"]);
+    expect(names(facetedFilterValues(rows, {}, plain, columns))).toEqual(["—", "2024-04-19", "2025-01-02", "2026-10-16"]);
+  });
 });
