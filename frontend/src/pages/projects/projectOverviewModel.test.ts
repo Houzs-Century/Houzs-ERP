@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { figuresOf, totalsOf, trendOf, groupBy, type OvProject } from "./projectOverviewModel";
+import { figuresOf, totalsOf, trendOf, groupBy, drillOf, type OvProject } from "./projectOverviewModel";
 
 const p = (o: Partial<OvProject>): OvProject => ({
   id: 1, code: "P1", name: "Fair", brand: "AKEMI", organizer: "MLE", venue: "MV", state: "KL", stage: "draft",
@@ -33,5 +33,12 @@ describe("Project Overview figures", () => {
     expect(t.at(-2)).toMatchObject({ key: "2026-09", sales: 500 });
     expect(trendOf(ps, "2026-10-17", "quarter").at(-1)).toMatchObject({ key: "2026-Q4", sales: 900 });
     expect(groupBy(ps, (x) => x.brand).map((g) => g.key)).toEqual(["ZANOTTI", "AKEMI"]);
+  });
+  it("drills year, quarter, month, week by event start", () => {
+    const ps = [p({ id: 1, startDate: "2025-03-10", salesOrders: { sen: 100_00, costSen: 0, count: 1 } }), p({ id: 2, startDate: "2026-10-09", salesOrders: { sen: 900_00, costSen: 0, count: 1 } }), p({ id: 3, startDate: "2026-10-30", salesOrders: { sen: 50_00, costSen: 0, count: 1 } })];
+    expect(drillOf(ps, { level: "years" }, "2026-10-17").map((b) => [b.key, b.sales])).toEqual([["2025", 100], ["2026", 950]]);
+    expect(drillOf(ps, { level: "quarters", year: 2026 }, "2026-10-17").map((b) => b.sales)).toEqual([0, 0, 0, 950]);
+    expect(drillOf(ps, { level: "months", year: 2026, quarter: 4 }, "2026-10-17")[0]).toMatchObject({ key: "2026-10", sales: 950, next: { level: "weeks", month: "2026-10" } });
+    expect(drillOf(ps, { level: "weeks", month: "2026-10" }, "2026-10-17").map((b) => [b.label, b.sales])).toEqual([["1–7 Oct", 0], ["8–14 Oct", 900], ["15–21 Oct", 0], ["22–31 Oct", 50]]);
   });
 });

@@ -80,3 +80,35 @@ export function trendOf(ps: OvProject[], to: string, grain: Grain) {
     return { ...b, ...totalsOf(xs) };
   });
 }
+
+/** The trend's drill level (owner 2026-10-17): every year, a year's quarters,
+ *  a quarter's months, a month's weeks (1–7, 8–14, 15–21, 22–end). */
+export type Drill = { level: "years" } | { level: "quarters"; year: number } | { level: "months"; year: number; quarter: number } | { level: "weeks"; month: string };
+
+export function drillOf(ps: OvProject[], drill: Drill, today: string) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const last = (yy: number, mm: number) => new Date(Date.UTC(yy, mm, 0)).getUTCDate();
+  const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const buckets: Array<{ key: string; label: string; from: string; to: string; next: Drill | null }> = [];
+  if (drill.level === "years") {
+    const years = ps.map((p) => Number((p.startDate ?? "").slice(0, 4))).filter((y) => y > 2000);
+    const y1 = Number(today.slice(0, 4)); const y0 = Math.max(y1 - 6, Math.min(y1, ...years));
+    for (let y = y0; y <= y1; y++) buckets.push({ key: String(y), label: String(y), from: `${y}-01-01`, to: `${y}-12-31`, next: { level: "quarters", year: y } });
+  } else if (drill.level === "quarters") {
+    for (let q = 1; q <= 4; q++) {
+      const m1 = (q - 1) * 3 + 1;
+      buckets.push({ key: `${drill.year}-Q${q}`, label: `Q${q} ${drill.year}`, from: `${drill.year}-${pad(m1)}-01`, to: `${drill.year}-${pad(m1 + 2)}-${pad(last(drill.year, m1 + 2))}`, next: { level: "months", year: drill.year, quarter: q } });
+    }
+  } else if (drill.level === "months") {
+    for (let i = 0; i < 3; i++) {
+      const mm = (drill.quarter - 1) * 3 + 1 + i; const key = `${drill.year}-${pad(mm)}`;
+      buckets.push({ key, label: `${MON[mm - 1]} ${drill.year}`, from: `${key}-01`, to: `${key}-${pad(last(drill.year, mm))}`, next: { level: "weeks", month: key } });
+    }
+  } else {
+    const yy = Number(drill.month.slice(0, 4)); const mm = Number(drill.month.slice(5, 7)); const end = last(yy, mm);
+    for (const [a, b] of [[1, 7], [8, 14], [15, 21], [22, end]] as Array<[number, number]>) {
+      buckets.push({ key: `${drill.month}-${a}`, label: `${a}–${b} ${MON[mm - 1]}`, from: `${drill.month}-${pad(a)}`, to: `${drill.month}-${pad(b)}`, next: null });
+    }
+  }
+  return buckets.map((b) => ({ ...b, ...totalsOf(ps.filter((p) => !!p.startDate && p.startDate >= b.from && p.startDate <= b.to)) }));
+}

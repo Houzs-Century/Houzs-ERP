@@ -12,10 +12,10 @@ import { api } from "../../api/client";
 import { formatCurrency, cn } from "../../lib/utils";
 import { todayMY } from "../../vendor/shared/format";
 import { Panel, Th, Td, Toggle, SELECT_CLS } from "../../components/scm-v2/OverviewKit";
-import { Columns, HBars, SplitBar, TONE, PALETTE } from "../../components/scm-v2/Charts";
+import { Columns, SplitBar, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
 import { ProjectDataGapsPanel } from "./ProjectOverviewParts";
-import { figuresOf, totalsOf, groupBy, trendOf, pctOf, type OvProject, type Grain } from "./projectOverviewModel";
+import { figuresOf, totalsOf, groupBy, drillOf, pctOf, type OvProject, type Drill } from "./projectOverviewModel";
 
 type Dim = "brand" | "eventType" | "organizer" | "venue" | "state";
 const DIMS: Array<[Dim, string]> = [["brand", "Brand"], ["eventType", "Event type"], ["organizer", "Organizer"], ["venue", "Venue"], ["state", "State"]];
@@ -29,7 +29,7 @@ export function ProjectOverviewPage() {
   const [period, setPeriod] = useDashboardPeriod(today, "af_from", "af_to", []);
   const q = useQuery<{ projects: OvProject[] }>("/api/projects/overview", () => api.get("/api/projects/overview"));
   const [brand, setBrand] = useState(""); const [type, setType] = useState(""); const [organizer, setOrganizer] = useState("");
-  const [grain, setGrain] = useState<Grain>("month");
+  const [drill, setDrill] = useState<Drill>({ level: "years" });
   const [dim, setDim] = useState<Dim>("brand");
   const [pick, setPick] = useState<string | null>(null);
   const [sort, setSort] = useState<SortKey>("start");
@@ -39,7 +39,22 @@ export function ProjectOverviewPage() {
   const inPeriod = useMemo(() => all.filter((p) => !!p.startDate && p.startDate >= period.from && p.startDate <= period.to), [all, period.from, period.to]);
   const t = totalsOf(inPeriod);
   const groups = groupBy(inPeriod, (p) => p[dim]);
-  const trend = trendOf(all, period.to, grain);
+  const trend = drillOf(all, drill, today);
+  /* Breadcrumb back up the drill: All years > 2026 > Q4 > Oct. */
+  const crumbs: Array<[string, Drill]> = [["All years", { level: "years" }]];
+  if (drill.level !== "years") {
+    const year = drill.level === "weeks" ? Number(drill.month.slice(0, 4)) : drill.year;
+    crumbs.push([String(year), { level: "quarters", year }]);
+    const quarter = drill.level === "months" ? drill.quarter : drill.level === "weeks" ? Math.ceil(Number(drill.month.slice(5, 7)) / 3) : null;
+    if (quarter) crumbs.push([`Q${quarter}`, { level: "months", year, quarter }]);
+    if (drill.level === "weeks") crumbs.push([new Date(`${drill.month}-01T00:00:00Z`).toLocaleString("en", { month: "short", timeZone: "UTC" }), drill]);
+  }
+  const unit = drill.level === "years" ? "Year" : drill.level === "quarters" ? "Quarter" : drill.level === "months" ? "Month" : "Week";
+  const openBucket = (b: (typeof trend)[number]) => { if (b.next) setDrill(b.next); else { setPick(null); setPeriod(b.from, b.to > today ? today : b.to); } };
+  /* Running costs after COGS, only the ones that are not zero. */
+  const costs = ([["Rental", t.rental, PALETTE[2]!], ["Commission", t.commission, PALETTE[3]!], ["Setup", t.setup, PALETTE[5]!], ["Transport", t.transport, PALETTE[8]!], ["Merchandise", t.merchandise, PALETTE[7]!], ["Other", t.other, "#c9cdc4"]] as Array<[string, number, string]>).filter(([, v]) => v !== 0);
+  const running = costs.reduce((a, [, v]) => a + v, 0);
+  const npMax = Math.max(1, ...groups.map((g) => Math.abs(g.np)));
   const listed = inPeriod.filter((p) => !pick || (p[dim] || "—") === pick)
     .map((p) => ({ p, f: figuresOf(p) }))
     .sort((a, b) => sort === "sales" ? b.f.sales - a.f.sales : sort === "np" ? b.f.np - a.f.np : sort === "npPct" ? (pctOf(b.f.np, b.f.sales) ?? -1e9) - (pctOf(a.f.np, a.f.sales) ?? -1e9) : (b.p.startDate ?? "").localeCompare(a.p.startDate ?? ""));
@@ -73,58 +88,61 @@ export function ProjectOverviewPage() {
       </section>
 
       <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
-        <Panel title="Trend" hint="sales, gross and net profit by event start" right={<Toggle value={grain} options={[["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]]} onChange={setGrain} />}>
-          <Columns valueLabels={false} height={230} stacked={false} format={money} highlight={trend.findIndex((b) => period.to >= b.from && period.to <= b.to)}
+        <Panel title="Trend" hint="sales, gross and net profit by event start · click a row to go one level down"
+          right={<span className="flex flex-wrap items-center gap-1 text-[12px]">{crumbs.map(([label, d], i) => (
+            <span key={label} className="flex items-center gap-1">
+              {i > 0 && <span className="text-ink-muted">›</span>}
+              {i === crumbs.length - 1 ? <b className="text-ink">{label}</b> : <button type="button" className="text-primary hover:underline" onClick={() => setDrill(d)}>{label}</button>}
+            </span>
+          ))}</span>}>
+          <Columns valueLabels={false} height={230} stacked={false} format={money} highlight={trend.findIndex((b) => today >= b.from && today <= b.to)}
             labels={trend.map((b) => b.label)}
             series={[{ name: "Sales", color: PALETTE[0]! }, { name: "Gross profit", color: "#8fb3ae" }]}
             values={[trend.map((b) => b.sales), trend.map((b) => Math.max(0, b.gp))]}
             line={{ name: "Net profit %", color: PALETTE[1]!, values: trend.map((b) => pctOf(b.np, b.sales)), format: (x) => `${x.toFixed(1)}%` }} />
           <div className="mt-2 overflow-x-auto">
             <table className="w-full border-collapse">
-              <thead><tr><Th left>{grain === "month" ? "Month" : grain === "quarter" ? "Quarter" : "Year"}</Th><Th>Projects</Th><Th>Sales</Th><Th>GP</Th><Th>GP %</Th><Th>NP</Th><Th>NP %</Th></tr></thead>
+              <thead><tr><Th left>{unit}</Th><Th>Projects</Th><Th>Sales</Th><Th>GP</Th><Th>GP %</Th><Th>NP</Th><Th>NP %</Th></tr></thead>
               <tbody>{trend.slice().reverse().map((b) => (
-                <tr key={b.key} className="cursor-pointer hover:bg-surface-2/50" onClick={() => setPeriod(b.from, b.to > today ? today : b.to)}>
-                  <Td left className="text-primary">{b.label}</Td><Td>{b.projects}</Td><Td>{money(b.sales)}</Td><Td>{money(b.gp)}</Td><Td>{pctTxt(pctOf(b.gp, b.sales))}</Td>
+                <tr key={b.key} className="cursor-pointer hover:bg-surface-2/50" onClick={() => openBucket(b)}>
+                  <Td left className="text-primary">{b.label}{b.next ? " ›" : ""}</Td><Td>{b.projects}</Td><Td>{money(b.sales)}</Td><Td>{money(b.gp)}</Td><Td>{pctTxt(pctOf(b.gp, b.sales))}</Td>
                   <Td className={b.np < 0 ? "text-err" : ""}>{money(b.np)}</Td><Td>{pctTxt(pctOf(b.np, b.sales))}</Td>
                 </tr>))}</tbody>
             </table>
-            <p className="mt-1 text-[11px] text-ink-muted">Click a row to look at that month, quarter or year.</p>
+            <p className="mt-1 text-[11px] text-ink-muted">{drill.level === "weeks" ? "Click a week to show its projects across the page." : "Year, then its quarters, then its months, then the weeks of a month."}</p>
           </div>
         </Panel>
         <Panel title="Where each ringgit of sales goes" hint={period.label}>
           <SplitBar format={money} parts={[
             { label: "COGS", value: t.cogs, color: PALETTE[1]! },
-            { label: "Rental", value: t.rental, color: PALETTE[2]! },
-            { label: "Commission", value: t.commission, color: PALETTE[3]! },
-            { label: "Setup", value: t.setup, color: PALETTE[5]! },
-            { label: "Transport", value: t.transport, color: PALETTE[8]! },
-            { label: "Merchandise", value: t.merchandise, color: PALETTE[7]! },
-            { label: "Other", value: t.other, color: "#c9cdc4" },
+            ...costs.map(([label, value, color]) => ({ label, value, color })),
             { label: "Net profit", value: Math.max(0, t.np), color: TONE.good },
           ]} />
           <table className="mt-3 w-full border-collapse"><tbody>
-            {([["Sales", t.sales], ["− COGS", t.cogs], ["= Gross profit", t.gp], ["− Rental", t.rental], ["− Commission", t.commission], ["− Setup", t.setup], ["− Transport", t.transport], ["− Merchandise", t.merchandise], ["− Other cost", t.other], ["= Net profit", t.np]] as Array<[string, number]>).map(([l, v]) => (
-              <tr key={l} className={l.startsWith("=") ? "font-semibold" : ""}><Td left>{l}</Td><Td>{money(v)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(v, t.sales))}</Td></tr>
-            ))}
+            <tr><Td left>Sales</Td><Td>{money(t.sales)}</Td><Td className="text-ink-muted">100%</Td></tr>
+            <tr><Td left>− COGS</Td><Td>{money(t.cogs)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(t.cogs, t.sales))}</Td></tr>
+            <tr className="font-semibold"><Td left>= Gross profit</Td><Td>{money(t.gp)}</Td><Td>{pctTxt(pctOf(t.gp, t.sales))}</Td></tr>
+            <tr><Td left>− Event costs</Td><Td>{money(running)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(running, t.sales))}</Td></tr>
+            <tr className="font-semibold"><Td left>= Net profit</Td><Td className={t.np < 0 ? "text-err" : "text-synced"}>{money(t.np)}</Td><Td>{pctTxt(pctOf(t.np, t.sales))}</Td></tr>
           </tbody></table>
+          {costs.length > 0 && <p className="mt-2 text-[11.5px] text-ink-muted">Event costs: {costs.map(([l, v]) => `${l} ${money(v)}`).join(" · ")}</p>}
         </Panel>
       </div>
 
-      <Panel title="Breakdown" hint="click a row to list its projects below" right={<Toggle value={dim} options={DIMS} onChange={(v) => { setDim(v); setPick(null); }} />}>
-        <div className="grid gap-4 xl:grid-cols-[1fr_1.4fr]">
-          <HBars format={money} empty="No projects in this period."
-            rows={groups.slice(0, 10).map((g) => ({ key: g.key, label: `${g.key} · ${g.projects}`, value: g.np, color: g.np < 0 ? TONE.bad : TONE.good,
-              right: <>{money(g.np)}<span className="ml-1.5 text-[11px] text-ink-muted">{pctTxt(pctOf(g.np, g.sales))}</span></>, onClick: () => setPick(pick === g.key ? null : g.key) }))} />
-          <div className="max-h-[380px] overflow-auto">
-            <table className="w-full border-collapse">
-              <thead className="sticky top-0 bg-surface"><tr><Th left>{DIMS.find(([d]) => d === dim)?.[1]}</Th><Th>Projects</Th><Th>Sales</Th><Th>GP %</Th><Th>Rental</Th><Th>NP</Th><Th>NP %</Th></tr></thead>
-              <tbody>{groups.map((g) => (
-                <tr key={g.key} onClick={() => setPick(pick === g.key ? null : g.key)} className={cn("cursor-pointer hover:bg-surface-2/50", pick === g.key && "bg-primary-soft/50")}>
-                  <Td left className="max-w-[200px] truncate">{g.key}</Td><Td>{g.projects}</Td><Td>{money(g.sales)}</Td><Td>{pctTxt(pctOf(g.gp, g.sales))}</Td><Td>{money(g.rental)}</Td>
-                  <Td className={g.np < 0 ? "text-err" : "text-synced"}>{money(g.np)}</Td><Td>{pctTxt(pctOf(g.np, g.sales))}</Td>
-                </tr>))}</tbody>
-            </table>
-          </div>
+      <Panel title="Breakdown" hint="largest sales first · click a row to list its projects below" right={<Toggle value={dim} options={DIMS} onChange={(v) => { setDim(v); setPick(null); }} />}>
+        <div className="max-h-[420px] overflow-auto">
+          <table className="w-full border-collapse">
+            <thead className="sticky top-0 bg-surface"><tr><Th left>{DIMS.find(([d]) => d === dim)?.[1]}</Th><Th>Projects</Th><Th>Sales</Th><Th>GP %</Th><Th>Event costs</Th><Th>Net profit</Th><Th left> </Th><Th>NP %</Th></tr></thead>
+            <tbody>{groups.map((g) => (
+              <tr key={g.key} onClick={() => setPick(pick === g.key ? null : g.key)} className={cn("cursor-pointer hover:bg-surface-2/50", pick === g.key && "bg-primary-soft/50")}>
+                <Td left className="max-w-[220px] truncate">{g.key}</Td><Td>{g.projects}</Td><Td>{money(g.sales)}</Td><Td>{pctTxt(pctOf(g.gp, g.sales))}</Td><Td>{money(g.rental + g.otherCost)}</Td>
+                <Td className={g.np < 0 ? "font-semibold text-err" : "font-semibold text-synced"}>{money(g.np)}</Td>
+                <Td left className="w-[18%]"><div className="h-2 rounded-full bg-surface-2"><div className="h-2 rounded-full" style={{ width: `${(Math.abs(g.np) / npMax) * 100}%`, background: g.np < 0 ? TONE.bad : TONE.good }} /></div></Td>
+                <Td>{pctTxt(pctOf(g.np, g.sales))}</Td>
+              </tr>))}
+              {groups.length === 0 && <tr><Td left className="text-ink-muted">No projects in this period.</Td></tr>}
+            </tbody>
+          </table>
         </div>
       </Panel>
 
