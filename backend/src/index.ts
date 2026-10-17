@@ -51,6 +51,7 @@ import { posDevice } from "./routes/pos-device";
 import projectsOutstanding from "./routes/projectsOutstanding";
 import { projectDataGaps } from "./routes/projectDataGaps";
 import { projectOverview } from "./routes/projectOverview";
+import assrQuality from "./routes/assrQuality";
 // Sales entries (/api/sales) is retained as a DEPENDENCY of Projects — the
 // Projects page embeds the sales-entry EntryPanel + submit/void/delete flow.
 // It has no standalone nav/route after the cutover.
@@ -442,6 +443,9 @@ app.use("/api/projects/*", venturePortalKick());
 // Mount the Lead Time Portal first so /api/assr/portal/* doesn't
 // fall through into the catch-all /:id handler on the main module.
 app.route("/api/assr/portal", assrPortal);
+// Quality Overview's period summary and supplier figures; before the Service
+// Case router so its "/:id" does not take the path. See routes/assrQuality.ts.
+app.route("/api/assr/quality-overview", assrQuality);
 app.route("/api/assr", assr);
 app.route("/api/logs", logs);
 app.route("/api/audit", auditRoutes);

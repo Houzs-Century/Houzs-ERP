@@ -8,6 +8,7 @@ import { Panel } from "../components/Panel";
 import { ListSkeleton } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
 import { useQuery } from "../hooks/useQuery";
+import { QualitySummary } from "./QualitySummary";
 import { DashboardPeriodPicker, useDashboardPeriod } from "../components/scm-v2/DashboardPeriod";
 import { todayMY } from "../vendor/shared/format";
 import { Donut, type Slice } from "../components/scm-v2/Charts";
@@ -209,6 +210,14 @@ export function ServiceMetrics() {
     [period.from, period.to],
     { enabled: canReadMetrics }
   );
+  /* "Where the cases are" shows EVERY open case, whenever it was opened (owner
+     2026-10-17), so the open stages come from an unbounded read; Completed
+     stays the period's own count. */
+  const summaryAll = useQuery<AssrSummaryV31>("/api/assr/summary?from=:&to=:#all",
+    () => api.get(`/api/assr/summary?from=2000-01-01&to=${today}`),
+    [today],
+    { enabled: canReadMetrics }
+  );
 
   const m = metrics.data;
   const h = m?.headline;
@@ -225,186 +234,17 @@ export function ServiceMetrics() {
         <DashboardPeriodPicker period={period} today={today} onChange={setPeriod} />
       </div>
 
-      {/* ── Live Status — real-time pulse. "What's wrong NOW" sits above
-          the windowed period aggregates so dispatchers triage first. ── */}
-      <SectionHeader
-        icon={<Activity size={15} />}
-        title="Live Status"
-        hint="Now · all open cases"
-      />
-      <DashboardGrid cols={4}>
-        <StatCard
-          label="Review"
-          value={s?.pending_review_count != null ? s.pending_review_count.toLocaleString() : "—"}
-          subtitle="Cases awaiting triage"
-          tone={(s?.pending_review_count ?? 0) > 0 ? "warning" : "default"}
-          onClick={() => setDrill({ metric: "pending_review" })}
-        />
-        <StatCard
-          label="Aging > 3 days"
-          value={s?.aging_count != null ? s.aging_count.toLocaleString() : "—"}
-          subtitle="Open cases stuck in a stage"
-          tone={(s?.aging_count ?? 0) > 0 ? "warning" : "default"}
-          onClick={() => setDrill({ metric: "aging" })}
-        />
-        <StatCard
-          label="SLA Breached (now)"
-          value={s?.breach_count != null ? s.breach_count.toLocaleString() : "—"}
-          subtitle="Past deadline, not yet closed"
-          tone={(s?.breach_count ?? 0) > 0 ? "error" : "default"}
-          onClick={() => setDrill({ metric: "breach_now" })}
-        />
-        <StatCard
-          label="Open"
-          value={h?.open_count != null ? h.open_count.toLocaleString() : "—"}
-          subtitle="Still in progress"
-          onClick={() => setDrill({ metric: "open_now" })}
-        />
-      </DashboardGrid>
+      <QualitySummary from={period.from} to={period.to} periodLabel={period.label} breachNow={s?.breach_count ?? null}
+        onDrill={(metric) => setDrill({ metric })}
+        funnel={summaryAll.data && summaryAll.data.stage_funnel.length > 0
+          ? <StageFunnel data={summaryAll.data.stage_funnel.map((r) => r.stage === "completed" ? (s?.stage_funnel.find((x) => x.stage === "completed") ?? { ...r, total: 0, breached: 0 }) : r)} />
+          : <div className="py-4 text-[12px] text-ink-muted">No open cases right now.</div>} />
 
-      <MetricCard icon={<Activity size={13} />} title="Stage Funnel">
-        {s && s.stage_funnel.length > 0 ? (
-          <StageFunnel data={s.stage_funnel} />
-        ) : (
-          <div className="py-4 text-[12px] text-ink-muted">No open cases right now.</div>
-        )}
-      </MetricCard>
-
-      {/* ── This Period — windowed aggregates over the selected range. ── */}
-      <SectionHeader
-        icon={<Gauge size={15} />}
-        title="This Period"
-        hint={`${period.label} · ${period.from} – ${period.to}`}
-      />
-      <DashboardGrid cols={4}>
-        <StatCard
-          label="Total Cases"
-          value={h?.total != null ? h.total.toLocaleString() : "—"}
-          subtitle={`${period.from} – ${period.to} · ${m?.since_days ?? "—"} days`}
-          onClick={() => setDrill({ metric: "total_period" })}
-        />
-        <StatCard
-          label="Completion Rate"
-          value={completionRate != null ? `${completionRate}%` : "—"}
-          subtitle={h && h.closed != null && h.total != null ? `${h.closed.toLocaleString()} of ${h.total.toLocaleString()} closed` : " "}
-          tone={completionRate != null && completionRate >= 80 ? "success" : "default"}
-          onClick={() => setDrill({ metric: "closed_period" })}
-        />
-        <StatCard
-          label="SLA Breached"
-          value={h?.breached != null ? h.breached.toLocaleString() : "—"}
-          subtitle="Open cases past deadline"
-          tone={(h?.breached ?? 0) > 0 ? "error" : "default"}
-          onClick={() => setDrill({ metric: "breach_period" })}
-        />
-        <StatCard
-          label="Avg Satisfaction"
-          value={h?.avg_satisfaction != null ? `${h.avg_satisfaction.toFixed(2)} / 5` : "—"}
-          subtitle="Customer rating on close"
-        />
-      </DashboardGrid>
-
-      <DashboardGrid cols={3}>
-        <StatCard
-          label="QA Passed"
-          value={h?.qa_passed != null ? h.qa_passed.toLocaleString() : "—"}
-          subtitle="Cases with manager sign-off"
-          onClick={() => setDrill({ metric: "qa_passed" })}
-        />
-        <StatCard
-          label="Avg Resolution"
-          value={
-            h?.avg_resolution_hours != null
-              ? h.avg_resolution_hours >= 24
-                ? `${(h.avg_resolution_hours / 24).toFixed(1)}d`
-                : `${Math.round(h.avg_resolution_hours)}h`
-              : "—"
-          }
-          subtitle="Created → closed"
-        />
-        <StatCard
-          label="Avg E2E Lead Time"
-          value={s?.avg_e2e_days != null ? `${s.avg_e2e_days.toFixed(1)}d` : "—"}
-          subtitle="Created → closed (all stages)"
-        />
-      </DashboardGrid>
-
-      {/* ── Case Duration — mirrors the legacy Excel "Case Duration" tile.
-          Bucketed by age of OPEN cases since complained_date. ── */}
-      <SectionHeader
-        icon={<Hourglass size={15} />}
-        title="Case Duration"
-        hint="Age of open cases"
-      />
-      <div className="mb-3">
-        <DashboardGrid cols={5}>
-          <StatCard
-            label="Opening Cases"
-            value={m?.case_duration?.opening_count != null
-              ? m.case_duration.opening_count.toLocaleString()
-              : "—"}
-            subtitle="Currently open"
-            onClick={() => setDrill({ metric: "opening_count" })}
-          />
-          <StatCard
-            label="Over 1 month"
-            value={m?.case_duration?.over_1_month != null
-              ? m.case_duration.over_1_month.toLocaleString()
-              : "—"}
-            subtitle="Aged ≥ 30 days"
-            tone={(m?.case_duration?.over_1_month ?? 0) > 0 ? "error" : "default"}
-            onClick={() => setDrill({ metric: "over_1_month" })}
-          />
-          <StatCard
-            label="Over 3 weeks"
-            value={m?.case_duration?.over_3_weeks != null
-              ? m.case_duration.over_3_weeks.toLocaleString()
-              : "—"}
-            subtitle="21–29 days old"
-            tone={(m?.case_duration?.over_3_weeks ?? 0) > 0 ? "warning" : "default"}
-            onClick={() => setDrill({ metric: "over_3_weeks" })}
-          />
-          <StatCard
-            label="Over 2 weeks"
-            value={m?.case_duration?.over_2_weeks != null
-              ? m.case_duration.over_2_weeks.toLocaleString()
-              : "—"}
-            subtitle="14–20 days old"
-            tone={(m?.case_duration?.over_2_weeks ?? 0) > 0 ? "warning" : "default"}
-            onClick={() => setDrill({ metric: "over_2_weeks" })}
-          />
-          <StatCard
-            label="Avg / month"
-            value={
-              m?.case_duration?.avg_per_month != null
-                ? m.case_duration.avg_per_month.toFixed(2)
-                : "—"
-            }
-            subtitle="Last 4 months"
-          />
-        </DashboardGrid>
-      </div>
-
-      {/* ── Trends ── */}
-      <SectionHeader icon={<LineChart size={15} />} title="Trends" />
-      <DashboardPanels cols={2}>
+      {s && s.csat_trend.length > 0 && (
         <MetricCard icon={<Smile size={13} />} title="CSAT — 13-week rolling" flat>
-          {s && s.csat_trend.length > 0 ? (
-            <CsatTrend data={s.csat_trend} />
-          ) : (
-            <div className="py-4 text-[12px] text-ink-muted">
-              No survey responses in the last 13 weeks.
-            </div>
-          )}
+          <CsatTrend data={s.csat_trend} />
         </MetricCard>
-        <MetricCard icon={<TrendingUp size={13} />} title="Monthly Trend" flat>
-          {m && m.monthly_trend.length > 0 ? (
-            <Trend data={m.monthly_trend} />
-          ) : (
-            <div className="py-4 text-[12px] text-ink-muted">Not enough data</div>
-          )}
-        </MetricCard>
-      </DashboardPanels>
+      )}
 
       {/* ── Breakdowns ── */}
       <SectionHeader icon={<PieChart size={15} />} title="Breakdowns" />

@@ -270,7 +270,7 @@ function assrVisibilitySql(
 /** The row-level scope for the aggregate endpoints, resolved once per request.
  *  Returns a builder because the same scope has to be rendered against several
  *  table aliases within one handler. */
-async function assrVisibilityScope(c: {
+export async function assrVisibilityScope(c: {
   get(key: "user"): unknown;
   env: Env;
 }): Promise<(prefix?: string) => { sql: string; binds: string[] }> {
