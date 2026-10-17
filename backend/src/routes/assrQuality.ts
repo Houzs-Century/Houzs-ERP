@@ -22,6 +22,7 @@ const app = new Hono<{ Bindings: Env }>();
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 app.get("/", requirePermission("service_cases.read"), async (c) => {
+  // company-scope: the cases read carries allowedCompaniesSql (Service Cases are cross-company by the owner's 2026-07-19 ruling); items and stage history are read only for those case ids; goods received carry allowedCompaniesSql on g.company_id.
   const today = todayMyt();
   const qf = c.req.query("from") ?? ""; const qt = c.req.query("to") ?? "";
   const from = ISO.test(qf) ? qf : `${today.slice(0, 7)}-01`;
