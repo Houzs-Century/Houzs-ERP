@@ -23,9 +23,9 @@ export function classifyProjectGaps(projects: GapProject[]) {
   }
   return {
     ended: projects.length,
-    noSales: { count: noSales.length, costBooked: noSales.reduce((a, p) => a + p.cost, 0), soSen: noSales.reduce((a, p) => a + p.soSen, 0), rows: noSales.slice(0, 50).map(pick) },
-    noCogs: { count: noCogs.length, salesAffected: noCogs.reduce((a, p) => a + p.income, 0), rows: noCogs.slice(0, 50).map(pick) },
-    noCommission: { count: noCommission.length, salesAffected: noCommission.reduce((a, p) => a + p.income, 0), rows: noCommission.slice(0, 50).map(pick) },
+    noSales: { count: noSales.length, costBooked: noSales.reduce((a, p) => a + p.cost, 0), soSen: noSales.reduce((a, p) => a + p.soSen, 0), rows: noSales.slice(0, 300).map(pick) },
+    noCogs: { count: noCogs.length, salesAffected: noCogs.reduce((a, p) => a + p.income, 0), rows: noCogs.slice(0, 300).map(pick) },
+    noCommission: { count: noCommission.length, salesAffected: noCommission.reduce((a, p) => a + p.income, 0), rows: noCommission.slice(0, 300).map(pick) },
     byMonth: [...months.values()].sort((a, b) => a.month.localeCompare(b.month)),
   };
 }

@@ -14,7 +14,7 @@ import { todayMY } from "../../vendor/shared/format";
 import { Panel, Th, Td, Toggle, SELECT_CLS } from "../../components/scm-v2/OverviewKit";
 import { Columns, SplitBar, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
-import { ProjectDataGapsPanel } from "./ProjectOverviewParts";
+import { ProjectDataGapsPanel, ProjectStuckPanel } from "./ProjectOverviewParts";
 import { figuresOf, totalsOf, groupBy, drillOf, pctOf, type OvProject, type Drill } from "./projectOverviewModel";
 
 type Dim = "brand" | "eventType" | "organizer" | "venue" | "state";
@@ -175,6 +175,7 @@ export function ProjectOverviewPage() {
         </div>
       </Panel>
 
+      <ProjectStuckPanel onOpen={(id) => navigate(`/projects/${id}`)} />
       <ProjectDataGapsPanel onOpen={(id) => navigate(`/projects/${id}`)} />
     </div>
   );
