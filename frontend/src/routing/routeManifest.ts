@@ -110,6 +110,8 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/inventory",
   "/scm/inventory/stock-card/:itemCode",
   "/scm/suppliers/:id",
+  "/scm/logistic-overview",
+  "/scm/procurement-overview",
   "/scm/delivery-planning",
   "/scm/dp-orders",
   "/scm/trips",

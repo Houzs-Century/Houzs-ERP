@@ -1192,7 +1192,7 @@ mfgSalesOrders.get('/', async (c) => {
        2026-09-14), tab, search (approval codes and phone included) and date
        window — for the page, the money strip and the line export
        (lib/so-list-read.ts). The status counts take its `scoped` half. */
-    const read = await prepareSoListRead(sb, c, readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k)), scopeIds, c.get('houzsUser')?.id ?? null, new Date());
+    const read = await prepareSoListRead(sb, c, readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k), canViewScmFinance(c)), scopeIds, c.get('houzsUser')?.id ?? null, new Date());
     if (!read.ok) return c.json(read.body, read.status);
     let q = read.header(orderSoList(fromSoList(sb, LIST_COLS, { count: 'exact' }), c.req.query('sort') ?? null));
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
@@ -1274,8 +1274,12 @@ mfgSalesOrders.get('/', async (c) => {
        still carries the true total via PostgREST's `Content-Range` header. */
     if (error && isRangeNotSatisfiable(error)) {
       data = [];
-      total = res.count ?? 0;
       error = null;
+      /* supabase-js drops the count on a 416, so a page past a narrowed set (a
+         column funnel leaving 8 orders, read at page 2) reported total 0 — ask. */
+      const head = res.count == null ? await read.header(fromSoList(sb, 'doc_no', { count: 'exact', head: true })) : null;
+      if (head?.error) error = head.error;
+      total = res.count ?? head?.count ?? 0;
     }
     /* Every status in the vocabulary gets a bucket (lowercase keys, the wire
        shape the tabs read), plus `other` for anything OUTSIDE it (legacy

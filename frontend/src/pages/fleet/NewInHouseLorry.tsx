@@ -25,8 +25,9 @@ export function NewInHouseLorry({ onClose, onCreated }: { onClose: () => void; o
   const create = useCreateLorry();
   const warehouses = useWarehouses();
   const navigate = useNavigate();
-  const [f, setF] = useState({ plate: "", model: "", warehouseId: "", lengthFt: "", widthFt: "", heightFt: "", maxSets: "", maxRevenueRm: "", registrationDate: "" });
+  const [f, setF] = useState({ plate: "", model: "", lengthFt: "", widthFt: "", heightFt: "", maxSets: "", maxRevenueRm: "", registrationDate: "" });
   const [type, setType] = useState<LorryType>("LORRY_17FT");
+  const [whIds, setWhIds] = useState<string[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const set = (k: keyof typeof f, v: string) => setF((s) => ({ ...s, [k]: v }));
 
@@ -42,7 +43,7 @@ export function NewInHouseLorry({ onClose, onCreated }: { onClose: () => void; o
       isInternal: true,
       threeplCompanyId: null,
       model: f.model.trim() || null,
-      warehouseId: f.warehouseId || null,
+      warehouseIds: whIds,
       lengthFt: l, widthFt: w, heightFt: h,
       maxSets: sets != null ? Math.round(sets) : null,
       maxRevenueSen: rev != null ? Math.round(rev * 100) : null,
@@ -69,11 +70,15 @@ export function NewInHouseLorry({ onClose, onCreated }: { onClose: () => void; o
             </select>
           </div>
           <div><label className={LABEL}>Model</label><input className={CLS} value={f.model} onChange={(e) => set("model", e.target.value)} placeholder="e.g. Isuzu NPR75" /></div>
-          <div><label className={LABEL}>Home warehouse</label>
-            <select className={CLS} value={f.warehouseId} onChange={(e) => set("warehouseId", e.target.value)}>
-              <option value="">Any region</option>
-              {(warehouses.data ?? []).map((w) => <option key={w.id} value={w.id}>{warehouseLabel(w)}</option>)}
-            </select>
+          <div className="col-span-2"><label className={LABEL}>Warehouses it serves (none = any)</label>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1">
+              {(warehouses.data ?? []).map((w) => (
+                <label key={w.id} className="inline-flex items-center gap-1.5 text-[12px] text-ink">
+                  <input type="checkbox" checked={whIds.includes(w.id)} onChange={() => setWhIds((x) => x.includes(w.id) ? x.filter((y) => y !== w.id) : [...x, w.id])} />
+                  {warehouseLabel(w)}
+                </label>
+              ))}
+            </div>
           </div>
           <div><label className={LABEL}>Length (ft)</label><input className={CLS} inputMode="decimal" value={f.lengthFt} onChange={(e) => set("lengthFt", e.target.value)} placeholder="e.g. 17" /></div>
           <div><label className={LABEL}>Width (ft)</label><input className={CLS} inputMode="decimal" value={f.widthFt} onChange={(e) => set("widthFt", e.target.value)} placeholder="e.g. 7" /></div>
