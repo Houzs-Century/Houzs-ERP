@@ -17,6 +17,7 @@ type StageDays = Partial<Record<string, { avgDays: number | null; cases: number 
 type Supplier = {
   creditor: string; name: string; receivedQty: number; receivedLines: number; cases: number; items: number;
   ratePct: number | null; open: number; overdue: number; closed: number; avgDaysToClose: number | null; stageDays: StageDays;
+  months: Array<{ month: string; receivedQty: number; items: number; ratePct: number | null }>;
 };
 type Overdue = {
   id: number; assrNo: string | null; customer: string | null; supplier: string | null; stage: string;
@@ -24,9 +25,9 @@ type Overdue = {
 };
 type Quality = {
   opened: number; closed: number; ongoingNow: number; openedStillOpen: number;
-  avgDaysToClose: number | null; avgDaysToCloseCases: number; stageDays: StageDays;
+  avgDaysToClose: number | null; avgDaysToCloseCases: number; avgDaysToClosePrev30: number | null; stageDays: StageDays;
   ages: Array<{ label: string; count: number }>;
-  trend: Array<{ month: string; opened: number; closed: number; backlog: number }>;
+  trend: Array<{ month: string; opened: number; closed: number; backlog: number; avgDaysToClose: number | null }>;
   overdue: Overdue[]; suppliers: Supplier[]; unattributed: number;
 };
 
@@ -60,17 +61,17 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, onDri
         <Tile label="Ongoing now" value={v(d?.ongoingNow)} note="every open case today" tone="warn" trend={null} onClick={() => onDrill("open_now")} />
         <Tile label="Overdue now" value={d ? String(d.overdue.length) : breachNow != null ? String(breachNow) : "…"} note="open and past the stage's target days · listed below" tone={d?.overdue.length ? "bad" : "good"} trend={null}
           onClick={() => document.getElementById("quality-overdue")?.scrollIntoView({ behavior: "smooth" })} />
-        <Tile label="Average to close" value={dayTxt(d?.avgDaysToClose)} note={d ? `${d.avgDaysToCloseCases} cases opened ${periodLabel} and already closed` : ""} tone="brass" trend={null} onClick={null} />
+        <Tile label="Average to close · last 30 days" value={dayTxt(d?.avgDaysToClose)} note={d ? `${d.avgDaysToCloseCases} cases closed in the last 30 days · the 30 days before: ${dayTxt(d.avgDaysToClosePrev30)}` : ""} tone="brass" trend={null} onClick={null} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <Panel title="Time spent in each stage" hint={`average days, stages finished ${periodLabel} · the slow leg shows red`}>
+        <Panel title="Time spent in each stage" hint="average days, stages finished in the last 30 days · the slow leg shows red">
           {d && <HBars format={(x) => `${x} days`} empty="No stage finished in this period."
             rows={STAGES.filter(([k]) => d.stageDays[k]?.avgDays != null).map(([k, label]) => {
               const s = d.stageDays[k] as { avgDays: number; cases: number };
               return { key: k, label: `${label} · ${s.cases} cases`, value: s.avgDays, color: s.avgDays > 10 ? TONE.bad : s.avgDays > 5 ? TONE.warn : TONE.good, right: dayTxt(s.avgDays), onClick: null };
             })} />}
-          <p className="mt-2 text-[11px] text-ink-muted">Same window as Average to close: only what happened in the picked period, so last quarter&apos;s slow cases do not hide this month&apos;s pace. Pick a longer period to compare.</p>
+          <p className="mt-2 text-[11px] text-ink-muted">Same window as Average to close: the last 30 days, whatever period is picked, so an older, slower pace does not hide today&apos;s. The monthly trend shows each month&apos;s average.</p>
         </Panel>
         <Panel title="How old the open cases are" hint={`${openTotal} open cases today · days since the complaint`}>
           {d && <HBars format={(x) => `${x} cases`} empty="No open cases."
@@ -80,12 +81,25 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, onDri
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
-        <Panel title="Monthly trend" hint="cases opened and closed each month · line = still open at month end">
+        <Panel title="Monthly trend" hint="cases opened and closed each month · line = that month's average days to close (cases closed in it)">
           {d && <Columns valueLabels height={230} stacked={false} format={(x) => `${x} cases`} highlight={d.trend.length - 1}
             labels={d.trend.map((t) => `${t.month.slice(2, 4)}/${t.month.slice(5)}`)}
             series={[{ name: "Opened", color: "#c9a77c" }, { name: "Closed", color: TONE.good }]}
             values={[d.trend.map((t) => t.opened), d.trend.map((t) => t.closed)]}
-            line={{ name: "Still open at month end", color: TONE.bad, values: d.trend.map((t) => t.backlog), format: (x) => `${x} open` }} />}
+            line={{ name: "Average days to close", color: TONE.bad, values: d.trend.map((t) => t.avgDaysToClose), format: (x) => `${x} days` }} />}
+          {d && (
+            <div className="mt-2 overflow-x-auto">
+              <table className="w-full border-collapse">
+                <thead><tr><Th left>Month</Th>{d.trend.map((t) => <Th key={t.month}>{`${t.month.slice(2, 4)}/${t.month.slice(5)}`}</Th>)}</tr></thead>
+                <tbody>
+                  <tr><Td left>Opened</Td>{d.trend.map((t) => <Td key={t.month}>{t.opened}</Td>)}</tr>
+                  <tr><Td left>Closed</Td>{d.trend.map((t) => <Td key={t.month}>{t.closed}</Td>)}</tr>
+                  <tr className="font-semibold"><Td left>Average to close</Td>{d.trend.map((t) => <Td key={t.month}>{t.avgDaysToClose ?? "—"}</Td>)}</tr>
+                  <tr className="text-ink-secondary"><Td left>Open at month end</Td>{d.trend.map((t) => <Td key={t.month}>{t.backlog}</Td>)}</tr>
+                </tbody>
+              </table>
+            </div>
+          )}
         </Panel>
         <Panel title="Where the cases are" hint="open cases by stage, with those completed in the period">{funnel}</Panel>
       </div>
@@ -150,6 +164,25 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, onDri
               </tbody>
             </table>
           </div>
+          {d.suppliers.length > 0 && (d.suppliers[0]?.months.length ?? 0) > 1 && (
+            <div className="mt-4 overflow-x-auto">
+              <div className="mb-1 text-[12px] font-semibold text-ink">Month by month · service case rate (items in cases / items received)</div>
+              <table className="w-full border-collapse">
+                <thead><tr><Th left>Supplier</Th>{(d.suppliers[0]?.months ?? []).map((m) => <Th key={m.month}>{m.month}</Th>)}</tr></thead>
+                <tbody>{d.suppliers.map((s) => (
+                  <tr key={s.creditor}>
+                    <Td left className="max-w-[220px] truncate">{s.name}</Td>
+                    {s.months.map((m) => (
+                      <Td key={m.month} className={m.ratePct == null ? "text-ink-muted" : m.ratePct > 100 ? "text-warning-text" : m.ratePct >= 5 ? "font-semibold text-err" : ""}>
+                        {m.ratePct == null ? (m.items ? `${m.items} / 0` : "—") : m.ratePct > 100 ? "check code" : `${m.ratePct}%`}
+                        <span className="block text-[10.5px] text-ink-muted">{m.items} / {m.receivedQty.toLocaleString()}</span>
+                      </Td>
+                    ))}
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          )}
           <ul className="mt-2 list-disc space-y-0.5 pl-5 text-[11.5px] text-ink-muted">
             <li>Service case rate = items in that supplier&apos;s cases ÷ items received from them in the same period (1,000 received, 50 in cases = 5%). Red from 5%.</li>
             <li>Average to close = the supplier&apos;s cases opened in the period and closed, opened to closed. Stage columns = average days per stage, for stages finished in the period.</li>

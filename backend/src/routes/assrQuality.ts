@@ -52,15 +52,15 @@ app.get("/", requirePermission("service_cases.read"), async (c) => {
   }
 
   const recv = await c.env.DB.prepare(
-    `SELECT s.code AS code, s.name AS name, SUM(gi.qty_received) AS qty, COUNT(*) AS lines
+    `SELECT s.code AS code, s.name AS name, substr(CAST(g.received_at AS TEXT), 1, 7) AS month, SUM(gi.qty_received) AS qty, COUNT(*) AS lines
        FROM scm.grn_items gi
        JOIN scm.grns g ON g.id = gi.grn_id
        JOIN scm.suppliers s ON s.id = g.supplier_id
       WHERE g.status NOT IN ('DRAFT','CANCELLED')
         AND substr(CAST(g.received_at AS TEXT), 1, 10) >= ? AND substr(CAST(g.received_at AS TEXT), 1, 10) <= ?${allowedCompaniesSql(c, "g.company_id")}
-      GROUP BY s.code, s.name`,
-  ).bind(from, to).all<{ code: string | null; name: string | null; qty: number | null; lines: number | null }>();
-  const received: QReceived[] = recv.results.filter((r) => r.code).map((r) => ({ creditor: String(r.code), name: String(r.name ?? r.code), qty: Number(r.qty ?? 0), lines: Number(r.lines ?? 0) }));
+      GROUP BY s.code, s.name, substr(CAST(g.received_at AS TEXT), 1, 7)`,
+  ).bind(from, to).all<{ code: string | null; name: string | null; month: string | null; qty: number | null; lines: number | null }>();
+  const received: QReceived[] = recv.results.filter((r) => r.code).map((r) => ({ creditor: String(r.code), name: String(r.name ?? r.code), month: String(r.month ?? ''), qty: Number(r.qty ?? 0), lines: Number(r.lines ?? 0) }));
 
   const creditors = await c.env.DB.prepare(`SELECT creditor_code, company_name FROM creditors`).all<{ creditor_code: string; company_name: string | null }>();
   const names = new Map(creditors.results.filter((r) => r.company_name).map((r) => [String(r.creditor_code), String(r.company_name)]));
