@@ -10,7 +10,8 @@ import { PageHeader } from "../../components/Layout";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
-import { Th, Td, Panel, Toggle, PeriodPicker, periodRange, SELECT_CLS, type Gran } from "../../components/scm-v2/OverviewKit";
+import { Th, Td, Panel, Toggle, SELECT_CLS } from "../../components/scm-v2/OverviewKit";
+import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
 import { Donut, Columns, HBars, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
 
 type Bucket = "late5" | "late0to4" | "due2to7" | "due8plus";
@@ -41,9 +42,7 @@ const VERDICT: Record<string, [string, string]> = { too_short: ["Set too short",
 /** `embedded`: inside the phone shell, which draws its own header. */
 export function ProcurementOverview({ embedded }: { embedded: boolean }) {
   const today = todayMY();
-  const [gran, setGran] = useState<Gran>("M");
-  const [anchor, setAnchor] = useState(`${today.slice(0, 7)}-01`);
-  const range = periodRange(gran, anchor);
+  const [range, setRange] = useDashboardPeriod(today, "from", "to", []);
   const q = useQuery({
     queryKey: ["procurement-overview", range.from, range.to],
     queryFn: () => authedFetch<Payload>(`/procurement-overview?from=${range.from}&to=${range.to}`),
@@ -99,7 +98,10 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
       {!embedded && <PageHeader eyebrow="Supply chain · Procurement" title="Procurement Overview"
         description="Open purchase orders and how late they are, the PO raised and supplier bills received in the period, and how long each category really takes to arrive." />}
 
-      <PeriodPicker gran={gran} anchor={anchor} today={today} onChange={(g, a2) => { setGran(g); setAnchor(a2); }} note="Open PO and lateness are as of today; PO raised and bills follow the period." />
+      <div className="flex flex-wrap items-center gap-2">
+        <DashboardPeriodPicker period={range} today={today} onChange={setRange} />
+        <span className="text-[11.5px] text-ink-muted">Open PO and lateness are as of today; PO raised and bills follow the period.</span>
+      </div>
 
       {q.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {(q.error as Error).message}</div>}
 

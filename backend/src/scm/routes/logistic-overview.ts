@@ -111,8 +111,39 @@ logisticOverview.get('/', async (c) => {
   }
   const doNoCost = { count: (noCost.data ?? []).length, amountSen: (noCost.data ?? []).reduce((a, d) => a + num(d.local_total_sen), 0) };
 
+  /* The selected period (?from=&to=, default this month to today): what went
+     out on a DO, how much of it is closed with a POD, and what each lorry run
+     carried — revenue on its stops, or its DOs' amount when a stop has none. */
+  const ISO = /^\d{4}-\d{2}-\d{2}$/;
+  const qFrom = c.req.query('from'); const qTo = c.req.query('to');
+  const pFrom = qFrom && ISO.test(qFrom) ? qFrom : `${today.slice(0, 7)}-01`;
+  const pTo = qTo && ISO.test(qTo) ? qTo : today;
+  const periodDos = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('delivery_orders')
+    .select('id, status, local_total_sen').gte('do_date', pFrom).lte('do_date', pTo)
+    .in('status', ['LOADED', 'DELIVERED']), c).order('id').range(f, t));
+  if (periodDos.error) return fail('delivery orders in the period', periodDos.error);
+  const periodTrips = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('trips')
+    .select('id, lorry_id').gte('trip_date', pFrom).lte('trip_date', pTo).neq('status', 'CANCELLED'), c).order('id').range(f, t));
+  if (periodTrips.error) return fail('lorry runs in the period', periodTrips.error);
+  const tripIds = (periodTrips.data ?? []).map((r) => String(r.id));
+  const stops = await chunkIn<Row>(tripIds, (b, f, t) => scopeToCompany(sb.from('trip_stops')
+    .select('trip_id, do_id, revenue_sen').in('trip_id', b), c).order('id').range(f, t));
+  if (stops.error) return fail('lorry run stops', stops.error);
+  const doAmount = new Map((periodDos.data ?? []).map((d) => [String(d.id), num(d.local_total_sen)]));
+  const runAmountSen = stops.data.reduce((a, s) => a + (s.revenue_sen != null ? num(s.revenue_sen) : doAmount.get(String(s.do_id)) ?? 0), 0);
+  const period = {
+    from: pFrom, to: pTo,
+    doCount: (periodDos.data ?? []).length,
+    doAmountSen: (periodDos.data ?? []).reduce((a, d) => a + num(d.local_total_sen), 0),
+    podClosed: (periodDos.data ?? []).filter((d) => d.status === 'DELIVERED').length,
+    runs: tripIds.length,
+    lorries: new Set((periodTrips.data ?? []).map((r) => r.lorry_id).filter(Boolean)).size,
+    runAmountSen,
+  };
+
   return c.json({
     today, thisMonday,
+    period,
     doNotClosed, doNoCost,
     runsToday: (trips.data ?? []).filter((t) => String(t.trip_date ?? '').slice(0, 10) === today).length,
     weeks,
