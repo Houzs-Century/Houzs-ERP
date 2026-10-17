@@ -12,6 +12,7 @@ import { fmtDate, fmtSen, todayMY } from "../vendor/shared/format";
 import { formatCurrency } from "../lib/utils";
 import type { ProfitabilityResponse } from "./projects/financeViewModel";
 import { ManagementWatch, type WatchInputs } from "./overview/ManagementWatch";
+import { DashboardPeriodPicker, useDashboardPeriod } from "../components/scm-v2/DashboardPeriod";
 
 // ── Types for the data this page aggregates ──────────────────
 interface InboxItem {
@@ -73,10 +74,12 @@ export function Overview() {
   /* The module overviews' headline figures, each fetched only for a viewer of
      that module (OFF-NOT-HIDE, as above). */
   const today = todayMY();
-  const monthFrom = `${today.slice(0, 7)}-01`;
+  /* The figures below follow the dashboard period (this month by default). */
+  const [period, setPeriod] = useDashboardPeriod(today, "from", "to", []);
+  const pFrom = period.from; const pTo = period.to;
   const proc = useQuery<NonNullable<WatchInputs["procurement"]> & { total: { open: { sen: number } } }>("/api/scm/procurement-overview#home",
-    () => api.get(`/api/scm/procurement-overview?from=${monthFrom}&to=${today}`),
-    [monthFrom, today],
+    () => api.get(`/api/scm/procurement-overview?from=${pFrom}&to=${pTo}`),
+    [pFrom, pTo],
     { enabled: pageAccess("scm.procurement.po") !== "none" },
   );
   const logi = useQuery<NonNullable<WatchInputs["logistic"]> & { runsToday: number; weeks: { doCount: number; current: boolean }[] }>("/api/scm/logistic-overview",
@@ -85,8 +88,8 @@ export function Overview() {
     { enabled: pageAccess("scm.transportation.drivers") !== "none" },
   );
   const pnl = useQuery<ProfitabilityResponse>("/api/projects/analytics/profitability#home",
-    () => api.get(`/api/projects/analytics/profitability?date_from=${monthFrom}&date_to=${today}&scope=all`),
-    [monthFrom, today],
+    () => api.get(`/api/projects/analytics/profitability?date_from=${pFrom}&date_to=${pTo}&scope=all`),
+    [pFrom, pTo],
     { enabled: !!user?.project_finance_viewer },
   );
   const gaps = useQuery<NonNullable<WatchInputs["projectGaps"]>>("/api/projects/data-gaps",
@@ -135,7 +138,7 @@ export function Overview() {
   const review = num(inboxUnknown, c?.review_queue);
 
   const kpis: { label: string; value: string; sub: string }[] = [
-    { label: "Project sales MTD", value: pnl.loading ? "…" : pt ? formatCurrency(pt.income) : "—", sub: pt ? (pt.income === 0 ? `${pt.projects} projects · sales not keyed in yet` : `${pt.projects} projects · GP ${pct(pt.gp, pt.income)}`) : pnl.error ? "Couldn't load" : "Project finance viewers only" },
+    { label: "Project sales", value: pnl.loading ? "…" : pt ? formatCurrency(pt.income) : "—", sub: pt ? (pt.income === 0 ? `${pt.projects} projects · sales not keyed in yet` : `${pt.projects} projects · GP ${pct(pt.gp, pt.income)}`) : pnl.error ? "Couldn't load" : "Project finance viewers only" },
     { label: "PO not received", value: proc.loading ? "…" : po ? fmtSen(po.sen) : "—", sub: po ? `${po.lines} open lines · ${po.late} late` : proc.error ? "Couldn't load" : "Procurement only" },
     { label: "Open Cases", value: assr.loading ? "…" : num(assrUnknown, assr.data?.active_count), sub: assrUnknown ? "Couldn't load" : `${slaRisk} SLA risks` },
     { label: "Runs today", value: logi.loading ? "…" : logi.data ? String(logi.data.runsToday) : "—", sub: thisWeek ? `${thisWeek.doCount} DO issued this week` : logi.error ? "Couldn't load" : "Logistics only" },
@@ -190,6 +193,10 @@ export function Overview() {
       </div>
 
       {/* ── KPI ribbon ──────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <DashboardPeriodPicker period={period} today={today} onChange={setPeriod} />
+        <span className="text-[11.5px] text-ink-muted">Project sales, P&amp;L and PO figures follow this period; open cases, runs and projects are live.</span>
+      </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {kpis.map((k) => (
           <div key={k.label} className="relative overflow-hidden rounded-xl border border-border bg-surface px-4 py-4 shadow-stone">
@@ -209,7 +216,7 @@ export function Overview() {
       {/* ── What every module overview found, ranked ──────────── */}
       <ManagementWatch inputs={watchInputs} loading={logi.loading || proc.loading || gaps.loading || assr.loading} />
 
-      {/* ── Two columns: needs-me feed + P&L this month ─────────── */}
+      {/* ── Two columns: needs-me feed + P&L of the period ──────── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.3fr_1fr]">
         {/* Needs me */}
         <div className="rounded-xl border border-border bg-surface p-4 shadow-stone sm:p-5">
@@ -254,14 +261,14 @@ export function Overview() {
           )}
         </div>
 
-        {/* P&L this month, opening Project Overview on the month. */}
+        {/* P&L of the period, opening Project Overview on it. */}
         <div className="space-y-4">
-          <button onClick={() => navigate(`/projects?view=finances&af_from=${monthFrom}&af_to=${today.slice(0, 8)}${new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 0)).getUTCDate()}`)}
+          <button onClick={() => navigate(`/projects?view=finances&af_from=${pFrom}&af_to=${pTo}`)}
             className="block w-full rounded-xl border border-primary/30 bg-primary-soft p-4 text-left shadow-stone sm:p-5">
-            <div className="font-mono text-[10px] font-bold uppercase tracking-brand text-primary-ink">Project P&amp;L this month</div>
+            <div className="font-mono text-[10px] font-bold uppercase tracking-brand text-primary-ink">Project P&amp;L · {period.label}</div>
             <div className="mt-1.5 font-display text-[30px] font-extrabold leading-none text-primary-ink">{pt ? formatCurrency(pt.profit) : "—"}</div>
             <div className="mt-1.5 text-[11px] text-primary-ink/70">
-              {pt && pt.income === 0 && pt.cost > 0 ? `No sales keyed in yet this month; rental booked ${formatCurrency(pt.rental)} across ${pt.projects} projects.` : pt ? `Net profit ${pct(pt.profit, pt.income)} on sales ${formatCurrency(pt.income)} · COGS ${formatCurrency(pt.cogs)} · rental ${formatCurrency(pt.rental)}` : pnl.error ? "Couldn't load" : "Project finance viewers only"}
+              {pt && pt.income === 0 && pt.cost > 0 ? `No sales keyed in yet for this period; rental booked ${formatCurrency(pt.rental)} across ${pt.projects} projects.` : pt ? `Net profit ${pct(pt.profit, pt.income)} on sales ${formatCurrency(pt.income)} · COGS ${formatCurrency(pt.cogs)} · rental ${formatCurrency(pt.rental)}` : pnl.error ? "Couldn't load" : "Project finance viewers only"}
             </div>
           </button>
         </div>

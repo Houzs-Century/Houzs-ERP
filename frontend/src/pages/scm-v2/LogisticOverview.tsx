@@ -11,6 +11,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/Layout";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
+import { api } from "../../api/client";
 import { useDeliveryPlanning, type PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
 import { useFleetDay } from "../../vendor/scm/lib/fleet-day-queries";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
@@ -54,6 +55,11 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
     return next;
   }, { replace: true });
   const board = useDeliveryPlanning({ region: "ALL", state: "ALL" });
+  /* Delivery Planning is the shared queue of every company the caller may see;
+     this page reports the active company, like its DO figures, so board rows
+     of another company are left out. A row with no company tag stays. */
+  const companies = useQuery({ queryKey: ["companies"], queryFn: () => api.get<{ activeCompanyCode: string | null }>("/api/companies"), staleTime: 300_000 });
+  const activeCode = companies.data?.activeCompanyCode ?? null;
   const hist = useQuery({
     queryKey: ["logistic-overview", period.from, period.to, warehouse],
     queryFn: () => authedFetch<History>(`/logistic-overview?from=${period.from}&to=${period.to}${warehouse ? `&warehouse=${warehouse}` : ""}`),
@@ -63,10 +69,12 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
 
   const warehouses = useMemo(() => {
     const map = new Map<string, string>();
-    for (const o of board.data?.orders ?? []) if (o.warehouse_id) map.set(o.warehouse_id, [o.warehouse_name, o.warehouse_code].filter(Boolean).join(" · ") || o.warehouse_id);
+    for (const o of board.data?.orders ?? []) if (o.warehouse_id && (!activeCode || !o.company_code || o.company_code === activeCode)) map.set(o.warehouse_id, [o.warehouse_name, o.warehouse_code].filter(Boolean).join(" · ") || o.warehouse_id);
     return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [board.data]);
-  const allRows: PlanningOrder[] = useMemo(() => (board.data?.orders ?? []).filter((o) => !warehouse || o.warehouse_id === warehouse), [board.data, warehouse]);
+  }, [board.data, activeCode]);
+  const allRows: PlanningOrder[] = useMemo(() => (board.data?.orders ?? [])
+    .filter((o) => !activeCode || !o.company_code || o.company_code === activeCode)
+    .filter((o) => !warehouse || o.warehouse_id === warehouse), [board.data, warehouse, activeCode]);
   const rows: PlanningOrder[] = useMemo(() => allRows.filter((o) => o.row_type === "so"), [allRows]);
   /* Counted from the (warehouse-filtered) rows, so the status split always
      agrees with the rows the rest of the page reads. */
