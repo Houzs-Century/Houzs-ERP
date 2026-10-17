@@ -72,22 +72,24 @@ describe('procurement period', () => {
     expect(few.canOrderLaterDays).toBeNull();
   });
 
-  test('dead stock: no open order at all and idle over 90 days, since the last time it went out or first arrived', () => {
+  test('dead stock: no open order at all, whatever its idle time, less 14 days of outflow', () => {
     const r = deadStock([
       { warehouse: 'KL', category: 'SOFA', itemCode: 'A', variantKey: '', name: null, qty: 1, valueSen: 100, lastOut: '2026-10-01', firstMove: '2025-01-01' },
       { warehouse: 'KL', category: 'SOFA', itemCode: 'B', variantKey: '', name: null, qty: 1, valueSen: 300, lastOut: '2026-05-01', firstMove: '2025-01-01' },
       { warehouse: 'PG', category: 'MATTRESS', itemCode: 'C', variantKey: '', name: null, qty: 1, valueSen: 500, lastOut: null, firstMove: '2025-06-01' },
-    ], '2026-10-17', new Map(), new Map());
-    expect(r).toMatchObject({ totalSen: 900, deadSen: 800, deadSkus: 2 });
+      /* Sells 1 a day over its variants: 14 days = 14, so 20 on hand leaves 6 dead. */
+      { warehouse: 'KL', category: 'ACCESSORY', itemCode: 'P', variantKey: '', name: null, qty: 20, valueSen: 2000, lastOut: '2026-10-16', firstMove: null },
+    ], '2026-10-17', new Map(), new Map([['P|*', 1]]));
+    expect(r).toMatchObject({ deadSen: 1500, deadSkus: 4 });
     expect(r.byCategory.find((g) => g.key === 'SOFA')!.ages).toEqual({ d0to90: 100, d91to180: 300, d181to365: 0, d365plus: 0 });
-    expect(r.top.map((x) => [x.itemCode, x.idleDays])).toEqual([['C', 503], ['B', 169]]);
+    expect(r.top.map((x) => [x.itemCode, x.qty])).toEqual([['P', 6], ['C', 1], ['B', 1], ['A', 1]]);
   });
 
   test('buffer stock: beyond orders with a date, less 14 days of normal outflow, matched by variant', () => {
     const r = deadStock([
       /* Bedframe in fabric X: 10 on hand, 3 on dated orders, 4 on undated, sells 0.25 a day -> 14 days = 3.5 -> buffer 3. */
       { warehouse: 'KL', category: 'BEDFRAME', itemCode: 'BF', variantKey: 'fabric=X', name: null, qty: 10, valueSen: 1000, lastOut: '2026-10-10', firstMove: null },
-      /* Same bedframe in fabric Y, idle a year, no order for Y (an order for X does not count) -> dead. */
+      /* Same bedframe in fabric Y, no order for Y (an order for X does not count) -> dead. */
       { warehouse: 'KL', category: 'BEDFRAME', itemCode: 'BF', variantKey: 'fabric=Y', name: null, qty: 2, valueSen: 200, lastOut: '2025-09-01', firstMove: null },
       /* Fast pillow: 20 on hand, no order, 2 a day -> 14 days = 28 covers it -> no buffer. */
       { warehouse: 'KL', category: 'ACCESSORY', itemCode: 'P', variantKey: '', name: null, qty: 20, valueSen: 400, lastOut: '2026-10-16', firstMove: null },

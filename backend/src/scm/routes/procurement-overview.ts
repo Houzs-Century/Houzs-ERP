@@ -217,6 +217,7 @@ procurementOverview.get('/', async (c) => {
     if (!d || d < outFrom) continue;
     const k = `${String(m.item_code)}|${String(m.variant_key ?? '')}`;
     outPerDay.set(k, (outPerDay.get(k) ?? 0) + Math.abs(num(m.qty)) / outDays);
+    outPerDay.set(`${String(m.item_code)}|*`, (outPerDay.get(`${String(m.item_code)}|*`) ?? 0) + Math.abs(num(m.qty)) / outDays);
   }
   const dead = deadStock((stock.data ?? []).filter((r) => !isShowroom(r)).map((r) => ({
     warehouse: String(r.warehouse_code ?? '—'), category: catOf(r), itemCode: String(r.item_code), variantKey: String(r.variant_key ?? ''), name: str(r.product_name),

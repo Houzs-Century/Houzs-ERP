@@ -55,6 +55,7 @@ const BUCKETS: Array<{ k: BucketKey; label: string; color: string }> = [
   { k: "due8plus", label: "Due in 8+ days", color: TONE.good },
 ];
 const AGES: Array<{ k: keyof Ages; label: string; color: string }> = [
+  { k: "d0to90", label: "Moved in the last 90 days", color: "#c9a77c" },
   { k: "d91to180", label: "91–180 days", color: TONE.warn },
   { k: "d181to365", label: "181–365 days", color: "#c2603d" },
   { k: "d365plus", label: "Over a year", color: TONE.bad },
@@ -317,7 +318,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
           </Panel>
 
           <section id="dead">
-            <Panel title="Dead stock · no order at all" hint="on hand, no open sales order wants that item and variant, and it has not gone out for over 90 days · showroom and display left out · as of today">
+            <Panel title="Dead stock · no order at all" hint={`on hand, no open sales order wants that item and variant, less what normally goes out in ${d.deadStock.coverDays} days · bars split by how long since it last went out · showroom and display left out · as of today`}>
               <div className="grid gap-4 xl:grid-cols-2">
                 <div>
                   <div className="mb-1 text-[12px] font-semibold text-ink">By category</div>

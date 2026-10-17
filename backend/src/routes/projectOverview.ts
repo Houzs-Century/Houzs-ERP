@@ -91,6 +91,7 @@ projectOverview.get("/", async (c) => {
    (every task done or n/a), the first step not done ("waiting at"), and its
    tasks past their due date. Live = not cancelled and not ended more than 30
    days ago (whatever stage it was left at). A task done but still waiting for review is not done. */
+/* Every live event is listed (owner: "all of them, so I can see what is overdue"). */
 projectOverview.get("/tasks", async (c) => {
   const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
   const since = new Date(Date.parse(`${today}T00:00:00Z`) - 30 * 86400000).toISOString().slice(0, 10);
@@ -130,6 +131,6 @@ projectOverview.get("/tasks", async (c) => {
       stepsDone: ordered.filter(([, g]) => g.done).length, steps: ordered.length, waitingAt,
       pending: rs.filter((r) => !isDone(r)).length, late, daysOver: late[0]?.daysOver ?? 0,
     };
-  }).filter((e) => e.late.length > 0).sort((a, b) => b.daysOver - a.daysOver);
+  }).sort((a, b) => b.daysOver - a.daysOver || String(a.start).localeCompare(String(b.start)));
   return c.json({ today, steps: [...steps.entries()].sort((a, b) => a[1] - b[1]).map(([k]) => k), events });
 });

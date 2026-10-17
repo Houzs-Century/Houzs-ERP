@@ -161,9 +161,10 @@ export function procurementPeriod(lines: PLine[], from: string, to: string, toda
 /* Dead stock and buffer stock (owner, 2026-10-17). Stock is matched to open
    orders per item AND variant (a sofa in one fabric does not serve an order
    for another), across the selling warehouses. As of today.
-   - Dead stock: no open sales order wants that item/variant at all, and it has
-     not gone out for over 90 days (from its last OUT in that warehouse, or its
-     first movement there if it never left).
+   - Dead stock: no open sales order wants that item/variant at all (owner: no
+     90-day wait), less what normally goes out in 14 days — a fast seller with
+     no order on hand right now is not dead. Idle days (from its last OUT in
+     that warehouse, or its first movement there if it never left) are shown.
    - Buffer stock: bought before it was needed. What is left after the orders
      WITH a delivery date (stock held for orders with no date yet could have
      been ordered when the customer fixed the date), less what normally goes
@@ -176,7 +177,9 @@ const AGES: Age[] = ['d0to90', 'd91to180', 'd181to365', 'd365plus'];
 const ageOf = (idle: number | null): Age => (idle == null || idle <= 90 ? 'd0to90' : idle <= 180 ? 'd91to180' : idle <= 365 ? 'd181to365' : 'd365plus');
 export const BUFFER_COVER_DAYS = 14;
 
-/** `outPerDay`: per item|variant, the quantity that went out per day lately. */
+/** `outPerDay`: per item|variant, the quantity that went out per day lately;
+ *  `item|*` is the item over all its variants, used for stock kept with no
+ *  variant (e.g. "30 a month" -> 14 days = 14). */
 export function deadStock(rows: StockRow[], today: string, demand: Map<string, OpenDemand>, outPerDay: Map<string, number>) {
   const idleOf = (r: StockRow) => { const d = r.lastOut ?? r.firstMove; return d ? daysBetween(d, today) : null; };
   const keyOf = (r: StockRow) => `${r.itemCode}|${r.variantKey}`;
@@ -186,17 +189,18 @@ export function deadStock(rows: StockRow[], today: string, demand: Map<string, O
   const itemInfo = new Map<string, { onHand: number; scheduled: number; unscheduled: number; cover: number; bufferQty: number }>();
   for (const [k, rs] of items) {
     const dm = demand.get(k) ?? { scheduled: 0, unscheduled: 0 };
-    const cover = Math.round((outPerDay.get(k) ?? 0) * BUFFER_COVER_DAYS * 10) / 10;
-    let rest = rs;
-    if (dm.scheduled + dm.unscheduled === 0) {
-      for (const r of rs) if (ageOf(idleOf(r)) !== 'd0to90') dead.set(r, r.qty);
-      rest = rs.filter((r) => !dead.has(r));
+    const perDay = rs[0]!.variantKey ? outPerDay.get(k) ?? 0 : outPerDay.get(`${rs[0]!.itemCode}|*`) ?? outPerDay.get(k) ?? 0;
+    const cover = Math.round(perDay * BUFFER_COVER_DAYS * 10) / 10;
+    const onHand = rs.reduce((a, r) => a + r.qty, 0);
+    const noOrder = dm.scheduled + dm.unscheduled === 0;
+    const extra = Math.max(0, Math.floor(onHand - dm.scheduled - cover));
+    /* Spread over the rows, most idle first, as dead (no order at all) or buffer. */
+    let left = extra;
+    for (const r of [...rs].sort((x, y) => (idleOf(y) ?? -1) - (idleOf(x) ?? -1))) {
+      const q = Math.min(left, r.qty); left -= q;
+      (noOrder ? dead : buffer).set(r, q);
     }
-    const onHand = rest.reduce((a, r) => a + r.qty, 0);
-    const bufferQty = Math.max(0, Math.floor(onHand - dm.scheduled - cover));
-    /* Spread over the remaining rows in proportion to what each holds. */
-    let left = bufferQty;
-    rest.forEach((r, i) => { const q = i === rest.length - 1 ? left : Math.min(left, Math.round((bufferQty * r.qty) / Math.max(1, onHand))); buffer.set(r, q); left -= q; });
+    const bufferQty = noOrder ? 0 : extra;
     itemInfo.set(k, { onHand: rs.reduce((a, r) => a + r.qty, 0), scheduled: dm.scheduled, unscheduled: dm.unscheduled, cover, bufferQty });
   }
   const senOf = (r: StockRow, q: number) => (r.qty > 0 ? Math.round((r.valueSen * q) / r.qty) : 0);
@@ -210,8 +214,8 @@ export function deadStock(rows: StockRow[], today: string, demand: Map<string, O
       const ds = deadSen(r); const bs = bufSen(r);
       g.skus += 1; g.valueSen += r.valueSen;
       if (ds > 0) { g.deadSkus += 1; g.deadSen += ds; g.ages[ageOf(idleOf(r))] += ds; }
+      /* ages = the dead value by how long since it last went out. */
       if (bs > 0) { g.bufferSkus += 1; g.bufferSen += bs; }
-      g.ages.d0to90 += r.valueSen - ds;
       map.set(k, g);
     }
     return [...map.values()].sort((a, b) => b.deadSen + b.bufferSen - (a.deadSen + a.bufferSen));
@@ -229,7 +233,7 @@ export function deadStock(rows: StockRow[], today: string, demand: Map<string, O
     deadSen: deadRows.reduce((a, r) => a + deadSen(r), 0), deadSkus: deadRows.length,
     bufferSen: rows.reduce((a, r) => a + bufSen(r), 0), bufferSkus: bufferItems.length,
     byCategory: by((r) => r.category), byWarehouse: by((r) => r.warehouse),
-    top: deadRows.map((r) => ({ ...r, valueSen: deadSen(r), idleDays: idleOf(r) })).sort((a, b) => b.valueSen - a.valueSen).slice(0, 50),
+    top: deadRows.map((r) => ({ ...r, qty: dead.get(r) ?? 0, onHand: r.qty, valueSen: deadSen(r), idleDays: idleOf(r) })).sort((a, b) => b.valueSen - a.valueSen).slice(0, 50),
     bufferTop: bufferItems.slice(0, 50),
   };
 }
