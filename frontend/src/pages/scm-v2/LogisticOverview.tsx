@@ -7,7 +7,7 @@
 // GET /api/scm/logistic-overview (weekly + monthly history, delivered-but-owing,
 // process gaps) and GET /api/scm/trips/day (today's runs).
 import { useMemo } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/Layout";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
@@ -15,7 +15,9 @@ import { useDeliveryPlanning, type PlanningOrder } from "../../vendor/scm/lib/de
 import { useFleetDay } from "../../vendor/scm/lib/fleet-day-queries";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
-import { Th, Td, Panel } from "../../components/scm-v2/OverviewKit";
+import { Th, Td, Panel, SELECT_CLS } from "../../components/scm-v2/OverviewKit";
+import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
+import { LogisticPeriodSection, type PeriodTotals } from "./LogisticPeriodSection";
 import { Donut, Columns, Bullet, SplitBar, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
 
 type Week = { from: string; to: string; doCount: number; doAmountSen: number; delivered: number; runs: number; current: boolean };
@@ -26,6 +28,7 @@ type History = {
   deliveredOwingOver30: { count: number; balanceSen: number; oldestDays: number };
   doNotClosed: { count: number; amountSen: number; over30: number; over30Sen: number };
   doNoCost: { count: number; amountSen: number };
+  period: PeriodTotals;
 };
 
 const DAY = 86400000;
@@ -41,12 +44,37 @@ const pctFmt = (x: number) => `${x.toFixed(1)}%`;
 export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const today = todayMY();
   const navigate = useNavigate();
+  const [period, setPeriod] = useDashboardPeriod(today, "from", "to", []);
+  /* Every warehouse unless one is picked (owner 2026-10-17). */
+  const [params, setParams] = useSearchParams();
+  const warehouse = params.get("warehouse") ?? "";
+  const setWarehouse = (w: string) => setParams((prev) => {
+    const next = new URLSearchParams(prev);
+    if (w) next.set("warehouse", w); else next.delete("warehouse");
+    return next;
+  }, { replace: true });
   const board = useDeliveryPlanning({ region: "ALL", state: "ALL" });
-  const hist = useQuery({ queryKey: ["logistic-overview"], queryFn: () => authedFetch<History>("/logistic-overview"), staleTime: 60_000 });
+  const hist = useQuery({
+    queryKey: ["logistic-overview", period.from, period.to, warehouse],
+    queryFn: () => authedFetch<History>(`/logistic-overview?from=${period.from}&to=${period.to}${warehouse ? `&warehouse=${warehouse}` : ""}`),
+    staleTime: 60_000,
+  });
   const day = useFleetDay({ date: today });
 
-  const rows: PlanningOrder[] = useMemo(() => (board.data?.orders ?? []).filter((o) => o.row_type === "so"), [board.data]);
-  const counts = board.data?.counts as Record<string, number> | undefined;
+  const warehouses = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const o of board.data?.orders ?? []) if (o.warehouse_id) map.set(o.warehouse_id, [o.warehouse_name, o.warehouse_code].filter(Boolean).join(" · ") || o.warehouse_id);
+    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [board.data]);
+  const allRows: PlanningOrder[] = useMemo(() => (board.data?.orders ?? []).filter((o) => !warehouse || o.warehouse_id === warehouse), [board.data, warehouse]);
+  const rows: PlanningOrder[] = useMemo(() => allRows.filter((o) => o.row_type === "so"), [allRows]);
+  /* Counted from the (warehouse-filtered) rows, so the status split always
+     agrees with the rows the rest of the page reads. */
+  const counts = useMemo(() => {
+    const c: Partial<Record<string, number>> = {};
+    for (const o of rows) c[o.delivery_state] = (c[o.delivery_state] ?? 0) + 1;
+    return c;
+  }, [rows]);
 
   const m = useMemo(() => {
     const open = rows.filter((o) => o.delivery_state !== "DELIVERED");
@@ -83,7 +111,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
     ["PENDING_DELIVERY", "Pending delivery", PALETTE[2]!], ["PENDING_SCHEDULE", "Pending schedule", TONE.warn],
     ["OVERDUE", "Overdue", TONE.bad], ["DELIVERED", "Delivered", TONE.good],
   ];
-  const statusTotal = status.reduce((a, [k]) => a + (counts?.[k] ?? 0), 0);
+  const statusTotal = status.reduce((a, [k]) => a + ((counts[k] ?? 0)), 0);
   const loading = board.isLoading || hist.isLoading;
   const v = (x: number | undefined) => (loading || x == null ? "…" : n(x));
   const jump = (id: string) => () => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
@@ -92,11 +120,21 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
     <div className="space-y-4">
       {!embedded && <PageHeader eyebrow="Supply chain · Transportation" title="Logistic Overview"
         description="What needs action, where every order stands, the weekly logistic report and today's runs — straight from the orders and delivery orders." />}
+      <div className="flex flex-wrap items-center gap-2">
+        <DashboardPeriodPicker period={period} today={today} onChange={setPeriod} />
+        <select className={SELECT_CLS} value={warehouse} onChange={(e) => setWarehouse(e.target.value)} aria-label="Warehouse">
+          <option value="">All warehouses</option>
+          {warehouses.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+        </select>
+        {hist.isFetching && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
+      </div>
       {(board.error || hist.error) && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {((board.error ?? hist.error) as Error).message}</div>}
+
+      <LogisticPeriodSection rows={allRows} period={period} today={today} totals={hist.data?.period ?? null} />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Tile label="Due in 3 days, not ready" value={v(m.urgent.length)} note={`of ${m.in3} orders due by ${dd(addDays(today, 3))}`} tone={m.urgent.length ? "bad" : "good"} trend={null} onClick={jump("urgent")} />
-        <Tile label="Overdue deliveries" value={v(counts?.OVERDUE)} note="past the delivery date, not delivered" tone={counts?.OVERDUE ? "bad" : "good"} trend={null} onClick={() => navigate("/scm/delivery-planning")} />
+        <Tile label="Overdue deliveries" value={v(counts.OVERDUE ?? 0)} note="past the delivery date, not delivered" tone={(counts.OVERDUE ?? 0) ? "bad" : "good"} trend={null} onClick={() => navigate("/scm/delivery-planning")} />
         <Tile label="DO loaded, not closed" value={v(h?.doNotClosed.count)} note={h ? `${rm(h.doNotClosed.amountSen)} · loaded over 7 days ago` : ""} tone={h?.doNotClosed.count ? "warn" : "good"} trend={null} onClick={jump("gaps")} />
         <Tile label="Delivered, owing > 30 days" value={v(h?.deliveredOwingOver30.count)} note={h ? `${rm(h.deliveredOwingOver30.balanceSen)} · oldest ${h.deliveredOwingOver30.oldestDays} days` : ""} tone={h?.deliveredOwingOver30.count ? "bad" : "good"} trend={null} onClick={null} />
         <Tile label="Orders to deliver" value={v(m.openCount)} note={rm(m.openSen)} tone="main" trend={null} onClick={null} />
@@ -106,15 +144,15 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Panel title="Order status" hint="all regions">
+        <Panel title="Order status" hint={warehouse ? "this warehouse, all open and delivered orders" : "all warehouses, all open and delivered orders"}>
           <Donut size={128} format={n} center={{ value: n(statusTotal), label: "orders" }}
-            data={status.map(([k, label, color]) => ({ label, value: counts?.[k] ?? 0, color }))} />
+            data={status.map(([k, label, color]) => ({ label, value: (counts[k] ?? 0), color }))} />
         </Panel>
         <Panel title="KPI scorecard" hint="actual against target">
           <div className="space-y-3">
             <Bullet label="Phone completeness" actual={m.phoneComplete != null ? m.phoneComplete * 100 : null} target={100} max={100} format={pctFmt} higherIsBetter />
             <Bullet label="Ready orders with a confirmed date" actual={m.ready ? (m.confirmed / m.ready) * 100 : null} target={100} max={100} format={pctFmt} higherIsBetter />
-            <Bullet label="Overdue share" actual={statusTotal ? ((counts?.OVERDUE ?? 0) / statusTotal) * 100 : null} target={5} max={20} format={pctFmt} higherIsBetter={false} />
+            <Bullet label="Overdue share" actual={statusTotal ? ((counts.OVERDUE ?? 0) / statusTotal) * 100 : null} target={5} max={20} format={pctFmt} higherIsBetter={false} />
             <Bullet label={`Avg sales per run · ${thisMonth}`} actual={avgPerRun} target={AVG_SALES_PER_RUN_TARGET_SEN} max={AVG_SALES_PER_RUN_TARGET_SEN * 2} format={fmtSen} higherIsBetter />
           </div>
           {avgPerRun == null && <p className="mt-2 text-[11px] text-ink-muted">Avg sales per run fills in once lorry runs are planned in Delivery Time Arrangement.</p>}

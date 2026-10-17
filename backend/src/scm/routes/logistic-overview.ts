@@ -33,19 +33,25 @@ export function mondayOf(day: string): string {
 logisticOverview.get('/', async (c) => {
   const sb = c.get('supabase');
   const today = todayMyt();
+  /* ?warehouse=<id>: delivery orders and lorry runs of that warehouse only;
+     absent = every warehouse. Delivered-but-owing stays company-wide (it is
+     a sales order balance, not a warehouse's). */
+  const wq = c.req.query('warehouse') ?? '';
+  const warehouseId = /^[0-9a-f-]{36}$/i.test(wq) ? wq : null;
+  const byWh = <Q,>(q: Q): Q => (warehouseId ? (q as unknown as { eq: (col: string, v: string) => Q }).eq('warehouse_id', warehouseId) : q);
   const thisMonday = mondayOf(today);
   const firstWeek = iso(Date.parse(`${thisMonday}T00:00:00Z`) - 8 * 7 * DAY);
   const lastDay = iso(Date.parse(`${thisMonday}T00:00:00Z`) + 14 * DAY - DAY);
   const yearAgo = `${iso(Date.parse(`${today.slice(0, 7)}-01T00:00:00Z`) - 330 * DAY).slice(0, 7)}-01`;
   const fail = (what: string, e: { message: string }) => c.json({ error: 'load_failed', reason: `${what}: ${e.message}` }, 500);
 
-  const dos = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('delivery_orders')
+  const dos = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
     .select('id, do_date, delivered_at, status, local_total_sen').gte('do_date', yearAgo)
-    .not('status', 'in', '("DRAFT","CANCELLED")'), c).order('id').range(f, t));
+    .not('status', 'in', '("DRAFT","CANCELLED")')), c).order('id').range(f, t));
   if (dos.error) return fail('delivery orders', dos.error);
-  const trips = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('trips')
+  const trips = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('trips')
     .select('id, trip_date, status').gte('trip_date', firstWeek).lte('trip_date', lastDay)
-    .neq('status', 'CANCELLED'), c).order('id').range(f, t));
+    .neq('status', 'CANCELLED')), c).order('id').range(f, t));
   if (trips.error) return fail('lorry runs', trips.error);
 
   // Weeks: 8 back, this week, next week.
@@ -97,12 +103,12 @@ logisticOverview.get('/', async (c) => {
      "owing" read low), and DOs carrying no cost (their margin reads 100%). */
   const weekAgo = iso(Date.parse(`${today}T00:00:00Z`) - 7 * DAY);
   const monthAgo = iso(Date.parse(`${today}T00:00:00Z`) - 30 * DAY);
-  const notClosed = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('delivery_orders')
-    .select('do_date, local_total_sen').eq('status', 'LOADED').lt('do_date', weekAgo), c).order('id').range(f, t));
+  const notClosed = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
+    .select('do_date, local_total_sen').eq('status', 'LOADED').lt('do_date', weekAgo)), c).order('id').range(f, t));
   if (notClosed.error) return fail('unclosed delivery orders', notClosed.error);
-  const noCost = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('delivery_orders')
+  const noCost = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
     .select('local_total_sen').gte('do_date', iso(Date.parse(`${today}T00:00:00Z`) - 90 * DAY))
-    .neq('status', 'CANCELLED').gt('local_total_sen', 0).or('total_cost_sen.is.null,total_cost_sen.eq.0'), c).order('id').range(f, t));
+    .neq('status', 'CANCELLED').gt('local_total_sen', 0).or('total_cost_sen.is.null,total_cost_sen.eq.0')), c).order('id').range(f, t));
   if (noCost.error) return fail('delivery orders without cost', noCost.error);
   const doNotClosed = { count: 0, amountSen: 0, over30: 0, over30Sen: 0 };
   for (const d of notClosed.data ?? []) {
@@ -118,12 +124,12 @@ logisticOverview.get('/', async (c) => {
   const qFrom = c.req.query('from'); const qTo = c.req.query('to');
   const pFrom = qFrom && ISO.test(qFrom) ? qFrom : `${today.slice(0, 7)}-01`;
   const pTo = qTo && ISO.test(qTo) ? qTo : today;
-  const periodDos = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('delivery_orders')
+  const periodDos = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
     .select('id, status, local_total_sen').gte('do_date', pFrom).lte('do_date', pTo)
-    .in('status', ['LOADED', 'DELIVERED']), c).order('id').range(f, t));
+    .in('status', ['LOADED', 'DELIVERED'])), c).order('id').range(f, t));
   if (periodDos.error) return fail('delivery orders in the period', periodDos.error);
-  const periodTrips = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('trips')
-    .select('id, lorry_id').gte('trip_date', pFrom).lte('trip_date', pTo).neq('status', 'CANCELLED'), c).order('id').range(f, t));
+  const periodTrips = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('trips')
+    .select('id, lorry_id').gte('trip_date', pFrom).lte('trip_date', pTo).neq('status', 'CANCELLED')), c).order('id').range(f, t));
   if (periodTrips.error) return fail('lorry runs in the period', periodTrips.error);
   const tripIds = (periodTrips.data ?? []).map((r) => String(r.id));
   const stops = await chunkIn<Row>(tripIds, (b, f, t) => scopeToCompany(sb.from('trip_stops')
