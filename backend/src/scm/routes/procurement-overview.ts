@@ -171,7 +171,10 @@ procurementOverview.get('/', async (c) => {
     if (more.error) return fail('products', more.error);
     for (const r of more.data) prodCat.set(String(r.code), str(r.category));
   }
-  const dead = deadStock((stock.data ?? []).map((r) => ({
+  /* Display / showroom stock is on the floor to be seen, not waiting to be
+     sold off, so it is not dead stock (owner 2026-10-17). */
+  const isShowroom = (r: Row) => /SHOWROOM|DISPLAY/i.test(String(r.warehouse_code ?? ''));
+  const dead = deadStock((stock.data ?? []).filter((r) => !isShowroom(r)).map((r) => ({
     warehouse: String(r.warehouse_code ?? '—'), category: catOf(r), itemCode: String(r.item_code), name: str(r.product_name),
     qty: num(r.qty_on_hand), valueSen: num(r.value_sen), lastOut: lastOut.get(keyOf(r)) ?? null, firstMove: firstMove.get(keyOf(r)) ?? null,
   })), today);
@@ -180,12 +183,21 @@ procurementOverview.get('/', async (c) => {
   const whs = await scopeToCompany(sb.from('warehouses').select('id, code'), c);
   if (whs.error) return fail('warehouses', whs.error);
   const whCode = new Map((whs.data as Row[]).map((w) => [String(w.id), String(w.code ?? '—')]));
+  /* Turnover reads a fixed trailing year (owner 2026-10-17: it should not move
+     with the period picked); stock movements only begin 2026-09, so until a
+     year has passed the window starts at the first OUT. */
   let firstOut: string | null = null;
+  for (const m of moves.data ?? []) {
+    if (m.movement_type !== 'OUT') continue;
+    const d = day(m.movement_date) ?? day(m.created_at);
+    if (d && (!firstOut || d < firstOut)) firstOut = d;
+  }
+  const yearAgo = new Date(Date.parse(`${today}T00:00:00Z`) - 364 * 86400000).toISOString().slice(0, 10);
+  const turnFrom = firstOut && firstOut > yearAgo ? firstOut : yearAgo;
   const outs = (moves.data ?? []).flatMap((m) => {
     if (m.movement_type !== 'OUT') return [];
     const d = day(m.movement_date) ?? day(m.created_at);
-    if (d && (!firstOut || d < firstOut)) firstOut = d;
-    if (!d || d < from || d > to) return [];
+    if (!d || d < turnFrom || d > today) return [];
     return [{ warehouse: whCode.get(String(m.warehouse_id)) ?? '—', category: catOf(m), costSen: num(m.total_cost_sen), zeroCost: !num(m.total_cost_sen) }];
   });
   const periodSos = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('mfg_sales_orders')
@@ -193,6 +205,11 @@ procurementOverview.get('/', async (c) => {
   if (periodSos.error) return fail('sales orders in the period', periodSos.error);
   const soLines = await chunkIn<Row>((periodSos.data ?? []).map((r) => String(r.doc_no)), (b, f, t) => scopeToCompany(sb.from('mfg_sales_order_items')
     .select('item_code, item_group, description, qty, total_sen, cancelled').in('doc_no', b), c).order('id').range(f, t));
+  /* Sellers leave out service lines (delivery, disposal, lift — not stock), and
+     count a sofa by its model: KABBIN-L(RHF) and KABBIN-2A(LHF) are KABBIN. */
+  const isService = (r: Row) => String(r.item_group ?? '').toLowerCase() === 'service' || String(r.item_code ?? '').toUpperCase().startsWith('SVC-')
+    || prodCat.get(String(r.item_code ?? '')) === 'SERVICE';
+  const modelOf = (code: string, category: string) => (category === 'SOFA' ? code.split('-')[0] || code : code);
   if (soLines.error) return fail('sales order lines', soLines.error);
   const soldCodes = [...new Set(soLines.data.map((r) => str(r.item_code)).filter((x): x is string => !!x && !prodCat.has(x)))];
   if (soldCodes.length) {
@@ -200,13 +217,21 @@ procurementOverview.get('/', async (c) => {
     if (more.error) return fail('products', more.error);
     for (const r of more.data) prodCat.set(String(r.code), str(r.category));
   }
+  const turnDays = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${turnFrom}T00:00:00Z`)) / 86400000) + 1;
   const periodDays = Math.round((Date.parse(`${to < today ? to : today}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000) + 1;
   const turnover = {
-    firstOut,
+    firstOut, turnFrom, turnTo: today,
     ...turnoverAndSellers(
-      (stock.data ?? []).map((r) => ({ warehouse: String(r.warehouse_code ?? '—'), category: catOf(r), itemCode: String(r.item_code), name: str(r.product_name), qty: num(r.qty_on_hand), valueSen: num(r.value_sen), lastOut: null, firstMove: null })),
+      (stock.data ?? []).filter((r) => !isService(r)).map((r) => {
+        const cat = catOf(r); const model = modelOf(String(r.item_code), cat);
+        return { warehouse: String(r.warehouse_code ?? '—'), category: cat, itemCode: model, name: model === String(r.item_code) ? str(r.product_name) : `${model} (all variants)`, qty: num(r.qty_on_hand), valueSen: num(r.value_sen), lastOut: null, firstMove: null };
+      }),
       outs,
-      soLines.data.filter((r) => !r.cancelled && r.item_code).map((r) => ({ itemCode: String(r.item_code), name: str(r.description), category: catOf(r), qty: num(r.qty), salesSen: num(r.total_sen) })),
+      soLines.data.filter((r) => !r.cancelled && r.item_code && !isService(r)).map((r) => {
+        const cat = catOf(r); const model = modelOf(String(r.item_code), cat);
+        return { itemCode: model, name: model === String(r.item_code) ? str(r.description) : `${model} (all variants)`, category: cat, qty: num(r.qty), salesSen: num(r.total_sen) };
+      }),
+      Math.max(1, turnDays),
       Math.max(1, periodDays),
     ),
   };

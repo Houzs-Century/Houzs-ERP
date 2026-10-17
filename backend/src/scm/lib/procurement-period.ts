@@ -48,7 +48,7 @@ export interface GroupRow {
   receivedSen: number;
   open: { lines: number; sen: number; late: number; lateSen: number; buckets: Record<Bucket, { lines: number; sen: number }> };
   supplierLead: { receipts: number; avgDays: number | null; p80Days: number | null; onTimePct: number | null; latePct: number | null; onTimeAmountPct: number | null; avgDaysLate: number | null };
-  ordering: { lines: number; avgOrderAheadDays: number | null; avgDueBeforeNeedDays: number | null; measured: number; avgArrivedBeforeNeedDays: number | null; p20ArrivedBeforeNeedDays: number | null; canOrderLaterDays: number | null };
+  ordering: { lines: number; avgOrderAheadDays: number | null; avgDueBeforeNeedDays: number | null; measured: number; avgOrderBeforeNeedDays: number | null; avgArrivedBeforeNeedDays: number | null; p20ArrivedBeforeNeedDays: number | null; canOrderLaterDays: number | null };
 }
 
 /** Lines a supplier-lead figure needs before it is trusted. */
@@ -97,6 +97,8 @@ export function procurementPeriod(lines: PLine[], from: string, to: string, toda
     const slack = ls.filter((l) => l.needDate && real(l).length > 0)
       .map((l) => daysBetween(real(l).map((r) => r.date).sort().at(-1) as string, l.needDate as string));
     const p20 = slack.length ? percentile(slack, 0.2) : null;
+    /* The same received lines: how many days before the customer date the PO went out. */
+    const orderBeforeNeed = ls.filter((l) => l.needDate && real(l).length > 0).map((l) => daysBetween(l.poDate, l.needDate as string));
     return {
       key,
       raised: {
@@ -120,7 +122,7 @@ export function procurementPeriod(lines: PLine[], from: string, to: string, toda
       },
       ordering: {
         lines: raised.length, avgOrderAheadDays: avg(ahead), avgDueBeforeNeedDays: avg(beforeNeed),
-        measured: slack.length, avgArrivedBeforeNeedDays: avg(slack), p20ArrivedBeforeNeedDays: p20,
+        measured: slack.length, avgOrderBeforeNeedDays: avg(orderBeforeNeed), avgArrivedBeforeNeedDays: avg(slack), p20ArrivedBeforeNeedDays: p20,
         /* Ordering later by the 20th-percentile slack still has 80% of lines
            arriving by the customer's date. Too few lines, or no slack: null / 0. */
         canOrderLaterDays: slack.length < MIN_SAMPLES || p20 == null ? null : Math.max(0, Math.floor(p20)),
@@ -187,7 +189,10 @@ export function deadStock(rows: StockRow[], today: string) {
 export interface OutMove { warehouse: string; category: string; costSen: number; zeroCost: boolean }
 export interface SoldLine { itemCode: string; name: string | null; category: string; qty: number; salesSen: number }
 
-export function turnoverAndSellers(stock: StockRow[], outs: OutMove[], sold: SoldLine[], days: number) {
+/** `turnDays`: the days the OUT moves cover (a fixed trailing window, not the
+ *  page's period); `sellerDays`: the days the sold lines cover (the period). */
+export function turnoverAndSellers(stock: StockRow[], outs: OutMove[], sold: SoldLine[], turnDays: number, sellerDays: number) {
+  const days = turnDays;
   const by = (keyOfStock: (r: StockRow) => string, keyOfOut: (o: OutMove) => string) => {
     const map = new Map<string, { key: string; stockSen: number; outSen: number }>();
     for (const r of stock) { const k = keyOfStock(r); const g = map.get(k) ?? { key: k, stockSen: 0, outSen: 0 }; g.stockSen += r.valueSen; map.set(k, g); }
@@ -211,14 +216,14 @@ export function turnoverAndSellers(stock: StockRow[], outs: OutMove[], sold: Sol
   const totalOut = outs.reduce((a, o) => a + o.costSen, 0);
   const totalStock = stock.reduce((a, r) => a + r.valueSen, 0);
   return {
-    days,
+    days, sellerDays,
     total: { stockSen: totalStock, outSen: totalOut, turnsPerYear: totalStock > 0 ? Math.round(((totalOut * (365 / days)) / totalStock) * 10) / 10 : null, daysOfStock: totalOut > 0 ? Math.round(totalStock / (totalOut / days)) : null },
     zeroCostOuts: outs.filter((o) => o.zeroCost).length,
     byCategory: by((r) => r.category, (o) => o.category),
     byWarehouse: by((r) => r.warehouse, (o) => o.warehouse),
     topSellers: [...soldByItem.values()].sort((a, b) => b.qty - a.qty).slice(0, 15).map((s) => {
       const st = stockByItem.get(s.itemCode);
-      return { ...s, stockQty: st?.qty ?? 0, coverDays: s.qty > 0 ? Math.round((st?.qty ?? 0) / (s.qty / days)) : null };
+      return { ...s, stockQty: st?.qty ?? 0, coverDays: s.qty > 0 ? Math.round((st?.qty ?? 0) / (s.qty / sellerDays)) : null };
     }),
     lowSellers: [...stockByItem.entries()].filter(([, g]) => g.qty > 0)
       .map(([code, g]) => ({ itemCode: code, name: g.name, category: g.category, stockQty: g.qty, stockSen: g.valueSen, soldQty: soldByItem.get(code)?.qty ?? 0 }))

@@ -56,6 +56,7 @@ describe('procurement period', () => {
     expect(o.measured).toBe(10);
     expect(o.avgOrderAheadDays).toBe(18);
     expect(o.avgDueBeforeNeedDays).toBe(21);
+    expect(o.avgOrderBeforeNeedDays).toBe(39);
     expect(o.p20ArrivedBeforeNeedDays).toBe(13);
     expect(o.canOrderLaterDays).toBe(13);
     const few = procurementPeriod(lines.slice(0, 3), '2026-10-01', '2026-10-31', '2026-10-31', 'original').total.ordering;
@@ -86,7 +87,7 @@ describe('procurement period', () => {
     ], [
       { itemCode: 'A', name: 'Sofa A', category: 'SOFA', qty: 6, salesSen: 9000 },
       { itemCode: 'A', name: 'Sofa A', category: 'SOFA', qty: 4, salesSen: 6000 },
-    ], 30);
+    ], 30, 30);
     const sofa = r.byCategory.find((g) => g.key === 'SOFA')!;
     expect(sofa).toMatchObject({ stockSen: 450_000, outSen: 36_500, daysOfStock: 370 });
     expect(sofa.turnsPerYear).toBe(1);
