@@ -50,6 +50,7 @@ import { posAdmin } from "./routes/pos-admin";
 import { posDevice } from "./routes/pos-device";
 import projectsOutstanding from "./routes/projectsOutstanding";
 import { projectDataGaps } from "./routes/projectDataGaps";
+import { projectOverview } from "./routes/projectOverview";
 // Sales entries (/api/sales) is retained as a DEPENDENCY of Projects — the
 // Projects page embeds the sales-entry EntryPanel + submit/void/delete flow.
 // It has no standalone nav/route after the cutover.
@@ -479,6 +480,10 @@ app.route("/api/projects/outstanding-tasks", projectsOutstanding);
 // path-first reason as above; finance-viewer rule inside. See routes/projectDataGaps.ts.
 app.use("/api/projects/data-gaps/*", requirePageAccess("projects.finances"));
 app.route("/api/projects/data-gaps", projectDataGaps);
+// Every project with its keyed books and its Sales Orders, for Project Overview.
+// Same exact-path-first reason and gate as data-gaps. See routes/projectOverview.ts.
+app.use("/api/projects/overview/*", requirePageAccess("projects.finances"));
+app.route("/api/projects/overview", projectOverview);
 app.route("/api/projects", projects);
 // The office side of a brand's share link (generate / revoke). Own file because
 // routes/projects.ts is at its size ceiling. See routes/brandShare.ts.
