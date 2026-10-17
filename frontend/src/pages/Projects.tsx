@@ -123,6 +123,8 @@ import type {
 } from "./projects/types";
 import { composeDefaultProjectName, viewableMime, googleCalendarUrl } from "./projects/projectHelpers";
 import { itemComplete } from "./projects/checklistDone";
+import { PROJECT_STAGES, projectStage, setupArrangedOf } from "./projects/projectStage";
+import { todayMY } from "../vendor/shared/format";
 import { salesOrderProjectLabel, shownProjectName, shownOrganizer, isSoloMasked, maskSoloOrganizer, SOLO_ORGANIZER_MASK, type SoloMaskProject } from "./projects/soloOrganizerMask";
 import { SoloSafeName, useCanSeeSoloOrganizer } from "./projects/SoloSafeName";
 import { STATUS_OPTIONS, ProjectStatusSelect } from "./projects/projectStatus";
@@ -3385,28 +3387,8 @@ function TaskAttachmentRow({
 }
 
 // ── Project Stage stepper ─────────────────────────────────────
-// Auto-detected 9-step timeline (Floorplan → Done) with T-offset
-// deadlines from the project's start date. A step is "done" when its
-// mapped checklist item(s) are done; steps whose items don't exist
-// (e.g. removed from the template) are treated as pass-through so they
-// never block. The current step is the first not-done one — shown red
-// when today is past its deadline.
-const PROJECT_STAGES: { label: string; offset: number; titles: string[]; kind?: "crew" }[] = [
-  { label: "Floorplan", offset: -21, titles: ["Blank Floorplan"] },
-  { label: "3D", offset: -14, titles: ["3D Design"] },
-  // "Stocks Request" retired — the "Stocks Request Listing" item was
-  // removed, so the step is dropped from the tracker.
-  { label: "Stocks Transfer", offset: -7, titles: ["Stock Out Transfer Record"] },
-  { label: "Driver Info", offset: -3, titles: ["Stock In Transfer Record"] },
-  // Setup/Dismantle crew arrangement — not a checklist item; goes green
-  // when the Setup & Dismantle section is filled (kind: "crew").
-  { label: "Setup/Dismantle", offset: -2, titles: [], kind: "crew" },
-  { label: "Setup Image", offset: 0, titles: ["Setup Image"] },
-  { label: "Filled Floorplan", offset: 3, titles: ["Filled Floorplan"] },
-  { label: "Event Complete", offset: 7, titles: ["Event Complete Image"] },
-  { label: "Done", offset: 7, titles: [] },
-];
-
+// The 9-step tracker; its rule lives in projects/projectStage.ts, shared with
+// Project Overview's event list.
 function ProjectStageStepper({
   checklist,
   startDate,
@@ -3419,26 +3401,7 @@ function ProjectStageStepper({
   setupCrew?: string | null;
   setupStartAt?: string | null;
 }) {
-  const items = checklist ?? [];
-  // Setup is considered "arranged" when a setup time is set OR the setup
-  // crew JSON holds anything (dismantle may be left empty = same as setup).
-  const setupArranged =
-    !!setupStartAt ||
-    (!!setupCrew && !["", "{}"].includes(setupCrew.trim()));
-  const stepDone = (idx: number): boolean => {
-    const st = PROJECT_STAGES[idx];
-    if (st.kind === "crew") return setupArranged;
-    if (st.titles.length === 0) return false; // final "Done" handled below
-    const present = items.filter((i) => st.titles.includes(i.title));
-    if (present.length === 0) return true; // no signal → pass-through
-    // Every mapped item done / N/A / approved (see itemComplete): status alone
-    // kept an approved 3D bullet red for months (owner 2026-09-23, KL ZANOTTI REX).
-    return present.every(itemComplete);
-  };
-  const lastIdx = PROJECT_STAGES.length - 1;
-  let currentIdx = PROJECT_STAGES.findIndex((_, i) => i < lastIdx && !stepDone(i));
-  const allDone = currentIdx === -1;
-  if (allDone) currentIdx = lastIdx;
+  const { currentIdx, allDone, lastIdx } = projectStage(checklist ?? [], setupArrangedOf(setupCrew, setupStartAt), startDate, todayMY());
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);

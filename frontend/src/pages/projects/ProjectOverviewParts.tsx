@@ -3,6 +3,7 @@
 import { Panel, Th, Td } from "../../components/scm-v2/OverviewKit";
 import { useState } from "react";
 import { formatCurrency, cn } from "../../lib/utils";
+import { PROJECT_STAGES, projectStage, setupArrangedOf } from "./projectStage";
 import { useQuery } from "../../hooks/useQuery";
 import { api } from "../../api/client";
 
@@ -68,49 +69,52 @@ export function StepTabs({ tabs, value, onChange }: { tabs: Array<[string, strin
   );
 }
 
-interface StuckEvent {
+interface LiveEvent {
   projectId: number; project: string; brand: string | null; start: string | null; end: string | null;
-  stepsDone: number; steps: number; waitingAt: string | null; pending: number; daysOver: number;
-  late: Array<{ title: string; step: string; role: string | null; due: string; daysOver: number; waitingReview: boolean }>;
+  setupCrew: string | null; setupStartAt: string | null;
+  items: Array<{ title: string; status: string; review_status: string | null }>;
+  pending: number; late: Array<{ title: string; role: string | null; due: string; daysOver: number }>;
 }
-const titleStep = (s: string) => s.toLowerCase().replace(/\b\w/g, (ch) => ch.toUpperCase()).replace(/ — /g, " · ");
 
-/** Every live event (owner 2026-10-17): which step each is waiting at, how
- *  many steps are done, and its tasks past their SLA due date. */
+/** Every live event by its project stage (owner 2026-10-17), the same 9-step
+ *  tracker as the project page: the stage it is at, its deadline (event start
+ *  + the stage's T-offset), how late, and its checklist tasks past due. */
 export function ProjectStuckPanel({ onOpen }: { onOpen: (id: number) => void }) {
-  const q = useQuery<{ today: string; steps: string[]; events: StuckEvent[] }>("/api/projects/overview/tasks", () => api.get("/api/projects/overview/tasks"));
+  const q = useQuery<{ today: string; events: LiveEvent[] }>("/api/projects/overview/tasks", () => api.get("/api/projects/overview/tasks"));
   const [tab, setTab] = useState("all");
   const [search, setSearch] = useState("");
   const d = q.data;
   if (q.error) return <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load the event tasks: {q.error}</div>;
   if (!d) return null;
+  const rows = d.events.map((e) => ({ e, st: projectStage(e.items, setupArrangedOf(e.setupCrew, e.setupStartAt), e.start, d.today) }))
+    .sort((a, b) => b.st.daysLate - a.st.daysLate || String(a.e.start).localeCompare(String(b.e.start)));
+  const behind = rows.filter((r) => r.st.daysLate > 0);
   const s = search.trim().toLowerCase();
-  const behind = d.events.filter((e) => e.late.length > 0);
-  const inTab = (e: StuckEvent) => tab === "all" || (tab === "behind" ? e.late.length > 0 : tab === "done" ? !e.waitingAt : e.waitingAt === tab);
-  const shown = d.events.filter((e) => inTab(e) && (!s || e.project.toLowerCase().includes(s) || e.late.some((t) => t.title.toLowerCase().includes(s))));
+  const shown = rows.filter((r) => (tab === "all" || (tab === "behind" ? r.st.daysLate > 0 : String(r.st.currentIdx) === tab))
+    && (!s || r.e.project.toLowerCase().includes(s) || r.e.late.some((t) => t.title.toLowerCase().includes(s))));
   return (
-    <Panel title={`Events · ${d.events.length} · ${behind.length} behind schedule`} hint="every event not cancelled and not ended over 30 days ago · waiting at = the first checklist step not done · late = a task past its due date (the SLA: event start + the days set on that task in the checklist template) · most late first"
+    <Panel title={`Events by stage · ${rows.length} · ${behind.length} behind`} hint="every event not cancelled and not ended over 30 days ago · stage = the project page's tracker (Floorplan T-21 … Event complete T+7) · late = today past the current stage's deadline · most late first"
       right={<input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search event or task" className="h-8 w-56 rounded-md border border-border bg-surface px-2 text-[12.5px]" />}>
-      <StepTabs tabs={[["all", "All", d.events.length] as [string, string, number], ["behind", "Behind schedule", behind.length] as [string, string, number],
-        ...d.steps.map((st) => [st, titleStep(st), d.events.filter((e) => e.waitingAt === st).length] as [string, string, number]),
-        ["done", "All steps done", d.events.filter((e) => !e.waitingAt).length] as [string, string, number]]} value={tab} onChange={setTab} />
+      <StepTabs tabs={[["all", "All", rows.length] as [string, string, number], ["behind", "Behind", behind.length] as [string, string, number],
+        ...PROJECT_STAGES.map((st, i) => [String(i), `${st.label} ${st.offset >= 0 ? `T+${st.offset}` : `T${st.offset}`}`, rows.filter((r) => r.st.currentIdx === i).length] as [string, string, number])]}
+        value={tab} onChange={setTab} />
       {shown.length === 0 ? <p className="text-[12.5px] text-ink-muted">No event here.</p> : (
         <div className="max-h-[520px] overflow-y-auto">
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Starts</Th><Th left>Waiting at</Th><Th>Steps done</Th><Th>Tasks open</Th><Th left>Tasks past due</Th><Th>Days late</Th></tr></thead>
-            <tbody>{shown.map((e) => (
+            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Starts</Th><Th left>Stage</Th><Th>Stage deadline</Th><Th>Steps done</Th><Th left>Tasks past due</Th><Th>Days late</Th></tr></thead>
+            <tbody>{shown.map(({ e, st }) => (
               <tr key={e.projectId} className="cursor-pointer align-top hover:bg-surface-2/50" onClick={() => onOpen(e.projectId)}>
                 <Td left className="max-w-[300px]"><span className="block truncate text-primary">{e.project}</span></Td>
                 <Td>{e.start ?? "—"}</Td>
-                <Td left>{e.waitingAt ? titleStep(e.waitingAt) : "—"}</Td>
-                <Td>{e.stepsDone} / {e.steps}</Td>
-                <Td className="text-ink-secondary">{e.pending}</Td>
-                <Td left className="max-w-[360px] text-[12px] text-ink-secondary">
-                  {e.late.slice(0, 3).map((t) => <span key={t.title + t.due} className="block truncate">{t.title} <span className="text-ink-muted">· {t.daysOver} d{t.waitingReview ? " · waiting review" : ""}</span></span>)}
+                <Td left className={st.daysLate > 0 ? "font-semibold text-err" : st.allDone ? "text-synced" : ""}>{PROJECT_STAGES[st.currentIdx]?.label}</Td>
+                <Td>{st.allDone ? "—" : st.deadline ?? "—"}</Td>
+                <Td>{st.allDone ? st.lastIdx : st.currentIdx} / {st.lastIdx}</Td>
+                <Td left className="max-w-[340px] text-[12px] text-ink-secondary">
+                  {e.late.slice(0, 3).map((t) => <span key={t.title + t.due} className="block truncate">{t.title} <span className="text-ink-muted">· {t.daysOver} d</span></span>)}
                   {e.late.length > 3 && <span className="text-ink-muted">+{e.late.length - 3} more</span>}
                   {e.late.length === 0 && <span className="text-ink-muted">—</span>}
                 </Td>
-                <Td>{e.late.length === 0 ? <span className="text-[11.5px] text-synced">on time</span> : <span className={cn("rounded-full px-2 py-0.5 text-[11.5px] font-semibold", e.daysOver >= 7 ? "bg-err/10 text-err" : "bg-warning-bg text-warning-text")}>{e.daysOver} d</span>}</Td>
+                <Td>{st.daysLate === 0 ? <span className="text-[11.5px] text-synced">on time</span> : <span className={cn("rounded-full px-2 py-0.5 text-[11.5px] font-semibold", st.daysLate >= 7 ? "bg-err/10 text-err" : "bg-warning-bg text-warning-text")}>{st.daysLate} d</span>}</Td>
               </tr>
             ))}</tbody>
           </table>

@@ -82,55 +82,42 @@ projectOverview.get("/", async (c) => {
   });
 });
 
-/* GET /api/projects/overview/tasks — where each live event is stuck (owner,
-   2026-10-17: "like the overdue production orders — which step is holding it,
-   overdue against our SLA"). The SLA is each checklist task's due date: the
-   event start plus the task's due-offset days set in the checklist template.
-   Steps are the checklist sections (Contract, Operation, Payment, Booth layout
-   & setup, Setup & dismantle documents, Expo map). Per event: the steps done
-   (every task done or n/a), the first step not done ("waiting at"), and its
-   tasks past their due date. Live = not cancelled and not ended more than 30
-   days ago (whatever stage it was left at). A task done but still waiting for review is not done. */
-/* Every live event is listed (owner: "all of them, so I can see what is overdue"). */
+/* GET /api/projects/overview/tasks — every live event with what the project
+   stage tracker needs (owner, 2026-10-17: "group the events by the project
+   stage, like the overdue production orders"): its checklist items and
+   whether setup is arranged; the page applies the tracker's own rule
+   (frontend projects/projectStage.ts) so the list and the project page agree.
+   Also each task past its due date (the SLA: event start + the task's
+   due-offset days in the checklist template). Live = not cancelled and not
+   ended more than 30 days ago, whatever stage it was left at. */
 projectOverview.get("/tasks", async (c) => {
   const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
   const since = new Date(Date.parse(`${today}T00:00:00Z`) - 30 * 86400000).toISOString().slice(0, 10);
   const rows = await c.env.DB.prepare(
     `SELECT c.title, c.role_label, c.status, c.review_status, c.due_date,
-            s.name AS section, s.sort_order,
-            p.id AS project_id, p.name, p.brand, p.start_date, p.end_date
+            p.id AS project_id, p.name, p.brand, p.start_date, p.end_date, p.setup_crew, p.setup_start_at
        FROM project_checklist c
        JOIN projects p ON p.id = c.project_id
-       LEFT JOIN project_checklist_sections s ON s.id = c.section_id
       WHERE p.archived_at IS NULL AND p.status <> 'cancelled'
         AND substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?${activeCompanySql(c, "p.company_id")}`,
-  ).bind(since).all<{ title: string; role_label: string | null; status: string; review_status: string | null; due_date: string | null; section: string | null; sort_order: number | null; project_id: number; name: string; brand: string | null; start_date: string | null; end_date: string | null }>();
+  ).bind(since).all<{ title: string; role_label: string | null; status: string; review_status: string | null; due_date: string | null; project_id: number; name: string; brand: string | null; start_date: string | null; end_date: string | null; setup_crew: string | null; setup_start_at: string | null }>();
   const day = (v: string | null) => (v ? String(v).slice(0, 10) : null);
   const diff = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
-  const isDone = (r: { status: string; review_status: string | null }) => r.status === "na" || (r.status === "done" && r.review_status !== "pending_review");
+  /* The checklist's own "complete": done, n/a, or approved (frontend checklistDone.ts). */
+  const complete = (r: { status: string; review_status: string | null }) => r.status === "done" || r.status === "na" || r.review_status === "approved";
   const byProject = new Map<number, typeof rows.results>();
   for (const r of rows.results) byProject.set(r.project_id, [...(byProject.get(r.project_id) ?? []), r]);
-  const steps = new Map<string, number>();
   const events = [...byProject.values()].map((rs) => {
     const p = rs[0]!;
-    const secs = new Map<string, { order: number; done: boolean }>();
-    for (const r of rs) {
-      const k = r.section ?? "Other";
-      const g = secs.get(k) ?? { order: r.sort_order ?? 999, done: true };
-      if (!isDone(r)) g.done = false;
-      secs.set(k, g);
-      if (!steps.has(k) || (r.sort_order ?? 999) < (steps.get(k) as number)) steps.set(k, r.sort_order ?? 999);
-    }
-    const ordered = [...secs.entries()].sort((a, b) => a[1].order - b[1].order);
-    const waitingAt = ordered.find(([, g]) => !g.done)?.[0] ?? null;
-    const late = rs.filter((r) => !isDone(r) && day(r.due_date) && (day(r.due_date) as string) < today)
-      .map((r) => ({ title: r.title, step: r.section ?? "Other", role: r.role_label, due: day(r.due_date) as string, daysOver: diff(day(r.due_date) as string, today), waitingReview: r.status === "done" }))
+    const late = rs.filter((r) => !complete(r) && day(r.due_date) && (day(r.due_date) as string) < today)
+      .map((r) => ({ title: r.title, role: r.role_label, due: day(r.due_date) as string, daysOver: diff(day(r.due_date) as string, today) }))
       .sort((a, b) => b.daysOver - a.daysOver);
     return {
       projectId: p.project_id, project: p.name, brand: p.brand, start: day(p.start_date), end: day(p.end_date),
-      stepsDone: ordered.filter(([, g]) => g.done).length, steps: ordered.length, waitingAt,
-      pending: rs.filter((r) => !isDone(r)).length, late, daysOver: late[0]?.daysOver ?? 0,
+      setupCrew: p.setup_crew, setupStartAt: p.setup_start_at,
+      items: rs.map((r) => ({ title: r.title, status: r.status, review_status: r.review_status })),
+      pending: rs.filter((r) => !complete(r)).length, late,
     };
-  }).sort((a, b) => b.daysOver - a.daysOver || String(a.start).localeCompare(String(b.start)));
-  return c.json({ today, steps: [...steps.entries()].sort((a, b) => a[1] - b[1]).map(([k]) => k), events });
+  });
+  return c.json({ today, events });
 });
