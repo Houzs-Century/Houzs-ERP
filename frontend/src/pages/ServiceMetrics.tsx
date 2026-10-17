@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Star, TrendingUp, AlertTriangle, Clock, CheckCircle2, Activity, Smile, Hourglass, ExternalLink, Gauge, LineChart, PieChart } from "lucide-react";
-import { FilterPills } from "../components/FilterPills";
 import { DataTable, type Column } from "../components/DataTable";
 import { StatCard } from "../components/StatCard";
 import { DashboardGrid, DashboardPanels, DashboardBreakdown } from "../components/Dashboard";
@@ -9,6 +8,8 @@ import { Panel } from "../components/Panel";
 import { ListSkeleton } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
 import { useQuery } from "../hooks/useQuery";
+import { DashboardPeriodPicker, useDashboardPeriod } from "../components/scm-v2/DashboardPeriod";
+import { todayMY } from "../vendor/shared/format";
 import { Donut, type Slice } from "../components/scm-v2/Charts";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -87,21 +88,6 @@ const DRILL_LABELS: Record<string, string> = {
 type DrillState =
   | { metric: string; title?: string; extra?: Record<string, string> };
 
-// Period filter — calendar-style buckets. Values stay as `since_days`
-// (the API contract) so the labels are just the human framing of each
-// rolling window: 1 month / 1 quarter / half a year / a year.
-const PERIOD_OPTIONS: { value: "30" | "90" | "180" | "365"; label: string }[] = [
-  { value: "30", label: "Monthly" },
-  { value: "90", label: "Quarterly" },
-  { value: "180", label: "Half-year" },
-  { value: "365", label: "Yearly" },
-];
-const PERIOD_LABEL: Record<string, string> = {
-  "30": "Monthly",
-  "90": "Quarterly",
-  "180": "Half-year",
-  "365": "Yearly",
-};
 
 // Full-width section divider — bold uppercase title + trailing rule.
 // Groups the dashboard into scannable bands (Live / Period / Trends …)
@@ -196,7 +182,9 @@ function MetricCard({
 
 export function ServiceMetrics() {
   const { can } = useAuth();
-  const [since, setSince] = useState<"30" | "90" | "180" | "365">("90");
+  const today = todayMY();
+  /* This month / quarter / year or a date range, as on every dashboard (owner 2026-10-17). */
+  const [period, setPeriod] = useDashboardPeriod(today, "from", "to", []);
   const [drill, setDrill] = useState<DrillState | null>(null);
 
   // OFF-NOT-HIDE: both /metrics and /summary are ORG aggregates gated behind
@@ -206,9 +194,9 @@ export function ServiceMetrics() {
   // fetches so they never fire without the permission; the dashboard renders
   // its empty state instead.
   const canReadMetrics = can("service_cases.read");
-  const metrics = useQuery<AssrMetrics>("/api/assr/metrics?since_days=:",
-    () => api.get(`/api/assr/metrics?since_days=${since}`),
-    [since],
+  const metrics = useQuery<AssrMetrics>("/api/assr/metrics?from=:&to=:",
+    () => api.get(`/api/assr/metrics?from=${period.from}&to=${period.to}`),
+    [period.from, period.to],
     { enabled: canReadMetrics }
   );
   // v3.1 — pull the enriched /summary alongside the legacy metrics
@@ -216,9 +204,9 @@ export function ServiceMetrics() {
   // and Stage Funnel narrow with the dropdown. CSAT trend on the
   // summary is still a fixed 13-week rolling window (it's a trend
   // chart, not a window-aware stat).
-  const summary = useQuery<AssrSummaryV31>("/api/assr/summary?since_days=:",
-    () => api.get(`/api/assr/summary?since_days=${since}`),
-    [since],
+  const summary = useQuery<AssrSummaryV31>("/api/assr/summary?from=:&to=:",
+    () => api.get(`/api/assr/summary?from=${period.from}&to=${period.to}`),
+    [period.from, period.to],
     { enabled: canReadMetrics }
   );
 
@@ -234,7 +222,7 @@ export function ServiceMetrics() {
   return (
     <div>
       <div className="mb-5">
-        <FilterPills value={since} onChange={setSince} options={PERIOD_OPTIONS} />
+        <DashboardPeriodPicker period={period} today={today} onChange={setPeriod} />
       </div>
 
       {/* ── Live Status — real-time pulse. "What's wrong NOW" sits above
@@ -286,13 +274,13 @@ export function ServiceMetrics() {
       <SectionHeader
         icon={<Gauge size={15} />}
         title="This Period"
-        hint={`${PERIOD_LABEL[since]} · ${since}d window`}
+        hint={`${period.label} · ${period.from} – ${period.to}`}
       />
       <DashboardGrid cols={4}>
         <StatCard
           label="Total Cases"
           value={h?.total != null ? h.total.toLocaleString() : "—"}
-          subtitle={`Period: ${m?.since_days ?? since} days`}
+          subtitle={`${period.from} – ${period.to} · ${m?.since_days ?? "—"} days`}
           onClick={() => setDrill({ metric: "total_period" })}
         />
         <StatCard
@@ -582,7 +570,8 @@ export function ServiceMetrics() {
       {drill && (
         <DrillPanel
           drill={drill}
-          sinceDays={parseInt(since, 10)}
+          from={period.from}
+          to={period.to}
           onClose={() => setDrill(null)}
         />
       )}
@@ -613,11 +602,13 @@ type DrillCase = {
 
 function DrillPanel({
   drill,
-  sinceDays,
+  from,
+  to,
   onClose,
 }: {
   drill: DrillState;
-  sinceDays: number;
+  from: string;
+  to: string;
   onClose: () => void;
 }) {
   const navigate = useNavigate();
@@ -639,7 +630,8 @@ function DrillPanel({
     setErr(null);
     const params = new URLSearchParams({
       metric: drill.metric,
-      since_days: String(sinceDays),
+      from,
+      to,
     });
     if (drill.extra) {
       for (const [k, v] of Object.entries(drill.extra)) params.set(k, v);
@@ -660,7 +652,7 @@ function DrillPanel({
     return () => {
       cancelled = true;
     };
-  }, [drill.metric, sinceDays, extraKey]);
+  }, [drill.metric, from, to, extraKey]);
 
   const title = drill.title ?? DRILL_LABELS[drill.metric] ?? drill.metric;
   const count = data?.cases.length ?? 0;
