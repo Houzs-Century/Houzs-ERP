@@ -178,3 +178,50 @@ export function deadStock(rows: StockRow[], today: string) {
     top: dead.map((r) => ({ ...r, idleDays: idleOf(r) })).sort((a, b) => b.valueSen - a.valueSen).slice(0, 50),
   };
 }
+
+/* Stock turnover and sellers over the period (owner, 2026-10-17, decision B:
+   sellers by quantity ordered on sales orders, turnover by what actually left
+   the warehouse; "turnover is just the stock balance — do it live"). Turnover
+   = cost sent out in the period, scaled to a year, over the stock value now;
+   days of stock = stock value over the daily cost sent out. */
+export interface OutMove { warehouse: string; category: string; costSen: number; zeroCost: boolean }
+export interface SoldLine { itemCode: string; name: string | null; category: string; qty: number; salesSen: number }
+
+export function turnoverAndSellers(stock: StockRow[], outs: OutMove[], sold: SoldLine[], days: number) {
+  const by = (keyOfStock: (r: StockRow) => string, keyOfOut: (o: OutMove) => string) => {
+    const map = new Map<string, { key: string; stockSen: number; outSen: number }>();
+    for (const r of stock) { const k = keyOfStock(r); const g = map.get(k) ?? { key: k, stockSen: 0, outSen: 0 }; g.stockSen += r.valueSen; map.set(k, g); }
+    for (const o of outs) { const k = keyOfOut(o); const g = map.get(k) ?? { key: k, stockSen: 0, outSen: 0 }; g.outSen += o.costSen; map.set(k, g); }
+    return [...map.values()].map((g) => ({
+      ...g,
+      turnsPerYear: g.stockSen > 0 ? Math.round(((g.outSen * (365 / days)) / g.stockSen) * 10) / 10 : null,
+      daysOfStock: g.outSen > 0 ? Math.round(g.stockSen / (g.outSen / days)) : null,
+    })).sort((a, b) => b.stockSen - a.stockSen);
+  };
+  const stockByItem = new Map<string, { qty: number; valueSen: number; name: string | null; category: string }>();
+  for (const r of stock) {
+    const g = stockByItem.get(r.itemCode) ?? { qty: 0, valueSen: 0, name: r.name, category: r.category };
+    g.qty += r.qty; g.valueSen += r.valueSen; stockByItem.set(r.itemCode, g);
+  }
+  const soldByItem = new Map<string, SoldLine>();
+  for (const s of sold) {
+    const g = soldByItem.get(s.itemCode) ?? { ...s, qty: 0, salesSen: 0 };
+    g.qty += s.qty; g.salesSen += s.salesSen; soldByItem.set(s.itemCode, g);
+  }
+  const totalOut = outs.reduce((a, o) => a + o.costSen, 0);
+  const totalStock = stock.reduce((a, r) => a + r.valueSen, 0);
+  return {
+    days,
+    total: { stockSen: totalStock, outSen: totalOut, turnsPerYear: totalStock > 0 ? Math.round(((totalOut * (365 / days)) / totalStock) * 10) / 10 : null, daysOfStock: totalOut > 0 ? Math.round(totalStock / (totalOut / days)) : null },
+    zeroCostOuts: outs.filter((o) => o.zeroCost).length,
+    byCategory: by((r) => r.category, (o) => o.category),
+    byWarehouse: by((r) => r.warehouse, (o) => o.warehouse),
+    topSellers: [...soldByItem.values()].sort((a, b) => b.qty - a.qty).slice(0, 15).map((s) => {
+      const st = stockByItem.get(s.itemCode);
+      return { ...s, stockQty: st?.qty ?? 0, coverDays: s.qty > 0 ? Math.round((st?.qty ?? 0) / (s.qty / days)) : null };
+    }),
+    lowSellers: [...stockByItem.entries()].filter(([, g]) => g.qty > 0)
+      .map(([code, g]) => ({ itemCode: code, name: g.name, category: g.category, stockQty: g.qty, stockSen: g.valueSen, soldQty: soldByItem.get(code)?.qty ?? 0 }))
+      .sort((a, b) => a.soldQty - b.soldQty || b.stockSen - a.stockSen).slice(0, 15),
+  };
+}

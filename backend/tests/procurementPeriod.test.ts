@@ -1,7 +1,7 @@
 /* Procurement Overview, period edition (owner, 2026-10-17): every figure
    follows the period; "open" and "late" are as of the period's last day. */
 import { describe, expect, test } from 'vitest';
-import { procurementPeriod, deadStock, type PLine } from '../src/scm/lib/procurement-period';
+import { procurementPeriod, deadStock, turnoverAndSellers, type PLine } from '../src/scm/lib/procurement-period';
 
 const line = (o: Partial<PLine>): PLine => ({
   poId: 'p1', poNumber: 'PO-1', poDate: '2026-10-02', supplier: 'HOOKKA', category: 'BEDFRAME',
@@ -72,5 +72,27 @@ describe('procurement period', () => {
     expect(r.byCategory.find((g) => g.key === 'SOFA')!.ages).toEqual({ d0to90: 100, d91to180: 300, d181to365: 0, d365plus: 0 });
     expect(r.byWarehouse.find((g) => g.key === 'PG')!.ages.d365plus).toBe(500);
     expect(r.top.map((x) => [x.itemCode, x.idleDays])).toEqual([['C', 503], ['B', 169]]);
+  });
+
+  test('turnover: cost sent out in the period, a year of it, over the stock value now', () => {
+    const stock = [
+      { warehouse: 'KL', category: 'SOFA', itemCode: 'A', name: 'Sofa A', qty: 10, valueSen: 300_000, lastOut: null, firstMove: null },
+      { warehouse: 'PG', category: 'SOFA', itemCode: 'A', name: 'Sofa A', qty: 5, valueSen: 150_000, lastOut: null, firstMove: null },
+      { warehouse: 'KL', category: 'MATTRESS', itemCode: 'B', name: 'Mat B', qty: 3, valueSen: 50_000, lastOut: null, firstMove: null },
+    ];
+    const r = turnoverAndSellers(stock, [
+      { warehouse: 'KL', category: 'SOFA', costSen: 36_500, zeroCost: false },
+      { warehouse: 'KL', category: 'SOFA', costSen: 0, zeroCost: true },
+    ], [
+      { itemCode: 'A', name: 'Sofa A', category: 'SOFA', qty: 6, salesSen: 9000 },
+      { itemCode: 'A', name: 'Sofa A', category: 'SOFA', qty: 4, salesSen: 6000 },
+    ], 30);
+    const sofa = r.byCategory.find((g) => g.key === 'SOFA')!;
+    expect(sofa).toMatchObject({ stockSen: 450_000, outSen: 36_500, daysOfStock: 370 });
+    expect(sofa.turnsPerYear).toBe(1);
+    expect(r.byCategory.find((g) => g.key === 'MATTRESS')!.daysOfStock).toBeNull();
+    expect(r.zeroCostOuts).toBe(1);
+    expect(r.topSellers[0]).toMatchObject({ itemCode: 'A', qty: 10, salesSen: 15000, stockQty: 15, coverDays: 45 });
+    expect(r.lowSellers.map((x) => [x.itemCode, x.soldQty])).toEqual([['B', 0], ['A', 10]]);
   });
 });

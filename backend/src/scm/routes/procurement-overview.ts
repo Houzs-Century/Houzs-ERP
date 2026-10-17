@@ -17,7 +17,7 @@ import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { procurementCategory, promisedDate, PROCUREMENT_CATEGORIES, type ProcurementCategory } from '../lib/procurement-overview';
-import { procurementPeriod, deadStock, type PLine } from '../lib/procurement-period';
+import { procurementPeriod, deadStock, turnoverAndSellers, type PLine } from '../lib/procurement-period';
 
 export const procurementOverview = new Hono<{ Bindings: Env; Variables: Variables }>();
 procurementOverview.use('*', supabaseAuth);
@@ -84,12 +84,16 @@ procurementOverview.get('/', async (c) => {
     scopeToCompany(sb.from('mfg_products').select('code, category').in('code', b), c).order('code').range(f, t));
   if (prods.error) return fail('products', prods.error);
   const prodCat = new Map(prods.data.map((r) => [String(r.code), str(r.category)]));
-  const settings = await scopeToCompany(sb.from('mrp_category_lead_times').select('category, lead_days'), c);
+  /* The company-wide MRP setting per category (warehouse overrides aside) —
+     the value "Apply" on the page writes back. */
+  const settings = await scopeToCompany(sb.from('mrp_category_lead_times').select('category, lead_days, warehouse_id'), c);
   if (settings.error) return fail('lead time settings', settings.error);
   const currentLead: Record<string, number> = {};
+  const leadOverrides: Record<string, Array<{ warehouseId: string; days: number }>> = {};
   for (const s of settings.data as Row[]) {
     const k = procurementCategory(str(s.category), null);
-    currentLead[k] = Math.max(currentLead[k] ?? 0, num(s.lead_days));
+    if (s.warehouse_id == null) currentLead[k] = num(s.lead_days);
+    else (leadOverrides[k] ??= []).push({ warehouseId: String(s.warehouse_id), days: num(s.lead_days) });
   }
 
   /* ── Supplier bills in the period ─────────────────────────────────────── */
@@ -151,7 +155,7 @@ procurementOverview.get('/', async (c) => {
     .order('warehouse_id').order('item_code').order('variant_key').range(f, t));
   if (stock.error) return fail('stock on hand', stock.error);
   const moves = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('inventory_movements')
-    .select('warehouse_id, item_code, variant_key, movement_type, movement_date, created_at'), c).order('id').range(f, t));
+    .select('warehouse_id, item_code, variant_key, movement_type, movement_date, created_at, total_cost_sen'), c).order('id').range(f, t));
   if (moves.error) return fail('stock movements', moves.error);
   const keyOf = (r: Row) => `${String(r.warehouse_id)}|${String(r.item_code)}|${String(r.variant_key ?? '')}`;
   const lastOut = new Map<string, string>(); const firstMove = new Map<string, string>();
@@ -172,11 +176,48 @@ procurementOverview.get('/', async (c) => {
     qty: num(r.qty_on_hand), valueSen: num(r.value_sen), lastOut: lastOut.get(keyOf(r)) ?? null, firstMove: firstMove.get(keyOf(r)) ?? null,
   })), today);
 
+  /* ── Turnover and sellers in the period ───────────────────────────────── */
+  const whs = await scopeToCompany(sb.from('warehouses').select('id, code'), c);
+  if (whs.error) return fail('warehouses', whs.error);
+  const whCode = new Map((whs.data as Row[]).map((w) => [String(w.id), String(w.code ?? '—')]));
+  let firstOut: string | null = null;
+  const outs = (moves.data ?? []).flatMap((m) => {
+    if (m.movement_type !== 'OUT') return [];
+    const d = day(m.movement_date) ?? day(m.created_at);
+    if (d && (!firstOut || d < firstOut)) firstOut = d;
+    if (!d || d < from || d > to) return [];
+    return [{ warehouse: whCode.get(String(m.warehouse_id)) ?? '—', category: catOf(m), costSen: num(m.total_cost_sen), zeroCost: !num(m.total_cost_sen) }];
+  });
+  const periodSos = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('mfg_sales_orders')
+    .select('doc_no').gte('so_date', from).lte('so_date', to).not('status', 'in', '("DRAFT","CANCELLED")'), c).order('doc_no').range(f, t));
+  if (periodSos.error) return fail('sales orders in the period', periodSos.error);
+  const soLines = await chunkIn<Row>((periodSos.data ?? []).map((r) => String(r.doc_no)), (b, f, t) => scopeToCompany(sb.from('mfg_sales_order_items')
+    .select('item_code, item_group, description, qty, total_sen, cancelled').in('doc_no', b), c).order('id').range(f, t));
+  if (soLines.error) return fail('sales order lines', soLines.error);
+  const soldCodes = [...new Set(soLines.data.map((r) => str(r.item_code)).filter((x): x is string => !!x && !prodCat.has(x)))];
+  if (soldCodes.length) {
+    const more = await chunkIn<Row>(soldCodes, (b, f, t) => scopeToCompany(sb.from('mfg_products').select('code, category').in('code', b), c).order('code').range(f, t));
+    if (more.error) return fail('products', more.error);
+    for (const r of more.data) prodCat.set(String(r.code), str(r.category));
+  }
+  const periodDays = Math.round((Date.parse(`${to < today ? to : today}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000) + 1;
+  const turnover = {
+    firstOut,
+    ...turnoverAndSellers(
+      (stock.data ?? []).map((r) => ({ warehouse: String(r.warehouse_code ?? '—'), category: catOf(r), itemCode: String(r.item_code), name: str(r.product_name), qty: num(r.qty_on_hand), valueSen: num(r.value_sen), lastOut: null, firstMove: null })),
+      outs,
+      soLines.data.filter((r) => !r.cancelled && r.item_code).map((r) => ({ itemCode: String(r.item_code), name: str(r.description), category: catOf(r), qty: num(r.qty), salesSen: num(r.total_sen) })),
+      Math.max(1, periodDays),
+    ),
+  };
+
   return c.json({
     today, from, to,
     deadStock: dead,
+    turnover,
     categories: PROCUREMENT_CATEGORIES,
     currentLead,
+    leadOverrides: Object.fromEntries(Object.entries(leadOverrides).map(([k, xs]) => [k, xs.map((x) => ({ warehouse: whCode.get(x.warehouseId) ?? '—', days: x.days }))])),
     billed: { totalSen: (pis.data ?? []).reduce((a, r) => a + num(r.total_sen), 0), count: (pis.data ?? []).length, bySupplier: billedBySupplier, byCategory: billedByCategory },
     ...procurementPeriod(lines, from, to, today, basis),
   });

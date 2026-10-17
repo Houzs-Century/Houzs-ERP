@@ -15,6 +15,7 @@ import { cn } from "../../lib/utils";
 import { Th, Td, Panel, Toggle } from "../../components/scm-v2/OverviewKit";
 import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
 import { Columns, Donut, SplitBar, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
+import { useUpdateCategoryLeadTime, type LeadCategory } from "../../vendor/scm/lib/mrp-queries";
 
 type BucketKey = "late5" | "late0to4" | "due2to7" | "due8plus";
 type Group = {
@@ -29,9 +30,18 @@ type Group = {
 type OpenLine = { poId: string; poNumber: string; poDate: string; supplier: string; category: string; itemCode: string | null; itemDesc: string | null; soDocNo: string | null; openQty: number; openSen: number; originalDue: string | null; promised: string | null; needDate: string | null; daysLate: number };
 type Ages = { d0to90: number; d91to180: number; d181to365: number; d365plus: number };
 type StockGroup = { key: string; skus: number; valueSen: number; deadSkus: number; deadSen: number; ages: Ages };
+type TurnRow = { key: string; stockSen: number; outSen: number; turnsPerYear: number | null; daysOfStock: number | null };
+type Turnover = {
+  firstOut: string | null; days: number; zeroCostOuts: number;
+  total: { stockSen: number; outSen: number; turnsPerYear: number | null; daysOfStock: number | null };
+  byCategory: TurnRow[]; byWarehouse: TurnRow[];
+  topSellers: Array<{ itemCode: string; name: string | null; category: string; qty: number; salesSen: number; stockQty: number; coverDays: number | null }>;
+  lowSellers: Array<{ itemCode: string; name: string | null; category: string; stockQty: number; stockSen: number; soldQty: number }>;
+};
 type Payload = {
+  turnover: Turnover;
   today: string; from: string; to: string; asOf: string; basis: "original" | "promised";
-  categories: string[]; currentLead: Partial<Record<string, number>>;
+  categories: string[]; currentLead: Partial<Record<string, number>>; leadOverrides: Partial<Record<string, Array<{ warehouse: string; days: number }>>>;
   billed: { totalSen: number; count: number; bySupplier: Record<string, number>; byCategory: Record<string, number> };
   total: Group; byCategory: Group[]; bySupplier: Group[]; overdue: OpenLine[]; dueSoon: OpenLine[];
   deadStock: { asOf: string; totalSen: number; skus: number; deadSen: number; deadSkus: number; byCategory: StockGroup[]; byWarehouse: StockGroup[]; top: Array<{ warehouse: string; category: string; itemCode: string; name: string | null; qty: number; valueSen: number; idleDays: number | null }> };
@@ -54,6 +64,8 @@ const days = (x: number | null) => (x == null ? "—" : `${x}`);
 const pctTxt = (x: number | null) => (x == null ? "—" : `${x}%`);
 const share = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : "—");
 const MIN_RECEIPTS = 10;
+/* The MRP categories a lead time can be set for (mrp-lead-times). */
+const MRP_CATEGORY: Partial<Record<string, LeadCategory>> = { MATTRESS: "mattress", BEDFRAME: "bedframe", SOFA: "sofa", ACCESSORY: "accessory" };
 
 /** `embedded`: inside the phone shell, which draws its own header. */
 export function ProcurementOverview({ embedded }: { embedded: boolean }) {
@@ -70,6 +82,9 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
     staleTime: 60_000,
   });
   const d = q.data;
+  /* Decision C (owner 2026-10-17): the system only suggests a lead time; it
+     changes when someone presses Apply. */
+  const applyLead = useUpdateCategoryLeadTime();
   const label = (k: string) => (by === "category" ? CAT_LABEL[k] ?? k : k);
   const groups = (by === "category" ? d?.byCategory : d?.bySupplier) ?? [];
   const billedOf = (k: string) => (by === "category" ? d?.billed.byCategory[k] : d?.billed.bySupplier[k]) ?? 0;
@@ -201,7 +216,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
 
           <Panel title="Supplier delivery lead time" hint={`receipts in ${period.label} · lead time = PO date to goods received · on time = by the date first put on the PO`}>
             <table className="w-full border-collapse">
-              <thead><tr><Th left>{by === "category" ? "Category" : "Supplier"}</Th><Th>Receipts</Th><Th>Average days</Th><Th>80% within</Th><Th>On time · lines</Th><Th>On time · amount</Th><Th>Late · lines</Th><Th>Average days late</Th></tr></thead>
+              <thead><tr><Th left>{by === "category" ? "Category" : "Supplier"}</Th><Th>Receipts</Th><Th>Average days</Th><Th>80% within</Th><Th>On time · lines</Th><Th>On time · amount</Th><Th>Late · lines</Th><Th>Average days late</Th>{by === "category" && <><Th>MRP setting</Th><Th>Suggested</Th><Th left> </Th></>}</tr></thead>
               <tbody>
                 {groups.filter((g) => g.supplierLead.receipts > 0).map((g) => (
                   <tr key={g.key} className={g.supplierLead.receipts < MIN_RECEIPTS ? "text-ink-muted" : ""}>
@@ -209,12 +224,33 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
                     <Td>{days(g.supplierLead.avgDays)}</Td><Td>{days(g.supplierLead.p80Days)}</Td>
                     <Td className={g.supplierLead.onTimePct == null ? "" : g.supplierLead.onTimePct >= 80 ? "text-synced" : g.supplierLead.onTimePct >= 60 ? "text-warning-text" : "text-err"}>{pctTxt(g.supplierLead.onTimePct)}</Td>
                     <Td>{pctTxt(g.supplierLead.onTimeAmountPct)}</Td><Td>{pctTxt(g.supplierLead.latePct)}</Td><Td>{g.supplierLead.avgDaysLate != null ? `+${g.supplierLead.avgDaysLate}` : "—"}</Td>
+                    {by === "category" && (() => {
+                      const cur = d.currentLead[g.key] ?? null;
+                      const sug = g.supplierLead.receipts >= MIN_RECEIPTS ? g.supplierLead.p80Days : null;
+                      const mrp = MRP_CATEGORY[g.key];
+                      return <>
+                        <Td>
+                          {cur != null ? `${cur} days` : "—"}
+                          {(d.leadOverrides[g.key] ?? []).length > 0 && (
+                            <span className="block text-[10.5px] text-ink-muted">{(d.leadOverrides[g.key] ?? []).map((o) => `${o.warehouse.replace(" WAREHOUSE", "")} ${o.days}`).join(" · ")}</span>
+                          )}
+                        </Td>
+                        <Td className="font-semibold">{sug != null ? `${sug} days` : "—"}</Td>
+                        <Td left>{mrp && sug != null && sug !== cur && (
+                          <button type="button" disabled={applyLead.isPending}
+                            onClick={() => applyLead.mutate({ warehouseId: null, category: mrp, leadDays: sug }, { onSuccess: () => { void q.refetch(); } })}
+                            className="rounded-md border border-primary/40 px-2 py-0.5 text-[11.5px] text-primary hover:bg-primary-soft disabled:opacity-50">
+                            Apply {sug} days
+                          </button>
+                        )}</Td>
+                      </>;
+                    })()}
                   </tr>
                 ))}
                 <tr className="font-semibold"><Td left>All</Td><Td>{t.supplierLead.receipts}</Td><Td>{days(t.supplierLead.avgDays)}</Td><Td>{days(t.supplierLead.p80Days)}</Td><Td>{pctTxt(t.supplierLead.onTimePct)}</Td><Td>{pctTxt(t.supplierLead.onTimeAmountPct)}</Td><Td>{pctTxt(t.supplierLead.latePct)}</Td><Td>{t.supplierLead.avgDaysLate != null ? `+${t.supplierLead.avgDaysLate}` : "—"}</Td></tr>
               </tbody>
             </table>
-            <p className="mt-2 text-[11.5px] text-ink-muted">Each receipt line counts once ("lines"); "amount" weighs it by its value. Average days late is over the late lines only. A row with fewer than {MIN_RECEIPTS} receipts is greyed: too few to judge.</p>
+            <p className="mt-2 text-[11.5px] text-ink-muted">Each receipt line counts once ("lines"); "amount" weighs it by its value. Average days late is over the late lines only. A row with fewer than {MIN_RECEIPTS} receipts is greyed: too few to judge.{by === "category" ? " Suggested = the days 80% of the receipts in this period arrived within. The MRP setting is how many days before the customer date MRP orders; it changes only when you press Apply. Apply sets the company-wide value; the warehouse settings listed under it (East Malaysia includes shipping) stay as they are." : ""}</p>
           </Panel>
 
           <Panel title="How early we order" hint={`PO lines raised in ${period.label}, and lines received in it whose customer date is known`}>
@@ -268,6 +304,8 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
               </table>
             </Panel>
           </section>
+
+          <TurnoverPanel t={d.turnover} from={d.from} period={period.label} />
         </>
       )}
     </div>
@@ -303,6 +341,62 @@ function StockTable({ title, rows, name }: { title: string; rows: StockGroup[]; 
         {rows.map((r) => <tr key={r.key}><Td left>{name(r.key)}</Td><Td>{fmtSen(r.valueSen)}</Td><Td className={r.deadSen ? "text-warning-text" : ""}>{fmtSen(r.deadSen)}</Td><Td>{share(r.deadSen, r.valueSen)}</Td><Td>{r.deadSkus}</Td></tr>)}
         <tr className="font-semibold"><Td left>Total</Td><Td>{fmtSen(tot.v)}</Td><Td>{fmtSen(tot.d)}</Td><Td>{share(tot.d, tot.v)}</Td><Td>{tot.s}</Td></tr>
       </tbody>
+    </table>
+  );
+}
+
+function TurnoverPanel({ t, from, period }: { t: Turnover; from: string; period: string }) {
+  const early = !t.firstOut || from < t.firstOut;
+  const turns = (x: number | null) => (x == null ? "—" : `${x}×`);
+  const daysTxt = (x: number | null) => (x == null ? "—" : `${x} days`);
+  return (
+    <Panel title={`Stock turnover and sellers · ${period}`} hint="turnover = cost sent out of the warehouses in the period, scaled to a year, over the stock value now · sellers = quantity on sales orders in the period">
+      {early && <p className="mb-2 rounded-md bg-warning-bg px-2.5 py-1.5 text-[12px] text-warning-text">Stock movements start {t.firstOut ?? "—"}: turnover before that date reads low.</p>}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Tile label="Turns a year" value={turns(t.total.turnsPerYear)} note={`${fmtSen(t.total.outSen)} sent out in ${t.days} days`} tone="main" trend={null} onClick={null} />
+        <Tile label="Days of stock" value={daysTxt(t.total.daysOfStock)} note={`${fmtSen(t.total.stockSen)} on hand now`} tone={(t.total.daysOfStock ?? 0) > 120 ? "warn" : "main"} trend={null} onClick={null} />
+        <Tile label="Top seller" value={t.topSellers[0]?.itemCode ?? "—"} note={t.topSellers[0] ? `${t.topSellers[0].qty} ordered · stock covers ${daysTxt(t.topSellers[0].coverDays)}` : ""} tone="good" trend={null} onClick={null} />
+        <Tile label="Movements without cost" value={String(t.zeroCostOuts)} note="these make turnover read low" tone={t.zeroCostOuts ? "warn" : "good"} trend={null} onClick={null} />
+      </div>
+      <div className="mt-3 grid gap-4 xl:grid-cols-2">
+        <TurnTable title="Category" rows={t.byCategory} name={(k) => CAT_LABEL[k] ?? k} />
+        <TurnTable title="Warehouse" rows={t.byWarehouse} name={(k) => k} />
+      </div>
+      <div className="mt-3 grid gap-4 xl:grid-cols-2">
+        <div>
+          <div className="mb-1 text-[12px] font-semibold text-ink">Top sellers</div>
+          <table className="w-full border-collapse">
+            <thead><tr><Th left>Item</Th><Th>Ordered</Th><Th>Sales</Th><Th>In stock</Th><Th>Stock covers</Th></tr></thead>
+            <tbody>{t.topSellers.map((r) => (
+              <tr key={r.itemCode}><Td left><span title={r.name ?? ""}>{r.itemCode}</span></Td><Td>{r.qty}</Td><Td>{fmtSen(r.salesSen)}</Td><Td>{r.stockQty}</Td>
+                <Td className={r.coverDays != null && r.coverDays < 14 ? "font-semibold text-err" : ""}>{daysTxt(r.coverDays)}</Td></tr>
+            ))}</tbody>
+          </table>
+          <p className="mt-1 text-[11px] text-ink-muted">Stock covers = stock on hand ÷ quantity ordered a day. Under 14 days is red: reorder.</p>
+        </div>
+        <div>
+          <div className="mb-1 text-[12px] font-semibold text-ink">Low sellers · most money held first</div>
+          <table className="w-full border-collapse">
+            <thead><tr><Th left>Item</Th><Th>Ordered</Th><Th>In stock</Th><Th>Stock value</Th></tr></thead>
+            <tbody>{t.lowSellers.map((r) => (
+              <tr key={r.itemCode}><Td left><span title={r.name ?? ""}>{r.itemCode}</span></Td><Td className={r.soldQty === 0 ? "text-err" : ""}>{r.soldQty}</Td><Td>{r.stockQty}</Td><Td>{fmtSen(r.stockSen)}</Td></tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function TurnTable({ title, rows, name }: { title: string; rows: TurnRow[]; name: (k: string) => string }) {
+  return (
+    <table className="w-full border-collapse">
+      <thead><tr><Th left>{title}</Th><Th>Stock now</Th><Th>Sent out</Th><Th>Turns a year</Th><Th>Days of stock</Th></tr></thead>
+      <tbody>{rows.filter((r) => r.stockSen > 0 || r.outSen > 0).map((r) => (
+        <tr key={r.key}><Td left>{name(r.key)}</Td><Td>{fmtSen(r.stockSen)}</Td><Td>{fmtSen(r.outSen)}</Td>
+          <Td className={r.turnsPerYear == null ? "" : r.turnsPerYear < 3 ? "text-err" : r.turnsPerYear < 4 ? "text-warning-text" : "text-synced"}>{r.turnsPerYear == null ? "—" : `${r.turnsPerYear}×`}</Td>
+          <Td>{r.daysOfStock == null ? "—" : r.daysOfStock}</Td></tr>
+      ))}</tbody>
     </table>
   );
 }
