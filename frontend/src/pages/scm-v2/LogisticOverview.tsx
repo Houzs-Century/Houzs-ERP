@@ -19,7 +19,7 @@ import { cn } from "../../lib/utils";
 import { Th, Td, Panel, SELECT_CLS, Toggle } from "../../components/scm-v2/OverviewKit";
 import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
 import { LogisticPeriodSection, type PeriodTotals } from "./LogisticPeriodSection";
-import { LogisticDailySection } from "./LogisticDailySection";
+import { LogisticDailySection, LorrySection } from "./LogisticDailySection";
 import { Columns, SplitBar, TONE, PALETTE } from "../../components/scm-v2/Charts";
 
 type Week = { from: string; to: string; doCount: number; doAmountSen: number; delivered: number; current: boolean };
@@ -140,6 +140,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       <LogisticPeriodSection rows={allRows} period={period} today={today} totals={h?.period ?? null}
         overdue={{ count: buckets[0]?.count ?? 0, sen: buckets[0]?.sen ?? 0 }} onOverdue={jump("overdue")} />
       {h?.period && <LogisticDailySection days={h.period.days} regions={h.period.byRegion} />}
+      {h?.period && <LorrySection lorries={h.period.byLorry} days={h.period.lorryDayList} recorded={h.period.lorry.recordedOrders} total={h.period.doCount} />}
 
       <h2 className="pt-2 text-[14px] font-semibold text-ink">2 · Still to deliver · as of today</h2>
       <Panel title="Outstanding delivery, by when it is due" hint={`${warehouse ? "this warehouse" : "all warehouses"} · every sales order not yet delivered · by its delivery date`}>

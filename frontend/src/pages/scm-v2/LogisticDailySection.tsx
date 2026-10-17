@@ -8,6 +8,8 @@ import { Columns, PALETTE, TONE } from "../../components/scm-v2/Charts";
 
 export type DayRow = { date: string; orders: number; amountSen: number; avgOrderSen: number | null; lorries: number; lorryOrders: number; perLorrySen: number | null };
 export type RegionRow = { region: string; orders: number; amountSen: number; avgOrderSen: number | null };
+export type LorryRow = { lorry: string; internal: boolean; daysOut: number; workingDays: number; occupancyPct: number | null; orders: number; amountSen: number; perDayOutSen: number | null };
+export type LorryDay = { date: string; lorry: string; orders: number; amountSen: number };
 
 const dd = (d: string) => d.slice(5).replace("-", "/");
 const money = (x: number | null) => (x == null ? "—" : fmtSen(x));
@@ -76,6 +78,58 @@ export function LogisticDailySection({ days, regions }: { days: DayRow[]; region
             {regions.length === 0 && <tr><Td left className="text-ink-muted">Nothing delivered in this period.</Td></tr>}
           </tbody>
         </table>
+      </Panel>
+    </div>
+  );
+}
+
+/* Each lorry's revenue and occupancy (owner 2026-10-17): days it went out over
+   the working days so far (Sundays off). Our own lorries carry a fixed crew
+   and instalment, so every working day one stays in costs money. */
+export function LorrySection({ lorries, days, recorded, total }: { lorries: LorryRow[]; days: LorryDay[]; recorded: number; total: number }) {
+  const own = lorries.filter((l) => l.internal);
+  const ownDays = own.reduce((a, l) => a + l.daysOut, 0);
+  const ownPossible = own.reduce((a, l) => a + l.workingDays, 0);
+  const work = lorries[0]?.workingDays ?? 0;
+  return (
+    <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
+      <Panel title="Lorries · revenue and occupancy" hint={`${work} working days so far in the period (Sundays off) · occupancy = days out ÷ working days`}>
+        {own.length > 0 && (
+          <p className="mb-2 text-[12.5px] text-ink-secondary">
+            Our own lorries went out on <b className="text-ink">{ownDays}</b> of <b className="text-ink">{ownPossible}</b> lorry working days
+            ({ownPossible ? Math.round((ownDays / ownPossible) * 100) : 0}% occupied); {ownPossible - ownDays} lorry-days stood idle.
+          </p>
+        )}
+        <table className="w-full border-collapse">
+          <thead><tr><Th left>Lorry</Th><Th left> </Th><Th>Days out</Th><Th left>Occupancy</Th><Th>Orders</Th><Th>Revenue</Th><Th>Per day out</Th></tr></thead>
+          <tbody>{lorries.map((l) => (
+            <tr key={l.lorry}>
+              <Td left className="font-semibold">{l.lorry}</Td>
+              <Td left className="text-[11px] text-ink-muted">{l.internal ? "own" : "3PL"}</Td>
+              <Td>{l.daysOut} / {l.workingDays}</Td>
+              <Td left className="w-[22%]">
+                <div className="flex items-center gap-2">
+                  <div className="h-2 flex-1 rounded-full bg-surface-2"><div className="h-2 rounded-full" style={{ width: `${Math.min(100, l.occupancyPct ?? 0)}%`, background: (l.occupancyPct ?? 0) >= 80 ? TONE.good : (l.occupancyPct ?? 0) >= 60 ? TONE.warn : TONE.bad }} /></div>
+                  <span className="w-12 text-right tabular-nums text-[12px]">{l.occupancyPct == null ? "—" : `${l.occupancyPct}%`}</span>
+                </div>
+              </Td>
+              <Td>{l.orders}</Td><Td>{fmtSen(l.amountSen)}</Td><Td>{money(l.perDayOutSen)}</Td>
+            </tr>
+          ))}
+            {lorries.length === 0 && <tr><Td left className="text-ink-muted">No lorry recorded in this period.</Td></tr>}
+          </tbody>
+        </table>
+        {recorded < total && <p className="mt-2 text-[11.5px] text-warning-text">The lorry is recorded on {recorded} of {total} delivery orders in this period, so these figures read low until the crew and lorry are set on each DO.</p>}
+      </Panel>
+      <Panel title="Each lorry, each day" hint="orders and revenue a lorry carried on a day">
+        {days.length === 0 ? <p className="text-[12.5px] text-ink-muted">No delivery order in this period has its lorry recorded yet.</p> : (
+          <div className="max-h-[420px] overflow-y-auto">
+            <table className="w-full border-collapse">
+              <thead className="sticky top-0 bg-surface"><tr><Th left>Date</Th><Th left>Lorry</Th><Th>Orders</Th><Th>Revenue</Th></tr></thead>
+              <tbody>{days.map((x) => <tr key={`${x.date}-${x.lorry}`}><Td left>{x.date}</Td><Td left>{x.lorry}</Td><Td>{x.orders}</Td><Td>{fmtSen(x.amountSen)}</Td></tr>)}</tbody>
+            </table>
+          </div>
+        )}
       </Panel>
     </div>
   );

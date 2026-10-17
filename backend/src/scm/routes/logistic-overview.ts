@@ -141,9 +141,14 @@ logisticOverview.get('/', async (c) => {
   const lorryOfDo = new Map<string, string>();
   for (const s of stops.data) { const l = lorryOfTrip.get(String(s.trip_id)); if (l) lorryOfDo.set(String(s.do_id), l); }
   for (const r of crew.data) { const l = str(r.lorry_id) || str(r.lorry_plate); if (l) lorryOfDo.set(String(r.do_id), l); }
+  /* The fleet, to name each lorry by its plate and list our own even on no day out. */
+  const fleet = await scopeToCompany(sb.from('lorries').select('id, plate, is_internal, active'), c);
+  if (fleet.error) return fail('lorries', fleet.error);
+  const plateOf = new Map((fleet.data as Row[]).map((l) => [String(l.id), String(l.plate ?? '—')]));
+  const fleetLorries = (fleet.data as Row[]).filter((l) => l.active !== false).map((l) => ({ plate: String(l.plate ?? '—'), internal: l.is_internal === true }));
   const pDos: PeriodDo[] = (periodDos.data ?? []).map((d) => ({
     id: String(d.id), doDate: String(d.do_date).slice(0, 10), status: String(d.status), amountSen: num(d.local_total_sen),
-    state: str(d.state) || str(d.customer_state), lorry: lorryOfDo.get(String(d.id)) ?? null,
+    state: str(d.state) || str(d.customer_state), lorry: (() => { const l = lorryOfDo.get(String(d.id)); return l ? plateOf.get(l) ?? l : null; })(),
   }));
   const doLines = await chunkIn<Row>(doIds, (b, f, t) => scopeToCompany(sb.from('delivery_order_items')
     .select('delivery_order_id, item_code, item_group, line_total_sen').in('delivery_order_id', b), c).order('id').range(f, t));
@@ -164,7 +169,7 @@ logisticOverview.get('/', async (c) => {
     doCount: pDos.length,
     doAmountSen: pDos.reduce((a, d) => a + d.amountSen, 0),
     podClosed: pDos.filter((d) => d.status === 'DELIVERED').length,
-    ...logisticPeriod(pDos, catLines, pFrom, pTo),
+    ...logisticPeriod(pDos, catLines, pFrom, pTo, fleetLorries, today),
   };
 
   return c.json({

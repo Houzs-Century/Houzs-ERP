@@ -9,12 +9,13 @@ import { Th, Td, Panel, Toggle } from "../../components/scm-v2/OverviewKit";
 import { Tile } from "../../components/scm-v2/Charts";
 import type { Period } from "../../components/scm-v2/DashboardPeriod";
 
-import type { DayRow, RegionRow } from "./LogisticDailySection";
+import type { DayRow, RegionRow, LorryRow, LorryDay } from "./LogisticDailySection";
 
 export type PeriodTotals = {
   from: string; to: string; doCount: number; doAmountSen: number; podClosed: number;
   days: DayRow[]; byRegion: RegionRow[];
-  lorry: { lorryDays: number; recordedOrders: number; perLorrySen: number | null };
+  lorry: { lorryDays: number; recordedOrders: number; perLorrySen: number | null; workingDays: number };
+  byLorry: LorryRow[]; lorryDayList: LorryDay[];
   byCategory: Array<{ category: string; orders: number; amountSen: number; avgSen: number | null }>;
   chargesSen: number;
 };
