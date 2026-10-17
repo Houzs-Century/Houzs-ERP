@@ -67,8 +67,8 @@ export function LogisticPeriodSection({ rows, period, today, totals, overdue, on
         <Tile label="Average per lorry, per day" tone="brass" trend={null} onClick={null}
           value={totals?.lorry.perLorrySen != null ? fmtSen(totals.lorry.perLorrySen) : "—"}
           note={totals ? (totals.lorry.recordedOrders ? `${totals.lorry.lorryDays} lorry-days · lorry recorded on ${totals.lorry.recordedOrders} of ${totals.doCount} DO` : `lorry not recorded on the DOs yet (0 of ${totals.doCount})`) : ""} />
-        <Tile label="Overdue now" tone={overdue.count ? "bad" : "good"} trend={null} onClick={overdue.count ? onOverdue : null}
-          value={amt ? fmtSen(overdue.sen) : `${overdue.count} orders`} note={overdue.count ? `${amt ? `${overdue.count} orders` : fmtSen(overdue.sen)} past their delivery date · see the list` : "nothing past its date"} />
+        <Tile label="Overdue · ready, date not confirmed" tone={overdue.count ? "bad" : "good"} trend={null} onClick={overdue.count ? onOverdue : null}
+          value={amt ? fmtSen(overdue.sen) : `${overdue.count} orders`} note={overdue.count ? `${amt ? `${overdue.count} orders` : fmtSen(overdue.sen)} · stock ready, no delivery date agreed · see the list` : "every ready order has a date"} />
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1.3fr_1fr]">

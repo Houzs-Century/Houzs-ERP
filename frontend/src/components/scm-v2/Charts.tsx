@@ -190,13 +190,13 @@ export function SplitBar({ parts, format }: { parts: Slice[]; format: Fmt }) {
           <div key={p.label} style={{ width: `${(p.value / total) * 100}%`, background: p.color ?? PALETTE[i % PALETTE.length] }} title={`${p.label}: ${format(p.value)} (${pctOf(p.value, total)})`} />
         ))}
       </div>
-      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11.5px]">
+      {/* One small block per part (label over figure), so a long legend stays readable. */}
+      <div className="mt-2.5 grid gap-x-4 gap-y-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))" }}>
         {parts.map((p, i) => (
-          <span key={p.label} className="inline-flex items-center gap-1.5 text-ink-secondary">
-            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: p.color ?? PALETTE[i % PALETTE.length] }} />
-            {p.label} <b className="font-semibold tabular-nums text-ink">{format(p.value)}</b>
-            <span className="tabular-nums text-ink-muted">{pctOf(p.value, total)}</span>
-          </span>
+          <div key={p.label} className="min-w-0 border-l-[3px] pl-2" style={{ borderColor: p.color ?? PALETTE[i % PALETTE.length] }}>
+            <div className="truncate text-[11.5px] text-ink-secondary">{p.label}</div>
+            <div className="text-[13px] font-semibold tabular-nums text-ink">{format(p.value)} <span className="text-[11px] font-normal text-ink-muted">{pctOf(p.value, total)}</span></div>
+          </div>
         ))}
       </div>
     </div>

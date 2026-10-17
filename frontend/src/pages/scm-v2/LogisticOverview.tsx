@@ -90,7 +90,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const open = useMemo(() => rows.filter((o) => o.delivery_state !== "DELIVERED"), [rows]);
   const buckets = useMemo(() => {
     const defs: Array<{ key: string; label: string; color: string; test: (e: string | null) => boolean }> = [
-      { key: "overdue", label: "Overdue", color: TONE.bad, test: (e) => !!e && e < today },
+      { key: "overdue", label: "Past delivery date", color: TONE.bad, test: (e) => !!e && e < today },
       { key: "d3", label: "Within 3 days", color: TONE.warn, test: (e) => !!e && e >= today && e <= addDays(today, 3) },
       { key: "d7", label: "4 – 7 days", color: "#d9b25c", test: (e) => !!e && e > addDays(today, 3) && e <= addDays(today, 7) },
       { key: "d14", label: "8 – 14 days", color: PALETTE[2]!, test: (e) => !!e && e > addDays(today, 7) && e <= addDays(today, 14) },
@@ -103,7 +103,12 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       return { ...b, rows: xs, count: xs.length, sen: xs.reduce((a, o) => a + o.local_total_sen, 0), notReady: xs.filter((o) => !o.is_ship_ready).length, confirmed: xs.filter((o) => !!o.amended_delivery_date).length };
     });
   }, [open, today]);
-  const overdueRows = (buckets[0]?.rows ?? []).slice().sort((a, b) => String(a.effective_delivery_date).localeCompare(String(b.effective_delivery_date)));
+  /* Overdue (owner 2026-10-17): the goods are ready but the order is not
+     delivered and no delivery date has been confirmed with the customer yet —
+     stock sitting in the warehouse waiting on us. Oldest customer date first. */
+  const overdueRows = open.filter((o) => o.is_ship_ready && !o.amended_delivery_date)
+    .sort((a, b) => String(a.customer_delivery_date ?? "9999").localeCompare(String(b.customer_delivery_date ?? "9999")));
+  const overdueSen = overdueRows.reduce((a, o) => a + o.local_total_sen, 0);
   const urgent = (buckets[1]?.rows ?? []).filter((o) => !o.is_ship_ready);
   const todays = open.filter((o) => o.effective_delivery_date === today);
   const openSen = open.reduce((a, o) => a + o.local_total_sen, 0);
@@ -138,7 +143,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
 
       <h2 className="pt-1 text-[14px] font-semibold text-ink">1 · Delivered in the period</h2>
       <LogisticPeriodSection rows={allRows} period={period} today={today} totals={h?.period ?? null}
-        overdue={{ count: buckets[0]?.count ?? 0, sen: buckets[0]?.sen ?? 0 }} onOverdue={jump("overdue")} />
+        overdue={{ count: overdueRows.length, sen: overdueSen }} onOverdue={jump("overdue")} />
       {h?.period && <LogisticDailySection days={h.period.days} regions={h.period.byRegion} />}
       {h?.period && <LorrySection lorries={h.period.byLorry} days={h.period.lorryDayList} recorded={h.period.lorry.recordedOrders} total={h.period.doCount} />}
 
@@ -175,53 +180,6 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
             <p className="mt-1 text-[11px] text-ink-muted">From the message status on Delivery Planning.</p>
           </div>
         </div>
-      </Panel>
-
-      <div className="grid gap-4 xl:grid-cols-2">
-        <section id="overdue">
-          <Panel title="Overdue" hint={`${overdueRows.length} orders past their delivery date · oldest first · chase stock or a new date`}>
-            {overdueRows.length === 0 ? <p className="text-[12.5px] text-ink-muted">No order is past its delivery date.</p> : (
-              <div className="max-h-[420px] overflow-y-auto">
-                <table className="w-full border-collapse"><thead className="sticky top-0 bg-surface"><tr><Th left>Order</Th><Th left>Customer</Th><Th>Delivery date</Th><Th>Days over</Th><Th>Amount</Th><Th left>Stock</Th></tr></thead>
-                  <tbody>{overdueRows.map((o) => (
-                    <tr key={o.so_doc_no}>
-                      <Td left><Link to={`/scm/sales-orders/${o.so_doc_no}`} className="text-primary hover:underline">{o.so_doc_no}</Link></Td>
-                      <Td left className="max-w-[160px] truncate">{o.debtor_name ?? "—"}</Td>
-                      <Td>{o.effective_delivery_date ?? "—"}</Td>
-                      <Td className={daysOver(o.effective_delivery_date) >= 7 ? "font-semibold text-err" : "text-warning-text"}>{daysOver(o.effective_delivery_date)}</Td>
-                      <Td>{fmtSen(o.local_total_sen)}</Td>
-                      <Td left className={o.is_ship_ready ? "text-synced" : ""}>{o.is_ship_ready ? "Ready" : o.stock_remark || o.stock_status || "Not ready"}</Td>
-                    </tr>
-                  ))}</tbody></table>
-              </div>
-            )}
-          </Panel>
-        </section>
-        <section id="urgent">
-          <Panel title="Due in 3 days, not ready" hint={`${urgent.length} orders · chase stock or reschedule with the customer`}>
-            {urgent.length === 0 ? <p className="text-[12.5px] text-ink-muted">Nothing due in the next 3 days is short of stock.</p> : (
-              <div className="max-h-[420px] overflow-y-auto">
-                <table className="w-full border-collapse"><thead className="sticky top-0 bg-surface"><tr><Th left>Order</Th><Th left>Customer</Th><Th>Delivery</Th><Th left>Stock</Th></tr></thead>
-                  <tbody>{urgent.map((o) => <tr key={o.so_doc_no}><Td left><Link to={`/scm/sales-orders/${o.so_doc_no}`} className="text-primary hover:underline">{o.so_doc_no}</Link></Td><Td left className="max-w-[160px] truncate">{o.debtor_name ?? "—"}</Td><Td>{dd(o.effective_delivery_date ?? "")}</Td><Td left>{o.stock_remark || o.stock_status || "—"}</Td></tr>)}</tbody></table>
-              </div>
-            )}
-          </Panel>
-        </section>
-      </div>
-
-      <Panel title="Delivering today" hint={`${todays.length} orders dated ${today}, not yet delivered`}
-        right={<Link to={`/scm/fleet-day?date=${today}`} className="text-[12px] text-primary hover:underline">Open Last Mile</Link>}>
-        {todays.length === 0 ? <p className="text-[12.5px] text-ink-muted">No order is dated today.</p> : (
-          <table className="w-full border-collapse"><thead><tr><Th left>Order</Th><Th left>Customer</Th><Th left>State</Th><Th>Amount</Th><Th left>Stock</Th><Th left>Follow-up</Th></tr></thead>
-            <tbody>{todays.map((o) => (
-              <tr key={o.so_doc_no}>
-                <Td left><Link to={`/scm/sales-orders/${o.so_doc_no}`} className="text-primary hover:underline">{o.so_doc_no}</Link></Td>
-                <Td left className="max-w-[180px] truncate">{o.debtor_name ?? "—"}</Td><Td left>{o.customer_state ?? "—"}</Td><Td>{fmtSen(o.local_total_sen)}</Td>
-                <Td left className={o.is_ship_ready ? "text-synced" : "text-err"}>{o.is_ship_ready ? "Ready" : o.stock_remark || o.stock_status || "Not ready"}</Td>
-                <Td left className="text-ink-secondary">{followUpOf(o.delivery_message_status)}</Td>
-              </tr>
-            ))}</tbody></table>
-        )}
       </Panel>
 
       <h2 className="pt-2 text-[14px] font-semibold text-ink">3 · Reports</h2>
@@ -281,6 +239,54 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
           </Panel>
         </section>
       </div>
+      <h2 className="pt-2 text-[14px] font-semibold text-ink">4 · Lists to chase</h2>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <section id="overdue">
+          <Panel title="Overdue · ready, no delivery date confirmed" hint={`${overdueRows.length} orders · ${fmtSen(overdueSen)} · stock is ready, the date is not confirmed with the customer, not delivered · oldest customer date first`}>
+            {overdueRows.length === 0 ? <p className="text-[12.5px] text-ink-muted">Every ready order has a confirmed delivery date.</p> : (
+              <div className="max-h-[420px] overflow-y-auto">
+                <table className="w-full border-collapse"><thead className="sticky top-0 bg-surface"><tr><Th left>Order</Th><Th left>Customer</Th><Th>Customer date</Th><Th>Days to / past</Th><Th>Amount</Th><Th left>Follow-up</Th></tr></thead>
+                  <tbody>{overdueRows.map((o) => (
+                    <tr key={o.so_doc_no}>
+                      <Td left><Link to={`/scm/sales-orders/${o.so_doc_no}`} className="text-primary hover:underline">{o.so_doc_no}</Link></Td>
+                      <Td left className="max-w-[160px] truncate">{o.debtor_name ?? "—"}</Td>
+                      <Td>{o.customer_delivery_date ?? "—"}</Td>
+                      <Td className={!o.customer_delivery_date ? "text-ink-muted" : daysOver(o.customer_delivery_date) > 0 ? "font-semibold text-err" : "text-ink-secondary"}>{!o.customer_delivery_date ? "—" : daysOver(o.customer_delivery_date) > 0 ? `${daysOver(o.customer_delivery_date)} past` : `in ${-daysOver(o.customer_delivery_date)}`}</Td>
+                      <Td>{fmtSen(o.local_total_sen)}</Td>
+                      <Td left className="text-ink-secondary">{followUpOf(o.delivery_message_status)}</Td>
+                    </tr>
+                  ))}</tbody></table>
+              </div>
+            )}
+          </Panel>
+        </section>
+        <section id="urgent">
+          <Panel title="Due in 3 days, not ready" hint={`${urgent.length} orders · chase stock or reschedule with the customer`}>
+            {urgent.length === 0 ? <p className="text-[12.5px] text-ink-muted">Nothing due in the next 3 days is short of stock.</p> : (
+              <div className="max-h-[420px] overflow-y-auto">
+                <table className="w-full border-collapse"><thead className="sticky top-0 bg-surface"><tr><Th left>Order</Th><Th left>Customer</Th><Th>Delivery</Th><Th left>Stock</Th></tr></thead>
+                  <tbody>{urgent.map((o) => <tr key={o.so_doc_no}><Td left><Link to={`/scm/sales-orders/${o.so_doc_no}`} className="text-primary hover:underline">{o.so_doc_no}</Link></Td><Td left className="max-w-[160px] truncate">{o.debtor_name ?? "—"}</Td><Td>{dd(o.effective_delivery_date ?? "")}</Td><Td left>{o.stock_remark || o.stock_status || "—"}</Td></tr>)}</tbody></table>
+              </div>
+            )}
+          </Panel>
+        </section>
+      </div>
+
+      <Panel title="Delivering today" hint={`${todays.length} orders dated ${today}, not yet delivered`}
+        right={<Link to={`/scm/fleet-day?date=${today}`} className="text-[12px] text-primary hover:underline">Open Last Mile</Link>}>
+        {todays.length === 0 ? <p className="text-[12.5px] text-ink-muted">No order is dated today.</p> : (
+          <table className="w-full border-collapse"><thead><tr><Th left>Order</Th><Th left>Customer</Th><Th left>State</Th><Th>Amount</Th><Th left>Stock</Th><Th left>Follow-up</Th></tr></thead>
+            <tbody>{todays.map((o) => (
+              <tr key={o.so_doc_no}>
+                <Td left><Link to={`/scm/sales-orders/${o.so_doc_no}`} className="text-primary hover:underline">{o.so_doc_no}</Link></Td>
+                <Td left className="max-w-[180px] truncate">{o.debtor_name ?? "—"}</Td><Td left>{o.customer_state ?? "—"}</Td><Td>{fmtSen(o.local_total_sen)}</Td>
+                <Td left className={o.is_ship_ready ? "text-synced" : "text-err"}>{o.is_ship_ready ? "Ready" : o.stock_remark || o.stock_status || "Not ready"}</Td>
+                <Td left className="text-ink-secondary">{followUpOf(o.delivery_message_status)}</Td>
+              </tr>
+            ))}</tbody></table>
+        )}
+      </Panel>
+
     </div>
   );
 }

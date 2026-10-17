@@ -29,7 +29,7 @@ type Group = {
 };
 type OpenLine = { poId: string; poNumber: string; poDate: string; supplier: string; category: string; itemCode: string | null; itemDesc: string | null; soDocNo: string | null; openQty: number; openSen: number; originalDue: string | null; promised: string | null; needDate: string | null; daysLate: number };
 type Ages = { d0to90: number; d91to180: number; d181to365: number; d365plus: number };
-type StockGroup = { key: string; skus: number; valueSen: number; deadSkus: number; deadSen: number; ages: Ages };
+type StockGroup = { key: string; skus: number; valueSen: number; deadSkus: number; deadSen: number; bufferSkus: number; bufferSen: number; ages: Ages };
 type TurnRow = { key: string; stockSen: number; outSen: number; turnsPerYear: number | null; daysOfStock: number | null };
 type Turnover = {
   firstOut: string | null; turnFrom: string; turnTo: string; days: number; sellerDays: number; zeroCostOuts: number;
@@ -44,7 +44,8 @@ type Payload = {
   categories: string[]; currentLead: Partial<Record<string, number>>; leadOverrides: Partial<Record<string, Array<{ warehouse: string; days: number }>>>;
   billed: { totalSen: number; count: number; bySupplier: Record<string, number>; byCategory: Record<string, number> };
   total: Group; byCategory: Group[]; bySupplier: Group[]; overdue: OpenLine[]; dueSoon: OpenLine[];
-  deadStock: { asOf: string; totalSen: number; skus: number; deadSen: number; deadSkus: number; byCategory: StockGroup[]; byWarehouse: StockGroup[]; top: Array<{ warehouse: string; category: string; itemCode: string; name: string | null; qty: number; valueSen: number; idleDays: number | null }> };
+  deadStock: { asOf: string; coverDays: number; totalSen: number; skus: number; deadSen: number; deadSkus: number; bufferSen: number; bufferSkus: number; byCategory: StockGroup[]; byWarehouse: StockGroup[]; top: Array<{ warehouse: string; category: string; itemCode: string; variantKey: string; name: string | null; qty: number; valueSen: number; idleDays: number | null }>;
+    bufferTop: Array<{ itemCode: string; variantKey: string; name: string | null; category: string; warehouses: string; onHand: number; scheduled: number; unscheduled: number; cover: number; bufferQty: number; valueSen: number }> };
 };
 
 const BUCKETS: Array<{ k: BucketKey; label: string; color: string }> = [
@@ -112,7 +113,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
     if (later.length) out.push({ tone: TONE.warn, text: `Goods arrive well before the customer needs them: ${later.map((g) => `${CAT_LABEL[g.key] ?? g.key} could be ordered ${g.ordering.canOrderLaterDays} days later`).join(", ")}, and 80% of lines would still arrive in time.` });
     const unreliable = d.bySupplier.filter((g) => g.supplierLead.receipts >= MIN_RECEIPTS && (g.supplierLead.onTimePct ?? 100) < 60);
     if (unreliable.length) out.push({ tone: TONE.warn, text: `On time under 60% this period: ${unreliable.slice(0, 4).map((g) => `${g.key} ${g.supplierLead.onTimePct}%`).join(", ")}.` });
-    if (d.deadStock.deadSen > 0) out.push({ tone: TONE.warn, text: `${rm(d.deadStock.deadSen)} of stock has not gone out in over 90 days (${d.deadStock.deadSkus} items, ${share(d.deadStock.deadSen, d.deadStock.totalSen)} of stock value).` });
+    if (d.deadStock.deadSen > 0) out.push({ tone: TONE.warn, text: `Dead stock: ${rm(d.deadStock.deadSen)} with no order at all and idle over 90 days (${d.deadStock.deadSkus} items). Buffer stock: ${rm(d.deadStock.bufferSen)} bought before any dated order needed it (${d.deadStock.bufferSkus} items).` });
     return out;
   }, [d, asOfNote]);
 
@@ -209,6 +210,31 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
             </Panel>
           </section>
 
+          <Panel title="Buffer stock · bought before it was needed" hint={`stock beyond the orders that have a delivery date, less ${d.deadStock.coverDays} days of normal outflow · matched per item and variant · as of today`}>
+            <p className="mb-2 text-[12.5px] text-ink-secondary">
+              {rm(d.deadStock.bufferSen)} across {d.deadStock.bufferSkus} items. Stock held for orders with no delivery date yet could have been bought when the customer fixed the date; what sells out within {d.deadStock.coverDays} days anyway is left out.
+            </p>
+            <div className="grid gap-4 xl:grid-cols-2">
+              <BufferTable title="Category" rows={d.deadStock.byCategory} name={(k) => CAT_LABEL[k] ?? k} />
+              <BufferTable title="Warehouse" rows={d.deadStock.byWarehouse} name={(k) => k} />
+            </div>
+            <div className="mt-3 text-[12px] font-semibold text-ink">Largest buffer items</div>
+            <div className="max-h-[420px] overflow-y-auto">
+              <table className="mt-1 w-full border-collapse">
+                <thead className="sticky top-0 bg-surface"><tr><Th left>Item / variant</Th><Th left>Warehouse</Th><Th>On hand</Th><Th>Orders with a date</Th><Th>Orders, no date</Th><Th>{d.deadStock.coverDays} days of outflow</Th><Th>Buffer</Th><Th>Value</Th></tr></thead>
+                <tbody>{d.deadStock.bufferTop.slice(0, 40).map((r) => (
+                  <tr key={`${r.itemCode}|${r.variantKey}`}>
+                    <Td left><span title={r.name ?? ""}>{r.itemCode}</span>{r.variantKey && <span className="block max-w-[320px] truncate text-[10.5px] text-ink-muted">{r.variantKey}</span>}</Td>
+                    <Td left className="text-ink-secondary">{r.warehouses}</Td>
+                    <Td>{r.onHand}</Td><Td>{r.scheduled}</Td><Td>{r.unscheduled}</Td><Td>{r.cover}</Td>
+                    <Td className="font-semibold">{r.bufferQty}</Td><Td>{rm(r.valueSen)}</Td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+            <p className="mt-1 text-[11px] text-ink-muted">Buffer = on hand − orders with a delivery date − what normally goes out in {d.deadStock.coverDays} days. Sofas and bedframes count only orders for the same fabric and size.</p>
+          </Panel>
+
           <div className="grid gap-4 xl:grid-cols-2">
             <Panel title={`Overdue${focus ? ` · ${label(focus)}` : ""}`} hint={`${overdue.length} lines past their date ${asOfNote}`}
               right={focus ? <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setFocus(null)}>Show all</button> : null}>
@@ -291,7 +317,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
           </Panel>
 
           <section id="dead">
-            <Panel title="Dead stock" hint="stock on hand that has not gone out for over 90 days, counted from the last time it left that warehouse (or from when it arrived, if it never left) · showroom and display stock left out · as of today">
+            <Panel title="Dead stock · no order at all" hint="on hand, no open sales order wants that item and variant, and it has not gone out for over 90 days · showroom and display left out · as of today">
               <div className="grid gap-4 xl:grid-cols-2">
                 <div>
                   <div className="mb-1 text-[12px] font-semibold text-ink">By category</div>
@@ -308,11 +334,11 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
                 <StockTable title="Category" rows={d.deadStock.byCategory} name={(k) => CAT_LABEL[k] ?? k} />
                 <StockTable title="Warehouse" rows={d.deadStock.byWarehouse} name={(k) => k} />
               </div>
-              <div className="mt-3 text-[12px] font-semibold text-ink">Largest idle items</div>
+              <div className="mt-3 text-[12px] font-semibold text-ink">Largest dead items</div>
               <table className="mt-1 w-full border-collapse">
                 <thead><tr><Th left>Item</Th><Th left>Warehouse</Th><Th left>Category</Th><Th>Qty</Th><Th>Value</Th><Th>Days since it last went out</Th></tr></thead>
                 <tbody>{d.deadStock.top.slice(0, 20).map((r, i) => (
-                  <tr key={`${r.itemCode}-${r.warehouse}-${i}`}><Td left><span title={r.name ?? ""}>{r.itemCode}</span></Td><Td left>{r.warehouse}</Td><Td left>{CAT_LABEL[r.category] ?? r.category}</Td><Td>{r.qty}</Td><Td>{rm(r.valueSen)}</Td><Td className={(r.idleDays ?? 0) > 365 ? "text-err" : ""}>{r.idleDays ?? "—"}</Td></tr>
+                  <tr key={`${r.itemCode}-${r.warehouse}-${i}`}><Td left><span title={r.name ?? ""}>{r.itemCode}</span>{r.variantKey && <span className="block max-w-[320px] truncate text-[10.5px] text-ink-muted">{r.variantKey}</span>}</Td><Td left>{r.warehouse}</Td><Td left>{CAT_LABEL[r.category] ?? r.category}</Td><Td>{r.qty}</Td><Td>{rm(r.valueSen)}</Td><Td className={(r.idleDays ?? 0) > 365 ? "text-err" : ""}>{r.idleDays ?? "—"}</Td></tr>
                 ))}</tbody>
               </table>
             </Panel>
@@ -345,11 +371,24 @@ function LineTable({ rows, empty, mode }: { rows: OpenLine[]; empty: string; mod
   );
 }
 
+function BufferTable({ title, rows, name }: { title: string; rows: StockGroup[]; name: (k: string) => string }) {
+  const tot = rows.reduce((a, r) => ({ v: a.v + r.valueSen, b: a.b + r.bufferSen, s: a.s + r.bufferSkus }), { v: 0, b: 0, s: 0 });
+  return (
+    <table className="w-full border-collapse">
+      <thead><tr><Th left>{title}</Th><Th>Stock value</Th><Th>Buffer</Th><Th>Share</Th><Th>Items</Th></tr></thead>
+      <tbody>
+        {rows.filter((r) => r.bufferSen > 0).map((r) => <tr key={r.key}><Td left>{name(r.key)}</Td><Td>{fmtSen(r.valueSen)}</Td><Td className="text-warning-text">{fmtSen(r.bufferSen)}</Td><Td>{share(r.bufferSen, r.valueSen)}</Td><Td>{r.bufferSkus}</Td></tr>)}
+        <tr className="font-semibold"><Td left>Total</Td><Td>{fmtSen(tot.v)}</Td><Td>{fmtSen(tot.b)}</Td><Td>{share(tot.b, tot.v)}</Td><Td>{tot.s}</Td></tr>
+      </tbody>
+    </table>
+  );
+}
+
 function StockTable({ title, rows, name }: { title: string; rows: StockGroup[]; name: (k: string) => string }) {
   const tot = rows.reduce((a, r) => ({ v: a.v + r.valueSen, d: a.d + r.deadSen, s: a.s + r.deadSkus }), { v: 0, d: 0, s: 0 });
   return (
     <table className="w-full border-collapse">
-      <thead><tr><Th left>{title}</Th><Th>Stock value</Th><Th>Dead (90+ days)</Th><Th>Share</Th><Th>Items</Th></tr></thead>
+      <thead><tr><Th left>{title}</Th><Th>Stock value</Th><Th>Dead</Th><Th>Share</Th><Th>Items</Th></tr></thead>
       <tbody>
         {rows.map((r) => <tr key={r.key}><Td left>{name(r.key)}</Td><Td>{fmtSen(r.valueSen)}</Td><Td className={r.deadSen ? "text-warning-text" : ""}>{fmtSen(r.deadSen)}</Td><Td>{share(r.deadSen, r.valueSen)}</Td><Td>{r.deadSkus}</Td></tr>)}
         <tr className="font-semibold"><Td left>Total</Td><Td>{fmtSen(tot.v)}</Td><Td>{fmtSen(tot.d)}</Td><Td>{share(tot.d, tot.v)}</Td><Td>{tot.s}</Td></tr>
@@ -366,7 +405,7 @@ function TurnoverPanel({ t, when }: { t: Turnover; when: string }) {
     <Panel title="Stock turnover and sellers" hint={`turnover: the last 12 months, ${t.turnFrom} – ${t.turnTo}, the same whatever period is picked · sellers: quantity on sales orders ${when}, service lines left out, sofas counted by model`}>
       {early && <p className="mb-2 rounded-md bg-warning-bg px-2.5 py-1.5 text-[12px] text-warning-text">Stock movements in the ERP begin {t.firstOut}, so turnover covers {t.days} days so far; it becomes a full year as time passes.</p>}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Tile label="Turns a year" value={turns(t.total.turnsPerYear)} note={`${fmtSen(t.total.outSen)} sent out in ${t.days} days`} tone="main" trend={null} onClick={null} />
+        <Tile label="Turns a year" value={turns(t.total.turnsPerYear)} note={`cost of goods that left the warehouses: ${fmtSen(t.total.outSen)} in ${t.days} days, scaled to a year, ÷ stock now`} tone="main" trend={null} onClick={null} />
         <Tile label="Days of stock" value={daysTxt(t.total.daysOfStock)} note={`${fmtSen(t.total.stockSen)} on hand now`} tone={(t.total.daysOfStock ?? 0) > 120 ? "warn" : "main"} trend={null} onClick={null} />
         <Tile label="Top seller" value={t.topSellers[0]?.itemCode ?? "—"} note={t.topSellers[0] ? `${t.topSellers[0].qty} ordered · stock covers ${daysTxt(t.topSellers[0].coverDays)}` : ""} tone="good" trend={null} onClick={null} />
         <Tile label="Movements without cost" value={String(t.zeroCostOuts)} note="these make turnover read low" tone={t.zeroCostOuts ? "warn" : "good"} trend={null} onClick={null} />
@@ -379,13 +418,13 @@ function TurnoverPanel({ t, when }: { t: Turnover; when: string }) {
         <div>
           <div className="mb-1 text-[12px] font-semibold text-ink">Top sellers</div>
           <table className="w-full border-collapse">
-            <thead><tr><Th left>Item / sofa model</Th><Th>Ordered</Th><Th>Sales</Th><Th>In stock</Th><Th>Stock covers</Th></tr></thead>
+            <thead><tr><Th left>Item / sofa model</Th><Th>Ordered</Th><Th>Sales</Th><Th>In stock</Th><Th>Stock lasts</Th></tr></thead>
             <tbody>{t.topSellers.map((r) => (
               <tr key={r.itemCode}><Td left><span title={r.name ?? ""}>{r.itemCode}</span></Td><Td>{r.qty}</Td><Td>{fmtSen(r.salesSen)}</Td><Td>{r.stockQty}</Td>
                 <Td className={r.coverDays != null && r.coverDays < 14 ? "font-semibold text-err" : ""}>{daysTxt(r.coverDays)}</Td></tr>
             ))}</tbody>
           </table>
-          <p className="mt-1 text-[11px] text-ink-muted">Stock covers = stock on hand ÷ quantity ordered a day. Under 14 days is red: reorder.</p>
+          <p className="mt-1 text-[11px] text-ink-muted">Stock lasts = stock on hand ÷ quantity ordered a day: how many days the stock lasts at this selling rate. Under 14 days is red: reorder. Free lines (gifts, bundled items) are not counted as sold.</p>
         </div>
         <div>
           <div className="mb-1 text-[12px] font-semibold text-ink">Low sellers · most money held first</div>
@@ -404,7 +443,7 @@ function TurnoverPanel({ t, when }: { t: Turnover; when: string }) {
 function TurnTable({ title, rows, name }: { title: string; rows: TurnRow[]; name: (k: string) => string }) {
   return (
     <table className="w-full border-collapse">
-      <thead><tr><Th left>{title}</Th><Th>Stock now</Th><Th>Sent out</Th><Th>Turns a year</Th><Th>Days of stock</Th></tr></thead>
+      <thead><tr><Th left>{title}</Th><Th>Stock now</Th><Th>Cost of goods out</Th><Th>Turns a year</Th><Th>Days of stock</Th></tr></thead>
       <tbody>{rows.filter((r) => r.stockSen > 0 || r.outSen > 0).map((r) => (
         <tr key={r.key}><Td left>{name(r.key)}</Td><Td>{fmtSen(r.stockSen)}</Td><Td>{fmtSen(r.outSen)}</Td>
           <Td className={r.turnsPerYear == null ? "" : r.turnsPerYear < 3 ? "text-err" : r.turnsPerYear < 4 ? "text-warning-text" : "text-synced"}>{r.turnsPerYear == null ? "—" : `${r.turnsPerYear}×`}</Td>

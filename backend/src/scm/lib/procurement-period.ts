@@ -158,53 +158,79 @@ export function procurementPeriod(lines: PLine[], from: string, to: string, toda
   };
 }
 
-/* Dead stock (owner, 2026-10-17): stock on hand that has not gone out for
-   over 90 days AND that no open order is waiting for — the inventory page's
-   "Spare". Idle days run from the last OUT movement of that item in that
-   warehouse, or — never sent out — from its first movement there. Open orders
-   claim an item's stock first, taken from the most idle rows first, so only
-   what is left over counts as dead. A balance is a snapshot, so this is as of
-   today whatever the period. */
-export interface StockRow { warehouse: string; category: string; itemCode: string; name: string | null; qty: number; valueSen: number; lastOut: string | null; firstMove: string | null }
+/* Dead stock and buffer stock (owner, 2026-10-17). Stock is matched to open
+   orders per item AND variant (a sofa in one fabric does not serve an order
+   for another), across the selling warehouses. As of today.
+   - Dead stock: no open sales order wants that item/variant at all, and it has
+     not gone out for over 90 days (from its last OUT in that warehouse, or its
+     first movement there if it never left).
+   - Buffer stock: bought before it was needed. What is left after the orders
+     WITH a delivery date (stock held for orders with no date yet could have
+     been ordered when the customer fixed the date), less what normally goes
+     out in 14 days — a fast seller's shelf stock is not waste. */
+export interface StockRow { warehouse: string; category: string; itemCode: string; variantKey: string; name: string | null; qty: number; valueSen: number; lastOut: string | null; firstMove: string | null }
+/** Per item|variant: the quantity open orders wait for, with and without a delivery date. */
+export interface OpenDemand { scheduled: number; unscheduled: number }
 type Age = 'd0to90' | 'd91to180' | 'd181to365' | 'd365plus';
 const AGES: Age[] = ['d0to90', 'd91to180', 'd181to365', 'd365plus'];
 const ageOf = (idle: number | null): Age => (idle == null || idle <= 90 ? 'd0to90' : idle <= 180 ? 'd91to180' : idle <= 365 ? 'd181to365' : 'd365plus');
+export const BUFFER_COVER_DAYS = 14;
 
-/** `openDemand`: per item code, the quantity open sales orders still wait for. */
-export function deadStock(rows: StockRow[], today: string, openDemand: Map<string, number>) {
+/** `outPerDay`: per item|variant, the quantity that went out per day lately. */
+export function deadStock(rows: StockRow[], today: string, demand: Map<string, OpenDemand>, outPerDay: Map<string, number>) {
   const idleOf = (r: StockRow) => { const d = r.lastOut ?? r.firstMove; return d ? daysBetween(d, today) : null; };
-  /* Each row's dead quantity: idle over 90 days, after the item's open orders took their share. */
-  const deadQty = new Map<StockRow, number>();
-  const byItem = new Map<string, StockRow[]>();
-  for (const r of rows) byItem.set(r.itemCode, [...(byItem.get(r.itemCode) ?? []), r]);
-  for (const [code, rs] of byItem) {
-    let claim = openDemand.get(code) ?? 0;
-    for (const r of [...rs].sort((x, y) => (idleOf(y) ?? -1) - (idleOf(x) ?? -1))) {
-      const taken = Math.min(r.qty, Math.max(0, claim)); claim -= taken;
-      deadQty.set(r, ageOf(idleOf(r)) === 'd0to90' ? 0 : r.qty - taken);
+  const keyOf = (r: StockRow) => `${r.itemCode}|${r.variantKey}`;
+  const dead = new Map<StockRow, number>(); const buffer = new Map<StockRow, number>();
+  const items = new Map<string, StockRow[]>();
+  for (const r of rows) items.set(keyOf(r), [...(items.get(keyOf(r)) ?? []), r]);
+  const itemInfo = new Map<string, { onHand: number; scheduled: number; unscheduled: number; cover: number; bufferQty: number }>();
+  for (const [k, rs] of items) {
+    const dm = demand.get(k) ?? { scheduled: 0, unscheduled: 0 };
+    const cover = Math.round((outPerDay.get(k) ?? 0) * BUFFER_COVER_DAYS * 10) / 10;
+    let rest = rs;
+    if (dm.scheduled + dm.unscheduled === 0) {
+      for (const r of rs) if (ageOf(idleOf(r)) !== 'd0to90') dead.set(r, r.qty);
+      rest = rs.filter((r) => !dead.has(r));
     }
+    const onHand = rest.reduce((a, r) => a + r.qty, 0);
+    const bufferQty = Math.max(0, Math.floor(onHand - dm.scheduled - cover));
+    /* Spread over the remaining rows in proportion to what each holds. */
+    let left = bufferQty;
+    rest.forEach((r, i) => { const q = i === rest.length - 1 ? left : Math.min(left, Math.round((bufferQty * r.qty) / Math.max(1, onHand))); buffer.set(r, q); left -= q; });
+    itemInfo.set(k, { onHand: rs.reduce((a, r) => a + r.qty, 0), scheduled: dm.scheduled, unscheduled: dm.unscheduled, cover, bufferQty });
   }
-  const deadSenOf = (r: StockRow) => (r.qty > 0 ? Math.round((r.valueSen * (deadQty.get(r) ?? 0)) / r.qty) : 0);
-  const by = (keyOf: (r: StockRow) => string) => {
-    const map = new Map<string, { key: string; skus: number; valueSen: number; deadSkus: number; deadSen: number; ages: Record<Age, number> }>();
+  const senOf = (r: StockRow, q: number) => (r.qty > 0 ? Math.round((r.valueSen * q) / r.qty) : 0);
+  const deadSen = (r: StockRow) => senOf(r, dead.get(r) ?? 0);
+  const bufSen = (r: StockRow) => senOf(r, buffer.get(r) ?? 0);
+  const by = (keyBy: (r: StockRow) => string) => {
+    const map = new Map<string, { key: string; skus: number; valueSen: number; deadSkus: number; deadSen: number; bufferSkus: number; bufferSen: number; ages: Record<Age, number> }>();
     for (const r of rows) {
-      const k = keyOf(r);
-      const g = map.get(k) ?? { key: k, skus: 0, valueSen: 0, deadSkus: 0, deadSen: 0, ages: Object.fromEntries(AGES.map((a) => [a, 0])) as Record<Age, number> };
-      const ds = deadSenOf(r);
+      const k = keyBy(r);
+      const g = map.get(k) ?? { key: k, skus: 0, valueSen: 0, deadSkus: 0, deadSen: 0, bufferSkus: 0, bufferSen: 0, ages: Object.fromEntries(AGES.map((x) => [x, 0])) as Record<Age, number> };
+      const ds = deadSen(r); const bs = bufSen(r);
       g.skus += 1; g.valueSen += r.valueSen;
-      g.ages[ds > 0 ? ageOf(idleOf(r)) : 'd0to90'] += ds; g.ages.d0to90 += r.valueSen - ds;
-      if (ds > 0) { g.deadSkus += 1; g.deadSen += ds; }
+      if (ds > 0) { g.deadSkus += 1; g.deadSen += ds; g.ages[ageOf(idleOf(r))] += ds; }
+      if (bs > 0) { g.bufferSkus += 1; g.bufferSen += bs; }
+      g.ages.d0to90 += r.valueSen - ds;
       map.set(k, g);
     }
-    return [...map.values()].sort((a, b) => b.deadSen - a.deadSen);
+    return [...map.values()].sort((a, b) => b.deadSen + b.bufferSen - (a.deadSen + a.bufferSen));
   };
-  const dead = rows.filter((r) => (deadQty.get(r) ?? 0) > 0);
+  const deadRows = rows.filter((r) => (dead.get(r) ?? 0) > 0);
+  const bufferItems = [...items.entries()].map(([k, rs]) => {
+    const info = itemInfo.get(k)!;
+    return { itemCode: rs[0]!.itemCode, variantKey: rs[0]!.variantKey, name: rs[0]!.name, category: rs[0]!.category,
+      warehouses: [...new Set(rs.filter((r) => (buffer.get(r) ?? 0) > 0).map((r) => r.warehouse))].join(', '),
+      ...info, valueSen: rs.reduce((a, r) => a + bufSen(r), 0) };
+  }).filter((x) => x.bufferQty > 0).sort((a, b) => b.valueSen - a.valueSen);
   return {
-    asOf: today,
+    asOf: today, coverDays: BUFFER_COVER_DAYS,
     totalSen: rows.reduce((a, r) => a + r.valueSen, 0), skus: rows.length,
-    deadSen: dead.reduce((a, r) => a + deadSenOf(r), 0), deadSkus: dead.length,
+    deadSen: deadRows.reduce((a, r) => a + deadSen(r), 0), deadSkus: deadRows.length,
+    bufferSen: rows.reduce((a, r) => a + bufSen(r), 0), bufferSkus: bufferItems.length,
     byCategory: by((r) => r.category), byWarehouse: by((r) => r.warehouse),
-    top: dead.map((r) => ({ ...r, qty: deadQty.get(r) ?? 0, valueSen: deadSenOf(r), onHand: r.qty, idleDays: idleOf(r) })).sort((a, b) => b.valueSen - a.valueSen).slice(0, 50),
+    top: deadRows.map((r) => ({ ...r, valueSen: deadSen(r), idleDays: idleOf(r) })).sort((a, b) => b.valueSen - a.valueSen).slice(0, 50),
+    bufferTop: bufferItems.slice(0, 50),
   };
 }
 

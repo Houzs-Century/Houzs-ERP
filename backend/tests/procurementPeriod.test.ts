@@ -72,34 +72,35 @@ describe('procurement period', () => {
     expect(few.canOrderLaterDays).toBeNull();
   });
 
-  test('dead stock: idle since the last time it went out, or since it first arrived', () => {
+  test('dead stock: no open order at all and idle over 90 days, since the last time it went out or first arrived', () => {
     const r = deadStock([
-      { warehouse: 'KL', category: 'SOFA', itemCode: 'A', name: null, qty: 1, valueSen: 100, lastOut: '2026-10-01', firstMove: '2025-01-01' },
-      { warehouse: 'KL', category: 'SOFA', itemCode: 'B', name: null, qty: 1, valueSen: 300, lastOut: '2026-05-01', firstMove: '2025-01-01' },
-      { warehouse: 'PG', category: 'MATTRESS', itemCode: 'C', name: null, qty: 1, valueSen: 500, lastOut: null, firstMove: '2025-06-01' },
-    ], '2026-10-17', new Map());
+      { warehouse: 'KL', category: 'SOFA', itemCode: 'A', variantKey: '', name: null, qty: 1, valueSen: 100, lastOut: '2026-10-01', firstMove: '2025-01-01' },
+      { warehouse: 'KL', category: 'SOFA', itemCode: 'B', variantKey: '', name: null, qty: 1, valueSen: 300, lastOut: '2026-05-01', firstMove: '2025-01-01' },
+      { warehouse: 'PG', category: 'MATTRESS', itemCode: 'C', variantKey: '', name: null, qty: 1, valueSen: 500, lastOut: null, firstMove: '2025-06-01' },
+    ], '2026-10-17', new Map(), new Map());
     expect(r).toMatchObject({ totalSen: 900, deadSen: 800, deadSkus: 2 });
     expect(r.byCategory.find((g) => g.key === 'SOFA')!.ages).toEqual({ d0to90: 100, d91to180: 300, d181to365: 0, d365plus: 0 });
-    expect(r.byWarehouse.find((g) => g.key === 'PG')!.ages.d365plus).toBe(500);
     expect(r.top.map((x) => [x.itemCode, x.idleDays])).toEqual([['C', 503], ['B', 169]]);
   });
 
-  test('dead stock leaves out what open orders are waiting for (the inventory Spare)', () => {
+  test('buffer stock: beyond orders with a date, less 14 days of normal outflow, matched by variant', () => {
     const r = deadStock([
-      { warehouse: 'KL', category: 'SOFA', itemCode: 'A', name: null, qty: 3, valueSen: 300, lastOut: '2026-05-01', firstMove: null },
-      { warehouse: 'PG', category: 'SOFA', itemCode: 'A', name: null, qty: 2, valueSen: 200, lastOut: '2026-01-01', firstMove: null },
-      { warehouse: 'KL', category: 'SOFA', itemCode: 'B', name: null, qty: 1, valueSen: 900, lastOut: '2026-01-01', firstMove: null },
-    ], '2026-10-17', new Map([['A', 3], ['B', 1]]));
-    /* A: 5 on hand, 3 on order, taken from the most idle (PG 2, then KL 1) -> 2 dead in KL. B: fully on order. */
-    expect(r).toMatchObject({ deadSen: 200, deadSkus: 1 });
-    expect(r.top).toEqual([expect.objectContaining({ itemCode: 'A', warehouse: 'KL', qty: 2, onHand: 3, valueSen: 200 })]);
+      /* Bedframe in fabric X: 10 on hand, 3 on dated orders, 4 on undated, sells 0.25 a day -> 14 days = 3.5 -> buffer 3. */
+      { warehouse: 'KL', category: 'BEDFRAME', itemCode: 'BF', variantKey: 'fabric=X', name: null, qty: 10, valueSen: 1000, lastOut: '2026-10-10', firstMove: null },
+      /* Same bedframe in fabric Y, idle a year, no order for Y (an order for X does not count) -> dead. */
+      { warehouse: 'KL', category: 'BEDFRAME', itemCode: 'BF', variantKey: 'fabric=Y', name: null, qty: 2, valueSen: 200, lastOut: '2025-09-01', firstMove: null },
+      /* Fast pillow: 20 on hand, no order, 2 a day -> 14 days = 28 covers it -> no buffer. */
+      { warehouse: 'KL', category: 'ACCESSORY', itemCode: 'P', variantKey: '', name: null, qty: 20, valueSen: 400, lastOut: '2026-10-16', firstMove: null },
+    ], '2026-10-17', new Map([['BF|fabric=X', { scheduled: 3, unscheduled: 4 }]]), new Map([['BF|fabric=X', 0.25], ['P|', 2]]));
+    expect(r).toMatchObject({ deadSen: 200, deadSkus: 1, bufferSen: 300, bufferSkus: 1 });
+    expect(r.bufferTop[0]).toMatchObject({ itemCode: 'BF', variantKey: 'fabric=X', onHand: 10, scheduled: 3, unscheduled: 4, cover: 3.5, bufferQty: 3, valueSen: 300 });
   });
 
   test('turnover: cost sent out in the period, a year of it, over the stock value now', () => {
     const stock = [
-      { warehouse: 'KL', category: 'SOFA', itemCode: 'A', name: 'Sofa A', qty: 10, valueSen: 300_000, lastOut: null, firstMove: null },
-      { warehouse: 'PG', category: 'SOFA', itemCode: 'A', name: 'Sofa A', qty: 5, valueSen: 150_000, lastOut: null, firstMove: null },
-      { warehouse: 'KL', category: 'MATTRESS', itemCode: 'B', name: 'Mat B', qty: 3, valueSen: 50_000, lastOut: null, firstMove: null },
+      { warehouse: 'KL', category: 'SOFA', itemCode: 'A', variantKey: '', name: 'Sofa A', qty: 10, valueSen: 300_000, lastOut: null, firstMove: null },
+      { warehouse: 'PG', category: 'SOFA', itemCode: 'A', variantKey: '', name: 'Sofa A', qty: 5, valueSen: 150_000, lastOut: null, firstMove: null },
+      { warehouse: 'KL', category: 'MATTRESS', itemCode: 'B', variantKey: '', name: 'Mat B', qty: 3, valueSen: 50_000, lastOut: null, firstMove: null },
     ];
     const r = turnoverAndSellers(stock, [
       { warehouse: 'KL', category: 'SOFA', costSen: 36_500, zeroCost: false },

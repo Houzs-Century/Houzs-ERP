@@ -18,7 +18,8 @@ import { scopeToCompany } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { doCountsAsDelivered } from '../shared/do-shipped-states';
 import { procurementCategory, promisedDate, PROCUREMENT_CATEGORIES, type ProcurementCategory } from '../lib/procurement-overview';
-import { procurementPeriod, deadStock, turnoverAndSellers, type PLine } from '../lib/procurement-period';
+import { procurementPeriod, deadStock, turnoverAndSellers, type PLine, type OpenDemand } from '../lib/procurement-period';
+import { computeVariantKey, type VariantAttrs } from '../shared';
 import { attributeStockPos, type StockReceipt, type StockOut } from '../lib/stock-po-attribution';
 
 export const procurementOverview = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -157,7 +158,7 @@ procurementOverview.get('/', async (c) => {
     .order('warehouse_id').order('item_code').order('variant_key').range(f, t));
   if (stock.error) return fail('stock on hand', stock.error);
   const moves = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('inventory_movements')
-    .select('warehouse_id, item_code, variant_key, movement_type, movement_date, created_at, total_cost_sen'), c).order('id').range(f, t));
+    .select('warehouse_id, item_code, variant_key, movement_type, movement_date, created_at, total_cost_sen, qty'), c).order('id').range(f, t));
   if (moves.error) return fail('stock movements', moves.error);
   const keyOf = (r: Row) => `${String(r.warehouse_id)}|${String(r.item_code)}|${String(r.variant_key ?? '')}`;
   const lastOut = new Map<string, string>(); const firstMove = new Map<string, string>();
@@ -176,14 +177,17 @@ procurementOverview.get('/', async (c) => {
   /* Display / showroom stock is on the floor to be seen, not waiting to be
      sold off, so it is not dead stock (owner 2026-10-17). */
   const isShowroom = (r: Row) => /SHOWROOM|DISPLAY/i.test(String(r.warehouse_code ?? ''));
-  /* What open sales orders still wait for, per item: an open line's quantity
-     less what has gone out on a shipped DO — the same claim the inventory
-     page's Spare subtracts. */
+  /* What open sales orders still wait for, per item AND variant (owner: a
+     bedframe or sofa only serves an order for the same fabric and size): an
+     open line's quantity less what has gone out on a shipped DO, split by
+     whether the line has a delivery date — the inventory page's Scheduled /
+     Unscheduled. */
   const SO_DONE = new Set(['DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED', 'DRAFT']);
   const demandLines = await chunkIn<Row>([...new Set((stock.data ?? []).map((r) => String(r.item_code)))], (b, f, t) => scopeToCompany(sb
-    .from('mfg_sales_order_items').select('id, item_code, qty, so:mfg_sales_orders!inner(status)').in('item_code', b).eq('cancelled', false), c).order('id').range(f, t));
+    .from('mfg_sales_order_items').select('id, item_code, item_group, variants, qty, line_delivery_date, so:mfg_sales_orders!inner(status, customer_delivery_date)').in('item_code', b).eq('cancelled', false), c).order('id').range(f, t));
   if (demandLines.error) return fail('open order lines', demandLines.error);
-  const openLines = demandLines.data.filter((r) => { const so = (Array.isArray(r.so) ? r.so[0] : r.so) as Row | null; return !!so && !SO_DONE.has(String(so.status)); });
+  const soOf = (r: Row) => (Array.isArray(r.so) ? r.so[0] : r.so) as Row | null;
+  const openLines = demandLines.data.filter((r) => { const so = soOf(r); return !!so && !SO_DONE.has(String(so.status)); });
   const shippedLines = await chunkIn<Row>(openLines.map((r) => String(r.id)), (b, f, t) => scopeToCompany(sb
     .from('delivery_order_items').select('so_item_id, qty, do:delivery_orders!inner(status)').in('so_item_id', b), c).order('id').range(f, t));
   if (shippedLines.error) return fail('shipped order lines', shippedLines.error);
@@ -192,12 +196,32 @@ procurementOverview.get('/', async (c) => {
     const d = (Array.isArray(l.do) ? l.do[0] : l.do) as Row | null;
     if (d && doCountsAsDelivered(str(d.status))) shipped.set(String(l.so_item_id), (shipped.get(String(l.so_item_id)) ?? 0) + num(l.qty));
   }
-  const openDemand = new Map<string, number>();
-  for (const r of openLines) openDemand.set(String(r.item_code), (openDemand.get(String(r.item_code)) ?? 0) + Math.max(0, num(r.qty) - (shipped.get(String(r.id)) ?? 0)));
+  const openDemand = new Map<string, OpenDemand>();
+  for (const r of openLines) {
+    const left = Math.max(0, num(r.qty) - (shipped.get(String(r.id)) ?? 0));
+    if (left <= 0) continue;
+    const k = `${String(r.item_code)}|${computeVariantKey(str(r.item_group), (r.variants ?? null) as VariantAttrs | null)}`;
+    const g = openDemand.get(k) ?? { scheduled: 0, unscheduled: 0 };
+    if (day(r.line_delivery_date) ?? day(soOf(r)?.customer_delivery_date)) g.scheduled += left; else g.unscheduled += left;
+    openDemand.set(k, g);
+  }
+  /* What normally goes out per day, per item and variant, over the stock
+     movements the ERP has (from the first OUT, at most a year). */
+  const firstOutAll = (moves.data ?? []).reduce<string | null>((a, m) => { if (m.movement_type !== 'OUT') return a; const d = day(m.movement_date) ?? day(m.created_at); return d && (!a || d < a) ? d : a; }, null);
+  const outFrom = firstOutAll && firstOutAll > windowStart ? firstOutAll : windowStart;
+  const outDays = Math.max(1, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${outFrom}T00:00:00Z`)) / 86400000) + 1);
+  const outPerDay = new Map<string, number>();
+  for (const m of moves.data ?? []) {
+    if (m.movement_type !== 'OUT') continue;
+    const d = day(m.movement_date) ?? day(m.created_at);
+    if (!d || d < outFrom) continue;
+    const k = `${String(m.item_code)}|${String(m.variant_key ?? '')}`;
+    outPerDay.set(k, (outPerDay.get(k) ?? 0) + Math.abs(num(m.qty)) / outDays);
+  }
   const dead = deadStock((stock.data ?? []).filter((r) => !isShowroom(r)).map((r) => ({
-    warehouse: String(r.warehouse_code ?? '—'), category: catOf(r), itemCode: String(r.item_code), name: str(r.product_name),
+    warehouse: String(r.warehouse_code ?? '—'), category: catOf(r), itemCode: String(r.item_code), variantKey: String(r.variant_key ?? ''), name: str(r.product_name),
     qty: num(r.qty_on_hand), valueSen: num(r.value_sen), lastOut: lastOut.get(keyOf(r)) ?? null, firstMove: firstMove.get(keyOf(r)) ?? null,
-  })), today, openDemand);
+  })), today, openDemand, outPerDay);
 
   /* ── Turnover and sellers in the period ───────────────────────────────── */
   const whs = await scopeToCompany(sb.from('warehouses').select('id, code'), c);
@@ -244,10 +268,11 @@ procurementOverview.get('/', async (c) => {
     ...turnoverAndSellers(
       (stock.data ?? []).filter((r) => !isService(r)).map((r) => {
         const cat = catOf(r); const model = modelOf(String(r.item_code), cat);
-        return { warehouse: String(r.warehouse_code ?? '—'), category: cat, itemCode: model, name: model === String(r.item_code) ? str(r.product_name) : `${model} (all variants)`, qty: num(r.qty_on_hand), valueSen: num(r.value_sen), lastOut: null, firstMove: null };
+        return { warehouse: String(r.warehouse_code ?? '—'), category: cat, itemCode: model, variantKey: '', name: model === String(r.item_code) ? str(r.product_name) : `${model} (all variants)`, qty: num(r.qty_on_hand), valueSen: num(r.value_sen), lastOut: null, firstMove: null };
       }),
       outs,
-      soLines.data.filter((r) => !r.cancelled && r.item_code && !isService(r)).map((r) => {
+      /* A line given free (gift pillow, bundled bedframe) is not a sale. */
+      soLines.data.filter((r) => !r.cancelled && r.item_code && !isService(r) && num(r.total_sen) > 0).map((r) => {
         const cat = catOf(r); const model = modelOf(String(r.item_code), cat);
         return { itemCode: model, name: model === String(r.item_code) ? str(r.description) : `${model} (all variants)`, category: cat, qty: num(r.qty), salesSen: num(r.total_sen) };
       }),
