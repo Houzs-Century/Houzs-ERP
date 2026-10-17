@@ -142,7 +142,7 @@ export const LorryDetail = ({ lorry, onClose }: { lorry: LorryRow; onClose: () =
 
 // Fleet A1 — the per-lorry delivery capacity ceilings the auto-propose packer
 // reads. Blank max_* => the packer uses its config default (10 sets / RM30k).
-const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
+export const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
   const update = useUpdateLorry();
   const warehouses = useWarehouses();
   const companies = useThreePLCompanies();

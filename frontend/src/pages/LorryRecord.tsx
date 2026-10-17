@@ -29,7 +29,7 @@ import { api } from "../api/client";
 import { cn } from "../lib/utils";
 import { useLorries } from "../vendor/scm/lib/lorries-queries";
 import { todayMY } from "../vendor/shared/format";
-import { PurchaseSection } from "./scm-v2/LorryDetail";
+import { PurchaseSection, CapacitySection } from "./scm-v2/LorryDetail";
 import { NotifyProvider } from "../vendor/scm/components/NotifyDialog";
 import { LorryTodayRoute } from "./fleet/LorryTodayRoute";
 import { RepairSpend } from "./fleet/RepairSpend";
@@ -147,6 +147,9 @@ export function LorryRecord() {
       {/* Vehicle details and purchase are kept HERE now (owner, 2026-10-15), not on
           Coverage & Fleet. Same editor and same writer (PATCH /lorries/:id), moved. */}
       {/* The scm editor reports through the scm dialog, so it carries its provider here. */}
+      {/* Length / width / height and the trip ceilings of an in-house lorry are set here
+          (owner, 2026-10-16); Coverage & Fleet shows the same row. */}
+      {lorryRow && <NotifyProvider><CapacitySection lorry={lorryRow} /></NotifyProvider>}
       {lorryRow ? <NotifyProvider><PurchaseSection lorry={lorryRow} /></NotifyProvider> : (
         <Section title="Vehicle details & purchase">
           <p className="text-[12px] text-ink-muted">{lorries.isLoading ? "Loading…" : "The lorry master row could not be read."}</p>
