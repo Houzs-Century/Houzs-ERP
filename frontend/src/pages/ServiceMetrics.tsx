@@ -237,44 +237,34 @@ export function ServiceMetrics() {
         onDrill={(metric) => setDrill({ metric })}
         funnel={summaryAll.data && summaryAll.data.stage_funnel.length > 0
           ? <StageFunnel data={summaryAll.data.stage_funnel.map((r) => r.stage === "completed" ? (s?.stage_funnel.find((x) => x.stage === "completed") ?? { ...r, total: 0, breached: 0 }) : r)} />
-          : <div className="py-4 text-[12px] text-ink-muted">No open cases right now.</div>} />
-
-      {s && s.csat_trend.length > 0 && (
-        <MetricCard icon={<Smile size={13} />} title="CSAT — 13-week rolling" flat>
-          <CsatTrend data={s.csat_trend} />
-        </MetricCard>
-      )}
-
-      {/* ── Breakdowns ── */}
-      <SectionHeader icon={<PieChart size={15} />} title="Breakdowns" />
-      <DashboardPanels cols={3}>
-        <DonutPanel
-          title="Service Issue Categories"
-          data={mergeByLabel(m?.issue_categories?.map((r) => ({ label: r.category || "Other", value: r.count, color: null })) ?? [])}
-        />
-        <DonutPanel
-          title="Resolution Method Mix"
-          data={m?.resolutions.map((r) => ({ label: r.method === "unset" ? "Not recorded" : resolutionLabel(r.method), value: r.count, color: r.method === "unset" ? "#c9cdc4" : null })) ?? []}
-        />
-        <DashboardBreakdown
-          title="NCR Categories (root-cause)"
-          items={m?.ncr.map((r) => ({ label: ncrLabel(r.category), count: r.count })) ?? []}
-        />
-      </DashboardPanels>
-
-      {/* Suppliers live in the quality summary above (rate, days to close,
-          stages); what is left here is who and what keeps coming back. */}
-      <SectionHeader icon={<AlertTriangle size={15} />} title="Repeat issues" />
-      <div className="mb-3 grid gap-3 lg:grid-cols-2">
-        <RepeatList title="Items with 2 or more cases" empty="No item came back twice in this period."
-          rows={(m?.repeat_items ?? []).map((r) => ({ key: r.item_code, label: r.item_code, cases: r.cases, latest: r.latest, onClick: () => setDrill({ metric: "item_cases", title: `${r.item_code} — ${r.cases} cases in period`, extra: { item_code: r.item_code } }) }))} />
-        <RepeatList title="Customers with 2 or more cases" empty="No customer opened two cases in this period."
-          rows={(m?.repeat_customers ?? []).map((r, i) => ({ key: `${r.customer_name}-${i}`, label: r.customer_name, cases: r.cases, latest: r.latest, onClick: () => {
-            const extra: Record<string, string> = { customer_name: r.customer_name };
-            if (r.phone) extra.phone = r.phone;
-            setDrill({ metric: "customer_cases", title: `${r.customer_name} — ${r.cases} cases in period`, extra });
-          } }))} />
-      </div>
+          : <div className="py-4 text-[12px] text-ink-muted">No open cases right now.</div>}
+        breakdowns={<>
+          <DashboardPanels cols={2}>
+            <DonutPanel
+              title="Service Issue Categories"
+              data={mergeByLabel(m?.issue_categories?.map((r) => ({ label: r.category || "Other", value: r.count, color: null })) ?? [])}
+            />
+            <DonutPanel
+              title="Resolution Method Mix"
+              data={m?.resolutions.map((r) => ({ label: r.method === "unset" ? "Not recorded" : resolutionLabel(r.method), value: r.count, color: r.method === "unset" ? "#c9cdc4" : null })) ?? []}
+            />
+          </DashboardPanels>
+          {s && s.csat_trend.length > 0 && (
+            <MetricCard icon={<Smile size={13} />} title="CSAT — 13-week rolling" flat>
+              <CsatTrend data={s.csat_trend} />
+            </MetricCard>
+          )}
+        </>}
+        repeats={<div className="grid gap-3 lg:grid-cols-2">
+          <RepeatList title="Items with 2 or more cases" empty="No item came back twice in this period."
+            rows={(m?.repeat_items ?? []).map((r) => ({ key: r.item_code, label: r.item_code, cases: r.cases, latest: r.latest, onClick: () => setDrill({ metric: "item_cases", title: `${r.item_code} — ${r.cases} cases in period`, extra: { item_code: r.item_code } }) }))} />
+          <RepeatList title="Customers with 2 or more cases" empty="No customer opened two cases in this period."
+            rows={(m?.repeat_customers ?? []).map((r, i) => ({ key: `${r.customer_name}-${i}`, label: r.customer_name, cases: r.cases, latest: r.latest, onClick: () => {
+              const extra: Record<string, string> = { customer_name: r.customer_name };
+              if (r.phone) extra.phone = r.phone;
+              setDrill({ metric: "customer_cases", title: `${r.customer_name} — ${r.cases} cases in period`, extra });
+            } }))} />
+        </div>} />
 
       {drill && (
         <DrillPanel
