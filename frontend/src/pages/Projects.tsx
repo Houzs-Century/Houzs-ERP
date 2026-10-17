@@ -157,6 +157,8 @@ import {
   type FinanceByProjectResponse,
   FINANCE_STAGE_OPTIONS,
 } from "./projects/financeViewModel";
+import { dashboardPeriods } from "../components/scm-v2/DashboardPeriod";
+import { todayMY } from "../vendor/shared/format";
 import { ProjectOverviewHeadline, ProjectPeriodBar, ProjectOverviewCharts, ProjectDataGapsPanel } from "./projects/ProjectOverviewParts";
 
 interface ProjectDetail {
@@ -1811,9 +1813,9 @@ function FinanceListView() {
   // fetch with `enabled` too so a future refactor can never let it fire (and
   // 403) for a non-viewer. Fail-open when the flag is absent — backend enforces.
   const canProjectFinance = !!user?.project_finance_viewer;
-  const thisYear = new Date().getFullYear();
-  const defaultFrom = `${thisYear}-01-01`;
-  const defaultTo = `${thisYear}-12-31`;
+  // Opens on this month, 1st to today, like every dashboard (owner 2026-10-17).
+  const defaultFrom = dashboardPeriods(todayMY())[0]!.from;
+  const defaultTo = todayMY();
   const [params, setParams] = useStickyFilters(
     "projects-finance",
     FINANCE_LIST_FILTER_KEYS
@@ -2375,7 +2377,6 @@ function FilterField({
 
 function ProjectsAnalyticsView() {
   // Date range default: current year. User can clear or change.
-  const thisYear = new Date().getFullYear();
   const navigate = useNavigate();
   const { user } = useAuth();
   // Belt-and-suspenders finance gate (see FinanceListView): the profitability
@@ -2389,8 +2390,8 @@ function ProjectsAnalyticsView() {
   // defaults to the current year when its param is ABSENT; an explicit empty
   // param (e.g. ?af_from=) means the user cleared that bound.
   const [params, setParams] = useSearchParams();
-  const dateFrom = params.get("af_from") ?? `${thisYear}-01-01`;
-  const dateTo = params.get("af_to") ?? `${thisYear}-12-31`;
+  const dateFrom = params.get("af_from") ?? dashboardPeriods(todayMY())[0]!.from;
+  const dateTo = params.get("af_to") ?? todayMY();
   const brand = params.get("af_brand") ?? "";
   const organizer = params.get("af_org") ?? "";
   const eventTypeId = params.get("af_type") ?? "";

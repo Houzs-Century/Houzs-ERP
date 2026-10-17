@@ -1,7 +1,8 @@
 // Project Overview (owner, 2026-10-16/17): the headline P&L of every project in
 // a period, the Monthly / Quarterly / Yearly picker that sets the period, the
 // period in charts, and the finished events whose books are incomplete.
-import { Toggle, SELECT_CLS, periodAnchors, periodRange, Panel, Th, Td, type Gran } from "../../components/scm-v2/OverviewKit";
+import { Panel, Th, Td } from "../../components/scm-v2/OverviewKit";
+import { DashboardPeriodPicker, resolvePeriod } from "../../components/scm-v2/DashboardPeriod";
 import { Donut, Columns, HBars, SplitBar, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { formatCurrency } from "../../lib/utils";
 import { todayMyt } from "../../vendor/scm/lib/dates";
@@ -29,29 +30,14 @@ export function ProjectOverviewHeadline({ totals }: { totals: ProfitabilityRespo
   );
 }
 
-/** The period the From / To range matches, or null for a custom range. */
-function matchPeriod(from: string, to: string): { gran: Gran; anchor: string } | null {
-  if (!from || !to) return null;
-  for (const gran of ["M", "Q", "Y"] as const) {
-    const r = periodRange(gran, from);
-    if (r.from === from && r.to === to) return { gran, anchor: from };
-  }
-  return null;
-}
-
+/** The dashboard period picker over the page's own From / To. A cleared range
+ *  (all dates) shows as such until a period is picked. */
 export function ProjectPeriodBar({ dateFrom, dateTo, onRange }: { dateFrom: string; dateTo: string; onRange: (from: string, to: string) => void }) {
   const today = todayMyt();
-  const match = matchPeriod(dateFrom, dateTo);
-  const gran: Gran = match?.gran ?? "Y";
-  const pick = (g: Gran, anchor: string) => { const r = periodRange(g, anchor); onRange(r.from, r.to); };
-  const anchors = periodAnchors(gran, today);
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2">
-      <Toggle value={match ? gran : ("" as Gran)} options={[["M", "Monthly"], ["Q", "Quarterly"], ["Y", "Yearly"]]} onChange={(g) => pick(g, periodAnchors(g, today)[0]!)} />
-      <select className={SELECT_CLS} value={match && anchors.includes(match.anchor) ? match.anchor : ""} onChange={(e) => pick(gran, e.target.value)} aria-label="Period">
-        {!(match && anchors.includes(match.anchor)) && <option value="">Custom range</option>}
-        {anchors.map((a) => <option key={a} value={a}>{periodRange(gran, a).label}</option>)}
-      </select>
+      <DashboardPeriodPicker period={resolvePeriod(dateFrom, dateTo, today)} today={today} onChange={onRange} />
+      {(!dateFrom || !dateTo) && <span className="text-[11.5px] text-ink-muted">Showing every date — pick a period to narrow it.</span>}
     </div>
   );
 }
