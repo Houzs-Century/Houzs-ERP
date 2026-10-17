@@ -1100,7 +1100,7 @@ export function MfgSalesOrdersListV2() {
      customer seed below: a brand absent from the loaded page must be pickable. */
   const projectBrandsQ = useProjectBrands();
   const brandNames = useMemo(
-    () => [...new Set((projectBrandsQ.data ?? []).filter((b) => b.active === 1 || b.active === true).map((b) => (b.name ?? "").trim()).filter((n) => n.length > 0))],
+    () => [...new Set((projectBrandsQ.data ?? []).filter((b) => b.active === 1 || b.active === true).map((b) => b.name.trim()).filter((n) => n.length > 0))],
     [projectBrandsQ.data],
   );
   /* Seed the Customer Name funnel with every customer (not only the loaded
