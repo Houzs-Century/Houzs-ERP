@@ -75,7 +75,7 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, onDri
         </Panel>
         <Panel title="How old the open cases are" hint={`${openTotal} open cases today · days since the complaint`}>
           {d && <HBars format={(x) => `${x} cases`} empty="No open cases."
-            rows={d.ages.map((a, i) => ({ key: a.label, label: a.label, value: a.count, color: AGE_COLOR[i] ?? PALETTE[0]!, right: `${a.count} · ${openTotal ? Math.round((a.count / openTotal) * 100) : 0}%`, onClick: i >= 4 ? () => onDrill("over_1_month") : null }))} />}
+            rows={d.ages.map((a, i) => ({ key: a.label, label: a.label, value: a.count, color: AGE_COLOR[i] ?? PALETTE[0]!, right: `${a.count} ${a.count === 1 ? "case" : "cases"}`, onClick: i >= 4 ? () => onDrill("over_1_month") : null }))} />}
           {d && <p className="mt-2 text-[11.5px] text-err">{d.ages.slice(4).reduce((a, x) => a + x.count, 0)} open cases are over a month old (click a bar over 30 days to list them).</p>}
         </Panel>
       </div>

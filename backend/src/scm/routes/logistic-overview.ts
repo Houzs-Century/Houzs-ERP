@@ -121,12 +121,13 @@ logisticOverview.get('/', async (c) => {
   const pFrom = qFrom && ISO.test(qFrom) ? qFrom : `${today.slice(0, 7)}-01`;
   const pTo = qTo && ISO.test(qTo) ? qTo : today;
   const periodDos = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
-    .select('id, status, do_date, local_total_sen, state, customer_state')
+    .select('id, status, do_date, local_total_sen, state, customer_state, vehicle')
     .gte('do_date', pFrom).lte('do_date', pTo)
     .in('status', ['LOADED', 'DELIVERED'])), c).order('id').range(f, t));
   if (periodDos.error) return fail('delivery orders in the period', periodDos.error);
   const doIds = (periodDos.data ?? []).map((d) => String(d.id));
-  /* The lorry: the DO's crew record first, else the lorry run it was put on. */
+  /* The lorry: the DO's crew record first, else the lorry run it was put on,
+     else the Vehicle typed on the DO itself. */
   const crew = await chunkIn<Row>(doIds, (b, f, t) => scopeToCompany(sb.from('delivery_order_crew')
     .select('do_id, lorry_id, lorry_plate').in('do_id', b), c).order('id').range(f, t));
   if (crew.error) return fail('delivery crews', crew.error);
@@ -145,10 +146,11 @@ logisticOverview.get('/', async (c) => {
   const fleet = await scopeToCompany(sb.from('lorries').select('id, plate, is_internal, active'), c);
   if (fleet.error) return fail('lorries', fleet.error);
   const plateOf = new Map((fleet.data as Row[]).map((l) => [String(l.id), String(l.plate ?? '—')]));
+  const fleetByNorm = new Map((fleet.data as Row[]).map((l) => [String(l.plate ?? '').replace(/\s+/g, '').toUpperCase(), String(l.plate ?? '—')]));
   const fleetLorries = (fleet.data as Row[]).filter((l) => l.active !== false).map((l) => ({ plate: String(l.plate ?? '—'), internal: l.is_internal === true }));
   const pDos: PeriodDo[] = (periodDos.data ?? []).map((d) => ({
     id: String(d.id), doDate: String(d.do_date).slice(0, 10), status: String(d.status), amountSen: num(d.local_total_sen),
-    state: str(d.state) || str(d.customer_state), lorry: (() => { const l = lorryOfDo.get(String(d.id)); return l ? plateOf.get(l) ?? l : null; })(),
+    state: str(d.state) || str(d.customer_state), lorry: (() => { const l = lorryOfDo.get(String(d.id)); if (l) return plateOf.get(l) ?? l; const v = String(d.vehicle ?? '').replace(/\s+/g, '').toUpperCase(); return v ? fleetByNorm.get(v) ?? v : null; })(),
   }));
   const doLines = await chunkIn<Row>(doIds, (b, f, t) => scopeToCompany(sb.from('delivery_order_items')
     .select('delivery_order_id, item_code, item_group, line_total_sen').in('delivery_order_id', b), c).order('id').range(f, t));
