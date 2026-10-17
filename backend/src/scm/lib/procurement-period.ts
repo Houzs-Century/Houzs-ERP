@@ -158,36 +158,53 @@ export function procurementPeriod(lines: PLine[], from: string, to: string, toda
   };
 }
 
-/* Dead stock (owner, 2026-10-17): stock on hand by how long since it last went
-   out. Idle days run from the last OUT movement of that item in that warehouse,
-   or — never sent out — from its first movement there. A balance is a snapshot,
-   so this is as of today whatever the period. */
+/* Dead stock (owner, 2026-10-17): stock on hand that has not gone out for
+   over 90 days AND that no open order is waiting for — the inventory page's
+   "Spare". Idle days run from the last OUT movement of that item in that
+   warehouse, or — never sent out — from its first movement there. Open orders
+   claim an item's stock first, taken from the most idle rows first, so only
+   what is left over counts as dead. A balance is a snapshot, so this is as of
+   today whatever the period. */
 export interface StockRow { warehouse: string; category: string; itemCode: string; name: string | null; qty: number; valueSen: number; lastOut: string | null; firstMove: string | null }
 type Age = 'd0to90' | 'd91to180' | 'd181to365' | 'd365plus';
 const AGES: Age[] = ['d0to90', 'd91to180', 'd181to365', 'd365plus'];
 const ageOf = (idle: number | null): Age => (idle == null || idle <= 90 ? 'd0to90' : idle <= 180 ? 'd91to180' : idle <= 365 ? 'd181to365' : 'd365plus');
 
-export function deadStock(rows: StockRow[], today: string) {
+/** `openDemand`: per item code, the quantity open sales orders still wait for. */
+export function deadStock(rows: StockRow[], today: string, openDemand: Map<string, number>) {
   const idleOf = (r: StockRow) => { const d = r.lastOut ?? r.firstMove; return d ? daysBetween(d, today) : null; };
+  /* Each row's dead quantity: idle over 90 days, after the item's open orders took their share. */
+  const deadQty = new Map<StockRow, number>();
+  const byItem = new Map<string, StockRow[]>();
+  for (const r of rows) byItem.set(r.itemCode, [...(byItem.get(r.itemCode) ?? []), r]);
+  for (const [code, rs] of byItem) {
+    let claim = openDemand.get(code) ?? 0;
+    for (const r of [...rs].sort((x, y) => (idleOf(y) ?? -1) - (idleOf(x) ?? -1))) {
+      const taken = Math.min(r.qty, Math.max(0, claim)); claim -= taken;
+      deadQty.set(r, ageOf(idleOf(r)) === 'd0to90' ? 0 : r.qty - taken);
+    }
+  }
+  const deadSenOf = (r: StockRow) => (r.qty > 0 ? Math.round((r.valueSen * (deadQty.get(r) ?? 0)) / r.qty) : 0);
   const by = (keyOf: (r: StockRow) => string) => {
     const map = new Map<string, { key: string; skus: number; valueSen: number; deadSkus: number; deadSen: number; ages: Record<Age, number> }>();
     for (const r of rows) {
       const k = keyOf(r);
       const g = map.get(k) ?? { key: k, skus: 0, valueSen: 0, deadSkus: 0, deadSen: 0, ages: Object.fromEntries(AGES.map((a) => [a, 0])) as Record<Age, number> };
-      const age = ageOf(idleOf(r));
-      g.skus += 1; g.valueSen += r.valueSen; g.ages[age] += r.valueSen;
-      if (age !== 'd0to90') { g.deadSkus += 1; g.deadSen += r.valueSen; }
+      const ds = deadSenOf(r);
+      g.skus += 1; g.valueSen += r.valueSen;
+      g.ages[ds > 0 ? ageOf(idleOf(r)) : 'd0to90'] += ds; g.ages.d0to90 += r.valueSen - ds;
+      if (ds > 0) { g.deadSkus += 1; g.deadSen += ds; }
       map.set(k, g);
     }
     return [...map.values()].sort((a, b) => b.deadSen - a.deadSen);
   };
-  const dead = rows.filter((r) => ageOf(idleOf(r)) !== 'd0to90');
+  const dead = rows.filter((r) => (deadQty.get(r) ?? 0) > 0);
   return {
     asOf: today,
     totalSen: rows.reduce((a, r) => a + r.valueSen, 0), skus: rows.length,
-    deadSen: dead.reduce((a, r) => a + r.valueSen, 0), deadSkus: dead.length,
+    deadSen: dead.reduce((a, r) => a + deadSenOf(r), 0), deadSkus: dead.length,
     byCategory: by((r) => r.category), byWarehouse: by((r) => r.warehouse),
-    top: dead.map((r) => ({ ...r, idleDays: idleOf(r) })).sort((a, b) => b.valueSen - a.valueSen).slice(0, 50),
+    top: dead.map((r) => ({ ...r, qty: deadQty.get(r) ?? 0, valueSen: deadSenOf(r), onHand: r.qty, idleDays: idleOf(r) })).sort((a, b) => b.valueSen - a.valueSen).slice(0, 50),
   };
 }
 

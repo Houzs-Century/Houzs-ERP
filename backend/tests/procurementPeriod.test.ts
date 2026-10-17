@@ -77,11 +77,22 @@ describe('procurement period', () => {
       { warehouse: 'KL', category: 'SOFA', itemCode: 'A', name: null, qty: 1, valueSen: 100, lastOut: '2026-10-01', firstMove: '2025-01-01' },
       { warehouse: 'KL', category: 'SOFA', itemCode: 'B', name: null, qty: 1, valueSen: 300, lastOut: '2026-05-01', firstMove: '2025-01-01' },
       { warehouse: 'PG', category: 'MATTRESS', itemCode: 'C', name: null, qty: 1, valueSen: 500, lastOut: null, firstMove: '2025-06-01' },
-    ], '2026-10-17');
+    ], '2026-10-17', new Map());
     expect(r).toMatchObject({ totalSen: 900, deadSen: 800, deadSkus: 2 });
     expect(r.byCategory.find((g) => g.key === 'SOFA')!.ages).toEqual({ d0to90: 100, d91to180: 300, d181to365: 0, d365plus: 0 });
     expect(r.byWarehouse.find((g) => g.key === 'PG')!.ages.d365plus).toBe(500);
     expect(r.top.map((x) => [x.itemCode, x.idleDays])).toEqual([['C', 503], ['B', 169]]);
+  });
+
+  test('dead stock leaves out what open orders are waiting for (the inventory Spare)', () => {
+    const r = deadStock([
+      { warehouse: 'KL', category: 'SOFA', itemCode: 'A', name: null, qty: 3, valueSen: 300, lastOut: '2026-05-01', firstMove: null },
+      { warehouse: 'PG', category: 'SOFA', itemCode: 'A', name: null, qty: 2, valueSen: 200, lastOut: '2026-01-01', firstMove: null },
+      { warehouse: 'KL', category: 'SOFA', itemCode: 'B', name: null, qty: 1, valueSen: 900, lastOut: '2026-01-01', firstMove: null },
+    ], '2026-10-17', new Map([['A', 3], ['B', 1]]));
+    /* A: 5 on hand, 3 on order, taken from the most idle (PG 2, then KL 1) -> 2 dead in KL. B: fully on order. */
+    expect(r).toMatchObject({ deadSen: 200, deadSkus: 1 });
+    expect(r.top).toEqual([expect.objectContaining({ itemCode: 'A', warehouse: 'KL', qty: 2, onHand: 3, valueSen: 200 })]);
   });
 
   test('turnover: cost sent out in the period, a year of it, over the stock value now', () => {

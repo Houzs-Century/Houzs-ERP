@@ -16,6 +16,7 @@ import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
+import { doCountsAsDelivered } from '../shared/do-shipped-states';
 import { procurementCategory, promisedDate, PROCUREMENT_CATEGORIES, type ProcurementCategory } from '../lib/procurement-overview';
 import { procurementPeriod, deadStock, turnoverAndSellers, type PLine } from '../lib/procurement-period';
 import { attributeStockPos, type StockReceipt, type StockOut } from '../lib/stock-po-attribution';
@@ -175,10 +176,28 @@ procurementOverview.get('/', async (c) => {
   /* Display / showroom stock is on the floor to be seen, not waiting to be
      sold off, so it is not dead stock (owner 2026-10-17). */
   const isShowroom = (r: Row) => /SHOWROOM|DISPLAY/i.test(String(r.warehouse_code ?? ''));
+  /* What open sales orders still wait for, per item: an open line's quantity
+     less what has gone out on a shipped DO — the same claim the inventory
+     page's Spare subtracts. */
+  const SO_DONE = new Set(['DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED', 'DRAFT']);
+  const demandLines = await chunkIn<Row>([...new Set((stock.data ?? []).map((r) => String(r.item_code)))], (b, f, t) => scopeToCompany(sb
+    .from('mfg_sales_order_items').select('id, item_code, qty, so:mfg_sales_orders!inner(status)').in('item_code', b).eq('cancelled', false), c).order('id').range(f, t));
+  if (demandLines.error) return fail('open order lines', demandLines.error);
+  const openLines = demandLines.data.filter((r) => { const so = (Array.isArray(r.so) ? r.so[0] : r.so) as Row | null; return !!so && !SO_DONE.has(String(so.status)); });
+  const shippedLines = await chunkIn<Row>(openLines.map((r) => String(r.id)), (b, f, t) => scopeToCompany(sb
+    .from('delivery_order_items').select('so_item_id, qty, do:delivery_orders!inner(status)').in('so_item_id', b), c).order('id').range(f, t));
+  if (shippedLines.error) return fail('shipped order lines', shippedLines.error);
+  const shipped = new Map<string, number>();
+  for (const l of shippedLines.data) {
+    const d = (Array.isArray(l.do) ? l.do[0] : l.do) as Row | null;
+    if (d && doCountsAsDelivered(str(d.status))) shipped.set(String(l.so_item_id), (shipped.get(String(l.so_item_id)) ?? 0) + num(l.qty));
+  }
+  const openDemand = new Map<string, number>();
+  for (const r of openLines) openDemand.set(String(r.item_code), (openDemand.get(String(r.item_code)) ?? 0) + Math.max(0, num(r.qty) - (shipped.get(String(r.id)) ?? 0)));
   const dead = deadStock((stock.data ?? []).filter((r) => !isShowroom(r)).map((r) => ({
     warehouse: String(r.warehouse_code ?? '—'), category: catOf(r), itemCode: String(r.item_code), name: str(r.product_name),
     qty: num(r.qty_on_hand), valueSen: num(r.value_sen), lastOut: lastOut.get(keyOf(r)) ?? null, firstMove: firstMove.get(keyOf(r)) ?? null,
-  })), today);
+  })), today, openDemand);
 
   /* ── Turnover and sellers in the period ───────────────────────────────── */
   const whs = await scopeToCompany(sb.from('warehouses').select('id, code'), c);
