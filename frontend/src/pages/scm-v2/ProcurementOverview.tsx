@@ -1,8 +1,10 @@
-// Procurement Overview (owner, 2026-10-16) — replaces the PO CHASING LIST
-// sheet: open PO lines and how late they are (the sheet's four buckets) by
-// category and supplier, the PO raised and supplier bills received in a
-// period, and how long each category really takes to deliver.
-// Data: GET /api/scm/procurement-overview (backend routes/procurement-overview.ts).
+// Procurement Overview (owner, 2026-10-16/17) — replaces the PO CHASING LIST
+// sheet. Every figure follows the period picked at the top: PO raised, due,
+// received and billed in it; what was still to come and how late at its last
+// day; the overdue and arriving-soon lists; how long suppliers really take and
+// how early we order against the customer's date; and dead stock.
+// By category and By supplier are one switch over the same layout.
+// Data: GET /api/scm/procurement-overview (backend lib/procurement-period.ts).
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -10,237 +12,298 @@ import { PageHeader } from "../../components/Layout";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
-import { Th, Td, Panel, Toggle, SELECT_CLS } from "../../components/scm-v2/OverviewKit";
+import { Th, Td, Panel, Toggle } from "../../components/scm-v2/OverviewKit";
 import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
-import { Donut, Columns, HBars, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
+import { Columns, Donut, SplitBar, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
 
-type Bucket = "late5" | "late0to4" | "due2to7" | "due8plus";
-type BucketRow = { key: string; lines: number; remainingQty: number; remainingSen: number; buckets: Record<Bucket, number> };
-type Chase = { poId: string; poNumber: string; supplier: string; category: string; itemCode: string | null; itemDesc: string | null; location: string | null; soDocNo: string | null; poDate: string | null; remainingQty: number; originalDue: string | null; promised: string | null; revised: string[]; daysLate: number; daysLateOriginal: number | null };
-type Lead = { key: string; receipts: number; avgDays: number | null; p80Days: number | null; onTimePct: number | null; avgDaysLate: number | null; rejectPct: number | null; current?: number | null; suggested?: number | null; verdict?: "too_short" | "ok" | "can_shorten" | "not_enough_data" };
-type Period = { totalSen: number; count: number; bySupplier: Record<string, number>; byCategory: Record<string, number> };
+type BucketKey = "late5" | "late0to4" | "due2to7" | "due8plus";
+type Group = {
+  key: string;
+  raised: { pos: number; lines: number; sen: number; receivedSen: number; openSen: number };
+  due: { lines: number; sen: number; receivedSen: number; openSen: number };
+  receivedSen: number;
+  open: { lines: number; sen: number; late: number; lateSen: number; buckets: Record<BucketKey, { lines: number; sen: number }> };
+  supplierLead: { receipts: number; avgDays: number | null; p80Days: number | null; onTimePct: number | null; latePct: number | null; onTimeAmountPct: number | null; avgDaysLate: number | null };
+  ordering: { lines: number; avgOrderAheadDays: number | null; avgDueBeforeNeedDays: number | null; measured: number; avgArrivedBeforeNeedDays: number | null; p20ArrivedBeforeNeedDays: number | null; canOrderLaterDays: number | null };
+};
+type OpenLine = { poId: string; poNumber: string; poDate: string; supplier: string; category: string; itemCode: string | null; itemDesc: string | null; soDocNo: string | null; openQty: number; openSen: number; originalDue: string | null; promised: string | null; needDate: string | null; daysLate: number };
+type Ages = { d0to90: number; d91to180: number; d181to365: number; d365plus: number };
+type StockGroup = { key: string; skus: number; valueSen: number; deadSkus: number; deadSen: number; ages: Ages };
 type Payload = {
-  today: string; from: string; to: string; categories: string[];
-  open: { poCount: number; lineCount: number; remainingQty: number; remainingSen: number; late5Lines: number; late5LinesOriginal: number; late5Suppliers: number; worstDaysLate: number };
-  poRaised: Period; piReceived: Period;
-  overdueByCategory: BucketRow[]; overdueBySupplier: BucketRow[]; overdueByCategoryOriginal: BucketRow[]; overdueBySupplierOriginal: BucketRow[];
-  chasing: Chase[]; leadByCategory: Lead[]; leadBySupplier: Lead[]; receiptsSince: string;
+  today: string; from: string; to: string; asOf: string; basis: "original" | "promised";
+  categories: string[]; currentLead: Partial<Record<string, number>>;
+  billed: { totalSen: number; count: number; bySupplier: Record<string, number>; byCategory: Record<string, number> };
+  total: Group; byCategory: Group[]; bySupplier: Group[]; overdue: OpenLine[]; dueSoon: OpenLine[];
+  deadStock: { asOf: string; totalSen: number; skus: number; deadSen: number; deadSkus: number; byCategory: StockGroup[]; byWarehouse: StockGroup[]; top: Array<{ warehouse: string; category: string; itemCode: string; name: string | null; qty: number; valueSen: number; idleDays: number | null }> };
 };
 
-const BUCKETS: Array<{ k: Bucket; label: string; tone: string }> = [
-  { k: "late5", label: "Late ≥ 5 days", tone: "text-err" },
-  { k: "late0to4", label: "Late 4 days – due now", tone: "text-warning-text" },
-  { k: "due2to7", label: "Due in 2–7 days", tone: "text-ink" },
-  { k: "due8plus", label: "Due in 8+ days", tone: "text-synced" },
+const BUCKETS: Array<{ k: BucketKey; label: string; color: string }> = [
+  { k: "late5", label: "Late 5+ days", color: TONE.bad },
+  { k: "late0to4", label: "Late 4 days – due tomorrow", color: TONE.warn },
+  { k: "due2to7", label: "Due in 2–7 days", color: "#8fb3ae" },
+  { k: "due8plus", label: "Due in 8+ days", color: TONE.good },
 ];
-const BUCKET_COLOR = [TONE.bad, TONE.warn, "#8fb3ae", TONE.good];
-// Money reads like AutoCount everywhere: "RM 15,000.00" (owner 2026-09-15).
-const rm = fmtSen;
+const AGES: Array<{ k: keyof Ages; label: string; color: string }> = [
+  { k: "d91to180", label: "91–180 days", color: TONE.warn },
+  { k: "d181to365", label: "181–365 days", color: "#c2603d" },
+  { k: "d365plus", label: "Over a year", color: TONE.bad },
+];
 const CAT_LABEL: Record<string, string> = { MATTRESS: "Mattress", BEDFRAME: "Bedframe", SOFA: "Sofa", ACCESSORY: "Accessories", DINING: "Dining", OTHERS: "Others" };
-const VERDICT: Record<string, [string, string]> = { too_short: ["Set too short", "bg-err/10 text-err"], ok: ["About right", "bg-synced/10 text-synced"], can_shorten: ["Can shorten", "bg-warning-text/10 text-warning-text"], not_enough_data: ["Too few receipts", "bg-surface-2 text-ink-muted"] };
+const rm = fmtSen;
+const days = (x: number | null) => (x == null ? "—" : `${x}`);
+const pctTxt = (x: number | null) => (x == null ? "—" : `${x}%`);
+const share = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : "—");
+const MIN_RECEIPTS = 10;
 
 /** `embedded`: inside the phone shell, which draws its own header. */
 export function ProcurementOverview({ embedded }: { embedded: boolean }) {
   const today = todayMY();
-  const [range, setRange] = useDashboardPeriod(today, "from", "to", []);
+  const [period, setPeriod] = useDashboardPeriod(today, "from", "to", []);
+  /* The owner's sheet counts days late from the date first put on the PO;
+     chasing works off the date the supplier promises now. Both are offered. */
+  const [basis, setBasis] = useState<"original" | "promised">("original");
+  const [by, setBy] = useState<"category" | "supplier">("category");
+  const [focus, setFocus] = useState<string | null>(null);
   const q = useQuery({
-    queryKey: ["procurement-overview", range.from, range.to],
-    queryFn: () => authedFetch<Payload>(`/procurement-overview?from=${range.from}&to=${range.to}`),
+    queryKey: ["procurement-overview", period.from, period.to, basis],
+    queryFn: () => authedFetch<Payload>(`/procurement-overview?from=${period.from}&to=${period.to}&basis=${basis}`),
     staleTime: 60_000,
   });
   const d = q.data;
-  const [overBy, setOverBy] = useState<"supplier" | "category">("supplier");
-  /* Owner's sheet counts days late from the date first put on the PO; chasing
-     works off the date the supplier promises now. Both are shown. */
-  const [basis, setBasis] = useState<"original" | "promised">("original");
-  const [moneyBy, setMoneyBy] = useState<"category" | "supplier">("category");
-  const [leadBy, setLeadBy] = useState<"category" | "supplier">("category");
-  const [chaseSup, setChaseSup] = useState("");
-  const [chaseCat, setChaseCat] = useState("");
+  const label = (k: string) => (by === "category" ? CAT_LABEL[k] ?? k : k);
+  const groups = (by === "category" ? d?.byCategory : d?.bySupplier) ?? [];
+  const billedOf = (k: string) => (by === "category" ? d?.billed.byCategory[k] : d?.billed.bySupplier[k]) ?? 0;
+  const t = d?.total;
+  const matches = (l: OpenLine) => !focus || (by === "category" ? l.category === focus : l.supplier === focus);
+  const overdue = (d?.overdue ?? []).filter(matches);
+  const dueSoon = (d?.dueSoon ?? []).filter(matches);
+  const top = groups.slice(0, 8);
+  const asOfNote = d ? (d.asOf === today ? "as of today" : `as of ${d.asOf}, the period's last day`) : "";
 
-  const overRows = overBy === "supplier"
-    ? (basis === "original" ? d?.overdueBySupplierOriginal : d?.overdueBySupplier) ?? []
-    : (basis === "original" ? d?.overdueByCategoryOriginal : d?.overdueByCategory) ?? [];
-  const overTotal = useMemo(() => overRows.reduce((a, r) => ({ lines: a.lines + r.lines, qty: a.qty + r.remainingQty, b: BUCKETS.map((b, i) => a.b[i]! + r.buckets[b.k]) }), { lines: 0, qty: 0, b: [0, 0, 0, 0] }), [overRows]);
-  const moneyRows = useMemo(() => {
-    if (!d) return [];
-    const src = moneyBy === "category" ? d.overdueByCategory : d.overdueBySupplier;
-    const keys = new Set([...src.map((r) => r.key), ...Object.keys(moneyBy === "category" ? d.poRaised.byCategory : d.poRaised.bySupplier), ...Object.keys(moneyBy === "category" ? d.piReceived.byCategory : d.piReceived.bySupplier)]);
-    return [...keys].map((k) => {
-      const o = src.find((r) => r.key === k);
-      return { key: k, lines: o?.lines ?? 0, remainingSen: o?.remainingSen ?? 0, po: (moneyBy === "category" ? d.poRaised.byCategory : d.poRaised.bySupplier)[k] ?? 0, pi: (moneyBy === "category" ? d.piReceived.byCategory : d.piReceived.bySupplier)[k] ?? 0 };
-    }).sort((a, b) => b.remainingSen + b.po - (a.remainingSen + a.po));
-  }, [d, moneyBy]);
-  const lateOf = (c: Chase) => (basis === "original" ? c.daysLateOriginal ?? c.daysLate : c.daysLate);
-  const chasing = (d?.chasing ?? []).slice().sort((a, b) => lateOf(b) - lateOf(a)).filter((c) => (!chaseSup || c.supplier === chaseSup) && (!chaseCat || c.category === chaseCat));
-  const sel = SELECT_CLS;
-  const catRows = (basis === "original" ? d?.overdueByCategoryOriginal : d?.overdueByCategory) ?? [];
-  const supRows = ((basis === "original" ? d?.overdueBySupplierOriginal : d?.overdueBySupplier) ?? []).slice().sort((a, b) => b.remainingSen - a.remainingSen);
   const insights = useMemo(() => {
     if (!d) return [];
     const out: Array<{ tone: string; text: string }> = [];
-    const late = basis === "original" ? d.open.late5LinesOriginal : d.open.late5Lines;
-    if (late) out.push({ tone: TONE.bad, text: `${late} open lines are 5+ days late across ${d.open.late5Suppliers} suppliers; the worst is ${d.open.worstDaysLate} days. Chase them from the list below.` });
-    const shorten = d.leadByCategory.filter((l) => l.verdict === "can_shorten");
-    if (shorten.length) out.push({ tone: TONE.warn, text: `Lead time set longer than needed for ${shorten.map((l) => `${CAT_LABEL[l.key] ?? l.key} (${l.current} → ${l.suggested} days)`).join(", ")}. A long setting makes MRP order earlier and holds stock longer.` });
-    const tooShort = d.leadByCategory.filter((l) => l.verdict === "too_short");
-    if (tooShort.length) out.push({ tone: TONE.bad, text: `Lead time set too short for ${tooShort.map((l) => `${CAT_LABEL[l.key] ?? l.key} (${l.current} → ${l.suggested} days)`).join(", ")}: orders will keep arriving after the date promised to customers.` });
-    const unreliable = d.leadBySupplier.filter((l) => l.receipts >= 10 && l.onTimePct != null && l.onTimePct < 60);
-    if (unreliable.length) out.push({ tone: TONE.warn, text: `On time under 60%: ${unreliable.slice(0, 4).map((l) => `${l.key} ${l.onTimePct}%`).join(", ")}.` });
-    const rejects = d.leadBySupplier.filter((l) => l.receipts >= 10 && (l.rejectPct ?? 0) >= 3);
-    if (rejects.length) out.push({ tone: TONE.warn, text: `Rejected 3% or more at receiving: ${rejects.slice(0, 4).map((l) => `${l.key} ${l.rejectPct}%`).join(", ")}.` });
-    if (d.poRaised.totalSen > 0 && d.piReceived.totalSen / d.poRaised.totalSen < 0.5) out.push({ tone: TONE.main, text: `Supplier bills cover ${Math.round((d.piReceived.totalSen / d.poRaised.totalSen) * 100)}% of the PO raised in ${range.label}; the rest is still to be billed or delivered.` });
+    const tt = d.total;
+    if (tt.due.openSen > 0) out.push({ tone: TONE.bad, text: `${rm(tt.due.openSen)} of the ${rm(tt.due.sen)} due in this period has not arrived (${share(tt.due.openSen, tt.due.sen)}).` });
+    if (tt.open.late > 0) out.push({ tone: TONE.bad, text: `${tt.open.late} open lines are past their date ${asOfNote}, worth ${rm(tt.open.lateSen)}. They are listed under Overdue.` });
+    const later = d.byCategory.filter((g) => (g.ordering.canOrderLaterDays ?? 0) >= 3);
+    if (later.length) out.push({ tone: TONE.warn, text: `Goods arrive well before the customer needs them: ${later.map((g) => `${CAT_LABEL[g.key] ?? g.key} could be ordered ${g.ordering.canOrderLaterDays} days later`).join(", ")}, and 80% of lines would still arrive in time.` });
+    const unreliable = d.bySupplier.filter((g) => g.supplierLead.receipts >= MIN_RECEIPTS && (g.supplierLead.onTimePct ?? 100) < 60);
+    if (unreliable.length) out.push({ tone: TONE.warn, text: `On time under 60% this period: ${unreliable.slice(0, 4).map((g) => `${g.key} ${g.supplierLead.onTimePct}%`).join(", ")}.` });
+    if (d.deadStock.deadSen > 0) out.push({ tone: TONE.warn, text: `${rm(d.deadStock.deadSen)} of stock has not gone out in over 90 days (${d.deadStock.deadSkus} items, ${share(d.deadStock.deadSen, d.deadStock.totalSen)} of stock value).` });
     return out;
-  }, [d, basis, range.label]);
+  }, [d, asOfNote]);
 
   return (
     <div className="space-y-4">
       {!embedded && <PageHeader eyebrow="Supply chain · Procurement" title="Procurement Overview"
-        description="Open purchase orders and how late they are, the PO raised and supplier bills received in the period, and how long each category really takes to arrive." />}
+        description="What we ordered, what was due and what arrived in the period, what is still to come and late, how long suppliers really take, how early we order, and dead stock." />}
 
       <div className="flex flex-wrap items-center gap-2">
-        <DashboardPeriodPicker period={range} today={today} onChange={setRange} />
-        <span className="text-[11.5px] text-ink-muted">Open PO and lateness are as of today; PO raised and bills follow the period.</span>
+        <DashboardPeriodPicker period={period} today={today} onChange={(f, to) => { setFocus(null); setPeriod(f, to); }} />
+        <Toggle value={basis} options={[["original", "Late vs first date"], ["promised", "Late vs latest promise"]]} onChange={setBasis} />
+        {q.isFetching && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
       </div>
-
       {q.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {(q.error as Error).message}</div>}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Tile label="Open PO" value={d ? `${d.open.poCount}` : "…"} note={d ? `${d.open.lineCount} lines · ${d.open.remainingQty.toLocaleString()} pcs · ${rm(d.open.remainingSen)} owed` : ""} tone="main" trend={null} onClick={null} />
-        <Tile label={`PO raised · ${range.label}`} value={d ? rm(d.poRaised.totalSen) : "…"} note={d ? `${d.poRaised.count} purchase orders` : ""} tone="brass" trend={null} onClick={null} />
-        <Tile label={`Supplier bills (PI) · ${range.label}`} value={d ? rm(d.piReceived.totalSen) : "…"} note={d ? `${d.piReceived.count} invoices · ${d.poRaised.totalSen ? Math.round((d.piReceived.totalSen / d.poRaised.totalSen) * 100) : 0}% of PO raised` : ""} tone="main" trend={null} onClick={null} />
-        <Tile label="Late ≥ 5 days" value={d ? `${basis === "original" ? d.open.late5LinesOriginal : d.open.late5Lines} lines` : "…"} note={d ? (basis === "original" ? `against the first promised date · ${d.open.late5Lines} against the latest` : `against the latest promised date · ${d.open.late5LinesOriginal} against the first`) : ""} tone={d && (basis === "original" ? d.open.late5LinesOriginal : d.open.late5Lines) ? "bad" : "good"} trend={null} onClick={() => document.getElementById("chasing")?.scrollIntoView({ behavior: "smooth" })} />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+        <Tile label={`PO raised · ${period.label}`} value={t ? rm(t.raised.sen) : "…"} tone="brass" trend={null} onClick={null}
+          note={t ? `${t.raised.pos} POs · ${rm(t.raised.receivedSen)} received · ${rm(t.raised.openSen)} still to come` : ""} />
+        <Tile label="Due in the period" value={t ? rm(t.due.sen) : "…"} tone={t?.due.openSen ? "bad" : "good"} trend={null} onClick={null}
+          note={t ? `${rm(t.due.receivedSen)} received · ${rm(t.due.openSen)} not yet received` : ""} />
+        <Tile label="Goods received in the period" value={t ? rm(t.receivedSen) : "…"} tone="main" trend={null} onClick={null}
+          note={t ? `${t.supplierLead.receipts} receipt lines` : ""} />
+        <Tile label="Supplier bills (PI) in the period" value={d ? rm(d.billed.totalSen) : "…"} tone="main" trend={null} onClick={null}
+          note={d ? `${d.billed.count} invoices` : ""} />
+        <Tile label="Still to come" value={t ? rm(t.open.sen) : "…"} tone={t?.open.late ? "warn" : "main"} trend={null} onClick={() => document.getElementById("overdue")?.scrollIntoView({ behavior: "smooth" })}
+          note={t ? `${t.open.lines} open lines ${asOfNote} · ${t.open.late} late (${rm(t.open.lateSen)})` : ""} />
+        <Tile label="Dead stock · no sale in 90+ days" value={d ? rm(d.deadStock.deadSen) : "…"} tone={d?.deadStock.deadSen ? "warn" : "good"} trend={null} onClick={() => document.getElementById("dead")?.scrollIntoView({ behavior: "smooth" })}
+          note={d ? `${d.deadStock.deadSkus} items · ${share(d.deadStock.deadSen, d.deadStock.totalSen)} of ${rm(d.deadStock.totalSen)} stock · as of today` : ""} />
       </div>
 
-      {d && (
-        <div className="grid gap-4 lg:grid-cols-3">
-          <Panel title="Still owed by category" hint="quantity to come × PO price">
-            <Donut size={124} format={rm} center={{ value: String(d.open.lineCount), label: "open lines" }}
-              data={d.overdueByCategory.slice().sort((a, b) => b.remainingSen - a.remainingSen).map((r) => ({ label: CAT_LABEL[r.key] ?? r.key, value: r.remainingSen, color: null }))} />
-          </Panel>
-          <Panel title="How late, by category" hint={basis === "original" ? "against the first promised date" : "against the latest promised date"}>
-            <Columns height={190} stacked format={(x) => `${x} lines`} highlight={null} line={null}
-              labels={catRows.map((r) => CAT_LABEL[r.key] ?? r.key)}
-              series={BUCKETS.map((b, i) => ({ name: b.label, color: BUCKET_COLOR[i]! }))}
-              values={BUCKETS.map((b) => catRows.map((r) => r.buckets[b.k]))} />
-          </Panel>
-          <Panel title={`PO raised vs bills · ${range.label}`} hint="by category">
-            <Columns height={190} stacked={false} format={rm} highlight={null} line={null}
-              labels={d.categories.map((k) => CAT_LABEL[k] ?? k)}
-              series={[{ name: "PO raised", color: PALETTE[1]! }, { name: "Supplier bills (PI)", color: PALETTE[0]! }]}
-              values={[d.categories.map((k) => d.poRaised.byCategory[k] ?? 0), d.categories.map((k) => d.piReceived.byCategory[k] ?? 0)]} />
-          </Panel>
-        </div>
+      {insights.length > 0 && (
+        <Panel title="What to act on" hint="read from the figures on this page">
+          <ul className="space-y-1.5 text-[12.5px]">
+            {insights.map((x, i) => <li key={i} className="flex gap-2"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: x.tone }} /><span className="text-ink-secondary">{x.text}</span></li>)}
+          </ul>
+        </Panel>
       )}
 
-      {d && (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Panel title="Suppliers holding the most" hint="owed, with lines 5+ days late">
-            <HBars format={rm} empty="No open purchase orders."
-              rows={supRows.slice(0, 8).map((r) => ({ key: r.key, label: r.key, value: r.remainingSen, color: r.buckets.late5 ? TONE.bad : null,
-                right: <>{rm(r.remainingSen)}{r.buckets.late5 > 0 && <span className="ml-1.5 text-[11px] text-err">{r.buckets.late5} late</span>}</>,
-                onClick: () => { setChaseSup(r.key); document.getElementById("chasing")?.scrollIntoView({ behavior: "smooth" }); } }))} />
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        <h2 className="text-[14px] font-semibold text-ink">Breakdown</h2>
+        <Toggle value={by} options={[["category", "By category"], ["supplier", "By supplier"]]} onChange={(v) => { setBy(v); setFocus(null); }} />
+        <span className="text-[11.5px] text-ink-muted">Amounts are quantity × PO price. Click a row to filter the overdue and arriving lists.</span>
+      </div>
+
+      {d && t && (
+        <>
+          <Panel title={`Ordered, due and received · ${period.label}`} hint="what is still to come is counted at the period's last day">
+            <table className="w-full border-collapse">
+              <thead><tr>
+                <Th left>{by === "category" ? "Category" : "Supplier"}</Th><Th>PO raised</Th><Th>POs</Th><Th>of which received</Th><Th>still to come</Th>
+                <Th>Due in period</Th><Th>not received</Th><Th>Received</Th><Th>Billed (PI)</Th>
+              </tr></thead>
+              <tbody>
+                {groups.map((g) => (
+                  <tr key={g.key} onClick={() => setFocus(focus === g.key ? null : g.key)} className={cn("cursor-pointer hover:bg-surface-2/50", focus === g.key && "bg-primary-soft/50")}>
+                    <Td left className="max-w-[240px] truncate">{label(g.key)}</Td>
+                    <Td>{rm(g.raised.sen)}</Td><Td>{g.raised.pos}</Td><Td>{rm(g.raised.receivedSen)}</Td><Td>{rm(g.raised.openSen)}</Td>
+                    <Td>{rm(g.due.sen)}</Td><Td className={g.due.openSen ? "text-err" : ""}>{rm(g.due.openSen)}</Td>
+                    <Td>{rm(g.receivedSen)}</Td><Td>{rm(billedOf(g.key))}</Td>
+                  </tr>
+                ))}
+                <tr className="font-semibold">
+                  <Td left>Total</Td><Td>{rm(t.raised.sen)}</Td><Td>{t.raised.pos}</Td><Td>{rm(t.raised.receivedSen)}</Td><Td>{rm(t.raised.openSen)}</Td>
+                  <Td>{rm(t.due.sen)}</Td><Td>{rm(t.due.openSen)}</Td><Td>{rm(t.receivedSen)}</Td><Td>{rm(d.billed.totalSen)}</Td>
+                </tr>
+              </tbody>
+            </table>
           </Panel>
-          <Panel title="What to act on" hint="read from the figures on this page">
-            <ul className="space-y-2 text-[12.5px]">
-              {insights.map((t, i) => <li key={i} className="flex gap-2"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: t.tone }} /><span className="text-ink-secondary">{t.text}</span></li>)}
-              {insights.length === 0 && <li className="text-ink-muted">Nothing stands out.</li>}
-            </ul>
-          </Panel>
-        </div>
-      )}
 
-      <Panel title="PO overdue" hint={basis === "original" ? "open lines by days late against the date first put on the PO" : "open lines by days late against the date the supplier now promises"}
-        right={<span className="flex flex-wrap gap-2"><Toggle value={basis} options={[["original", "First promised"], ["promised", "Latest promised"]]} onChange={setBasis} /><Toggle value={overBy} options={[["supplier", "By supplier"], ["category", "By category"]]} onChange={setOverBy} /></span>}>
-        <table className="w-full border-collapse">
-          <thead><tr><Th left>{overBy === "supplier" ? "Supplier" : "Category"}</Th><Th>Open lines</Th><Th>Qty owed</Th>{BUCKETS.map((b) => <Th key={b.k}>{b.label}</Th>)}</tr></thead>
-          <tbody>
-            {overRows.map((r) => (
-              <tr key={r.key} className="hover:bg-surface-2/50">
-                <Td left><button type="button" className="text-left hover:text-primary hover:underline" onClick={() => overBy === "supplier" ? setChaseSup(r.key) : setChaseCat(r.key)}>{overBy === "category" ? CAT_LABEL[r.key] ?? r.key : r.key}</button></Td>
-                <Td>{r.lines}</Td><Td>{r.remainingQty.toLocaleString()}</Td>
-                {BUCKETS.map((b) => <Td key={b.k} className={r.buckets[b.k] ? b.tone : "text-ink-muted"}>{r.buckets[b.k]} <span className="text-[10.5px] text-ink-muted">{r.lines ? Math.round((r.buckets[b.k] / r.lines) * 100) : 0}%</span></Td>)}
-              </tr>
-            ))}
-            {overRows.length > 0 && <tr className="font-semibold"><Td left>Total</Td><Td>{overTotal.lines}</Td><Td>{overTotal.qty.toLocaleString()}</Td>{overTotal.b.map((n, i) => <Td key={i}>{n}</Td>)}</tr>}
-            {!q.isLoading && overRows.length === 0 && <tr><Td left className="text-ink-muted">No open purchase order lines.</Td></tr>}
-          </tbody>
-        </table>
-      </Panel>
-
-      <div id="chasing" />
-      <Panel title="PO chasing list" hint="most overdue first"
-        right={<span className="flex gap-2">
-          <select className={sel} value={chaseSup} onChange={(e) => setChaseSup(e.target.value)} aria-label="Supplier"><option value="">All suppliers</option>{[...new Set((d?.chasing ?? []).map((c) => c.supplier))].sort().map((s) => <option key={s}>{s}</option>)}</select>
-          <select className={sel} value={chaseCat} onChange={(e) => setChaseCat(e.target.value)} aria-label="Category"><option value="">All categories</option>{(d?.categories ?? []).map((k) => <option key={k} value={k}>{CAT_LABEL[k] ?? k}</option>)}</select>
-        </span>}>
-        <table className="w-full border-collapse">
-          <thead><tr><Th left>PO</Th><Th left>Supplier</Th><Th left>Item</Th><Th left>Category</Th><Th left>Location</Th><Th>PO date</Th><Th>Owed</Th><Th>First promised</Th><Th>Now promised</Th><Th>Days late</Th></tr></thead>
-          <tbody>
-            {chasing.slice(0, 50).map((c, i) => (
-              <tr key={`${c.poId}-${i}`} className="hover:bg-surface-2/50">
-                <Td left><Link to={`/scm/purchase-orders/${c.poId}`} className="text-primary hover:underline">{c.poNumber}</Link>{c.soDocNo && <span className="ml-1 text-[10.5px] text-ink-muted">{c.soDocNo}</span>}</Td>
-                <Td left>{c.supplier}</Td>
-                <Td left><span title={c.itemDesc ?? ""}>{c.itemCode ?? "—"}</span></Td>
-                <Td left>{CAT_LABEL[c.category] ?? c.category}</Td>
-                <Td left>{c.location ?? "—"}</Td>
-                <Td>{c.poDate?.slice(0, 10) ?? "—"}</Td>
-                <Td>{c.remainingQty}</Td>
-                <Td>{c.originalDue?.slice(0, 10) ?? "—"}</Td>
-                <Td>{c.promised ?? "—"}{c.revised.length > 0 && <span className="ml-1 text-[10.5px] text-ink-muted">moved {c.revised.length}x</span>}</Td>
-                <Td className={lateOf(c) >= 5 ? "font-semibold text-err" : lateOf(c) >= -1 ? "text-warning-text" : "text-ink-muted"}>{lateOf(c) > 0 ? `${lateOf(c)}` : lateOf(c) === 0 ? "due today" : `in ${-lateOf(c)}`}</Td>
-              </tr>
-            ))}
-            {!q.isLoading && chasing.length === 0 && <tr><Td left className="text-ink-muted">Nothing to chase.</Td></tr>}
-          </tbody>
-        </table>
-        {chasing.length > 50 && <p className="mt-2 text-[11.5px] text-ink-muted">Showing the 50 most overdue of {chasing.length}. Filter by supplier or category to narrow.</p>}
-      </Panel>
-
-      <Panel title={`Amounts · ${range.label}`} hint="owed = quantity still to come × PO price"
-        right={<Toggle value={moneyBy} options={[["category", "By category"], ["supplier", "By supplier"]]} onChange={setMoneyBy} />}>
-        <table className="w-full border-collapse">
-          <thead><tr><Th left>{moneyBy === "category" ? "Category" : "Supplier"}</Th><Th>Open lines</Th><Th>Owed</Th><Th>PO raised</Th><Th>Supplier bills (PI)</Th></tr></thead>
-          <tbody>
-            {moneyRows.map((r) => <tr key={r.key}><Td left>{moneyBy === "category" ? CAT_LABEL[r.key] ?? r.key : r.key}</Td><Td>{r.lines}</Td><Td>{fmtSen(r.remainingSen)}</Td><Td>{fmtSen(r.po)}</Td><Td>{fmtSen(r.pi)}</Td></tr>)}
-            {d && <tr className="font-semibold"><Td left>Total</Td><Td>{d.open.lineCount}</Td><Td>{fmtSen(d.open.remainingSen)}</Td><Td>{fmtSen(d.poRaised.totalSen)}</Td><Td>{fmtSen(d.piReceived.totalSen)}</Td></tr>}
-          </tbody>
-        </table>
-      </Panel>
-
-      <Panel title="Lead time" hint={d ? `goods received since ${d.receiptsSince} · lead time = received − PO date · on time = by the date first promised` : undefined}
-        right={<Toggle value={leadBy} options={[["category", "By category"], ["supplier", "By supplier"]]} onChange={setLeadBy} />}>
-        {leadBy === "category" && d && (
-          <div className="mb-3">
-            <Columns height={180} stacked={false} format={(x) => `${x} days`} highlight={null}
-              labels={d.leadByCategory.map((l) => CAT_LABEL[l.key] ?? l.key)}
-              series={[{ name: "Average days", color: "#8fb3ae" }, { name: "80% arrive within", color: PALETTE[0]! }]}
-              values={[d.leadByCategory.map((l) => l.avgDays ?? 0), d.leadByCategory.map((l) => l.p80Days ?? 0)]}
-              line={{ name: "Current setting", color: PALETTE[1]!, values: d.leadByCategory.map((l) => l.current ?? null), format: (x) => `${x} days` }} />
+          <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
+            <Panel title="PO raised in the period: received and still to come" hint={by === "supplier" ? "largest 8 suppliers" : undefined}>
+              <Columns height={210} stacked format={rm} highlight={null} line={null} labels={top.map((g) => label(g.key).slice(0, 14))}
+                series={[{ name: "Received", color: TONE.good }, { name: "Still to come", color: PALETTE[1]! }]}
+                values={[top.map((g) => g.raised.receivedSen), top.map((g) => g.raised.openSen)]} />
+            </Panel>
+            <Panel title="Still to come" hint={asOfNote}>
+              <Donut size={120} format={rm} center={{ value: String(t.open.lines), label: "open lines" }}
+                data={groups.map((g) => ({ label: label(g.key), value: g.open.sen, color: null }))} />
+            </Panel>
           </div>
-        )}
-        <table className="w-full border-collapse">
-          <thead><tr><Th left>{leadBy === "category" ? "Category" : "Supplier"}</Th><Th>Receipts</Th><Th>Average days</Th><Th>80% within</Th><Th>On time</Th><Th>Avg days late</Th><Th>Rejected</Th>{leadBy === "category" && <><Th>Current setting</Th><Th>Suggested</Th><Th left> </Th></>}</tr></thead>
-          <tbody>
-            {(leadBy === "category" ? d?.leadByCategory ?? [] : d?.leadBySupplier ?? []).map((l) => (
-              <tr key={l.key}>
-                <Td left>{leadBy === "category" ? CAT_LABEL[l.key] ?? l.key : l.key}</Td>
-                <Td>{l.receipts}</Td><Td>{l.avgDays ?? "—"}</Td><Td>{l.p80Days ?? "—"}</Td>
-                <Td className={l.onTimePct == null ? "" : l.onTimePct >= 80 ? "text-synced" : l.onTimePct >= 60 ? "text-warning-text" : "text-err"}>{l.onTimePct != null ? `${l.onTimePct}%` : "—"}</Td>
-                <Td>{l.avgDaysLate != null ? `+${l.avgDaysLate}` : "—"}</Td>
-                <Td>{l.rejectPct != null ? `${l.rejectPct}%` : "—"}</Td>
-                {leadBy === "category" && <>
-                  <Td>{l.current ?? "—"}</Td>
-                  <Td className="font-semibold">{l.suggested ?? "—"}</Td>
-                  <Td left>{l.verdict && <span className={cn("rounded-full px-2 py-0.5 text-[10.5px]", VERDICT[l.verdict]![1])}>{VERDICT[l.verdict]![0]}</span>}</Td>
-                </>}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <p className="mt-2 text-[11.5px] text-ink-muted">Suggested = the number of days 80% of receipts arrived within. A category keeps its current setting until it has 10 receipts.</p>
-      </Panel>
+
+          <section id="overdue">
+            <Panel title="How late, by amount still to come" hint={`${basis === "original" ? "against the date first put on the PO" : "against the latest promised date"} · ${asOfNote}`}>
+              <div className="space-y-2.5">
+                {groups.filter((g) => g.open.lines > 0).map((g) => (
+                  <button key={g.key} type="button" onClick={() => setFocus(focus === g.key ? null : g.key)} className={cn("block w-full rounded-md px-2 py-1.5 text-left hover:bg-surface-2/60", focus === g.key && "bg-primary-soft/50")}>
+                    <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-3 text-[12.5px]">
+                      <b className="text-ink">{label(g.key)}</b>
+                      <span className="tabular-nums text-ink-muted">{rm(g.open.sen)} · {g.open.lines} lines{g.open.late ? <span className="text-err"> · {g.open.late} late</span> : null}</span>
+                    </div>
+                    <SplitBar format={rm} parts={BUCKETS.map((b) => ({ label: `${b.label} (${g.open.buckets[b.k].lines})`, value: g.open.buckets[b.k].sen, color: b.color }))} />
+                  </button>
+                ))}
+              </div>
+            </Panel>
+          </section>
+
+          <div className="grid gap-4 xl:grid-cols-2">
+            <Panel title={`Overdue${focus ? ` · ${label(focus)}` : ""}`} hint={`${overdue.length} lines past their date ${asOfNote}`}
+              right={focus ? <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setFocus(null)}>Show all</button> : null}>
+              <LineTable rows={overdue.slice(0, 60)} empty="Nothing is past its date." mode="late" />
+              {overdue.length > 60 && <p className="mt-1 text-[11px] text-ink-muted">The 60 most overdue of {overdue.length}.</p>}
+            </Panel>
+            <Panel title={`Arriving in the next 3 days${focus ? ` · ${label(focus)}` : ""}`} hint={`${dueSoon.length} lines`}>
+              <LineTable rows={dueSoon.slice(0, 60)} empty="Nothing is due in the next 3 days." mode="soon" />
+            </Panel>
+          </div>
+
+          <Panel title="Supplier delivery lead time" hint={`receipts in ${period.label} · lead time = PO date to goods received · on time = by the date first put on the PO`}>
+            <table className="w-full border-collapse">
+              <thead><tr><Th left>{by === "category" ? "Category" : "Supplier"}</Th><Th>Receipts</Th><Th>Average days</Th><Th>80% within</Th><Th>On time · lines</Th><Th>On time · amount</Th><Th>Late · lines</Th><Th>Average days late</Th></tr></thead>
+              <tbody>
+                {groups.filter((g) => g.supplierLead.receipts > 0).map((g) => (
+                  <tr key={g.key} className={g.supplierLead.receipts < MIN_RECEIPTS ? "text-ink-muted" : ""}>
+                    <Td left className="max-w-[240px] truncate">{label(g.key)}</Td><Td>{g.supplierLead.receipts}</Td>
+                    <Td>{days(g.supplierLead.avgDays)}</Td><Td>{days(g.supplierLead.p80Days)}</Td>
+                    <Td className={g.supplierLead.onTimePct == null ? "" : g.supplierLead.onTimePct >= 80 ? "text-synced" : g.supplierLead.onTimePct >= 60 ? "text-warning-text" : "text-err"}>{pctTxt(g.supplierLead.onTimePct)}</Td>
+                    <Td>{pctTxt(g.supplierLead.onTimeAmountPct)}</Td><Td>{pctTxt(g.supplierLead.latePct)}</Td><Td>{g.supplierLead.avgDaysLate != null ? `+${g.supplierLead.avgDaysLate}` : "—"}</Td>
+                  </tr>
+                ))}
+                <tr className="font-semibold"><Td left>All</Td><Td>{t.supplierLead.receipts}</Td><Td>{days(t.supplierLead.avgDays)}</Td><Td>{days(t.supplierLead.p80Days)}</Td><Td>{pctTxt(t.supplierLead.onTimePct)}</Td><Td>{pctTxt(t.supplierLead.onTimeAmountPct)}</Td><Td>{pctTxt(t.supplierLead.latePct)}</Td><Td>{t.supplierLead.avgDaysLate != null ? `+${t.supplierLead.avgDaysLate}` : "—"}</Td></tr>
+              </tbody>
+            </table>
+            <p className="mt-2 text-[11.5px] text-ink-muted">Each receipt line counts once ("lines"); "amount" weighs it by its value. Average days late is over the late lines only. A row with fewer than {MIN_RECEIPTS} receipts is greyed: too few to judge.</p>
+          </Panel>
+
+          <Panel title="How early we order" hint={`PO lines raised in ${period.label}, and lines received in it whose customer date is known`}>
+            <Columns height={190} stacked={false} format={(x) => `${x} days`} highlight={null} line={null} labels={top.map((g) => label(g.key).slice(0, 14))}
+              series={[{ name: "PO date → date on the PO", color: PALETTE[1]! }, { name: "Date on the PO → customer date", color: "#8fb3ae" }, { name: "Arrived before the customer date", color: PALETTE[0]! }]}
+              values={[top.map((g) => g.ordering.avgOrderAheadDays ?? 0), top.map((g) => g.ordering.avgDueBeforeNeedDays ?? 0), top.map((g) => g.ordering.avgArrivedBeforeNeedDays ?? 0)]} />
+            <table className="mt-3 w-full border-collapse">
+              <thead><tr><Th left>{by === "category" ? "Category" : "Supplier"}</Th><Th>Lines raised</Th><Th>Ordered ahead (days)</Th><Th>Date on PO before customer date</Th><Th>Lines measured</Th><Th>Arrived early · average</Th><Th>80% arrived at least</Th><Th>Could order later by</Th>{by === "category" && <Th>MRP setting</Th>}</tr></thead>
+              <tbody>
+                {groups.filter((g) => g.ordering.lines > 0 || g.ordering.measured > 0).map((g) => (
+                  <tr key={g.key}>
+                    <Td left className="max-w-[240px] truncate">{label(g.key)}</Td><Td>{g.ordering.lines}</Td>
+                    <Td>{days(g.ordering.avgOrderAheadDays)}</Td><Td>{days(g.ordering.avgDueBeforeNeedDays)}</Td>
+                    <Td>{g.ordering.measured}</Td><Td>{days(g.ordering.avgArrivedBeforeNeedDays)}</Td><Td>{days(g.ordering.p20ArrivedBeforeNeedDays)}</Td>
+                    <Td className="font-semibold">{g.ordering.canOrderLaterDays == null ? <span className="font-normal text-ink-muted">too few lines</span> : g.ordering.canOrderLaterDays > 0 ? `${g.ordering.canOrderLaterDays} days` : "no"}</Td>
+                    {by === "category" && <Td>{d.currentLead[g.key] != null ? `${d.currentLead[g.key]} days` : "—"}</Td>}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-2 text-[11.5px] text-ink-muted">
+              Read it as: we place the PO this many days before its date, that date sits this many days before the customer needs the goods, and the goods in fact arrived this many days early.
+              "Could order later by" is how early the latest fifth of lines still arrived (the 20th percentile): ordering that much later would still have had 80% of lines in before the customer date. It comes from real receipts, not from the MRP setting, and needs {MIN_RECEIPTS} lines.
+            </p>
+          </Panel>
+
+          <section id="dead">
+            <Panel title="Dead stock" hint="stock on hand that has not gone out in over 90 days · idle since the last OUT movement, or since it first arrived · as of today">
+              <div className="grid gap-4 xl:grid-cols-2">
+                <div>
+                  <div className="mb-1 text-[12px] font-semibold text-ink">By category</div>
+                  <Columns height={190} stacked format={rm} highlight={null} line={null} labels={d.deadStock.byCategory.map((g) => CAT_LABEL[g.key] ?? g.key)}
+                    series={AGES.map((a) => ({ name: a.label, color: a.color }))} values={AGES.map((a) => d.deadStock.byCategory.map((g) => g.ages[a.k]))} />
+                </div>
+                <div>
+                  <div className="mb-1 text-[12px] font-semibold text-ink">By warehouse</div>
+                  <Columns height={190} stacked format={rm} highlight={null} line={null} labels={d.deadStock.byWarehouse.filter((g) => g.deadSen > 0).map((g) => g.key.replace(" WAREHOUSE", " WH").slice(0, 12))}
+                    series={AGES.map((a) => ({ name: a.label, color: a.color }))} values={AGES.map((a) => d.deadStock.byWarehouse.filter((g) => g.deadSen > 0).map((g) => g.ages[a.k]))} />
+                </div>
+              </div>
+              <div className="mt-3 grid gap-4 xl:grid-cols-2">
+                <StockTable title="Category" rows={d.deadStock.byCategory} name={(k) => CAT_LABEL[k] ?? k} />
+                <StockTable title="Warehouse" rows={d.deadStock.byWarehouse} name={(k) => k} />
+              </div>
+              <div className="mt-3 text-[12px] font-semibold text-ink">Largest idle items</div>
+              <table className="mt-1 w-full border-collapse">
+                <thead><tr><Th left>Item</Th><Th left>Warehouse</Th><Th left>Category</Th><Th>Qty</Th><Th>Value</Th><Th>Idle days</Th></tr></thead>
+                <tbody>{d.deadStock.top.slice(0, 20).map((r, i) => (
+                  <tr key={`${r.itemCode}-${r.warehouse}-${i}`}><Td left><span title={r.name ?? ""}>{r.itemCode}</span></Td><Td left>{r.warehouse}</Td><Td left>{CAT_LABEL[r.category] ?? r.category}</Td><Td>{r.qty}</Td><Td>{rm(r.valueSen)}</Td><Td className={(r.idleDays ?? 0) > 365 ? "text-err" : ""}>{r.idleDays ?? "—"}</Td></tr>
+                ))}</tbody>
+              </table>
+            </Panel>
+          </section>
+        </>
+      )}
     </div>
+  );
+}
+
+function LineTable({ rows, empty, mode }: { rows: OpenLine[]; empty: string; mode: "late" | "soon" }) {
+  if (rows.length === 0) return <p className="py-2 text-[12.5px] text-ink-muted">{empty}</p>;
+  return (
+    <table className="w-full border-collapse">
+      <thead><tr><Th left>PO</Th><Th left>Supplier</Th><Th left>Item</Th><Th>Still to come</Th><Th>Date on PO</Th><Th>Promised</Th><Th>Customer date</Th><Th>{mode === "late" ? "Days late" : "Due in"}</Th></tr></thead>
+      <tbody>{rows.map((l, i) => (
+        <tr key={`${l.poId}-${l.itemCode}-${i}`} className="hover:bg-surface-2/50">
+          <Td left><Link to={`/scm/purchase-orders/${l.poId}`} className="text-primary hover:underline">{l.poNumber}</Link>{l.soDocNo && <span className="ml-1 text-[10.5px] text-ink-muted">{l.soDocNo}</span>}</Td>
+          <Td left className="max-w-[160px] truncate">{l.supplier}</Td>
+          <Td left><span title={l.itemDesc ?? ""}>{l.itemCode ?? "—"}</span></Td>
+          <Td>{l.openQty} · {fmtSen(l.openSen)}</Td>
+          <Td>{l.originalDue ?? "—"}</Td><Td>{l.promised ?? "—"}</Td>
+          <Td className={l.needDate && l.promised && l.promised > l.needDate ? "text-err" : ""}>{l.needDate ?? "—"}</Td>
+          <Td className={mode === "late" ? (l.daysLate >= 5 ? "font-semibold text-err" : "text-warning-text") : ""}>{mode === "late" ? l.daysLate : l.daysLate === 0 ? "today" : `${-l.daysLate} days`}</Td>
+        </tr>
+      ))}</tbody>
+    </table>
+  );
+}
+
+function StockTable({ title, rows, name }: { title: string; rows: StockGroup[]; name: (k: string) => string }) {
+  const tot = rows.reduce((a, r) => ({ v: a.v + r.valueSen, d: a.d + r.deadSen, s: a.s + r.deadSkus }), { v: 0, d: 0, s: 0 });
+  return (
+    <table className="w-full border-collapse">
+      <thead><tr><Th left>{title}</Th><Th>Stock value</Th><Th>Dead (90+ days)</Th><Th>Share</Th><Th>Items</Th></tr></thead>
+      <tbody>
+        {rows.map((r) => <tr key={r.key}><Td left>{name(r.key)}</Td><Td>{fmtSen(r.valueSen)}</Td><Td className={r.deadSen ? "text-warning-text" : ""}>{fmtSen(r.deadSen)}</Td><Td>{share(r.deadSen, r.valueSen)}</Td><Td>{r.deadSkus}</Td></tr>)}
+        <tr className="font-semibold"><Td left>Total</Td><Td>{fmtSen(tot.v)}</Td><Td>{fmtSen(tot.d)}</Td><Td>{share(tot.d, tot.v)}</Td><Td>{tot.s}</Td></tr>
+      </tbody>
+    </table>
   );
 }
 

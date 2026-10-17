@@ -74,7 +74,7 @@ export function Overview() {
      that module (OFF-NOT-HIDE, as above). */
   const today = todayMY();
   const monthFrom = `${today.slice(0, 7)}-01`;
-  const proc = useQuery<{ open: { poCount: number; remainingSen: number; late5Lines: number; late5Suppliers: number; worstDaysLate: number }; leadByCategory: NonNullable<WatchInputs["procurement"]>["leadByCategory"] }>("/api/scm/procurement-overview#home",
+  const proc = useQuery<NonNullable<WatchInputs["procurement"]> & { total: { open: { sen: number } } }>("/api/scm/procurement-overview#home",
     () => api.get(`/api/scm/procurement-overview?from=${monthFrom}&to=${today}`),
     [monthFrom, today],
     { enabled: pageAccess("scm.procurement.po") !== "none" },
@@ -97,7 +97,7 @@ export function Overview() {
   const watchInputs: WatchInputs = { logistic: logi.data ?? null, procurement: proc.data ?? null, service: assr.data ?? null, projectGaps: gaps.data ?? null };
   const pct = (part: number, whole: number) => (whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : "—");
   const pt = pnl.data?.totals;
-  const po = proc.data?.open;
+  const po = proc.data?.total.open;
   const thisWeek = logi.data?.weeks.find((w) => w.current);
 
   const now = new Date();
@@ -136,7 +136,7 @@ export function Overview() {
 
   const kpis: { label: string; value: string; sub: string }[] = [
     { label: "Project sales MTD", value: pnl.loading ? "…" : pt ? formatCurrency(pt.income) : "—", sub: pt ? (pt.income === 0 ? `${pt.projects} projects · sales not keyed in yet` : `${pt.projects} projects · GP ${pct(pt.gp, pt.income)}`) : pnl.error ? "Couldn't load" : "Project finance viewers only" },
-    { label: "PO not received", value: proc.loading ? "…" : po ? fmtSen(po.remainingSen) : "—", sub: po ? `${po.poCount} POs · ${po.late5Lines} lines 5+ days late` : proc.error ? "Couldn't load" : "Procurement only" },
+    { label: "PO not received", value: proc.loading ? "…" : po ? fmtSen(po.sen) : "—", sub: po ? `${po.lines} open lines · ${po.late} late` : proc.error ? "Couldn't load" : "Procurement only" },
     { label: "Open Cases", value: assr.loading ? "…" : num(assrUnknown, assr.data?.active_count), sub: assrUnknown ? "Couldn't load" : `${slaRisk} SLA risks` },
     { label: "Runs today", value: logi.loading ? "…" : logi.data ? String(logi.data.runsToday) : "—", sub: thisWeek ? `${thisWeek.doCount} DO issued this week` : logi.error ? "Couldn't load" : "Logistics only" },
     { label: "Active Projects", value: projects.loading ? "…" : num(projectsUnknown, projects.data?.live_count), sub: projectsUnknown ? "Couldn't load" : `${projects.data?.upcoming_30d ?? 0} due this month` },

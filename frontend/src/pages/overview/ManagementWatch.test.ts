@@ -20,11 +20,16 @@ describe("management watchlist", () => {
     ]);
   });
 
-  it("names the lead-time categories that are off and their suggested days", () => {
-    const [item] = watchItems({
+  it("names the categories we could order later, and the days", () => {
+    const items = watchItems({
       ...none,
-      procurement: { open: { late5Lines: 0, late5Suppliers: 0, worstDaysLate: 0 }, leadByCategory: [{ key: "MATTRESS", current: 40, suggested: 22, verdict: "can_shorten" }, { key: "SOFA", current: 40, suggested: 38, verdict: "ok" }] },
+      procurement: {
+        asOf: "2026-10-17",
+        total: { open: { lines: 5, late: 0, lateSen: 0, buckets: { late5: { lines: 0, sen: 0 } } }, due: { sen: 0, openSen: 0 } },
+        byCategory: [{ key: "MATTRESS", ordering: { canOrderLaterDays: 8 } }, { key: "SOFA", ordering: { canOrderLaterDays: 1 } }],
+        deadStock: { deadSen: 0, deadSkus: 0, totalSen: 0 },
+      },
     });
-    expect(item.figure).toBe("MATTRESS 40 → 22 days");
+    expect(items.map((i) => i.figure)).toEqual(["MATTRESS 8 days later"]);
   });
 });
