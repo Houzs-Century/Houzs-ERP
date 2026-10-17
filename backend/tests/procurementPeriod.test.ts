@@ -45,7 +45,16 @@ describe('procurement period', () => {
       line({ receipts: [{ date: '2026-10-18', qty: 10, rejected: 0 }] }),
       line({ poId: 'p2', receipts: [{ date: '2026-10-25', qty: 10, rejected: 0 }] }),
     ], '2026-10-01', '2026-10-31', '2026-10-31', 'original');
-    expect(r.total.supplierLead).toMatchObject({ receipts: 2, avgDays: 19.5, onTimePct: 50, latePct: 50, avgDaysLate: 5 });
+    expect(r.total.supplierLead).toMatchObject({ receipts: 2, midDays: 19.5, onTimePct: 50, latePct: 50, midDaysLate: 5 });
+  });
+
+  test('lead time is the median, so one line ordered months ahead does not drag it', () => {
+    const r = procurementPeriod([
+      line({ poDate: '2026-10-01', receipts: [{ date: '2026-10-11', qty: 1, rejected: 0 }] }),
+      line({ poId: 'p2', poDate: '2026-10-01', receipts: [{ date: '2026-10-13', qty: 1, rejected: 0 }] }),
+      line({ poId: 'p3', poDate: '2026-04-01', receipts: [{ date: '2026-10-18', qty: 1, rejected: 0 }] }),
+    ], '2026-10-01', '2026-10-31', '2026-10-31', 'original');
+    expect(r.total.supplierLead.midDays).toBe(12);
   });
 
   test('order later by the slack 80% of lines still keep', () => {
@@ -56,7 +65,7 @@ describe('procurement period', () => {
     expect(o.measured).toBe(10);
     expect(o.avgOrderAheadDays).toBe(18);
     expect(o.avgDueBeforeNeedDays).toBe(21);
-    expect(o.avgOrderBeforeNeedDays).toBe(39);
+    expect(o.midOrderBeforeNeedDays).toBe(39);
     expect(o.p20ArrivedBeforeNeedDays).toBe(13);
     expect(o.canOrderLaterDays).toBe(13);
     const few = procurementPeriod(lines.slice(0, 3), '2026-10-01', '2026-10-31', '2026-10-31', 'original').total.ordering;

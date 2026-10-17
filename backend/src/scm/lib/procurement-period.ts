@@ -39,6 +39,14 @@ const receivedBy = (l: PLine, date: string) => l.receipts.filter((r) => r.date <
 const openQtyAt = (l: PLine, date: string) => (l.poDate <= date ? Math.max(0, l.qty - receivedBy(l, date)) : 0);
 const dueOf = (l: PLine, basis: Basis) => (basis === 'original' ? l.originalDue : l.promised ?? l.originalDue);
 const avg = (xs: number[]) => (xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 10) / 10 : null);
+/* Lead-time figures use the middle value (owner 2026-10-17): a few lines
+   ordered months ahead would drag an average; half the lines are at or under
+   the median, half at or over. Even count = the mean of the two middle ones. */
+const mid = (xs: number[]) => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b); const h = Math.floor(s.length / 2);
+  return Math.round((s.length % 2 ? s[h]! : (s[h - 1]! + s[h]!) / 2) * 10) / 10;
+};
 const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : null);
 
 export interface GroupRow {
@@ -47,8 +55,8 @@ export interface GroupRow {
   due: { lines: number; sen: number; receivedSen: number; openSen: number };
   receivedSen: number;
   open: { lines: number; sen: number; late: number; lateSen: number; buckets: Record<Bucket, { lines: number; sen: number }> };
-  supplierLead: { receipts: number; avgDays: number | null; p80Days: number | null; onTimePct: number | null; latePct: number | null; onTimeAmountPct: number | null; avgDaysLate: number | null };
-  ordering: { lines: number; avgOrderAheadDays: number | null; avgDueBeforeNeedDays: number | null; measured: number; avgOrderBeforeNeedDays: number | null; avgArrivedBeforeNeedDays: number | null; p20ArrivedBeforeNeedDays: number | null; canOrderLaterDays: number | null };
+  supplierLead: { receipts: number; midDays: number | null; p80Days: number | null; onTimePct: number | null; latePct: number | null; onTimeAmountPct: number | null; midDaysLate: number | null };
+  ordering: { lines: number; avgOrderAheadDays: number | null; avgDueBeforeNeedDays: number | null; measured: number; midOrderBeforeNeedDays: number | null; midArrivedBeforeNeedDays: number | null; p20ArrivedBeforeNeedDays: number | null; canOrderLaterDays: number | null };
 }
 
 /** Lines a supplier-lead figure needs before it is trusted. */
@@ -115,14 +123,14 @@ export function procurementPeriod(lines: PLine[], from: string, to: string, toda
       receivedSen: rc.reduce((a, { l, r }) => a + r.qty * l.priceSen, 0),
       open: { lines: openLines, sen: openSen, late, lateSen, buckets },
       supplierLead: {
-        receipts: rc.length, avgDays: avg(leads), p80Days: leads.length ? percentile(leads, 0.8) : null,
+        receipts: rc.length, midDays: mid(leads), p80Days: leads.length ? percentile(leads, 0.8) : null,
         onTimePct: pct(onTime, withDue.length), latePct: pct(withDue.length - onTime, withDue.length),
         onTimeAmountPct: pct(amt(withDue.filter((_, i) => (lateBy[i] as number) <= 0)), amt(withDue)),
-        avgDaysLate: avg(lateBy.filter((x) => x > 0)),
+        midDaysLate: mid(lateBy.filter((x) => x > 0)),
       },
       ordering: {
         lines: raised.length, avgOrderAheadDays: avg(ahead), avgDueBeforeNeedDays: avg(beforeNeed),
-        measured: slack.length, avgOrderBeforeNeedDays: avg(orderBeforeNeed), avgArrivedBeforeNeedDays: avg(slack), p20ArrivedBeforeNeedDays: p20,
+        measured: slack.length, midOrderBeforeNeedDays: mid(orderBeforeNeed), midArrivedBeforeNeedDays: mid(slack), p20ArrivedBeforeNeedDays: p20,
         /* Ordering later by the 20th-percentile slack still has 80% of lines
            arriving by the customer's date. Too few lines, or no slack: null / 0. */
         canOrderLaterDays: slack.length < MIN_SAMPLES || p20 == null ? null : Math.max(0, Math.floor(p20)),
