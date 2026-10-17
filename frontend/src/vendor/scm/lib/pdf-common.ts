@@ -156,20 +156,7 @@ const WINANSI_ABOVE_LATIN1 = new Set([
    the screen keeps the symbols. Applied to a whole cell, a customer's own
    arrow folds the same way, which is a faithful print, not a corruption. */
 const PAPER_FOLDS: ReadonlyArray<[RegExp, string]> = [[/→/g, '->'], [/←/g, '<-'], [/−/g, '-'], [/≈/g, '~']];
-
-/* A Latin letter whose accent is outside WinAnsi and both subsets (the "Ō" of
-   the AKEMI KŌRI range refused HC-PCO-2610-001) prints as its base letter,
-   "KORI". Only base letter + combining marks qualifies: CJK compatibility
-   ideographs and Hangul also decompose under NFD and must stay as they are. */
-const foldLatinAccent = (ch: string): string => {
-  const cp = ch.codePointAt(0)!;
-  if (cp <= 0xff || WINANSI_ABOVE_LATIN1.has(cp)) return ch;
-  const m = /^([A-Za-z])[̀-ͯ]+$/.exec(ch.normalize('NFD'));
-  return m ? m[1]! : ch;
-};
-
-export const paperText = (s: string): string =>
-  PAPER_FOLDS.reduce((acc, [re, to]) => acc.replace(re, to), s).replace(/[^\u0000-ÿ]/gu, foldLatinAccent);
+export const paperText = (s: string): string => PAPER_FOLDS.reduce((acc, [re, to]) => acc.replace(re, to), s);
 
 /** Hanzi proper (vs. CJK punctuation) — picks which subset a document needs. */
 const isHanzi = (cp: number): boolean =>
