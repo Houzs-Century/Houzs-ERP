@@ -4,6 +4,8 @@
    although paperText already folds it to "->" for paper. The check now scans
    the folded text, and the doc folds the same symbols wherever it paints or
    measures, autotable cells included. */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -61,11 +63,24 @@ describe('paper folds (→ ← − ≈) never block a PDF', () => {
   });
 });
 
-/* HC-PCO-2610-001 — nine lines of the AKEMI KŌRI range: "Ō" (U+014C) is in
-   neither WinAnsi nor the Noto subsets, so the whole PCO PDF was refused. */
-describe('accented Latin outside WinAnsi prints as its base letter', () => {
-  it('a KŌRI line passes the glyph check with no font fetch and paints KORI', async () => {
-    const fetchSpy = vi.fn();
+/* HC-PCO-2610-001 — nine lines of the "AKEMI KŌRI" range. Owner's call
+   (2026-10-16) reversed the earlier fold (#4697): "Ō" (U+014C) must PRINT with
+   its macron, not collapse to "KORI". The punct + hanzi Noto subsets now carry
+   Latin Extended-A, so a macron name embeds and prints, while real Chinese and
+   plain WinAnsi documents are unchanged. These load the COMMITTED subsets through
+   the real jsPDF cmap guard, so they also fail if a future font drops the macrons. */
+describe('romaji macron letters embed in the Noto subset (no fold)', () => {
+  // vitest runs with cwd at the frontend root, where the committed subsets live.
+  const faceFetch = () =>
+    vi.fn((url: string) => {
+      const name = String(url).split('/').pop() ?? '';
+      const buf = readFileSync(join(process.cwd(), 'public', 'fonts', name));
+      const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+      return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(ab) } as Response);
+    });
+
+  it('a KŌRI line passes the glyph guard and paints the macron through Noto', async () => {
+    const fetchSpy = faceFetch();
     vi.stubGlobal('fetch', fetchSpy);
     const doc = new jsPDF();
     const painted: unknown[] = [];
@@ -78,17 +93,43 @@ describe('accented Latin outside WinAnsi prints as its base letter', () => {
       { po_number: 'HC-PCO-2610-001' },
       [{ item_code: 'AKEMI KŌRI ISHI MATT (K)', supplier_sku: 'AK-KŌRI ISHI-K' }],
     ])).resolves.toBeUndefined();
-    expect(fetchSpy).not.toHaveBeenCalled();
+    // A macron letter is not isHanzi -> the cheap PUNCT tier, both weights.
+    const urls = fetchSpy.mock.calls.map(([u]) => String(u));
+    expect(urls.some((u) => u.includes('noto-sans-sc-punct-400'))).toBe(true);
+    expect(urls.some((u) => u.includes('noto-sans-sc-punct-700'))).toBe(true);
+    expect(urls.some((u) => u.includes('hanzi'))).toBe(false);
+    expect(Object.keys(doc.getFontList())).toContain('NotoSansSC');
 
+    // The macron survives to paper (NOT folded to "KORI"), autotable cells too.
     autoTable(doc, { body: [['AK-KŌRI ISHI-K', 'AKEMI KŌRI ISHI MATT (K)']] });
     const flat = painted.flat().map(String);
-    expect(flat).toEqual(expect.arrayContaining(['AK-KORI ISHI-K', 'AKEMI KORI ISHI MATT (K)']));
-    expect(flat.some((s) => s.includes('Ō'))).toBe(false);
+    expect(flat).toEqual(expect.arrayContaining(['AK-KŌRI ISHI-K', 'AKEMI KŌRI ISHI MATT (K)']));
+    expect(flat.some((s) => s.includes('KORI'))).toBe(false);
   });
 
-  it('keeps what already prints: Latin-1, the WinAnsi extras, CJK and Hangul', () => {
-    expect(paperText('Ōōāēīū Ūrūmqi Łódź')).toBe('Ooaeiu Urumqi Łódz');
-    expect(paperText('Café Müller Š Ž Œ')).toBe('Café Müller Š Ž Œ');
+  it('a document with real Chinese still routes to the hanzi subset', async () => {
+    const fetchSpy = faceFetch();
+    vi.stubGlobal('fetch', fetchSpy);
+    const doc = new jsPDF();
+    // Resolve or throw by glyph, but the tier is chosen and fetched before the
+    // cmap guard — that routing is what this pins.
+    await ensurePdfCjkFont(doc, { customer: '大文 Sdn Bhd' }).catch(() => undefined);
+    expect(fetchSpy.mock.calls.some(([u]) => String(u).includes('noto-sans-sc-hanzi'))).toBe(true);
+  });
+
+  it('paperText folds its symbols but no longer strips the macron; Latin-1/CJK/Hangul intact', () => {
+    expect(paperText('AKEMI KŌRI → x')).toBe('AKEMI KŌRI -> x');
+    expect(paperText('Ōōāēīū Café Müller Š Ž Œ')).toBe('Ōōāēīū Café Müller Š Ž Œ');
     expect(paperText('陈大文 豈 한')).toBe('陈大文 豈 한');
+  });
+
+  it('a pure-WinAnsi document still fetches no font', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const doc = new jsPDF();
+    await expect(
+      ensurePdfCjkFont(doc, { supplier: 'Cafe Sdn Bhd', notes: 'plain ascii only' }),
+    ).resolves.toBeUndefined();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
