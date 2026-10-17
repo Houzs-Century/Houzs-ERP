@@ -18,6 +18,7 @@ import { scopeToCompany } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { procurementCategory, promisedDate, PROCUREMENT_CATEGORIES, type ProcurementCategory } from '../lib/procurement-overview';
 import { procurementPeriod, deadStock, turnoverAndSellers, type PLine } from '../lib/procurement-period';
+import { attributeStockPos, type StockReceipt, type StockOut } from '../lib/stock-po-attribution';
 
 export const procurementOverview = new Hono<{ Bindings: Env; Variables: Variables }>();
 procurementOverview.use('*', supabaseAuth);
@@ -246,4 +247,75 @@ procurementOverview.get('/', async (c) => {
     billed: { totalSen: (pis.data ?? []).reduce((a, r) => a + num(r.total_sen), 0), count: (pis.data ?? []).length, bySupplier: billedBySupplier, byCategory: billedByCategory },
     ...procurementPeriod(lines, from, to, today, basis),
   });
+});
+
+/* GET /api/scm/procurement-overview/stock-ordering — how far ahead stock POs
+   (raised with no customer behind them) were ordered, matched first in first
+   out to the delivered orders that later took their goods
+   (lib/stock-po-attribution.ts). Back end only (owner 2026-10-17): no page
+   shows it. The past year of receipts and deliveries, active company. */
+procurementOverview.get('/stock-ordering', async (c) => {
+  const sb = c.get('supabase');
+  const today = todayMyt();
+  const since = new Date(Date.parse(`${today}T00:00:00Z`) - 365 * 86400000).toISOString().slice(0, 10);
+  const fail = (what: string, e: { message: string }) => c.json({ error: 'load_failed', reason: `${what}: ${e.message}` }, 500);
+
+  const grns = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('grns')
+    .select('id, received_at, warehouse_id').gte('received_at', since), c).order('id').range(f, t));
+  if (grns.error) return fail('goods received', grns.error);
+  const grnById = new Map((grns.data ?? []).map((g) => [String(g.id), g]));
+  const grnItems = await chunkIn<Row>([...grnById.keys()], (b, f, t) => scopeToCompany(sb.from('grn_items')
+    .select('grn_id, purchase_order_item_id, item_code, qty_received').in('grn_id', b), c).order('id').range(f, t));
+  if (grnItems.error) return fail('goods received lines', grnItems.error);
+  const poItems = await chunkIn<Row>([...new Set(grnItems.data.map((g) => str(g.purchase_order_item_id)).filter((x): x is string => !!x))], (b, f, t) =>
+    scopeToCompany(sb.from('purchase_order_items').select('id, purchase_order_id, so_item_id, item_group').in('id', b), c).order('id').range(f, t));
+  if (poItems.error) return fail('PO lines', poItems.error);
+  const poItemById = new Map(poItems.data.map((p) => [String(p.id), p]));
+  const pos = await chunkIn<Row>([...new Set(poItems.data.map((p) => String(p.purchase_order_id)))], (b, f, t) =>
+    scopeToCompany(sb.from('purchase_orders').select('id, po_date').in('id', b), c).order('id').range(f, t));
+  if (pos.error) return fail('purchase orders', pos.error);
+  const poDate = new Map(pos.data.map((p) => [String(p.id), day(p.po_date)]));
+
+  const dos = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('delivery_orders')
+    .select('id, do_date, warehouse_id').gte('do_date', since).in('status', ['LOADED', 'DELIVERED']), c).order('id').range(f, t));
+  if (dos.error) return fail('delivery orders', dos.error);
+  const doById = new Map((dos.data ?? []).map((d) => [String(d.id), d]));
+  const doLines = await chunkIn<Row>([...doById.keys()], (b, f, t) => scopeToCompany(sb.from('delivery_order_items')
+    .select('delivery_order_id, so_item_id, item_code, qty').in('delivery_order_id', b), c).order('id').range(f, t));
+  if (doLines.error) return fail('delivery order lines', doLines.error);
+  /* A sales-order line some PO line was raised for was bought for that customer, not taken from stock. */
+  const soItemIds = [...new Set(doLines.data.map((l) => str(l.so_item_id)).filter((x): x is string => !!x))];
+  const boughtFor = await chunkIn<Row>(soItemIds, (b, f, t) => scopeToCompany(sb.from('purchase_order_items')
+    .select('so_item_id').in('so_item_id', b), c).order('id').range(f, t));
+  if (boughtFor.error) return fail('PO lines for orders', boughtFor.error);
+  const bought = new Set(boughtFor.data.map((r) => String(r.so_item_id)));
+  const soItems = await chunkIn<Row>(soItemIds, (b, f, t) => scopeToCompany(sb.from('mfg_sales_order_items')
+    .select('id, doc_no').in('id', b), c).order('id').range(f, t));
+  if (soItems.error) return fail('sales order lines', soItems.error);
+  const docOf = new Map(soItems.data.map((r) => [String(r.id), String(r.doc_no)]));
+  const sos = await chunkIn<Row>([...new Set(docOf.values())], (b, f, t) => scopeToCompany(sb.from('mfg_sales_orders')
+    .select('doc_no, so_date, customer_delivery_date, amended_delivery_date').in('doc_no', b), c).order('doc_no').range(f, t));
+  if (sos.error) return fail('sales orders', sos.error);
+  const soByDoc = new Map(sos.data.map((s) => [String(s.doc_no), s]));
+  const codes = [...new Set(grnItems.data.map((g) => str(g.item_code)).filter((x): x is string => !!x))];
+  const prods = await chunkIn<Row>(codes, (b, f, t) => scopeToCompany(sb.from('mfg_products').select('code, category').in('code', b), c).order('code').range(f, t));
+  if (prods.error) return fail('products', prods.error);
+  const prodCat = new Map(prods.data.map((p) => [String(p.code), str(p.category)]));
+
+  const receipts: StockReceipt[] = grnItems.data.flatMap((g) => {
+    const pi = poItemById.get(String(g.purchase_order_item_id ?? ''));
+    const grn = grnById.get(String(g.grn_id));
+    const pd = pi ? poDate.get(String(pi.purchase_order_id)) : null;
+    if (!pi || pi.so_item_id || !grn?.warehouse_id || !pd || !g.item_code) return [];
+    return [{ warehouse: String(grn.warehouse_id), itemCode: String(g.item_code), category: procurementCategory(prodCat.get(String(g.item_code)) ?? null, str(pi.item_group)),
+      poId: String(pi.purchase_order_id), poDate: pd, receivedAt: String(grn.received_at).slice(0, 10), qty: num(g.qty_received) }];
+  });
+  const outs: StockOut[] = doLines.data.flatMap((l) => {
+    const d = doById.get(String(l.delivery_order_id));
+    if (!d?.warehouse_id || !l.item_code || (l.so_item_id && bought.has(String(l.so_item_id)))) return [];
+    const so = l.so_item_id ? soByDoc.get(docOf.get(String(l.so_item_id)) ?? '') : undefined;
+    return [{ warehouse: String(d.warehouse_id), itemCode: String(l.item_code), doDate: String(d.do_date).slice(0, 10), qty: num(l.qty),
+      soDate: so ? day(so.so_date) : null, needDate: so ? day(so.amended_delivery_date) ?? day(so.customer_delivery_date) : null }];
+  });
+  return c.json({ since, to: today, ...attributeStockPos(receipts, outs) });
 });
