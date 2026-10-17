@@ -6,7 +6,7 @@
 // Data: the Delivery Planning board (what is pending / ready / confirmed),
 // GET /api/scm/logistic-overview (weekly + monthly history, delivered-but-owing,
 // process gaps) and GET /api/scm/trips/day (today's runs).
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/Layout";
@@ -16,9 +16,10 @@ import { useDeliveryPlanning, type PlanningOrder } from "../../vendor/scm/lib/de
 import { useFleetDay } from "../../vendor/scm/lib/fleet-day-queries";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
-import { Th, Td, Panel, SELECT_CLS } from "../../components/scm-v2/OverviewKit";
+import { Th, Td, Panel, SELECT_CLS, Toggle } from "../../components/scm-v2/OverviewKit";
 import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
 import { LogisticPeriodSection, type PeriodTotals } from "./LogisticPeriodSection";
+import { LogisticDailySection } from "./LogisticDailySection";
 import { Donut, Columns, Bullet, SplitBar, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
 
 type Week = { from: string; to: string; doCount: number; doAmountSen: number; delivered: number; runs: number; current: boolean };
@@ -40,6 +41,17 @@ const AVG_SALES_PER_RUN_TARGET_SEN = 30000_00;
 const rm = fmtSen;
 const n = (v: number) => v.toLocaleString();
 const pctFmt = (x: number) => `${x.toFixed(1)}%`;
+/* The customer follow-up an open order is waiting on, from its message status
+   on Delivery Planning. */
+const FOLLOW_UP: Array<[string, RegExp]> = [
+  ["Waiting for the customer to reply", /Pending Customer Reply|To Remind Customer Reply/i],
+  ["To reschedule", /Pending Reschedule|Postpone/i],
+  ["Delivery date not sent yet", /To Send Delivery Date|Not Sent/i],
+  ["Balance to collect", /Collect Balance|Balance Reminder/i],
+  ["Date agreed", /Done Scheduling|Delivery Time|Driver|Reminder Sent|Done Remind/i],
+  ["Address or contact wrong", /Invalid/i],
+];
+const followUpOf = (s: string | null) => (s ? FOLLOW_UP.find(([, rx]) => rx.test(s))?.[0] ?? "Other" : "No follow-up yet");
 
 /** `embedded`: inside the phone shell, which draws its own header. */
 export function LogisticOverview({ embedded }: { embedded: boolean }) {
@@ -123,6 +135,18 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const loading = board.isLoading || hist.isLoading;
   const v = (x: number | undefined) => (loading || x == null ? "…" : n(x));
   const jump = (id: string) => () => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+  const [monthBy, setMonthBy] = useState<"amount" | "orders">("amount");
+  /* Outstanding delivery orders: every open sales order, split by where it
+     stands and by the customer follow-up it waits on. */
+  const open = rows.filter((o) => o.delivery_state !== "DELIVERED");
+  const openSen = open.reduce((a, o) => a + o.local_total_sen, 0);
+  const byState = status.filter(([k]) => k !== "DELIVERED").map(([k, label, color]) => {
+    const xs = open.filter((o) => o.delivery_state === k);
+    return { label, color, count: xs.length, sen: xs.reduce((a, o) => a + o.local_total_sen, 0) };
+  });
+  const followMap = new Map<string, { count: number; sen: number }>();
+  for (const o of open) { const k = followUpOf(o.delivery_message_status); const g = followMap.get(k) ?? { count: 0, sen: 0 }; g.count += 1; g.sen += o.local_total_sen; followMap.set(k, g); }
+  const follow = [...followMap.entries()].sort((a, b) => b[1].count - a[1].count);
 
   return (
     <div className="space-y-4">
@@ -140,22 +164,32 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
 
       <LogisticPeriodSection rows={allRows} period={period} today={today} totals={hist.data?.period ?? null} />
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Tile label="Due in 3 days, not ready" value={v(m.urgent.length)} note={`of ${m.in3} orders due by ${dd(addDays(today, 3))}`} tone={m.urgent.length ? "bad" : "good"} trend={null} onClick={jump("urgent")} />
-        <Tile label="Overdue deliveries" value={v(counts.OVERDUE ?? 0)} note="past the delivery date, not delivered" tone={(counts.OVERDUE ?? 0) ? "bad" : "good"} trend={null} onClick={() => navigate("/scm/delivery-planning")} />
-        <Tile label="DO loaded, not closed" value={v(h?.doNotClosed.count)} note={h ? `${rm(h.doNotClosed.amountSen)} · loaded over 7 days ago` : ""} tone={h?.doNotClosed.count ? "warn" : "good"} trend={null} onClick={jump("gaps")} />
-        <Tile label="Delivered, owing > 30 days" value={v(h?.deliveredOwingOver30.count)} note={h ? `${rm(h.deliveredOwingOver30.balanceSen)} · oldest ${h.deliveredOwingOver30.oldestDays} days` : ""} tone={h?.deliveredOwingOver30.count ? "bad" : "good"} trend={null} onClick={null} />
-        <Tile label="Orders to deliver" value={v(m.openCount)} note={rm(m.openSen)} tone="main" trend={null} onClick={null} />
-        <Tile label="DO last week" value={lastWeek ? n(lastWeek.doCount) : "…"} note={lastWeek ? `${rm(lastWeek.doAmountSen)} · ${dd(lastWeek.from)}–${dd(lastWeek.to)}` : ""} tone="brass" trend={weeks.slice(0, -1).map((w) => w.doAmountSen)} onClick={null} />
-        <Tile label="Runs today" value={day.isLoading ? "…" : n(runsToday.length)} note={`${runsToday.reduce((a, t) => a + t.stops.length, 0)} stops`} tone="main" trend={null} onClick={() => navigate(`/scm/fleet-day?date=${today}`)} />
-        <Tile label="Delivered, still owing" value={h ? rm(h.deliveredOwing.balanceSen) : "…"} note={h ? `${h.deliveredOwing.count} orders` : ""} tone="warn" trend={null} onClick={null} />
-      </div>
+      {hist.data?.period && <LogisticDailySection days={hist.data.period.days} regions={hist.data.period.byRegion} runs={hist.data.period.runList} />}
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Panel title="Order status" hint={warehouse ? "this warehouse, all open and delivered orders" : "all warehouses, all open and delivered orders"}>
-          <Donut size={128} format={n} center={{ value: n(statusTotal), label: "orders" }}
-            data={status.map(([k, label, color]) => ({ label, value: (counts[k] ?? 0), color }))} />
-        </Panel>
+      <Panel title="Outstanding delivery orders" hint={`${warehouse ? "this warehouse" : "all warehouses"} · every sales order not yet delivered, today`}>
+        <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+          <span className="text-[26px] font-bold tabular-nums text-ink">{loading ? "…" : n(open.length)}</span>
+          <span className="text-[13px] text-ink-secondary">orders · {fmtSen(openSen)}</span>
+          {m.urgent.length > 0 && <button type="button" onClick={jump("urgent")} className="text-[12px] text-err hover:underline">{m.urgent.length} due in 3 days and not ready</button>}
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div>
+            <div className="mb-1 text-[12px] font-semibold text-ink">Where they stand</div>
+            <SplitBar format={n} parts={byState.map((x) => ({ label: x.label, value: x.count, color: x.color }))} />
+            <table className="mt-2 w-full border-collapse"><tbody>
+              {byState.map((x) => <tr key={x.label}><Td left>{x.label}</Td><Td>{x.count}</Td><Td>{fmtSen(x.sen)}</Td></tr>)}
+            </tbody></table>
+          </div>
+          <div>
+            <div className="mb-1 text-[12px] font-semibold text-ink">Customer follow-up</div>
+            <table className="w-full border-collapse"><tbody>
+              {follow.map(([k, g]) => <tr key={k}><Td left className={k.startsWith("Waiting") || k.startsWith("To reschedule") ? "text-warning-text" : ""}>{k}</Td><Td>{g.count}</Td><Td>{fmtSen(g.sen)}</Td></tr>)}
+            </tbody></table>
+          </div>
+        </div>
+      </Panel>
+
+      <div className="grid gap-4 lg:grid-cols-2">
         <Panel title="KPI scorecard" hint="actual against target">
           <div className="space-y-3">
             <Bullet label="Phone completeness" actual={m.phoneComplete != null ? m.phoneComplete * 100 : null} target={100} max={100} format={pctFmt} higherIsBetter />
@@ -184,8 +218,8 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       <Panel title="Weekly logistic report" hint="Monday to Sunday · this week highlighted">
         <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
           <Columns height={200} labels={weeks.map((w) => dd(w.from))} highlight={weeks.findIndex((w) => w.current)} stacked={false} format={n}
-            series={[{ name: "DO issued", color: PALETTE[0] }, { name: "Marked delivered", color: TONE.good }, { name: "Lorry runs", color: PALETTE[1] }]}
-            values={[weeks.map((w) => w.doCount), weeks.map((w) => w.delivered), weeks.map((w) => w.runs)]}
+            series={[{ name: "DO issued", color: PALETTE[0] }, { name: "Marked delivered", color: TONE.good }]}
+            values={[weeks.map((w) => w.doCount), weeks.map((w) => w.delivered)]}
             line={{ name: "DO amount", color: PALETTE[2], values: weeks.map((w) => w.doAmountSen), format: rm }} />
           <table className="w-full border-collapse self-start">
             <thead><tr><Th left>Week</Th><Th>DO</Th><Th>Amount</Th><Th>Delivered</Th><Th>Runs</Th></tr></thead>
@@ -200,10 +234,15 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       </Panel>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title="Monthly delivery volume" hint="DO amount (bars) and DO count (line)">
-          <Columns height={190} labels={months.map((x) => x.month.slice(2).replace("-", "/"))} highlight={months.length - 1} stacked={false} format={rm}
-            series={[{ name: "DO amount", color: PALETTE[0] }]} values={[months.map((x) => x.doAmountSen)]}
-            line={{ name: "DO count", color: PALETTE[1], values: months.map((x) => x.doCount), format: n }} />
+        <Panel title="Monthly delivery volume" hint="delivery orders issued each month"
+          right={<Toggle value={monthBy} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setMonthBy} />}>
+          <Columns height={190} labels={months.map((x) => x.month.slice(2).replace("-", "/"))} highlight={months.length - 1} stacked={false} format={monthBy === "amount" ? rm : (x) => `${x} DO`}
+            series={[{ name: monthBy === "amount" ? "DO amount" : "DO issued", color: PALETTE[0] }]} values={[months.map((x) => (monthBy === "amount" ? x.doAmountSen : x.doCount))]}
+            line={null} />
+          <table className="mt-2 w-full border-collapse">
+            <thead><tr><Th left>Month</Th><Th>DO</Th><Th>Amount</Th><Th>Average order</Th></tr></thead>
+            <tbody>{months.slice().reverse().map((x) => <tr key={x.month}><Td left>{x.month}</Td><Td>{x.doCount}</Td><Td>{rm(x.doAmountSen)}</Td><Td>{x.doCount ? rm(Math.round(x.doAmountSen / x.doCount)) : "—"}</Td></tr>)}</tbody>
+          </table>
           <p className="mt-1 text-[11px] text-ink-muted">Counts delivery orders raised in the ERP; months before the ERP took over delivery orders read low.</p>
         </Panel>
         <section id="gaps">
@@ -212,6 +251,10 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
               <li>
                 <div className="flex flex-wrap items-baseline justify-between gap-x-2"><b className="text-ink">DO loaded, never closed as delivered</b><span className="tabular-nums text-warning-text">{h ? `${n(h.doNotClosed.count)} DO · ${rm(h.doNotClosed.amountSen)}` : "…"}</span></div>
                 <p className="text-ink-muted">Loaded more than 7 days ago{h ? `, ${n(h.doNotClosed.over30)} of them over 30 days (${rm(h.doNotClosed.over30Sen)})` : ""}. Until the crew takes the POD the order never counts as delivered, its balance never ages as owing, and "Marked delivered" above stays near zero.</p>
+              </li>
+              <li>
+                <div className="flex flex-wrap items-baseline justify-between gap-x-2"><b className="text-ink">Delivered, still owing after 30 days</b><span className="tabular-nums text-err">{h ? `${n(h.deliveredOwingOver30.count)} orders · ${rm(h.deliveredOwingOver30.balanceSen)}` : "…"}</span></div>
+                <p className="text-ink-muted">{h ? `Oldest ${h.deliveredOwingOver30.oldestDays} days. ` : ""}Goods are with the customer and the balance is not paid.</p>
               </li>
               <li>
                 <div className="flex flex-wrap items-baseline justify-between gap-x-2"><b className="text-ink">DO without cost · last 90 days</b><span className="tabular-nums text-warning-text">{h ? `${n(h.doNoCost.count)} DO · ${rm(h.doNoCost.amountSen)}` : "…"}</span></div>

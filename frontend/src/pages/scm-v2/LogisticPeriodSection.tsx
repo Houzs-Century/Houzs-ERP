@@ -11,7 +11,13 @@ import { Th, Td, Panel, Toggle } from "../../components/scm-v2/OverviewKit";
 import { Donut, SplitBar, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import type { Period } from "../../components/scm-v2/DashboardPeriod";
 
-export type PeriodTotals = { from: string; to: string; doCount: number; doAmountSen: number; podClosed: number; runs: number; lorries: number; runAmountSen: number };
+import type { DayRow, RegionRow, RunRow } from "./LogisticDailySection";
+
+export type PeriodTotals = {
+  from: string; to: string; doCount: number; doAmountSen: number; podClosed: number; runs: number; lorries: number; runAmountSen: number;
+  days: DayRow[]; byRegion: RegionRow[]; runList: RunRow[];
+  byCategory: Array<{ category: string; orders: number; amountSen: number; avgSen: number | null }>;
+};
 
 const endOfMonth = (d: string) => {
   const y = Number(d.slice(0, 4)); const m = Number(d.slice(5, 7));
@@ -76,16 +82,32 @@ export function LogisticPeriodSection({ rows, period, today, totals }: { rows: P
         <Tile label="Delivered (DO issued)" tone="good" trend={null} onClick={null}
           value={totals ? (by === "amount" ? fmtSen(totals.doAmountSen) : `${totals.doCount} DO`) : "…"}
           note={totals ? `${by === "amount" ? `${totals.doCount} DO` : fmtSen(totals.doAmountSen)} · ${totals.podClosed} closed with POD` : ""} />
-        <Tile label={past ? `Dated by ${estimateEnd.slice(5).replace("-", "/")}, still not delivered today` : `Still to deliver by ${estimateEnd.slice(5).replace("-", "/")}`} tone={overdue.length ? "bad" : "warn"} trend={null} onClick={null}
+        <Tile label={past ? `Dated by ${estimateEnd.slice(5).replace("-", "/")}, still not delivered today` : `Outstanding delivery by ${estimateEnd.slice(5).replace("-", "/")}`} tone={overdue.length ? "bad" : "warn"} trend={null} onClick={null}
           value={fig(toDeliver)} note={`${sub(toDeliver)} · ${overdue.length} already overdue (${fmtSen(sum(overdue))})`} />
         <Tile label={past ? `Open today, dated after ${estimateEnd.slice(5).replace("-", "/")}` : "Owed after that"} tone="main" trend={null} onClick={null}
           value={fig(after)} note={`next month ${by === "amount" ? fmtSen(sum(nextMonth)) : nextMonth.length} · later ${by === "amount" ? fmtSen(sum(later)) : later.length} · no date ${by === "amount" ? fmtSen(sum(noDate)) : noDate.length}`} />
         <Tile label="Average per order" tone="brass" trend={null} onClick={null}
-          value={avgOrder != null ? fmtSen(avgOrder) : "—"} note="DO amount ÷ DOs in the period" />
+          value={avgOrder != null ? fmtSen(avgOrder) : "—"} note="DO amount ÷ DOs in the period · by category below" />
         <Tile label="Average per lorry run" tone="brass" trend={null} onClick={null}
           value={avgRun != null ? fmtSen(avgRun) : "—"}
           note={totals?.runs ? `${totals.runs} runs · ${totals.lorries} lorries · ${fmtSen(totals.runAmountSen)} carried` : "no lorry runs recorded in this period yet"} />
       </div>
+
+      {totals && totals.byCategory.length > 0 && (
+        <div className="mt-3">
+          <div className="mb-1.5 text-[12px] font-semibold text-ink">Average per order, by category</div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+            {totals.byCategory.map((c) => (
+              <div key={c.category} className="rounded-md border border-border px-3 py-2">
+                <div className="text-[11px] uppercase tracking-wide text-ink-muted">{c.category}</div>
+                <div className="text-[15px] font-semibold tabular-nums text-ink">{c.avgSen != null ? fmtSen(c.avgSen) : "—"}</div>
+                <div className="text-[11px] text-ink-muted">{c.orders} DO · {fmtSen(c.amountSen)}</div>
+              </div>
+            ))}
+          </div>
+          <p className="mt-1 text-[11px] text-ink-muted">A DO counts in each category it charges for, with only that category&apos;s amount; free items (bundled bedframes, gift pillows) are not counted.</p>
+        </div>
+      )}
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <div>
@@ -93,7 +115,7 @@ export function LogisticPeriodSection({ rows, period, today, totals }: { rows: P
           <SplitBar format={by === "amount" ? fmtSen : (x) => `${x}`} parts={[
             { label: "Delivered", value: totals ? (by === "amount" ? totals.doAmountSen : totals.doCount) : 0, color: TONE.good },
             { label: "Overdue", value: by === "amount" ? sum(overdue) : overdue.length, color: TONE.bad },
-            { label: "Due by period end", value: by === "amount" ? sum(toDeliver) - sum(overdue) : toDeliver.length - overdue.length, color: TONE.warn },
+            { label: "Outstanding by period end", value: by === "amount" ? sum(toDeliver) - sum(overdue) : toDeliver.length - overdue.length, color: TONE.warn },
             { label: "Next month", value: by === "amount" ? sum(nextMonth) : nextMonth.length, color: PALETTE[2]! },
             { label: "Later / no date", value: by === "amount" ? sum(later) + sum(noDate) : later.length + noDate.length, color: "#c9cdc4" },
           ]} />
