@@ -72,9 +72,10 @@ function useWidth(fallback: number) {
 }
 
 /** Vertical columns per period, side by side or stacked, with an optional line on top. */
-export function Columns({ labels, series, values, format, stacked, line, highlight, height }: {
+/** `valueLabels`: print each bar's figure above it (keep it off when bars are many and narrow). */
+export function Columns({ labels, series, values, format, stacked, line, highlight, height, valueLabels }: {
   labels: string[]; series: Series[]; values: number[][]; format: Fmt; stacked: boolean;
-  line: { name: string; color: string; values: Array<number | null>; format: Fmt } | null; highlight: number | null; height: number;
+  line: { name: string; color: string; values: Array<number | null>; format: Fmt } | null; highlight: number | null; height: number; valueLabels: boolean;
 }) {
   const [ref, W] = useWidth(420);
   const H = height; const padL = 8; const padB = 22; const padT = 10;
@@ -107,9 +108,12 @@ export function Columns({ labels, series, values, format, stacked, line, highlig
                 const x = stacked ? x0 : x0 + si * barW;
                 acc += v;
                 return v > 0 ? (
-                  <rect key={s.name} x={x} y={top} width={Math.max(1, barW - (stacked ? 0 : 1.5))} height={Math.max(0.5, h)} fill={s.color} rx={stacked ? 0 : 1.5}>
-                    <title>{`${lab} · ${s.name}: ${format(v)}`}</title>
-                  </rect>
+                  <g key={s.name}>
+                    <rect x={x} y={top} width={Math.max(1, barW - (stacked ? 0 : 1.5))} height={Math.max(0.5, h)} fill={s.color} rx={stacked ? 0 : 1.5}>
+                      <title>{`${lab} · ${s.name}: ${format(v)}`}</title>
+                    </rect>
+                    {valueLabels && !stacked && <text x={x + barW / 2} y={top - 3} textAnchor="middle" className="fill-ink-secondary" style={{ fontSize: 10 }}>{v.toLocaleString()}</text>}
+                  </g>
                 ) : null;
               })}
               {i % step === 0 && <text x={padL + i * slot + slot / 2} y={H - 6} textAnchor="middle" className="fill-ink-muted" style={{ fontSize: 10.5 }}>{lab}</text>}

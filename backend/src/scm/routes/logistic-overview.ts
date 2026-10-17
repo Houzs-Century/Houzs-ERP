@@ -14,7 +14,7 @@ import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
-import { logisticPeriod, regionOf, type PeriodDo, type PeriodTrip, type DoCatLine } from '../lib/logistic-period';
+import { logisticPeriod, type PeriodDo, type DoCatLine } from '../lib/logistic-period';
 import { procurementCategory } from '../lib/procurement-overview';
 
 export const logisticOverview = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -44,7 +44,6 @@ logisticOverview.get('/', async (c) => {
   const byWh = <Q,>(q: Q): Q => (warehouseId ? (q as unknown as { eq: (col: string, v: string) => Q }).eq('warehouse_id', warehouseId) : q);
   const thisMonday = mondayOf(today);
   const firstWeek = iso(Date.parse(`${thisMonday}T00:00:00Z`) - 8 * 7 * DAY);
-  const lastDay = iso(Date.parse(`${thisMonday}T00:00:00Z`) + 14 * DAY - DAY);
   const yearAgo = `${iso(Date.parse(`${today.slice(0, 7)}-01T00:00:00Z`) - 330 * DAY).slice(0, 7)}-01`;
   const fail = (what: string, e: { message: string }) => c.json({ error: 'load_failed', reason: `${what}: ${e.message}` }, 500);
 
@@ -52,15 +51,11 @@ logisticOverview.get('/', async (c) => {
     .select('id, do_date, delivered_at, status, local_total_sen').gte('do_date', yearAgo)
     .not('status', 'in', '("DRAFT","CANCELLED")')), c).order('id').range(f, t));
   if (dos.error) return fail('delivery orders', dos.error);
-  const trips = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('trips')
-    .select('id, trip_date, status').gte('trip_date', firstWeek).lte('trip_date', lastDay)
-    .neq('status', 'CANCELLED')), c).order('id').range(f, t));
-  if (trips.error) return fail('lorry runs', trips.error);
 
   // Weeks: 8 back, this week, next week.
   const weeks = Array.from({ length: 10 }, (_, i) => {
     const from = iso(Date.parse(`${firstWeek}T00:00:00Z`) + i * 7 * DAY);
-    return { from, to: iso(Date.parse(`${from}T00:00:00Z`) + 6 * DAY), doCount: 0, doAmountSen: 0, delivered: 0, runs: 0, current: from === thisMonday };
+    return { from, to: iso(Date.parse(`${from}T00:00:00Z`) + 6 * DAY), doCount: 0, doAmountSen: 0, delivered: 0, current: from === thisMonday };
   });
   const weekOf = (d: string | null) => (d ? weeks.find((w) => d.slice(0, 10) >= w.from && d.slice(0, 10) <= w.to) : undefined);
   const months = new Map<string, { month: string; doCount: number; doAmountSen: number }>();
@@ -74,7 +69,6 @@ logisticOverview.get('/', async (c) => {
     const m = date.slice(0, 7);
     if (m) { const row = months.get(m) ?? { month: m, doCount: 0, doAmountSen: 0 }; row.doCount += 1; row.doAmountSen += num(d.local_total_sen); months.set(m, row); }
   }
-  for (const t of trips.data ?? []) { const w = weekOf(String(t.trip_date ?? '')); if (w) w.runs += 1; }
 
   /* Delivered but still owing: an order whose delivery is done and whose
      balance is above zero, aged from its last delivery. */
@@ -120,57 +114,38 @@ logisticOverview.get('/', async (c) => {
   }
   const doNoCost = { count: (noCost.data ?? []).length, amountSen: (noCost.data ?? []).reduce((a, d) => a + num(d.local_total_sen), 0) };
 
-  /* The selected period (?from=&to=, default this month to today): what went
-     out on a DO, how much of it is closed with a POD, and what each lorry run
-     carried — revenue on its stops, or its DOs' amount when a stop has none. */
+  /* The selected period (?from=&to=, default this month to today): the DOs
+     issued in it, the lorry each went on, and their lines by category. */
   const ISO = /^\d{4}-\d{2}-\d{2}$/;
   const qFrom = c.req.query('from'); const qTo = c.req.query('to');
   const pFrom = qFrom && ISO.test(qFrom) ? qFrom : `${today.slice(0, 7)}-01`;
   const pTo = qTo && ISO.test(qTo) ? qTo : today;
-  /* DOs dated from 60 days before the period (a DO delivered in the period
-     may have been issued before it); logisticPeriod keeps what belongs. */
-  const lookback = iso(Date.parse(`${pFrom}T00:00:00Z`) - 60 * DAY);
   const periodDos = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
-    .select('id, status, do_date, delivered_at, local_total_sen, state, customer_state, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, service_sen')
-    .gte('do_date', lookback).lte('do_date', pTo)
+    .select('id, status, do_date, local_total_sen, state, customer_state')
+    .gte('do_date', pFrom).lte('do_date', pTo)
     .in('status', ['LOADED', 'DELIVERED'])), c).order('id').range(f, t));
   if (periodDos.error) return fail('delivery orders in the period', periodDos.error);
-  const periodTrips = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('trips')
-    .select('id, trip_date, lorry_id').gte('trip_date', pFrom).lte('trip_date', pTo).neq('status', 'CANCELLED')), c).order('id').range(f, t));
-  if (periodTrips.error) return fail('lorry runs in the period', periodTrips.error);
-  const tripIds = (periodTrips.data ?? []).map((r) => String(r.id));
-  const stops = await chunkIn<Row>(tripIds, (b, f, t) => scopeToCompany(sb.from('trip_stops')
-    .select('trip_id, do_id, revenue_sen').in('trip_id', b), c).order('id').range(f, t));
+  const doIds = (periodDos.data ?? []).map((d) => String(d.id));
+  /* The lorry: the DO's crew record first, else the lorry run it was put on. */
+  const crew = await chunkIn<Row>(doIds, (b, f, t) => scopeToCompany(sb.from('delivery_order_crew')
+    .select('do_id, lorry_id, lorry_plate').in('do_id', b), c).order('id').range(f, t));
+  if (crew.error) return fail('delivery crews', crew.error);
+  const stops = await chunkIn<Row>(doIds, (b, f, t) => scopeToCompany(sb.from('trip_stops')
+    .select('do_id, trip_id').in('do_id', b), c).order('id').range(f, t));
   if (stops.error) return fail('lorry run stops', stops.error);
-  const stopDoIds = [...new Set(stops.data.map((s) => str(s.do_id)).filter((x): x is string => !!x))];
-  const stopDos = await chunkIn<Row>(stopDoIds, (b, f, t) => scopeToCompany(sb.from('delivery_orders')
-    .select('id, local_total_sen, state, customer_state').in('id', b), c).order('id').range(f, t));
-  if (stopDos.error) return fail('lorry run delivery orders', stopDos.error);
-  const lorryIds = [...new Set((periodTrips.data ?? []).map((r) => str(r.lorry_id)).filter((x): x is string => !!x))];
-  const lorries = await chunkIn<Row>(lorryIds, (b, f, t) => scopeToCompany(sb.from('lorries').select('id, plate').in('id', b), c).order('id').range(f, t));
-  if (lorries.error) return fail('lorries', lorries.error);
-  const plate = new Map(lorries.data.map((l) => [String(l.id), String(l.plate ?? '—')]));
-  const stopDoById = new Map(stopDos.data.map((d) => [String(d.id), d]));
-
-  const runs: PeriodTrip[] = (periodTrips.data ?? []).map((t) => {
-    const ss = stops.data.filter((s) => String(s.trip_id) === String(t.id));
-    const regs = new Map<string, number>();
-    let amountSen = 0;
-    for (const s of ss) {
-      const d = s.do_id ? stopDoById.get(String(s.do_id)) : undefined;
-      amountSen += s.revenue_sen != null ? num(s.revenue_sen) : num(d?.local_total_sen);
-      if (d) { const r = regionOf(str(d.state) || str(d.customer_state)); regs.set(r, (regs.get(r) ?? 0) + 1); }
-    }
-    const region = [...regs.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] ?? null;
-    return { id: String(t.id), date: String(t.trip_date).slice(0, 10), lorry: t.lorry_id ? plate.get(String(t.lorry_id)) ?? null : null, driver: null, stops: ss.length, amountSen, region };
-  });
+  const tripIds = [...new Set(stops.data.map((s) => String(s.trip_id)))];
+  const trips = await chunkIn<Row>(tripIds, (b, f, t) => scopeToCompany(sb.from('trips')
+    .select('id, lorry_id').in('id', b).neq('status', 'CANCELLED'), c).order('id').range(f, t));
+  if (trips.error) return fail('lorry runs', trips.error);
+  const lorryOfTrip = new Map(trips.data.map((t) => [String(t.id), str(t.lorry_id)]));
+  const lorryOfDo = new Map<string, string>();
+  for (const s of stops.data) { const l = lorryOfTrip.get(String(s.trip_id)); if (l) lorryOfDo.set(String(s.do_id), l); }
+  for (const r of crew.data) { const l = str(r.lorry_id) || str(r.lorry_plate); if (l) lorryOfDo.set(String(r.do_id), l); }
   const pDos: PeriodDo[] = (periodDos.data ?? []).map((d) => ({
-    id: String(d.id), doDate: String(d.do_date).slice(0, 10), deliveredAt: d.delivered_at ? String(d.delivered_at).slice(0, 10) : null,
-    status: String(d.status), amountSen: num(d.local_total_sen), state: str(d.state) || str(d.customer_state),
-    mattressSofaSen: num(d.mattress_sofa_sen), bedframeSen: num(d.bedframe_sen), accessoriesSen: num(d.accessories_sen), othersSen: num(d.others_sen), serviceSen: num(d.service_sen),
+    id: String(d.id), doDate: String(d.do_date).slice(0, 10), status: String(d.status), amountSen: num(d.local_total_sen),
+    state: str(d.state) || str(d.customer_state), lorry: lorryOfDo.get(String(d.id)) ?? null,
   }));
-  const inP = pDos.filter((d) => d.doDate >= pFrom && d.doDate <= pTo);
-  const doLines = await chunkIn<Row>(inP.map((d) => d.id), (b, f, t) => scopeToCompany(sb.from('delivery_order_items')
+  const doLines = await chunkIn<Row>(doIds, (b, f, t) => scopeToCompany(sb.from('delivery_order_items')
     .select('delivery_order_id, item_code, item_group, line_total_sen').in('delivery_order_id', b), c).order('id').range(f, t));
   if (doLines.error) return fail('delivery order lines', doLines.error);
   const lineCodes = [...new Set(doLines.data.map((l) => str(l.item_code)).filter((x): x is string => !!x))];
@@ -180,25 +155,22 @@ logisticOverview.get('/', async (c) => {
   const CAT_LABEL: Record<string, string> = { MATTRESS: 'Mattress', BEDFRAME: 'Bedframe', SOFA: 'Sofa', ACCESSORY: 'Accessories', DINING: 'Dining', OTHERS: 'Others' };
   const catLines: DoCatLine[] = doLines.data.map((l) => {
     const raw = prodCat.get(String(l.item_code ?? '')) ?? null;
-    const service = raw === 'SERVICE' || String(l.item_group ?? '').toLowerCase() === 'service' || String(l.item_code ?? '').toUpperCase().startsWith('SVC-');
-    return { doId: String(l.delivery_order_id), category: service ? 'Service' : CAT_LABEL[procurementCategory(raw, str(l.item_group))] ?? 'Others', sen: num(l.line_total_sen) };
+    /* Transport, disposal, storage fees: a charge on the order, not a product. */
+    const fee = raw === 'SERVICE' || String(l.item_group ?? '').toLowerCase() === 'service' || String(l.item_code ?? '').toUpperCase().startsWith('SVC-');
+    return { doId: String(l.delivery_order_id), category: fee ? 'Charges' : CAT_LABEL[procurementCategory(raw, str(l.item_group))] ?? 'Others', sen: num(l.line_total_sen) };
   });
   const period = {
     from: pFrom, to: pTo,
-    doCount: inP.length,
-    doAmountSen: inP.reduce((a, d) => a + d.amountSen, 0),
-    podClosed: inP.filter((d) => d.status === 'DELIVERED').length,
-    runs: runs.length,
-    lorries: new Set(runs.map((r) => r.lorry).filter(Boolean)).size,
-    runAmountSen: runs.reduce((a, r) => a + r.amountSen, 0),
-    ...logisticPeriod(pDos, runs, catLines, pFrom, pTo),
+    doCount: pDos.length,
+    doAmountSen: pDos.reduce((a, d) => a + d.amountSen, 0),
+    podClosed: pDos.filter((d) => d.status === 'DELIVERED').length,
+    ...logisticPeriod(pDos, catLines, pFrom, pTo),
   };
 
   return c.json({
     today, thisMonday,
     period,
     doNotClosed, doNoCost,
-    runsToday: (trips.data ?? []).filter((t) => String(t.trip_date ?? '').slice(0, 10) === today).length,
     weeks,
     months: [...months.values()].sort((a, b) => a.month.localeCompare(b.month)),
     deliveredOwing: outstanding,

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { Star, TrendingUp, AlertTriangle, Clock, CheckCircle2, Activity, Smile, Hourglass, ExternalLink, Gauge, LineChart, PieChart } from "lucide-react";
-import { DataTable, type Column } from "../components/DataTable";
+import { TrendingUp, AlertTriangle, Activity, Smile, Hourglass, ExternalLink, Gauge, LineChart, PieChart } from "lucide-react";
 import { StatCard } from "../components/StatCard";
 import { DashboardGrid, DashboardPanels, DashboardBreakdown } from "../components/Dashboard";
 import { Panel } from "../components/Panel";
@@ -263,149 +262,19 @@ export function ServiceMetrics() {
         />
       </DashboardPanels>
 
-      {/* ── Suppliers & Repeat Issues ── */}
-      <SectionHeader
-        icon={<AlertTriangle size={15} />}
-        title="Suppliers & Repeat Issues"
-      />
-
-      {/* Creditor performance */}
-      <div className="mb-3 overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
-        <div className="flex items-center gap-2 border-b border-border px-5 py-3">
-          <CheckCircle2 size={13} className="text-accent" />
-          <div className="text-[10.5px] font-bold uppercase tracking-wide text-ink-secondary">
-            Creditor Performance
-          </div>
-        </div>
-        {/* Batch 4: pure-display report table → DataTable (sort + column
-            show/hide + export on a read-only metrics table). */}
-        <DataTable<AssrMetrics["creditor_performance"][number]>
-          tableId="service-metrics-creditor"
-          layoutFamily="service-metrics-creditor"
-          exportName="creditor-performance"
-          rows={m ? m.creditor_performance : null}
-          loading={!m}
-          emptyLabel="No creditor assignments in this period"
-          getRowKey={(s) => s.creditor_code}
-          columns={[
-            {
-              key: "creditor", label: "Creditor", getValue: (s) => s.name || s.creditor_code,
-              render: (s) => (
-                <>
-                  <div className="font-semibold">{s.name || s.creditor_code}</div>
-                  <div className="font-mono text-[10px] text-ink-muted">{s.creditor_code}</div>
-                </>
-              ),
-            },
-            { key: "cases", label: "Cases", align: "right", width: "90px", getValue: (s) => s.total_cases, render: (s) => <span className="font-mono">{s.total_cases}</span> },
-            { key: "closed", label: "Closed", align: "right", width: "90px", getValue: (s) => s.closed_cases, render: (s) => <span className="font-mono text-synced">{s.closed_cases}</span> },
-            { key: "breached", label: "Breached", align: "right", width: "100px", getValue: (s) => s.breached, render: (s) => <span className={cn("font-mono", s.breached > 0 ? "font-bold text-err" : "text-ink-muted")}>{s.breached}</span> },
-            {
-              key: "avg", label: "Avg Resolution", align: "right", width: "130px",
-              getValue: (s) => s.avg_resolution_hours ?? -1,
-              render: (s) => (
-                <span className="font-mono">
-                  {s.avg_resolution_hours != null
-                    ? s.avg_resolution_hours >= 24
-                      ? `${(s.avg_resolution_hours / 24).toFixed(1)}d`
-                      : `${Math.round(s.avg_resolution_hours)}h`
-                    : "—"}
-                </span>
-              ),
-            },
-            {
-              key: "rating", label: "Rating", align: "right", width: "90px",
-              getValue: (s) => s.avg_rating ?? -1,
-              render: (s) => s.avg_rating != null ? (
-                <span className="inline-flex items-center gap-1">
-                  <Star size={10} className="fill-amber-400 text-amber-400" />
-                  <span className="font-mono">{s.avg_rating.toFixed(1)}</span>
-                </span>
-              ) : (
-                <span className="text-ink-muted">—</span>
-              ),
-            },
-          ] satisfies Column<AssrMetrics["creditor_performance"][number]>[]}
-        />
+      {/* Suppliers live in the quality summary above (rate, days to close,
+          stages); what is left here is who and what keeps coming back. */}
+      <SectionHeader icon={<AlertTriangle size={15} />} title="Repeat issues" />
+      <div className="mb-3 grid gap-3 lg:grid-cols-2">
+        <RepeatList title="Items with 2 or more cases" empty="No item came back twice in this period."
+          rows={(m?.repeat_items ?? []).map((r) => ({ key: r.item_code, label: r.item_code, cases: r.cases, latest: r.latest, onClick: () => setDrill({ metric: "item_cases", title: `${r.item_code} — ${r.cases} cases in period`, extra: { item_code: r.item_code } }) }))} />
+        <RepeatList title="Customers with 2 or more cases" empty="No customer opened two cases in this period."
+          rows={(m?.repeat_customers ?? []).map((r, i) => ({ key: `${r.customer_name}-${i}`, label: r.customer_name, cases: r.cases, latest: r.latest, onClick: () => {
+            const extra: Record<string, string> = { customer_name: r.customer_name };
+            if (r.phone) extra.phone = r.phone;
+            setDrill({ metric: "customer_cases", title: `${r.customer_name} — ${r.cases} cases in period`, extra });
+          } }))} />
       </div>
-
-      <DashboardPanels cols={2}>
-        {/* Repeat items */}
-        <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
-          <div className="flex items-center gap-2 border-b border-border px-5 py-3">
-            <AlertTriangle size={13} className="text-err" />
-            <div className="text-[10.5px] font-bold uppercase tracking-wide text-ink-secondary">
-              Repeat-Issue Items (≥ 2 cases)
-            </div>
-          </div>
-          {m && m.repeat_items.length > 0 ? (
-            <ul>
-              {m.repeat_items.map((r) => (
-                <li key={r.item_code} className="border-b border-border last:border-b-0">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setDrill({
-                        metric: "item_cases",
-                        title: `${r.item_code} — ${r.cases} cases in period`,
-                        extra: { item_code: r.item_code },
-                      })
-                    }
-                    className="flex w-full items-center gap-3 px-5 py-2 text-left text-[12px] transition-colors hover:bg-bg/60"
-                  >
-                    <span className="font-mono text-[11px] font-semibold">{r.item_code}</span>
-                    <span className="ml-auto text-ink-muted">last: {formatDate(r.latest)}</span>
-                    <span className="rounded-full bg-err/10 px-2 py-0.5 text-[11px] font-bold text-err">
-                      {r.cases}×
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="px-5 py-4 text-[12px] text-ink-muted">No repeat items in this period</div>
-          )}
-        </div>
-
-        {/* Repeat customers */}
-        <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
-          <div className="flex items-center gap-2 border-b border-border px-5 py-3">
-            <Clock size={13} className="text-err" />
-            <div className="text-[10.5px] font-bold uppercase tracking-wide text-ink-secondary">
-              Repeat Customers (≥ 2 cases)
-            </div>
-          </div>
-          {m && m.repeat_customers.length > 0 ? (
-            <ul>
-              {m.repeat_customers.map((r, i) => (
-                <li key={i} className="border-b border-border last:border-b-0">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const extra: Record<string, string> = { customer_name: r.customer_name };
-                      if (r.phone) extra.phone = r.phone;
-                      setDrill({
-                        metric: "customer_cases",
-                        title: `${r.customer_name} — ${r.cases} cases in period`,
-                        extra,
-                      });
-                    }}
-                    className="flex w-full items-center gap-3 px-5 py-2 text-left text-[12px] transition-colors hover:bg-bg/60"
-                  >
-                    <span className="flex-1 truncate font-semibold">{r.customer_name}</span>
-                    <span className="text-[11px] text-ink-muted">last: {formatDate(r.latest)}</span>
-                    <span className="rounded-full bg-err/10 px-2 py-0.5 text-[11px] font-bold text-err">
-                      {r.cases}×
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="px-5 py-4 text-[12px] text-ink-muted">No repeat customers in this period</div>
-          )}
-        </div>
-      </DashboardPanels>
 
       {drill && (
         <DrillPanel
@@ -414,6 +283,28 @@ export function ServiceMetrics() {
           to={period.to}
           onClose={() => setDrill(null)}
         />
+      )}
+    </div>
+  );
+}
+
+function RepeatList({ title, empty, rows }: { title: string; empty: string; rows: Array<{ key: string; label: string; cases: number; latest: string; onClick: () => void }> }) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
+      <div className="border-b border-border px-5 py-3 text-[12.5px] font-semibold text-ink">{title} <span className="font-normal text-ink-muted">· {rows.length} · click to list the cases</span></div>
+      {rows.length === 0 ? <div className="px-5 py-4 text-[12px] text-ink-muted">{empty}</div> : (
+        <div className="max-h-[320px] overflow-y-auto">
+          <table className="w-full border-collapse text-[12px]">
+            <thead className="sticky top-0 bg-surface text-[10.5px] uppercase tracking-wide text-ink-muted"><tr><th className="px-5 py-1.5 text-left font-semibold">Name</th><th className="px-3 py-1.5 text-right font-semibold">Cases</th><th className="px-5 py-1.5 text-right font-semibold">Last case</th></tr></thead>
+            <tbody>{rows.map((r) => (
+              <tr key={r.key} onClick={r.onClick} className="cursor-pointer border-t border-border hover:bg-bg/60">
+                <td className="max-w-[260px] truncate px-5 py-1.5 font-semibold">{r.label}</td>
+                <td className="px-3 py-1.5 text-right font-mono font-bold text-err">{r.cases}</td>
+                <td className="px-5 py-1.5 text-right text-ink-muted">{formatDate(r.latest)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
       )}
     </div>
   );

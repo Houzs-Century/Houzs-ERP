@@ -6,7 +6,7 @@
 // By category and By supplier are one switch over the same layout.
 // Data: GET /api/scm/procurement-overview (backend lib/procurement-period.ts).
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/Layout";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
@@ -76,6 +76,11 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
   const basis = "original";
   const [by, setBy] = useState<"category" | "supplier">("category");
   const [focus, setFocus] = useState<string | null>(null);
+  /* Two tabs (owner 2026-10-17, "too long"): the PO money and lists, and the
+     slower-moving lead time, dead stock and turnover. */
+  const [params, setParams] = useSearchParams();
+  const tab = params.get("tab") === "stock" ? "stock" : "overview";
+  const setTab = (v: "overview" | "stock") => setParams((p) => { const n = new URLSearchParams(p); if (v === "overview") n.delete("tab"); else n.set("tab", v); return n; }, { replace: true });
   const q = useQuery({
     queryKey: ["procurement-overview", period.from, period.to, basis],
     queryFn: () => authedFetch<Payload>(`/procurement-overview?from=${period.from}&to=${period.to}&basis=${basis}`),
@@ -118,11 +123,12 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
 
       <div className="flex flex-wrap items-center gap-2">
         <DashboardPeriodPicker period={period} today={today} onChange={(f, to) => { setFocus(null); setPeriod(f, to); }} />
+        <Toggle value={tab} options={[["overview", "Overview"], ["stock", "Lead time & stock"]]} onChange={setTab} />
         {q.isFetching && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
       </div>
       {q.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {(q.error as Error).message}</div>}
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      {tab === "overview" && <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Tile label={`PO raised ${when}`} value={t ? rm(t.raised.sen) : "…"} tone="brass" trend={null} onClick={null}
           note={t ? `${t.raised.pos} purchase orders` : ""} />
         <Tile label={`Due ${when}`} value={t ? rm(t.due.sen) : "…"} tone={t?.due.openSen ? "bad" : "good"} trend={null} onClick={null}
@@ -133,9 +139,9 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
           note={d ? `${d.billed.count} supplier invoices` : ""} />
         <Tile label="Total outstanding" value={t ? rm(t.open.sen) : "…"} tone={t?.open.late ? "warn" : "main"} trend={null} onClick={() => document.getElementById("overdue")?.scrollIntoView({ behavior: "smooth" })}
           note={t ? `all POs not yet received, ${asOfNote} · ${t.open.late} lines late` : ""} />
-      </div>
+      </div>}
 
-      {insights.length > 0 && (
+      {tab === "overview" && insights.length > 0 && (
         <Panel title="What to act on" hint="read from the figures on this page">
           <ul className="space-y-1.5 text-[12.5px]">
             {insights.map((x, i) => <li key={i} className="flex gap-2"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: x.tone }} /><span className="text-ink-secondary">{x.text}</span></li>)}
@@ -146,16 +152,16 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
       <div className="flex flex-wrap items-center gap-2 pt-1">
         <h2 className="text-[14px] font-semibold text-ink">Breakdown</h2>
         <Toggle value={by} options={[["category", "By category"], ["supplier", "By supplier"]]} onChange={(v) => { setBy(v); setFocus(null); }} />
-        <span className="text-[11.5px] text-ink-muted">Amounts are quantity × PO price. Click a row to filter the overdue and arriving lists.</span>
+        <span className="text-[11.5px] text-ink-muted">{tab === "overview" ? "Amounts are quantity × PO price. Click a row to filter the overdue and arriving lists at the bottom." : "Lead time by category or by supplier; dead stock and turnover are by category and warehouse."}</span>
       </div>
 
-      {d && t && (
+      {d && t && tab === "overview" && (
         <>
           <Panel title={`PO ${when}`} hint={`total outstanding = every PO line not yet received, ${asOfNote}`}>
             <table className="w-full border-collapse">
               <thead><tr>
-                <Th left>{by === "category" ? "Category" : "Supplier"}</Th><Th>PO raised</Th><Th>POs</Th>
-                <Th>Due {when}</Th><Th>Not arrived yet</Th><Th>Received</Th><Th>Billed</Th><Th>Total outstanding</Th>
+                <Th left>{by === "category" ? "Category" : "Supplier"}</Th><Th>PO raised {when}</Th><Th>POs</Th>
+                <Th>Due {when}</Th><Th>Due · not arrived yet</Th><Th>Received {when}</Th><Th>Supplier billed {when}</Th><Th>Total outstanding</Th>
               </tr></thead>
               <tbody>
                 {groups.map((g) => (
@@ -214,23 +220,28 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
             </Panel>
           </div>
 
+        </>
+      )}
+
+      {d && t && tab === "stock" && (
+        <>
           <Panel title="Lead time" hint={`goods received ${when}`}>
             <p className="mb-2 text-[12.5px] text-ink-secondary">
               Three questions per row: how long the supplier really takes (PO to goods in), how many days before the customer&apos;s date we place the PO, and how early the goods then arrive. If goods keep arriving well before the customer needs them, we can order later and hold less stock.
             </p>
-            <Columns height={190} stacked={false} format={(x) => `${x} days`} highlight={null} line={null}
+            <Columns valueLabels={false} height={190} stacked={false} format={(x) => `${x} days`} highlight={null} line={null}
               labels={groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => label(g.key).slice(0, 14))}
               series={[{ name: "Supplier takes (80% arrive within)", color: PALETTE[0]! }, { name: "We order before the customer date", color: PALETTE[1]! }, { name: "Goods arrive before the customer date", color: TONE.good }]}
               values={[
                 groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => g.supplierLead.p80Days ?? 0),
-                groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => g.ordering.avgOrderBeforeNeedDays ?? 0),
-                groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => g.ordering.avgArrivedBeforeNeedDays ?? 0),
+                groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => (g.ordering.measured < MIN_RECEIPTS ? 0 : g.ordering.avgOrderBeforeNeedDays ?? 0)),
+                groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => (g.ordering.measured < MIN_RECEIPTS ? 0 : g.ordering.avgArrivedBeforeNeedDays ?? 0)),
               ]} />
             <table className="mt-3 w-full border-collapse">
               <thead><tr>
                 <Th left>{by === "category" ? "Category" : "Supplier"}</Th><Th>Receipts</Th>
                 <Th>Supplier takes · average</Th><Th>80% arrive within</Th><Th>On time</Th><Th>Late by · average</Th>
-                <Th>We order before customer date</Th><Th>Arrives before customer date</Th><Th>Could order later by</Th>
+                <Th>Lines with a customer date</Th><Th>We order before customer date</Th><Th>Arrives before customer date</Th><Th>Could order later by</Th>
                 {by === "category" && <><Th>MRP setting</Th><Th>Suggested</Th><Th left> </Th></>}
               </tr></thead>
               <tbody>
@@ -246,8 +257,9 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
                       <Td>{g.supplierLead.p80Days != null ? `${g.supplierLead.p80Days} days` : "—"}</Td>
                       <Td className={few || g.supplierLead.onTimePct == null ? "" : g.supplierLead.onTimePct >= 80 ? "text-synced" : g.supplierLead.onTimePct >= 60 ? "text-warning-text" : "text-err"}>{pctTxt(g.supplierLead.onTimePct)}</Td>
                       <Td>{g.supplierLead.avgDaysLate != null ? `${g.supplierLead.avgDaysLate} days` : "—"}</Td>
-                      <Td>{g.ordering.avgOrderBeforeNeedDays != null ? `${g.ordering.avgOrderBeforeNeedDays} days` : "—"}</Td>
-                      <Td>{g.ordering.avgArrivedBeforeNeedDays != null ? `${g.ordering.avgArrivedBeforeNeedDays} days early` : "—"}</Td>
+                      <Td className="text-ink-secondary">{g.ordering.measured}</Td>
+                      <Td>{g.ordering.measured < MIN_RECEIPTS ? <span className="text-ink-muted">too few lines</span> : g.ordering.avgOrderBeforeNeedDays != null ? `${g.ordering.avgOrderBeforeNeedDays} days` : "—"}</Td>
+                      <Td>{g.ordering.measured < MIN_RECEIPTS ? <span className="text-ink-muted">too few lines</span> : g.ordering.avgArrivedBeforeNeedDays != null ? `${g.ordering.avgArrivedBeforeNeedDays} days early` : "—"}</Td>
                       <Td className="font-semibold">{g.ordering.canOrderLaterDays == null ? <span className="font-normal text-ink-muted">too few lines</span> : g.ordering.canOrderLaterDays > 0 ? `${g.ordering.canOrderLaterDays} days` : "no"}</Td>
                       {by === "category" && <>
                         <Td>
@@ -271,7 +283,8 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
               </tbody>
             </table>
             <ul className="mt-2 list-disc space-y-0.5 pl-5 text-[11.5px] text-ink-muted">
-              <li>On time = arrived by the date first put on the PO, counted per line. Late by = average over the late lines only.</li>
+              <li>Supplier takes = PO date to the goods received note, for every line received {when}. 80% arrive within = 8 in 10 of those lines came in that many days or fewer. On time = arrived by the date first put on the PO. Late by = average over the late lines only.</li>
+              <li>We order before / arrives before the customer date: only lines tied to a sales order (stock POs raised with no customer behind them have no customer date and are left out, so they do not stretch the figure). Arrives before = customer date minus the day the goods came in.</li>
               <li>Could order later by = how early the latest fifth of lines still arrived. Ordering that many days later would still have 80% of lines in before the customer&apos;s date. Needs {MIN_RECEIPTS} lines; greyed rows have too few.</li>
               {by === "category" && <li>MRP setting = how many days before the customer&apos;s date MRP tells you to order. Suggested = 80% arrive within. Apply changes the company-wide value only; the warehouse values under it (East Malaysia includes shipping) stay.</li>}
             </ul>
@@ -282,12 +295,12 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
               <div className="grid gap-4 xl:grid-cols-2">
                 <div>
                   <div className="mb-1 text-[12px] font-semibold text-ink">By category</div>
-                  <Columns height={190} stacked format={rm} highlight={null} line={null} labels={d.deadStock.byCategory.map((g) => CAT_LABEL[g.key] ?? g.key)}
+                  <Columns valueLabels={false} height={190} stacked format={rm} highlight={null} line={null} labels={d.deadStock.byCategory.map((g) => CAT_LABEL[g.key] ?? g.key)}
                     series={AGES.map((a) => ({ name: a.label, color: a.color }))} values={AGES.map((a) => d.deadStock.byCategory.map((g) => g.ages[a.k]))} />
                 </div>
                 <div>
                   <div className="mb-1 text-[12px] font-semibold text-ink">By warehouse</div>
-                  <Columns height={190} stacked format={rm} highlight={null} line={null} labels={d.deadStock.byWarehouse.filter((g) => g.deadSen > 0).map((g) => g.key.replace(" WAREHOUSE", " WH").slice(0, 12))}
+                  <Columns valueLabels={false} height={190} stacked format={rm} highlight={null} line={null} labels={d.deadStock.byWarehouse.filter((g) => g.deadSen > 0).map((g) => g.key.replace(" WAREHOUSE", " WH").slice(0, 12))}
                     series={AGES.map((a) => ({ name: a.label, color: a.color }))} values={AGES.map((a) => d.deadStock.byWarehouse.filter((g) => g.deadSen > 0).map((g) => g.ages[a.k]))} />
                 </div>
               </div>
@@ -324,7 +337,7 @@ function LineTable({ rows, empty, mode }: { rows: OpenLine[]; empty: string; mod
           <Td left><span title={l.itemDesc ?? ""}>{l.itemCode ?? "—"}</span></Td>
           <Td>{l.openQty} · {fmtSen(l.openSen)}</Td>
           <Td>{l.originalDue ?? "—"}</Td><Td>{l.promised ?? "—"}</Td>
-          <Td className={l.needDate && l.promised && l.promised > l.needDate ? "text-err" : ""}>{l.needDate ?? "—"}</Td>
+          <Td className={l.needDate && l.promised && l.promised > l.needDate ? "text-err" : ""}>{l.needDate ?? <span className="text-ink-muted" title="Raised for stock, not tied to a sales order">stock</span>}</Td>
           <Td className={mode === "late" ? (l.daysLate >= 5 ? "font-semibold text-err" : "text-warning-text") : ""}>{mode === "late" ? l.daysLate : l.daysLate === 0 ? "today" : `${-l.daysLate} days`}</Td>
         </tr>
       ))}</tbody>

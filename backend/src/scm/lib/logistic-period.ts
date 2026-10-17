@@ -1,19 +1,19 @@
-/* Logistic Overview · the period, day by day (owner, 2026-10-17): what went out
-   each day (DOs issued) and what was closed as delivered, the average order,
-   lorries and runs per day, the same by region, the average order per product
-   category, and each lorry run.
+/* Logistic Overview · the period, day by day (owner, 2026-10-17): what was
+   delivered each day (orders and amount), the average order, how many lorries
+   went out and the average a lorry carried; the same by region; and the
+   average order per product category.
 
-   "Out" is a DO issued (LOADED or DELIVERED) on its DO date; "delivered" is a
-   DO closed DELIVERED, on its delivered date when stamped, else its DO date.
-   Lorries come from planned runs (trips); a DO not on any run still counts in
-   the money, just not in the lorry figures. */
+   A delivery is a DO issued (LOADED or DELIVERED) on its DO date — the day the
+   goods leave on the lorry. Waiting for the POD would make a day read low
+   whenever the crew forgets to close the DO (that gap is shown on its own).
+   The lorry is the one recorded on the DO's crew, else the lorry run it was
+   placed on; a DO with neither counts in the money, not in the lorry figures. */
 
 export interface PeriodDo {
-  id: string; doDate: string; deliveredAt: string | null; status: string;
-  amountSen: number; state: string | null;
-  mattressSofaSen: number; bedframeSen: number; accessoriesSen: number; othersSen: number; serviceSen: number;
+  id: string; doDate: string; status: string; amountSen: number; state: string | null;
+  /** The lorry that carried it, or null when not recorded. */
+  lorry: string | null;
 }
-export interface PeriodTrip { id: string; date: string; lorry: string | null; driver: string | null; stops: number; amountSen: number; region: string | null }
 
 /** The delivery region a customer state falls in (Delivery Planning's buckets). */
 export function regionOf(state: string | null): string {
@@ -29,48 +29,45 @@ export function regionOf(state: string | null): string {
 
 const addDay = (d: string) => new Date(Date.parse(`${d}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
 
-/** One DO line's product category and amount, for the average order per category. */
+/** One DO line's product category and amount, for the average order per category.
+ *  Category `Charges` = transport, disposal, storage and similar fee lines. */
 export interface DoCatLine { doId: string; category: string; sen: number }
 
-export function logisticPeriod(dos: PeriodDo[], trips: PeriodTrip[], catLines: DoCatLine[], from: string, to: string) {
-  const inPeriod = (d: string | null) => !!d && d >= from && d <= to;
-  const out = dos.filter((d) => inPeriod(d.doDate));
-  const delivered = dos.filter((d) => d.status === 'DELIVERED' && inPeriod((d.deliveredAt ?? d.doDate).slice(0, 10)));
+export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: string, to: string) {
+  const out = dos.filter((d) => d.doDate >= from && d.doDate <= to);
 
-  const days: Array<{ date: string; outCount: number; outSen: number; deliveredCount: number; deliveredSen: number; avgOrderSen: number | null; runs: number; lorries: number; runSen: number }> = [];
+  const days: Array<{ date: string; orders: number; amountSen: number; avgOrderSen: number | null; lorries: number; lorryOrders: number; perLorrySen: number | null }> = [];
   for (let d = from; d <= to; d = addDay(d)) {
     const o = out.filter((x) => x.doDate === d);
-    const dl = delivered.filter((x) => (x.deliveredAt ?? x.doDate).slice(0, 10) === d);
-    const t = trips.filter((x) => x.date === d);
-    const outSen = o.reduce((a, x) => a + x.amountSen, 0);
+    const amountSen = o.reduce((a, x) => a + x.amountSen, 0);
+    const withLorry = o.filter((x) => x.lorry);
+    const lorries = new Set(withLorry.map((x) => x.lorry)).size;
     days.push({
-      date: d, outCount: o.length, outSen,
-      deliveredCount: dl.length, deliveredSen: dl.reduce((a, x) => a + x.amountSen, 0),
-      avgOrderSen: o.length ? Math.round(outSen / o.length) : null,
-      runs: t.length, lorries: new Set(t.map((x) => x.lorry).filter(Boolean)).size, runSen: t.reduce((a, x) => a + x.amountSen, 0),
+      date: d, orders: o.length, amountSen,
+      avgOrderSen: o.length ? Math.round(amountSen / o.length) : null,
+      lorries, lorryOrders: withLorry.length,
+      /* Only the DOs whose lorry is known, over those lorries. */
+      perLorrySen: lorries ? Math.round(withLorry.reduce((a, x) => a + x.amountSen, 0) / lorries) : null,
     });
   }
 
-  const regions = new Map<string, { region: string; outCount: number; outSen: number; runs: number; runSen: number }>();
+  const regions = new Map<string, { region: string; orders: number; amountSen: number }>();
   for (const d of out) {
     const r = regionOf(d.state);
-    const g = regions.get(r) ?? { region: r, outCount: 0, outSen: 0, runs: 0, runSen: 0 };
-    g.outCount += 1; g.outSen += d.amountSen; regions.set(r, g);
-  }
-  for (const t of trips) {
-    const r = t.region ?? 'Unknown';
-    const g = regions.get(r) ?? { region: r, outCount: 0, outSen: 0, runs: 0, runSen: 0 };
-    g.runs += 1; g.runSen += t.amountSen; regions.set(r, g);
+    const g = regions.get(r) ?? { region: r, orders: 0, amountSen: 0 };
+    g.orders += 1; g.amountSen += d.amountSen; regions.set(r, g);
   }
 
   /* Average order per category, from the DO lines: a DO counts in a category
      when it carries a charged line of it, with only that category's amount, so a mixed
-     DO counts once in each of its categories. */
+     DO counts once in each of its categories. Fee lines are not a product. */
   const outIds = new Set(out.map((d) => d.id));
   const cats = new Map<string, Map<string, number>>();
+  let chargesSen = 0;
   for (const l of catLines) {
     /* A free line (a bundled bedframe, a gift pillow) is not an order of that category. */
     if (!outIds.has(l.doId) || l.sen <= 0) continue;
+    if (l.category === 'Charges') { chargesSen += l.sen; continue; }
     const m = cats.get(l.category) ?? new Map<string, number>();
     m.set(l.doId, (m.get(l.doId) ?? 0) + l.sen);
     cats.set(l.category, m);
@@ -80,11 +77,15 @@ export function logisticPeriod(dos: PeriodDo[], trips: PeriodTrip[], catLines: D
     return { category, orders: m.size, amountSen: sen, avgSen: m.size ? Math.round(sen / m.size) : null };
   }).sort((x, y) => y.amountSen - x.amountSen);
 
+  const lorryDays = days.reduce((a, x) => a + x.lorries, 0);
+  const lorrySen = out.filter((x) => x.lorry).reduce((a, x) => a + x.amountSen, 0);
   return {
     days,
-    byRegion: [...regions.values()].map((g) => ({ ...g, avgOrderSen: g.outCount ? Math.round(g.outSen / g.outCount) : null, avgRunSen: g.runs ? Math.round(g.runSen / g.runs) : null }))
-      .sort((a, b) => b.outSen - a.outSen),
+    /* Average a lorry carried per day it went out, over the period. */
+    lorry: { lorryDays, recordedOrders: out.filter((x) => x.lorry).length, perLorrySen: lorryDays ? Math.round(lorrySen / lorryDays) : null },
+    byRegion: [...regions.values()].map((g) => ({ ...g, avgOrderSen: g.orders ? Math.round(g.amountSen / g.orders) : null }))
+      .sort((a, b) => b.amountSen - a.amountSen),
     byCategory,
-    runList: [...trips].sort((a, b) => b.date.localeCompare(a.date) || b.amountSen - a.amountSen).slice(0, 200),
+    chargesSen,
   };
 }

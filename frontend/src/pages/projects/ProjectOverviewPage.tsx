@@ -74,7 +74,7 @@ export function ProjectOverviewPage() {
 
       <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
         <Panel title="Trend" hint="sales, gross and net profit by event start" right={<Toggle value={grain} options={[["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]]} onChange={setGrain} />}>
-          <Columns height={230} stacked={false} format={money} highlight={trend.findIndex((b) => period.to >= b.from && period.to <= b.to)}
+          <Columns valueLabels={false} height={230} stacked={false} format={money} highlight={trend.findIndex((b) => period.to >= b.from && period.to <= b.to)}
             labels={trend.map((b) => b.label)}
             series={[{ name: "Sales", color: PALETTE[0]! }, { name: "Gross profit", color: "#8fb3ae" }]}
             values={[trend.map((b) => b.sales), trend.map((b) => Math.max(0, b.gp))]}

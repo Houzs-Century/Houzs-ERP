@@ -9,7 +9,7 @@
    Same reach as the other Quality Overview reads: service_cases.read, the
    caller's allowed companies (Service Cases are cross-company by the owner's
    2026-07-19 ruling) and the same row visibility the list applies. The goods
-   received per supplier read the same allowed companies. */
+   received per supplier, over the same period, read the same allowed companies. */
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { requirePermission } from "../middleware/auth";
@@ -27,18 +27,17 @@ app.get("/", requirePermission("service_cases.read"), async (c) => {
   const qf = c.req.query("from") ?? ""; const qt = c.req.query("to") ?? "";
   const from = ISO.test(qf) ? qf : `${today.slice(0, 7)}-01`;
   const to = ISO.test(qt) && qt >= from ? qt : today;
-  const supFrom = new Date(Date.parse(`${to}T00:00:00Z`) - 364 * 86400000).toISOString().slice(0, 10);
   const since = new Date(Date.parse(`${to}T00:00:00Z`) - 730 * 86400000).toISOString().slice(0, 10);
   const vis = (await assrVisibilityScope(c))("c.");
   const co = allowedCompaniesSql(c, "c.company_id");
 
   const rows = await c.env.DB.prepare(
-    `SELECT c.id, c.stage, COALESCE(c.complained_date, c.created_at) AS opened_at, c.closed_at, c.creditor_code
+    `SELECT c.id, c.stage, COALESCE(c.complained_date, c.created_at) AS opened_at, c.closed_at, c.creditor_code, c.assr_no, c.customer_name
        FROM assr_cases c
       WHERE c.archived_at IS NULL
         AND (COALESCE(c.complained_date, c.created_at) >= ? OR c.closed_at IS NULL)${co}${vis.sql}`,
-  ).bind(since, ...vis.binds).all<{ id: number; stage: string; opened_at: string; closed_at: string | null; creditor_code: string | null }>();
-  const cases: QCase[] = rows.results.map((r) => ({ id: Number(r.id), stage: String(r.stage), openedAt: String(r.opened_at), closedAt: r.closed_at ? String(r.closed_at) : null, creditor: r.creditor_code || null }));
+  ).bind(since, ...vis.binds).all<{ id: number; stage: string; opened_at: string; closed_at: string | null; creditor_code: string | null; assr_no: string | null; customer_name: string | null }>();
+  const cases: QCase[] = rows.results.map((r) => ({ id: Number(r.id), stage: String(r.stage), openedAt: String(r.opened_at), closedAt: r.closed_at ? String(r.closed_at) : null, creditor: r.creditor_code || null, assrNo: r.assr_no, customer: r.customer_name }));
 
   /* Ids are integers read from the table just above, so inlining them is safe. */
   const itemsByCase = new Map<number, number>();
@@ -48,8 +47,8 @@ app.get("/", requirePermission("service_cases.read"), async (c) => {
     if (!ids) continue;
     const items = await c.env.DB.prepare(`SELECT assr_id, SUM(qty) AS qty FROM assr_items WHERE assr_id IN (${ids}) GROUP BY assr_id`).all<{ assr_id: number; qty: number | null }>();
     for (const r of items.results) itemsByCase.set(Number(r.assr_id), Number(r.qty ?? 0));
-    const hist = await c.env.DB.prepare(`SELECT assr_id, stage, entered_at, exited_at FROM assr_stage_history WHERE assr_id IN (${ids})`).all<{ assr_id: number; stage: string; entered_at: string; exited_at: string | null }>();
-    for (const r of hist.results) history.push({ caseId: Number(r.assr_id), stage: String(r.stage), enteredAt: String(r.entered_at), exitedAt: r.exited_at ? String(r.exited_at) : null });
+    const hist = await c.env.DB.prepare(`SELECT assr_id, stage, entered_at, exited_at, target_days FROM assr_stage_history WHERE assr_id IN (${ids})`).all<{ assr_id: number; stage: string; entered_at: string; exited_at: string | null; target_days: number | null }>();
+    for (const r of hist.results) history.push({ caseId: Number(r.assr_id), stage: String(r.stage), enteredAt: String(r.entered_at), exitedAt: r.exited_at ? String(r.exited_at) : null, targetDays: r.target_days == null ? null : Number(r.target_days) });
   }
 
   const recv = await c.env.DB.prepare(
@@ -60,13 +59,13 @@ app.get("/", requirePermission("service_cases.read"), async (c) => {
       WHERE g.status NOT IN ('DRAFT','CANCELLED')
         AND substr(CAST(g.received_at AS TEXT), 1, 10) >= ? AND substr(CAST(g.received_at AS TEXT), 1, 10) <= ?${allowedCompaniesSql(c, "g.company_id")}
       GROUP BY s.code, s.name`,
-  ).bind(supFrom, to).all<{ code: string | null; name: string | null; qty: number | null; lines: number | null }>();
+  ).bind(from, to).all<{ code: string | null; name: string | null; qty: number | null; lines: number | null }>();
   const received: QReceived[] = recv.results.filter((r) => r.code).map((r) => ({ creditor: String(r.code), name: String(r.name ?? r.code), qty: Number(r.qty ?? 0), lines: Number(r.lines ?? 0) }));
 
   const creditors = await c.env.DB.prepare(`SELECT creditor_code, company_name FROM creditors`).all<{ creditor_code: string; company_name: string | null }>();
   const names = new Map(creditors.results.filter((r) => r.company_name).map((r) => [String(r.creditor_code), String(r.company_name)]));
 
-  return c.json({ from, to, ...qualityOverview(cases, itemsByCase, history, received, from, to, today, supFrom, names) });
+  return c.json({ from, to, ...qualityOverview(cases, itemsByCase, history, received, from, to, today, names) });
 });
 
 export default app;

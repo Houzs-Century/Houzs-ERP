@@ -1,11 +1,11 @@
-/* Logistic Overview, day by day (owner, 2026-10-17): out vs delivered per day,
-   by region, the average order per category, and lorry runs. */
+/* Logistic Overview, day by day (owner, 2026-10-17): delivered per day with the
+   average order and the average per lorry, by region, the average order per
+   category with fee lines left out. */
 import { describe, expect, test } from 'vitest';
 import { logisticPeriod, regionOf, type PeriodDo } from '../src/scm/lib/logistic-period';
 
 const d = (o: Partial<PeriodDo>): PeriodDo => ({
-  id: 'd1', doDate: '2026-10-02', deliveredAt: null, status: 'LOADED', amountSen: 1000_00, state: 'SELANGOR',
-  mattressSofaSen: 1000_00, bedframeSen: 0, accessoriesSen: 0, othersSen: 0, serviceSen: 0, ...o,
+  id: 'd1', doDate: '2026-10-02', status: 'LOADED', amountSen: 1000_00, state: 'SELANGOR', lorry: null, ...o,
 });
 
 describe('logistic period', () => {
@@ -17,22 +17,26 @@ describe('logistic period', () => {
     expect(regionOf(null)).toBe('Unknown');
   });
 
-  test('each day: out on its DO date, delivered on its delivered date, average order', () => {
+  test('each day: delivered on its DO date, average order, average per lorry from the DOs whose lorry is known', () => {
     const r = logisticPeriod([
-      d({ id: 'a', doDate: '2026-10-01', amountSen: 3000_00, mattressSofaSen: 2000_00, bedframeSen: 1000_00 }),
-      d({ id: 'b', doDate: '2026-10-01', amountSen: 1000_00, state: 'PENANG' }),
-      d({ id: 'c', doDate: '2026-09-28', status: 'DELIVERED', deliveredAt: '2026-10-02' }),
-    ], [{ id: 't1', date: '2026-10-01', lorry: 'VNB9058', driver: null, stops: 2, amountSen: 4000_00, region: 'KL / Selangor' }], [
+      d({ id: 'a', doDate: '2026-10-01', amountSen: 3000_00, lorry: 'L1' }),
+      d({ id: 'b', doDate: '2026-10-01', amountSen: 1000_00, state: 'PENANG', lorry: 'L1' }),
+      d({ id: 'e', doDate: '2026-10-01', amountSen: 2000_00, lorry: 'L2' }),
+      d({ id: 'f', doDate: '2026-10-01', amountSen: 6000_00 }),
+      d({ id: 'c', doDate: '2026-09-28', status: 'DELIVERED' }),
+    ], [
       { doId: 'a', category: 'Mattress', sen: 2000_00 }, { doId: 'a', category: 'Bedframe', sen: 1000_00 },
-      { doId: 'b', category: 'Mattress', sen: 1000_00 }, { doId: 'b', category: 'Accessories', sen: 0 }, { doId: 'c', category: 'Sofa', sen: 1000_00 },
+      { doId: 'b', category: 'Mattress', sen: 1000_00 }, { doId: 'b', category: 'Accessories', sen: 0 },
+      { doId: 'b', category: 'Charges', sen: 150_00 }, { doId: 'c', category: 'Sofa', sen: 1000_00 },
     ], '2026-10-01', '2026-10-02');
-    expect(r.days[0]).toMatchObject({ date: '2026-10-01', outCount: 2, outSen: 4000_00, avgOrderSen: 2000_00, runs: 1, lorries: 1, runSen: 4000_00, deliveredCount: 0 });
-    expect(r.days[1]).toMatchObject({ date: '2026-10-02', outCount: 0, deliveredCount: 1, deliveredSen: 1000_00 });
-    expect(r.byRegion.map((g) => [g.region, g.outCount])).toEqual([['KL / Selangor', 1], ['Northern', 1]]);
+    expect(r.days[0]).toMatchObject({ date: '2026-10-01', orders: 4, amountSen: 12000_00, avgOrderSen: 3000_00, lorries: 2, lorryOrders: 3, perLorrySen: 3000_00 });
+    expect(r.days[1]).toMatchObject({ date: '2026-10-02', orders: 0, perLorrySen: null });
+    expect(r.lorry).toEqual({ lorryDays: 2, recordedOrders: 3, perLorrySen: 3000_00 });
+    expect(r.byRegion.map((g) => [g.region, g.orders])).toEqual([['KL / Selangor', 3], ['Northern', 1]]);
     expect(r.byCategory).toEqual([
       { category: 'Mattress', orders: 2, amountSen: 3000_00, avgSen: 1500_00 },
       { category: 'Bedframe', orders: 1, amountSen: 1000_00, avgSen: 1000_00 },
     ]);
-    expect(r.runList).toHaveLength(1);
+    expect(r.chargesSen).toBe(150_00);
   });
 });

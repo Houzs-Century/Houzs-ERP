@@ -37,7 +37,7 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
               <Tile label="Sales, no commission" value={String(g.noCommission.count)} note={`${money(g.noCommission.salesAffected)} sales · NP overstated`} tone={g.noCommission.count ? "warn" : "good"} trend={null} onClick={null} />
             </div>
             <div className="mt-3">
-              <Columns height={160} stacked format={(x) => `${x} events`} highlight={null} line={null}
+              <Columns valueLabels={false} height={160} stacked format={(x) => `${x} events`} highlight={null} line={null}
                 labels={g.byMonth.map((m) => monthLabel(m.month))}
                 series={[{ name: "Sales keyed", color: TONE.good }, { name: "No sales keyed", color: TONE.bad }]}
                 values={[g.byMonth.map((m) => m.withSales), g.byMonth.map((m) => m.ended - m.withSales)]} />
