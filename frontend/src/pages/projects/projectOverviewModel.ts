@@ -88,7 +88,6 @@ export type Drill = { level: "years" } | { level: "quarters"; year: number } | {
 export function drillOf(ps: OvProject[], drill: Drill, today: string) {
   const pad = (n: number) => String(n).padStart(2, "0");
   const last = (yy: number, mm: number) => new Date(Date.UTC(yy, mm, 0)).getUTCDate();
-  const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const buckets: Array<{ key: string; label: string; from: string; to: string; next: Drill | null }> = [];
   if (drill.level === "years") {
     const years = ps.map((p) => Number((p.startDate ?? "").slice(0, 4))).filter((y) => y > 2000);
@@ -104,12 +103,12 @@ export function drillOf(ps: OvProject[], drill: Drill, today: string) {
     const first = drill.level === "months" ? (drill.quarter - 1) * 3 + 1 : 1;
     for (let i = 0; i < (drill.level === "months" ? 3 : 12); i++) {
       const mm = first + i; const key = `${drill.year}-${pad(mm)}`;
-      buckets.push({ key, label: `${MON[mm - 1]} ${drill.year}`, from: `${key}-01`, to: `${key}-${pad(last(drill.year, mm))}`, next: { level: "weeks", month: key } });
+      buckets.push({ key, label: key, from: `${key}-01`, to: `${key}-${pad(last(drill.year, mm))}`, next: { level: "weeks", month: key } });
     }
   } else {
     const yy = Number(drill.month.slice(0, 4)); const mm = Number(drill.month.slice(5, 7)); const end = last(yy, mm);
     for (const [a, b] of [[1, 7], [8, 14], [15, 21], [22, end]] as Array<[number, number]>) {
-      buckets.push({ key: `${drill.month}-${a}`, label: `${a}–${b} ${MON[mm - 1]}`, from: `${drill.month}-${pad(a)}`, to: `${drill.month}-${pad(b)}`, next: null });
+      buckets.push({ key: `${drill.month}-${a}`, label: `${pad(mm)}/${pad(a)}–${pad(mm)}/${pad(b)}`, from: `${drill.month}-${pad(a)}`, to: `${drill.month}-${pad(b)}`, next: null });
     }
   }
   return buckets.map((b) => ({ ...b, ...totalsOf(ps.filter((p) => !!p.startDate && p.startDate >= b.from && p.startDate <= b.to)) }));

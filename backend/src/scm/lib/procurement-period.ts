@@ -13,7 +13,7 @@
      and how early the goods actually arrive before the customer needs them.
      The days we could order later come from that real slack, not from the
      MRP setting. */
-import { daysBetween, overdueBucket, percentile, type ProcurementCategory } from './procurement-overview';
+import { daysBetween, overdueBucket, percentile, OVERDUE_BUCKETS, type OverdueBucket, type ProcurementCategory } from './procurement-overview';
 
 export interface PLine {
   poId: string; poNumber: string; poDate: string; supplier: string; category: ProcurementCategory;
@@ -32,8 +32,8 @@ export interface PLine {
 }
 
 export type Basis = 'original' | 'promised';
-type Bucket = 'late5' | 'late0to4' | 'due2to7' | 'due8plus';
-const BUCKETS: Bucket[] = ['late5', 'late0to4', 'due2to7', 'due8plus'];
+type Bucket = OverdueBucket;
+const BUCKETS = OVERDUE_BUCKETS;
 
 const receivedBy = (l: PLine, date: string) => l.receipts.filter((r) => r.date <= date).reduce((a, r) => a + r.qty, 0);
 const openQtyAt = (l: PLine, date: string) => (l.poDate <= date ? Math.max(0, l.qty - receivedBy(l, date)) : 0);

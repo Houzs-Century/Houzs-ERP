@@ -1594,6 +1594,26 @@
       "check": "D2",
       "key": "GERAN,INSURANCE,PUSPAKOM,ROAD_TAX ~ INSURANCE,PUSPAKOM,ROAD_TAX",
       "why": "Not the same question. The four are the kinds an in-house lorry keeps on file; the three are the kinds that EXPIRE (a flat expiry column each, and required for an in-house lorry). Geran has no expiry, so it is deliberately in the first and not the second."
+    },
+    {
+      "check": "D1",
+      "key": "AVAILABLE,BREAKDOWN,COMPLIANCE_BLOCKED,OUT_OF_SERVICE,PLANNED_MAINTENANCE,SERVICE_DUE,WAITING_PARTS|backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx frontend/src/pages/FleetHealthCharts.tsx",
+      "why": "ONE DECISION, ONE HOME: services/fleet-status.ts derives the vehicle status; FleetHealth.tsx and FleetHealthCharts.tsx only colour and label the value the API returns (a display map keyed by the enum). The browser cannot import the Worker module. A status the map lacks renders unlabelled, never decides dispatch."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,DEPOSIT_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,SERVICE_COST_SEN,SERVICE_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN|backend/src/scm/lib/finance-keys.ts frontend/src/pages/scm-v2/so-list-server-funnels.ts",
+      "why": "THE SERVER DECIDES: scm/lib/finance-keys.ts is the one list of finance columns the server hides from non-finance users and ignores in their filters; so-list-server-funnels.ts only names which grid columns to SEND as server filters. A key missing on the client means that column filters the page only; it can never expose a finance figure, because the server strips it regardless."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORY,BEDFRAME,DINING,MATTRESS,OTHERS,SOFA|backend/src/scm/lib/procurement-overview.ts frontend/src/pages/scm-v2/ProcurementOverview.tsx",
+      "why": "ONE DECISION, ONE HOME: scm/lib/procurement-overview.ts procurementCategory() decides each line's category and PROCUREMENT_CATEGORIES its order; ProcurementOverview.tsx CAT_LABEL only prints the category code the API returns (display labels; the browser cannot import the Worker lib). An unknown code prints as itself."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORY,BEDFRAME,MATTRESS,SOFA|frontend/src/pages/scm-v2/Mrp.tsx frontend/src/pages/scm-v2/ProcurementOverview.tsx",
+      "why": "TWO DIFFERENT QUESTIONS: Mrp.tsx lists the categories an MRP lead time can be SET for; ProcurementOverview.tsx MRP_CATEGORY maps the overview's upper-case category code to that setting's lower-case key so Apply writes the right row. DINING and OTHERS have no MRP setting, so the overview map stops at four on purpose."
     }
   ]
 }

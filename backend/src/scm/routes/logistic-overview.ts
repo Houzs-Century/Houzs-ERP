@@ -15,7 +15,11 @@ import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { logisticPeriod, type PeriodDo, type DoCatLine } from '../lib/logistic-period';
-import { procurementCategory } from '../lib/procurement-overview';
+import { DO_NOT_DELIVERED_IN_LIST, DO_STOCK_OUT_STATES } from '../shared/do-shipped-states';
+
+/* A sales order that is a draft or cancelled has no balance to chase. */
+const SO_NOT_LIVE = `(${['DRAFT', 'CANCELLED'].join(',')})`;
+import { procurementCategory, PROCUREMENT_CATEGORY_LABEL } from '../lib/procurement-overview';
 
 export const logisticOverview = new Hono<{ Bindings: Env; Variables: Variables }>();
 logisticOverview.use('*', supabaseAuth);
@@ -49,7 +53,7 @@ logisticOverview.get('/', async (c) => {
 
   const dos = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
     .select('id, do_date, delivered_at, status, local_total_sen').gte('do_date', yearAgo)
-    .not('status', 'in', '("DRAFT","CANCELLED")')), c).order('id').range(f, t));
+    .not('status', 'in', DO_NOT_DELIVERED_IN_LIST)), c).order('id').range(f, t));
   if (dos.error) return fail('delivery orders', dos.error);
 
   // Weeks: 8 back, this week, next week.
@@ -73,7 +77,7 @@ logisticOverview.get('/', async (c) => {
   /* Delivered but still owing: an order whose delivery is done and whose
      balance is above zero, aged from its last delivery. */
   const owing = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('mfg_sales_orders')
-    .select('doc_no, balance_sen').gt('balance_sen', 0).not('status', 'in', '("DRAFT","CANCELLED")'), c).order('doc_no').range(f, t));
+    .select('doc_no, balance_sen').gt('balance_sen', 0).not('status', 'in', SO_NOT_LIVE), c).order('doc_no').range(f, t));
   if (owing.error) return fail('order balances', owing.error);
   const owingDocs = (owing.data ?? []).map((r) => String(r.doc_no));
   const delivered = await chunkIn<Row>(owingDocs, (b, f, t) => scopeToCompany(sb.from('delivery_orders')
@@ -123,7 +127,7 @@ logisticOverview.get('/', async (c) => {
   const periodDos = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
     .select('id, status, do_date, local_total_sen, state, customer_state, vehicle')
     .gte('do_date', pFrom).lte('do_date', pTo)
-    .in('status', ['LOADED', 'DELIVERED'])), c).order('id').range(f, t));
+    .in('status', [...DO_STOCK_OUT_STATES])), c).order('id').range(f, t));
   if (periodDos.error) return fail('delivery orders in the period', periodDos.error);
   const doIds = (periodDos.data ?? []).map((d) => String(d.id));
   /* The lorry: the DO's crew record first, else the lorry run it was put on,
@@ -159,12 +163,11 @@ logisticOverview.get('/', async (c) => {
   const prods = await chunkIn<Row>(lineCodes, (b, f, t) => scopeToCompany(sb.from('mfg_products').select('code, category').in('code', b), c).order('code').range(f, t));
   if (prods.error) return fail('products', prods.error);
   const prodCat = new Map(prods.data.map((p) => [String(p.code), str(p.category)]));
-  const CAT_LABEL: Record<string, string> = { MATTRESS: 'Mattress', BEDFRAME: 'Bedframe', SOFA: 'Sofa', ACCESSORY: 'Accessories', DINING: 'Dining', OTHERS: 'Others' };
   const catLines: DoCatLine[] = doLines.data.map((l) => {
     const raw = prodCat.get(String(l.item_code ?? '')) ?? null;
     /* Transport, disposal, storage fees: a charge on the order, not a product. */
     const fee = raw === 'SERVICE' || String(l.item_group ?? '').toLowerCase() === 'service' || String(l.item_code ?? '').toUpperCase().startsWith('SVC-');
-    return { doId: String(l.delivery_order_id), category: fee ? 'Charges' : CAT_LABEL[procurementCategory(raw, str(l.item_group))] ?? 'Others', sen: num(l.line_total_sen) };
+    return { doId: String(l.delivery_order_id), category: fee ? 'Charges' : PROCUREMENT_CATEGORY_LABEL[procurementCategory(raw, str(l.item_group))], sen: num(l.line_total_sen) };
   });
   const period = {
     from: pFrom, to: pTo,

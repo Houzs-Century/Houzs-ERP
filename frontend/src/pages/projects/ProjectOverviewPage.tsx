@@ -48,7 +48,7 @@ export function ProjectOverviewPage() {
     crumbs.push([String(year), drill.level === "yearMonths" ? drill : { level: "quarters", year }]);
     const quarter = drill.level === "months" ? drill.quarter : drill.level === "weeks" ? Math.ceil(Number(drill.month.slice(5, 7)) / 3) : null;
     if (quarter) crumbs.push([`Q${quarter}`, { level: "months", year, quarter }]);
-    if (drill.level === "weeks") crumbs.push([new Date(`${drill.month}-01T00:00:00Z`).toLocaleString("en", { month: "short", timeZone: "UTC" }), drill]);
+    if (drill.level === "weeks") crumbs.push([drill.month, drill]);
   }
   const unit = drill.level === "years" ? "Year" : drill.level === "quarters" ? "Quarter" : drill.level === "months" || drill.level === "yearMonths" ? "Month" : "Week";
   const yearView = drill.level === "quarters" || drill.level === "yearMonths" ? drill.year : null;

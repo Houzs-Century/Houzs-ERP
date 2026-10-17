@@ -16,7 +16,8 @@ import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
-import { doCountsAsDelivered } from '../shared/do-shipped-states';
+import { doCountsAsDelivered, DO_STOCK_OUT_STATES } from '../shared/do-shipped-states';
+import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
 import { procurementCategory, promisedDate, PROCUREMENT_CATEGORIES, type ProcurementCategory } from '../lib/procurement-overview';
 import { procurementPeriod, deadStock, turnoverAndSellers, type PLine, type OpenDemand } from '../lib/procurement-period';
 import { computeVariantKey, type VariantAttrs } from '../shared';
@@ -182,7 +183,7 @@ procurementOverview.get('/', async (c) => {
      open line's quantity less what has gone out on a shipped DO, split by
      whether the line has a delivery date — the inventory page's Scheduled /
      Unscheduled. */
-  const SO_DONE = new Set(['DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED', 'DRAFT']);
+  const SO_DONE = new Set<string>(SO_TERMINAL_STATES);
   const demandLines = await chunkIn<Row>([...new Set((stock.data ?? []).map((r) => String(r.item_code)))], (b, f, t) => scopeToCompany(sb
     .from('mfg_sales_order_items').select('id, item_code, item_group, variants, qty, line_delivery_date, so:mfg_sales_orders!inner(status, customer_delivery_date)').in('item_code', b).eq('cancelled', false), c).order('id').range(f, t));
   if (demandLines.error) return fail('open order lines', demandLines.error);
@@ -322,7 +323,7 @@ procurementOverview.get('/stock-ordering', async (c) => {
   const poDate = new Map(pos.data.map((p) => [String(p.id), day(p.po_date)]));
 
   const dos = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('delivery_orders')
-    .select('id, do_date, warehouse_id').gte('do_date', since).in('status', ['LOADED', 'DELIVERED']), c).order('id').range(f, t));
+    .select('id, do_date, warehouse_id').gte('do_date', since).in('status', [...DO_STOCK_OUT_STATES]), c).order('id').range(f, t));
   if (dos.error) return fail('delivery orders', dos.error);
   const doById = new Map((dos.data ?? []).map((d) => [String(d.id), d]));
   const doLines = await chunkIn<Row>([...doById.keys()], (b, f, t) => scopeToCompany(sb.from('delivery_order_items')

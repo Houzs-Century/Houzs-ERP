@@ -11,6 +11,9 @@
 export const PROCUREMENT_CATEGORIES = ['MATTRESS', 'BEDFRAME', 'SOFA', 'ACCESSORY', 'DINING', 'OTHERS'] as const;
 export type ProcurementCategory = (typeof PROCUREMENT_CATEGORIES)[number];
 
+/** How a category reads on a page. */
+export const PROCUREMENT_CATEGORY_LABEL: Record<ProcurementCategory, string> = { MATTRESS: 'Mattress', BEDFRAME: 'Bedframe', SOFA: 'Sofa', ACCESSORY: 'Accessories', DINING: 'Dining', OTHERS: 'Others' };
+
 /** The product master's category (mfg_products.category) first, then the line's
  *  free-text item_group ("ACC", "Mattress", "BED FRAME"…). */
 export function procurementCategory(productCategory: string | null | undefined, itemGroup: string | null | undefined): ProcurementCategory {
