@@ -45,7 +45,7 @@ describe('procurement period', () => {
       line({ receipts: [{ date: '2026-10-18', qty: 10, rejected: 0 }] }),
       line({ poId: 'p2', receipts: [{ date: '2026-10-25', qty: 10, rejected: 0 }] }),
     ], '2026-10-01', '2026-10-31', '2026-10-31', 'original');
-    expect(r.total.supplierLead).toMatchObject({ receipts: 2, midDays: 19.5, onTimePct: 50, latePct: 50, midDaysLate: 5 });
+    expect(r.total.supplierLead).toMatchObject({ receipts: 2, midDays: 19.5, onTimePct: 50, latePct: 50, avgDaysLate: 5 });
   });
 
   test('lead time is the median, so one line ordered months ahead does not drag it', () => {
@@ -65,7 +65,7 @@ describe('procurement period', () => {
     expect(o.measured).toBe(10);
     expect(o.avgOrderAheadDays).toBe(18);
     expect(o.avgDueBeforeNeedDays).toBe(21);
-    expect(o.midOrderBeforeNeedDays).toBe(39);
+    expect(o.midPoDueBeforeNeedDays).toBe(21);
     expect(o.p20ArrivedBeforeNeedDays).toBe(13);
     expect(o.canOrderLaterDays).toBe(13);
     const few = procurementPeriod(lines.slice(0, 3), '2026-10-01', '2026-10-31', '2026-10-31', 'original').total.ordering;

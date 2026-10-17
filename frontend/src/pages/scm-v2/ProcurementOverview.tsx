@@ -24,8 +24,8 @@ type Group = {
   due: { lines: number; sen: number; receivedSen: number; openSen: number };
   receivedSen: number;
   open: { lines: number; sen: number; late: number; lateSen: number; buckets: Record<BucketKey, { lines: number; sen: number }> };
-  supplierLead: { receipts: number; midDays: number | null; p80Days: number | null; onTimePct: number | null; latePct: number | null; onTimeAmountPct: number | null; midDaysLate: number | null };
-  ordering: { lines: number; avgOrderAheadDays: number | null; avgDueBeforeNeedDays: number | null; measured: number; midOrderBeforeNeedDays: number | null; midArrivedBeforeNeedDays: number | null; p20ArrivedBeforeNeedDays: number | null; canOrderLaterDays: number | null };
+  supplierLead: { receipts: number; midDays: number | null; avgDays: number | null; p80Days: number | null; onTimePct: number | null; latePct: number | null; onTimeAmountPct: number | null; avgDaysLate: number | null };
+  ordering: { lines: number; avgOrderAheadDays: number | null; avgDueBeforeNeedDays: number | null; measured: number; midPoDueBeforeNeedDays: number | null; avgPoDueBeforeNeedDays: number | null; midArrivedBeforeNeedDays: number | null; p20ArrivedBeforeNeedDays: number | null; canOrderLaterDays: number | null };
 };
 type OpenLine = { poId: string; poNumber: string; poDate: string; supplier: string; category: string; itemCode: string | null; itemDesc: string | null; soDocNo: string | null; openQty: number; openSen: number; originalDue: string | null; promised: string | null; needDate: string | null; daysLate: number };
 type Ages = { d0to90: number; d91to180: number; d181to365: number; d365plus: number };
@@ -227,21 +227,21 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
         <>
           <Panel title="Lead time" hint={`goods received ${when}`}>
             <p className="mb-2 text-[12.5px] text-ink-secondary">
-              Three questions per row: how long the supplier really takes (PO to goods in), how many days before the customer&apos;s date we place the PO, and how early the goods then arrive. If goods keep arriving well before the customer needs them, we can order later and hold less stock.
+              Per row: how long the supplier really takes (PO to goods in), how often they come by the date on the PO and how late when they do not, and how many days before the customer&apos;s date we ask the supplier to deliver. If that gap is large, purchasing is asking for goods too early.
             </p>
             <Columns valueLabels={false} height={190} stacked={false} format={(x) => `${x} days`} highlight={null} line={null}
               labels={groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => label(g.key).slice(0, 14))}
-              series={[{ name: "Supplier takes (80% arrive within)", color: PALETTE[0]! }, { name: "We order before the customer date", color: PALETTE[1]! }, { name: "Goods arrive before the customer date", color: TONE.good }]}
+              series={[{ name: "Supplier takes · average", color: PALETTE[0]! }, { name: "Date on PO before the customer date · average", color: PALETTE[1]! }, { name: "Goods arrive before the customer date", color: TONE.good }]}
               values={[
-                groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => g.supplierLead.p80Days ?? 0),
-                groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => (g.ordering.measured < MIN_RECEIPTS ? 0 : g.ordering.midOrderBeforeNeedDays ?? 0)),
+                groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => g.supplierLead.avgDays ?? 0),
+                groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => (g.ordering.measured < MIN_RECEIPTS ? 0 : g.ordering.avgPoDueBeforeNeedDays ?? 0)),
                 groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => (g.ordering.measured < MIN_RECEIPTS ? 0 : g.ordering.midArrivedBeforeNeedDays ?? 0)),
               ]} />
             <table className="mt-3 w-full border-collapse">
               <thead><tr>
                 <Th left>{by === "category" ? "Category" : "Supplier"}</Th><Th>Receipts</Th>
-                <Th>Supplier takes · median</Th><Th>80% arrive within</Th><Th>On time</Th><Th>Late by · median</Th>
-                <Th>Lines with a customer date</Th><Th>We order before customer date · median</Th><Th>Arrives before customer date · median</Th><Th>Could order later by</Th>
+                <Th>Supplier takes · average</Th><Th>On time</Th><Th>Late by · average</Th>
+                <Th>Lines with a customer date</Th><Th>Date on PO before customer date · average</Th><Th>Arrives before customer date · median</Th><Th>Could order later by</Th>
                 {by === "category" && <><Th>MRP setting</Th><Th>Suggested</Th><Th left> </Th></>}
               </tr></thead>
               <tbody>
@@ -253,12 +253,11 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
                   return (
                     <tr key={g.key} className={few ? "text-ink-muted" : ""}>
                       <Td left className="max-w-[220px] truncate">{label(g.key)}</Td><Td>{g.supplierLead.receipts}</Td>
-                      <Td>{g.supplierLead.midDays != null ? `${g.supplierLead.midDays} days` : "—"}</Td>
-                      <Td>{g.supplierLead.p80Days != null ? `${g.supplierLead.p80Days} days` : "—"}</Td>
+                      <Td>{g.supplierLead.avgDays != null ? `${g.supplierLead.avgDays} days` : "—"}<span className="block text-[10.5px] text-ink-muted">median {g.supplierLead.midDays ?? "—"}</span></Td>
                       <Td className={few || g.supplierLead.onTimePct == null ? "" : g.supplierLead.onTimePct >= 80 ? "text-synced" : g.supplierLead.onTimePct >= 60 ? "text-warning-text" : "text-err"}>{pctTxt(g.supplierLead.onTimePct)}</Td>
-                      <Td>{g.supplierLead.midDaysLate != null ? `${g.supplierLead.midDaysLate} days` : "—"}</Td>
+                      <Td>{g.supplierLead.avgDaysLate != null ? `${g.supplierLead.avgDaysLate} days` : "—"}</Td>
                       <Td className="text-ink-secondary">{g.ordering.measured}</Td>
-                      <Td>{g.ordering.measured < MIN_RECEIPTS ? <span className="text-ink-muted">too few lines</span> : g.ordering.midOrderBeforeNeedDays != null ? `${g.ordering.midOrderBeforeNeedDays} days` : "—"}</Td>
+                      <Td>{g.ordering.measured < MIN_RECEIPTS ? <span className="text-ink-muted">too few lines</span> : g.ordering.avgPoDueBeforeNeedDays != null ? <>{`${g.ordering.avgPoDueBeforeNeedDays} days`}<span className="block text-[10.5px] text-ink-muted">median {g.ordering.midPoDueBeforeNeedDays ?? "—"}</span></> : "—"}</Td>
                       <Td>{g.ordering.measured < MIN_RECEIPTS ? <span className="text-ink-muted">too few lines</span> : g.ordering.midArrivedBeforeNeedDays != null ? `${g.ordering.midArrivedBeforeNeedDays} days early` : "—"}</Td>
                       <Td className="font-semibold">{g.ordering.canOrderLaterDays == null ? <span className="font-normal text-ink-muted">too few lines</span> : g.ordering.canOrderLaterDays > 0 ? `${g.ordering.canOrderLaterDays} days` : "no"}</Td>
                       {by === "category" && <>
@@ -283,11 +282,11 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
               </tbody>
             </table>
             <ul className="mt-2 list-disc space-y-0.5 pl-5 text-[11.5px] text-ink-muted">
-              <li>Median = the middle line: half the lines took that many days or fewer, half took more. Used instead of an average so a few lines ordered months ahead do not drag the figure.</li>
-              <li>Supplier takes = PO date to the goods received note, for every line received {when}. 80% arrive within = 8 in 10 of those lines came in that many days or fewer. On time = arrived by the date first put on the PO. Late by = median over the late lines only.</li>
-              <li>We order before / arrives before the customer date: only lines tied to a sales order (stock POs raised with no customer behind them have no customer date and are left out, so they do not stretch the figure). Arrives before = customer date minus the day the goods came in.</li>
+              <li>Supplier takes = goods received date minus PO date, averaged over every line received {when}; the median under it is the middle line, for when a few very slow lines pull the average up.</li>
+              <li>On time = lines received on or before the date on the PO (the first one put on it) ÷ lines received. Late by = the late lines&apos; days late added up ÷ the number of late lines: when a supplier is late, how late.</li>
+              <li>Date on PO before customer date = the customer&apos;s delivery date minus the date on the PO, averaged: how early we ask the supplier to deliver. Only lines tied to a sales order (stock POs have no customer date). Arrives before = customer date minus the day the goods actually came in.</li>
               <li>Could order later by = how early the latest fifth of lines still arrived. Ordering that many days later would still have 80% of lines in before the customer&apos;s date. Needs {MIN_RECEIPTS} lines; greyed rows have too few.</li>
-              {by === "category" && <li>MRP setting = how many days before the customer&apos;s date MRP tells you to order. Suggested = 80% arrive within. Apply changes the company-wide value only; the warehouse values under it (East Malaysia includes shipping) stay.</li>}
+              {by === "category" && <li>MRP setting = how many days before the customer&apos;s date MRP tells you to order. Suggested = the days 8 in 10 lines came within, so most orders still arrive in time. Apply changes the company-wide value only; the warehouse values under it (East Malaysia includes shipping) stay.</li>}
             </ul>
           </Panel>
 

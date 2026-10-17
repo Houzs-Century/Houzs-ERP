@@ -55,8 +55,8 @@ export interface GroupRow {
   due: { lines: number; sen: number; receivedSen: number; openSen: number };
   receivedSen: number;
   open: { lines: number; sen: number; late: number; lateSen: number; buckets: Record<Bucket, { lines: number; sen: number }> };
-  supplierLead: { receipts: number; midDays: number | null; p80Days: number | null; onTimePct: number | null; latePct: number | null; onTimeAmountPct: number | null; midDaysLate: number | null };
-  ordering: { lines: number; avgOrderAheadDays: number | null; avgDueBeforeNeedDays: number | null; measured: number; midOrderBeforeNeedDays: number | null; midArrivedBeforeNeedDays: number | null; p20ArrivedBeforeNeedDays: number | null; canOrderLaterDays: number | null };
+  supplierLead: { receipts: number; midDays: number | null; avgDays: number | null; p80Days: number | null; onTimePct: number | null; latePct: number | null; onTimeAmountPct: number | null; avgDaysLate: number | null };
+  ordering: { lines: number; avgOrderAheadDays: number | null; avgDueBeforeNeedDays: number | null; measured: number; midPoDueBeforeNeedDays: number | null; avgPoDueBeforeNeedDays: number | null; midArrivedBeforeNeedDays: number | null; p20ArrivedBeforeNeedDays: number | null; canOrderLaterDays: number | null };
 }
 
 /** Lines a supplier-lead figure needs before it is trusted. */
@@ -105,8 +105,9 @@ export function procurementPeriod(lines: PLine[], from: string, to: string, toda
     const slack = ls.filter((l) => l.needDate && real(l).length > 0)
       .map((l) => daysBetween(real(l).map((r) => r.date).sort().at(-1) as string, l.needDate as string));
     const p20 = slack.length ? percentile(slack, 0.2) : null;
-    /* The same received lines: how many days before the customer date the PO went out. */
-    const orderBeforeNeed = ls.filter((l) => l.needDate && real(l).length > 0).map((l) => daysBetween(l.poDate, l.needDate as string));
+    /* The same received lines: the customer's date minus the date on the PO —
+       how early we ask the supplier to deliver before the customer needs it. */
+    const poDueBeforeNeed = ls.filter((l) => l.needDate && l.originalDue && real(l).length > 0).map((l) => daysBetween(l.originalDue as string, l.needDate as string));
     return {
       key,
       raised: {
@@ -123,14 +124,15 @@ export function procurementPeriod(lines: PLine[], from: string, to: string, toda
       receivedSen: rc.reduce((a, { l, r }) => a + r.qty * l.priceSen, 0),
       open: { lines: openLines, sen: openSen, late, lateSen, buckets },
       supplierLead: {
-        receipts: rc.length, midDays: mid(leads), p80Days: leads.length ? percentile(leads, 0.8) : null,
+        receipts: rc.length, midDays: mid(leads), avgDays: avg(leads), p80Days: leads.length ? percentile(leads, 0.8) : null,
         onTimePct: pct(onTime, withDue.length), latePct: pct(withDue.length - onTime, withDue.length),
         onTimeAmountPct: pct(amt(withDue.filter((_, i) => (lateBy[i] as number) <= 0)), amt(withDue)),
-        midDaysLate: mid(lateBy.filter((x) => x > 0)),
+        /* Late by: the late lines' days late added up, over the number of late lines (owner). */
+        avgDaysLate: avg(lateBy.filter((x) => x > 0)),
       },
       ordering: {
         lines: raised.length, avgOrderAheadDays: avg(ahead), avgDueBeforeNeedDays: avg(beforeNeed),
-        measured: slack.length, midOrderBeforeNeedDays: mid(orderBeforeNeed), midArrivedBeforeNeedDays: mid(slack), p20ArrivedBeforeNeedDays: p20,
+        measured: slack.length, midPoDueBeforeNeedDays: mid(poDueBeforeNeed), avgPoDueBeforeNeedDays: avg(poDueBeforeNeed), midArrivedBeforeNeedDays: mid(slack), p20ArrivedBeforeNeedDays: p20,
         /* Ordering later by the 20th-percentile slack still has 80% of lines
            arriving by the customer's date. Too few lines, or no slack: null / 0. */
         canOrderLaterDays: slack.length < MIN_SAMPLES || p20 == null ? null : Math.max(0, Math.floor(p20)),
