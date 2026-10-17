@@ -24,7 +24,7 @@ const so = (over: Row): Row => ({
   customer_so_no: null, branding: 'ZANOTTI', phone: '012-345 6789', ...over,
 });
 
-const params = (over: Partial<SoListParams>): SoListParams => ({ status: null, q: null, sort: null, from: null, to: null, f: [], debtorNames: null, currencies: null, ...over });
+const params = (over: Partial<SoListParams>): SoListParams => ({ status: null, q: null, sort: null, from: null, to: null, f: [], debtorNames: null, currencies: null, brandings: null, ...over });
 
 async function docNos(rows: Row[], p: SoListParams, companyId = 1): Promise<string[]> {
   const sb = fakeSb({ mfg_sales_orders_with_payment_totals: rows, mfg_sales_order_payments: [] });
@@ -67,7 +67,7 @@ describe('the Sales Order list predicate set', () => {
   it('reads the query string the list sends, repeated f rows included', () => {
     const q: Record<string, string> = { status: 'CONFIRMED', q: 'x', sort: 'doc_no:asc' };
     expect(readSoListParams((k) => q[k], (k) => (k === 'f' ? ['a:is:1', 'b:is:2'] : undefined)))
-      .toEqual({ status: 'CONFIRMED', q: 'x', sort: 'doc_no:asc', from: null, to: null, f: ['a:is:1', 'b:is:2'], debtorNames: null, currencies: null });
+      .toEqual({ status: 'CONFIRMED', q: 'x', sort: 'doc_no:asc', from: null, to: null, f: ['a:is:1', 'b:is:2'], debtorNames: null, currencies: null, brandings: null });
   });
 
   it('pushes the Customer (debtor) Name funnel into the query so it matches across pages', async () => {
@@ -88,6 +88,37 @@ describe('the Sales Order list predicate set', () => {
       so({ doc_no: 'B', currency: 'USD' }),
     ];
     expect(await docNos(rows, params({ currencies: ['USD'], sort: 'doc_no:asc' }))).toEqual(['B']);
+  });
+
+  /* Owner 2026-10-17: BRANDING = ZANOTTI filtered only the loaded page (9 of 50)
+     while the footer kept "of 3,465". The funnel now narrows the READ, so the
+     total and the pages are the filtered set's. */
+  it('pushes the Branding funnel into the query so it matches across pages', async () => {
+    const rows = [
+      so({ doc_no: 'A', branding: 'ZANOTTI' }),
+      so({ doc_no: 'B', branding: 'AKEMI' }),
+      so({ doc_no: 'C', branding: 'ZANOTTI' }),
+      so({ doc_no: 'D', branding: 'NONE' }),
+      so({ doc_no: 'E', branding: null }),
+      so({ doc_no: 'F', branding: 'ZANOTTI', company_id: 2 }),
+    ];
+    // A brand on headers: exact, placeholder-header orders NOT admitted, other company never.
+    expect(await docNos(rows, params({ brandings: ['ZANOTTI'], sort: 'doc_no:asc' }))).toEqual(['A', 'C']);
+    expect(await docNos(rows, params({ brandings: ['ZANOTTI', 'AKEMI'], sort: 'doc_no:asc' }))).toEqual(['A', 'B', 'C']);
+    // A label that is only ever derived ("Accessory"): the blank/placeholder-header
+    // orders are admitted (their cell is derived from lines; the grid trims the page).
+    expect(await docNos(rows, params({ brandings: ['Accessory'], sort: 'doc_no:asc' }))).toEqual(['D', 'E']);
+    expect(await docNos(rows, params({ brandings: ['ZANOTTI', 'Accessory'], sort: 'doc_no:asc' }))).toEqual(['A', 'C', 'D', 'E']);
+  });
+
+  it('keeps a brand with reserved characters intact in the or= expression', async () => {
+    const rows = [so({ doc_no: 'A', branding: 'HAPPI, S (MATT)' }), so({ doc_no: 'B', branding: 'ZANOTTI' })];
+    expect(await docNos(rows, params({ brandings: ['HAPPI, S (MATT)'] }))).toEqual(['A']);
+  });
+
+  it('parses the brandings funnel param as a JSON array', () => {
+    const q: Record<string, string> = { brandings: JSON.stringify(['ZANOTTI', '2990s Sofa']) };
+    expect(readSoListParams((k) => q[k], () => undefined).brandings).toEqual(['ZANOTTI', '2990s Sofa']);
   });
 
   it('parses the debtorNames / currencies funnel params as JSON arrays (commas in names survive)', () => {

@@ -26,6 +26,7 @@ import { applySoScope } from './salesScope';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { prepareSoListFilters } from './so-list-query-filters';
 import { SO_STATUSES } from './so-lifecycle-guards';
+import { resolveSoBrandingFunnel } from './so-list-branding-funnel';
 
 /** The list's filter contract, as the query string carries it. */
 export type SoListParams = {
@@ -43,6 +44,9 @@ export type SoListParams = {
      base-column filter. */
   debtorNames: string[] | null;
   currencies: string[] | null;
+  /** The Branding funnel (owner 2026-10-17) — see so-list-branding-funnel.ts
+     for why the header column answers it and when it is a superset. */
+  brandings: string[] | null;
 };
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
@@ -74,6 +78,7 @@ export function readSoListParams(
     f: queries('f') ?? [],
     debtorNames: jsonArrayParam(query('debtorNames')),
     currencies: jsonArrayParam(query('currencies')),
+    brandings: jsonArrayParam(query('brandings')),
   };
 }
 
@@ -153,6 +158,9 @@ export async function prepareSoListRead(
   if (!code.ok) return code;
   const codePart = code.part;
 
+  const branding = await resolveSoBrandingFunnel(sb, c, p.brandings);
+  if (!branding.ok) return branding;
+
   const scoped = <T>(q: T): T => soFilter.apply(scopeToCompany(applySoScope(q, scopeIds), c));
 
   const status = effectiveStatusFilter(p.status);
@@ -193,6 +201,7 @@ export async function prepareSoListRead(
        stay full — mirrors how the PO creditor funnel behaves. */
     if (p.debtorNames && p.debtorNames.length > 0) q = q.in('debtor_name', p.debtorNames);
     if (p.currencies && p.currencies.length > 0) q = q.in('currency', p.currencies);
+    if (branding.or) q = q.or(branding.or);
     return q as unknown as T;
   };
 

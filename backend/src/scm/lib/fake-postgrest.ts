@@ -352,12 +352,29 @@ export function fakeSb(
       /* PostgREST `or=(a.op.v,b.op.v)`: the row passes when ANY term does. Only
          the term shapes the list readers send are understood — `ilike` (the
          search box), `eq` and `is.true|false|null` (the hold marker), `neq`
-         (the sales lines' item group); anything else THROWS, for the reason
-         `not()` above gives. */
+         (the sales lines' item group), `in.(…)` (the SO Branding funnel);
+         anything else THROWS, for the reason `not()` above gives. Terms split on
+         the commas OUTSIDE a quoted value or an `in.(…)` list, as PostgREST does. */
       or(expr: string) {
-        const terms = String(expr).split(',').map((t) => {
+        const parts: string[] = [];
+        let cur = '', depth = 0, quoted = false;
+        for (let i = 0; i < String(expr).length; i += 1) {
+          const ch = String(expr)[i]!;
+          if (quoted && ch === '\\') { cur += ch + (String(expr)[i + 1] ?? ''); i += 1; continue; }
+          if (ch === '"') quoted = !quoted;
+          else if (!quoted && ch === '(') depth += 1;
+          else if (!quoted && ch === ')') depth -= 1;
+          else if (!quoted && depth === 0 && ch === ',') { parts.push(cur); cur = ''; continue; }
+          cur += ch;
+        }
+        parts.push(cur);
+        const terms = parts.map((t) => {
           const [col, op, ...rest] = t.split('.');
           const val = rest.join('.');
+          if (op === 'in') {
+            const vals = parsePgrestInList(val);
+            return (r: Row) => r[col!] != null && vals.includes(String(r[col!]));
+          }
           if (op === 'ilike') {
             const rx = new RegExp(`^${val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`, 'i');
             return (r: Row) => rx.test(String(r[col!] ?? ''));

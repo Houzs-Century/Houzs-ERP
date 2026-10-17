@@ -71,7 +71,7 @@ export const useMfgSalesOrders = (status?: string) =>
 // mfg_sales_orders.status column stores UPPERCASE — uppercase here to match.
 /** The Sales Order list's filter as query parameters, no paging: the list request
  *  and the list's export (so-list-export.ts) send exactly these. */
-export function soListSearchParams(f: { status?: string; q?: string; sort?: string; filters?: readonly SoListFilter[]; debtorNames?: string[]; currencies?: string[] }): URLSearchParams {
+export function soListSearchParams(f: { status?: string; q?: string; sort?: string; filters?: readonly SoListFilter[]; debtorNames?: string[]; currencies?: string[]; brandings?: string[] }): URLSearchParams {
   const usp = new URLSearchParams();
   if (f.status && f.status !== 'all') usp.set('status', f.status.toUpperCase());
   if (f.q && f.q.trim()) usp.set('q', f.q.trim());
@@ -81,12 +81,14 @@ export function soListSearchParams(f: { status?: string; q?: string; sort?: stri
   // Currency, JSON arrays (a customer name may contain a comma).
   if (f.debtorNames && f.debtorNames.length) usp.set('debtorNames', JSON.stringify(f.debtorNames));
   if (f.currencies && f.currencies.length) usp.set('currencies', JSON.stringify(f.currencies));
+  // Branding funnel (owner 2026-10-17) — backend lib/so-list-branding-funnel.ts.
+  if (f.brandings && f.brandings.length) usp.set('brandings', JSON.stringify(f.brandings));
   return usp;
 }
 
-export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; enabled?: boolean; filters?: readonly SoListFilter[]; debtorNames?: string[]; currencies?: string[] }) {
-  const { page, pageSize, status, q, sort, enabled, filters = [], debtorNames, currencies } = params;
-  const usp = soListSearchParams({ status, q, sort, filters, debtorNames, currencies });
+export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; enabled?: boolean; filters?: readonly SoListFilter[]; debtorNames?: string[]; currencies?: string[]; brandings?: string[] }) {
+  const { page, pageSize, status, q, sort, enabled, filters = [], debtorNames, currencies, brandings } = params;
+  const usp = soListSearchParams({ status, q, sort, filters, debtorNames, currencies, brandings });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
   return useQuery({
@@ -95,7 +97,7 @@ export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number;
     // initial query already carries any localStorage-restored `sort` instead of
     // firing sort-less, getting aborted, and immediately re-firing with sort.
     enabled: enabled ?? true,
-    queryKey: ['mfg-sales-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? '', usp.getAll('f').join('|'), JSON.stringify(debtorNames ?? []), JSON.stringify(currencies ?? [])],
+    queryKey: ['mfg-sales-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? '', usp.getAll('f').join('|'), JSON.stringify(debtorNames ?? []), JSON.stringify(currencies ?? []), JSON.stringify(brandings ?? [])],
     // statusCounts carries ONE bucket per backend SO_STATUSES entry (lowercase:
     // draft/confirmed/in_production/ready_to_ship/shipped/delivered/invoiced/
     // closed/on_hold/cancelled) plus `all` and `other` (legacy/unknown
