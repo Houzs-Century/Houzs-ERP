@@ -45,7 +45,7 @@ procurementOverview.get('/', async (c) => {
   if (pos.error) return fail('purchase orders', pos.error);
   const poById = new Map((pos.data ?? []).map((r) => [String(r.id), r]));
   const items = await chunkIn<Row>([...poById.keys()], (b, f, t) => scopeToCompany(sb.from('purchase_order_items')
-    .select('id, purchase_order_id, item_code, item_group, description, qty, received_qty, unit_price_sen, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, so_item_id')
+    .select('id, purchase_order_id, item_code, item_group, description, qty, received_qty, unit_price_sen, line_total_sen, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, so_item_id')
     .in('purchase_order_id', b), c).order('id').range(f, t));
   if (items.error) return fail('PO lines', items.error);
 
@@ -136,7 +136,9 @@ procurementOverview.get('/', async (c) => {
       poId: String(po.id), poNumber: String(po.po_number ?? ''), poDate: day(po.po_date) as string,
       supplier: supName.get(String(po.supplier_id ?? '')) ?? '—', category: catOf(r),
       itemCode: str(r.item_code), itemDesc: str(r.description), soDocNo: soDoc,
-      qty: num(r.qty), priceSen: num(r.unit_price_sen),
+      /* Net of line discount: the line total spread over its quantity, so PO
+         raised adds up to the PO totals. */
+      qty: num(r.qty), priceSen: num(r.qty) > 0 && r.line_total_sen != null ? num(r.line_total_sen) / num(r.qty) : num(r.unit_price_sen),
       originalDue: original, promised: promisedDate([original, ...revised]),
       needDate: soDoc ? needOfSo.get(soDoc) ?? null : null,
       receipts: withInferred(receiptsByLine.get(String(r.id)) ?? [], num(r.received_qty), original ?? (day(po.po_date) as string)),
