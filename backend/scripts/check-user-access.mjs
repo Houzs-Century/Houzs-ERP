@@ -49,12 +49,12 @@ try {
               JOIN public.companies c ON c.id = uc.company_id
              WHERE uc.user_id = u.id) AS companies
       FROM public.users u
-      JOIN public.roles r ON r.id = u.role_id
+      LEFT JOIN public.roles r ON r.id = u.role_id
       LEFT JOIN public.positions p ON p.id = u.position_id
       LEFT JOIN public.departments pd ON pd.id = p.department_id
       LEFT JOIN public.position_policy pp ON pp.position_id = u.position_id
       LEFT JOIN public.departments d ON d.id = u.department_id
-     WHERE regexp_replace(lower(u.name), '\\s+', '', 'g')
+     WHERE regexp_replace(lower(coalesce(u.name, '') || ' ' || coalesce(u.email, '')), '\\s+', '', 'g')
            LIKE '%' || regexp_replace(lower(${name}), '\\s+', '', 'g') || '%'
      ORDER BY u.id`;
 
