@@ -39,6 +39,9 @@ describe("Project Overview figures", () => {
     expect(drillOf(ps, { level: "years" }, "2026-10-17").map((b) => [b.key, b.sales])).toEqual([["2025", 100], ["2026", 950]]);
     expect(drillOf(ps, { level: "quarters", year: 2026 }, "2026-10-17").map((b) => b.sales)).toEqual([0, 0, 0, 950]);
     expect(drillOf(ps, { level: "months", year: 2026, quarter: 4 }, "2026-10-17")[0]).toMatchObject({ key: "2026-10", sales: 950, next: { level: "weeks", month: "2026-10" } });
+    const yr = drillOf(ps, { level: "yearMonths", year: 2026 }, "2026-10-17");
+    expect(yr).toHaveLength(12);
+    expect(yr[9]).toMatchObject({ key: "2026-10", sales: 950 });
     expect(drillOf(ps, { level: "weeks", month: "2026-10" }, "2026-10-17").map((b) => [b.label, b.sales])).toEqual([["1–7 Oct", 0], ["8–14 Oct", 900], ["15–21 Oct", 0], ["22–31 Oct", 50]]);
   });
 });

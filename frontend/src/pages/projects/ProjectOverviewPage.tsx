@@ -29,7 +29,8 @@ export function ProjectOverviewPage() {
   const [period, setPeriod] = useDashboardPeriod(today, "af_from", "af_to", []);
   const q = useQuery<{ projects: OvProject[] }>("/api/projects/overview", () => api.get("/api/projects/overview"));
   const [brand, setBrand] = useState(""); const [type, setType] = useState(""); const [organizer, setOrganizer] = useState("");
-  const [drill, setDrill] = useState<Drill>({ level: "years" });
+  /* Opens on this year by month (owner 2026-10-17). */
+  const [drill, setDrill] = useState<Drill>({ level: "yearMonths", year: Number(today.slice(0, 4)) });
   const [dim, setDim] = useState<Dim>("brand");
   const [pick, setPick] = useState<string | null>(null);
   const [sort, setSort] = useState<SortKey>("start");
@@ -44,12 +45,13 @@ export function ProjectOverviewPage() {
   const crumbs: Array<[string, Drill]> = [["All years", { level: "years" }]];
   if (drill.level !== "years") {
     const year = drill.level === "weeks" ? Number(drill.month.slice(0, 4)) : drill.year;
-    crumbs.push([String(year), { level: "quarters", year }]);
+    crumbs.push([String(year), drill.level === "yearMonths" ? drill : { level: "quarters", year }]);
     const quarter = drill.level === "months" ? drill.quarter : drill.level === "weeks" ? Math.ceil(Number(drill.month.slice(5, 7)) / 3) : null;
     if (quarter) crumbs.push([`Q${quarter}`, { level: "months", year, quarter }]);
     if (drill.level === "weeks") crumbs.push([new Date(`${drill.month}-01T00:00:00Z`).toLocaleString("en", { month: "short", timeZone: "UTC" }), drill]);
   }
-  const unit = drill.level === "years" ? "Year" : drill.level === "quarters" ? "Quarter" : drill.level === "months" ? "Month" : "Week";
+  const unit = drill.level === "years" ? "Year" : drill.level === "quarters" ? "Quarter" : drill.level === "months" || drill.level === "yearMonths" ? "Month" : "Week";
+  const yearView = drill.level === "quarters" || drill.level === "yearMonths" ? drill.year : null;
   const openBucket = (b: (typeof trend)[number]) => { if (b.next) setDrill(b.next); else { setPick(null); setPeriod(b.from, b.to > today ? today : b.to); } };
   /* Running costs after COGS, only the ones that are not zero. */
   const costs = ([["Rental", t.rental, PALETTE[2]!], ["Commission", t.commission, PALETTE[3]!], ["Setup", t.setup, PALETTE[5]!], ["Transport", t.transport, PALETTE[8]!], ["Merchandise", t.merchandise, PALETTE[7]!], ["Other", t.other, "#c9cdc4"]] as Array<[string, number, string]>).filter(([, v]) => v !== 0);
@@ -94,7 +96,10 @@ export function ProjectOverviewPage() {
               {i > 0 && <span className="text-ink-muted">›</span>}
               {i === crumbs.length - 1 ? <b className="text-ink">{label}</b> : <button type="button" className="text-primary hover:underline" onClick={() => setDrill(d)}>{label}</button>}
             </span>
-          ))}</span>}>
+          ))}
+            {yearView != null && <Toggle value={drill.level === "quarters" ? "q" : "m"} options={[["m", "By month"], ["q", "By quarter"]]}
+              onChange={(v) => setDrill(v === "q" ? { level: "quarters", year: yearView } : { level: "yearMonths", year: yearView })} />}
+          </span>}>
           <Columns valueLabels={false} height={230} stacked={false} format={money} highlight={trend.findIndex((b) => today >= b.from && today <= b.to)}
             labels={trend.map((b) => b.label)}
             series={[{ name: "Sales", color: PALETTE[0]! }, { name: "Gross profit", color: "#8fb3ae" }]}

@@ -83,7 +83,7 @@ export function trendOf(ps: OvProject[], to: string, grain: Grain) {
 
 /** The trend's drill level (owner 2026-10-17): every year, a year's quarters,
  *  a quarter's months, a month's weeks (1–7, 8–14, 15–21, 22–end). */
-export type Drill = { level: "years" } | { level: "quarters"; year: number } | { level: "months"; year: number; quarter: number } | { level: "weeks"; month: string };
+export type Drill = { level: "years" } | { level: "quarters"; year: number } | { level: "yearMonths"; year: number } | { level: "months"; year: number; quarter: number } | { level: "weeks"; month: string };
 
 export function drillOf(ps: OvProject[], drill: Drill, today: string) {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -99,9 +99,11 @@ export function drillOf(ps: OvProject[], drill: Drill, today: string) {
       const m1 = (q - 1) * 3 + 1;
       buckets.push({ key: `${drill.year}-Q${q}`, label: `Q${q} ${drill.year}`, from: `${drill.year}-${pad(m1)}-01`, to: `${drill.year}-${pad(m1 + 2)}-${pad(last(drill.year, m1 + 2))}`, next: { level: "months", year: drill.year, quarter: q } });
     }
-  } else if (drill.level === "months") {
-    for (let i = 0; i < 3; i++) {
-      const mm = (drill.quarter - 1) * 3 + 1 + i; const key = `${drill.year}-${pad(mm)}`;
+  } else if (drill.level === "months" || drill.level === "yearMonths") {
+    /* A quarter's three months, or all twelve months of a year (the opening view). */
+    const first = drill.level === "months" ? (drill.quarter - 1) * 3 + 1 : 1;
+    for (let i = 0; i < (drill.level === "months" ? 3 : 12); i++) {
+      const mm = first + i; const key = `${drill.year}-${pad(mm)}`;
       buckets.push({ key, label: `${MON[mm - 1]} ${drill.year}`, from: `${key}-01`, to: `${key}-${pad(last(drill.year, mm))}`, next: { level: "weeks", month: key } });
     }
   } else {
