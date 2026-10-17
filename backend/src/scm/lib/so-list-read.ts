@@ -136,7 +136,7 @@ export function fromSoList(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped throughout (see salesScope.ts)
   sb: any,
   cols: string,
-  opts?: { count: 'exact' },
+  opts?: { count: 'exact'; head?: boolean },
 ) {
   return sb.from('mfg_sales_orders_with_payment_totals').select(cols, opts);
 }

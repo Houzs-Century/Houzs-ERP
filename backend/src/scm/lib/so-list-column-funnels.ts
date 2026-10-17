@@ -105,7 +105,10 @@ export function readSoColumnFunnels(raw: string | undefined, canFinance: boolean
   const out: SoColumnFunnels = {};
   for (const [key, vals] of Object.entries(parsed as Record<string, unknown>)) {
     if (!(key in SO_COLUMN_FUNNELS) || (FINANCE.has(key) && !canFinance) || !Array.isArray(vals)) continue;
-    const kept = [...new Set(vals.filter((v): v is string => typeof v === 'string' && v.length > 0 && !v.startsWith('\u0001')))];
+    /* '' is the blank cell too (dataTableRows.filterKeyOf folds it into "—"). */
+    const kept = [...new Set(vals
+      .filter((v): v is string => typeof v === 'string' && !v.startsWith('\u0001'))
+      .map((v) => (v === '' ? BLANK : v)))];
     if (kept.length > 0) out[key] = kept;
   }
   return Object.keys(out).length > 0 ? out : null;
@@ -227,9 +230,10 @@ const VIEW_COLS = [
   'venue', 'branding', 'ref', 'customer_so_no', 'sales_location', 'address1', 'address2', 'city', 'postcode',
   'customer_state', 'paid_total_sen', 'paid_sen', 'balance_sen_live', 'balance_sen', 'processing_date',
   'customer_delivery_date', 'note', 'customer_type', 'building_type', 'customer_country', 'currency',
+  'so_line_warehouse_ids',
 ];
 
-type ValueRow = Record<string, string | number | null> & { doc_no: string };
+type ValueRow = Record<string, string | number | null> & { doc_no: string; so_line_warehouse_ids: string[] | null };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const str = (v: unknown): string => (v == null ? '' : String(v));
@@ -256,7 +260,7 @@ function cellOf(key: string, r: ValueRow, ctx: { acDocNo: string | null; staffNa
       const agent = trimmedOrNull(r.agent);
       return str(book().ac_agent ?? (agent && UUID_RE.test(agent) ? ctx.staffName(agent) : agent));
     }
-    case 'reference': return trimmedOrNull(r.ref) ?? trimmedOrNull(r.customer_so_no) ?? BLANK;
+    case 'reference': return trimmedOrNull(r.ref) ?? trimmedOrNull(r.customer_so_no) ?? '';
     case 'sales_location': return str(trimmedOrNull(r.sales_location));
   }
 }
@@ -268,8 +272,9 @@ export type SoFunnelValues =
 /**
  * Every value each server column takes across the caller's orders in the active
  * company (sales scope applied, so a rep is offered only what their own list can
- * show). Sales Location also offers every company warehouse label, the value a
- * line's warehouse gives the cell. Currency rides along (pushed down since
+ * show), a blank cell as "—" like the grid. Sales Location also offers the
+ * label of every warehouse the company's order lines use, the value a line's
+ * warehouse gives the cell. Currency rides along (pushed down since
  * 2026-09-16, previously seeded from the loaded page only).
  */
 export async function buildSoFunnelValues(sb: Sb, c: CompanyScopeCtx, scopeIds: string[] | null, canFinance: boolean): Promise<SoFunnelValues> {
@@ -298,13 +303,15 @@ export async function buildSoFunnelValues(sb: Sb, c: CompanyScopeCtx, scopeIds: 
 
   const sets = new Map<string, Set<string>>(keys.map((k) => [k, new Set<string>()]));
   const currency = new Set<string>();
+  const usedWarehouses = new Set<string>();
   for (const r of rows) {
     const ctx = { acDocNo: acDocNo.get(r.doc_no) ?? null, staffName };
-    for (const k of keys) sets.get(k)!.add(cellOf(k, r, ctx));
+    for (const k of keys) sets.get(k)!.add(cellOf(k, r, ctx) || BLANK);
     currency.add(str(r.currency) || 'MYR');
+    for (const id of r.so_line_warehouse_ids ?? []) usedWarehouses.add(id);
   }
-  for (const w of (wh.data ?? []) as Array<{ code: string | null; name: string | null }>) {
-    const l = warehouseLabel(w);
+  for (const w of (wh.data ?? []) as Array<{ id: string; code: string | null; name: string | null }>) {
+    const l = usedWarehouses.has(w.id) ? warehouseLabel(w) : null;
     if (l) sets.get('sales_location')!.add(l);
   }
   const values: Record<string, string[]> = { currency: [...currency].sort() };

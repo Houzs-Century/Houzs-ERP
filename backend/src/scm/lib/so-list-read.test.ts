@@ -148,6 +148,34 @@ describe('the Sales Order list predicate set', () => {
     expect(await docNos(rows, params({ currencies: ['USD'], sort: 'doc_no:asc' }))).toEqual(['C']);
   });
 
+  /* Regression (local stack 2026-10-17): values taken from /funnel-values or a
+     row of the list — a doc no, a date, text with a space, '&' or '.', and the
+     blank entry, which the value list and a hand-built request send as ''. */
+  it('matches a doc no, a date, text with spaces and reserved characters, and the blank entry sent as an empty string', async () => {
+    const rows = [
+      so({ doc_no: 'HC-SO-2610-218', so_date: '2026-10-16', city: '546080 Singapore', venue: '3 DAMANSARA', sales_location: 'C&C K.J', ref: '-' }),
+      so({ doc_no: 'HC-SO-2610-217', so_date: '2026-10-15', city: '', venue: 'IOI', sales_location: 'KL', ref: 'R, (1)' }),
+      so({ doc_no: 'HC-SO-2610-216', so_date: '2026-10-16', city: null, venue: null, sales_location: null, ref: null }),
+    ];
+    const more = { mfg_sales_orders: [], staff: [], warehouses: [] };
+    const viaQuery = async (cols: Record<string, string[]>) => {
+      const p = readSoListParams((k) => (k === 'cols' ? JSON.stringify(cols) : k === 'sort' ? 'doc_no:asc' : undefined), () => undefined, false);
+      return docNos(rows, p, 1, more);
+    };
+    expect(await viaQuery({ doc_no: ['HC-SO-2610-218'] })).toEqual(['HC-SO-2610-218']);
+    expect(await viaQuery({ erp_doc_no: ['HC-SO-2610-217'] })).toEqual(['HC-SO-2610-217']);
+    expect(await viaQuery({ so_date: ['2026-10-16'] })).toEqual(['HC-SO-2610-216', 'HC-SO-2610-218']);
+    expect(await viaQuery({ city: ['546080 Singapore'] })).toEqual(['HC-SO-2610-218']);
+    expect(await viaQuery({ venue: ['3 DAMANSARA'] })).toEqual(['HC-SO-2610-218']);
+    expect(await viaQuery({ sales_location: ['C&C K.J'] })).toEqual(['HC-SO-2610-218']);
+    expect(await viaQuery({ reference: ['-'] })).toEqual(['HC-SO-2610-218']);
+    expect(await viaQuery({ reference: ['R, (1)'] })).toEqual(['HC-SO-2610-217']);
+    // The blank entry, as '' or as the grid's "—": blank cells only, never the whole set.
+    expect(await viaQuery({ city: [''] })).toEqual(['HC-SO-2610-216', 'HC-SO-2610-217']);
+    expect(await viaQuery({ city: ['—'] })).toEqual(['HC-SO-2610-216', 'HC-SO-2610-217']);
+    expect(await viaQuery({ city: ['', '546080 Singapore'] })).toEqual(['HC-SO-2610-216', 'HC-SO-2610-217', 'HC-SO-2610-218']);
+  });
+
   it('matches a money cell that shows 0 for an empty column', async () => {
     const rows = [so({ doc_no: 'A', paid_total_sen: 0 }), so({ doc_no: 'B', paid_total_sen: null }), so({ doc_no: 'C', paid_total_sen: 500 })];
     expect(await docNos(rows, params({ cols: { paid: ['0'] }, sort: 'doc_no:asc' }))).toEqual(['A', 'B']);
@@ -202,6 +230,15 @@ describe('the list handler reads through it', () => {
 
   it('prepares the one predicate set', () => {
     expect(listBlock()).toContain('prepareSoListRead(');
+  });
+
+  /* Regression: a page past a narrowed set (8 orders, read at page 2) is a 416,
+     on which supabase-js drops the count — the total read 0, not 8. */
+  it('counts the set again when the page is past its end', () => {
+    const block = listBlock();
+    const arm = block.slice(block.indexOf('isRangeNotSatisfiable(error)'));
+    expect(arm).toContain("read.header(fromSoList(sb, 'doc_no', { count: 'exact', head: true }))");
+    expect(arm).toContain('total = res.count ?? head?.count ?? 0');
   });
 
   it('builds the money strip through the same header as the page', () => {

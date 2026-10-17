@@ -1274,8 +1274,12 @@ mfgSalesOrders.get('/', async (c) => {
        still carries the true total via PostgREST's `Content-Range` header. */
     if (error && isRangeNotSatisfiable(error)) {
       data = [];
-      total = res.count ?? 0;
       error = null;
+      /* supabase-js drops the count on a 416, so a page past a narrowed set (a
+         column funnel leaving 8 orders, read at page 2) reported total 0 — ask. */
+      const head = res.count == null ? await read.header(fromSoList(sb, 'doc_no', { count: 'exact', head: true })) : null;
+      if (head?.error) error = head.error;
+      total = res.count ?? head?.count ?? 0;
     }
     /* Every status in the vocabulary gets a bucket (lowercase keys, the wire
        shape the tabs read), plus `other` for anything OUTSIDE it (legacy
