@@ -81,7 +81,7 @@ export function LogisticPeriodSection({ rows, period, today, totals }: { rows: P
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Tile label="Delivered (DO issued)" tone="good" trend={null} onClick={null}
           value={totals ? (by === "amount" ? fmtSen(totals.doAmountSen) : `${totals.doCount} DO`) : "…"}
-          note={totals ? `${by === "amount" ? `${totals.doCount} DO` : fmtSen(totals.doAmountSen)} · ${totals.podClosed} closed with POD` : ""} />
+          note={totals ? `${by === "amount" ? `${totals.doCount} DO` : fmtSen(totals.doAmountSen)} · ${totals.podClosed} marked delivered` : ""} />
         <Tile label={past ? `Dated by ${estimateEnd.slice(5).replace("-", "/")}, still not delivered today` : `Outstanding delivery by ${estimateEnd.slice(5).replace("-", "/")}`} tone={overdue.length ? "bad" : "warn"} trend={null} onClick={null}
           value={fig(toDeliver)} note={`${sub(toDeliver)} · ${overdue.length} already overdue (${fmtSen(sum(overdue))})`} />
         <Tile label={past ? `Open today, dated after ${estimateEnd.slice(5).replace("-", "/")}` : "Owed after that"} tone="main" trend={null} onClick={null}
