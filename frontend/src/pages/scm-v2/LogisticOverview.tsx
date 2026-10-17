@@ -120,10 +120,8 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const h = hist.data;
   const weeks = h?.weeks ?? [];
   const months = h?.months ?? [];
-  const thisMonth = today.slice(0, 7);
-  const monthRow = months.find((x) => x.month === thisMonth);
-  const monthRuns = weeks.filter((w) => w.from.slice(0, 7) === thisMonth || w.to.slice(0, 7) === thisMonth).reduce((a, w) => a + w.runs, 0);
-  const avgPerRun = monthRuns && monthRow ? monthRow.doAmountSen / monthRuns : null;
+  /* Average sales per lorry run over the picked period, from its runs. */
+  const avgPerRun = h?.period.runs ? h.period.runAmountSen / h.period.runs : null;
   const lastWeek = h ? weeks.find((w) => w.to === addDays(h.thisMonday, -1)) : undefined;
   const nextWeek = h ? weeks.find((w) => w.from === addDays(h.thisMonday, 7)) : undefined;
   const runsToday = day.data?.trips ?? [];
@@ -195,7 +193,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
             <Bullet label="Phone completeness" actual={m.phoneComplete != null ? m.phoneComplete * 100 : null} target={100} max={100} format={pctFmt} higherIsBetter />
             <Bullet label="Ready orders with a confirmed date" actual={m.ready ? (m.confirmed / m.ready) * 100 : null} target={100} max={100} format={pctFmt} higherIsBetter />
             <Bullet label="Overdue share" actual={statusTotal ? ((counts.OVERDUE ?? 0) / statusTotal) * 100 : null} target={5} max={20} format={pctFmt} higherIsBetter={false} />
-            <Bullet label={`Avg sales per run · ${thisMonth}`} actual={avgPerRun} target={AVG_SALES_PER_RUN_TARGET_SEN} max={AVG_SALES_PER_RUN_TARGET_SEN * 2} format={fmtSen} higherIsBetter />
+            <Bullet label={`Avg sales per lorry run · ${period.label}`} actual={avgPerRun} target={AVG_SALES_PER_RUN_TARGET_SEN} max={AVG_SALES_PER_RUN_TARGET_SEN * 2} format={fmtSen} higherIsBetter />
           </div>
           {avgPerRun == null && <p className="mt-2 text-[11px] text-ink-muted">Avg sales per run fills in once lorry runs are planned in Delivery Time Arrangement.</p>}
         </Panel>
