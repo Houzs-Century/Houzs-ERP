@@ -1192,7 +1192,7 @@ mfgSalesOrders.get('/', async (c) => {
        2026-09-14), tab, search (approval codes and phone included) and date
        window — for the page, the money strip and the line export
        (lib/so-list-read.ts). The status counts take its `scoped` half. */
-    const read = await prepareSoListRead(sb, c, readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k)), scopeIds, c.get('houzsUser')?.id ?? null, new Date());
+    const read = await prepareSoListRead(sb, c, readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k), canViewScmFinance(c)), scopeIds, c.get('houzsUser')?.id ?? null, new Date());
     if (!read.ok) return c.json(read.body, read.status);
     let q = read.header(orderSoList(fromSoList(sb, LIST_COLS, { count: 'exact' }), c.req.query('sort') ?? null));
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);

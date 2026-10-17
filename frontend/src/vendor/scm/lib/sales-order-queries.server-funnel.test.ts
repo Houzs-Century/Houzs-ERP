@@ -24,4 +24,10 @@ describe("soListSearchParams — server-filterable funnels", () => {
     expect(usp.get("brandings")).toBe(JSON.stringify(["ZANOTTI", "2990s Sofa"]));
     expect(soListSearchParams({ status: "all", brandings: [] }).has("brandings")).toBe(false);
   });
+
+  it("serializes every other column funnel as one cols object", () => {
+    const cols = { city: ["KL", "—"], so_date: ["2026-09-01"] };
+    expect(soListSearchParams({ status: "all", cols }).get("cols")).toBe(JSON.stringify(cols));
+    expect(soListSearchParams({ status: "all", cols: {} }).has("cols")).toBe(false);
+  });
 });

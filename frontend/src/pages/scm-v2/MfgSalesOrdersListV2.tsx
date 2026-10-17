@@ -24,7 +24,7 @@ import { shippedProgressColumn, ShippedProgressPill } from "./so-list-shipped-co
 import { SO_STATUS_TABS, statusFor, type StatusTab } from "./so-list-status";
 import { SoListStatusCell } from "./SoListStatusCell";
 import { SoListFilterBar } from "./SoListFilterBar";
-import { clampSoPage, soPageOnlyFunnelKeys, soServerFunnels, type SoServerFunnels } from "./so-list-server-funnels";
+import { clampSoPage, soPageOnlyFunnelKeys, soServerFunnels, withSoFunnelSeeds, type SoServerFunnels } from "./so-list-server-funnels";
 import { useProjectBrands } from "../../vendor/scm/lib/product-models-queries";
 import { useSoListFilters } from "../../vendor/scm/lib/so-list-filter-state";
 import { salesOrderRowMenu } from "./row-menus";
@@ -84,7 +84,7 @@ import { shortCompanyName, getBrandingCompanyCode } from "../../lib/branding";
 import { brandingLabel, isPlaceholderBrandText } from "../../vendor/shared/so-branding-label";
 import { soCanRaiseDo } from "../../vendor/shared/so-deliverable-states";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
-import { useMfgSalesOrdersPaged, useMfgCustomers, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows, useSoLineCoverage } from "../../vendor/scm/lib/sales-order-queries";
+import { useMfgSalesOrdersPaged, useMfgCustomers, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows, useSoLineCoverage, useSoFunnelValues } from "../../vendor/scm/lib/sales-order-queries";
 import { useSetDocumentHold } from "../../vendor/scm/lib/document-hold-queries";
 import { holdPrompt } from "./use-hold-action";
 import { useCancelRequestAction } from "./use-cancel-request-action";
@@ -1089,13 +1089,13 @@ export function MfgSalesOrdersListV2() {
   // Multi-select → batch "Print all". Keys are doc_no (the DataTable rowKey).
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [printingDocs, setPrintingDocs] = useState(false);
-  /* Server-filterable column funnels the grid pushes down (owner 2026-09-16) so
-     pagination runs over the filtered set: Customer (debtor) Name, Currency and
-     Branding (owner 2026-10-17). Debtor CODE and every line-level / MRP funnel
-     stay client-side on the loaded page, and the pager says so (pageOnlyFunnels)
-     — see ./so-list-server-funnels. */
+  /* Column funnels the grid pushes down so pagination and the total run over
+     the filtered set (owner 2026-09-16, every header column 2026-10-17); which
+     columns, and the few that stay page-local, in ./so-list-server-funnels. */
   const [serverFunnels, setServerFunnels] = useState<SoServerFunnels>(() => soServerFunnels({}));
-  const [pageOnlyFunnels, setPageOnlyFunnels] = useState<string[]>([]);
+  /* Each server column's funnel offers every value across the company's orders,
+     not only the loaded page's (backend lib/so-list-column-funnels.ts). */
+  const funnelValues = useSoFunnelValues().data?.values;
   /* Seed the Branding funnel with every active brand, for the same reason as the
      customer seed below: a brand absent from the loaded page must be pickable. */
   const projectBrandsQ = useProjectBrands();
@@ -1228,7 +1228,7 @@ export function MfgSalesOrdersListV2() {
     setPageParam(0); // sort change → back to page 0
   };
   /* DataTable reports its funnel state here; we lift the SERVER-FILTERABLE ones
-     (Customer Name, Currency, Branding) into the list query. Mirrors
+     (./so-list-server-funnels) into the list query. Mirrors
      setSortAndReset: the first (mount-restore) report adopts the funnel without
      clobbering a deep-linked ?page=; any later funnel change — server or
      page-local — resets to page 1. */
@@ -1241,7 +1241,6 @@ export function MfgSalesOrdersListV2() {
     if (sig === funnelSigRef.current) return;
     funnelSigRef.current = sig;
     setServerFunnels(next);
-    setPageOnlyFunnels(pageOnly);
     if (!funnelSyncedRef.current) { funnelSyncedRef.current = true; return; }
     setPageParam(0);
   };
@@ -1434,7 +1433,7 @@ export function MfgSalesOrdersListV2() {
      Branding are the book's spellings where the order is in AutoCount (the
      server stamps ac_*; 2990 prints its own). The ERP number stays on ERP Doc No. */
   const soLineColumnList = Object.values(soLineColumns<SoRow>());
-  const columns: Column<SoRow, SoListLine>[] = [
+  const columns: Column<SoRow, SoListLine>[] = withSoFunnelSeeds<Column<SoRow, SoListLine>>(funnelValues, [
     {
       key: "doc_no",
       group: "Basic",
@@ -1893,7 +1892,7 @@ export function MfgSalesOrdersListV2() {
         ]
       : []),
     ...soLineColumnList,
-  ];
+  ]);
 
   /* ── Column layouts ──────────────────────────────────────────────────────
      Houzs and 2990 run their sales desks off the SAME list page but read it for
@@ -1946,9 +1945,6 @@ export function MfgSalesOrdersListV2() {
       { id: "so-autocount", label: "AutoCount: SALES ORDER DETAILS-SALES", hint: "One row per line in the Export", columns: SO_AUTOCOUNT_KEYS },
     ];
   }, [branding.companyCode]);
-  /* Honest footer: a page-local funnel narrows the rows shown, never the count. */
-  const pageOnlyFunnelNote = pageOnlyFunnels.length === 0 ? null
-    : `Filter on ${pageOnlyFunnels.map((k) => columns.find((col) => col.key === k)?.label ?? k).join(", ")} narrows this page only`;
 
   /* One pill per vocabulary status, each carrying its FULL-set count (see
      SO_STATUS_TABS) via FilterPills' count badge — these are the SERVER's
@@ -2236,7 +2232,6 @@ export function MfgSalesOrdersListV2() {
             page={page}
             pageSize={pageSize}
             total={total}
-            note={pageOnlyFunnelNote}
             noun="orders"
             onPageChange={setPageParam}
             onPageSizeChange={(n) => { setPageSize(n); setPageParam(0); }}

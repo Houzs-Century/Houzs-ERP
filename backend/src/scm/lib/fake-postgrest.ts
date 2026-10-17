@@ -352,9 +352,11 @@ export function fakeSb(
       /* PostgREST `or=(a.op.v,b.op.v)`: the row passes when ANY term does. Only
          the term shapes the list readers send are understood — `ilike` (the
          search box), `eq` and `is.true|false|null` (the hold marker), `neq`
-         (the sales lines' item group), `in.(…)` (the SO Branding funnel);
-         anything else THROWS, for the reason `not()` above gives. Terms split on
-         the commas OUTSIDE a quoted value or an `in.(…)` list, as PostgREST does. */
+         (the sales lines' item group), `in.(…)` (the SO Branding funnel),
+         `ov.{…}` (the sales scope, the SO Sales Location funnel); anything else
+         THROWS, for the reason `not()` above gives. Terms split on the commas
+         OUTSIDE a quoted value, an `in.(…)` list or an `ov.{…}` array, as
+         PostgREST does. */
       or(expr: string) {
         const parts: string[] = [];
         let cur = '', depth = 0, quoted = false;
@@ -362,8 +364,8 @@ export function fakeSb(
           const ch = String(expr)[i]!;
           if (quoted && ch === '\\') { cur += ch + (String(expr)[i + 1] ?? ''); i += 1; continue; }
           if (ch === '"') quoted = !quoted;
-          else if (!quoted && ch === '(') depth += 1;
-          else if (!quoted && ch === ')') depth -= 1;
+          else if (!quoted && (ch === '(' || ch === '{')) depth += 1;
+          else if (!quoted && (ch === ')' || ch === '}')) depth -= 1;
           else if (!quoted && depth === 0 && ch === ',') { parts.push(cur); cur = ''; continue; }
           cur += ch;
         }
@@ -374,6 +376,10 @@ export function fakeSb(
           if (op === 'in') {
             const vals = parsePgrestInList(val);
             return (r: Row) => r[col!] != null && vals.includes(String(r[col!]));
+          }
+          if (op === 'ov') {
+            const vals = val.replace(/^\{|\}$/g, '').split(',');
+            return (r: Row) => Array.isArray(r[col!]) && (r[col!] as unknown[]).some((x) => vals.includes(String(x)));
           }
           if (op === 'ilike') {
             const rx = new RegExp(`^${val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`, 'i');

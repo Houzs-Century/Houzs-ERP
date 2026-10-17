@@ -27,7 +27,7 @@ export const BRANDING_FUNNEL_PROBE_CAP = 40;
 
 /* Every value double-quoted with `"` and `\` escaped: a brand may carry a comma,
    a dot or a parenthesis, all reserved inside PostgREST's `or=(...)`. */
-const quote = (v: string): string => `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+export const quote = (v: string): string => `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
 /**
  * The `or=` expression for the funnel.

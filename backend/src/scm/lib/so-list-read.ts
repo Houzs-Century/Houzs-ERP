@@ -26,7 +26,8 @@ import { applySoScope } from './salesScope';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { prepareSoListFilters } from './so-list-query-filters';
 import { SO_STATUSES } from './so-lifecycle-guards';
-import { resolveSoBrandingFunnel } from './so-list-branding-funnel';
+import { quote, resolveSoBrandingFunnel } from './so-list-branding-funnel';
+import { readSoColumnFunnels, resolveSoColumnFunnels, type SoColumnFunnels } from './so-list-column-funnels';
 
 /** The list's filter contract, as the query string carries it. */
 export type SoListParams = {
@@ -47,6 +48,9 @@ export type SoListParams = {
   /** The Branding funnel (owner 2026-10-17) — see so-list-branding-funnel.ts
      for why the header column answers it and when it is a superset. */
   brandings: string[] | null;
+  /** Every other server-run column funnel (owner 2026-10-17), keyed by grid
+     column — see so-list-column-funnels.ts for which columns and how. */
+  cols: SoColumnFunnels | null;
 };
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
@@ -68,6 +72,7 @@ function jsonArrayParam(v: string | undefined): string[] | null {
 export function readSoListParams(
   query: (key: string) => string | undefined,
   queries: (key: string) => string[] | undefined,
+  canFinance: boolean,
 ): SoListParams {
   return {
     status: param(query('status')),
@@ -79,6 +84,7 @@ export function readSoListParams(
     debtorNames: jsonArrayParam(query('debtorNames')),
     currencies: jsonArrayParam(query('currencies')),
     brandings: jsonArrayParam(query('brandings')),
+    cols: readSoColumnFunnels(query('cols'), canFinance),
   };
 }
 
@@ -160,6 +166,8 @@ export async function prepareSoListRead(
 
   const branding = await resolveSoBrandingFunnel(sb, c, p.brandings);
   if (!branding.ok) return branding;
+  const columns = await resolveSoColumnFunnels(sb, c, p.cols);
+  if (!columns.ok) return columns;
 
   const scoped = <T>(q: T): T => soFilter.apply(scopeToCompany(applySoScope(q, scopeIds), c));
 
@@ -200,8 +208,14 @@ export async function prepareSoListRead(
        (not `scoped`) so the list + its count narrow while the status-count pills
        stay full — mirrors how the PO creditor funnel behaves. */
     if (p.debtorNames && p.debtorNames.length > 0) q = q.in('debtor_name', p.debtorNames);
-    if (p.currencies && p.currencies.length > 0) q = q.in('currency', p.currencies);
+    /* The Currency cell shows MYR for a blank currency, so MYR admits blanks. */
+    if (p.currencies && p.currencies.length > 0) {
+      q = p.currencies.includes('MYR')
+        ? q.or(`currency.in.(${p.currencies.map(quote).join(',')}),currency.is.null`)
+        : q.in('currency', p.currencies);
+    }
     if (branding.or) q = q.or(branding.or);
+    for (const or of columns.ors) q = q.or(or);
     return q as unknown as T;
   };
 
