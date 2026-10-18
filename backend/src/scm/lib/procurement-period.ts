@@ -155,6 +155,22 @@ export function procurementPeriod(lines: PLine[], from: string, to: string, toda
     bySupplier: group((l) => l.supplier),
     overdue: openAt.filter((x) => x.daysLate > 0).sort((a, b) => b.daysLate - a.daysLate).slice(0, 300),
     dueSoon: openAt.filter((x) => x.daysLate <= 0 && x.daysLate >= -3).sort((a, b) => b.daysLate - a.daysLate).slice(0, 300),
+    /* Every line behind a figure on the page — raised, due or received in the
+       period, or still open at its end — for the drill-down (owner 2026-10-18). */
+    lines: lines.flatMap((l) => {
+      const raised = inPeriod(l.poDate);
+      const due = inPeriod(dueOf(l, basis));
+      const receivedQty = l.receipts.filter((r) => inPeriod(r.date) && !r.inferred).reduce((a, r) => a + r.qty, 0);
+      const openQty = openQtyAt(l, asOf);
+      if (!raised && !due && receivedQty <= 0 && openQty <= 0) return [];
+      const d = dueOf(l, basis);
+      return [{
+        poId: l.poId, poNumber: l.poNumber, poDate: l.poDate, supplier: l.supplier, category: l.category, itemCode: l.itemCode,
+        qty: l.qty, sen: Math.round(l.qty * l.priceSen), raised, due, dueDate: d,
+        receivedQty, receivedSen: Math.round(receivedQty * l.priceSen),
+        openQty, openSen: Math.round(openQty * l.priceSen), daysLate: openQty > 0 && d ? daysBetween(d, asOf) : null,
+      }];
+    }),
   };
 }
 
