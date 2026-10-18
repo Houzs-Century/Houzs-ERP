@@ -292,8 +292,8 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
               series={[{ name: "Supplier takes · average", color: PALETTE[0]! }, { name: "Date on PO before the customer date · average", color: PALETTE[1]! }, { name: "Goods arrive before the customer date", color: TONE.good }]}
               values={[
                 groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => g.supplierLead.avgDays ?? 0),
-                groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => (g.ordering.measured < MIN_RECEIPTS ? 0 : g.ordering.avgPoDueBeforeNeedDays ?? 0)),
-                groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => (g.ordering.measured < MIN_RECEIPTS ? 0 : g.ordering.midArrivedBeforeNeedDays ?? 0)),
+                groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => (g.ordering.avgPoDueBeforeNeedDays ?? 0)),
+                groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => (g.ordering.midArrivedBeforeNeedDays ?? 0)),
               ]} />
             <table className="mt-3 w-full border-collapse">
               <thead><tr>
@@ -315,8 +315,9 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
                       <Td className={few || g.supplierLead.onTimePct == null ? "" : g.supplierLead.onTimePct >= 80 ? "text-synced" : g.supplierLead.onTimePct >= 60 ? "text-warning-text" : "text-err"}>{pctTxt(g.supplierLead.onTimePct)}</Td>
                       <Td>{g.supplierLead.avgDaysLate != null ? `${g.supplierLead.avgDaysLate} days` : "—"}</Td>
                       <Td className="text-ink-secondary">{g.ordering.measured}</Td>
-                      <Td>{g.ordering.measured < MIN_RECEIPTS ? <span className="text-ink-muted">too few lines</span> : g.ordering.avgPoDueBeforeNeedDays != null ? <>{`${g.ordering.avgPoDueBeforeNeedDays} days`}<span className="block text-[10.5px] text-ink-muted">median {g.ordering.midPoDueBeforeNeedDays ?? "—"}</span></> : "—"}</Td>
-                      <Td>{g.ordering.measured < MIN_RECEIPTS ? <span className="text-ink-muted">too few lines</span> : g.ordering.midArrivedBeforeNeedDays != null ? `${g.ordering.midArrivedBeforeNeedDays} days early` : "—"}</Td>
+                      {/* Shown even on a few lines (owner 2026-10-18), greyed with the count so it is read with care. */}
+                      <Td className={g.ordering.measured < MIN_RECEIPTS ? "text-ink-muted" : ""}>{g.ordering.avgPoDueBeforeNeedDays != null ? <>{`${g.ordering.avgPoDueBeforeNeedDays} days`}<span className="block text-[10.5px] text-ink-muted">{g.ordering.measured < MIN_RECEIPTS ? `only ${g.ordering.measured} lines` : `median ${g.ordering.midPoDueBeforeNeedDays ?? "—"}`}</span></> : "—"}</Td>
+                      <Td className={g.ordering.measured < MIN_RECEIPTS ? "text-ink-muted" : ""}>{g.ordering.midArrivedBeforeNeedDays != null ? <>{`${g.ordering.midArrivedBeforeNeedDays} days early`}{g.ordering.measured < MIN_RECEIPTS && <span className="block text-[10.5px]">only {g.ordering.measured} lines</span>}</> : "—"}</Td>
                       <Td className="font-semibold">{g.ordering.canOrderLaterDays == null ? <span className="font-normal text-ink-muted">too few lines</span> : g.ordering.canOrderLaterDays > 0 ? `${g.ordering.canOrderLaterDays} days` : "no"}</Td>
                       {by === "category" && <>
                         <Td>

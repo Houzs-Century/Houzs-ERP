@@ -183,22 +183,30 @@ export function HBars({ rows, format, empty }: { rows: HBarRow[]; format: Fmt; e
 /** One 100% bar split into parts, with the legend underneath. */
 export function SplitBar({ parts, format }: { parts: Slice[]; format: Fmt }) {
   const total = parts.reduce((a, p) => a + Math.max(0, p.value), 0);
+  const shown = parts.filter((p) => p.value > 0);
+  /* Bar and labels share one flex model, so each label sits under its own
+     colour (owner 2026-10-18); a small part keeps a minimum width so its label
+     still reads. */
+  const cell = (p: Slice) => ({ flexGrow: p.value, flexBasis: 0, minWidth: "84px" });
+  const colorOf = (p: Slice) => p.color ?? PALETTE[parts.indexOf(p) % PALETTE.length];
   return (
-    <div>
-      <div className="flex h-3.5 overflow-hidden rounded-full bg-surface-2">
-        {total > 0 && parts.map((p, i) => p.value > 0 && (
-          <div key={p.label} style={{ width: `${(p.value / total) * 100}%`, background: p.color ?? PALETTE[i % PALETTE.length] }} title={`${p.label}: ${format(p.value)} (${pctOf(p.value, total)})`} />
+    <div className="overflow-x-auto">
+      <div className="flex h-3.5 min-w-fit gap-px overflow-hidden rounded-full bg-surface-2">
+        {total > 0 && shown.map((p) => (
+          <div key={p.label} style={{ ...cell(p), background: colorOf(p) }} title={`${p.label}: ${format(p.value)} (${pctOf(p.value, total)})`} />
         ))}
       </div>
-      {/* One small block per part (label over figure), so a long legend stays readable. */}
-      <div className="mt-2.5 grid gap-x-4 gap-y-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))" }}>
-        {parts.map((p, i) => (
-          <div key={p.label} className="min-w-0 border-l-[3px] pl-2" style={{ borderColor: p.color ?? PALETTE[i % PALETTE.length] }}>
+      <div className="mt-2 flex min-w-fit gap-px">
+        {shown.map((p) => (
+          <div key={p.label} style={{ ...cell(p), borderColor: colorOf(p) }} className="min-w-0 border-l-[3px] pl-2 pr-1">
             <div className="truncate text-[11.5px] text-ink-secondary">{p.label}</div>
             <div className="text-[13px] font-semibold tabular-nums text-ink">{format(p.value)} <span className="text-[11px] font-normal text-ink-muted">{pctOf(p.value, total)}</span></div>
           </div>
         ))}
       </div>
+      {parts.some((p) => p.value <= 0) && (
+        <div className="mt-1 text-[11px] text-ink-muted">{parts.filter((p) => p.value <= 0).map((p) => p.label).join(", ")}: none</div>
+      )}
     </div>
   );
 }

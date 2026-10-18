@@ -20,6 +20,8 @@ describe('assr quality overview', () => {
     expect(r).toMatchObject({ opened: 2, closed: 2, ongoingNow: 1, openedStillOpen: 1, avgDaysToClose: 11, avgDaysToCloseCases: 2, avgDaysToClosePrev30: null });
     expect(r.trend.at(-1)).toMatchObject({ month: '2026-10', opened: 2, closed: 2, backlog: 1, avgDaysToClose: 11 });
     expect(r.trend.at(-2)).toMatchObject({ month: '2026-09', backlog: 1 });
+    /* The drill-down list: opened in the period, open now, or closed in the last 30 days; never the voided one. */
+    expect(r.caseList.map((x) => x.id).sort()).toEqual([1, 2, 5]);
   });
 
   test('stage days over stages finished in the last 30 days; overdue against target days; supplier rate per item received', () => {

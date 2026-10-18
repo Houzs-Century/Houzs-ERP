@@ -119,7 +119,33 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const ready = open.filter((o) => o.is_ship_ready);
 
   const h = hist.data;
-  const weeks = h?.weeks ?? [];
+  /* The weekly report follows the picked period, by week of the month
+     (owner 2026-10-18): W1 = 1st–7th, W2 = 8th–14th, W3 = 15th–21st,
+     W4 = 22nd–28th, W5 = 29th to the month's end. */
+  const weeks = useMemo(() => {
+    const out: Array<{ key: string; label: string; from: string; to: string; doCount: number; doAmountSen: number; delivered: number; current: boolean }> = [];
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const months: string[] = [];
+    for (let m = period.from.slice(0, 7); m <= period.to.slice(0, 7);) {
+      months.push(m);
+      const y = Number(m.slice(0, 4)); const mm = Number(m.slice(5, 7));
+      m = mm === 12 ? `${y + 1}-01` : `${y}-${pad(mm + 1)}`;
+    }
+    for (const m of months) {
+      const last = new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0)).getUTCDate();
+      [[1, 7], [8, 14], [15, 21], [22, 28], [29, last]].forEach(([a, b], i) => {
+        if (a! > last) return;
+        const from = `${m}-${pad(a!)}`; const to = `${m}-${pad(b!)}`;
+        const ds = (h?.period.doList ?? []).filter((d) => d.date >= from && d.date <= to);
+        out.push({
+          key: from, label: months.length > 1 ? `${m} · W${i + 1}` : `W${i + 1}`, from, to,
+          doCount: ds.length, doAmountSen: ds.reduce((x, d) => x + d.amountSen, 0), delivered: ds.filter((d) => d.status === "DELIVERED").length,
+          current: today >= from && today <= to,
+        });
+      });
+    }
+    return out;
+  }, [h, period.from, period.to, today]);
   const months = h?.months ?? [];
   const loading = board.isLoading || hist.isLoading;
   const jump = (id: string) => () => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
@@ -212,10 +238,10 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       </Panel>
 
       <h2 className="pt-2 text-[14px] font-semibold text-ink">3 · Reports</h2>
-      <Panel title="Weekly logistic report" hint="Monday to Sunday · delivery orders issued, their amount, and how many were marked delivered · this week highlighted"
+      <Panel title="Weekly logistic report" hint={`${period.label} by week of the month (W1 = 1st–7th … W5 = 29th to the end) · delivery orders issued, their amount, and how many are marked delivered · click a week for its orders`}
         right={<Toggle value={weekBy} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setWeekBy} />}>
         <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
-          <Columns valueLabels={weekBy === "orders"} height={200} labels={weeks.map((w) => dd(w.from))} highlight={weeks.findIndex((w) => w.current)} stacked={false}
+          <Columns valueLabels={weekBy === "orders"} height={200} labels={weeks.map((w) => w.label)} highlight={weeks.findIndex((w) => w.current)} stacked={false}
             format={weekBy === "amount" ? rm : (x) => `${x} DO`}
             series={weekBy === "amount" ? [{ name: "DO amount", color: PALETTE[0]! }] : [{ name: "DO issued", color: PALETTE[0]! }, { name: "Marked delivered", color: TONE.good }]}
             values={weekBy === "amount" ? [weeks.map((w) => w.doAmountSen)] : [weeks.map((w) => w.doCount), weeks.map((w) => w.delivered)]}
@@ -223,10 +249,11 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
           <table className="w-full border-collapse self-start">
             <thead><tr><Th left>Week</Th><Th>DO</Th><Th>Amount</Th><Th>Average order</Th><Th>Marked delivered</Th></tr></thead>
             <tbody>{weeks.map((w) => (
-              <tr key={w.from} className={cn(w.current && "bg-primary-soft/40 font-semibold")}>
-                <Td left>{dd(w.from)} – {dd(w.to)}{w.current ? " · now" : w.from > (h?.thisMonday ?? "") ? " · next" : ""}</Td>
+              <tr key={w.key} onClick={() => openDos(`Delivered · ${w.label} (${dd(w.from)} – ${dd(w.to)})`, (d) => d.date >= w.from && d.date <= w.to)}
+                className={cn("cursor-pointer hover:bg-surface-2/50", w.current && "bg-primary-soft/40 font-semibold")}>
+                <Td left>{w.label} <span className="text-ink-muted">{dd(w.from)} – {dd(w.to)}</span>{w.current ? " · now" : ""}</Td>
                 <Td>{w.doCount}</Td><Td>{rm(w.doAmountSen)}</Td><Td>{w.doCount ? rm(Math.round(w.doAmountSen / w.doCount)) : "—"}</Td>
-                <Td className={w.doCount > 5 && w.delivered === 0 && w.from < (h?.thisMonday ?? "") ? "text-err" : ""}>{w.delivered}</Td>
+                <Td className={w.doCount > 5 && w.delivered === 0 && w.to < today ? "text-err" : ""}>{w.delivered}</Td>
               </tr>))}</tbody>
           </table>
         </div>

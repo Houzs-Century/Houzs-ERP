@@ -11,7 +11,7 @@ import { DrillDrawer, col, type Drill } from "../components/scm-v2/DrillDrawer";
 import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
-import { Panel, Th, Td } from "../components/scm-v2/OverviewKit";
+import { Panel, Th, Td, Toggle } from "../components/scm-v2/OverviewKit";
 import { Columns, HBars, TONE, PALETTE } from "../components/scm-v2/Charts";
 
 type StageDays = Partial<Record<string, { avgDays: number | null; cases: number }>>;
@@ -27,6 +27,7 @@ type Overdue = {
 type Quality = {
   opened: number; closed: number; ongoingNow: number; openedStillOpen: number;
   avgDaysToClose: number | null; avgDaysToCloseCases: number; avgDaysToClosePrev30: number | null; stageDays: StageDays;
+  avgDaysToClose90: number | null; avgDaysToClose90Cases: number; stageDays90: StageDays;
   ages: Array<{ label: string; count: number }>;
   trend: Array<{ month: string; opened: number; closed: number; backlog: number; avgDaysToClose: number | null }>;
   overdue: Overdue[]; suppliers: Supplier[]; unattributed: number;
@@ -56,6 +57,9 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
   const q = useQuery<Quality>("/api/assr/quality-overview?from=:&to=:", () => api.get(`/api/assr/quality-overview?from=${from}&to=${to}`), [from, to]);
   const d = q.data;
   const [stageTab, setStageTab] = useState<string>("all");
+  /* Time per stage over the last 30 or 90 days (owner 2026-10-18). */
+  const [win, setWin] = useState<"30" | "90">("30");
+  const stageDays = d ? (win === "30" ? d.stageDays : d.stageDays90) : {};
   const navigate = useNavigate();
   /* The second layer (owner 2026-10-18): a bar or a supplier opens its cases. */
   const [drill, setDrill] = useState<Drill<CaseRow> | null>(null);
@@ -104,16 +108,20 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
         </div>
       </section>
 
+      <SectionTitle eyebrow="Now" title="Where the open cases are" />
+      <Panel title="Where the cases are" hint="open cases by stage, with those completed in the period · red = past the stage's target days">{funnel}</Panel>
+
       <SectionTitle eyebrow="Speed" title="How fast cases move" />
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <Panel title="Time spent in each stage" hint="average days, stages finished in the last 30 days · the slow leg shows red">
+        <Panel title="Time spent in each stage" hint={`average days, stages finished in the last ${win} days · average to close over them: ${d ? dayTxt(win === "30" ? d.avgDaysToClose : d.avgDaysToClose90) : "…"} · the slow leg shows red`}
+          right={<Toggle value={win} options={[["30", "Last 30 days"], ["90", "Last 90 days"]]} onChange={setWin} />}>
           {d && <HBars format={(x) => `${x} days`} empty="No stage finished in this period."
-            rows={STAGES.filter(([k]) => d.stageDays[k]?.avgDays != null).map(([k, label]) => {
-              const s = d.stageDays[k] as { avgDays: number; cases: number };
+            rows={STAGES.filter(([k]) => stageDays[k]?.avgDays != null).map(([k, label]) => {
+              const s = stageDays[k] as { avgDays: number; cases: number };
               return { key: k, label: `${label} · ${s.cases} cases`, value: s.avgDays, color: s.avgDays > 10 ? TONE.bad : s.avgDays > 5 ? TONE.warn : TONE.good, right: dayTxt(s.avgDays), onClick: () => openCases(`At ${label} now`, (c) => c.open && c.stage === k) };
             })} />}
-          <p className="mt-2 text-[11px] text-ink-muted">Same window as Average to close: the last 30 days, whatever period is picked, so an older, slower pace does not hide today&apos;s. The monthly trend shows each month&apos;s average.</p>
+          <p className="mt-2 text-[11px] text-ink-muted">The last 30 or 90 days, whatever period is picked, so an older, slower pace does not hide today&apos;s. The monthly trend shows each month&apos;s average.</p>
         </Panel>
         <Panel title="How old the open cases are" hint={`${openTotal} open cases today · days since the complaint`}>
           {d && <HBars format={(x) => `${x} cases`} empty="No open cases."
@@ -123,7 +131,7 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
       </div>
 
       <SectionTitle eyebrow="Volume" title="Cases coming in and going out" />
-      <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
+      <div>
         <Panel title="Monthly trend" hint="cases opened and closed each month · line = that month's average days to close (cases closed in it)">
           {d && <Columns valueLabels height={230} stacked={false} format={(x) => `${x} cases`} highlight={d.trend.length - 1}
             labels={d.trend.map((t) => `${t.month.slice(2, 4)}/${t.month.slice(5)}`)}
@@ -144,7 +152,6 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
             </div>
           )}
         </Panel>
-        <Panel title="Where the cases are" hint="open cases by stage, with those completed in the period">{funnel}</Panel>
       </div>
 
       <SectionTitle eyebrow="Why" title="What the cases are about" />
