@@ -129,5 +129,13 @@ export function qualityOverview(cases: QCase[], itemsByCase: Map<number, number>
     overdue,
     suppliers,
     unattributed: opened.filter((c) => !c.creditor).length,
+    /* The cases behind the figures — opened in the period, open now, or closed
+       in the last 30 days — for the page's drill-down (owner 2026-10-18). */
+    caseList: live.filter((c) => inP(c.openedAt) || isOpen(c) || (c.stage === "completed" && !!c.closedAt && c.closedAt.slice(0, 10) >= dayBefore(29)))
+      .map((c) => ({
+        id: c.id, assrNo: c.assrNo, customer: c.customer, creditor: c.creditor, supplier: c.creditor ? names.get(c.creditor) ?? c.creditor : null,
+        stage: c.stage, openedAt: c.openedAt.slice(0, 10), closedAt: c.closedAt ? c.closedAt.slice(0, 10) : null,
+        open: isOpen(c), openedInPeriod: inP(c.openedAt), ageDays: Math.floor(days(c.openedAt, c.closedAt ?? today)),
+      })),
   };
 }
