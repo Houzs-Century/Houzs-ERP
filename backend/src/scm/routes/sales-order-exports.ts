@@ -31,7 +31,8 @@ import { prepareSoListRead, readSoListParams } from '../lib/so-list-read';
 import { buildSoExportRows } from '../lib/so-list-lines';
 import { readExportWindow } from '../lib/document-line-export';
 import { resolveSalesScopeIds } from '../lib/salesScope';
-import { canViewAllSales } from '../lib/houzs-perms';
+import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
+import { buildSoFunnelValues } from '../lib/so-list-column-funnels';
 import { SO_LIST_COLS } from './mfg-sales-orders';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -41,7 +42,7 @@ export async function soExportRowsHandler(c: Ctx) {
   /* The same row-level visibility as the list: view-all callers see every
      order, everyone else their own + downline (lib/salesScope.ts). */
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
-  const params = readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k));
+  const params = readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k), canViewScmFinance(c));
   const read = await prepareSoListRead(sb, c, params, scopeIds, c.get('houzsUser')?.id ?? null, new Date());
   if (!read.ok) return c.json(read.body, read.status);
   const out = await buildSoExportRows(sb, c, read, params.sort, SO_LIST_COLS, readExportWindow((k) => c.req.query(k)));
@@ -52,3 +53,16 @@ export async function soExportRowsHandler(c: Ctx) {
 export const salesOrderExports = new Hono<{ Bindings: Env; Variables: Variables }>();
 salesOrderExports.use('*', supabaseAuth);
 salesOrderExports.get('/export/rows', soExportRowsHandler);
+
+/* GET /mfg-sales-orders/funnel-values -> { values: { <grid column>: string[] }, truncated }
+   Every value each server-run column funnel can take across the caller's orders
+   in the active company (lib/so-list-column-funnels.ts), so the grid can offer a
+   value that is not on the loaded page. Company + sales scope as the list. */
+export async function soFunnelValuesHandler(c: Ctx) {
+  const sb = c.get('supabase');
+  const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
+  const out = await buildSoFunnelValues(sb, c, scopeIds, canViewScmFinance(c));
+  if (out.error !== null) return c.json({ error: 'load_failed', reason: out.error }, 500);
+  return c.json(out);
+}
+salesOrderExports.get('/funnel-values', soFunnelValuesHandler);

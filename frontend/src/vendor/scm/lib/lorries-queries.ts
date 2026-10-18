@@ -108,6 +108,8 @@ export type NewLorry = {
   type: LorryType;
   isInternal?: boolean;
   warehouseId?: string | null;
+  /** Every warehouse the lorry serves; the first is also written as warehouseId. */
+  warehouseIds?: string[];
   capacityM3?: number | null;
   capacityKg?: number | null;
   notes?: string;

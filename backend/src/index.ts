@@ -5,7 +5,7 @@ import { secureHeaders } from "hono/secure-headers";
 import type { Env } from "./types";
 import { GIT_SHA, resolveBuildSha } from "./build-info";
 import { restKeyClaims, restUrlRef } from "./db/rest-key-claims";
-import { auth, requirePermission, requireAnyPermission, requireScmAccess, requirePageAccessOrSalesView } from "./middleware/auth";
+import { auth, requirePermission, requireAnyPermission, requireScmAccess, requirePageAccessOrSalesView, requirePageAccess } from "./middleware/auth";
 import { TRANSIENT_CONN_RE } from "./db/d1-compat";
 // Ported 2990's SCM modules (furniture supply chain). Talk to the `scm` Postgres
 // schema via supabase-js; namespaced under /api/scm/*, owner-only during the port.
@@ -49,6 +49,9 @@ import { projectPosSales } from "./routes/project-pos-sales";
 import { posAdmin } from "./routes/pos-admin";
 import { posDevice } from "./routes/pos-device";
 import projectsOutstanding from "./routes/projectsOutstanding";
+import { projectDataGaps } from "./routes/projectDataGaps";
+import { projectOverview } from "./routes/projectOverview";
+import assrQuality from "./routes/assrQuality";
 // Sales entries (/api/sales) is retained as a DEPENDENCY of Projects — the
 // Projects page embeds the sales-entry EntryPanel + submit/void/delete flow.
 // It has no standalone nav/route after the cutover.
@@ -440,6 +443,9 @@ app.use("/api/projects/*", venturePortalKick());
 // Mount the Lead Time Portal first so /api/assr/portal/* doesn't
 // fall through into the catch-all /:id handler on the main module.
 app.route("/api/assr/portal", assrPortal);
+// Quality Overview's period summary and supplier figures; before the Service
+// Case router so its "/:id" does not take the path. See routes/assrQuality.ts.
+app.route("/api/assr/quality-overview", assrQuality);
 app.route("/api/assr", assr);
 app.route("/api/logs", logs);
 app.route("/api/audit", auditRoutes);
@@ -474,6 +480,14 @@ app.route("/api/presence", presence);
 // Mounted at the EXACT path BEFORE the projects router so its "/:id" catch-all
 // does not swallow "outstanding-tasks" as an id (owner/admin Reminder view).
 app.route("/api/projects/outstanding-tasks", projectsOutstanding);
+// Finished events with incomplete books (Project Overview, Overview). Same exact-
+// path-first reason as above; finance-viewer rule inside. See routes/projectDataGaps.ts.
+app.use("/api/projects/data-gaps/*", requirePageAccess("projects.finances"));
+app.route("/api/projects/data-gaps", projectDataGaps);
+// Every project with its keyed books and its Sales Orders, for Project Overview.
+// Same exact-path-first reason and gate as data-gaps. See routes/projectOverview.ts.
+app.use("/api/projects/overview/*", requirePageAccess("projects.finances"));
+app.route("/api/projects/overview", projectOverview);
 app.route("/api/projects", projects);
 // The office side of a brand's share link (generate / revoke). Own file because
 // routes/projects.ts is at its size ceiling. See routes/brandShare.ts.
