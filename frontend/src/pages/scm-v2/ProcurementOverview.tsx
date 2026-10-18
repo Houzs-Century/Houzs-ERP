@@ -6,7 +6,8 @@
 // By category and By supplier are one switch over the same layout.
 // Data: GET /api/scm/procurement-overview (backend lib/procurement-period.ts).
 import { useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { DrillDrawer, col, type Drill } from "../../components/scm-v2/DrillDrawer";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/Layout";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
@@ -17,6 +18,11 @@ import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-
 import { Columns, Donut, SplitBar, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { useUpdateCategoryLeadTime, type LeadCategory } from "../../vendor/scm/lib/mrp-queries";
 
+type PeriodLine = {
+  poId: string; poNumber: string; poDate: string; supplier: string; category: string; itemCode: string | null;
+  qty: number; sen: number; raised: boolean; due: boolean; dueDate: string | null;
+  receivedQty: number; receivedSen: number; openQty: number; openSen: number; daysLate: number | null;
+};
 type BucketKey = "late5" | "late0to4" | "due2to7" | "due8plus";
 type Group = {
   key: string;
@@ -43,7 +49,7 @@ type Payload = {
   today: string; from: string; to: string; asOf: string; basis: "original" | "promised";
   categories: string[]; currentLead: Partial<Record<string, number>>; leadOverrides: Partial<Record<string, Array<{ warehouse: string; days: number }>>>;
   billed: { totalSen: number; count: number; bySupplier: Record<string, number>; byCategory: Record<string, number> };
-  total: Group; byCategory: Group[]; bySupplier: Group[]; overdue: OpenLine[]; dueSoon: OpenLine[];
+  total: Group; byCategory: Group[]; bySupplier: Group[]; overdue: OpenLine[]; dueSoon: OpenLine[]; lines: PeriodLine[];
   deadStock: { asOf: string; coverDays: number; totalSen: number; skus: number; deadSen: number; deadSkus: number; bufferSen: number; bufferSkus: number; byCategory: StockGroup[]; byWarehouse: StockGroup[]; top: Array<{ warehouse: string; category: string; itemCode: string; variantKey: string; name: string | null; qty: number; valueSen: number; idleDays: number | null }>;
     bufferTop: Array<{ itemCode: string; variantKey: string; name: string | null; category: string; warehouses: string; onHand: number; scheduled: number; unscheduled: number; cover: number; bufferQty: number; valueSen: number }> };
 };
@@ -78,6 +84,9 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
   const basis = "original";
   const [by, setBy] = useState<"category" | "supplier">("category");
   const [focus, setFocus] = useState<string | null>(null);
+  const navigate = useNavigate();
+  /* The second layer (owner 2026-10-18): a figure opens the PO lines behind it. */
+  const [drill, setDrill] = useState<Drill<PeriodLine> | null>(null);
   /* Two tabs (owner 2026-10-17, "too long"): the PO money and lists, and the
      slower-moving lead time, dead stock and turnover. */
   const [params, setParams] = useSearchParams();
@@ -103,6 +112,27 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
   const when = period.key === "month" ? "this month" : period.key === "quarter" ? "this quarter" : period.key === "year" ? "this year" : `in ${period.label}`;
   const When = when.charAt(0).toUpperCase() + when.slice(1);
   const asOfNote = d ? (d.asOf === today ? "as of today" : `as of ${d.asOf}, the period's last day`) : "";
+
+  const openLines = (title: string, measure: "raised" | "due" | "received" | "open", group: string | null) => {
+    const inGroup = (l: PeriodLine) => !group || (by === "category" ? l.category === group : l.supplier === group);
+    const keep = (l: PeriodLine) => inGroup(l) && (measure === "raised" ? l.raised : measure === "due" ? l.due : measure === "received" ? l.receivedQty > 0 : l.openQty > 0);
+    const amount = (l: PeriodLine) => (measure === "received" ? l.receivedSen : measure === "open" ? l.openSen : l.sen);
+    setDrill({
+      title: group ? `${title} · ${label(group)}` : title, subtitle: `${period.from} – ${period.to}`,
+      rows: (d?.lines ?? []).filter(keep).sort((a, b) => amount(b) - amount(a)), rowKey: (l) => `${l.poId}|${l.itemCode}|${l.qty}|${l.dueDate}`,
+      onRow: (l) => navigate(`/scm/purchase-orders/${l.poId}`),
+      columns: [
+        col<PeriodLine>("PO", true, (l) => <span className="text-primary">{l.poNumber}</span>, (l) => l.poNumber, null, null),
+        col<PeriodLine>("Date", false, (l) => l.poDate, null, null, null),
+        col<PeriodLine>("Supplier", true, (l) => l.supplier, (l) => l.supplier, null, null),
+        col<PeriodLine>("Item", true, (l) => l.itemCode ?? "—", (l) => l.itemCode ?? "", null, null),
+        col<PeriodLine>("Due", false, (l) => l.dueDate ?? "—", null, null, null),
+        col<PeriodLine>(measure === "received" ? "Received" : measure === "open" ? "Still to come" : "Qty", false, (l) => (measure === "received" ? l.receivedQty : measure === "open" ? l.openQty : l.qty), null, null, null),
+        ...(measure === "open" ? [col<PeriodLine>("Days late", false, (l) => (l.daysLate != null && l.daysLate > 0 ? <span className="text-err">{l.daysLate}</span> : "—"), null, null, null)] : []),
+        col<PeriodLine>("Amount", false, (l) => rm(amount(l)), null, amount, rm),
+      ],
+    });
+  };
 
   const insights = useMemo(() => {
     if (!d) return [];
@@ -131,15 +161,15 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
       {q.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {(q.error as Error).message}</div>}
 
       {tab === "overview" && <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Tile label={`PO raised ${when}`} value={t ? rm(t.raised.sen) : "…"} tone="brass" trend={null} onClick={null}
+        <Tile label={`PO raised ${when}`} value={t ? rm(t.raised.sen) : "…"} tone="brass" trend={null} onClick={() => openLines(`PO raised ${when}`, "raised", focus)}
           note={t ? `${t.raised.pos} purchase orders` : ""} />
-        <Tile label={`Due ${when}`} value={t ? rm(t.due.sen) : "…"} tone={t?.due.openSen ? "bad" : "good"} trend={null} onClick={null}
+        <Tile label={`Due ${when}`} value={t ? rm(t.due.sen) : "…"} tone={t?.due.openSen ? "bad" : "good"} trend={null} onClick={() => openLines(`Due ${when}`, "due", focus)}
           note={t ? (t.due.openSen ? `${rm(t.due.openSen)} has not arrived yet` : "all of it has arrived") : ""} />
-        <Tile label={`Received ${when}`} value={t ? rm(t.receivedSen) : "…"} tone="main" trend={null} onClick={null}
+        <Tile label={`Received ${when}`} value={t ? rm(t.receivedSen) : "…"} tone="main" trend={null} onClick={() => openLines(`Received ${when}`, "received", focus)}
           note={t ? `${t.supplierLead.receipts} lines received` : ""} />
         <Tile label={`Supplier billed ${when}`} value={d ? rm(d.billed.totalSen) : "…"} tone="main" trend={null} onClick={null}
           note={d ? `${d.billed.count} supplier invoices` : ""} />
-        <Tile label="Total outstanding" value={t ? rm(t.open.sen) : "…"} tone={t?.open.late ? "warn" : "main"} trend={null} onClick={() => document.getElementById("overdue")?.scrollIntoView({ behavior: "smooth" })}
+        <Tile label="Total outstanding" value={t ? rm(t.open.sen) : "…"} tone={t?.open.late ? "warn" : "main"} trend={null} onClick={() => openLines("Total outstanding", "open", focus)}
           note={t ? `all POs not yet received, ${asOfNote} · ${t.open.late} lines late` : ""} />
       </div>}
 
@@ -154,7 +184,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
       <div className="flex flex-wrap items-center gap-2 pt-1">
         <h2 className="text-[14px] font-semibold text-ink">Breakdown</h2>
         <Toggle value={by} options={[["category", "By category"], ["supplier", "By supplier"]]} onChange={(v) => { setBy(v); setFocus(null); }} />
-        <span className="text-[11.5px] text-ink-muted">{tab === "overview" ? "Amounts are quantity × PO price. Click a row to filter the overdue and arriving lists at the bottom." : "Lead time by category or by supplier; dead stock and turnover are by category and warehouse."}</span>
+        <span className="text-[11.5px] text-ink-muted">{tab === "overview" ? "Amounts are quantity × PO price. Click an amount for its PO lines; click a row to filter the lists at the bottom." : "Lead time by category or by supplier; dead stock and turnover are by category and warehouse."}</span>
       </div>
 
       {d && t && tab === "overview" && (
@@ -169,9 +199,10 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
                 {groups.map((g) => (
                   <tr key={g.key} onClick={() => setFocus(focus === g.key ? null : g.key)} className={cn("cursor-pointer hover:bg-surface-2/50", focus === g.key && "bg-primary-soft/50")}>
                     <Td left className="max-w-[240px] truncate">{label(g.key)}</Td>
-                    <Td>{rm(g.raised.sen)}</Td><Td>{g.raised.pos}</Td>
-                    <Td>{rm(g.due.sen)}</Td><Td className={g.due.openSen ? "text-err" : ""}>{rm(g.due.openSen)}</Td>
-                    <Td>{rm(g.receivedSen)}</Td><Td>{rm(billedOf(g.key))}</Td><Td className="font-semibold">{rm(g.open.sen)}</Td>
+                    <Td><button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={(e) => { e.stopPropagation(); openLines(`PO raised ${when}`, "raised", g.key); }}>{rm(g.raised.sen)}</button></Td><Td>{g.raised.pos}</Td>
+                    <Td><button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={(e) => { e.stopPropagation(); openLines(`Due ${when}`, "due", g.key); }}>{rm(g.due.sen)}</button></Td><Td className={g.due.openSen ? "text-err" : ""}>{rm(g.due.openSen)}</Td>
+                    <Td><button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={(e) => { e.stopPropagation(); openLines(`Received ${when}`, "received", g.key); }}>{rm(g.receivedSen)}</button></Td><Td>{rm(billedOf(g.key))}</Td>
+                    <Td className="font-semibold"><button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={(e) => { e.stopPropagation(); openLines("Total outstanding", "open", g.key); }}>{rm(g.open.sen)}</button></Td>
                   </tr>
                 ))}
                 <tr className="font-semibold">
@@ -261,8 +292,8 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
               series={[{ name: "Supplier takes · average", color: PALETTE[0]! }, { name: "Date on PO before the customer date · average", color: PALETTE[1]! }, { name: "Goods arrive before the customer date", color: TONE.good }]}
               values={[
                 groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => g.supplierLead.avgDays ?? 0),
-                groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => (g.ordering.measured < MIN_RECEIPTS ? 0 : g.ordering.avgPoDueBeforeNeedDays ?? 0)),
-                groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => (g.ordering.measured < MIN_RECEIPTS ? 0 : g.ordering.midArrivedBeforeNeedDays ?? 0)),
+                groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => (g.ordering.avgPoDueBeforeNeedDays ?? 0)),
+                groups.filter((g) => g.supplierLead.receipts > 0).slice(0, 8).map((g) => (g.ordering.midArrivedBeforeNeedDays ?? 0)),
               ]} />
             <table className="mt-3 w-full border-collapse">
               <thead><tr>
@@ -284,8 +315,9 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
                       <Td className={few || g.supplierLead.onTimePct == null ? "" : g.supplierLead.onTimePct >= 80 ? "text-synced" : g.supplierLead.onTimePct >= 60 ? "text-warning-text" : "text-err"}>{pctTxt(g.supplierLead.onTimePct)}</Td>
                       <Td>{g.supplierLead.avgDaysLate != null ? `${g.supplierLead.avgDaysLate} days` : "—"}</Td>
                       <Td className="text-ink-secondary">{g.ordering.measured}</Td>
-                      <Td>{g.ordering.measured < MIN_RECEIPTS ? <span className="text-ink-muted">too few lines</span> : g.ordering.avgPoDueBeforeNeedDays != null ? <>{`${g.ordering.avgPoDueBeforeNeedDays} days`}<span className="block text-[10.5px] text-ink-muted">median {g.ordering.midPoDueBeforeNeedDays ?? "—"}</span></> : "—"}</Td>
-                      <Td>{g.ordering.measured < MIN_RECEIPTS ? <span className="text-ink-muted">too few lines</span> : g.ordering.midArrivedBeforeNeedDays != null ? `${g.ordering.midArrivedBeforeNeedDays} days early` : "—"}</Td>
+                      {/* Shown even on a few lines (owner 2026-10-18), greyed with the count so it is read with care. */}
+                      <Td className={g.ordering.measured < MIN_RECEIPTS ? "text-ink-muted" : ""}>{g.ordering.avgPoDueBeforeNeedDays != null ? <>{`${g.ordering.avgPoDueBeforeNeedDays} days`}<span className="block text-[10.5px] text-ink-muted">{g.ordering.measured < MIN_RECEIPTS ? `only ${g.ordering.measured} lines` : `median ${g.ordering.midPoDueBeforeNeedDays ?? "—"}`}</span></> : "—"}</Td>
+                      <Td className={g.ordering.measured < MIN_RECEIPTS ? "text-ink-muted" : ""}>{g.ordering.midArrivedBeforeNeedDays != null ? <>{`${g.ordering.midArrivedBeforeNeedDays} days early`}{g.ordering.measured < MIN_RECEIPTS && <span className="block text-[10.5px]">only {g.ordering.measured} lines</span>}</> : "—"}</Td>
                       <Td className="font-semibold">{g.ordering.canOrderLaterDays == null ? <span className="font-normal text-ink-muted">too few lines</span> : g.ordering.canOrderLaterDays > 0 ? `${g.ordering.canOrderLaterDays} days` : "no"}</Td>
                       {by === "category" && <>
                         <Td>
@@ -348,6 +380,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
           <TurnoverPanel t={d.turnover} when={when} />
         </>
       )}
+      <DrillDrawer drill={drill} onClose={() => setDrill(null)} />
     </div>
   );
 }

@@ -14,7 +14,7 @@ import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
-import { logisticPeriod, type PeriodDo, type DoCatLine } from '../lib/logistic-period';
+import { logisticPeriod, regionOf, type PeriodDo, type DoCatLine } from '../lib/logistic-period';
 import { DO_NOT_DELIVERED_IN_LIST, DO_STOCK_OUT_STATES } from '../shared/do-shipped-states';
 
 /* A sales order that is a draft or cancelled has no balance to chase. */
@@ -125,7 +125,7 @@ logisticOverview.get('/', async (c) => {
   const pFrom = qFrom && ISO.test(qFrom) ? qFrom : `${today.slice(0, 7)}-01`;
   const pTo = qTo && ISO.test(qTo) ? qTo : today;
   const periodDos = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
-    .select('id, status, do_date, local_total_sen, state, customer_state, vehicle')
+    .select('id, do_number, so_doc_no, debtor_name, status, do_date, local_total_sen, state, customer_state, vehicle')
     .gte('do_date', pFrom).lte('do_date', pTo)
     .in('status', [...DO_STOCK_OUT_STATES])), c).order('id').range(f, t));
   if (periodDos.error) return fail('delivery orders in the period', periodDos.error);
@@ -175,6 +175,11 @@ logisticOverview.get('/', async (c) => {
     doAmountSen: pDos.reduce((a, d) => a + d.amountSen, 0),
     podClosed: pDos.filter((d) => d.status === 'DELIVERED').length,
     ...logisticPeriod(pDos, catLines, pFrom, pTo, fleetLorries, today),
+    /* The delivery orders behind every figure above, for the page's drill-down. */
+    doList: (periodDos.data ?? []).map((d, i) => ({
+      id: String(d.id), doNumber: str(d.do_number), soDocNo: str(d.so_doc_no), customer: str(d.debtor_name),
+      date: pDos[i]!.doDate, region: regionOf(pDos[i]!.state), state: pDos[i]!.state, amountSen: pDos[i]!.amountSen, lorry: pDos[i]!.lorry, status: pDos[i]!.status,
+    })),
   };
 
   return c.json({

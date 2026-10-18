@@ -8,7 +8,7 @@
 // Data: the Delivery Planning board (open orders) and
 // GET /api/scm/logistic-overview (the period, weeks, months, process gaps).
 import { useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/Layout";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
@@ -19,7 +19,9 @@ import { cn } from "../../lib/utils";
 import { Th, Td, Panel, SELECT_CLS, Toggle } from "../../components/scm-v2/OverviewKit";
 import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
 import { LogisticPeriodSection, type PeriodTotals } from "./LogisticPeriodSection";
-import { LogisticDailySection, LorrySection } from "./LogisticDailySection";
+import { LogisticDailySection, LorrySection, type DoDrill } from "./LogisticDailySection";
+import type { DoRow } from "./LogisticPeriodSection";
+import { DrillDrawer, col, type Drill } from "../../components/scm-v2/DrillDrawer";
 import { Columns, SplitBar, TONE, PALETTE } from "../../components/scm-v2/Charts";
 
 type Week = { from: string; to: string; doCount: number; doAmountSen: number; delivered: number; current: boolean };
@@ -54,6 +56,7 @@ const followUpOf = (s: string | null) => (s ? FOLLOW_UP.find(([, rx]) => rx.test
 /** `embedded`: inside the phone shell, which draws its own header. */
 export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const today = todayMY();
+  const navigate = useNavigate();
   const [period, setPeriod] = useDashboardPeriod(today, "from", "to", []);
   /* Every warehouse unless one is picked (owner 2026-10-17). */
   const [params, setParams] = useSearchParams();
@@ -116,12 +119,65 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const ready = open.filter((o) => o.is_ship_ready);
 
   const h = hist.data;
-  const weeks = h?.weeks ?? [];
+  /* The weekly report follows the picked period, by week of the month
+     (owner 2026-10-18): W1 = 1st–7th, W2 = 8th–14th, W3 = 15th–21st,
+     W4 = 22nd–28th, W5 = 29th to the month's end. */
+  const weeks = useMemo(() => {
+    const out: Array<{ key: string; label: string; from: string; to: string; doCount: number; doAmountSen: number; delivered: number; current: boolean }> = [];
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const months: string[] = [];
+    for (let m = period.from.slice(0, 7); m <= period.to.slice(0, 7);) {
+      months.push(m);
+      const y = Number(m.slice(0, 4)); const mm = Number(m.slice(5, 7));
+      m = mm === 12 ? `${y + 1}-01` : `${y}-${pad(mm + 1)}`;
+    }
+    for (const m of months) {
+      const last = new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0)).getUTCDate();
+      [[1, 7], [8, 14], [15, 21], [22, 28], [29, last]].forEach(([a, b], i) => {
+        if (a! > last) return;
+        const from = `${m}-${pad(a!)}`; const to = `${m}-${pad(b!)}`;
+        const ds = (h?.period.doList ?? []).filter((d) => d.date >= from && d.date <= to);
+        out.push({
+          key: from, label: months.length > 1 ? `${m} · W${i + 1}` : `W${i + 1}`, from, to,
+          doCount: ds.length, doAmountSen: ds.reduce((x, d) => x + d.amountSen, 0), delivered: ds.filter((d) => d.status === "DELIVERED").length,
+          current: today >= from && today <= to,
+        });
+      });
+    }
+    return out;
+  }, [h, period.from, period.to, today]);
   const months = h?.months ?? [];
   const loading = board.isLoading || hist.isLoading;
   const jump = (id: string) => () => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
   const [monthBy, setMonthBy] = useState<"amount" | "orders">("amount");
   const [weekBy, setWeekBy] = useState<"amount" | "orders">("amount");
+  /* The second layer (owner 2026-10-18): a figure opens the rows behind it. */
+  const [doDrill, setDoDrill] = useState<Drill<DoRow> | null>(null);
+  const [soDrill, setSoDrill] = useState<Drill<PlanningOrder> | null>(null);
+  const openDos: DoDrill = (title, keep) => setDoDrill({
+    title, subtitle: `${period.from} – ${period.to}`, rows: (h?.period.doList ?? []).filter(keep), rowKey: (d) => d.id,
+    onRow: (d) => navigate(`/scm/delivery-orders/${d.id}`),
+    columns: [
+      col<DoRow>("DO", true, (d) => <span className="text-primary">{d.doNumber ?? "—"}</span>, (d) => d.doNumber ?? "", null, null),
+      col<DoRow>("Date", false, (d) => d.date, null, null, null),
+      col<DoRow>("Customer", true, (d) => d.customer ?? "—", (d) => d.customer ?? "", null, null),
+      col<DoRow>("Region", true, (d) => d.region, (d) => d.region, null, null),
+      col<DoRow>("Lorry", true, (d) => d.lorry ?? "—", (d) => d.lorry ?? "", null, null),
+      col<DoRow>("Amount", false, (d) => fmtSen(d.amountSen), null, (d) => d.amountSen, fmtSen),
+    ],
+  });
+  const openSos = (title: string, xs: PlanningOrder[]) => setSoDrill({
+    title, subtitle: "open sales orders, as of today", rows: xs, rowKey: (o) => o.so_doc_no,
+    onRow: (o) => navigate(`/scm/sales-orders/${o.so_doc_no}`),
+    columns: [
+      col<PlanningOrder>("Order", true, (o) => <span className="text-primary">{o.so_doc_no}</span>, (o) => o.so_doc_no, null, null),
+      col<PlanningOrder>("Customer", true, (o) => o.debtor_name ?? "—", (o) => o.debtor_name ?? "", null, null),
+      col<PlanningOrder>("Delivery", false, (o) => o.effective_delivery_date ?? "—", null, null, null),
+      col<PlanningOrder>("Stock", true, (o) => (o.is_ship_ready ? "Ready" : o.stock_remark || o.stock_status || "Not ready"), (o) => o.stock_remark || o.stock_status || "", null, null),
+      col<PlanningOrder>("Follow-up", true, (o) => followUpOf(o.delivery_message_status), (o) => followUpOf(o.delivery_message_status), null, null),
+      col<PlanningOrder>("Amount", false, (o) => fmtSen(o.local_total_sen), null, (o) => o.local_total_sen, fmtSen),
+    ],
+  });
   const followMap = new Map<string, { count: number; sen: number }>();
   for (const o of open) { const k = followUpOf(o.delivery_message_status); const g = followMap.get(k) ?? { count: 0, sen: 0 }; g.count += 1; g.sen += o.local_total_sen; followMap.set(k, g); }
   const follow = [...followMap.entries()].sort((a, b) => b[1].count - a[1].count);
@@ -143,9 +199,9 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
 
       <h2 className="pt-1 text-[14px] font-semibold text-ink">1 · Delivered in the period</h2>
       <LogisticPeriodSection rows={allRows} period={period} today={today} totals={h?.period ?? null}
-        overdue={{ count: overdueRows.length, sen: overdueSen }} onOverdue={jump("overdue")} />
-      {h?.period && <LogisticDailySection days={h.period.days} regions={h.period.byRegion} />}
-      {h?.period && <LorrySection lorries={h.period.byLorry} days={h.period.lorryDayList} recorded={h.period.lorry.recordedOrders} total={h.period.doCount} />}
+        overdue={{ count: overdueRows.length, sen: overdueSen }} onOverdue={() => openSos("Overdue · ready, no delivery date confirmed", overdueRows)} onDrill={openDos} />
+      {h?.period && <LogisticDailySection days={h.period.days} regions={h.period.byRegion} onDrill={openDos} />}
+      {h?.period && <LorrySection lorries={h.period.byLorry} days={h.period.lorryDayList} recorded={h.period.lorry.recordedOrders} total={h.period.doCount} onDrill={openDos} />}
 
       <h2 className="pt-2 text-[14px] font-semibold text-ink">2 · Still to deliver · as of today</h2>
       <Panel title="Outstanding delivery, by when it is due" hint={`${warehouse ? "this warehouse" : "all warehouses"} · every sales order not yet delivered · by its delivery date`}>
@@ -160,8 +216,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
             <thead><tr><Th left>Due</Th><Th>Orders</Th><Th>Amount</Th><Th>Not ready (stock)</Th><Th>Date agreed with customer</Th></tr></thead>
             <tbody>
               {buckets.map((b) => (
-                <tr key={b.key} onClick={b.key === "overdue" ? jump("overdue") : b.key === "d3" ? jump("urgent") : undefined}
-                  className={cn((b.key === "overdue" || b.key === "d3") && "cursor-pointer hover:bg-surface-2/50")}>
+                <tr key={b.key} onClick={() => openSos(`Due · ${b.label}`, b.rows)} className="cursor-pointer hover:bg-surface-2/50">
                   <Td left><span className="mr-2 inline-block h-2 w-2 rounded-full" style={{ background: b.color }} />{b.label}</Td>
                   <Td className={b.key === "overdue" && b.count ? "font-semibold text-err" : ""}>{b.count}</Td>
                   <Td>{fmtSen(b.sen)}</Td>
@@ -183,10 +238,10 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       </Panel>
 
       <h2 className="pt-2 text-[14px] font-semibold text-ink">3 · Reports</h2>
-      <Panel title="Weekly logistic report" hint="Monday to Sunday · delivery orders issued, their amount, and how many were marked delivered · this week highlighted"
+      <Panel title="Weekly logistic report" hint={`${period.label} by week of the month (W1 = 1st–7th … W5 = 29th to the end) · delivery orders issued, their amount, and how many are marked delivered · click a week for its orders`}
         right={<Toggle value={weekBy} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setWeekBy} />}>
         <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
-          <Columns valueLabels={weekBy === "orders"} height={200} labels={weeks.map((w) => dd(w.from))} highlight={weeks.findIndex((w) => w.current)} stacked={false}
+          <Columns valueLabels={weekBy === "orders"} height={200} labels={weeks.map((w) => w.label)} highlight={weeks.findIndex((w) => w.current)} stacked={false}
             format={weekBy === "amount" ? rm : (x) => `${x} DO`}
             series={weekBy === "amount" ? [{ name: "DO amount", color: PALETTE[0]! }] : [{ name: "DO issued", color: PALETTE[0]! }, { name: "Marked delivered", color: TONE.good }]}
             values={weekBy === "amount" ? [weeks.map((w) => w.doAmountSen)] : [weeks.map((w) => w.doCount), weeks.map((w) => w.delivered)]}
@@ -194,10 +249,11 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
           <table className="w-full border-collapse self-start">
             <thead><tr><Th left>Week</Th><Th>DO</Th><Th>Amount</Th><Th>Average order</Th><Th>Marked delivered</Th></tr></thead>
             <tbody>{weeks.map((w) => (
-              <tr key={w.from} className={cn(w.current && "bg-primary-soft/40 font-semibold")}>
-                <Td left>{dd(w.from)} – {dd(w.to)}{w.current ? " · now" : w.from > (h?.thisMonday ?? "") ? " · next" : ""}</Td>
+              <tr key={w.key} onClick={() => openDos(`Delivered · ${w.label} (${dd(w.from)} – ${dd(w.to)})`, (d) => d.date >= w.from && d.date <= w.to)}
+                className={cn("cursor-pointer hover:bg-surface-2/50", w.current && "bg-primary-soft/40 font-semibold")}>
+                <Td left>{w.label} <span className="text-ink-muted">{dd(w.from)} – {dd(w.to)}</span>{w.current ? " · now" : ""}</Td>
                 <Td>{w.doCount}</Td><Td>{rm(w.doAmountSen)}</Td><Td>{w.doCount ? rm(Math.round(w.doAmountSen / w.doCount)) : "—"}</Td>
-                <Td className={w.doCount > 5 && w.delivered === 0 && w.from < (h?.thisMonday ?? "") ? "text-err" : ""}>{w.delivered}</Td>
+                <Td className={w.doCount > 5 && w.delivered === 0 && w.to < today ? "text-err" : ""}>{w.delivered}</Td>
               </tr>))}</tbody>
           </table>
         </div>
@@ -287,6 +343,8 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
         )}
       </Panel>
 
+      <DrillDrawer drill={doDrill} onClose={() => setDoDrill(null)} />
+      <DrillDrawer drill={soDrill} onClose={() => setSoDrill(null)} />
     </div>
   );
 }

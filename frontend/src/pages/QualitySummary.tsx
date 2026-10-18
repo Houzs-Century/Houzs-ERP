@@ -6,12 +6,13 @@
 //   cases, their age and the overdue list are as of today.
 // Data: GET /api/assr/quality-overview (backend routes/lib/assr-quality.ts).
 import { useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { DrillDrawer, col, type Drill } from "../components/scm-v2/DrillDrawer";
 import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
-import { Panel, Th, Td } from "../components/scm-v2/OverviewKit";
-import { Columns, HBars, Tile, TONE, PALETTE } from "../components/scm-v2/Charts";
+import { Panel, Th, Td, Toggle } from "../components/scm-v2/OverviewKit";
+import { Columns, HBars, TONE, PALETTE } from "../components/scm-v2/Charts";
 
 type StageDays = Partial<Record<string, { avgDays: number | null; cases: number }>>;
 type Supplier = {
@@ -26,9 +27,15 @@ type Overdue = {
 type Quality = {
   opened: number; closed: number; ongoingNow: number; openedStillOpen: number;
   avgDaysToClose: number | null; avgDaysToCloseCases: number; avgDaysToClosePrev30: number | null; stageDays: StageDays;
+  avgDaysToClose90: number | null; avgDaysToClose90Cases: number; stageDays90: StageDays;
   ages: Array<{ label: string; count: number }>;
   trend: Array<{ month: string; opened: number; closed: number; backlog: number; avgDaysToClose: number | null }>;
   overdue: Overdue[]; suppliers: Supplier[]; unattributed: number;
+  caseList: CaseRow[];
+};
+type CaseRow = {
+  id: number; assrNo: string | null; customer: string | null; creditor: string | null; supplier: string | null;
+  stage: string; openedAt: string; closedAt: string | null; open: boolean; openedInPeriod: boolean; ageDays: number;
 };
 
 const STAGES: Array<[string, string]> = [
@@ -50,6 +57,29 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
   const q = useQuery<Quality>("/api/assr/quality-overview?from=:&to=:", () => api.get(`/api/assr/quality-overview?from=${from}&to=${to}`), [from, to]);
   const d = q.data;
   const [stageTab, setStageTab] = useState<string>("all");
+  /* Time per stage over the last 30 or 90 days (owner 2026-10-18). */
+  const [win, setWin] = useState<"30" | "90">("30");
+  const stageDays = d ? (win === "30" ? d.stageDays : d.stageDays90) : {};
+  const navigate = useNavigate();
+  /* The second layer (owner 2026-10-18): a bar or a supplier opens its cases. */
+  const [drill, setDrill] = useState<Drill<CaseRow> | null>(null);
+  const openCases = (title: string, keep: (c: CaseRow) => boolean) => setDrill({
+    title, subtitle: periodLabel, rows: (d?.caseList ?? []).filter(keep).sort((a, b) => b.ageDays - a.ageDays), rowKey: (c) => String(c.id),
+    onRow: (c) => navigate(`/assr/${c.id}`),
+    columns: [
+      col<CaseRow>("Case", true, (c) => <span className="text-primary">{c.assrNo ?? `#${c.id}`}</span>, (c) => c.assrNo ?? "", null, null),
+      col<CaseRow>("Customer", true, (c) => c.customer ?? "—", (c) => c.customer ?? "", null, null),
+      col<CaseRow>("Supplier", true, (c) => c.supplier ?? "—", (c) => c.supplier ?? "", null, null),
+      col<CaseRow>("Stage", true, (c) => (c.stage === "completed" ? "Completed" : stageLabel(c.stage)), (c) => c.stage, null, null),
+      col<CaseRow>("Opened", false, (c) => c.openedAt, null, null, null),
+      col<CaseRow>("Closed", false, (c) => c.closedAt ?? "—", null, null, null),
+      col<CaseRow>("Days", false, (c) => c.ageDays, null, null, null),
+    ],
+  });
+  const ageRange = (label: string): [number, number] => {
+    const m = label.match(/(\d+)\D+(\d+)/);
+    return m ? [Number(m[1]), Number(m[2])] : [91, 100000];
+  };
   const v = (x: number | undefined) => (d && x != null ? x.toLocaleString() : "…");
   const openTotal = d ? d.ages.reduce((a, x) => a + x.count, 0) : 0;
   const overdueStages = d ? STAGES.filter(([k]) => d.overdue.some((o) => o.stage === k)) : [];
@@ -57,32 +87,51 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
   return (
     <div className="mb-4 space-y-4">
       {q.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load the quality summary: {q.error}</div>}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Tile label={`Opened · ${periodLabel}`} value={v(d?.opened)} note={d ? `${d.openedStillOpen} of them still open` : ""} tone="main" trend={null} onClick={() => onDrill("total_period")} />
-        <Tile label={`Closed · ${periodLabel}`} value={v(d?.closed)} note="completed in the period, whenever opened" tone="good" trend={null} onClick={() => onDrill("closed_period")} />
-        <Tile label="Ongoing now" value={v(d?.ongoingNow)} note="every open case today" tone="warn" trend={null} onClick={() => onDrill("open_now")} />
-        <Tile label="Overdue now" value={d ? String(d.overdue.length) : breachNow != null ? String(breachNow) : "…"} note="open and past the stage's target days · listed below" tone={d?.overdue.length ? "bad" : "good"} trend={null}
-          onClick={() => document.getElementById("quality-overdue")?.scrollIntoView({ behavior: "smooth" })} />
-        <Tile label="Average to close · last 30 days" value={dayTxt(d?.avgDaysToClose)} note={d ? `${d.avgDaysToCloseCases} cases closed in the last 30 days · the 30 days before: ${dayTxt(d.avgDaysToClosePrev30)}` : ""} tone="brass" trend={null} onClick={null} />
-      </div>
+      {/* The headline on the dark slab the home page and Project Overview use. */}
+      <section className="relative overflow-hidden rounded-2xl bg-sidebar px-5 py-5 text-sidebar-ink shadow-slab sm:px-7">
+        <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full opacity-50 blur-2xl" style={{ background: "radial-gradient(circle, rgba(22,105,95,0.6), transparent 70%)" }} />
+        <div className="relative">
+          <div className="font-mono text-[10px] font-bold uppercase tracking-brand text-accent-bright">Service cases · {periodLabel}</div>
+          <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-4 lg:grid-cols-5">
+            <HeroStat label="Opened" value={v(d?.opened)} sub={d ? `${d.openedStillOpen} of them still open` : ""} onClick={() => onDrill("total_period")} tone={null} />
+            <HeroStat label="Closed" value={v(d?.closed)} sub="completed in the period" onClick={() => onDrill("closed_period")} tone="good" />
+            <HeroStat label="Ongoing now" value={v(d?.ongoingNow)} sub="every open case today" onClick={() => onDrill("open_now")} tone={null} />
+            <HeroStat label="Overdue now" value={d ? String(d.overdue.length) : breachNow != null ? String(breachNow) : "…"} sub="past the stage's target days"
+              onClick={() => document.getElementById("quality-overdue")?.scrollIntoView({ behavior: "smooth" })} tone={d?.overdue.length ? "bad" : "good"} />
+            <HeroStat label="Average to close · 30 days" value={dayTxt(d?.avgDaysToClose)}
+              sub={d ? (d.avgDaysToClosePrev30 != null && d.avgDaysToClose != null
+                ? `${d.avgDaysToClose <= d.avgDaysToClosePrev30 ? "faster" : "slower"} than the 30 days before (${d.avgDaysToClosePrev30} days) · ${d.avgDaysToCloseCases} cases`
+                : `${d.avgDaysToCloseCases} cases closed`) : ""}
+              onClick={() => openCases("Closed in the last 30 days", (c) => !c.open && !!c.closedAt)}
+              tone={d && d.avgDaysToClosePrev30 != null && d.avgDaysToClose != null ? (d.avgDaysToClose <= d.avgDaysToClosePrev30 ? "good" : "bad") : null} />
+          </div>
+        </div>
+      </section>
+
+      <SectionTitle eyebrow="Now" title="Where the open cases are" />
+      <Panel title="Where the cases are" hint="open cases by stage, with those completed in the period · red = past the stage's target days">{funnel}</Panel>
+
+      <SectionTitle eyebrow="Speed" title="How fast cases move" />
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <Panel title="Time spent in each stage" hint="average days, stages finished in the last 30 days · the slow leg shows red">
+        <Panel title="Time spent in each stage" hint={`average days, stages finished in the last ${win} days · average to close over them: ${d ? dayTxt(win === "30" ? d.avgDaysToClose : d.avgDaysToClose90) : "…"} · the slow leg shows red`}
+          right={<Toggle value={win} options={[["30", "Last 30 days"], ["90", "Last 90 days"]]} onChange={setWin} />}>
           {d && <HBars format={(x) => `${x} days`} empty="No stage finished in this period."
-            rows={STAGES.filter(([k]) => d.stageDays[k]?.avgDays != null).map(([k, label]) => {
-              const s = d.stageDays[k] as { avgDays: number; cases: number };
-              return { key: k, label: `${label} · ${s.cases} cases`, value: s.avgDays, color: s.avgDays > 10 ? TONE.bad : s.avgDays > 5 ? TONE.warn : TONE.good, right: dayTxt(s.avgDays), onClick: null };
+            rows={STAGES.filter(([k]) => stageDays[k]?.avgDays != null).map(([k, label]) => {
+              const s = stageDays[k] as { avgDays: number; cases: number };
+              return { key: k, label: `${label} · ${s.cases} cases`, value: s.avgDays, color: s.avgDays > 10 ? TONE.bad : s.avgDays > 5 ? TONE.warn : TONE.good, right: dayTxt(s.avgDays), onClick: () => openCases(`At ${label} now`, (c) => c.open && c.stage === k) };
             })} />}
-          <p className="mt-2 text-[11px] text-ink-muted">Same window as Average to close: the last 30 days, whatever period is picked, so an older, slower pace does not hide today&apos;s. The monthly trend shows each month&apos;s average.</p>
+          <p className="mt-2 text-[11px] text-ink-muted">The last 30 or 90 days, whatever period is picked, so an older, slower pace does not hide today&apos;s. The monthly trend shows each month&apos;s average.</p>
         </Panel>
         <Panel title="How old the open cases are" hint={`${openTotal} open cases today · days since the complaint`}>
           {d && <HBars format={(x) => `${x} cases`} empty="No open cases."
-            rows={d.ages.map((a, i) => ({ key: a.label, label: a.label, value: a.count, color: AGE_COLOR[i] ?? PALETTE[0]!, right: `${a.count} ${a.count === 1 ? "case" : "cases"}`, onClick: i >= 4 ? () => onDrill("over_1_month") : null }))} />}
-          {d && <p className="mt-2 text-[11.5px] text-err">{d.ages.slice(4).reduce((a, x) => a + x.count, 0)} open cases are over a month old (click a bar over 30 days to list them).</p>}
+            rows={d.ages.map((a, i) => ({ key: a.label, label: a.label, value: a.count, color: AGE_COLOR[i] ?? PALETTE[0]!, right: `${a.count} ${a.count === 1 ? "case" : "cases"}`, onClick: () => { const [lo, hi] = ageRange(a.label); openCases(`Open, ${a.label} old`, (c) => c.open && c.ageDays >= lo && c.ageDays <= hi); } }))} />}
+          {d && <p className="mt-2 text-[11.5px] text-err">{d.ages.slice(4).reduce((a, x) => a + x.count, 0)} open cases are over a month old (click any bar to list its cases).</p>}
         </Panel>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
+      <SectionTitle eyebrow="Volume" title="Cases coming in and going out" />
+      <div>
         <Panel title="Monthly trend" hint="cases opened and closed each month · line = that month's average days to close (cases closed in it)">
           {d && <Columns valueLabels height={230} stacked={false} format={(x) => `${x} cases`} highlight={d.trend.length - 1}
             labels={d.trend.map((t) => `${t.month.slice(2, 4)}/${t.month.slice(5)}`)}
@@ -103,19 +152,20 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
             </div>
           )}
         </Panel>
-        <Panel title="Where the cases are" hint="open cases by stage, with those completed in the period">{funnel}</Panel>
       </div>
 
+      <SectionTitle eyebrow="Why" title="What the cases are about" />
       {breakdowns}
 
+      <SectionTitle eyebrow="Suppliers" title="Whose goods come back" />
       {d && (
         <Panel title="Suppliers" hint={`cases opened ${periodLabel} against goods received from the same supplier ${periodLabel}`}>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead><tr><Th left>Supplier</Th><Th>Service case rate</Th><Th>Items in cases / received</Th><Th>Cases</Th><Th>Still open</Th><Th>Overdue</Th><Th>Average to close</Th></tr></thead>
               <tbody>{d.suppliers.map((s) => (
-                <tr key={s.creditor}>
-                  <Td left className="max-w-[260px] truncate">{s.name}</Td>
+                <tr key={s.creditor} className="cursor-pointer hover:bg-surface-2/50" onClick={() => openCases(`${s.name} · cases opened`, (c) => c.openedInPeriod && c.creditor === s.creditor)}>
+                  <Td left className="max-w-[260px] truncate text-primary">{s.name}</Td>
                   <Td className={s.ratePct == null ? "text-ink-muted" : s.ratePct > 100 ? "text-warning-text" : s.ratePct >= 5 ? "font-semibold text-err" : s.ratePct >= 2 ? "text-warning-text" : "text-synced"}>{s.ratePct == null ? "—" : s.ratePct > 100 ? "check code" : `${s.ratePct}%`}</Td>
                   <Td className="text-ink-secondary">{s.items} / {s.receivedQty.toLocaleString()}</Td>
                   <Td>{s.cases}</Td><Td>{s.open}</Td><Td className={s.overdue ? "text-err" : ""}>{s.overdue}</Td><Td>{dayTxt(s.avgDaysToClose)}</Td>
@@ -151,6 +201,7 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
           </ul>
         </Panel>
       )}
+      <SectionTitle eyebrow="Chase" title="Who and what to chase" />
       {repeats}
 
       {d && (
@@ -191,6 +242,26 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
         </section>
       )}
 
+      <DrillDrawer drill={drill} onClose={() => setDrill(null)} />
+    </div>
+  );
+}
+
+function HeroStat({ label, value, sub, onClick, tone }: { label: string; value: string; sub: string; onClick: () => void; tone: "good" | "bad" | null }) {
+  return (
+    <button type="button" onClick={onClick} className="min-w-0 rounded-lg p-1 text-left transition-colors hover:bg-white/5">
+      <div className="text-[10.5px] font-semibold uppercase tracking-wider text-sidebar-ink/70">{label}</div>
+      <div className={cn("mt-1 whitespace-nowrap font-display text-[24px] font-bold leading-tight tabular-nums", tone === "bad" ? "text-[#f0a39b]" : tone === "good" ? "text-[#8fe0b5]" : "text-sidebar-ink")}>{value}</div>
+      <div className="mt-0.5 text-[11.5px] text-sidebar-ink/70">{sub}</div>
+    </button>
+  );
+}
+
+function SectionTitle({ eyebrow, title }: { eyebrow: string; title: string }) {
+  return (
+    <div className="flex items-baseline gap-2 pt-2">
+      <span className="font-mono text-[10px] font-bold uppercase tracking-brand text-accent">{eyebrow}</span>
+      <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
     </div>
   );
 }

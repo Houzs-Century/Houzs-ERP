@@ -9,13 +9,15 @@ import { Th, Td, Panel, Toggle } from "../../components/scm-v2/OverviewKit";
 import { Tile } from "../../components/scm-v2/Charts";
 import type { Period } from "../../components/scm-v2/DashboardPeriod";
 
-import type { DayRow, RegionRow, LorryRow, LorryDay } from "./LogisticDailySection";
+import type { DayRow, RegionRow, LorryRow, LorryDay, DoDrill } from "./LogisticDailySection";
+
+export type DoRow = { id: string; doNumber: string | null; soDocNo: string | null; customer: string | null; date: string; region: string; state: string | null; amountSen: number; lorry: string | null; status: string };
 
 export type PeriodTotals = {
   from: string; to: string; doCount: number; doAmountSen: number; podClosed: number;
   days: DayRow[]; byRegion: RegionRow[];
   lorry: { lorryDays: number; recordedOrders: number; perLorrySen: number | null; workingDays: number };
-  byLorry: LorryRow[]; lorryDayList: LorryDay[];
+  byLorry: LorryRow[]; lorryDayList: LorryDay[]; doList: DoRow[];
   byCategory: Array<{ category: string; orders: number; amountSen: number; avgSen: number | null }>;
   chargesSen: number;
 };
@@ -37,9 +39,9 @@ export function jobDone(o: PlanningOrder, today: string): boolean {
   return o.delivery_state === "DELIVERED";
 }
 
-export function LogisticPeriodSection({ rows, period, today, totals, overdue, onOverdue }: {
+export function LogisticPeriodSection({ rows, period, today, totals, overdue, onOverdue, onDrill }: {
   rows: PlanningOrder[]; period: Period; today: string; totals: PeriodTotals | null;
-  overdue: { count: number; sen: number }; onOverdue: () => void;
+  overdue: { count: number; sen: number }; onOverdue: () => void; onDrill: DoDrill;
 }) {
   const [by, setBy] = useState<"amount" | "orders">("amount");
   const amt = by === "amount";
@@ -59,12 +61,12 @@ export function LogisticPeriodSection({ rows, period, today, totals, overdue, on
     <Panel title={`Delivered · ${period.label}`} hint={`delivery orders issued ${period.from} – ${period.to} (the day the goods leave on the lorry)`}
       right={<Toggle value={by} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setBy} />}>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Tile label="Delivered" tone="good" trend={null} onClick={null}
+        <Tile label="Delivered" tone="good" trend={null} onClick={() => onDrill(`Delivered · ${period.label}`, () => true)}
           value={totals ? (amt ? fmtSen(totals.doAmountSen) : `${totals.doCount} orders`) : "…"}
           note={totals ? (amt ? `${totals.doCount} delivery orders` : fmtSen(totals.doAmountSen)) : ""} />
-        <Tile label="Average per order" tone="brass" trend={null} onClick={null}
+        <Tile label="Average per order" tone="brass" trend={null} onClick={() => onDrill(`Delivered · ${period.label}`, () => true)}
           value={avgOrder != null ? fmtSen(avgOrder) : "—"} note="delivery orders only · service cases not counted" />
-        <Tile label="Average per lorry, per day" tone="brass" trend={null} onClick={null}
+        <Tile label="Average per lorry, per day" tone="brass" trend={null} onClick={() => onDrill("Delivery orders with a lorry recorded", (d) => !!d.lorry)}
           value={totals?.lorry.perLorrySen != null ? fmtSen(totals.lorry.perLorrySen) : "—"}
           note={totals ? (totals.lorry.recordedOrders ? `${totals.lorry.lorryDays} lorry-days · lorry recorded on ${totals.lorry.recordedOrders} of ${totals.doCount} DO` : `lorry not recorded on the DOs yet (0 of ${totals.doCount})`) : ""} />
         <Tile label="Overdue · ready, date not confirmed" tone={overdue.count ? "bad" : "good"} trend={null} onClick={overdue.count ? onOverdue : null}

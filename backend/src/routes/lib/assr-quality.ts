@@ -38,6 +38,8 @@ export function qualityOverview(cases: QCase[], itemsByCase: Map<number, number>
   const closedBetween = (a: string, b: string) => live.filter((c) => c.stage === "completed" && !!c.closedAt && c.closedAt.slice(0, 10) >= a && c.closedAt.slice(0, 10) <= b);
   const last30 = closedBetween(dayBefore(29), today);
   const prev30 = closedBetween(dayBefore(59), dayBefore(30));
+  /* The same over 90 days (owner: "one month or three?") — the page switches. */
+  const last90 = closedBetween(dayBefore(89), today);
   /* Open on day d: opened by then, and either still open now or closed after d.
      A completed case with no closing date (older imports) counts as closed. */
   const openAt = (d: string) => live.filter((c) => c.openedAt.slice(0, 10) <= d && (isOpen(c) || (!!c.closedAt && c.closedAt.slice(0, 10) > d)));
@@ -124,10 +126,21 @@ export function qualityOverview(cases: QCase[], itemsByCase: Map<number, number>
     avgDaysToCloseCases: last30.length,
     avgDaysToClosePrev30: resolution(prev30),
     stageDays: stageDays(null, dayBefore(29), today),
+    avgDaysToClose90: resolution(last90),
+    avgDaysToClose90Cases: last90.length,
+    stageDays90: stageDays(null, dayBefore(89), today),
     ages,
     trend,
     overdue,
     suppliers,
     unattributed: opened.filter((c) => !c.creditor).length,
+    /* The cases behind the figures — opened in the period, open now, or closed
+       in the last 30 days — for the page's drill-down (owner 2026-10-18). */
+    caseList: live.filter((c) => inP(c.openedAt) || isOpen(c) || (c.stage === "completed" && !!c.closedAt && c.closedAt.slice(0, 10) >= dayBefore(29)))
+      .map((c) => ({
+        id: c.id, assrNo: c.assrNo, customer: c.customer, creditor: c.creditor, supplier: c.creditor ? names.get(c.creditor) ?? c.creditor : null,
+        stage: c.stage, openedAt: c.openedAt.slice(0, 10), closedAt: c.closedAt ? c.closedAt.slice(0, 10) : null,
+        open: isOpen(c), openedInPeriod: inP(c.openedAt), ageDays: Math.floor(days(c.openedAt, c.closedAt ?? today)),
+      })),
   };
 }

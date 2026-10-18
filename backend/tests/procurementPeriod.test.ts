@@ -48,6 +48,14 @@ describe('procurement period', () => {
     expect(r.total.supplierLead).toMatchObject({ receipts: 2, midDays: 19.5, onTimePct: 50, latePct: 50, avgDaysLate: 5 });
   });
 
+  test('the drill-down lines: raised, due, received in the period, or still open at its end', () => {
+    const r = procurementPeriod([
+      line({ poId: 'a', poDate: '2026-10-02', receipts: [{ date: '2026-10-10', qty: 4, rejected: 0 }] }),
+      line({ poId: 'b', poDate: '2026-08-01', originalDue: '2026-08-20', promised: '2026-08-20', receipts: [{ date: '2026-08-20', qty: 10, rejected: 0 }] }),
+    ], '2026-10-01', '2026-10-17', '2026-10-17', 'original');
+    expect(r.lines).toEqual([expect.objectContaining({ poId: 'a', raised: true, due: false, receivedQty: 4, receivedSen: 400_00, openQty: 6, openSen: 600_00 })]);
+  });
+
   test('lead time is the median, so one line ordered months ahead does not drag it', () => {
     const r = procurementPeriod([
       line({ poDate: '2026-10-01', receipts: [{ date: '2026-10-11', qty: 1, rejected: 0 }] }),
