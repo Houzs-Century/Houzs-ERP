@@ -515,7 +515,7 @@ export function MobileDeliveryPlanning({
           </button>
           <span className="eyebrow">Transportation</span>
         </div>
-        <div className="scr-title">Delivery Planning</div>
+        <div className="scr-title">Last Mile Delivery</div>
         <div
           className="tnum"
           style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 2 }}
@@ -1526,7 +1526,7 @@ function StopDetail({
       <header className="hdr">
         <div className="hdr-row">
           <button className="back" onClick={onBack}>
-            <span className="chev">‹</span> Delivery Planning
+            <span className="chev">‹</span> Last Mile Delivery
           </button>
           <StopPill o={order} isToday={isToday} />
         </div>
