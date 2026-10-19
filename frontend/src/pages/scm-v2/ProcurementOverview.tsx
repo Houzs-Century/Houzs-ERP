@@ -344,21 +344,20 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
               <div className="max-h-[420px] overflow-auto">
                 {itemsOf === "dead" ? (
                   <table className="mt-1 w-full border-collapse">
-                    <thead className="sticky top-0 bg-surface"><tr><Th left>Item / variant</Th><Th left>Warehouse</Th><Th left>Category</Th><Th>Dead qty</Th><Th>Value</Th><Th>Days since it last went out</Th><Th left>Why dead</Th></tr></thead>
+                    <thead className="sticky top-0 bg-surface"><tr><Th left>Item / variant</Th><Th left>Warehouse</Th><Th left>Category</Th><Th>Dead qty</Th><Th>Value</Th><Th>Days since it last went out</Th></tr></thead>
                     <tbody>{d.deadStock.top.slice(0, 40).map((r, i) => (
-                      <tr key={`${r.itemCode}-${r.warehouse}-${i}`}><Td left><span title={r.name ?? ""}>{r.itemCode}</span>{r.variantKey && <span className="block max-w-[320px] truncate text-[10.5px] text-ink-muted">{r.variantKey}</span>}</Td><Td left>{r.warehouse}</Td><Td left>{CAT_LABEL[r.category] ?? r.category}</Td><Td>{r.qty}</Td><Td>{rm(r.valueSen)}</Td><Td className={(r.idleDays ?? 0) > 365 ? "text-err" : ""}>{r.idleDays ?? "—"}</Td><Td left className="min-w-[280px] text-[11.5px] text-ink-secondary">{whyDead(r)}</Td></tr>
+                      <tr key={`${r.itemCode}-${r.warehouse}-${i}`}><Td left><span title={r.name ?? ""}>{r.itemCode}</span>{r.variantKey && <span className="block max-w-[320px] truncate text-[10.5px] text-ink-muted">{r.variantKey}</span>}</Td><Td left>{r.warehouse}</Td><Td left>{CAT_LABEL[r.category] ?? r.category}</Td><Td>{r.qty}</Td><Td>{rm(r.valueSen)}</Td><Td className={(r.idleDays ?? 0) > 365 ? "text-err" : ""}>{r.idleDays ?? "—"}</Td></tr>
                     ))}</tbody>
                   </table>
                 ) : (
                   <table className="mt-1 w-full border-collapse">
-                    <thead className="sticky top-0 bg-surface"><tr><Th left>Item / variant</Th><Th left>Warehouse</Th><Th left>Category</Th><Th>Buffer qty</Th><Th>Value</Th><Th>Last received</Th><Th>Held</Th><Th left>Why buffer</Th></tr></thead>
+                    <thead className="sticky top-0 bg-surface"><tr><Th left>Item / variant</Th><Th left>Warehouse</Th><Th left>Category</Th><Th>Buffer qty</Th><Th>Value</Th><Th>Last received</Th><Th>Held</Th></tr></thead>
                     <tbody>{d.deadStock.bufferTop.slice(0, 40).map((r) => (
                       <tr key={`${r.itemCode}|${r.variantKey}|${r.warehouse}`}>
                         <Td left><span title={r.name ?? ""}>{r.itemCode}</span>{r.variantKey && <span className="block max-w-[320px] truncate text-[10.5px] text-ink-muted">{r.variantKey}</span>}</Td>
                         <Td left>{r.warehouse}</Td><Td left>{CAT_LABEL[r.category] ?? r.category}</Td>
                         <Td className="font-semibold">{r.bufferQty}</Td><Td>{rm(r.valueSen)}</Td>
                         <Td>{r.lastIn ?? "—"}</Td><Td className={(r.heldDays ?? 0) > 90 ? "text-err" : ""}>{r.heldDays != null ? `${r.heldDays} days` : "—"}</Td>
-                        <Td left className="min-w-[280px] text-[11.5px] text-ink-secondary">{whyBuffer(r)}</Td>
                       </tr>
                     ))}</tbody>
                   </table>
@@ -402,20 +401,6 @@ function LineTable({ rows, empty, mode }: { rows: OpenLine[]; empty: string; mod
 }
 
 type ByKind = { warehouse: number; others: number; service: number; display: number };
-const heldIn = (k: ByKind) => ([["warehouse", k.warehouse], ["others", k.others], ["service", k.service], ["display", k.display]] as Array<[string, number]>)
-  .filter(([, q]) => q > 0).map(([n, q]) => `${n} ${q}`).join(", ");
-
-/** One line per listed row: the orders against what all locations hold, in the order they ship. */
-function whyDead(r: { qty: number; kind: string; poolOnHand: number; scheduled: number; unscheduled: number; byKind: ByKind }): string {
-  const need = r.scheduled + r.unscheduled;
-  if (need === 0) return `No open order for this item and variant. All locations hold ${r.poolOnHand} (${heldIn(r.byKind)}).`;
-  return `Orders need ${need} (${r.scheduled} dated, ${r.unscheduled} no date); all locations hold ${r.poolOnHand} (${heldIn(r.byKind)}). Orders take the warehouse, then service, then display, so these ${r.qty} at ${r.kind} are left over.`;
-}
-
-function whyBuffer(r: { bufferQty: number; kind: string; poolOnHand: number; scheduled: number; unscheduled: number; byKind: ByKind }): string {
-  return `Orders need ${r.scheduled + r.unscheduled} (${r.scheduled} dated, ${r.unscheduled} no date); all locations hold ${r.poolOnHand} (${heldIn(r.byKind)}). The dated orders take stock first, so these ${r.bufferQty} at ${r.kind} wait for orders with no date yet.`;
-}
-
 /** Which locations the stock figures cover; the same choice as the bar at the top. */
 function ScopePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
