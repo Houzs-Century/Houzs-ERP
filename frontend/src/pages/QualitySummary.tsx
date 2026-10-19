@@ -11,7 +11,7 @@ import { DrillDrawer, col, type Drill } from "../components/scm-v2/DrillDrawer";
 import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
-import { Panel, Th, Td, Toggle } from "../components/scm-v2/OverviewKit";
+import { Panel, Th, Td, Toggle, StepTabs } from "../components/scm-v2/OverviewKit";
 import { Columns, HBars, TONE, PALETTE } from "../components/scm-v2/Charts";
 
 type StageDays = Partial<Record<string, { avgDays: number | null; cases: number }>>;
@@ -82,7 +82,6 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
   };
   const v = (x: number | undefined) => (d && x != null ? x.toLocaleString() : "…");
   const openTotal = d ? d.ages.reduce((a, x) => a + x.count, 0) : 0;
-  const overdueStages = d ? STAGES.filter(([k]) => d.overdue.some((o) => o.stage === k)) : [];
   const overdue = d ? d.overdue.filter((o) => stageTab === "all" || o.stage === stageTab) : [];
   return (
     <div className="mb-4 space-y-4">
@@ -206,18 +205,11 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
 
       {d && (
         <section id="quality-overdue">
-          <Panel title="Overdue cases" hint="open cases whose current stage has run past its target days · most overdue first">
-            <div className="mb-2 flex flex-wrap gap-1.5">
-              {[["all", "All"] as [string, string], ...overdueStages].map(([k, label]) => {
-                const n = k === "all" ? d.overdue.length : d.overdue.filter((o) => o.stage === k).length;
-                return (
-                  <button key={k} type="button" onClick={() => setStageTab(k)}
-                    className={cn("rounded-full border px-3 py-1 text-[12px]", stageTab === k ? "border-primary bg-primary text-white" : "border-border text-ink-secondary hover:bg-surface-2")}>
-                    {label} <span className="ml-1 tabular-nums opacity-80">{n}</span>
-                  </button>
-                );
-              })}
-            </div>
+          <Panel title="Overdue cases" hint="open cases whose current stage has run past its target days · tab = open cases at the stage, red = how many are overdue · most overdue first">
+            {/* Each stage: open cases at it, and in red how many of them are overdue. */}
+            <StepTabs value={stageTab} onChange={setStageTab}
+              tabs={[["all", "All", d.caseList.filter((c) => c.open).length, d.overdue.length] as [string, string, number, number],
+                ...STAGES.map(([k, label]) => [k, label, d.caseList.filter((c) => c.open && c.stage === k).length, d.overdue.filter((o) => o.stage === k).length] as [string, string, number, number])]} />
             {overdue.length === 0 ? <p className="text-[12.5px] text-ink-muted">Nothing is overdue.</p> : (
               <div className="max-h-[440px] overflow-y-auto">
                 <table className="w-full border-collapse">
