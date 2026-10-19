@@ -176,6 +176,17 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   checked」; shown as "PV-… (checked)"). A row the books fill replaces its typed
   and auto lines; a rejected voucher drops out and the typed figure returns; AP
   invoices still count from Post.
+- The event P&L is TWO P&Ls (owner 2026-10-16; `services/eventPnl.ts`, inputs
+  `services/eventPnlInputs.ts`, detail field `finance_pnl`): BY TOTAL SALES (sales
+  lines, else the Total Sales box, else the orders' total) and BY SALES ORDERS
+  (the opened, uncancelled orders — drafts included, as the SO block counts —
+  at their own cost buckets). COGS by Total Sales = a typed COGS, else the
+  orders' cost ratio × Total Sales. Rental / Setup / Transport S&D / Others are
+  shared. Transport Fee / Commission / Merchandise = Finance's books, else a
+  typed line, else the brand rate card % of THAT column's sales (boost on that
+  column's GP%); the stored `auto_source` lines are not counted. Desktop
+  `EventPnlTable` shows both; the phone P&L tiles read `by_sales` and a By Sales
+  Orders line.
 - The evening sales report (one bill per line: booklet no, amount, salesperson;
   a "+ N(T)" transport or "(D)" disposal tail is kept apart) is DERIVED from the
   project chat on every read — notes by the Owner position, Ummu or weisiang
