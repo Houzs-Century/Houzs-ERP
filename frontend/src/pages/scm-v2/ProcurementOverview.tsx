@@ -47,7 +47,7 @@ type Turnover = {
 type Payload = {
   turnover: Turnover;
   today: string; from: string; to: string; asOf: string; basis: "original" | "promised";
-  stockScope: string; warehouseKinds: Record<string, string>;
+  stockScope: string; warehouseKinds: Record<string, string>; needSource: { stored: number; estimated: number };
   categories: string[]; currentLead: Partial<Record<string, number>>; leadOverrides: Partial<Record<string, Array<{ warehouse: string; days: number }>>>;
   billed: { totalSen: number; count: number; bySupplier: Record<string, number>; byCategory: Record<string, number> };
   total: Group; byCategory: Group[]; bySupplier: Group[]; overdue: OpenLine[]; dueSoon: OpenLine[]; lines: PeriodLine[];
@@ -361,6 +361,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
               <li>Supplier takes = goods received date minus PO date, averaged over every line received {when}; the median under it is the middle line, for when a few very slow lines pull the average up.</li>
               <li>On time = lines received on or before the date on the PO (the first one put on it) ÷ lines received. Late by = the late lines&apos; days late added up ÷ the number of late lines: when a supplier is late, how late.</li>
               <li>Date on PO before customer date = the customer&apos;s delivery date minus the date on the PO, averaged: how early we ask the supplier to deliver. Only lines tied to a sales order (stock POs have no customer date). Arrives before = customer date minus the day the goods actually came in.</li>
+              <li>Stock POs (raised with no sales order) take the customer date of the order their goods went to: MRP&apos;s rule, the open orders of that item due within 60 days, earliest first. Recorded at goods receipt from now on{d.needSource.stored ? ` (${d.needSource.stored} lines)` : ""}; earlier receipts are estimated with the same rule ({d.needSource.estimated} lines).</li>
               <li>Could order later by = how early the latest fifth of lines still arrived. Ordering that many days later would still have 80% of lines in before the customer&apos;s date. Needs {MIN_RECEIPTS} lines; greyed rows have too few.</li>
               {by === "category" && <li>MRP setting = how many days before the customer&apos;s date MRP tells you to order. Suggested = the days 8 in 10 lines came within, so most orders still arrive in time. Apply changes the company-wide value only; the warehouse values under it (East Malaysia includes shipping) stay.</li>}
             </ul>
