@@ -318,19 +318,73 @@ ORDER BY t.so_date, t.doc_no`;
  * sheet's key; a native order carries the same number on both. So the row is
  * found by EITHER column, within the secret's company. RETURNING carries the
  * sheet's key back so the caller can answer per row.
+ *
+ * HC-0118: a date that MOVES the header moves the lines too, by the rule the
+ * SO editor's header save follows (scm.apply_so_header_cas, migration
+ * 20260915T1200): every line, a hand-set one included (its flag resets), except
+ * a line a live delivery order or invoice names, and no line at all while a
+ * live delivery order or invoice carries a line naming none. Before this the
+ * header moved alone and the SO screen, and every DO cut from it, kept the old
+ * line date (HC-SO-012526: header 30/10, lines 15/09). A re-sent unchanged
+ * date leaves the lines alone, as an unchanged header save does.
  */
 export function updateFromSheetSql(rowCount: number): string {
   const values = Array.from({ length: rowCount }, () => "(?::text, ?::text, ?::date)").join(", ");
   return `
-UPDATE scm.mfg_sales_orders so
-   SET remark4 = COALESCE(v.remark4, so.remark4),
-       customer_delivery_date = COALESCE(v.delivery_date, so.customer_delivery_date),
-       updated_at = now()
-  FROM (VALUES ${values}) AS v(sheet_doc_no, remark4, delivery_date)
- WHERE so.company_id = ?
-   AND (so.linked_ac_docno = v.sheet_doc_no OR so.doc_no = v.sheet_doc_no)
-   AND so.status::text NOT IN ('DRAFT', 'CANCELLED')
- RETURNING so.doc_no, v.sheet_doc_no`;
+WITH v(sheet_doc_no, remark4, delivery_date) AS (VALUES ${values}),
+hit AS (
+  SELECT so.doc_no, v.sheet_doc_no, v.remark4, v.delivery_date, so.customer_delivery_date AS prev_date
+    FROM scm.mfg_sales_orders so
+    JOIN v ON so.linked_ac_docno = v.sheet_doc_no OR so.doc_no = v.sheet_doc_no
+   WHERE so.company_id = ?
+     AND so.status::text NOT IN ('DRAFT', 'CANCELLED')
+),
+upd AS (
+  UPDATE scm.mfg_sales_orders so
+     SET remark4 = COALESCE(h.remark4, so.remark4),
+         customer_delivery_date = COALESCE(h.delivery_date, so.customer_delivery_date),
+         updated_at = now()
+    FROM hit h
+   WHERE so.doc_no = h.doc_no
+  RETURNING so.doc_no, h.sheet_doc_no, h.delivery_date, h.prev_date
+),
+moved AS (
+  SELECT u.doc_no, u.delivery_date
+    FROM upd u
+   WHERE u.delivery_date IS NOT NULL
+     AND u.delivery_date IS DISTINCT FROM u.prev_date
+     AND NOT EXISTS (
+       SELECT 1 FROM scm.delivery_order_items doi
+         JOIN scm.delivery_orders d ON d.id = doi.delivery_order_id
+        WHERE d.so_doc_no = u.doc_no
+          AND upper(btrim(COALESCE(d.status::text, ''))) <> 'CANCELLED'
+          AND doi.so_item_id IS NULL)
+     AND NOT EXISTS (
+       SELECT 1 FROM scm.sales_invoice_items sii
+         JOIN scm.sales_invoices s ON s.id = sii.sales_invoice_id
+        WHERE s.so_doc_no = u.doc_no
+          AND upper(btrim(COALESCE(s.status::text, ''))) <> 'CANCELLED'
+          AND sii.so_item_id IS NULL AND sii.do_item_id IS NULL)
+),
+lines AS (
+  UPDATE scm.mfg_sales_order_items i
+     SET line_delivery_date = m.delivery_date,
+         line_delivery_date_overridden = false
+    FROM moved m
+   WHERE i.doc_no = m.doc_no
+     AND NOT EXISTS (
+       SELECT 1 FROM scm.delivery_order_items doi
+         JOIN scm.delivery_orders d ON d.id = doi.delivery_order_id
+        WHERE doi.so_item_id = i.id
+          AND upper(btrim(COALESCE(d.status::text, ''))) <> 'CANCELLED')
+     AND NOT EXISTS (
+       SELECT 1 FROM scm.sales_invoice_items sii
+         JOIN scm.sales_invoices s ON s.id = sii.sales_invoice_id
+        WHERE sii.so_item_id = i.id
+          AND upper(btrim(COALESCE(s.status::text, ''))) <> 'CANCELLED')
+  RETURNING i.id
+)
+SELECT doc_no, sheet_doc_no FROM upd`;
 }
 
 const senToAmount = (sen: number | null | undefined): number =>
