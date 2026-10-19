@@ -498,7 +498,8 @@ async function loadTeachableJob(svc: SupabaseClient, c: CompanyScopeCtx, id: str
   const row = data as { id: string; status: string; sample_id: string | null; linked_doc_no: string | null; salesperson_id: string | null; houzs_user_id: number | null } | null;
   if (error || !row) return { ok: false, status: 404, reason: 'Scan job not found.' };
   if (row.status !== 'done' || !row.sample_id || !row.salesperson_id) return { ok: false, status: 409, reason: 'This scan has nothing to match yet.' };
-  const { data: sample } = await svc.from('so_scan_samples').select('extracted').eq('id', row.sample_id).maybeSingle();
+  const { data: sample, error: sampleErr } = await svc.from('so_scan_samples').select('extracted').eq('id', row.sample_id).maybeSingle();
+  if (sampleErr) return { ok: false, status: 409, reason: 'Could not load what was read off this delivery order. Please try again.' };
   const parsed = (sample as { extracted: GrnExtracted | null } | null)?.extracted ?? null;
   if (!parsed || !Array.isArray(parsed.lines) || parsed.lines.length === 0) return { ok: false, status: 409, reason: 'No lines were read off this delivery order.' };
   return {
