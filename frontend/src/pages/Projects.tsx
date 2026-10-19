@@ -7393,7 +7393,7 @@ function FinanceLedgerSection({
       </div>
       <p className="mt-1 text-[10.5px] text-ink-muted">
         Tap a row to set its amount. Individual cost lines and their receipts live in the Cost lines section above. Sales live in the Sales section above; auto rows are computed from the rate card.
-        {filled.size > 0 && " Rows marked 入账 are Finance's figures — approved payment vouchers and posted AP invoices on this event — and replace the typed or auto amount."}
+        {filled.size > 0 && " Rows marked 入账 are Finance's figures — payment vouchers once checked, and posted AP invoices, on this event — and replace the typed or auto amount."}
       </p>
       {books && !books.ok && (
         <p className="mt-1 text-[10.5px] text-warning-text" role="status">
