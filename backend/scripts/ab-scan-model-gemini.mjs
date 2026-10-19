@@ -240,6 +240,15 @@ try {
     return { slip, parseMs: performance.now() - t0 };
   }
 
+  // Fail fast on a model id this key cannot use, and name the ones it can (names only).
+  const gm = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}`, { headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY } });
+  if (!gm.ok) {
+    const list = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY } }).then((r) => r.json()).catch(() => ({}));
+    const names = (list.models ?? []).filter((m) => (m.supportedGenerationMethods ?? []).includes('generateContent')).map((m) => m.name.replace('models/', ''));
+    console.error(`Gemini model ${GEMINI_MODEL}: HTTP ${gm.status}. This key can use:\n${names.join('\n')}`);
+    process.exit(1);
+  }
+
   // Warm each distinct prefix once per model (prod keeps Claude's cache warm with a cron).
   for (const prefix of new Set(slips.map((s) => s.prefix))) {
     const s = slips.find((x) => x.prefix === prefix);
