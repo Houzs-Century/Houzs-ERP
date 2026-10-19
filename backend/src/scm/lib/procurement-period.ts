@@ -229,7 +229,7 @@ export function deadStock(allRows: StockRow[], today: string, demand: Map<string
   const dead = new Map<StockRow, number>(); const buffer = new Map<StockRow, number>();
   const items = new Map<string, StockRow[]>();
   for (const r of allRows) items.set(keyOf(r), [...(items.get(keyOf(r)) ?? []), r]);
-  const itemInfo = new Map<string, { onHand: number; scheduled: number; unscheduled: number }>();
+  const itemInfo = new Map<string, { onHand: number; scheduled: number; unscheduled: number; byKind: Record<LocationKind, number> }>();
   for (const [k, rs] of items) {
     const dm = demand.get(k) ?? { scheduled: 0, unscheduled: 0 };
     let dated = dm.scheduled; let undated = dm.unscheduled;
@@ -241,7 +241,10 @@ export function deadStock(allRows: StockRow[], today: string, demand: Map<string
       buffer.set(r, buf);
       dead.set(r, Math.max(0, r.qty - needed - buf));
     }
-    itemInfo.set(k, { onHand: rs.reduce((a, r) => a + r.qty, 0), scheduled: dm.scheduled, unscheduled: dm.unscheduled });
+    /* What each kind of location holds, so each listed row can say why (owner 2026-10-19). */
+    const byKind: Record<LocationKind, number> = { warehouse: 0, others: 0, service: 0, display: 0 };
+    for (const r of rs) byKind[r.kind] += r.qty;
+    itemInfo.set(k, { onHand: rs.reduce((a, r) => a + r.qty, 0), scheduled: dm.scheduled, unscheduled: dm.unscheduled, byKind });
   }
   const senOf = (r: StockRow, q: number) => (r.qty > 0 ? Math.round((r.valueSen * q) / r.qty) : 0);
   const deadSen = (r: StockRow) => senOf(r, dead.get(r) ?? 0);
@@ -261,21 +264,24 @@ export function deadStock(allRows: StockRow[], today: string, demand: Map<string
     return [...map.values()].sort((a, b) => b.deadSen + b.bufferSen - (a.deadSen + a.bufferSen));
   };
   const deadRows = rows.filter((r) => (dead.get(r) ?? 0) > 0);
-  const bufferItems = [...items.entries()].map(([k, all]) => {
-    const info = itemInfo.get(k)!;
-    const rs = all.filter(shown);
-    return { itemCode: all[0]!.itemCode, variantKey: all[0]!.variantKey, name: all[0]!.name, category: all[0]!.category,
-      warehouses: [...new Set(rs.filter((r) => (buffer.get(r) ?? 0) > 0).map((r) => r.warehouse))].join(', '),
-      ...info, bufferQty: rs.reduce((a, r) => a + (buffer.get(r) ?? 0), 0), valueSen: rs.reduce((a, r) => a + bufSen(r), 0) };
-  }).filter((x) => x.bufferQty > 0).sort((a, b) => b.valueSen - a.valueSen);
+  /* One row per item and location, like the dead list (owner 2026-10-19). */
+  const bufferRows = rows.filter((r) => (buffer.get(r) ?? 0) > 0).map((r) => {
+    const info = itemInfo.get(keyOf(r))!;
+    return { itemCode: r.itemCode, variantKey: r.variantKey, name: r.name, category: r.category, warehouse: r.warehouse, kind: r.kind,
+      bufferQty: buffer.get(r) ?? 0, valueSen: bufSen(r), poolOnHand: info.onHand, scheduled: info.scheduled, unscheduled: info.unscheduled, byKind: info.byKind };
+  }).sort((a, b) => b.valueSen - a.valueSen);
   return {
     asOf: today,
     totalSen: rows.reduce((a, r) => a + r.valueSen, 0), skus: rows.length,
     deadSen: deadRows.reduce((a, r) => a + deadSen(r), 0), deadSkus: deadRows.length,
-    bufferSen: rows.reduce((a, r) => a + bufSen(r), 0), bufferSkus: bufferItems.length,
+    bufferSen: rows.reduce((a, r) => a + bufSen(r), 0), bufferSkus: new Set(bufferRows.map((r) => `${r.itemCode}|${r.variantKey}`)).size,
     byCategory: by((r) => r.category), byWarehouse: by((r) => r.warehouse),
-    top: deadRows.map((r) => ({ ...r, qty: dead.get(r) ?? 0, onHand: r.qty, valueSen: deadSen(r), idleDays: idleOf(r) })).sort((a, b) => b.valueSen - a.valueSen).slice(0, 50),
-    bufferTop: bufferItems.slice(0, 50),
+    top: deadRows.map((r) => {
+      const info = itemInfo.get(keyOf(r))!;
+      return { ...r, qty: dead.get(r) ?? 0, onHand: r.qty, valueSen: deadSen(r), idleDays: idleOf(r),
+        poolOnHand: info.onHand, scheduled: info.scheduled, unscheduled: info.unscheduled, byKind: info.byKind };
+    }).sort((a, b) => b.valueSen - a.valueSen).slice(0, 50),
+    bufferTop: bufferRows.slice(0, 50),
   };
 }
 

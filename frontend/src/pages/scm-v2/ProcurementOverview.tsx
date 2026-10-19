@@ -51,8 +51,8 @@ type Payload = {
   categories: string[]; currentLead: Partial<Record<string, number>>; leadOverrides: Partial<Record<string, Array<{ warehouse: string; days: number }>>>;
   billed: { totalSen: number; count: number; bySupplier: Record<string, number>; byCategory: Record<string, number> };
   total: Group; byCategory: Group[]; bySupplier: Group[]; overdue: OpenLine[]; dueSoon: OpenLine[]; lines: PeriodLine[];
-  deadStock: { asOf: string; totalSen: number; skus: number; deadSen: number; deadSkus: number; bufferSen: number; bufferSkus: number; byCategory: StockGroup[]; byWarehouse: StockGroup[]; top: Array<{ warehouse: string; category: string; itemCode: string; variantKey: string; name: string | null; qty: number; valueSen: number; idleDays: number | null }>;
-    bufferTop: Array<{ itemCode: string; variantKey: string; name: string | null; category: string; warehouses: string; onHand: number; scheduled: number; unscheduled: number; cover: number; bufferQty: number; valueSen: number; lastIn: string | null; heldDays: number | null }> };
+  deadStock: { asOf: string; totalSen: number; skus: number; deadSen: number; deadSkus: number; bufferSen: number; bufferSkus: number; byCategory: StockGroup[]; byWarehouse: StockGroup[]; top: Array<{ warehouse: string; kind: string; category: string; itemCode: string; variantKey: string; name: string | null; qty: number; onHand: number; valueSen: number; idleDays: number | null; poolOnHand: number; scheduled: number; unscheduled: number; byKind: ByKind }>;
+    bufferTop: Array<{ itemCode: string; variantKey: string; name: string | null; category: string; warehouse: string; kind: string; poolOnHand: number; scheduled: number; unscheduled: number; byKind: ByKind; bufferQty: number; valueSen: number; lastIn: string | null; heldDays: number | null }> };
 };
 
 const BUCKETS: Array<{ k: BucketKey; label: string; color: string }> = [
@@ -344,21 +344,21 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
               <div className="max-h-[420px] overflow-auto">
                 {itemsOf === "dead" ? (
                   <table className="mt-1 w-full border-collapse">
-                    <thead className="sticky top-0 bg-surface"><tr><Th left>Item / variant</Th><Th left>Warehouse</Th><Th left>Category</Th><Th>Dead qty</Th><Th>Value</Th><Th>Days since it last went out</Th></tr></thead>
+                    <thead className="sticky top-0 bg-surface"><tr><Th left>Item / variant</Th><Th left>Warehouse</Th><Th left>Category</Th><Th>Dead qty</Th><Th>Value</Th><Th>Days since it last went out</Th><Th left>Why dead</Th></tr></thead>
                     <tbody>{d.deadStock.top.slice(0, 40).map((r, i) => (
-                      <tr key={`${r.itemCode}-${r.warehouse}-${i}`}><Td left><span title={r.name ?? ""}>{r.itemCode}</span>{r.variantKey && <span className="block max-w-[320px] truncate text-[10.5px] text-ink-muted">{r.variantKey}</span>}</Td><Td left>{r.warehouse}</Td><Td left>{CAT_LABEL[r.category] ?? r.category}</Td><Td>{r.qty}</Td><Td>{rm(r.valueSen)}</Td><Td className={(r.idleDays ?? 0) > 365 ? "text-err" : ""}>{r.idleDays ?? "—"}</Td></tr>
+                      <tr key={`${r.itemCode}-${r.warehouse}-${i}`}><Td left><span title={r.name ?? ""}>{r.itemCode}</span>{r.variantKey && <span className="block max-w-[320px] truncate text-[10.5px] text-ink-muted">{r.variantKey}</span>}</Td><Td left>{r.warehouse}</Td><Td left>{CAT_LABEL[r.category] ?? r.category}</Td><Td>{r.qty}</Td><Td>{rm(r.valueSen)}</Td><Td className={(r.idleDays ?? 0) > 365 ? "text-err" : ""}>{r.idleDays ?? "—"}</Td><Td left className="min-w-[280px] text-[11.5px] text-ink-secondary">{whyDead(r)}</Td></tr>
                     ))}</tbody>
                   </table>
                 ) : (
                   <table className="mt-1 w-full border-collapse">
-                    <thead className="sticky top-0 bg-surface"><tr><Th left>Item / variant</Th><Th left>Warehouse</Th><Th>On hand</Th><Th>Orders with a date</Th><Th>Orders, no date</Th><Th>Buffer qty</Th><Th>Value</Th><Th>Last received</Th><Th>Held</Th></tr></thead>
+                    <thead className="sticky top-0 bg-surface"><tr><Th left>Item / variant</Th><Th left>Warehouse</Th><Th left>Category</Th><Th>Buffer qty</Th><Th>Value</Th><Th>Last received</Th><Th>Held</Th><Th left>Why buffer</Th></tr></thead>
                     <tbody>{d.deadStock.bufferTop.slice(0, 40).map((r) => (
-                      <tr key={`${r.itemCode}|${r.variantKey}`}>
+                      <tr key={`${r.itemCode}|${r.variantKey}|${r.warehouse}`}>
                         <Td left><span title={r.name ?? ""}>{r.itemCode}</span>{r.variantKey && <span className="block max-w-[320px] truncate text-[10.5px] text-ink-muted">{r.variantKey}</span>}</Td>
-                        <Td left className="text-ink-secondary">{r.warehouses}</Td>
-                        <Td>{r.onHand}</Td><Td>{r.scheduled}</Td><Td>{r.unscheduled}</Td>
+                        <Td left>{r.warehouse}</Td><Td left>{CAT_LABEL[r.category] ?? r.category}</Td>
                         <Td className="font-semibold">{r.bufferQty}</Td><Td>{rm(r.valueSen)}</Td>
                         <Td>{r.lastIn ?? "—"}</Td><Td className={(r.heldDays ?? 0) > 90 ? "text-err" : ""}>{r.heldDays != null ? `${r.heldDays} days` : "—"}</Td>
+                        <Td left className="min-w-[280px] text-[11.5px] text-ink-secondary">{whyBuffer(r)}</Td>
                       </tr>
                     ))}</tbody>
                   </table>
@@ -370,13 +370,6 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
                 <li>Dead = stock no open order needs. E.g. orders want 10 and the warehouse holds 15: the 5 extra in the warehouse and all of the service and display stock are dead, since orders ship from the warehouse first.</li>
                 <li>Sofas and bedframes count only orders for the same fabric and size. A piece is needed, buffer or dead, never two, so the figures add up.</li>
               </ul>
-              <div className="mt-4 text-[12px] font-semibold text-ink">Dead stock by how long since it last went out</div>
-              <div className="mt-1 grid gap-4 xl:grid-cols-2">
-                <Columns valueLabels={false} height={190} stacked format={rm} highlight={null} line={null} labels={d.deadStock.byCategory.map((g) => CAT_LABEL[g.key] ?? g.key)}
-                  series={AGES.map((a) => ({ name: a.label, color: a.color }))} values={AGES.map((a) => d.deadStock.byCategory.map((g) => g.ages[a.k]))} />
-                <Columns valueLabels={false} height={190} stacked format={rm} highlight={null} line={null} labels={d.deadStock.byWarehouse.filter((g) => g.deadSen > 0).map((g) => g.key.replace(" WAREHOUSE", " WH").slice(0, 12))}
-                  series={AGES.map((a) => ({ name: a.label, color: a.color }))} values={AGES.map((a) => d.deadStock.byWarehouse.filter((g) => g.deadSen > 0).map((g) => g.ages[a.k]))} />
-              </div>
             </Panel>
           </section>
 
@@ -406,6 +399,21 @@ function LineTable({ rows, empty, mode }: { rows: OpenLine[]; empty: string; mod
       ))}</tbody>
     </table>
   );
+}
+
+type ByKind = { warehouse: number; others: number; service: number; display: number };
+const heldIn = (k: ByKind) => ([["warehouse", k.warehouse], ["others", k.others], ["service", k.service], ["display", k.display]] as Array<[string, number]>)
+  .filter(([, q]) => q > 0).map(([n, q]) => `${n} ${q}`).join(", ");
+
+/** One line per listed row: the orders against what all locations hold, in the order they ship. */
+function whyDead(r: { qty: number; kind: string; poolOnHand: number; scheduled: number; unscheduled: number; byKind: ByKind }): string {
+  const need = r.scheduled + r.unscheduled;
+  if (need === 0) return `No open order for this item and variant. All locations hold ${r.poolOnHand} (${heldIn(r.byKind)}).`;
+  return `Orders need ${need} (${r.scheduled} dated, ${r.unscheduled} no date); all locations hold ${r.poolOnHand} (${heldIn(r.byKind)}). Orders take the warehouse, then service, then display, so these ${r.qty} at ${r.kind} are left over.`;
+}
+
+function whyBuffer(r: { bufferQty: number; kind: string; poolOnHand: number; scheduled: number; unscheduled: number; byKind: ByKind }): string {
+  return `Orders need ${r.scheduled + r.unscheduled} (${r.scheduled} dated, ${r.unscheduled} no date); all locations hold ${r.poolOnHand} (${heldIn(r.byKind)}). The dated orders take stock first, so these ${r.bufferQty} at ${r.kind} wait for orders with no date yet.`;
 }
 
 /** Which locations the stock figures cover; the same choice as the bar at the top. */
