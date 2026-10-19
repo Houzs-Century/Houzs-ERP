@@ -164,7 +164,7 @@ try {
       LEFT JOIN LATERAL (SELECT * FROM scan_jobs j WHERE j.sample_id = s.id ORDER BY j.created_at DESC LIMIT 1) j ON true
      WHERE s.status = 'CONFIRMED' AND s.corrected IS NOT NULL AND s.extracted IS NOT NULL
        AND coalesce(s.document_type, 'SO') = 'SO'
-       AND (coalesce(array_length(j.image_keys, 1), 0) > 0 OR s.image_key IS NOT NULL)
+       AND ((jsonb_typeof(j.image_keys) = 'array' AND jsonb_array_length(j.image_keys) > 0) OR s.image_key IS NOT NULL)
      ORDER BY s.created_at DESC LIMIT 200`);
   const companyName = (await branding.getBranding({ DB: d1 })).companyName;
   const catalogs = new Map();
