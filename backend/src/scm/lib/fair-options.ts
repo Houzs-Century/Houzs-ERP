@@ -63,7 +63,7 @@
 // withdrew from, and its revenue lands in a project the P&L excludes.
 // ----------------------------------------------------------------------------
 
-import { fmtDayMonthRange } from '../shared/format';
+import { fmtDayMonth, fmtDayMonthRange } from '../shared/format';
 
 /** One PMS project row, as the loader reads it. A project is one BRAND's booth
  *  at one organizer's event: the fair the owner talks about is several of these. */
@@ -715,6 +715,34 @@ export function attendingMessage(booth: Pick<FairProjectRow, 'brand' | 'venue' |
  *  the Fair rules switch says so. */
 export function venueDiffersMessage(slipVenue: string, placed: Pick<FairProjectRow, 'venue' | 'startDate' | 'endDate'>): string {
   return `Venue differs. Slip venue: ${clean(slipVenue)} — placed at: ${clean(placed.venue)} (${fmtDayMonthRange(placed.startDate, placed.endDate)}). Pick the fair the slip was written at, or correct the venue, then confirm again.`;
+}
+
+/** The "要查" line (owner 2026-10-19): 「Slip venue: MID VALLEY — placed at:
+ *  IOIGECC (10/09 - 10/11). Reason: …」. A typed order names its venue as the
+ *  order's, not the slip's. */
+export function venueDiffersNote(input: {
+  orderVenue: string;
+  scanned: boolean;
+  placed: Pick<FairProjectRow, 'venue' | 'startDate' | 'endDate'>;
+  reason: string;
+}): string {
+  const where = input.scanned ? 'Slip venue' : 'Venue on the order';
+  return `${where}: ${clean(input.orderVenue)} — placed at: ${clean(input.placed.venue)} (${fmtDayMonthRange(input.placed.startDate, input.placed.endDate)}). Reason: ${input.reason}.`;
+}
+
+/** Why the order's own venue did not place it, from what PMS holds NOW for
+ *  that place in the four weeks to the order date (the window the re-link
+ *  dropdown offers). `atVenue` is that read. */
+export function venueDiffersReason(venue: string, soDate: string, atVenue: readonly FairProjectRow[]): string {
+  const live = atVenue.filter(isPickableFair).sort((a, b) => (b.startDate as string).localeCompare(a.startDate as string));
+  const nearest = live[0];
+  if (!nearest) return `no fair at ${clean(venue)} in PMS in the 4 weeks to ${fmtDayMonth(soDate)}`;
+  return `${clean(venue)} has ${clean(nearest.organizer)} (${fmtDayMonthRange(nearest.startDate, nearest.endDate)}) in PMS — re-link if it was sold there`;
+}
+
+/** The "等加人" line: who is missing from which booth's Sales Attending. */
+export function attendingNote(booth: Pick<FairProjectRow, 'brand' | 'venue' | 'startDate' | 'endDate'>, scannerName: string, draft: boolean): string {
+  return `${scannerName} is not on Sales Attending for ${boothLabel(booth)}.${draft ? ' The draft cannot be confirmed until PMS adds them.' : ''}`;
 }
 
 /** Same place? Case/space-insensitive, as every venue compare here. */

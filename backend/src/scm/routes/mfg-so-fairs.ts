@@ -19,6 +19,7 @@
 //   GET  /fair-default          the keyer's fair a new order starts with
 //   GET  /fair-pending          orders with no fair link a person should see
 //   GET  /fair-pending/count    how many — the sidebar badge
+//   GET  /fair-checks           linked orders to check: venue differs / Sales Attending
 //   POST /:docNo/fair           a person settles one of them
 //   GET  /active-venue          the rep's bound venue (moved here, unchanged)
 //
@@ -39,6 +40,7 @@ import {
 } from '../lib/fair-binding';
 import { buildFairOptions, companyUsesKeyerFair, fairMissingMessage, isPickableFair } from '../lib/fair-options';
 import { countFairPending, loadFairPending } from '../lib/fair-pending';
+import { loadFairChecks } from '../lib/fair-checks';
 /* GET /active-venue moved here from mfg-sales-orders.ts on 2026-09-13. It is the
    same concern as the picker — which exhibition is this rep at — and that file
    is over its size ceiling, so the endpoint could not stay beside its new
@@ -170,6 +172,26 @@ mfgSoFairs.get('/fair-pending/count', async (c) => {
   } catch {
     return c.json({ error: 'fair_pending_count_failed' }, 500);
   }
+});
+
+/**
+ * GET /mfg-sales-orders/fair-checks
+ *
+ * The LINKED orders the same page lists in two groups of their own (owner
+ * 2026-10-19): 要查 — the venue on the order is not where it was placed — and
+ * 等加人 — a scan whose scanner is not on its booth's Sales Attending. Read as
+ * the order and PMS stand now; scm/lib/fair-checks.ts has the rules. A failed
+ * read is an error, never "nothing to check".
+ */
+mfgSoFairs.get('/fair-checks', async (c) => {
+  const res = await loadFairChecks({
+    sb: c.get('supabase'),
+    db: c.env.DB as unknown as FairDb,
+    companySql: activeCompanySql(c, 'p.company_id'),
+    scope: (q) => scopeToCompany(q, c),
+  });
+  if (!res.ok) return c.json({ error: 'fair_checks_read_failed', rows: [] }, 500);
+  return c.json({ rows: res.rows });
 });
 
 /**

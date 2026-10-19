@@ -24,16 +24,28 @@
  * Which orders, exactly, is the server's (scm/lib/fair-pending.ts); the sidebar
  * entry's red number counts the same list.
  *
+ * Two groups of LINKED orders sit above them (owner 2026-10-19,
+ * scm/lib/fair-checks.ts), each row with the server's own sentence:
+ *
+ *   TO CHECK — VENUE DIFFERS   要查: the venue on the order is not where it was
+ *                              placed. Re-link it to the fair at its venue here.
+ *   WAITING FOR SALES ATTENDING 等加人: the person who scanned it is not on that
+ *                              booth's Sales Attending. PMS adds them in the
+ *                              project; a draft cannot be confirmed until then.
+ *
  * There is no bulk "link them all" action, deliberately: every button here
  * writes an attribution into exhibition P&L and somebody's commission, and a
  * bulk action over rows nobody read is how a wrong one gets in.
  */
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
+  useFairChecks,
   useFairPending,
   useAssignFair,
   useFairOptions,
   fairLabel,
+  type FairCheckRow,
   type FairPendingRow,
 } from '../../vendor/scm/lib/fair-options-queries';
 
@@ -50,6 +62,12 @@ const GROUPS = [
   { key: NO_VERDICT, title: 'Keyed before the fair picker', hint: 'Orders from 1 September keyed before the fair picker went live on 13 September, never linked to a fair.' },
 ] as const;
 
+/* The LINKED orders to look at, above the unlinked ones (owner 2026-10-19). */
+const CHECK_GROUPS = [
+  { key: 'VENUE_DIFFERS', title: 'To check — venue differs', hint: 'The venue on the order is not where it was placed. Re-link it to the fair at its venue, or leave it if the link is right.' },
+  { key: 'NEEDS_ATTENDING', title: 'Waiting for Sales Attending', hint: 'The person who scanned the order is not on that booth’s Sales Attending. PMS adds them in the project; a draft cannot be confirmed until then.' },
+] as const;
+
 function money(sen: number | null): string {
   if (sen == null) return '—';
   return `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -57,8 +75,10 @@ function money(sen: number | null): string {
 
 export function FairPending() {
   const rowsQ = useFairPending(LIST_LIMIT);
+  const checksQ = useFairChecks();
   const assign = useAssignFair();
   const rows = rowsQ.data ?? [];
+  const checks = checksQ.data ?? [];
 
   const byGroup = useMemo(() => {
     const m = new Map<string, FairPendingRow[]>();
@@ -76,12 +96,40 @@ export function FairPending() {
     <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div>
         <h1 style={{ margin: 0, fontSize: 20 }}>Fair links to settle</h1>
-        <p style={{ margin: '4px 0 0', opacity: 0.7, fontSize: 13 }}>
-          {rows.length === 0
-            ? 'Nothing to settle — every order is linked to its fair.'
-            : `${rows.length} order${rows.length === 1 ? '' : 's'} not yet attributed to a fair${rows.length >= LIST_LIMIT ? ` (the newest ${LIST_LIMIT} shown)` : ''}.`}
-        </p>
+        {/* A list that could not be read must not read as "nothing to settle". */}
+        {rowsQ.isError ? (
+          <p role="alert" style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--c-festive-b, #B8331F)' }}>
+            Couldn’t load the orders with no fair — try again.
+          </p>
+        ) : (
+          <p style={{ margin: '4px 0 0', opacity: 0.7, fontSize: 13 }}>
+            {rows.length === 0
+              ? 'Nothing to settle — every order is linked to its fair.'
+              : `${rows.length} order${rows.length === 1 ? '' : 's'} not yet attributed to a fair${rows.length >= LIST_LIMIT ? ` (the newest ${LIST_LIMIT} shown)` : ''}.`}
+          </p>
+        )}
+        {checksQ.isError && (
+          <p role="alert" style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--c-festive-b, #B8331F)' }}>
+            Couldn’t load the linked orders to check — try again.
+          </p>
+        )}
       </div>
+
+      {CHECK_GROUPS.map((g) => {
+        const list = checks.filter((r) => r.check === g.key);
+        if (list.length === 0) return null;
+        return (
+          <section key={g.key}>
+            <h2 style={{ margin: '0 0 2px', fontSize: 15 }}>{g.title} ({list.length})</h2>
+            <p style={{ margin: '0 0 8px', opacity: 0.7, fontSize: 12 }}>{g.hint}</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {list.map((r) => (g.key === 'VENUE_DIFFERS'
+                ? <PendingRow key={r.doc_no} row={r} note={r.note} onAssign={assign.mutate} busy={assign.isPending} />
+                : <CheckRow key={r.doc_no} row={r} />))}
+            </div>
+          </section>
+        );
+      })}
 
       {GROUPS.map((g) => {
         const list = byGroup.get(g.key) ?? [];
@@ -102,12 +150,27 @@ export function FairPending() {
   );
 }
 
+/** A 等加人 row: nothing to pick here — PMS adds the person in the project. */
+function CheckRow({ row }: { row: FairCheckRow }) {
+  return (
+    <div style={{ border: '1px solid var(--c-border, #ddd)', borderRadius: 8, padding: 10, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+      <Link to={`/scm/sales-orders/${encodeURIComponent(row.doc_no)}`} style={{ fontFamily: 'monospace', fontSize: 13 }}>{row.doc_no}</Link>
+      <span style={{ fontSize: 13, opacity: 0.8 }}>{row.so_date ?? '—'}</span>
+      <span style={{ fontSize: 12, opacity: 0.7 }}>{row.status === 'DRAFT' ? 'Draft' : 'Confirmed'}</span>
+      <span style={{ fontSize: 13, marginInlineStart: 'auto' }}>{money(row.local_total_sen)}</span>
+      <span style={{ flexBasis: '100%', fontSize: 12.5 }}>{row.note}</span>
+    </div>
+  );
+}
+
 function PendingRow(props: {
-  row: FairPendingRow;
+  row: Pick<FairPendingRow, 'doc_no' | 'so_date' | 'venue' | 'branding' | 'local_total_sen'>;
+  /** The server's 要查 sentence, shown under the row. */
+  note?: string;
   onAssign: (v: { docNo: string; projectId: number | null }) => void;
   busy: boolean;
 }) {
-  const { row, onAssign, busy } = props;
+  const { row, note, onAssign, busy } = props;
   const [pick, setPick] = useState<string>('');
   /* The SAME options the salesperson saw, resolved for THIS order's date — not
      today's. An order from last week must be settled against the fairs that were
@@ -153,6 +216,7 @@ function PendingRow(props: {
       >
         Link
       </button>
+      {note && <span style={{ flexBasis: '100%', fontSize: 12.5 }}>{note}</span>}
     </div>
   );
 }

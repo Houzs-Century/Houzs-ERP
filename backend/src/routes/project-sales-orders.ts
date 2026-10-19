@@ -39,7 +39,9 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env, Variables } from "../scm/env";
 import { supabaseAuth } from "../scm/middleware/auth";
-import { scopeToCompany } from "../scm/lib/companyScope";
+import { activeCompanySql, scopeToCompany } from "../scm/lib/companyScope";
+import { loadFairsByIds, type FairDb } from "../scm/lib/fair-binding";
+import { sameVenue } from "../scm/lib/fair-options";
 import { canViewAllSales } from "../scm/lib/houzs-perms";
 import { resolveSalesScopeIds, applySoScope } from "../scm/lib/salesScope";
 import { paginateAll, chunkIn, type PageResult } from "../scm/lib/paginate-all";
@@ -57,7 +59,7 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
    join (mfg-sales-orders.ts, the "customers table" note by its list). */
 const SO_COLS =
   "doc_no, so_date, ref, customer_so_no, debtor_name, phone, status, salesperson_id, " +
-  "local_total_sen, total_revenue_sen, deposit_sen, fair_match, linked_ac_docno, created_at";
+  "local_total_sen, total_revenue_sen, deposit_sen, fair_match, linked_ac_docno, created_at, venue";
 
 type SoRow = {
   doc_no: string;
@@ -76,6 +78,7 @@ type SoRow = {
   fair_match: string | null;
   linked_ac_docno: string | null;
   created_at: string | null;
+  venue: string | null;
 };
 
 export type ProjectSalesOrderRow = {
@@ -92,6 +95,10 @@ export type ProjectSalesOrderRow = {
   fair_match: string | null;
   linked_ac_docno: string | null;
   created_at: string | null;
+  /** "Venue differs" (owner 2026-10-19): the venue on the order when it is NOT
+   *  this fair's venue — the slip said one place, the order was placed here.
+   *  Null when they agree, or when the order carries no venue. */
+  venue_differs: string | null;
 };
 
 export type ProjectSalesOrderTotals = {
@@ -181,6 +188,15 @@ export async function projectSalesOrdersHandler(c: Ctx): Promise<Response> {
     for (const s of staff) if (s.id && s.name) staffNames.set(s.id, s.name);
   }
 
+  /* The fair's own venue, for "Venue differs". A display hint only: when PMS
+     cannot be read the rows still list, with no flag rather than a wrong one. */
+  const db = c.env?.DB as unknown as FairDb | undefined;
+  const booth = db
+    ? (await loadFairsByIds(db, activeCompanySql(c, "p.company_id"), [projectId]).catch(() => new Map<number, never>())).get(projectId)
+    : undefined;
+  const venueDiffers = (v: string | null): string | null =>
+    v && v.trim() && booth?.venue && !sameVenue(v, booth.venue) ? v.trim() : null;
+
   const rows: ProjectSalesOrderRow[] = headers.map((h) => {
     const led = ledger.get(h.doc_no);
     const inputs = soPaidInputsOf(h as unknown as Record<string, unknown>, led?.paidSen ?? 0, led?.depositInLedger ?? false);
@@ -200,6 +216,7 @@ export async function projectSalesOrdersHandler(c: Ctx): Promise<Response> {
       fair_match: h.fair_match,
       linked_ac_docno: h.linked_ac_docno,
       created_at: h.created_at,
+      venue_differs: venueDiffers(h.venue),
     };
   });
 
