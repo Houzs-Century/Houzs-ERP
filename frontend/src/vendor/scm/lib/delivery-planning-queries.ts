@@ -297,6 +297,40 @@ export type PlanningResponse = {
   regions: Array<{ key: RegionKey; label: string }>;
 };
 
+/* ── Client-side region bucketing (owner 2026-10-19 "filter 没反应") ───────────
+   The board fetches EVERY region once (region=ALL) and filters by the active
+   region chip HERE, in the browser — the same instant, no-refetch pattern the
+   state tabs already use (DeliveryPlanningBoard filters delivery_state locally)
+   and the mobile board already uses. A per-region fetch re-ran the whole server
+   board assembly (~3.7k SOs + DOs + crew + trips) on every chip click, so the
+   region row felt frozen; locally it is instant. Exact twin of the backend's
+   matchesRegion (routes/delivery-planning.ts): 'ALL'/'' → no filter; a KNOWN
+   bucket code → keep orders whose regions[] include it; an unknown code → no-op
+   (defensive — a stale/renamed region param never blanks the board). */
+export function filterOrdersByRegion<T extends { regions: RegionCode[] }>(
+  orders: readonly T[],
+  region: string,
+  knownRegionKeys: ReadonlySet<string>,
+): T[] {
+  if (region === 'ALL' || region === '' || !knownRegionKeys.has(region)) return [...orders];
+  return orders.filter((o) => o.regions.includes(region));
+}
+
+/* State-tab counts (+ ALL) for a board slice. Computed over the REGION-filtered,
+   state-UNfiltered set so the badges reflect the active region exactly as the
+   server's region-scoped counts used to. */
+export function planningCountsFrom(
+  orders: readonly Pick<PlanningOrder, 'delivery_state'>[],
+): PlanningCounts {
+  // Build the zeroed tally from DELIVERY_STATES (the one home of the state
+  // vocabulary) rather than re-listing the states — a second literal set of
+  // them would be a duplicated decision (audit:duplicated-decisions).
+  const counts = { ALL: orders.length } as PlanningCounts;
+  for (const s of DELIVERY_STATES) counts[s] = 0;
+  for (const o of orders) counts[o.delivery_state] += 1;
+  return counts;
+}
+
 /* The board. region = ALL | KL | NORTHERN | SOUTHERN | EAST_COAST | EM; state = DeliveryState | 'ALL'.
    Counts come back scoped to the active region (not the state) so the 4 state
    tab badges stay stable as the operator switches between state tabs. */
