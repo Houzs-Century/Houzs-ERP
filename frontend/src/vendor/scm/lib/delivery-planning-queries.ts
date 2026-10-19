@@ -189,6 +189,17 @@ export type PlanningOrder = {
   /* The latest DO's OWN document date (delivery_orders.do_date); null when this
      SO has no (non-DRAFT/CANCELLED) DO yet — drives the "DO Date" grid column. */
   do_date: string | null;
+  /* POD (proof of delivery) off the latest DO. has_pod is true when the driver
+     left evidence (a photo or a GPS fix) — it separates a REAL driver POD from
+     an evidence-free "mark delivered" (office advance / QR scan), which is the
+     "No POD" flag on the board. delivered_at is the real delivered instant (vs
+     the manually-typed customer_delivered_date). The signature/photo themselves
+     are viewed on the DO detail, not carried on the row. Absent on synthetic
+     (service / project / manual) rows that have no DO. */
+  has_pod?: boolean;
+  delivered_at?: string | null;
+  pod_r2_key?: string | null;
+  pod_lat?: number | null;
   /* A STATUS: 'READY' | 'PENDING' only. There is no third value — the string
      "READY (PARTIAL)" was removed on 2026-08-16 because the board grouped by
      this field and produced a header that contradicted every row under it. */

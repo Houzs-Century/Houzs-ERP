@@ -65,7 +65,7 @@
 
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
-import { HC_SUBSTATUS_VALUES, HC_MESSAGE_STATUS_VALUES, fieldsSchema, SO_FIELD_COLS, DO_FIELD_COLS, type DeliveryOrderExecRow } from './delivery-planning-fields';
+import { HC_SUBSTATUS_VALUES, HC_MESSAGE_STATUS_VALUES, fieldsSchema, SO_FIELD_COLS, DO_FIELD_COLS, type DeliveryOrderExecRow, type DoExecOut } from './delivery-planning-fields';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { todayMyt } from '../lib/my-time';
@@ -603,28 +603,12 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
 
   /* 5. DOs for these SOs — the cut DO doc_no + status + per-DO crew (driver /
         helper / lorry from delivery_order_crew). Non-DRAFT/CANCELLED. */
-  /* HC DO-execution raw-data fields surface alongside the DO. dual-read
-     camelCase (the pg driver camelCases result columns). */
-  type DoExecOut = {
-    time_range: string | null; time_confirmed: boolean | null;
-    arrival_at: string | null; departure_at: string | null;
-    shipout_date: string | null; customer_delivered_date: string | null;
-    eta_arriving_port: string | null; delivery_substatus: string | null;
-    // EM-region transit arrival date.
-    arrives_em_warehouse_date: string | null;
-    // EM cross-border transport status (owner 2026-09-23) — the ESB sea-freight
-    // leg + the BS last-mile leg, back-filled by the two 3PL transporters.
-    em_delivery_status: string | null; consignment_no: string | null;
-    vessel_voyage: string | null; etd_port_klang: string | null;
-    bs_delivery_date: string | null; esb_remarks: string | null;
-    bs_remarks: string | null; ctn: string | null; em_delivered_date: string | null;
-    // The latest DO's OWN document date (delivery_orders.do_date) — surfaced as
-    // the planning grid "DO Date" column. From the SAME latest-DO lookup as crew.
-    do_date: string | null;
-  };
+  /* HC DO-execution raw-data fields surface alongside the DO (DoExecOut lives in
+     ./delivery-planning-fields for the file-size ceiling). dual-read camelCase
+     (the pg driver camelCases result columns). */
   const { data: doRowsRaw, error: doErr } = await chunkIn<DeliveryOrderExecRow>(docNos, (batch, from, to) =>
     sb.from('delivery_orders')
-      .select('id, do_number, so_doc_no, status, driver_id, delivery_state, customer_delivery_date, do_date, time_range, time_confirmed, arrival_at, departure_at, shipout_date, customer_delivered_date, eta_arriving_port, delivery_substatus, arrives_em_warehouse_date, em_delivery_status, consignment_no, vessel_voyage, etd_port_klang, bs_delivery_date, esb_remarks, bs_remarks, ctn, em_delivered_date')
+      .select('id, do_number, so_doc_no, status, driver_id, delivery_state, customer_delivery_date, do_date, delivered_at, pod_r2_key, pod_lat, time_range, time_confirmed, arrival_at, departure_at, shipout_date, customer_delivered_date, eta_arriving_port, delivery_substatus, arrives_em_warehouse_date, em_delivery_status, consignment_no, vessel_voyage, etd_port_klang, bs_delivery_date, esb_remarks, bs_remarks, ctn, em_delivered_date')
       .in('so_doc_no', batch).order('id').range(from, to),
   );
   noteDegradedRead('do_headers', doErr);
@@ -667,6 +651,12 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       ctn: d.ctn ?? null,
       em_delivered_date: d.emDeliveredDate ?? d.em_delivered_date ?? null,
       do_date: d.doDate ?? d.do_date ?? null,
+      delivered_at: d.deliveredAt ?? d.delivered_at ?? null,
+      pod_r2_key: d.podR2Key ?? d.pod_r2_key ?? null,
+      pod_lat: d.podLat ?? d.pod_lat ?? null,
+      // Real POD leaves a photo or a GPS fix; an evidence-free "mark delivered"
+      // (office advance / QR scan) leaves neither.
+      has_pod: (d.podR2Key ?? d.pod_r2_key) != null || (d.podLat ?? d.pod_lat) != null,
     });
   }
 
@@ -985,6 +975,13 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       // The latest DO's OWN document date (delivery_orders.do_date), null when
       // this SO has no (non-DRAFT/CANCELLED) DO yet — drives the "DO Date" column.
       do_date: doExecByDoc.get(docNo)?.do_date ?? null,
+      // POD: real delivered instant + evidence presence (the signature/photo
+      // preview is fetched on demand). has_pod separates a real driver POD from
+      // an evidence-free "mark delivered".
+      delivered_at: doExecByDoc.get(docNo)?.delivered_at ?? null,
+      pod_r2_key: doExecByDoc.get(docNo)?.pod_r2_key ?? null,
+      pod_lat: doExecByDoc.get(docNo)?.pod_lat ?? null,
+      has_pod: doExecByDoc.get(docNo)?.has_pod ?? false,
       // stock — the four fields and why they differ: lib/so-readiness-row.ts
       ...readinessRowFields(readiness),
       // multi-company: readable company code for the shared-queue Company column
