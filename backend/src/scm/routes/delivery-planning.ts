@@ -86,7 +86,7 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardUnionSql, assrOpenCaseGuardSql, ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
+import { assrBoardUnionSql, assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
@@ -1050,15 +1050,22 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       customer_pickup_at: string | null; inspection_visit_at: string | null;
       inspection_by: string | null; do_date: string | null;
       addr1: string | null; addr2: string | null; addr3: string | null; addr4: string | null;
+      // The linked Sales Order's real customer state / postcode / country — the
+      // State and Postcode columns and the region bucket read these, not `location`.
+      so_state: string | null; so_postcode: string | null; so_country: string | null;
     }>();
 
     for (const a of (assrRows.results ?? [])) {
       const assrNo = String(a.assr_no ?? '').trim();
       if (!assrNo) continue;
-      // Region buckets from the case LOCATION/state — REUSE the SAME config
-      // mapping SO rows use (stateToRegionsFromConfig), so ASSR rows filter by
-      // the region tab exactly like SOs.
-      const stateRegions = stateToRegionsFromConfig(regionCfg, a.location, null);
+      // Real customer state / postcode for the State + Postcode columns and the
+      // region bucket — the case's own address first, then the linked order (see
+      // assrBoardLocation). NOT `a.location` (the branch), which showed "SRW" in
+      // State and put a Sarawak case in the KL bucket. Region is then classified
+      // by that real state with the SAME config mapping SO rows use, so an ASSR
+      // row filters under its customer's tab exactly like an SO.
+      const { state: realState, postcode: realPostcode } = assrBoardLocation(a.addr3, a.addr4, a.so_state, a.so_postcode);
+      const stateRegions = stateToRegionsFromConfig(regionCfg, realState, a.so_country);
       const primaryRegion = stateRegions[0] ?? FALLBACK_DEFAULT_REGION;
       const regionSet = new Set<Region>(stateRegions);
       const address = [a.addr1, a.addr2, a.addr3, a.addr4].filter(Boolean).join(', ') || null;
@@ -1127,7 +1134,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           po_locked: false,
           days_left: daysBetween(today, leg.date),
           address,
-          postcode: null,
+          postcode: realPostcode,
           building_type: null,
           possession_date: null,
           house_type: null,
@@ -1161,7 +1168,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           warehouse_id: null,
           warehouse_code: null,
           warehouse_name: null,
-          customer_state: a.location ?? null,
+          // The real customer state (case address first, then linked order) —
+          // NOT `location`, the branch the case was raised at.
+          customer_state: realState,
           delivered_qty: 0,
           remaining_qty: 0,
           crew: null,
