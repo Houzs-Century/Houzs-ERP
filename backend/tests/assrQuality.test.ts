@@ -39,4 +39,18 @@ describe('assr quality overview', () => {
     expect(r.suppliers[0]).toMatchObject({ name: 'A Sofa', receivedQty: 100, cases: 2, items: 5, ratePct: 5, open: 1, overdue: 1, closed: 1, avgDaysToClose: 10 });
     expect(r.suppliers[0]?.months).toEqual([{ month: '2026-10', receivedQty: 100, items: 5, ratePct: 5 }]);
   });
+
+  test('codes of one company count as one supplier: cases under one code, goods under another', () => {
+    const r = qualityOverview([
+      c({ id: 1, creditor: '400-H003' }), c({ id: 2, creditor: '400-O002' }), c({ id: 3, creditor: '400-B' }),
+    ], new Map(), [], [
+      { creditor: '400-H004', name: 'HOOKKA INDUSTRIES', month: '2026-10', qty: 30, lines: 3 },
+      { creditor: '400-O002', name: 'OHANA', month: '2026-10', qty: 10, lines: 1 },
+      { creditor: '400-B', name: 'B', month: '2026-10', qty: 10, lines: 1 },
+    ], '2026-10-01', '2026-10-17', '2026-10-01', '2026-10-17', new Map());
+    const g = r.suppliers.find((s) => s.creditor === 'GROUP-HOOKKA-OHANA');
+    expect(g).toMatchObject({ cases: 2, items: 2, receivedQty: 40, ratePct: 5 });
+    expect([...(g?.codes ?? [])].sort()).toEqual(['400-H003', '400-H004', '400-O002']);
+    expect(r.suppliers.find((s) => s.creditor === '400-B')).toMatchObject({ cases: 1, receivedQty: 10, ratePct: 10 });
+  });
 });

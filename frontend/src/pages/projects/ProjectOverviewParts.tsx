@@ -21,11 +21,9 @@ interface DataGaps {
 
 /* The books line by line, as in each event's Financial Snapshot (owner
    2026-10-19): which line is not keyed is the data problem, under the
-   process problem (Events by stage) above. */
-const BOOK_LINES: Array<[BookKey, string]> = [
-  ["sales", "Sales"], ["cogs", "COGS"], ["rental", "Rental"], ["setup", "Setup"], ["transportFee", "Transport fee"],
-  ["transportSetup", "Transport setup & dismantle"], ["commission", "Commission"], ["merchandise", "Merchandise"],
-];
+   process problem (Events by stage) above. Only the lines someone keys by
+   hand; commission, merchandise and transport are worked out automatically. */
+const BOOK_LINES: Array<[BookKey, string]> = [["sales", "Sales"], ["rental", "Rental"], ["setup", "Setup"]];
 type BookKey = "sales" | "cogs" | "rental" | "setup" | "transportFee" | "transportSetup" | "commission" | "merchandise";
 interface BookRow { id: number; name: string; brand: string | null; endDate: string; soSen: number; lines: Record<BookKey, number> }
 
@@ -58,7 +56,7 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
           </tbody>
         </table>
       </div>
-      <p className="mt-1 text-[11px] text-ink-muted">Sales Orders = what was sold at the event, for comparison when Sales is not keyed. Transport fee, commission and merchandise are auto rows (a % of sales) on the event page; they count as keyed once saved.</p>
+      <p className="mt-1 text-[11px] text-ink-muted">Sales Orders = what was sold at the event, for comparison when Sales is not keyed. Commission, merchandise and transport are worked out automatically, so they are not checked here.</p>
     </Panel>
   );
 }

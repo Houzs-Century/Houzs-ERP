@@ -16,7 +16,7 @@ import { Columns, HBars, TONE, PALETTE } from "../components/scm-v2/Charts";
 
 type StageDays = Partial<Record<string, { avgDays: number | null; cases: number }>>;
 type Supplier = {
-  creditor: string; name: string; receivedQty: number; receivedLines: number; cases: number; items: number;
+  creditor: string; codes: string[]; name: string; receivedQty: number; receivedLines: number; cases: number; items: number;
   ratePct: number | null; open: number; overdue: number; closed: number; avgDaysToClose: number | null; stageDays: StageDays;
   months: Array<{ month: string; receivedQty: number; items: number; ratePct: number | null }>;
 };
@@ -166,7 +166,7 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
             <table className="w-full border-collapse">
               <thead><tr><Th left>Supplier</Th><Th>Service case rate</Th><Th>Items in cases / received</Th><Th>Cases</Th><Th>Still open</Th><Th>Overdue</Th><Th>Average to close</Th></tr></thead>
               <tbody>{d.suppliers.map((s) => (
-                <tr key={s.creditor} className="cursor-pointer hover:bg-surface-2/50" onClick={() => openCases(`${s.name} · cases opened`, (c) => c.openedInPeriod && c.creditor === s.creditor)}>
+                <tr key={s.creditor} className="cursor-pointer hover:bg-surface-2/50" onClick={() => openCases(`${s.name} · cases opened`, (c) => c.openedInPeriod && !!c.creditor && s.codes.includes(c.creditor))}>
                   <Td left className="max-w-[260px] truncate text-primary">{s.name}</Td>
                   <Td className={s.ratePct == null ? "text-ink-muted" : s.ratePct > 100 ? "text-warning-text" : s.ratePct >= 5 ? "font-semibold text-err" : s.ratePct >= 2 ? "text-warning-text" : "text-synced"}>{s.ratePct == null ? "—" : s.ratePct > 100 ? "check code" : `${s.ratePct}%`}</Td>
                   <Td className="text-ink-secondary">{s.items} / {s.receivedQty.toLocaleString()}</Td>
