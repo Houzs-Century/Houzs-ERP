@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { assrBoardUnionSql, assrOpenCaseGuardSql } from "../src/scm/lib/assr-board-scope";
+import { assrBoardLocation, assrBoardUnionSql, assrOpenCaseGuardSql } from "../src/scm/lib/assr-board-scope";
 import { assrCompanySql } from "../src/routes/assr";
 
 /* THE DELIVERY PLANNING BOARD MUST NOT SHOW ANOTHER COMPANY'S SERVICE CASE.
@@ -96,5 +96,35 @@ describe("Delivery Planning board — scheduling a Service Case is scoped too", 
   test("unresolved company context does not blank the guard", () => {
     // A single-company install (or a cold start) must still be able to schedule.
     expect(assrOpenCaseGuardSql(ctx(undefined))).not.toContain("1=0");
+  });
+});
+
+/* The State / Postcode a Service-Case row shows used to be `location` — the
+   BRANCH it was raised at — so a Kuching case read "SRW" in State and fell into
+   the KL region. assrBoardLocation reads the customer instead: the case's own
+   address first, then the linked order. The function never sees `location`. */
+describe("assrBoardLocation — State/Postcode come from the customer, not the branch", () => {
+  test("the case's own addr4 is the state; addr3 leads with the postcode", () => {
+    expect(assrBoardLocation("93250 Kuching", "Sarawak", null, null)).toEqual({ state: "Sarawak", postcode: "93250" });
+  });
+
+  test("addr4 is canonicalised (Penang -> Pulau Pinang)", () => {
+    expect(assrBoardLocation("11950 Bayan Lepas", "Penang", null, null)).toEqual({ state: "Pulau Pinang", postcode: "11950" });
+  });
+
+  test("a non-state addr4 falls back to the linked order's state", () => {
+    expect(assrBoardLocation("50450 Kuala Lumpur", "Jalan Ampang", "Kuala Lumpur", "50450")).toEqual({ state: "Kuala Lumpur", postcode: "50450" });
+  });
+
+  test("a blank case address uses the linked order's state + postcode", () => {
+    expect(assrBoardLocation(null, null, "Johor", "81200")).toEqual({ state: "Johor", postcode: "81200" });
+  });
+
+  test("no case address and no linked order -> both null (blank, never the warehouse)", () => {
+    expect(assrBoardLocation(null, null, null, null)).toEqual({ state: null, postcode: null });
+  });
+
+  test("the service address wins over the linked order (that is where the team goes)", () => {
+    expect(assrBoardLocation("93250 Kuching", "Sarawak", "Selangor", "40000")).toEqual({ state: "Sarawak", postcode: "93250" });
   });
 });
