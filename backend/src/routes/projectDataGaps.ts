@@ -40,6 +40,7 @@ projectDataGaps.get("/", async (c) => {
   const COGS = "('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')";
   const sum = (where: string) =>
     `COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l WHERE l.project_id = p.id AND l.archived_at IS NULL AND ${where}), 0)`;
+  // company-scope: finance lines are read per project of the active company (activeCompanySql on p.company_id at the end of this statement).
   const rows = await c.env.DB.prepare(
     `SELECT p.id, p.code, p.name, p.brand, p.end_date,
             ${sum("l.kind = 'income'")} AS income,
