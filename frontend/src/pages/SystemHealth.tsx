@@ -25,6 +25,11 @@ import { useQuery, type QueryState } from "../hooks/useQuery";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../api/client";
 import { cn, relativeTime } from "../lib/utils";
+import { JobsPanel } from "./systemHealth/JobsPanel";
+import { QueuesPanel } from "./systemHealth/QueuesPanel";
+import { ServicesPanel } from "./systemHealth/ServicesPanel";
+import { DatabasePanel } from "./systemHealth/DatabasePanel";
+import { LoginsPanel } from "./systemHealth/LoginsPanel";
 
 // ---------------------------------------------------------------------------
 // System Health — owner-only ("*"). "Real data" phase 1, ported from Hookka's
@@ -224,8 +229,7 @@ export function SystemHealth() {
   const [showSetup, setShowSetup] = useState(false);
   const { can } = useAuth();
   // Client errors panel is super-admin only (the backend gates /summary on "*"
-  // too). Hard-gate the query so a non-owner with system_health page access
-  // never fires a 403 fetch.
+  // too). Hard-gate the query so a caller without "*" never fires a 403 fetch.
   const isOwner = can("*");
 
   const live = useQuery<LivePayload>("/api/admin/health/live", () => api.get("/api/admin/health/live"));
@@ -289,7 +293,7 @@ export function SystemHealth() {
       <PageHeader
         eyebrow="System · Health"
         title="System Health"
-        description="Live database and connection health, plus the audit trail of who changed what. Restricted to positions granted System Health access."
+        description="Live database and connection health, plus the audit trail of who changed what. Restricted to roles granted View IT pages."
         actions={
           <div className="flex items-center gap-3">
             <button
@@ -514,6 +518,12 @@ export function SystemHealth() {
                 Supabase off the micro tier.
               </p>
             </div>
+
+            <JobsPanel />
+            <QueuesPanel />
+            <ServicesPanel />
+            <DatabasePanel />
+            <LoginsPanel />
 
             {/* Audit feed — who changed what, from audit_events. */}
             <div className="rounded-lg border border-border bg-surface px-5 py-5 shadow-stone">

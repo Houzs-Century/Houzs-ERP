@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { logProjectActivity } from "./projects";
+import { recordAi } from "./aiUsage";
 
 /**
  * Read the total booth area (m²) off an uploaded Display Floor Plan.
@@ -196,7 +197,8 @@ export async function detectFloorplanSize(
     : "";
 
   try {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    const usage = { env, feature: "floorplan_size", model: "claude-sonnet-4-6", companyId: null, userId: opts.userId, waitUntil: null };
+    const resp = await recordAi(usage, fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -211,7 +213,7 @@ export async function detectFloorplanSize(
         ],
       }),
       signal: AbortSignal.timeout(45_000),
-    });
+    }));
     if (!resp.ok) {
       const detail = await resp.text().catch(() => "");
       console.error("[floorplan-size] anthropic", resp.status, detail.slice(0, 300));

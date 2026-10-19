@@ -26,6 +26,7 @@ import {
   setItemCartonQty,
 } from "../services/assr";
 import { normalizeSlaHours } from "../services/assrSla";
+import { assrWindow } from "./lib/assr-window";
 import { openSupplierReturnRoute, patchSupplierReturnRoute, archiveSupplierReturnRoute } from "../services/assrSupplierReturns";
 import { reopenCaseRoute } from "../services/assrReopen";
 import { runSlaEscalation } from "../services/assrEscalation";
@@ -269,7 +270,7 @@ function assrVisibilitySql(
 /** The row-level scope for the aggregate endpoints, resolved once per request.
  *  Returns a builder because the same scope has to be rendered against several
  *  table aliases within one handler. */
-async function assrVisibilityScope(c: {
+export async function assrVisibilityScope(c: {
   get(key: "user"): unknown;
   env: Env;
 }): Promise<(prefix?: string) => { sql: string; binds: string[] }> {
@@ -643,9 +644,10 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
   // to cases whose complaint / creation date falls inside the window —
   // previously they were always "real-time across all data" and so
   // looked frozen as the user switched periods.
-  const sinceDays = Math.min(730, Math.max(1, parseInt(c.req.query("since_days") || "90", 10) || 90));
+  const win = assrWindow({ from: c.req.query("from"), to: c.req.query("to"), since_days: c.req.query("since_days") });
+  const sinceDays = win.days;
   const periodAnd =
-    `AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`;
+    `AND ${win.sql("COALESCE(c.complained_date, c.created_at)")}`;
   // Allowed-companies predicates ("" when unresolved) — one per table alias
   // used below.
   const coC = assrCompanySql(c, "c.company_id");
@@ -799,7 +801,7 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
         AND closed_at IS NOT NULL
         AND julianday(closed_at) > julianday(created_at)
         AND (julianday(closed_at) - julianday(created_at)) < 365
-        AND closed_at >= date('now', '-${sinceDays} days')${coBare}${visBare.sql}`
+        AND ${win.sql("closed_at")}${coBare}${visBare.sql}`
     )
       .bind(...visBare.binds)
       .first<{ avg_days: number | null }>(),
@@ -2283,14 +2285,15 @@ app.post("/run-escalation", requirePermission("service_cases.manage"), async (c)
 // ── Quality metrics (for manager dashboard) ───────────────────
 
 app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
-  const sinceDays = Math.min(730, Math.max(1, parseInt(c.req.query("since_days") || "90", 10) || 90));
+  const win = assrWindow({ from: c.req.query("from"), to: c.req.query("to"), since_days: c.req.query("since_days") });
+  const sinceDays = win.days;
   // Period filter falls back to created_at when complained_date is
   // NULL — legacy rows + manual SQL inserts often skipped the intake
   // date, so a strict `complained_date >= …` was silently excluding
   // them from EVERY window (which makes 30d / 90d / 365d look identical
   // because the same too-small subset survives the filter).
   const sinceFor = (prefix = "") =>
-    `AND COALESCE(${prefix}complained_date, ${prefix}created_at) >= date('now', '-${sinceDays} days')`;
+    `AND ${win.sql(`COALESCE(${prefix}complained_date, ${prefix}created_at)`)}`;
   const sinceClause = sinceFor();
   // Allowed-companies predicates per table alias ("" when unresolved).
   const coBare = assrCompanySql(c);
@@ -2493,6 +2496,8 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
 
   return c.json({
     since_days: sinceDays,
+    from: win.from,
+    to: win.to,
     headline,
     ncr: ncr.results ?? [],
     issue_categories: issueCategories.results ?? [],
@@ -2543,7 +2548,8 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
   if (!DRILL_METRICS.has(metric as any)) {
     return c.json({ error: `Unknown metric: ${metric}` }, 400);
   }
-  const sinceDays = Math.min(730, Math.max(1, parseInt(c.req.query("since_days") || "90", 10) || 90));
+  const win = assrWindow({ from: c.req.query("from"), to: c.req.query("to"), since_days: c.req.query("since_days") });
+  const sinceDays = win.days;
   const limit = Math.min(parseInt(c.req.query("limit") || "100", 10), 500);
 
   // Collect WHERE fragments + their bind values together so user input
@@ -2581,19 +2587,19 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
       conds.push(assrOpenStageSql("c"));
       break;
     case "total_period":
-      conds.push(`COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
+      conds.push(`${win.sql("COALESCE(c.complained_date, c.created_at)")}`);
       break;
     case "closed_period":
-      conds.push(`c.stage = 'completed' AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
+      conds.push(`c.stage = 'completed' AND ${win.sql("COALESCE(c.complained_date, c.created_at)")}`);
       break;
     case "breach_period":
       conds.push(`${assrOpenStageSql("c")}
         AND c.deadline_at IS NOT NULL
         AND datetime('now') > c.deadline_at
-        AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
+        AND ${win.sql("COALESCE(c.complained_date, c.created_at)")}`);
       break;
     case "qa_passed":
-      conds.push(`c.quality_review_passed = 1 AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
+      conds.push(`c.quality_review_passed = 1 AND ${win.sql("COALESCE(c.complained_date, c.created_at)")}`);
       break;
     case "over_1_month":
       conds.push(`${assrOpenStageSql("c")}
@@ -2623,7 +2629,7 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
       if (!name) {
         return c.json({ error: "We couldn't load that customer's cases. Please try again." }, 400);
       }
-      conds.push(`c.customer_name = ? AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
+      conds.push(`c.customer_name = ? AND ${win.sql("COALESCE(c.complained_date, c.created_at)")}`);
       binds.push(name);
       if (phone) {
         conds.push("c.phone = ?");
@@ -2643,7 +2649,7 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
         return c.json({ error: "We couldn't load that item's cases. Please try again." }, 400);
       }
       joinItems = true;
-      conds.push(`i.item_code = ? AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
+      conds.push(`i.item_code = ? AND ${win.sql("COALESCE(c.complained_date, c.created_at)")}`);
       binds.push(code);
       break;
     }

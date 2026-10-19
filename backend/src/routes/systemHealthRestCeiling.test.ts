@@ -96,7 +96,7 @@ type CeilingBody = {
 
 async function measure(tables: Record<string, number>, cap: number | null) {
   EDGE = fakeEdge(tables, cap);
-  const res = await appWith(['*']).request('/rest-page-ceiling');
+  const res = await appWith(['*', 'it.view']).request('/rest-page-ceiling');
   expect(res.status).toBe(200);
   return (await res.json()) as CeilingBody;
 }

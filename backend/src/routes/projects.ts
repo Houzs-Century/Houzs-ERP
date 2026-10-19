@@ -1,9 +1,9 @@
-import { Hono } from "hono";
-import type { Context } from "hono";
+import { Hono, type Context } from "hono";
 import type { Env } from "../types";
 import { requirePermission, requireAnyPermission, requirePageAccess } from "../middleware/auth";
 import { parseFairSheet, eventToFinanceLines } from "../services/agents/fair-report-parse";
 import { buildFileBlocks } from "../services/vision-blocks";
+import { recordAi, requestAiTag } from "../services/aiUsage";
 import { reconcileSchedule, type ProjRow } from "../services/agents/schedule-reconcile";
 import {
   DEFECT_REVIEW_REGION_STATES,
@@ -850,14 +850,14 @@ app.post("/schedule-reconcile/scan", requirePermission("projects.write"), async 
 
   let extract: { organizer: string; events: { venue: string; startDate: string | null; endDate: string | null; status?: string | null }[] };
   try {
-    const resp = await fetch(RECONCILE_URL, {
+    const resp = await recordAi(requestAiTag(c, "schedule_reconcile", RECONCILE_MODEL), fetch(RECONCILE_URL, {
       method: "POST",
       headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({
         model: RECONCILE_MODEL, max_tokens: 2000, system: sys,
         messages: [{ role: "user", content: [...blocks, { type: "text", text: "Extract the schedule as JSON." }] }],
       }),
-    });
+    }));
     if (!resp.ok) return c.json({ error: "extract_failed", reason: `vision ${resp.status}` }, 502);
     const data = (await resp.json()) as { content?: { type: string; text?: string }[] };
     const text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
@@ -906,14 +906,14 @@ app.post("/setup-invoice/scan", requirePermission("projects.write"), async (c) =
 
   let parsed: { vendor?: string | null; currency?: string; totalRM?: number; items?: { description?: string; amountRM?: number }[] };
   try {
-    const resp = await fetch(RECONCILE_URL, {
+    const resp = await recordAi(requestAiTag(c, "setup_invoice_extract", RECONCILE_MODEL), fetch(RECONCILE_URL, {
       method: "POST",
       headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({
         model: RECONCILE_MODEL, max_tokens: 2000, system: sys,
         messages: [{ role: "user", content: [...blocks, { type: "text", text: "Extract the invoice as JSON." }] }],
       }),
-    });
+    }));
     if (!resp.ok) return c.json({ error: "extract_failed", reason: `vision ${resp.status}` }, 502);
     const data = (await resp.json()) as { content?: { type: string; text?: string }[] };
     const text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");

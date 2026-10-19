@@ -39,7 +39,7 @@ const pagedArm = (): string => {
 describe('SO list second-level filter wiring', () => {
   test('prepares the one read from the repeated f param and returns its refusal', () => {
     const arm = pagedArm();
-    expect(arm).toContain('prepareSoListRead(sb, c, readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k))');
+    expect(arm).toContain('prepareSoListRead(sb, c, readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k), canViewScmFinance(c))');
     expect(arm).toContain('if (!read.ok) return c.json(read.body, read.status)');
     expect(readSource).toContain('prepareSoListFilters(sb, p.f, houzsUserId, now)');
     expect(readSource).toContain('if (!soFilter.ok) return soFilter;');

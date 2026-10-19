@@ -5,7 +5,7 @@ import { secureHeaders } from "hono/secure-headers";
 import type { Env } from "./types";
 import { GIT_SHA, resolveBuildSha } from "./build-info";
 import { restKeyClaims, restUrlRef } from "./db/rest-key-claims";
-import { auth, requirePermission, requireAnyPermission, requireScmAccess, requirePageAccessOrSalesView } from "./middleware/auth";
+import { auth, requirePermission, requireAnyPermission, requireScmAccess, requirePageAccessOrSalesView, requirePageAccess } from "./middleware/auth";
 import { TRANSIENT_CONN_RE } from "./db/d1-compat";
 // Ported 2990's SCM modules (furniture supply chain). Talk to the `scm` Postgres
 // schema via supabase-js; namespaced under /api/scm/*, owner-only during the port.
@@ -20,6 +20,8 @@ import assr from "./routes/assr";
 import logs from "./routes/logs";
 import auditRoutes from "./routes/audit";
 import systemHealthRoutes from "./routes/systemHealth";
+import aiUsageRoutes from "./routes/aiUsage";
+import ocrDashboardRoutes from "./routes/ocrDashboard";
 // Self-hosted client error reporting (no Sentry): the SPA's global reporter
 // POSTs batched uncaught errors here; the daily 02:00 cron mails IT a digest.
 import clientErrors from "./routes/clientErrors";
@@ -47,6 +49,9 @@ import { projectPosSales } from "./routes/project-pos-sales";
 import { posAdmin } from "./routes/pos-admin";
 import { posDevice } from "./routes/pos-device";
 import projectsOutstanding from "./routes/projectsOutstanding";
+import { projectDataGaps } from "./routes/projectDataGaps";
+import { projectOverview } from "./routes/projectOverview";
+import assrQuality from "./routes/assrQuality";
 // Sales entries (/api/sales) is retained as a DEPENDENCY of Projects — the
 // Projects page embeds the sales-entry EntryPanel + submit/void/delete flow.
 // It has no standalone nav/route after the cutover.
@@ -148,6 +153,7 @@ import { runPosAlerts } from "./services/posAlerts";
 // slot gated to Sundays — no new cron trigger. getSupabaseService is the same
 // service client scan-so.ts uses internally (serviceClient(env)).
 import { distillAllSalespersonRules, warmCatalogCacheForCron, processScanQueueMessage } from "./scm/routes/scan-so";
+import { CLAUDE_MODEL } from "./scm/lib/scan-ocr";
 import { runAgentHeartbeat } from "./services/agent-scheduler";
 import { getSupabaseService } from "./db/supabase";
 import { sweepStockClose } from "./acc/stock-close";
@@ -168,6 +174,8 @@ import { runDoMirrorSync } from "./services/doMirror";
 import { runPOPull, runPODocsPull } from "./services/po";
 import { runSOSnapshot, runPOSnapshot } from "./services/acSnapshot";
 import { isAutoCountSyncDisabled } from "./services/autocount";
+import { jobTracker, purgeOldJobRuns } from "./services/jobRuns";
+import { pruneFailedLogins } from "./services/failedLogins";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -435,10 +443,15 @@ app.use("/api/projects/*", venturePortalKick());
 // Mount the Lead Time Portal first so /api/assr/portal/* doesn't
 // fall through into the catch-all /:id handler on the main module.
 app.route("/api/assr/portal", assrPortal);
+// Quality Overview's period summary and supplier figures; before the Service
+// Case router so its "/:id" does not take the path. See routes/assrQuality.ts.
+app.route("/api/assr/quality-overview", assrQuality);
 app.route("/api/assr", assr);
 app.route("/api/logs", logs);
 app.route("/api/audit", auditRoutes);
 app.route("/api/admin/health", systemHealthRoutes);
+app.route("/api/admin/ai-usage", aiUsageRoutes);
+app.route("/api/admin/ocr", ocrDashboardRoutes);
 // Behind the /api/* auth gate: intake needs a session (identity is stamped from
 // it, never from the body); the /summary read is super-admin inside the router.
 app.route("/api/client-errors", clientErrors);
@@ -467,6 +480,14 @@ app.route("/api/presence", presence);
 // Mounted at the EXACT path BEFORE the projects router so its "/:id" catch-all
 // does not swallow "outstanding-tasks" as an id (owner/admin Reminder view).
 app.route("/api/projects/outstanding-tasks", projectsOutstanding);
+// Finished events with incomplete books (Project Overview, Overview). Same exact-
+// path-first reason as above; finance-viewer rule inside. See routes/projectDataGaps.ts.
+app.use("/api/projects/data-gaps/*", requirePageAccess("projects.finances"));
+app.route("/api/projects/data-gaps", projectDataGaps);
+// Every project with its keyed books and its Sales Orders, for Project Overview.
+// Same exact-path-first reason and gate as data-gaps. See routes/projectOverview.ts.
+app.use("/api/projects/overview/*", requirePageAccess("projects.finances"));
+app.route("/api/projects/overview", projectOverview);
 app.route("/api/projects", projects);
 // The office side of a brand's share link (generate / revoke). Own file because
 // routes/projects.ts is at its size ceiling. See routes/brandShare.ts.
@@ -633,18 +654,20 @@ export default {
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
     // Cutover: cron services write via env.DB too — point it at Postgres.
     env = withPgDb(env);
+    // Each job's run lands in public.job_runs for System Health (services/jobRuns.ts).
+    const track = jobTracker(env);
     if (event.cron === "*/5 * * * *") {
       // Keep-warm: a trivial DB ping every 5 min keeps the Hyperdrive pool
       // alive through quiet periods so the first real request never hits a
       // reaped/cold connection. Cheap — SELECT 1.
       ctx.waitUntil(
-        env.DB.prepare("SELECT 1 AS ok").first().catch((e) => console.error("[cron keepwarm]", e))
+        track("keepwarm", () => env.DB.prepare("SELECT 1 AS ok").first()).catch((e) => console.error("[cron keepwarm]", e))
       );
       // Durable email: retry outbox rows whose immediate send failed. No-op
       // without RESEND_API_KEY; bounded to 25 rows / 3 attempts so a bad batch
       // can't stall the slot.
       ctx.waitUntil(
-        drainEmailOutbox(env)
+        track("email-outbox", () => drainEmailOutbox(env))
           .then((r) => {
             if (r.processed) console.log(`[cron email-outbox] processed=${r.processed} sent=${r.sent} failed=${r.failed}`);
           })
@@ -666,7 +689,7 @@ export default {
       // the env kill switch; best-effort so a pull failure never breaks the slot.
       if (!isAutoCountSyncDisabled(env)) {
         ctx.waitUntil(
-          runPull(env, "SCHEDULED")
+          track("so-pull", () => runPull(env, "SCHEDULED"))
             .then((r) => console.log(`[cron so-pull] ${r.message}`))
             .catch((e) => console.error("[cron so-pull]", e))
         );
@@ -676,7 +699,7 @@ export default {
       // off or the 2990 bridge is unconfigured, so this is safe to run always and
       // ships dark. Best-effort — a drain failure can never break the slot.
       ctx.waitUntil(
-        drainCommands(env)
+        track("amendment-cmd", () => drainCommands(env))
           .then((r) => {
             if (r.processed) console.log(`[cron amendment-cmd] ${JSON.stringify(r)}`);
           })
@@ -687,7 +710,7 @@ export default {
       // is off (which 0277 seeds it to). Best-effort — a drain failure can
       // never break the slot.
       ctx.waitUntil(
-        drainAutoCountOutbox(env)
+        track("ac-writeback", () => drainAutoCountOutbox(env))
           .then((r) => {
             /* A FAILED row means a document exists in the ERP and does not
                exist in AutoCount. That is the divergence this whole mechanism
@@ -710,7 +733,7 @@ export default {
          and its NULL are in the migration header), and a pg_cron job would be
          invisible to every gate this repo runs. Commission is settled monthly,
          so five minutes and ten seconds are the same number to it. */
-      const vpOrderDrain = drainVenturePortalOutbox(env)
+      const vpOrderDrain = track("vp-feed", () => drainVenturePortalOutbox(env))
         .then((r) => {
           /* A FAILED row means a sales order exists here and the portal has
              not got it — somebody's commission is computed from a document
@@ -726,7 +749,7 @@ export default {
          orders are waiting for, and its own failure is caught here, never
          there. The unchanged case is one md5 round trip. */
       const vpCatalogue = vpOrderDrain
-        .then(() => pushVenturePortalCatalogue(env, { force: false }))
+        .then(() => track("vp-catalogue", () => pushVenturePortalCatalogue(env, { force: false })))
         .then((r) => {
           /* failed = the portal refused the catalogue (400/413/422) and it
              will not be sent again until it changes or a person forces it;
@@ -770,7 +793,7 @@ export default {
          has to press "Match up lines" per document. Best-effort — a sweep
          failure can never break the slot. */
       ctx.waitUntil(
-        relinkHeldBackSweep(env)
+        track("ac-relink-sweep", () => relinkHeldBackSweep(env))
           .then((r) => {
             if (r.mode !== "off" && (r.scanned || r.linesStamped || r.docsEnqueued)) {
               console.log(`[cron ac-relink-sweep] ${JSON.stringify(r)}`);
@@ -787,7 +810,7 @@ export default {
          the book after import never reached us (docs/bugs/0810). Best-effort —
          a sweep failure can never break the slot. */
       ctx.waitUntil(
-        deliveryDateSweep(env)
+        track("ac-delivery-dates", () => deliveryDateSweep(env))
           .then((r) => {
             if (r.mode !== "off" && (r.linesWritten || r.headersWritten || r.remaining || r.hostError)) {
               console.log(`[cron ac-delivery-dates] ${JSON.stringify(r)}`);
@@ -815,7 +838,7 @@ export default {
          the recompute leaves no row and no retry, and that gap closes only by
          moving each route onto `runScmPgCommand`. */
       ctx.waitUntil(
-        drainStockAllocationRecompute(env)
+        track("so-allocation", () => drainStockAllocationRecompute(env))
           .then((r) => {
             /* A dead-lettered job is the one state that must NEVER read as
                routine: allocation has stopped and stays stopped until a human
@@ -832,7 +855,7 @@ export default {
       // instantly from a fresh plan. Best-effort + fire-and-forget — a slow or
       // failed run logs and never stalls the slot.
       ctx.waitUntil(
-        refreshAllMrpSnapshots(env, new Date().toISOString())
+        track("mrp-snapshot", () => refreshAllMrpSnapshots(env, new Date().toISOString()))
           .catch((e) => console.error("[cron mrp-snapshot]", e))
       );
     } else if (event.cron === "*/30 * * * *") {
@@ -849,7 +872,7 @@ export default {
          automatically would hide the failure behind a retry loop. Ships dark
          with the feed. */
       ctx.waitUntil(
-        reconcileVenturePortalOutbox(env, { includeFailed: false })
+        track("vp-reconcile", () => reconcileVenturePortalOutbox(env, { includeFailed: false }))
           .then((r) => {
             if (r.requeued) console.warn(`[cron vp-reconcile] requeued=${r.requeued}`);
           })
@@ -869,7 +892,7 @@ export default {
       // Cheap: one query over open stage_history rows, idempotent via the
       // alerts_fired bit-mask.
       ctx.waitUntil(
-        runAssrAlerts(env)
+        track("assr-alerts", () => runAssrAlerts(env))
           .then((r) =>
             console.log(
               `[cron assr-alerts] scanned=${r.cases_scanned} half=${r.half} appr=${r.approaching} breach=${r.breach}`
@@ -883,7 +906,7 @@ export default {
       // 48h overdue window gets its supervisors notified once (owner
       // 2026-09-06). Cheap: one indexed-ish SELECT, work only for due rows.
       ctx.waitUntil(
-        runOverdueEscalation(env)
+        track("ann-escalation", () => runOverdueEscalation(env))
           .then((r) => {
             if (r.escalated > 0 || r.scanned > 0)
               console.log(`[cron ann-escalation] ${JSON.stringify(r)}`);
@@ -891,7 +914,7 @@ export default {
           .catch((e) => console.error("[cron ann-escalation]", e))
       );
       ctx.waitUntil(
-        runScheduledLeadTimeActivations(env)
+        track("lead-time-schedule", () => runScheduledLeadTimeActivations(env))
           .then((r) => {
             if (r.fired > 0) console.log(`[cron lead-time-schedule] fired=${r.fired}`);
           })
@@ -902,7 +925,7 @@ export default {
       // engine registers; kill switch / pause honoured inside. Best-effort:
       // a heartbeat failure can never break the other crons.
       ctx.waitUntil(
-        runAgentHeartbeat(env)
+        track("agent-heartbeat", () => runAgentHeartbeat(env))
           .then((r) => {
             if (r.ran.length)
               console.log(
@@ -921,7 +944,7 @@ export default {
         const h = new Date(event.scheduledTime).getUTCHours();
         if (h >= 0 && h < 14 && env.ANTHROPIC_API_KEY) {
           ctx.waitUntil(
-            warmCatalogCacheForCron(env)
+            track("scan-so-warm", () => warmCatalogCacheForCron(env))
               .then((r) => console.log(`[cron scan-so warm] ${JSON.stringify(r)}`))
               .catch((e) => console.error("[cron scan-so warm]", e)),
           );
@@ -935,7 +958,7 @@ export default {
         const h = new Date(event.scheduledTime).getUTCHours();
         if (h === 0) {
           ctx.waitUntil(
-            runPushFleetReminders(env)
+            track("push-reminders", () => runPushFleetReminders(env))
               .then((r) => {
                 if (r.attempted || r.reason !== "apns_not_configured")
                   console.log(`[cron push-reminders] ${JSON.stringify(r)}`);
@@ -956,7 +979,7 @@ export default {
         const h = new Date(event.scheduledTime).getUTCHours();
         if (h === 0) {
           ctx.waitUntil(
-            reconcilePendingFairs(env)
+            track("fair-reconcile", () => reconcilePendingFairs(env))
               .then((r) => {
                 if (r.scanned > 0) console.log(`[cron fair-reconcile] ${JSON.stringify(r)}`);
               })
@@ -971,7 +994,7 @@ export default {
       // abandoned/failed uploads. Idempotent; best-effort (a failure can never
       // break the other crons).
       ctx.waitUntil(
-        reapOnce(getSupabaseService(env), env, `cron-${event.scheduledTime}`)
+        track("slip-reaper", () => reapOnce(getSupabaseService(env), env, `cron-${event.scheduledTime}`))
           .then((r) => {
             if (r.claimed > 0 || r.errors > 0)
               console.log(
@@ -983,7 +1006,7 @@ export default {
     } else if (event.cron === "0 2 * * *") {
       // Daily 02:00 UTC slot: SLA escalation + ASSR digest + project reminders.
       ctx.waitUntil(
-        runSlaEscalation(env)
+        track("sla", () => runSlaEscalation(env))
           .then((r) => console.log(`[cron sla] escalated ${r.escalated} case(s)`))
           .catch((e) => console.error("[cron sla]", e))
       );
@@ -994,7 +1017,7 @@ export default {
       // the 5-min SO pull. Same kill-switch + best-effort rules as the SO pull.
       if (!isAutoCountSyncDisabled(env)) {
         ctx.waitUntil(
-          runDoMirrorSync(env, "SCHEDULED")
+          track("do-mirror", () => runDoMirrorSync(env, "SCHEDULED"))
             .then((r) => console.log(`[cron do-mirror] ${r.message}`))
             .catch((e) => console.error("[cron do-mirror]", e))
         );
@@ -1005,9 +1028,9 @@ export default {
         // few thousand rows. Sequential so the two reloads never interleave, and
         // best-effort like every other job in this slot.
         ctx.waitUntil(
-          runPODocsPull(env, "SCHEDULED")
+          track("po-docs-pull", () => runPODocsPull(env, "SCHEDULED"))
             .then((r) => console.log(`[cron po-docs-pull] ${r.message}`))
-            .then(() => runPOPull(env, "SCHEDULED"))
+            .then(() => track("po-pull", () => runPOPull(env, "SCHEDULED")))
             .then((r) => console.log(`[cron po-pull] ${r.message}`))
             .catch((e) => console.error("[cron po-pull]", e))
         );
@@ -1016,20 +1039,20 @@ export default {
         // needs. Writes only its own tables, so a failure here cannot touch the
         // mirrors above.
         ctx.waitUntil(
-          runSOSnapshot(env, "SCHEDULED")
+          track("ac-snapshot-so", () => runSOSnapshot(env, "SCHEDULED"))
             .then((r) => console.log(`[cron ac-snapshot-so] ${r.message}`))
-            .then(() => runPOSnapshot(env, "SCHEDULED"))
+            .then(() => track("ac-snapshot-po", () => runPOSnapshot(env, "SCHEDULED")))
             .then((r) => console.log(`[cron ac-snapshot-po] ${r.message}`))
             .catch((e) => console.error("[cron ac-snapshot]", e))
         );
       }
       ctx.waitUntil(
-        runAssrDailyDigest(env)
+        track("assr-digest", () => runAssrDailyDigest(env))
           .then((r) => console.log(`[cron assr-digest] sent=${r.recipients} cases=${r.cases}`))
           .catch((e) => console.error("[cron assr-digest]", e))
       );
       ctx.waitUntil(
-        runProjectDueReminders(env)
+        track("proj-reminders", () => runProjectDueReminders(env))
           .then((r) =>
             console.log(
               `[cron proj-reminders] ${r.items} item(s) across ${r.recipients} recipient(s), ${r.sent} email(s) sent`
@@ -1041,7 +1064,7 @@ export default {
       // 24h (zero errors = no email), plus the 90-day retention sweep.
       // Best-effort — a digest failure can never break the other crons.
       ctx.waitUntil(
-        runClientErrorDigest(env)
+        track("client-errors", () => runClientErrorDigest(env))
           .then((r) => {
             if (r.errors || r.purged)
               console.log(
@@ -1064,10 +1087,10 @@ export default {
       // created_at against a shim-rewritten datetime('now'), which is this. When
       // a timestamptz column meets datetime('now'), compare in PG terms.
       ctx.waitUntil(
-        env.DB.prepare(
+        track("idempotency-sweep", () => env.DB.prepare(
           `DELETE FROM idempotency_keys WHERE created_at < now() - interval '24 hours'`,
         )
-          .run()
+          .run())
           .then((r) => {
             const n = r?.meta?.changes ?? 0;
             if (n) console.log(`[cron idempotency-sweep] purged ${n} expired key(s)`);
@@ -1085,7 +1108,7 @@ export default {
       // endpoint keeps serving the previous snapshot (or the live path) until the
       // next successful run.
       ctx.waitUntil(
-        (async () => {
+        track("ar-aging-refresh", async () => {
           await env.DB.prepare(
             "REFRESH MATERIALIZED VIEW CONCURRENTLY scm.mv_ar_aging",
           ).run();
@@ -1093,7 +1116,23 @@ export default {
             "UPDATE scm.mv_ar_aging_meta SET refreshed_at = now()",
           ).run();
           console.log("[cron ar-aging-refresh] refreshed scm.mv_ar_aging");
-        })().catch((e) => console.error("[cron ar-aging-refresh]", e)),
+        }).catch((e) => console.error("[cron ar-aging-refresh]", e)),
+      );
+      // job_runs retention: the System Health run log keeps 14 days.
+      ctx.waitUntil(
+        track("job-runs-retention", () => purgeOldJobRuns(env))
+          .then((n) => {
+            if (n) console.log(`[cron job-runs-retention] purged ${n} run(s)`);
+          })
+          .catch((e) => console.error("[cron job-runs-retention]", e)),
+      );
+      // Failed sign-ins (System Health): kept 90 days.
+      ctx.waitUntil(
+        track("failed-logins-retention", () => pruneFailedLogins(env))
+          .then((n) => {
+            if (n) console.log(`[cron failed-logins-retention] purged ${n} row(s)`);
+          })
+          .catch((e) => console.error("[cron failed-logins-retention]", e)),
       );
       // Weekly: re-distill every salesperson's scan-so OCR rules + the
       // __GLOBAL__ alias dictionary. Reuses the daily 02:00 slot, gated to
@@ -1103,19 +1142,16 @@ export default {
       // so a distill failure can never break the scheduled handler.
       if (new Date(event.scheduledTime).getUTCDay() === 0) {
         ctx.waitUntil(
-          (async () => {
-            try {
-              const branding = await getBranding(env);
-              const summary = await distillAllSalespersonRules(
-                getSupabaseService(env),
-                env.ANTHROPIC_API_KEY,
-                branding.companyName,
-              );
-              console.log("[scan-so weekly distill]", JSON.stringify(summary));
-            } catch (e) {
-              console.error("[scan-so weekly distill]", e);
-            }
-          })(),
+          track("scan-so-distill", async () => {
+            const branding = await getBranding(env);
+            const summary = await distillAllSalespersonRules(
+              getSupabaseService(env),
+              env.ANTHROPIC_API_KEY,
+              branding.companyName,
+              { env, feature: "scan_so_distill", model: CLAUDE_MODEL, companyId: null, userId: null, waitUntil: null },
+            );
+            console.log("[scan-so weekly distill]", JSON.stringify(summary));
+          }).catch((e) => console.error("[scan-so weekly distill]", e)),
         );
       }
     } else if (event.cron === "5 16 * * *") {
@@ -1127,7 +1163,7 @@ export default {
       // outcome (including the quiet 'unchanged') lands in
       // scm.acc_stock_close_runs — the visible trail the owner asked for.
       ctx.waitUntil(
-        (async () => {
+        track("stock-close", async () => {
           const sb = getSupabaseService(env);
           const { data, error } = await sb.schema("public").from("companies").select("id");
           if (error) throw new Error(`companies: ${error.message}`);
@@ -1138,12 +1174,12 @@ export default {
             `[cron stock-close] ${outcomes.length} check(s), ${changed.length} change(s)` +
             (changed.length ? ` — ${changed.map((o) => `${o.companyId}/${o.month}:${o.action}`).join(", ")}` : ""),
           );
-        })().catch((e) => console.error("[cron stock-close]", e)),
+        }).catch((e) => console.error("[cron stock-close]", e)),
       );
       // Scheduled supplier prices whose effective date is today (BUG-32): onto
       // the flat binding POs read, then the derived product cost SOs read.
       ctx.waitUntil(
-        applyDueSupplierPrices(getSupabaseService(env), { today: todayMyt() })
+        track("supplier-price-apply", () => applyDueSupplierPrices(getSupabaseService(env), { today: todayMyt() }))
           .then((r) => console.log(`[cron supplier-price-apply] ${r.bindings} binding(s), ${r.applied} applied, ${r.failed} failed`))
           .catch((e) => console.error("[cron supplier-price-apply]", e)),
       );

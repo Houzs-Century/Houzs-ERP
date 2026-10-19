@@ -34,6 +34,7 @@ import { Hono } from 'hono';
 import type { Env } from '../../types';
 import type { Variables } from '../env';
 import { supabaseAuth } from '../middleware/auth';
+import { recordAi, requestAiTag } from '../../services/aiUsage';
 import { scanTimer } from '../lib/scan-timing';
 import { keepScanFile } from '../lib/scan-files';
 import { activeCompanyId } from '../lib/companyScope';
@@ -310,9 +311,10 @@ scanLorryInvoice.post('/extract', async (c) => {
 
   let parsed: ExtractedRepairDoc | null = null;
   let errorMsg: string | null = null;
+  const usage = requestAiTag(c, 'scan_lorry_invoice', CLAUDE_MODEL);
 
   try {
-    const resp = await fetch(ANTHROPIC_URL, {
+    const resp = await recordAi(usage, fetch(ANTHROPIC_URL, {
       /* One document, one shot, an operator waiting. 110s matches scan-so's
          own ceiling and sits under the frontend's 120s scan allowance. */
       signal: AbortSignal.timeout(110_000),
@@ -335,7 +337,7 @@ scanLorryInvoice.post('/extract', async (c) => {
           ],
         }],
       }),
-    });
+    }));
 
     const bodyText = await resp.text();
     timer.mark('model');

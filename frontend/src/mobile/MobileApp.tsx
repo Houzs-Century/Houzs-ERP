@@ -68,6 +68,7 @@ const MobileScanInvoice = lazy(() => import("./MobileScanInvoice").then((m) => (
 const MobileGrnScan = lazy(() => import("./MobileGrnScan").then((m) => ({ default: m.MobileGrnScan })));
 const MobileConvertWizard = lazy(() => import("./MobileConvertWizard").then((m) => ({ default: m.MobileConvertWizard })));
 const MobilePOD = lazy(() => import("./MobilePOD").then((m) => ({ default: m.MobilePOD })));
+const MobileOverview = lazy(() => import("./MobileOverview").then((m) => ({ default: m.MobileOverview })));
 const MobileMileageCapture = lazy(() => import("./MobileMileageCapture").then((m) => ({ default: m.MobileMileageCapture })));
 const MobileProfile = lazy(() => import("./MobileProfile").then((m) => ({ default: m.MobileProfile })));
 const MobileStockCard = lazy(() => import("./MobileStockCard").then((m) => ({ default: m.MobileStockCard })));
@@ -153,6 +154,7 @@ type Screen =
   | { t: "product-requests" }
   | { t: "service"; startNew?: boolean }
   | { t: "delivery-planning"; completedDoNumber?: string | null }
+  | { t: "overview"; kind: "logistic" | "procurement" }
   | { t: "pms"; projectId?: number }
   | { t: "mail" }
   | { t: "roles" }
@@ -195,6 +197,8 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/roles") return { t: "roles" };
   if (path === "/titles") return { t: "titles" };
   if (path === "/scm/delivery-planning") return { t: "delivery-planning" };
+  if (path === "/scm/logistic-overview") return { t: "overview", kind: "logistic" };
+  if (path === "/scm/procurement-overview") return { t: "overview", kind: "procurement" };
   if (path === "/scm/warehouses/racks") return { t: "racks" };
   if (path === "/scm/payment-requests") return { t: "payment-requests" };
   if (path === "/scm/product-requests") return { t: "product-requests" };
@@ -385,6 +389,7 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
     { to: "/assr", label: "Service Case" },
   ]},
   { group: "Procurement & MRP", items: [
+    { to: "/scm/procurement-overview", label: "Procurement Overview" },
     { to: "/scm/mrp", label: "MRP · Stock Status" },
     { to: "/scm/purchase-orders", label: "Purchase Orders" },
     { to: "/scm/po-amendments", label: "PO Amendments" },
@@ -410,6 +415,7 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
     { to: "/scm/purchase-consignment-returns", label: "Purchase Consignment Returns" },
   ]},
   { group: "Logistics", items: [
+    { to: "/scm/logistic-overview", label: "Logistic Overview" },
     { to: "/scm/delivery-planning", label: "Delivery Planning" },
     { to: "/scm/fleet", label: "Fleet", gateVia: "/scm/delivery-maintenance" },
     /* KEPT, unlike the retired DESKTOP /scm/drivers page — mobile is NOT the
@@ -1049,6 +1055,7 @@ function MobileAppInner() {
     overlay = <MobilePOD docNo={screen.docNo} onBack={leavePod} onDone={donePod} />;
   }
   else if (screen.t === "mileage-capture") overlay = <MobileMileageCapture onBack={back} />;
+  else if (screen.t === "overview") overlay = <MobileOverview kind={screen.kind} onBack={back} />;
   else if (screen.t === "service") overlay = <MobileServiceCase onBack={back} startNew={screen.startNew} />;
   else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} completedDoNumber={screen.completedDoNumber ?? null} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber) => setScreen({ t: "pod", docNo: doNumber, from: "delivery-planning" })} />;
   else if (screen.t === "pms") overlay = <MobilePMS onBack={back} initialProjectId={screen.projectId} />;

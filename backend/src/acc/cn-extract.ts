@@ -13,6 +13,7 @@
 // ----------------------------------------------------------------------------
 
 import { isoOrNull, readPaperJson, rmToSen, type BillFile } from './bill-extract';
+import type { AiUsageTag } from '../services/aiUsage';
 
 export type CnLine = {
   /** The line's words as printed: the item's name and anything printed under it
@@ -122,9 +123,10 @@ export function coerceCnJson(raw: unknown): CnExtraction {
 export async function extractOneCreditNote(
   apiKey: string,
   files: BillFile[],
+  usage: AiUsageTag | null,
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ ok: true; extraction: CnExtraction } | { ok: false; reason: string }> {
-  const read = await readPaperJson(apiKey, files, PROMPT, fetchImpl);
+  const read = await readPaperJson(apiKey, files, PROMPT, usage, fetchImpl);
   if (!read.ok) return read;
   if (!read.json) return { ok: false, reason: 'The reader answered, but not with a credit note — try a clearer scan.' };
   return { ok: true, extraction: coerceCnJson(read.json) };

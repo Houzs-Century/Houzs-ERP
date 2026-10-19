@@ -9,6 +9,13 @@ export const SCAN_DOCUMENT_TYPES = ['SO', 'GR', 'PI'] as const;
 
 export type ScanDocumentType = (typeof SCAN_DOCUMENT_TYPES)[number];
 
+/** How each type reads on screen (the IT OCR page). */
+export const SCAN_DOCUMENT_TYPE_LABEL: Record<ScanDocumentType, string> = {
+  SO: 'Sales slip (SO)',
+  GR: 'Supplier delivery order (GR)',
+  PI: 'Supplier invoice (PI)',
+};
+
 // The column default across scm.scan_jobs / scm.so_scan_samples /
 // scm.so_scan_rules — the SO path threads this so nothing about SO changes.
 export const DEFAULT_SCAN_DOCUMENT_TYPE: ScanDocumentType = 'SO';

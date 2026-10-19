@@ -37,7 +37,7 @@ import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../li
 import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
 import { soStatusAfterProcessingDateChange } from '../lib/so-proceed-status-change';
-import { liveStatusForProcessingDate } from '../shared/so-proceeded-status';
+import { liveStatusForProcessingDate, processingDateOnConfirm } from '../shared/so-proceeded-status';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
 import { exemptionExpirySeed } from '../lib/so-exemption-expiry';
 import { soIsMigrated, withSoMigratedReadonly } from '../lib/migrated-so-readonly';
@@ -1192,7 +1192,7 @@ mfgSalesOrders.get('/', async (c) => {
        2026-09-14), tab, search (approval codes and phone included) and date
        window — for the page, the money strip and the line export
        (lib/so-list-read.ts). The status counts take its `scoped` half. */
-    const read = await prepareSoListRead(sb, c, readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k)), scopeIds, c.get('houzsUser')?.id ?? null, new Date());
+    const read = await prepareSoListRead(sb, c, readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k), canViewScmFinance(c)), scopeIds, c.get('houzsUser')?.id ?? null, new Date());
     if (!read.ok) return c.json(read.body, read.status);
     let q = read.header(orderSoList(fromSoList(sb, LIST_COLS, { count: 'exact' }), c.req.query('sort') ?? null));
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
@@ -1274,8 +1274,12 @@ mfgSalesOrders.get('/', async (c) => {
        still carries the true total via PostgREST's `Content-Range` header. */
     if (error && isRangeNotSatisfiable(error)) {
       data = [];
-      total = res.count ?? 0;
       error = null;
+      /* supabase-js drops the count on a 416, so a page past a narrowed set (a
+         column funnel leaving 8 orders, read at page 2) reported total 0 — ask. */
+      const head = res.count == null ? await read.header(fromSoList(sb, 'doc_no', { count: 'exact', head: true })) : null;
+      if (head?.error) error = head.error;
+      total = res.count ?? head?.count ?? 0;
     }
     /* Every status in the vocabulary gets a bucket (lowercase keys, the wire
        shape the tabs read), plus `other` for anything OUTSIDE it (legacy
@@ -2609,17 +2613,39 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      unit price from (product, fabric, variants). Drift > 0.5% rejects
      the request with HTTP 400. Manual override path (mfgSoPriceOverrides)
      stays intact at PATCH /:docNo/items/:itemId/override. */
-  const cachedConfig = await loadMaintenanceConfig(sb);
-  // Special Add-ons (migration 0134) — fetched once; each line's specials pool is
-  // built from these so POS add-ons price from special_addons, not the legacy pool.
-  const cachedSpecialAddons = await loadSpecialAddons(sb);
+  /* HC-0006 speed: these eight reads don't depend on each other, so they run
+     together (one round trip instead of eight in a row). None of them throws —
+     each returns its failure as data — so every refusal below still comes out
+     exactly as before. loadSellingSofaCombos CAN throw, so it stays awaited in its
+     old place, after the allowed-options refusal. */
+  const itemCodes = items.map((it) => String(it?.itemCode ?? ''));
+  const [
+    cachedConfig,
+    // Special Add-ons (migration 0134) — fetched once; each line's specials pool is
+    // built from these so POS add-ons price from special_addons, not the legacy pool.
+    cachedSpecialAddons,
+    { byCode: pmByCode, lookupError: pmErr },
+    cachedFabricAddonConfig,  // migration 0124 — fabric-tier Δ (SoCreateContext → local companyId)
+    cachedModelOverrides,  // migration 0175 — per-Model Δ
+    cachedCompartmentOverrides,  // migration 0025 — per-compartment Δ
+    dropdownErr,
+    productRowByCode,
+  ] = await Promise.all([
+    loadMaintenanceConfig(sb),
+    loadSpecialAddons(sb),
+    loadProductsAndModels(sb, itemCodes, companyId),
+    loadFabricTierAddonConfig(sb, companyId),
+    loadModelFabricTierOverrides(sb),
+    loadCompartmentFabricTierOverrides(sb),
+    validateSoDropdownFields(sb, body, companyId),
+    loadProductsByCodes(sb, itemCodes, companyId),
+  ]);
   /* PR #216 — allowed_options pre-flight. Run BEFORE the pricing recompute
      so a disallowed variant returns the precise field/value/allowed
      payload instead of getting silently re-priced. Batched (Loo 2026-06-06):
      2 `in()` queries for the whole order instead of 2 × lines — per-line
      loads helped a 6-item order blow the CF Workers subrequest cap.
      First violation across all lines short-circuits the request. */
-  const { byCode: pmByCode, lookupError: pmErr } = await loadProductsAndModels(sb, items.map((it) => String(it?.itemCode ?? '')), companyId);
   /* A code missing from the map because the READ FAILED is not a code the
      catalog has nothing to say about — the loop below would read the resulting
      nulls as "allowed" and create the order. Refuse instead. */
@@ -2640,19 +2666,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     }
   }
   const cachedCombos = await loadSellingSofaCombos(sb, c);  // Phase 4b — sofa selling recompute
-  const cachedFabricAddonConfig = await loadFabricTierAddonConfig(sb, companyId);  // migration 0124 — fabric-tier Δ (SoCreateContext → local companyId)
-  const cachedModelOverrides = await loadModelFabricTierOverrides(sb);  // migration 0175 — per-Model Δ
-  const cachedCompartmentOverrides = await loadCompartmentFabricTierOverrides(sb);  // migration 0025 — per-compartment Δ
 
   /* Loo 2026-06-05 — maintained-dropdown 409 gate. Runs BEFORE any side
      effect (customer upsert, PWP claims) so a rejected request leaves
      nothing behind. */
-  const dropdownErr = await validateSoDropdownFields(sb, body, companyId);
   if (dropdownErr) return c.json(dropdownErr, 409);
 
   // Subrequest diet (Loo 2026-06-06) — one `in()` query for every line's
   // product row instead of one query per line.
-  const productRowByCode = await loadProductsByCodes(sb, items.map((it) => String(it.itemCode ?? '')), companyId);
   const lineProducts = items.map((it) => productRowByCode.get(String(it.itemCode ?? '').trim()) ?? null);
   /* PWP Code Voucher (migration 0130) — code-driven grant + atomic claim. A
      reward line earns its per-SKU pwp_price_sen ONLY if it carries a valid
@@ -5058,13 +5079,20 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      Submitted, past the header-save rule that would have moved it (it fires on
      null -> date, and the date was already there). 171 orders on 2026-10-13.
      The confirm gate above still judges the CONFIRM; only the landing differs. */
+  let confirmProcRoll: { from: string | null; to: string } | null = null;
   if (isConfirm) {
-    const { data: dated, error: datedErr } = await scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_PROCESSING_DATE_COLUMN), co.companyId)
+    const { data: dated, error: datedErr } = await scopeToCompanyId(sb.from('mfg_sales_orders').select(`${SO_PROCESSING_DATE_COLUMN}, customer_delivery_date`), co.companyId)
       .eq('doc_no', docNo).maybeSingle();
     /* A failed read is not "no date": confirming into Submitted on a blip would
        file a proceeded order under the wrong tab, which is the defect itself. */
     if (datedErr) return c.json({ error: 'load_failed', reason: datedErr.message }, 500);
-    toStatus = liveStatusForProcessingDate((dated as Record<string, string | null> | null)?.[SO_PROCESSING_DATE_COLUMN] ?? null);
+    const datedRow = dated as Record<string, string | null> | null;
+    const storedProc = datedRow?.[SO_PROCESSING_DATE_COLUMN] ?? null;
+    /* HC-0113 — see processingDateOnConfirm. */
+    const roll = processingDateOnConfirm({ processingDate: storedProc, deliveryDate: datedRow?.customer_delivery_date, todayMY: todayMyt() });
+    if (!roll.ok) return c.json(validationFailedBody([roll.problem]), 422);
+    if (roll.write) confirmProcRoll = { from: storedProc, to: roll.write };
+    toStatus = liveStatusForProcessingDate(roll.write ?? storedProc);
   }
   /* ── Stock-location gate on the DRAFT -> live transition (owner 2026-08-13,
      company 1 only) — the SAME invariant the create path enforces. This is the
@@ -5078,6 +5106,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
     if (locationProblem) return c.json(validationFailedBody([locationProblem]), 422);
   }
   const patch: Record<string, unknown> = { status: toStatus, version: currentVersion + 1, updated_at: new Date().toISOString() };
+  if (confirmProcRoll) patch[SO_PROCESSING_DATE_COLUMN] = confirmProcRoll.to;
   if (toStatus === 'IN_PRODUCTION') {
     /* Column bound to the constant — see "WHY A CONSTANT" in
        shared/so-processing-date.ts. */
@@ -5225,6 +5254,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
       actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
       fieldChanges: [
         { field: 'status', from: fromStatus, to: toStatus },
+        ...(confirmProcRoll ? [{ field: 'processingDate', from: confirmProcRoll.from, to: confirmProcRoll.to }] : []),
         ...(voucherPlan ? soCancelVoucherAuditChanges(voucherPlan) : []),
       ],
       statusSnapshot: toStatus,

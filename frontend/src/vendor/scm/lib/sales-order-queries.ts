@@ -71,7 +71,7 @@ export const useMfgSalesOrders = (status?: string) =>
 // mfg_sales_orders.status column stores UPPERCASE — uppercase here to match.
 /** The Sales Order list's filter as query parameters, no paging: the list request
  *  and the list's export (so-list-export.ts) send exactly these. */
-export function soListSearchParams(f: { status?: string; q?: string; sort?: string; filters?: readonly SoListFilter[]; debtorNames?: string[]; currencies?: string[] }): URLSearchParams {
+export function soListSearchParams(f: { status?: string; q?: string; sort?: string; filters?: readonly SoListFilter[]; debtorNames?: string[]; currencies?: string[]; brandings?: string[]; cols?: Record<string, string[]> }): URLSearchParams {
   const usp = new URLSearchParams();
   if (f.status && f.status !== 'all') usp.set('status', f.status.toUpperCase());
   if (f.q && f.q.trim()) usp.set('q', f.q.trim());
@@ -81,12 +81,17 @@ export function soListSearchParams(f: { status?: string; q?: string; sort?: stri
   // Currency, JSON arrays (a customer name may contain a comma).
   if (f.debtorNames && f.debtorNames.length) usp.set('debtorNames', JSON.stringify(f.debtorNames));
   if (f.currencies && f.currencies.length) usp.set('currencies', JSON.stringify(f.currencies));
+  // Branding funnel (owner 2026-10-17) — backend lib/so-list-branding-funnel.ts.
+  if (f.brandings && f.brandings.length) usp.set('brandings', JSON.stringify(f.brandings));
+  // Every other server-run column funnel (owner 2026-10-17) — backend
+  // lib/so-list-column-funnels.ts. One JSON object keyed by grid column.
+  if (f.cols && Object.keys(f.cols).length) usp.set('cols', JSON.stringify(f.cols));
   return usp;
 }
 
-export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; enabled?: boolean; filters?: readonly SoListFilter[]; debtorNames?: string[]; currencies?: string[] }) {
-  const { page, pageSize, status, q, sort, enabled, filters = [], debtorNames, currencies } = params;
-  const usp = soListSearchParams({ status, q, sort, filters, debtorNames, currencies });
+export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; enabled?: boolean; filters?: readonly SoListFilter[]; debtorNames?: string[]; currencies?: string[]; brandings?: string[]; cols?: Record<string, string[]> }) {
+  const { page, pageSize, status, q, sort, enabled, filters = [], debtorNames, currencies, brandings, cols } = params;
+  const usp = soListSearchParams({ status, q, sort, filters, debtorNames, currencies, brandings, cols });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
   return useQuery({
@@ -95,7 +100,7 @@ export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number;
     // initial query already carries any localStorage-restored `sort` instead of
     // firing sort-less, getting aborted, and immediately re-firing with sort.
     enabled: enabled ?? true,
-    queryKey: ['mfg-sales-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? '', usp.getAll('f').join('|'), JSON.stringify(debtorNames ?? []), JSON.stringify(currencies ?? [])],
+    queryKey: ['mfg-sales-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? '', usp.getAll('f').join('|'), JSON.stringify(debtorNames ?? []), JSON.stringify(currencies ?? []), JSON.stringify(brandings ?? []), usp.get('cols') ?? ''],
     // statusCounts carries ONE bucket per backend SO_STATUSES entry (lowercase:
     // draft/confirmed/in_production/ready_to_ship/shipped/delivered/invoiced/
     // closed/on_hold/cancelled) plus `all` and `other` (legacy/unknown
@@ -107,6 +112,19 @@ export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number;
     staleTime: 30_000,
     retry: retryUnlessClientError,
     retryDelay: 800,
+  });
+}
+
+/* Every value each server-run Sales Order column funnel can take across the
+   caller's orders in the active company (backend lib/so-list-column-funnels.ts),
+   so a value that is not on the loaded page can still be picked. Keyed by grid
+   column. Values change slowly, so the read is cached five minutes. */
+export function useSoFunnelValues() {
+  return useQuery({
+    queryKey: ['mfg-sales-orders-funnel-values'],
+    queryFn: ({ signal }) => authedFetch<{ values: Record<string, string[]>; truncated: boolean }>('/mfg-sales-orders/funnel-values', { signal }),
+    staleTime: 5 * 60_000,
+    retry: retryUnlessClientError,
   });
 }
 

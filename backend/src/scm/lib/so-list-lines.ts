@@ -28,11 +28,12 @@ import { warehouseLabel } from './warehouse-label';
 import { bindingsFor } from './autocount-outbox';
 import { doCountsAsDelivered } from '../shared/do-shipped-states';
 import { buildVariantSummary } from '../shared/variant-summary';
-import { bookSpellingOrOwn, resolveAcAgent, AC_DEBTOR_CODE } from '../../services/autocount-writeback';
-import { LOCATION_MAP, VENUE_MAP, BRANDING_MAP } from '../../services/autocount-master-maps';
+import { bookSpellingOrOwn } from '../../services/autocount-writeback';
+import { LOCATION_MAP } from '../../services/autocount-master-maps';
+import { soBookHeaderOf } from './so-book-header';
 import { bookLineItem } from '../../services/autocount-book-item';
 import { soDeliverableRemaining } from '../routes/delivery-orders-mfg';
-import type { SoBookHeader, SoListLine } from './so-line-export-columns';
+import type { SoListLine } from './so-line-export-columns';
 
 export const SO_LINE_READ_COLS =
   'id, doc_no, line_no, created_at, item_code, description, description2, variants, remark, item_group, uom, ' +
@@ -242,13 +243,7 @@ export async function attachSoLines(
     const docNo = r.doc_no ?? '';
     const inBook = acDocNo.get(docNo) != null;
     const staffName = r.salesperson_id ? text(staff.byId.get(r.salesperson_id)?.name) : null;
-    const book: SoBookHeader = {
-      ac_doc_no: acDocNo.get(docNo) ?? (docNo || null),
-      ac_debtor_code: inBook ? (text(r.debtor_code) ?? AC_DEBTOR_CODE) : text(r.debtor_code),
-      ac_agent: inBook ? resolveAcAgent(r.agent, staffName) : (text(r.agent) ?? staffName),
-      ac_venue: inBook ? bookSpellingOrOwn(r.venue, VENUE_MAP) : text(r.venue),
-      ac_branding: inBook ? bookSpellingOrOwn(r.branding, BRANDING_MAP) : text(r.branding),
-    };
+    const book = soBookHeaderOf(r, acDocNo.get(docNo) ?? null, staffName);
     const lines: SoListLine[] = [...(byDoc.get(docNo) ?? [])].sort(byLinePosition).map((l) => {
       const item = inBook
         ? bookLineItem({ itemCode: l.item_code, description: l.description, category: l.item_group, uom: l.uom }, null, { bindings })
