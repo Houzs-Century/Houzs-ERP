@@ -3752,6 +3752,11 @@ function buildDraftSoBodyFromSlip(
        resolves it from the salesperson's current exhibition project — which is
        why a no-match must stay null rather than be coerced. */
     venue: parsed.locationMatch?.value ?? null,
+    /* The slip's own written date. With the venue above it is where the order's
+       FAIR is looked up first (owner 2026-10-19 — fair-binding.ts::
+       resolveScanFair), and a fair found that way takes it as the Fair Day. Read
+       only for a scan; checked there (a misread or future date counts as none). */
+    slipDate: parsed.slipDate ?? null,
     // Payment header fields (validated matches; the operator reviews the
     // draft before it becomes a real order). No payments[] in the create
     // body — the ledger rows are booked AFTER the create by

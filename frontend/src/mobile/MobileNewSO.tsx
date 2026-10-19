@@ -229,7 +229,7 @@ type SoHeader = {
   venue_id?: string | null;
   venueId?: string | null;
   fair?: LinkedFair | null; // the linked event (owner 2026-09-24); absent on an older server
-  fair_date?: string | null; // the day of that event the order was written on
+  fair_date?: string | null; fair_match?: string | null; // the day of that event; how it was linked
   sales_location?: string | null;
   note: string | null;
   address1: string | null;
@@ -989,7 +989,7 @@ export function MobileNewSO({
         setPrefillVenueId(h.venueId ?? h.venue_id ?? null);
         setPrefillVenueName(h.venue ?? "");
         setOrderDate(h.so_date ? h.so_date.slice(0, 10) : null);
-        setLinkedFair(h.fair ?? null); setLinkedDay(h.fair_date ?? null);
+        setLinkedFair(h.fair ?? null); setLinkedDay(h.fair_date ?? null); setNoFair(h.fair_match === "NO_FAIR");
         setProcDate((h.processing_date ?? "").slice(0, 10));
         setOrigProcDate((h.processing_date ?? "").slice(0, 10));
         setDelivDate((h.customer_delivery_date ?? "").slice(0, 10));
@@ -1969,7 +1969,7 @@ export function MobileNewSO({
     try {
       if (isEdit && docNo) {
         // The picked fair EVENT rides the edit too (owner 2026-09-24) — fairPick.ts.
-        const patch: Record<string, unknown> = { ...fairEditPatch(fairEventOf(fairPick)), ...soHeaderPatchFrom(headerPatchInput) };
+        const patch: Record<string, unknown> = { ...fairEditPatch(fairEventOf(fairPick)), ...soHeaderPatchFrom(headerPatchInput), ...(isDraftSo && noFair ? { noFair: true } : {}) };
         /* AMENDMENT MODE (Phase 1-C, desktop SalesOrderDetail.submitAmendment
            parity) — the SO is processing-locked but amendment_eligible. The edit
            splits in two:
@@ -2410,7 +2410,7 @@ export function MobileNewSO({
                   </Field>
                 </div>
                 {autoFair.hint}
-                {!isEdit && !fairEventOf(fairPick) && (
+                {(!isEdit || isDraftSo) && !fairEventOf(fairPick) && ( // a draft says No fair here too (owner 2026-10-19)
                   <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginTop: 6 }}>
                     <input type="checkbox" checked={noFair} disabled={identityLocked} onChange={(e) => setNoFair(e.target.checked)} />
                     <span>No fair (showroom / direct sale)</span>

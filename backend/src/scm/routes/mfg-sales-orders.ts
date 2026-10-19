@@ -166,8 +166,8 @@ import {
   type VenueSource,
   type VenueBindingSb,
 } from '../lib/venue-binding';
-import { bindVenueOnCreate, fairLinkForEdit, fairRequiredProblem, loadLinkedFair, resolveFairForCreate, resolveFairForSave, type FairDb } from '../lib/fair-binding';
-import { fairDayMissing, fairDayOnSave, fairPickedPeriod, fairWhyOf } from '../lib/fair-options';
+import { bindVenueOnCreate, fairConfirmProblems, fairLinkForEdit, fairLinkOnCreate, fairRequiredProblem, loadLinkedFair, resolveFairForSave, type FairDb } from '../lib/fair-binding';
+import { fairDayMissing, fairDayOnSave, fairWhyOf } from '../lib/fair-options';
 import { loadVpBrandAsk, type VpBrandDb } from '../lib/vp-brand-ask';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
 /* What changed on a LINE, for the audit trail — derived from the update about to
@@ -1591,7 +1591,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        LIST route reads that view, so the base-table detail read is the only
        place they are valid. (`proceeded_at` was appended here until 2026-08-18,
        feeding a "Proceed Date" the desktop deleted on 2026-06-05.) */
-    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno, collaborator_staff_ids, access_staff_ids, open_to_all, project_id, fair_date`).eq('doc_no', docNo), c).maybeSingle(),
+    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno, collaborator_staff_ids, access_staff_ids, open_to_all, project_id, fair_match, fair_date`).eq('doc_no', docNo), c).maybeSingle(),
     /* line_no = the persisted listing order (0165); NULLS LAST so pre-0165
        docs fall back to created_at + the rule re-derive below. */
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -4568,43 +4568,18 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      venue and a date, and must still record WHY it has no fair link rather than
      leaving a blank that reads the same as "nobody has looked".
 
-     The automatic PMS binding above is a real link when it fired, so it stands
-     when the picker resolves nothing. Non-fatal throughout — no fair-link
-     problem may block a sale, and the nightly reconcile retries PENDING.
-     Where the brand cannot pick the booth, the KEYER's own booth does (owner
-     2026-10-19) — resolveFairForCreate. */
+     Non-fatal throughout — no fair-link problem may block a sale, and the
+     nightly reconcile retries PENDING. The rule — No fair, a scan's slip place
+     and date then the KEYER's fair (owner 2026-10-19), a typed pick, the brand's
+     booth then the keyer's own — is fair-binding.ts::fairLinkOnCreate. */
   {
-    const fair = await resolveFairForCreate({
-      keyerId: Number(c.get('houzsUser')?.id ?? NaN),
-      db: c.env.DB as unknown as FairDb,
-      companySql: activeCompanySql(c, 'p.company_id'),
-      venue: resolvedVenueName,
-      organizer:
-        typeof body.fairOrganizer === 'string' && body.fairOrganizer.trim()
-          ? body.fairOrganizer.trim()
-          : null,
-      /* The PICKED row's period, straight off the dropdown the operator used.
-         Sent since 2026-09-19 because the server has no other way to know WHICH
-         occurrence they meant: the order date is the day it was keyed, which for
-         a fair written up afterwards is not a day that fair was on. With the
-         period the pick resolves exactly; without it the server falls back to
-         the venue window, which is a guess between the fairs that were there. */
-      picked: fairPickedPeriod(body),
-      soDate: soDateForVenue,
-      brand: effectiveBrand,
+    const fairLink = await fairLinkOnCreate({
+      db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'),
+      companyCode: c.get('companyCode'), scanned: c.auditSource === 'scan',
+      keyerId: Number(c.get('houzsUser')?.id ?? NaN), body, venue: resolvedVenueName,
+      soDate: soDateForVenue, brand: effectiveBrand, bindingProjectId: projectIdToStamp,
     });
-    // Owner 2026-09-26: an explicit No-fair / showroom sale is a DECIDED state,
-    // not an unresolved blank — record it as NO_FAIR with no project link so the
-    // Sales Report can tell "deliberately no fair" from "not yet attributed".
-    const linkedId = body.noFair === true ? null : (fair.projectId ?? projectIdToStamp);
-    const fairMatch = body.noFair === true ? 'NO_FAIR' : (linkedId != null ? 'PICKED' : fair.match);
-    await scopeToCompany(
-      sb
-        .from('mfg_sales_orders')
-        .update({ project_id: linkedId, fair_match: fairMatch })
-        .eq('doc_no', docNo),
-      c,
-    );
+    await scopeToCompany(sb.from('mfg_sales_orders').update(fairLink).eq('doc_no', docNo), c);
   }
 
   /* PWP Code Voucher (migration 0130) — carry forward the un-applied reserved
@@ -5088,6 +5063,12 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
   const isConfirm = fromNorm === 'DRAFT' && toStatus === 'CONFIRMED';
   if (isConfirm) {
     const confirmProblems = await soConfirmProblemsForDoc(sb, docNo);
+    /* ...and the fair (owner 2026-10-19): a fair or No fair; a scan's booth needs
+       the person who scanned it on Sales Attending — fair-binding.ts. */
+    confirmProblems.push(...await fairConfirmProblems({
+      sb, db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), companyCode: c.get('companyCode'),
+      scope: (q) => scopeToCompanyId(q, co.companyId), docNo, confirmerId: Number(c.get('houzsUser')?.id ?? NaN), todayMyt: todayMyt(),
+    }));
     if (confirmProblems.length > 0) return c.json(validationFailedBody(confirmProblems), 422);
   }
   /* WHERE A CONFIRM LANDS. The scan review screen and the desktop draft fill
@@ -6051,6 +6032,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     delete updates['fair_date'];
     delete body['fairDate'];
   }
+  /* No fair, ticked on an edit (owner 2026-10-19: a scan draft cannot be confirmed
+     without a fair or this). A decided state, as on create; written only when it
+     changes. Unticking alone changes nothing — picking a fair does. */
+  if (body.noFair === true && !fairLink && (beforeRecord.fair_match !== 'NO_FAIR' || beforeRecord.project_id != null)) {
+    Object.assign(updates, { project_id: null, fair_match: 'NO_FAIR', fair_date: null }); body['fairDate'] = null;
+  }
   for (const [from, to] of map) {
     if (!(to in updates) || norm(updates[to]) !== norm(beforeRecord[to])) continue;
     delete updates[to];
@@ -6166,7 +6153,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        venue + date + brand detection create does (HC-0094), and what it cannot
        settle stays PENDING / AMBIGUOUS / UNMATCHED for the reconcile and the
        pending screen. */
-    if (!fairLink) {
+    if (!fairLink && body.noFair !== true) {
       const fair = await resolveFairForSave({
         db: c.env?.DB as unknown as FairDb,
         companySql: activeCompanySql(c, 'p.company_id'),
