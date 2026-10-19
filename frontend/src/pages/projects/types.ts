@@ -183,6 +183,38 @@ export interface FinanceBooks {
   replaced: FinanceLine[];
 }
 
+/** A % row of the P&L: Finance's figure, a typed line, or the rate card. */
+export interface PnlPctRow {
+  amount: number;
+  from: "books" | "typed" | "rate" | "none";
+  pct: number | null;
+}
+
+/** One of the event's two P&Ls (backend services/eventPnl.ts). */
+export interface PnlColumn {
+  sales: number;
+  salesFrom: "lines" | "box" | "so" | "none";
+  cogs: { mattSofa: number; bedframe: number; accessories: number; other: number; total: number; from: "typed" | "so" | "so_ratio" | "none" };
+  rental: number;
+  setup: number;
+  transportSetupDismantle: number;
+  others: number;
+  transportFee: PnlPctRow;
+  commission: PnlPctRow & { boost: boolean };
+  merchandise: PnlPctRow;
+  totalCost: number;
+  grossProfit: number;
+  netProfit: number;
+}
+
+/** The event's two P&Ls (owner 2026-10-16): by the Total Sales he keys, and by
+ *  the Sales Orders opened at the fair. `by_so` is null with no order opened. */
+export interface EventPnl {
+  by_sales: PnlColumn;
+  by_so: PnlColumn | null;
+  so_count: number;
+}
+
 export type AttachRole = "sales" | "driver" | "design" | "office";
 
 export interface ProjectAttachment {

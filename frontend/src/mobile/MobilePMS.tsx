@@ -43,6 +43,7 @@ import { MobilePmsPosSales, useMobileProjectPosSales } from "./MobilePmsPosSales
 import { MobilePmsSalesBills, useMobileProjectSalesBills, type MobileProjectSalesBillsQuery } from "./MobilePmsSalesBills";
 import { fmtRmSen, notOpenedByRepId } from "../lib/projectSalesBills";
 import { SoloSafeName, useCanSeeSoloOrganizer, isSoloMasked, shownProjectName } from "../pages/projects/SoloSafeName";
+import type { EventPnl } from "../pages/projects/types";
 
 /* ------------------------------------------------------------------ *
  * Mobile Project (PMS) — list + detail.
@@ -191,6 +192,9 @@ type ProjectDetail = {
     total_sales: number | null;
   } | null;
   finance_lines?: FinanceLine[];
+  /** The two P&Ls (owner 2026-10-16; backend services/eventPnl.ts) — the same
+   *  figures the desktop event page shows. Null on an older server. */
+  finance_pnl?: EventPnl | null;
   checklist?: ChecklistItem[];
   checklist_attachments?: TaskAttachment[];
   sections?: TasklistSection[];
@@ -1625,6 +1629,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               <FinancialSnapshot
                 finance={data.finance!}
                 lines={data.finance_lines}
+                pnl={data.finance_pnl ?? null}
                 canWrite={canWrite && financeCanEdit}
                 busy={busy}
                 setBusy={setBusy}
@@ -3733,11 +3738,12 @@ function QuickRentalField({
 }
 
 function FinancialSnapshot({
-  projectId, finance, lines, canWrite, busy, setBusy, notify, reload,
+  projectId, finance, lines, pnl, canWrite, busy, setBusy, notify, reload,
 }: {
   projectId: number;
   finance: NonNullable<ProjectDetail["finance"]>;
   lines?: FinanceLine[];
+  pnl: EventPnl | null;
   canWrite: boolean;
   busy: boolean;
   setBusy: SetBusy;
@@ -3755,8 +3761,11 @@ function FinancialSnapshot({
 
   const allLines = lines ?? [];
   const costLines = allLines.filter((l) => (l.kind ?? "").toLowerCase() === "cost");
-  const sales = finance.total_sales ?? 0;
-  const cost =
+  /* The server's P&L by Total Sales when it sent one — the desktop page's own
+     figures, Finance's books and the orders' cost included; else the old
+     cached rollup. */
+  const sales = pnl ? pnl.by_sales.sales : finance.total_sales ?? 0;
+  const cost = pnl ? pnl.by_sales.totalCost :
     (finance.rental ?? 0) +
     (finance.contractor_cost ?? 0) +
     (finance.license_fee ?? 0) +
@@ -3797,6 +3806,13 @@ function FinancialSnapshot({
             <div className="money" style={{ fontSize: 16, fontWeight: 800, color: netColor, marginTop: 3 }}>{marginPct == null ? "—" : `${marginPct.toFixed(1)}%`}</div>
           </div>
         </div>
+        {/* The second P&L (owner 2026-10-16): the Sales Orders opened at the fair. */}
+        {pnl?.by_so && (
+          <div style={{ fontSize: 11, color: "#6b7064", marginTop: 8 }}>
+            By Sales Orders ({pnl.so_count}): sales {formatCurrency(pnl.by_so.sales)} · cost {formatCurrency(pnl.by_so.totalCost)} · net{" "}
+            <span style={{ fontWeight: 700, color: pnl.by_so.netProfit >= 0 ? "#2f8a5b" : "#b23a3a" }}>{formatCurrency(pnl.by_so.netProfit)}</span>
+          </div>
+        )}
         {/* Quick edit (finance write) — Total Sales PATCHes
             project_finance.total_sales (mirror desktop saveQuickTotal:9937-9954);
             Rental writes a `rental` cost line (mirror desktop
