@@ -7,6 +7,7 @@ import {
   describeUnmatchedScanLines,
   listScanLines,
   matchGrnScanToPoLines,
+  nameMatchItem,
   normalizeCode,
   pickBySpec,
   normalizeSupplierName,
@@ -612,5 +613,123 @@ describe('same item code on several PO lines: the printed spec breaks the tie (D
     const gap1 = jager('pi-gap1', 'HC-PO-2609-330', 'PC151-03 / GAP 1"');
     const gap12 = jager('pi-gap12', 'HC-PO-2609-330', 'PC151-03 / GAP 12"');
     expect(pickBySpec('PC151-03 / GAP 11"', [gap1, gap12])).toBeNull();
+  });
+});
+
+// HC-0120 (2026-10-19, Sim): DIGLANT DGSN26002266 delivered 7 mattresses (plus
+// 12 free pillows) on HC-PO-2610-084, which still owed 15 lines of one each.
+// DIGLANT prints its own codes (T1MAMWA0MK ...), so no row matched by code and
+// the draft took all 15. Rows now match the PO by product name; what no name
+// matches is reported, and a whole-PO draft needs the qty to agree.
+describe("a named PO whose delivery order prints the supplier's own codes (DGSN26002266)", () => {
+  const mk = (n: number, itemCode: string, materialName: string): OpenPoLine =>
+    line({ poItemId: `pi-${n}`, poNumber: 'HC-PO-2610-084', itemCode, materialName, remaining: 1 });
+  // HC-PO-2610-084 as read from production on 2026-10-19.
+  const open: OpenPoLine[] = [
+    mk(1, 'AKEMI ULTIMATE MATT (K)', 'AKEMI ULTIMATE MATTRESS (183X190X36CM)'),
+    mk(2, 'HAPPI SLEEP SOLITUDE MATT (Q)', 'HAPPI SLEEP SOLITUDE MATTRESS (152X190CM)'),
+    mk(3, 'HAPPI SLEEP SOLITUDE MATT (Q)', 'HAPPI SLEEP SOLITUDE MATTRESS (152X190CM)'),
+    mk(4, 'AKEMI ULTIMATE MATT (K)', 'AKEMI ULTIMATE MATTRESS (183X190X36CM)'),
+    mk(5, 'HAPPI SLEEP SOLITUDE MATT (Q)', 'HAPPI SLEEP SOLITUDE MATTRESS (152X190CM)'),
+    mk(6, 'AKEMI ARMOUR MATT (K)', 'AKEMI ARMOUR MATTRESS (183X190X30CM)'),
+    mk(7, 'AKEMI BULWARK MATT (K)', 'AKEMI BULWARK MATTRESS (183X190X36CM)'),
+    mk(8, 'AKEMI ULTIMATE MATT (K)', 'AKEMI ULTIMATE MATTRESS (183X190X36CM)'),
+    mk(9, 'AKEMI BULWARK MATT (K)', 'AKEMI BULWARK MATTRESS (183X190X36CM)'),
+    mk(10, 'AKEMI NOBILITY MATT (Q)', 'AKEMI NOBILITY MATTRESS (152X190X25CM)'),
+    mk(11, 'AKEMI NOBILITY MATT (Q)', 'AKEMI NOBILITY MATTRESS (152X190X25CM)'),
+    mk(12, 'HAPPI SLEEP SOLITUDE MATT (Q)', 'HAPPI SLEEP SOLITUDE MATTRESS (152X190CM)'),
+    mk(13, 'AKEMI ULTIMATE MATT (K)', 'AKEMI ULTIMATE MATTRESS (183X190X36CM)'),
+    mk(14, 'AKEMI IMMORTAL MATT (K)', 'AKEMI IMMORTAL MATTRESS (183X190X36CM)'),
+    mk(15, 'AKEMI BASTION MATT (Q)', 'AKEMI BASTION MATTRESS (152X190X25CM)'),
+  ];
+  // DGSN26002266 as read by the scanner (scm.grns.notes on HC-GRN-2610-134).
+  const do266 = [
+    scan({ itemCode: 'T1MAMWA0MK', description: 'Mattress Akemi Medi+Health Bulwark K King 183x190x36cm', qty: 1 }),
+    scan({ itemCode: 'T1MAMWA0MK', description: 'Seremban Akemi Solo Aeon Sereman 2 14/4-26/4/26 Mattress Akemi Medi+Health Bulwark K King 183x190x36cm', qty: 1 }),
+    scan({ itemCode: 'T1MPSIA0MQ', description: 'Mattress Happi Sleep Solitude Q Queen 153x190x30cm', qty: 1 }),
+    scan({ itemCode: 'T1MPSIA0MQ', description: 'Sabah Akemi MegaHome @ Sabah International Convention Center 2/10/2026 to 4/10/2026 Mattress Happi Sleep Solitude Q Queen 153x190x30cm', qty: 1 }),
+    scan({ itemCode: 'T1MPSIA0MQ', description: 'Penang Akemi HomeDec @ Setia Spice Convention Center 2/10/2026 to 4/10/2026 Mattress Happi Sleep Solitude Q Queen 153x190x30cm', qty: 1 }),
+    scan({ itemCode: 'T1MPSIA0MQ', description: 'Johor Akemi Perfect Living @ MVEC Southkey 2/10/2026 to 4/10/2026 Mattress Happi Sleep Solitude Q Queen 153x190x30cm', qty: 1 }),
+    scan({ itemCode: 'T1MAMHA0MK', description: 'Mattress Akemi Medi+Health Immortal K King 183x190x36cm', qty: 1 }),
+    scan({ itemCode: 'AFKPAK25A23J29W', description: 'GWP Pillow Acc : Akemi Sleep Essentials 7 Holes Fibrefil Pil 48cm x 74cm', qty: 4 }),
+    scan({ itemCode: 'UFHPHS13B25J29E', description: 'Happi Sleep Easy Sleep Pillow 48x74cm', qty: 8 }),
+  ];
+
+  test('drafts the 7 mattresses delivered, one PO line each, and leaves the pillows out', () => {
+    const res = matchGrnScanToPoLines('PO2610084', do266, open, [], 'sup-1');
+    expect(res.poFallback).toBeNull();
+    expect(res.picks).toEqual([
+      { poItemId: 'pi-7', qty: 1 }, { poItemId: 'pi-9', qty: 1 },
+      { poItemId: 'pi-2', qty: 1 }, { poItemId: 'pi-3', qty: 1 }, { poItemId: 'pi-5', qty: 1 }, { poItemId: 'pi-12', qty: 1 },
+      { poItemId: 'pi-14', qty: 1 },
+    ]);
+    expect(res.nameMatches.map((m) => m.itemCode)).toEqual([
+      'AKEMI BULWARK MATT (K)', 'AKEMI BULWARK MATT (K)',
+      'HAPPI SLEEP SOLITUDE MATT (Q)', 'HAPPI SLEEP SOLITUDE MATT (Q)', 'HAPPI SLEEP SOLITUDE MATT (Q)', 'HAPPI SLEEP SOLITUDE MATT (Q)',
+      'AKEMI IMMORTAL MATT (K)',
+    ]);
+    expect(res.namedPos).toEqual(['HC-PO-2610-084']);
+    expect(res.unmatched.map((u) => [u.line.itemCode, u.reason])).toEqual([
+      ['AFKPAK25A23J29W', 'not_on_po'],
+      ['UFHPHS13B25J29E', 'not_on_po'],
+    ]);
+  });
+
+  test('a row naming more of one item than the PO owes clamps to what it owes', () => {
+    const res = matchGrnScanToPoLines('PO2610084', [scan({ description: 'Akemi Immortal K King', qty: 3 })], open, [], 'sup-1');
+    expect(res.picks).toEqual([{ poItemId: 'pi-14', qty: 1 }]);
+  });
+
+  test('rows no name matches, with a qty that is not what the PO owes, make no draft', () => {
+    const lines = [scan({ itemCode: 'T1X', qty: 7 }), scan({ itemCode: 'T1Y', qty: 12 })];
+    const res = matchGrnScanToPoLines('PO2610084', lines, open, [], 'sup-1');
+    expect(res.picks).toEqual([]);
+    expect(res.poFallback).toBeNull();
+    expect(res.qtyMismatch).toEqual([{ poNumber: 'HC-PO-2610-084', listed: 19, owed: 15 }]);
+  });
+
+  test('rows no name matches, listing exactly what the PO owes, still draft the PO', () => {
+    const res = matchGrnScanToPoLines('PO2610084', [scan({ itemCode: 'T1X', qty: 15 })], open, [], 'sup-1');
+    expect(res.poFallback).toBe('HC-PO-2610-084');
+    expect(res.qtyMismatch).toBeNull();
+    expect(res.picks).toHaveLength(15);
+  });
+});
+
+// HC-0119 (2026-10-19, Sim): DGSN26002269, one mattress plus 2 free pillows on
+// HC-PO-2610-162, which owes just that mattress.
+describe('a single-item PO with a free gift on the delivery order (DGSN26002269)', () => {
+  const open = [line({ poItemId: 'pi-elev', poNumber: 'HC-PO-2610-162', itemCode: 'AKEMI ELEVATION MATT (K)', materialName: 'AKEMI ELEVATION MATTRESS (183X190X30CM)', remaining: 1 })];
+  const do269 = [
+    scan({ itemCode: 'T1MAMLA0MK', description: 'Mattress Akemi Medi+Health Elevation K King 183x190x40cm', qty: 1 }),
+    scan({ itemCode: 'AFKPAK25A23J29W', description: 'GWP Pillow Acc : Akemi Sleep Essentials 7 Holes Fibrefil Pil 48cm x 74cm', qty: 2 }),
+  ];
+
+  test('drafts the mattress and reports the pillow as not on the PO', () => {
+    const res = matchGrnScanToPoLines('HC-PO-2610-162', do269, open, [], 'sup-1');
+    expect(res.picks).toEqual([{ poItemId: 'pi-elev', qty: 1 }]);
+    expect(describeUnmatchedScanLines(res.unmatched, [])).toBe(
+      'AFKPAK25A23J29W GWP Pillow Acc : Akemi Sleep Essentials 7 Holes Fibrefil Pil 48cm x 74cm x2 (not on the PO).',
+    );
+  });
+});
+
+describe('nameMatchItem', () => {
+  const po = [
+    line({ itemCode: '9058-2S', materialName: 'SOFA MAYBATCH 2S' }),
+    line({ itemCode: '9058-1A(RHF)', materialName: 'SOFA MAYBATCH 1A(RHF)' }),
+    line({ itemCode: '8051-1S', materialName: 'SOFA PRESTIGE 1S' }),
+  ];
+  test('pieces sharing every word never match by name', () => {
+    expect(nameMatchItem('DSL9058 MAYBATCH 3SEATER (2+1)', po)).toBeNull();
+  });
+  test('a word only one item has matches it', () => {
+    expect(nameMatchItem('Prestige 1 seater', po)).toBe('8051-1S');
+  });
+  test('a row naming two items matches neither', () => {
+    expect(nameMatchItem('Prestige with Maybatch cushion', [po[0], po[2]])).toBeNull();
+  });
+  test('no printed text, no match', () => {
+    expect(nameMatchItem(null, po)).toBeNull();
   });
 });
