@@ -22,6 +22,7 @@
 // exactly as collectProcessingGateProblems already takes its facts, so this stays
 // pure and the IO lives in the route / validate endpoint.
 // ----------------------------------------------------------------------------
+import { fairMissingMessage, type FairWhy } from '../lib/fair-options';
 import { SOFA_MIX_REASON } from '../lib/main-mix';
 import { soLocationProblem } from '../lib/so-location-gate';
 import {
@@ -80,6 +81,9 @@ export interface SoSubmitFacts {
   /** The operator explicitly marked this a No-fair / showroom sale (the escape
    *  hatch that keeps the compulsory rule from blocking a genuine non-fair sale). */
   noFair: boolean;
+  /** Why no fair was filled in for the keyer (GET /fair-default), which words
+   *  the fair refusal (`fairMissingMessage`). Null keeps the standing sentence. */
+  fairWhy: FairWhy | null;
   /** An EVENT was picked with no day of it (owner 2026-09-24,
    *  `fair-options.ts::fairDayMissing`). Confirm-only, like the venue. */
   fairDayMissing: boolean;
@@ -141,7 +145,7 @@ export function collectSoSubmitProblems(facts: SoSubmitFacts): SaveProblem[] {
     // Fair is compulsory (owner 2026-09-26): a fair must be picked, or the sale
     // explicitly marked No-fair / showroom. Blocks the ambiguous "left blank".
     if (!facts.fairChosen && !facts.noFair) {
-      out.push({ code: 'fair_required', message: 'Pick the Fair, or mark it No fair (showroom).', field: 'Fair' });
+      out.push({ code: 'fair_required', message: fairMissingMessage(facts.fairWhy), field: 'Fair' });
     }
     if (facts.fairDayMissing) out.push(requiredFieldProblem('Fair day'));
     if (!facts.hasSalesperson) out.push(requiredFieldProblem('Salesperson'));

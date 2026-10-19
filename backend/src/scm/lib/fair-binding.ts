@@ -11,14 +11,19 @@
 // ----------------------------------------------------------------------------
 
 import {
+  companyUsesKeyerFair,
   editFairPick,
   fairKeyPart,
+  fairMissingMessage,
+  keyerFairDefault,
   linkedFairOf,
   lookbackWindow,
   resolveFair,
+  resolveFairWithKeyer,
   type FairMatch,
   type FairProjectRow,
   type FairResolution,
+  type KeyerFairDefault,
   type LinkedFair,
 } from './fair-options';
 import {
@@ -260,7 +265,7 @@ export async function loadVenueMaster(
  * Best-effort by contract: a lookup failure returns PENDING with no project,
  * never an exception. No fair-link problem may ever block a sale.
  */
-export async function resolveFairForSave(args: {
+type FairSaveArgs = {
   db: FairDb;
   companySql: string;
   venue: string | null;
@@ -274,24 +279,29 @@ export async function resolveFairForSave(args: {
   picked: { startDate: string; endDate: string | null } | null;
   soDate: string;
   brand: string | null;
-}): Promise<FairResolution> {
+};
+
+/* An EVENT was picked: match it exactly. A PLACE only: fall back to the window
+   at that venue, where the date is all there is to go on. The caller has
+   already refused a blank venue. */
+function loadSaveCandidates(args: FairSaveArgs, venue: string): Promise<FairProjectRow[]> {
+  const organizer = (args.organizer ?? '').trim();
+  return args.picked && organizer
+    ? loadFairsForEvent(args.db, args.companySql, {
+        venue,
+        organizer,
+        startDate: args.picked.startDate,
+        endDate: args.picked.endDate,
+      })
+    : loadFairsAtVenue(args.db, args.companySql, venue, args.soDate);
+}
+
+export async function resolveFairForSave(args: FairSaveArgs): Promise<FairResolution> {
   const venue = (args.venue ?? '').trim();
   if (!venue) return { projectId: null, match: 'PENDING', candidateIds: [] };
-  const organizer = (args.organizer ?? '').trim();
   try {
-    /* An EVENT was picked: match it exactly. A PLACE only: fall back to the
-       window at that venue, where the date is all there is to go on. */
-    const candidates =
-      args.picked && organizer
-        ? await loadFairsForEvent(args.db, args.companySql, {
-            venue,
-            organizer,
-            startDate: args.picked.startDate,
-            endDate: args.picked.endDate,
-          })
-        : await loadFairsAtVenue(args.db, args.companySql, venue, args.soDate);
     return resolveFair({
-      candidates,
+      candidates: await loadSaveCandidates(args, venue),
       brand: args.brand,
       organizer: args.organizer,
     });
@@ -301,6 +311,119 @@ export async function resolveFairForSave(args: {
        silent UNMATCHED would be a verdict this never computed. */
     return { projectId: null, match: 'PENDING', candidateIds: [] };
   }
+}
+
+/* The keyer STANDS AT a project as its PIC or on its Sales Attending — the two
+   links venue-binding.ts reads. Binds the user id TWICE. */
+const KEYER_ON_PROJECT = `(p.pic_id = ? OR EXISTS (
+         SELECT 1 FROM project_sales_attendees psa
+           JOIN sales_reps sr ON sr.id = psa.sales_rep_id
+          WHERE psa.project_id = p.id AND sr.user_id = ?))`;
+
+/**
+ * `resolveFairForSave` for a NEW order: the same lookup, then the keyer's booth
+ * where the brand cannot decide (`resolveFairWithKeyer`). Create only — an edit,
+ * the nightly reconcile and a re-detect keep the plain rule, so an order already
+ * saved never moves because of who happens to open it.
+ *
+ * @param keyerId `public.users.id` of the person keying the order (the scan
+ *   uploader on a scan) — not the order's salesperson (owner: 「看打单的人」).
+ */
+export async function resolveFairForCreate(args: FairSaveArgs & { keyerId: number }): Promise<FairResolution> {
+  const venue = (args.venue ?? '').trim();
+  if (!venue) return { projectId: null, match: 'PENDING', candidateIds: [] };
+  let candidates: FairProjectRow[];
+  try {
+    candidates = await loadSaveCandidates(args, venue);
+  } catch {
+    return { projectId: null, match: 'PENDING', candidateIds: [] };
+  }
+  const ids = [...new Set(candidates.map((r) => r.projectId))];
+  let keyerProjectIds = new Set<number>();
+  if (Number.isFinite(args.keyerId) && ids.length > 0) {
+    try {
+      const rows = await args.db
+        .prepare(
+          `SELECT p.id AS id FROM projects p
+            WHERE p.id IN (${ids.map(() => '?').join(', ')})
+              AND ${KEYER_ON_PROJECT}${args.companySql}`,
+        )
+        .bind(...ids, args.keyerId, args.keyerId)
+        .all<Record<string, unknown>>();
+      keyerProjectIds = new Set((rows.results ?? []).map((r) => Number(r.id)).filter(Number.isInteger));
+    } catch {
+      /* Not knowing where the keyer stands is not a reason to drop the brand's
+         answer: the plain rule still runs, with no keyer step. */
+    }
+  }
+  return resolveFairWithKeyer({ candidates, brand: args.brand, organizer: args.organizer, keyerProjectIds });
+}
+
+/**
+ * Every live fair the KEYER stands at that had started by the order date —
+ * the input to `keyerFairDefault`. No lower bound: the newest fair OUTSIDE the
+ * window is what the "ended over a month ago" sentence names. The row count is
+ * bounded by "fairs this one person was put on", which is small.
+ */
+export async function loadKeyerFairs(
+  db: FairDb,
+  companySql: string,
+  userId: number,
+  orderDate: string,
+): Promise<FairProjectRow[]> {
+  const rows = await db
+    .prepare(
+      `SELECT ${FAIR_COLUMNS}
+         FROM projects p
+        WHERE ${LIVE_FAIR}
+          AND p.start_date <= ?
+          AND ${KEYER_ON_PROJECT}${companySql}`,
+    )
+    .bind(orderDate.slice(0, 10), userId, userId)
+    .all<Record<string, unknown>>();
+  return ((rows.results ?? []) as Array<Record<string, unknown>>)
+    .map(toFairRow)
+    .filter((r) => Number.isFinite(r.projectId));
+}
+
+/** `keyerFairDefault` over the keyer's fairs. Best-effort: an unknown keyer or a
+ *  failed read is "nothing to fill in, no reason to give" — never a guess. */
+export async function keyerFairDefaultFor(args: {
+  db: FairDb;
+  companySql: string;
+  userId: number;
+  orderDate: string;
+}): Promise<KeyerFairDefault> {
+  if (!Number.isFinite(args.userId)) return { event: null, how: null, why: null };
+  try {
+    return keyerFairDefault(await loadKeyerFairs(args.db, args.companySql, args.userId, args.orderDate), args.orderDate);
+  } catch {
+    return { event: null, how: null, why: null };
+  }
+}
+
+/**
+ * The refusal a NEW confirmed order gets when it names neither a fair nor No
+ * fair (owner 2026-10-19: a typed order cannot save without one). The form asks
+ * the same through POST /validate; this is the copy a stale or hand-built
+ * client cannot skip. Null = no refusal. Only for companies on the keyer rule;
+ * the caller leaves drafts (scan, Save as draft) and the POS out.
+ */
+export async function fairRequiredProblem(args: {
+  companyCode: unknown;
+  body: Record<string, unknown>;
+  db: FairDb;
+  companySql: string;
+  keyerId: number;
+  orderDate: string;
+}): Promise<{ code: 'fair_required'; message: string; field: 'Fair' } | null> {
+  if (!companyUsesKeyerFair(args.companyCode)) return null;
+  if (args.body.noFair === true) return null;
+  if (typeof args.body.fairOrganizer === 'string' && args.body.fairOrganizer.trim() !== '') return null;
+  const { why } = await keyerFairDefaultFor({
+    db: args.db, companySql: args.companySql, userId: args.keyerId, orderDate: args.orderDate,
+  });
+  return { code: 'fair_required', message: fairMissingMessage(why), field: 'Fair' };
 }
 
 /**

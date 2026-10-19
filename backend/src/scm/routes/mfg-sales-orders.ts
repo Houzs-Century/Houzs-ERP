@@ -166,8 +166,8 @@ import {
   type VenueSource,
   type VenueBindingSb,
 } from '../lib/venue-binding';
-import { bindVenueOnCreate, fairLinkForEdit, loadLinkedFair, resolveFairForSave, type FairDb } from '../lib/fair-binding';
-import { fairDayMissing, fairDayOnSave, fairPickedPeriod } from '../lib/fair-options';
+import { bindVenueOnCreate, fairLinkForEdit, fairRequiredProblem, loadLinkedFair, resolveFairForCreate, resolveFairForSave, type FairDb } from '../lib/fair-binding';
+import { fairDayMissing, fairDayOnSave, fairPickedPeriod, fairWhyOf } from '../lib/fair-options';
 import { loadVpBrandAsk, type VpBrandDb } from '../lib/vp-brand-ask';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
 /* What changed on a LINE, for the audit trail — derived from the update about to
@@ -2593,6 +2593,13 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         description: (it.description as string | null | undefined) ?? null,
       })),
     });
+    /* ...and a fair or No fair (owner 2026-10-19), worded by why the keyer got
+       none — the rule the form asks through /validate. Never the POS. */
+    const fairProblem = (await isPosTabletCaller(c)) ? null : await fairRequiredProblem({
+      companyCode: c.get('companyCode'), body, db: c.env.DB as unknown as FairDb,
+      companySql: activeCompanySql(c, 'p.company_id'), keyerId: Number(c.get('houzsUser')?.id ?? NaN), orderDate: soDateForVenue,
+    });
+    if (fairProblem) confirmProblems.push(fairProblem);
     if (confirmProblems.length > 0) return c.json(validationFailedBody(confirmProblems), 422);
   }
 
@@ -4563,9 +4570,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
 
      The automatic PMS binding above is a real link when it fired, so it stands
      when the picker resolves nothing. Non-fatal throughout — no fair-link
-     problem may block a sale, and the nightly reconcile retries PENDING. */
+     problem may block a sale, and the nightly reconcile retries PENDING.
+     Where the brand cannot pick the booth, the KEYER's own booth does (owner
+     2026-10-19) — resolveFairForCreate. */
   {
-    const fair = await resolveFairForSave({
+    const fair = await resolveFairForCreate({
+      keyerId: Number(c.get('houzsUser')?.id ?? NaN),
       db: c.env.DB as unknown as FairDb,
       companySql: activeCompanySql(c, 'p.company_id'),
       venue: resolvedVenueName,
@@ -4834,6 +4844,7 @@ mfgSalesOrders.post('/validate', async (c) => {
     // pre-dates the rule.
     fairChosen: str(body.fairOrganizer).trim() !== '' || isEdit,
     noFair: body.noFair === true,
+    fairWhy: fairWhyOf(body.fairWhy), // why no fair was filled in (GET /fair-default)
     /* The surfaces send the fair keys only when this draft picks or changes an
        event (components/fairPick.ts), so an old order's untouched pick never
        asks for a day it was saved without. */

@@ -92,7 +92,7 @@ import { useAuth } from '../../vendor/scm/lib/auth';
    AuthUser to default + name the creator so the field is never blank. */
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useVenues, type AutoVenue } from '../../vendor/scm/lib/venues-queries';
-import { FairDayPicker, FairPicker, type FairPickValue } from '../../components/FairPicker';
+import { FairDayPicker, FairPicker, useAutoFair, type FairPickValue } from '../../components/FairPicker';
 import { fairDayCheck, fairEditPatch, fairEventOf } from '../../components/fairPick';
 import {
   useLocalities, countryForState,
@@ -1052,6 +1052,7 @@ export const SalesOrderNew = () => {
     setFairPick(next);
     if (next.organizer) setNoFair(false);
   }, []);
+  const autoFair = useAutoFair(!noFair, fairPick, onFairChange); // the keyer's fair (owner 2026-10-19)
   const effectiveVenueName: string = useMemo(() => {
     if (fairPick.venue) return fairPick.venue;
     const id = pickedVenueId ?? resolvedVenueId;
@@ -1401,7 +1402,7 @@ export const SalesOrderNew = () => {
     asDraft: asDraftFlag,
     hasVenue: !!effectiveVenueId,
     ...fairDayCheck(fairEditPatch(fairEventOf(fairPick)), {}),
-    noFair,
+    noFair, fairWhy: autoFair.why,
     hasSalesperson: !!salespersonId,
     companyCode: branding.companyCode,
     salesLocation,
@@ -1419,7 +1420,7 @@ export const SalesOrderNew = () => {
       convertedFromDocNo: d.convertedFromDocNo,
       amountSen: d.amountSen,
     })),
-  }), [debtorName, phone, lines, effectiveVenueId, fairPick, noFair, salespersonId, branding.companyCode, salesLocation, state, processingDate, deliveryDate, fillAddressLater, address1, postcode, paymentDrafts]);
+  }), [debtorName, phone, lines, effectiveVenueId, fairPick, noFair, autoFair.why, salespersonId, branding.companyCode, salesLocation, state, processingDate, deliveryDate, fillAddressLater, address1, postcode, paymentDrafts]);
 
   /* Live "Can't save — N to fix" list, asked of the backend as the operator
      types (debounced). Based on the CONFIRMED create (asDraft:false), which is
@@ -1967,12 +1968,11 @@ export const SalesOrderNew = () => {
                 wrapClassName={styles.selectWrap}
                 selectClassName={`${styles.fieldSelect} ${editedClass('venueId', effectiveVenueId ?? '')}`}
               />
+              {autoFair.hint}
               {/* Name the SOURCE of the default, not just that there was one:
                   "from Ipoh Fair" and "from your showroom" mean different things
-                  and the operator overrides on that. (The "master holds ~38" note
-                  that stood here was stale — measured 2026-09-13 it holds 92 and
-                  covers every venue any 2026 fair uses.) */}
-              {autoVenue?.venueName && (
+                  and the operator overrides on that. Not beside the keyer's fair line. */}
+              {autoVenue?.venueName && !autoFair.hint && (
                 <span style={{ fontSize: '11px', marginTop: '4px', opacity: 0.7 }}>
                   {autoVenue.venueId
                     ? `Auto-filled from ${autoVenue.source === 'PMS' ? (autoVenue.projectName ?? 'your fair') : `your showroom${autoVenue.showroomName ? ` (${autoVenue.showroomName})` : ''}`} — change it if you are somewhere else today`

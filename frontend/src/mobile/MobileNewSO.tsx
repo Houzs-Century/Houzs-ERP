@@ -24,7 +24,7 @@ import { fillCollectedBy } from "../vendor/scm/lib/default-collected-by";
 import { useAuth, isAdminLevel, isHatchSales } from "../vendor/scm/lib/auth";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
-import { FairDayPicker, FairPicker, type FairPickValue } from "../components/FairPicker";
+import { FairDayPicker, FairPicker, useAutoFair, type FairPickValue } from "../components/FairPicker";
 import { fairDayCheck, fairEditPatch, fairEventOf, fairPickValue, linkedEvent, type LinkedFair } from "../components/fairPick";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
@@ -1180,15 +1180,14 @@ export function MobileNewSO({
      value keeps flowing (including a later salesperson change re-deriving it);
      picking "—" reverts to the derived default (desktop-verbatim behaviour). */
   const [pickedVenueId, setPickedVenueId] = useState<string | null>(null);
-  /* FAIR PICKER (owner 2026-09-13) — desktop parity, same component, same rules:
-     a row is a place plus an organizer, nothing is typed, and the brand is
-     derived from the SKUs server-side. The venue NAME leads and the master id
-     follows it by name, because a fair can name a venue the master lacks. */
+  /* FAIR PICKER (owner 2026-09-13) — desktop parity, same component, same rules. The venue NAME
+     leads and the master id follows it by name, because a fair can name a venue the master lacks. */
   const [fairPick, setFairPick] = useState<FairPickValue>({
     venue: null, organizer: null, startDate: null, endDate: null, day: null,
   });
   const [noFair, setNoFair] = useState(false); // fair compulsory on create (owner 2026-09-26)
   const onFairChange = useCallback((n: FairPickValue) => { setFairPick(n); if (n.organizer) setNoFair(false); }, []);
+  const autoFair = useAutoFair(!isEdit && !noFair, fairPick, onFairChange); // the keyer's fair (owner 2026-10-19)
   useEffect(() => {
     /* Seeds a BLANK only — a human pick is a decision and is never overwritten.
        A place, plus the order's linked event when it has one (fairPick.ts).
@@ -1418,7 +1417,7 @@ export function MobileNewSO({
     isEdit,
     hasVenue: isEdit || !!outgoingVenueName || !!outgoingVenueId,
     ...fairDayCheck(fairEditPatch(fairEventOf(fairPick)), fairEditPatch(linkedEvent(resolvedVenueName, linkedFair, linkedDay))),
-    noFair,
+    noFair, fairWhy: autoFair.why,
     hasSalesperson: isEdit || !canChangeSalesperson || !!outgoingSalespersonId || !!selfStaffMatch,
     companyCode: branding.companyCode,
     salesLocation,
@@ -1439,7 +1438,7 @@ export function MobileNewSO({
       convertedFromDocNo: p.convertedFromDocNo ?? "",
       amountSen: toSen(p.amount),
     })),
-  }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, fairPick, noFair, resolvedVenueName, linkedFair, linkedDay, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origItems, pays]);
+  }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, fairPick, noFair, autoFair.why, resolvedVenueName, linkedFair, linkedDay, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origItems, pays]);
 
   /* A slip date outside the window blocks the save (the payments post AFTER the
      create) — except a too-old row, which becomes an admin request (isBackdateRow). */
@@ -2410,6 +2409,7 @@ export function MobileNewSO({
                     />
                   </Field>
                 </div>
+                {autoFair.hint}
                 {!isEdit && !fairEventOf(fairPick) && (
                   <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginTop: 6 }}>
                     <input type="checkbox" checked={noFair} disabled={identityLocked} onChange={(e) => setNoFair(e.target.checked)} />
@@ -2419,7 +2419,7 @@ export function MobileNewSO({
                 {fairEventOf(fairPick) && ( // which DAY of the picked event (owner 2026-09-24)
                   <Field label="Fair Day"><FairDayPicker id="mob-so-fair-day" value={fairPick} soDate={orderDate} onChange={setFairPick} disabled={identityLocked} selectClassName="fld-i" /></Field>
                 )}
-                {!isEdit && autoVenue?.venueId &&
+                {!isEdit && !autoFair.hint && autoVenue?.venueId &&
                   (pickedVenueId == null || pickedVenueId === autoVenue.venueId) && (
                   <div style={{ fontSize: 10, color: "#16695f", marginTop: -4 }}>
                     {autoVenue.source === "SHOWROOM"
