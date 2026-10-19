@@ -14,6 +14,8 @@ export interface OvProject {
   };
   /** costSplit: the orders' line cost by product group, only for an event with no COGS keyed. */
   salesOrders: { sen: number; costSen: number; count: number; costSplit: { mattSofa: number; bedframe: number; accessories: number } };
+  /** The event's chat sales report against its Sales Orders; null = no report saved. */
+  chatReport: { bills: number; billsSen: number; opened: number; openedSen: number; otherEvent: number } | null;
 }
 
 export type SalesSource = "keyed" | "sales_orders" | "none";
