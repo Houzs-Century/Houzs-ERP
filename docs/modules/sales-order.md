@@ -37,7 +37,8 @@ Line and derived states:
 - `stock_remark` (`summariseReadiness`, `lib/so-readiness.ts`) names what IS ready: `''`, `READY`, `PARTIAL` (all main lines in, an accessory pending), or `BEDFRAME` / `SOFA` / `MATTRESS` / `ACC`, `/`-joined in that order. It never contains READY while anything is short.
 - The ship gate is `is_ship_ready`: every main line ready if the order has one, otherwise every live line; a line-less SO is never ready. Accessories don't block when a main line exists, service-only orders are ready at once, and fully delivered lines count but gate nothing.
 - Stock Status column = arrival. Delivered column = `shipped_qty / deliverable_qty` (`vendor/scm/lib/shipped-progress.ts`); a missing figure shows as unknown, never 0.
-- `fair_match`: `PICKED`; `PENDING` (the daily pass links it); `AMBIGUOUS` (settle on `/scm/fair-pending`); `UNMATCHED`; NULL = created before the picker, not back-filled.
+- `fair_match`: `PICKED`; `PENDING` (the daily pass links it); `AMBIGUOUS`; `UNMATCHED`; `NO_FAIR` (ticked by hand); NULL = created before the picker, not back-filled.
+- Fair Links to Settle (`/scm/fair-pending`, sidebar Sales Order group, red count): every unlinked, uncancelled order with PENDING / AMBIGUOUS / UNMATCHED / NO_FAIR, plus NULL from 2026-09-01 (`scm/lib/fair-pending.ts`, shared with `GET /mfg-sales-orders/fair-pending/count`).
 
 ## Permissions
 

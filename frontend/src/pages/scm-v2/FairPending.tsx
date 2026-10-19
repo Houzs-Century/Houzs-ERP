@@ -1,4 +1,4 @@
-/* Orders whose FAIR link the system could not settle on its own.
+/* Orders with no FAIR link that a person should look at.
  *
  * Owner 2026-09-13. The picker records which exhibition a sale was written at,
  * and three things can stop it resolving. They are different problems for
@@ -14,6 +14,15 @@
  *   BRAND HAS NO BOOTH     the order sells a brand that is not at that event.
  *                          Usually a SKU with no brand on it rather than a wrong
  *                          venue — "Fair data gaps (read-only)" lists those.
+ *   MARKED NO FAIR         the salesperson ticked No fair. Listed so a person can
+ *                          check it really was not a fair sale (owner 2026-10-19:
+ *                          「总之没有 assign 到 fair 的就列出来就对了」).
+ *   KEYED BEFORE THE PICKER  no verdict at all — orders from 1 September 2026
+ *                          (when Houzs opened its books in the ERP) keyed before
+ *                          the picker went live, never linked.
+ *
+ * Which orders, exactly, is the server's (scm/lib/fair-pending.ts); the sidebar
+ * entry's red number counts the same list.
  *
  * There is no bulk "link them all" action, deliberately: every button here
  * writes an attribution into exhibition P&L and somebody's commission, and a
@@ -28,10 +37,17 @@ import {
   type FairPendingRow,
 } from '../../vendor/scm/lib/fair-options-queries';
 
+/** The group of an order with no verdict at all (fair_match NULL). */
+const NO_VERDICT = 'NO_VERDICT';
+/** The server sends at most this many, newest first. */
+const LIST_LIMIT = 500;
+
 const GROUPS = [
   { key: 'AMBIGUOUS', title: 'Pick one', hint: 'Two booths fit this order. Choose the fair it belongs to.' },
   { key: 'UNMATCHED', title: 'Brand has no booth', hint: 'The order sells a brand that is not at that event. Check the SKU brand first.' },
   { key: 'PENDING', title: 'Waiting for the fair', hint: 'The event is not in the system yet. It links itself once it is.' },
+  { key: 'NO_FAIR', title: 'Marked No fair', hint: 'The salesperson ticked No fair. Check it really was not a fair sale.' },
+  { key: NO_VERDICT, title: 'Keyed before the fair picker', hint: 'Orders from 1 September keyed before the fair picker went live on 13 September, never linked to a fair.' },
 ] as const;
 
 function money(sen: number | null): string {
@@ -40,14 +56,14 @@ function money(sen: number | null): string {
 }
 
 export function FairPending() {
-  const rowsQ = useFairPending();
+  const rowsQ = useFairPending(LIST_LIMIT);
   const assign = useAssignFair();
   const rows = rowsQ.data ?? [];
 
   const byGroup = useMemo(() => {
     const m = new Map<string, FairPendingRow[]>();
     for (const r of rows) {
-      const k = r.fair_match ?? 'PENDING';
+      const k = r.fair_match ?? NO_VERDICT;
       const list = m.get(k);
       if (list) list.push(r); else m.set(k, [r]);
     }
@@ -63,7 +79,7 @@ export function FairPending() {
         <p style={{ margin: '4px 0 0', opacity: 0.7, fontSize: 13 }}>
           {rows.length === 0
             ? 'Nothing to settle — every order is linked to its fair.'
-            : `${rows.length} order${rows.length === 1 ? '' : 's'} not yet attributed to a fair.`}
+            : `${rows.length} order${rows.length === 1 ? '' : 's'} not yet attributed to a fair${rows.length >= LIST_LIMIT ? ` (the newest ${LIST_LIMIT} shown)` : ''}.`}
         </p>
       </div>
 
