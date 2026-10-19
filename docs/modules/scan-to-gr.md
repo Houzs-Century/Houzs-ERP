@@ -22,11 +22,14 @@ lists only what differs for GR.
   `linked_doc_no` null, slip retained, a plain note) and the operator receives
   from the PO by hand. The note lists each scanned line and why, including a
   refused PO's live status ("HC-PO-2609-223 is marked Received").
-- **Known PO, unknown items.** When the rows (or header) name exactly ONE open PO
-  of the resolved supplier and no row lines up by item, the draft carries every
-  line still owed on that PO at its remaining qty (`poFallback`), with "Check
-  every line" and the delivery order as read on the note. Never with an
-  unresolved supplier, never across two POs.
+- **Known PO, unknown codes.** A row whose PO is known but whose code matches
+  nothing (DIGLANT prints its own `T1MAMWA0MK`) is matched by product name
+  (`nameMatchItem`: every word only that item has on the PO must be printed);
+  the note says how many rows matched by name. A row no name matches is
+  "not on the PO" (free gifts). When no row lines up at all, the draft carries
+  every line still owed on the named PO(s) (`poFallback`) only when the
+  delivery order's qty equals what each owes; otherwise needs-review with the
+  counts (`qtyMismatch`). Never with an unresolved supplier.
 
 ## Endpoints (`/scan-gr/*`, gated `scm.procurement.grn`, writeLevel `view`)
 

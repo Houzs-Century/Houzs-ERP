@@ -269,6 +269,9 @@ async function runGrnScanJob(
     const weakNote = match.weakMatch
       ? `Check the PO: only ${match.weakMatch.matched} of ${match.weakMatch.scanned} scanned lines matched ${match.matchedPoNumbers.join(', ')}, so it may be the wrong PO.`
       : null;
+    const nameNote = match.nameMatched > 0
+      ? `Check the items: ${match.nameMatched} delivery order ${match.nameMatched === 1 ? 'row was' : 'rows were'} matched to the PO by product name, not by code.`
+      : null;
     // Scanned lines the operator must add by hand, by name, so the draft itself
     // says what is missing. A draft built from the whole PO lists what the
     // delivery order says instead, since every PO line is already on it.
@@ -282,7 +285,7 @@ async function runGrnScanJob(
       companyId: job.companyId,
       companyCode,
       picks: match.picks,
-      notes: [doRef, weakNote, unmatchedNote].filter(Boolean).join(' · '),
+      notes: [doRef, weakNote, nameNote, unmatchedNote].filter(Boolean).join(' · '),
       receivedDate: parsed.deliveryDate ?? undefined,
       deliveryNoteRef: parsed.doNo,
     });

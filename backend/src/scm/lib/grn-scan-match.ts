@@ -90,7 +90,9 @@ export type UnmatchedScanLine = {
   //                   already received). Never item-matched onto some other PO.
   //   no_po_number  — the row printed no PO while other rows did; an item-only
   //                   hit is not trusted next to rows that name their PO.
-  reason: 'no_open_po_line' | 'ambiguous' | 'nothing_remaining' | 'po_not_open' | 'no_po_number';
+  //   not_on_po     — the row's PO is known but nothing on it is this item
+  //                   (a free gift, or an item ordered on another PO).
+  reason: 'no_open_po_line' | 'ambiguous' | 'nothing_remaining' | 'po_not_open' | 'no_po_number' | 'not_on_po';
   // When ambiguous, the candidate PO lines we refused to guess between.
   candidatePoItemIds: string[];
 };
@@ -121,6 +123,8 @@ export type GrnMatchResult = {
   // lined up by item, and its qty is not what those POs still owe (a part
   // delivery, or extra rows): one entry per named PO. No draft is made then.
   qtyMismatch: Array<{ poNumber: string; listed: number; owed: number }> | null;
+  // Rows matched to their PO's line by product name, not code (nameMatchItem).
+  nameMatched: number;
 };
 
 // Normalise a code/number for comparison: uppercase, drop every non-alnum char.
@@ -296,6 +300,7 @@ export function matchGrnScanToPoLines(
   const anchoredScanQty = new Map<string, number>(); // po_number -> qty the delivery order lists for it
   let scannedCount = 0;
   let itemOnlyMatchedCount = 0;
+  let nameMatched = 0;
 
   for (const sl of scannedLines) {
     if (!(sl.qty > 0)) continue; // a zero/blank qty line carries nothing to receive
@@ -339,6 +344,33 @@ export function matchGrnScanToPoLines(
     }
 
     const hitList = [...hits.values()].filter((l) => anchorPo === null || l.poNumber === anchorPo);
+    if (hitList.length === 0 && anchorPo !== null) {
+      // The supplier's own code is unknown to us (DIGLANT prints T1MAMWA0MK for
+      // our AKEMI BULWARK MATT (K)), but the PO is certain: try the product name.
+      const poLines = supplierLines.filter((l) => l.poNumber === anchorPo);
+      const item = nameMatchItem(sl.description, poLines);
+      const lines = item === null ? [] : poLines.filter((l) => l.itemCode === item && (remainingById.get(l.poItemId) ?? 0) > 0);
+      const specs = new Set(lines.map((l) => (l.description2 ?? '').trim()));
+      const into = specs.size > 1 ? [pickBySpec(sl.description, lines)].filter((l): l is OpenPoLine => l !== null) : lines;
+      if (item === null) {
+        unmatched.push({ line: sl, reason: 'not_on_po', candidatePoItemIds: [] });
+      } else if (into.length === 0) {
+        unmatched.push({ line: sl, reason: lines.length === 0 ? 'nothing_remaining' : 'ambiguous', candidatePoItemIds: lines.map((l) => l.poItemId) });
+      } else {
+        // Identical lines (one per customer order) take the qty in turn.
+        let left = sl.qty;
+        for (const l of into) {
+          const room = (remainingById.get(l.poItemId) ?? 0) - (anchoredQty.get(l.poItemId) ?? 0);
+          if (left <= 0 || room <= 0) continue;
+          const take = Math.min(left, room);
+          anchoredQty.set(l.poItemId, (anchoredQty.get(l.poItemId) ?? 0) + take);
+          poNumberOf.set(l.poItemId, l.poNumber);
+          left -= take;
+        }
+        nameMatched += 1;
+      }
+      continue;
+    }
     if (hitList.length === 0) {
       unmatched.push({ line: sl, reason: 'no_open_po_line', candidatePoItemIds: [] });
       continue;
@@ -427,7 +459,36 @@ export function matchGrnScanToPoLines(
     weakMatch,
     poFallback,
     qtyMismatch,
+    nameMatched,
   };
+}
+
+const nameWords = (s: string | null | undefined): string[] =>
+  (s ?? '').toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+
+/**
+ * The one item code on a known PO that a delivery-order row names by product,
+ * or null. An item's model words are the alphabetic words (4+ letters) of its
+ * code and name that no other item on the PO has ("BULWARK"; "HAPPI SLEEP
+ * SOLITUDE" when only one Happi Sleep item is ordered). The row must print
+ * every one of them, a printed word counting when it starts with the model
+ * word (MATT / MATTRESS). Exactly one item must qualify; an item with no model
+ * word of its own (three MAYBATCH sofa pieces) never does. "Happi Sleep Easy
+ * Sleep Pillow" lacks SOLITUDE, so it is not the Solitude mattress.
+ */
+export function nameMatchItem(printed: string | null | undefined, poLines: OpenPoLine[]): string | null {
+  const row = nameWords(printed);
+  if (row.length === 0) return null;
+  const items = [...new Set(poLines.map((l) => l.itemCode))];
+  const wordsOf = new Map(items.map((ic) => {
+    const names = poLines.filter((l) => l.itemCode === ic).map((l) => `${ic} ${l.materialName ?? ''}`).join(' ');
+    return [ic, new Set(nameWords(names).filter((w) => /^[A-Z]{4,}$/.test(w)))];
+  }));
+  const hits = items.filter((ic) => {
+    const model = [...wordsOf.get(ic)!].filter((w) => items.every((o) => o === ic || !wordsOf.get(o)!.has(w)));
+    return model.length > 0 && model.every((w) => row.some((r) => r.startsWith(w)));
+  });
+  return hits.length === 1 ? hits[0] : null;
 }
 
 const PO_STATUS_WHY: Record<string, string> = {
@@ -468,6 +529,7 @@ const UNMATCHED_WHY: Record<UnmatchedScanLine['reason'], (l: ScannedGrnLine, all
   nothing_remaining: () => 'its PO line shows 0 qty remaining',
   po_not_open: poNotOpenWhy,
   no_po_number: () => 'no PO printed on the row',
+  not_on_po: () => 'not on the PO',
 };
 
 const scanLineLabel = (l: ScannedGrnLine): string =>
