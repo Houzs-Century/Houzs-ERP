@@ -666,6 +666,12 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
     const { placeGrnLinesOnRacks } = await import('../lib/grn-rack-sync');
     await placeGrnLinesOnRacks(sb, grnId, grnNo, userId);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[grn-rack] place failed:', e); }
+  /* Which open orders the stock-PO lines of this receipt serve, earliest
+     delivery first, kept for the lead-time figures (owner 2026-10-19). Best-effort. */
+  try {
+    const { recordReceiptAssignments } = await import('../lib/receipt-so-assignment');
+    await recordReceiptAssignments(sb, grnId, companyId);
+  } catch (e) { /* eslint-disable-next-line no-console */ console.error('[receipt-so] post-grn failed:', e); }
   /* B2C SO auto-allocation — stock just came in, re-walk every PENDING SO line
      and flip to READY where the new inventory covers it. Best-effort. */
   try {

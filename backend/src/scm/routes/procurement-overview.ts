@@ -14,7 +14,8 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
-import { scopeToCompany } from '../lib/companyScope';
+import { scopeToCompany, activeCompanyId } from '../lib/companyScope';
+import { allocateReceipts, loadStockDemand, type StockReceipt as ReceiptForSo } from '../lib/receipt-so-assignment';
 import { todayMyt } from '../lib/my-time';
 import { doCountsAsDelivered, DO_STOCK_OUT_STATES } from '../shared/do-shipped-states';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
@@ -136,6 +137,29 @@ procurementOverview.get('/', async (c) => {
     const gap = receivedQty - rs.reduce((a, x) => a + x.qty, 0);
     return gap > 0 ? [...rs, { date: due, qty: gap, rejected: 0, inferred: true }] : rs;
   };
+  /* A stock PO (no sales-order line) gets the customer date of the order its
+     goods went to: the assignment kept at goods-receipt time, else the same
+     rule run over the past receipts as an estimate (lib/receipt-so-assignment.ts).
+     The earliest such date stands for the line. */
+  const stockLineIds = items.data.filter((r) => !r.so_item_id && (receiptsByLine.get(String(r.id)) ?? []).length > 0).map((r) => String(r.id));
+  const derivedNeed = new Map<string, string>();
+  const keepNeed = (poItemId: string, d: string | null) => { if (d && (!derivedNeed.has(poItemId) || d < (derivedNeed.get(poItemId) as string))) derivedNeed.set(poItemId, d); };
+  const stored = await chunkIn<Row>(stockLineIds, (b, f, t) => scopeToCompany(sb.from('po_receipt_so_assignments')
+    .select('purchase_order_item_id, need_date').in('purchase_order_item_id', b), c).order('id').range(f, t));
+  if (stored.error) return fail('receipt assignments', stored.error);
+  for (const a of stored.data) keepNeed(String(a.purchase_order_item_id), day(a.need_date));
+  const storedLines = new Set(stored.data.map((a) => String(a.purchase_order_item_id)));
+  const toEstimate = items.data.filter((r) => stockLineIds.includes(String(r.id)) && !storedLines.has(String(r.id)) && r.item_code);
+  if (toEstimate.length) {
+    const receipts: ReceiptForSo[] = toEstimate.flatMap((r) => (receiptsByLine.get(String(r.id)) ?? []).filter((x) => x.qty > 0)
+      .map((x, i) => ({ key: `${String(r.id)}|${i}`, grnId: '', poItemId: String(r.id), itemCode: String(r.item_code), qty: x.qty, receivedAt: x.date })));
+    try {
+      const demand = await loadStockDemand(sb, activeCompanyId(c) as number, [...new Set(receipts.map((x) => x.itemCode))], today, true);
+      for (const a of allocateReceipts(receipts, demand)) keepNeed(a.poItemId, a.needDate);
+    } catch (e) { return fail('stock demand', e as { message: string }); }
+  }
+  const needSource = { stored: [...derivedNeed.keys()].filter((k) => storedLines.has(k)).length, estimated: [...derivedNeed.keys()].filter((k) => !storedLines.has(k)).length };
+
   const lines: PLine[] = items.data.flatMap((r) => {
     const po = poById.get(String(r.purchase_order_id));
     if (!po?.po_date) return [];
@@ -150,7 +174,7 @@ procurementOverview.get('/', async (c) => {
          raised adds up to the PO totals. */
       qty: num(r.qty), priceSen: num(r.qty) > 0 && r.line_total_sen != null ? num(r.line_total_sen) / num(r.qty) : num(r.unit_price_sen),
       originalDue: original, promised: promisedDate([original, ...revised]),
-      needDate: soDoc ? needOfSo.get(soDoc) ?? null : null,
+      needDate: soDoc ? needOfSo.get(soDoc) ?? null : derivedNeed.get(String(r.id)) ?? null,
       receipts: withInferred(receiptsByLine.get(String(r.id)) ?? [], num(r.received_qty), original ?? (day(po.po_date) as string)),
     }];
   });
@@ -322,6 +346,8 @@ procurementOverview.get('/', async (c) => {
     categories: PROCUREMENT_CATEGORIES,
     currentLead,
     stockScope: scope,
+    /* Stock-PO lines given a customer date: kept at goods receipt / estimated. */
+    needSource,
     warehouseKinds: Object.fromEntries((whs.data as Row[]).map((w) => [String(w.code ?? '—'), kindOf.get(String(w.id)) ?? 'others'])),
     leadOverrides: Object.fromEntries(Object.entries(leadOverrides).map(([k, xs]) => [k, xs.map((x) => ({ warehouse: whCode.get(x.warehouseId) ?? '—', days: x.days }))])),
     billed: { totalSen: (pis.data ?? []).reduce((a, r) => a + num(r.total_sen), 0), count: (pis.data ?? []).length, bySupplier: billedBySupplier, byCategory: billedByCategory },
