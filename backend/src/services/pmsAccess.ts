@@ -440,3 +440,21 @@ export function financeHiddenForUser(user: AuthUser | null | undefined): boolean
   if (!user || user.position_id == null) return false;
   return !isFinanceViewer(user);
 }
+
+/**
+ * May this user CREATE an event (a PMS project)? Owner 2026-07-24: BD staff,
+ * the Owner account, and Lim (weisiang329@gmail.com) — NOT other Super Admins
+ * nor anyone else. The ONE backend copy: the New Project POST
+ * (routes/projects.ts) and the fair re-assign (scm/lib/fair-reassign.ts — owner
+ * 2026-10-16: "PMS" may re-assign an order's fair) both read it. Mirrored for
+ * the buttons in frontend auth/salesAccess.canCreateEvent; this is the authority.
+ */
+export function canCreateEvent(
+  user: { role_name?: string | null; position_name?: string | null; email?: string | null } | null | undefined,
+): boolean {
+  if (!user) return false;
+  const role = (user.role_name ?? "").toLowerCase();
+  const position = (user.position_name ?? "").toLowerCase();
+  const email = (user.email ?? "").toLowerCase();
+  return /\bbd\b/.test(role) || position === "owner" || email === "weisiang329@gmail.com";
+}

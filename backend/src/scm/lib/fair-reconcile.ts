@@ -27,6 +27,8 @@ import { getSupabaseService } from '../../db/supabase';
 import type { Env } from '../env';
 import { resolveFairForSave, type FairDb } from './fair-binding';
 import type { FairMatch } from './fair-options';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { fairStateOf, recordFairChange } from './fair-audit';
 
 export type FairReconcileResult = {
   scanned: number;
@@ -133,6 +135,12 @@ export async function reconcilePendingFairs(
     if (updErr) { out.skipped += 1; continue; }
     if (fair.projectId != null) out.linked += 1;
     else out.needsAPerson += 1;
+    /* In the order's History, like every fair move (fair-audit.ts). */
+    await recordFairChange({
+      sb: sb as unknown as SupabaseClient, db: env.DB as unknown as FairDb, companySql: ` AND p.company_id = ${companyId}`, docNo,
+      before: { projectId: null, fairMatch: 'PENDING' }, after: fairStateOf(patch), how: 'nightly', actorId: null, actorName: 'System',
+      note: fair.projectId != null ? 'The nightly pass found the fair in PMS.' : 'The nightly pass found the fair, but a person must choose the booth.',
+    });
   }
 
   return out;

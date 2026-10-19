@@ -39,6 +39,8 @@
  */
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../../auth/AuthContext';
+import { canCreateEvent } from '../../auth/salesAccess';
 import {
   useFairChecks,
   useFairPending,
@@ -77,6 +79,11 @@ export function FairPending() {
   const rowsQ = useFairPending(LIST_LIMIT);
   const checksQ = useFairChecks();
   const assign = useAssignFair();
+  /* Finance or PMS re-assign here (owner 2026-10-16); the API enforces the same
+     (scm/lib/fair-reassign.ts), this only stops a button that would be refused. */
+  const { can, user } = useAuth();
+  const canReassign = can('scm.finance.accounting') || canCreateEvent(user);
+  const busy = assign.isPending || !canReassign;
   const rows = rowsQ.data ?? [];
   const checks = checksQ.data ?? [];
 
@@ -113,6 +120,11 @@ export function FairPending() {
             Couldn’t load the linked orders to check — try again.
           </p>
         )}
+        {!canReassign && (
+          <p style={{ margin: '4px 0 0', fontSize: 12, opacity: 0.7 }}>
+            Only Finance or PMS can re-assign a fair here. Every change is in the order’s History.
+          </p>
+        )}
       </div>
 
       {CHECK_GROUPS.map((g) => {
@@ -124,7 +136,7 @@ export function FairPending() {
             <p style={{ margin: '0 0 8px', opacity: 0.7, fontSize: 12 }}>{g.hint}</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {list.map((r) => (g.key === 'VENUE_DIFFERS'
-                ? <PendingRow key={r.doc_no} row={r} note={r.note} onAssign={assign.mutate} busy={assign.isPending} />
+                ? <PendingRow key={r.doc_no} row={r} note={r.note} onAssign={assign.mutate} busy={busy} />
                 : <CheckRow key={r.doc_no} row={r} />))}
             </div>
           </section>
@@ -140,7 +152,7 @@ export function FairPending() {
             <p style={{ margin: '0 0 8px', opacity: 0.7, fontSize: 12 }}>{g.hint}</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {list.map((r) => (
-                <PendingRow key={r.doc_no} row={r} onAssign={assign.mutate} busy={assign.isPending} />
+                <PendingRow key={r.doc_no} row={r} onAssign={assign.mutate} busy={busy} />
               ))}
             </div>
           </section>

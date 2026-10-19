@@ -166,10 +166,11 @@ import {
   type VenueSource,
   type VenueBindingSb,
 } from '../lib/venue-binding';
-import { bindVenueOnCreate, fairConfirmProblems, fairLinkForEdit, fairLinkOnCreate, fairRequiredProblem, loadLinkedFair, resolveFairForSave, type FairDb } from '../lib/fair-binding';
+import { bindVenueOnCreate, fairConfirmProblems, fairLinkForEdit, fairLinkOnCreate, fairRequiredProblem, loadLinkedFair, resolveFairForSave, SCAN_STEP_NOTE, type FairDb } from '../lib/fair-binding';
 import { fairDayMissing, fairDayOnSave, fairWhyOf } from '../lib/fair-options';
 import { loadVpBrandAsk, type VpBrandDb } from '../lib/vp-brand-ask';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
+import { fairStateOf, recordFairChange } from '../lib/fair-audit';
 /* What changed on a LINE, for the audit trail — derived from the update about to
    be persisted rather than a hand-kept field list (owner 2026-08-12; see the
    module header for the 2990-SO-2608-017 edit this existed to catch and did not). */
@@ -4579,7 +4580,15 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       keyerId: Number(c.get('houzsUser')?.id ?? NaN), body, venue: resolvedVenueName,
       soDate: soDateForVenue, brand: effectiveBrand, bindingProjectId: projectIdToStamp,
     });
-    await scopeToCompany(sb.from('mfg_sales_orders').update(fairLink).eq('doc_no', docNo), c);
+    await scopeToCompany(sb.from('mfg_sales_orders').update(fairLink.columns).eq('doc_no', docNo), c);
+    /* A scan's fair was the system's call: History says which rule made it (fair-audit.ts). */
+    if (fairLink.step) {
+      await recordFairChange({
+        sb, db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), docNo,
+        before: { projectId: null, fairMatch: null }, after: fairStateOf(fairLink.columns), how: 'scan',
+        actorId: user.id, actorName: null, note: SCAN_STEP_NOTE[fairLink.step],
+      });
+    }
   }
 
   /* PWP Code Voucher (migration 0130) — carry forward the un-applied reserved
@@ -6650,6 +6659,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
         statusSnapshot: (beforeRow as { status?: string }).status ?? null,
       });
     }
+    /* The fair, named, whenever this edit moved it (owner 2026-10-19) — fair-audit.ts. */
+    await recordFairChange({
+      sb, db: c.env?.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), docNo,
+      before: fairStateOf(beforeRow), after: fairStateOf({ ...beforeRow, ...updates }), how: 'edit',
+      actorId: user.id, actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+    });
   }
 
   /* SO header edit may have changed customer_delivery_date or

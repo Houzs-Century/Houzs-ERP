@@ -216,28 +216,28 @@ describe('fairLinkOnCreate — the columns a new order is written with', () => {
 
   it('No fair ticked is decided, whatever else came', async () => {
     const r = await fairLinkOnCreate({ ...base, db: fakeDb([]), companyCode: 'HOUZS', scanned: false, body: { noFair: true, fairOrganizer: 'REX' }, venue: 'MID VALLEY', brand: null });
-    expect(r).toEqual({ project_id: null, fair_match: 'NO_FAIR' });
+    expect(r).toEqual({ columns: { project_id: null, fair_match: 'NO_FAIR' }, step: null });
   });
 
   it('a Houzs scan found by slip place and date takes the slip date as its Fair Day', async () => {
     const db = fakeDb([[KEYER_AMONG, [{ id: 340 }]], [AT_PLACE_ON_DAY, [REX(340, 'AKEMI')]]]);
     const r = await fairLinkOnCreate({ ...base, db, companyCode: 'HOUZS', scanned: true, body: { venue: 'MID VALLEY', slipDate: '2026-10-16' }, venue: 'MID VALLEY', brand: 'AKEMI' });
-    expect(r).toEqual({ project_id: 340, fair_match: 'PICKED', fair_date: '2026-10-16' });
+    expect(r).toEqual({ columns: { project_id: 340, fair_match: 'PICKED', fair_date: '2026-10-16' }, step: 'slip_mine' });
   });
 
   it('a slip with no place takes the place of the fair it was put at', async () => {
     const IOI = project({ id: 2320, venue: 'IOIGECC', organizer: 'MLE', startdate: '2026-10-17', enddate: '2026-10-20' });
     const db = fakeDb([[EVENT_BOOTHS, [IOI]], [KEYER_FAIRS, [IOI]]]);
     const r = await fairLinkOnCreate({ ...base, db, companyCode: 'HOUZS', scanned: true, body: { venue: null, slipDate: '2026-10-16' }, venue: null, brand: 'AKEMI' });
-    expect(r).toEqual({ project_id: 2320, fair_match: 'PICKED', venue: 'IOIGECC', venue_source: 'PMS' });
+    expect(r).toEqual({ columns: { project_id: 2320, fair_match: 'PICKED', venue: 'IOIGECC', venue_source: 'PMS' }, step: 'today' });
   });
 
   it('Houzs never falls back to the keyer\'s running fair at ANOTHER place; 2990 keeps that fallback', async () => {
     const typed = { scanned: false, body: { fairOrganizer: 'REX', fairStart: '2026-10-15', fairEnd: '2026-10-18' }, venue: 'KLCC', brand: 'AKEMI' };
     expect(await fairLinkOnCreate({ ...base, ...typed, db: fakeDb([[EVENT_BOOTHS, []]]), companyCode: 'HOUZS' }))
-      .toEqual({ project_id: null, fair_match: 'PENDING' });
+      .toEqual({ columns: { project_id: null, fair_match: 'PENDING' }, step: null });
     expect(await fairLinkOnCreate({ ...base, ...typed, db: fakeDb([[EVENT_BOOTHS, []]]), companyCode: '2990' }))
-      .toEqual({ project_id: 2228, fair_match: 'PICKED' });
+      .toEqual({ columns: { project_id: 2228, fair_match: 'PICKED' }, step: null });
   });
 });
 
