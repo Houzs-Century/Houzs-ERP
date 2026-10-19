@@ -189,7 +189,7 @@ export function procurementPeriod(lines: PLine[], from: string, to: string, dueT
      WITH a delivery date (stock held for orders with no date yet could have
      been ordered when the customer fixed the date), less what normally goes
      out in 14 days — a fast seller's shelf stock is not waste. */
-export interface StockRow { warehouse: string; category: string; itemCode: string; variantKey: string; name: string | null; qty: number; valueSen: number; lastOut: string | null; firstMove: string | null }
+export interface StockRow { warehouse: string; kind: LocationKind; category: string; itemCode: string; variantKey: string; name: string | null; qty: number; valueSen: number; lastOut: string | null; firstMove: string | null }
 /** Per item|variant: the quantity open orders wait for, with and without a delivery date. */
 export interface OpenDemand { scheduled: number; unscheduled: number }
 type Age = 'd0to90' | 'd91to180' | 'd181to365' | 'd365plus';
@@ -209,15 +209,25 @@ export function stockScopeKeeps(scope: StockScope, kind: string): boolean {
   return kind === scope;
 }
 
+/* Orders are filled from the warehouse first, then service (it comes back and
+   ships), then display (it goes to service for repacking first) - owner
+   2026-10-19. Others sit after the warehouse. What is left over is excess, so it
+   lands on display first, then service. */
+const FILL_ORDER: Record<LocationKind, number> = { warehouse: 0, others: 1, service: 2, display: 3 };
+
 /** `outPerDay`: per item|variant, the quantity that went out per day lately;
  *  `item|*` is the item over all its variants, used for stock kept with no
- *  variant (e.g. "30 a month" -> 14 days = 14). */
-export function deadStock(rows: StockRow[], today: string, demand: Map<string, OpenDemand>, outPerDay: Map<string, number>) {
+ *  variant (e.g. "30 a month" -> 14 days = 14).
+ *  `shown`: the locations picked. Every location's stock is matched against the
+ *  orders as one pool (owner 2026-10-19: would display stock still be excess if
+ *  it became sellable stock today?), and only then are the picked rows shown. */
+export function deadStock(allRows: StockRow[], today: string, demand: Map<string, OpenDemand>, outPerDay: Map<string, number>, shown: (r: StockRow) => boolean) {
+  const rows = allRows.filter(shown);
   const idleOf = (r: StockRow) => { const d = r.lastOut ?? r.firstMove; return d ? daysBetween(d, today) : null; };
   const keyOf = (r: StockRow) => `${r.itemCode}|${r.variantKey}`;
   const dead = new Map<StockRow, number>(); const buffer = new Map<StockRow, number>();
   const items = new Map<string, StockRow[]>();
-  for (const r of rows) items.set(keyOf(r), [...(items.get(keyOf(r)) ?? []), r]);
+  for (const r of allRows) items.set(keyOf(r), [...(items.get(keyOf(r)) ?? []), r]);
   const itemInfo = new Map<string, { onHand: number; scheduled: number; unscheduled: number; cover: number; bufferQty: number }>();
   for (const [k, rs] of items) {
     const dm = demand.get(k) ?? { scheduled: 0, unscheduled: 0 };
@@ -225,10 +235,15 @@ export function deadStock(rows: StockRow[], today: string, demand: Map<string, O
     const cover = Math.round(perDay * BUFFER_COVER_DAYS * 10) / 10;
     const onHand = rs.reduce((a, r) => a + r.qty, 0);
     const noOrder = dm.scheduled + dm.unscheduled === 0;
-    const extra = Math.max(0, Math.floor(onHand - dm.scheduled - cover));
-    /* Spread over the rows, most idle first, as dead (no order at all) or buffer. */
+    /* Dead: no order at all, less what normally goes out in 14 days. Buffer:
+       everything no dated order needs (owner 2026-10-19: 30 on hand, 5 on dated
+       orders, 25 on undated -> buffer 25, valued 25 x cost); the dated orders are
+       the outflow, so no 14 days come off as well. */
+    const extra = noOrder ? Math.max(0, Math.floor(onHand - cover)) : Math.max(0, Math.floor(onHand - dm.scheduled));
+    /* Spread over the rows as dead (no order at all) or buffer: the last
+       location orders would be filled from first, most idle first within it. */
     let left = extra;
-    for (const r of [...rs].sort((x, y) => (idleOf(y) ?? -1) - (idleOf(x) ?? -1))) {
+    for (const r of [...rs].sort((x, y) => FILL_ORDER[y.kind] - FILL_ORDER[x.kind] || (idleOf(y) ?? -1) - (idleOf(x) ?? -1))) {
       const q = Math.min(left, r.qty); left -= q;
       (noOrder ? dead : buffer).set(r, q);
     }
@@ -253,11 +268,12 @@ export function deadStock(rows: StockRow[], today: string, demand: Map<string, O
     return [...map.values()].sort((a, b) => b.deadSen + b.bufferSen - (a.deadSen + a.bufferSen));
   };
   const deadRows = rows.filter((r) => (dead.get(r) ?? 0) > 0);
-  const bufferItems = [...items.entries()].map(([k, rs]) => {
+  const bufferItems = [...items.entries()].map(([k, all]) => {
     const info = itemInfo.get(k)!;
-    return { itemCode: rs[0]!.itemCode, variantKey: rs[0]!.variantKey, name: rs[0]!.name, category: rs[0]!.category,
+    const rs = all.filter(shown);
+    return { itemCode: all[0]!.itemCode, variantKey: all[0]!.variantKey, name: all[0]!.name, category: all[0]!.category,
       warehouses: [...new Set(rs.filter((r) => (buffer.get(r) ?? 0) > 0).map((r) => r.warehouse))].join(', '),
-      ...info, valueSen: rs.reduce((a, r) => a + bufSen(r), 0) };
+      ...info, bufferQty: rs.reduce((a, r) => a + (buffer.get(r) ?? 0), 0), valueSen: rs.reduce((a, r) => a + bufSen(r), 0) };
   }).filter((x) => x.bufferQty > 0).sort((a, b) => b.valueSen - a.valueSen);
   return {
     asOf: today, coverDays: BUFFER_COVER_DAYS,

@@ -20,7 +20,7 @@ import { todayMyt } from '../lib/my-time';
 import { doCountsAsDelivered, DO_STOCK_OUT_STATES } from '../shared/do-shipped-states';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
 import { procurementCategory, promisedDate, PROCUREMENT_CATEGORIES, type ProcurementCategory } from '../lib/procurement-overview';
-import { procurementPeriod, deadStock, turnoverAndSellers, STOCK_SCOPES, stockScopeKeeps, type PLine, type OpenDemand, type StockScope } from '../lib/procurement-period';
+import { procurementPeriod, deadStock, turnoverAndSellers, STOCK_SCOPES, stockScopeKeeps, type PLine, type OpenDemand, type StockScope, type LocationKind } from '../lib/procurement-period';
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { attributeStockPos, type StockReceipt, type StockOut } from '../lib/stock-po-attribution';
 
@@ -208,7 +208,7 @@ procurementOverview.get('/', async (c) => {
   const whs = await scopeToCompany(sb.from('warehouses').select('id, code, type'), c);
   if (whs.error) return fail('warehouses', whs.error);
   const whCode = new Map((whs.data as Row[]).map((w) => [String(w.id), String(w.code ?? '—')]));
-  const kindOf = new Map((whs.data as Row[]).map((w) => {
+  const kindOf = new Map<string, LocationKind>((whs.data as Row[]).map((w): [string, LocationKind] => {
     const t = String(w.type ?? '').toLowerCase();
     return [String(w.id), t === 'showroom' || t === 'display' ? 'display' : t === 'service' ? 'service' : t === 'warehouse' ? 'warehouse' : 'others'];
   }));
@@ -274,10 +274,10 @@ procurementOverview.get('/', async (c) => {
     if (!lastIn.has(k)) keep(k, day(m.movement_date) ?? day(m.created_at));
   }
   const heldDays = (k: string) => { const d = lastIn.get(k); return d ? Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 86400000) : null; };
-  const deadRaw = deadStock((stock.data ?? []).filter((r) => !outOfScope(r)).map((r) => ({
-    warehouse: String(r.warehouse_code ?? '—'), category: catOf(r), itemCode: String(r.item_code), variantKey: String(r.variant_key ?? ''), name: str(r.product_name),
+  const deadRaw = deadStock((stock.data ?? []).map((r) => ({
+    warehouse: String(r.warehouse_code ?? '—'), kind: (kindOf.get(String(r.warehouse_id)) ?? 'others'), category: catOf(r), itemCode: String(r.item_code), variantKey: String(r.variant_key ?? ''), name: str(r.product_name),
     qty: num(r.qty_on_hand), valueSen: num(r.value_sen), lastOut: lastOut.get(keyOf(r)) ?? null, firstMove: firstMove.get(keyOf(r)) ?? null,
-  })), today, openDemand, outPerDay);
+  })), today, openDemand, outPerDay, (r) => stockScopeKeeps(scope, r.kind));
   const dead = {
     ...deadRaw,
     top: deadRaw.top.map((x) => ({ ...x, lastIn: lastIn.get(`${x.itemCode}|${x.variantKey}`) ?? null, heldDays: heldDays(`${x.itemCode}|${x.variantKey}`) })),
@@ -326,7 +326,7 @@ procurementOverview.get('/', async (c) => {
     ...turnoverAndSellers(
       (stock.data ?? []).filter((r) => !isService(r) && inScope(r.warehouse_id)).map((r) => {
         const cat = catOf(r); const model = modelOf(String(r.item_code), cat);
-        return { warehouse: String(r.warehouse_code ?? '—'), category: cat, itemCode: model, variantKey: '', name: model === String(r.item_code) ? str(r.product_name) : `${model} (all variants)`, qty: num(r.qty_on_hand), valueSen: num(r.value_sen), lastOut: null, firstMove: null };
+        return { warehouse: String(r.warehouse_code ?? '—'), kind: kindOf.get(String(r.warehouse_id)) ?? 'others', category: cat, itemCode: model, variantKey: '', name: model === String(r.item_code) ? str(r.product_name) : `${model} (all variants)`, qty: num(r.qty_on_hand), valueSen: num(r.value_sen), lastOut: null, firstMove: null };
       }),
       outs,
       /* A line given free (gift pillow, bundled bedframe) is not a sale. */
