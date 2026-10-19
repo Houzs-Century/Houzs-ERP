@@ -36,7 +36,7 @@ describe('deliveryNeedsPurchaserOk', () => {
   test('bringing it forward with no PO stays Logistic alone', () => {
     expect(deliveryNeedsPurchaserOk({ storedDeliv: '2026-10-20', nextDeliv: '2026-10-15', hasUnreceivedPo: false })).toBe(false);
   });
-  test('HC-0114: bringing it forward once every PO is received stays Logistic alone', () => {
+  test('HC-0114: bringing it forward with no PO still owed by the supplier stays Logistic alone', () => {
     expect(deliveryNeedsPurchaserOk({ storedDeliv: '2026-10-20', nextDeliv: '2026-10-17', hasUnreceivedPo: false })).toBe(false);
   });
   test('a request that does not touch the Delivery Date needs nothing', () => {
