@@ -89,7 +89,7 @@ if (noKey.length) {
   process.exit(2);
 }
 const N = Math.max(1, Math.min(100, Number(process.env.N || 30)));
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 const GEMINI_THINKING = process.env.GEMINI_THINKING;
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT = process.env.OUT || path.join(HERE, '..', '..', 'docs', 'pipeline', '2026-10-16', 'hc0006-model-ab.json');

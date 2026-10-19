@@ -14,7 +14,7 @@ on:
         default: "30"
       gemini_model:
         description: "Gemini model id"
-        default: "gemini-2.5-flash"
+        default: "gemini-3.8-flash"
       gemini_thinking:
         description: "Gemini thinking budget (blank = model default, 0 = off)"
         default: ""
@@ -44,7 +44,7 @@ jobs:
         env:
           APPLY: "1"
           N: ${{ inputs.n || '30' }}
-          GEMINI_MODEL: ${{ inputs.gemini_model || 'gemini-2.5-flash' }}
+          GEMINI_MODEL: ${{ inputs.gemini_model || 'gemini-3.8-flash' }}
           GEMINI_THINKING: ${{ inputs.gemini_thinking }}
           OUT: ${{ runner.temp }}/hc0006-model-ab.json
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
