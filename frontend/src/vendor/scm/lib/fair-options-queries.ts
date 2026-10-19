@@ -100,6 +100,33 @@ export function useFairOptions(soDate: string | null | undefined) {
   });
 }
 
+/** Why no fair was filled in for the person keying the order. Sent back to
+ *  POST /validate as `fairWhy`, which words the refusal from it. */
+export type FairWhy =
+  | { code: 'no_fair' }
+  | { code: 'too_old'; venue: string; startDate: string; endDate: string | null };
+
+/** GET /fair-default — the KEYER's fair a new order starts with (owner
+ *  2026-10-19): running today, else the latest one within the dropdown's window.
+ *  `event` is a row of /fair-options. With none, `whyMessage` is the sentence a
+ *  save without a fair is refused with. Houzs only; other companies get nulls. */
+export type FairDefaultResponse = {
+  date: string;
+  event: FairOption | null;
+  how: 'ongoing' | 'latest' | null;
+  why: FairWhy | null;
+  whyMessage: string | null;
+};
+
+export function useFairDefault(enabled: boolean) {
+  return useQuery({
+    queryKey: ['fair-default'],
+    queryFn: () => authedFetch<FairDefaultResponse>('/mfg-sales-orders/fair-default'),
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
 export type FairPendingRow = {
   doc_no: string;
   so_date: string | null;

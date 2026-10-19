@@ -16,6 +16,7 @@
 // pick others"*, and Others is a second PICK from the company's venue master.
 //
 //   GET  /fair-options          the dropdown, for one order date
+//   GET  /fair-default          the keyer's fair a new order starts with
 //   GET  /fair-pending          orders with no fair link a person should see
 //   GET  /fair-pending/count    how many — the sidebar badge
 //   POST /:docNo/fair           a person settles one of them
@@ -30,12 +31,13 @@ import { supabaseAuth } from '../middleware/auth';
 import { activeCompanySql, scopeToCompany, activeCompanyId } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import {
+  keyerFairDefaultFor,
   loadFairsInWindow,
   loadFairsAtVenue,
   loadVenueMaster,
   type FairDb,
 } from '../lib/fair-binding';
-import { buildFairOptions, isPickableFair } from '../lib/fair-options';
+import { buildFairOptions, companyUsesKeyerFair, fairMissingMessage, isPickableFair } from '../lib/fair-options';
 import { countFairPending, loadFairPending } from '../lib/fair-pending';
 /* GET /active-venue moved here from mfg-sales-orders.ts on 2026-09-13. It is the
    same concern as the picker — which exhibition is this rep at — and that file
@@ -89,6 +91,37 @@ mfgSoFairs.get('/fair-options', async (c) => {
   } catch {
     return c.json(empty);
   }
+});
+
+/**
+ * GET /mfg-sales-orders/fair-default?date=YYYY-MM-DD
+ *
+ * The fair a NEW typed order starts with: the fair of the person KEYING it —
+ * running today, else the latest one they stood at within the dropdown's window
+ * (owner 2026-10-19, the boss's rule; the rule is fair-options.ts::
+ * keyerFairDefault). `event` is a row of GET /fair-options, so the picker lights
+ * it up and the operator can change it like any pick.
+ *
+ * With no event, `why` says why and `whyMessage` is the sentence the save is
+ * refused with — the same `fairMissingMessage` /validate and the create use, so
+ * the hint and the refusal cannot word it differently.
+ *
+ * Only for companies on the keyer rule (Houzs); the others answer nothing and
+ * their forms keep the place default from /active-venue. Never an error status:
+ * a broken default is "nothing to fill in", and the operator still picks.
+ */
+mfgSoFairs.get('/fair-default', async (c) => {
+  const soDate = orderDate(c.req.query('date'));
+  const none = { date: soDate, event: null, how: null, why: null, whyMessage: null };
+  if (!companyUsesKeyerFair(c.get('companyCode'))) return c.json(none);
+  const hu = c.get('houzsUser');
+  const found = await keyerFairDefaultFor({
+    db: c.env.DB as unknown as FairDb,
+    companySql: activeCompanySql(c, 'p.company_id'),
+    userId: hu?.id != null ? Number(hu.id) : NaN,
+    orderDate: soDate,
+  });
+  return c.json({ date: soDate, ...found, whyMessage: found.why ? fairMissingMessage(found.why) : null });
 });
 
 /**

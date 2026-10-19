@@ -39,6 +39,7 @@ Line and derived states:
 - Stock Status column = arrival. Delivered column = `shipped_qty / deliverable_qty` (`vendor/scm/lib/shipped-progress.ts`); a missing figure shows as unknown, never 0.
 - `fair_match`: `PICKED`; `PENDING` (the daily pass links it); `AMBIGUOUS`; `UNMATCHED`; `NO_FAIR` (ticked by hand); NULL = created before the picker, not back-filled.
 - Fair Links to Settle (`/scm/fair-pending`, sidebar Sales Order group, red count): every unlinked, uncancelled order with PENDING / AMBIGUOUS / UNMATCHED / NO_FAIR, plus NULL from 2026-09-01 (`scm/lib/fair-pending.ts`, shared with `GET /mfg-sales-orders/fair-pending/count`).
+- The keyer's fair (Houzs only, `KEYER_FAIR_COMPANY_CODES`): a new typed order starts with the logged-in person's fair (PIC or Sales Attending) running today, else the latest within 28 days (`GET /mfg-sales-orders/fair-default`, `keyerFairDefault`; `useAutoFair` fills it once). A confirmed create with neither a fair nor No fair is refused (`fairRequiredProblem`), worded by why none was found (`fairMissingMessage`). On a new order, a brand with no booth at the event goes to the keyer's own booth (`resolveFairForCreate`).
 
 ## Permissions
 
