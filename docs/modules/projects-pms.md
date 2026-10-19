@@ -186,7 +186,11 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   typed line, else the brand rate card % of THAT column's sales (boost on that
   column's GP%); the stored `auto_source` lines are not counted. Desktop
   `EventPnlTable` shows both; the phone P&L tiles read `by_sales` and a By Sales
-  Orders line.
+  Orders line. The Projects list fills its finance columns (Rental, Revenue,
+  COGS, GP, NP — `fin_*`) from the same Total Sales P&L for a caller who may see
+  finance (`services/eventPnlBatch.ts`, one read per input for the page;
+  `readEventBooksMany` = posted legs + checked vouchers, the event page's two
+  reads); a failed read leaves the list's own SQL figures.
 - The evening sales report (one bill per line: booklet no, amount, salesperson;
   a "+ N(T)" transport or "(D)" disposal tail is kept apart) is DERIVED from the
   project chat on every read — notes by the Owner position, Ummu or weisiang
