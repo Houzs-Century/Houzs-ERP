@@ -278,7 +278,7 @@ async function runGrnScanJob(
     const unmatchedLines = describeUnmatchedScanLines(match.unmatched, allPos);
     const unmatchedNote = match.poFallback
       ? `Check every line: no scanned line matched ${match.poFallback} by item, so this draft lists everything still owed on ${match.poFallback.includes(',') ? 'those POs' : 'that PO'} at the PO quantity. Change it to what was delivered before posting. The delivery order lists: ${listScanLines(parsed.lines.map(toScanned).filter((l) => l.qty > 0))}`
-      : unmatchedLines ? `Not added, please add on the draft: ${unmatchedLines}` : null;
+      : unmatchedLines ? `Not added to this draft: ${unmatchedLines}` : null;
     const res = await createDraftGrnFromPoItems(env, {
       userId: job.uploaderStaffId,
       houzsUserId: job.houzsUserId,
