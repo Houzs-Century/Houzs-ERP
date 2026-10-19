@@ -62,17 +62,37 @@ projectOverview.get("/", async (c) => {
   ).all<ProjectRow>();
   const projects = rows.results;
 
-  const sos = await chunkIn<{ project_id: number; local_total_sen: number | null; total_cost_sen: number | null }>(projects.map((p) => String(p.id)), (b, f, t) =>
+  const sos = await chunkIn<{ doc_no: string; project_id: number; local_total_sen: number | null; total_cost_sen: number | null }>(projects.map((p) => String(p.id)), (b, f, t) =>
     scopeToCompany(c.get("supabase").from("mfg_sales_orders")
-      .select("project_id, local_total_sen, total_cost_sen").in("project_id", b)
+      .select("doc_no, project_id, local_total_sen, total_cost_sen").in("project_id", b)
       .not("status", "in", '("DRAFT","CANCELLED")'), c).order("doc_no").range(f, t));
   if (sos.error) return c.json({ error: "load_failed", reason: `sales orders: ${sos.error.message}` }, 500);
-  const so = new Map<number, { sen: number; costSen: number; count: number }>();
+  type SoCost = { sen: number; costSen: number; count: number; costSplit: { mattSofa: number; bedframe: number; accessories: number } };
+  const so = new Map<number, SoCost>();
   for (const s of sos.data) {
     const k = Number(s.project_id);
-    const g = so.get(k) ?? { sen: 0, costSen: 0, count: 0 };
+    const g = so.get(k) ?? { sen: 0, costSen: 0, count: 0, costSplit: { mattSofa: 0, bedframe: 0, accessories: 0 } };
     g.sen += Number(s.local_total_sen ?? 0); g.costSen += Number(s.total_cost_sen ?? 0); g.count += 1;
     so.set(k, g);
+  }
+  /* An event with no COGS keyed takes its COGS from its Sales Orders; split that
+     cost by the line's product group into the Financial Snapshot's three COGS
+     lines (owner 2026-10-19: "确保这些是 breakdown"). Only those events' lines
+     are read, not every order ever opened at an event. */
+  const noCogs = new Set(projects.filter((p) => !(Number(p.cogs) > 0)).map((p) => p.id));
+  const projectOfDoc = new Map(sos.data.filter((s) => noCogs.has(Number(s.project_id))).map((s) => [s.doc_no, Number(s.project_id)]));
+  if (projectOfDoc.size > 0) {
+    const items = await chunkIn<{ doc_no: string; item_group: string | null; line_cost_sen: number | null }>([...projectOfDoc.keys()], (b, f, t) =>
+      scopeToCompany(c.get("supabase").from("mfg_sales_order_items")
+        .select("doc_no, item_group, line_cost_sen").in("doc_no", b).eq("cancelled", false), c).order("id").range(f, t));
+    if (items.error) return c.json({ error: "load_failed", reason: `sales order lines: ${items.error.message}` }, 500);
+    for (const it of items.data) {
+      const g = so.get(projectOfDoc.get(it.doc_no) ?? -1);
+      if (!g) continue;
+      const grp = (it.item_group ?? "").toLowerCase();
+      const key = grp === "mattress" || grp === "sofa" ? "mattSofa" : grp === "bedframe" ? "bedframe" : "accessories";
+      g.costSplit[key] += Number(it.line_cost_sen ?? 0);
+    }
   }
 
   return c.json({
@@ -86,7 +106,7 @@ projectOverview.get("/", async (c) => {
         cogsMattSofa: Number(p.cogs_matt_sofa), cogsBedframe: Number(p.cogs_bedframe), cogsAccessories: Number(p.cogs_accessories),
         transportFee: Number(p.transport_fee), transportSetup: Number(p.transport_setup),
       },
-      salesOrders: so.get(p.id) ?? { sen: 0, costSen: 0, count: 0 },
+      salesOrders: so.get(p.id) ?? { sen: 0, costSen: 0, count: 0, costSplit: { mattSofa: 0, bedframe: 0, accessories: 0 } },
     })),
   });
 });
