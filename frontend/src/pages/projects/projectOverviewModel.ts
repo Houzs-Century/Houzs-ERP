@@ -12,7 +12,8 @@ export interface OvProject {
     /** The same lines as fine as the Financial Snapshot (owner 2026-10-19). */
     cogsMattSofa: number; cogsBedframe: number; cogsAccessories: number; transportFee: number; transportSetup: number;
   };
-  salesOrders: { sen: number; costSen: number; count: number };
+  /** costSplit: the orders' line cost by product group, only for an event with no COGS keyed. */
+  salesOrders: { sen: number; costSen: number; count: number; costSplit: { mattSofa: number; bedframe: number; accessories: number } };
 }
 
 export type SalesSource = "keyed" | "sales_orders" | "none";
@@ -36,7 +37,8 @@ export function figuresOf(p: OvProject): Figures {
 
 export interface Totals {
   projects: number; sales: number; cogs: number; rental: number; commission: number; setup: number; transport: number; merchandise: number; other: number; otherCost: number; gp: number; np: number; fromSalesOrders: number; noSales: number;
-  /** COGS split as keyed; COGS taken from Sales Orders cannot be split and is its own line. */
+  /** COGS split as keyed, or for an event with none keyed, its Sales Orders' cost by product group;
+   *  cogsFromSo = the part of that cost no line accounts for (order total above its lines). */
   cogsMattSofa: number; cogsBedframe: number; cogsAccessories: number; cogsFromSo: number; transportFee: number; transportSetup: number;
 }
 
@@ -48,8 +50,11 @@ export function totalsOf(ps: OvProject[]): Totals {
     t.sales += f.sales; t.cogs += f.cogs; t.rental += f.rental; t.commission += f.commission; t.setup += f.setup;
     t.transport += f.transport; t.merchandise += f.merchandise; t.other += f.other; t.otherCost += f.otherCost; t.gp += f.gp; t.np += f.np;
     const k = p.keyed;
-    if (f.cogsFromSalesOrders) t.cogsFromSo += f.cogs;
-    else { t.cogsMattSofa += k.cogsMattSofa; t.cogsBedframe += k.cogsBedframe; t.cogsAccessories += k.cogsAccessories; }
+    if (f.cogsFromSalesOrders) {
+      const sp = p.salesOrders.costSplit;
+      t.cogsMattSofa += sp.mattSofa / 100; t.cogsBedframe += sp.bedframe / 100; t.cogsAccessories += sp.accessories / 100;
+      t.cogsFromSo += f.cogs - (sp.mattSofa + sp.bedframe + sp.accessories) / 100;
+    } else { t.cogsMattSofa += k.cogsMattSofa; t.cogsBedframe += k.cogsBedframe; t.cogsAccessories += k.cogsAccessories; }
     t.transportFee += k.transportFee; t.transportSetup += k.transportSetup;
     if (f.salesSource === "sales_orders") t.fromSalesOrders += 1;
     if (f.salesSource === "none") t.noSales += 1;
