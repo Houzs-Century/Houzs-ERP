@@ -9,7 +9,7 @@ import { hasPermission, hasPermissionLiterally } from "./permissions";
  * behaves like every other permission gate.
  */
 // ponytail: temporary launch switch; delete it and call hasPermission directly once the IT pages open to Owner.
-export const IT_PAGES_WILDCARD_PASSES: boolean = false;
+export const IT_PAGES_WILDCARD_PASSES: boolean = true;
 
 export function canViewItPages(granted: ReadonlyArray<string> | ReadonlySet<string>): boolean {
   return IT_PAGES_WILDCARD_PASSES
