@@ -171,6 +171,7 @@ export function procurementPeriod(lines: PLine[], from: string, to: string, dueT
         poId: l.poId, poNumber: l.poNumber, poDate: l.poDate, supplier: l.supplier, category: l.category, itemCode: l.itemCode,
         qty: l.qty, sen: Math.round(l.qty * l.priceSen), raised, due, dueDate: d,
         receivedQty, receivedSen: Math.round(receivedQty * l.priceSen),
+        lastReceived: l.receipts.filter((r) => inPeriod(r.date) && !r.inferred).map((r) => r.date).sort().at(-1) ?? null,
         openQty, openSen: Math.round(openQty * l.priceSen), daysLate: openQty > 0 && d ? daysBetween(d, asOf) : null,
       }];
     }),

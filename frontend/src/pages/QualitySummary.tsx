@@ -31,7 +31,7 @@ type Quality = {
   avgDaysToClose90: number | null; avgDaysToClose90Cases: number; stageDays90: StageDays;
   ages: Array<{ label: string; count: number }>;
   trend: Array<{ month: string; opened: number; closed: number; backlog: number; avgDaysToClose: number | null }>;
-  overdue: Overdue[]; suppliers: Supplier[]; unattributed: number;
+  overdue: Overdue[]; suppliers: Supplier[]; unattributed: number; rateFrom: string;
   caseList: CaseRow[];
 };
 type CaseRow = {
@@ -161,7 +161,7 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
 
       <SectionTitle eyebrow="Suppliers" title="Whose goods come back" />
       {d && (
-        <Panel title="Suppliers" hint={`cases opened ${periodLabel} against goods received from the same supplier ${periodLabel}`}>
+        <Panel title="Suppliers" hint={`cases opened ${d.rateFrom} – ${to} against goods received from the same supplier over the same dates · at least 3 months, since a defect shows up weeks after delivery`}>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead><tr><Th left>Supplier</Th><Th>Service case rate</Th><Th>Items in cases / received</Th><Th>Cases</Th><Th>Still open</Th><Th>Overdue</Th><Th>Average to close</Th></tr></thead>
@@ -197,14 +197,12 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
             </div>
           )}
           <ul className="mt-2 list-disc space-y-0.5 pl-5 text-[11.5px] text-ink-muted">
-            <li>Service case rate = items in that supplier&apos;s cases ÷ items received from them in the same period (1,000 received, 50 in cases = 5%). Red from 5%.</li>
+            <li>Service case rate = items in that supplier&apos;s cases ÷ items received from them over the same dates (1,000 received, 50 in cases = 5%). Red from 5%. At least the last 3 months, so a month with no delivery does not read as 100%.</li>
             <li>Average to close = the supplier&apos;s cases opened in the period and already closed, opened to closed. &quot;—&quot; rate = nothing received from them in the period.</li>
             <li>&quot;check code&quot; = more items in cases than received under this supplier code: the goods are booked under another code (a renamed or new company). {d.unattributed} cases opened in the period have no supplier set and are not counted.</li>
           </ul>
         </Panel>
       )}
-      <SectionTitle eyebrow="Chase" title="Who and what to chase" />
-      {repeats}
 
       {d && (
         <section id="quality-overdue">
@@ -237,6 +235,9 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
           </Panel>
         </section>
       )}
+
+      <SectionTitle eyebrow="Chase" title="Who and what to chase" />
+      {repeats}
 
       <DrillDrawer drill={drill} onClose={() => setDrill(null)} />
     </div>

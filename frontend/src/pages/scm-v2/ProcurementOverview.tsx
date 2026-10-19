@@ -21,7 +21,7 @@ import { useUpdateCategoryLeadTime, type LeadCategory } from "../../vendor/scm/l
 type PeriodLine = {
   poId: string; poNumber: string; poDate: string; supplier: string; category: string; itemCode: string | null;
   qty: number; sen: number; raised: boolean; due: boolean; dueDate: string | null;
-  receivedQty: number; receivedSen: number; openQty: number; openSen: number; daysLate: number | null;
+  receivedQty: number; receivedSen: number; lastReceived: string | null; openQty: number; openSen: number; daysLate: number | null;
 };
 type BucketKey = "late5" | "late0to4" | "due2to7" | "due8plus";
 type Group = {
@@ -134,7 +134,8 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
       onRow: (l) => navigate(`/scm/purchase-orders/${l.poId}`),
       columns: [
         col<PeriodLine>("PO", true, (l) => <span className="text-primary">{l.poNumber}</span>, (l) => l.poNumber, null, null),
-        col<PeriodLine>("Date", false, (l) => l.poDate, null, null, null),
+        col<PeriodLine>("PO date", false, (l) => l.poDate, null, null, null),
+        ...(measure === "received" ? [col<PeriodLine>("Received on", false, (l) => l.lastReceived ?? "—", null, null, null)] : []),
         col<PeriodLine>("Supplier", true, (l) => l.supplier, (l) => l.supplier, null, null),
         col<PeriodLine>("Item", true, (l) => l.itemCode ?? "—", (l) => l.itemCode ?? "", null, null),
         col<PeriodLine>("Due", false, (l) => l.dueDate ?? "—", null, null, null),
@@ -258,7 +259,8 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
             </Panel>
           </section>
 
-          <Panel title="Buffer stock · bought before it was needed" hint={`stock beyond the orders that have a delivery date, less ${d.deadStock.coverDays} days of normal outflow · matched per item and variant · as of today`}>
+          <Panel title="Buffer stock · bought before it was needed" hint={`stock beyond the orders that have a delivery date, less ${d.deadStock.coverDays} days of normal outflow · matched per item and variant · as of today`}
+            right={<ScopePicker value={scope} onChange={setScope} />}>
             <p className="mb-2 text-[12.5px] text-ink-secondary">
               {rm(d.deadStock.bufferSen)} across {d.deadStock.bufferSkus} items. Stock held for orders with no delivery date yet could have been bought when the customer fixed the date; what sells out within {d.deadStock.coverDays} days anyway is left out.
             </p>
@@ -367,7 +369,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
           </Panel>
 
           <section id="dead">
-            <Panel title="Dead stock · no order at all" hint={`on hand, no open sales order wants that item and variant, less what normally goes out in ${d.deadStock.coverDays} days · bars split by how long since it last went out · ${STOCK_SCOPE_OPTIONS.find(([k]) => k === scope)?.[1].toLowerCase()} · as of today`}>
+            <Panel title="Dead stock · no order at all" right={<ScopePicker value={scope} onChange={setScope} />} hint={`on hand, no open sales order wants that item and variant, less what normally goes out in ${d.deadStock.coverDays} days · bars split by how long since it last went out · ${STOCK_SCOPE_OPTIONS.find(([k]) => k === scope)?.[1].toLowerCase()} · as of today`}>
               <div className="grid gap-4 xl:grid-cols-2">
                 <div>
                   <div className="mb-1 text-[12px] font-semibold text-ink">By category</div>
@@ -422,14 +424,26 @@ function LineTable({ rows, empty, mode }: { rows: OpenLine[]; empty: string; mod
   );
 }
 
+/** Which locations the stock figures cover; the same choice as the bar at the top. */
+function ScopePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <label className="flex items-center gap-1.5 text-[12px] text-ink-secondary">
+      Locations
+      <select className={SELECT_CLS} value={value} onChange={(e) => onChange(e.target.value)} aria-label="Locations">
+        {STOCK_SCOPE_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+      </select>
+    </label>
+  );
+}
+
 function BufferTable({ title, rows, name }: { title: string; rows: StockGroup[]; name: (k: string) => ReactNode }) {
   const tot = rows.reduce((a, r) => ({ v: a.v + r.valueSen, b: a.b + r.bufferSen, s: a.s + r.bufferSkus }), { v: 0, b: 0, s: 0 });
   return (
     <table className="w-full border-collapse">
-      <thead><tr><Th left>{title}</Th><Th>Stock value</Th><Th>Buffer</Th><Th>Share</Th><Th>Items</Th></tr></thead>
+      <thead><tr><Th left>{title}</Th><Th>Stock value</Th><Th>Buffer</Th><Th>Share of all buffer</Th><Th>% of its stock</Th><Th>Items</Th></tr></thead>
       <tbody>
-        {rows.map((r) => <tr key={r.key}><Td left>{name(r.key)}</Td><Td>{fmtSen(r.valueSen)}</Td><Td className="text-warning-text">{fmtSen(r.bufferSen)}</Td><Td>{share(r.bufferSen, r.valueSen)}</Td><Td>{r.bufferSkus}</Td></tr>)}
-        <tr className="font-semibold"><Td left>Total</Td><Td>{fmtSen(tot.v)}</Td><Td>{fmtSen(tot.b)}</Td><Td>{share(tot.b, tot.v)}</Td><Td>{tot.s}</Td></tr>
+        {rows.map((r) => <tr key={r.key}><Td left>{name(r.key)}</Td><Td>{fmtSen(r.valueSen)}</Td><Td className="text-warning-text">{fmtSen(r.bufferSen)}</Td><Td className="font-semibold">{share(r.bufferSen, tot.b)}</Td><Td className="text-ink-secondary">{share(r.bufferSen, r.valueSen)}</Td><Td>{r.bufferSkus}</Td></tr>)}
+        <tr className="font-semibold"><Td left>Total</Td><Td>{fmtSen(tot.v)}</Td><Td>{fmtSen(tot.b)}</Td><Td>100%</Td><Td>{share(tot.b, tot.v)}</Td><Td>{tot.s}</Td></tr>
       </tbody>
     </table>
   );
@@ -439,10 +453,10 @@ function StockTable({ title, rows, name }: { title: string; rows: StockGroup[]; 
   const tot = rows.reduce((a, r) => ({ v: a.v + r.valueSen, d: a.d + r.deadSen, s: a.s + r.deadSkus }), { v: 0, d: 0, s: 0 });
   return (
     <table className="w-full border-collapse">
-      <thead><tr><Th left>{title}</Th><Th>Stock value</Th><Th>Dead</Th><Th>Share</Th><Th>Items</Th></tr></thead>
+      <thead><tr><Th left>{title}</Th><Th>Stock value</Th><Th>Dead</Th><Th>Share of all dead</Th><Th>% of its stock</Th><Th>Items</Th></tr></thead>
       <tbody>
-        {rows.map((r) => <tr key={r.key}><Td left>{name(r.key)}</Td><Td>{fmtSen(r.valueSen)}</Td><Td className={r.deadSen ? "text-warning-text" : ""}>{fmtSen(r.deadSen)}</Td><Td>{share(r.deadSen, r.valueSen)}</Td><Td>{r.deadSkus}</Td></tr>)}
-        <tr className="font-semibold"><Td left>Total</Td><Td>{fmtSen(tot.v)}</Td><Td>{fmtSen(tot.d)}</Td><Td>{share(tot.d, tot.v)}</Td><Td>{tot.s}</Td></tr>
+        {rows.map((r) => <tr key={r.key}><Td left>{name(r.key)}</Td><Td>{fmtSen(r.valueSen)}</Td><Td className={r.deadSen ? "text-warning-text" : ""}>{fmtSen(r.deadSen)}</Td><Td className="font-semibold">{share(r.deadSen, tot.d)}</Td><Td className="text-ink-secondary">{share(r.deadSen, r.valueSen)}</Td><Td>{r.deadSkus}</Td></tr>)}
+        <tr className="font-semibold"><Td left>Total</Td><Td>{fmtSen(tot.v)}</Td><Td>{fmtSen(tot.d)}</Td><Td>100%</Td><Td>{share(tot.d, tot.v)}</Td><Td>{tot.s}</Td></tr>
       </tbody>
     </table>
   );

@@ -29,7 +29,11 @@ export const AGE_BUCKETS: Array<[string, number, number]> = [
   ["0–7 days", 0, 7], ["8–14 days", 8, 14], ["15–21 days", 15, 21], ["22–30 days", 22, 30], ["31–60 days", 31, 60], ["61–90 days", 61, 90], ["Over 90 days", 91, Infinity],
 ];
 
-export function qualityOverview(cases: QCase[], itemsByCase: Map<number, number>, history: QStageRow[], received: QReceived[], from: string, to: string, today: string, names: Map<string, string>) {
+/** `rateFrom`: where the supplier figures start — at least three months before
+ *  the period ends, since a defect shows up weeks after the goods arrive
+ *  (owner 2026-10-19: a month with no delivery from Ohana read 12 items in
+ *  cases against 2 received). Cases and goods received are both counted over it. */
+export function qualityOverview(cases: QCase[], itemsByCase: Map<number, number>, history: QStageRow[], received: QReceived[], from: string, to: string, rateFrom: string, today: string, names: Map<string, string>) {
   const live = cases.filter((c) => c.stage !== "voided");
   const inP = (d: string | null) => !!d && d.slice(0, 10) >= from && d.slice(0, 10) <= to;
   const opened = live.filter((c) => inP(c.openedAt));
@@ -93,11 +97,13 @@ export function qualityOverview(cases: QCase[], itemsByCase: Map<number, number>
   for (const r of received) { const g = recv.get(r.creditor) ?? { qty: 0, lines: 0, name: r.name }; g.qty += r.qty; g.lines += r.lines; recv.set(r.creditor, g); }
   /* Every month of the period, so a quarter or a year shows each month's goods in, cases and rate. */
   const months: string[] = [];
-  for (let d = new Date(`${from.slice(0, 7)}-01T00:00:00Z`); d.toISOString().slice(0, 7) <= to.slice(0, 7); d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1))) months.push(d.toISOString().slice(0, 7));
+  const inRate = (d: string | null) => !!d && d.slice(0, 10) >= rateFrom && d.slice(0, 10) <= to;
+  const rateCases = live.filter((c) => inRate(c.openedAt));
+  for (let d = new Date(`${rateFrom.slice(0, 7)}-01T00:00:00Z`); d.toISOString().slice(0, 7) <= to.slice(0, 7); d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1))) months.push(d.toISOString().slice(0, 7));
   const itemsOf = (cs: QCase[]) => cs.reduce((a, c) => a + Math.max(1, itemsByCase.get(c.id) ?? 1), 0);
-  const supplierKeys = [...new Set([...opened.map((c) => c.creditor), ...received.map((r) => r.creditor)].filter((x): x is string => !!x))];
+  const supplierKeys = [...new Set([...rateCases.map((c) => c.creditor), ...received.map((r) => r.creditor)].filter((x): x is string => !!x))];
   const suppliers = supplierKeys.map((code) => {
-    const cs = opened.filter((c) => c.creditor === code);
+    const cs = rateCases.filter((c) => c.creditor === code);
     const items = itemsOf(cs);
     const r = recv.get(code);
     const done = cs.filter((c) => c.stage === "completed" && !!c.closedAt);
@@ -135,7 +141,8 @@ export function qualityOverview(cases: QCase[], itemsByCase: Map<number, number>
     trend,
     overdue,
     suppliers,
-    unattributed: opened.filter((c) => !c.creditor).length,
+    unattributed: rateCases.filter((c) => !c.creditor).length,
+    rateFrom,
     /* The cases behind the figures — opened in the period, open now, or closed
        in the last 30 days — for the page's drill-down (owner 2026-10-18). */
     caseList: live.filter((c) => inP(c.openedAt) || isOpen(c) || (c.stage === "completed" && !!c.closedAt && c.closedAt.slice(0, 10) >= dayBefore(29)))

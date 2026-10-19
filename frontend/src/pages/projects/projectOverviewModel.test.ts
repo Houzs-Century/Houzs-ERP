@@ -4,23 +4,23 @@ import { figuresOf, totalsOf, trendOf, groupBy, drillOf, type OvProject } from "
 const p = (o: Partial<OvProject>): OvProject => ({
   id: 1, code: "P1", name: "Fair", brand: "AKEMI", organizer: "MLE", venue: "MV", state: "KL", stage: "draft",
   startDate: "2026-10-02", endDate: "2026-10-04", eventType: "Exhibition",
-  keyed: { income: 0, cogs: 0, rental: 0, commission: 0, setup: 0, transport: 0, merchandise: 0, other: 0 },
+  keyed: { income: 0, cogs: 0, rental: 0, commission: 0, setup: 0, transport: 0, merchandise: 0, other: 0, cogsMattSofa: 0, cogsBedframe: 0, cogsAccessories: 0, transportFee: 0, transportSetup: 0 },
   salesOrders: { sen: 0, costSen: 0, count: 0 }, ...o,
 });
 
 describe("Project Overview figures", () => {
   it("uses the keyed books when they exist", () => {
-    const f = figuresOf(p({ keyed: { income: 10000, cogs: 4000, rental: 2000, commission: 500, setup: 0, transport: 0, merchandise: 0, other: 0 }, salesOrders: { sen: 999_00, costSen: 1_00, count: 1 } }));
+    const f = figuresOf(p({ keyed: { income: 10000, cogs: 4000, rental: 2000, commission: 500, setup: 0, transport: 0, merchandise: 0, other: 0, cogsMattSofa: 0, cogsBedframe: 0, cogsAccessories: 0, transportFee: 0, transportSetup: 0 }, salesOrders: { sen: 999_00, costSen: 1_00, count: 1 } }));
     expect(f).toMatchObject({ salesSource: "keyed", sales: 10000, cogs: 4000, gp: 6000, np: 3500, cogsFromSalesOrders: false });
   });
 
   it("falls back to the Sales Orders — amount for sales, cost for COGS — until the event is settled", () => {
-    const f = figuresOf(p({ keyed: { income: 0, cogs: 0, rental: 2000, commission: 0, setup: 0, transport: 0, merchandise: 0, other: 0 }, salesOrders: { sen: 8000_00, costSen: 3000_00, count: 3 } }));
+    const f = figuresOf(p({ keyed: { income: 0, cogs: 0, rental: 2000, commission: 0, setup: 0, transport: 0, merchandise: 0, other: 0, cogsMattSofa: 0, cogsBedframe: 0, cogsAccessories: 0, transportFee: 0, transportSetup: 0 }, salesOrders: { sen: 8000_00, costSen: 3000_00, count: 3 } }));
     expect(f).toMatchObject({ salesSource: "sales_orders", sales: 8000, cogs: 3000, gp: 5000, np: 3000, cogsFromSalesOrders: true });
   });
 
   it("an event with neither shows its booked cost as a loss and says so", () => {
-    const f = figuresOf(p({ keyed: { income: 0, cogs: 0, rental: 2000, commission: 0, setup: 0, transport: 0, merchandise: 0, other: 0 } }));
+    const f = figuresOf(p({ keyed: { income: 0, cogs: 0, rental: 2000, commission: 0, setup: 0, transport: 0, merchandise: 0, other: 0, cogsMattSofa: 0, cogsBedframe: 0, cogsAccessories: 0, transportFee: 0, transportSetup: 0 } }));
     expect(f).toMatchObject({ salesSource: "none", sales: 0, np: -2000 });
     expect(totalsOf([p({}), p({ salesOrders: { sen: 100_00, costSen: 0, count: 1 } })])).toMatchObject({ projects: 2, noSales: 1, fromSalesOrders: 1, sales: 100 });
   });

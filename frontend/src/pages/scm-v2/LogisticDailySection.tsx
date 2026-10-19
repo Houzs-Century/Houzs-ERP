@@ -3,6 +3,7 @@
 // and the average a lorry carried; per region the same money in one table.
 import { useState } from "react";
 import { fmtSen } from "../../vendor/shared/format";
+import { cn } from "../../lib/utils";
 import { Th, Td, Panel, Toggle } from "../../components/scm-v2/OverviewKit";
 import { Columns, PALETTE, TONE } from "../../components/scm-v2/Charts";
 
@@ -16,9 +17,22 @@ export type DoDrill = (title: string, keep: (d: { date: string; region: string; 
 const dd = (d: string) => d.slice(5).replace("-", "/");
 const money = (x: number | null) => (x == null ? "—" : fmtSen(x));
 
-export function LogisticDailySection({ days, regions, onDrill }: { days: DayRow[]; regions: RegionRow[]; onDrill: DoDrill }) {
+type DayDo = { date: string; region: string; amountSen: number; lorry: string | null };
+
+export function LogisticDailySection({ days: allDays, regions, doList, onDrill }: { days: DayRow[]; regions: RegionRow[]; doList: DayDo[]; onDrill: DoDrill }) {
   const [by, setBy] = useState<"amount" | "orders">("amount");
   const amt = by === "amount";
+  /* Click a region and the day by day follows it (owner 2026-10-19), like the
+     Project breakdown filters its project list; click it again for all. */
+  const [region, setRegion] = useState<string | null>(null);
+  const days: DayRow[] = region == null ? allDays : allDays.map((x) => {
+    const ds = doList.filter((d) => d.date === x.date && d.region === region);
+    const withLorry = ds.filter((d) => d.lorry);
+    const lorries = new Set(withLorry.map((d) => d.lorry)).size;
+    const amountSen = ds.reduce((a, d) => a + d.amountSen, 0);
+    return { date: x.date, orders: ds.length, amountSen, avgOrderSen: ds.length ? Math.round(amountSen / ds.length) : null, lorries, lorryOrders: withLorry.length,
+      perLorrySen: lorries ? Math.round(withLorry.reduce((a, d) => a + d.amountSen, 0) / lorries) : null };
+  });
   const shown = days.filter((x) => x.orders);
   const tot = days.reduce((a, x) => ({ orders: a.orders + x.orders, amountSen: a.amountSen + x.amountSen, lorries: a.lorries + x.lorries, lorryOrders: a.lorryOrders + x.lorryOrders }), { orders: 0, amountSen: 0, lorries: 0, lorryOrders: 0 });
   const lorrySen = days.reduce((a, x) => a + (x.perLorrySen ?? 0) * x.lorries, 0);
@@ -26,8 +40,11 @@ export function LogisticDailySection({ days, regions, onDrill }: { days: DayRow[
   const regionMax = Math.max(1, ...regions.map((r) => (amt ? r.amountSen : r.orders)));
   return (
     <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
-      <Panel title="Day by day" hint="delivery orders issued each day · click a day for its orders"
-        right={<Toggle value={by} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setBy} />}>
+      <Panel title={region ? `Day by day · ${region}` : "Day by day"} hint="delivery orders issued each day · click a day for its orders · click a region on the right to follow it"
+        right={<span className="flex items-center gap-2">
+          {region && <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setRegion(null)}>All regions</button>}
+          <Toggle value={by} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setBy} />
+        </span>}>
         <Columns valueLabels={!amt} height={190} stacked={false} format={amt ? fmtSen : (x) => `${x} orders`} highlight={null}
           labels={days.map((x) => dd(x.date))}
           series={[{ name: amt ? "Delivered amount" : "Orders delivered", color: TONE.good }]}
@@ -40,7 +57,7 @@ export function LogisticDailySection({ days, regions, onDrill }: { days: DayRow[
             </tr></thead>
             <tbody>
               {shown.map((x) => (
-                <tr key={x.date} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onDrill(`Delivered on ${x.date}`, (d) => d.date === x.date)}>
+                <tr key={x.date} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onDrill(`Delivered on ${x.date}${region ? ` · ${region}` : ""}`, (d) => d.date === x.date && (!region || d.region === region))}>
                   <Td left>{x.date}</Td><Td>{x.orders}</Td><Td>{fmtSen(x.amountSen)}</Td><Td>{money(x.avgOrderSen)}</Td>
                   <Td>{x.lorries || "—"}</Td><Td>{money(x.perLorrySen)}</Td>
                 </tr>
@@ -62,12 +79,12 @@ export function LogisticDailySection({ days, regions, onDrill }: { days: DayRow[
         </p>
       </Panel>
 
-      <Panel title="By region" hint="the customer's state, in Delivery Planning's regions · click a region for its orders">
+      <Panel title="By region" hint="the customer's state, in Delivery Planning's regions · click a region to follow it on the left">
         <table className="w-full border-collapse">
           <thead><tr><Th left>Region</Th><Th left> </Th><Th>Orders</Th><Th>Amount</Th><Th>Share</Th><Th>Average order</Th></tr></thead>
           <tbody>
             {regions.map((r, i) => (
-              <tr key={r.region} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onDrill(`Delivered to ${r.region}`, (d) => d.region === r.region)}>
+              <tr key={r.region} className={cn("cursor-pointer hover:bg-surface-2/50", region === r.region && "bg-primary-soft/50")} onClick={() => setRegion(region === r.region ? null : r.region)}>
                 <Td left>{r.region}</Td>
                 <Td left className="w-[28%]">
                   <div className="h-2 rounded-full bg-surface-2"><div className="h-2 rounded-full" style={{ width: `${((amt ? r.amountSen : r.orders) / regionMax) * 100}%`, background: PALETTE[i % PALETTE.length] }} /></div>

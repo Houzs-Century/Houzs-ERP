@@ -27,6 +27,9 @@ app.get("/", requirePermission("service_cases.read"), async (c) => {
   const qf = c.req.query("from") ?? ""; const qt = c.req.query("to") ?? "";
   const from = ISO.test(qf) ? qf : `${today.slice(0, 7)}-01`;
   const to = ISO.test(qt) && qt >= from ? qt : today;
+  /* Supplier figures: at least the three months up to the period end. */
+  const threeMonths = new Date(Date.parse(`${to}T00:00:00Z`) - 89 * 86400000).toISOString().slice(0, 10);
+  const rateFrom = from < threeMonths ? from : threeMonths;
   const since = new Date(Date.parse(`${to}T00:00:00Z`) - 730 * 86400000).toISOString().slice(0, 10);
   const vis = (await assrVisibilityScope(c))("c.");
   const co = allowedCompaniesSql(c, "c.company_id");
@@ -59,13 +62,13 @@ app.get("/", requirePermission("service_cases.read"), async (c) => {
       WHERE g.status NOT IN ('DRAFT','CANCELLED')
         AND substr(CAST(g.received_at AS TEXT), 1, 10) >= ? AND substr(CAST(g.received_at AS TEXT), 1, 10) <= ?${allowedCompaniesSql(c, "g.company_id")}
       GROUP BY s.code, s.name, substr(CAST(g.received_at AS TEXT), 1, 7)`,
-  ).bind(from, to).all<{ code: string | null; name: string | null; month: string | null; qty: number | null; lines: number | null }>();
+  ).bind(rateFrom, to).all<{ code: string | null; name: string | null; month: string | null; qty: number | null; lines: number | null }>();
   const received: QReceived[] = recv.results.filter((r) => r.code).map((r) => ({ creditor: String(r.code), name: String(r.name ?? r.code), month: String(r.month ?? ''), qty: Number(r.qty ?? 0), lines: Number(r.lines ?? 0) }));
 
   const creditors = await c.env.DB.prepare(`SELECT creditor_code, company_name FROM creditors`).all<{ creditor_code: string; company_name: string | null }>();
   const names = new Map(creditors.results.filter((r) => r.company_name).map((r) => [String(r.creditor_code), String(r.company_name)]));
 
-  return c.json({ from, to, ...qualityOverview(cases, itemsByCase, history, received, from, to, today, names) });
+  return c.json({ from, to, ...qualityOverview(cases, itemsByCase, history, received, from, to, rateFrom, today, names) });
 });
 
 export default app;

@@ -54,8 +54,16 @@ export function ProjectOverviewPage() {
   const yearView = drill.level === "quarters" || drill.level === "yearMonths" ? drill.year : null;
   const openBucket = (b: (typeof trend)[number]) => { if (b.next) setDrill(b.next); else { setPick(null); setPeriod(b.from, b.to > today ? today : b.to); } };
   /* Running costs after COGS, only the ones that are not zero. */
-  const costs = ([["Rental", t.rental, PALETTE[2]!], ["Commission", t.commission, PALETTE[3]!], ["Setup", t.setup, PALETTE[5]!], ["Transport", t.transport, PALETTE[8]!], ["Merchandise", t.merchandise, PALETTE[7]!], ["Other", t.other, "#c9cdc4"]] as Array<[string, number, string]>).filter(([, v]) => v !== 0);
-  const running = costs.reduce((a, [, v]) => a + v, 0);
+  /* The lines of the Financial Snapshot, each against sales (owner 2026-10-19). */
+  const cogsLines: Array<[string, number, string]> = [
+    ["COGS — Matt / Sofa", t.cogsMattSofa, PALETTE[1]!], ["COGS — Bedframe", t.cogsBedframe, "#c98a4b"], ["COGS — Accessories", t.cogsAccessories, "#e0b184"],
+    ...(t.cogsFromSo ? [["COGS — from Sales Orders (not split)", t.cogsFromSo, "#b07a3f"] as [string, number, string]] : []),
+  ];
+  const costLines: Array<[string, number, string]> = [
+    ["Rental", t.rental, PALETTE[2]!], ["Setup", t.setup, PALETTE[5]!], ["Transport fee", t.transportFee, PALETTE[8]!],
+    ["Transport setup & dismantle", t.transportSetup, "#7a9cc6"], ["Commission", t.commission, PALETTE[3]!], ["Merchandise", t.merchandise, PALETTE[7]!], ["Others costing", t.other, "#c9cdc4"],
+  ];
+  const running = costLines.reduce((a, [, v]) => a + v, 0);
   const npMax = Math.max(1, ...groups.map((g) => Math.abs(g.np)));
   const listed = inPeriod.filter((p) => !pick || (p[dim] || "—") === pick)
     .map((p) => ({ p, f: figuresOf(p) }))
@@ -119,18 +127,19 @@ export function ProjectOverviewPage() {
         </Panel>
         <Panel title="Where each ringgit of sales goes" hint={period.label}>
           <SplitBar format={money} parts={[
-            { label: "COGS", value: t.cogs, color: PALETTE[1]! },
-            ...costs.map(([label, value, color]) => ({ label, value, color })),
+            ...[...cogsLines, ...costLines].filter(([, v]) => v > 0).map(([label, value, color]) => ({ label, value, color })),
             { label: "Net profit", value: Math.max(0, t.np), color: TONE.good },
           ]} />
           <table className="mt-3 w-full border-collapse"><tbody>
-            <tr><Td left>Sales</Td><Td>{money(t.sales)}</Td><Td className="text-ink-muted">100%</Td></tr>
-            <tr><Td left>− COGS</Td><Td>{money(t.cogs)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(t.cogs, t.sales))}</Td></tr>
+            <tr className="font-semibold"><Td left>Sales</Td><Td>{money(t.sales)}</Td><Td className="text-ink-muted">100%</Td></tr>
+            {cogsLines.map(([l, v]) => <tr key={l} className={v ? "" : "text-ink-muted"}><Td left className="pl-6">{l}</Td><Td>{money(v)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(v, t.sales))}</Td></tr>)}
+            <tr><Td left>− COGS total</Td><Td>{money(t.cogs)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(t.cogs, t.sales))}</Td></tr>
             <tr className="font-semibold"><Td left>= Gross profit</Td><Td>{money(t.gp)}</Td><Td>{pctTxt(pctOf(t.gp, t.sales))}</Td></tr>
-            <tr><Td left>− Event costs</Td><Td>{money(running)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(running, t.sales))}</Td></tr>
+            {costLines.map(([l, v]) => <tr key={l} className={v ? "" : "text-ink-muted"}><Td left className="pl-6">{l}</Td><Td>{money(v)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(v, t.sales))}</Td></tr>)}
+            <tr><Td left>− Total cost</Td><Td>{money(running)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(running, t.sales))}</Td></tr>
             <tr className="font-semibold"><Td left>= Net profit</Td><Td className={t.np < 0 ? "text-err" : "text-synced"}>{money(t.np)}</Td><Td>{pctTxt(pctOf(t.np, t.sales))}</Td></tr>
           </tbody></table>
-          {costs.length > 0 && <p className="mt-2 text-[11.5px] text-ink-muted">Event costs: {costs.map(([l, v]) => `${l} ${money(v)}`).join(" · ")}</p>}
+          <p className="mt-2 text-[11.5px] text-ink-muted">The lines of each event&apos;s Financial Snapshot, added up; % = share of sales. A grey line has nothing keyed in this period.</p>
         </Panel>
       </div>
 

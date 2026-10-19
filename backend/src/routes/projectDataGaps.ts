@@ -45,11 +45,16 @@ projectDataGaps.get("/", async (c) => {
             ${sum("l.kind = 'income'")} AS income,
             ${sum(`l.kind = 'cost' AND l.category IN ${COGS}`)} AS cogs,
             ${sum("l.kind = 'cost' AND l.category = 'commission'")} AS commission,
-            ${sum("l.kind = 'cost'")} AS cost
+            ${sum("l.kind = 'cost'")} AS cost,
+            ${sum("l.kind = 'cost' AND l.category = 'rental'")} AS rental,
+            ${sum("l.kind = 'cost' AND l.category = 'setup'")} AS setup,
+            ${sum("l.kind = 'cost' AND l.category IN ('transport_fee','transport')")} AS transport_fee,
+            ${sum("l.kind = 'cost' AND l.category = 'transport_setup_dismantle'")} AS transport_setup,
+            ${sum("l.kind = 'cost' AND l.category = 'merchandise'")} AS merchandise
        FROM projects p
       WHERE p.archived_at IS NULL
         AND substr(p.end_date, 1, 10) >= ? AND substr(p.end_date, 1, 10) <= ?${activeCompanySql(c, "p.company_id")}`,
-  ).bind(from, to).all<Omit<GapProject, "soSen">>();
+  ).bind(from, to).all<Omit<GapProject, "soSen"> & { rental: number; setup: number; transport_fee: number; transport_setup: number; merchandise: number }>();
   const projects = rows.results;
 
   const ids = projects.map((p) => String(p.id));
@@ -61,5 +66,15 @@ projectDataGaps.get("/", async (c) => {
   const soSen = new Map<number, number>();
   for (const s of sos.data) soSen.set(Number(s.project_id), (soSen.get(Number(s.project_id)) ?? 0) + Number(s.local_total_sen ?? 0));
 
-  return c.json({ from, to, ...classifyProjectGaps(projects.map((p) => ({ ...p, soSen: soSen.get(p.id) ?? 0 }))) });
+  /* Each event's books line by line (owner 2026-10-19: "which costing is not
+     complete" — the data problem, under the process problem above). A line is
+     complete when something is keyed on it. */
+  const books = projects.map((p) => ({
+    id: p.id, name: p.name, brand: p.brand, endDate: String(p.end_date ?? "").slice(0, 10), soSen: soSen.get(p.id) ?? 0,
+    lines: {
+      sales: Number(p.income), cogs: Number(p.cogs), rental: Number(p.rental), setup: Number(p.setup), transportFee: Number(p.transport_fee),
+      transportSetup: Number(p.transport_setup), commission: Number(p.commission), merchandise: Number(p.merchandise),
+    },
+  })).sort((a, b) => b.endDate.localeCompare(a.endDate));
+  return c.json({ from, to, books, ...classifyProjectGaps(projects.map((p) => ({ ...p, soSen: soSen.get(p.id) ?? 0 }))) });
 });

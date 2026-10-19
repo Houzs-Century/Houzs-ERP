@@ -15,7 +15,7 @@ describe('assr quality overview', () => {
       c({ id: 3, stage: 'completed', openedAt: '2026-01-02', closedAt: null }),
       c({ id: 4, stage: 'voided', openedAt: '2026-10-06' }),
       c({ id: 5, stage: 'completed', openedAt: '2026-10-02', closedAt: '2026-10-06' }),
-    ], new Map(), [], [], '2026-10-01', '2026-10-17', '2026-10-17', new Map());
+    ], new Map(), [], [], '2026-10-01', '2026-10-17', '2026-10-01', '2026-10-17', new Map());
     /* Last 30 days: case 2 (18 days) and case 5 (4 days) closed in them. */
     expect(r).toMatchObject({ opened: 2, closed: 2, ongoingNow: 1, openedStillOpen: 1, avgDaysToClose: 11, avgDaysToCloseCases: 2, avgDaysToClosePrev30: null });
     expect(r.trend.at(-1)).toMatchObject({ month: '2026-10', opened: 2, closed: 2, backlog: 1, avgDaysToClose: 11 });
@@ -33,7 +33,7 @@ describe('assr quality overview', () => {
       { caseId: 1, stage: 'pending_delivery_service', enteredAt: '2026-10-04', exitedAt: '2026-10-11', targetDays: 5 },
       { caseId: 1, stage: 'pending_review', enteredAt: '2026-09-01', exitedAt: '2026-09-10', targetDays: 2 },
       { caseId: 2, stage: 'pending_solution', enteredAt: '2026-10-07', exitedAt: null, targetDays: 3 },
-    ], [{ creditor: '400-A', name: 'A SDN BHD', month: '2026-10', qty: 60, lines: 20 }, { creditor: '400-A', name: 'A SDN BHD', month: '2026-10', qty: 40, lines: 20 }], '2026-10-01', '2026-10-17', '2026-10-17', new Map([['400-A', 'A Sofa']]));
+    ], [{ creditor: '400-A', name: 'A SDN BHD', month: '2026-10', qty: 60, lines: 20 }, { creditor: '400-A', name: 'A SDN BHD', month: '2026-10', qty: 40, lines: 20 }], '2026-10-01', '2026-10-17', '2026-10-01', '2026-10-17', new Map([['400-A', 'A Sofa']]));
     expect(r.stageDays).toEqual({ pending_solution: { avgDays: 3, cases: 1 }, pending_delivery_service: { avgDays: 7, cases: 1 } });
     expect(r.overdue).toEqual([expect.objectContaining({ id: 2, assrNo: 'ASSR-2', customer: 'Tan', supplier: 'A Sofa', stage: 'pending_solution', daysInStage: 10, daysOver: 7, caseAgeDays: 14 })]);
     expect(r.suppliers[0]).toMatchObject({ name: 'A Sofa', receivedQty: 100, cases: 2, items: 5, ratePct: 5, open: 1, overdue: 1, closed: 1, avgDaysToClose: 10 });
