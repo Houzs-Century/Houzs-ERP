@@ -33,9 +33,31 @@ describe('the create path refuses a typed order with no fair', () => {
     expect(gate).toContain('orderDate: soDateForVenue');
   });
 
-  it("the new order's fair link takes the keyer's booth where the brand cannot decide", () => {
+  it("the new order's fair link is fairLinkOnCreate: scans by slip, the keyer is the logged-in person", () => {
     const link = core.slice(core.indexOf('── FAIR LINK (owner 2026-09-13)'));
-    expect(link).toContain('await resolveFairForCreate({');
+    expect(link).toContain('await fairLinkOnCreate({');
+    expect(link).toContain("scanned: c.auditSource === 'scan'");
     expect(link).toContain("keyerId: Number(c.get('houzsUser')?.id ?? NaN)");
+    expect(link).toContain('bindingProjectId: projectIdToStamp');
+  });
+});
+
+describe('the DRAFT -> CONFIRMED gate asks about the fair (owner 2026-10-19)', () => {
+  const start = raw.indexOf('export const patchMfgSalesOrderStatusHandler');
+  const handler = start < 0 ? '' : raw.slice(start, raw.indexOf('const commitStatusChange', start));
+
+  it('adds fairConfirmProblems to the confirm problems, scoped to the active company', () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(handler).toContain('confirmProblems.push(...await fairConfirmProblems({');
+    expect(handler).toContain('scope: (q) => scopeToCompanyId(q, co.companyId)');
+    expect(handler).toContain("confirmerId: Number(c.get('houzsUser')?.id ?? NaN)");
+  });
+});
+
+describe('a header edit can say No fair (owner 2026-10-19)', () => {
+  it('writes NO_FAIR, and the venue re-detect leaves it alone', () => {
+    expect(raw).toContain("if (body.noFair === true && !fairLink && (beforeRecord.fair_match !== 'NO_FAIR' || beforeRecord.project_id != null)) {");
+    expect(raw).toContain("Object.assign(updates, { project_id: null, fair_match: 'NO_FAIR', fair_date: null });");
+    expect(raw).toContain('if (!fairLink && body.noFair !== true) {');
   });
 });

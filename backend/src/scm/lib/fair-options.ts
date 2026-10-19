@@ -306,6 +306,12 @@ function optionKey(venue: string, organizer: string, start: string, end: string 
   return [fairKeyPart(venue), fairKeyPart(organizer), start, end ?? ''].join('|');
 }
 
+/** The EVENT a pickable project belongs to (venue + organizer + period), keyed
+ *  as the dropdown keys its rows. Two booths of one event share it. */
+export function fairEventKey(row: FairProjectRow): string {
+  return optionOf(row).key;
+}
+
 /** One picker row for one PICKABLE project. The single place a row is built, so
  *  the dropdown and the keyer's default (`keyerFairDefault`) key an event
  *  identically and the form can light up the row it was given. */
@@ -481,11 +487,10 @@ export function resolveFairWithKeyer(input: {
   const narrowed = input.candidates
     .filter(isPickableFair)
     .filter((r) => (wantOrg ? fairKeyPart(r.organizer) === wantOrg : true));
-  const eventOf = (r: FairProjectRow) => optionOf(r).key;
-  const keyerEvents = new Set(narrowed.filter((r) => input.keyerProjectIds.has(r.projectId)).map(eventOf));
+  const keyerEvents = new Set(narrowed.filter((r) => input.keyerProjectIds.has(r.projectId)).map(fairEventKey));
   if (keyerEvents.size !== 1) return plain;
   const [event] = [...keyerEvents];
-  const booths = narrowed.filter((r) => eventOf(r) === event);
+  const booths = narrowed.filter((r) => fairEventKey(r) === event);
   const inEvent = resolveFair({ candidates: booths, brand: input.brand, organizer: input.organizer });
   if (inEvent.projectId != null) return { ...inEvent, candidateIds: plain.candidateIds };
   /* Two records of ONE booth still count as one, as everywhere here. */
@@ -684,4 +689,35 @@ export function fairMissingMessage(why: FairWhy | null): string {
     return 'No fair found for you: you are not on Sales Attending for any fair in PMS. Pick a fair yourself, or ask the person in charge to add you.';
   }
   return 'Pick the Fair, or mark it No fair (showroom).';
+}
+
+/** "DUNLOPILLO @ MID VALLEY (10/15 - 10/18)" — one BOOTH, as the scan rules
+ *  name it to a salesperson. A booth with no brand reads as its event. */
+export function boothLabel(row: Pick<FairProjectRow, 'brand' | 'venue' | 'startDate' | 'endDate'>): string {
+  const brand = clean(row.brand);
+  const place = `${clean(row.venue)} (${fmtDayMonthRange(row.startDate, row.endDate)})`;
+  return brand ? `${brand} @ ${place}` : place;
+}
+
+/** Why a SCANNED order waits as a draft (owner 2026-10-19): the person who
+ *  scanned it must be on the Sales Attending of the booth it belongs to — 「他被
+ *  assign 去 akemi 就只能 save akemi 的 brand」 — and PMS adds them, not the
+ *  system. The owner approved the first-person sentence; `scannerName` is set
+ *  only when someone else presses Confirm, so it names whom to add. */
+export function attendingMessage(booth: Pick<FairProjectRow, 'brand' | 'venue' | 'startDate' | 'endDate'>, scannerName: string | null): string {
+  return scannerName
+    ? `${scannerName} is not on Sales Attending for ${boothLabel(booth)}. Ask the person in charge to add ${scannerName}, then confirm again.`
+    : `You are not on Sales Attending for ${boothLabel(booth)}. Ask the person in charge to add you, then confirm again.`;
+}
+
+/** "Venue differs" (owner 2026-10-19): the place written on the slip is not
+ *  where the order was placed. A flag by default; a refusal at Confirm once
+ *  the Fair rules switch says so. */
+export function venueDiffersMessage(slipVenue: string, placed: Pick<FairProjectRow, 'venue' | 'startDate' | 'endDate'>): string {
+  return `Venue differs. Slip venue: ${clean(slipVenue)} — placed at: ${clean(placed.venue)} (${fmtDayMonthRange(placed.startDate, placed.endDate)}). Pick the fair the slip was written at, or correct the venue, then confirm again.`;
+}
+
+/** Same place? Case/space-insensitive, as every venue compare here. */
+export function sameVenue(a: string | null | undefined, b: string | null | undefined): boolean {
+  return fairKeyPart(a) === fairKeyPart(b);
 }
