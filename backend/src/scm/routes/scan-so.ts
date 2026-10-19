@@ -3101,7 +3101,7 @@ const DUP_LOOKBACK_DAYS = 30;
 // scan_jobs.sample_id/so_doc_no, both indexed by migration 0068). THROWS on a
 // query error so each caller picks its own fail-open behaviour: the soft path
 // warns + skips the flag, the /enqueue path queues normally.
-async function findRecentSoForSlipSha(
+export async function findRecentSoForSlipSha(
   svc: SupabaseClient,
   imageSha256: string,
   // The sample the CURRENT scan just inserted — excluded or every scan would
@@ -3129,11 +3129,24 @@ async function findRecentSoForSlipSha(
     .in('sample_id', sampleIds)
     .not('so_doc_no', 'is', null)
     .order('created_at', { ascending: false })
-    .limit(1);
+    .limit(10);
   if (jobErr) throw new Error(jobErr.message);
-  const row = ((jobRows as Array<Record<string, unknown>> | null) ?? [])[0];
-  const doc = (row?.soDocNo ?? row?.so_doc_no) as string | undefined;
-  return typeof doc === 'string' && doc !== '' ? doc : null;
+  const jobDocs = (((jobRows as Array<Record<string, unknown>> | null) ?? [])
+    .map((r) => (r.soDocNo ?? r.so_doc_no) as unknown)
+    .filter((v): v is string => typeof v === 'string' && v !== ''));
+  if (jobDocs.length === 0) return null;
+  // HC-0117: "Discard draft" hard-deletes the SO but scan_jobs.so_doc_no keeps
+  // pointing at it, so a re-scan of the same photo was refused as "already
+  // created HC-SO-2610-210" for an order nobody could open. Only an SO that
+  // still exists counts as the original.
+  const { data: soRows, error: soErr } = await svc
+    .from('mfg_sales_orders')
+    .select('doc_no')
+    .in('doc_no', [...new Set(jobDocs)]);
+  if (soErr) throw new Error(soErr.message);
+  const alive = new Set(((soRows as Array<Record<string, unknown>> | null) ?? [])
+    .map((r) => (r.docNo ?? r.doc_no) as unknown));
+  return jobDocs.find((d) => alive.has(d)) ?? null;
 }
 
 async function findDuplicateSo(
