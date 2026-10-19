@@ -59,6 +59,7 @@ import { scopeSalesReportsForUser } from "../services/orgScope";
 import { audit } from "../services/audit";
 import { hasPermission, holdsChecklistApproval, EXPLICIT_APPROVAL_KEYS } from "../services/permissions";
 import { recomputeAutoCostLines } from "../services/projectCostRates";
+import { attendeeRepId, staffNotOnRoster } from "../services/salesAttending";
 import { issueShareToken, revokeShareTokens } from "../services/contractorShare";
 import { todayMyt } from "../scm/lib/my-time";
 import { canonicalizeVenue } from "../scm/lib/canonical-venue";
@@ -2393,7 +2394,7 @@ app.get("/sales-rep-options", requirePermission("projects.write"), async (c) => 
         AND r.status = 'active'
       ORDER BY LOWER(r.name), r.code`
   ).all<{ id: number; code: string; name: string; phone: string | null }>();
-  return c.json({ data: rows.results ?? [] });
+  return c.json({ data: rows.results ?? [], others: await staffNotOnRoster(c.env, activeCompanyId(c)) });
 });
 
 // ── Detail ────────────────────────────────────────────────────
@@ -4641,8 +4642,7 @@ app.delete("/team/:teamId", requirePermission("projects.write"), async (c) => {
 // project (booth duty etc). Separate from pic_id (a User) and the
 // generic project_team (also Users).
 
-// (sales-rep-options GET route MOVED above the "/:id" detail route — it's a
-// single-segment static path that "/:id" would otherwise shadow with a 400.)
+// (GET /sales-rep-options sits above "/:id", which would otherwise shadow it with a 400.)
 
 app.post("/:id/sales-attendees", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -4651,26 +4651,26 @@ app.post("/:id/sales-attendees", requirePermission("projects.write"), async (c) 
   const user = c.get("user");
   // Owner 2026-07-20: reversed the 2026-07-18 block — a Sales Director may now
   // change Sales Attending, like everyone else holding projects.write.
-  const body = await c.req.json<{ sales_rep_id?: number }>();
-  if (!body.sales_rep_id) return c.json({ error: "Please choose a sales attendee." }, 400);
+  const picked = await attendeeRepId(c.env, activeCompanyId(c), await c.req.json(), user?.id ?? null, id);
+  if (!picked.ok) return c.json({ error: picked.error }, 400);
   try {
     await c.env.DB.prepare(
       `INSERT INTO project_sales_attendees (project_id, sales_rep_id, created_by)
        VALUES (?, ?, ?)`
     )
-      .bind(id, body.sales_rep_id, user?.id ?? null)
+      .bind(id, picked.repId, user?.id ?? null)
       .run();
     const rep = await c.env.DB.prepare(
       `SELECT code, name FROM sales_reps WHERE id = ?`
     )
-      .bind(body.sales_rep_id)
+      .bind(picked.repId)
       .first<{ code: string; name: string }>();
     await logProjectActivity(
       c.env,
       id,
       "sales_attendee_add",
       null,
-      rep ? `${rep.code} ${rep.name}` : String(body.sales_rep_id),
+      rep ? `${rep.code} ${rep.name}` : String(picked.repId),
       null,
       user?.id
     );

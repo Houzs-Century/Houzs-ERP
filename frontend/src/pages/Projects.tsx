@@ -2291,6 +2291,13 @@ interface SalesRepBrief {
   brands_csv?: string | null;
 }
 
+/** An active staff member who is not on the Sales Team roster yet. */
+interface StaffBrief {
+  user_id: number;
+  name: string | null;
+  email: string;
+}
+
 function ProjectTeamSection({
   projectId,
   project: p,
@@ -2325,7 +2332,7 @@ function ProjectTeamSection({
   // Sales-attending picker — gated on projects.write, role-filtered to
   // sales_person. Brand-relaxed (owner: Option A): lists ALL active
   // Sales Persons regardless of brand. See GET /api/projects/sales-rep-options.
-  const repsQ = useQuery<{ data: SalesRepBrief[] }>("/api/projects/sales-rep-options",
+  const repsQ = useQuery<{ data: SalesRepBrief[]; others?: StaffBrief[] }>("/api/projects/sales-rep-options",
     () => api.get(`/api/projects/sales-rep-options`),
     []
   );
@@ -2334,19 +2341,22 @@ function ProjectTeamSection({
   const reps = [...(repsQ.data?.data ?? [])].sort((a, b) =>
     (a.name ?? "").localeCompare(b.name ?? ""),
   );
+  /* Staff NOT on the Sales Team roster (owner 2026-10-19: 「不需要改部门啊，就让
+     他们可以去 sales attending 不就好了？」). Adding one puts them on the roster;
+     their department stays as it is. */
+  const others = repsQ.data?.others ?? [];
   const takenRepIds = new Set(attendees.map((a) => a.sales_rep_id));
   const availableReps = reps.filter((r) => !takenRepIds.has(r.id));
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const filteredAvailable = availableReps.filter((r) => {
+  const [selectedStaff, setSelectedStaff] = useState<Set<number>>(new Set());
+  const matches = (...texts: Array<string | null | undefined>) => {
     const q = search.trim().toLowerCase();
-    if (!q) return true;
-    return (
-      (r.code ?? "").toLowerCase().includes(q) ||
-      (r.name ?? "").toLowerCase().includes(q)
-    );
-  });
+    return !q || texts.some((t) => (t ?? "").toLowerCase().includes(q));
+  };
+  const filteredAvailable = availableReps.filter((r) => matches(r.code, r.name));
+  const filteredOthers = others.filter((s) => matches(s.name, s.email));
 
   function toggleSelected(id: number) {
     setSelected((prev) => {
@@ -2356,12 +2366,22 @@ function ProjectTeamSection({
       return next;
     });
   }
+  function toggleStaff(userId: number) {
+    setSelectedStaff((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+  }
+  const pickedCount = selected.size + selectedStaff.size;
 
   // Owner 2026-06-25: multi-select — tick several reps + add them in one go
   // (was one-at-a-time). POSTs each selected id sequentially, then reloads once.
   async function addSelected() {
     const ids = [...selected].filter((id) => availableReps.some((r) => r.id === id));
-    if (ids.length === 0) return;
+    const staffIds = [...selectedStaff].filter((id) => others.some((s) => s.user_id === id));
+    if (ids.length === 0 && staffIds.length === 0) return;
     setBusy(true);
     try {
       for (const repId of ids) {
@@ -2369,7 +2389,11 @@ function ProjectTeamSection({
           sales_rep_id: repId,
         });
       }
+      for (const userId of staffIds) {
+        await api.post(`/api/projects/${projectId}/sales-attendees`, { user_id: userId });
+      }
       setSelected(new Set());
+      setSelectedStaff(new Set());
       setSearch("");
       onChanged();
     } catch (e: any) {
@@ -2504,7 +2528,7 @@ function ProjectTeamSection({
           <div className="mt-2">
             {/* Multi-select (owner 2026-06-25: "直接可以 multiselect 多选,不用
                 一个一个按") — filter + tick several + "Add N" in one go. */}
-            {reps.length === 0 ? (
+            {reps.length === 0 && others.length === 0 ? (
               !repsQ.loading && (
                 <div className="text-[9.5px] leading-snug text-warning-text">
                   No Sales Persons found. This picker reads the active Sales Reps
@@ -2513,7 +2537,7 @@ function ProjectTeamSection({
                   make sure that rep exists and is active (not archived).
                 </div>
               )
-            ) : availableReps.length === 0 ? (
+            ) : availableReps.length === 0 && others.length === 0 ? (
               <div className="text-[11px] italic text-ink-muted">
                 All sales reps added.
               </div>
@@ -2527,7 +2551,7 @@ function ProjectTeamSection({
                   className={SPEC_INPUT_CLASS}
                 />
                 <div className="mt-1 max-h-44 overflow-auto rounded-md border border-border">
-                  {filteredAvailable.length === 0 ? (
+                  {filteredAvailable.length === 0 && filteredOthers.length === 0 ? (
                     <div className="px-2 py-2 text-[10.5px] text-ink-muted">
                       No matches.
                     </div>
@@ -2554,13 +2578,36 @@ function ProjectTeamSection({
                       </label>
                     ))
                   )}
+                  {filteredOthers.length > 0 && (
+                    <>
+                      <div className="border-t border-border bg-bg/60 px-2 py-1 text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+                        Not in the Sales Team yet — adding puts them in it
+                      </div>
+                      {filteredOthers.map((s) => (
+                        <label
+                          key={`staff-${s.user_id}`}
+                          className="flex cursor-pointer items-center gap-2 border-t border-border px-2 py-1.5 text-[11px] hover:bg-bg/60"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedStaff.has(s.user_id)}
+                            onChange={() => toggleStaff(s.user_id)}
+                          />
+                          <span className="truncate text-ink">{s.name || s.email}</span>
+                          {s.name && (
+                            <span className="ml-auto shrink-0 truncate font-mono text-[9.5px] text-ink-muted">{s.email}</span>
+                          )}
+                        </label>
+                      ))}
+                    </>
+                  )}
                 </div>
                 <button
                   onClick={addSelected}
-                  disabled={busy || selected.size === 0}
+                  disabled={busy || pickedCount === 0}
                   className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-md border border-accent/40 bg-surface px-2 py-1.5 text-[11px] font-semibold text-accent hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <Plus size={11} /> Add{selected.size > 0 ? ` ${selected.size} selected` : ""}
+                  <Plus size={11} /> Add{pickedCount > 0 ? ` ${pickedCount} selected` : ""}
                 </button>
               </>
             )}
