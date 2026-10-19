@@ -243,20 +243,6 @@ procurementOverview.get('/', async (c) => {
     if (day(r.line_delivery_date) ?? day(soOf(r)?.customer_delivery_date)) g.scheduled += left; else g.unscheduled += left;
     openDemand.set(k, g);
   }
-  /* What normally goes out per day, per item and variant, over the stock
-     movements the ERP has (from the first OUT, at most a year). */
-  const firstOutAll = (moves.data ?? []).reduce<string | null>((a, m) => { if (m.movement_type !== 'OUT') return a; const d = day(m.movement_date) ?? day(m.created_at); return d && (!a || d < a) ? d : a; }, null);
-  const outFrom = firstOutAll && firstOutAll > windowStart ? firstOutAll : windowStart;
-  const outDays = Math.max(1, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${outFrom}T00:00:00Z`)) / 86400000) + 1);
-  const outPerDay = new Map<string, number>();
-  for (const m of moves.data ?? []) {
-    if (m.movement_type !== 'OUT') continue;
-    const d = day(m.movement_date) ?? day(m.created_at);
-    if (!d || d < outFrom) continue;
-    const k = `${String(m.item_code)}|${String(m.variant_key ?? '')}`;
-    outPerDay.set(k, (outPerDay.get(k) ?? 0) + Math.abs(num(m.qty)) / outDays);
-    outPerDay.set(`${String(m.item_code)}|*`, (outPerDay.get(`${String(m.item_code)}|*`) ?? 0) + Math.abs(num(m.qty)) / outDays);
-  }
   /* When each item / variant last came in, so the buffer and dead lists say
      how long the stock has sat (owner 2026-10-19). */
   /* From the open stock lots — a goods receipt and the AutoCount cut-over
@@ -277,7 +263,7 @@ procurementOverview.get('/', async (c) => {
   const deadRaw = deadStock((stock.data ?? []).map((r) => ({
     warehouse: String(r.warehouse_code ?? '—'), kind: (kindOf.get(String(r.warehouse_id)) ?? 'others'), category: catOf(r), itemCode: String(r.item_code), variantKey: String(r.variant_key ?? ''), name: str(r.product_name),
     qty: num(r.qty_on_hand), valueSen: num(r.value_sen), lastOut: lastOut.get(keyOf(r)) ?? null, firstMove: firstMove.get(keyOf(r)) ?? null,
-  })), today, openDemand, outPerDay, (r) => stockScopeKeeps(scope, r.kind));
+  })), today, openDemand, (r) => stockScopeKeeps(scope, r.kind));
   const dead = {
     ...deadRaw,
     top: deadRaw.top.map((x) => ({ ...x, lastIn: lastIn.get(`${x.itemCode}|${x.variantKey}`) ?? null, heldDays: heldDays(`${x.itemCode}|${x.variantKey}`) })),
