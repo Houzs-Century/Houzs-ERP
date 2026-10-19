@@ -8,6 +8,7 @@ import { deriveProjectCode, deriveProjectName, syncedNameForOrganizerChange } fr
 import { checklistRowDone } from "./checklistProgress";
 import { eventFinanceLines } from "./projectFinanceLines";
 import { loadEventPnl } from "./eventPnlInputs";
+import { pnlForProjects, withPnlColumns } from "./eventPnlBatch";
 export { deriveProjectCode, deriveProjectName };
 
 /** Disambiguate against existing codes by appending -2, -3, … */
@@ -1135,6 +1136,9 @@ export function stripSetupDismantle<
 // ── List ──────────────────────────────────────────────────────
 
 export interface ListProjectsFilters {
+  /** Fill the finance columns from the event page's P&L (services/eventPnlBatch.ts) —
+   *  set by the route for a caller who may see finance (owner 2026-10-19, ledger item 5). */
+  with_pnl?: boolean;
   stage?: string;
   /** Date-derived event phase for the field/sales slim filter bar (owner
    *  2026-07-21). The `stage` enum is unmaintained (never reaches
@@ -2005,7 +2009,9 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     .all();
 
   return {
-    data: rows.results ?? [],
+    data: f.with_pnl
+      ? withPnlColumns((rows.results ?? []) as any[], await pnlForProjects(env, (rows.results ?? []) as any[], f.company_id ?? null, LEDGER_COST_CATEGORIES))
+      : rows.results ?? [],
     page,
     per_page: perPage,
     total: total?.count ?? 0,

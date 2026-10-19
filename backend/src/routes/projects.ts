@@ -1172,6 +1172,7 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
   }
   const result = await listProjects(c.env, {
     company_id: activeCompanyId(c),
+    with_pnl: !financeHiddenForUser(user), // finance columns from the event P&L (ledger item 5)
     pending_label: pendingLabel,
     pending_title: pendingTitle,
     pending_logistic: pendingLogistic,
