@@ -152,6 +152,22 @@ try {
 }
 const CLAUDE_MODEL = ocr.CLAUDE_MODEL;
 
+// Fail fast on a Gemini model this key cannot call: one tiny real request, then Google's error text and
+// the usable model names (no slip data involved).
+if (APPLY) {
+  const gk = { 'content-type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY };
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+    { method: 'POST', headers: gk, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'ping' }] }] }) });
+  if (!r.ok) {
+    const msg = (await r.json().catch(() => ({})))?.error?.message ?? '';
+    const list = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: gk }).then((x) => x.json()).catch(() => ({}));
+    const names = (list.models ?? []).filter((m) => (m.supportedGenerationMethods ?? []).includes('generateContent')).map((m) => m.name.replace('models/', ''));
+    console.error(`Gemini ${GEMINI_MODEL}: HTTP ${r.status} ${msg.slice(0, 300)}\nThis key can use:\n${names.join('\n')}`);
+    await sql.end();
+    process.exit(1);
+  }
+}
+
 // ---------- pick the slips ----------
 const FINAL = 'Extract the sale-order slip above using the rules + catalog. ' +
   "OUTPUT FORMAT: Your response must be VALID JSON ONLY. Do NOT write any preamble, explanation, analysis, or chain-of-thought. Do NOT start with phrases like 'Looking at the image…'. Do NOT wrap in markdown fences. The very first character of your response must be '{' and the very last must be '}'.";
@@ -238,15 +254,6 @@ try {
     let slip = null;
     try { slip = mod.__normalizeSlip(JSON.parse(ocr.stripJsonFences(res.text))); } catch { /* scored as all-miss */ }
     return { slip, parseMs: performance.now() - t0 };
-  }
-
-  // Fail fast on a model id this key cannot use, and name the ones it can (names only).
-  const gm = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}`, { headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY } });
-  if (!gm.ok) {
-    const list = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY } }).then((r) => r.json()).catch(() => ({}));
-    const names = (list.models ?? []).filter((m) => (m.supportedGenerationMethods ?? []).includes('generateContent')).map((m) => m.name.replace('models/', ''));
-    console.error(`Gemini model ${GEMINI_MODEL}: HTTP ${gm.status}. This key can use:\n${names.join('\n')}`);
-    process.exit(1);
   }
 
   // Warm each distinct prefix once per model (prod keeps Claude's cache warm with a cron).
