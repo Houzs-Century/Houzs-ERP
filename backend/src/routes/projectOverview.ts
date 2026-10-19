@@ -15,7 +15,8 @@ import type { Env, Variables } from "../scm/env";
 import type { AuthUser } from "../services/auth";
 import { supabaseAuth } from "../scm/middleware/auth";
 import { scopeToCompany, activeCompanySql } from "../scm/lib/companyScope";
-import { chunkIn } from "../scm/lib/paginate-all";
+import { chunkIn, paginateAll } from "../scm/lib/paginate-all";
+import { indexOrdersByToken, matchBill, type OrderRow } from "./lib/sales-report-bills";
 import { financeHiddenForUser } from "../services/pmsAccess";
 
 export const projectOverview = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -95,6 +96,37 @@ projectOverview.get("/", async (c) => {
     }
   }
 
+  /* Is the event's Sales Orders daily? (owner 2026-10-19) Its chat sales report
+     against the orders, by the event page's own rule (lib/sales-report-bills.ts):
+     every bill opened as an order under this event = daily. */
+  // company-scope: the saved report bills carry activeCompanySql on b.company_id.
+  const billRows = await c.env.DB.prepare(
+    `SELECT b.project_id, b.ref_token, b.amount_sen FROM project_sales_bills b WHERE 1 = 1${activeCompanySql(c, "b.company_id")}`,
+  ).all<{ project_id: number; ref_token: string; amount_sen: number }>();
+  const billsOf = new Map<number, Array<{ ref_token: string; amount_sen: number }>>();
+  for (const b of billRows.results) billsOf.set(Number(b.project_id), [...(billsOf.get(Number(b.project_id)) ?? []), b]);
+  const withBills = projects.filter((p) => billsOf.has(p.id));
+  const report = new Map<number, { bills: number; billsSen: number; opened: number; openedSen: number; otherEvent: number }>();
+  if (withBills.length > 0) {
+    const starts = withBills.map((p) => String(p.start_date ?? "").slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+    const from = new Date(Date.parse(`${starts[0] ?? new Date().toISOString().slice(0, 10)}T00:00:00Z`) - 30 * 86400000).toISOString().slice(0, 10);
+    const orders = await paginateAll<OrderRow>((f, t) => scopeToCompany(c.get("supabase").from("mfg_sales_orders")
+      .select("doc_no, project_id, status, customer_so_no, ref, salesperson_id, local_total_sen, total_revenue_sen")
+      .neq("status", "CANCELLED").gte("so_date", from), c).order("doc_no").range(f, t));
+    if (orders.error) return c.json({ error: "load_failed", reason: `orders for the sales report: ${orders.error.message}` }, 500);
+    const index = indexOrdersByToken(orders.data ?? []);
+    for (const p of withBills) {
+      const r = { bills: 0, billsSen: 0, opened: 0, openedSen: 0, otherEvent: 0 };
+      for (const b of billsOf.get(p.id) ?? []) {
+        const m = matchBill(b.ref_token, p.id, index);
+        r.bills += 1; r.billsSen += Number(b.amount_sen);
+        if (m.status === "opened" && !m.other_event) { r.opened += 1; r.openedSen += Number(b.amount_sen); }
+        if (m.other_event) r.otherEvent += 1;
+      }
+      report.set(p.id, r);
+    }
+  }
+
   return c.json({
     projects: projects.map((p) => ({
       id: p.id, code: p.code, name: p.name, brand: p.brand, organizer: p.organizer, venue: p.venue, state: p.state, stage: p.stage,
@@ -107,6 +139,7 @@ projectOverview.get("/", async (c) => {
         transportFee: Number(p.transport_fee), transportSetup: Number(p.transport_setup),
       },
       salesOrders: so.get(p.id) ?? { sen: 0, costSen: 0, count: 0, costSplit: { mattSofa: 0, bedframe: 0, accessories: 0 } },
+      chatReport: report.get(p.id) ?? null,
     })),
   });
 });

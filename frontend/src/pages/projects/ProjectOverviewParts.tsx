@@ -23,12 +23,14 @@ interface DataGaps {
    2026-10-19): which line is not keyed is the data problem, under the
    process problem (Events by stage) above. Only the lines someone keys by
    hand; commission, merchandise and transport are worked out automatically. */
-const BOOK_LINES: Array<[BookKey, string]> = [
-  ["sales", "Sales"], ["cogsMattSofa", "COGS — Matt / Sofa"], ["cogsBedframe", "COGS — Bedframe"], ["cogsAccessories", "COGS — Accessories"],
-  ["rental", "Rental"], ["setup", "Setup"],
-];
+const BOOK_LINES: Array<[BookKey, string]> = [["sales", "Sales"], ["rental", "Rental"], ["setup", "Setup"]];
 type BookKey = "sales" | "cogs" | "cogsMattSofa" | "cogsBedframe" | "cogsAccessories" | "rental" | "setup" | "transportFee" | "transportSetup" | "commission" | "merchandise";
-interface BookRow { id: number; name: string; brand: string | null; endDate: string; soSen: number; lines: Record<BookKey, number> }
+interface BookRow {
+  id: number; code: string; name: string; brand: string | null; endDate: string; soSen: number; lines: Record<BookKey, number>;
+  soDocs: string[];
+  /** Order lines that sell a product but carry no cost: the COGS gap (owner 2026-10-19). */
+  noCostLines: Array<{ docNo: string; itemCode: string }>;
+}
 
 /** Finished events and which lines of their books are still empty. */
 export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void }) {
@@ -37,29 +39,36 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
   const g = q.data;
   if (q.error) return <div className="mb-4 rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not check the event books: {q.error}</div>;
   if (!g) return null;
-  const missing = (r: BookRow) => BOOK_LINES.filter(([k]) => !(r.lines[k] > 0)).map(([k]) => k);
+  const missing = (r: BookRow): string[] => [...BOOK_LINES.filter(([k]) => !(r.lines[k] > 0)).map(([k]) => k), ...(r.noCostLines.length ? ["cogs"] : [])];
   const incomplete = g.books.filter((r) => missing(r).length > 0);
-  const rows = incomplete.filter((r) => tab === "any" || missing(r).includes(tab as BookKey));
+  const rows = incomplete.filter((r) => tab === "any" || missing(r).includes(tab));
   const sen = (x: number) => money(x / 100);
   return (
     <Panel title="Books not complete" hint={`events that ended ${g.from} – ${g.to} (${g.books.length} events) · a red line has nothing keyed yet · the figures above read wrong until it is`}>
       <StepTabs value={tab} onChange={setTab}
         tabs={[["any", "Any line missing", incomplete.length, 0] as [string, string, number, number],
-          ...BOOK_LINES.map(([k, label]) => [k, `${label} not keyed`, incomplete.filter((r) => missing(r).includes(k)).length, 0] as [string, string, number, number])]} />
+          ...BOOK_LINES.map(([k, label]) => [k, `${label} not keyed`, incomplete.filter((r) => missing(r).includes(k)).length, 0] as [string, string, number, number]),
+          ["cogs", "COGS not captured on an order", incomplete.filter((r) => r.noCostLines.length > 0).length, 0] as [string, string, number, number]]} />
       <div className="max-h-[460px] overflow-auto">
         <table className="w-full border-collapse">
-          <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th>Sales Orders</Th>{BOOK_LINES.map(([k, l]) => <Th key={k}>{l}</Th>)}</tr></thead>
+          <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th left>Sales Orders</Th>{BOOK_LINES.map(([k, l]) => <Th key={k}>{l}</Th>)}<Th left>COGS not captured</Th></tr></thead>
           <tbody>{rows.map((r) => (
             <tr key={r.id} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
-              <Td left className="max-w-[300px] truncate text-primary">{r.name}</Td><Td>{r.endDate}</Td><Td className="text-ink-secondary">{sen(r.soSen)}</Td>
+              <Td left className="max-w-[300px] truncate"><span className="text-primary">{r.name}</span><span className="block text-[10.5px] text-ink-muted">{r.code}</span></Td><Td>{r.endDate}</Td>
+              <Td left className="text-ink-secondary"><span className="tabular-nums">{sen(r.soSen)}</span><span className="block max-w-[220px] truncate text-[10.5px] text-ink-muted" title={r.soDocs.join(", ")}>{r.soDocs.length ? `${r.soDocs.length} SO · ${r.soDocs.join(", ")}` : "no Sales Order"}</span></Td>
               {BOOK_LINES.map(([k]) => <Td key={k} className={r.lines[k] > 0 ? "" : "bg-err/5 font-semibold text-err"}>{r.lines[k] > 0 ? money(r.lines[k]) : "missing"}</Td>)}
+              <Td left className={r.noCostLines.length ? "bg-err/5 text-err" : "text-ink-muted"}>
+                {r.noCostLines.length
+                  ? <span title={r.noCostLines.map((x) => `${x.docNo} · ${x.itemCode}`).join("\n")}><span className="font-semibold">{r.noCostLines.length} lines</span><span className="block max-w-[260px] truncate text-[10.5px]">{[...new Set(r.noCostLines.map((x) => x.docNo))].join(", ")}</span></span>
+                  : "all costed"}
+              </Td>
             </tr>
           ))}
             {rows.length === 0 && <tr><Td left className="text-ink-muted">Every finished event has this line keyed.</Td></tr>}
           </tbody>
         </table>
       </div>
-      <p className="mt-1 text-[11px] text-ink-muted">Sales Orders = what was sold at the event, for comparison when Sales is not keyed. Commission, merchandise and transport are worked out automatically, so they are not checked here.</p>
+      <p className="mt-1 text-[11px] text-ink-muted">Sales Orders = what was sold at the event, for comparison when Sales is not keyed. COGS not captured = an order line that sells a product with no cost on it (service lines excluded); hover for the order and item. Commission, merchandise and transport are worked out automatically, so they are not checked here.</p>
     </Panel>
   );
 }

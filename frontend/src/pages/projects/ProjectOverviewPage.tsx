@@ -167,15 +167,16 @@ export function ProjectOverviewPage() {
         </span>}>
         <div className="max-h-[560px] overflow-auto">
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-surface"><tr><Th left>Project</Th><Th left>Dates</Th><Th>Sales</Th><Th>COGS</Th><Th>Rental</Th><Th>Other cost</Th><Th>Net profit</Th><Th>NP %</Th><Th left>Figures from</Th></tr></thead>
+            <thead className="sticky top-0 bg-surface"><tr><Th left>Project</Th><Th left>Dates</Th><Th>Sales</Th><Th>COGS</Th><Th>GP</Th><Th>GP %</Th><Th>Rental</Th><Th>Setup</Th><Th>Transport</Th><Th>Commission</Th><Th>Merchandise</Th><Th>Others</Th><Th>Net profit</Th><Th>NP %</Th><Th left>Sales Orders daily?</Th></tr></thead>
             <tbody>
               {listed.map(({ p, f }) => (
                 <tr key={p.id} onClick={() => navigate(`/projects/${p.id}`)} className="cursor-pointer hover:bg-surface-2/50">
                   <Td left className="max-w-[320px] truncate"><span className="text-primary">{p.name}</span><span className="ml-1.5 text-[10.5px] text-ink-muted">{p.eventType ?? ""}</span></Td>
                   <Td left className="text-ink-muted">{p.startDate?.slice(5) ?? "—"}{p.endDate && p.endDate !== p.startDate ? ` – ${p.endDate.slice(5)}` : ""}</Td>
-                  <Td>{money(f.sales)}</Td><Td>{money(f.cogs)}</Td><Td>{money(f.rental)}</Td><Td>{money(f.otherCost)}</Td>
+                  <Td>{money(f.sales)}</Td><Td>{money(f.cogs)}</Td><Td>{money(f.gp)}</Td><Td className="text-ink-secondary">{pctTxt(pctOf(f.gp, f.sales))}</Td>
+                  <Td>{money(f.rental)}</Td><Td>{money(f.setup)}</Td><Td>{money(f.transport)}</Td><Td>{money(f.commission)}</Td><Td>{money(f.merchandise)}</Td><Td>{money(f.other)}</Td>
                   <Td className={f.np < 0 ? "font-semibold text-err" : "font-semibold"}>{money(f.np)}</Td><Td>{pctTxt(pctOf(f.np, f.sales))}</Td>
-                  <Td left><Source s={f.salesSource} cogsSo={f.cogsFromSalesOrders} /></Td>
+                  <Td left><Daily r={p.chatReport} /></Td>
                 </tr>
               ))}
               {listed.length === 0 && <tr><Td left className="text-ink-muted">No projects in this period.</Td></tr>}
@@ -200,8 +201,14 @@ function Hero({ label, value, sub, tone }: { label: string; value: string; sub: 
   );
 }
 
-function Source({ s, cogsSo }: { s: "keyed" | "sales_orders" | "none"; cogsSo: boolean }) {
-  if (s === "keyed") return <span className="rounded-full bg-synced/10 px-2 py-0.5 text-[10.5px] text-synced">Books{cogsSo ? " · COGS from SO" : ""}</span>;
-  if (s === "sales_orders") return <span className="rounded-full bg-warning-bg px-2 py-0.5 text-[10.5px] text-warning-text">Sales Orders · not settled</span>;
-  return <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10.5px] text-ink-muted">No sales yet</span>;
+/** Daily = every bill in the event's chat sales report is opened as a Sales Order
+ *  under this event (owner 2026-10-19), the event page's own match. */
+function Daily({ r }: { r: OvProject["chatReport"] }) {
+  if (!r || r.bills === 0) return <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10.5px] text-ink-muted">No chat report</span>;
+  if (r.opened === r.bills) return <span className="rounded-full bg-synced/10 px-2 py-0.5 text-[10.5px] text-synced">Daily · {r.opened} / {r.bills} bills</span>;
+  return (
+    <span className="rounded-full bg-err/10 px-2 py-0.5 text-[10.5px] text-err" title={`${money(r.openedSen / 100)} of ${money(r.billsSen / 100)} reported is opened${r.otherEvent ? ` · ${r.otherEvent} under another event` : ""}`}>
+      Not daily · {r.opened} / {r.bills} bills{r.otherEvent ? ` · ${r.otherEvent} elsewhere` : ""}
+    </span>
+  );
 }
