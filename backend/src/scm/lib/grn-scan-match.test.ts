@@ -663,7 +663,12 @@ describe("a named PO whose delivery order prints the supplier's own codes (DGSN2
       { poItemId: 'pi-2', qty: 1 }, { poItemId: 'pi-3', qty: 1 }, { poItemId: 'pi-5', qty: 1 }, { poItemId: 'pi-12', qty: 1 },
       { poItemId: 'pi-14', qty: 1 },
     ]);
-    expect(res.nameMatched).toBe(7);
+    expect(res.nameMatches.map((m) => m.itemCode)).toEqual([
+      'AKEMI BULWARK MATT (K)', 'AKEMI BULWARK MATT (K)',
+      'HAPPI SLEEP SOLITUDE MATT (Q)', 'HAPPI SLEEP SOLITUDE MATT (Q)', 'HAPPI SLEEP SOLITUDE MATT (Q)', 'HAPPI SLEEP SOLITUDE MATT (Q)',
+      'AKEMI IMMORTAL MATT (K)',
+    ]);
+    expect(res.namedPos).toEqual(['HC-PO-2610-084']);
     expect(res.unmatched.map((u) => [u.line.itemCode, u.reason])).toEqual([
       ['AFKPAK25A23J29W', 'not_on_po'],
       ['UFHPHS13B25J29E', 'not_on_po'],

@@ -25,7 +25,6 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { activeCompanyId, scopeToCompany, type CompanyScopeCtx } from '../lib/companyScope';
-import { companyCodeById } from '../lib/doc-no';
 import { resolveCallerStaffId } from '../lib/salesScope';
 import { postPersonalNotice } from '../../services/personalNotice';
 import { jobToJson } from './scan-so-serialize';
@@ -38,12 +37,8 @@ import {
   type UploadedImage,
 } from '../lib/scan-ocr';
 import { callClaudeGrExtract, emptyScanNote, loadGrnFewShot, type GrnExtracted } from '../lib/grn-scan-extract';
-import { loadOpenPoLines, loadPoStatuses, loadSupplierBindings, loadSuppliers } from '../lib/grn-scan-load';
-import {
-  describeUnmatchedScanLines, listScanLines, matchGrnScanToPoLines, resolveScannedSupplier,
-  type GrnMatchResult, type PoStatusRef, type ScannedGrnLine,
-} from '../lib/grn-scan-match';
-import { createDraftGrnFromPoItems } from '../lib/grn-from-po-core';
+import { draftFromScan, matchScan, toScanned, type ScanDraftOutcome } from '../lib/grn-scan-draft';
+import { buildTeachOptions, saveScanCodes } from '../lib/grn-scan-codes';
 
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
@@ -136,43 +131,24 @@ async function postGrScanNotice(
   });
 }
 
-const toScanned = (l: GrnExtracted['lines'][number]): ScannedGrnLine => ({
-  itemCode: l.itemCode,
-  barcode: l.barcode,
-  description: l.description,
-  qty: l.qty,
-  poNo: l.poNo,
-});
-
-// A plain-language note for a NEEDS-REVIEW job (no GRN created): tell the
-// operator what we saw, line by line, so they can receive from the PO by hand.
-function buildNeedsReviewNote(parsed: GrnExtracted, match: GrnMatchResult, allPos: PoStatusRef[]): string {
-  const head = buildNeedsReviewHead(parsed, match);
-  if (match.qtyMismatch) return `${head} What we read: ${listScanLines(parsed.lines.map(toScanned).filter((l) => l.qty > 0))}`;
-  const lines = describeUnmatchedScanLines(match.unmatched, allPos);
-  return lines ? `${head} What we read: ${lines}` : head;
-}
-
-function buildNeedsReviewHead(parsed: GrnExtracted, match: GrnMatchResult): string {
-  const po = parsed.poNo ? `P.O. ${parsed.poNo}` : 'this delivery order';
-  const doRef = parsed.doNo ? ` (D.O. ${parsed.doNo})` : '';
-  const poMatched = match.matchedPoNumberValue;
-  const tail = 'Please open the right PO and create the goods receipt from it.';
-  if (match.refused === 'supplier_unknown') {
-    const who = parsed.supplierName ? `"${parsed.supplierName}"` : 'the supplier';
-    return `We read ${po}${doRef} but could not tell which of our suppliers ${who} is, so no receipt was created. ${tail}`;
-  }
-  if (match.refused === 'multiple_pos') {
-    return `We read ${po}${doRef} but its items point to more than one PO (${match.matchedPoNumbers.join(', ')}), so no receipt was created. ${tail}`;
-  }
-  if (match.qtyMismatch) {
-    const counts = match.qtyMismatch.map((m) => `${m.listed} listed against ${m.poNumber}, which still owes ${m.owed}`).join('; ');
-    return `We read ${po}${doRef} but could not line its items up to the PO by code, and the quantities differ (${counts}), so no receipt was created rather than one for the whole PO. Please open the PO and receive what was delivered.`;
-  }
-  if (poMatched) {
-    return `We read ${po}${doRef} but could not line its items up to open PO ${poMatched} automatically. Please open that PO and receive against it.`;
-  }
-  return `We could not match ${po}${doRef} to an open purchase order automatically. Please open the PO and create the goods receipt from it.`;
+async function announceDraft(
+  env: Env,
+  houzsUserId: number | null,
+  outcome: Extract<ScanDraftOutcome, { kind: 'draft' }>,
+  touch: (patch: Record<string, unknown>) => Promise<void>,
+): Promise<void> {
+  const { grnNumbers, poNumbers, jobNote } = outcome;
+  await touch({ status: 'done', linked_doc_no: grnNumbers[0], error: jobNote });
+  const bodyParts = [
+    `Your scanned delivery order was saved as a DRAFT goods receipt (${grnNumbers.join(', ')}) from ${poNumbers.join(', ')}. Open it to review and post.`,
+  ];
+  if (jobNote) bodyParts.push(jobNote);
+  await postGrScanNotice(env, {
+    houzsUserId,
+    category: jobNote ? 'WARNING' : 'GENERAL',
+    title: `Goods receipt draft saved — ${grnNumbers.join(', ')}`,
+    body: bodyParts.join(' '),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -245,88 +221,9 @@ async function runGrnScanJob(
       return await needsReview(emptyScanNote(parsed));
     }
 
-    // Resolve the company doc prefix from the captured company (headless — no
-    // request context). companyCodeById reads public.companies.
-    const companyCode = await companyCodeById(svc, job.companyId);
-
-    // Candidate open PO lines + supplier-SKU bindings, then the pure match.
-    const [openLines, bindings, suppliers, allPos] = await Promise.all([
-      loadOpenPoLines(svc, job.companyId),
-      loadSupplierBindings(svc, job.companyId),
-      loadSuppliers(svc, job.companyId),
-      loadPoStatuses(svc, job.companyId),
-    ]);
-    const supplierId = resolveScannedSupplier(parsed.supplierName, suppliers);
-    const match = matchGrnScanToPoLines(parsed.poNo, parsed.lines.map(toScanned), openLines, bindings, supplierId);
-
-    if (match.picks.length === 0) {
-      // No confident PO line — never fabricate a standalone GRN or a wrong link.
-      return await needsReview(buildNeedsReviewNote(parsed, match, allPos));
-    }
-
-    // CONVERT the confident picks into a DRAFT GRN, linked to the source PO(s).
-    const doRef = parsed.doNo ? `D.O. ${parsed.doNo}` : 'scanned delivery order';
-    const weakNote = match.weakMatch
-      ? `Check the PO: only ${match.weakMatch.matched} of ${match.weakMatch.scanned} scanned lines matched ${match.matchedPoNumbers.join(', ')}, so it may be the wrong PO.`
-      : null;
-    const nameNote = match.nameMatched > 0
-      ? `Check the items: ${match.nameMatched} delivery order ${match.nameMatched === 1 ? 'row was' : 'rows were'} matched to the PO by product name, not by code.`
-      : null;
-    // Scanned lines the operator must add by hand, by name, so the draft itself
-    // says what is missing. A draft built from the whole PO lists what the
-    // delivery order says instead, since every PO line is already on it.
-    const unmatchedLines = describeUnmatchedScanLines(match.unmatched, allPos);
-    const unmatchedNote = match.poFallback
-      ? `Check every line: no scanned line matched ${match.poFallback} by item, so this draft lists everything still owed on ${match.poFallback.includes(',') ? 'those POs' : 'that PO'} at the PO quantity. Change it to what was delivered before posting. The delivery order lists: ${listScanLines(parsed.lines.map(toScanned).filter((l) => l.qty > 0))}`
-      : unmatchedLines ? `Not added to this draft: ${unmatchedLines}` : null;
-    const res = await createDraftGrnFromPoItems(env, {
-      userId: job.uploaderStaffId,
-      houzsUserId: job.houzsUserId,
-      companyId: job.companyId,
-      companyCode,
-      picks: match.picks,
-      notes: [doRef, weakNote, nameNote, unmatchedNote].filter(Boolean).join(' · '),
-      receivedDate: parsed.deliveryDate ?? undefined,
-      deliveryNoteRef: parsed.doNo,
-    });
-
-    if (!res.ok) {
-      // The convert refused (e.g. a concurrent receive pushed a line over its
-      // cap, or the PO is no longer receivable). The delivery order is still
-      // valid — land it needs-review, not a red failure, so the operator can
-      // receive from the PO by hand.
-      const reason =
-        typeof res.body.reason === 'string' ? res.body.reason
-        : typeof res.body.error === 'string' ? String(res.body.error)
-        : 'the receipt could not be created automatically';
-      console.error('[scan-gr] convert refused:', job.id, res.status, JSON.stringify(res.body).slice(0, 400));
-      return await needsReview(
-        `We read ${doRef} but ${reason}. Please open the PO and create the goods receipt from it.`,
-      );
-    }
-    if (res.created.length === 0) {
-      // Defensive — ok:true with nothing created (every bucket dropped).
-      return await needsReview(
-        `We read ${doRef} but could not create the receipt automatically. Please create it from the PO.`,
-      );
-    }
-
-    const grnNumbers = res.created.map((g) => g.grnNumber);
-    const primary = grnNumbers[0];
-    const poNumbers = [...new Set(res.created.flatMap((g) => g.poNumbers))];
-
-    const jobNote = [weakNote, unmatchedNote].filter(Boolean).join(' ') || null;
-    await touch({ status: 'done', linked_doc_no: primary, ...(jobNote ? { error: jobNote } : {}) });
-    const bodyParts = [
-      `Your scanned delivery order was saved as a DRAFT goods receipt (${grnNumbers.join(', ')}) from ${poNumbers.join(', ')}. Open it to review and post.`,
-    ];
-    if (jobNote) bodyParts.push(jobNote);
-    await postGrScanNotice(env, {
-      houzsUserId: job.houzsUserId,
-      category: jobNote ? 'WARNING' : 'GENERAL',
-      title: `Goods receipt draft saved — ${grnNumbers.join(', ')}`,
-      body: bodyParts.join(' '),
-    });
+    const outcome = await draftFromScan(env, svc, job, parsed);
+    if (outcome.kind === 'needs_review') return await needsReview(outcome.note);
+    await announceDraft(env, job.houzsUserId, outcome, touch);
   } catch (e) {
     console.error('[scan-gr] pipeline threw:', job.id, e);
     await fail(JOB_MSG.fallback);
@@ -586,6 +483,97 @@ scanGr.get('/jobs/:id', async (c) => {
   if (!data) return c.json({ error: 'not_found', reason: 'Scan job not found.' }, 404);
   const [job] = await withGrnIds(svc, c, [jobToJson(data as Record<string, unknown>)]);
   return c.json({ success: true, data: { job } });
+});
+
+// The finished GR job and its stored read, for teaching codes. Company-scoped
+// by-id read, like GET /jobs/:id.
+async function loadTeachableJob(svc: SupabaseClient, c: CompanyScopeCtx, id: string): Promise<
+  | { ok: true; job: { id: string; linkedDocNo: string | null; uploaderStaffId: string; houzsUserId: number | null; companyId: number }; parsed: GrnExtracted }
+  | { ok: false; status: 400 | 404 | 409; reason: string }
+> {
+  const companyId = activeCompanyId(c);
+  const { data, error } = await svc
+    .from('scan_jobs').select('id, status, sample_id, linked_doc_no, salesperson_id, houzs_user_id')
+    .eq('id', id).eq('document_type', 'GR').eq('company_id', companyId).limit(1).maybeSingle();
+  const row = data as { id: string; status: string; sample_id: string | null; linked_doc_no: string | null; salesperson_id: string | null; houzs_user_id: number | null } | null;
+  if (error || !row) return { ok: false, status: 404, reason: 'Scan job not found.' };
+  if (row.status !== 'done' || !row.sample_id || !row.salesperson_id) return { ok: false, status: 409, reason: 'This scan has nothing to match yet.' };
+  const { data: sample } = await svc.from('so_scan_samples').select('extracted').eq('id', row.sample_id).maybeSingle();
+  const parsed = (sample as { extracted: GrnExtracted | null } | null)?.extracted ?? null;
+  if (!parsed || !Array.isArray(parsed.lines) || parsed.lines.length === 0) return { ok: false, status: 409, reason: 'No lines were read off this delivery order.' };
+  return {
+    ok: true,
+    job: { id: row.id, linkedDocNo: row.linked_doc_no, uploaderStaffId: row.salesperson_id, houzsUserId: row.houzs_user_id, companyId: companyId as number },
+    parsed,
+  };
+}
+
+// GET /scan-gr/jobs/:id/codes — the supplier codes on this delivery order the
+// scan could not match by code, and the PO lines they could be (HC-0120).
+scanGr.get('/jobs/:id/codes', async (c) => {
+  const svc = serviceClient(c.env);
+  const loaded = await loadTeachableJob(svc, c, c.req.param('id').trim());
+  if (!loaded.ok) return c.json({ error: 'not_teachable', reason: loaded.reason }, loaded.status);
+  const ctx = await matchScan(svc, loaded.job.companyId, loaded.parsed);
+  if (ctx.supplierId === null) {
+    return c.json({ success: true, data: { supplierKnown: false, rows: [], poLines: [] } });
+  }
+  const options = buildTeachOptions(loaded.parsed.lines.map(toScanned), ctx.match, ctx.openLines, ctx.supplierId);
+  return c.json({ success: true, data: { supplierKnown: true, ...options } });
+});
+
+// POST /scan-gr/jobs/:id/codes {pairs: [{printedCode, poItemId}]} — remember
+// which of our items each printed code is, for this supplier. A scan that made
+// no draft yet is matched again from its stored read (no new OCR call).
+scanGr.post('/jobs/:id/codes', async (c) => {
+  let body: { pairs?: Array<{ printedCode?: unknown; poItemId?: unknown }> };
+  try { body = await c.req.json(); } catch { return c.json({ error: 'bad_request', reason: 'Invalid request.' }, 400); }
+  const raw = Array.isArray(body.pairs) ? body.pairs : [];
+  const svc = serviceClient(c.env);
+  const loaded = await loadTeachableJob(svc, c, c.req.param('id').trim());
+  if (!loaded.ok) return c.json({ error: 'not_teachable', reason: loaded.reason }, loaded.status);
+  const ctx = await matchScan(svc, loaded.job.companyId, loaded.parsed);
+  if (ctx.supplierId === null) return c.json({ error: 'supplier_unknown', reason: 'We could not tell which supplier this delivery order is from.' }, 409);
+  const options = buildTeachOptions(loaded.parsed.lines.map(toScanned), ctx.match, ctx.openLines, ctx.supplierId);
+
+  // Only codes this delivery order printed, only onto lines it was offered:
+  // the offer is company- and supplier-scoped, so a caller-supplied id cannot
+  // reach another company's or supplier's item.
+  const printed = new Set(options.rows.map((r) => r.printedCode));
+  const lineById = new Map(options.poLines.map((l) => [l.poItemId, l]));
+  const pairs: Array<{ printedCode: string; itemCode: string }> = [];
+  for (const p of raw) {
+    const code = typeof p.printedCode === 'string' ? p.printedCode : '';
+    const line = typeof p.poItemId === 'string' ? lineById.get(p.poItemId) : undefined;
+    if (!printed.has(code) || !line) return c.json({ error: 'bad_request', reason: `"${code}" cannot be matched to that line.` }, 400);
+    pairs.push({ printedCode: code, itemCode: line.itemCode });
+  }
+  if (pairs.length === 0) return c.json({ error: 'bad_request', reason: 'Choose a PO line for at least one code.' }, 400);
+
+  const houzsUser = c.get('houzsUser');
+  const userId = houzsUser?.id != null && Number.isFinite(Number(houzsUser.id)) ? Number(houzsUser.id) : null;
+  const saved = await saveScanCodes(svc, { companyId: loaded.job.companyId, supplierId: ctx.supplierId, userId, pairs });
+  if (!saved.ok) {
+    console.error('[scan-gr codes] save failed:', saved.reason);
+    return c.json({ error: 'save_failed', reason: 'Could not save the codes. Please try again.' }, 500);
+  }
+
+  let redrafted: string | null = null;
+  if (!loaded.job.linkedDocNo) {
+    const touch = async (patch: Record<string, unknown>): Promise<void> => {
+      const { error } = await svc.from('scan_jobs').update({ ...patch, updated_at: new Date().toISOString() })
+        .eq('id', loaded.job.id).eq('company_id', loaded.job.companyId);
+      if (error) console.error('[scan-gr codes] job update failed:', loaded.job.id, error.message);
+    };
+    const outcome = await draftFromScan(c.env, svc, loaded.job, loaded.parsed);
+    if (outcome.kind === 'draft') {
+      await announceDraft(c.env, loaded.job.houzsUserId, outcome, touch);
+      redrafted = outcome.grnNumbers[0];
+    } else {
+      await touch({ error: outcome.note });
+    }
+  }
+  return c.json({ success: true, data: { saved: pairs.length, draft: redrafted } });
 });
 
 // POST /scan-gr/jobs/clear-failed — delete this company's terminal error GR rows.

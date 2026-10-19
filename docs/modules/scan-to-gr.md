@@ -38,6 +38,8 @@ lists only what differs for GR.
 | `POST /scan-gr/enqueue` | multipart, repeated `file` (delivery-order pages). Stores photos to R2, inserts a `scan_jobs` row `document_type='GR'`, queues it, returns `202 {job_id}`. |
 | `GET /scan-gr/jobs` | latest 20 GR jobs for the active company. |
 | `GET /scan-gr/jobs/:id` | poll one job. |
+| `GET /scan-gr/jobs/:id/codes` | printed codes on a finished scan that did not match by code (name-matched or not matched), one row per code, with the PO lines they could be (the named POs, else the supplier's open lines). |
+| `POST /scan-gr/jobs/:id/codes` | `{pairs:[{printedCode, poItemId}]}`: only codes and lines that GET offered. Upserts `scm.supplier_scan_codes`; a job with no draft yet is matched again from its stored read (no OCR) and drafted. |
 | `POST /scan-gr/jobs/clear-failed` | delete this company's terminal `error` GR rows. |
 | `GET /scan-gr/slip-image?key=scan-slips/<id>` | serve the stored delivery-order photo (R2 proxy, `scan-slips/` prefix guard). |
 
@@ -51,7 +53,10 @@ lists only what differs for GR.
    one set). Few-shot from prior GR samples.
 2. `insertGrnScanSample` writes `so_scan_samples` `document_type='GR'`.
 3. `matchGrnScanToPoLines` (`lib/grn-scan-match.ts`, **pure**) over open PO lines
-   + supplier bindings (`lib/grn-scan-load.ts`).
+   + supplier bindings (`lib/grn-scan-load.ts`) + codes taught for the resolved
+   supplier (`scm.supplier_scan_codes`, `lib/grn-scan-codes.ts`). Steps 3-4 live
+   in `lib/grn-scan-draft.ts`, shared with the codes re-run. Identical lines of
+   one item on one PO take a row's qty in PO line order.
 4. Confident picks → `createDraftGrnFromPoItems` → stamp `scan_jobs.linked_doc_no`
    with the GRN number. No picks → needs-review (no doc).
 
@@ -120,6 +125,8 @@ jobs write `linked_doc_no` only (never `so_doc_no`).
   `ScanGrnModal` (`vendor/scm/components/ScanGrnModal.tsx`).
 - Mobile: `MobileModuleList` scan icon (wired for `grns` in `MobileApp.tsx`) →
   `MobileGrnScan` (`mobile/MobileGrnScan.tsx`).
+- Both: a finished card has "Match supplier codes" → `ScanCodesPanel`
+  (`vendor/scm/components/ScanCodesPanel.tsx`), shared.
 - Both reuse `vendor/scm/lib/scan-jobs.ts` (+ `linkedDocNo`, `linkedDocId`) and `authedFetch`.
   The job endpoints resolve `linkedDocId` (company-scoped), so the scan card's
   GRN number opens the draft directly.

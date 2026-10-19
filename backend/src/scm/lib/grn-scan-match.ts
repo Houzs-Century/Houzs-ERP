@@ -123,8 +123,11 @@ export type GrnMatchResult = {
   // lined up by item, and its qty is not what those POs still owe (a part
   // delivery, or extra rows): one entry per named PO. No draft is made then.
   qtyMismatch: Array<{ poNumber: string; listed: number; owed: number }> | null;
-  // Rows matched to their PO's line by product name, not code (nameMatchItem).
-  nameMatched: number;
+  // Rows matched to their PO's line by product name, not code (nameMatchItem),
+  // with the item code each matched.
+  nameMatches: Array<{ line: ScannedGrnLine; itemCode: string }>;
+  // The open POs the delivery order named (header or rows), resolved.
+  namedPos: string[];
 };
 
 // Normalise a code/number for comparison: uppercase, drop every non-alnum char.
@@ -300,7 +303,19 @@ export function matchGrnScanToPoLines(
   const anchoredScanQty = new Map<string, number>(); // po_number -> qty the delivery order lists for it
   let scannedCount = 0;
   let itemOnlyMatchedCount = 0;
-  let nameMatched = 0;
+  const nameMatches: GrnMatchResult['nameMatches'] = [];
+  // Identical lines (one per customer order) take a row's qty in PO line order.
+  const spread = (qty: number, lines: OpenPoLine[], target: Map<string, number>): void => {
+    let left = qty;
+    for (const l of lines) {
+      const room = (remainingById.get(l.poItemId) ?? 0) - (target.get(l.poItemId) ?? 0);
+      if (left <= 0 || room <= 0) continue;
+      const take = Math.min(left, room);
+      target.set(l.poItemId, (target.get(l.poItemId) ?? 0) + take);
+      poNumberOf.set(l.poItemId, l.poNumber);
+      left -= take;
+    }
+  };
 
   for (const sl of scannedLines) {
     if (!(sl.qty > 0)) continue; // a zero/blank qty line carries nothing to receive
@@ -357,22 +372,29 @@ export function matchGrnScanToPoLines(
       } else if (into.length === 0) {
         unmatched.push({ line: sl, reason: lines.length === 0 ? 'nothing_remaining' : 'ambiguous', candidatePoItemIds: lines.map((l) => l.poItemId) });
       } else {
-        // Identical lines (one per customer order) take the qty in turn.
-        let left = sl.qty;
-        for (const l of into) {
-          const room = (remainingById.get(l.poItemId) ?? 0) - (anchoredQty.get(l.poItemId) ?? 0);
-          if (left <= 0 || room <= 0) continue;
-          const take = Math.min(left, room);
-          anchoredQty.set(l.poItemId, (anchoredQty.get(l.poItemId) ?? 0) + take);
-          poNumberOf.set(l.poItemId, l.poNumber);
-          left -= take;
-        }
-        nameMatched += 1;
+        spread(sl.qty, into, anchoredQty);
+        nameMatches.push({ line: sl, itemCode: item });
       }
       continue;
     }
     if (hitList.length === 0) {
       unmatched.push({ line: sl, reason: 'no_open_po_line', candidatePoItemIds: [] });
+      continue;
+    }
+    const twins = hitList.length > 1
+      && new Set(hitList.map((l) => l.poNumber)).size === 1
+      && new Set(hitList.map((l) => `${normalizeCode(l.itemCode)}|${(l.description2 ?? '').trim()}`)).size === 1;
+    if (twins) {
+      const open = hitList.filter((l) => (remainingById.get(l.poItemId) ?? 0) > 0);
+      if (open.length === 0) {
+        unmatched.push({ line: sl, reason: 'nothing_remaining', candidatePoItemIds: hitList.map((l) => l.poItemId) });
+        continue;
+      }
+      spread(sl.qty, open, anchorPo !== null ? anchoredQty : itemOnlyQty);
+      if (anchorPo === null) {
+        itemOnlyLines.push({ line: sl, poItemId: open[0].poItemId });
+        itemOnlyMatchedCount += 1;
+      }
       continue;
     }
     const hit = hitList.length === 1 ? hitList[0] : pickBySpec(sl.description, hitList);
@@ -459,7 +481,8 @@ export function matchGrnScanToPoLines(
     weakMatch,
     poFallback,
     qtyMismatch,
-    nameMatched,
+    nameMatches,
+    namedPos: [...anchoredPos],
   };
 }
 
