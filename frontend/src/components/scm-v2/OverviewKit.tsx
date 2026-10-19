@@ -30,4 +30,19 @@ export function Toggle<T extends string>({ value, options, onChange }: { value: 
     </span>
   );
 }
+/** Pill tabs with a count, and a small red count of how many are already late
+ *  (owner 2026-10-19: "show how many have started to go overdue"). */
+export function StepTabs({ tabs, value, onChange }: { tabs: Array<[string, string, number, number]>; value: string; onChange: (k: string) => void }) {
+  return (
+    <div className="mb-2 flex flex-wrap gap-1.5">
+      {tabs.map(([k, label, n, late]) => (
+        <button key={k} type="button" onClick={() => onChange(k)}
+          className={cn("relative rounded-full border px-3 py-1 text-[12px]", value === k ? "border-primary bg-primary text-white" : "border-border text-ink-secondary hover:bg-surface-2")}>
+          {label} <span className="ml-1 tabular-nums opacity-80">{n}</span>
+          {late > 0 && <span className="absolute -right-1.5 -top-1.5 min-w-[18px] rounded-full bg-err px-1 text-[10px] font-bold leading-[18px] text-white" title={`${late} late`}>{late}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
 export const SELECT_CLS = "rounded-md border border-border bg-surface px-2 py-1 text-[12px] text-ink";

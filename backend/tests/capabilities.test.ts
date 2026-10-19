@@ -161,9 +161,8 @@ const GATES: Record<CapabilityKey, (u: CapabilityCaller) => boolean> = {
   "org.crew.scoped": (u) => isCrewScopedUser(asAuthUser(u)),
   "org.assistant.use": (u) => canUseAssistant(asAuthUser(u)),
 
-  // Literal hold of it.view: during DEV-35 testing the wildcard does not pass.
-  "it.pages.view": (u) =>
-    Array.isArray(u.permissions) ? u.permissions.includes("it.view") : !!u.permissions_set?.has("it.view"),
+  // it.view, and the wildcard passes since the IT pages opened to Owner.
+  "it.pages.view": (u) => hasPermission(u.permissions_set ?? u.permissions ?? [], "it.view"),
 
   // The composed page-open tier — union of the write gate and the read tier.
   "scm.maintenance.open": (u) =>
