@@ -180,6 +180,20 @@ export const UUID_CHUNK = chunkSizeForUrl(['00000000-0000-4000-8000-000000000000
  */
 const CHUNK_CONCURRENCY = 6;
 
+/**
+ * A PostgREST `in.(...)` list with every value quoted and escaped, for
+ * `.filter(col, 'in', inList(values))`.
+ *
+ * postgrest-js `.in()` wraps a value holding `,()` in double quotes but does not
+ * escape a double quote inside it, so a product code like `GENERASI 5" MATT (S)`
+ * ends the quoted value early and the rest of that batch matches nothing, with
+ * no error (2026-10-19: 233 open order lines silently missing from the
+ * Procurement dead-stock demand).
+ */
+export function inList(values: readonly InValue[]): string {
+  return `(${values.map((v) => `"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join(',')})`;
+}
+
 export async function chunkIn<T = Record<string, unknown>, V extends InValue = string>(
   codes: readonly V[],
   makeQuery: (batch: V[], from: number, to: number) => PromiseLike<PageResult<T>>,
