@@ -143,7 +143,7 @@ import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useAuth } from '../../vendor/scm/lib/auth';
 import { useVenues } from '../../vendor/scm/lib/venues-queries';
 import { FairDayPicker, FairPicker } from '../../components/FairPicker';
-import { fairDayCheck, fairEditPatch, fairEventOf, fairPickValue, linkedEvent, type LinkedFair } from '../../components/fairPick';
+import { fairDayCheck, fairEditPatch, fairElsewhereLine, fairEventOf, fairPickValue, linkedEvent, type LinkedFair } from '../../components/fairPick';
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { generateSalesOrderPdf } from '../../vendor/scm/lib/sales-order-pdf';
@@ -3444,6 +3444,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 wrapClassName={styles.selectWrap}
                 selectClassName={styles.fieldSelect}
               />
+              {!form.fair && fairElsewhereLine(header.venue, header.fair) && <span style={{ fontSize: '11px', marginTop: '4px' }}>{fairElsewhereLine(header.venue, header.fair)}</span>}
               {(header.status as string) === 'DRAFT' && !form.fair && (/* a draft says No fair here too (owner 2026-10-19) */
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', marginTop: '6px', cursor: 'pointer' }}><input type="checkbox" checked={form.noFair} disabled={inputsDisabled} onChange={(e) => setForm((s) => ({ ...s, noFair: e.target.checked }))} />
                   <span>No fair (showroom / direct sale)</span></label>)}

@@ -11,7 +11,7 @@
 // with its event and is cleared whenever the event changes.
 
 import type { FairPickValue } from './FairPicker';
-import type { LinkedFair } from '../vendor/scm/lib/fair-options-queries';
+import { fairLabel, type LinkedFair } from '../vendor/scm/lib/fair-options-queries';
 
 export type { LinkedFair };
 
@@ -42,6 +42,18 @@ export function linkedEvent(
 ): FairEvent | null {
   if (!orderVenue || !linked || !sameText(orderVenue, linked.venue)) return null;
   return { venue: orderVenue, organizer: linked.organizer, startDate: linked.startDate, endDate: linked.endDate, day };
+}
+
+/** "Placed at: IOIGECC — MLE (10/09 - 10/11) · Venue differs" — the fair an order
+ *  is linked to when it is NOT at the order's own venue (a scan placed at the
+ *  scanner's fair, owner 2026-10-19). The order shows the FAIR's name — never
+ *  the PMS project's — and keeps its own venue beside it. Null when the link is
+ *  at the order's venue (the picker row already shows it) or there is none. */
+export function fairElsewhereLine(orderVenue: string | null | undefined, linked: LinkedFair | null | undefined): string | null {
+  if (!linked) return null;
+  const venue = (orderVenue ?? '').trim();
+  if (venue && sameText(venue, linked.venue)) return null;
+  return `Placed at: ${fairLabel(linked)}${venue ? ' · Venue differs' : ''}`;
 }
 
 /** The picker's value for a form: the order's venue plus the event, when there is one. */
