@@ -32,12 +32,12 @@ app.get("/", requirePermission("service_cases.read"), async (c) => {
   const co = allowedCompaniesSql(c, "c.company_id");
 
   const rows = await c.env.DB.prepare(
-    `SELECT c.id, c.stage, COALESCE(c.complained_date, c.created_at) AS opened_at, c.closed_at, c.creditor_code, c.assr_no, c.customer_name
+    `SELECT c.id, c.stage, COALESCE(c.complained_date, c.created_at) AS opened_at, c.closed_at, c.creditor_code, c.assr_no, c.customer_name, c.complaint_issue, c.issue_category
        FROM assr_cases c
       WHERE c.archived_at IS NULL
         AND (COALESCE(c.complained_date, c.created_at) >= ? OR c.closed_at IS NULL)${co}${vis.sql}`,
-  ).bind(since, ...vis.binds).all<{ id: number; stage: string; opened_at: string; closed_at: string | null; creditor_code: string | null; assr_no: string | null; customer_name: string | null }>();
-  const cases: QCase[] = rows.results.map((r) => ({ id: Number(r.id), stage: String(r.stage), openedAt: String(r.opened_at), closedAt: r.closed_at ? String(r.closed_at) : null, creditor: r.creditor_code || null, assrNo: r.assr_no, customer: r.customer_name }));
+  ).bind(since, ...vis.binds).all<{ id: number; stage: string; opened_at: string; closed_at: string | null; creditor_code: string | null; assr_no: string | null; customer_name: string | null; complaint_issue: string | null; issue_category: string | null }>();
+  const cases: QCase[] = rows.results.map((r) => ({ id: Number(r.id), stage: String(r.stage), openedAt: String(r.opened_at), closedAt: r.closed_at ? String(r.closed_at) : null, creditor: r.creditor_code || null, assrNo: r.assr_no, customer: r.customer_name, complaint: r.complaint_issue, issueCategory: r.issue_category }));
 
   /* Ids are integers read from the table just above, so inlining them is safe. */
   const itemsByCase = new Map<number, number>();

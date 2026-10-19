@@ -22,6 +22,7 @@ type Supplier = {
 };
 type Overdue = {
   id: number; assrNo: string | null; customer: string | null; supplier: string | null; stage: string;
+  complaint: string | null; issueCategory: string | null;
   enteredAt: string; targetDays: number; daysInStage: number; daysOver: number; caseAgeDays: number;
 };
 type Quality = {
@@ -35,6 +36,7 @@ type Quality = {
 };
 type CaseRow = {
   id: number; assrNo: string | null; customer: string | null; creditor: string | null; supplier: string | null;
+  complaint: string | null; issueCategory: string | null;
   stage: string; openedAt: string; closedAt: string | null; open: boolean; openedInPeriod: boolean; ageDays: number;
 };
 
@@ -69,6 +71,7 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
     columns: [
       col<CaseRow>("Case", true, (c) => <span className="text-primary">{c.assrNo ?? `#${c.id}`}</span>, (c) => c.assrNo ?? "", null, null),
       col<CaseRow>("Customer", true, (c) => c.customer ?? "—", (c) => c.customer ?? "", null, null),
+      col<CaseRow>("Complaint", true, (c) => <span title={c.complaint ?? ""}>{c.complaint ?? "—"}</span>, (c) => `${c.complaint ?? ""} ${c.issueCategory ?? ""}`, null, null),
       col<CaseRow>("Supplier", true, (c) => c.supplier ?? "—", (c) => c.supplier ?? "", null, null),
       col<CaseRow>("Stage", true, (c) => (c.stage === "completed" ? "Completed" : stageLabel(c.stage)), (c) => c.stage, null, null),
       col<CaseRow>("Opened", false, (c) => c.openedAt, null, null, null),
@@ -214,12 +217,13 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
               <div className="max-h-[440px] overflow-y-auto">
                 <table className="w-full border-collapse">
                   <thead className="sticky top-0 bg-surface"><tr>
-                    <Th left>Case</Th><Th left>Customer</Th><Th left>Supplier</Th><Th left>Stage</Th><Th>In stage since</Th><Th>Target</Th><Th>Days in stage</Th><Th>Days overdue</Th><Th>Case age</Th>
+                    <Th left>Case</Th><Th left>Customer</Th><Th left>Complaint</Th><Th left>Supplier</Th><Th left>Stage</Th><Th>In stage since</Th><Th>Target</Th><Th>Days in stage</Th><Th>Days overdue</Th><Th>Case age</Th>
                   </tr></thead>
                   <tbody>{overdue.map((o) => (
                     <tr key={`${o.id}-${o.stage}`}>
                       <Td left><Link to={`/assr/${o.id}`} className="text-primary hover:underline">{o.assrNo ?? `#${o.id}`}</Link></Td>
                       <Td left className="max-w-[160px] truncate">{o.customer ?? "—"}</Td>
+                      <Td left className="max-w-[280px] truncate"><span title={`${o.issueCategory ?? ""}${o.issueCategory && o.complaint ? " · " : ""}${o.complaint ?? ""}`}>{o.complaint ?? "—"}</span>{o.issueCategory && <span className="block truncate text-[10.5px] text-ink-muted">{o.issueCategory}</span>}</Td>
                       <Td left className="max-w-[160px] truncate text-ink-secondary">{o.supplier ?? "—"}</Td>
                       <Td left>{stageLabel(o.stage)}</Td>
                       <Td>{o.enteredAt}</Td><Td>{o.targetDays} days</Td><Td>{o.daysInStage}</Td>

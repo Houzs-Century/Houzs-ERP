@@ -14,6 +14,8 @@
 export interface QCase {
   id: number; stage: string; openedAt: string; closedAt: string | null; creditor: string | null;
   assrNo: string | null; customer: string | null;
+  /** What the customer complained about, and its category. */
+  complaint: string | null; issueCategory: string | null;
 }
 export interface QStageRow { caseId: number; stage: string; enteredAt: string; exitedAt: string | null; targetDays: number | null }
 export interface QReceived { creditor: string; name: string; month: string; qty: number; lines: number }
@@ -82,7 +84,7 @@ export function qualityOverview(cases: QCase[], itemsByCase: Map<number, number>
     .filter((x): x is { h: QStageRow; c: QCase; inStage: number } => !!x.c && isOpen(x.c) && x.inStage >= (x.h.targetDays as number))
     .map(({ h, c, inStage }) => ({
       id: c.id, assrNo: c.assrNo, customer: c.customer, supplier: c.creditor ? names.get(c.creditor) ?? c.creditor : null,
-      stage: h.stage, enteredAt: h.enteredAt.slice(0, 10), targetDays: h.targetDays as number,
+      complaint: c.complaint, issueCategory: c.issueCategory, stage: h.stage, enteredAt: h.enteredAt.slice(0, 10), targetDays: h.targetDays as number,
       daysInStage: Math.floor(inStage), daysOver: Math.floor(inStage - (h.targetDays as number)), caseAgeDays: Math.floor(days(c.openedAt, today)),
     }))
     .sort((a, b) => b.daysOver - a.daysOver);
@@ -138,7 +140,7 @@ export function qualityOverview(cases: QCase[], itemsByCase: Map<number, number>
        in the last 30 days — for the page's drill-down (owner 2026-10-18). */
     caseList: live.filter((c) => inP(c.openedAt) || isOpen(c) || (c.stage === "completed" && !!c.closedAt && c.closedAt.slice(0, 10) >= dayBefore(29)))
       .map((c) => ({
-        id: c.id, assrNo: c.assrNo, customer: c.customer, creditor: c.creditor, supplier: c.creditor ? names.get(c.creditor) ?? c.creditor : null,
+        id: c.id, assrNo: c.assrNo, customer: c.customer, complaint: c.complaint, issueCategory: c.issueCategory, creditor: c.creditor, supplier: c.creditor ? names.get(c.creditor) ?? c.creditor : null,
         stage: c.stage, openedAt: c.openedAt.slice(0, 10), closedAt: c.closedAt ? c.closedAt.slice(0, 10) : null,
         open: isOpen(c), openedInPeriod: inP(c.openedAt), ageDays: Math.floor(days(c.openedAt, c.closedAt ?? today)),
       })),

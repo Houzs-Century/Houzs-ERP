@@ -1,7 +1,7 @@
 /* Procurement Overview, period edition (owner, 2026-10-17): every figure
    follows the period; "open" and "late" are as of the period's last day. */
 import { describe, expect, test } from 'vitest';
-import { procurementPeriod, deadStock, turnoverAndSellers, type PLine } from '../src/scm/lib/procurement-period';
+import { stockScopeKeeps, procurementPeriod, deadStock, turnoverAndSellers, type PLine } from '../src/scm/lib/procurement-period';
 
 const line = (o: Partial<PLine>): PLine => ({
   poId: 'p1', poNumber: 'PO-1', poDate: '2026-10-02', supplier: 'HOOKKA', category: 'BEDFRAME',
@@ -14,7 +14,7 @@ describe('procurement period', () => {
     const r = procurementPeriod([
       line({ receipts: [{ date: '2026-10-10', qty: 4, rejected: 0 }] }),
       line({ poId: 'p2', poDate: '2026-09-15', originalDue: '2026-10-05', promised: '2026-10-05' }),
-    ], '2026-10-01', '2026-10-31', '2026-10-17', 'original');
+    ], '2026-10-01', '2026-10-31', '2026-10-31', '2026-10-17', 'original');
     expect(r.asOf).toBe('2026-10-17');
     expect(r.total.raised).toMatchObject({ pos: 1, lines: 1, sen: 1000_00, receivedSen: 400_00, openSen: 600_00 });
     expect(r.total.due).toMatchObject({ lines: 2, sen: 2000_00, openSen: 1600_00 });
@@ -24,18 +24,18 @@ describe('procurement period', () => {
 
   test('a past month is judged at its last day, not today', () => {
     const l = line({ poDate: '2026-08-01', originalDue: '2026-08-20', promised: '2026-08-20', receipts: [{ date: '2026-09-05', qty: 10, rejected: 0 }] });
-    const aug = procurementPeriod([l], '2026-08-01', '2026-08-31', '2026-10-17', 'original');
+    const aug = procurementPeriod([l], '2026-08-01', '2026-08-31', '2026-08-31', '2026-10-17', 'original');
     expect(aug.asOf).toBe('2026-08-31');
     expect(aug.total.open).toMatchObject({ lines: 1, late: 1, sen: 1000_00 });
     expect(aug.total.open.buckets.late5.lines).toBe(1);
-    const oct = procurementPeriod([l], '2026-10-01', '2026-10-17', '2026-10-17', 'original');
+    const oct = procurementPeriod([l], '2026-10-01', '2026-10-17', '2026-10-17', '2026-10-17', 'original');
     expect(oct.total.open.lines).toBe(0);
   });
 
   test('due in the next 3 days, and the basis switch', () => {
     const l = line({ originalDue: '2026-10-10', promised: '2026-10-19' });
-    expect(procurementPeriod([l], '2026-10-01', '2026-10-17', '2026-10-17', 'original').overdue).toHaveLength(1);
-    const latest = procurementPeriod([l], '2026-10-01', '2026-10-17', '2026-10-17', 'promised');
+    expect(procurementPeriod([l], '2026-10-01', '2026-10-17', '2026-10-17', '2026-10-17', 'original').overdue).toHaveLength(1);
+    const latest = procurementPeriod([l], '2026-10-01', '2026-10-17', '2026-10-17', '2026-10-17', 'promised');
     expect(latest.overdue).toHaveLength(0);
     expect(latest.dueSoon.map((x) => x.daysLate)).toEqual([-2]);
   });
@@ -44,7 +44,7 @@ describe('procurement period', () => {
     const r = procurementPeriod([
       line({ receipts: [{ date: '2026-10-18', qty: 10, rejected: 0 }] }),
       line({ poId: 'p2', receipts: [{ date: '2026-10-25', qty: 10, rejected: 0 }] }),
-    ], '2026-10-01', '2026-10-31', '2026-10-31', 'original');
+    ], '2026-10-01', '2026-10-31', '2026-10-31', '2026-10-31', 'original');
     expect(r.total.supplierLead).toMatchObject({ receipts: 2, midDays: 19.5, onTimePct: 50, latePct: 50, avgDaysLate: 5 });
   });
 
@@ -52,8 +52,21 @@ describe('procurement period', () => {
     const r = procurementPeriod([
       line({ poId: 'a', poDate: '2026-10-02', receipts: [{ date: '2026-10-10', qty: 4, rejected: 0 }] }),
       line({ poId: 'b', poDate: '2026-08-01', originalDue: '2026-08-20', promised: '2026-08-20', receipts: [{ date: '2026-08-20', qty: 10, rejected: 0 }] }),
-    ], '2026-10-01', '2026-10-17', '2026-10-17', 'original');
+    ], '2026-10-01', '2026-10-17', '2026-10-17', '2026-10-17', 'original');
     expect(r.lines).toEqual([expect.objectContaining({ poId: 'a', raised: true, due: false, receivedQty: 4, receivedSen: 400_00, openQty: 6, openSen: 600_00 })]);
+  });
+
+  test('location scope: all, leave out display / display and service, or one kind', () => {
+    expect(['warehouse', 'display', 'service', 'others'].filter((k) => stockScopeKeeps('all', k))).toEqual(['warehouse', 'display', 'service', 'others']);
+    expect(['warehouse', 'display', 'service', 'others'].filter((k) => stockScopeKeeps('no_display', k))).toEqual(['warehouse', 'service', 'others']);
+    expect(['warehouse', 'display', 'service', 'others'].filter((k) => stockScopeKeeps('no_display_service', k))).toEqual(['warehouse', 'others']);
+    expect(['warehouse', 'display', 'service', 'others'].filter((k) => stockScopeKeeps('service', k))).toEqual(['service']);
+  });
+
+  test('due runs to the natural end of the period while received stops at today', () => {
+    const r = procurementPeriod([line({ originalDue: '2026-10-28', promised: '2026-10-28' })], '2026-10-01', '2026-10-19', '2026-10-31', '2026-10-19', 'original');
+    expect(r.total.due.lines).toBe(1);
+    expect(procurementPeriod([line({ originalDue: '2026-10-28', promised: '2026-10-28' })], '2026-10-01', '2026-10-19', '2026-10-19', '2026-10-19', 'original').total.due.lines).toBe(0);
   });
 
   test('lead time is the median, so one line ordered months ahead does not drag it', () => {
@@ -61,7 +74,7 @@ describe('procurement period', () => {
       line({ poDate: '2026-10-01', receipts: [{ date: '2026-10-11', qty: 1, rejected: 0 }] }),
       line({ poId: 'p2', poDate: '2026-10-01', receipts: [{ date: '2026-10-13', qty: 1, rejected: 0 }] }),
       line({ poId: 'p3', poDate: '2026-04-01', receipts: [{ date: '2026-10-18', qty: 1, rejected: 0 }] }),
-    ], '2026-10-01', '2026-10-31', '2026-10-31', 'original');
+    ], '2026-10-01', '2026-10-31', '2026-10-31', '2026-10-31', 'original');
     expect(r.total.supplierLead.midDays).toBe(12);
   });
 
@@ -69,14 +82,14 @@ describe('procurement period', () => {
     const lines = Array.from({ length: 10 }, (_, i) => line({
       poId: `p${i}`, needDate: '2026-11-10', receipts: [{ date: `2026-10-${String(20 + i).padStart(2, '0')}`, qty: 10, rejected: 0 }],
     }));
-    const o = procurementPeriod(lines, '2026-10-01', '2026-10-31', '2026-10-31', 'original').total.ordering;
+    const o = procurementPeriod(lines, '2026-10-01', '2026-10-31', '2026-10-31', '2026-10-31', 'original').total.ordering;
     expect(o.measured).toBe(10);
     expect(o.avgOrderAheadDays).toBe(18);
     expect(o.avgDueBeforeNeedDays).toBe(21);
     expect(o.midPoDueBeforeNeedDays).toBe(21);
     expect(o.p20ArrivedBeforeNeedDays).toBe(13);
     expect(o.canOrderLaterDays).toBe(13);
-    const few = procurementPeriod(lines.slice(0, 3), '2026-10-01', '2026-10-31', '2026-10-31', 'original').total.ordering;
+    const few = procurementPeriod(lines.slice(0, 3), '2026-10-01', '2026-10-31', '2026-10-31', '2026-10-31', 'original').total.ordering;
     expect(few.canOrderLaterDays).toBeNull();
   });
 

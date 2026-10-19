@@ -29,7 +29,7 @@
 | 卡片 | 算法 |
 | --- | --- |
 | PO raised this month | 期间内开的 PO（不含 DRAFT、CANCELLED）。金额 = 每行的行总额（已扣折扣），加起来跟 PO 总额一致 |
-| Due this month | PO 行上第一次写的交货日期落在期间内的金额。下面一行 "has not arrived yet" = 其中到期末还没收到的部分 |
+| Due this month | PO 行上第一次写的交货日期落在期间内的金额（选 This month / quarter / year 时算到月底 / 季末 / 年底；PO raised 和 Received 只算到今天）。下面一行 "has not arrived yet" = 其中到期末还没收到的部分 |
 | Received this month | 期间内收货单（GRN）收到的数量 × PO 单价 |
 | Supplier billed this month | 期间内供应商发票（purchase invoice，不含 DRAFT、CANCELLED）的总额 |
 | Total outstanding | 所有还没收完的 PO 行，未收数量 × 单价。快照：到今天（或过去期间的最后一天） |
@@ -72,7 +72,7 @@
 
 ### 1.3 Dead stock 和 Buffer stock（快照，今天）
 
-- 范围：现在仓库里有货的每个品项。不含 SHOWROOM、DISPLAY 仓库，因为展示品会当样品卖掉。
+- 范围：现在有货的每个地点。右上角可选：全部（默认）、不含 Display、不含 Display 和 Service、只看 Warehouse / Display / Service / Others。地点类型来自仓库设定：Display = display + showroom。库存金额、dead stock、buffer、周转率都跟着这个选择。
 - 订单按 **品项 + 款式** 对货：沙发、床架要面料、尺寸都一样才算同一款。
 - **Dead stock** = 完全没有未完成的订单要这个款式，扣掉平时 14 天会卖出去的量后剩下的（不再要求 90 天没出货）。图表按 "多久没出货" 分段：90 天内、91–180、181–365、超过一年。
 - **Buffer stock（太早买的）** = 库存 − 有交货日期的订单 − 平时 14 天会卖出去的量。没有交货日期的订单要的货，可以等客户定了日期再买，所以也算 buffer。
