@@ -522,6 +522,10 @@ export const NAV_TABS: NavTab[] = [
         anyAccess: ["scm.sales", "scm.sales.orders", "scm.sales.delivery", "scm.sales.invoices", "scm.sales.returns"],
         children: [
           { to: "/scm/sales-orders", label: "Sales Orders", icon: ShoppingCart, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.orders"] },
+          // Orders with no fair link, for the office to settle (owner 2026-10-19:
+          // 「先做 Fair links to settle 菜单」). The page existed only by URL; the
+          // red number is how many it lists, from the same server read.
+          { to: "/scm/fair-pending", label: "Fair Links to Settle", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.orders"], hideForSalesRep: true, badge: "fair-links-to-settle" },
           // The office / director path to Amendments. A rep reaches it via the
           // rep-only leaf above instead, so this carries hideForSalesRep like its
           // DO / SI siblings — belt-and-braces against the parent's flag being

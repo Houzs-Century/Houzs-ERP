@@ -106,14 +106,16 @@ export type FairPendingRow = {
   venue: string | null;
   branding: string | null;
   project_id: number | null;
-  fair_match: 'PENDING' | 'AMBIGUOUS' | 'UNMATCHED' | null;
+  /** NULL = an order keyed before the picker, listed from 1 September 2026. */
+  fair_match: 'PENDING' | 'AMBIGUOUS' | 'UNMATCHED' | 'NO_FAIR' | null;
   status: string | null;
   local_total_sen: number | null;
   salesperson_id: string | null;
 };
 
-/** Orders whose fair link still needs a person. Three different reasons share
- *  this list and the screen keeps them apart — see the `fair_match` column. */
+/** Orders with no fair link a person should see (backend scm/lib/fair-pending.ts).
+ *  The reasons share this list and the screen keeps them apart — see the
+ *  `fair_match` column. */
 export function useFairPending(limit = 200) {
   return useQuery({
     queryKey: ['fair-pending', limit],

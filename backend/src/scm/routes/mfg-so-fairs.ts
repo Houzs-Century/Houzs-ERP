@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// mfg-so-fairs — the SO fair picker's three endpoints.
+// mfg-so-fairs — the SO fair picker's endpoints.
 //
 // Mounted at /mfg-sales-orders BEFORE the main router so `/fair-options` is not
 // swallowed by its `/:docNo`. It lives in its own file rather than in
@@ -16,7 +16,8 @@
 // pick others"*, and Others is a second PICK from the company's venue master.
 //
 //   GET  /fair-options          the dropdown, for one order date
-//   GET  /fair-pending          orders whose fair link still needs a person
+//   GET  /fair-pending          orders with no fair link a person should see
+//   GET  /fair-pending/count    how many — the sidebar badge
 //   POST /:docNo/fair           a person settles one of them
 //   GET  /active-venue          the rep's bound venue (moved here, unchanged)
 //
@@ -35,6 +36,7 @@ import {
   type FairDb,
 } from '../lib/fair-binding';
 import { buildFairOptions, isPickableFair } from '../lib/fair-options';
+import { countFairPending, loadFairPending } from '../lib/fair-pending';
 /* GET /active-venue moved here from mfg-sales-orders.ts on 2026-09-13. It is the
    same concern as the picker — which exhibition is this rep at — and that file
    is over its size ceiling, so the endpoint could not stay beside its new
@@ -89,48 +91,51 @@ mfgSoFairs.get('/fair-options', async (c) => {
   }
 });
 
-/* What the pending screen shows. Every value here is already on the order — this
-   endpoint joins nothing and computes nothing, so it cannot disagree with the
-   list view about an order's state. */
-const PENDING_COLUMNS =
-  'doc_no, so_date, venue, branding, project_id, fair_match, status, local_total_sen, salesperson_id';
-
-const NEEDS_A_PERSON = ['PENDING', 'AMBIGUOUS', 'UNMATCHED'];
-
 /**
  * GET /mfg-sales-orders/fair-pending?limit=200
  *
- * The orders the reconcile job could not settle on its own. Three different
- * reasons live here and the screen must keep them apart — see the `fair_match`
+ * Every order with no fair link that a person should look at — the "Fair Links
+ * to Settle" page. The reasons stay apart on the screen — see the `fair_match`
  * column comment (mig 20260913T1900):
  *
  *   PENDING    the fair is not in PMS yet. Usually resolves itself when it is.
  *   AMBIGUOUS  two booths fit. Only a person knows which.
  *   UNMATCHED  the order's brand has no booth at that event. Usually a missing
  *              brand on the SKU rather than a wrong venue.
+ *   NO_FAIR    the salesperson ticked "No fair" (owner 2026-10-19: listed too).
+ *   NULL       no verdict — listed only from 1 September 2026, when Houzs
+ *              opened its books in the ERP; the AutoCount years stay out.
  *
- * NULL `fair_match` is deliberately NOT in this list: those are the 2,946 orders
- * that predate the picker, and dumping them here would bury the handful that
- * actually need attention under three years of history.
+ * Which orders, exactly, is scm/lib/fair-pending.ts — shared with the count the
+ * sidebar badge shows, so the two cannot disagree.
  */
 mfgSoFairs.get('/fair-pending', async (c) => {
   const sb = c.get('supabase');
   const limitRaw = Number(c.req.query('limit'));
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 500) : 200;
   try {
-    const { data, error } = await scopeToCompany(
-      sb
-        .from('mfg_sales_orders')
-        .select(PENDING_COLUMNS)
-        .in('fair_match', NEEDS_A_PERSON)
-        .order('so_date', { ascending: false })
-        .limit(limit),
-      c,
-    );
-    if (error) return c.json({ error: 'fair_pending_read_failed', rows: [] }, 500);
-    return c.json({ rows: data });
+    const res = await loadFairPending(sb, (q) => scopeToCompany(q, c), limit);
+    if (!res.ok) return c.json({ error: 'fair_pending_read_failed', rows: [] }, 500);
+    return c.json({ rows: res.rows });
   } catch {
     return c.json({ error: 'fair_pending_read_failed', rows: [] }, 500);
+  }
+});
+
+/**
+ * GET /mfg-sales-orders/fair-pending/count
+ *
+ * How many orders the page above lists — the red number on its sidebar entry
+ * (owner 2026-10-19: 「先做 Fair links to settle 菜单」). A failed read answers
+ * an error, never 0: the badge then shows nothing rather than "all settled".
+ */
+mfgSoFairs.get('/fair-pending/count', async (c) => {
+  try {
+    const res = await countFairPending(c.get('supabase'), (q) => scopeToCompany(q, c));
+    if (!res.ok) return c.json({ error: 'fair_pending_count_failed' }, 500);
+    return c.json({ count: res.count });
+  } catch {
+    return c.json({ error: 'fair_pending_count_failed' }, 500);
   }
 });
 
