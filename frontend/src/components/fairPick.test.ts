@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import { diffHeaderPayload } from '../vendor/scm/lib/so-header-diff';
 import {
-  fairDayCheck, fairDaysOf, fairEditPatch, fairEventOf, fairPickValue, linkedEvent, soleFairDay, type LinkedFair,
+  fairDayCheck, fairDaysOf, fairEditPatch, fairElsewhereLine, fairEventOf, fairPickValue, linkedEvent, soleFairDay, type LinkedFair,
 } from './fairPick';
 
 const MLE: LinkedFair = { venue: 'MID VALLEY', organizer: 'MLE', solo: false, startDate: '2026-08-08', endDate: '2026-08-09' };
@@ -89,6 +89,24 @@ describe('linkedEvent — the link is shown only under its own venue', () => {
     expect(linkedEvent('MID VALLEY', null, null)).toBeNull();
     expect(linkedEvent('MID VALLEY', undefined, null)).toBeNull();
     expect(linkedEvent(null, MLE, null)).toBeNull();
+  });
+});
+
+describe('fairElsewhereLine — the FAIR an order is placed at, when not at its own venue (owner 2026-10-19)', () => {
+  it('names the fair, never the project, and says the venue differs', () => {
+    /* The same HC-SO-2609-081 shape: the link is real and must be seen, beside
+       the order's own venue rather than in place of it. */
+    expect(fairElsewhereLine('KUALA LUMPUR CONVENTION CENTRE', { ...MLE, venue: 'IOI MALL PUTRAJAYA' }))
+      .toBe('Placed at: IOI MALL PUTRAJAYA — MLE (08/08 - 08/09) · Venue differs');
+  });
+
+  it('a link at the order\'s own venue needs no line — the picker row shows it', () => {
+    expect(fairElsewhereLine(' mid valley ', MLE)).toBeNull();
+    expect(fairElsewhereLine('MID VALLEY', null)).toBeNull();
+  });
+
+  it('an order with no venue names the fair without claiming a difference', () => {
+    expect(fairElsewhereLine(null, MLE)).toBe('Placed at: MID VALLEY — MLE (08/08 - 08/09)');
   });
 });
 
