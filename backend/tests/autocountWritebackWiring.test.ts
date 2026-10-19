@@ -207,7 +207,7 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
        the money. The whole-document queueAcSoEdit on these three paths is the
        regression this pins. */
     expect(between(paymentRowSource, 'export async function recordSoPaymentRow(', 'return { payment: data as Record<string, unknown>, errorMessage: null };'))
-      .toContain('await enqueueSoPaymentEdit(sb, {');
+      .toContain('enqueueSoPaymentEdit(sb, {'); // awaited in the core's Promise.all (HC-0006 speed)
     const amend = between(soSource, "action: 'UPDATE_PAYMENT',", 'collected_by_name: staff?.name ?? null');
     expect(amend).toContain("enqueueSoPaymentEdit(c.get('supabase'), { companyId: activeCompanyId(c), docNo,");
     expect(amend).not.toContain('queueAcSoEdit(c, docNo)');

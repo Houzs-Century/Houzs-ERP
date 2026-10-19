@@ -4717,9 +4717,15 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      to READY immediately and the header advances to READY_TO_SHIP. Runs a GLOBAL
      re-walk (not scoped to this doc) so that if this higher-priority order steals
      stock from a lower-priority one, the loser regresses from READY in the SAME
-     pass instead of lagging. Best-effort: a failure never sinks the SO create. */
-  try { await recomputeSoStockAllocation(sb); }
-  catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-create failed:', e); }
+     pass instead of lagging. Best-effort: a failure never sinks the SO create.
+     NOT for a DRAFT (HC-0006 speed): DRAFT is in SO_TERMINAL_STATES, so the walk
+     never loads the new order and the full re-walk only cost the scan job
+     seconds. DRAFT -> CONFIRMED re-walks on the status route, and the 5-minute
+     sweep repairs anything else. */
+  if ((body as { asDraft?: unknown }).asDraft !== true) {
+    try { await recomputeSoStockAllocation(sb); }
+    catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-create failed:', e); }
+  }
 
   /* ERP -> AutoCount write-back. Queued, never pushed inline: the AutoCount
      host must not be able to fail a salesperson's Save. No-op while the flag is
