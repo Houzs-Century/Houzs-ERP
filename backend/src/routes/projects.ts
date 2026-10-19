@@ -59,6 +59,7 @@ import { scopeSalesReportsForUser } from "../services/orgScope";
 import { audit } from "../services/audit";
 import { hasPermission, holdsChecklistApproval, EXPLICIT_APPROVAL_KEYS } from "../services/permissions";
 import { recomputeAutoCostLines } from "../services/projectCostRates";
+import { ensureSalesRepForUser } from "../services/salesTeam";
 import { issueShareToken, revokeShareTokens } from "../services/contractorShare";
 import { todayMyt } from "../scm/lib/my-time";
 import { canonicalizeVenue } from "../scm/lib/canonical-venue";
@@ -2393,7 +2394,29 @@ app.get("/sales-rep-options", requirePermission("projects.write"), async (c) => 
         AND r.status = 'active'
       ORDER BY LOWER(r.name), r.code`
   ).all<{ id: number; code: string; name: string; phone: string | null }>();
-  return c.json({ data: rows.results ?? [] });
+  /* `others`: active staff NOT on the Sales Team roster (owner 2026-10-19:
+     「不需要改部门啊，就让他们可以去 sales attending 不就好了？」). Picking one
+     below puts them on it (ensureSalesRepForUser). Staff granted this company,
+     or granted none at all (logins older than per-company grants). A failed read
+     costs only this list — the roster above still answers. */
+  let others: Array<{ user_id: number; name: string | null; email: string }> = [];
+  try {
+    const co = activeCompanyId(c);
+    const res = await c.env.DB.prepare(
+      `SELECT u.id AS user_id, u.name, u.email
+         FROM users u
+        WHERE LOWER(COALESCE(u.status, '')) = 'active'
+          AND NOT EXISTS (SELECT 1 FROM sales_reps r
+                           WHERE r.user_id = u.id AND r.archived_at IS NULL AND r.status = 'active')${co != null ? `
+          AND (EXISTS (SELECT 1 FROM user_companies uc WHERE uc.user_id = u.id AND uc.company_id = ?)
+               OR NOT EXISTS (SELECT 1 FROM user_companies uc WHERE uc.user_id = u.id))` : ""}
+        ORDER BY LOWER(COALESCE(u.name, u.email))`
+    ).bind(...(co != null ? [co] : [])).all<{ user_id: number; name: string | null; email: string }>();
+    others = res.results ?? [];
+  } catch (e) {
+    console.error("[projects] sales-rep-options: staff not on the roster could not be read", e);
+  }
+  return c.json({ data: rows.results ?? [], others });
 });
 
 // ── Detail ────────────────────────────────────────────────────
@@ -4651,26 +4674,45 @@ app.post("/:id/sales-attendees", requirePermission("projects.write"), async (c) 
   const user = c.get("user");
   // Owner 2026-07-20: reversed the 2026-07-18 block — a Sales Director may now
   // change Sales Attending, like everyone else holding projects.write.
-  const body = await c.req.json<{ sales_rep_id?: number }>();
-  if (!body.sales_rep_id) return c.json({ error: "Please choose a sales attendee." }, 400);
+  const body = await c.req.json<{ sales_rep_id?: number; user_id?: number }>();
+  let repId = Number.isInteger(Number(body.sales_rep_id)) && Number(body.sales_rep_id) > 0 ? Number(body.sales_rep_id) : null;
+  /* A staff member not on the Sales Team roster yet (owner 2026-10-19): picking
+     them puts them on it — their department is not touched — and then they
+     attend like anyone else. Only someone the picker could offer: an active
+     login granted this company (or granted none). */
+  if (repId == null && Number.isInteger(Number(body.user_id)) && Number(body.user_id) > 0) {
+    const staffId = Number(body.user_id);
+    const co = activeCompanyId(c);
+    if (co != null) {
+      const grant = await c.env.DB.prepare(
+        `SELECT (EXISTS (SELECT 1 FROM user_companies WHERE user_id = ? AND company_id = ?)
+                 OR NOT EXISTS (SELECT 1 FROM user_companies WHERE user_id = ?)) AS ok`
+      ).bind(staffId, co, staffId).first<{ ok: boolean | number }>();
+      if (!grant?.ok) return c.json({ error: "That staff member does not work in this company." }, 400);
+    }
+    const ensured = await ensureSalesRepForUser(c.env, staffId, user?.id ?? null, `Added to the Sales Team from Sales Attending on project #${id}`);
+    if (!ensured) return c.json({ error: "That staff member is not an active user." }, 400);
+    repId = ensured.repId;
+  }
+  if (repId == null) return c.json({ error: "Please choose a sales attendee." }, 400);
   try {
     await c.env.DB.prepare(
       `INSERT INTO project_sales_attendees (project_id, sales_rep_id, created_by)
        VALUES (?, ?, ?)`
     )
-      .bind(id, body.sales_rep_id, user?.id ?? null)
+      .bind(id, repId, user?.id ?? null)
       .run();
     const rep = await c.env.DB.prepare(
       `SELECT code, name FROM sales_reps WHERE id = ?`
     )
-      .bind(body.sales_rep_id)
+      .bind(repId)
       .first<{ code: string; name: string }>();
     await logProjectActivity(
       c.env,
       id,
       "sales_attendee_add",
       null,
-      rep ? `${rep.code} ${rep.name}` : String(body.sales_rep_id),
+      rep ? `${rep.code} ${rep.name}` : String(repId),
       null,
       user?.id
     );

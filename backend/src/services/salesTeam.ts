@@ -97,6 +97,66 @@ export async function logSalesTeamActivity(
     .run();
 }
 
+// ── A staff member onto the roster, by hand ───────────────────
+//
+// Owner 2026-10-19: 「不需要改部门啊，就让他们可以去 sales attending 不就好了？」
+// The PMS "Sales Attending" picker lists the sales_reps roster, and only a
+// Sales-department login is put on it automatically (syncSalesRepFromUser
+// below). Staff in other departments who do stand at fairs — Lim
+// (Management), Nancy and Syasya (Operation) on 2026-10-19 — could never be
+// picked, so the orders they key could never be matched to a fair.
+//
+// Picking such a person in Sales Attending now puts them on the roster without
+// touching their department: their archived row comes back if they have one,
+// else a new row is made, linked by user_id. The department sync is left as it
+// is — it only acts when a department CHANGES, so a hand-added row stays until
+// someone moves that person to another department.
+
+export async function ensureSalesRepForUser(
+  env: Env,
+  userId: number,
+  actorId: number | null,
+  note: string,
+): Promise<{ action: "existing" | "created" | "unarchived"; repId: number } | null> {
+  const user = await env.DB.prepare(
+    `SELECT id, name, email, status FROM users WHERE id = ?`,
+  )
+    .bind(userId)
+    .first<{ id: number; name: string | null; email: string; status: string | null }>();
+  if (!user || String(user.status ?? "").toLowerCase() !== "active") return null;
+
+  const existing = await env.DB.prepare(
+    `SELECT id, archived_at, status FROM sales_reps WHERE user_id = ? LIMIT 1`,
+  )
+    .bind(userId)
+    .first<{ id: number; archived_at: string | null; status: string | null }>();
+
+  if (existing) {
+    if (!existing.archived_at && existing.status === "active") return { action: "existing", repId: existing.id };
+    await env.DB.prepare(
+      `UPDATE sales_reps
+          SET archived_at = NULL, archived_by = NULL, status = 'active',
+              updated_at = datetime('now')
+        WHERE id = ?`,
+    )
+      .bind(existing.id)
+      .run();
+    await logSalesTeamActivity(env, existing.id, "status_change", existing.archived_at ? "archived" : existing.status, "active", note, actorId);
+    return { action: "unarchived", repId: existing.id };
+  }
+
+  const code = await nextSalesRepCode(env);
+  const r = await env.DB.prepare(
+    `INSERT INTO sales_reps (code, name, email, user_id, status)
+     VALUES (?, ?, ?, ?, 'active')`,
+  )
+    .bind(code, user.name || user.email, user.email || null, userId)
+    .run();
+  const repId = r.meta.last_row_id as number;
+  await logSalesTeamActivity(env, repId, "created", null, code, note, actorId);
+  return { action: "created", repId };
+}
+
 // ── User ↔ Sales rep sync ────────────────────────────────────
 //
 // Keeps the sales_reps roster in lockstep with the users.department:
