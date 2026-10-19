@@ -45,7 +45,7 @@ function Harness(props: { enabled: boolean; initial: FairPickValue; spy: (v: Fai
   );
 }
 
-const valueNow = () => JSON.parse(screen.getByTestId('value').textContent ?? 'null') as FairPickValue;
+const valueNow = () => JSON.parse(screen.getByTestId('value').textContent) as FairPickValue;
 
 describe("useAutoFair — the keyer's fair on a new order", () => {
   it('fills a blank form with the fair running today, and says so', () => {
@@ -91,7 +91,7 @@ describe("useAutoFair — the keyer's fair on a new order", () => {
     render(<Harness enabled initial={BLANK} spy={spy} />);
     expect(spy).not.toHaveBeenCalled();
     expect(screen.getByRole('note').textContent).toBe(NO_FAIR_MSG);
-    expect(JSON.parse(screen.getByTestId('why').textContent ?? 'null')).toEqual({ code: 'no_fair' });
+    expect(JSON.parse(screen.getByTestId('why').textContent)).toEqual({ code: 'no_fair' });
   });
 
   it('No fair ticked, or an edit: nothing filled, nothing said', () => {
