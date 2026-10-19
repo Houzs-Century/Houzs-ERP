@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, test, beforeEach } from "vitest";
 import { ensureSalesRepForUser, syncSalesRepFromUser } from "../src/services/salesTeam";
+import { attendeeRepId } from "../src/services/salesAttending";
 
 // Covers the CREATE-path guarantee the users invite handler now relies on:
 // creating a user straight into a Sales department must yield an active
@@ -145,5 +146,23 @@ describe("ensureSalesRepForUser (picked in Sales Attending)", () => {
 
     expect(await ensureSalesRepForUser(env, 214, null, "Added from Sales Attending")).toBeNull();
     expect(await repForUser(214)).toBeNull();
+  });
+});
+
+describe("attendeeRepId (POST /projects/:id/sales-attendees body)", () => {
+  test("a roster id passes straight through", async () => {
+    expect(await attendeeRepId(env, null, { sales_rep_id: 77 }, null, 1)).toEqual({ ok: true, repId: 77 });
+  });
+
+  test("a login not on the roster is put on it and its roster id answered", async () => {
+    await seedUser(221, OTHER_DEPT_ID);
+    const res = await attendeeRepId(env, null, { user_id: 221 }, null, 1);
+    expect(res.ok).toBe(true);
+    const rep = await repForUser(221);
+    expect(res.ok && res.repId).toBe(rep?.id);
+  });
+
+  test("nothing chosen is refused with the picker's sentence", async () => {
+    expect(await attendeeRepId(env, null, {}, null, 1)).toEqual({ ok: false, error: "Please choose a sales attendee." });
   });
 });
