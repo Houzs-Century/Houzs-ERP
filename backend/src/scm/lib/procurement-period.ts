@@ -62,9 +62,12 @@ export interface GroupRow {
 /** Lines a supplier-lead figure needs before it is trusted. */
 export const MIN_SAMPLES = 10;
 
-export function procurementPeriod(lines: PLine[], from: string, to: string, today: string, basis: Basis) {
+/** `dueTo`: where "due" ends — the whole month / quarter / year for a period
+ *  that runs to today (owner 2026-10-19: due this month = to the 31st), else `to`. */
+export function procurementPeriod(lines: PLine[], from: string, to: string, dueTo: string, today: string, basis: Basis) {
   const asOf = to < today ? to : today;
   const inPeriod = (d: string | null) => !!d && d >= from && d <= to;
+  const inDue = (d: string | null) => !!d && d >= from && d <= dueTo;
 
   const group = (keyOf: (l: PLine) => string): GroupRow[] => {
     const map = new Map<string, PLine[]>();
@@ -76,7 +79,7 @@ export function procurementPeriod(lines: PLine[], from: string, to: string, toda
 
   const row = (key: string, ls: PLine[]): GroupRow => {
     const raised = ls.filter((l) => inPeriod(l.poDate));
-    const due = ls.filter((l) => inPeriod(dueOf(l, basis)));
+    const due = ls.filter((l) => inDue(dueOf(l, basis)));
     const sen = (l: PLine, q: number) => q * l.priceSen;
     const buckets = Object.fromEntries(BUCKETS.map((b) => [b, { lines: 0, sen: 0 }])) as GroupRow['open']['buckets'];
     let openLines = 0; let openSen = 0; let late = 0; let lateSen = 0;
@@ -159,7 +162,7 @@ export function procurementPeriod(lines: PLine[], from: string, to: string, toda
        period, or still open at its end — for the drill-down (owner 2026-10-18). */
     lines: lines.flatMap((l) => {
       const raised = inPeriod(l.poDate);
-      const due = inPeriod(dueOf(l, basis));
+      const due = inDue(dueOf(l, basis));
       const receivedQty = l.receipts.filter((r) => inPeriod(r.date) && !r.inferred).reduce((a, r) => a + r.qty, 0);
       const openQty = openQtyAt(l, asOf);
       if (!raised && !due && receivedQty <= 0 && openQty <= 0) return [];
@@ -192,6 +195,18 @@ type Age = 'd0to90' | 'd91to180' | 'd181to365' | 'd365plus';
 const AGES: Age[] = ['d0to90', 'd91to180', 'd181to365', 'd365plus'];
 const ageOf = (idle: number | null): Age => (idle == null || idle <= 90 ? 'd0to90' : idle <= 180 ? 'd91to180' : idle <= 365 ? 'd181to365' : 'd365plus');
 export const BUFFER_COVER_DAYS = 14;
+
+/** The locations the stock figures cover: every one, leave out display
+ *  (display + showroom) and service, or one kind alone. */
+export const STOCK_SCOPES = ['all', 'no_display', 'no_display_service', 'warehouse', 'display', 'service', 'others'] as const;
+export type StockScope = (typeof STOCK_SCOPES)[number];
+export type LocationKind = 'warehouse' | 'display' | 'service' | 'others';
+export function stockScopeKeeps(scope: StockScope, kind: string): boolean {
+  if (scope === 'all') return true;
+  if (scope === 'no_display') return kind !== 'display';
+  if (scope === 'no_display_service') return kind !== 'display' && kind !== 'service';
+  return kind === scope;
+}
 
 /** `outPerDay`: per item|variant, the quantity that went out per day lately;
  *  `item|*` is the item over all its variants, used for stock kept with no

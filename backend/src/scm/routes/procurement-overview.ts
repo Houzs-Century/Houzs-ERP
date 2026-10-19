@@ -19,7 +19,7 @@ import { todayMyt } from '../lib/my-time';
 import { doCountsAsDelivered, DO_STOCK_OUT_STATES } from '../shared/do-shipped-states';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
 import { procurementCategory, promisedDate, PROCUREMENT_CATEGORIES, type ProcurementCategory } from '../lib/procurement-overview';
-import { procurementPeriod, deadStock, turnoverAndSellers, type PLine, type OpenDemand } from '../lib/procurement-period';
+import { procurementPeriod, deadStock, turnoverAndSellers, STOCK_SCOPES, stockScopeKeeps, type PLine, type OpenDemand, type StockScope } from '../lib/procurement-period';
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { attributeStockPos, type StockReceipt, type StockOut } from '../lib/stock-po-attribution';
 
@@ -39,6 +39,8 @@ procurementOverview.get('/', async (c) => {
   const from = ISO.test(qFrom) ? qFrom : `${today.slice(0, 7)}-01`;
   const to = ISO.test(qTo) && qTo >= from ? qTo : today;
   const basis = c.req.query('basis') === 'promised' ? 'promised' : 'original';
+  const qDueTo = c.req.query('dueTo') ?? '';
+  const dueTo = ISO.test(qDueTo) && qDueTo >= to ? qDueTo : to;
   const windowStart = new Date(Date.parse(`${to}T00:00:00Z`) - 365 * 86400000).toISOString().slice(0, 10);
   const fail = (what: string, e: { message: string }) => c.json({ error: 'load_failed', reason: `${what}: ${e.message}` }, 500);
 
@@ -175,9 +177,20 @@ procurementOverview.get('/', async (c) => {
     if (more.error) return fail('products', more.error);
     for (const r of more.data) prodCat.set(String(r.code), str(r.category));
   }
-  /* Display / showroom stock is on the floor to be seen, not waiting to be
-     sold off, so it is not dead stock (owner 2026-10-17). */
-  const isShowroom = (r: Row) => /SHOWROOM|DISPLAY/i.test(String(r.warehouse_code ?? ''));
+  /* Which locations the stock figures cover (owner 2026-10-19): every location
+     by default, or leave out display (display + showroom) and service, or one
+     kind alone. Kinds come from warehouses.type: warehouse, display (display
+     and showroom), service, others. */
+  const whs = await scopeToCompany(sb.from('warehouses').select('id, code, type'), c);
+  if (whs.error) return fail('warehouses', whs.error);
+  const whCode = new Map((whs.data as Row[]).map((w) => [String(w.id), String(w.code ?? '—')]));
+  const kindOf = new Map((whs.data as Row[]).map((w) => {
+    const t = String(w.type ?? '').toLowerCase();
+    return [String(w.id), t === 'showroom' || t === 'display' ? 'display' : t === 'service' ? 'service' : t === 'warehouse' ? 'warehouse' : 'others'];
+  }));
+  const scope = STOCK_SCOPES.includes(c.req.query('scope') as StockScope) ? c.req.query('scope') as StockScope : 'all';
+  const inScope = (warehouseId: unknown) => stockScopeKeeps(scope, kindOf.get(String(warehouseId)) ?? 'others');
+  const outOfScope = (r: Row) => !inScope(r.warehouse_id);
   /* What open sales orders still wait for, per item AND variant (owner: a
      bedframe or sofa only serves an order for the same fabric and size): an
      open line's quantity less what has gone out on a shipped DO, split by
@@ -237,7 +250,7 @@ procurementOverview.get('/', async (c) => {
     if (!lastIn.has(k)) keep(k, day(m.movement_date) ?? day(m.created_at));
   }
   const heldDays = (k: string) => { const d = lastIn.get(k); return d ? Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 86400000) : null; };
-  const deadRaw = deadStock((stock.data ?? []).filter((r) => !isShowroom(r)).map((r) => ({
+  const deadRaw = deadStock((stock.data ?? []).filter((r) => !outOfScope(r)).map((r) => ({
     warehouse: String(r.warehouse_code ?? '—'), category: catOf(r), itemCode: String(r.item_code), variantKey: String(r.variant_key ?? ''), name: str(r.product_name),
     qty: num(r.qty_on_hand), valueSen: num(r.value_sen), lastOut: lastOut.get(keyOf(r)) ?? null, firstMove: firstMove.get(keyOf(r)) ?? null,
   })), today, openDemand, outPerDay);
@@ -248,9 +261,6 @@ procurementOverview.get('/', async (c) => {
   };
 
   /* ── Turnover and sellers in the period ───────────────────────────────── */
-  const whs = await scopeToCompany(sb.from('warehouses').select('id, code'), c);
-  if (whs.error) return fail('warehouses', whs.error);
-  const whCode = new Map((whs.data as Row[]).map((w) => [String(w.id), String(w.code ?? '—')]));
   /* Turnover reads a fixed trailing year (owner 2026-10-17: it should not move
      with the period picked); stock movements only begin 2026-09, so until a
      year has passed the window starts at the first OUT. */
@@ -262,7 +272,7 @@ procurementOverview.get('/', async (c) => {
   }
   const yearAgo = new Date(Date.parse(`${today}T00:00:00Z`) - 364 * 86400000).toISOString().slice(0, 10);
   const turnFrom = firstOut && firstOut > yearAgo ? firstOut : yearAgo;
-  const outs = (moves.data ?? []).flatMap((m) => {
+  const outs = (moves.data ?? []).filter((m) => inScope(m.warehouse_id)).flatMap((m) => {
     if (m.movement_type !== 'OUT') return [];
     const d = day(m.movement_date) ?? day(m.created_at);
     if (!d || d < turnFrom || d > today) return [];
@@ -290,7 +300,7 @@ procurementOverview.get('/', async (c) => {
   const turnover = {
     firstOut, turnFrom, turnTo: today,
     ...turnoverAndSellers(
-      (stock.data ?? []).filter((r) => !isService(r)).map((r) => {
+      (stock.data ?? []).filter((r) => !isService(r) && inScope(r.warehouse_id)).map((r) => {
         const cat = catOf(r); const model = modelOf(String(r.item_code), cat);
         return { warehouse: String(r.warehouse_code ?? '—'), category: cat, itemCode: model, variantKey: '', name: model === String(r.item_code) ? str(r.product_name) : `${model} (all variants)`, qty: num(r.qty_on_hand), valueSen: num(r.value_sen), lastOut: null, firstMove: null };
       }),
@@ -311,9 +321,12 @@ procurementOverview.get('/', async (c) => {
     turnover,
     categories: PROCUREMENT_CATEGORIES,
     currentLead,
+    stockScope: scope,
+    warehouseKinds: Object.fromEntries((whs.data as Row[]).map((w) => [String(w.code ?? '—'), kindOf.get(String(w.id)) ?? 'others'])),
     leadOverrides: Object.fromEntries(Object.entries(leadOverrides).map(([k, xs]) => [k, xs.map((x) => ({ warehouse: whCode.get(x.warehouseId) ?? '—', days: x.days }))])),
     billed: { totalSen: (pis.data ?? []).reduce((a, r) => a + num(r.total_sen), 0), count: (pis.data ?? []).length, bySupplier: billedBySupplier, byCategory: billedByCategory },
-    ...procurementPeriod(lines, from, to, today, basis),
+    dueTo,
+    ...procurementPeriod(lines, from, to, dueTo, today, basis),
   });
 });
 
