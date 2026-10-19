@@ -11,7 +11,10 @@
 // the one the order carries now. Slip place/date come from
 // scm.so_scan_samples.extracted (scan_jobs.sample_id / so_doc_no).
 //
-// Writes nothing. Env: DATABASE_URL, COMPANY_ID (default 1), FROM (default 2026-09-26).
+// WITH_SLIP_DAY=1 adds a step 2b between 2 and 3: the keyer's fair running on
+// the slip's date, whatever place the slip names (a misread place).
+//
+// Writes nothing. Env: DATABASE_URL, COMPANY_ID (default 1), FROM (default 2026-09-26), WITH_SLIP_DAY.
 //   npx tsx scripts/check-scan-fair-chain.mjs
 
 import postgres from 'postgres';
@@ -65,10 +68,12 @@ try {
     let step = '5 none'; let hit = null;
     const s1 = sd && place ? own.filter((f) => norm(f.venue) === place && runs(f, sd)) : [];
     const s2 = sd && place ? fairs.filter((f) => norm(f.venue) === place && runs(f, sd)) : [];
+    const sDate = sd ? own.filter((f) => runs(f, sd)) : [];
     const s3 = own.filter((f) => runs(f, keyed));
     const s4 = own.filter((f) => endOf(f) < keyed && endOf(f) >= addDays(keyed, -30)).sort((a, b) => endOf(b).localeCompare(endOf(a)));
     if (s1.length) { step = '1 place+date+his fair'; hit = s1[0]; }
     else if (s2.length) { step = '2 place+date'; hit = s2[0]; }
+    else if (process.env.WITH_SLIP_DAY === '1' && sDate.length) { step = '2b his fair on the slip date'; hit = sDate[0]; }
     else if (s3.length) { step = '3 his fair today'; hit = s3[0]; }
     else if (s4.length) { step = '4 his latest fair (1 month)'; hit = s4[0]; }
     const linked = r.project_id != null ? byId.get(Number(r.project_id)) ?? null : null;
