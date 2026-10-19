@@ -62,6 +62,9 @@ export const PRODUCT_CODE_CASCADE: readonly CascadeColumn[] = [
   { table: 'stock_take_lines',           col: 'item_code' },
   { table: 'warehouse_rack_items',       col: 'item_code' },
   { table: 'warehouse_rack_movements',   col: 'item_code' },
+  /* A supplier's printed code taught on the delivery-order scan card: left on the
+     old code, that supplier's next delivery order would match nothing. */
+  { table: 'supplier_scan_codes',        col: 'item_code' },
 ];
 
 export interface KeptColumn {
