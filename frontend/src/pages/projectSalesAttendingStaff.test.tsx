@@ -3,6 +3,7 @@
    Pinned here: the picker lists them under their own heading, and adding one
    sends their LOGIN (user_id) so the server puts them on the roster; a roster
    rep still goes by sales_rep_id. */
+import type { ReactNode } from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
@@ -24,7 +25,7 @@ const DETAIL = {
 };
 
 vi.mock("../api/client", async () => {
-  const actual = await vi.importActual<any>("../api/client");
+  const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
   return {
     ...actual,
     api: {
@@ -59,17 +60,17 @@ vi.mock("../auth/AuthContext", () => ({
     reload: async () => {}, login: async () => ({ kind: "ok" }), verifyTotpLogin: async () => {},
     logout: async () => {}, bootstrap: async () => {}, acceptInvite: async () => {},
   }),
-  AuthProvider: ({ children }: any) => children,
+  AuthProvider: ({ children }: { children: ReactNode }) => children,
 }));
 
 vi.mock("../hooks/useToast", () => ({
   useToast: () => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }),
-  ToastProvider: ({ children }: any) => children,
+  ToastProvider: ({ children }: { children: ReactNode }) => children,
 }));
 
 vi.mock("../hooks/useDialog", () => ({
   useDialog: () => ({ confirm: async () => true, prompt: async () => null, alert: async () => {} }),
-  DialogProvider: ({ children }: any) => children,
+  DialogProvider: ({ children }: { children: ReactNode }) => children,
 }));
 
 function renderDetail() {
