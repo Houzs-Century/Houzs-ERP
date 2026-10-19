@@ -29,7 +29,21 @@ export const AGE_BUCKETS: Array<[string, number, number]> = [
   ["0–7 days", 0, 7], ["8–14 days", 8, 14], ["15–21 days", 15, 21], ["22–30 days", 22, 30], ["31–60 days", 31, 60], ["61–90 days", 61, 90], ["Over 90 days", 91, Infinity],
 ];
 
-export function qualityOverview(cases: QCase[], itemsByCase: Map<number, number>, history: QStageRow[], received: QReceived[], from: string, to: string, today: string, names: Map<string, string>) {
+/** Supplier codes that are one company (owner 2026-10-19: "Hookka 两个 + Ohana
+ *  是同样的公司"). Cases are keyed under one code and the goods arrive under
+ *  another, so per code the rate read 544% for one and nothing for the other. */
+export const SUPPLIER_GROUPS: Record<string, { key: string; name: string }> = {
+  "400-H003": { key: "GROUP-HOOKKA-OHANA", name: "Hookka Manufacturing + Hookka Industries + Ohana" },
+  "400-H004": { key: "GROUP-HOOKKA-OHANA", name: "Hookka Manufacturing + Hookka Industries + Ohana" },
+  "400-O002": { key: "GROUP-HOOKKA-OHANA", name: "Hookka Manufacturing + Hookka Industries + Ohana" },
+};
+const groupOf = (code: string) => SUPPLIER_GROUPS[code]?.key ?? code;
+
+/** `rateFrom`: where the supplier figures start — at least three months before
+ *  the period ends, since a defect shows up weeks after the goods arrive
+ *  (owner 2026-10-19: a month with no delivery from Ohana read 12 items in
+ *  cases against 2 received). Cases and goods received are both counted over it. */
+export function qualityOverview(cases: QCase[], itemsByCase: Map<number, number>, history: QStageRow[], received: QReceived[], from: string, to: string, rateFrom: string, today: string, names: Map<string, string>) {
   const live = cases.filter((c) => c.stage !== "voided");
   const inP = (d: string | null) => !!d && d.slice(0, 10) >= from && d.slice(0, 10) <= to;
   const opened = live.filter((c) => inP(c.openedAt));
@@ -90,29 +104,36 @@ export function qualityOverview(cases: QCase[], itemsByCase: Map<number, number>
     .sort((a, b) => b.daysOver - a.daysOver);
 
   const recv = new Map<string, { qty: number; lines: number; name: string }>();
-  for (const r of received) { const g = recv.get(r.creditor) ?? { qty: 0, lines: 0, name: r.name }; g.qty += r.qty; g.lines += r.lines; recv.set(r.creditor, g); }
+  for (const r of received) { const k = groupOf(r.creditor); const g = recv.get(k) ?? { qty: 0, lines: 0, name: r.name }; g.qty += r.qty; g.lines += r.lines; recv.set(k, g); }
   /* Every month of the period, so a quarter or a year shows each month's goods in, cases and rate. */
   const months: string[] = [];
-  for (let d = new Date(`${from.slice(0, 7)}-01T00:00:00Z`); d.toISOString().slice(0, 7) <= to.slice(0, 7); d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1))) months.push(d.toISOString().slice(0, 7));
+  const inRate = (d: string | null) => !!d && d.slice(0, 10) >= rateFrom && d.slice(0, 10) <= to;
+  const rateCases = live.filter((c) => inRate(c.openedAt));
+  for (let d = new Date(`${rateFrom.slice(0, 7)}-01T00:00:00Z`); d.toISOString().slice(0, 7) <= to.slice(0, 7); d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1))) months.push(d.toISOString().slice(0, 7));
   const itemsOf = (cs: QCase[]) => cs.reduce((a, c) => a + Math.max(1, itemsByCase.get(c.id) ?? 1), 0);
-  const supplierKeys = [...new Set([...opened.map((c) => c.creditor), ...received.map((r) => r.creditor)].filter((x): x is string => !!x))];
+  const allCodes = [...new Set([...live.map((c) => c.creditor), ...received.map((r) => r.creditor)].filter((x): x is string => !!x))];
+  const codesOf = (key: string) => allCodes.filter((c) => groupOf(c) === key);
+  const inGroup = (creditor: string | null, key: string) => !!creditor && groupOf(creditor) === key;
+  const supplierKeys = [...new Set([...rateCases.map((c) => c.creditor), ...received.map((r) => r.creditor)].filter((x): x is string => !!x).map(groupOf))];
   const suppliers = supplierKeys.map((code) => {
-    const cs = opened.filter((c) => c.creditor === code);
+    const codes = codesOf(code);
+    const groupName = Object.values(SUPPLIER_GROUPS).find((g) => g.key === code)?.name;
+    const cs = rateCases.filter((c) => inGroup(c.creditor, code));
     const items = itemsOf(cs);
     const r = recv.get(code);
     const done = cs.filter((c) => c.stage === "completed" && !!c.closedAt);
     return {
-      creditor: code, name: names.get(code) ?? r?.name ?? code,
+      creditor: code, codes, name: groupName ?? names.get(code) ?? r?.name ?? code,
       receivedQty: r?.qty ?? 0, receivedLines: r?.lines ?? 0,
       cases: cs.length, items,
       ratePct: r?.qty ? Math.round((items / r.qty) * 1000) / 10 : null,
       open: cs.filter(isOpen).length,
-      overdue: overdue.filter((o) => o.supplier === (names.get(code) ?? code)).length,
+      overdue: overdue.filter((o) => codes.some((x) => o.supplier === (names.get(x) ?? x))).length,
       closed: done.length,
       avgDaysToClose: resolution(done),
-      stageDays: stageDays(new Set(live.filter((c) => c.creditor === code).map((c) => c.id)), from, to),
+      stageDays: stageDays(new Set(live.filter((c) => inGroup(c.creditor, code)).map((c) => c.id)), from, to),
       months: months.map((mo) => {
-        const q = received.filter((x) => x.creditor === code && x.month === mo).reduce((a, x) => a + x.qty, 0);
+        const q = received.filter((x) => groupOf(x.creditor) === code && x.month === mo).reduce((a, x) => a + x.qty, 0);
         const it = itemsOf(cs.filter((c) => c.openedAt.slice(0, 7) === mo));
         return { month: mo, receivedQty: q, items: it, ratePct: q ? Math.round((it / q) * 1000) / 10 : null };
       }),
@@ -135,7 +156,8 @@ export function qualityOverview(cases: QCase[], itemsByCase: Map<number, number>
     trend,
     overdue,
     suppliers,
-    unattributed: opened.filter((c) => !c.creditor).length,
+    unattributed: rateCases.filter((c) => !c.creditor).length,
+    rateFrom,
     /* The cases behind the figures — opened in the period, open now, or closed
        in the last 30 days — for the page's drill-down (owner 2026-10-18). */
     caseList: live.filter((c) => inP(c.openedAt) || isOpen(c) || (c.stage === "completed" && !!c.closedAt && c.closedAt.slice(0, 10) >= dayBefore(29)))

@@ -53,6 +53,7 @@ import {
 } from "../components/DetailLayout";
 import { Button } from "../components/Button";
 import { DataTable, type Column } from "../components/DataTable";
+import { STAGE_COLUMNS } from "./serviceCaseStageColumns";
 import { UserMultiSelect, type UserOptionItem } from "../components/UserMultiSelect";
 import {
   StatusDot,
@@ -932,6 +933,7 @@ function CasesView({
       ),
       getValue: (r) => r.creditor_name,
     },
+    ...STAGE_COLUMNS,
   ];
 
   return (

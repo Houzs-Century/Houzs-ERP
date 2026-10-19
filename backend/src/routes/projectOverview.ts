@@ -32,17 +32,24 @@ type ProjectRow = {
   id: number; code: string; name: string; brand: string | null; organizer: string | null; venue: string | null;
   state: string | null; stage: string | null; start_date: string | null; end_date: string | null; event_type: string | null;
   income: number; cogs: number; rental: number; commission: number; setup: number; transport: number; merchandise: number; other_cost: number;
+  cogs_matt_sofa: number; cogs_bedframe: number; cogs_accessories: number; transport_fee: number; transport_setup: number;
 };
 
 projectOverview.get("/", async (c) => {
   const COGS = "('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')";
   const sum = (where: string) =>
     `COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l WHERE l.project_id = p.id AND l.archived_at IS NULL AND ${where}), 0)`;
+  // company-scope: finance lines are read per project of the active company (activeCompanySql on p.company_id at the end of this statement).
   const rows = await c.env.DB.prepare(
     `SELECT p.id, p.code, p.name, p.brand, p.organizer, p.venue, p.state, p.stage, p.start_date, p.end_date,
             et.name AS event_type,
             ${sum("l.kind = 'income'")} AS income,
             ${sum(`l.kind = 'cost' AND l.category IN ${COGS}`)} AS cogs,
+            ${sum("l.kind = 'cost' AND l.category IN ('cogs_matt_sofa','cogs')")} AS cogs_matt_sofa,
+            ${sum("l.kind = 'cost' AND l.category = 'cogs_bedframe'")} AS cogs_bedframe,
+            ${sum("l.kind = 'cost' AND l.category = 'cogs_accessories'")} AS cogs_accessories,
+            ${sum("l.kind = 'cost' AND l.category IN ('transport_fee','transport')")} AS transport_fee,
+            ${sum("l.kind = 'cost' AND l.category = 'transport_setup_dismantle'")} AS transport_setup,
             ${sum("l.kind = 'cost' AND l.category = 'rental'")} AS rental,
             ${sum("l.kind = 'cost' AND l.category = 'commission'")} AS commission,
             ${sum("l.kind = 'cost' AND l.category = 'setup'")} AS setup,
@@ -76,6 +83,8 @@ projectOverview.get("/", async (c) => {
       keyed: {
         income: Number(p.income), cogs: Number(p.cogs), rental: Number(p.rental), commission: Number(p.commission),
         setup: Number(p.setup), transport: Number(p.transport), merchandise: Number(p.merchandise), other: Number(p.other_cost),
+        cogsMattSofa: Number(p.cogs_matt_sofa), cogsBedframe: Number(p.cogs_bedframe), cogsAccessories: Number(p.cogs_accessories),
+        transportFee: Number(p.transport_fee), transportSetup: Number(p.transport_setup),
       },
       salesOrders: so.get(p.id) ?? { sen: 0, costSen: 0, count: 0 },
     })),
