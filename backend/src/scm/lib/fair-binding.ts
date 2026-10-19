@@ -352,7 +352,7 @@ export async function resolveFairForCreate(args: FairSaveArgs & { keyerId: numbe
 
 /** The projects among `rows` the keyer stands at (PIC or Sales Attending).
  *  Throws on a failed read — each caller decides what not knowing means. */
-async function keyerProjectIdsAmong(
+export async function keyerProjectIdsAmong(
   db: FairDb,
   companySql: string,
   keyerId: number,
@@ -468,6 +468,28 @@ export type ScanFairResult = FairResolution & {
 };
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Projects by id, in this company — whatever their state, since a link made
+ *  before a fair was cancelled or archived still names it. Throws on a failed
+ *  read. */
+export async function loadFairsByIds(
+  db: FairDb,
+  companySql: string,
+  ids: readonly number[],
+): Promise<Map<number, FairProjectRow>> {
+  const unique = [...new Set(ids.filter(Number.isInteger))];
+  const out = new Map<number, FairProjectRow>();
+  if (unique.length === 0) return out;
+  const rows = await db
+    .prepare(`SELECT ${FAIR_COLUMNS} FROM projects p WHERE p.id IN (${unique.map(() => '?').join(', ')})${companySql}`)
+    .bind(...unique)
+    .all<Record<string, unknown>>();
+  for (const r of (rows.results ?? []) as Array<Record<string, unknown>>) {
+    const row = toFairRow(r);
+    if (Number.isFinite(row.projectId)) out.set(row.projectId, row);
+  }
+  return out;
+}
 
 /** Every live fair at one place whose period contains one day. */
 export async function loadFairsAtVenueOn(

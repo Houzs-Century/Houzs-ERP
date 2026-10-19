@@ -154,6 +154,20 @@ export function useFairPending(limit = 200) {
   });
 }
 
+/** A LINKED order to look at (backend scm/lib/fair-checks.ts, owner 2026-10-19):
+ *  VENUE_DIFFERS — 要查, the venue on the order is not where it was placed;
+ *  NEEDS_ATTENDING — 等加人, a scan whose scanner is not on its booth's Sales
+ *  Attending. `note` is the server's sentence, shown as it comes. */
+export type FairCheckRow = Omit<FairPendingRow, 'fair_match'> & { fair_match: string | null; check: 'VENUE_DIFFERS' | 'NEEDS_ATTENDING'; note: string };
+
+export function useFairChecks() {
+  return useQuery({
+    queryKey: ['fair-pending', 'checks'],
+    queryFn: () => authedFetch<{ rows: FairCheckRow[] }>('/mfg-sales-orders/fair-checks').then((r) => r.rows),
+    staleTime: 30_000,
+  });
+}
+
 /** Settle one order. `projectId: null` is a legitimate answer — "I do not know
  *  either" — and leaves the order in the list rather than forcing a wrong pick. */
 export function useAssignFair() {

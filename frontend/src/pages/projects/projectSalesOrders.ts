@@ -23,6 +23,9 @@ export type ProjectSalesOrderRow = {
   fair_match: string | null;
   linked_ac_docno: string | null;
   created_at: string | null;
+  /** "Venue differs" (owner 2026-10-19): the venue on the order when it is not
+   *  this fair's — absent from an older server. */
+  venue_differs?: string | null;
 };
 
 export type ProjectSalesOrderTotals = {

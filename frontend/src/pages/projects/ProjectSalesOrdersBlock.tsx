@@ -193,6 +193,11 @@ export function ProjectSalesOrdersBlock({
                       >
                         {soStatusLabel(r.status)}
                       </span>
+                      {r.venue_differs && (
+                        <span title={`Venue on the order: ${r.venue_differs}`} className="ml-1 inline-flex rounded-full bg-amber-100 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-amber-800">
+                          Venue differs
+                        </span>
+                      )}
                     </td>
                   </tr>
                 );
