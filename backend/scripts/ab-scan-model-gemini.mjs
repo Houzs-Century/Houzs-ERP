@@ -157,7 +157,7 @@ const CLAUDE_MODEL = ocr.CLAUDE_MODEL;
 if (APPLY) {
   const gk = { 'content-type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY };
   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-    { method: 'POST', headers: gk, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'ping' }] }] }) });
+    { method: 'POST', headers: gk, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'ping' }] }], generationConfig: GEMINI_THINKING ? { thinkingConfig: { thinkingBudget: Number(GEMINI_THINKING) } } : undefined }) });
   if (!r.ok) {
     const msg = (await r.json().catch(() => ({})))?.error?.message ?? '';
     const list = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: gk }).then((x) => x.json()).catch(() => ({}));
