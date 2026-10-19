@@ -18,7 +18,7 @@ import { scopeToCompany, activeCompanyId } from '../lib/companyScope';
 import { allocateReceipts, loadStockDemand, type StockReceipt as ReceiptForSo } from '../lib/receipt-so-assignment';
 import { todayMyt } from '../lib/my-time';
 import { doCountsAsDelivered, DO_STOCK_OUT_STATES } from '../shared/do-shipped-states';
-import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
+import { SO_TERMINAL_STATES, SO_TERMINAL_STATES_PGREST } from '../shared/so-terminal-states';
 import { procurementCategory, promisedDate, PROCUREMENT_CATEGORIES, type ProcurementCategory } from '../lib/procurement-overview';
 import { procurementPeriod, deadStock, turnoverAndSellers, STOCK_SCOPES, stockScopeKeeps, type PLine, type OpenDemand, type StockScope, type LocationKind } from '../lib/procurement-period';
 import { computeVariantKey, type VariantAttrs } from '../shared';
@@ -51,36 +51,42 @@ procurementOverview.get('/', async (c) => {
     .not('status', 'in', '("DRAFT","CANCELLED")'), c).order('id').range(f, t));
   if (pos.error) return fail('purchase orders', pos.error);
   const poById = new Map((pos.data ?? []).map((r) => [String(r.id), r]));
-  const items = await chunkIn<Row>([...poById.keys()], (b, f, t) => scopeToCompany(sb.from('purchase_order_items')
-    .select('id, purchase_order_id, item_code, item_group, description, qty, received_qty, unit_price_sen, line_total_sen, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, so_item_id')
-    .in('purchase_order_id', b), c).order('id').range(f, t));
-  if (items.error) return fail('PO lines', items.error);
+  /* Lines, their receipts and their sales order read with the rows they hang
+     off (embedded), filtered in the database: batching a year of PO and line
+     uuids into the filter cost ~100 serial round trips in production. */
+  const one = (x: unknown) => (Array.isArray(x) ? x[0] : x) as Row | null | undefined;
+  const itemsAll = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('purchase_order_items')
+    .select('id, purchase_order_id, item_code, item_group, description, qty, received_qty, unit_price_sen, line_total_sen, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, so_item_id, po:purchase_orders!inner(po_date, status), si:mfg_sales_order_items(doc_no, so:mfg_sales_orders(customer_delivery_date, amended_delivery_date))')
+    .gte('po.po_date', windowStart).lte('po.po_date', to).not('po.status', 'in', '("DRAFT","CANCELLED")'), c).order('id').range(f, t));
+  if (itemsAll.error) return fail('PO lines', itemsAll.error);
+  const items = { data: (itemsAll.data ?? []).filter((r) => poById.has(String(r.purchase_order_id))) };
+  const itemIds = new Set(items.data.map((r) => String(r.id)));
 
   /* ── Receipts of those lines ──────────────────────────────────────────── */
-  const grnItems = await chunkIn<Row>(items.data.map((r) => String(r.id)), (b, f, t) => scopeToCompany(sb.from('grn_items')
-    .select('grn_id, purchase_order_item_id, qty_received, qty_rejected').in('purchase_order_item_id', b), c).order('id').range(f, t));
-  if (grnItems.error) return fail('goods received lines', grnItems.error);
-  const grns = await chunkIn<Row>([...new Set(grnItems.data.map((r) => String(r.grn_id)))], (b, f, t) => scopeToCompany(sb.from('grns')
-    .select('id, received_at, status').in('id', b), c).order('id').range(f, t));
-  if (grns.error) return fail('goods received', grns.error);
-  const grnDate = new Map(grns.data.filter((g) => g.received_at && !['DRAFT', 'CANCELLED'].includes(String(g.status))).map((g) => [String(g.id), day(g.received_at) as string]));
+  /* A receipt of a PO raised in the window comes in after that PO's date. */
+  const grnAll = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('grn_items')
+    .select('grn_id, purchase_order_item_id, qty_received, qty_rejected, grn:grns!inner(received_at, status)')
+    .not('purchase_order_item_id', 'is', null).gte('grn.received_at', windowStart), c).order('id').range(f, t));
+  if (grnAll.error) return fail('goods received lines', grnAll.error);
   const receiptsByLine = new Map<string, PLine['receipts']>();
-  for (const g of grnItems.data) {
-    const d = grnDate.get(String(g.grn_id));
-    if (!d) continue;
+  for (const g of grnAll.data ?? []) {
     const k = String(g.purchase_order_item_id);
+    const grn = one(g.grn);
+    const d = grn && grn.received_at && !['DRAFT', 'CANCELLED'].includes(String(grn.status)) ? day(grn.received_at) : null;
+    if (!d || !itemIds.has(k)) continue;
     receiptsByLine.set(k, [...(receiptsByLine.get(k) ?? []), { date: d, qty: num(g.qty_received), rejected: num(g.qty_rejected) }]);
   }
 
   /* ── The customer's date, through the linked sales order line ─────────── */
-  const soItems = await chunkIn<Row>([...new Set(items.data.map((r) => str(r.so_item_id)).filter((x): x is string => !!x))], (b, f, t) =>
-    scopeToCompany(sb.from('mfg_sales_order_items').select('id, doc_no').in('id', b), c).order('id').range(f, t));
-  if (soItems.error) return fail('sales order lines', soItems.error);
-  const soDocOfItem = new Map(soItems.data.map((r) => [String(r.id), String(r.doc_no)]));
-  const sos = await chunkIn<Row>([...new Set(soDocOfItem.values())], (b, f, t) => scopeToCompany(sb.from('mfg_sales_orders')
-    .select('doc_no, customer_delivery_date, amended_delivery_date').in('doc_no', b), c).order('doc_no').range(f, t));
-  if (sos.error) return fail('sales orders', sos.error);
-  const needOfSo = new Map(sos.data.map((r) => [String(r.doc_no), day(r.amended_delivery_date) ?? day(r.customer_delivery_date)]));
+  const soDocOfItem = new Map<string, string>();
+  const needOfSo = new Map<string, string | null>();
+  for (const r of items.data) {
+    const si = one(r.si);
+    if (!r.so_item_id || !si?.doc_no) continue;
+    soDocOfItem.set(String(r.so_item_id), String(si.doc_no));
+    const so = one(si.so);
+    if (so) needOfSo.set(String(si.doc_no), day(so.amended_delivery_date) ?? day(so.customer_delivery_date));
+  }
 
   /* ── Names, categories, lead-time settings ────────────────────────────── */
   const sups = await chunkIn<Row>([...new Set((pos.data ?? []).map((r) => str(r.supplier_id)).filter((x): x is string => !!x))], (b, f, t) =>
@@ -221,13 +227,22 @@ procurementOverview.get('/', async (c) => {
      whether the line has a delivery date — the inventory page's Scheduled /
      Unscheduled. */
   const SO_DONE = new Set<string>(SO_TERMINAL_STATES);
-  const demandLines = await chunkIn<Row>([...new Set((stock.data ?? []).map((r) => String(r.item_code)))], (b, f, t) => scopeToCompany(sb
-    .from('mfg_sales_order_items').select('id, item_code, item_group, variants, qty, line_delivery_date, so:mfg_sales_orders!inner(status, customer_delivery_date)').in('item_code', b).eq('cancelled', false), c).order('id').range(f, t));
+  /* Every open order line at once, filtered in the database; batching by the
+     stock's item codes (long names, few per URL) made ~200 round trips. */
+  const heldCodes = new Set((stock.data ?? []).map((r) => String(r.item_code)));
+  const allDemand = await paginateAll<Row>((f, t) => scopeToCompany(sb
+    .from('mfg_sales_order_items').select('id, item_code, item_group, variants, qty, line_delivery_date, so:mfg_sales_orders!inner(status, customer_delivery_date)')
+    .eq('cancelled', false).not('so.status', 'in', SO_TERMINAL_STATES_PGREST), c).order('id').range(f, t));
+  const demandLines = { error: allDemand.error, data: (allDemand.data ?? []).filter((r) => heldCodes.has(String(r.item_code))) };
   if (demandLines.error) return fail('open order lines', demandLines.error);
   const soOf = (r: Row) => (Array.isArray(r.so) ? r.so[0] : r.so) as Row | null;
   const openLines = demandLines.data.filter((r) => { const so = soOf(r); return !!so && !SO_DONE.has(String(so.status)); });
-  const shippedLines = await chunkIn<Row>(openLines.map((r) => String(r.id)), (b, f, t) => scopeToCompany(sb
-    .from('delivery_order_items').select('so_item_id, qty, do:delivery_orders!inner(status)').in('so_item_id', b), c).order('id').range(f, t));
+  /* Every DO line tied to an order line, then kept for the open ones: a few
+     pages, where batching 13,000 order-line uuids into the filter was ~180. */
+  const openIds = new Set(openLines.map((r) => String(r.id)));
+  const allShipped = await paginateAll<Row>((f, t) => scopeToCompany(sb
+    .from('delivery_order_items').select('so_item_id, qty, do:delivery_orders!inner(status)').not('so_item_id', 'is', null), c).order('id').range(f, t));
+  const shippedLines = { error: allShipped.error, data: (allShipped.data ?? []).filter((l) => openIds.has(String(l.so_item_id))) };
   if (shippedLines.error) return fail('shipped order lines', shippedLines.error);
   const shipped = new Map<string, number>();
   for (const l of shippedLines.data) {
