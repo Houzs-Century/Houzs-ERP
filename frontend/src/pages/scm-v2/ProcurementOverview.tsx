@@ -51,7 +51,7 @@ type Payload = {
   categories: string[]; currentLead: Partial<Record<string, number>>; leadOverrides: Partial<Record<string, Array<{ warehouse: string; days: number }>>>;
   billed: { totalSen: number; count: number; bySupplier: Record<string, number>; byCategory: Record<string, number> };
   total: Group; byCategory: Group[]; bySupplier: Group[]; overdue: OpenLine[]; dueSoon: OpenLine[]; lines: PeriodLine[];
-  deadStock: { asOf: string; coverDays: number; totalSen: number; skus: number; deadSen: number; deadSkus: number; bufferSen: number; bufferSkus: number; byCategory: StockGroup[]; byWarehouse: StockGroup[]; top: Array<{ warehouse: string; category: string; itemCode: string; variantKey: string; name: string | null; qty: number; valueSen: number; idleDays: number | null }>;
+  deadStock: { asOf: string; totalSen: number; skus: number; deadSen: number; deadSkus: number; bufferSen: number; bufferSkus: number; byCategory: StockGroup[]; byWarehouse: StockGroup[]; top: Array<{ warehouse: string; category: string; itemCode: string; variantKey: string; name: string | null; qty: number; valueSen: number; idleDays: number | null }>;
     bufferTop: Array<{ itemCode: string; variantKey: string; name: string | null; category: string; warehouses: string; onHand: number; scheduled: number; unscheduled: number; cover: number; bufferQty: number; valueSen: number; lastIn: string | null; heldDays: number | null }> };
 };
 
@@ -330,7 +330,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
             <Panel title="Excess stock · dead and buffer" right={<ScopePicker value={scope} onChange={setScope} />}
               hint={`matched per item and variant · ${STOCK_SCOPE_OPTIONS.find(([k]) => k === scope)?.[1].toLowerCase()} · as of today`}>
               <div className="mb-3 grid gap-2 sm:grid-cols-3">
-                <ExcessFigure label="Dead · no order at all" sen={d.deadStock.deadSen} items={d.deadStock.deadSkus} of={d.deadStock.totalSen} />
+                <ExcessFigure label="Dead · no open order needs it" sen={d.deadStock.deadSen} items={d.deadStock.deadSkus} of={d.deadStock.totalSen} />
                 <ExcessFigure label="Buffer · bought before it was needed" sen={d.deadStock.bufferSen} items={d.deadStock.bufferSkus} of={d.deadStock.totalSen} />
                 <ExcessFigure label="Dead + buffer" sen={d.deadStock.deadSen + d.deadStock.bufferSen} items={d.deadStock.deadSkus + d.deadStock.bufferSkus} of={d.deadStock.totalSen} />
               </div>
@@ -365,9 +365,10 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
                 )}
               </div>
               <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[11px] text-ink-muted">
-                <li>Dead = on hand of an item and variant that no open sales order wants, less what normally goes out in {d.deadStock.coverDays} days. It does not sell: clear it.</li>
-                <li>Buffer = on hand − orders with a delivery date, for items that do have orders: e.g. 30 on hand, 5 on dated orders, 25 waiting for a date = 25 buffer, valued at 25 × cost. It sells, but was bought before it was needed: cash held. Sofas and bedframes count only orders for the same fabric and size.</li>
-                <li>An item is in one or the other, never both, so the two add up.</li>
+                <li>Every location&apos;s stock of the same item and variant is matched against the open sales orders together. Orders take the warehouse first, then service, then display.</li>
+                <li>Buffer = stock held for orders with no delivery date yet: e.g. 30 on hand, 5 on dated orders, 25 waiting for a date = 25 buffer, valued at 25 × cost. It sells, but was bought before it was needed.</li>
+                <li>Dead = stock no open order needs. E.g. orders want 10 and the warehouse holds 15: the 5 extra in the warehouse and all of the service and display stock are dead, since orders ship from the warehouse first.</li>
+                <li>Sofas and bedframes count only orders for the same fabric and size. A piece is needed, buffer or dead, never two, so the figures add up.</li>
               </ul>
               <div className="mt-4 text-[12px] font-semibold text-ink">Dead stock by how long since it last went out</div>
               <div className="mt-1 grid gap-4 xl:grid-cols-2">

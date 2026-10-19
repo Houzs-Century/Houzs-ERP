@@ -195,7 +195,6 @@ export interface OpenDemand { scheduled: number; unscheduled: number }
 type Age = 'd0to90' | 'd91to180' | 'd181to365' | 'd365plus';
 const AGES: Age[] = ['d0to90', 'd91to180', 'd181to365', 'd365plus'];
 const ageOf = (idle: number | null): Age => (idle == null || idle <= 90 ? 'd0to90' : idle <= 180 ? 'd91to180' : idle <= 365 ? 'd181to365' : 'd365plus');
-export const BUFFER_COVER_DAYS = 14;
 
 /** The locations the stock figures cover: every one, leave out display
  *  (display + showroom) and service, or one kind alone. */
@@ -211,44 +210,38 @@ export function stockScopeKeeps(scope: StockScope, kind: string): boolean {
 
 /* Orders are filled from the warehouse first, then service (it comes back and
    ships), then display (it goes to service for repacking first) - owner
-   2026-10-19. Others sit after the warehouse. What is left over is excess, so it
-   lands on display first, then service. */
+   2026-10-19. Others sit after the warehouse. */
 const FILL_ORDER: Record<LocationKind, number> = { warehouse: 0, others: 1, service: 2, display: 3 };
 
-/** `outPerDay`: per item|variant, the quantity that went out per day lately;
- *  `item|*` is the item over all its variants, used for stock kept with no
- *  variant (e.g. "30 a month" -> 14 days = 14).
- *  `shown`: the locations picked. Every location's stock is matched against the
- *  orders as one pool (owner 2026-10-19: would display stock still be excess if
- *  it became sellable stock today?), and only then are the picked rows shown. */
-export function deadStock(allRows: StockRow[], today: string, demand: Map<string, OpenDemand>, outPerDay: Map<string, number>, shown: (r: StockRow) => boolean) {
+/** Every location's stock is matched against the open orders as one pool
+ *  (owner 2026-10-19): the orders take the warehouse first, then service, then
+ *  display. Per item and variant, in that order, the stock goes to
+ *    1. orders with a delivery date: needed;
+ *    2. orders with no date yet: buffer (30 on hand, 5 dated, 25 undated -> 25);
+ *    3. nothing: dead, whatever its location. Display stock beyond what the
+ *       warehouse and service already cover is dead, since it would never ship.
+ *  No days of outflow come off. `shown`: the locations picked; they are shown
+ *  after the matching, so the locations add up to All. */
+export function deadStock(allRows: StockRow[], today: string, demand: Map<string, OpenDemand>, shown: (r: StockRow) => boolean) {
   const rows = allRows.filter(shown);
   const idleOf = (r: StockRow) => { const d = r.lastOut ?? r.firstMove; return d ? daysBetween(d, today) : null; };
   const keyOf = (r: StockRow) => `${r.itemCode}|${r.variantKey}`;
   const dead = new Map<StockRow, number>(); const buffer = new Map<StockRow, number>();
   const items = new Map<string, StockRow[]>();
   for (const r of allRows) items.set(keyOf(r), [...(items.get(keyOf(r)) ?? []), r]);
-  const itemInfo = new Map<string, { onHand: number; scheduled: number; unscheduled: number; cover: number; bufferQty: number }>();
+  const itemInfo = new Map<string, { onHand: number; scheduled: number; unscheduled: number }>();
   for (const [k, rs] of items) {
     const dm = demand.get(k) ?? { scheduled: 0, unscheduled: 0 };
-    const perDay = rs[0]!.variantKey ? outPerDay.get(k) ?? 0 : outPerDay.get(`${rs[0]!.itemCode}|*`) ?? outPerDay.get(k) ?? 0;
-    const cover = Math.round(perDay * BUFFER_COVER_DAYS * 10) / 10;
-    const onHand = rs.reduce((a, r) => a + r.qty, 0);
-    const noOrder = dm.scheduled + dm.unscheduled === 0;
-    /* Dead: no order at all, less what normally goes out in 14 days. Buffer:
-       everything no dated order needs (owner 2026-10-19: 30 on hand, 5 on dated
-       orders, 25 on undated -> buffer 25, valued 25 x cost); the dated orders are
-       the outflow, so no 14 days come off as well. */
-    const extra = noOrder ? Math.max(0, Math.floor(onHand - cover)) : Math.max(0, Math.floor(onHand - dm.scheduled));
-    /* Spread over the rows as dead (no order at all) or buffer: the last
-       location orders would be filled from first, most idle first within it. */
-    let left = extra;
-    for (const r of [...rs].sort((x, y) => FILL_ORDER[y.kind] - FILL_ORDER[x.kind] || (idleOf(y) ?? -1) - (idleOf(x) ?? -1))) {
-      const q = Math.min(left, r.qty); left -= q;
-      (noOrder ? dead : buffer).set(r, q);
+    let dated = dm.scheduled; let undated = dm.unscheduled;
+    /* Fill order; within a location kind the most recently moved first, so what
+       is left is the stock that has sat longest. */
+    for (const r of [...rs].sort((x, y) => FILL_ORDER[x.kind] - FILL_ORDER[y.kind] || (idleOf(x) ?? Infinity) - (idleOf(y) ?? Infinity))) {
+      const needed = Math.min(dated, r.qty); dated -= needed;
+      const buf = Math.min(undated, r.qty - needed); undated -= buf;
+      buffer.set(r, buf);
+      dead.set(r, Math.max(0, r.qty - needed - buf));
     }
-    const bufferQty = noOrder ? 0 : extra;
-    itemInfo.set(k, { onHand: rs.reduce((a, r) => a + r.qty, 0), scheduled: dm.scheduled, unscheduled: dm.unscheduled, cover, bufferQty });
+    itemInfo.set(k, { onHand: rs.reduce((a, r) => a + r.qty, 0), scheduled: dm.scheduled, unscheduled: dm.unscheduled });
   }
   const senOf = (r: StockRow, q: number) => (r.qty > 0 ? Math.round((r.valueSen * q) / r.qty) : 0);
   const deadSen = (r: StockRow) => senOf(r, dead.get(r) ?? 0);
@@ -276,7 +269,7 @@ export function deadStock(allRows: StockRow[], today: string, demand: Map<string
       ...info, bufferQty: rs.reduce((a, r) => a + (buffer.get(r) ?? 0), 0), valueSen: rs.reduce((a, r) => a + bufSen(r), 0) };
   }).filter((x) => x.bufferQty > 0).sort((a, b) => b.valueSen - a.valueSen);
   return {
-    asOf: today, coverDays: BUFFER_COVER_DAYS,
+    asOf: today,
     totalSen: rows.reduce((a, r) => a + r.valueSen, 0), skus: rows.length,
     deadSen: deadRows.reduce((a, r) => a + deadSen(r), 0), deadSkus: deadRows.length,
     bufferSen: rows.reduce((a, r) => a + bufSen(r), 0), bufferSkus: bufferItems.length,

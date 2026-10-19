@@ -93,40 +93,6 @@ describe('procurement period', () => {
     expect(few.canOrderLaterDays).toBeNull();
   });
 
-  test('dead stock: no open order at all, whatever its idle time, less 14 days of outflow', () => {
-    const r = deadStock([
-      { warehouse: 'KL', kind: 'warehouse', category: 'SOFA', itemCode: 'A', variantKey: '', name: null, qty: 1, valueSen: 100, lastOut: '2026-10-01', firstMove: '2025-01-01' },
-      { warehouse: 'KL', kind: 'warehouse', category: 'SOFA', itemCode: 'B', variantKey: '', name: null, qty: 1, valueSen: 300, lastOut: '2026-05-01', firstMove: '2025-01-01' },
-      { warehouse: 'PG', kind: 'warehouse', category: 'MATTRESS', itemCode: 'C', variantKey: '', name: null, qty: 1, valueSen: 500, lastOut: null, firstMove: '2025-06-01' },
-      /* Sells 1 a day over its variants: 14 days = 14, so 20 on hand leaves 6 dead. */
-      { warehouse: 'KL', kind: 'warehouse', category: 'ACCESSORY', itemCode: 'P', variantKey: '', name: null, qty: 20, valueSen: 2000, lastOut: '2026-10-16', firstMove: null },
-    ], '2026-10-17', new Map(), new Map([['P|*', 1]]), () => true);
-    expect(r).toMatchObject({ deadSen: 1500, deadSkus: 4 });
-    expect(r.byCategory.find((g) => g.key === 'SOFA')!.ages).toEqual({ d0to90: 100, d91to180: 300, d181to365: 0, d365plus: 0 });
-    expect(r.top.map((x) => [x.itemCode, x.qty])).toEqual([['P', 6], ['C', 1], ['B', 1], ['A', 1]]);
-  });
-
-  test('buffer stock: everything beyond the orders with a date, matched by variant', () => {
-    const r = deadStock([
-      /* Bedframe in fabric X: 10 on hand, 3 on dated orders, 4 on undated -> buffer 7 (its outflow does not come off). */
-      { warehouse: 'KL', kind: 'warehouse', category: 'BEDFRAME', itemCode: 'BF', variantKey: 'fabric=X', name: null, qty: 10, valueSen: 1000, lastOut: '2026-10-10', firstMove: null },
-      /* Same bedframe in fabric Y, no order for Y (an order for X does not count) -> dead. */
-      { warehouse: 'KL', kind: 'warehouse', category: 'BEDFRAME', itemCode: 'BF', variantKey: 'fabric=Y', name: null, qty: 2, valueSen: 200, lastOut: '2025-09-01', firstMove: null },
-      /* Fast pillow: 20 on hand, no order, 2 a day -> 14 days = 28 covers it -> no buffer. */
-      { warehouse: 'KL', kind: 'warehouse', category: 'ACCESSORY', itemCode: 'P', variantKey: '', name: null, qty: 20, valueSen: 400, lastOut: '2026-10-16', firstMove: null },
-    ], '2026-10-17', new Map([['BF|fabric=X', { scheduled: 3, unscheduled: 4 }]]), new Map([['BF|fabric=X', 0.25], ['P|', 2]]), () => true);
-    expect(r).toMatchObject({ deadSen: 200, deadSkus: 1, bufferSen: 700, bufferSkus: 1 });
-    expect(r.bufferTop[0]).toMatchObject({ itemCode: 'BF', variantKey: 'fabric=X', onHand: 10, scheduled: 3, unscheduled: 4, bufferQty: 7, valueSen: 700 });
-  });
-
-  test("buffer, the owner's example: 30 on hand, 5 on dated orders, 25 undated -> 25 at cost", () => {
-    const r = deadStock([
-      { warehouse: 'KL', kind: 'warehouse', category: 'MATTRESS', itemCode: 'M', variantKey: 'size=Q', name: null, qty: 30, valueSen: 30 * 1000_00, lastOut: '2026-10-15', firstMove: null },
-    ], '2026-10-17', new Map([['M|size=Q', { scheduled: 5, unscheduled: 25 }]]), new Map([['M|size=Q', 1]]), () => true);
-    expect(r.bufferTop[0]).toMatchObject({ bufferQty: 25, valueSen: 25 * 1000_00 });
-    expect(r.deadSen).toBe(0);
-  });
-
   test('turnover: cost sent out in the period, a year of it, over the stock value now', () => {
     const stock = [
       { warehouse: 'KL', kind: 'warehouse', category: 'SOFA', itemCode: 'A', variantKey: '', name: 'Sofa A', qty: 10, valueSen: 300_000, lastOut: null, firstMove: null },
@@ -149,29 +115,46 @@ describe('procurement period', () => {
     expect(r.lowSellers.map((x) => [x.itemCode, x.soldQty])).toEqual([['B', 0], ['A', 10]]);
   });
 
-  test('every location is one pool against the orders; what is left lands on display and service first, then the picked locations are shown', () => {
-    const rows = [
-      { warehouse: 'KL WH', kind: 'warehouse' as const, category: 'SOFA', itemCode: 'S', variantKey: 'c=1', name: null, qty: 6, valueSen: 600, lastOut: '2026-10-15', firstMove: null },
-      { warehouse: 'KL DISPLAY', kind: 'display' as const, category: 'SOFA', itemCode: 'S', variantKey: 'c=1', name: null, qty: 2, valueSen: 200, lastOut: null, firstMove: '2026-01-01' },
-    ];
-    /* 8 in the pool, 7 on dated orders: 1 left over, and it sits at the display. */
-    const demand = new Map([['S|c=1', { scheduled: 7, unscheduled: 0 }]]);
-    const all = deadStock(rows, '2026-10-17', demand, new Map(), () => true);
-    expect(all.byWarehouse.map((w) => [w.key, w.bufferSen])).toEqual([['KL DISPLAY', 100], ['KL WH', 0]]);
-    /* Display picked alone: still 1, not 2 - the warehouse stock is counted against the orders first. */
-    const display = deadStock(rows, '2026-10-17', demand, new Map(), (r) => r.kind === 'display');
-    expect(display).toMatchObject({ totalSen: 200, bufferSen: 100 });
-    expect(display.bufferTop[0]).toMatchObject({ bufferQty: 1, onHand: 8, warehouses: 'KL DISPLAY' });
-    /* Warehouse picked alone: nothing left over there. */
-    expect(deadStock(rows, '2026-10-17', demand, new Map(), (r) => r.kind === 'warehouse')).toMatchObject({ totalSen: 600, bufferSen: 0 });
+  const row = (warehouse: string, kind: 'warehouse' | 'service' | 'display' | 'others', itemCode: string, variantKey: string, qty: number, unitSen: number, lastOut: string | null = null) =>
+    ({ warehouse, kind, category: 'MATTRESS', itemCode, variantKey, name: null, qty, valueSen: qty * unitSen, lastOut, firstMove: '2025-01-01' });
+  const D = '2026-10-17';
+
+  test('no open order wants it: all of it is dead, wherever it is, with no days of outflow off', () => {
+    const r = deadStock([row('KL', 'warehouse', 'P', '', 20, 100, '2026-10-16'), row('KL', 'warehouse', 'C', '', 1, 500)], D, new Map(), () => true);
+    expect(r).toMatchObject({ deadSen: 2500, deadSkus: 2, bufferSen: 0 });
   });
 
-  test('orders are filled from the warehouse, then service, then display: the excess sits at display before service', () => {
-    const row = (warehouse: string, kind: 'warehouse' | 'service' | 'display', qty: number) =>
-      ({ warehouse, kind, category: 'MATTRESS', itemCode: 'M', variantKey: '', name: null, qty, valueSen: qty * 100, lastOut: null, firstMove: '2026-01-01' });
-    /* 3 + 2 + 2 = 7 in the pool, 4 on dated orders: 3 left over - display's 2, then 1 at service. */
-    const r = deadStock([row('WH', 'warehouse', 3), row('SVC', 'service', 2), row('DSP', 'display', 2)], '2026-10-17',
-      new Map([['M|', { scheduled: 4, unscheduled: 0 }]]), new Map(), () => true);
-    expect(Object.fromEntries(r.byWarehouse.map((w) => [w.key, w.bufferSen]))).toEqual({ DSP: 200, SVC: 100, WH: 0 });
+  test("buffer, the owner's example: 30 on hand, 5 on dated orders, 25 undated -> 25 at cost", () => {
+    const r = deadStock([row('KL', 'warehouse', 'M', 'size=Q', 30, 1000_00)], D, new Map([['M|size=Q', { scheduled: 5, unscheduled: 25 }]]), () => true);
+    expect(r.bufferTop[0]).toMatchObject({ bufferQty: 25, valueSen: 25 * 1000_00 });
+    expect(r.deadSen).toBe(0);
+  });
+
+  test('matched by variant: an order for fabric X does not take fabric Y', () => {
+    const r = deadStock([row('KL', 'warehouse', 'BF', 'fabric=X', 10, 100), row('KL', 'warehouse', 'BF', 'fabric=Y', 2, 100)], D,
+      new Map([['BF|fabric=X', { scheduled: 3, unscheduled: 4 }]]), () => true);
+    /* X: 3 needed, 4 buffer, 3 dead. Y: no order, 2 dead. */
+    expect(r).toMatchObject({ bufferSen: 400, deadSen: 500 });
+  });
+
+  test("the owner's display case: orders want 10, the warehouse holds 15, so service and display stock is dead", () => {
+    const rows = [row('KL WH', 'warehouse', 'S', '', 15, 100), row('KL SVC', 'service', 'S', '', 2, 100), row('KL DSP', 'display', 'S', '', 2, 100)];
+    const demand = new Map([['S|', { scheduled: 10, unscheduled: 0 }]]);
+    const all = deadStock(rows, D, demand, () => true);
+    expect(Object.fromEntries(all.byWarehouse.map((w) => [w.key, w.deadSen]))).toEqual({ 'KL WH': 500, 'KL SVC': 200, 'KL DSP': 200 });
+    /* Display picked alone: still dead - the warehouse fills the orders first. */
+    expect(deadStock(rows, D, demand, (r) => r.kind === 'display')).toMatchObject({ totalSen: 200, deadSen: 200, bufferSen: 0 });
+  });
+
+  test('orders take the warehouse, then service, then display; dated orders before undated, the rest dead', () => {
+    const rows = [row('WH', 'warehouse', 'M', '', 3, 100), row('SVC', 'service', 'M', '', 2, 100), row('DSP', 'display', 'M', '', 2, 100)];
+    /* 7 in the pool: 3 dated (warehouse), 3 undated (service 2 + display 1) -> buffer 3, dead 1 at display. */
+    const r = deadStock(rows, D, new Map([['M|', { scheduled: 3, unscheduled: 3 }]]), () => true);
+    const by = Object.fromEntries(r.byWarehouse.map((w) => [w.key, [w.bufferSen, w.deadSen]]));
+    expect(by).toEqual({ WH: [0, 0], SVC: [200, 0], DSP: [100, 100] });
+    /* The picked locations add up to All. */
+    const sum = (['warehouse', 'service', 'display'] as const).map((k) => deadStock(rows, D, new Map([['M|', { scheduled: 3, unscheduled: 3 }]]), (x) => x.kind === k))
+      .reduce((a, x) => ({ d: a.d + x.deadSen, b: a.b + x.bufferSen }), { d: 0, b: 0 });
+    expect(sum).toEqual({ d: r.deadSen, b: r.bufferSen });
   });
 });
