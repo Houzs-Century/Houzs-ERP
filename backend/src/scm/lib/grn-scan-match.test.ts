@@ -614,3 +614,50 @@ describe('same item code on several PO lines: the printed spec breaks the tie (D
     expect(pickBySpec('PC151-03 / GAP 11"', [gap1, gap12])).toBeNull();
   });
 });
+
+// HC-0120 (2026-10-19, Sim): DIGLANT DGSN26002266 delivered 7 mattresses (plus
+// 12 free pillows) on HC-PO-2610-084, which still owed 15. Its codes
+// (T1MAMWA0MK ...) are DIGLANT's own, so no row matched by item and the draft
+// took all 15 owed lines. A delivery order whose qty is not what the PO owes
+// gets no draft; it says why instead.
+describe('a named PO whose delivery order qty is not what it owes (DGSN26002266)', () => {
+  const open: OpenPoLine[] = [
+    line({ poItemId: 'pi-bulwark', poNumber: 'HC-PO-2610-084', itemCode: 'AKEMI BULWARK MATT (K)', remaining: 5 }),
+    line({ poItemId: 'pi-solitude', poNumber: 'HC-PO-2610-084', itemCode: 'HAPPI SLEEP SOLITUDE (Q)', remaining: 8 }),
+    line({ poItemId: 'pi-immortal', poNumber: 'HC-PO-2610-084', itemCode: 'AKEMI IMMORTAL MATT (K)', remaining: 2 }),
+  ];
+  const do266 = [
+    scan({ itemCode: 'T1MAMWA0MK', description: 'Mattress Akemi Medi+Health Bulwark K King', qty: 2 }),
+    scan({ itemCode: 'T1MPSIA0MQ', description: 'Mattress Happi Sleep Solitude Q Queen', qty: 4 }),
+    scan({ itemCode: 'T1MAMHA0MK', description: 'Mattress Akemi Medi+Health Immortal K King', qty: 1 }),
+    scan({ itemCode: 'AFKPAK25A23J29W', description: 'GWP Pillow Acc', qty: 4 }),
+    scan({ itemCode: 'UFHPHS13B25J29E', description: 'Happi Sleep Easy Sleep Pillow', qty: 8 }),
+  ];
+
+  test('no draft of the whole PO; the counts say why', () => {
+    const res = matchGrnScanToPoLines('PO2610084', do266, open, [], 'sup-1');
+    expect(res.matchedPoNumberValue).toBe('HC-PO-2610-084');
+    expect(res.picks).toEqual([]);
+    expect(res.poFallback).toBeNull();
+    expect(res.qtyMismatch).toEqual([{ poNumber: 'HC-PO-2610-084', listed: 19, owed: 15 }]);
+  });
+
+  test('a delivery order listing exactly what the PO owes still drafts it', () => {
+    const full = [scan({ itemCode: 'T1MAMWA0MK', qty: 5 }), scan({ itemCode: 'T1MPSIA0MQ', qty: 8 }), scan({ itemCode: 'T1MAMHA0MK', qty: 2 })];
+    const res = matchGrnScanToPoLines('PO2610084', full, open, [], 'sup-1');
+    expect(res.poFallback).toBe('HC-PO-2610-084');
+    expect(res.qtyMismatch).toBeNull();
+    expect(res.picks).toEqual([
+      { poItemId: 'pi-bulwark', qty: 5 },
+      { poItemId: 'pi-solitude', qty: 8 },
+      { poItemId: 'pi-immortal', qty: 2 },
+    ]);
+  });
+
+  test('a row that matches by item drafts only that row, as before', () => {
+    const lines = [scan({ itemCode: 'AKEMI BULWARK MATT (K)', qty: 2 }), ...do266.slice(1)];
+    const res = matchGrnScanToPoLines('PO2610084', lines, open, [], 'sup-1');
+    expect(res.picks).toEqual([{ poItemId: 'pi-bulwark', qty: 2 }]);
+    expect(res.qtyMismatch).toBeNull();
+  });
+});

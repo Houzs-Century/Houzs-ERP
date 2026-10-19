@@ -117,6 +117,10 @@ export type GrnMatchResult = {
   // then every line still owed on those POs, at its remaining qty, for the
   // operator to correct.
   poFallback: string | null;
+  // Set when the delivery order named open POs of the resolved supplier, no row
+  // lined up by item, and its qty is not what those POs still owe (a part
+  // delivery, or extra rows): one entry per named PO. No draft is made then.
+  qtyMismatch: Array<{ poNumber: string; listed: number; owed: number }> | null;
 };
 
 // Normalise a code/number for comparison: uppercase, drop every non-alnum char.
@@ -387,25 +391,28 @@ export function matchGrnScanToPoLines(
       else if (itemOnlyMatchedCount * 2 <= scannedCount) weakMatch = { matched: itemOnlyMatchedCount, scanned: scannedCount };
     }
   }
-  // The delivery order named one open PO of a known supplier, yet no row lined
-  // up by item (the supplier describes a set differently from our PO lines).
-  // The PO is certain, so draft everything still owed on it for the operator to
-  // correct, rather than nothing. Never without a resolved supplier: a printed
-  // number alone could name another supplier's PO. Several named POs only when
-  // the delivery order's qty for each equals what that PO still owes; a part
-  // delivery spread over POs is left to the operator.
+  // The delivery order named open POs of a known supplier, yet no row lined up
+  // by item (the supplier describes a set differently from our PO lines). Draft
+  // everything still owed on them for the operator to correct, but only when
+  // the delivery order's qty for each PO equals what it still owes. HC-0120: a
+  // 7-mattress part delivery on a PO owing 15 drafted all 15. Never without a
+  // resolved supplier: a printed number alone could name another supplier's PO.
   let poFallback: string | null = null;
+  let qtyMismatch: GrnMatchResult['qtyMismatch'] = null;
   const owed = (po: string): number =>
     supplierLines.reduce((sum, l) => sum + (l.poNumber === po ? l.remaining : 0), 0);
-  const certainPos = anchoredPos.size === 1
-    || [...anchoredPos].every((po) => anchoredScanQty.get(po) === owed(po));
-  if (picks.length === 0 && refused === null && supplierId !== null && anchoredPos.size > 0 && certainPos) {
-    for (const l of supplierLines) {
-      if (!anchoredPos.has(l.poNumber) || l.remaining <= 0) continue;
-      picks.push({ poItemId: l.poItemId, qty: l.remaining });
-      poNumberOf.set(l.poItemId, l.poNumber);
+  if (picks.length === 0 && refused === null && supplierId !== null && anchoredPos.size > 0) {
+    const perPo = [...anchoredPos].map((po) => ({ poNumber: po, listed: anchoredScanQty.get(po) ?? 0, owed: owed(po) }));
+    if (perPo.every((p) => p.listed === p.owed)) {
+      for (const l of supplierLines) {
+        if (!anchoredPos.has(l.poNumber) || l.remaining <= 0) continue;
+        picks.push({ poItemId: l.poItemId, qty: l.remaining });
+        poNumberOf.set(l.poItemId, l.poNumber);
+      }
+      if (picks.length > 0) poFallback = [...anchoredPos].join(', ');
+    } else {
+      qtyMismatch = perPo;
     }
-    if (picks.length > 0) poFallback = [...anchoredPos].join(', ');
   }
 
   const matchedPoNumbers = [...new Set(picks.map((p) => poNumberOf.get(p.poItemId) ?? ''))].filter(Boolean);
@@ -419,6 +426,7 @@ export function matchGrnScanToPoLines(
     refused,
     weakMatch,
     poFallback,
+    qtyMismatch,
   };
 }
 

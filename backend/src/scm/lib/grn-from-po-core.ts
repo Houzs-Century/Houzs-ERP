@@ -71,7 +71,7 @@ export async function createDraftGrnsFromPoItemsCore(
      is stamped with the active company, and the only by-id write is the ROLLBACK
      of a header this core just inserted — no caller-supplied id is touched. */
   const sb = c.get('supabase'); const user = c.get('user');
-  let body: { picks?: Array<{ poItemId: string; qty: number }>; notes?: string; receivedDate?: string; allocationMethod?: unknown };
+  let body: { picks?: Array<{ poItemId: string; qty: number }>; notes?: string; receivedDate?: string; allocationMethod?: unknown; deliveryNoteRef?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return { ok: false, status: 400, body: { error: 'invalid_json' } }; }
   const picks = body.picks ?? [];
   if (picks.length === 0) return { ok: false, status: 400, body: { error: 'picks_required' } };
@@ -207,6 +207,7 @@ export async function createDraftGrnsFromPoItemsCore(
       notes: body.notes
         ? `Received from ${[...bucket.poNumbers].join(', ')} · ${body.notes}`
         : `Received from ${[...bucket.poNumbers].join(', ')}`,
+      delivery_note_ref: body.deliveryNoteRef?.trim() || null,
       created_by: user.id,
       /* Explicit, never the column default: scm.grns.status defaults to
          'POSTED' in production, so an insert that omits it lands a header that
@@ -337,6 +338,8 @@ export async function createDraftGrnFromPoItems(
     notes?: string | null;
     receivedDate?: string | null;
     allocationMethod?: unknown;
+    /** The supplier's delivery order number, shown in the GRN's Delivery Note field. */
+    deliveryNoteRef: string | null;
   },
 ): Promise<CreateDraftGrnsFromPoItemsResult> {
   const svc = getSupabaseService(env);
@@ -351,7 +354,7 @@ export async function createDraftGrnFromPoItems(
     return undefined;
   };
   const res = await createDraftGrnsFromPoItemsCore({
-    req: { json: async () => ({ picks: opts.picks, notes: opts.notes ?? undefined, receivedDate: opts.receivedDate ?? undefined, allocationMethod: opts.allocationMethod }) },
+    req: { json: async () => ({ picks: opts.picks, notes: opts.notes ?? undefined, receivedDate: opts.receivedDate ?? undefined, allocationMethod: opts.allocationMethod, deliveryNoteRef: opts.deliveryNoteRef ?? undefined }) },
     get: syntheticGet as unknown as GrnFromPoItemsContext['get'],
   });
   /* Record CREATE per draft, at the moment it becomes final (there is no post
