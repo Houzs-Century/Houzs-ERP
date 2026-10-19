@@ -51,7 +51,7 @@ type Payload = {
   billed: { totalSen: number; count: number; bySupplier: Record<string, number>; byCategory: Record<string, number> };
   total: Group; byCategory: Group[]; bySupplier: Group[]; overdue: OpenLine[]; dueSoon: OpenLine[]; lines: PeriodLine[];
   deadStock: { asOf: string; coverDays: number; totalSen: number; skus: number; deadSen: number; deadSkus: number; bufferSen: number; bufferSkus: number; byCategory: StockGroup[]; byWarehouse: StockGroup[]; top: Array<{ warehouse: string; category: string; itemCode: string; variantKey: string; name: string | null; qty: number; valueSen: number; idleDays: number | null }>;
-    bufferTop: Array<{ itemCode: string; variantKey: string; name: string | null; category: string; warehouses: string; onHand: number; scheduled: number; unscheduled: number; cover: number; bufferQty: number; valueSen: number }> };
+    bufferTop: Array<{ itemCode: string; variantKey: string; name: string | null; category: string; warehouses: string; onHand: number; scheduled: number; unscheduled: number; cover: number; bufferQty: number; valueSen: number; lastIn: string | null; heldDays: number | null }> };
 };
 
 const BUCKETS: Array<{ k: BucketKey; label: string; color: string }> = [
@@ -253,13 +253,14 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
             <div className="mt-3 text-[12px] font-semibold text-ink">Largest buffer items</div>
             <div className="max-h-[420px] overflow-y-auto">
               <table className="mt-1 w-full border-collapse">
-                <thead className="sticky top-0 bg-surface"><tr><Th left>Item / variant</Th><Th left>Warehouse</Th><Th>On hand</Th><Th>Orders with a date</Th><Th>Orders, no date</Th><Th>{d.deadStock.coverDays} days of outflow</Th><Th>Buffer</Th><Th>Value</Th></tr></thead>
+                <thead className="sticky top-0 bg-surface"><tr><Th left>Item / variant</Th><Th left>Warehouse</Th><Th>On hand</Th><Th>Orders with a date</Th><Th>Orders, no date</Th><Th>{d.deadStock.coverDays} days of outflow</Th><Th>Buffer</Th><Th>Value</Th><Th>Last received</Th><Th>Held</Th></tr></thead>
                 <tbody>{d.deadStock.bufferTop.slice(0, 40).map((r) => (
                   <tr key={`${r.itemCode}|${r.variantKey}`}>
                     <Td left><span title={r.name ?? ""}>{r.itemCode}</span>{r.variantKey && <span className="block max-w-[320px] truncate text-[10.5px] text-ink-muted">{r.variantKey}</span>}</Td>
                     <Td left className="text-ink-secondary">{r.warehouses}</Td>
                     <Td>{r.onHand}</Td><Td>{r.scheduled}</Td><Td>{r.unscheduled}</Td><Td>{r.cover}</Td>
                     <Td className="font-semibold">{r.bufferQty}</Td><Td>{rm(r.valueSen)}</Td>
+                    <Td>{r.lastIn ?? "—"}</Td><Td className={(r.heldDays ?? 0) > 90 ? "text-err" : ""}>{r.heldDays != null ? `${r.heldDays} days` : "—"}</Td>
                   </tr>
                 ))}</tbody>
               </table>

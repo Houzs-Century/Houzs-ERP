@@ -220,10 +220,32 @@ procurementOverview.get('/', async (c) => {
     outPerDay.set(k, (outPerDay.get(k) ?? 0) + Math.abs(num(m.qty)) / outDays);
     outPerDay.set(`${String(m.item_code)}|*`, (outPerDay.get(`${String(m.item_code)}|*`) ?? 0) + Math.abs(num(m.qty)) / outDays);
   }
-  const dead = deadStock((stock.data ?? []).filter((r) => !isShowroom(r)).map((r) => ({
+  /* When each item / variant last came in, so the buffer and dead lists say
+     how long the stock has sat (owner 2026-10-19). */
+  /* From the open stock lots — a goods receipt and the AutoCount cut-over
+     opening stock both carry their received date there; a movement-only
+     receipt (no lot) falls back to its IN movement. */
+  const lastIn = new Map<string, string>();
+  const keep = (k: string, d: string | null) => { if (d && (!lastIn.has(k) || d > (lastIn.get(k) as string))) lastIn.set(k, d); };
+  const lots = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('inventory_lots')
+    .select('item_code, variant_key, received_at').gt('qty_remaining', 0), c).order('id').range(f, t));
+  if (lots.error) return fail('stock lots', lots.error);
+  for (const l of lots.data ?? []) keep(`${String(l.item_code)}|${String(l.variant_key ?? '')}`, day(l.received_at));
+  for (const m of moves.data ?? []) {
+    if (m.movement_type !== 'IN') continue;
+    const k = `${String(m.item_code)}|${String(m.variant_key ?? '')}`;
+    if (!lastIn.has(k)) keep(k, day(m.movement_date) ?? day(m.created_at));
+  }
+  const heldDays = (k: string) => { const d = lastIn.get(k); return d ? Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 86400000) : null; };
+  const deadRaw = deadStock((stock.data ?? []).filter((r) => !isShowroom(r)).map((r) => ({
     warehouse: String(r.warehouse_code ?? '—'), category: catOf(r), itemCode: String(r.item_code), variantKey: String(r.variant_key ?? ''), name: str(r.product_name),
     qty: num(r.qty_on_hand), valueSen: num(r.value_sen), lastOut: lastOut.get(keyOf(r)) ?? null, firstMove: firstMove.get(keyOf(r)) ?? null,
   })), today, openDemand, outPerDay);
+  const dead = {
+    ...deadRaw,
+    top: deadRaw.top.map((x) => ({ ...x, lastIn: lastIn.get(`${x.itemCode}|${x.variantKey}`) ?? null, heldDays: heldDays(`${x.itemCode}|${x.variantKey}`) })),
+    bufferTop: deadRaw.bufferTop.map((x) => ({ ...x, lastIn: lastIn.get(`${x.itemCode}|${x.variantKey}`) ?? null, heldDays: heldDays(`${x.itemCode}|${x.variantKey}`) })),
+  };
 
   /* ── Turnover and sellers in the period ───────────────────────────────── */
   const whs = await scopeToCompany(sb.from('warehouses').select('id, code'), c);

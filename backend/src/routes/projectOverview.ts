@@ -115,7 +115,7 @@ projectOverview.get("/tasks", async (c) => {
     return {
       projectId: p.project_id, project: p.name, brand: p.brand, start: day(p.start_date), end: day(p.end_date),
       setupCrew: p.setup_crew, setupStartAt: p.setup_start_at,
-      items: rs.map((r) => ({ title: r.title, status: r.status, review_status: r.review_status })),
+      items: rs.map((r) => ({ title: r.title, status: r.status, review_status: r.review_status, due: day(r.due_date) })),
       pending: rs.filter((r) => !complete(r)).length, late,
     };
   });
