@@ -322,7 +322,11 @@ export function filterOrdersByRegion<T extends { regions: RegionCode[] }>(
 export function planningCountsFrom(
   orders: readonly Pick<PlanningOrder, 'delivery_state'>[],
 ): PlanningCounts {
-  const counts: PlanningCounts = { ALL: orders.length, PENDING_DELIVERY: 0, PENDING_SCHEDULE: 0, OVERDUE: 0, DELIVERED: 0 };
+  // Build the zeroed tally from DELIVERY_STATES (the one home of the state
+  // vocabulary) rather than re-listing the states — a second literal set of
+  // them would be a duplicated decision (audit:duplicated-decisions).
+  const counts = { ALL: orders.length } as PlanningCounts;
+  for (const s of DELIVERY_STATES) counts[s] = 0;
   for (const o of orders) counts[o.delivery_state] += 1;
   return counts;
 }
