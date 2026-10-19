@@ -66,7 +66,10 @@ import {
   useDeliveryMessageStatuses,
   useSendDeliveryMessages,
   useUpdateDeliveryFields,
+  filterOrdersByRegion,
+  planningCountsFrom,
   type PlanningOrder,
+  type PlanningCounts,
   type SendDeliveryMessagesResult,
 } from '../../vendor/scm/lib/delivery-planning-queries';
 import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
@@ -233,11 +236,13 @@ export const DeliveryPlanning = () => {
     await runConvert(docNos);
   };
 
-  /* Fetch scoped to the active REGION; counts come back region-scoped so the
-     state-tab badges are stable as the operator flips state tabs. We pass the
-     state to the server too (it filters), but render-time we already have the
-     region-filtered orders so switching states is instant via the cache key. */
-  const { data, isLoading, error } = useDeliveryPlanning({ region: activeRegion, state: 'ALL' });
+  /* Fetch EVERY region once (region=ALL) and filter by the active region chip in
+     the browser (filterOrdersByRegion below) — the same instant, no-refetch
+     pattern the state tabs already use, and the mobile board already uses. The
+     old per-region fetch re-ran the whole server board assembly on every chip
+     click, so the region row felt frozen (owner 2026-10-19 "filter 没反应");
+     locally it is instant and the region chip no longer triggers a load. */
+  const { data, isLoading, error } = useDeliveryPlanning({ region: 'ALL', state: 'ALL' });
 
   /* Region chips = the CONFIG-DRIVEN buckets from the API master (+ "All"
      prepended). Falls back to the five geographic defaults if the API hasn't
@@ -264,8 +269,18 @@ export const DeliveryPlanning = () => {
     setParams(next, { replace: true });
   };
 
-  const allOrders = useMemo<PlanningOrder[]>(() => data?.orders ?? [], [data]);
-  const counts = data?.counts ?? { ALL: 0, PENDING_DELIVERY: 0, PENDING_SCHEDULE: 0, OVERDUE: 0, DELIVERED: 0 };
+  /* Every fetched order (all regions). The active region chip filters this
+     locally; valid region keys come from the chip list (an unknown/stale key is
+     a defensive no-op, never an empty board). */
+  const fetchedOrders = useMemo<PlanningOrder[]>(() => data?.orders ?? [], [data]);
+  const regionKeys = useMemo(() => new Set(regionTabs.map((r) => r.key)), [regionTabs]);
+  const allOrders = useMemo<PlanningOrder[]>(
+    () => filterOrdersByRegion(fetchedOrders, activeRegion, regionKeys),
+    [fetchedOrders, activeRegion, regionKeys],
+  );
+  /* State-tab badges over the region-filtered set, so they reflect the active
+     region exactly as the server's region-scoped counts did. */
+  const counts = useMemo<PlanningCounts>(() => planningCountsFrom(allOrders), [allOrders]);
 
   /* The SO order objects behind the current selection — fed to the scheduling
      drawer as its ordered stop list. Resolved from the region-scoped board (all
