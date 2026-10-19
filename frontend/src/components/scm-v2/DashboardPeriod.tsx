@@ -16,6 +16,18 @@ export interface Period { key: string; label: string; from: string; to: string }
 const pad = (n: number) => String(n).padStart(2, "0");
 const lastDay = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
 
+/** Where a period naturally ends: a "this month / quarter / year" that runs to
+ *  today ends on the month's, quarter's or year's last day; any other period
+ *  ends where it says. For figures that look ahead, like "due this month". */
+export function periodEnd(p: Period): string {
+  const y = Number(p.from.slice(0, 4)); const m = Number(p.from.slice(5, 7));
+  const last = (yy: number, mm: number) => `${yy}-${String(mm).padStart(2, "0")}-${String(new Date(Date.UTC(yy, mm, 0)).getUTCDate()).padStart(2, "0")}`;
+  if (p.key === "month") return last(y, m);
+  if (p.key === "quarter") return last(y, Math.ceil(m / 3) * 3);
+  if (p.key === "year") return `${y}-12-31`;
+  return p.to;
+}
+
 export type PeriodGroup = "upToToday" | "quarter" | "year" | "month";
 export interface PresetPeriod extends Period { group: PeriodGroup }
 

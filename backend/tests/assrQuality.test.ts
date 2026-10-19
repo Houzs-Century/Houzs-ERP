@@ -5,7 +5,7 @@
 import { describe, expect, test } from 'vitest';
 import { qualityOverview, type QCase } from '../src/routes/lib/assr-quality';
 
-const c = (o: Partial<QCase>): QCase => ({ id: 1, stage: 'pending_solution', openedAt: '2026-10-05', closedAt: null, creditor: null, assrNo: null, customer: null, ...o });
+const c = (o: Partial<QCase>): QCase => ({ id: 1, stage: 'pending_solution', openedAt: '2026-10-05', closedAt: null, creditor: null, assrNo: null, customer: null, complaint: null, issueCategory: null, ...o });
 
 describe('assr quality overview', () => {
   test('opened, closed and ongoing; average to close over the last 30 days and per month', () => {

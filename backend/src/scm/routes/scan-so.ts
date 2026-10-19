@@ -3957,26 +3957,24 @@ async function runScanJob(
 
     // PRICING-CRITICAL create — the factored mfg-sales-orders core, replayed
     // with the identities captured at enqueue time. Never reimplemented here.
-    let outcome = await createDraftSalesOrder(env, {
-      salespersonId: job.salespersonId,
-      salespersonName: job.salespersonName,
-      houzsUserId: job.houzsUserId,
-      companyId: job.companyId,
-      body,
-    });
+    // Each call is counted on the timer, so the save split shows a retried create.
+    const replay = (b: Record<string, unknown>) => {
+      timer.createAttempt();
+      return createDraftSalesOrder(env, {
+        salespersonId: job.salespersonId,
+        salespersonName: job.salespersonName,
+        houzsUserId: job.houzsUserId,
+        companyId: job.companyId,
+        body: b,
+      });
+    };
+    let outcome = await replay(body);
     // Belt-and-suspenders TIER 1: if the create rejects AND we set slip dates,
     // the date/variant pairing rules are the likely cause (a Processing Date
     // needs complete line variants) — retry WITHOUT dates, KEEPING the full
     // category lines (itemGroup/fabric/specials). The operator sets dates on
     // review. This is what recovers a sofa with a delivery date but no seat
     // height while preserving desktop-parity lines.
-    const replay = (b: Record<string, unknown>) => createDraftSalesOrder(env, {
-      salespersonId: job.salespersonId,
-      salespersonName: job.salespersonName,
-      houzsUserId: job.houzsUserId,
-      companyId: job.companyId,
-      body: b,
-    });
     if (
       outcome.status !== 201 &&
       (body.processingDate != null || body.customerDeliveryDate != null)

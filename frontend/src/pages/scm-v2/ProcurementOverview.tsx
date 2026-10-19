@@ -5,7 +5,7 @@
 // how early we order against the customer's date; and dead stock.
 // By category and By supplier are one switch over the same layout.
 // Data: GET /api/scm/procurement-overview (backend lib/procurement-period.ts).
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { DrillDrawer, col, type Drill } from "../../components/scm-v2/DrillDrawer";
 import { useQuery } from "@tanstack/react-query";
@@ -13,8 +13,8 @@ import { PageHeader } from "../../components/Layout";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
-import { Th, Td, Panel, Toggle } from "../../components/scm-v2/OverviewKit";
-import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
+import { Th, Td, Panel, Toggle, SELECT_CLS } from "../../components/scm-v2/OverviewKit";
+import { DashboardPeriodPicker, useDashboardPeriod, periodEnd } from "../../components/scm-v2/DashboardPeriod";
 import { Columns, Donut, SplitBar, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { useUpdateCategoryLeadTime, type LeadCategory } from "../../vendor/scm/lib/mrp-queries";
 
@@ -47,6 +47,7 @@ type Turnover = {
 type Payload = {
   turnover: Turnover;
   today: string; from: string; to: string; asOf: string; basis: "original" | "promised";
+  stockScope: string; warehouseKinds: Record<string, string>;
   categories: string[]; currentLead: Partial<Record<string, number>>; leadOverrides: Partial<Record<string, Array<{ warehouse: string; days: number }>>>;
   billed: { totalSen: number; count: number; bySupplier: Record<string, number>; byCategory: Record<string, number> };
   total: Group; byCategory: Group[]; bySupplier: Group[]; overdue: OpenLine[]; dueSoon: OpenLine[]; lines: PeriodLine[];
@@ -72,6 +73,11 @@ const days = (x: number | null) => (x == null ? "—" : `${x}`);
 const pctTxt = (x: number | null) => (x == null ? "—" : `${x}%`);
 const share = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : "—");
 const MIN_RECEIPTS = 10;
+/* Location kinds from the warehouse type: display = display + showroom. */
+const STOCK_SCOPE_OPTIONS: Array<[string, string]> = [
+  ["all", "All locations"], ["no_display", "Exclude display"], ["no_display_service", "Exclude display and service"],
+  ["warehouse", "Warehouse only"], ["display", "Display only"], ["service", "Service only"], ["others", "Others only"],
+];
 /* The MRP categories a lead time can be set for (mrp-lead-times). */
 const MRP_CATEGORY: Partial<Record<string, LeadCategory>> = { MATTRESS: "mattress", BEDFRAME: "bedframe", SOFA: "sofa", ACCESSORY: "accessory" };
 
@@ -82,6 +88,8 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
   /* Decision A (owner 2026-10-17): late and on time are counted against the
      date first put on the PO, never the latest revised one. */
   const basis = "original";
+  /* Due looks ahead: this month = due up to the month's last day (owner 2026-10-19). */
+  const dueTo = periodEnd(period);
   const [by, setBy] = useState<"category" | "supplier">("category");
   const [focus, setFocus] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -92,9 +100,12 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") === "stock" ? "stock" : "overview";
   const setTab = (v: "overview" | "stock") => setParams((p) => { const n = new URLSearchParams(p); if (v === "overview") n.delete("tab"); else n.set("tab", v); return n; }, { replace: true });
+  /* Which locations the stock figures cover (owner 2026-10-19), kept in the URL. */
+  const scope = STOCK_SCOPE_OPTIONS.some(([k]) => k === params.get("loc")) ? (params.get("loc") as string) : "all";
+  const setScope = (v: string) => setParams((p) => { const n = new URLSearchParams(p); if (v === "all") n.delete("loc"); else n.set("loc", v); return n; }, { replace: true });
   const q = useQuery({
-    queryKey: ["procurement-overview", period.from, period.to, basis],
-    queryFn: () => authedFetch<Payload>(`/procurement-overview?from=${period.from}&to=${period.to}&basis=${basis}`),
+    queryKey: ["procurement-overview", period.from, period.to, dueTo, basis, scope],
+    queryFn: () => authedFetch<Payload>(`/procurement-overview?from=${period.from}&to=${period.to}&dueTo=${dueTo}&basis=${basis}&scope=${scope}`),
     staleTime: 60_000,
   });
   const d = q.data;
@@ -156,6 +167,11 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
       <div className="flex flex-wrap items-center gap-2">
         <DashboardPeriodPicker period={period} today={today} onChange={(f, to) => { setFocus(null); setPeriod(f, to); }} />
         <Toggle value={tab} options={[["overview", "Overview"], ["stock", "Lead time & stock"]]} onChange={setTab} />
+        {tab === "stock" && (
+          <select className={cn(SELECT_CLS, "ml-auto")} value={scope} onChange={(e) => setScope(e.target.value)} aria-label="Locations">
+            {STOCK_SCOPE_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+        )}
         {q.isFetching && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
       </div>
       {q.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {(q.error as Error).message}</div>}
@@ -164,7 +180,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
         <Tile label={`PO raised ${when}`} value={t ? rm(t.raised.sen) : "…"} tone="brass" trend={null} onClick={() => openLines(`PO raised ${when}`, "raised", focus)}
           note={t ? `${t.raised.pos} purchase orders` : ""} />
         <Tile label={`Due ${when}`} value={t ? rm(t.due.sen) : "…"} tone={t?.due.openSen ? "bad" : "good"} trend={null} onClick={() => openLines(`Due ${when}`, "due", focus)}
-          note={t ? (t.due.openSen ? `${rm(t.due.openSen)} has not arrived yet` : "all of it has arrived") : ""} />
+          note={t ? `${dueTo !== period.to ? `to ${dueTo.slice(5).replace("-", "/")} · ` : ""}${t.due.openSen ? `${rm(t.due.openSen)} has not arrived yet` : "all of it has arrived"}` : ""} />
         <Tile label={`Received ${when}`} value={t ? rm(t.receivedSen) : "…"} tone="main" trend={null} onClick={() => openLines(`Received ${when}`, "received", focus)}
           note={t ? `${t.supplierLead.receipts} lines received` : ""} />
         <Tile label={`Supplier billed ${when}`} value={d ? rm(d.billed.totalSen) : "…"} tone="main" trend={null} onClick={null}
@@ -248,7 +264,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
             </p>
             <div className="grid gap-4 xl:grid-cols-2">
               <BufferTable title="Category" rows={d.deadStock.byCategory} name={(k) => CAT_LABEL[k] ?? k} />
-              <BufferTable title="Warehouse" rows={d.deadStock.byWarehouse} name={(k) => k} />
+              <BufferTable title="Warehouse" rows={d.deadStock.byWarehouse} name={(k) => <>{k} <span className="text-[10.5px] text-ink-muted">{d.warehouseKinds[k] ?? ""}</span></>} />
             </div>
             <div className="mt-3 text-[12px] font-semibold text-ink">Largest buffer items</div>
             <div className="max-h-[420px] overflow-y-auto">
@@ -351,7 +367,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
           </Panel>
 
           <section id="dead">
-            <Panel title="Dead stock · no order at all" hint={`on hand, no open sales order wants that item and variant, less what normally goes out in ${d.deadStock.coverDays} days · bars split by how long since it last went out · showroom and display left out · as of today`}>
+            <Panel title="Dead stock · no order at all" hint={`on hand, no open sales order wants that item and variant, less what normally goes out in ${d.deadStock.coverDays} days · bars split by how long since it last went out · ${STOCK_SCOPE_OPTIONS.find(([k]) => k === scope)?.[1].toLowerCase()} · as of today`}>
               <div className="grid gap-4 xl:grid-cols-2">
                 <div>
                   <div className="mb-1 text-[12px] font-semibold text-ink">By category</div>
@@ -366,7 +382,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
               </div>
               <div className="mt-3 grid gap-4 xl:grid-cols-2">
                 <StockTable title="Category" rows={d.deadStock.byCategory} name={(k) => CAT_LABEL[k] ?? k} />
-                <StockTable title="Warehouse" rows={d.deadStock.byWarehouse} name={(k) => k} />
+                <StockTable title="Warehouse" rows={d.deadStock.byWarehouse} name={(k) => <>{k} <span className="text-[10.5px] text-ink-muted">{d.warehouseKinds[k] ?? ""}</span></>} />
               </div>
               <div className="mt-3 text-[12px] font-semibold text-ink">Largest dead items</div>
               <table className="mt-1 w-full border-collapse">
@@ -378,7 +394,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
             </Panel>
           </section>
 
-          <TurnoverPanel t={d.turnover} when={when} />
+          <TurnoverPanel t={d.turnover} when={when} kinds={d.warehouseKinds} />
         </>
       )}
       <DrillDrawer drill={drill} onClose={() => setDrill(null)} />
@@ -406,20 +422,20 @@ function LineTable({ rows, empty, mode }: { rows: OpenLine[]; empty: string; mod
   );
 }
 
-function BufferTable({ title, rows, name }: { title: string; rows: StockGroup[]; name: (k: string) => string }) {
+function BufferTable({ title, rows, name }: { title: string; rows: StockGroup[]; name: (k: string) => ReactNode }) {
   const tot = rows.reduce((a, r) => ({ v: a.v + r.valueSen, b: a.b + r.bufferSen, s: a.s + r.bufferSkus }), { v: 0, b: 0, s: 0 });
   return (
     <table className="w-full border-collapse">
       <thead><tr><Th left>{title}</Th><Th>Stock value</Th><Th>Buffer</Th><Th>Share</Th><Th>Items</Th></tr></thead>
       <tbody>
-        {rows.filter((r) => r.bufferSen > 0).map((r) => <tr key={r.key}><Td left>{name(r.key)}</Td><Td>{fmtSen(r.valueSen)}</Td><Td className="text-warning-text">{fmtSen(r.bufferSen)}</Td><Td>{share(r.bufferSen, r.valueSen)}</Td><Td>{r.bufferSkus}</Td></tr>)}
+        {rows.map((r) => <tr key={r.key}><Td left>{name(r.key)}</Td><Td>{fmtSen(r.valueSen)}</Td><Td className="text-warning-text">{fmtSen(r.bufferSen)}</Td><Td>{share(r.bufferSen, r.valueSen)}</Td><Td>{r.bufferSkus}</Td></tr>)}
         <tr className="font-semibold"><Td left>Total</Td><Td>{fmtSen(tot.v)}</Td><Td>{fmtSen(tot.b)}</Td><Td>{share(tot.b, tot.v)}</Td><Td>{tot.s}</Td></tr>
       </tbody>
     </table>
   );
 }
 
-function StockTable({ title, rows, name }: { title: string; rows: StockGroup[]; name: (k: string) => string }) {
+function StockTable({ title, rows, name }: { title: string; rows: StockGroup[]; name: (k: string) => ReactNode }) {
   const tot = rows.reduce((a, r) => ({ v: a.v + r.valueSen, d: a.d + r.deadSen, s: a.s + r.deadSkus }), { v: 0, d: 0, s: 0 });
   return (
     <table className="w-full border-collapse">
@@ -432,7 +448,7 @@ function StockTable({ title, rows, name }: { title: string; rows: StockGroup[]; 
   );
 }
 
-function TurnoverPanel({ t, when }: { t: Turnover; when: string }) {
+function TurnoverPanel({ t, when, kinds }: { t: Turnover; when: string; kinds: Record<string, string> }) {
   const early = !!t.firstOut && t.firstOut === t.turnFrom;
   const turns = (x: number | null) => (x == null ? "—" : `${x}×`);
   const daysTxt = (x: number | null) => (x == null ? "—" : `${x} days`);
@@ -447,7 +463,7 @@ function TurnoverPanel({ t, when }: { t: Turnover; when: string }) {
       </div>
       <div className="mt-3 grid gap-4 xl:grid-cols-2">
         <TurnTable title="Category" rows={t.byCategory} name={(k) => CAT_LABEL[k] ?? k} />
-        <TurnTable title="Warehouse" rows={t.byWarehouse} name={(k) => k} />
+        <TurnTable title="Warehouse" rows={t.byWarehouse} name={(k) => <>{k} <span className="text-[10.5px] text-ink-muted">{kinds[k] ?? ""}</span></>} />
       </div>
       <div className="mt-3 grid gap-4 xl:grid-cols-2">
         <div>
@@ -475,7 +491,7 @@ function TurnoverPanel({ t, when }: { t: Turnover; when: string }) {
   );
 }
 
-function TurnTable({ title, rows, name }: { title: string; rows: TurnRow[]; name: (k: string) => string }) {
+function TurnTable({ title, rows, name }: { title: string; rows: TurnRow[]; name: (k: string) => ReactNode }) {
   return (
     <table className="w-full border-collapse">
       <thead><tr><Th left>{title}</Th><Th>Stock now</Th><Th>Cost of goods out</Th><Th>Turns a year</Th><Th>Days of stock</Th></tr></thead>
