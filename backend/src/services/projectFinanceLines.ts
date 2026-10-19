@@ -11,7 +11,7 @@
 // ----------------------------------------------------------------------------
 
 import type { Env } from "../types";
-import { applyEventBooks, readEventBooks } from "../scm/lib/event-books";
+import { applyEventBooks, readCheckedVoucherLegs, readEventBooks, withCheckedVouchers } from "../scm/lib/event-books";
 
 export async function eventFinanceLines(
   env: Env,
@@ -20,7 +20,13 @@ export async function eventFinanceLines(
   ledger: any[],
   costCategories: readonly string[],
 ) {
-  const { lines, books } = applyEventBooks(projectId, ledger, await readEventBooks(env.DB, projectId, companyId), costCategories);
+  /* The posted books, and vouchers Finance has CHECKED but not yet approved
+     (owner 2026-10-19: 「改成 pv checked」) — scm/lib/event-books.ts. */
+  const [posted, checked] = await Promise.all([
+    readEventBooks(env.DB, projectId, companyId),
+    readCheckedVoucherLegs(env.DB, projectId, companyId),
+  ]);
+  const { lines, books } = applyEventBooks(projectId, ledger, withCheckedVouchers(posted, checked), costCategories);
 
   // Sales entries surface as virtual income rows in the ledger so the
   // Finance section reflects rep-entered sales without double-bookkeeping.

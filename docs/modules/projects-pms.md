@@ -169,6 +169,13 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   paid from the payment ledger via `so-outstanding.ts`. "Not yet opened" is
   the lump-sum `total_sales` minus the SO total — a comparison, not a count
   of slips.
+- The event page's finance lines take Finance's money from the books
+  (`scm/lib/event-books.ts`, read in `services/projectFinanceLines.ts`): posted
+  GL legs tagged to the event, plus payment-voucher lines that are CHECKED but
+  not yet approved (`readCheckedVoucherLegs`, owner 2026-10-19 「改成 pv
+  checked」; shown as "PV-… (checked)"). A row the books fill replaces its typed
+  and auto lines; a rejected voucher drops out and the typed figure returns; AP
+  invoices still count from Post.
 - The evening sales report (one bill per line: booklet no, amount, salesperson;
   a "+ N(T)" transport or "(D)" disposal tail is kept apart) is DERIVED from the
   project chat on every read — notes by the Owner position, Ummu or weisiang
