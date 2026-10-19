@@ -16,7 +16,7 @@ import type { AuthUser } from "../services/auth";
 import { supabaseAuth } from "../scm/middleware/auth";
 import { scopeToCompany, activeCompanySql } from "../scm/lib/companyScope";
 import { chunkIn, paginateAll } from "../scm/lib/paginate-all";
-import { indexOrdersByToken, matchBill, type OrderRow } from "./lib/sales-report-bills";
+import { collectReport, indexOrdersByToken, matchBill, type NoteRow, type OrderRow } from "./lib/sales-report-bills";
 import { financeHiddenForUser } from "../services/pmsAccess";
 
 export const projectOverview = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -98,13 +98,26 @@ projectOverview.get("/", async (c) => {
 
   /* Is the event's Sales Orders daily? (owner 2026-10-19) Its chat sales report
      against the orders, by the event page's own rule (lib/sales-report-bills.ts):
-     every bill opened as an order under this event = daily. */
-  // company-scope: the saved report bills carry activeCompanySql on b.company_id.
-  const billRows = await c.env.DB.prepare(
-    `SELECT b.project_id, b.ref_token, b.amount_sen FROM project_sales_bills b WHERE 1 = 1${activeCompanySql(c, "b.company_id")}`,
-  ).all<{ project_id: number; ref_token: string; amount_sen: number }>();
+     the bills read from the chat with collectReport, as the event page does
+     (the saved bills table holds only part of them), every bill opened as an
+     order under this event = daily. Events of the last 180 days. */
+  const recent = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
+  const recentIds = new Set(projects.filter((p) => String(p.start_date ?? p.end_date ?? "").slice(0, 10) >= recent).map((p) => p.id));
+  // company-scope: chat notes of this company's projects (activeCompanySql on p.company_id).
+  const noteRows = await c.env.DB.prepare(
+    `SELECT a.id, a.project_id, a.note, a.created_at, u.email AS author_email, ps.name AS author_position
+       FROM project_activity a JOIN projects p ON p.id = a.project_id
+       LEFT JOIN users u ON u.id = a.user_id LEFT JOIN positions ps ON ps.id = u.position_id
+      WHERE a.action = 'note' AND a.archived_at IS NULL AND substr(COALESCE(p.start_date, p.end_date), 1, 10) >= ?${activeCompanySql(c, "p.company_id")}`,
+  ).bind(recent).all<NoteRow & { project_id: number }>();
+  const notesOf = new Map<number, NoteRow[]>();
+  for (const n of noteRows.results) notesOf.set(Number(n.project_id), [...(notesOf.get(Number(n.project_id)) ?? []), { ...n, id: Number(n.id) }]);
   const billsOf = new Map<number, Array<{ ref_token: string; amount_sen: number }>>();
-  for (const b of billRows.results) billsOf.set(Number(b.project_id), [...(billsOf.get(Number(b.project_id)) ?? []), b]);
+  for (const p of projects) {
+    if (!recentIds.has(p.id) || !notesOf.has(p.id)) continue;
+    const bills = collectReport(notesOf.get(p.id)!, p.start_date ? String(p.start_date) : null).bills;
+    if (bills.length) billsOf.set(p.id, bills);
+  }
   const withBills = projects.filter((p) => billsOf.has(p.id));
   const report = new Map<number, { bills: number; billsSen: number; opened: number; openedSen: number; otherEvent: number }>();
   if (withBills.length > 0) {
