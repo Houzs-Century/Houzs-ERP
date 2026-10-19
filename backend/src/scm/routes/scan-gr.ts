@@ -147,8 +147,9 @@ const toScanned = (l: GrnExtracted['lines'][number]): ScannedGrnLine => ({
 // A plain-language note for a NEEDS-REVIEW job (no GRN created): tell the
 // operator what we saw, line by line, so they can receive from the PO by hand.
 function buildNeedsReviewNote(parsed: GrnExtracted, match: GrnMatchResult, allPos: PoStatusRef[]): string {
-  const lines = describeUnmatchedScanLines(match.unmatched, allPos);
   const head = buildNeedsReviewHead(parsed, match);
+  if (match.qtyMismatch) return `${head} What we read: ${listScanLines(parsed.lines.map(toScanned).filter((l) => l.qty > 0))}`;
+  const lines = describeUnmatchedScanLines(match.unmatched, allPos);
   return lines ? `${head} What we read: ${lines}` : head;
 }
 
@@ -163,6 +164,10 @@ function buildNeedsReviewHead(parsed: GrnExtracted, match: GrnMatchResult): stri
   }
   if (match.refused === 'multiple_pos') {
     return `We read ${po}${doRef} but its items point to more than one PO (${match.matchedPoNumbers.join(', ')}), so no receipt was created. ${tail}`;
+  }
+  if (match.qtyMismatch) {
+    const counts = match.qtyMismatch.map((m) => `${m.listed} listed against ${m.poNumber}, which still owes ${m.owed}`).join('; ');
+    return `We read ${po}${doRef} but could not line its items up to the PO by code, and the quantities differ (${counts}), so no receipt was created rather than one for the whole PO. Please open the PO and receive what was delivered.`;
   }
   if (poMatched) {
     return `We read ${po}${doRef} but could not line its items up to open PO ${poMatched} automatically. Please open that PO and receive against it.`;
@@ -264,21 +269,25 @@ async function runGrnScanJob(
     const weakNote = match.weakMatch
       ? `Check the PO: only ${match.weakMatch.matched} of ${match.weakMatch.scanned} scanned lines matched ${match.matchedPoNumbers.join(', ')}, so it may be the wrong PO.`
       : null;
+    const nameNote = match.nameMatched > 0
+      ? `Check the items: ${match.nameMatched} delivery order ${match.nameMatched === 1 ? 'row was' : 'rows were'} matched to the PO by product name, not by code.`
+      : null;
     // Scanned lines the operator must add by hand, by name, so the draft itself
     // says what is missing. A draft built from the whole PO lists what the
     // delivery order says instead, since every PO line is already on it.
     const unmatchedLines = describeUnmatchedScanLines(match.unmatched, allPos);
     const unmatchedNote = match.poFallback
       ? `Check every line: no scanned line matched ${match.poFallback} by item, so this draft lists everything still owed on ${match.poFallback.includes(',') ? 'those POs' : 'that PO'} at the PO quantity. Change it to what was delivered before posting. The delivery order lists: ${listScanLines(parsed.lines.map(toScanned).filter((l) => l.qty > 0))}`
-      : unmatchedLines ? `Not added, please add on the draft: ${unmatchedLines}` : null;
+      : unmatchedLines ? `Not added to this draft: ${unmatchedLines}` : null;
     const res = await createDraftGrnFromPoItems(env, {
       userId: job.uploaderStaffId,
       houzsUserId: job.houzsUserId,
       companyId: job.companyId,
       companyCode,
       picks: match.picks,
-      notes: [doRef, weakNote, unmatchedNote].filter(Boolean).join(' · '),
+      notes: [doRef, weakNote, nameNote, unmatchedNote].filter(Boolean).join(' · '),
       receivedDate: parsed.deliveryDate ?? undefined,
+      deliveryNoteRef: parsed.doNo,
     });
 
     if (!res.ok) {
