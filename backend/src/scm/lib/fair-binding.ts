@@ -568,9 +568,28 @@ export async function resolveScanFair(args: {
   }
 }
 
+/** The fair columns a new order is written with. */
+export type FairLinkColumns = {
+  project_id: number | null;
+  fair_match: FairMatch | 'NO_FAIR';
+  fair_date?: string;
+  venue?: string;
+  venue_source?: 'PMS';
+};
+
+/** Why a SCAN was placed where it was, for its History row (fair-audit.ts). */
+export const SCAN_STEP_NOTE: Record<ScanFairStep, string> = {
+  slip_mine: 'Placed by the slip’s place and date, at a fair the scanner stands at.',
+  slip_place: 'Placed by the slip’s place and date. The scanner is not on its Sales Attending yet.',
+  today: 'No fair at the slip’s place and date — placed at the scanner’s fair today.',
+  latest: 'No fair at the slip’s place and date — placed at the scanner’s latest fair.',
+  none: 'No fair found for the slip or the scanner — a person picks it.',
+};
+
 /**
  * The fair columns a NEW order is written with, after its lines are in (the
- * brand comes from them). One decision for every create path:
+ * brand comes from them), and — for a scan — which rule placed it. One
+ * decision for every create path:
  *
  *   - No fair ticked: NO_FAIR, no project — a decided state (owner 2026-09-26).
  *   - A SCAN, on the keyer rule: `resolveScanFair`; steps 1-2 also take the
@@ -596,9 +615,9 @@ export async function fairLinkOnCreate(args: {
   soDate: string;
   brand: string | null;
   bindingProjectId: number | null;
-}): Promise<{ project_id: number | null; fair_match: FairMatch | 'NO_FAIR'; fair_date?: string; venue?: string; venue_source?: 'PMS' }> {
+}): Promise<{ columns: FairLinkColumns; step: ScanFairStep | null }> {
   const { body } = args;
-  if (body.noFair === true) return { project_id: null, fair_match: 'NO_FAIR' };
+  if (body.noFair === true) return { columns: { project_id: null, fair_match: 'NO_FAIR' }, step: null };
   const keyerRule = companyUsesKeyerFair(args.companyCode);
   const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
   if (keyerRule && args.scanned) {
@@ -607,11 +626,14 @@ export async function fairLinkOnCreate(args: {
       db: args.db, companySql: args.companySql, keyerId: args.keyerId,
       slipVenue, slipDate: text(body.slipDate), keyedDate: args.soDate, brand: args.brand,
     });
-    if (scan.projectId == null) return { project_id: null, fair_match: scan.match };
+    if (scan.projectId == null) return { columns: { project_id: null, fair_match: scan.match }, step: scan.step };
     return {
-      project_id: scan.projectId, fair_match: 'PICKED',
-      ...(scan.fairDate ? { fair_date: scan.fairDate } : {}),
-      ...(!slipVenue && scan.venue ? { venue: scan.venue, venue_source: 'PMS' as const } : {}),
+      step: scan.step,
+      columns: {
+        project_id: scan.projectId, fair_match: 'PICKED',
+        ...(scan.fairDate ? { fair_date: scan.fairDate } : {}),
+        ...(!slipVenue && scan.venue ? { venue: scan.venue, venue_source: 'PMS' as const } : {}),
+      },
     };
   }
   const fair = await resolveFairForCreate({
@@ -623,7 +645,7 @@ export async function fairLinkOnCreate(args: {
     soDate: args.soDate, brand: args.brand,
   });
   const linkedId = fair.projectId ?? (keyerRule ? null : args.bindingProjectId);
-  return { project_id: linkedId, fair_match: linkedId != null ? 'PICKED' : fair.match };
+  return { columns: { project_id: linkedId, fair_match: linkedId != null ? 'PICKED' : fair.match }, step: null };
 }
 
 /** The scan_jobs columns the confirm rules read. */

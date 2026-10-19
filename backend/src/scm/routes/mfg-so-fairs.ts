@@ -41,6 +41,8 @@ import {
 import { buildFairOptions, companyUsesKeyerFair, fairMissingMessage, isPickableFair } from '../lib/fair-options';
 import { countFairPending, loadFairPending } from '../lib/fair-pending';
 import { loadFairChecks } from '../lib/fair-checks';
+import { fairStateOf, recordFairChange } from '../lib/fair-audit';
+import { canReassignFair, FAIR_REASSIGN_REFUSAL } from '../lib/fair-reassign';
 /* GET /active-venue moved here from mfg-sales-orders.ts on 2026-09-13. It is the
    same concern as the picker — which exhibition is this rep at — and that file
    is over its size ceiling, so the endpoint could not stay beside its new
@@ -207,6 +209,8 @@ mfgSoFairs.get('/fair-checks', async (c) => {
  * a stale screen and a sale attributed to the other company's exhibition.
  */
 mfgSoFairs.post('/:docNo/fair', async (c) => {
+  /* Finance or PMS only (owner 2026-10-16) — scm/lib/fair-reassign.ts. */
+  if (!canReassignFair(c)) return c.json({ error: 'forbidden', reason: FAIR_REASSIGN_REFUSAL }, 403);
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');
   let body: { projectId?: unknown };
@@ -226,7 +230,7 @@ mfgSoFairs.post('/:docNo/fair', async (c) => {
      against, and reading it under the company predicate also answers "is this
      order mine" before anything is written. */
   const { data: so, error: soErr } = await scopeToCompany(
-    sb.from('mfg_sales_orders').select('doc_no, so_date, venue').eq('doc_no', docNo),
+    sb.from('mfg_sales_orders').select('doc_no, so_date, venue, project_id, fair_match').eq('doc_no', docNo),
     c,
   ).maybeSingle();
   if (soErr) return c.json({ error: 'so_read_failed' }, 500);
@@ -283,6 +287,16 @@ mfgSoFairs.post('/:docNo/fair', async (c) => {
     c,
   );
   if (updErr) return c.json({ error: 'fair_update_failed' }, 500);
+
+  /* Who moved it, from what to what — in the order's History (fair-audit.ts). */
+  const user = c.get('user');
+  await recordFairChange({
+    sb, db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), docNo,
+    before: fairStateOf(so as Record<string, unknown>),
+    after: { projectId, fairMatch: projectId == null ? 'AMBIGUOUS' : 'PICKED' },
+    how: 'settle', actorId: user?.id ?? null,
+    actorName: (user?.user_metadata as { name?: string } | undefined)?.name ?? c.get('houzsUser')?.name ?? null,
+  });
 
   return c.json({ ok: true, docNo, projectId, companyId: activeCompanyId(c) ?? null });
 });

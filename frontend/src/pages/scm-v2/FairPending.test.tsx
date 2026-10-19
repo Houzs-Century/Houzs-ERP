@@ -36,6 +36,10 @@ const OPTIONS: FairOptionsResponse = {
 
 const assign = vi.fn();
 const checks = vi.hoisted(() => ({ rows: [] as unknown[], error: false }));
+const who = vi.hoisted(() => ({ perms: new Set<string>(['scm.finance.accounting']), role: '' }));
+vi.mock('../../auth/AuthContext', () => ({
+  useAuth: () => ({ user: { id: 1, role_name: who.role, position_name: null, email: 'x@houzs.test' }, can: (p: string) => who.perms.has('*') || who.perms.has(p) }),
+}));
 
 vi.mock('../../vendor/scm/lib/fair-options-queries', async (orig) => ({
   ...(await orig<typeof import('../../vendor/scm/lib/fair-options-queries')>()),
@@ -134,5 +138,24 @@ describe('FairPending — linked orders to check (owner 2026-10-19)', () => {
     checks.error = true;
     show();
     expect(screen.getByText('Couldn’t load the linked orders to check — try again.')).toBeTruthy();
+  });
+});
+
+describe('FairPending — who may re-assign (owner 2026-10-16: Finance and PMS)', () => {
+  afterEach(() => { who.perms = new Set(['scm.finance.accounting']); who.role = ''; });
+
+  it('anyone else sees the list but cannot link, and is told why', () => {
+    who.perms = new Set(['scm.access', 'scm.sales.orders']);
+    show();
+    expect(screen.getByText('Only Finance or PMS can re-assign a fair here. Every change is in the order’s History.')).toBeTruthy();
+    expect((screen.getByLabelText('Fair for HC-SO-2609-064') as HTMLSelectElement).disabled).toBe(true);
+  });
+
+  it('a BD role (PMS) may link', () => {
+    who.perms = new Set(['scm.access']);
+    who.role = 'BD Executive';
+    show();
+    expect((screen.getByLabelText('Fair for HC-SO-2609-064') as HTMLSelectElement).disabled).toBe(false);
+    expect(screen.queryByText(/Only Finance or PMS/)).toBeNull();
   });
 });

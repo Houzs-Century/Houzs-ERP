@@ -1541,6 +1541,10 @@ const histSentence = (e: SoAuditEntry): string => {
       return e.status_snapshot === "DRAFT" ? "created this order (draft)" : "created this order";
     case "UPDATE_DETAILS":
       return "updated details";
+    case "UPDATE_FAIR": { // owner 2026-10-19: every fair move, named
+      const f = find("fair");
+      return f ? `changed the fair: ${String(f.from ?? "—")} → ${String(f.to ?? "—")}` : "changed the fair";
+    }
     case "UPDATE_STATUS": {
       const s = find("status");
       const to = statusLabel("so", (s?.to ?? e.status_snapshot ?? "?") as string);

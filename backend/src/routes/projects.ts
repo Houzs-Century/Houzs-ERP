@@ -54,7 +54,7 @@ import {
   stripSensitiveChecklist,
   stripSetupDismantle,
 } from "../services/projects";
-import { getPmsAccess, financeHiddenForUser, isFinanceViewer, isSalesUser } from "../services/pmsAccess";
+import { canCreateEvent, getPmsAccess, financeHiddenForUser, isFinanceViewer, isSalesUser } from "../services/pmsAccess";
 import { scopeSalesReportsForUser } from "../services/orgScope";
 import { audit } from "../services/audit";
 import { hasPermission, holdsChecklistApproval, EXPLICIT_APPROVAL_KEYS } from "../services/permissions";
@@ -2513,20 +2513,8 @@ app.get("/:id", requirePageAccess("projects.list"), async (c) => {
 
 // ── Create ────────────────────────────────────────────────────
 
-// Event (project) creation is restricted to BD staff, the Owner account, and
-// Lim (weisiang329@gmail.com) — NOT other Super Admins nor anyone else (owner
-// 2026-07-24). This is the authority; the FE hides the New Project button for
-// everyone else. Mirrors frontend auth/salesAccess.canCreateEvent.
-function canCreateEvent(
-  user: { role_name?: string | null; position_name?: string | null; email?: string | null } | null | undefined,
-): boolean {
-  if (!user) return false;
-  const role = (user.role_name ?? "").toLowerCase();
-  const position = (user.position_name ?? "").toLowerCase();
-  const email = (user.email ?? "").toLowerCase();
-  return /\bbd\b/.test(role) || position === "owner" || email === "weisiang329@gmail.com";
-}
-
+// Event (project) creation: BD staff, the Owner account and Lim only (owner
+// 2026-07-24) — services/pmsAccess.canCreateEvent is the one rule.
 app.post("/", requirePermission("projects.write"), async (c) => {
   const user = c.get("user");
   if (!canCreateEvent(user)) {

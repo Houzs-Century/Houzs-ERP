@@ -24,6 +24,7 @@ import { namesABrand } from './vp-brand';
 import { activeCompanyId, activeCompanySql, scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { soHasDownstream } from './downstream-lock';
 import { redetectFairAfterBrandChange, type FairDb } from './fair-binding';
+import { fairStateOf, recordFairChange } from './fair-audit';
 
 export type LineBrandingRow = {
   item_code?: string | null;
@@ -117,9 +118,17 @@ export async function restampHeaderBranding(
       oldBrand: h.branding,
       newBrand: brand,
     });
-    await sb.from('mfg_sales_orders')
+    const { error: updErr } = await sb.from('mfg_sales_orders')
       .update({ branding: brand, ...(fair ?? {}) })
       .eq('doc_no', docNo).eq('company_id', companyId);
+    /* A fair the brand moved is in the order's History (fair-audit.ts). */
+    if (fair && !updErr) {
+      await recordFairChange({
+        sb, db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), docNo,
+        before: fairStateOf(h), after: fairStateOf(fair), how: 'brand', actorId: null, actorName: 'System',
+        note: `The order's brand became ${brand}, so its fair link followed the brand.`,
+      });
+    }
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error('[restamp-header-branding] failed for', docNo, e);

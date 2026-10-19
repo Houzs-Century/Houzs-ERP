@@ -76,6 +76,7 @@ export const supabaseAuth = createMiddleware<{ Bindings: Env; Variables: Variabl
       id?: number | string;
       email?: string;
       name?: string | null;
+      role_name?: string | null;
       position_name?: string | null;
       department_name?: string | null;
       permissions?: string[];
@@ -100,6 +101,9 @@ export const supabaseAuth = createMiddleware<{ Bindings: Env; Variables: Variabl
             // amendment self-service — see lib/houzs-perms.ts).
             position_name: hu.position_name ?? null,
             department_name: hu.department_name ?? null,
+            // The ROLE's name, for pmsAccess.canCreateEvent (a BD role may open
+            // fairs, and so re-assign an order's fair — scm/lib/fair-reassign.ts).
+            role_name: hu.role_name ?? null,
             permissions: hu.permissions,
             permissions_set: hu.permissions_set,
             // Operational-capability grants (position_capabilities, mig 0322)
