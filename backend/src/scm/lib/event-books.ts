@@ -69,6 +69,51 @@ export async function readEventBooks(db: D1Database, projectId: number, companyI
   }
 }
 
+/** Marks a leg read from a voucher that is CHECKED but not yet approved. */
+export const PV_CHECKED_SOURCE = 'PV_CHECKED';
+
+/**
+ * Payment vouchers CHECKED but not yet approved, as legs the books count
+ * (owner 2026-10-19: 「改成 pv checked」 — the event row takes Finance's figure
+ * once a voucher is checked, not only once it posts).
+ *
+ * A voucher only reaches the GL when it is APPROVED (approval posts it), so a
+ * checked one has no leg yet; this reads its tagged lines instead. Status stays
+ * DRAFT through the whole four-layer cycle (mig 0343), so "checked, not yet
+ * approved" is `checked_at` set and `approved_at` not. A reject clears every
+ * marker and the line drops out — the typed figure comes back; an approval
+ * posts the GL leg and the line drops out here, so a voucher is never counted
+ * twice. AP invoices have no Checked stage and still count from Post.
+ */
+export async function readCheckedVoucherLegs(db: D1Database, projectId: number, companyId: number | null): Promise<BooksRead> {
+  try {
+    const res = await db.prepare(
+      `SELECT l.id::text AS leg_id, l.debit_account_code AS account_code, l.amount_sen AS debit_sen, 0 AS credit_sen,
+              l.description AS notes, pv.pv_number AS je_no, to_char(pv.voucher_date, 'YYYY-MM-DD') AS entry_date,
+              '${PV_CHECKED_SOURCE}' AS source_type, pv.pv_number AS source_doc_no,
+              true AS posted, false AS reversed, NULL::text AS reversed_by_je,
+              a.account_name, a.account_type, a.pms_row
+         FROM scm.payment_voucher_lines l
+         JOIN scm.payment_vouchers pv ON pv.id = l.pv_id
+         LEFT JOIN scm.accounts a ON a.company_id = l.company_id AND a.account_code = l.debit_account_code
+        WHERE l.project_id = ?${companyId != null ? ' AND l.company_id = ?' : ''}
+          AND pv.status = 'DRAFT' AND pv.checked_at IS NOT NULL AND pv.approved_at IS NULL
+        ORDER BY pv.voucher_date, pv.pv_number, l.line_no`
+    ).bind(projectId, ...(companyId != null ? [companyId] : [])).all<BooksLeg>();
+    return { ok: true, legs: res.results ?? [] };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** The posted books and the checked vouchers as one read. Either failing is a
+    failed read — the page then keeps its typed figures and says so. */
+export function withCheckedVouchers(posted: BooksRead, checked: BooksRead): BooksRead {
+  if (!posted.ok) return posted;
+  if (!checked.ok) return checked;
+  return { ok: true, legs: [...posted.legs, ...checked.legs] };
+}
+
 /** The row a typed or auto category sits in on the event page. COGS and
     Merchandise are rows no account fills; every category without a row of its
     own is Others Costing — the rows of the snapshot this feeds (Projects.tsx,
@@ -147,7 +192,10 @@ export function booksLinesFor(projectId: number, legs: BooksLeg[]): BooksLine[] 
       archived_at: null,
       auto_source: null,
       source: 'books',
-      doc_no: leg.source_doc_no || leg.je_no,
+      /* A checked voucher says so: it is Finance's figure, not yet in the GL. */
+      doc_no: leg.source_type === PV_CHECKED_SOURCE
+        ? `${leg.source_doc_no || leg.je_no} (checked)`
+        : leg.source_doc_no || leg.je_no,
       account_code: leg.account_code,
       account_name: leg.account_name,
     });
