@@ -179,3 +179,21 @@ describe('a round trip through both directions agrees with itself', () => {
     expect(postcodeOptionsFor(ROWS, viaPostcode.state, viaPostcode.city)).toContain(viaPostcode.postcode);
   });
 });
+
+// An imported / old-PMS order stores the state as "PENANG" or "KL" while the
+// dataset says "Pulau Pinang" / "Wilayah Persekutuan Kuala Lumpur". The exact
+// compare left City and Postcode empty ("No cities seeded") on edit.
+describe('legacy state spellings still narrow City and Postcode', () => {
+  it('PENANG finds the Pulau Pinang cities and postcodes', () => {
+    expect(cityOptionsFor(ROWS, 'PENANG')).toEqual(['George Town']);
+    expect(postcodeOptionsFor(ROWS, 'PENANG', '')).toEqual(['10000']);
+    expect(postcodeOptionsFor(ROWS, 'PENANG', 'GEORGE TOWN')).toEqual(['10000']);
+  });
+  it('KL and N.S. style codes resolve too', () => {
+    expect(cityOptionsFor(ROWS, 'KL')).toEqual(['Kuala Lumpur', 'Taman Melati']);
+    expect(cityOptionsFor(ROWS, 'Kuala Lumpur')).toEqual(['Kuala Lumpur', 'Taman Melati']);
+  });
+  it('an unknown state still yields nothing', () => {
+    expect(cityOptionsFor(ROWS, 'Atlantis')).toEqual([]);
+  });
+});
