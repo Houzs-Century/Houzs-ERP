@@ -1232,7 +1232,8 @@ export const PurchaseOrderDetail = () => {
       {lockedDueToChildren && (
         <div className={styles.bannerWarn} style={{ marginBottom: 'var(--space-3)' }}>
           <strong>Locked — has a Goods Receipt.</strong>{' '}
-          Cancel or delete the downstream GRN to edit this PO again.
+          Cancel or delete the downstream GRN to edit this PO again. If the supplier cannot deliver an item
+          that is not received yet, remove it with <strong>Raise amendment</strong> on the PO page instead.
         </div>
       )}
 
@@ -1603,7 +1604,9 @@ const SupplierCard = ({
             <span>
               This PO has a Goods Receipt, so its <strong>supplier, currency, purchase location</strong> and
               line items are locked — a GRN was received against them. Its dates and notes are still editable.
-              To change a locked field, cancel the GRN first, then edit the PO.
+              To change a locked field, cancel the GRN first, then edit the PO. To drop an item the supplier
+              cannot deliver and that is not received yet, use <strong>Raise amendment</strong> on the PO page
+              and remove that line.
             </span>
           </div>
         )}

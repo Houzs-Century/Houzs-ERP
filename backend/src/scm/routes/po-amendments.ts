@@ -35,7 +35,8 @@ import { planStockRelease, type AllocationRow } from '../lib/po-allocations';
    current truth. po-revision re-exports so-revision's ReceivedFloorError (same
    class), so the one imported above already covers both engines. */
 import { reviseBoundPo } from '../lib/so-revision';
-import { enqueueEdit } from '../lib/autocount-outbox';
+import { enqueueEdit, type AcRetiredLine } from '../lib/autocount-outbox';
+import { recomputeSoPicked } from './mfg-purchase-orders';
 import { hasHouzsPerm, holdsHouzsPermLiterally } from '../lib/houzs-perms';
 import { resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
 import {
@@ -404,6 +405,8 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
      between is picked up, never lost). A manual row keeps applyPoAmendment. */
   let appliedRevision: number;
   let appliedWarnings: string[];
+  let appliedRetire: AcRetiredLine[] = [];
+  let releasedSoItemIds: string[] = [];
   try {
     if (amendment.source_so_amendment_id) {
       const revised = await reviseBoundPo(sb, amendment.source_so_amendment_id, user.id, c, { onlyPoId: amendment.po_id });
@@ -418,6 +421,8 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
       const applied = await applyPoAmendment(sb, id, user.id, c);
       appliedRevision = applied.revision;
       appliedWarnings = applied.warnings;
+      appliedRetire = applied.retired;
+      releasedSoItemIds = applied.releasedSoItemIds;
     }
   } catch (e) {
     // Release the lease so a retry is clean.
@@ -453,6 +458,7 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
         'The received-status recount failed — the PO may show a stale received state until its next receipt or return.'];
     }
   }
+  await recomputeSoPicked(sb, releasedSoItemIds);
 
   const { data: updated, error: updErr } = await sb.from('po_amendments').update({
     status:      to,
@@ -502,6 +508,7 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
     docType: 'PO',
     docId: amendment.po_id,
     docNo: amendment.po_number,
+    retire: appliedRetire,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 
