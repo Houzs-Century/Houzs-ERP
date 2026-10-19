@@ -8,7 +8,8 @@ import { activeCompanySql, requireActiveCompanyId, scopeToCompany } from '../lib
 import { loadEventsBetween, type EventRow } from '../lib/event-tags';
 import { suggestEvents } from '../lib/event-match';
 import { todayMyt } from '../lib/my-time';
-import { extractOneBill, matchSupplier, normalizeVendor, BILL_IMAGE_MIMES, MAX_BILLS_PER_CALL, MAX_FILES_PER_BILL, MAX_BILL_FILE_BYTES } from '../../acc/bill-extract';
+import { extractOneBill, matchSupplier, normalizeVendor, BILL_IMAGE_MIMES, BILL_MODEL, MAX_BILLS_PER_CALL, MAX_FILES_PER_BILL, MAX_BILL_FILE_BYTES } from '../../acc/bill-extract';
+import { requestAiTag } from '../../services/aiUsage';
 import { toBase64 } from '../lib/scan-ocr';
 import { scanTimer } from '../lib/scan-timing';
 import { keepScanFile } from '../lib/scan-files';
@@ -119,7 +120,7 @@ export const extractBillsHandler = async (c: any) => {
       const files = (bills[i]!.files as Array<{ name?: unknown; mime?: unknown; dataBase64?: unknown }>).map((f) => ({
         name: String(f.name ?? `file-${i}`), mime: String(f.mime ?? ''), dataBase64: String(f.dataBase64 ?? ''),
       }));
-      read[i] = await extractOneBill(apiKey, files);
+      read[i] = await extractOneBill(apiKey, files, requestAiTag(c, 'bill_extract', BILL_MODEL));
     }
   }));
   await kept; // originals are kept alongside the reads; keepScanFile never throws

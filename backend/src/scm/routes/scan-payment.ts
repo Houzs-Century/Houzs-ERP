@@ -59,6 +59,7 @@ import { activeCompanyId } from '../lib/companyScope';
 import type { Env, Variables } from '../env';
 import { paginateAll } from '../lib/paginate-all';
 import { getBranding } from '../../services/branding';
+import { recordAi, requestAiTag } from '../../services/aiUsage';
 import { slipBindings, expiresInOneHour } from '../lib/slip';
 import { buildSlipKey, type SlipMime } from '../lib/r2';
 import { scanTimer } from '../lib/scan-timing';
@@ -507,9 +508,10 @@ scanPayment.post('/extract', async (c) => {
   let errorMsg: string | null = null;
   let parsed: ExtractedReceipt | null = null;
   let claudeText = '';
+  const usage = requestAiTag(c, 'scan_payment', CLAUDE_MODEL);
 
   try {
-    const resp = await fetch(ANTHROPIC_URL, {
+    const resp = await recordAi(usage, fetch(ANTHROPIC_URL, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -537,7 +539,7 @@ scanPayment.post('/extract', async (c) => {
           },
         ],
       }),
-    });
+    }));
 
     const bodyText = await resp.text();
     timer.mark('model');

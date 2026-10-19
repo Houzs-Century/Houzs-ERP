@@ -40,7 +40,7 @@ describe("translateAnnouncement attempt timeout", () => {
         );
       }),
     );
-    const out = await translateAnnouncement({ title: "T", body: "B", apiKey: "k" });
+    const out = await translateAnnouncement({ title: "T", body: "B", apiKey: "k", usage: null });
     expect(out?.en.title).toBe("T");
     expect(signals).toHaveLength(1);
     expect(signals[0]).toBeInstanceOf(AbortSignal);
@@ -55,7 +55,7 @@ describe("translateAnnouncement attempt timeout", () => {
       }),
     );
     await expect(
-      translateAnnouncement({ title: "T", body: "B", apiKey: "k" }),
+      translateAnnouncement({ title: "T", body: "B", apiKey: "k", usage: null }),
     ).resolves.toBeNull();
   });
 });

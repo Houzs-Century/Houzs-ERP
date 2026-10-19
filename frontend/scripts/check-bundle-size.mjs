@@ -245,7 +245,12 @@ const CEILINGS = {
   // (supplier sofa pricing headers) added NO eager module; only the lazy
   // SupplierDetail chunk's hashed name changed in the entry's lazy-chunk map,
   // and gzip of the new hash cost a few bytes. Any lazy-page edit could trip it.
-  INITIAL_JS_GZIP: 172 * KB,
+  // 172 -> 173 on 2026-10-18: main sat AT 172.0 and the module dashboards
+  // (PR #4706) added NO eager module: two lazy() routes (Procurement /
+  // Logistic Overview), their manifest lines and four Sidebar entries renamed
+  // or added (each module opens with its overview; icons the shell already
+  // loads). Measured +0.2 KB on the entry. Same shell-growth mechanism.
+  INITIAL_JS_GZIP: 173 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT

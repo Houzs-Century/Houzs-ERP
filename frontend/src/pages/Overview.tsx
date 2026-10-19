@@ -8,7 +8,11 @@ import { Button } from "../components/Button";
 import { Badge } from "../components/Badge";
 import { AckTrendCard, AnnouncementBannerStack, TeamPendingCard } from "../components/AnnouncementDashboard";
 import { cn } from "../lib/utils";
-import { fmtDate } from "../vendor/shared/format";
+import { fmtDate, fmtSen, todayMY } from "../vendor/shared/format";
+import { formatCurrency } from "../lib/utils";
+import { totalsOf, type OvProject } from "./projects/projectOverviewModel";
+import { ManagementWatch, type WatchInputs } from "./overview/ManagementWatch";
+import { DashboardPeriodPicker, useDashboardPeriod } from "../components/scm-v2/DashboardPeriod";
 
 // ── Types for the data this page aggregates ──────────────────
 interface InboxItem {
@@ -47,7 +51,7 @@ const SEV_BADGE: Record<string, { tone: "accent" | "warning" | "error" | "succes
 };
 
 export function Overview() {
-  const { user, can } = useAuth();
+  const { user, can, pageAccess } = useAuth();
   const navigate = useNavigate();
 
   // OFF-NOT-HIDE: the home dashboard's org-summary KPIs hit permission-gated
@@ -66,6 +70,39 @@ export function Overview() {
     [],
     { enabled: can("projects.read") },
   );
+
+  /* The module overviews' headline figures, each fetched only for a viewer of
+     that module (OFF-NOT-HIDE, as above). */
+  const today = todayMY();
+  /* The figures below follow the dashboard period (this month by default). */
+  const [period, setPeriod] = useDashboardPeriod(today, "from", "to", []);
+  const pFrom = period.from; const pTo = period.to;
+  const proc = useQuery<NonNullable<WatchInputs["procurement"]> & { total: { open: { sen: number } } }>("/api/scm/procurement-overview#home",
+    () => api.get(`/api/scm/procurement-overview?from=${pFrom}&to=${pTo}`),
+    [pFrom, pTo],
+    { enabled: pageAccess("scm.procurement.po") !== "none" },
+  );
+  const logi = useQuery<NonNullable<WatchInputs["logistic"]> & { runsToday: number; weeks: { doCount: number; current: boolean }[] }>("/api/scm/logistic-overview",
+    () => api.get("/api/scm/logistic-overview"),
+    [],
+    { enabled: pageAccess("scm.transportation.drivers") !== "none" },
+  );
+  /* The same figures as Project Overview: keyed books, else the event's Sales Orders. */
+  const pnl = useQuery<{ projects: OvProject[] }>("/api/projects/overview",
+    () => api.get("/api/projects/overview"),
+    [],
+    { enabled: !!user?.project_finance_viewer && pageAccess("projects.finances") !== "none" },
+  );
+  const gaps = useQuery<NonNullable<WatchInputs["projectGaps"]>>("/api/projects/data-gaps",
+    () => api.get("/api/projects/data-gaps"),
+    [],
+    { enabled: !!user?.project_finance_viewer && pageAccess("projects.finances") !== "none" },
+  );
+  const watchInputs: WatchInputs = { logistic: logi.data ?? null, procurement: proc.data ?? null, service: assr.data ?? null, projectGaps: gaps.data ?? null };
+  const pct = (part: number, whole: number) => (whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : "—");
+  const pt = pnl.data ? totalsOf(pnl.data.projects.filter((x) => !!x.startDate && x.startDate >= pFrom && x.startDate <= pTo)) : undefined;
+  const po = proc.data?.total.open;
+  const thisWeek = logi.data?.weeks.find((w) => w.current);
 
   const now = new Date();
   /* The WEEKDAY is a word by design; the date beside it is the one rule. */
@@ -102,10 +139,10 @@ export function Overview() {
   const review = num(inboxUnknown, c?.review_queue);
 
   const kpis: { label: string; value: string; sub: string }[] = [
-    { label: "Revenue MTD", value: "—", sub: "No source yet" },
-    { label: "Outstanding PO", value: "—", sub: "Pending SCM" },
+    { label: "Project sales", value: pnl.loading ? "…" : pt ? formatCurrency(pt.sales) : "—", sub: pt ? `${pt.projects} projects · GP ${pct(pt.gp, pt.sales)}${pt.fromSalesOrders ? ` · ${pt.fromSalesOrders} from Sales Orders` : ""}` : pnl.error ? "Couldn't load" : "Project finance viewers only" },
+    { label: "PO not received", value: proc.loading ? "…" : po ? fmtSen(po.sen) : "—", sub: po ? `${po.lines} open lines · ${po.late} late` : proc.error ? "Couldn't load" : "Procurement only" },
     { label: "Open Cases", value: assr.loading ? "…" : num(assrUnknown, assr.data?.active_count), sub: assrUnknown ? "Couldn't load" : `${slaRisk} SLA risks` },
-    { label: "Trips Today", value: "—", sub: "Logistics TBD" },
+    { label: "Runs today", value: logi.loading ? "…" : logi.data ? String(logi.data.runsToday) : "—", sub: thisWeek ? `${thisWeek.doCount} DO issued this week` : logi.error ? "Couldn't load" : "Logistics only" },
     { label: "Active Projects", value: projects.loading ? "…" : num(projectsUnknown, projects.data?.live_count), sub: projectsUnknown ? "Couldn't load" : `${projects.data?.upcoming_30d ?? 0} due this month` },
   ];
 
@@ -157,6 +194,10 @@ export function Overview() {
       </div>
 
       {/* ── KPI ribbon ──────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <DashboardPeriodPicker period={period} today={today} onChange={setPeriod} />
+        <span className="text-[11.5px] text-ink-muted">Project sales, P&amp;L and PO figures follow this period; open cases, runs and projects are live.</span>
+      </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {kpis.map((k) => (
           <div key={k.label} className="relative overflow-hidden rounded-xl border border-border bg-surface px-4 py-4 shadow-stone">
@@ -173,7 +214,10 @@ export function Overview() {
         ))}
       </div>
 
-      {/* ── Two columns: needs-me feed + pipeline/P&L ───────────── */}
+      {/* ── What every module overview found, ranked ──────────── */}
+      <ManagementWatch inputs={watchInputs} loading={logi.loading || proc.loading || gaps.loading || assr.loading} />
+
+      {/* ── Two columns: needs-me feed + P&L of the period ──────── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.3fr_1fr]">
         {/* Needs me */}
         <div className="rounded-xl border border-border bg-surface p-4 shadow-stone sm:p-5">
@@ -218,19 +262,16 @@ export function Overview() {
           )}
         </div>
 
-        {/* Pipeline + P&L (data sources pending — shown honestly) */}
+        {/* P&L of the period, opening Project Overview on it. */}
         <div className="space-y-4">
-          <div className="rounded-xl border border-border bg-surface p-4 shadow-stone sm:p-5">
-            <h2 className="mb-3 text-[15px] font-bold text-ink">Sales Pipeline</h2>
-            <div className="rounded-lg border border-dashed border-border bg-surface-2 px-4 py-6 text-center text-[12px] text-ink-muted">
-              No data yet — shows once the pipeline API is wired.
+          <button onClick={() => navigate(`/projects?view=finances&af_from=${pFrom}&af_to=${pTo}`)}
+            className="block w-full rounded-xl border border-primary/30 bg-primary-soft p-4 text-left shadow-stone sm:p-5">
+            <div className="font-mono text-[10px] font-bold uppercase tracking-brand text-primary-ink">Project P&amp;L · {period.label}</div>
+            <div className="mt-1.5 font-display text-[30px] font-extrabold leading-none text-primary-ink">{pt ? formatCurrency(pt.np) : "—"}</div>
+            <div className="mt-1.5 text-[11px] text-primary-ink/70">
+              {pt ? `Net profit ${pct(pt.np, pt.sales)} on sales ${formatCurrency(pt.sales)} · COGS ${formatCurrency(pt.cogs)} · rental ${formatCurrency(pt.rental)}${pt.fromSalesOrders ? ` · ${pt.fromSalesOrders} projects from Sales Orders, not settled` : ""}` : pnl.error ? "Couldn't load" : "Project finance viewers only"}
             </div>
-          </div>
-          <div className="rounded-xl border border-primary/30 bg-primary-soft p-4 shadow-stone sm:p-5">
-            <div className="font-mono text-[10px] font-bold uppercase tracking-brand text-primary-ink">P&amp;L This Month</div>
-            <div className="mt-1.5 font-display text-[30px] font-extrabold leading-none text-primary-ink">—</div>
-            <div className="mt-1.5 text-[11px] text-primary-ink/70">Shows once the finance API is wired</div>
-          </div>
+          </button>
         </div>
       </div>
     </div>

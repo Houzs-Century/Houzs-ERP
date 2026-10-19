@@ -46,7 +46,8 @@
 import type { Env } from "../../types";
 import { activeInstructions, readAgentSetting } from "../agent-console";
 import { registerAgent } from "../agent-scheduler";
-import { askAgentBrain, type AgentBrainUsageSink } from "../agent-brain";
+import { AGENT_BRAIN_MODEL, askAgentBrain, type AgentBrainUsageSink } from "../agent-brain";
+import { agentFeature } from "../aiUsage";
 
 // ── Tunables (module-constant defaults; per-key overrides may live in
 //    app_settings['agents.document'] as whole-day numbers) ───────────────────
@@ -1096,6 +1097,7 @@ registerAgent({
         payload: { brief: compactDocumentBrief(r.brief), ownerInstructions },
         maxTokens: 400,
         usageSink: sink,
+        aiUsage: { env, feature: agentFeature("DOCUMENT"), model: AGENT_BRAIN_MODEL, companyId: null, userId: null, waitUntil: null },
       });
       ctx.addTokens(sink.tokensIn, sink.tokensOut);
       if (focus) {

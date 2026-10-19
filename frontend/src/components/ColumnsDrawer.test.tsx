@@ -323,7 +323,7 @@ describe("Sales Orders column groups", () => {
     const source = await import("node:fs").then((fs) =>
       fs.readFileSync("src/pages/scm-v2/MfgSalesOrdersListV2.tsx", "utf8"),
     );
-    const start = source.indexOf("const columns: Column<SoRow, SoListLine>[] = [");
+    const start = source.indexOf("const columns: Column<SoRow, SoListLine>[] = ");
     expect(start).toBeGreaterThan(0);
     const columnsBlock = source.slice(start, source.indexOf("/* One pill per vocabulary status"));
     const keys = [...columnsBlock.matchAll(/\bkey: "([a-z0-9_]+)"/g)].map((m) => m[1]);

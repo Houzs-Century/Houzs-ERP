@@ -81,6 +81,7 @@ import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER,
   AMENDMENT_NOTHING_TO_SUBMIT } from '../../vendor/scm/lib/so-amendment-submit';
 import { useAmendmentSubmitDialog, RequestProcessingDateRemoval } from '../../vendor/scm/components/AmendmentSubmitDialog';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { soConfirmDateNote } from '../../lib/soConfirmDateNote';
 import { addressLineProps } from '../../lib/acColumnWidths';
 /* lib/utils formatDate (NOT the vendored fmtDate) for the amendment's header
    dates: these are bare YYYY-MM-DD strings, and fmtDate's `new Date(d)` parses
@@ -2063,9 +2064,10 @@ export const SalesOrderDetail = () => {
             </Button>
             <Button variant="primary"
               onClick={async () => {
+                const dateNote = soConfirmDateNote(header.processing_date, header.customer_delivery_date);
                 if (!(await askConfirm({
                   title: `Confirm ${header.doc_no}?`,
-                  body: 'This turns the draft into a live, confirmed sales order — it will appear in MRP / PO / DO flows and KPIs.',
+                  body: <>This turns the draft into a live, confirmed sales order — it will appear in MRP / PO / DO flows and KPIs.{dateNote && <><br /><br /><strong>{dateNote}</strong></>}</>,
                   confirmLabel: 'Confirm Order',
                 }))) return;
                 updateStatus.mutate({ docNo: header.doc_no, status: 'CONFIRMED', expectedStatus: header.status });

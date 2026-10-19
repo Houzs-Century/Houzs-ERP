@@ -57,6 +57,7 @@ const MIG_DIR = join(ROOT, "src", "db", "migrations-pg");
 const ACCEPTED = new Map([
   ["fabric_colours.colour_id", "lookup table, a few dozen rows: seq scan is the cheaper plan"],
   ["fabric_colours.label", "same lookup table"],
+  ["mfg_sales_orders.venue", "Sales Orders column funnel: a case-insensitive EXACT match on a value picked from the list (no wildcard), run once per filter pick, not per keystroke; a trigram index serves wildcard search, not this"],
 ]);
 
 /**

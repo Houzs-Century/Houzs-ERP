@@ -360,7 +360,8 @@ async function loadAndPack(
     .eq('active', true)
     .eq('is_internal', true)
     .order('plate');
-  if (depotWarehouseId) lq = lq.or(`warehouse_id.is.null,warehouse_id.eq.${depotWarehouseId}`);
+  // A lorry serving several warehouses is eligible at each of them; none set = any.
+  if (depotWarehouseId) lq = lq.or(`warehouse_ids.eq.{},warehouse_ids.cs.{${depotWarehouseId}}`);
   const { data: lorryRows, error: lorryErr } = await lq;
   if (lorryErr) return { ok: false, status: 500, error: 'load_failed', reason: lorryErr.message };
   const lorries: PackLorry[] = ((lorryRows ?? []) as Array<Record<string, unknown>>).map((l) => {
