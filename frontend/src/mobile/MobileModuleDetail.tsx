@@ -457,6 +457,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     meta: (h) => [
       ["Received", dmy(h.received_at)],
       ["Delivery Note", firstOf(h.delivery_note_ref)],
+      ["Warehouse", firstOf(h.warehouse_code)],
       ["Supplier", firstOf(nested(h.supplier)?.code)],
       ["Currency", firstOf(h.currency)],
     ],
