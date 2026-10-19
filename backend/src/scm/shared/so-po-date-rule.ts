@@ -13,9 +13,12 @@
 //   2. Postponing the Delivery Date is Logistic's alone. Bringing it FORWARD on
 //      an order with a live PO asks the supplier for the goods sooner, so the
 //      Purchaser must OK it before Logistic can approve it.
+//      HC-0114 (Syu, owner 2026-10-16): only while a PO is still waiting on the
+//      supplier. Once every live PO is RECEIVED the goods are in the warehouse
+//      and the date is Logistic's last mile alone (HC-SO-012039, READY_TO_SHIP).
 //
-// Pure: the caller resolves `hasLivePo` (lib/so-po-lock soHasLivePo) and the
-// stored dates. Dates are compared as YYYY-MM-DD strings, '' for none.
+// Pure: the caller resolves `hasLivePo` / `hasUnreceivedPo` (lib/so-po-lock)
+// and the stored dates. Dates are compared as YYYY-MM-DD strings, '' for none.
 
 /** The exception (Sim 2026-10-12): only the Purchaser handles a Processing Date
  *  change once a PO exists, never sales. Granted to the Purchaser role
@@ -34,7 +37,7 @@ export const PROCESSING_DATE_PO_LOCKED = {
 export const PURCHASER_OK_REQUIRED = {
   error: 'purchaser_ok_required',
   message:
-    'This brings the Delivery Date forward on an order that already has a Purchase Order. '
+    'This brings the Delivery Date forward on an order whose Purchase Order is not fully received yet. '
     + 'A Purchaser must OK it first.',
 } as const;
 
@@ -53,11 +56,17 @@ export function deliveryBroughtForward(storedDeliv: string, nextDeliv: string): 
   return storedDeliv !== '' && nextDeliv !== '' && nextDeliv < storedDeliv;
 }
 
+/** Is the supplier still owed goods on a PO in this status? */
+export function poAwaitingSupplier(status: string | null | undefined): boolean {
+  const s = String(status ?? '').toUpperCase();
+  return s !== 'CANCELLED' && s !== 'RECEIVED';
+}
+
 /** Does this DELIVERY-lane request need the Purchaser's OK before Logistic signs? */
 export function deliveryNeedsPurchaserOk(args: {
   storedDeliv: string;
   nextDeliv: string | null;
-  hasLivePo: boolean;
+  hasUnreceivedPo: boolean;
 }): boolean {
-  return args.hasLivePo && args.nextDeliv != null && deliveryBroughtForward(args.storedDeliv, args.nextDeliv);
+  return args.hasUnreceivedPo && args.nextDeliv != null && deliveryBroughtForward(args.storedDeliv, args.nextDeliv);
 }

@@ -6,6 +6,10 @@
  *  · a Delivery Date brought forward under a PO waits for PATCH /purchaser-ok,
  *    which only a Purchaser can give, and Logistic's approve then goes through;
  *  · a postponed Delivery Date stays Logistic's alone.
+ *
+ * HC-0114 (Syu, owner 2026-10-16) — HC-SO-012039 was READY_TO_SHIP and its
+ * Delivery Date brought forward still waited on a Purchaser. Once every PO is
+ * RECEIVED the goods are in, so Logistic approves alone.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
@@ -124,6 +128,28 @@ describe('approve-so under a live PO', () => {
     seed('CANCELLED');
     expect(await errorOf(await call(PURCHASER, 'A1', 'approve-so'))).toBe('reached-claim');
     expect(await errorOf(await call(LOGISTIC, 'A2', 'approve-so'))).toBe('reached-claim');
+  });
+});
+
+describe('HC-0114: every PO received', () => {
+  it('Logistic approves a Delivery Date brought forward alone', async () => {
+    seed('RECEIVED');
+    expect(await errorOf(await call(LOGISTIC, 'A2', 'approve-so'))).toBe('reached-claim');
+  });
+
+  it('a Purchaser OK is not asked for', async () => {
+    seed('RECEIVED');
+    expect(await errorOf(await call(PURCHASER, 'A2', 'purchaser-ok'))).toBe('purchaser_ok_not_needed');
+  });
+
+  it('the Processing Date stays frozen by the received PO', async () => {
+    seed('RECEIVED');
+    expect(await errorOf(await call(PURCHASER, 'A1', 'approve-so'))).toBe('processing_date_po_locked');
+  });
+
+  it('a PO only partly received still needs the Purchaser', async () => {
+    seed('PARTIALLY_RECEIVED');
+    expect(await errorOf(await call(LOGISTIC, 'A2', 'approve-so'))).toBe('purchaser_ok_required');
   });
 });
 
