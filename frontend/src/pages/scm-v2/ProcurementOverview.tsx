@@ -328,7 +328,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
 
           <section id="dead">
             <Panel title="Excess stock · dead and buffer" right={<ScopePicker value={scope} onChange={setScope} />}
-              hint={`matched per item and variant · ${d.deadStock.coverDays} days of normal outflow left out of both · ${STOCK_SCOPE_OPTIONS.find(([k]) => k === scope)?.[1].toLowerCase()} · as of today`}>
+              hint={`matched per item and variant · ${STOCK_SCOPE_OPTIONS.find(([k]) => k === scope)?.[1].toLowerCase()} · as of today`}>
               <div className="mb-3 grid gap-2 sm:grid-cols-3">
                 <ExcessFigure label="Dead · no order at all" sen={d.deadStock.deadSen} items={d.deadStock.deadSkus} of={d.deadStock.totalSen} />
                 <ExcessFigure label="Buffer · bought before it was needed" sen={d.deadStock.bufferSen} items={d.deadStock.bufferSkus} of={d.deadStock.totalSen} />
@@ -351,12 +351,12 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
                   </table>
                 ) : (
                   <table className="mt-1 w-full border-collapse">
-                    <thead className="sticky top-0 bg-surface"><tr><Th left>Item / variant</Th><Th left>Warehouse</Th><Th>On hand</Th><Th>Orders with a date</Th><Th>Orders, no date</Th><Th>{d.deadStock.coverDays} days of outflow</Th><Th>Buffer qty</Th><Th>Value</Th><Th>Last received</Th><Th>Held</Th></tr></thead>
+                    <thead className="sticky top-0 bg-surface"><tr><Th left>Item / variant</Th><Th left>Warehouse</Th><Th>On hand</Th><Th>Orders with a date</Th><Th>Orders, no date</Th><Th>Buffer qty</Th><Th>Value</Th><Th>Last received</Th><Th>Held</Th></tr></thead>
                     <tbody>{d.deadStock.bufferTop.slice(0, 40).map((r) => (
                       <tr key={`${r.itemCode}|${r.variantKey}`}>
                         <Td left><span title={r.name ?? ""}>{r.itemCode}</span>{r.variantKey && <span className="block max-w-[320px] truncate text-[10.5px] text-ink-muted">{r.variantKey}</span>}</Td>
                         <Td left className="text-ink-secondary">{r.warehouses}</Td>
-                        <Td>{r.onHand}</Td><Td>{r.scheduled}</Td><Td>{r.unscheduled}</Td><Td>{r.cover}</Td>
+                        <Td>{r.onHand}</Td><Td>{r.scheduled}</Td><Td>{r.unscheduled}</Td>
                         <Td className="font-semibold">{r.bufferQty}</Td><Td>{rm(r.valueSen)}</Td>
                         <Td>{r.lastIn ?? "—"}</Td><Td className={(r.heldDays ?? 0) > 90 ? "text-err" : ""}>{r.heldDays != null ? `${r.heldDays} days` : "—"}</Td>
                       </tr>
@@ -366,7 +366,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
               </div>
               <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[11px] text-ink-muted">
                 <li>Dead = on hand of an item and variant that no open sales order wants, less what normally goes out in {d.deadStock.coverDays} days. It does not sell: clear it.</li>
-                <li>Buffer = on hand − orders with a delivery date − {d.deadStock.coverDays} days of outflow, for items that do have orders. It sells, but was bought early or too much: cash held. Sofas and bedframes count only orders for the same fabric and size.</li>
+                <li>Buffer = on hand − orders with a delivery date, for items that do have orders: e.g. 30 on hand, 5 on dated orders, 25 waiting for a date = 25 buffer, valued at 25 × cost. It sells, but was bought before it was needed: cash held. Sofas and bedframes count only orders for the same fabric and size.</li>
                 <li>An item is in one or the other, never both, so the two add up.</li>
               </ul>
               <div className="mt-4 text-[12px] font-semibold text-ink">Dead stock by how long since it last went out</div>
