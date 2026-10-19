@@ -50,11 +50,14 @@ projectDataGaps.get("/", async (c) => {
             ${sum("l.kind = 'cost' AND l.category = 'setup'")} AS setup,
             ${sum("l.kind = 'cost' AND l.category IN ('transport_fee','transport')")} AS transport_fee,
             ${sum("l.kind = 'cost' AND l.category = 'transport_setup_dismantle'")} AS transport_setup,
-            ${sum("l.kind = 'cost' AND l.category = 'merchandise'")} AS merchandise
+            ${sum("l.kind = 'cost' AND l.category = 'merchandise'")} AS merchandise,
+            ${sum("l.kind = 'cost' AND l.category IN ('cogs_matt_sofa','cogs')")} AS cogs_matt_sofa,
+            ${sum("l.kind = 'cost' AND l.category = 'cogs_bedframe'")} AS cogs_bedframe,
+            ${sum("l.kind = 'cost' AND l.category = 'cogs_accessories'")} AS cogs_accessories
        FROM projects p
       WHERE p.archived_at IS NULL
         AND substr(p.end_date, 1, 10) >= ? AND substr(p.end_date, 1, 10) <= ?${activeCompanySql(c, "p.company_id")}`,
-  ).bind(from, to).all<Omit<GapProject, "soSen"> & { rental: number; setup: number; transport_fee: number; transport_setup: number; merchandise: number }>();
+  ).bind(from, to).all<Omit<GapProject, "soSen"> & { rental: number; setup: number; transport_fee: number; transport_setup: number; merchandise: number; cogs_matt_sofa: number; cogs_bedframe: number; cogs_accessories: number }>();
   const projects = rows.results;
 
   const ids = projects.map((p) => String(p.id));
@@ -72,7 +75,8 @@ projectDataGaps.get("/", async (c) => {
   const books = projects.map((p) => ({
     id: p.id, name: p.name, brand: p.brand, endDate: String(p.end_date ?? "").slice(0, 10), soSen: soSen.get(p.id) ?? 0,
     lines: {
-      sales: Number(p.income), cogs: Number(p.cogs), rental: Number(p.rental), setup: Number(p.setup), transportFee: Number(p.transport_fee),
+      sales: Number(p.income), cogs: Number(p.cogs),
+      cogsMattSofa: Number(p.cogs_matt_sofa), cogsBedframe: Number(p.cogs_bedframe), cogsAccessories: Number(p.cogs_accessories), rental: Number(p.rental), setup: Number(p.setup), transportFee: Number(p.transport_fee),
       transportSetup: Number(p.transport_setup), commission: Number(p.commission), merchandise: Number(p.merchandise),
     },
   })).sort((a, b) => b.endDate.localeCompare(a.endDate));
