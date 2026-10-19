@@ -57,7 +57,7 @@ export function ProjectOverviewPage() {
   /* The lines of the Financial Snapshot, each against sales (owner 2026-10-19). */
   const cogsLines: Array<[string, number, string]> = [
     ["COGS — Matt / Sofa", t.cogsMattSofa, PALETTE[1]!], ["COGS — Bedframe", t.cogsBedframe, "#c98a4b"], ["COGS — Accessories", t.cogsAccessories, "#e0b184"],
-    ...(t.cogsFromSo ? [["COGS — from Sales Orders (not split)", t.cogsFromSo, "#b07a3f"] as [string, number, string]] : []),
+    ...(Math.abs(t.cogsFromSo) >= 1 ? [["COGS — order cost not on a line", t.cogsFromSo, "#b07a3f"] as [string, number, string]] : []),
   ];
   const costLines: Array<[string, number, string]> = [
     ["Rental", t.rental, PALETTE[2]!], ["Setup", t.setup, PALETTE[5]!], ["Transport fee", t.transportFee, PALETTE[8]!],

@@ -159,7 +159,7 @@
 ## 4. Project Overview（项目 / 展会）
 
 - 项目按开始日期归到期间。
-- Sales：有在项目里填账（keyed books）就用填的；没填就用这个项目的销售单金额，COGS 用销售单成本。每个项目标明数字来源（Books / Sales Orders · not settled / No sales yet）。
+- Sales：有在项目里填账（keyed books）就用填的；没填就用这个项目的销售单金额，COGS 用销售单成本，按每行货的类别分到 Matt / Sofa（mattress、sofa）、Bedframe、Accessories（其余）。每个项目标明数字来源（Books / Sales Orders · not settled / No sales yet）。
 - Books not complete：已结束的活动里，人手填的几行哪一行还没填：Sales、COGS（Matt / Sofa、Bedframe、Accessories 分开看）、Rental、Setup。Commission、Merchandise、Transport 是自动算的，不检查。
 - Gross profit = Sales − COGS。Net profit = Gross profit − 租金 − 佣金 − 搭建 − 运输 − 宣传品 − 其他。
 - Trend：先看每一年，点一年看它的四个季度，点一个季度看它的三个月，点一个月看这个月每周（1–7、8–14、15–21、22 号到月底）。点某一周，整页就切到那一周。
