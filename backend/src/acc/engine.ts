@@ -331,7 +331,7 @@ export type ReverseJournalResult =
       was voided — the number a reader recognises, which the contra's is not. */
   | { ok: true; status: 'reversed'; jeNo: string; jeId: string; originalJeNo: string }
   | { ok: true; status: 'already_reversed' | 'nothing_to_reverse' }
-  | { ok: false; status: 'reversal_read_failed' | 'reversal_insert_failed' | 'reversal_lines_failed'; reason?: string };
+  | { ok: false; status: 'reversal_read_failed' | 'reversal_insert_failed' | 'reversal_lines_failed' | 'reversal_post_failed' | 'reversal_flag_failed'; reason?: string };
 
 export async function reverseJournal(sb: any, input: ReverseJournalInput): Promise<ReverseJournalResult> {
   const revType = REVERSAL_SOURCE[input.sourceType] ?? `${input.sourceType}_REVERSAL`;
@@ -489,8 +489,25 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
   // Post the contra + flag the original. Order matters: if the flag update
   // fails the contra still exists, so the reversed_by_je guard makes a retry
   // idempotent instead of double-voiding.
-  await sb.from('journal_entries').update({ posted: true }).eq('id', revJe.id);
-  await sb.from('journal_entries').update({ reversed: true, reversed_by_je: revJe.id }).eq('id', orig.id);
+  //
+  // BOTH answers are read (owner 2026-10-20, 「这样要修」). Unread, a contra the
+  // database refused to post — the one-active index refused every SECOND void
+  // of a document until 20261020T1100 — still flagged the original reversed
+  // and answered ok, so the caller booked afresh over a void that never posted:
+  // 35 such contras in production by 2026-10-20. A refused post now takes the
+  // unposted contra back out and leaves the original live, so the caller stops
+  // with nothing half-done.
+  const { error: postErr } = await sb.from('journal_entries').update({ posted: true }).eq('id', revJe.id);
+  if (postErr) {
+    await sb.from('journal_entry_lines').delete().eq('journal_entry_id', revJe.id);
+    await sb.from('journal_entries').delete().eq('id', revJe.id);
+    return { ok: false, status: 'reversal_post_failed', reason: postErr.message };
+  }
+  // The contra is posted. If the flag does not stick, the caller must not book
+  // afresh over an original the books still count; its retry lands on the
+  // reversed_by_je guard above, which makes the flag stick and answers ok.
+  const { error: flagErr } = await sb.from('journal_entries').update({ reversed: true, reversed_by_je: revJe.id }).eq('id', orig.id);
+  if (flagErr) return { ok: false, status: 'reversal_flag_failed', reason: flagErr.message };
 
   return { ok: true, status: 'reversed', jeNo: revJe.je_no, jeId: revJe.id, originalJeNo: orig.je_no };
 }
