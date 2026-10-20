@@ -14,6 +14,9 @@ import { authedFetch } from './authed-fetch';
 import { writeFailedAs } from './mutation-error';
 import { fmtDayMonthRange } from '../../shared/format';
 
+/** One brand's booth inside a row (backend twin `FairBooth`). */
+export type FairBooth = { projectId: number; brand: string | null };
+
 /** One row in the picker: a place, an organizer and the event's PERIOD. */
 export type FairOption = {
   key: string;
@@ -29,6 +32,10 @@ export type FairOption = {
   startDate: string;
   endDate: string | null;
   projectIds: number[];
+  /** The booths with their brand — what Fair Links names each choice by (owner
+   *  2026-10-20). Optional so a response cached from before the field existed
+   *  still renders; its booths then read as "No brand". */
+  booths?: FairBooth[];
 };
 
 export type VenueMasterRow = { id: string; name: string };

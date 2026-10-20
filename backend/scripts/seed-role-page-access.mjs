@@ -46,11 +46,11 @@
 // Run under tsx (TS imports): npx tsx scripts/seed-role-page-access.mjs
 // ---------------------------------------------------------------------------
 import postgres from "postgres";
-import { PAGES, resolvePositionAccessFromRows } from "../src/services/pageAccess.ts";
-import { resolveMemberPageAccess } from "../src/services/memberPageAccess.ts";
-import { applySalesJdOverride } from "../src/services/salesJdAccess.ts";
 import { parsePermissions } from "../src/services/permissions.ts";
-import { policyRowFromDb } from "../src/services/positionPolicyRows.ts";
+import {
+  MONEY_STOCK_KEYS, PAGE_KEYS, shapeOf, memberCtx, baseWithRows,
+  readStoredRows, checkStoredAgainstPlan,
+} from "./lib/role-page-access-seed.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -65,75 +65,6 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
 
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const out = (m) => console.log(m);
-
-// Money / stock pages — the ones the plan says MUST be zero-diff. Printed on
-// their own line per role so a reviewer can see them without reading the map.
-const MONEY_STOCK_KEYS = [
-  "scm.finance", "scm.finance.accounting", "scm.finance.outstanding",
-  "scm.warehouse", "scm.warehouse.inventory", "scm.warehouse.adjustments",
-  "scm.warehouse.transfers", "scm.warehouse.stock_take",
-];
-
-const PAGE_KEYS = PAGES.map((p) => p.key);
-/** Stable string form of a page-access map over the full catalogue, for
- *  deep-equality and shape assertions (keys printed in catalogue order). */
-const shapeOf = (map) => JSON.stringify(PAGE_KEYS.map((k) => [k, map[k] ?? "none"]));
-
-/** The caller context for a member, built from one authority row. */
-function memberCtx(u) {
-  const permissions = new Set(parsePermissions(u.role_permissions));
-  const positionPolicy = policyRowFromDb({
-    position_id: u.position_id,
-    cohort: u.cohort,
-    profile: u.profile,
-    can_move_money: u.can_move_money,
-    can_write_config: u.can_write_config,
-    is_fleet: u.is_fleet,
-    duty: u.duty,
-  });
-  return {
-    permissions,
-    positionId: u.position_id ?? null,
-    positionName: u.position_name ?? null,
-    departmentName: u.user_department_name ?? null,
-    positionPolicy,
-  };
-}
-
-/** A member's BASE page access (pre-applySalesJdOverride) under the given rows —
- *  roleRows=[] reproduces the live policy / backfill (today's behaviour). */
-const baseWithRows = (ctx, roleRows) =>
-  resolveMemberPageAccess({
-    permissionsSet: ctx.permissions,
-    positionId: ctx.positionId,
-    positionName: ctx.positionName,
-    departmentName: ctx.departmentName,
-    positionPolicy: ctx.positionPolicy,
-    roleRows,
-  }).pageAccess;
-
-/** A member's FINAL page access = base + applySalesJdOverride (what login
- *  attaches to AuthUser.page_access). */
-const finalWithRows = (ctx, roleRows) =>
-  applySalesJdOverride(baseWithRows(ctx, roleRows), {
-    permissions: ctx.permissions,
-    position_name: ctx.positionName,
-    department_name: ctx.departmentName,
-    position_policy: ctx.positionPolicy,
-  });
-
-/** A member's resolved scm_l2_configured under the given rows — a NON-page
- *  output that must also be a no-op across the seed (the title-less path could
- *  otherwise flip it; see memberPageAccess.ts). */
-const scmL2WithRows = (ctx, roleRows) =>
-  resolveMemberPageAccess({
-    permissionsSet: ctx.permissions,
-    positionId: ctx.positionId,
-    positionName: ctx.positionName,
-    departmentName: ctx.departmentName,
-    positionPolicy: ctx.positionPolicy,
-    roleRows,
-  }).scmL2Configured;
 
 async function buildPlan(sql) {
   const roles = await sql`SELECT id, name, permissions, is_system FROM roles ORDER BY id`;
@@ -253,31 +184,19 @@ async function applyPlan(sql, p) {
 async function verify(p) {
   const fresh = postgres(DSN, { ssl: "require", prepare: false, max: 1 });
   try {
-    const problems = [];
+    // 1. Read the stored rows back and prove the read is WHOLE (one row per
+    //    page for every planned role) before comparing anything with it. A short
+    //    read throws with its counts rather than resolving every role to "none".
+    const stored = await readStoredRows({
+      read: () => fresh`SELECT role_id, page_key, level FROM role_page_access ORDER BY role_id, page_key`,
+      plans: p.plans,
+      log,
+    });
 
-    // 1. Stored rows round-trip to the computed base, for every role and page.
-    const stored = await fresh`SELECT role_id, page_key, level FROM role_page_access ORDER BY role_id, page_key`;
-    const storedByRole = new Map();
-    for (const r of stored) {
-      if (!storedByRole.has(r.role_id)) storedByRole.set(r.role_id, []);
-      storedByRole.get(r.role_id).push({ page_key: r.page_key, level: r.level });
-    }
-    for (const pl of p.plans) {
-      const rows = storedByRole.get(pl.role.id) ?? [];
-      const resolved = resolvePositionAccessFromRows(rows);
-      if (shapeOf(resolved) !== shapeOf(pl.base)) {
-        problems.push(`role ${pl.role.id} "${pl.role.name}": stored rows resolve to a DIFFERENT shape than the planned base`);
-      }
-      for (const k of MONEY_STOCK_KEYS) {
-        if ((resolved[k] ?? "none") !== (pl.base[k] ?? "none")) {
-          problems.push(`role ${pl.role.id} "${pl.role.name}": money/stock page ${k} is "${resolved[k]}", planned "${pl.base[k]}"`);
-        }
-      }
-    }
-
-    // 2. Every active member's NEW resolution (stored rows) equals their OLD one
-    //    (live policy, roleRows=[]) — the end-to-end no-op, applySalesJdOverride
-    //    included.
+    // 2. Stored rows round-trip to the planned base for every role, and every
+    //    active member's NEW resolution (stored rows) equals their OLD one (live
+    //    policy, roleRows=[]) — the end-to-end no-op, applySalesJdOverride
+    //    included. A role or member with no stored rows FAILS, it does not pass.
     const members = await fresh`
       SELECT u.id, u.role_id, r.permissions AS role_permissions,
              u.position_id, p.name AS position_name, d.name AS user_department_name,
@@ -288,31 +207,13 @@ async function verify(p) {
       LEFT JOIN departments d ON d.id = u.department_id
       LEFT JOIN position_policy pp ON pp.position_id = u.position_id
       WHERE u.status = 'active'`;
-    let checked = 0;
-    for (const m of members) {
-      const ctx = memberCtx(m);
-      const stored = storedByRole.get(m.role_id) ?? [];
-      const oldFinal = finalWithRows(ctx, []);
-      const newFinal = finalWithRows(ctx, stored);
-      if (shapeOf(oldFinal) !== shapeOf(newFinal)) {
-        problems.push(`member #${m.id} (role ${m.role_id}): NEW page access differs from OLD`);
-      }
-      // scm_l2_configured is a non-page output that must also not move — on the
-      // title-less path a seed of scm.*=none rows could otherwise flip it and
-      // make scmAreaGuard start enforcing.
-      const oldScmL2 = scmL2WithRows(ctx, []);
-      const newScmL2 = scmL2WithRows(ctx, stored);
-      if (oldScmL2 !== newScmL2) {
-        problems.push(`member #${m.id} (role ${m.role_id}): scm_l2_configured changed ${oldScmL2} -> ${newScmL2}`);
-      }
-      checked += 1;
-    }
+    const { problems, checked } = checkStoredAgainstPlan({ plans: p.plans, stored, members });
 
     if (problems.length) {
       problems.forEach((x) => log(`VERIFY FAIL: ${x}`));
       throw new Error(`${problems.length} verification failures`);
     }
-    log(`VERIFY OK (fresh connection) — every role's stored rows round-trip to the planned base, money/stock pages match, and all ${checked} active members resolve byte-identically to before.`);
+    log(`VERIFY OK (fresh connection) — ${stored.length} stored rows; every role's rows round-trip to the planned base, money/stock pages match, and all ${checked} active members resolve byte-identically to before.`);
   } finally { await fresh.end(); }
 }
 

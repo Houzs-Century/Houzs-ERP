@@ -33,14 +33,26 @@
  *                              booth's Sales Attending. PMS adds them in the
  *                              project; a draft cannot be confirmed until then.
  *
+ * ONE TABLE SHAPE FOR EVERY GROUP (owner 2026-10-20: 「很乱不整齐，然我要 link
+ * fair 时无法知道 brand」): SO No. | SO date | Venue | Brand | Amount | Fair |
+ * Link, fixed columns so the groups line up under each other. Each choice is ONE
+ * BOOTH and says whose — BRAND — VENUE — ORGANIZER (dates), the venue kept
+ * (「地点照样要显示」) — with the order's own brand first. The order's-brand
+ * booth nearest its date is filled in (「可以」), and nothing is linked until a
+ * person presses Link. The SO number opens the order in its own tab (「这里可以
+ * 直接点开 so 看那张 so」).
+ *
  * There is no bulk "link them all" action, deliberately: every button here
  * writes an attribution into exhibition P&L and somebody's commission, and a
  * bulk action over rows nobody read is how a wrong one gets in.
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { Button } from '@2990s/design-system';
 import { useAuth } from '../../auth/AuthContext';
 import { canCreateEvent } from '../../auth/salesAccess';
+import { markWorkspaceOpenIntent } from '../../lib/workspaceTabs';
+import { fmtDateOrDash } from '../../vendor/shared/format';
 import {
   useFairChecks,
   useFairPending,
@@ -48,6 +60,7 @@ import {
   useFairOptions,
   fairLabel,
   type FairCheckRow,
+  type FairOption,
   type FairPendingRow,
 } from '../../vendor/scm/lib/fair-options-queries';
 
@@ -70,9 +83,90 @@ const CHECK_GROUPS = [
   { key: 'NEEDS_ATTENDING', title: 'Waiting for Sales Attending', hint: 'The person who scanned the order is not on that booth’s Sales Attending. PMS adds them in the project; a draft cannot be confirmed until then.' },
 ] as const;
 
+const soft: CSSProperties = { color: 'var(--fg-muted)' };
+const card: CSSProperties = { background: 'var(--c-paper, #fff)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, overflowX: 'auto' };
+const th: CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap', textAlign: 'left' };
+const td: CSSProperties = { padding: '8px 10px', verticalAlign: 'middle', borderTop: '1px solid var(--border-weak, #e3e1da)', overflowWrap: 'anywhere' };
+const num: CSSProperties = { ...td, textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
+const noteCell: CSSProperties = { padding: '0 10px 8px', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
+const select: CSSProperties = { width: '100%', fontSize: 'var(--fs-13)', padding: '4px 6px', borderRadius: 6, border: '1px solid var(--border-weak, #e3e1da)', background: 'var(--c-paper, #fff)' };
+
+/* The same column widths in every group, so the tables line up. */
+const COLUMNS: Array<number | string | undefined> = [150, 100, '20%', 120, 130, undefined, 84];
+const COLS = COLUMNS.length;
+
 function money(sen: number | null): string {
   if (sen == null) return '—';
   return `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** Case/space-insensitive, as every venue and brand compare on the server. */
+const norm = (v: string | null | undefined): string => (v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
+const dayNo = (iso: string): number => Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10))) / 86_400_000;
+
+/** Days between the order's date and the fair's period: 0 inside it. */
+function daysFrom(o: Pick<FairOption, 'startDate' | 'endDate'>, soDate: string | null): number {
+  if (!soDate || !ISO.test(soDate) || !ISO.test(o.startDate)) return 0;
+  const d = dayNo(soDate);
+  const start = dayNo(o.startDate);
+  const end = dayNo(o.endDate && ISO.test(o.endDate) ? o.endDate : o.startDate);
+  if (d < start) return start - d;
+  if (d > end) return d - end;
+  return 0;
+}
+
+/** One choice in a row's Fair dropdown: ONE booth — a brand at one event. */
+export type BoothChoice = { projectId: number; label: string; sameBrand: boolean };
+
+/**
+ * The booths an order can be linked to here, and the one to fill in.
+ *
+ * Only fairs at the venue the order already records — the place is evidence
+ * from the floor; this screen decides WHICH BOOTH, never where the sale
+ * happened. Each reads BRAND — VENUE — ORGANIZER (dates). The order's own brand
+ * comes first, then the rest; in each, the fair nearest the order's date first.
+ * Two records of one booth (same brand at one event) show once, as the lowest
+ * id — the arbiter the server's resolver uses (fair-options.ts
+ * oneBoothOrNothing); booths with no brand cannot be told apart, so they are
+ * never merged.
+ *
+ * `suggested` is the order's-brand booth nearest its date, or null when the
+ * order has no brand or its brand has no booth there.
+ */
+export function boothChoices(
+  options: readonly FairOption[],
+  order: Pick<FairPendingRow, 'venue' | 'branding' | 'so_date'>,
+): { choices: BoothChoice[]; suggested: number | null } {
+  const brand = norm(order.branding);
+  const soDate = order.so_date ? order.so_date.slice(0, 10) : null;
+  const byBooth = new Map<string, { choice: BoothChoice; days: number; start: string; brand: string }>();
+  for (const o of options) {
+    if (norm(o.venue) !== norm(order.venue)) continue;
+    const booths = o.booths ?? o.projectIds.map((projectId) => ({ projectId, brand: null }));
+    for (const b of booths) {
+      const key = b.brand ? `${o.key}|${norm(b.brand)}` : `${o.key}|#${b.projectId}`;
+      const seen = byBooth.get(key);
+      if (seen && seen.choice.projectId <= b.projectId) continue;
+      byBooth.set(key, {
+        choice: { projectId: b.projectId, label: `${b.brand || 'No brand'} — ${fairLabel(o)}`, sameBrand: brand !== '' && norm(b.brand) === brand },
+        days: daysFrom(o, soDate),
+        start: o.startDate,
+        brand: norm(b.brand),
+      });
+    }
+  }
+  const choices = [...byBooth.values()]
+    .sort((a, b) =>
+      Number(b.choice.sameBrand) - Number(a.choice.sameBrand) ||
+      a.days - b.days ||
+      b.start.localeCompare(a.start) ||
+      (a.brand === '' ? 1 : 0) - (b.brand === '' ? 1 : 0) ||
+      a.brand.localeCompare(b.brand) ||
+      a.choice.projectId - b.choice.projectId)
+    .map((x) => x.choice);
+  return { choices, suggested: choices[0]?.sameBrand ? choices[0].projectId : null };
 }
 
 export function FairPending() {
@@ -131,15 +225,11 @@ export function FairPending() {
         const list = checks.filter((r) => r.check === g.key);
         if (list.length === 0) return null;
         return (
-          <section key={g.key}>
-            <h2 style={{ margin: '0 0 2px', fontSize: 15 }}>{g.title} ({list.length})</h2>
-            <p style={{ margin: '0 0 8px', opacity: 0.7, fontSize: 12 }}>{g.hint}</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {list.map((r) => (g.key === 'VENUE_DIFFERS'
-                ? <PendingRow key={r.doc_no} row={r} note={r.note} onAssign={assign.mutate} busy={busy} />
-                : <CheckRow key={r.doc_no} row={r} />))}
-            </div>
-          </section>
+          <Group key={g.key} title={`${g.title} (${list.length})`} hint={g.hint} last={g.key === 'VENUE_DIFFERS' ? 'Fair' : 'Status'}>
+            {list.map((r) => (g.key === 'VENUE_DIFFERS'
+              ? <PendingRow key={r.doc_no} row={r} note={r.note} onAssign={assign.mutate} busy={busy} />
+              : <CheckRow key={r.doc_no} row={r} />))}
+          </Group>
         );
       })}
 
@@ -147,31 +237,86 @@ export function FairPending() {
         const list = byGroup.get(g.key) ?? [];
         if (list.length === 0) return null;
         return (
-          <section key={g.key}>
-            <h2 style={{ margin: '0 0 2px', fontSize: 15 }}>{g.title} ({list.length})</h2>
-            <p style={{ margin: '0 0 8px', opacity: 0.7, fontSize: 12 }}>{g.hint}</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {list.map((r) => (
-                <PendingRow key={r.doc_no} row={r} onAssign={assign.mutate} busy={busy} />
-              ))}
-            </div>
-          </section>
+          <Group key={g.key} title={`${g.title} (${list.length})`} hint={g.hint} last="Fair">
+            {list.map((r) => (
+              <PendingRow key={r.doc_no} row={r} onAssign={assign.mutate} busy={busy} />
+            ))}
+          </Group>
         );
       })}
     </div>
   );
 }
 
+/** One group: its title, what to do, and its orders in the shared columns. */
+function Group({ title, hint, last, children }: { title: string; hint: string; last: 'Fair' | 'Status'; children: ReactNode }) {
+  return (
+    <section>
+      <h2 style={{ margin: '0 0 2px', fontSize: 15 }}>{title}</h2>
+      <p style={{ margin: '0 0 8px', opacity: 0.7, fontSize: 12 }}>{hint}</p>
+      <div style={card}>
+        <table style={{ width: '100%', minWidth: 960, tableLayout: 'fixed', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+          <colgroup>
+            {COLUMNS.map((w, i) => <col key={i} style={w == null ? undefined : { width: w }} />)}
+          </colgroup>
+          <thead>
+            <tr>
+              <th style={th}>SO No.</th>
+              <th style={th}>SO date</th>
+              <th style={th}>Venue</th>
+              <th style={th}>Brand</th>
+              <th style={{ ...th, textAlign: 'right' }}>Amount</th>
+              <th style={th}>{last}</th>
+              <th style={th} />
+            </tr>
+          </thead>
+          <tbody>{children}</tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+/** The order number, opening the order in its OWN tab of the in-app strip so
+ *  this list stays one click away (owner 2026-10-20; the convention of the
+ *  project page's SO list, lib/openDocInTab.ts). Ctrl/Cmd-click still opens a
+ *  browser window. */
+function SoLink({ docNo }: { docNo: string }) {
+  return (
+    <Link
+      to={`/scm/sales-orders/${encodeURIComponent(docNo)}`}
+      onClick={(e) => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) markWorkspaceOpenIntent(true); }}
+      style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, whiteSpace: 'nowrap' }}
+    >
+      {docNo}
+    </Link>
+  );
+}
+
+/** The cells every group shares: number, date, venue, brand, amount. */
+function OrderCells({ row }: { row: Pick<FairPendingRow, 'doc_no' | 'so_date' | 'venue' | 'branding' | 'local_total_sen'> }) {
+  return (
+    <>
+      <td style={td}><SoLink docNo={row.doc_no} /></td>
+      <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmtDateOrDash(row.so_date)}</td>
+      <td style={td}>{row.venue || <span style={soft}>(no place)</span>}</td>
+      <td style={td}>{row.branding || <span style={soft}>no brand</span>}</td>
+      <td style={num}>{money(row.local_total_sen)}</td>
+    </>
+  );
+}
+
 /** A 等加人 row: nothing to pick here — PMS adds the person in the project. */
 function CheckRow({ row }: { row: FairCheckRow }) {
   return (
-    <div style={{ border: '1px solid var(--c-border, #ddd)', borderRadius: 8, padding: 10, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
-      <Link to={`/scm/sales-orders/${encodeURIComponent(row.doc_no)}`} style={{ fontFamily: 'monospace', fontSize: 13 }}>{row.doc_no}</Link>
-      <span style={{ fontSize: 13, opacity: 0.8 }}>{row.so_date ?? '—'}</span>
-      <span style={{ fontSize: 12, opacity: 0.7 }}>{row.status === 'DRAFT' ? 'Draft' : 'Confirmed'}</span>
-      <span style={{ fontSize: 13, marginInlineStart: 'auto' }}>{money(row.local_total_sen)}</span>
-      <span style={{ flexBasis: '100%', fontSize: 12.5 }}>{row.note}</span>
-    </div>
+    <>
+      <tr>
+        <OrderCells row={row} />
+        <td style={td}>{row.status === 'DRAFT' ? 'Draft' : 'Confirmed'}</td>
+        <td style={td} />
+      </tr>
+      <tr><td colSpan={COLS} style={noteCell}>{row.note}</td></tr>
+    </>
   );
 }
 
@@ -183,53 +328,52 @@ function PendingRow(props: {
   busy: boolean;
 }) {
   const { row, note, onAssign, busy } = props;
-  const [pick, setPick] = useState<string>('');
+  /* null = untouched, so the suggestion shows; '' = the person cleared it. */
+  const [pick, setPick] = useState<string | null>(null);
   /* The SAME options the salesperson saw, resolved for THIS order's date — not
      today's. An order from last week must be settled against the fairs that were
      running last week, or the screen offers an attribution that is wrong by
      construction. */
   const optionsQ = useFairOptions(row.so_date);
-  const options = [...(optionsQ.data?.running ?? []), ...(optionsQ.data?.earlier ?? [])];
-  /* Only fairs at the venue the order already records. The place is evidence
-     from the floor; this screen decides WHICH BOOTH, never where the sale
-     happened. */
-  const atVenue = options.filter(
-    (o) => o.venue.trim().toLowerCase() === (row.venue ?? '').trim().toLowerCase(),
+  const { choices, suggested } = boothChoices(
+    [...(optionsQ.data?.running ?? []), ...(optionsQ.data?.earlier ?? [])],
+    row,
   );
+  const value = pick ?? (suggested != null ? String(suggested) : '');
 
   return (
-    <div style={{ border: '1px solid var(--c-border, #ddd)', borderRadius: 8, padding: 10, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
-      <span style={{ fontFamily: 'monospace', fontSize: 13 }}>{row.doc_no}</span>
-      <span style={{ fontSize: 13, opacity: 0.8 }}>{row.so_date ?? '—'}</span>
-      <span style={{ fontSize: 13 }}>{row.venue || '(no place)'}</span>
-      <span style={{ fontSize: 12, opacity: 0.7 }}>{row.branding || 'no brand'}</span>
-      <span style={{ fontSize: 13, marginInlineStart: 'auto' }}>{money(row.local_total_sen)}</span>
-      <select
-        aria-label={`Fair for ${row.doc_no}`}
-        value={pick}
-        disabled={busy || atVenue.length === 0}
-        onChange={(e) => setPick(e.target.value)}
-      >
-        <option value="">
-          {atVenue.length === 0 ? 'No fair at that place on that date' : '— choose a fair —'}
-        </option>
-        {atVenue.map((o) => (
-          /* One row can cover several brand booths. Offer each project id, since
-             the point of this screen is choosing between them. */
-          o.projectIds.map((id) => (
-            <option key={`${o.key}:${id}`} value={String(id)}>{`${fairLabel(o)} #${id}`}</option>
-          ))
-        ))}
-      </select>
-      <button
-        type="button"
-        disabled={busy || !pick}
-        onClick={() => onAssign({ docNo: row.doc_no, projectId: Number(pick) })}
-      >
-        Link
-      </button>
-      {note && <span style={{ flexBasis: '100%', fontSize: 12.5 }}>{note}</span>}
-    </div>
+    <>
+      <tr>
+        <OrderCells row={row} />
+        <td style={td}>
+          <select
+            aria-label={`Fair for ${row.doc_no}`}
+            value={value}
+            disabled={busy || choices.length === 0}
+            onChange={(e) => setPick(e.target.value)}
+            style={select}
+          >
+            <option value="">
+              {choices.length === 0 ? 'No fair at that place on that date' : '— choose a fair —'}
+            </option>
+            {choices.map((ch) => (
+              <option key={ch.projectId} value={String(ch.projectId)}>{ch.label}</option>
+            ))}
+          </select>
+        </td>
+        <td style={{ ...td, textAlign: 'right' }}>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={busy || !value}
+            onClick={() => onAssign({ docNo: row.doc_no, projectId: Number(value) })}
+          >
+            Link
+          </Button>
+        </td>
+      </tr>
+      {note && <tr><td colSpan={COLS} style={noteCell}>{note}</td></tr>}
+    </>
   );
 }
 

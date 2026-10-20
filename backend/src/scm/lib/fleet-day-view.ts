@@ -110,6 +110,10 @@ export interface DayTrip {
   depot: LatLng | null;
   total_revenue_sen: number;
   total_drops: number;
+  /** Of the DELIVERY drops: how many are DELIVERED, and how many of those carry
+   *  real POD evidence (signature/photo/GPS). total_with_pod <= total_delivered. */
+  total_delivered: number;
+  total_with_pod: number;
   stops: DayStop[];
 }
 
@@ -126,6 +130,9 @@ export interface AssembleInput {
   geoByStopId: Map<string, LatLng>;
   /** warehouseId -> geocoded depot point. Missing = no depot geocode. */
   depotByWarehouseId: Map<string, LatLng>;
+  /** stopId -> the stop's DO delivery/POD state. Missing = no DO / not delivered /
+   *  no POD — all count as not-done in the per-trip rollup. */
+  podByStopId: Map<string, { delivered: boolean; hasPod: boolean }>;
 }
 
 const EMPTY_ENRICH: StopEnrichment = {
@@ -152,7 +159,7 @@ function num(v: unknown): number {
 export function assembleDayView(input: AssembleInput): { trips: DayTrip[] } {
   const {
     trips, stops, driversById, helpersById, lorriesById, warehousesById,
-    enrichByStopId, geoByStopId, depotByWarehouseId,
+    enrichByStopId, geoByStopId, depotByWarehouseId, podByStopId,
   } = input;
 
   const stopsByTrip = new Map<string, RawStopRow[]>();
@@ -170,13 +177,20 @@ export function assembleDayView(input: AssembleInput): { trips: DayTrip[] } {
 
     let totalRevenue = 0;
     let drops = 0;
+    let delivered = 0;
+    let withPod = 0;
     const dayStops: DayStop[] = raw.map((s, idx) => {
       const enrich = enrichByStopId.get(s.id) ?? EMPTY_ENRICH;
       const geo = geoByStopId.get(s.id) ?? null;
       const rev = Math.max(0, Math.round(num(s.revenue_sen)));
       totalRevenue += rev;
       const stopType = (s.stop_type ?? 'DELIVERY').toUpperCase();
-      if (stopType === 'DELIVERY') drops += 1;
+      if (stopType === 'DELIVERY') {
+        drops += 1;
+        const pod = podByStopId.get(s.id);
+        if (pod?.delivered) delivered += 1;
+        if (pod?.hasPod) withPod += 1;
+      }
       return {
         id: s.id,
         stop_no: s.stop_no == null ? idx + 1 : s.stop_no,
@@ -221,6 +235,8 @@ export function assembleDayView(input: AssembleInput): { trips: DayTrip[] } {
       depot,
       total_revenue_sen: totalRevenue,
       total_drops: drops,
+      total_delivered: delivered,
+      total_with_pod: withPod,
       stops: dayStops,
     };
   });

@@ -24,6 +24,7 @@ function baseInput(over: Partial<AssembleInput> = {}): AssembleInput {
     enrichByStopId: new Map<string, StopEnrichment>(),
     geoByStopId: new Map<string, LatLng>(),
     depotByWarehouseId: new Map<string, LatLng>(),
+    podByStopId: new Map<string, { delivered: boolean; hasPod: boolean }>(),
   };
   return { ...empty, ...over };
 }
