@@ -59,6 +59,7 @@ import type { AuthUser } from "../services/auth";
 import type { Context, MiddlewareHandler } from "hono";
 import { normalizePhone } from "../scm/shared/phone";
 import { ASSR_SUB_STATUS_KEYS } from "../scm/shared/assr-sub-statuses";
+import { pickupTrackingError } from "../scm/shared/assr-pickup-tracking";
 import { sendCompletionSurvey } from "../services/assrCompletionSurvey";
 
 /* The context the extracted handlers below receive. They are exported so the
@@ -1880,6 +1881,8 @@ app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) =>
   ) {
     return c.json({ error: "Unknown sub-status" }, 400);
   }
+  const trackingError = pickupTrackingError(body);
+  if (trackingError) return c.json({ error: trackingError }, 400);
   // Snapshot the responsible fields BEFORE the patch so we notify only on an
   // ACTUAL change (owner 2026-07-15). A doc_no re-match inside patchAssrCase can
   // also rewrite sales_agent, so we compare committed before/after values

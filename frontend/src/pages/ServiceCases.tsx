@@ -69,6 +69,7 @@ import { CaseAccessSection } from "../components/CaseAccessSection";
 import { SupplierReturnsList } from "../components/assr/SupplierReturnsList";
 import { ReopenCaseControl } from "../components/assr/ReopenCaseControl";
 import { InlineEdit } from "../components/InlineEdit";
+import { PickupTrackingFields } from "../components/assr/PickupTrackingFields";
 import { DeliveryByCard } from "./ServiceCaseDeliveryBy";
 import { ExpandableText } from "../components/ExpandableText";
 import { StatCard } from "../components/StatCard";
@@ -4301,12 +4302,7 @@ function DetailContent({
                     ))}
                   </div>
                 </div>
-                <InlineEdit
-                  label="Customer Pickup Date"
-                  type="date"
-                  value={c.customer_pickup_at}
-                  onSave={(v) => patch({ customer_pickup_at: v || null })}
-                />
+                <PickupTrackingFields c={c} patch={patch} />
                 {/* 返厂 (owner 2026-09-21). Every factory trip is a row; ops
                     adds as many as needed (a real case has been back 4 times).
                     The latest row is the current trip, and the case's
