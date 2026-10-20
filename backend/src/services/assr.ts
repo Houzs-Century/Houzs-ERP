@@ -1067,10 +1067,9 @@ const PATCH_FIELDS = [
   "sla_hours", "deadline_at",
   // Mig 064 — supplier handover + ready dates
   "supplier_pickup_at", "items_ready_at",
-  // Mig 107 — date we collect the faulty item from the customer's house
-  "customer_pickup_at",
-  // Mig 127 — on-site OWN-TEAM inspection visit date, de-conflated from
-  // customer_pickup_at; drives a distinct INSPECTION leg on Delivery Planning.
+  // Mig 107 — date we collect the faulty item from the customer's house (shown as the Scheduled Pickup Date / ETA)
+  "customer_pickup_at", "pickup_status", "actual_pickup_at", "pickup_pic", "item_location", // HC-0129, values checked in the route
+  // Mig 127 — own-team inspection visit date (not customer_pickup_at); drives the INSPECTION leg on Delivery Planning.
   "inspection_visit_at",
   // Mig 074 — v3.1 fields
   "inspection_result", "email_for_survey",
@@ -1121,7 +1120,8 @@ const FIELD_LABELS: Record<string, string> = {
   supplier_invoice_ref: "Supplier Invoice Ref", cost_notes: "Cost Notes",
   sla_hours: "SLA Hours", deadline_at: "Deadline",
   supplier_pickup_at: "Supplier Pickup Date", items_ready_at: "Supplier Return / Item Ready Date",
-  customer_pickup_at: "Customer Pickup Date", inspection_visit_at: "Inspection Visit Date",
+  customer_pickup_at: "Scheduled Pickup Date", inspection_visit_at: "Inspection Visit Date", actual_pickup_at: "Actual Pickup Date",
+  pickup_status: "Pickup Status", pickup_pic: "Pickup PIC", item_location: "Item Location",
   inspection_result: "Inspection Result", email_for_survey: "Survey Email",
   verification_outcome: "Verification Outcome", verified_root_cause: "Verified Root Cause",
   qc_receipt_date: "QC Receipt Date", goods_returned_note: "Goods Returned Note",
@@ -1136,7 +1136,7 @@ const FIELD_LABELS: Record<string, string> = {
 // separately as attachment events, and item remarks via item_remark.
 const FIELD_LOG_ALLOW = new Set<string>([
   // dates
-  "customer_pickup_at", "supplier_pickup_at", "items_ready_at",
+  "customer_pickup_at", "actual_pickup_at", "supplier_pickup_at", "items_ready_at",
   "completion_date", "do_date", "qc_receipt_date",
   // remarks / free-text notes
   "goods_returned_note", "supplier_service_note", "action_remark", "satisfaction_notes",
