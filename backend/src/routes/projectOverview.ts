@@ -14,8 +14,11 @@ import { Hono } from "hono";
 import type { Env, Variables } from "../scm/env";
 import type { AuthUser } from "../services/auth";
 import { supabaseAuth } from "../scm/middleware/auth";
-import { scopeToCompany, activeCompanySql } from "../scm/lib/companyScope";
+import { scopeToCompany, activeCompanySql, activeCompanyId } from "../scm/lib/companyScope";
 import { chunkIn, paginateAll } from "../scm/lib/paginate-all";
+import { pnlForProjects } from "../services/eventPnlBatch";
+import type { PnlColumn } from "../services/eventPnl";
+import { LEDGER_COST_CATEGORIES } from "../services/projects";
 import { collectReport, indexOrdersByToken, matchBill, type NoteRow, type OrderRow } from "./lib/sales-report-bills";
 import { financeHiddenForUser } from "../services/pmsAccess";
 
@@ -59,7 +62,7 @@ projectOverview.get("/", async (c) => {
             ${sum(`l.kind = 'cost' AND l.category NOT IN ${COGS} AND l.category NOT IN ('rental','commission','setup','transport','transport_fee','transport_setup_dismantle','merchandise')`)} AS other_cost
        FROM projects p
        LEFT JOIN project_event_types et ON et.id = p.event_type_id
-      WHERE p.archived_at IS NULL${activeCompanySql(c, "p.company_id")}`,
+      WHERE p.archived_at IS NULL AND COALESCE(p.status, '') <> 'cancelled'${activeCompanySql(c, "p.company_id")}`,
   ).all<ProjectRow>();
   const projects = rows.results;
 
@@ -140,6 +143,29 @@ projectOverview.get("/", async (c) => {
     }
   }
 
+  /* Each event's P&L by the event page's own engine (services/eventPnl.ts),
+     the By Sales Orders column (owner 2026-10-20: commission, transport and
+     merchandise "根据开单的 sales order 去 capture" - the brand's rate card on the
+     orders' goods; Finance's figure when the books fill the row). An event with
+     no order keeps its own costs (rental, setup, books) at zero sales. Empty on a
+     failed read: the page then falls back to the keyed lines below. */
+  const pnls = await pnlForProjects(c.env as unknown as Parameters<typeof pnlForProjects>[0], projects.map((p) => ({ id: p.id, brand: p.brand })), activeCompanyId(c) ?? null, LEDGER_COST_CATEGORIES);
+  const compact = (id: number) => {
+    const e = pnls.get(id);
+    if (!e) return null;
+    const col: PnlColumn = e.by_so ?? e.by_sales;
+    const fromOrders = !!e.by_so;
+    const kept = (r: { amount: number; from: string }) => (fromOrders || r.from === "books" || r.from === "typed" ? r.amount : 0);
+    return {
+      fromOrders,
+      sales: fromOrders ? col.sales : 0,
+      serviceRevenue: fromOrders ? col.serviceRevenue : 0,
+      cogs: fromOrders ? { mattSofa: col.cogs.mattSofa, bedframe: col.cogs.bedframe, accessories: col.cogs.accessories, other: col.cogs.other } : { mattSofa: 0, bedframe: 0, accessories: 0, other: 0 },
+      rental: col.rental, setup: col.setup, transportSetup: col.transportSetupDismantle, others: col.others,
+      transportFee: kept(col.transportFee), commission: kept(col.commission), merchandise: kept(col.merchandise),
+    };
+  };
+
   return c.json({
     projects: projects.map((p) => ({
       id: p.id, code: p.code, name: p.name, brand: p.brand, organizer: p.organizer, venue: p.venue, state: p.state, stage: p.stage,
@@ -153,6 +179,7 @@ projectOverview.get("/", async (c) => {
       },
       salesOrders: so.get(p.id) ?? { sen: 0, costSen: 0, count: 0, costSplit: { mattSofa: 0, bedframe: 0, accessories: 0 } },
       chatReport: report.get(p.id) ?? null,
+      pnl: compact(p.id),
     })),
   });
 });

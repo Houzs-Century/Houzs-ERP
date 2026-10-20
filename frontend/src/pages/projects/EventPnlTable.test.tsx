@@ -10,8 +10,8 @@ import type { EventPnl, PnlColumn } from "./types";
 const col = (over: Partial<PnlColumn> = {}): PnlColumn => ({
   sales: 114240, salesFrom: "box",
   cogs: { mattSofa: 36969.3, bedframe: 0, accessories: 6851.6, other: 0, total: 43820.9, from: "so_ratio" },
-  rental: 9800, setup: 0, transportSetupDismantle: 0, others: 0,
-  transportFee: { amount: 5712, from: "rate", pct: 5 },
+  rental: 9800, setup: 0, transportSetupDismantle: 0, others: 0, serviceRevenue: 0,
+  transportFee: { amount: 5712, from: "rate", pct: 5, serviceCost: 0 },
   commission: { amount: 17136, from: "rate", pct: 15, boost: true },
   merchandise: { amount: 2284.8, from: "rate", pct: 2 },
   totalCost: 78753.7, grossProfit: 70419.1, netProfit: 35486.3,
@@ -22,7 +22,7 @@ const PNL: EventPnl = {
   by_so: col({
     sales: 46352, salesFrom: "so",
     cogs: { mattSofa: 15000, bedframe: 0, accessories: 2780, other: 0, total: 17780, from: "so" },
-    transportFee: { amount: 2317.6, from: "rate", pct: 5 },
+    transportFee: { amount: 2317.6, from: "rate", pct: 5, serviceCost: 0 },
   }),
   so_count: 8,
 };

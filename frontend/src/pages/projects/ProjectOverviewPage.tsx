@@ -135,6 +135,7 @@ export function ProjectOverviewPage() {
             {cogsLines.map(([l, v]) => <tr key={l} className={v ? "" : "text-ink-muted"}><Td left className="pl-6">{l}</Td><Td>{money(v)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(v, t.sales))}</Td></tr>)}
             <tr><Td left>− COGS total</Td><Td>{money(t.cogs)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(t.cogs, t.sales))}</Td></tr>
             <tr className="font-semibold"><Td left>= Gross profit</Td><Td>{money(t.gp)}</Td><Td>{pctTxt(pctOf(t.gp, t.sales))}</Td></tr>
+            {t.serviceRevenue !== 0 && <tr><Td left>+ Service revenue</Td><Td>{money(t.serviceRevenue)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(t.serviceRevenue, t.sales))}</Td></tr>}
             {costLines.map(([l, v]) => <tr key={l} className={v ? "" : "text-ink-muted"}><Td left className="pl-6">{l}</Td><Td>{money(v)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(v, t.sales))}</Td></tr>)}
             <tr><Td left>− Total cost</Td><Td>{money(running)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(running, t.sales))}</Td></tr>
             <tr className="font-semibold"><Td left>= Net profit</Td><Td className={t.np < 0 ? "text-err" : "text-synced"}>{money(t.np)}</Td><Td>{pctTxt(pctOf(t.np, t.sales))}</Td></tr>
@@ -167,13 +168,13 @@ export function ProjectOverviewPage() {
         </span>}>
         <div className="max-h-[560px] overflow-auto">
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-surface"><tr><Th left>Project</Th><Th left>Dates</Th><Th>Sales</Th><Th>COGS</Th><Th>GP</Th><Th>GP %</Th><Th>Rental</Th><Th>Setup</Th><Th>Transport</Th><Th>Commission</Th><Th>Merchandise</Th><Th>Others</Th><Th>Net profit</Th><Th>NP %</Th><Th left>Sales Orders daily?</Th></tr></thead>
+            <thead className="sticky top-0 bg-surface"><tr><Th left>Project</Th><Th left>Dates</Th><Th>Sales</Th><Th>Service</Th><Th>COGS</Th><Th>GP</Th><Th>GP %</Th><Th>Rental</Th><Th>Setup</Th><Th>Transport</Th><Th>Commission</Th><Th>Merchandise</Th><Th>Others</Th><Th>Net profit</Th><Th>NP %</Th><Th left>Sales Orders daily?</Th></tr></thead>
             <tbody>
               {listed.map(({ p, f }) => (
                 <tr key={p.id} onClick={() => navigate(`/projects/${p.id}`)} className="cursor-pointer hover:bg-surface-2/50">
                   <Td left className="max-w-[320px] truncate"><span className="text-primary">{p.name}</span><span className="ml-1.5 text-[10.5px] text-ink-muted">{p.eventType ?? ""}</span></Td>
                   <Td left className="text-ink-muted">{p.startDate?.slice(5) ?? "—"}{p.endDate && p.endDate !== p.startDate ? ` – ${p.endDate.slice(5)}` : ""}</Td>
-                  <Td>{money(f.sales)}</Td><Td>{money(f.cogs)}</Td><Td>{money(f.gp)}</Td><Td className="text-ink-secondary">{pctTxt(pctOf(f.gp, f.sales))}</Td>
+                  <Td>{money(f.sales)}</Td><Td className="text-ink-secondary">{money(f.serviceRevenue)}</Td><Td>{money(f.cogs)}</Td><Td>{money(f.gp)}</Td><Td className="text-ink-secondary">{pctTxt(pctOf(f.gp, f.sales))}</Td>
                   <Td>{money(f.rental)}</Td><Td>{money(f.setup)}</Td><Td>{money(f.transport)}</Td><Td>{money(f.commission)}</Td><Td>{money(f.merchandise)}</Td><Td>{money(f.other)}</Td>
                   <Td className={f.np < 0 ? "font-semibold text-err" : "font-semibold"}>{money(f.np)}</Td><Td>{pctTxt(pctOf(f.np, f.sales))}</Td>
                   <Td left><Daily r={p.chatReport} /></Td>

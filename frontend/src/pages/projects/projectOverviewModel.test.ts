@@ -7,7 +7,7 @@ const p = (o: Partial<OvProject>): OvProject => ({
   id: 1, code: "P1", name: "Fair", brand: "AKEMI", organizer: "MLE", venue: "MV", state: "KL", stage: "draft",
   startDate: "2026-10-02", endDate: "2026-10-04", eventType: "Exhibition",
   keyed: { income: 0, cogs: 0, rental: 0, commission: 0, setup: 0, transport: 0, merchandise: 0, other: 0, cogsMattSofa: 0, cogsBedframe: 0, cogsAccessories: 0, transportFee: 0, transportSetup: 0 },
-  salesOrders: { sen: 0, costSen: 0, count: 0, costSplit: NO_SPLIT }, chatReport: null, ...o,
+  salesOrders: { sen: 0, costSen: 0, count: 0, costSplit: NO_SPLIT }, chatReport: null, pnl: null, ...o,
 });
 
 describe("Project Overview figures", () => {
@@ -51,4 +51,15 @@ describe("Project Overview figures", () => {
     const t = totalsOf([p({ salesOrders: { sen: 1000_00, costSen: 400_00, count: 2, costSplit: { mattSofa: 250_00, bedframe: 100_00, accessories: 40_00 } } })]);
     expect(t).toMatchObject({ cogs: 400, cogsMattSofa: 250, cogsBedframe: 100, cogsAccessories: 40, cogsFromSo: 10 });
   });
+
+  it("the event page's P&L wins when sent: costs follow the orders, service revenue beside sales", () => {
+    const pnl = { fromOrders: true, sales: 73670, serviceRevenue: 500, cogs: { mattSofa: 19939, bedframe: 9960, accessories: 2752.7, other: 0 },
+      rental: 38400, setup: 0, transportSetup: 0, others: 0, transportFee: 2946.8, commission: 10313.8, merchandise: 1473.4 };
+    const f = figuresOf(p({ pnl }));
+    expect(f).toMatchObject({ sales: 73670, serviceRevenue: 500, rental: 38400, commission: 10313.8, merchandise: 1473.4, transport: 2946.8 });
+    expect(f.cogs).toBeCloseTo(32651.7, 2);
+    expect(f.np).toBeCloseTo(73670 + 500 - 32651.7 - 38400 - 2946.8 - 10313.8 - 1473.4, 2);
+    expect(totalsOf([p({ pnl })])).toMatchObject({ cogsMattSofa: 19939, transportFee: 2946.8, serviceRevenue: 500 });
+  });
 });
+

@@ -52,6 +52,8 @@ import projectsOutstanding from "./routes/projectsOutstanding";
 import { projectDataGaps } from "./routes/projectDataGaps";
 import { projectOverview } from "./routes/projectOverview";
 import assrQuality from "./routes/assrQuality";
+import { isFinanceViewer } from "./services/pmsAccess";
+import type { AuthUser } from "./services/auth";
 // Sales entries (/api/sales) is retained as a DEPENDENCY of Projects — the
 // Projects page embeds the sales-entry EntryPanel + submit/void/delete flow.
 // It has no standalone nav/route after the cutover.
@@ -487,7 +489,12 @@ app.use("/api/projects/data-gaps/*", requirePageAccess("projects.finances"));
 app.route("/api/projects/data-gaps", projectDataGaps);
 // Every project with its keyed books and its Sales Orders, for Project Overview.
 // Same exact-path-first reason and gate as data-gaps. See routes/projectOverview.ts.
-app.use("/api/projects/overview/*", requirePageAccess("projects.finances"));
+/* Project Overview: the projects.finances page, or any finance viewer (the
+   directors, owner 2026-10-20) - the router itself still refuses everyone else. */
+app.use("/api/projects/overview/*", async (c, next) => {
+  if (isFinanceViewer(c.get("user") as unknown as AuthUser)) return next();
+  return requirePageAccess("projects.finances")(c, next);
+});
 app.route("/api/projects/overview", projectOverview);
 app.route("/api/projects", projects);
 // The office side of a brand's share link (generate / revoke). Own file because

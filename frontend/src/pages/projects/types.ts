@@ -199,7 +199,10 @@ export interface PnlColumn {
   setup: number;
   transportSetupDismantle: number;
   others: number;
-  transportFee: PnlPctRow;
+  /** The orders' service charges: income beside Sales, not in it. */
+  serviceRevenue: number;
+  /** serviceCost = the orders' service cost, carried in the Transport Fee. */
+  transportFee: PnlPctRow & { serviceCost: number };
   commission: PnlPctRow & { boost: boolean };
   merchandise: PnlPctRow;
   totalCost: number;

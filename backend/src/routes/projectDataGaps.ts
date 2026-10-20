@@ -56,7 +56,7 @@ projectDataGaps.get("/", async (c) => {
             ${sum("l.kind = 'cost' AND l.category = 'cogs_bedframe'")} AS cogs_bedframe,
             ${sum("l.kind = 'cost' AND l.category = 'cogs_accessories'")} AS cogs_accessories
        FROM projects p
-      WHERE p.archived_at IS NULL
+      WHERE p.archived_at IS NULL AND COALESCE(p.status, '') <> 'cancelled'
         AND substr(p.end_date, 1, 10) >= ? AND substr(p.end_date, 1, 10) <= ?${activeCompanySql(c, "p.company_id")}`,
   ).bind(from, to).all<Omit<GapProject, "soSen"> & { rental: number; setup: number; transport_fee: number; transport_setup: number; merchandise: number; cogs_matt_sofa: number; cogs_bedframe: number; cogs_accessories: number }>();
   const projects = rows.results;

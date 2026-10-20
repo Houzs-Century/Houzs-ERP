@@ -33,15 +33,18 @@ export async function loadFairSoTotalsMany(env: Env, projectIds: readonly number
   if (ids.length === 0) return out;
   const res = await env.DB.prepare(
     `SELECT project_id, local_total_sen, total_revenue_sen, mattress_sofa_cost_sen, bedframe_cost_sen,
-            accessories_cost_sen, others_cost_sen
+            accessories_cost_sen, others_cost_sen, service_sen, service_cost_sen
        FROM scm.mfg_sales_orders
       WHERE project_id IN (${ids.map(() => "?").join(", ")}) AND status <> 'CANCELLED'${companyId != null ? " AND company_id = ?" : ""}`,
   ).bind(...ids, ...(companyId != null ? [companyId] : [])).all<Record<string, unknown>>();
   for (const r of res.results ?? []) {
     const id = n(r.project_id);
-    const t = out.get(id) ?? { count: 0, salesRm: 0, costRm: { mattSofa: 0, bedframe: 0, accessories: 0, others: 0 } };
+    const t = out.get(id) ?? { count: 0, salesRm: 0, serviceRm: 0, serviceCostRm: 0, costRm: { mattSofa: 0, bedframe: 0, accessories: 0, others: 0 } };
     t.count += 1;
-    t.salesRm += soDisplayTotalSen(soPaidInputsOf({ local_total_sen: n(r.local_total_sen), total_revenue_sen: n(r.total_revenue_sen) }, 0, false)) / 100;
+    /* The goods only: the service lines are Service revenue (eventPnl.ts). */
+    t.salesRm += (soDisplayTotalSen(soPaidInputsOf({ local_total_sen: n(r.local_total_sen), total_revenue_sen: n(r.total_revenue_sen) }, 0, false)) - n(r.service_sen)) / 100;
+    t.serviceRm += n(r.service_sen) / 100;
+    t.serviceCostRm += n(r.service_cost_sen) / 100;
     t.costRm.mattSofa += n(r.mattress_sofa_cost_sen) / 100;
     t.costRm.bedframe += n(r.bedframe_cost_sen) / 100;
     t.costRm.accessories += n(r.accessories_cost_sen) / 100;
@@ -54,7 +57,7 @@ export async function loadFairSoTotalsMany(env: Env, projectIds: readonly number
 /** The fair's opened orders, in RM. Throws on a failed read. */
 export async function loadFairSoTotals(env: Env, projectId: number, companyId: number | null): Promise<SoTotals> {
   return (await loadFairSoTotalsMany(env, [projectId], companyId)).get(projectId)
-    ?? { count: 0, salesRm: 0, costRm: { mattSofa: 0, bedframe: 0, accessories: 0, others: 0 } };
+    ?? { count: 0, salesRm: 0, serviceRm: 0, serviceCostRm: 0, costRm: { mattSofa: 0, bedframe: 0, accessories: 0, others: 0 } };
 }
 
 /** Several brands' rate cards, by brand. Throws on a failed read. */
