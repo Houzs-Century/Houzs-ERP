@@ -25,6 +25,7 @@ import { useAuth, isAdminLevel, isHatchSales } from "../vendor/scm/lib/auth";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
 import { FairDayPicker, FairPicker, useAutoFair, type FairPickValue } from "../components/FairPicker";
+import { FairFallback } from "../components/FairFallback";
 import { fairDayCheck, fairEditPatch, fairEventOf, fairPickValue, linkedEvent, type LinkedFair } from "../components/fairPick";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
@@ -2410,12 +2411,10 @@ export function MobileNewSO({
                   </Field>
                 </div>
                 {autoFair.hint}
-                {(!isEdit || isDraftSo) && !fairEventOf(fairPick) && ( // a draft says No fair here too (owner 2026-10-19)
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginTop: 6 }}>
-                    <input type="checkbox" checked={noFair} disabled={identityLocked} onChange={(e) => setNoFair(e.target.checked)} />
-                    <span>No fair (showroom / direct sale)</span>
-                  </label>
-                )}
+                {/* Back-keying date + the No-fair escape (owner 2026-09-26 / 10-19),
+                    shared with the desktop form; FairFallback.tsx has the rules. */}
+                <FairFallback enabled={!isEdit || isDraftSo} value={fairPick} orderDate={orderDate}
+                  onOrderDate={setOrderDate} maxDate={today} noFair={noFair} onNoFair={setNoFair} disabled={identityLocked} />
                 {fairEventOf(fairPick) && ( // which DAY of the picked event (owner 2026-09-24)
                   <Field label="Fair Day"><FairDayPicker id="mob-so-fair-day" value={fairPick} soDate={orderDate} onChange={setFairPick} disabled={identityLocked} selectClassName="fld-i" /></Field>
                 )}
