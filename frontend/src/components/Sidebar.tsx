@@ -65,7 +65,6 @@ import {
   Megaphone,
   LifeBuoy,
   History,
-  Wand2,
   CalendarOff,
   type LucideIcon, Landmark, CreditCard, Banknote, Receipt, Server, Sparkles, ScanLine } from "lucide-react";
 import { cn } from "../lib/utils";
@@ -595,8 +594,10 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/logistic-overview", label: "Logistic Overview", icon: LayoutDashboard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/delivery-planning", label: "Delivery Planning", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/dp-orders", label: "DP Orders", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-          { to: "/scm/auto-schedule", label: "Delivery Date Arrangement", icon: Wand2, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-          { to: "/scm/trips", label: "Delivery Time Arrangement", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+          // Delivery Date / Time Arrangement menu entries removed (owner 2026-10-20):
+          // all date/time/crew arranging now happens inline on Delivery Planning,
+          // which schedules onto trips directly. The /scm/auto-schedule and
+          // /scm/trips routes still resolve by direct URL (auto-propose optimiser).
           { to: "/scm/fleet-day", label: "Last Mile Delivery", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           // Fleet operations — capacity and leave. Fleet Health moved DOWN into
           // Maintenance (2026-08-02): it is reference-data upkeep on the in-house
