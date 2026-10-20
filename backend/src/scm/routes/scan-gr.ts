@@ -37,7 +37,9 @@ import {
   type UploadedImage,
 } from '../lib/scan-ocr';
 import { callClaudeGrExtract, emptyScanNote, loadGrnFewShot, type GrnExtracted } from '../lib/grn-scan-extract';
-import { draftFromScan, matchScan, toScanned, type ScanDraftOutcome } from '../lib/grn-scan-draft';
+import { appendGrnNote, draftFromScan, matchScan, scanGifts, toScanned, type ScanDraftOutcome } from '../lib/grn-scan-draft';
+import { addGiftLines, giftNote, loadCatalogueProducts } from '../lib/grn-scan-gifts';
+import { normalizeCode } from '../lib/grn-scan-match';
 import { buildTeachOptions, saveScanCodes } from '../lib/grn-scan-codes';
 
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
@@ -520,14 +522,17 @@ scanGr.get('/jobs/:id/codes', async (c) => {
     return c.json({ success: true, data: { supplierKnown: false, rows: [], poLines: [] } });
   }
   const options = buildTeachOptions(loaded.parsed.lines.map(toScanned), ctx.match, ctx.openLines, ctx.supplierId);
-  return c.json({ success: true, data: { supplierKnown: true, ...options } });
+  // A code already taught (a free gift's product) is known: not offered again.
+  const taught = new Set(ctx.taught.map((t) => normalizeCode(t.supplierSku)));
+  const rows = options.rows.filter((r) => r.status !== 'not_matched' || !taught.has(normalizeCode(r.printedCode)));
+  return c.json({ success: true, data: { supplierKnown: true, ...options, rows } });
 });
 
 // POST /scan-gr/jobs/:id/codes {pairs: [{printedCode, poItemId}]} — remember
 // which of our items each printed code is, for this supplier. A scan that made
 // no draft yet is matched again from its stored read (no new OCR call).
 scanGr.post('/jobs/:id/codes', async (c) => {
-  let body: { pairs?: Array<{ printedCode?: unknown; poItemId?: unknown }> };
+  let body: { pairs?: Array<{ printedCode?: unknown; poItemId?: unknown; productCode?: unknown }> };
   try { body = await c.req.json(); } catch { return c.json({ error: 'bad_request', reason: 'Invalid request.' }, 400); }
   const raw = Array.isArray(body.pairs) ? body.pairs : [];
   const svc = serviceClient(c.env);
@@ -540,16 +545,24 @@ scanGr.post('/jobs/:id/codes', async (c) => {
   // Only codes this delivery order printed, only onto lines it was offered:
   // the offer is company- and supplier-scoped, so a caller-supplied id cannot
   // reach another company's or supplier's item.
+  // A free gift (a code on no PO) is taught to an ACTIVE product of this
+  // company's catalogue instead of a PO line (Sim, 2026-10-20).
   const printed = new Set(options.rows.map((r) => r.printedCode));
+  const giftable = new Set(options.rows.filter((r) => r.status === 'not_matched').map((r) => r.printedCode));
   const lineById = new Map(options.poLines.map((l) => [l.poItemId, l]));
+  const productCodes = raw.map((p) => (typeof p.productCode === 'string' ? p.productCode : '')).filter(Boolean);
+  const catalogue = await loadCatalogueProducts(svc, loaded.job.companyId, productCodes);
   const pairs: Array<{ printedCode: string; itemCode: string }> = [];
+  let giftCount = 0;
   for (const p of raw) {
     const code = typeof p.printedCode === 'string' ? p.printedCode : '';
     const line = typeof p.poItemId === 'string' ? lineById.get(p.poItemId) : undefined;
-    if (!printed.has(code) || !line) return c.json({ error: 'bad_request', reason: `"${code}" cannot be matched to that line.` }, 400);
-    pairs.push({ printedCode: code, itemCode: line.itemCode });
+    const product = typeof p.productCode === 'string' ? catalogue.get(p.productCode) : undefined;
+    if (printed.has(code) && line) { pairs.push({ printedCode: code, itemCode: line.itemCode }); continue; }
+    if (giftable.has(code) && product) { pairs.push({ printedCode: code, itemCode: product.code }); giftCount += 1; continue; }
+    return c.json({ error: 'bad_request', reason: `"${code}" cannot be matched to that item.` }, 400);
   }
-  if (pairs.length === 0) return c.json({ error: 'bad_request', reason: 'Choose a PO line for at least one code.' }, 400);
+  if (pairs.length === 0) return c.json({ error: 'bad_request', reason: 'Choose an item for at least one code.' }, 400);
 
   const houzsUser = c.get('houzsUser');
   const userId = houzsUser?.id != null && Number.isFinite(Number(houzsUser.id)) ? Number(houzsUser.id) : null;
@@ -560,6 +573,21 @@ scanGr.post('/jobs/:id/codes', async (c) => {
   }
 
   let redrafted: string | null = null;
+  let giftsAdded = 0;
+  if (loaded.job.linkedDocNo && giftCount > 0) {
+    // The draft already exists: put the gifts on it now, from the stored read.
+    const { data: grn, error: grnErr } = await svc.from('grns').select('id')
+      .eq('grn_number', loaded.job.linkedDocNo).eq('company_id', loaded.job.companyId).maybeSingle();
+    if (grnErr) console.error('[scan-gr codes] draft lookup failed:', grnErr.message);
+    const grnId = (grn as { id: string } | null)?.id;
+    if (grnId) {
+      const fresh = await matchScan(svc, loaded.job.companyId, loaded.parsed);
+      const added = await addGiftLines(svc, loaded.job.companyId, grnId, await scanGifts(svc, loaded.job.companyId, fresh), loaded.job.uploaderStaffId);
+      const note = giftNote(added);
+      if (note) await appendGrnNote(svc, loaded.job.companyId, [grnId], note);
+      giftsAdded = added.length;
+    }
+  }
   if (!loaded.job.linkedDocNo) {
     const touch = async (patch: Record<string, unknown>): Promise<void> => {
       const { error } = await svc.from('scan_jobs').update({ ...patch, updated_at: new Date().toISOString() })
@@ -574,7 +602,21 @@ scanGr.post('/jobs/:id/codes', async (c) => {
       await touch({ error: outcome.note });
     }
   }
-  return c.json({ success: true, data: { saved: pairs.length, draft: redrafted } });
+  return c.json({ success: true, data: { saved: pairs.length, draft: redrafted, giftsAdded } });
+});
+
+// GET /scan-gr/products?search= — ACTIVE products of the active company, for
+// teaching a free gift's code on the scan card. Code / name contains, 20 max.
+scanGr.get('/products', async (c) => {
+  const term = (c.req.query('search') ?? '').trim();
+  if (term.length < 2) return c.json({ success: true, data: { products: [] } });
+  const like = `%${term.replace(/[%_,()]/g, ' ')}%`;
+  const svc = serviceClient(c.env);
+  const { data, error } = await svc.from('mfg_products').select('code, name')
+    .eq('company_id', activeCompanyId(c)).eq('status', 'ACTIVE')
+    .or(`code.ilike.${like},name.ilike.${like}`).order('code').limit(20);
+  if (error) return c.json({ error: 'query_failed', reason: 'Could not search products. Please try again.' }, 500);
+  return c.json({ success: true, data: { products: data ?? [] } });
 });
 
 // POST /scan-gr/jobs/clear-failed — delete this company's terminal error GR rows.
