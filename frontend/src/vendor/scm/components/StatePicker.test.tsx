@@ -207,11 +207,4 @@ describe('StatePicker behaviour survives the portal', () => {
     fireEvent.keyDown(input(), { key: 'Escape' });
     expect(screen.queryByRole('listbox')).toBeNull();
   });
-
-  test('compact (mobile) keeps the native select and portals nothing', () => {
-    stubInputRect(100);
-    renderPicker({ compact: true });
-    expect(screen.getByRole('combobox').tagName).toBe('SELECT');
-    expect(screen.queryByRole('listbox')).toBeNull();
-  });
 });

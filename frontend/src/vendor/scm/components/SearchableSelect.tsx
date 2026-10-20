@@ -167,7 +167,7 @@ export function SearchableSelect({
                       setOpen(false);
                     }}
                     style={{
-                      padding: "6px 10px",
+                      padding: "var(--pick-opt-pad, 6px 10px)",
                       borderRadius: 6,
                       cursor: "pointer",
                       fontSize: "var(--fs-13, 13px)",

@@ -19,8 +19,8 @@
 //   • Country pinned (Warehouse / Supplier edit — country is a separate field)
 //     → the combobox lists just that country's states, flat.
 //   • Country empty (create-supplier / Venue / SO forms) → grouped-by-country.
-//   `compact` (mobile) keeps the native <select> — the OS picker already
-//   groups and filters better than any web control on a phone.
+//   Mobile uses the same combobox: a native <select> cannot be typed into, and
+//   the operators asked to search State on the phone too.
 //
 // STYLING: the combobox input reuses the bordered select look (chevron
 // included) so it still matches the sibling City / Country / Postcode fields;
@@ -67,7 +67,6 @@ export const StatePicker = ({
   style,
   disabled,
   placeholder = '— pick state —',
-  compact = false,
   selectClassName,
 }: {
   /** When set, restrict the picker to this country's states (flat list).
@@ -81,10 +80,6 @@ export const StatePicker = ({
   style?: React.CSSProperties;
   disabled?: boolean;
   placeholder?: string;
-  /** Compact — render ONLY the grouped native <select>. For mobile / tight
-   *  inline contexts where the OS picker (iOS wheel, Android list) is the
-   *  better filter. Grouping keeps MY on top. */
-  compact?: boolean;
   /** Applied to the inner control so the caller can share its form styles. */
   selectClassName?: string;
 }) => {
@@ -180,32 +175,6 @@ export const StatePicker = ({
   const panelPos = useAnchoredPanel(inputRef, open && !controlsDisabled, PANEL_MAX_H);
 
   const wrapCls = className ? `${styles.wrap} ${className}` : styles.wrap;
-
-  /* Compact (mobile) keeps the native grouped <select>. */
-  if (compact) {
-    return (
-      <div className={wrapCls} style={style}>
-        <select
-          value={value}
-          onChange={(e) => handlePick(e.target.value)}
-          disabled={controlsDisabled}
-          className={selectClassName ?? styles.select}
-        >
-          <option value="">
-            {localities.isLoading ? 'Loading…' : isEmpty ? 'No states seeded' : placeholder}
-          </option>
-          {orphanValue && <option value={value}>{value}</option>}
-          {orderedGroups.map(([c, list]) => (
-            <optgroup key={c} label={c}>
-              {list.map((s) => (
-                <option key={`${c}-${s}`} value={s}>{s}</option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-      </div>
-    );
-  }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
