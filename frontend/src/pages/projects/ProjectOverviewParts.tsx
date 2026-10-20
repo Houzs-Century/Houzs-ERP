@@ -30,13 +30,15 @@ interface BookRow {
   /** The P&L's rental (Finance's books or a typed line), in RM. */
   rental: number;
 }
-type BooksTab = "daily" | "rental" | "report";
+type BooksTab = "daily" | "nocogs" | "rental" | "report";
+/** A Sales Order of a recent event with a product line at no cost - its SKU has no cost in Product Maintenance. */
+interface SoNoCogs { docNo: string; projectId: number; event: string; code: string; startDate: string; endDate: string; amountSen: number; items: string[] }
 /** An event of the last 180 days whose chat report holds bills not opened under it. */
 interface NotDailyEvent { id: number; code: string; name: string; startDate: string; endDate: string; reportBills: number; bills: ProblemBill[] }
 
 /** Finished events and what still makes their P&L wrong. */
 export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void }) {
-  const q = useQuery<DataGaps & { books: BookRow[]; notDaily: NotDailyEvent[]; recentFrom: string }>("/api/projects/data-gaps", () => api.get("/api/projects/data-gaps"));
+  const q = useQuery<DataGaps & { books: BookRow[]; notDaily: NotDailyEvent[]; soNoCogs: SoNoCogs[]; recentFrom: string }>("/api/projects/data-gaps", () => api.get("/api/projects/data-gaps"));
   const [tab, setTab] = useState<BooksTab>("daily");
   const g = q.data;
   if (q.error) return <div className="mb-4 rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not check the event books: {q.error}</div>;
@@ -50,7 +52,7 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
   return (
     <Panel title="Books not complete" hint={`events that ended ${g.from} – ${g.to} (${g.books.length} events) · what still makes the P&L above read wrong`}>
       <StepTabs value={tab} onChange={(v) => setTab(v as BooksTab)}
-        tabs={[["daily", "Sales Orders not daily", bills.length, 0], ["rental", "Rental missing or no sales", rentalRows.length, 0], ["report", "No chat sales report", noReport.length, 0]] as Array<[string, string, number, number]>} />
+        tabs={[["daily", "Sales Orders not daily", bills.length, 0], ["nocogs", "SO no COGS", g.soNoCogs.length, 0], ["rental", "Rental missing or no sales", rentalRows.length, 0], ["report", "No chat sales report", noReport.length, 0]] as Array<[string, string, number, number]>} />
       <div className="max-h-[460px] overflow-auto">
         {tab === "daily" && (
           <table className="w-full border-collapse">
@@ -69,6 +71,24 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
               );
             })}
               {bills.length === 0 && <tr><Td left className="text-ink-muted">Every reported bill is opened under its event.</Td></tr>}
+            </tbody>
+          </table>
+        )}
+        {tab === "nocogs" && (
+          <table className="w-full border-collapse">
+            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Dates</Th><Th left>Sales Order</Th><Th>Amount</Th><Th left>SKU with no cost</Th></tr></thead>
+            <tbody>{g.soNoCogs.map((o, i) => {
+              const first = i === 0 || g.soNoCogs[i - 1]!.projectId !== o.projectId;
+              return (
+                <tr key={o.docNo} className={cn("cursor-pointer hover:bg-surface-2/50", first && i > 0 && "border-t-2 border-border")} onClick={() => onOpen(o.projectId)}>
+                  {first ? eventCell({ name: o.event, code: o.code }) : <Td left> </Td>}
+                  <Td>{first ? `${o.startDate.slice(5)}${o.endDate && o.endDate !== o.startDate ? ` – ${o.endDate.slice(5)}` : ""}` : ""}</Td>
+                  <Td left className="font-mono">{o.docNo}</Td><Td>{sen(o.amountSen)}</Td>
+                  <Td left className="max-w-[360px] truncate text-err"><span title={o.items.join(", ")}>{o.items.join(", ")}</span></Td>
+                </tr>
+              );
+            })}
+              {g.soNoCogs.length === 0 && <tr><Td left className="text-ink-muted">Every order line of these events carries a cost.</Td></tr>}
             </tbody>
           </table>
         )}
