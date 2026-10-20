@@ -92,6 +92,11 @@ try {
   console.log(`booklet numbers listed by two or more events' reports: ${conflicts.length}`);
   for (const [t, s] of conflicts.slice(0, 30)) console.log(`  ${t}: ${[...s].map((id) => `#${id} ${name.get(id)}`).join(' | ')}`);
 
+  console.log('\nDETAIL doc | customer | order salesperson / the report says | order venue');
+  for (const m of moves) {
+    const o = orderByDoc.get(m.doc);
+    console.log(`DETAIL ${m.doc} | ${o?.debtor_name ?? '—'} | ${o?.sp_name ?? '—'} / ${m.sp ?? '—'} | ${o?.venue ?? '—'}`);
+  }
   console.log('\ndoc | booklet | report day | report amount | order RM | order status | so_date | order brand | from event → to event (brand) | held back?');
   for (const m of moves.sort((a, b) => String(a.doc).localeCompare(String(b.doc)))) {
     const o = orderByDoc.get(m.doc);
