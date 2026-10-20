@@ -65,7 +65,7 @@
 
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
-import { HC_SUBSTATUS_VALUES, HC_MESSAGE_STATUS_VALUES, fieldsSchema, SO_FIELD_COLS, DO_FIELD_COLS, type DeliveryOrderExecRow, type DoExecOut } from './delivery-planning-fields';
+import { HC_SUBSTATUS_VALUES, HC_MESSAGE_STATUS_VALUES, fieldsSchema, SO_FIELD_COLS, DO_FIELD_COLS, type DoExecOut } from './delivery-planning-fields';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { todayMyt } from '../lib/my-time';
@@ -78,7 +78,7 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
 import { effectiveSoDelivery } from '../shared';
 import { readinessRowFields, NO_STOCK_ROW } from '../lib/so-readiness-row';
-import { boardDeliverableByDoc } from '../lib/board-deliverable';
+import { kickOffBoardReads } from '../lib/delivery-planning-board-reads';
 import { readFailure, noteDegradedRead } from '../lib/read-failure';
 import { soProcessingLocked } from './mfg-sales-orders';
 import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
@@ -468,45 +468,12 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     return c.json({ orders: [], counts: emptyCounts(), regions: regionCfg.regions });
   }
 
-  /* OPEN-TIME (owner 2026-10-20 "开得慢"): the four per-SO reads below — live
-     balance, line readiness, deliverable sums, and DOs — each depend only on
-     docNos and on nothing from one another. They used to run one after another
-     (four serial DB round-trips over ~1,450 docs + ~7k lines), the bulk of the
-     board's open latency. Kick them off together HERE so they run concurrently;
-     each is still awaited and processed at its original site below, so the
-     assembled board is byte-identical — only the waiting is shared. The reads
-     also overlap the product-catalog sub-reads that sit between them. */
-  const liveBalanceReadP = chunkIn<{ doc_no: string | null; balance_sen_live: number | null }>(docNos, (batch, from, to) =>
-    sb.from('mfg_sales_orders_with_payment_totals')
-      .select('doc_no, balance_sen_live')
-      .in('doc_no', batch).order('doc_no').range(from, to),
-  );
-  const itemRowsReadP = chunkIn<{
-    doc_no: string; item_group: string | null; item_code: string | null;
-    stock_status: string | null; cancelled: boolean | null; warehouse_id: string | null;
-    branding: string | null; created_at: string | null;
-  }>(docNos, (batch, from, to) =>
-    sb.from('mfg_sales_order_items')
-      .select('doc_no, item_group, item_code, stock_status, cancelled, warehouse_id, branding, created_at')
-      .in('doc_no', batch)
-      .eq('cancelled', false)
-      .order('doc_no')
-      .order('line_no', { ascending: true, nullsFirst: false })
-      .order('created_at', { ascending: true })
-      .range(from, to),
-  );
-  /* boardDeliverableByDoc THROWS on failure (the others return {data,error}); wrap
-     it so the in-flight promise can never float as an unhandled rejection while the
-     other reads run. The 'delivered_sum' 500 is reproduced at the await site. */
-  const deliverableReadP = boardDeliverableByDoc(sb, docNos).then(
-    (r) => ({ ok: r } as const),
-    (e) => ({ err: e } as const),
-  );
-  const doRowsReadP = chunkIn<DeliveryOrderExecRow>(docNos, (batch, from, to) =>
-    sb.from('delivery_orders')
-      .select('id, do_number, so_doc_no, status, driver_id, delivery_state, customer_delivery_date, do_date, delivered_at, pod_r2_key, pod_lat, time_range, time_confirmed, arrival_at, departure_at, shipout_date, customer_delivered_date, eta_arriving_port, delivery_substatus, arrives_em_warehouse_date, em_delivery_status, consignment_no, vessel_voyage, etd_port_klang, bs_delivery_date, esb_remarks, bs_remarks, ctn, em_delivered_date')
-      .in('so_doc_no', batch).order('id').range(from, to),
-  );
+  /* OPEN-TIME (owner 2026-10-20 "开得慢"): kick off the four independent per-SO
+     reads (live balance, line readiness, deliverable sums, DOs) together so they
+     run concurrently instead of serially; each is still awaited and processed at
+     its own site below. Extracted to keep this file from growing (see
+     kickOffBoardReads for the why and the deliverable-wrap detail). */
+  const { liveBalanceReadP, itemRowsReadP, deliverableReadP, doRowsReadP } = kickOffBoardReads(sb, docNos);
 
   /* 2b. LIVE balance per SO — same source-of-truth as the SO list Balance column
         (mfg_sales_orders_with_payment_totals.balance_sen_live = local_total −
