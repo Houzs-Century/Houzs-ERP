@@ -606,7 +606,7 @@ export function splitInnerLocation(printed: string | null | undefined): { locati
 /**
  * Why a printed PO cannot take this delivery order, in words the operator can
  * act on: its status, on hold, another supplier's PO (Hookka DO-2610-079 named
- * OHANA STUDIO's HC-PO-010086), or nothing left on it. Null when the printed
+ * OHANA STUDIO's HC-PO-010086), or no open line found for it. Null when the printed
  * number is not a PO of ours at all.
  */
 export function printedPoWhy(printed: string | null | undefined, allPos: PoStatusRef[], scanSupplierId: string | null): string | null {
@@ -619,7 +619,7 @@ export function printedPoWhy(printed: string | null | undefined, allPos: PoStatu
   if (po.supplierName && scanSupplierId !== null && po.supplierId && po.supplierId !== scanSupplierId) {
     return `PO ${po.poNumber} is ${po.supplierName}'s PO, not this supplier's`;
   }
-  return `PO ${po.poNumber} has nothing left to receive`;
+  return `PO ${po.poNumber} shows no open line for this supplier in our search; open the PO to check its balance`;
 }
 
 function poNotOpenWhy(l: ScannedGrnLine, allPos: PoStatusRef[], scanSupplierId: string | null): string {

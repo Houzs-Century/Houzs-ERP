@@ -821,7 +821,7 @@ describe("a row naming another supplier's PO says whose it is (DO-2610-079)", ()
 
   test('on hold and nothing-left read as such', () => {
     expect(printedPoWhy('PO-010086', [{ ...allPos[0], onHold: true }], 'hookka')).toBe('PO HC-PO-010086 is on hold');
-    expect(printedPoWhy('PO-010086', [{ ...allPos[0], supplierId: 'hookka' }], 'hookka')).toBe('PO HC-PO-010086 has nothing left to receive');
+    expect(printedPoWhy('PO-010086', [{ ...allPos[0], supplierId: 'hookka' }], 'hookka')).toBe('PO HC-PO-010086 shows no open line for this supplier in our search; open the PO to check its balance');
   });
 });
 
