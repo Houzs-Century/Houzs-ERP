@@ -1121,6 +1121,7 @@ const FIELD_LABELS: Record<string, string> = {
   sla_hours: "SLA Hours", deadline_at: "Deadline",
   supplier_pickup_at: "Supplier Pickup Date", items_ready_at: "Supplier Return / Item Ready Date",
   customer_pickup_at: "Scheduled Pickup Date", inspection_visit_at: "Inspection Visit Date", actual_pickup_at: "Actual Pickup Date",
+  pickup_status: "Pickup Status", pickup_pic: "Pickup PIC", item_location: "Item Location",
   inspection_result: "Inspection Result", email_for_survey: "Survey Email",
   verification_outcome: "Verification Outcome", verified_root_cause: "Verified Root Cause",
   qc_receipt_date: "QC Receipt Date", goods_returned_note: "Goods Returned Note",
