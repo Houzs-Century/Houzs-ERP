@@ -62,7 +62,6 @@ import {
   priorityColor,
   resolutionLabel,
 } from "../components/StatusDot";
-import { Pagination } from "../components/Pagination";
 import { EmptyState } from "../components/EmptyState";
 import { Badge } from "../components/Badge";
 import { Panel, PanelSection, FieldRow } from "../components/Panel";
@@ -103,7 +102,6 @@ const LOOKUP_CACHE = { staleTime: 300_000 } as const;
    to the room actually available on the side it opens, so the last suggestion
    is never below the bottom of the window. */
 const SO_SUGGEST_MAX_H = 288;
-import { useServerSort } from "../hooks/useServerSort";
 import { useFocusFromUrl } from "../hooks/useFocusFromUrl";
 import { useAuth } from "../auth/AuthContext";
 import { isSalesStaff } from "../auth/salesAccess";
@@ -269,6 +267,18 @@ function isoLocal(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+/** Every case the list filters match, in pages of 200 (the route's cap). */
+async function fetchAllCases(filters: CaseFilters, signal: AbortSignal | undefined): Promise<Paginated<AssrCase>> {
+  const per = 200;
+  const first = await api.get<Paginated<AssrCase>>(`/api/assr${buildQuery({ ...filters, page: 1, per_page: per })}`, { signal });
+  const rows = [...first.data];
+  for (let pg = 2; pg <= Math.ceil(first.total / per); pg++) {
+    const next = await api.get<Paginated<AssrCase>>(`/api/assr${buildQuery({ ...filters, page: pg, per_page: per })}`, { signal });
+    rows.push(...next.data);
+  }
+  return { ...first, data: rows, page: 1, per_page: rows.length };
 }
 
 // ── Main page ─────────────────────────────────────────────────
@@ -451,15 +461,12 @@ function CasesView({
   useEffect(() => {
     writeAssrListFilter({ search, stage });
   }, [search, stage]);
-  const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useIdentityPreference("pp:assr", 50, pageSizePreference([10, 25, 50, 100, 200]));
   const [showArchived, setShowArchived] = useIdentityPreference("assr:showArchived", false, booleanPreference);
   const [myCases, setMyCases] = useIdentityPreference("assr:myCases", false, booleanPreference);
   // Hide completed cases from the working list — closed cases pile up
   // and ops mostly only cares about what's still open.
   const [hideCompleted, setHideCompleted] = useIdentityPreference("assr:hideCompleted", false, booleanPreference);
   const [bulkSelected, setBulkSelected] = useState<Set<number>>(new Set());
-  const { sort, sortParams, handleSortChange } = useServerSort(() => setPage(1));
   const [params, setParams] = useSearchParams();
   const creditorFilter = params.get("creditor_code");
 
@@ -502,14 +509,14 @@ function CasesView({
   // service_cases.manage; the daily cron covers routine freshness).
   const [syncingDo, setSyncingDo] = useState(false);
 
+  /* Every case the filters above match, not one page (owner 2026-10-20: "filter
+     sort 跨 pages 处理完"). The column sort and funnel filters then run over all
+     of them in the table; the server only sorted ~20 of the 27 columns and the
+     funnels filtered the visible page alone. A filtered list is a few hundred
+     cases at most (968 in all), read in pages of 200. */
   const list = useQuery<Paginated<AssrCase>>("assr-list",
-    (signal) =>
-      api.get(
-        // Same filter as Board / Calendar and Export.
-        `/api/assr${buildQuery({ ...caseFilters, page, per_page: perPage, ...sortParams })}`,
-        { signal },
-      ),
-    [stage, search, page, perPage, showArchived, excludeStageParam, myCases, user?.id, creditorFilter, sort?.key, sort?.dir],
+    (signal) => fetchAllCases(caseFilters, signal),
+    [stage, search, showArchived, excludeStageParam, myCases, user?.id, creditorFilter],
     // Paginated + stage/filter-switched list: keep the current rows visible
     // while the next page/filter loads instead of flashing an empty table.
     { keepPreviousData: true }
@@ -959,7 +966,7 @@ function CasesView({
       )}
       <StageStatStrip
         stage={stage}
-        onPick={(v) => { setPage(1); setStage(v); }}
+        onPick={(v) => { setStage(v); }}
       />
 
       {/* data-freeze-anchor: on scroll the frozen composition starts HERE —
@@ -999,7 +1006,7 @@ function CasesView({
           <input
             type="checkbox"
             checked={!!myCases}
-            onChange={(e) => { setPage(1); setMyCases(e.target.checked); }}
+            onChange={(e) => { setMyCases(e.target.checked); }}
             className="accent-accent"
             disabled={!user?.id}
           />
@@ -1009,7 +1016,7 @@ function CasesView({
           <input
             type="checkbox"
             checked={!!hideCompleted}
-            onChange={(e) => { setPage(1); setHideCompleted(e.target.checked); }}
+            onChange={(e) => { setHideCompleted(e.target.checked); }}
             className="accent-accent"
             disabled={stage === "completed"}
             title={stage === "completed" ? "Disabled while the Completed stage filter is active" : undefined}
@@ -1020,7 +1027,7 @@ function CasesView({
           <input
             type="checkbox"
             checked={showArchived}
-            onChange={(e) => { setPage(1); setShowArchived(e.target.checked); }}
+            onChange={(e) => { setShowArchived(e.target.checked); }}
             className="accent-accent"
           />
           Archived
@@ -1149,12 +1156,12 @@ function CasesView({
         exportName="service-cases"
         onExport={(cols) =>
           void downloadAllPagesCSV("service-cases", cols, (pg, per) =>
-            api.get<Paginated<AssrCase>>(`/api/assr${buildQuery({ ...caseFilters, page: pg, per_page: per, ...sortParams })}`),
+            api.get<Paginated<AssrCase>>(`/api/assr${buildQuery({ ...caseFilters, page: pg, per_page: per })}`),
           ).catch((e) => toast.error(`Export failed: ${e?.message || e}`))
         }
         search={{
           value: search,
-          onChange: (v) => { setPage(1); setSearch(v); },
+          onChange: (v) => { setSearch(v); },
           placeholder: "Search ASSR no, SO no, Ref no, customer, salesperson, phone…",
           searching: searchTransition.isSearching,
           countPending: list.loading || list.placeholder || Boolean(list.error) || searchTransition.resultsAreStale,
@@ -1176,7 +1183,6 @@ function CasesView({
             setShowArchived(false);
             setMyCases(false);
             setHideCompleted(false);
-            setPage(1);
             if (creditorFilter) {
               const next = new URLSearchParams(params);
               next.delete("creditor_code");
@@ -1192,19 +1198,7 @@ function CasesView({
         getRowKey={(r) => r.id}
         getRowClassName={(r) => (r.archived_at ? "opacity-60" : undefined)}
         onRowClick={(r) => navigate(`/assr/${r.id}`)}
-        serverSort
-        onSortChange={handleSortChange}
       />
-
-      {list.data && !searchTransition.resultsAreStale && (
-        <Pagination
-          page={page}
-          perPage={perPage}
-          total={list.data.total}
-          onPageChange={setPage}
-          onPerPageChange={(n) => { setPerPage(n); setPage(1); }}
-        />
-      )}
       </>
       )}
 
