@@ -128,15 +128,22 @@ describe("MobileGrnLineRack on a DRAFT — one line over several racks", () => {
   const draft = (line: Record<string, unknown> = LINE) =>
     render(<MobileGrnLineRack moduleKey="grns" grnId="G1" header={header("DRAFT")} line={line} onSaved={vi.fn()} />);
 
-  it("picks a rack, defaults the qty to what is left, and saves the split", () => {
+  it("the first rack picked takes the whole line at once, no Add (Sim, 2026-10-20)", () => {
     draft();
     expect(screen.getByText("10 of 10 not on a rack yet")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Pick a rack"), { target: { value: "R1" } });
+    expect(h.put.mock.calls[0][0]).toEqual({ grnId: "G1", itemId: "I1", racks: [{ rackId: "R1", qty: 10 }] });
+    expect(screen.queryByLabelText("Quantity on this rack")).toBeNull();
+  });
+
+  it("a second rack is a split: its qty, defaulting to all, comes off the first", () => {
+    h.rows = [{ grnItemId: "I1", rackId: "R1", qty: 10 }];
+    draft();
+    fireEvent.change(screen.getByLabelText("Pick a rack"), { target: { value: "R2" } });
     const qty = screen.getByLabelText("Quantity on this rack") as HTMLInputElement;
-    expect(qty.value).toBe("10");
-    fireEvent.change(qty, { target: { value: "6" } });
+    fireEvent.change(qty, { target: { value: "4" } });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
-    expect(h.put.mock.calls[0][0]).toEqual({ grnId: "G1", itemId: "I1", racks: [{ rackId: "R1", qty: 6 }] });
+    expect(h.put.mock.calls[0][0].racks).toEqual([{ rackId: "R1", qty: 6 }, { rackId: "R2", qty: 4 }]);
   });
 
   it("adds a scanned shelf to the shelves already there", () => {

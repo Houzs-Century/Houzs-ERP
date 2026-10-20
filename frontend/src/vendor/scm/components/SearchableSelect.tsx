@@ -40,6 +40,24 @@ export function nextOptionWindow(current: number, total: number, step = OPTION_P
   return Math.min(total, safeCurrent + safeStep);
 }
 
+/**
+ * The option Enter commits for a typed term: the one whose label or value IS the
+ * term (or ends with it as a word, "L19.2" -> "Rack L19.2"), else the only
+ * match. Several matches and none exact -> null, the list stays open to click.
+ * Sim, 2026-10-20: a rack typed and Enter'd looked filled but was never picked,
+ * so the GRN saved one line's rack out of eleven.
+ */
+export function enterPick(term: string, filtered: ReadonlyArray<SearchableSelectOption>): SearchableSelectOption | null {
+  const q = term.trim().toLowerCase();
+  if (!q) return null;
+  const exact = filtered.filter((o) => {
+    const l = o.label.toLowerCase();
+    return l === q || o.value.toLowerCase() === q || l.endsWith(` ${q}`);
+  });
+  if (exact.length === 1) return exact[0];
+  return filtered.length === 1 ? filtered[0] : null;
+}
+
 export function SearchableSelect({
   value,
   onChange,
@@ -121,6 +139,15 @@ export function SearchableSelect({
           e.currentTarget.select();
         }}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter") return;
+          const pick = enterPick(search, filtered);
+          if (!pick) return;
+          e.preventDefault();
+          onChange(pick.value);
+          setSearch("");
+          setOpen(false);
+        }}
         onChange={(e) => {
           setSearch(e.target.value);
           setOpen(true);
