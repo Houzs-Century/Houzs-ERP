@@ -24,6 +24,7 @@ export const ACCOUNTING_TAB_TITLES = {
   charges: 'Merchant charges',
   performance: 'Performance P&L',
   events: 'Event costs',
+  commission: 'Event Commission',
   products: 'Product Profit',
 } as const;
 
