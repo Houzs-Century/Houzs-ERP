@@ -3,7 +3,7 @@
 import { Panel, Th, Td, StepTabs } from "../../components/scm-v2/OverviewKit";
 import { useState } from "react";
 import { formatCurrency, cn } from "../../lib/utils";
-import { PROJECT_STAGES, projectStage, setupArrangedOf } from "./projectStage";
+import { PROJECT_STAGES, projectStage, setupArrangedOf, driverAssignedOf } from "./projectStage";
 import { useQuery } from "../../hooks/useQuery";
 import { api } from "../../api/client";
 
@@ -145,7 +145,7 @@ export function ProjectStuckPanel({ onOpen }: { onOpen: (id: number) => void }) 
      event start + the days set on it in the template — not the tracker's
      fixed T-offsets. Days late = the task furthest past its date. */
   const rows = d.events.map((e) => {
-    const st = projectStage(e.items, setupArrangedOf(e.setupCrew, e.setupStartAt), e.start, d.today);
+    const st = projectStage(e.items, setupArrangedOf(e.setupCrew, e.setupStartAt), e.start, d.today, driverAssignedOf(e.setupCrew));
     const mapped = e.items.filter((i) => (PROJECT_STAGES[st.currentIdx]?.titles ?? []).includes(i.title) && i.due);
     const stageDue = mapped.length ? mapped.map((i) => i.due as string).sort().at(-1) as string : st.deadline;
     return { e, st, stageDue, late: e.late[0]?.daysOver ?? 0 };
