@@ -17,7 +17,14 @@ Usage:
 
 It instances the VF at wght 400/700, subsets each to its tier's set, writes the
 four files, and verifies no existing glyph was dropped and every macron is kept.
+
+/fonts/* is served immutable for a year, so each file is named
+noto-sans-sc-<tier>-<weight>.<sha256[:8]>.ttf and a changed face gets a new
+name (an in-place rewrite never reached browsers that had printed before,
+2026-10-20). Repoint TIER_FACES in pdf-common.ts to the names printed below.
 """
+import glob
+import hashlib
 import os
 import sys
 from fontTools.ttLib import TTFont
@@ -28,12 +35,19 @@ LATIN_EXT_A = set(range(0x0100, 0x0180))
 MACRONS = {0x0100, 0x0101, 0x0112, 0x0113, 0x012A, 0x012B, 0x014C, 0x014D, 0x016A, 0x016B}
 KEEP_TABLES = {'cmap', 'glyf', 'head', 'hhea', 'hmtx', 'loca', 'maxp', 'name', 'OS/2', 'post'}
 TIERS = {
-    'punct': ['noto-sans-sc-punct-400.ttf', 'noto-sans-sc-punct-700.ttf'],
-    'hanzi': ['noto-sans-sc-hanzi-400.ttf', 'noto-sans-sc-hanzi-700.ttf'],
+    'punct': ['noto-sans-sc-punct-400', 'noto-sans-sc-punct-700'],
+    'hanzi': ['noto-sans-sc-hanzi-400', 'noto-sans-sc-hanzi-700'],
 }
 WEIGHT_OF = {'400': 400, '700': 700}
 
 FONT_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'public', 'fonts'))
+
+
+def current_file(stem):
+    found = glob.glob(os.path.join(FONT_DIR, f'{stem}.*.ttf'))
+    if len(found) != 1:
+        sys.exit(f'ABORT: expected exactly one {stem}.<sha8>.ttf in {FONT_DIR}, found {len(found)}.')
+    return found[0]
 
 
 def cmap_set(path):
@@ -61,18 +75,19 @@ def main(vf_path):
     target = {}
     for tier, files in TIERS.items():
         existing = set()
-        for fn in files:
-            existing |= cmap_set(os.path.join(FONT_DIR, fn))
+        for stem in files:
+            existing |= cmap_set(current_file(stem))
         dropped = sorted(existing - vf_cps)
         if dropped:
             sys.exit(f'ABORT {tier}: source would drop {len(dropped)} existing codepoints.')
         target[tier] = existing | set(latin_present)
 
     for tier, files in TIERS.items():
-        for fn in files:
-            w = WEIGHT_OF[fn.rsplit('-', 1)[1].split('.')[0]]
-            out = os.path.join(FONT_DIR, fn)
-            before = os.path.getsize(out)
+        for stem in files:
+            w = WEIGHT_OF[stem.rsplit('-', 1)[1]]
+            old = current_file(stem)
+            before = os.path.getsize(old)
+            out = os.path.join(FONT_DIR, f'{stem}.tmp.ttf')
             f = TTFont(vf_path, recalcTimestamp=False)   # else save() stamps head.modified = now
             instancer.instantiateVariableFont(f, {'wght': w}, inplace=True)
             ss = subset.Subsetter(options=subset_options())
@@ -86,8 +101,12 @@ def main(vf_path):
             f.save(out)
             got = cmap_set(out)
             if not MACRONS.issubset(got) or (target[tier] - set(latin_present)) - got:
-                sys.exit(f'ABORT: {fn} failed verification after subsetting.')
-            print(f'{fn}: {before} -> {os.path.getsize(out)} bytes, {len(got)} codepoints')
+                sys.exit(f'ABORT: {stem} failed verification after subsetting.')
+            with open(out, 'rb') as fh:
+                fn = f'{stem}.{hashlib.sha256(fh.read()).hexdigest()[:8]}.ttf'
+            os.remove(old)
+            os.replace(out, os.path.join(FONT_DIR, fn))
+            print(f'{fn}: {before} -> {os.path.getsize(os.path.join(FONT_DIR, fn))} bytes, {len(got)} codepoints')
 
 
 if __name__ == '__main__':
