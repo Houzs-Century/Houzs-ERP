@@ -38,6 +38,12 @@ enters on `pending_customer_pickup` (collect from customer), then
 terminal stage AND not archived — both terminal stages must be excluded, not
 just `completed`.
 
+Stage target days are snapshotted on the case (`stage_target_days`) and its open
+`assr_stage_history` row when it enters a stage. Saving a target in Service
+Maintenance (priority cell, or the active Lead Time profile) re-reads it for
+the open cases already in that stage (`reapplyStageTargets`), so "overdue"
+follows the new SLA at once.
+
 ## Permissions
 
 - `service_cases.read` / `.create` / `.write` / `.manage` / `.approve`.
