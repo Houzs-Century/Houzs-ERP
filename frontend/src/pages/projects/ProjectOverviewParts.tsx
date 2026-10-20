@@ -19,56 +19,79 @@ interface DataGaps {
   byMonth: Array<{ month: string; ended: number; withSales: number }>;
 }
 
-/* The books line by line, as in each event's Financial Snapshot (owner
-   2026-10-19): which line is not keyed is the data problem, under the
-   process problem (Events by stage) above. Only the lines someone keys by
-   hand; commission, merchandise and transport are worked out automatically. */
-const BOOK_LINES: Array<[BookKey, string]> = [["sales", "Sales"], ["rental", "Rental"], ["setup", "Setup"]];
-type BookKey = "sales" | "cogs" | "cogsMattSofa" | "cogsBedframe" | "cogsAccessories" | "rental" | "setup" | "transportFee" | "transportSetup" | "commission" | "merchandise";
+/* What makes an event's P&L read wrong (owner 2026-10-20), three problems:
+   Sales Orders not daily (per bill of the chat sales report: not opened, or
+   opened under another event and to be moved), Rental (none keyed, or keyed
+   with no sales against it), and No chat sales report (per event). */
+interface ProblemBill { ref: string; amountSen: number; salesperson: string | null; problem: "not_opened" | "other_event"; soDocNo: string | null; otherEvent: string | null }
 interface BookRow {
-  id: number; code: string; name: string; brand: string | null; endDate: string; soSen: number; lines: Record<BookKey, number>;
-  soDocs: string[];
-  /** Order lines that sell a product but carry no cost: the COGS gap (owner 2026-10-19). */
-  noCostLines: Array<{ docNo: string; itemCode: string }>;
+  id: number; code: string; name: string; brand: string | null; endDate: string; soSen: number; soDocs: string[];
+  hasReport: boolean; reportBills: number; problemBills: ProblemBill[];
+  /** The P&L's rental (Finance's books or a typed line), in RM. */
+  rental: number;
 }
+type BooksTab = "daily" | "rental" | "report";
 
-/** Finished events and which lines of their books are still empty. */
+/** Finished events and what still makes their P&L wrong. */
 export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void }) {
   const q = useQuery<DataGaps & { books: BookRow[] }>("/api/projects/data-gaps", () => api.get("/api/projects/data-gaps"));
-  const [tab, setTab] = useState<string>("any");
+  const [tab, setTab] = useState<BooksTab>("daily");
   const g = q.data;
   if (q.error) return <div className="mb-4 rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not check the event books: {q.error}</div>;
   if (!g) return null;
-  const missing = (r: BookRow): string[] => [...BOOK_LINES.filter(([k]) => !(r.lines[k] > 0)).map(([k]) => k), ...(r.noCostLines.length ? ["cogs"] : [])];
-  const incomplete = g.books.filter((r) => missing(r).length > 0);
-  const rows = incomplete.filter((r) => tab === "any" || missing(r).includes(tab));
   const sen = (x: number) => money(x / 100);
+  const bills = g.books.flatMap((r) => r.problemBills.map((b) => ({ r, b })));
+  const rentalRows = g.books.filter((r) => !(r.rental > 0) || !(r.soSen > 0));
+  const noReport = g.books.filter((r) => !r.hasReport);
+  const eventCell = (r: BookRow) => <Td left className="max-w-[300px] truncate"><span className="text-primary">{r.name}</span><span className="block text-[10.5px] text-ink-muted">{r.code}</span></Td>;
   return (
-    <Panel title="Books not complete" hint={`events that ended ${g.from} – ${g.to} (${g.books.length} events) · a red line has nothing keyed yet · the figures above read wrong until it is`}>
-      <StepTabs value={tab} onChange={setTab}
-        tabs={[["any", "Any line missing", incomplete.length, 0] as [string, string, number, number],
-          ...BOOK_LINES.map(([k, label]) => [k, `${label} not keyed`, incomplete.filter((r) => missing(r).includes(k)).length, 0] as [string, string, number, number]),
-          ["cogs", "COGS not captured on an order", incomplete.filter((r) => r.noCostLines.length > 0).length, 0] as [string, string, number, number]]} />
+    <Panel title="Books not complete" hint={`events that ended ${g.from} – ${g.to} (${g.books.length} events) · what still makes the P&L above read wrong`}>
+      <StepTabs value={tab} onChange={(v) => setTab(v as BooksTab)}
+        tabs={[["daily", "Sales Orders not daily", bills.length, 0], ["rental", "Rental missing or no sales", rentalRows.length, 0], ["report", "No chat sales report", noReport.length, 0]] as Array<[string, string, number, number]>} />
       <div className="max-h-[460px] overflow-auto">
-        <table className="w-full border-collapse">
-          <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th left>Sales Orders</Th>{BOOK_LINES.map(([k, l]) => <Th key={k}>{l}</Th>)}<Th left>COGS not captured</Th></tr></thead>
-          <tbody>{rows.map((r) => (
-            <tr key={r.id} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
-              <Td left className="max-w-[300px] truncate"><span className="text-primary">{r.name}</span><span className="block text-[10.5px] text-ink-muted">{r.code}</span></Td><Td>{r.endDate}</Td>
-              <Td left className="text-ink-secondary"><span className="tabular-nums">{sen(r.soSen)}</span><span className="block max-w-[220px] truncate text-[10.5px] text-ink-muted" title={r.soDocs.join(", ")}>{r.soDocs.length ? `${r.soDocs.length} SO · ${r.soDocs.join(", ")}` : "no Sales Order"}</span></Td>
-              {BOOK_LINES.map(([k]) => <Td key={k} className={r.lines[k] > 0 ? "" : "bg-err/5 font-semibold text-err"}>{r.lines[k] > 0 ? money(r.lines[k]) : "missing"}</Td>)}
-              <Td left className={r.noCostLines.length ? "bg-err/5 text-err" : "text-ink-muted"}>
-                {r.noCostLines.length
-                  ? <span title={r.noCostLines.map((x) => `${x.docNo} · ${x.itemCode}`).join("\n")}><span className="font-semibold">{r.noCostLines.length} lines</span><span className="block max-w-[260px] truncate text-[10.5px]">{[...new Set(r.noCostLines.map((x) => x.docNo))].join(", ")}</span></span>
-                  : "all costed"}
-              </Td>
-            </tr>
-          ))}
-            {rows.length === 0 && <tr><Td left className="text-ink-muted">Every finished event has this line keyed.</Td></tr>}
-          </tbody>
-        </table>
+        {tab === "daily" && (
+          <table className="w-full border-collapse">
+            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th left>Bill</Th><Th>Amount</Th><Th left>Salesperson</Th><Th left>Problem</Th></tr></thead>
+            <tbody>{bills.map(({ r, b }, i) => (
+              <tr key={`${r.id}-${b.ref}-${i}`} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
+                {eventCell(r)}<Td>{r.endDate}</Td><Td left className="font-mono">{b.ref}</Td><Td>{sen(b.amountSen)}</Td><Td left>{b.salesperson ?? "—"}</Td>
+                <Td left className={b.problem === "not_opened" ? "font-semibold text-err" : "text-warning-text"}>
+                  {b.problem === "not_opened" ? "Not opened as a Sales Order" : <>Opened under another event · <span className="font-mono">{b.soDocNo}</span> under {b.otherEvent} — move it</>}
+                </Td>
+              </tr>
+            ))}
+              {bills.length === 0 && <tr><Td left className="text-ink-muted">Every reported bill is opened under its event.</Td></tr>}
+            </tbody>
+          </table>
+        )}
+        {tab === "rental" && (
+          <table className="w-full border-collapse">
+            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th>Rental</Th><Th>Sales Orders</Th><Th left>Problem</Th></tr></thead>
+            <tbody>{rentalRows.map((r) => (
+              <tr key={r.id} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
+                {eventCell(r)}<Td>{r.endDate}</Td><Td className={r.rental > 0 ? "" : "font-semibold text-err"}>{r.rental > 0 ? money(r.rental) : "missing"}</Td>
+                <Td className={r.soSen > 0 ? "" : "font-semibold text-err"}>{sen(r.soSen)}</Td>
+                <Td left className="text-err">{!(r.rental > 0) ? "No rental keyed" : "Rental keyed, no sales"}</Td>
+              </tr>
+            ))}
+              {rentalRows.length === 0 && <tr><Td left className="text-ink-muted">Every finished event has its rental and sales.</Td></tr>}
+            </tbody>
+          </table>
+        )}
+        {tab === "report" && (
+          <table className="w-full border-collapse">
+            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th>Sales Orders</Th></tr></thead>
+            <tbody>{noReport.map((r) => (
+              <tr key={r.id} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
+                {eventCell(r)}<Td>{r.endDate}</Td><Td>{sen(r.soSen)}</Td>
+              </tr>
+            ))}
+              {noReport.length === 0 && <tr><Td left className="text-ink-muted">Every finished event has a chat sales report.</Td></tr>}
+            </tbody>
+          </table>
+        )}
       </div>
-      <p className="mt-1 text-[11px] text-ink-muted">Sales Orders = what was sold at the event, for comparison when Sales is not keyed. COGS not captured = an order line that sells a product with no cost on it (service lines excluded); hover for the order and item. Commission, merchandise and transport are worked out automatically, so they are not checked here.</p>
+      <p className="mt-1 text-[11px] text-ink-muted">Not daily = a bill in the event chat&apos;s sales report that is not a Sales Order under this event, matched as the event page matches it. Sales = the Sales Orders opened at the event. Click a row to open the event.</p>
     </Panel>
   );
 }
