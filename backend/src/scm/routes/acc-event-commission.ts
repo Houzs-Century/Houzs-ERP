@@ -1,6 +1,7 @@
-// GET /acc-events/commission?from=YYYY-MM-DD&to=YYYY-MM-DD — Accounting ›
-// Reports › Event Commission (owner 2026-10-20). The rules and the two parts
-// are scm/lib/event-commission.ts's; this reads what they need:
+// GET /acc-events/commission?from=YYYY-MM-DD&to=YYYY-MM-DD[&basis=so_date] —
+// Accounting › Reports › Event Commission (owner 2026-10-20), by fair (default)
+// or by the order's SO date. The rules and the two parts are
+// scm/lib/event-commission.ts's; this reads what they need:
 //   · the fairs starting in the range, with the event page's Total Sales and its
 //     Commission row (services/eventPnlBatch.ts — the same figures);
 //   · their orders, and the orders of EARLIER fairs that something happened to
@@ -16,7 +17,7 @@ import { todayMyt } from '../lib/my-time';
 import { dateOrNull } from '../lib/date-coerce';
 import {
   buildEventCommission,
-  type CommissionCancel, type CommissionChange, type CommissionFair, type CommissionPayment, type CommissionSo,
+  type CommissionBasis, type CommissionCancel, type CommissionChange, type CommissionFair, type CommissionPayment, type CommissionSo,
 } from '../lib/event-commission';
 import { pnlForProjects } from '../../services/eventPnlBatch';
 import { loadCostRates } from '../../services/eventPnlInputs';
@@ -36,9 +37,9 @@ type SoRead = {
   doc_no: string; project_id: number | string | null; salesperson_id: string | null; debtor_name: string | null;
   status: string; on_hold: boolean | null; mattress_sofa_sen: number | null; bedframe_sen: number | null;
   accessories_sen: number | null; others_sen: number | null; local_total_sen: number | null;
-  total_revenue_sen: number | null; created_at: string;
+  total_revenue_sen: number | null; created_at: string; so_date: string | null;
 };
-const SO_COLS = 'doc_no, project_id, salesperson_id, debtor_name, status, on_hold, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, local_total_sen, total_revenue_sen, created_at';
+const SO_COLS = 'doc_no, project_id, salesperson_id, debtor_name, status, on_hold, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, local_total_sen, total_revenue_sen, created_at, so_date';
 
 type FairRead = { id: number | string; name: string | null; brand: string | null; start_date: string | null; end_date: string | null; archived_at: string | null; status: string | null; total_sales: number | string | null };
 const FAIR_SQL = `SELECT p.id, p.name, p.brand, p.start_date, p.end_date, p.archived_at, p.status, pf.total_sales
@@ -62,25 +63,35 @@ export const eventCommissionHandler = async (c: any): Promise<Response> => {
   const companyId = co.companyId;
   const fromTs = `${from}T00:00:00+08:00`;
   const toTs = `${to}T23:59:59.999+08:00`;
+  /* By fair (the fair's start) or by SO date (the order's own) — owner 2026-10-20. */
+  const basis: CommissionBasis = c.req.query('basis') === 'so_date' ? 'so_date' : 'fair';
 
-  /* 1. The fairs starting in the range. */
-  let rangeFairs: FairRead[];
-  try {
-    const res = await env.DB.prepare(`${FAIR_SQL}
-       WHERE p.company_id = ? AND p.start_date IS NOT NULL AND p.start_date >= ? AND p.start_date <= ?
-       ORDER BY p.start_date, p.id`).bind(companyId, from, to).all();
-    rangeFairs = (res.results ?? []) as FairRead[];
-  } catch (e) {
-    return fail(c, 'fairs', String((e as Error)?.message ?? e));
+  /* 1–2. Part 1's orders. By fair: the fairs starting in the range and all their
+     orders. By SO date: the orders opened in the range that have a fair. */
+  let rangeFairs: FairRead[] = [];
+  let partOne: { data: SoRead[]; error: { message: string } | null };
+  if (basis === 'fair') {
+    try {
+      const res = await env.DB.prepare(`${FAIR_SQL}
+         WHERE p.company_id = ? AND p.start_date IS NOT NULL AND p.start_date >= ? AND p.start_date <= ?
+         ORDER BY p.start_date, p.id`).bind(companyId, from, to).all();
+      rangeFairs = (res.results ?? []) as FairRead[];
+    } catch (e) {
+      return fail(c, 'fairs', String((e as Error)?.message ?? e));
+    }
+    partOne = await chunkIn<SoRead, number>(rangeFairs.map((f) => Number(f.id)), (batch, lo, hi) =>
+      scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).in('project_id', batch), companyId).order('doc_no').range(lo, hi));
+  } else {
+    const opened = await paginateAll<SoRead>((lo, hi) =>
+      scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).gte('so_date', from).lte('so_date', to).not('project_id', 'is', null), companyId)
+        .order('doc_no').range(lo, hi));
+    partOne = { data: opened.data ?? [], error: opened.error };
   }
+  if (partOne.error) return fail(c, 'orders', partOne.error.message);
   const rangeIds = rangeFairs.map((f) => Number(f.id));
 
-  /* 2. Their orders. */
-  const partOne = await chunkIn<SoRead, number>(rangeIds, (batch, lo, hi) =>
-    scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).in('project_id', batch), companyId).order('doc_no').range(lo, hi));
-  if (partOne.error) return fail(c, 'orders', partOne.error.message);
-
-  /* 3. Orders of earlier fairs that something happened to in the range. */
+  /* 3. Orders of earlier fairs (by fair) / opened earlier (by SO date) that
+     something happened to in the range. */
   const [payIn, chIn, cancelIn] = await Promise.all([
     paginateAll<{ so_doc_no: string }>((lo, hi) =>
       scopeToCompanyId(sb.from('mfg_sales_order_payments').select('so_doc_no').gte('paid_at', from).lte('paid_at', to), companyId).order('so_doc_no').range(lo, hi)),
@@ -100,20 +111,30 @@ export const eventCommissionHandler = async (c: any): Promise<Response> => {
     scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).in('doc_no', batch).not('project_id', 'is', null), companyId).order('doc_no').range(lo, hi));
   if (partTwoRead.error) return fail(c, 'orders', partTwoRead.error.message);
 
-  const earlierIds = [...new Set(partTwoRead.data.map((s) => Number(s.project_id)).filter((id) => Number.isInteger(id) && !rangeIds.includes(id)))];
-  let earlierFairs: FairRead[] = [];
-  if (earlierIds.length > 0) {
-    try {
-      const res = await env.DB.prepare(`${FAIR_SQL}
-         WHERE p.company_id = ? AND p.id IN (${earlierIds.map(() => '?').join(', ')}) AND p.start_date < ?`)
-        .bind(companyId, ...earlierIds, from).all();
-      earlierFairs = (res.results ?? []) as FairRead[];
-    } catch (e) {
-      return fail(c, 'fairs', String((e as Error)?.message ?? e));
+  /* The fairs the rest needs: by fair, the earlier fairs of those orders (started
+     before the range); by SO date, every fair any of the orders is on. */
+  const readFairs = async (ids: number[], startedBefore: string | null): Promise<FairRead[]> => {
+    if (ids.length === 0) return [];
+    const res = await env.DB.prepare(`${FAIR_SQL}
+       WHERE p.company_id = ? AND p.id IN (${ids.map(() => '?').join(', ')})${startedBefore ? ' AND p.start_date < ?' : ''}`)
+      .bind(companyId, ...ids, ...(startedBefore ? [startedBefore] : [])).all();
+    return (res.results ?? []) as FairRead[];
+  };
+  const fairIdsOf = (rows: SoRead[]) => [...new Set(rows.map((s) => Number(s.project_id)).filter((id) => Number.isInteger(id)))];
+  let earlierFairs: FairRead[];
+  let partTwo: SoRead[];
+  try {
+    if (basis === 'fair') {
+      earlierFairs = await readFairs(fairIdsOf(partTwoRead.data).filter((id) => !rangeIds.includes(id)), from);
+      const earlierSet = new Set(earlierFairs.map((f) => Number(f.id)));
+      partTwo = partTwoRead.data.filter((s) => earlierSet.has(Number(s.project_id)));
+    } else {
+      partTwo = partTwoRead.data.filter((s) => s.so_date != null && String(s.so_date).slice(0, 10) < from);
+      earlierFairs = await readFairs(fairIdsOf([...partOne.data, ...partTwo]), null);
     }
+  } catch (e) {
+    return fail(c, 'fairs', String((e as Error)?.message ?? e));
   }
-  const earlierSet = new Set(earlierFairs.map((f) => Number(f.id)));
-  const partTwo = partTwoRead.data.filter((s) => earlierSet.has(Number(s.project_id)));
 
   /* 4. Every order's whole history: payments, goods changes, cancellations; and the names. */
   const sos = [...partOne.data, ...partTwo];
@@ -157,7 +178,7 @@ export const eventCommissionHandler = async (c: any): Promise<Response> => {
       };
     });
   const report = buildEventCommission({
-    from, to, fairs,
+    basis, from, to, fairs,
     ratePctByBrand: new Map([...rates].map(([brand, r]) => [brand, r.commission_normal_pct ?? null])),
     sos: sos.map((s): CommissionSo => ({
       docNo: s.doc_no, projectId: Number(s.project_id), salesperson: s.salesperson_id ? staffName.get(s.salesperson_id) ?? null : null,
@@ -165,6 +186,7 @@ export const eventCommissionHandler = async (c: any): Promise<Response> => {
       goodsSen: n(s.mattress_sofa_sen) + n(s.bedframe_sen) + n(s.accessories_sen) + n(s.others_sen),
       totalSen: n(s.total_revenue_sen) > 0 ? n(s.total_revenue_sen) : n(s.local_total_sen),
       createdAt: s.created_at,
+      soDate: s.so_date ? String(s.so_date).slice(0, 10) : null,
     })),
     payments: pays.data.map((p): CommissionPayment => ({ docNo: p.so_doc_no, paidAt: String(p.paid_at), amountSen: n(p.amount_sen) })),
     changes: chs.data.map((r): CommissionChange => ({

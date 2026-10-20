@@ -9,8 +9,9 @@
 // Outstanding PO stay on their AutoCount pulls for now (phase 2).
 //
 // Reuses Helper.gs as it stands: getTargetSs, getSheetConfig,
-// writeDataToTargetSheet, recordExecutionLog, Log. Column A is never written
-// by the pull (the writer starts at col B, as it always did).
+// recordExecutionLog, Log. Rows are written by erpWriteRecords_ (below), which
+// finds each order by DocNo at write time. Column A is written only on a row the
+// pull APPENDS, with the status the ERP last received from the sheet.
 //
 // SETUP (once, by the account that owns the triggers):
 //   1. Nothing to configure while ERPMain.gs keeps ASSR_SYNC_KEY and the ERP is
@@ -157,7 +158,7 @@ function erpAppendReadyOpen_(ss, cfg, rid) {
     const existing = erpExistingDocNos_(sheet, getSheetConfig(sheetName));
     const fresh = buckets[region].filter(function (o) { return !existing[String(o.DocNo).trim()]; });
     if (!fresh.length) return;
-    const r = writeDataToTargetSheet(ss, sheetName, fresh, rid);
+    const r = erpWriteRecords_(ss, sheetName, fresh, rid);
     out.appended += r.success;
     out.failed += r.fail;
   });
@@ -172,6 +173,109 @@ function erpExistingDocNos_(sheet, cfg) {
     if (r[0]) map[String(r[0]).trim()] = true;
   });
   return map;
+}
+
+// ── Row-safe writer (2026-10-20) ─────────────────────────────────────────────
+// writeDataToTargetSheet (Helper.gs) indexes col B ONCE and then writes each
+// order into the row it saw there. A sort / row move by staff during the ~30 s
+// run left those row numbers stale, so an order was written over ANOTHER
+// order's row: that order vanished (and came back later at the bottom with an
+// empty col A), while its col A status stayed beside the wrong order
+// (HC-SO-2609-084, R4453 -> R4727). This writer re-reads col B of the target
+// row right before every write and looks the order up again by DocNo when it
+// moved. A newly appended row gets its col A back from the ERP, which keeps the
+// last status the sheet pushed (remark4 = col A, see erpCollectUpdates_).
+function erpDocNoIndex_(sheet, startRow) {
+  const map = {};
+  const lastRow = sheet.getLastRow();
+  if (lastRow < startRow) return map;
+  sheet.getRange(startRow, 2, lastRow - startRow + 1, 1).getValues().forEach(function (r, i) {
+    const d = String(r[0] || "").trim();
+    if (d && !map[d]) map[d] = startRow + i;
+  });
+  return map;
+}
+
+/** The row that holds `docNo` NOW: the hinted row if col B still says so, else
+ *  a fresh col-B lookup. 0 when the order is not on the tab. */
+function erpRowOfDoc_(sheet, startRow, docNo, hint, state) {
+  if (hint && String(sheet.getRange(hint, 2).getValue() || "").trim() === docNo) return hint;
+  state.index = erpDocNoIndex_(sheet, startRow);
+  state.moved++;
+  return state.index[docNo] || 0;
+}
+
+function erpWriteRecords_(ss, sheetName, dataArray, rid) {
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    Log.warn(rid, "erpWriteRecords_: sheet [" + sheetName + "] not found.");
+    return { success: 0, fail: 0 };
+  }
+  const cfg = getSheetConfig(sheetName);
+  const state = { index: erpDocNoIndex_(sheet, cfg.startRow), moved: 0 };
+  const counts = { success: 0, fail: 0, appended: 0, restoredStatus: 0 };
+
+  dataArray.forEach(function (o) {
+    const doc = String(o.DocNo || "").trim();
+    if (!doc) { counts.fail++; return; }
+    let rowIndex = erpRowOfDoc_(sheet, cfg.startRow, doc, state.index[doc] || 0, state);
+    const isNew = !rowIndex;
+    if (isNew) {
+      rowIndex = sheet.getLastRow() + 1;
+      try {
+        sheet.getRange(rowIndex, 2).setValue(doc);
+        state.index[doc] = rowIndex;
+      } catch (e) {
+        Log.error(rid, "[" + sheetName + "] Failed to create row for " + doc, e);
+        counts.fail++;
+        return;
+      }
+    }
+
+    const b1Data = [
+      doc, o.TransferTo || "", o.DocDate ? String(o.DocDate).split("T")[0] : "",
+      o.Ref || "", o.SOUDF_BRANDING || "", o.DebtorName || "",
+      (o.Phone1 || "").toString().replace(/[+&\- ]/g, ""),
+      o.SalesLocation || "", o.SalesAgent || "", o.Total || 0,
+      o.SOUDF_BALANCE || 0, o.Remark2 || "",
+      o.SOUDF_PDate ? String(o.SOUDF_PDate).split("T")[0] : "",
+      o.SalesExemptionExpiryDate ? String(o.SalesExemptionExpiryDate).split("T")[0] : "",
+      o.Remark4 || ""
+    ];
+    const b2Data = cfg.includeRemark3
+      ? [o.Remark3 || "", o.SOUDF_Note || "", o.SOUDF_ToPONo || "", o.InvAddr1 || "", o.InvAddr2 || "", o.InvAddr3 || "", o.InvAddr4 || ""]
+      : [o.SOUDF_Note || "", o.SOUDF_ToPONo || "", o.InvAddr1 || "", o.InvAddr2 || "", o.InvAddr3 || "", o.InvAddr4 || ""];
+
+    try {
+      sheet.getRange(rowIndex, 2, 1, b1Data.length).setValues([b1Data]);
+    } catch (e) {
+      Log.warn(rid, "[" + sheetName + "] Block 1 write failed for " + doc + ": " + e.message);
+      counts.fail++;
+      return;
+    }
+    try { sheet.getRange(rowIndex, cfg.block2StartCol, 1, b2Data.length).setValues([b2Data]); }
+    catch (e) { Log.warn(rid, "[" + sheetName + "] Block 2 (Addr) for " + doc + " hit protection."); }
+    try {
+      sheet.getRange(rowIndex, cfg.attentionCol).setValue(o.Attention || "");
+      sheet.getRange(rowIndex, cfg.statusCol).setValue("SYNCED").setBackground("#d9ead3");
+    } catch (e) { Log.warn(rid, "[" + sheetName + "] Block 3 (Status) for " + doc + " hit protection."); }
+
+    if (isNew) {
+      counts.appended++;
+      const status = String(o.Remark4 || "").trim();
+      if (status) {
+        try {
+          const a = sheet.getRange(rowIndex, 1);
+          if (String(a.getValue() || "").trim() === "") { a.setValue(status); counts.restoredStatus++; }
+        } catch (e) { Log.warn(rid, "[" + sheetName + "] Could not restore col A for " + doc + ": " + e.message); }
+      }
+    }
+    counts.success++;
+  });
+
+  Log.info(rid, "[" + sheetName + "] Write complete: " + counts.success + " ok, " + counts.fail + " fail, " +
+    counts.appended + " appended (" + counts.restoredStatus + " col A restored), " + state.moved + " row(s) had moved.");
+  return counts;
 }
 
 // Manual restore (owner 2026-09-21): put specific orders back on their tab, even
@@ -203,7 +307,7 @@ function erpRestoreByDocNos_(docNos) {
     var fresh = buckets[region].filter(function (o) { return !existing[String(o.DocNo).trim()]; });
     out.skipped += buckets[region].length - fresh.length;
     if (!fresh.length) return;
-    var r = writeDataToTargetSheet(ss, sheetName, fresh, rid);
+    var r = erpWriteRecords_(ss, sheetName, fresh, rid);
     out.appended += r.success;
     out.failed += r.fail;
   });
@@ -344,7 +448,7 @@ function runErpPullProcess(triggerType) {
           erpPreserveBlanks_(sheet, cfg, recs);
         }
         if (!recs.length) return;
-        const r = writeDataToTargetSheet(ss, sheetName, recs, rid);
+        const r = erpWriteRecords_(ss, sheetName, recs, rid);
         pulled += r.success;
         pageFail += r.fail;
       });
@@ -410,11 +514,17 @@ function erpPushRows_(cfg, sheet, sConfig, updates, rid, markStatus) {
     } catch (e) {
       Log.error(rid, "Push batch connection error", e);
     }
+    const rowState = { index: {}, moved: 0 };
     batch.forEach(function (u, j) {
       const r = results ? results[j] : null;
       const good = r && r.ok === true;
       if (good) ok++; else err++;
       if (!markStatus) return;
+      // The row may have moved during the HTTP call; marking the old row number
+      // would clear ANOTHER order's PENDING and its status would never be pushed.
+      const row = erpRowOfDoc_(sheet, sConfig.start, u.DocNo, u.rowIndex, rowState);
+      if (!row) return;
+      u.rowIndex = row;
       if (good) sheet.getRange(u.rowIndex, sConfig.statusCol).setValue("SYNCED").setBackground("#d9ead3");
       else if (r && r.skipped === "no_order") sheet.getRange(u.rowIndex, sConfig.statusCol).setValue("ERR: NO ORDER").setBackground("#f4cccc");
       else sheet.getRange(u.rowIndex, sConfig.statusCol).setValue(results ? "ERR: " + ((r && (r.skipped || r.error)) || "?") : "ERR: CONN").setBackground("#f4cccc");
@@ -563,9 +673,9 @@ function runErpAssrPull(triggerType) {
         const sheetName = erpSheetFor_(region);
         const sheet = ss.getSheetByName(sheetName);
         if (!sheet) return;
-        // writeDataToTargetSheet finds each DocNo (col B) or appends it, so an
+        // erpWriteRecords_ finds each DocNo (col B) or appends it, so an
         // existing leg row is updated in place and a new one is appended.
-        const r = writeDataToTargetSheet(ss, sheetName, buckets[region], rid);
+        const r = erpWriteRecords_(ss, sheetName, buckets[region], rid);
         pulled += r.success;
         pageFail += r.fail;
       });

@@ -125,6 +125,8 @@ type GrnItem = {
   unit_price_sen?: number;
   line_total_sen?: number;
   warehouse_code?: string | null;
+  // The PO the line was received from; one GRN can draw on several POs.
+  source_po_number?: string | null;
 };
 
 type StatusTab = "all" | "draft" | "posted" | "cancelled" | "on_hold";
@@ -376,6 +378,9 @@ function DetailDrawer({
                         <div className="mt-0.5 text-[11.5px] leading-snug text-ink-secondary">
                           {secondary}
                         </div>
+                      )}
+                      {l.source_po_number && (
+                        <div className="mt-1 font-mono text-[11px] text-ink-muted">PO {l.source_po_number}</div>
                       )}
                       {!isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.item_code ?? "" }) && (
                         <GrnDrawerRack grnId={row.id} status={detailGrn?.status ?? row.status} warehouseId={detailGrn?.warehouse_id ?? null} line={l} />

@@ -96,6 +96,25 @@ export const roles = pgTable("roles", {
   created_at: text("created_at").default(nowText),
 });
 
+// ── role_page_access (mig-pg 20261019T1300) ────────────────
+// Persistent per-role page visibility — one level per (role, page_key). Recreates
+// the old 073 table dropped on 2026-09-17; the RBAC rebuild (Option A) makes the
+// role the single source of page access, edited through PR2's matrix down to
+// sub-page granularity. `level` is free text (none/partial/view/edit/full) so the
+// resolver's whole vocabulary round-trips; the cascade/filter lives in
+// pageAccess.resolvePositionAccessFromRows, consumed by memberPageAccess.ts.
+export const role_page_access = pgTable(
+  "role_page_access",
+  {
+    role_id: integer("role_id").notNull(),
+    page_key: text("page_key").notNull(),
+    level: text("level").notNull(),
+    created_at: text("created_at").default(nowText),
+    updated_at: text("updated_at").default(nowText),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.role_id, t.page_key] }) }),
+);
+
 // ── push_devices (mig-pg 0266) — iOS push token registry ───
 export const push_devices = pgTable("push_devices", {
   id: serial("id").primaryKey(),
