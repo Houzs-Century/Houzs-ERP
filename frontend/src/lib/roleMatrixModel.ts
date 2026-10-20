@@ -208,7 +208,7 @@ export function buildMatrixModules(
   return MODULE_SPECS.map((spec) => {
     const modPages = byModule.get(spec.id) ?? [];
     // The top page = the one with no parent inside this module (shallowest key).
-    const top = modPages.find((p) => !p.parent) ?? modPages[0] ?? null;
+    const top = modPages.find((p) => !p.parent) ?? modPages.at(0) ?? null;
     return {
       id: spec.id,
       labelZh: spec.labelZh,

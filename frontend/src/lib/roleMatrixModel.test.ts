@@ -16,6 +16,7 @@ import {
   maxLevel,
   type PageLite,
   type MatrixModule,
+  type MatrixLevel,
 } from "./roleMatrixModel";
 
 // A trimmed page catalogue mirroring GET /api/roles/page-access (backend PAGES).
@@ -178,9 +179,9 @@ describe("applyLevelToPerms", () => {
 describe("moduleLevel", () => {
   it("reads the common page level and reports mixed on divergence", () => {
     const sc = mod("service_cases");
-    const all = { service_cases: "view", "service_cases.cases": "view", "service_cases.pnl": "view" } as Record<string, any>;
+    const all: Record<string, MatrixLevel> = { service_cases: "view", "service_cases.cases": "view", "service_cases.pnl": "view" };
     expect(moduleLevel(sc, all, new Set())).toBe("view");
-    const mixed = { ...all, "service_cases.cases": "full" } as Record<string, any>;
+    const mixed: Record<string, MatrixLevel> = { ...all, "service_cases.cases": "full" };
     expect(moduleLevel(sc, mixed, new Set())).toBe("mixed");
   });
   it("derives a page-less module's level from the permission set", () => {
@@ -193,7 +194,7 @@ describe("moduleLevel", () => {
 
 describe("applyLevelToPages keeps dormant pages frozen", () => {
   it("sets live pages, leaves dormant ones at their current level", () => {
-    const start = { service_cases: "none", "service_cases.cases": "none", "service_cases.pnl": "full" } as Record<string, any>;
+    const start: Record<string, MatrixLevel> = { service_cases: "none", "service_cases.cases": "none", "service_cases.pnl": "full" };
     const next = applyLevelToPages(start, mod("service_cases"), "edit");
     expect(next["service_cases"]).toBe("edit");
     expect(next["service_cases.cases"]).toBe("edit");
@@ -203,12 +204,12 @@ describe("applyLevelToPages keeps dormant pages frozen", () => {
 
 describe("pageRowsToSend", () => {
   it("emits one row per page and derives the scm umbrella as max of its areas", () => {
-    const levels = {
+    const levels: Record<string, MatrixLevel> = {
       "scm.sales": "view",
       "scm.sales.orders": "view",
       "scm.warehouse": "full",
       "scm.warehouse.inventory": "full",
-    } as Record<string, any>;
+    };
     const rows = pageRowsToSend(PAGES, levels);
     expect(rows.length).toBe(PAGES.length);
     const scm = rows.find((r) => r.pageKey === "scm");
@@ -217,7 +218,7 @@ describe("pageRowsToSend", () => {
     expect(rows.find((r) => r.pageKey === "sales")?.level).toBe("none");
   });
   it("derives scm = none when every area is none", () => {
-    const rows = pageRowsToSend(PAGES, { "scm.sales": "none", "scm.warehouse": "none" } as Record<string, any>);
+    const rows = pageRowsToSend(PAGES, { "scm.sales": "none", "scm.warehouse": "none" } satisfies Record<string, MatrixLevel>);
     expect(rows.find((r) => r.pageKey === "scm")?.level).toBe("none");
   });
 });
@@ -239,8 +240,8 @@ describe("diff helpers", () => {
     expect(permsDiffer(new Set(["a"]), new Set(["b"]))).toBe(true);
   });
   it("pageLevelsDiffCount counts changed pages", () => {
-    const base = { sales: "none", projects: "view" } as Record<string, any>;
-    const staged = { sales: "full", projects: "view" } as Record<string, any>;
+    const base: Record<string, MatrixLevel> = { sales: "none", projects: "view" };
+    const staged: Record<string, MatrixLevel> = { sales: "full", projects: "view" };
     expect(pageLevelsDiffCount(PAGES, staged, base)).toBe(1);
   });
   it("maxLevel / MATRIX_LEVELS ordering", () => {

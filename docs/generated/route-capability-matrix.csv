@@ -494,6 +494,8 @@ GET,/api/roles,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission
 POST,/api/roles,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/roles.ts
 DELETE,/api/roles/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/roles.ts
 PATCH,/api/roles/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/roles.ts
+PATCH,/api/roles/:id/page-access,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.manage"")",,YES,DECLARED_GATE,backend/src/routes/roles.ts
+GET,/api/roles/page-access,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.read"")",,NO,DECLARED_GATE,backend/src/routes/roles.ts
 GET,/api/roles/permissions,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""roles.read"")",,NO,DECLARED_GATE,backend/src/routes/roles.ts
 GET,/api/sales/entries,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccessOrSalesView(""sales"")",,NO,DECLARED_GATE,backend/src/routes/sales.ts
 POST,/api/sales/entries,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""sales"")",,YES,DECLARED_GATE,backend/src/routes/sales.ts

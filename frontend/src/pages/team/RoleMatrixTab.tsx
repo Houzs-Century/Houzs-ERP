@@ -109,7 +109,7 @@ export function RoleMatrixTab() {
   // first role. Deriving it (rather than setting it from an effect) means there
   // is no render where the matrix is shown with no role selected — a click in
   // that window would otherwise no-op against a null id.
-  const selectedId = selected ?? roleList[0]?.id ?? null;
+  const selectedId = selected ?? roleList.at(0)?.id ?? null;
   const role = selectedId != null ? roleList.find((r) => r.id === selectedId) ?? null : null;
   const locked = role ? isLockedRole(role) : false;
   const readOnly = !canManage || locked;
