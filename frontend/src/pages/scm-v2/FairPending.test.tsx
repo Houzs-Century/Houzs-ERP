@@ -39,6 +39,7 @@ const OPTIONS: FairOptionsResponse = {
 };
 
 const assign = vi.fn();
+const transferMutate = vi.hoisted(() => vi.fn());
 const openIntent = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/workspaceTabs', async (orig) => ({
   ...(await orig<typeof import('../../lib/workspaceTabs')>()),
@@ -56,9 +57,11 @@ vi.mock('../../vendor/scm/lib/fair-options-queries', async (orig) => ({
   useFairOptions: () => ({ data: OPTIONS, isLoading: false, isError: false }),
   useAssignFair: () => ({ mutate: assign, isPending: false }),
   useFairChecks: () => ({ data: checks.rows, isLoading: false, isError: checks.error }),
+  useFairTransfer: () => ({ mutate: transferMutate, isPending: false }),
 }));
 
-import { FairPending, boothChoices } from './FairPending';
+import { FairPending } from './FairPending';
+import { boothChoices } from '../../vendor/scm/lib/fair-booth-choices';
 
 const show = () => render(<MemoryRouter><FairPending /></MemoryRouter>);
 
@@ -241,5 +244,45 @@ describe('boothChoices — which booths a row offers, in what order, and which i
       [341, 'No brand — MID VALLEY — REX (09/11 - 09/13)'],
     ]);
     expect(suggested).toBeNull();
+  });
+});
+
+describe('FairPending — report says another fair (owner 2026-10-20)', () => {
+  const toIoigecc = { projectId: 307, label: 'AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11)', reportDate: '2026-10-10' };
+  const LINKED_ELSEWHERE: FairCheckRow = {
+    doc_no: 'HC-SO-2610-167', so_date: '2026-10-12', venue: 'IOI MALL PUTRAJAYA', branding: 'AKEMI', project_id: 343, fair_match: 'PICKED',
+    status: 'CONFIRMED', local_total_sen: 338800, salesperson_id: 's1', check: 'REPORT_ELSEWHERE', target: toIoigecc,
+    note: 'The evening report of AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11) lists it on 10/10; the order is under AKEMI — IOI MALL PUTRAJAYA — MALL MGT (09/16 - 09/20).',
+  };
+  /* The unlinked HC-SO-2609-065 (waiting for the fair) is in a report: it moves up. */
+  const UNLINKED: FairCheckRow = { ...ROWS[1]!, check: 'REPORT_ELSEWHERE', target: toIoigecc, note: 'The evening report … lists it; the order has no event.' };
+  const TWO_REPORTS: FairCheckRow = { ...LINKED_ELSEWHERE, doc_no: 'HC-SO-2610-200', target: null, note: 'The evening reports of A and B both list it.' };
+  afterEach(() => { checks.rows = []; transferMutate.mockReset(); });
+
+  it('lists them first, once, with where the report puts each', () => {
+    checks.rows = [LINKED_ELSEWHERE, UNLINKED, TWO_REPORTS];
+    show();
+    const group = screen.getByText('Report says another fair (3)').closest('section') as HTMLElement;
+    expect(group.textContent).toContain('AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11) · 2026/10/10');
+    expect(group.textContent).toContain('Two reports list it — pick on the order');
+    /* Moved up out of "Waiting for the fair", not listed twice. */
+    expect(screen.queryByText('Waiting for the fair (1)')).toBeNull();
+    /* Still unattributed until it moves: the count is unchanged. */
+    expect(screen.getByText('5 orders not yet attributed to a fair.')).toBeTruthy();
+  });
+
+  it('transfers all at one click, or the ticked ones — never one two reports dispute', () => {
+    checks.rows = [LINKED_ELSEWHERE, UNLINKED, TWO_REPORTS];
+    show();
+    const group = screen.getByText('Report says another fair (3)').closest('section') as HTMLElement;
+    fireEvent.click(within(group).getByRole('button', { name: 'Transfer all (2)' }));
+    expect(transferMutate.mock.calls[0]![0]).toEqual([
+      { docNo: 'HC-SO-2610-167', projectId: 307 },
+      { docNo: 'HC-SO-2609-065', projectId: 307 },
+    ]);
+    expect(within(group).queryByLabelText('Tick HC-SO-2610-200')).toBeNull();
+    fireEvent.click(within(group).getByLabelText('Tick HC-SO-2610-167'));
+    fireEvent.click(within(group).getByRole('button', { name: 'Transfer ticked (1)' }));
+    expect(transferMutate.mock.calls[1]![0]).toEqual([{ docNo: 'HC-SO-2610-167', projectId: 307 }]);
   });
 });

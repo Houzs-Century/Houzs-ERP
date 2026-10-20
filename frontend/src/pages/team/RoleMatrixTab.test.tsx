@@ -113,6 +113,16 @@ describe("RoleMatrixTab", () => {
     expect(permCall![1].permissions).toContain("scm.access");
   });
 
+  it("shows the Excel export/import toolbar and opens the import modal", async () => {
+    mockApi();
+    render(<RoleMatrixTab />);
+    await waitFor(() => expect(screen.getByText("供应链·销售")).toBeTruthy());
+    expect(screen.getByText("导出 Excel")).toBeTruthy();
+    fireEvent.click(screen.getByText("导入 Excel"));
+    // The modal's pick step appears (file chooser).
+    expect(await screen.findByText("选择文件")).toBeTruthy();
+  });
+
   it("set 项目=批 grants the Projects CRUD keys but never an approval key", async () => {
     mockApi();
     render(<RoleMatrixTab />);

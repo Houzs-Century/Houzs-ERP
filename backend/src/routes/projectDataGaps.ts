@@ -161,5 +161,33 @@ projectDataGaps.get("/", async (c) => {
     const e = eventsById.get(id)!;
     return { id, code: e.code, name: e.name, startDate: String(e.start_date ?? "").slice(0, 10), endDate: String(e.end_date ?? "").slice(0, 10), reportBills: billsOf.get(id)?.length ?? 0, bills };
   }).sort((a, b) => b.endDate.localeCompare(a.endDate));
-  return c.json({ from, to, books, notDaily, recentFrom: recent, ...classifyProjectGaps(projects.map((p) => ({ ...p, soSen: soSen.get(p.id) ?? 0 }))) });
+  /* SO no COGS (owner 2026-10-20): the orders of those same events with a line
+     that sells a product at no cost. The nightly restamp (restamp-so-cost-from-
+     product) fills a zero line once its product has a cost, so what stays here
+     is a SKU with no cost in Product Maintenance. Service lines carry none. */
+  const evIds = [...eventsById.keys()].map(String);
+  const evOrders = await chunkIn<{ doc_no: string; project_id: number; local_total_sen: number | null; total_revenue_sen: number | null }>(evIds, (b, f, t) =>
+    scopeToCompany(c.get("supabase").from("mfg_sales_orders")
+      .select("doc_no, project_id, local_total_sen, total_revenue_sen").in("project_id", b)
+      .neq("status", "CANCELLED"), c).order("doc_no").range(f, t));
+  if (evOrders.error) return c.json({ error: "load_failed", reason: `orders of the events: ${evOrders.error.message}` }, 500);
+  const orderOf = new Map(evOrders.data.map((o) => [String(o.doc_no), o]));
+  const zeroLines = await chunkIn<{ doc_no: string; item_code: string | null; item_group: string | null; qty: number | null }>([...orderOf.keys()], (b, f, t) =>
+    scopeToCompany(c.get("supabase").from("mfg_sales_order_items")
+      .select("doc_no, item_code, item_group, qty").in("doc_no", b).eq("cancelled", false)
+      .or("line_cost_sen.is.null,line_cost_sen.eq.0"), c).order("id").range(f, t));
+  if (zeroLines.error) return c.json({ error: "load_failed", reason: `order lines with no cost: ${zeroLines.error.message}` }, 500);
+  const noCogs = new Map<string, string[]>();
+  for (const l of zeroLines.data) {
+    if (!l.item_code || String(l.item_group ?? "").toLowerCase() === "service") continue;
+    noCogs.set(String(l.doc_no), [...(noCogs.get(String(l.doc_no)) ?? []), String(l.item_code)]);
+  }
+  const soNoCogs = [...noCogs.entries()].map(([docNo, items]) => {
+    const o = orderOf.get(docNo)!;
+    const e = eventsById.get(Number(o.project_id))!;
+    const amountSen = Number(o.total_revenue_sen ?? 0) > 0 ? Number(o.total_revenue_sen) : Number(o.local_total_sen ?? 0);
+    return { docNo, projectId: e.id, event: e.name, code: e.code, startDate: String(e.start_date ?? "").slice(0, 10), endDate: String(e.end_date ?? "").slice(0, 10), amountSen, items: [...new Set(items)] };
+  }).sort((a, b) => b.endDate.localeCompare(a.endDate) || a.event.localeCompare(b.event) || a.docNo.localeCompare(b.docNo));
+
+  return c.json({ from, to, books, notDaily, soNoCogs, recentFrom: recent, ...classifyProjectGaps(projects.map((p) => ({ ...p, soSen: soSen.get(p.id) ?? 0 }))) });
 });
