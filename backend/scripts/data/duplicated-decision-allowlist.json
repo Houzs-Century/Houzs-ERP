@@ -1512,7 +1512,7 @@
     },
     {
       "check": "D1",
-      "key": "AMOUNT_SEN,BALANCE_SEN,COUNT,DRAFT_COUNT,PAID_SEN|backend/src/routes/project-sales-orders.ts frontend/src/pages/projects/projectSalesOrders.ts",
+      "key": "AMOUNT_SEN,BALANCE_SEN,COUNT,DRAFT_COUNT,PAID_SEN,SERVICE_SEN|backend/src/routes/project-sales-orders.ts frontend/src/pages/projects/projectSalesOrders.ts",
       "why": "ONE WIRE SHAPE seen from its two ends, not two answers to one question: routes/project-sales-orders.ts builds the totals object GET /api/project-sales-orders/:projectId sends, and the page-side ZERO_TOTALS in projectSalesOrders.ts is the empty value of that same object, used only when the read came back in another shape (normalizeProjectSalesOrders). The keys are the response contract; nothing is decided twice. Cost of divergence is a 0 in the Sales header, caught by the route test on one side and the normalize test on the other."
     },
     {
