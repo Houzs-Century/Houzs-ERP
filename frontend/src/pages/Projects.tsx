@@ -426,8 +426,10 @@ export function Projects() {
   const canProjectMaintenance = access.maintenance === "full";
   const allowed: ProjectsView[] = PROJECTS_VIEWS.filter(
     (v) =>
-      access[v as keyof typeof access] !== "none" &&
-      (v !== "finances" || canProjectFinance) &&
+      /* Project Overview: every finance viewer (directors, and the
+         projects.finance.view grant), with or without the page-access row
+         (owner 2026-10-20: open it to the directors). */
+      (v === "finances" ? canProjectFinance : access[v as keyof typeof access] !== "none") &&
       (v !== "maintenance" || canProjectMaintenance)
   );
   const firstAllowed: ProjectsView | null = allowed[0] ?? null;

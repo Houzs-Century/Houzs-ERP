@@ -25,6 +25,14 @@ function pctNote(r: PnlPctRow & { boost?: boolean }): string | undefined {
   return undefined;
 }
 
+/** The rate-card note, plus the orders' service cost the row carries. */
+function transportNote(r: PnlPctRow & { serviceCost: number }): string | undefined {
+  const base = pctNote(r);
+  if (!r.serviceCost) return base;
+  const svc = `incl. RM ${r.serviceCost.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} service cost`;
+  return base ? `${base} · ${svc}` : svc;
+}
+
 function cogsNote(c: PnlColumn, so: PnlColumn | null): string | undefined {
   if (c.cogs.from === "typed") return "typed";
   if (c.cogs.from === "so") return "orders' cost";
@@ -137,7 +145,8 @@ export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote }
         </tr>
       </thead>
       <tbody>
-        {row("Total Sales", (c) => c.sales, { noteA: SALES_FROM[a.salesFrom], noteB: b ? undefined : "no order opened", sub: true })}
+        {row("Total Sales", (c) => c.sales, { noteA: SALES_FROM[a.salesFrom], noteB: b ? "goods, service lines apart" : "no order opened", sub: true })}
+        {(a.serviceRevenue !== 0 || (b?.serviceRevenue ?? 0) !== 0) && row("Service Revenue", (c) => c.serviceRevenue, { indent: true, noteB: "orders' service lines" })}
         {row("COGS — Matt/Sofa", (c) => c.cogs.mattSofa, { category: "cogs_matt_sofa", indent: true })}
         {row("COGS — Bedframe", (c) => c.cogs.bedframe, { category: "cogs_bedframe", indent: true })}
         {row("COGS — Accessories", (c) => c.cogs.accessories, { category: "cogs_accessories", indent: true })}
@@ -146,7 +155,7 @@ export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote }
         {row("Gross Profit", (c) => c.grossProfit, { sub: true, tone: profitTone, noteA: gp(a).trim() || undefined, noteB: gp(b).trim() || undefined })}
         {row("Rental", (c) => c.rental, { category: "rental", bookRow: "rental", noteA: rentalNote })}
         {row("Setup", (c) => c.setup, { category: "setup", bookRow: "setup" })}
-        {row("Transport Fee", (c) => c.transportFee.amount, { bookRow: "transport_fee", noteA: pctNote(a.transportFee), noteB: b ? pctNote(b.transportFee) : undefined })}
+        {row("Transport Fee", (c) => c.transportFee.amount, { bookRow: "transport_fee", noteA: transportNote(a.transportFee), noteB: b ? transportNote(b.transportFee) : undefined })}
         {row("Transport Setup & Dismantle", (c) => c.transportSetupDismantle, { category: "transport_setup_dismantle", bookRow: "transport_setup_dismantle" })}
         {row("Commission", (c) => c.commission.amount, { bookRow: "commission", noteA: pctNote(a.commission), noteB: b ? pctNote(b.commission) : undefined })}
         {row("Merchandise", (c) => c.merchandise.amount, { noteA: pctNote(a.merchandise), noteB: b ? pctNote(b.merchandise) : undefined })}

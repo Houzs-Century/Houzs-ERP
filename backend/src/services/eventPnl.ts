@@ -19,6 +19,10 @@
 //   Rental, Setup, Transport Setup & Dismantle, Others Costing
 //              the same in both: Finance's figure when the books fill the row
 //              (applied upstream — scm/lib/event-books.ts), else the typed one.
+//   Service   the orders' service lines (service_sen) are not Sales: they are
+//              their own Service revenue line, and their cost (service_cost_sen)
+//              sits in Transport Fee - the service charge is what covers the
+//              transport (owner 2026-10-20). Sales = the goods alone.
 //   Transport Fee, Commission, Merchandise
 //              Finance's figure when the books fill the row; else a typed line
 //              (older events were imported with them); else the brand's rate
@@ -43,10 +47,13 @@ export type PnlLine = {
   source?: string | null;
 };
 
-/** The Sales Orders opened at the fair (cancelled ones excluded), in RM. */
+/** The Sales Orders opened at the fair (cancelled ones excluded), in RM.
+ *  salesRm = the goods (order total less its service lines). */
 export type SoTotals = {
   count: number;
   salesRm: number;
+  serviceRm: number;
+  serviceCostRm: number;
   costRm: { mattSofa: number; bedframe: number; accessories: number; others: number };
 };
 
@@ -62,6 +69,8 @@ export type CostRate = {
 
 export type PctRowFrom = 'books' | 'typed' | 'rate' | 'none';
 export type PctRow = { amount: number; from: PctRowFrom; pct: number | null };
+/** Transport Fee also carries the orders' service cost (see above). */
+export type TransportRow = PctRow & { serviceCost: number };
 
 export type PnlColumn = {
   sales: number;
@@ -71,7 +80,9 @@ export type PnlColumn = {
   setup: number;
   transportSetupDismantle: number;
   others: number;
-  transportFee: PctRow;
+  /** The orders' service charges: income beside Sales, not in it. */
+  serviceRevenue: number;
+  transportFee: TransportRow;
   commission: PctRow & { boost: boolean };
   merchandise: PctRow;
   totalCost: number;
@@ -135,13 +146,16 @@ export function eventPnl(input: {
     return { amount: round2((sales * pct) / 100), from: 'rate', pct };
   };
 
-  const column = (sales: number, salesFrom: PnlColumn['salesFrom'], cogs: PnlColumn['cogs']): PnlColumn => {
+  const column = (sales: number, salesFrom: PnlColumn['salesFrom'], cogs: PnlColumn['cogs'], service: { revenue: number; cost: number }): PnlColumn => {
     const r = input.rate;
     const gpPct = sales > 0 ? ((sales - cogs.total) / sales) * 100 : 0;
     const boost = !!r && r.commission_boost_pct != null
       && (r.boost_min_gp_pct == null || gpPct >= Number(r.boost_min_gp_pct))
       && (r.boost_min_sales == null || sales >= Number(r.boost_min_sales));
-    const transportFee = pctRow('transport_fee', ['transport', 'transport_fee'], r ? Number(r.transport_pct) : null, sales);
+    const transportBase = pctRow('transport_fee', ['transport', 'transport_fee'], r ? Number(r.transport_pct) : null, sales);
+    /* Finance's figure, when the books fill the row, already is the transport. */
+    const serviceCost = transportBase.from === 'books' ? 0 : round2(service.cost);
+    const transportFee: TransportRow = { ...transportBase, amount: round2(transportBase.amount + serviceCost), serviceCost };
     const merchandise = pctRow('merchandise', ['merchandise'], r ? Number(r.merchandise_pct) : null, sales);
     const commissionPct = r ? Number(boost ? r.commission_boost_pct : r.commission_normal_pct) : null;
     const commissionRow = pctRow('commission', ['commission'], commissionPct, sales);
@@ -149,9 +163,9 @@ export function eventPnl(input: {
     const totalCost = round2(cogs.total + shared.rental + shared.setup + shared.transportSetupDismantle + shared.others
       + transportFee.amount + commission.amount + merchandise.amount);
     return {
-      sales, salesFrom, cogs, ...shared, transportFee, commission, merchandise, totalCost,
+      sales, salesFrom, cogs, ...shared, serviceRevenue: round2(service.revenue), transportFee, commission, merchandise, totalCost,
       grossProfit: round2(sales - cogs.total),
-      netProfit: round2(sales - totalCost),
+      netProfit: round2(sales + service.revenue - totalCost),
     };
   };
 
@@ -187,9 +201,10 @@ export function eventPnl(input: {
     }, salesFrom === 'so' ? 'so' : 'so_ratio');
   } else bySalesCogs = withTotal({ mattSofa: 0, bedframe: 0, accessories: 0, other: 0 }, 'none');
 
+  const soService = { revenue: so?.serviceRm ?? 0, cost: so?.serviceCostRm ?? 0 };
   return {
-    by_sales: column(sales, salesFrom, bySalesCogs),
-    by_so: so && soCogs ? column(round2(so.salesRm), 'so', withTotal(soCogs, 'so')) : null,
+    by_sales: column(sales, salesFrom, bySalesCogs, salesFrom === 'so' ? soService : { revenue: 0, cost: 0 }),
+    by_so: so && soCogs ? column(round2(so.salesRm), 'so', withTotal(soCogs, 'so'), soService) : null,
     so_count: so?.count ?? 0,
   };
 }

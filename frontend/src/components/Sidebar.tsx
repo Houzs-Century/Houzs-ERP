@@ -374,6 +374,9 @@ export const NAV_TABS: NavTab[] = [
         label: "Project Overview",
         icon: DollarSign,
         pageAccess: "projects.finances",
+        // Directors open it without the page-access row (owner 2026-10-20: they
+        // check which orders were not opened); still finance viewers only.
+        showForDirector: true,
         requireFinanceViewer: true,
       },
       {

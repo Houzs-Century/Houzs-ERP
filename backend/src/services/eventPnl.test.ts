@@ -7,7 +7,7 @@ import { eventPnl, type CostRate, type PnlLine, type SoTotals } from './eventPnl
  * 114,240; 8 orders opened, RM 46,352, costing RM 17,780 (38.4%). */
 
 const ZANOTTI: CostRate = { transport_pct: 5, merchandise_pct: 2, commission_normal_pct: 13, commission_boost_pct: 15, boost_min_gp_pct: 45, boost_min_sales: null };
-const SO_2214: SoTotals = { count: 8, salesRm: 46352, costRm: { mattSofa: 15000, bedframe: 0, accessories: 2780, others: 0 } };
+const SO_2214: SoTotals = { count: 8, salesRm: 46352, serviceRm: 0, serviceCostRm: 0, costRm: { mattSofa: 15000, bedframe: 0, accessories: 2780, others: 0 } };
 const RENTAL: PnlLine = { kind: 'cost', category: 'rental', amount: 9800 };
 const run = (o: Partial<Parameters<typeof eventPnl>[0]> = {}) =>
   eventPnl({ lines: [RENTAL], booksRows: new Set(), lumpSales: 114240, so: SO_2214, rate: ZANOTTI, ...o });
@@ -19,7 +19,7 @@ describe('BY TOTAL SALES — the fair as the owner keys it', () => {
     /* 17,780 / 46,352 = 38.36% of 114,240 */
     expect(c.cogs.from).toBe('so_ratio');
     expect(c.cogs.total).toBeCloseTo(43821.25, 0);
-    expect(c.transportFee).toEqual({ amount: 5712, from: 'rate', pct: 5 });
+    expect(c.transportFee).toEqual({ amount: 5712, from: 'rate', pct: 5, serviceCost: 0 });
     expect(c.merchandise).toEqual({ amount: 2284.8, from: 'rate', pct: 2 });
     /* GP 61.6% ≥ 45: the boost tier */
     expect(c.commission).toMatchObject({ amount: 17136, from: 'rate', pct: 15, boost: true });
@@ -101,3 +101,23 @@ describe('rows both P&Ls share, and who wins a % row', () => {
     expect(c.commission.amount).toBe(0);
   });
 });
+
+describe('service lines are Service revenue, their cost sits in Transport Fee (owner 2026-10-20)', () => {
+  it('By Sales Orders: Sales is the goods, service beside it; transport = rate card on the goods + the service cost', () => {
+    /* 8 orders, RM 48,352 in all of which RM 2,000 is a delivery / service charge costing RM 600. */
+    const { by_so: c } = run({ so: { ...SO_2214, salesRm: 46352, serviceRm: 2000, serviceCostRm: 600 } });
+    expect(c).toMatchObject({ sales: 46352, serviceRevenue: 2000 });
+    expect(c!.transportFee).toEqual({ amount: 2317.6 + 600, from: 'rate', pct: 5, serviceCost: 600 });
+    expect(c!.netProfit).toBeCloseTo(46352 + 2000 - c!.totalCost, 2);
+  });
+
+  it('when the books fill Transport Fee, the Finance figure stands and the service cost is not added again', () => {
+    const { by_so: c } = run({
+      so: { ...SO_2214, serviceRm: 2000, serviceCostRm: 600 },
+      lines: [RENTAL, { kind: 'cost', category: 'transport_fee', amount: 1500 }],
+      booksRows: new Set(['transport_fee']),
+    });
+    expect(c!.transportFee).toMatchObject({ amount: 1500, from: 'books', serviceCost: 0 });
+  });
+});
+
