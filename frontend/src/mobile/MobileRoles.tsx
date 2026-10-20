@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
+import { FileDown, FileUp } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { useQuery } from "../hooks/useQuery";
 import { useToast } from "../hooks/useToast";
 import { api } from "../api/client";
 import type { PermissionDef, Role } from "../types";
 import { buildModules, diffGrants, isLockedRole } from "../lib/rolesPermissionModel";
+import { exportRoleMatrix } from "../lib/roleMatrixExcelFile";
+import { snapshotFromApi } from "../lib/roleMatrixExcel";
+import { RoleMatrixImportModal } from "../pages/team/RoleMatrixImportModal";
 import {
   MATRIX_LEVELS,
   MATRIX_LEVEL_LABEL,
@@ -37,6 +41,8 @@ type PageLevels = Record<string, MatrixLevel>;
  * phone by design.
  */
 export function MobileRoles({ onBack }: { onBack: () => void }) {
+  const { can } = useAuth();
+  const toast = useToast();
   const rolesQ = useQuery<{ roles: Role[] }>("/api/roles", () => api.get("/api/roles"));
   const permsQ = useQuery<{ permissions: PermissionDef[] }>("/api/roles/permissions", () =>
     api.get("/api/roles/permissions")
@@ -45,9 +51,22 @@ export function MobileRoles({ onBack }: { onBack: () => void }) {
     api.get("/api/roles/page-access")
   );
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const roles = rolesQ.data?.roles ?? [];
   const selected = selectedId != null ? roles.find((r) => r.id === selectedId) ?? null : null;
+
+  // Whole-matrix snapshot for Excel export/import — the SAME pure engine as the
+  // desktop Matrix tab (one product, one logic layer).
+  const snapshot = useMemo(
+    () => snapshotFromApi(roles, pageQ.data?.pages ?? [], permsQ.data?.permissions ?? [], pageQ.data?.roles ?? []),
+    [roles, permsQ.data, pageQ.data]
+  );
+  function onExport() {
+    void exportRoleMatrix(snapshot).catch((e) =>
+      toast.error((e instanceof Error && e.message) || "Export failed.")
+    );
+  }
 
   // A role that vanished under us (deleted elsewhere) drops back to the list.
   useEffect(() => {
@@ -75,13 +94,27 @@ export function MobileRoles({ onBack }: { onBack: () => void }) {
     );
   }
   return (
-    <RoleList
-      roles={roles}
-      permissions={permsQ.data?.permissions ?? []}
-      loading={rolesQ.loading || permsQ.loading}
-      onBack={onBack}
-      onOpen={setSelectedId}
-    />
+    <>
+      <RoleList
+        roles={roles}
+        permissions={permsQ.data?.permissions ?? []}
+        loading={rolesQ.loading || permsQ.loading}
+        canManage={can("roles.manage")}
+        onBack={onBack}
+        onOpen={setSelectedId}
+        onExport={onExport}
+        onImport={() => setImporting(true)}
+      />
+      <RoleMatrixImportModal
+        open={importing}
+        onClose={() => setImporting(false)}
+        snapshot={snapshot}
+        onApplied={() => {
+          rolesQ.reload();
+          pageQ.reload();
+        }}
+      />
+    </>
   );
 }
 
@@ -100,19 +133,42 @@ const HDR_BACK: React.CSSProperties = {
 };
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 
+const MATRIX_BTN: React.CSSProperties = {
+  flex: 1,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
+  height: 38,
+  border: "1px solid var(--line-card)",
+  background: "var(--bg)",
+  borderRadius: "var(--r-btn, 10px)",
+  fontFamily: "inherit",
+  fontSize: 13,
+  fontWeight: 700,
+  color: "var(--ink2)",
+  cursor: "pointer",
+};
+
 // ── List view ────────────────────────────────────────────────
 function RoleList({
   roles,
   permissions,
   loading,
+  canManage,
   onBack,
   onOpen,
+  onExport,
+  onImport,
 }: {
   roles: Role[];
   permissions: PermissionDef[];
   loading: boolean;
+  canManage: boolean;
   onBack: () => void;
   onOpen: (id: number) => void;
+  onExport: () => void;
+  onImport: () => void;
 }) {
   const [query, setQuery] = useState("");
   const keyLabel = useMemo(() => {
@@ -160,6 +216,16 @@ function RoleList({
             outline: "none",
           }}
         />
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <button onClick={onExport} style={MATRIX_BTN}>
+            <FileDown size={14} /> 导出 Excel
+          </button>
+          {canManage && (
+            <button onClick={onImport} style={MATRIX_BTN}>
+              <FileUp size={14} /> 导入 Excel
+            </button>
+          )}
+        </div>
       </header>
 
       <div className="scroll" style={{ padding: "12px 14px 32px" }}>

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, FileDown, FileUp } from "lucide-react";
 import { api } from "../../api/client";
 import { useQuery } from "../../hooks/useQuery";
 import { useToast } from "../../hooks/useToast";
@@ -28,6 +28,9 @@ import {
   type MatrixLevel,
   type MatrixModule,
 } from "../../lib/roleMatrixModel";
+import { exportRoleMatrix } from "../../lib/roleMatrixExcelFile";
+import { snapshotFromApi } from "../../lib/roleMatrixExcel";
+import { RoleMatrixImportModal } from "./RoleMatrixImportModal";
 
 /* The "矩阵" section of Roles & Permissions (RBAC rebuild, Option A — PR2). One
  * control per module — 无/看/改/批 — over what a role may SEE (role_page_access)
@@ -83,6 +86,19 @@ export function RoleMatrixTab() {
   const [permStaged, setPermStaged] = useState<Map<number, Set<string>>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
+
+  // The whole-matrix snapshot for Excel export/import (all roles, current state).
+  const snapshot = useMemo(
+    () => snapshotFromApi(roleList, pages, permsQ.data?.permissions ?? [], pageQ.data?.roles ?? []),
+    [roleList, pages, permsQ.data, pageQ.data],
+  );
+
+  function onExport() {
+    void exportRoleMatrix(snapshot).catch((e) =>
+      toast.error((e instanceof Error && e.message) || "Export failed."),
+    );
+  }
 
   // Baselines are DERIVED from the server data (not seeded via an effect), so
   // they are populated in the very render the modules first appear — there is no
@@ -239,7 +255,34 @@ export function RoleMatrixTab() {
           </select>
         </label>
         {role && <Badge tone={role.is_system ? "accent" : "neutral"}>{role.member_count} members</Badge>}
+
+        <div className="ml-auto flex items-center gap-2">
+          <Button variant="ghost" icon={<FileDown size={14} />} onClick={onExport}>
+            导出 Excel
+          </Button>
+          {canManage && (
+            <Button
+              variant="ghost"
+              icon={<FileUp size={14} />}
+              onClick={() => setImporting(true)}
+              disabled={dirtyIds.length > 0}
+              title={dirtyIds.length > 0 ? "先保存或放弃当前改动，再导入" : undefined}
+            >
+              导入 Excel
+            </Button>
+          )}
+        </div>
       </div>
+
+      <RoleMatrixImportModal
+        open={importing}
+        onClose={() => setImporting(false)}
+        snapshot={snapshot}
+        onApplied={() => {
+          rolesQ.reload();
+          pageQ.reload();
+        }}
+      />
 
       {locked ? (
         <div className="rounded-lg border border-border bg-surface p-4 shadow-stone">
