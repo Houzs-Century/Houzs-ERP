@@ -69,17 +69,20 @@ export const BASIS_WORDS: Record<CommissionBasis, { toggle: string; part1: strin
   },
 };
 
+/* A report from a server older than the toggle carries no basis — it is by fair. */
+export const basisOf = (r: EventCommission): CommissionBasis => r.basis ?? 'fair';
+
 /* Both parts as CSV: each fair, its orders beneath it; then the earlier lines. */
 export const eventCommissionCsv = (r: EventCommission): string => {
   const esc = (v: string | number | null) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const row = (cells: Array<string | number | null>) => cells.map(esc).join(',');
-  const byFair = r.basis === 'fair';
+  const byFair = basisOf(r) === 'fair';
   const lines = [row(['Fair', 'Dates', 'Rate %', 'Total Sales', 'Estimate', 'Order', 'SO date', 'Salesperson', 'Goods', 'Paid %', '30% reached', 'Commission'])];
   for (const f of r.fairs) {
     lines.push(row([f.name, fmtDayMonthRange(f.startDate, f.endDate), f.ratePct, byFair ? fmtRmWhole(f.totalSalesRm) : '', byFair ? fmtRmWhole(f.estimateRm) : '', '', '', '', '', '', '', fmtRm(f.payableSen)]));
     for (const s of f.sos) lines.push(row(['', '', '', '', '', s.docNo, s.soDate ?? '', s.salesperson, fmtRm(s.goodsSen), s.paidPct, s.reachedOn ?? 'not yet', fmtRm(s.commissionSen)]));
   }
-  lines.push('', row([BASIS_WORDS[r.basis].earlier, 'Date', 'What', 'Order', 'Salesperson', 'Goods', 'Commission']));
+  lines.push('', row([BASIS_WORDS[basisOf(r)].earlier, 'Date', 'What', 'Order', 'Salesperson', 'Goods', 'Commission']));
   for (const a of r.adjustments) lines.push(row([a.fairName, a.date, KIND_LABEL[a.kind], a.docNo, a.salesperson, fmtRm(a.goodsSen), fmtRm(a.commissionSen)]));
   lines.push('', row(['Total', '', '', '', '', '', fmtRm(r.totals.totalSen)]));
   return `${lines.join('\n')}\n`;
@@ -120,7 +123,7 @@ export const EventCommissionTab = () => {
         <Button variant="ghost" size="sm" onClick={() => setRange(monthOf(myt()))}>This month</Button>
         <Button variant="ghost" size="sm" onClick={() => setRange(monthOf(myt(), -1))}>Last month</Button>
         <span style={{ flex: 1 }} />
-        <Button variant="ghost" size="sm" disabled={!r} onClick={() => { if (r) downloadText(`event-commission-${r.basis === 'fair' ? 'by-fair' : 'by-so-date'}-${range.from}-${range.to}.csv`, eventCommissionCsv(r)); }}>
+        <Button variant="ghost" size="sm" disabled={!r} onClick={() => { if (r) downloadText(`event-commission-${basisOf(r) === 'fair' ? 'by-fair' : 'by-so-date'}-${range.from}-${range.to}.csv`, eventCommissionCsv(r)); }}>
           <Download size={16} strokeWidth={1.75} /> Export
         </Button>
       </div>
@@ -128,8 +131,8 @@ export const EventCommissionTab = () => {
       {r && (
         <div style={{ ...card, display: 'flex', gap: 'var(--space-5)', flexWrap: 'wrap', fontSize: 'var(--fs-13)' }}>
           <span>Fairs <b>{r.fairs.length}</b></span>
-          <span>{BASIS_WORDS[r.basis].inRange} <b style={num}>RM {fmtRm(r.totals.payableSen)}</b></span>
-          <span>{BASIS_WORDS[r.basis].earlier} <b style={num}>RM {fmtRm(r.totals.adjustmentsSen)}</b></span>
+          <span>{BASIS_WORDS[basisOf(r)].inRange} <b style={num}>RM {fmtRm(r.totals.payableSen)}</b></span>
+          <span>{BASIS_WORDS[basisOf(r)].earlier} <b style={num}>RM {fmtRm(r.totals.adjustmentsSen)}</b></span>
           <span>Total commission <b style={num}>RM {fmtRm(r.totals.totalSen)}</b></span>
         </div>
       )}

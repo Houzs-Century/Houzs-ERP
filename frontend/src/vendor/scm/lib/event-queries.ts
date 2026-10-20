@@ -134,7 +134,8 @@ export type CommissionAdjustment = {
 /** Which date puts an order in the range: its fair's start, or its own SO date. */
 export type CommissionBasis = 'fair' | 'so_date';
 export type EventCommission = {
-  basis: CommissionBasis;
+  /** Absent from a server older than the toggle — read it through basisOf. */
+  basis?: CommissionBasis;
   from: string;
   to: string;
   fairs: CommissionFairRow[];
