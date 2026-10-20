@@ -112,6 +112,7 @@ follows the new SLA at once.
   sync. `GET /api/delivery-sheet/assr-legs` is the own-team-gated feed
   (`delivery-sheet-assr-feed.ts`); the Delivery Planning board is deliberately
   NOT gated (it shows every dated leg), so board and sheet differ on purpose.
+- **Pickup tracking** on Pickup / Return (HC-0129): `pickup_status` (pending / scheduled / completed), `actual_pickup_at`, `pickup_pic` (free text), `item_location` (customer / warehouse / supplier). The Scheduled Pickup Date (ETA) is `customer_pickup_at`, not a new column. Allowed values live in `scm/shared/assr-pickup-tracking.ts` (frontend copy byte-identical); the PATCH refuses anything else. Desktop `components/assr/PickupTrackingFields.tsx`, mobile rows in `MobileServiceCase.tsx`.
 - **Supplier returns (返厂)** are rows in `assr_supplier_returns` (`round_no`
   1..N, added freely; an archived trip keeps its number, never reused). The list
   is the source of truth for each trip's out/back dates; the case's

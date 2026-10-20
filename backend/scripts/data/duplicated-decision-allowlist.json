@@ -632,7 +632,7 @@
     },
     {
       "check": "D2",
-      "key": "ACTION_REMARK,ADDR1,ADDR2,ADDR3,ADDR4,ASSIGNED_TO,ASSIGNED_TO_2,COMPLAINT_ISSUE,COMPLETION_DATE,COST_NOTES,CUSTOMER_AMOUNT,CUSTOMER_EMAIL,CUSTOMER_NAME,CUSTOMER_PICKUP_AT,DEADLINE_AT,DELIVERY_BY,DELIVERY_ORDER,DOC_NO,DO_DATE,EMAIL_FOR_SURVEY,GOODS_RETURNED_NOTE,INSPECTION_BY,INSPECTION_RESULT,INSPECTION_VISIT_AT,ISSUE_CATEGORY,ITEMS_READY_AT,ITEM_CODE,LOCATION,NCR_CATEGORY,PHONE,PICKUP_BY,PO_AMOUNT,PO_NO,PRIORITY,QC_ISSUE_RESULT,QC_RECEIPT_DATE,QUALITY_REVIEW_PASSED,REF_NO,RESOLUTION_METHOD,SALES_AGENT,SATISFACTION_NOTES,SATISFACTION_RATING,SERVICE_CATEGORY,SLA_HOURS,SUB_STATUS,SUPPLIER_INVOICE_REF,SUPPLIER_PICKUP_AT,SUPPLIER_SERVICE_NOTE,VERIFICATION_OUTCOME,VERIFIED_ROOT_CAUSE,VOID_REASON ~ ACTION_REMARK,ADDR1,ADDR2,ADDR3,ADDR4,COMPLAINT_ISSUE,COMPLETION_DATE,COST_NOTES,CUSTOMER_AMOUNT,CUSTOMER_EMAIL,CUSTOMER_NAME,CUSTOMER_PICKUP_AT,DEADLINE_AT,DELIVERY_BY,DELIVERY_ORDER,DOC_NO,DO_DATE,EMAIL_FOR_SURVEY,GOODS_RETURNED_NOTE,INSPECTION_BY,INSPECTION_RESULT,INSPECTION_VISIT_AT,ISSUE_CATEGORY,ITEMS_READY_AT,ITEM_CODE,LOCATION,NCR_CATEGORY,PHONE,PICKUP_BY,PO_AMOUNT,PO_NO,PRIORITY,QC_ISSUE_RESULT,QC_RECEIPT_DATE,QUALITY_REVIEW_PASSED,REF_NO,RESOLUTION_METHOD,SALES_AGENT,SATISFACTION_NOTES,SATISFACTION_RATING,SERVICE_CATEGORY,SLA_HOURS,SUPPLIER_INVOICE_REF,SUPPLIER_PICKUP_AT,SUPPLIER_SERVICE_NOTE,VERIFICATION_OUTCOME,VERIFIED_ROOT_CAUSE",
+      "key": "ACTION_REMARK,ACTUAL_PICKUP_AT,ADDR1,ADDR2,ADDR3,ADDR4,ASSIGNED_TO,ASSIGNED_TO_2,COMPLAINT_ISSUE,COMPLETION_DATE,COST_NOTES,CUSTOMER_AMOUNT,CUSTOMER_EMAIL,CUSTOMER_NAME,CUSTOMER_PICKUP_AT,DEADLINE_AT,DELIVERY_BY,DELIVERY_ORDER,DOC_NO,DO_DATE,EMAIL_FOR_SURVEY,GOODS_RETURNED_NOTE,INSPECTION_BY,INSPECTION_RESULT,INSPECTION_VISIT_AT,ISSUE_CATEGORY,ITEMS_READY_AT,ITEM_CODE,ITEM_LOCATION,LOCATION,NCR_CATEGORY,PHONE,PICKUP_BY,PICKUP_PIC,PICKUP_STATUS,PO_AMOUNT,PO_NO,PRIORITY,QC_ISSUE_RESULT,QC_RECEIPT_DATE,QUALITY_REVIEW_PASSED,REF_NO,RESOLUTION_METHOD,SALES_AGENT,SATISFACTION_NOTES,SATISFACTION_RATING,SERVICE_CATEGORY,SLA_HOURS,SUB_STATUS,SUPPLIER_INVOICE_REF,SUPPLIER_PICKUP_AT,SUPPLIER_SERVICE_NOTE,VERIFICATION_OUTCOME,VERIFIED_ROOT_CAUSE,VOID_REASON ~ ACTION_REMARK,ACTUAL_PICKUP_AT,ADDR1,ADDR2,ADDR3,ADDR4,COMPLAINT_ISSUE,COMPLETION_DATE,COST_NOTES,CUSTOMER_AMOUNT,CUSTOMER_EMAIL,CUSTOMER_NAME,CUSTOMER_PICKUP_AT,DEADLINE_AT,DELIVERY_BY,DELIVERY_ORDER,DOC_NO,DO_DATE,EMAIL_FOR_SURVEY,GOODS_RETURNED_NOTE,INSPECTION_BY,INSPECTION_RESULT,INSPECTION_VISIT_AT,ISSUE_CATEGORY,ITEMS_READY_AT,ITEM_CODE,ITEM_LOCATION,LOCATION,NCR_CATEGORY,PHONE,PICKUP_BY,PICKUP_PIC,PICKUP_STATUS,PO_AMOUNT,PO_NO,PRIORITY,QC_ISSUE_RESULT,QC_RECEIPT_DATE,QUALITY_REVIEW_PASSED,REF_NO,RESOLUTION_METHOD,SALES_AGENT,SATISFACTION_NOTES,SATISFACTION_RATING,SERVICE_CATEGORY,SLA_HOURS,SUPPLIER_INVOICE_REF,SUPPLIER_PICKUP_AT,SUPPLIER_SERVICE_NOTE,VERIFICATION_OUTCOME,VERIFIED_ROOT_CAUSE",
       "why": "THE ASSR PATCHABLE FIELDS VERSUS THE ASSR FIELD LABELS, in one file. Four fields are patchable without ever being shown as a labelled diff (assignments, sub-status, void reason). Same file, two lists, deliberate."
     },
     {
@@ -1512,7 +1512,7 @@
     },
     {
       "check": "D1",
-      "key": "AMOUNT_SEN,BALANCE_SEN,COUNT,DRAFT_COUNT,PAID_SEN|backend/src/routes/project-sales-orders.ts frontend/src/pages/projects/projectSalesOrders.ts",
+      "key": "AMOUNT_SEN,BALANCE_SEN,COUNT,DRAFT_COUNT,PAID_SEN,SERVICE_SEN|backend/src/routes/project-sales-orders.ts frontend/src/pages/projects/projectSalesOrders.ts",
       "why": "ONE WIRE SHAPE seen from its two ends, not two answers to one question: routes/project-sales-orders.ts builds the totals object GET /api/project-sales-orders/:projectId sends, and the page-side ZERO_TOTALS in projectSalesOrders.ts is the empty value of that same object, used only when the read came back in another shape (normalizeProjectSalesOrders). The keys are the response contract; nothing is decided twice. Cost of divergence is a 0 in the Sales header, caught by the route test on one side and the normalize test on the other."
     },
     {
@@ -1619,6 +1619,16 @@
       "check": "D1",
       "key": "AMBIGUOUS,NO_FAIR,PENDING,UNMATCHED|backend/src/scm/lib/fair-audit.ts backend/src/scm/lib/fair-pending.ts",
       "why": "ONE vocabulary (scm.mfg_sales_orders.fair_match), two different jobs: fair-pending.ts LISTED_VERDICTS is WHICH unlinked verdicts the Fair Links to Settle page lists; fair-audit.ts UNLINKED is how an order's History NAMES an unlinked state (owner 2026-10-19, every fair move named). Presentation of the same vocabulary, not a second answer to what the verdicts are. A verdict added to one and not the other costs a History row reading \"Not linked\", never a wrong list."
+    },
+    {
+      "check": "D1",
+      "key": "COMPLETED,PENDING,SCHEDULED|backend/src/scm/shared/assr-pickup-tracking.ts frontend/src/vendor/scm/lib/assr-pickup-tracking.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: PICKUP_STATUS_OPTIONS."
+    },
+    {
+      "check": "D1",
+      "key": "CUSTOMER,SUPPLIER,WAREHOUSE|backend/src/scm/shared/assr-pickup-tracking.ts frontend/src/vendor/scm/lib/assr-pickup-tracking.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: ITEM_LOCATION_OPTIONS."
     }
   ]
 }
