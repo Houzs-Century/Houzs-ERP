@@ -923,7 +923,7 @@ app.post("/:id/resolve-creditor", requirePermission("service_cases.manage"), asy
       creditor_code: creditorCode,
       message: creditorCode
         ? `Resolved ${row.item_code} → ${creditorCode}`
-        : `${row.item_code} has no MainSupplier in AutoCount`,
+        : `${row.item_code} has no supplier on its PO or in AutoCount`,
     });
   } catch {
     // Plain-language rule: never surface raw exception text to the user.

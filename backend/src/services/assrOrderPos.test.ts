@@ -4,7 +4,7 @@
 // ORDER lines. Pinned through a minimal fake PostgREST client, the same shape
 // as scm/lib/so-converted-po.test.ts, because the D1 test harness has no scm.
 import { describe, expect, test } from 'vitest';
-import { attachOrderPurchaseOrders } from './assrOrderPos';
+import { attachOrderPurchaseOrders, orderPoSupplierCode } from './assrOrderPos';
 
 type Row = Record<string, unknown>;
 
@@ -111,5 +111,46 @@ describe('attachOrderPurchaseOrders', () => {
     await attachOrderPurchaseOrders(fakeSb(tables, seen), rows);
     expect((rows[0].order_pos as unknown[]).length).toBe(2);
     expect(seen).toContain('purchase_orders.company_id=1');
+  });
+});
+
+// HC-0130 — the Solution step's SUPPLIER defaults to the supplier on the PO
+// raised from the case item's SO line, so Service Team stops typing it.
+describe('orderPoSupplierCode', () => {
+  const po = {
+    mfg_sales_order_items: [
+      { id: 'l-bed', doc_no: 'HC-SO-1', item_code: 'BED-1', company_id: HOUZS },
+      { id: 'l-sofa', doc_no: 'HC-SO-1', item_code: 'SOFA-1', company_id: HOUZS },
+      { id: 'l-other-co', doc_no: 'HC-SO-1', item_code: 'BED-1', company_id: CO_2990 },
+    ],
+    purchase_order_items: [
+      { so_item_id: 'l-bed', purchase_order_id: 'po-old', company_id: HOUZS },
+      { so_item_id: 'l-bed', purchase_order_id: 'po-new', company_id: HOUZS },
+      { so_item_id: 'l-bed', purchase_order_id: 'po-void', company_id: HOUZS },
+      { so_item_id: 'l-sofa', purchase_order_id: 'po-sofa', company_id: HOUZS },
+      { so_item_id: 'l-other-co', purchase_order_id: 'po-x', company_id: CO_2990 },
+    ],
+    purchase_orders: [
+      { id: 'po-old', po_number: 'HC-PO-1', po_date: '2026-09-01', status: 'RECEIVED', company_id: HOUZS, supplier: { code: '400-A001' } },
+      { id: 'po-new', po_number: 'HC-PO-2', po_date: '2026-10-01', status: 'SUBMITTED', company_id: HOUZS, supplier: { code: '400-O002' } },
+      { id: 'po-void', po_number: 'HC-PO-3', po_date: '2026-10-09', status: 'CANCELLED', company_id: HOUZS, supplier: { code: '400-Z999' } },
+      { id: 'po-sofa', po_number: 'HC-PO-4', po_date: '2026-10-05', status: 'SUBMITTED', company_id: HOUZS, supplier: { code: '400-S001' } },
+      { id: 'po-x', po_number: 'PO-9', po_date: '2026-10-10', status: 'SUBMITTED', company_id: CO_2990, supplier: { code: '400-X001' } },
+    ],
+  };
+
+  test("the item's latest live PO wins: not another item's, not a cancelled one", async () => {
+    expect(await orderPoSupplierCode(fakeSb(po), 'HC-SO-1', 'BED-1', HOUZS)).toBe('400-O002');
+    expect(await orderPoSupplierCode(fakeSb(po), 'HC-SO-1', 'SOFA-1', HOUZS)).toBe('400-S001');
+  });
+
+  test("reads only the case's own company", async () => {
+    expect(await orderPoSupplierCode(fakeSb(po), 'HC-SO-1', 'BED-1', CO_2990)).toBe('400-X001');
+  });
+
+  test('no SO, no item, no company or no PO reads as null', async () => {
+    expect(await orderPoSupplierCode(fakeSb(po), 'HC-SO-1', 'CHAIR-1', HOUZS)).toBeNull();
+    expect(await orderPoSupplierCode(fakeSb(po), null, 'BED-1', HOUZS)).toBeNull();
+    expect(await orderPoSupplierCode(fakeSb(po), 'HC-SO-1', 'BED-1', null)).toBeNull();
   });
 });
