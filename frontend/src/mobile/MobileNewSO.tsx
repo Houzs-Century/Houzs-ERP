@@ -2410,6 +2410,27 @@ export function MobileNewSO({
                   </Field>
                 </div>
                 {autoFair.hint}
+                {/* BACK-KEYING an order written at an earlier fair (mirror of the
+                    desktop SalesOrderNew form): the dropdown follows this date, so a
+                    fair now outside today's 4-week window is still offered and can be
+                    picked instead of being forced onto No fair. Re-anchors the list
+                    only, never the SO's own date. Create / draft, while no fair is
+                    picked; null keeps today's window. */}
+                {(!isEdit || isDraftSo) && !fairEventOf(fairPick) && (
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginTop: 6 }}>
+                    <span style={{ opacity: 0.8 }}>Earlier fair? Order date</span>
+                    <input
+                      type="date"
+                      value={orderDate ?? ""}
+                      max={today}
+                      disabled={identityLocked}
+                      onChange={(e) => setOrderDate(e.target.value || null)}
+                      aria-label="Order date, for picking an earlier fair"
+                      className="fld-i"
+                      style={{ flex: 1 }}
+                    />
+                  </label>
+                )}
                 {(!isEdit || isDraftSo) && !fairEventOf(fairPick) && ( // a draft says No fair here too (owner 2026-10-19)
                   <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginTop: 6 }}>
                     <input type="checkbox" checked={noFair} disabled={identityLocked} onChange={(e) => setNoFair(e.target.checked)} />
