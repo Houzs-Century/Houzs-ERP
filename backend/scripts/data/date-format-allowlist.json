@@ -94,7 +94,7 @@
     },
     {
       "file": "frontend/src/mobile/MobileServiceCase.tsx",
-      "text": "<EditRow label=\"Customer pickup date\" type=\"date\" value={get(c, \"customerPickupAt\", \"customer_pickup_at\")} busy={busy} disabled={dis} onSave={(v) => patchCase({ customer_pickup_at: v }, \"Couldn't save pickup date\")} />",
+      "text": "<EditRow label=\"Scheduled pickup date (ETA)\" type=\"date\" value={get(c, \"customerPickupAt\", \"customer_pickup_at\")} busy={busy} disabled={dis} onSave={(v) => patchCase({ customer_pickup_at: v }, \"Couldn't save pickup date\")} />",
       "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
     },
     {
@@ -301,6 +301,16 @@
       "file": "backend/src/scm/lib/delivery-message-kinds.ts",
       "text": "return String(iso ?? '').slice(0, 10).replace(/-/g, '/');",
       "why": "templateDate: the WhatsApp template VARIABLE value, not a display in this app. Connect's approved Meta templates (hc_order_driver_info, hc_order_postpone_reason, the delivery openers) print the date exactly as sent and were approved showing YYYY/MM/DD — the same shape delivery-messages.ts payloadDate has always sent for delivery_date_N. Changing it here changes what the customer reads inside an approved template; it is the template owner's call, not this gate's."
+    },
+    {
+      "file": "frontend/src/mobile/MobileServiceCase.tsx",
+      "text": "<EditRow label=\"Actual pickup date\" type=\"date\" value={get(c, \"actualPickupAt\", \"actual_pickup_at\")} busy={busy} disabled={dis} onSave={(v) => patchCase({ actual_pickup_at: v }, \"Couldn't save actual pickup date\")} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/components/assr/PickupTrackingFields.tsx",
+      "text": "type=\"date\"",
+      "why": "A type=\"date\" PROP on the InlineEdit wrapper (HC-0129 scheduled + actual pickup dates), not a native input. InlineEdit renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
     }
   ]
 }
