@@ -108,6 +108,10 @@ export async function draftFromScan(
   const nameNote = named > 0
     ? `Check the items: ${named} delivery order ${named === 1 ? 'row was' : 'rows were'} matched to the PO by product name, not by code.`
     : null;
+  const sets = match.soMatches.length;
+  const soNote = sets > 0
+    ? `Check the pieces: ${sets} delivery order ${sets === 1 ? 'row was' : 'rows were'} read as a set and received as every piece of ${[...new Set(match.soMatches.map((m) => m.soDocNo))].join(', ')} on the PO.`
+    : null;
   // Scanned lines the operator must add by hand, by name, so the draft itself
   // says what is missing. A draft built from the whole PO lists what the
   // delivery order says instead, since every PO line is already on it.
@@ -121,7 +125,7 @@ export async function draftFromScan(
     companyId: job.companyId,
     companyCode,
     picks: match.picks,
-    notes: [doRef, weakNote, nameNote, unmatchedNote].filter(Boolean).join(' · '),
+    notes: [doRef, weakNote, nameNote, soNote, unmatchedNote].filter(Boolean).join(' · '),
     receivedDate: parsed.deliveryDate ?? undefined,
     deliveryNoteRef: parsed.doNo,
   });
@@ -146,6 +150,6 @@ export async function draftFromScan(
     kind: 'draft',
     grnNumbers: res.created.map((g) => g.grnNumber),
     poNumbers: [...new Set(res.created.flatMap((g) => g.poNumbers))],
-    jobNote: [weakNote, nameNote, unmatchedNote].filter(Boolean).join(' ') || null,
+    jobNote: [weakNote, nameNote, soNote, unmatchedNote].filter(Boolean).join(' ') || null,
   };
 }
