@@ -20,6 +20,8 @@
 //   GET  /fair-pending          orders with no fair link a person should see
 //   GET  /fair-pending/count    how many — the sidebar badge
 //   GET  /fair-checks           linked orders to check: venue differs / Sales Attending
+//                               / an evening report puts them at another fair
+//   POST /fair-transfer         a person moves orders to their fair, one or many
 //   POST /:docNo/fair           a person settles one of them
 //   GET  /active-venue          the rep's bound venue (moved here, unchanged)
 //
@@ -29,7 +31,7 @@
 
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
-import { activeCompanySql, scopeToCompany, activeCompanyId } from '../lib/companyScope';
+import { activeCompanySql, scopeToCompany, activeCompanyId, requireActiveCompanyId } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import {
   keyerFairDefaultFor,
@@ -43,6 +45,7 @@ import { countFairPending, loadFairPending } from '../lib/fair-pending';
 import { loadFairChecks } from '../lib/fair-checks';
 import { fairStateOf, recordFairChange } from '../lib/fair-audit';
 import { canReassignFair, FAIR_REASSIGN_REFUSAL } from '../lib/fair-reassign';
+import { FAIR_TRANSFER_MAX, fairTransferItemsOf, transferOrdersToFairs } from '../lib/fair-transfer';
 /* GET /active-venue moved here from mfg-sales-orders.ts on 2026-09-13. It is the
    same concern as the picker — which exhibition is this rep at — and that file
    is over its size ceiling, so the endpoint could not stay beside its new
@@ -194,6 +197,47 @@ mfgSoFairs.get('/fair-checks', async (c) => {
   });
   if (!res.ok) return c.json({ error: 'fair_checks_read_failed', rows: [] }, 500);
   return c.json({ rows: res.rows });
+});
+
+/**
+ * POST /mfg-sales-orders/fair-transfer   { items: [{ docNo, projectId }] }
+ *
+ * Move orders to the project they belong to — one, a ticked few, or all of a
+ * list at one click (owner 2026-10-20: 「做成 manual bulk transfer」, 「也要支持一
+ * 键按钮转」). The Fair, the Venue and the Fair Day move together, with a
+ * History row each (scm/lib/fair-transfer.ts). Finance or PMS only, as the
+ * settle route below. Answers per order: one that cannot move says why and the
+ * rest still move.
+ */
+mfgSoFairs.post('/fair-transfer', async (c) => {
+  if (!canReassignFair(c)) return c.json({ error: 'forbidden', reason: FAIR_REASSIGN_REFUSAL }, 403);
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'bad_json' }, 400);
+  }
+  const items = fairTransferItemsOf(body);
+  if (!items) {
+    return c.json({ error: 'bad_items', reason: `Send 1 to ${FAIR_TRANSFER_MAX} orders, each with its docNo and the projectId to move it to.` }, 400);
+  }
+  const company = requireActiveCompanyId(c);
+  if (!company.ok) return c.json(company.refusal, 409);
+  const user = c.get('user');
+  try {
+    const results = await transferOrdersToFairs({
+      sb: c.get('supabase'),
+      db: c.env.DB as unknown as FairDb,
+      companySql: activeCompanySql(c, 'p.company_id'),
+      companyId: company.companyId,
+      items,
+      actorId: user?.id ?? null,
+      actorName: (user?.user_metadata as { name?: string } | undefined)?.name ?? c.get('houzsUser')?.name ?? null,
+    });
+    return c.json({ results, moved: results.filter((r) => r.ok).length });
+  } catch {
+    return c.json({ error: 'fair_transfer_failed' }, 500);
+  }
 });
 
 /**

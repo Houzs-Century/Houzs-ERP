@@ -13,14 +13,26 @@
 //                           fairConfirmProblems); a confirmed order that moved to
 //                           another brand's booth is listed so PMS can add them.
 //
-// Both are read from the order and PMS as they are NOW. Nothing is stored, so
-// re-linking, correcting the venue or PMS adding the person clears the row at
-// once — there is no flag to forget to reset.
+// The EVENING SALES REPORT (project chat) outranks the slip's place (owner
+// 2026-10-20, routes/lib/sales-report-evidence.ts):
+//
+//   REPORT_ELSEWHERE  another fair's report lists the order (linked elsewhere
+//                     or to nothing) — `target` is where to move it; two
+//                     fairs' reports both listing it leave `target` empty.
+//   An order the report of ITS OWN fair lists is right: never 要查
+//   (「对的上就不要显示 venue differs」). An order in REPORT_ELSEWHERE is not
+//   listed again under 要查 or 等加人 — its fair is the thing to fix first.
+//
+// All are read from the order, PMS and the chat as they are NOW. Nothing is
+// stored, so re-linking, correcting the venue or PMS adding the person clears
+// the row at once — there is no flag to forget to reset.
 // ----------------------------------------------------------------------------
 
 import { chunkIn, paginateAll, type PageResult } from './paginate-all';
 import {
   attendingNote,
+  fairOptionLabel,
+  linkedFairOf,
   sameVenue,
   venueDiffersNote,
   venueDiffersReason,
@@ -33,6 +45,8 @@ import {
   type FairPendingRow,
   type FairPendingScope,
 } from './fair-pending';
+import { fmtDayMonth } from '../shared/format';
+import { loadReportEvidence, reportVerdict, type ReportVerdict } from '../../routes/lib/sales-report-evidence';
 
 /** Linked orders are checked from the day Houzs opened its books in the ERP —
  *  the same line the unlinked list draws. */
@@ -43,10 +57,50 @@ export const FAIR_CHECKS_FROM = NO_VERDICT_LISTED_FROM;
  *  checked whatever its date — it cannot be confirmed without it. */
 export const SCAN_RULE_FROM = '2026-10-19';
 
-export type FairCheck = 'VENUE_DIFFERS' | 'NEEDS_ATTENDING';
-export type FairCheckRow = FairPendingRow & { check: FairCheck; note: string };
+/** Reports are read from fairs that started a month before the first checked
+ *  order — a bill is never reported at a fair later than its order. */
+export const REPORTS_FROM = '2026-08-01';
+
+export type FairCheck = 'VENUE_DIFFERS' | 'NEEDS_ATTENDING' | 'REPORT_ELSEWHERE';
+/** Where an evening report puts an order: the booth to move it to. */
+export type FairCheckTarget = { projectId: number; label: string; reportDate: string | null };
+export type FairCheckRow = FairPendingRow & { check: FairCheck; note: string; target?: FairCheckTarget | null };
 
 type ScanJob = { so_doc_no: string; houzs_user_id: number | string | null; created_at: string | null };
+type CheckedOrder = FairPendingRow & { customer_so_no?: string | null; ref?: string | null };
+
+const CHECK_COLUMNS = `${FAIR_PENDING_COLUMNS}, customer_so_no, ref`;
+
+/** "AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11)": one booth, as Fair Links
+ *  names a choice. */
+export function boothText(id: number, row: FairProjectRow | undefined): string {
+  const fair = row ? linkedFairOf(row) : null;
+  if (!fair) return `event #${id}`;
+  return `${(row?.brand ?? '').trim() || 'No brand'} — ${fairOptionLabel(fair)}`;
+}
+
+/** The REPORT_ELSEWHERE row for one order, or null when the reports do not
+ *  put it elsewhere. */
+function reportRow(o: CheckedOrder, v: ReportVerdict, booths: ReadonlyMap<number, FairProjectRow>): FairCheckRow | null {
+  const now = o.project_id != null ? `the order is under ${boothText(Number(o.project_id), booths.get(Number(o.project_id)))}` : 'the order has no event';
+  if (v.kind === 'elsewhere') {
+    const id = v.sighting.projectId;
+    const label = boothText(id, booths.get(id));
+    const on = v.sighting.reportDate ? ` on ${fmtDayMonth(v.sighting.reportDate)}` : '';
+    return {
+      ...o, check: 'REPORT_ELSEWHERE',
+      target: { projectId: id, label, reportDate: v.sighting.reportDate },
+      note: `The evening report of ${label} lists it${on}; ${now}.`,
+    };
+  }
+  if (v.kind === 'conflict') {
+    return {
+      ...o, check: 'REPORT_ELSEWHERE', target: null,
+      note: `The evening reports of ${v.projectIds.map((id) => boothText(id, booths.get(id))).join(' and ')} both list it; ${now}. Pick the right one on the order.`,
+    };
+  }
+  return null;
+}
 
 /**
  * Both groups, newest first. Any failed read is a failure — never an empty
@@ -60,25 +114,40 @@ export async function loadFairChecks(args: {
 }): Promise<{ ok: true; rows: FairCheckRow[] } | { ok: false }> {
   const { sb, db, companySql, scope } = args;
   try {
-    const linked = await paginateAll<FairPendingRow>((from, to) =>
-      scope(
-        sb.from('mfg_sales_orders').select(FAIR_PENDING_COLUMNS)
-          .not('project_id', 'is', null)
+    const read = (linkedOnes: boolean) => paginateAll<CheckedOrder>((from, to) => {
+      const q = sb.from('mfg_sales_orders').select(CHECK_COLUMNS);
+      return scope(
+        (linkedOnes ? q.not('project_id', 'is', null) : q.is('project_id', null))
           .neq('status', 'CANCELLED')
           .gte('so_date', FAIR_CHECKS_FROM)
           .order('so_date', { ascending: false }),
-      ).range(from, to) as PromiseLike<PageResult<FairPendingRow>>,
-    );
-    if (linked.error) return { ok: false };
+      ).range(from, to) as PromiseLike<PageResult<CheckedOrder>>;
+    });
+    const [linked, unlinked] = await Promise.all([read(true), read(false)]);
+    if (linked.error || unlinked.error) return { ok: false };
     const orders = (linked.data ?? []).filter((o) => o.project_id != null);
-    const booths = await loadFairsByIds(db, companySql, orders.map((o) => Number(o.project_id)));
+    const evidence = await loadReportEvidence(db, companySql, { since: REPORTS_FROM });
+
+    /* What the evening reports say about each order, linked or not. */
+    const verdicts = new Map<string, ReportVerdict>();
+    for (const o of [...orders, ...(unlinked.data ?? [])]) verdicts.set(o.doc_no, reportVerdict(o, evidence));
+    const elsewhere = [...orders, ...(unlinked.data ?? [])].filter((o) => {
+      const k = verdicts.get(o.doc_no)?.kind;
+      return k === 'elsewhere' || k === 'conflict';
+    });
+    const inReport = new Set(elsewhere.map((o) => o.doc_no));
+    const reportedIds = [...verdicts.values()].flatMap((v) =>
+      v.kind === 'elsewhere' ? [v.sighting.projectId] : v.kind === 'conflict' ? v.projectIds : []);
+    const booths = await loadFairsByIds(db, companySql, [...orders.map((o) => Number(o.project_id)), ...reportedIds]);
     const boothOf = (o: FairPendingRow): FairProjectRow | undefined => booths.get(Number(o.project_id));
 
     const differs = orders.filter((o) => {
       const b = boothOf(o);
-      return !!(o.venue ?? '').trim() && !!b?.venue && !sameVenue(o.venue, b.venue);
+      return !!(o.venue ?? '').trim() && !!b?.venue && !sameVenue(o.venue, b.venue)
+        && verdicts.get(o.doc_no)?.kind !== 'confirmed' && !inReport.has(o.doc_no);
     });
-    const attendCandidates = orders.filter((o) => o.status === 'DRAFT' || String(o.so_date ?? '') >= SCAN_RULE_FROM);
+    const attendCandidates = orders.filter((o) => !inReport.has(o.doc_no)
+      && (o.status === 'DRAFT' || String(o.so_date ?? '') >= SCAN_RULE_FROM));
 
     /* Who scanned which order — the latest job per order wins (a re-scan). */
     const docNos = [...new Set([...differs, ...attendCandidates].map((o) => o.doc_no))];
@@ -98,6 +167,12 @@ export async function loadFairChecks(args: {
     }
 
     const rows: FairCheckRow[] = [];
+
+    /* The evening report puts it at another fair. */
+    for (const o of elsewhere) {
+      const row = reportRow(o, verdicts.get(o.doc_no)!, booths);
+      if (row) rows.push(row);
+    }
 
     /* 要查 — one PMS read per (place, date), shared by every order on it. */
     const reasonFor = new Map<string, string>();

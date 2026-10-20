@@ -165,7 +165,54 @@ export function useFairPending(limit = 200) {
  *  VENUE_DIFFERS — 要查, the venue on the order is not where it was placed;
  *  NEEDS_ATTENDING — 等加人, a scan whose scanner is not on its booth's Sales
  *  Attending. `note` is the server's sentence, shown as it comes. */
-export type FairCheckRow = Omit<FairPendingRow, 'fair_match'> & { fair_match: string | null; check: 'VENUE_DIFFERS' | 'NEEDS_ATTENDING'; note: string };
+export type FairCheckRow = Omit<FairPendingRow, 'fair_match'> & {
+  fair_match: string | null;
+  /** REPORT_ELSEWHERE (owner 2026-10-20): another fair's evening report lists the
+   *  order, linked elsewhere or to nothing. */
+  check: 'VENUE_DIFFERS' | 'NEEDS_ATTENDING' | 'REPORT_ELSEWHERE';
+  note: string;
+  /** REPORT_ELSEWHERE: the booth the report puts it at; null when two fairs'
+   *  reports both list it. */
+  target?: { projectId: number; label: string; reportDate: string | null } | null;
+};
+
+export type FairTransferResult =
+  | { docNo: string; ok: true; projectId: number; venue: string; fairDate: string | null }
+  | { docNo: string; ok: false; reason: string };
+
+const NOT_MOVED: Record<string, string> = {
+  not_found: 'not found',
+  cancelled: 'cancelled',
+  fair_not_open: 'that fair is closed or cancelled',
+  already_there: 'already there',
+  update_failed: 'could not be saved',
+};
+
+/** "3 moved." / "2 moved. Not moved: HC-SO-2610-166 (already there)." */
+export function transferSummary(results: readonly FairTransferResult[]): string {
+  const moved = results.filter((r) => r.ok).length;
+  const not = results.flatMap((r) => (r.ok ? [] : [`${r.docNo} (${NOT_MOVED[r.reason] ?? r.reason})`]));
+  return `${moved} moved.${not.length ? ` Not moved: ${not.join(', ')}.` : ''}`;
+}
+
+/** Move orders to the project they belong to — one, a ticked few, or all
+ *  (owner 2026-10-20). The Fair, Venue and Fair Day move together; the server
+ *  moves what it can and says why for the rest (scm/lib/fair-transfer.ts). */
+export function useFairTransfer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (items: ReadonlyArray<{ docNo: string; projectId: number }>) =>
+      authedFetch<{ results: FairTransferResult[]; moved: number }>('/mfg-sales-orders/fair-transfer', {
+        method: 'POST',
+        body: JSON.stringify({ items }),
+      }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['fair-pending'] });
+      await qc.invalidateQueries({ queryKey: ['mfg-sales-orders'] });
+    },
+    onError: writeFailedAs('Orders not transferred'),
+  });
+}
 
 export function useFairChecks() {
   return useQuery({

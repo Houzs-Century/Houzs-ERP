@@ -42,6 +42,9 @@ import { supabaseAuth } from "../scm/middleware/auth";
 import { activeCompanySql, scopeToCompany } from "../scm/lib/companyScope";
 import { loadFairsByIds, type FairDb } from "../scm/lib/fair-binding";
 import { sameVenue } from "../scm/lib/fair-options";
+import { boothText, REPORTS_FROM } from "../scm/lib/fair-checks";
+import { canReassignFair } from "../scm/lib/fair-reassign";
+import { loadReportEvidence, reportVerdict, type ReportEvidence } from "./lib/sales-report-evidence";
 import { canViewAllSales } from "../scm/lib/houzs-perms";
 import { resolveSalesScopeIds, applySoScope } from "../scm/lib/salesScope";
 import { paginateAll, chunkIn, type PageResult } from "../scm/lib/paginate-all";
@@ -59,7 +62,7 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
    join (mfg-sales-orders.ts, the "customers table" note by its list). */
 const SO_COLS =
   "doc_no, so_date, ref, customer_so_no, debtor_name, phone, status, salesperson_id, " +
-  "local_total_sen, total_revenue_sen, deposit_sen, service_sen, fair_match, linked_ac_docno, created_at, venue";
+  "local_total_sen, total_revenue_sen, deposit_sen, service_sen, fair_match, linked_ac_docno, created_at, venue, branding";
 
 type SoRow = {
   doc_no: string;
@@ -80,6 +83,7 @@ type SoRow = {
   linked_ac_docno: string | null;
   created_at: string | null;
   venue: string | null;
+  branding: string | null;
 };
 
 export type ProjectSalesOrderRow = {
@@ -100,8 +104,15 @@ export type ProjectSalesOrderRow = {
   created_at: string | null;
   /** "Venue differs" (owner 2026-10-19): the venue on the order when it is NOT
    *  this fair's venue — the slip said one place, the order was placed here.
-   *  Null when they agree, or when the order carries no venue. */
+   *  Null when they agree, when the order carries no venue, or when this fair's
+   *  evening report lists the order (2026-10-20: the report proves the link). */
   venue_differs: string | null;
+  /** The order's own venue and brand, for the transfer pick. */
+  venue: string | null;
+  branding: string | null;
+  /** Another fair's evening report lists this order (owner 2026-10-20) — the
+   *  booth to transfer it to. Null when no report, or this one, lists it. */
+  report_elsewhere: { project_id: number; label: string; report_date: string | null } | null;
 };
 
 export type ProjectSalesOrderTotals = {
@@ -198,11 +209,32 @@ export async function projectSalesOrdersHandler(c: Ctx): Promise<Response> {
   /* The fair's own venue, for "Venue differs". A display hint only: when PMS
      cannot be read the rows still list, with no flag rather than a wrong one. */
   const db = c.env?.DB as unknown as FairDb | undefined;
+  const companySql = activeCompanySql(c, "p.company_id");
   const booth = db
-    ? (await loadFairsByIds(db, activeCompanySql(c, "p.company_id"), [projectId]).catch(() => new Map<number, never>())).get(projectId)
+    ? (await loadFairsByIds(db, companySql, [projectId]).catch(() => new Map<number, never>())).get(projectId)
     : undefined;
-  const venueDiffers = (v: string | null): string | null =>
-    v && v.trim() && booth?.venue && !sameVenue(v, booth.venue) ? v.trim() : null;
+  /* What the evening reports say (owner 2026-10-20): this fair's report
+     listing an order proves its link — no "Venue differs" — and another fair's
+     report listing it names where to transfer it. A hint like the flag: a chat
+     that cannot be read leaves both as before. */
+  const evidence: ReportEvidence = db && headers.length > 0
+    ? await loadReportEvidence(db, companySql, { since: REPORTS_FROM }).catch(() => new Map())
+    : new Map();
+  const verdictOf = new Map(headers.map((h) => [h.doc_no, reportVerdict({ ...h, project_id: projectId }, evidence)] as const));
+  const elsewhereIds = [...verdictOf.values()].flatMap((v) => (v.kind === "elsewhere" ? [v.sighting.projectId] : []));
+  const elsewhereBooths = db && elsewhereIds.length > 0
+    ? await loadFairsByIds(db, companySql, elsewhereIds).catch(() => new Map())
+    : new Map();
+  const venueDiffers = (h: SoRow): string | null =>
+    h.venue && h.venue.trim() && booth?.venue && !sameVenue(h.venue, booth.venue) && verdictOf.get(h.doc_no)?.kind !== "confirmed"
+      ? h.venue.trim()
+      : null;
+  const reportElsewhere = (h: SoRow): ProjectSalesOrderRow["report_elsewhere"] => {
+    const v = verdictOf.get(h.doc_no);
+    if (v?.kind !== "elsewhere") return null;
+    const id = v.sighting.projectId;
+    return { project_id: id, label: boothText(id, elsewhereBooths.get(id)), report_date: v.sighting.reportDate };
+  };
 
   const rows: ProjectSalesOrderRow[] = headers.map((h) => {
     const led = ledger.get(h.doc_no);
@@ -224,11 +256,15 @@ export async function projectSalesOrdersHandler(c: Ctx): Promise<Response> {
       fair_match: h.fair_match,
       linked_ac_docno: h.linked_ac_docno,
       created_at: h.created_at,
-      venue_differs: venueDiffers(h.venue),
+      venue_differs: venueDiffers(h),
+      venue: h.venue,
+      branding: h.branding,
+      report_elsewhere: reportElsewhere(h),
     };
   });
 
-  return c.json({ data: rows, totals: projectSalesOrderTotals(rows), scoped: scopeIds !== null });
+  /* Who may move an order from here: Finance or PMS, as on Fair Links. */
+  return c.json({ data: rows, totals: projectSalesOrderTotals(rows), scoped: scopeIds !== null, can_transfer: canReassignFair(c) });
 }
 
 export const projectSalesOrders = new Hono<{ Bindings: Env; Variables: Variables }>();

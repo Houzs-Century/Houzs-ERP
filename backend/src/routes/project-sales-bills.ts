@@ -42,6 +42,7 @@ import { projects, project_activity, project_finance, project_sales_attendees, p
 import { activeCompanyId, requireActiveCompanyId, scopeToCompany } from "../scm/lib/companyScope";
 import { paginateAll, chunkIn, type PageResult } from "../scm/lib/paginate-all";
 import { postPersonalNotice } from "../services/personalNotice";
+import { canReassignFair } from "../scm/lib/fair-reassign";
 import {
   canSaveSalesReport,
   collectReport,
@@ -201,6 +202,10 @@ async function readPayload(c: Ctx, db: Db, project: ProjectRow) {
     summary: report.summary,
     total_sales_rm: totalSalesRm,
     can_save: canSaveSalesReport(realUser(c)),
+    /* This event, and whether the caller may move an order here from the
+       report (Finance or PMS, owner 2026-10-20 — scm/lib/fair-transfer.ts). */
+    project_id: project.id,
+    can_transfer: canReassignFair(c),
   };
 }
 

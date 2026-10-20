@@ -85,6 +85,10 @@ export type ProjectSalesBillsResponse = {
   /** Total Sales in whole RM — sent to the three who report only, else null. */
   total_sales_rm: number | null;
   can_save: boolean;
+  /** This event — what "transfer here" moves an order to (null from an older server). */
+  project_id: number | null;
+  /** The caller may transfer an order here from the report (Finance or PMS). */
+  can_transfer: boolean;
 };
 
 const ZERO: BillTotals = {
@@ -123,7 +127,15 @@ export function normalizeProjectSalesBills(raw: unknown): ProjectSalesBillsRespo
     summary: normalizeSummary(r.summary),
     total_sales_rm: typeof r.total_sales_rm === "number" && Number.isFinite(r.total_sales_rm) ? r.total_sales_rm : null,
     can_save: r.can_save === true,
+    project_id: typeof r.project_id === "number" && Number.isInteger(r.project_id) ? r.project_id : null,
+    can_transfer: r.can_transfer === true,
   };
+}
+
+/** The report's bills an order exists for but sits under another event or
+ *  none — what "transfer here" can move (owner 2026-10-20). */
+export function billsToTransfer<T extends { match: BillMatch }>(bills: readonly T[]): T[] {
+  return bills.filter((b) => b.match.status === "opened" && !!b.match.so_doc_no && (b.match.other_event || b.match.unlinked));
 }
 
 /** sales_rep_id → sen still not opened, for the red number beside each name
