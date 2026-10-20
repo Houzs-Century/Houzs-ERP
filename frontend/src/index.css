@@ -486,3 +486,10 @@ tr.dt-row-cancelled:hover > td.dt-cancel-keep > * {
   color: #8c968a;
   opacity: 0.85;
 }
+
+/* Option rows of the searchable pickers (SearchableSelect, StatePicker) grow to
+   a finger-sized target on touch screens. Their menus are portalled to <body>,
+   so a page-scoped rule cannot reach them; they read this variable instead. */
+@media (pointer: coarse) {
+  :root { --pick-opt-pad: 11px 12px; }
+}

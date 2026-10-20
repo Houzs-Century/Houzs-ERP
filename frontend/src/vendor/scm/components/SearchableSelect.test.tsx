@@ -155,3 +155,39 @@ describe("Enter picks the typed option", () => {
     expect(menu()).toBeTruthy();
   });
 });
+
+describe("SearchableSelect clearing", () => {
+  const cities = [
+    { value: "Kangar", label: "Kangar" },
+    { value: "Arau", label: "Arau" },
+  ];
+  function renderCity() {
+    const picked: string[] = [];
+    render(<SearchableSelect value="Kangar" onChange={(v) => picked.push(v)} options={cities} />);
+    return picked;
+  }
+
+  test("deleting the text and leaving the field clears the value", () => {
+    const picked = renderCity();
+    openMenu();
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "" } });
+    fireEvent.blur(screen.getByRole("textbox"));
+    expect(picked).toEqual([""]);
+  });
+
+  test("tapping in and out without editing keeps the value", () => {
+    const picked = renderCity();
+    openMenu();
+    fireEvent.blur(screen.getByRole("textbox"));
+    expect(picked).toEqual([]);
+  });
+
+  test("leaving after a pick keeps the pick", () => {
+    const picked = renderCity();
+    openMenu();
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "" } });
+    fireEvent.mouseDown(screen.getByText("Arau"));
+    fireEvent.blur(screen.getByRole("textbox"));
+    expect(picked).toEqual(["Arau"]);
+  });
+});

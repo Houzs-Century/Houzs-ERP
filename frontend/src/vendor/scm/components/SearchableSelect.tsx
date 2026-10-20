@@ -138,7 +138,12 @@ export function SearchableSelect({
           setSearch(selectedLabel ?? "");
           e.currentTarget.select();
         }}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onBlur={() => {
+          // Text deleted, then the operator moved on: that is a clear, not a
+          // cancel. (A pick closes the menu first, so it never lands here.)
+          if (open && !search.trim() && selectedLabel) onChange("");
+          setTimeout(() => setOpen(false), 150);
+        }}
         onKeyDown={(e) => {
           if (e.key !== "Enter") return;
           const pick = enterPick(search, filtered);
@@ -194,7 +199,7 @@ export function SearchableSelect({
                       setOpen(false);
                     }}
                     style={{
-                      padding: "6px 10px",
+                      padding: "var(--pick-opt-pad, 6px 10px)",
                       borderRadius: 6,
                       cursor: "pointer",
                       fontSize: "var(--fs-13, 13px)",

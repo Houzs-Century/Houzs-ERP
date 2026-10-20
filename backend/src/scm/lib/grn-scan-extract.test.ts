@@ -21,8 +21,8 @@ describe('normalizeGrnExtract', () => {
     expect(out.doNo).toBe('DO-55231');
     expect(out.deliveryDate).toBe('2026-09-18');
     expect(out.lines).toEqual([
-      { itemCode: 'AMN-SF9050 SOFA 2B(RHF)', barcode: '123', description: 'Sofa', qty: 2, poNo: null },
-      { itemCode: '9015-1S', barcode: null, description: 'Chair', qty: 3, poNo: null },
+      { itemCode: 'AMN-SF9050 SOFA 2B(RHF)', barcode: '123', description: 'Sofa', qty: 2, poNo: null, rack: null },
+      { itemCode: '9015-1S', barcode: null, description: 'Chair', qty: 3, poNo: null, rack: null },
     ]);
   });
 
@@ -46,7 +46,7 @@ describe('normalizeGrnExtract', () => {
     });
     expect(out.supplierName).toBeNull();
     expect(out.poNo).toBeNull();
-    expect(out.lines[0]).toEqual({ itemCode: null, barcode: null, description: 'x', qty: 5, poNo: null });
+    expect(out.lines[0]).toEqual({ itemCode: null, barcode: null, description: 'x', qty: 5, poNo: null, rack: null });
     expect(out.lines[1].qty).toBe(0);
     expect(out.lines[2].qty).toBe(0); // negative clamps to 0
   });

@@ -1333,7 +1333,7 @@ function StageStatStrip({
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
           {[
-            { value: "ALL" as StageFilter, label: "All", desc: "All stages", total: allTotal, breached: 0 },
+            { value: "ALL" as StageFilter, label: "All", desc: "All stages", total: allTotal, breached: stages.reduce((n, st) => n + (byStage.get(st.value)?.breached ?? 0), 0) },
             ...stages.map((s) => {
               const row = byStage.get(s.value);
               // Supplier bucket names its three legs (Nico 2026-08-22 / 09-01):
@@ -1388,6 +1388,13 @@ function StageStatStrip({
                     {ready ? s.total : "—"}
                   </span>
                   <span className={cn("h-1.5 w-1.5 rounded-full", dot)} />
+                  {/* How many of them are past the stage's target days (owner
+                      2026-10-20), as the Quality Overview's tabs show it. */}
+                  {ready && s.breached > 0 && (
+                    <span className="rounded-full bg-err px-1.5 py-px font-mono text-[10px] font-bold leading-none text-white" title={`${s.breached} of ${s.total} past the stage's target days`}>
+                      {s.breached} overdue
+                    </span>
+                  )}
                 </span>
                 <span
                   className={cn(

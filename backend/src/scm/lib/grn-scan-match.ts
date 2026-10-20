@@ -66,6 +66,8 @@ export type ScannedGrnLine = {
   // A PO number printed on THIS row (a consolidated delivery order lists one of
   // our POs per line). Absent / null when the row shows none.
   poNo?: string | null;
+  // A rack handwritten beside the row ("R11-2"), when the scanner read one.
+  rack?: string | null;
 };
 
 export type MatchedPick = { poItemId: string; qty: number };
@@ -130,6 +132,9 @@ export type GrnMatchResult = {
   nameMatches: Array<{ line: ScannedGrnLine; itemCode: string }>;
   // Rows received as a whole set: every piece on their PO of the SO they print.
   soMatches: Array<{ line: ScannedGrnLine; soDocNo: string }>;
+  // poItemId -> the rack handwritten on the row(s) that line was received from.
+  // A line that two rows with different racks fed is left out.
+  racks: Record<string, string>;
   // The open POs the delivery order named (header or rows), resolved.
   namedPos: string[];
 };
@@ -310,7 +315,14 @@ export function matchGrnScanToPoLines(
   const nameMatches: GrnMatchResult['nameMatches'] = [];
   const soMatches: GrnMatchResult['soMatches'] = [];
   // Identical lines (one per customer order) take a row's qty in PO line order.
-  const spread = (qty: number, lines: OpenPoLine[], target: Map<string, number>): void => {
+  const rackOf = new Map<string, string | null>(); // null = rows disagreed
+  const noteRack = (poItemId: string, row: ScannedGrnLine): void => {
+    const r = (row.rack ?? '').trim();
+    if (!r) return;
+    const prev = rackOf.get(poItemId);
+    rackOf.set(poItemId, prev === undefined || prev === r ? r : null);
+  };
+  const spread = (qty: number, lines: OpenPoLine[], target: Map<string, number>, row: ScannedGrnLine): void => {
     let left = qty;
     for (const l of lines) {
       const room = (remainingById.get(l.poItemId) ?? 0) - (target.get(l.poItemId) ?? 0);
@@ -318,6 +330,7 @@ export function matchGrnScanToPoLines(
       const take = Math.min(left, room);
       target.set(l.poItemId, (target.get(l.poItemId) ?? 0) + take);
       poNumberOf.set(l.poItemId, l.poNumber);
+      noteRack(l.poItemId, row);
       left -= take;
     }
   };
@@ -372,7 +385,7 @@ export function matchGrnScanToPoLines(
       // our SO number, where our PO has one line per piece: take that SO's pieces.
       const set = setLinesBySo(sl, poLines.filter((l) => (remainingById.get(l.poItemId) ?? 0) > 0));
       if (set) {
-        for (const l of set.lines) spread(remainingById.get(l.poItemId) ?? 0, [l], anchoredQty);
+        for (const l of set.lines) spread(remainingById.get(l.poItemId) ?? 0, [l], anchoredQty, sl);
         soMatches.push({ line: sl, soDocNo: set.soDocNo });
         continue;
       }
@@ -385,7 +398,7 @@ export function matchGrnScanToPoLines(
       } else if (into.length === 0) {
         unmatched.push({ line: sl, reason: lines.length === 0 ? 'nothing_remaining' : 'ambiguous', candidatePoItemIds: lines.map((l) => l.poItemId) });
       } else {
-        spread(sl.qty, into, anchoredQty);
+        spread(sl.qty, into, anchoredQty, sl);
         nameMatches.push({ line: sl, itemCode: item });
       }
       continue;
@@ -403,7 +416,7 @@ export function matchGrnScanToPoLines(
         unmatched.push({ line: sl, reason: 'nothing_remaining', candidatePoItemIds: hitList.map((l) => l.poItemId) });
         continue;
       }
-      spread(sl.qty, open, anchorPo !== null ? anchoredQty : itemOnlyQty);
+      spread(sl.qty, open, anchorPo !== null ? anchoredQty : itemOnlyQty, sl);
       if (anchorPo === null) {
         itemOnlyLines.push({ line: sl, poItemId: open[0].poItemId });
         itemOnlyMatchedCount += 1;
@@ -426,6 +439,7 @@ export function matchGrnScanToPoLines(
     // on the draft if the physical delivery differs).
     const into = anchorPo !== null ? anchoredQty : itemOnlyQty;
     into.set(hit.poItemId, Math.min((into.get(hit.poItemId) ?? 0) + sl.qty, remaining));
+    noteRack(hit.poItemId, sl);
     poNumberOf.set(hit.poItemId, hit.poNumber);
     if (anchorPo === null) {
       itemOnlyLines.push({ line: sl, poItemId: hit.poItemId });
@@ -496,6 +510,7 @@ export function matchGrnScanToPoLines(
     qtyMismatch,
     nameMatches,
     soMatches,
+    racks: refused ? {} : Object.fromEntries([...rackOf].filter((e): e is [string, string] => e[1] !== null)),
     namedPos: [...anchoredPos],
   };
 }
