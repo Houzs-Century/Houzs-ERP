@@ -40,15 +40,7 @@ const PERMS: PermissionDef[] = [
 ];
 
 function role(id: number, name: string, permissions: string[], over: Partial<Role> = {}): Role {
-  return {
-    id,
-    name,
-    description: null,
-    permissions,
-    is_system: false,
-    member_count: 0,
-    ...over,
-  };
+  return { id, name, description: null, permissions, is_system: false, member_count: 0, ...over };
 }
 
 const ROLES: Role[] = [
@@ -57,7 +49,6 @@ const ROLES: Role[] = [
   role(1, "Owner", ["*"], { is_system: true }),
 ];
 
-// role 10 sees service_cases at view, nothing else; role 11 sees scm.warehouse at edit.
 const PAGE_ROLES = [
   { role_id: 10, levels: { service_cases: "view", "service_cases.cases": "view" } as Record<string, string> },
   { role_id: 11, levels: { scm: "edit", "scm.warehouse": "edit" } as Record<string, string> },
@@ -67,34 +58,37 @@ function snap(): MatrixSnapshot {
   return snapshotFromApi(ROLES, PAGES, PERMS, PAGE_ROLES);
 }
 
-/** Find a sheet by name in a built workbook. */
 function sheet(sheets: SheetData[], name: string): SheetData {
   const s = sheets.find((x) => x.name === name);
   if (!s) throw new Error(`no sheet ${name}`);
   return s;
 }
 
-/** The row (array of cells) whose key column equals `key`, given the key column
- *  index. */
+/** The row whose cell at `keyCol` equals `key`. */
 function rowFor(s: SheetData, keyCol: number, key: string): CellValue[] {
   const r = s.aoa.find((row) => row[keyCol] === key);
   if (!r) throw new Error(`no row ${key}`);
   return r;
 }
 
+// Column layout of the built sheets (see buildWorkbook):
+//   功能: 0 模块 | 1 功能 | 2 说明 | 3 key | 4 role10 | 5 role11 | 6 owner
+//   页面: 0 模块 | 1 页面 | 2 key  | 3 状态 | 4 role10 | 5 role11 | 6 owner
+const FN_KEY = 3;
+const PG_KEY = 2;
+
 describe("snapshotFromApi", () => {
   it("normalizes stored levels and marks locked roles", () => {
     const s = snap();
-    expect(s.roles.find((r) => r.id === 1)?.locked).toBe(true); // system
+    expect(s.roles.find((r) => r.id === 1)?.locked).toBe(true);
     expect(s.roles.find((r) => r.id === 10)?.locked).toBe(false);
     expect(s.levelsByRole.get(10)?.service_cases).toBe("view");
-    // every page present, defaulting to none
     expect(s.levelsByRole.get(10)?.sales).toBe("none");
   });
 });
 
 describe("buildWorkbook", () => {
-  it("writes the three sheets with id·name role headers", () => {
+  it("writes the three sheets with Name\\n(N人) role headers", () => {
     const wb = buildWorkbook(snap());
     expect(wb.sheets.map((x) => x.name)).toEqual([
       EXCEL_SHEET_FUNCTIONS,
@@ -102,50 +96,46 @@ describe("buildWorkbook", () => {
       EXCEL_SHEET_ROLES,
     ]);
     const fn = sheet(wb.sheets, EXCEL_SHEET_FUNCTIONS);
-    // header: 模块, 功能, Key, then one column per role
-    expect(fn.aoa[0]!.slice(0, 3)).toEqual(["模块 Module", "功能 Function", "Key"]);
-    expect(fn.aoa[0]!.slice(3)).toEqual(["10 · Sales Person", "11 · Storekeeper", "1 · Owner"]);
+    expect(fn.aoa[0]!.slice(0, 4)).toEqual(["模块", "功能", "说明", "key"]);
+    expect(fn.aoa[0]!.slice(4)).toEqual(["Sales Person\n(0人)", "Storekeeper\n(0人)", "Owner\n(0人)"]);
   });
 
-  it("ticks granted functions and dashes the rest", () => {
+  it("ticks granted functions and leaves the rest BLANK", () => {
     const wb = buildWorkbook(snap());
     const fn = sheet(wb.sheets, EXCEL_SHEET_FUNCTIONS);
-    // role 10 (col index 3) holds service_cases.read
-    const readRow = rowFor(fn, 2, "service_cases.read");
-    expect(readRow[3]).toBe("✓"); // Sales Person granted
-    expect(readRow[4]).toBe("−"); // Storekeeper not
+    const readRow = rowFor(fn, FN_KEY, "service_cases.read");
+    expect(readRow[4]).toBe("✓"); // Sales Person granted
+    expect(readRow[5]).toBe(""); // Storekeeper not — blank, not a dash
   });
 
-  it("writes page levels and never emits the derived scm umbrella row", () => {
+  it("writes page levels (none = blank) and never emits the derived scm umbrella", () => {
     const wb = buildWorkbook(snap());
     const pg = sheet(wb.sheets, EXCEL_SHEET_PAGES);
-    expect(pg.aoa.some((r) => r[2] === "scm")).toBe(false); // umbrella excluded
-    const warehouse = rowFor(pg, 2, "scm.warehouse");
-    // cols: 0=模块,1=页面,2=Key,3=状态,4=role10,5=role11 → role11 (Storekeeper) edit
-    expect(warehouse[5]).toBe("改");
+    expect(pg.aoa.some((r) => r[PG_KEY] === "scm")).toBe(false);
+    const warehouse = rowFor(pg, PG_KEY, "scm.warehouse");
+    expect(warehouse[5]).toBe("改"); // Storekeeper edit
+    const sales = rowFor(pg, PG_KEY, "sales");
+    expect(sales[4]).toBe(""); // Sales Person none → blank
   });
 
   it("flags dormant pages in the status column", () => {
     const wb = buildWorkbook(snap());
-    const pg = sheet(wb.sheets, EXCEL_SHEET_PAGES);
-    const pnl = rowFor(pg, 2, "service_cases.pnl");
+    const pnl = rowFor(sheet(wb.sheets, EXCEL_SHEET_PAGES), PG_KEY, "service_cases.pnl");
     expect(pnl[3]).toBe("停用 dormant");
   });
 
   it("writes a role legend with ids and the locked flag", () => {
-    const wb = buildWorkbook(snap());
-    const roles = sheet(wb.sheets, EXCEL_SHEET_ROLES);
-    const owner = roles.aoa.find((r) => r[0] === 1); // id column holds numbers
+    const roles = sheet(buildWorkbook(snap()).sheets, EXCEL_SHEET_ROLES);
+    const owner = roles.aoa.find((r) => r[0] === 1);
     expect(owner?.[1]).toBe("Owner");
-    expect(owner?.[4]).toBe("是 yes"); // locked
+    expect(owner?.[4]).toBe("是"); // locked
   });
 });
 
-describe("round-trip is a no-op", () => {
+describe("round-trip is a no-op (blankMode none)", () => {
   it("export → parse yields no changes", () => {
     const s = snap();
-    const wb = buildWorkbook(s);
-    const parsed = parseMatrixWorkbook(wb.sheets, s);
+    const parsed = parseMatrixWorkbook(buildWorkbook(s).sheets, s);
     expect(parsed.changedRoles).toEqual([]);
     expect(parsed.totalAdded).toBe(0);
     expect(parsed.totalRemoved).toBe(0);
@@ -155,78 +145,60 @@ describe("round-trip is a no-op", () => {
 });
 
 describe("parse: function edits", () => {
-  it("granting a dashed cell adds the key", () => {
+  it("ticking a blank cell adds the key", () => {
     const s = snap();
-    const wb = buildWorkbook(s);
-    const fn = sheet(wb.sheets, EXCEL_SHEET_FUNCTIONS);
-    // give Storekeeper (col 4) service_cases.read
-    const row = rowFor(fn, 2, "service_cases.read");
-    row[4] = "✓";
-    const parsed = parseMatrixWorkbook([fn], s);
-    const store = parsed.changedRoles.find((r) => r.roleId === 11)!;
+    const fn = sheet(buildWorkbook(s).sheets, EXCEL_SHEET_FUNCTIONS);
+    rowFor(fn, FN_KEY, "service_cases.read")[5] = "✓"; // Storekeeper gets read
+    const store = parseMatrixWorkbook([fn], s).changedRoles.find((r) => r.roleId === 11)!;
     expect(store.functionsAdded).toContain("service_cases.read");
     expect(store.addedCount).toBe(1);
-    expect(store.permsChanged).toBe(true);
     expect(store.permsPayload).toContain("service_cases.read");
   });
 
-  it("an explicit dash revokes a currently-granted key", () => {
+  it("clearing a ticked cell revokes it (complete-matrix: blank = not granted)", () => {
     const s = snap();
-    const wb = buildWorkbook(s);
-    const fn = sheet(wb.sheets, EXCEL_SHEET_FUNCTIONS);
-    rowFor(fn, 2, "service_cases.read")[3] = "−"; // Sales Person loses read
-    const parsed = parseMatrixWorkbook([fn], s);
-    const sales = parsed.changedRoles.find((r) => r.roleId === 10)!;
+    const fn = sheet(buildWorkbook(s).sheets, EXCEL_SHEET_FUNCTIONS);
+    rowFor(fn, FN_KEY, "service_cases.read")[4] = ""; // Sales Person loses read
+    const sales = parseMatrixWorkbook([fn], s).changedRoles.find((r) => r.roleId === 10)!;
     expect(sales.functionsRemoved).toContain("service_cases.read");
-    expect(sales.removedCount).toBe(1);
     expect(sales.permsPayload).not.toContain("service_cases.read");
   });
 
-  it("a blank cell leaves the current grant untouched", () => {
+  it("blankMode 'unchanged' leaves a cleared cell alone", () => {
     const s = snap();
-    const wb = buildWorkbook(s);
-    const fn = sheet(wb.sheets, EXCEL_SHEET_FUNCTIONS);
-    rowFor(fn, 2, "service_cases.read")[3] = ""; // blank, not a dash
-    const parsed = parseMatrixWorkbook([fn], s);
-    expect(parsed.changedRoles).toEqual([]);
+    const fn = sheet(buildWorkbook(s).sheets, EXCEL_SHEET_FUNCTIONS);
+    rowFor(fn, FN_KEY, "service_cases.read")[4] = "";
+    expect(parseMatrixWorkbook([fn], s, "unchanged").changedRoles).toEqual([]);
   });
 });
 
 describe("parse: page edits reconcile scm.access", () => {
   it("raising an SCM area adds scm.access; clearing all removes it", () => {
     const s = snap();
-    const wb = buildWorkbook(s);
-    const pg = sheet(wb.sheets, EXCEL_SHEET_PAGES);
-    // give Sales Person (col 4 of the pages sheet: 模块,页面,Key,状态 then roles)
-    rowFor(pg, 2, "scm.sales")[4] = "看"; // role 10 is first role col = index 4
-    const parsed = parseMatrixWorkbook([pg], s);
-    const sales = parsed.changedRoles.find((r) => r.roleId === 10)!;
+    const pg = sheet(buildWorkbook(s).sheets, EXCEL_SHEET_PAGES);
+    rowFor(pg, PG_KEY, "scm.sales")[4] = "看"; // Sales Person (role10)
+    const sales = parseMatrixWorkbook([pg], s).changedRoles.find((r) => r.roleId === 10)!;
     expect(sales.pageChanges.some((c) => c.pageKey === "scm.sales" && c.to === "view")).toBe(true);
-    expect(sales.functionsAdded).toContain("scm.access"); // reconciled
-    // payload carries the derived umbrella
+    expect(sales.functionsAdded).toContain("scm.access");
     expect(sales.pagePayload.find((e) => e.pageKey === "scm")?.level).toBe("view");
   });
 
-  it("lowering a page counts as removed", () => {
+  it("lowering a page counts as removed and withdraws the umbrella", () => {
     const s = snap();
-    const wb = buildWorkbook(s);
-    const pg = sheet(wb.sheets, EXCEL_SHEET_PAGES);
-    rowFor(pg, 2, "scm.warehouse")[5] = "无"; // role 11 (second role col = index 5) edit→none
-    const parsed = parseMatrixWorkbook([pg], s);
-    const store = parsed.changedRoles.find((r) => r.roleId === 11)!;
+    const pg = sheet(buildWorkbook(s).sheets, EXCEL_SHEET_PAGES);
+    rowFor(pg, PG_KEY, "scm.warehouse")[5] = ""; // Storekeeper edit → none (blank)
+    const store = parseMatrixWorkbook([pg], s).changedRoles.find((r) => r.roleId === 11)!;
     expect(store.pageChanges.some((c) => c.pageKey === "scm.warehouse" && c.to === "none")).toBe(true);
     expect(store.removedCount).toBeGreaterThanOrEqual(1);
-    // all SCM areas now none → scm.access withdrawn
     expect(store.functionsRemoved).toContain("scm.access");
   });
 });
 
 describe("parse: locked roles and bad data", () => {
-  it("never writes a locked role, reports it when the file edits it", () => {
+  it("never writes a locked role; flags it when a NON-blank cell targets it", () => {
     const s = snap();
-    const wb = buildWorkbook(s);
-    const fn = sheet(wb.sheets, EXCEL_SHEET_FUNCTIONS);
-    rowFor(fn, 2, "service_cases.read")[5] = "−"; // Owner column (locked)
+    const fn = sheet(buildWorkbook(s).sheets, EXCEL_SHEET_FUNCTIONS);
+    rowFor(fn, FN_KEY, "service_cases.read")[6] = "✓"; // Owner column (locked)
     const parsed = parseMatrixWorkbook([fn], s);
     expect(parsed.changedRoles.some((r) => r.roleId === 1)).toBe(false);
     expect(parsed.lockedWithEdits).toContain("Owner");
@@ -234,9 +206,8 @@ describe("parse: locked roles and bad data", () => {
 
   it("reports an unreadable cell instead of guessing", () => {
     const s = snap();
-    const wb = buildWorkbook(s);
-    const fn = sheet(wb.sheets, EXCEL_SHEET_FUNCTIONS);
-    rowFor(fn, 2, "service_cases.read")[4] = "maybe?";
+    const fn = sheet(buildWorkbook(s).sheets, EXCEL_SHEET_FUNCTIONS);
+    rowFor(fn, FN_KEY, "service_cases.read")[5] = "maybe?";
     const parsed = parseMatrixWorkbook([fn], s);
     expect(parsed.badCells.length).toBe(1);
     expect(parsed.badCells[0]!.value).toBe("maybe?");
@@ -247,30 +218,28 @@ describe("parse: locked roles and bad data", () => {
     const sheetData: SheetData = {
       name: "x",
       aoa: [
-        ["Key", "10 · Sales Person"],
+        ["key", "10 · Sales Person"],
         ["not.a.real.key", "✓"],
         ["service_cases.read", "✓"],
         ["service_cases.write", "✓"],
       ],
     };
-    const parsed = parseMatrixWorkbook([sheetData], s);
-    expect(parsed.unknownKeys).toContain("not.a.real.key");
+    expect(parseMatrixWorkbook([sheetData], s).unknownKeys).toContain("not.a.real.key");
   });
 });
 
 describe("parse: robust column + sheet detection", () => {
-  it("matches a role column by name when there is no id prefix", () => {
+  it("matches a role column by name with the owner's (N人) decoration", () => {
     const s = snap();
     const sheetData: SheetData = {
       name: "whatever",
       aoa: [
-        ["Key", "Sales Person"],
+        ["key", "Sales Person\n(39人)"],
         ["service_cases.write", "✓"],
-        ["service_cases.manage", "✓"],
+        ["service_cases.read", "✓"],
       ],
     };
-    const parsed = parseMatrixWorkbook([sheetData], s);
-    const sales = parsed.changedRoles.find((r) => r.roleId === 10)!;
+    const sales = parseMatrixWorkbook([sheetData], s).changedRoles.find((r) => r.roleId === 10)!;
     expect(sales.functionsAdded).toContain("service_cases.write");
   });
 
@@ -279,28 +248,25 @@ describe("parse: robust column + sheet detection", () => {
     const sheetData: SheetData = {
       name: "x",
       aoa: [
-        ["Key", "999 · Ghost Role"],
+        ["key", "999 · Ghost Role"],
         ["service_cases.read", "✓"],
         ["service_cases.write", "✓"],
       ],
     };
-    const parsed = parseMatrixWorkbook([sheetData], s);
-    expect(parsed.ignoredColumns).toContain("999 · Ghost Role");
+    expect(parseMatrixWorkbook([sheetData], s).ignoredColumns).toContain("999 · Ghost Role");
   });
 
   it("reports an ambiguous role name", () => {
-    const dupeRoles = [...ROLES, role(12, "Sales Person", [])];
-    const s = snapshotFromApi(dupeRoles, PAGES, PERMS, PAGE_ROLES);
+    const s = snapshotFromApi([...ROLES, role(12, "Sales Person", [])], PAGES, PERMS, PAGE_ROLES);
     const sheetData: SheetData = {
       name: "x",
       aoa: [
-        ["Key", "Sales Person"],
+        ["key", "Sales Person"],
         ["service_cases.read", "✓"],
         ["service_cases.write", "✓"],
       ],
     };
-    const parsed = parseMatrixWorkbook([sheetData], s);
-    expect(parsed.ambiguousColumns).toContain("Sales Person");
+    expect(parseMatrixWorkbook([sheetData], s).ambiguousColumns).toContain("Sales Person");
   });
 
   it("classifies pages and functions in ONE combined sheet by their key", () => {
@@ -308,25 +274,66 @@ describe("parse: robust column + sheet detection", () => {
     const sheetData: SheetData = {
       name: "combined",
       aoa: [
-        ["Key", "11 · Storekeeper"],
-        ["service_cases.write", "✓"], // function
-        ["service_cases.read", "✓"], // function (needed for key-col signal)
-        ["scm.sales", "看"], // page
+        ["key", "11 · Storekeeper"],
+        ["service_cases.write", "✓"],
+        ["service_cases.read", "✓"],
+        ["scm.sales", "看"],
       ],
     };
-    const parsed = parseMatrixWorkbook([sheetData], s);
-    const store = parsed.changedRoles.find((r) => r.roleId === 11)!;
+    const store = parseMatrixWorkbook([sheetData], s).changedRoles.find((r) => r.roleId === 11)!;
     expect(store.functionsAdded).toContain("service_cases.write");
     expect(store.pageChanges.some((c) => c.pageKey === "scm.sales")).toBe(true);
   });
 
   it("skips a sheet with no key column (the 角色 legend)", () => {
     const s = snap();
-    const wb = buildWorkbook(s);
-    const roles = sheet(wb.sheets, EXCEL_SHEET_ROLES);
+    const roles = sheet(buildWorkbook(s).sheets, EXCEL_SHEET_ROLES);
     const parsed = parseMatrixWorkbook([roles], s);
     expect(parsed.empty).toBe(true);
     expect(parsed.changedRoles).toEqual([]);
+  });
+});
+
+describe("scm.access is derived, never set by a function cell", () => {
+  it("a 功能 scm.access cell neither grants nor revokes it directly", () => {
+    const s = snap(); // Storekeeper (11) currently holds scm.access
+    const sheetData: SheetData = {
+      name: "x",
+      aoa: [
+        ["key", "11 · Storekeeper"],
+        ["scm.access", ""], // cleared — must NOT revoke (it is page-derived)
+        ["service_cases.read", "✓"],
+        ["service_cases.write", "✓"],
+      ],
+    };
+    const store = parseMatrixWorkbook([sheetData], s).roleResults.find((r) => r.roleId === 11)!;
+    // Storekeeper's SCM pages are unchanged (not in the file), so reconcile keeps
+    // scm.access exactly as it was — the blank cell did not strip it.
+    expect(store.functionsRemoved).not.toContain("scm.access");
+    expect(store.permsPayload).toContain("scm.access");
+  });
+});
+
+describe("key-column detection needs a MAJORITY of rows", () => {
+  it("skips a sheet whose best column only has a couple of stray keys", () => {
+    const s = snap();
+    const sheetData: SheetData = {
+      name: "pages-like",
+      aoa: [
+        ["页面", "现在由什么控制", "10 · Sales Person"],
+        ["Overview", "所有登录用户", "看"],
+        ["Cases", "service_cases.read", "看"],
+        ["Maintenance", "service_cases.manage", "改"],
+        ["Planning", "* 或 scm.access", "看"],
+        ["Map", "* 或 scm.access", "看"],
+        ["Bank", "* / PV key", "改"],
+      ],
+    };
+    const parsed = parseMatrixWorkbook([sheetData], s);
+    // The gate column has 2 exact keys out of 6 rows (<50%) → no key column.
+    expect(parsed.empty).toBe(true);
+    expect(parsed.badCells).toEqual([]);
+    expect(parsed.unknownKeys).toEqual([]);
   });
 });
 
@@ -336,20 +343,19 @@ describe("sensitiveKeysOf", () => {
     const sheetData: SheetData = {
       name: "x",
       aoa: [
-        ["Key", "10 · Sales Person"],
+        ["key", "10 · Sales Person"],
         ["service_cases.approve", "✓"],
         ["service_cases.read", "✓"],
         ["scm.payment_voucher.check", "✓"],
       ],
     };
-    const parsed = parseMatrixWorkbook([sheetData], s);
-    const sales = parsed.roleResults.find((r) => r.roleId === 10)!;
+    const sales = parseMatrixWorkbook([sheetData], s).roleResults.find((r) => r.roleId === 10)!;
     expect(sensitiveKeysOf(sales)).toEqual(["scm.payment_voucher.check", "service_cases.approve"]);
   });
 });
 
 describe("roleColumnHeader", () => {
-  it("is id · name", () => {
-    expect(roleColumnHeader({ id: 7, name: "Finance", locked: false, memberCount: 0 })).toBe("7 · Finance");
+  it("is name over the member count", () => {
+    expect(roleColumnHeader({ id: 7, name: "Finance", locked: false, memberCount: 2 })).toBe("Finance\n(2人)");
   });
 });

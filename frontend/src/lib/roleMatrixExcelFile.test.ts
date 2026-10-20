@@ -52,10 +52,10 @@ describe("workbookToXlsx + readWorkbookBytes", () => {
   it("an edited cell survives the real .xlsx round-trip", async () => {
     const snap = snapshotFromApi(ROLES, PAGES, PERMS, PAGE_ROLES);
     const wb = buildWorkbook(snap);
-    // Flip Storekeeper (col index 4 on the 功能 sheet) to grant projects.read.
+    // 功能 cols: 0 模块 | 1 功能 | 2 说明 | 3 key | 4 role7 | 5 role8(Storekeeper).
     const fn = wb.sheets.find((s) => s.name === EXCEL_SHEET_FUNCTIONS)!;
-    const row = fn.aoa.find((r) => r[2] === "projects.read")!;
-    row[4] = "✓";
+    const row = fn.aoa.find((r) => r[3] === "projects.read")!;
+    row[5] = "✓"; // grant Storekeeper projects.read
     const sheets = await readWorkbookBytes(await workbookToXlsx(wb));
     const parsed = parseMatrixWorkbook(sheets, snap);
     const store = parsed.changedRoles.find((r) => r.roleId === 8)!;

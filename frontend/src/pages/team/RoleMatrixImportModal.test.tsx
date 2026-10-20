@@ -103,7 +103,7 @@ describe("RoleMatrixImportModal", () => {
     nextSheets = [{ name: "junk", aoa: [["a", "b"], ["c", "d"]] }];
     render(<RoleMatrixImportModal open onClose={() => {}} snapshot={snap()} onApplied={() => {}} />);
     chooseCsv();
-    await waitFor(() => expect(screen.getByText(/No role columns or permission\/page keys/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/没找到角色列或功能\/页面的 key/)).toBeTruthy());
     expect(apiPatch).not.toHaveBeenCalled();
   });
 
