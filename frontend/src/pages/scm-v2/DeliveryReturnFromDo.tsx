@@ -304,7 +304,7 @@ export const DeliveryReturnFromDo = () => {
             disabled={locked}
             onClick={(e) => e.stopPropagation()}
             onChange={(e) => setCondition(r, e.target.value)}
-            style={{ ...QTY_INPUT, width: 118, ...(locked ? { cursor: 'not-allowed', background: 'var(--c-cream)' } : null) }}
+            style={{ ...QTY_INPUT, width: '100%', ...(locked ? { cursor: 'not-allowed', background: 'var(--c-cream)' } : null) }}
           >
             {sortByText(CONDITIONS).map((cond) => <option key={cond} value={cond}>{cond}</option>)}
           </select>
