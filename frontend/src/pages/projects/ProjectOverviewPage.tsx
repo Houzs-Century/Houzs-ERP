@@ -12,7 +12,7 @@ import { api } from "../../api/client";
 import { formatCurrency, cn } from "../../lib/utils";
 import { todayMY } from "../../vendor/shared/format";
 import { Panel, Th, Td, Toggle, SELECT_CLS } from "../../components/scm-v2/OverviewKit";
-import { Columns, SplitBar, TONE, PALETTE } from "../../components/scm-v2/Charts";
+import { Columns, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
 import { ProjectDataGapsPanel, ProjectStuckPanel } from "./ProjectOverviewParts";
 import { figuresOf, totalsOf, groupBy, drillOf, pctOf, type OvProject, type Drill } from "./projectOverviewModel";
@@ -126,11 +126,7 @@ export function ProjectOverviewPage() {
           </div>
         </Panel>
         <Panel title="Where each ringgit of sales goes" hint={period.label}>
-          <SplitBar format={money} parts={[
-            ...[...cogsLines, ...costLines].filter(([, v]) => v > 0).map(([label, value, color]) => ({ label, value, color })),
-            { label: "Net profit", value: Math.max(0, t.np), color: TONE.good },
-          ]} />
-          <table className="mt-3 w-full border-collapse"><tbody>
+          <table className="w-full border-collapse"><tbody>
             <tr className="font-semibold"><Td left>Sales</Td><Td>{money(t.sales)}</Td><Td className="text-ink-muted">100%</Td></tr>
             {cogsLines.map(([l, v]) => <tr key={l} className={v ? "" : "text-ink-muted"}><Td left className="pl-6">{l}</Td><Td>{money(v)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(v, t.sales))}</Td></tr>)}
             <tr><Td left>− COGS total</Td><Td>{money(t.cogs)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(t.cogs, t.sales))}</Td></tr>
@@ -147,10 +143,10 @@ export function ProjectOverviewPage() {
       <Panel title="Breakdown" hint="largest sales first · click a row to list its projects below" right={<Toggle value={dim} options={DIMS} onChange={(v) => { setDim(v); setPick(null); }} />}>
         <div className="max-h-[420px] overflow-auto">
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-surface"><tr><Th left>{DIMS.find(([d]) => d === dim)?.[1]}</Th><Th>Projects</Th><Th>Sales</Th><Th>GP %</Th><Th>Event costs</Th><Th>Net profit</Th><Th left> </Th><Th>NP %</Th></tr></thead>
+            <thead className="sticky top-0 bg-surface"><tr><Th left>{DIMS.find(([d]) => d === dim)?.[1]}</Th><Th>Projects</Th><Th>Sales</Th><Th>GP %</Th><Th>Rental</Th><Th>Rental %</Th><Th>Event costs</Th><Th>Net profit</Th><Th left> </Th><Th>NP %</Th></tr></thead>
             <tbody>{groups.map((g) => (
               <tr key={g.key} onClick={() => setPick(pick === g.key ? null : g.key)} className={cn("cursor-pointer hover:bg-surface-2/50", pick === g.key && "bg-primary-soft/50")}>
-                <Td left className="max-w-[220px] truncate">{g.key}</Td><Td>{g.projects}</Td><Td>{money(g.sales)}</Td><Td>{pctTxt(pctOf(g.gp, g.sales))}</Td><Td>{money(g.rental + g.otherCost)}</Td>
+                <Td left className="max-w-[220px] truncate">{g.key}</Td><Td>{g.projects}</Td><Td>{money(g.sales)}</Td><Td>{pctTxt(pctOf(g.gp, g.sales))}</Td><Td>{money(g.rental)}</Td><Td className="text-ink-secondary">{pctTxt(pctOf(g.rental, g.sales))}</Td><Td>{money(g.rental + g.otherCost)}</Td>
                 <Td className={g.np < 0 ? "font-semibold text-err" : "font-semibold text-synced"}>{money(g.np)}</Td>
                 <Td left className="w-[18%]"><div className="h-2 rounded-full bg-surface-2"><div className="h-2 rounded-full" style={{ width: `${(Math.abs(g.np) / npMax) * 100}%`, background: g.np < 0 ? TONE.bad : TONE.good }} /></div></Td>
                 <Td>{pctTxt(pctOf(g.np, g.sales))}</Td>
