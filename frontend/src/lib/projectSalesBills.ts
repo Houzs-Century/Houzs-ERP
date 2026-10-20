@@ -86,9 +86,9 @@ export type ProjectSalesBillsResponse = {
   total_sales_rm: number | null;
   can_save: boolean;
   /** This event — what "transfer here" moves an order to (null from an older server). */
-  project_id: number | null;
+  project_id?: number | null;
   /** The caller may transfer an order here from the report (Finance or PMS). */
-  can_transfer: boolean;
+  can_transfer?: boolean;
 };
 
 const ZERO: BillTotals = {

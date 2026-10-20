@@ -56,7 +56,7 @@ export type ProjectSalesOrdersResponse = {
   scoped: boolean;
   /** The caller may transfer an order to another fair from here (Finance or
    *  PMS) — false from an older server. */
-  can_transfer: boolean;
+  can_transfer?: boolean;
 };
 
 const ZERO_TOTALS: ProjectSalesOrderTotals = { count: 0, draft_count: 0, amount_sen: 0, paid_sen: 0, balance_sen: 0, service_sen: 0 };
