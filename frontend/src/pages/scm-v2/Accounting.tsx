@@ -44,6 +44,7 @@ import { CollectionTab } from './CollectionReport';
 import { MerchantChargesTab } from './MerchantChargesReport';
 import { PerformanceTab } from './PerformancePnl';
 import { EventCostsTab } from './EventCosts';
+import { EventCommissionTab } from './EventCommission';
 import { ProductProfitTab } from './ProductProfit';
 import { cardStyle, fieldStyle, btnStyle } from './JournalEntryCards';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -103,6 +104,7 @@ export const Accounting = () => {
       {tab === 'charges' && <MerchantChargesTab />}
       {tab === 'performance' && <PerformanceTab />}
       {tab === 'events' && <EventCostsTab />}
+      {tab === 'commission' && <EventCommissionTab />}
       {tab === 'products' && <ProductProfitTab />}
     </div>
   );

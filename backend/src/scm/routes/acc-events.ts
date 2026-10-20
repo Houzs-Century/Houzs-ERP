@@ -5,6 +5,8 @@
 //                                 around ?around=YYYY-MM-DD; ?ids= reads labels
 //   GET  /costs                   the event cost report: events starting in
 //                                 ?from..?to, each with every posted leg tagged to it
+//   GET  /commission              Event Commission: fairs starting in ?from..?to, each
+//                                 order's commission (acc-event-commission.ts)
 //   POST /pv-lines/:lineId/event  change the event on one voucher line — posted
 //                                 or not — and on its journal leg
 //
@@ -22,6 +24,7 @@ import { dateOrNull } from '../lib/date-coerce';
 import { assertAuditWritable, auditUnavailableBody, fieldChange, recordEntityAudit } from '../lib/entity-audit';
 import { listEventOptions, loadEventsByIds, parseEventId, pvLineEventRefusal, toEventRow, type EventRow } from '../lib/event-tags';
 import { buildEventCosts, type ChartRow, type LegEntry, type TaggedLeg } from '../lib/event-costs';
+import { eventCommissionHandler } from './acc-event-commission';
 
 export const accEvents = new Hono<{ Bindings: Env; Variables: Variables }>();
 accEvents.use('*', supabaseAuth);
@@ -107,6 +110,7 @@ export const eventCostsHandler = async (c: any): Promise<Response> => {
   });
 };
 accEvents.get('/costs', eventCostsHandler);
+accEvents.get('/commission', eventCommissionHandler);
 
 /* ── POST /pv-lines/:lineId/event ─────────────────────────────────────────────
    A voucher is locked from Check on, and an approved one cannot be edited at
