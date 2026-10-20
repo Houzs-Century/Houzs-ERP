@@ -322,7 +322,7 @@ function DeliveryDateEditCell({ order, sched }: { order: PlanningOrder; sched: S
     return detail(fmtDateOrDash(order.amended_delivery_date));
   }
   return (
-    <span {...stopRow} style={{ display: 'inline-flex', minWidth: 128 }}>
+    <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
       <DateField
         fullWidth
         value={val}
@@ -419,7 +419,7 @@ function DriverPickCell({ order, drivers, sched, writeSeat, pending }: {
   if (isProject(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.driver_1_name || '—'}</span>;
   const assrLeg = isAssr(order);
   return (
-    <span {...stopRow} style={{ display: 'inline-flex', minWidth: 150 }}>
+    <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
       <SearchCombo
         fill aria-label="Driver" placeholder="— pick a driver —"
         options={crewComboOptions(items, currentName)}
@@ -454,7 +454,7 @@ function LorryPickCell({ order, lorries, sched, writeSeat, pending }: {
   if (isProject(order) || isDp(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.lorry_plate || '—'}</span>;
   const assrLeg = isAssr(order);
   return (
-    <span {...stopRow} style={{ display: 'inline-flex', minWidth: 150 }}>
+    <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
       <SearchCombo
         fill aria-label="Lorry plate" placeholder="— pick a lorry —"
         options={crewComboOptions(items, currentPlate)}
@@ -489,7 +489,7 @@ function HelperPickCell({ order, helpers, writeSeat, pending, slot }: {
   useEffect(() => { setVal(chosen); }, [chosen]);
   if (isAssr(order) || isDp(order) || isProject(order)) return <NotApplicable />;
   return (
-    <span {...stopRow} style={{ display: 'inline-flex', minWidth: 150 }}>
+    <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
       <SearchCombo
         fill aria-label={`Helper ${slot}`} placeholder="— pick a helper —"
         options={crewComboOptions(items, currentName)}
