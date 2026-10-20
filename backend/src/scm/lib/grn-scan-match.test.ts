@@ -8,6 +8,7 @@ import {
   listScanLines,
   matchGrnScanToPoLines,
   nameMatchItem,
+  setLinesBySo,
   normalizeCode,
   pickBySpec,
   normalizeSupplierName,
@@ -731,5 +732,69 @@ describe('nameMatchItem', () => {
   });
   test('no printed text, no match', () => {
     expect(nameMatchItem(null, po)).toBeNull();
+  });
+});
+
+// HC-0123 follow-up (2026-10-20, Sim): Dorsettloft DO-2610-046 prints one row per
+// SET, "DSL8030(35") - 2 + L" x1 with our SO number, while HC-PO-2610-080 holds
+// the set as two pieces raised for that SO. 1 listed vs 2 owed refused the scan.
+describe('a set row naming our SO number (DO-2610-046)', () => {
+  // HC-PO-2610-080 as read from production on 2026-10-20.
+  const po080: OpenPoLine[] = [
+    line({ poItemId: 'pi-2a', poNumber: 'HC-PO-2610-080', itemCode: '8030-2A(LHF)', materialName: 'SOFA SOFFIO 2A(LHF)', remaining: 1, soDocNo: 'HC-SO-013339' }),
+    line({ poItemId: 'pi-l', poNumber: 'HC-PO-2610-080', itemCode: '8030-L(RHF)', materialName: 'SOFA SOFFIO L(RHF)', remaining: 1, soDocNo: 'HC-SO-013339' }),
+  ];
+  const do046 = [scan({
+    itemCode: 'DSL8030(35")',
+    description: 'DSL8030(35") - 2 + L COL; BO315-03-BEIGE *HC-SO-013339 *2R *L *CHANGE ARMREST 2X *BOTTOM COVER WITH NYLON FABRIC',
+    qty: 1,
+    poNo: 'HC-PO-2610-080',
+  })];
+
+  test('drafts every piece of that SO on the PO', () => {
+    const res = matchGrnScanToPoLines('S/O1893', do046, po080, [], 'sup-1');
+    expect(res.picks).toEqual([{ poItemId: 'pi-2a', qty: 1 }, { poItemId: 'pi-l', qty: 1 }]);
+    expect(res.soMatches).toEqual([{ line: do046[0], soDocNo: 'HC-SO-013339' }]);
+    expect(res.qtyMismatch).toBeNull();
+    expect(res.unmatched).toEqual([]);
+  });
+
+  test('an SO with no line on that PO is not a set; the row stays unmatched', () => {
+    const other = po080.map((l) => ({ ...l, soDocNo: 'HC-SO-099999' }));
+    const res = matchGrnScanToPoLines('S/O1893', do046, other, [], 'sup-1');
+    expect(res.soMatches).toEqual([]);
+    expect(res.picks).toEqual([]);
+  });
+});
+
+// The earlier Dorsettloft DO-2610-009: three set rows printing "*SO-011717"
+// (no company prefix) on HC-PO-010080, whose four pieces were raised for it.
+describe('set rows of one SO split by the model number they print (DO-2610-009)', () => {
+  const po: OpenPoLine[] = [
+    line({ poItemId: 'pi-2A', poNumber: 'HC-PO-010080', itemCode: '9058-2A(LHF)', remaining: 1, soDocNo: 'HC-SO-011717' }),
+    line({ poItemId: 'pi-1A', poNumber: 'HC-PO-010080', itemCode: '9058-1A(RHF)', remaining: 1, soDocNo: 'HC-SO-011717' }),
+    line({ poItemId: 'pi-2S', poNumber: 'HC-PO-010080', itemCode: '9058-2S', remaining: 1, soDocNo: 'HC-SO-011717' }),
+    line({ poItemId: 'pi-1S', poNumber: 'HC-PO-010080', itemCode: '8051-1S', remaining: 1, soDocNo: 'HC-SO-011717' }),
+  ];
+  const row = (code: string, desc: string) => scan({ itemCode: code, description: `${desc} COL: BO315-21-PEARL *ZNT6064 *SO-011717`, qty: 1, poNo: 'PO-010080' });
+
+  test('the 8051 row takes only the 8051 piece', () => {
+    expect(setLinesBySo(row('DSL8051(30")', '- 1 SEATER'), po)?.lines.map((l) => l.poItemId)).toEqual(['pi-1S']);
+  });
+
+  test('the whole delivery order drafts the four pieces once each', () => {
+    const res = matchGrnScanToPoLines('S/O1791', [
+      row('DSL9058(30")', '-3SEATER (2+1)'),
+      row('DSL9058(30")', '-1EFL+1B'),
+      row('DSL8051(30")', '- 1 SEATER'),
+    ], po, [], 'sup-1');
+    expect(res.picks).toEqual([
+      { poItemId: 'pi-2A', qty: 1 }, { poItemId: 'pi-1A', qty: 1 }, { poItemId: 'pi-2S', qty: 1 }, { poItemId: 'pi-1S', qty: 1 },
+    ]);
+    expect(res.poFallback).toBeNull();
+  });
+
+  test('a row naming no SO is not a set', () => {
+    expect(setLinesBySo(scan({ itemCode: 'DSL9058', description: 'no order number here', qty: 1 }), po)).toBeNull();
   });
 });

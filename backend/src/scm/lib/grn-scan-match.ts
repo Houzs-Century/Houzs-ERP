@@ -45,6 +45,8 @@ export type OpenPoLine = {
   // The line's spec as the PO page prints it ("PC151-01 / DIVAN 8\" + LEG 2\" /
   // GAP 11\""), split on " / ". Breaks a tie between same-code lines (DEV-68).
   description2?: string | null;
+  // The sales order the line was raised for ("HC-SO-013339"), or null (stock).
+  soDocNo?: string | null;
 };
 
 // A supplier_material_bindings row, narrowed to the mapping this matcher needs:
@@ -126,6 +128,8 @@ export type GrnMatchResult = {
   // Rows matched to their PO's line by product name, not code (nameMatchItem),
   // with the item code each matched.
   nameMatches: Array<{ line: ScannedGrnLine; itemCode: string }>;
+  // Rows received as a whole set: every piece on their PO of the SO they print.
+  soMatches: Array<{ line: ScannedGrnLine; soDocNo: string }>;
   // The open POs the delivery order named (header or rows), resolved.
   namedPos: string[];
 };
@@ -304,6 +308,7 @@ export function matchGrnScanToPoLines(
   let scannedCount = 0;
   let itemOnlyMatchedCount = 0;
   const nameMatches: GrnMatchResult['nameMatches'] = [];
+  const soMatches: GrnMatchResult['soMatches'] = [];
   // Identical lines (one per customer order) take a row's qty in PO line order.
   const spread = (qty: number, lines: OpenPoLine[], target: Map<string, number>): void => {
     let left = qty;
@@ -363,6 +368,14 @@ export function matchGrnScanToPoLines(
       // The supplier's own code is unknown to us (DIGLANT prints T1MAMWA0MK for
       // our AKEMI BULWARK MATT (K)), but the PO is certain: try the product name.
       const poLines = supplierLines.filter((l) => l.poNumber === anchorPo);
+      // Dorsettloft prints one row per SET ("DSL8030(35") - 2 + L", qty 1) with
+      // our SO number, where our PO has one line per piece: take that SO's pieces.
+      const set = setLinesBySo(sl, poLines.filter((l) => (remainingById.get(l.poItemId) ?? 0) > 0));
+      if (set) {
+        for (const l of set.lines) spread(remainingById.get(l.poItemId) ?? 0, [l], anchoredQty);
+        soMatches.push({ line: sl, soDocNo: set.soDocNo });
+        continue;
+      }
       const item = nameMatchItem(sl.description, poLines);
       const lines = item === null ? [] : poLines.filter((l) => l.itemCode === item && (remainingById.get(l.poItemId) ?? 0) > 0);
       const specs = new Set(lines.map((l) => (l.description2 ?? '').trim()));
@@ -482,6 +495,7 @@ export function matchGrnScanToPoLines(
     poFallback,
     qtyMismatch,
     nameMatches,
+    soMatches,
     namedPos: [...anchoredPos],
   };
 }
@@ -512,6 +526,27 @@ export function nameMatchItem(printed: string | null | undefined, poLines: OpenP
     return model.length > 0 && model.every((w) => row.some((r) => r.startsWith(w)));
   });
   return hits.length === 1 ? hits[0] : null;
+}
+
+const soKey = (v: string | null | undefined): string | null => /SO-?0*(\d{4,})\b/i.exec(v ?? '')?.[1] ?? null;
+
+/**
+ * The PO lines a delivery-order row delivers as one set: the row prints one of
+ * our SO numbers ("*HC-SO-013339", or "*SO-011717" without the company prefix)
+ * and the PO holds lines raised for exactly that SO. When the row also prints a
+ * model number those lines start with (DSL8030 -> 8030-2A(LHF)), only those.
+ * Null when the row names no SO, or none of `poLines` belongs to it.
+ */
+export function setLinesBySo(row: ScannedGrnLine, poLines: OpenPoLine[]): { soDocNo: string; lines: OpenPoLine[] } | null {
+  const text = `${row.itemCode ?? ''} ${row.description ?? ''}`;
+  const keys = new Set([...text.matchAll(/SO-?0*(\d{4,})\b/gi)].map((m) => m[1]));
+  if (keys.size === 0) return null;
+  const ofSo = poLines.filter((l) => keys.has(soKey(l.soDocNo) ?? ''));
+  const docs = new Set(ofSo.map((l) => l.soDocNo));
+  if (ofSo.length === 0 || docs.size !== 1) return null;
+  const models = new Set([...(row.itemCode ?? '').matchAll(/(\d{4,})/g)].map((m) => m[1]));
+  const ofModel = ofSo.filter((l) => models.has(/^(\d{4,})/.exec(l.itemCode)?.[1] ?? ''));
+  return { soDocNo: [...docs][0] as string, lines: ofModel.length > 0 ? ofModel : ofSo };
 }
 
 const PO_STATUS_WHY: Record<string, string> = {

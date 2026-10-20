@@ -25,7 +25,7 @@ lists only what differs for GR.
 - **Known PO, unknown codes.** A row whose PO is known but whose code matches
   nothing (DIGLANT prints its own `T1MAMWA0MK`) is matched by product name
   (`nameMatchItem`: every word only that item has on the PO must be printed);
-  the note says how many rows matched by name. A row no name matches is
+  the note says how many rows matched by name. Before the name, a row printing one of our SO numbers is a SET (Dorsettloft: "DSL8030 - 2 + L" x1 = two PO pieces): it takes every piece on its PO raised for that SO (`setLinesBySo`, narrowed by a printed model number), at the remaining qty. A row no name matches is
   "not on the PO" (free gifts). When no row lines up at all, the draft carries
   every line still owed on the named PO(s) (`poFallback`) only when the
   delivery order's qty equals what each owes; otherwise needs-review with the
