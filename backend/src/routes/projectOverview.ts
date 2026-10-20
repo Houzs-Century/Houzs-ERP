@@ -17,6 +17,7 @@ import { supabaseAuth } from "../scm/middleware/auth";
 import { scopeToCompany, activeCompanySql, activeCompanyId } from "../scm/lib/companyScope";
 import { chunkIn, paginateAll } from "../scm/lib/paginate-all";
 import { pnlForProjects } from "../services/eventPnlBatch";
+import { soDisplayTotalSen, soPaidInputsOf, soPaidSen } from "../scm/shared/so-outstanding";
 import type { PnlColumn } from "../services/eventPnl";
 import { LEDGER_COST_CATEGORIES } from "../services/projects";
 import { collectReport, indexOrdersByToken, matchBill, type NoteRow, type OrderRow } from "./lib/sales-report-bills";
@@ -143,6 +144,35 @@ projectOverview.get("/", async (c) => {
     }
   }
 
+  /* Collection (owner 2026-10-20: "看收了多少钱 ... 就看 paid 然后看 %"): what the
+     event's orders (drafts in, cancelled out) have been paid, from the payment
+     ledger, against their total - the event page's Sales Orders header, by the
+     same functions (scm/shared/so-outstanding.ts). Every payment of the company
+     is read once: a few pages, where batching thousands of doc numbers was not. */
+  const collOrders = await chunkIn<Record<string, unknown> & { doc_no: string; project_id: number }>(projects.map((p) => String(p.id)), (b, f, t) =>
+    scopeToCompany(c.get("supabase").from("mfg_sales_orders")
+      .select("doc_no, project_id, local_total_sen, total_revenue_sen, deposit_sen").in("project_id", b)
+      .neq("status", "CANCELLED"), c).order("doc_no").range(f, t));
+  if (collOrders.error) return c.json({ error: "load_failed", reason: `orders for collection: ${collOrders.error.message}` }, 500);
+  const pays = await paginateAll<{ so_doc_no: string; amount_sen: number | null; is_deposit: boolean | null }>((f, t) =>
+    scopeToCompany(c.get("supabase").from("mfg_sales_order_payments").select("so_doc_no, amount_sen, is_deposit"), c).order("id").range(f, t));
+  if (pays.error) return c.json({ error: "load_failed", reason: `payments: ${pays.error.message}` }, 500);
+  const ledger = new Map<string, { paid: number; deposit: boolean }>();
+  for (const p of pays.data ?? []) {
+    const cur = ledger.get(p.so_doc_no) ?? { paid: 0, deposit: false };
+    cur.paid += Number(p.amount_sen ?? 0);
+    if (p.is_deposit === true) cur.deposit = true;
+    ledger.set(p.so_doc_no, cur);
+  }
+  const collection = new Map<number, { totalSen: number; paidSen: number }>();
+  for (const o of collOrders.data) {
+    const led = ledger.get(o.doc_no);
+    const inputs = soPaidInputsOf(o, led?.paid ?? 0, led?.deposit ?? false);
+    const g = collection.get(Number(o.project_id)) ?? { totalSen: 0, paidSen: 0 };
+    g.totalSen += soDisplayTotalSen(inputs); g.paidSen += soPaidSen(inputs);
+    collection.set(Number(o.project_id), g);
+  }
+
   /* Each event's P&L by the event page's own engine (services/eventPnl.ts),
      the By Sales Orders column (owner 2026-10-20: commission, transport and
      merchandise "根据开单的 sales order 去 capture" - the brand's rate card on the
@@ -180,6 +210,7 @@ projectOverview.get("/", async (c) => {
       salesOrders: so.get(p.id) ?? { sen: 0, costSen: 0, count: 0, costSplit: { mattSofa: 0, bedframe: 0, accessories: 0 } },
       chatReport: report.get(p.id) ?? null,
       pnl: compact(p.id),
+      collection: collection.get(p.id) ?? { totalSen: 0, paidSen: 0 },
     })),
   });
 });

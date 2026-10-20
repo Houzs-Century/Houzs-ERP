@@ -168,7 +168,7 @@ export function ProjectOverviewPage() {
         </span>}>
         <div className="max-h-[560px] overflow-auto">
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-surface"><tr><Th left>Project</Th><Th left>Dates</Th><Th>Sales</Th><Th>Service</Th><Th>COGS</Th><Th>GP</Th><Th>GP %</Th><Th>Rental</Th><Th>Setup</Th><Th>Transport</Th><Th>Commission</Th><Th>Merchandise</Th><Th>Others</Th><Th>Net profit</Th><Th>NP %</Th><Th left>Sales Orders daily?</Th></tr></thead>
+            <thead className="sticky top-0 bg-surface"><tr><Th left>Project</Th><Th left>Dates</Th><Th>Sales</Th><Th>Service</Th><Th>COGS</Th><Th>GP</Th><Th>GP %</Th><Th>Rental</Th><Th>Setup</Th><Th>Transport</Th><Th>Commission</Th><Th>Merchandise</Th><Th>Others</Th><Th>Net profit</Th><Th>NP %</Th><Th>Collected</Th><Th>Collected %</Th><Th left>Sales Orders daily?</Th></tr></thead>
             <tbody>
               {listed.map(({ p, f }) => (
                 <tr key={p.id} onClick={() => navigate(`/projects/${p.id}`)} className="cursor-pointer hover:bg-surface-2/50">
@@ -177,6 +177,8 @@ export function ProjectOverviewPage() {
                   <Td>{money(f.sales)}</Td><Td className="text-ink-secondary">{money(f.serviceRevenue)}</Td><Td>{money(f.cogs)}</Td><Td>{money(f.gp)}</Td><Td className="text-ink-secondary">{pctTxt(pctOf(f.gp, f.sales))}</Td>
                   <Td>{money(f.rental)}</Td><Td>{money(f.setup)}</Td><Td>{money(f.transport)}</Td><Td>{money(f.commission)}</Td><Td>{money(f.merchandise)}</Td><Td>{money(f.other)}</Td>
                   <Td className={f.np < 0 ? "font-semibold text-err" : "font-semibold"}>{money(f.np)}</Td><Td>{pctTxt(pctOf(f.np, f.sales))}</Td>
+                  <Td><span title={`paid ${money(p.collection.paidSen / 100)} of ${money(p.collection.totalSen / 100)} ordered`}>{money(p.collection.paidSen / 100)}</span></Td>
+                  <Td className={p.collection.totalSen > 0 && p.collection.paidSen < p.collection.totalSen * 0.5 ? "text-err" : "text-ink-secondary"}>{pctTxt(pctOf(p.collection.paidSen, p.collection.totalSen))}</Td>
                   <Td left><Daily r={p.chatReport} /></Td>
                 </tr>
               ))}
