@@ -13,10 +13,11 @@ import type { GrnExtracted } from './grn-scan-extract';
 import { loadOpenPoLines, loadPoStatuses, loadSupplierBindings, loadSuppliers } from './grn-scan-load';
 import { loadScanCodes } from './grn-scan-codes';
 import { applyScanRacks, scanRackNote } from './grn-scan-racks';
+import { addGiftLines, giftLines, giftNote, isGiftRow, loadCatalogueProducts, type GiftLine } from './grn-scan-gifts';
 import { scopeToCompanyIdOrOpen } from './companyScope';
 import {
   describeUnmatchedScanLines, listScanLines, matchGrnScanToPoLines, printedPoWhy, resolveScannedSupplier,
-  type GrnMatchResult, type OpenPoLine, type PoStatusRef, type ScannedGrnLine,
+  type GrnMatchResult, type OpenPoLine, type PoStatusRef, type ScannedGrnLine, type SupplierSkuBinding,
 } from './grn-scan-match';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the untyped service client every scm route uses (grn-scan-load.ts)
@@ -70,6 +71,8 @@ export type ScanMatchContext = {
   openLines: OpenPoLine[];
   allPos: PoStatusRef[];
   match: GrnMatchResult;
+  // Codes taught for this supplier (scm.supplier_scan_codes), gifts among them.
+  taught: SupplierSkuBinding[];
 };
 
 // Load everything the matcher needs for this company and run it. Codes taught
@@ -84,7 +87,14 @@ export async function matchScan(svc: SupabaseClient, companyId: number | null, p
   const supplierId = resolveScannedSupplier(parsed.supplierName, suppliers);
   const taught = supplierId !== null ? await loadScanCodes(svc, companyId, supplierId) : [];
   const match = matchGrnScanToPoLines(parsed.poNo, parsed.lines.map(toScanned), openLines, [...bindings, ...taught], supplierId);
-  return { supplierId, openLines, allPos, match };
+  return { supplierId, openLines, allPos, match, taught };
+}
+
+/** The free gifts of this delivery order: rows on no PO whose code was taught to a catalogue product. */
+export async function scanGifts(svc: SupabaseClient, companyId: number | null, ctx: ScanMatchContext): Promise<GiftLine[]> {
+  if (ctx.taught.length === 0) return [];
+  const codes = [...new Set(ctx.taught.map((t) => t.itemCode))];
+  return giftLines(ctx.match, ctx.taught, await loadCatalogueProducts(svc, companyId, codes));
 }
 
 export type ScanDraftOutcome =
@@ -97,7 +107,9 @@ export async function draftFromScan(
   job: { uploaderStaffId: string; houzsUserId: number | null; companyId: number | null; id: string },
   parsed: GrnExtracted,
 ): Promise<ScanDraftOutcome> {
-  const { match, allPos, supplierId } = await matchScan(svc, job.companyId, parsed);
+  const ctx = await matchScan(svc, job.companyId, parsed);
+  const { match, allPos, supplierId } = ctx;
+  const gifts = match.picks.length > 0 ? await scanGifts(svc, job.companyId, ctx) : [];
   if (match.picks.length === 0) {
     // No confident PO line — never fabricate a standalone GRN or a wrong link.
     return { kind: 'needs_review', note: buildNeedsReviewNote(parsed, match, allPos, supplierId) };
@@ -121,7 +133,7 @@ export async function draftFromScan(
   // Scanned lines the operator must add by hand, by name, so the draft itself
   // says what is missing. A draft built from the whole PO lists what the
   // delivery order says instead, since every PO line is already on it.
-  const unmatchedLines = describeUnmatchedScanLines(match.unmatched, allPos, supplierId);
+  const unmatchedLines = describeUnmatchedScanLines(match.unmatched.filter((u) => !isGiftRow(u.line, gifts)), allPos, supplierId);
   const unmatchedNote = match.poFallback
     ? `Check every line: no scanned line matched ${match.poFallback} by item, so this draft lists everything still owed on ${match.poFallback.includes(',') ? 'those POs' : 'that PO'} at the PO quantity. Change it to what was delivered before posting. The delivery order lists: ${listScanLines(parsed.lines.map(toScanned).filter((l) => l.qty > 0))}`
     : unmatchedLines ? `Not added to this draft: ${unmatchedLines}` : null;
@@ -154,17 +166,19 @@ export async function draftFromScan(
   }
   const rackNote = scanRackNote(await applyScanRacks(svc, job.companyId, res.created.map((g) => g.id), match.racks));
   if (rackNote) await appendGrnNote(svc, job.companyId, res.created.map((g) => g.id), rackNote);
+  const freeNote = giftNote(await addGiftLines(svc, job.companyId, res.created[0].id, gifts, job.uploaderStaffId));
+  if (freeNote) await appendGrnNote(svc, job.companyId, [res.created[0].id], freeNote);
   return {
     kind: 'draft',
     grnNumbers: res.created.map((g) => g.grnNumber),
     poNumbers: [...new Set(res.created.flatMap((g) => g.poNumbers))],
-    jobNote: [weakNote, nameNote, soNote, unmatchedNote, rackNote].filter(Boolean).join(' ') || null,
+    jobNote: [weakNote, nameNote, soNote, unmatchedNote, rackNote, freeNote].filter(Boolean).join(' ') || null,
   };
 }
 
 // The rack outcome is known only once the drafts exist (their warehouse picks
 // the rack list), so it joins the note afterwards. Best-effort.
-async function appendGrnNote(svc: SupabaseClient, companyId: number | null, grnIds: string[], note: string): Promise<void> {
+export async function appendGrnNote(svc: SupabaseClient, companyId: number | null, grnIds: string[], note: string): Promise<void> {
   const { data, error } = await scopeToCompanyIdOrOpen(svc.from('grns').select('id, notes').in('id', grnIds), companyId);
   if (error) { console.error('[scan-gr racks] note read failed:', error.message); return; }
   for (const g of data as Array<{ id: string; notes: string | null }>) {

@@ -29,7 +29,11 @@ lists only what differs for GR.
   nothing (DIGLANT prints its own `T1MAMWA0MK`) is matched by product name
   (`nameMatchItem`: every word only that item has on the PO must be printed);
   the note says how many rows matched by name. Before the name, a row printing one of our SO numbers is a SET (Dorsettloft: "DSL8030 - 2 + L" x1 = two PO pieces): it takes every piece on its PO raised for that SO (`setLinesBySo`, narrowed by a printed model number), at the remaining qty. A row no name matches is
-  "not on the PO" (free gifts). When no row lines up at all, the draft carries
+  "not on the PO". A not-on-PO row whose code was taught to a catalogue
+  product is a **free gift** (Sim, 2026-10-20): `lib/grn-scan-gifts.ts` adds it
+  to the draft as a line with no PO link, RM0, `zero_cost_ack` with reason
+  "Free gift on the supplier delivery order", qty summed per product, never
+  twice, DRAFT only; no PO link = never sent to AutoCount. When no row lines up at all, the draft carries
   every line still owed on the named PO(s) (`poFallback`) only when the
   delivery order's qty equals what each owes; otherwise needs-review with the
   counts (`qtyMismatch`). Never with an unresolved supplier.
@@ -42,7 +46,8 @@ lists only what differs for GR.
 | `GET /scan-gr/jobs` | latest 20 GR jobs for the active company. |
 | `GET /scan-gr/jobs/:id` | poll one job. |
 | `GET /scan-gr/jobs/:id/codes` | printed codes on a finished scan that did not match by code (name-matched or not matched), one row per code, with the PO lines they could be (the named POs, else the supplier's open lines). |
-| `POST /scan-gr/jobs/:id/codes` | `{pairs:[{printedCode, poItemId}]}`: only codes and lines that GET offered. Upserts `scm.supplier_scan_codes`; a job with no draft yet is matched again from its stored read (no OCR) and drafted. |
+| `POST /scan-gr/jobs/:id/codes` | `{pairs:[{printedCode, poItemId} or {printedCode, productCode}]}`: only codes and lines that GET offered; `productCode` (free gift) only for a not-matched code and an ACTIVE product of the company. Upserts `scm.supplier_scan_codes`; a job with no draft yet is matched again from its stored read (no OCR) and drafted; a job with a draft gets the taught gifts added to it. Returns `{saved, draft, giftsAdded}`. |
+| `GET /scan-gr/products?search=` | ACTIVE products of the active company, code or name contains (2+ chars, 20 max), for picking a free gift's product. |
 | `POST /scan-gr/jobs/clear-failed` | delete this company's terminal `error` GR rows. |
 | `GET /scan-gr/slip-image?key=scan-slips/<id>` | serve the stored delivery-order photo (R2 proxy, `scan-slips/` prefix guard). |
 

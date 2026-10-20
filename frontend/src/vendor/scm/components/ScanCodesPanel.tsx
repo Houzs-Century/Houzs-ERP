@@ -3,7 +3,9 @@
 // and MobileGrnScan): the supplier's own printed codes the scan could not match
 // by code ("T1MAMWA0MK"), each with a choice of PO line. Saving remembers the
 // code for that supplier, so the next delivery order matches it by code; a scan
-// that made no draft yet is matched again and drafted (HC-0120).
+// that made no draft yet is matched again and drafted (HC-0120). A code on no
+// PO can be taught as a free gift to a catalogue product: it then goes on the
+// draft at RM0 (Sim, 2026-10-20).
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
@@ -14,7 +16,55 @@ import { writeFailed } from '../lib/mutation-error';
 type CodeRow = { printedCode: string; description: string | null; qty: number; status: 'name_matched' | 'not_matched'; suggestedPoItemId: string | null };
 type PoLine = { poItemId: string; poNumber: string; itemCode: string; materialName: string | null; remaining: number };
 type CodesResp = { data?: { supplierKnown?: boolean; rows?: CodeRow[]; poLines?: PoLine[] } };
-type SaveResp = { data?: { saved?: number; draft?: string | null } };
+type SaveResp = { data?: { saved?: number; draft?: string | null; giftsAdded?: number } };
+type Product = { code: string; name: string | null };
+type Pair = { printedCode: string; poItemId?: string; productCode?: string };
+
+const GIFT = '__gift__';
+const selectStyle: React.CSSProperties = { width: '100%', minHeight: 36, borderRadius: 8, border: '1px solid var(--line, #d6d3c8)', padding: '0 8px', font: 'inherit', background: '#fff' };
+
+function GiftPicker({ printedCode, product, onPick }: { printedCode: string; product: Product | undefined; onPick: (p: Product | undefined) => void }) {
+  const [term, setTerm] = useState('');
+  const search = term.trim();
+  const { data, isFetching } = useQuery({
+    queryKey: ['scan-gr-products', search],
+    queryFn: () => authedFetch<{ data?: { products?: Product[] } }>(`/scan-gr/products?search=${encodeURIComponent(search)}`),
+    enabled: search.length >= 2 && !product,
+    retry: false,
+  });
+  if (product) {
+    return (
+      <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ flex: 1 }}>Free gift: <b>{product.code}</b>{product.name ? ` - ${product.name}` : ''}, received at RM0</span>
+        <button type="button" onClick={() => onPick(undefined)} style={{ border: 'none', background: 'none', color: '#16695f', fontWeight: 600, font: 'inherit', cursor: 'pointer' }}>Change</button>
+      </div>
+    );
+  }
+  const found = data?.data?.products ?? [];
+  return (
+    <div style={{ marginTop: 4 }}>
+      <input
+        aria-label={`Gift product for ${printedCode}`}
+        placeholder="Search our product code or name"
+        value={term}
+        onChange={(e) => setTerm(e.target.value)}
+        style={{ ...selectStyle, boxSizing: 'border-box' }}
+      />
+      {search.length >= 2 && (
+        <div style={{ marginTop: 4, maxHeight: 180, overflowY: 'auto' }}>
+          {isFetching && found.length === 0 && <div style={{ color: 'var(--fg-muted, #767b6e)' }}>Searching...</div>}
+          {!isFetching && found.length === 0 && <div style={{ color: 'var(--fg-muted, #767b6e)' }}>No product matches "{search}".</div>}
+          {found.map((p) => (
+            <button key={p.code} type="button" onClick={() => onPick(p)}
+              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px', border: 'none', borderBottom: '1px solid var(--line, #eeece5)', background: 'none', font: 'inherit', cursor: 'pointer' }}>
+              <b>{p.code}</b>{p.name ? ` - ${p.name}` : ''}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // One choice per item on each PO: picking any of its identical lines teaches the same code.
 function itemChoices(lines: PoLine[]): Array<{ value: string; label: string }> {
@@ -46,15 +96,21 @@ export function ScanCodesPanel({ jobId, jobsQueryKey }: { jobId: string; jobsQue
   };
   const [picked, setPicked] = useState<Record<string, string>>({});
   const valueOf = (r: CodeRow): string => picked[r.printedCode] ?? choiceFor(r.suggestedPoItemId);
+  const [gifts, setGifts] = useState<Record<string, Product | undefined>>({});
   const [result, setResult] = useState<string | null>(null);
 
   const save = useMutation({
-    mutationFn: (pairs: Array<{ printedCode: string; poItemId: string }>) =>
+    mutationFn: (pairs: Pair[]) =>
       authedFetch<SaveResp>(`/scan-gr/jobs/${jobId}/codes`, { method: 'POST', body: JSON.stringify({ pairs }), headers: { 'Content-Type': 'application/json' } }),
     onSuccess: (r) => {
       const n = r.data?.saved ?? 0;
       const draft = r.data?.draft ?? null;
-      setResult(`${n} ${n === 1 ? 'code' : 'codes'} saved for this supplier. ${draft ? `Draft goods receipt ${draft} was created from this delivery order.` : 'The next delivery order with these codes will match them.'}`);
+      const added = r.data?.giftsAdded ?? 0;
+      setResult([
+        `${n} ${n === 1 ? 'code' : 'codes'} saved for this supplier.`,
+        draft ? `Draft goods receipt ${draft} was created from this delivery order.` : 'The next delivery order with these codes will match them.',
+        added > 0 ? `${added} free ${added === 1 ? 'gift was' : 'gifts were'} added to the draft at RM0.` : '',
+      ].filter(Boolean).join(' '));
       void qc.invalidateQueries({ queryKey: jobsQueryKey });
     },
     onError: writeFailed,
@@ -68,12 +124,16 @@ export function ScanCodesPanel({ jobId, jobsQueryKey }: { jobId: string; jobsQue
   if (rows.length === 0) return <div style={box}>Every item on this delivery order already matches by code.</div>;
 
   const choices = itemChoices(lines);
-  const pairs = rows.map((r) => ({ printedCode: r.printedCode, poItemId: valueOf(r) })).filter((p) => p.poItemId !== '');
+  const pairs: Pair[] = rows.flatMap((r): Pair[] => {
+    const v = valueOf(r);
+    if (v === GIFT) { const g = gifts[r.printedCode]; return g ? [{ printedCode: r.printedCode, productCode: g.code }] : []; }
+    return v ? [{ printedCode: r.printedCode, poItemId: v }] : [];
+  });
   return (
     <div style={box}>
       <div style={{ fontWeight: 700, marginBottom: 4 }}>Supplier codes</div>
       <div style={{ color: 'var(--fg-muted, #767b6e)', marginBottom: 8 }}>
-        Choose which item each code on the delivery order is. Leave a code on "Not on the PO" for free gifts. Saved codes match automatically next time.
+        Choose which item each code on the delivery order is. For a free gift on no PO, choose "Free gift" and our product: it goes into stock at RM0. Saved codes match automatically next time.
       </div>
       {rows.map((r) => (
         <div key={r.printedCode} style={{ padding: '6px 0', borderTop: '1px solid var(--line, #eeece5)' }}>
@@ -86,11 +146,16 @@ export function ScanCodesPanel({ jobId, jobsQueryKey }: { jobId: string; jobsQue
             aria-label={`Item for ${r.printedCode}`}
             value={valueOf(r)}
             onChange={(e) => setPicked((cur) => ({ ...cur, [r.printedCode]: e.target.value }))}
-            style={{ width: '100%', minHeight: 36, borderRadius: 8, border: '1px solid var(--line, #d6d3c8)', padding: '0 8px', font: 'inherit', background: '#fff' }}
+            style={selectStyle}
           >
             <option value="">Not on the PO</option>
+            {r.status === 'not_matched' && <option value={GIFT}>Free gift: choose our product</option>}
             {choices.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
           </select>
+          {valueOf(r) === GIFT && (
+            <GiftPicker printedCode={r.printedCode} product={gifts[r.printedCode]}
+              onPick={(g) => setGifts((cur) => ({ ...cur, [r.printedCode]: g }))} />
+          )}
         </div>
       ))}
       <button
