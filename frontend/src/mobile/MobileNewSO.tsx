@@ -2501,20 +2501,17 @@ export function MobileNewSO({
                         free-text inputs (the vendor no-data behaviour).
                         FIX D2 — State/City/Postcode freeze once the processing
                         date has passed (identity columns feed the supplier PO). */}
-                    {/* Address MVP2 (2026-07-23) — the shared StatePicker in
-                        compact mode. MY states listed first, then CN + SG
-                        grouped under their country in native <optgroup>s the
-                        OS picker respects (iOS wheel picker, Android list).
+                    {/* The shared StatePicker combobox: type to filter, MY
+                        states first, then CN + SG grouped under their country.
                         No `(legacy)` fallback option, no `<select> → <input>`
                         free-text branch — a state not in scm.my_localities
                         must be added via the Localities Maintenance UI first. */}
                     <Field label={addressRequired && stateRequiredForCompany ? "State *" : "State"} error={touched && addressRequired && stateRequiredForCompany && !state.trim()} scanned={scanned("state", state)}>
                       <StatePicker
-                        compact
                         value={state}
                         disabled={addressIdentityLocked}
                         placeholder="Pick state"
-                        selectClassName="fld-i"
+                        selectClassName="fld-i fld-pick"
                         onChange={(next) => onStateChange(next)}
                       />
                     </Field>
@@ -2531,25 +2528,28 @@ export function MobileNewSO({
                           state resolve back via resolvePostcode /
                           resolveCityState. */}
                       <Field label="City" style={{ flex: 1 }} error={false} scanned={scanned("city", city)}>
-                        <select
-                          className="fld-i"
+                        <SearchableSelect
+                          className="fld-i fld-pick"
+                          ariaLabel="City"
                           value={city}
                           disabled={addressIdentityLocked || cityChoices.length === 0}
-                          onChange={(e) => onCityChange(e.target.value)}
-                        >
-                          <option value="">
-                            {cityChoices.length === 0 ? "No cities seeded" : cityPlaceholder(state)}
-                          </option>
-                          {cityChoices.map((c) => <option key={c} value={c}>{c}</option>)}
-                        </select>
+                          placeholder={cityChoices.length === 0 ? "No cities seeded" : cityPlaceholder(state)}
+                          onChange={onCityChange}
+                          options={cityChoices.map((c) => ({ value: c, label: c }))}
+                        />
                       </Field>
                       <Field label={addressRequired ? "Postcode *" : "Postcode"} style={{ flex: 1 }} error={touched && addressRequired && !postcode.trim()} scanned={scanned("postcode", postcode)}>
                         {country === 'Singapore'
                           ? <SgPostcodeField bare inputClassName="fld-i" value={postcode} onChange={setPostcode} onResolve={(r) => { setAddr1(r.address); if (r.state && r.city) { setState(r.state); setCity(r.city); } }} disabled={addressIdentityLocked} />
-                          : (<select className="fld-i" value={postcode} disabled={addressIdentityLocked || postcodeChoices.length === 0} onChange={(e) => onPostcodeChange(e.target.value)}>
-                              <option value="">{postcodeChoices.length === 0 ? "No postcodes seeded" : postcodePlaceholder(state, city)}</option>
-                              {postcodeChoices.map((p) => <option key={p} value={p}>{p}</option>)}
-                            </select>)}
+                          : (<SearchableSelect
+                              className="fld-i fld-pick"
+                              ariaLabel="Postcode"
+                              value={postcode}
+                              disabled={addressIdentityLocked || postcodeChoices.length === 0}
+                              placeholder={postcodeChoices.length === 0 ? "No postcodes seeded" : postcodePlaceholder(state, city)}
+                              onChange={onPostcodeChange}
+                              options={postcodeChoices.map((p) => ({ value: p, label: p }))}
+                            />)}
                       </Field>
                     </div>
                     {addressIdentityLocked ? (
