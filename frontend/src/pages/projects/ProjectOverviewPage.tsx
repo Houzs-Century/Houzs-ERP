@@ -177,7 +177,7 @@ export function ProjectOverviewPage() {
                   <Td>{money(f.sales)}</Td><Td className="text-ink-secondary">{money(f.serviceRevenue)}</Td><Td>{money(f.cogs)}</Td><Td>{money(f.gp)}</Td><Td className="text-ink-secondary">{pctTxt(pctOf(f.gp, f.sales))}</Td>
                   <Td>{money(f.rental)}</Td><Td>{money(f.setup)}</Td><Td>{money(f.transport)}</Td><Td>{money(f.commission)}</Td><Td>{money(f.merchandise)}</Td><Td>{money(f.other)}</Td>
                   <Td className={f.np < 0 ? "font-semibold text-err" : "font-semibold"}>{money(f.np)}</Td><Td>{pctTxt(pctOf(f.np, f.sales))}</Td>
-                  <Td><span title={`paid RM ${(p.collection.paidSen / 100).toFixed(2)} of RM ${(p.collection.totalSen / 100).toFixed(2)} ordered`}>{money(p.collection.paidSen / 100)}</span></Td>
+                  <Td><span title={`paid ${money(p.collection.paidSen / 100)} of ${money(p.collection.totalSen / 100)} ordered`}>{money(p.collection.paidSen / 100)}</span></Td>
                   <Td className={p.collection.totalSen > 0 && p.collection.paidSen < p.collection.totalSen * 0.5 ? "text-err" : "text-ink-secondary"}>{pctTxt(pctOf(p.collection.paidSen, p.collection.totalSen))}</Td>
                   <Td left><Daily r={p.chatReport} /></Td>
                 </tr>
