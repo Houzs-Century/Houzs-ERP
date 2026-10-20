@@ -56,6 +56,7 @@ import {
 } from '../lib/scan-receipt-plan';
 import { safeScanDepositSen } from '../lib/scan-header-deposit';
 import { scanTimer } from '../lib/scan-timing';
+import { scanCatalogSkus, type CatalogSku, type ScanCatalogRow } from '../lib/scan-catalog-skus';
 import { readSlipWithAliases } from '../lib/scan-field-aliases';
 import { ttlCached } from '../lib/ttl-cache';
 import { keepScanFile, linkScanFiles } from '../lib/scan-files';
@@ -192,12 +193,6 @@ async function localityForPostcode(
 // ===========================================================================
 // Catalog — pulled live from Supabase on every /extract call.
 // ===========================================================================
-type CatalogSku = {
-  code: string;
-  name: string;
-  category: string;       // SOFA | BEDFRAME | MATTRESS | ACCESSORY | SERVICE
-  baseModel: string | null;
-};
 type CatalogFabric = { code: string; description: string | null };
 // SOFA Special Add-ons (scm.special_addons, migration 0134) — the configured
 // specials the SO line editor's accordion offers. ACTIVE rows only; injected
@@ -402,7 +397,7 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
     paginateAll((from, to) => {
       let q = sb
         .from('mfg_products')
-        .select('code, name, category, base_model')
+        .select('code, name, category, base_model, model:product_models(active)')
         .eq('status', 'ACTIVE');
       if (companyId != null) q = q.eq('company_id', companyId);
       return q.order('category').order('code').range(from, to);
@@ -472,14 +467,7 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
     loadVenueNames(db),
   ]);
 
-  const skus: CatalogSku[] = ((prodRes.data as Array<{
-    code: string; name: string; category: string; base_model: string | null;
-  }> | null) ?? []).map((p) => ({
-    code: p.code,
-    name: p.name,
-    category: p.category,
-    baseModel: p.base_model ?? null,
-  }));
+  const skus = scanCatalogSkus(prodRes.data as ScanCatalogRow[] | null);
 
   const fabrics: CatalogFabric[] = ((fabRes.data as Array<{
     fabric_code: string; fabric_description: string | null;
