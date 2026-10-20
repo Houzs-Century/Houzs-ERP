@@ -16,7 +16,7 @@ try {
       FROM scm.mfg_sales_orders
      WHERE company_id = ${CO} AND upper(coalesce(branding, '')) LIKE '%ZANOTTI%'
        AND status::text NOT IN ('CANCELLED', 'DRAFT') AND so_date IS NOT NULL
-     GROUP BY 1 ORDER BY 1 DESC LIMIT 30`;
+     GROUP BY 1 ORDER BY 1 DESC`;
   console.log('month | ZANOTTI orders | keyed in ERP (HC-SO-YYMM-NNN)');
   for (const m of months) console.log(`${m.month} | ${m.n} | ${m.erp_keyed}`);
   const picks = await sql`
@@ -31,7 +31,7 @@ try {
     )
     SELECT month, doc_no, so_date::text AS so_date, debtor_name, local_total_sen, line_count, project_id, rk, cnt
       FROM z WHERE rk = 1 OR rk = greatest(2, (cnt + 1) / 2)
-     ORDER BY month DESC, rk LIMIT 60`;
+     ORDER BY month DESC, rk`;
   console.log('\ncandidates (largest + a middle one, per month):');
   for (const p of picks) console.log(`${p.month} ${p.doc_no} ${p.so_date} RM ${(Number(p.local_total_sen) / 100).toFixed(2)} lines ${p.line_count} fair ${p.project_id ?? '—'} (${p.rk}/${p.cnt})`);
 } finally { await sql.end(); }
