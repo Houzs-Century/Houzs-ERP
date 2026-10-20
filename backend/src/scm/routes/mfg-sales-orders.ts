@@ -37,6 +37,7 @@ import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../li
 import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
 import { soStatusAfterProcessingDateChange } from '../lib/so-proceed-status-change';
+import { recordSoTotalChange, snapshotSoTotals } from '../lib/so-total-changes';
 import { liveStatusForProcessingDate, processingDateOnConfirm } from '../shared/so-proceeded-status';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
 import { exemptionExpirySeed } from '../lib/so-exemption-expiry';
@@ -7042,6 +7043,8 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
   }
   const grandTotal  = total + deliverySen;
   const grandMargin = grandTotal - totalCost;
+  // Upsales / drop sales for Event Commission (owner 2026-10-20): the header before the write.
+  const totalsBefore = await snapshotSoTotals(sb, docNo);
   const { error: updErr } = await sb.from('mfg_sales_orders').update({
     mattress_sofa_sen: mattressSofa,
     bedframe_sen: bedframe,
@@ -7074,7 +7077,9 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
     }
     /* eslint-disable-next-line no-console */
     console.error('[so-recompute] header update failed — totals left STALE:', docNo, updErr.message);
+    return;
   }
+  await recordSoTotalChange(sb, c, docNo, totalsBefore, { goodsSen: mattressSofa + bedframe + accessories + others, totalSen: grandTotal });
 }
 
 mfgSalesOrders.post('/:docNo/items', async (c) => {
