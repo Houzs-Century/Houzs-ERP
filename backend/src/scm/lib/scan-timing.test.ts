@@ -23,12 +23,35 @@ describe('scanTimer', () => {
     expect(JSON.parse(String(log.mock.calls[0][0]))).toEqual({
       event: 'scan_timing', kind: 'payment', id: 'abc', outcome: 'ok',
       total_ms: 3400, upload_ms: 200, model_ms: 3000, parse_ms: 50, save_ms: 150, prep_ms: 0,
+      save_sample_ms: 0, save_dup_ms: 0, save_create_ms: 0, save_tail_ms: 0, create_attempts: 0,
     });
     expect(writeDataPoint).toHaveBeenCalledWith({
       indexes: ['scan|payment'],
       blobs: ['scan', 'payment', 'ok', 'abc'],
-      doubles: [3400, 200, 3000, 50, 150, 0],
+      doubles: [3400, 200, 3000, 50, 150, 0, 0, 0, 0, 0, 0],
     });
+  });
+
+  test('a save part is charged on top of save, so save_ms keeps its old meaning', () => {
+    const clock = vi.spyOn(Date, 'now');
+    clock.mockReturnValue(0);
+    const t = scanTimer('so');
+    clock.mockReturnValue(100); t.mark('save', 'sample');
+    t.createAttempt();
+    clock.mockReturnValue(400); t.mark('save', 'create');
+    t.createAttempt();
+    clock.mockReturnValue(1400); t.mark('save', 'create');
+    clock.mockReturnValue(1450); t.mark('save', 'tail');
+
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const writeDataPoint = vi.fn();
+    t.done({ ERP_METRICS: { writeDataPoint } }, 'j', 'ok');
+
+    const line = JSON.parse(String(log.mock.calls[0][0]));
+    expect(line.save_ms).toBe(1450);
+    expect([line.save_sample_ms, line.save_dup_ms, line.save_create_ms, line.save_tail_ms]).toEqual([100, 0, 1300, 50]);
+    expect(line.create_attempts).toBe(2);
+    expect(writeDataPoint.mock.calls[0][0].doubles).toEqual([1450, 0, 0, 0, 1450, 0, 100, 0, 1300, 50, 2]);
   });
 
   test('an unmarked stage reads 0, a null id reads empty, the outcome passes through', () => {

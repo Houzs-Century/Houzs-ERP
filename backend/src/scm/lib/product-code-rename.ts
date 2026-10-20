@@ -62,6 +62,9 @@ export const PRODUCT_CODE_CASCADE: readonly CascadeColumn[] = [
   { table: 'stock_take_lines',           col: 'item_code' },
   { table: 'warehouse_rack_items',       col: 'item_code' },
   { table: 'warehouse_rack_movements',   col: 'item_code' },
+  /* A supplier's printed code taught on the delivery-order scan card: left on the
+     old code, that supplier's next delivery order would match nothing. */
+  { table: 'supplier_scan_codes',        col: 'item_code' },
 ];
 
 export interface KeptColumn {
@@ -77,6 +80,8 @@ const AUTOCOUNT = 'names the item in AutoCount, which keeps its own code when th
 const SUPPLIER = "the supplier's own model code for our item, not ours";
 
 export const PRODUCT_CODE_KEEPS_VALUE: readonly KeptColumn[] = [
+  /* A record of which order a stock-PO receipt served, under the code it was received as (receipt-so-assignment.ts); history, not a live reference. */
+  { column: 'scm.po_receipt_so_assignments.item_code', why: 'a receipt-to-order assignment is history: it records the code the goods were received under' },
   { column: 'scm.mfg_so_item_deletions.item_code', why: 'forensic record of a deleted SO line as it was at the moment of deletion (0302)' },
   { column: 'scm.retail_price_guard_log.item_code', why: 'evidence of one intervention: the SKU as the offending writer named it, at that moment (20260920T1300)' },
   { column: 'scm.supplier_material_bindings.ac_item_code', why: AUTOCOUNT },

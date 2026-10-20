@@ -29,6 +29,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
+import { JobDetailPanel, panelTargetOf, rowDocumentPath, type JobPanelTarget } from '../../components/scm-v2/JobDetailPanel';
 import { useNavigate } from 'react-router-dom';
 import { useStickyFilters } from '../../hooks/useStickyFilters';
 import { MapPinned, Truck, Plus, MessageSquare, CalendarClock, ChevronDown } from 'lucide-react';
@@ -65,7 +66,10 @@ import {
   useDeliveryMessageStatuses,
   useSendDeliveryMessages,
   useUpdateDeliveryFields,
+  filterOrdersByRegion,
+  planningCountsFrom,
   type PlanningOrder,
+  type PlanningCounts,
   type SendDeliveryMessagesResult,
 } from '../../vendor/scm/lib/delivery-planning-queries';
 import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
@@ -75,6 +79,8 @@ import { canOperateDeliveryOrders } from '../../auth/salesAccess';
 
 export const DeliveryPlanning = () => {
   const navigate = useNavigate();
+  // Single click opens the job panel; double click goes to the document.
+  const [jobPanel, setJobPanel] = useState<JobPanelTarget | null>(null);
   const askConfirm = useConfirm();
   const notify = useNotify();
   const { user, can, pageAccess } = useAuth();
@@ -202,7 +208,9 @@ export const DeliveryPlanning = () => {
   const openRow = (o: PlanningOrder) => {
     // DP-Order rows have no SO/ASSR document to open (their so_doc_no is a
     // synthetic `DP:<id>` key) — no navigation.
-    if (isDp(o) || isProject(o)) return;
+    // A project leg opens its project; a manual DP job has no document — its panel.
+    if (isProject(o)) { const to = rowDocumentPath(o); if (to) navigate(to); return; }
+    if (isDp(o)) { setJobPanel(panelTargetOf(o)); return; }
     if (isAssr(o)) {
       if (o.assr_id != null) navigate(`/assr/${o.assr_id}`);
     } else {
@@ -228,11 +236,13 @@ export const DeliveryPlanning = () => {
     await runConvert(docNos);
   };
 
-  /* Fetch scoped to the active REGION; counts come back region-scoped so the
-     state-tab badges are stable as the operator flips state tabs. We pass the
-     state to the server too (it filters), but render-time we already have the
-     region-filtered orders so switching states is instant via the cache key. */
-  const { data, isLoading, error } = useDeliveryPlanning({ region: activeRegion, state: 'ALL' });
+  /* Fetch EVERY region once (region=ALL) and filter by the active region chip in
+     the browser (filterOrdersByRegion below) — the same instant, no-refetch
+     pattern the state tabs already use, and the mobile board already uses. The
+     old per-region fetch re-ran the whole server board assembly on every chip
+     click, so the region row felt frozen (owner 2026-10-19 "filter 没反应");
+     locally it is instant and the region chip no longer triggers a load. */
+  const { data, isLoading, error } = useDeliveryPlanning({ region: 'ALL', state: 'ALL' });
 
   /* Region chips = the CONFIG-DRIVEN buckets from the API master (+ "All"
      prepended). Falls back to the five geographic defaults if the API hasn't
@@ -259,8 +269,18 @@ export const DeliveryPlanning = () => {
     setParams(next, { replace: true });
   };
 
-  const allOrders = useMemo<PlanningOrder[]>(() => data?.orders ?? [], [data]);
-  const counts = data?.counts ?? { ALL: 0, PENDING_DELIVERY: 0, PENDING_SCHEDULE: 0, OVERDUE: 0, DELIVERED: 0 };
+  /* Every fetched order (all regions). The active region chip filters this
+     locally; valid region keys come from the chip list (an unknown/stale key is
+     a defensive no-op, never an empty board). */
+  const fetchedOrders = useMemo<PlanningOrder[]>(() => data?.orders ?? [], [data]);
+  const regionKeys = useMemo(() => new Set(regionTabs.map((r) => r.key)), [regionTabs]);
+  const allOrders = useMemo<PlanningOrder[]>(
+    () => filterOrdersByRegion(fetchedOrders, activeRegion, regionKeys),
+    [fetchedOrders, activeRegion, regionKeys],
+  );
+  /* State-tab badges over the region-filtered set, so they reflect the active
+     region exactly as the server's region-scoped counts did. */
+  const counts = useMemo<PlanningCounts>(() => planningCountsFrom(allOrders), [allOrders]);
 
   /* The SO order objects behind the current selection — fed to the scheduling
      drawer as its ordered stop list. Resolved from the region-scoped board (all
@@ -402,6 +422,7 @@ export const DeliveryPlanning = () => {
         }
       />
 
+      <JobDetailPanel target={jobPanel} onClose={() => setJobPanel(null)} />
       <DeliveryPlanningBoard
         orders={allOrders}
         resetFilters={{ active: activeState !== 'ALL' || activeRegion !== 'ALL', onReset: resetView }}
@@ -433,6 +454,7 @@ export const DeliveryPlanning = () => {
         drivers={drivers}
         lorries={lorries}
         msgStatuses={msgStatuses}
+        onRowClick={(o) => setJobPanel(panelTargetOf(o))}
         onRowDoubleClick={openRow}
         bulkExtras={
           /* The heavier actions (Schedule drawer, Transfer to Delivery Order)

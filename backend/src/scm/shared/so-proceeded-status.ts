@@ -120,3 +120,33 @@ export function statusAfterProcessingDateCleared(input: {
   if (cur !== PROCEED_TO_STATUS) return null;
   return PROCEED_FROM_STATUS;
 }
+
+/* A DRAFT CONFIRMED LATE PROCEEDS ON THE DAY IT IS CONFIRMED (HC-0113, Sim
+   2026-10-16). HC-SO-2609-077 was saved as a draft with Processing Date 18/9
+   and confirmed on 13/10; the order reached purchasing carrying 18/9, so it
+   read as an order purchasing had sat on for four weeks. A draft is out of MRP
+   and PO until confirmed, so nothing proceeded before the confirm.
+
+   Only a PAST date moves: a draft dated for a later proceed keeps it (Samuel
+   2026-10-16). Moving the date to today past a Delivery Date that has also gone
+   by would leave Processing after Delivery, which every other writer refuses,
+   so the confirm is refused instead and the salesperson re-dates the delivery
+   first. */
+export const CONFIRM_DELIVERY_PAST_PROBLEM = {
+  code: 'confirm_delivery_date_past',
+  message: 'The Delivery Date has already passed. Move it to today or later, then confirm — the Processing Date becomes the confirm date.',
+  field: 'Delivery Date',
+} as const;
+
+export function processingDateOnConfirm(i: {
+  processingDate: string | null | undefined;
+  deliveryDate: string | null | undefined;
+  /** 'YYYY-MM-DD', Malaysia. */
+  todayMY: string;
+}): { ok: true; write: string | null } | { ok: false; problem: typeof CONFIRM_DELIVERY_PAST_PROBLEM } {
+  const proc = String(i.processingDate ?? '').trim().slice(0, 10);
+  if (!proc || proc >= i.todayMY) return { ok: true, write: null };
+  const deliv = String(i.deliveryDate ?? '').trim().slice(0, 10);
+  if (deliv && deliv < i.todayMY) return { ok: false, problem: CONFIRM_DELIVERY_PAST_PROBLEM };
+  return { ok: true, write: i.todayMY };
+}

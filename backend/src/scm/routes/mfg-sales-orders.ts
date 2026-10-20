@@ -37,7 +37,7 @@ import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../li
 import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
 import { soStatusAfterProcessingDateChange } from '../lib/so-proceed-status-change';
-import { liveStatusForProcessingDate } from '../shared/so-proceeded-status';
+import { liveStatusForProcessingDate, processingDateOnConfirm } from '../shared/so-proceeded-status';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
 import { exemptionExpirySeed } from '../lib/so-exemption-expiry';
 import { soIsMigrated, withSoMigratedReadonly } from '../lib/migrated-so-readonly';
@@ -144,7 +144,7 @@ import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
 /* "A PO is already out for this SO" — the second road to the same soft lock
    (owner 2026-08-12, 2990 only). See lib/so-po-lock.ts. */
-import { soHasLivePo, soPoLocked } from '../lib/so-po-lock';
+import { soHasLivePo, soHasUnreceivedPo, soPoLocked } from '../lib/so-po-lock';
 import { deliveryBroughtForward, deliveryNeedsPurchaserOk, processingDateFrozenByPo, PROCESSING_DATE_PO_LOCKED, PROCESSING_DATE_PO_OVERRIDE_KEY } from '../shared/so-po-date-rule';
 import { notifySoAmendmentPurchaserOkNeeded } from '../../services/amendmentNotify';
 import { monthBoundsMy, rangeBoundsMy, todayMyt, mytDateOf } from '../lib/my-time';
@@ -166,10 +166,11 @@ import {
   type VenueSource,
   type VenueBindingSb,
 } from '../lib/venue-binding';
-import { bindVenueOnCreate, fairLinkForEdit, loadLinkedFair, resolveFairForSave, type FairDb } from '../lib/fair-binding';
-import { fairDayMissing, fairDayOnSave, fairPickedPeriod } from '../lib/fair-options';
+import { bindVenueOnCreate, fairConfirmProblems, fairLinkForEdit, fairLinkOnCreate, fairRequiredProblem, loadLinkedFair, resolveFairForSave, SCAN_STEP_NOTE, type FairDb } from '../lib/fair-binding';
+import { fairDayMissing, fairDayOnSave, fairWhyOf } from '../lib/fair-options';
 import { loadVpBrandAsk, type VpBrandDb } from '../lib/vp-brand-ask';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
+import { fairStateOf, recordFairChange } from '../lib/fair-audit';
 /* What changed on a LINE, for the audit trail — derived from the update about to
    be persisted rather than a hand-kept field list (owner 2026-08-12; see the
    module header for the 2990-SO-2608-017 edit this existed to catch and did not). */
@@ -1192,7 +1193,7 @@ mfgSalesOrders.get('/', async (c) => {
        2026-09-14), tab, search (approval codes and phone included) and date
        window — for the page, the money strip and the line export
        (lib/so-list-read.ts). The status counts take its `scoped` half. */
-    const read = await prepareSoListRead(sb, c, readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k)), scopeIds, c.get('houzsUser')?.id ?? null, new Date());
+    const read = await prepareSoListRead(sb, c, readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k), canViewScmFinance(c)), scopeIds, c.get('houzsUser')?.id ?? null, new Date());
     if (!read.ok) return c.json(read.body, read.status);
     let q = read.header(orderSoList(fromSoList(sb, LIST_COLS, { count: 'exact' }), c.req.query('sort') ?? null));
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
@@ -1274,8 +1275,12 @@ mfgSalesOrders.get('/', async (c) => {
        still carries the true total via PostgREST's `Content-Range` header. */
     if (error && isRangeNotSatisfiable(error)) {
       data = [];
-      total = res.count ?? 0;
       error = null;
+      /* supabase-js drops the count on a 416, so a page past a narrowed set (a
+         column funnel leaving 8 orders, read at page 2) reported total 0 — ask. */
+      const head = res.count == null ? await read.header(fromSoList(sb, 'doc_no', { count: 'exact', head: true })) : null;
+      if (head?.error) error = head.error;
+      total = res.count ?? head?.count ?? 0;
     }
     /* Every status in the vocabulary gets a bucket (lowercase keys, the wire
        shape the tabs read), plus `other` for anything OUTSIDE it (legacy
@@ -1587,7 +1592,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        LIST route reads that view, so the base-table detail read is the only
        place they are valid. (`proceeded_at` was appended here until 2026-08-18,
        feeding a "Proceed Date" the desktop deleted on 2026-06-05.) */
-    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno, collaborator_staff_ids, access_staff_ids, open_to_all, project_id, fair_date`).eq('doc_no', docNo), c).maybeSingle(),
+    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno, collaborator_staff_ids, access_staff_ids, open_to_all, project_id, fair_match, fair_date`).eq('doc_no', docNo), c).maybeSingle(),
     /* line_no = the persisted listing order (0165); NULLS LAST so pre-0165
        docs fall back to created_at + the rule re-derive below. */
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -2589,6 +2594,13 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         description: (it.description as string | null | undefined) ?? null,
       })),
     });
+    /* ...and a fair or No fair (owner 2026-10-19), worded by why the keyer got
+       none — the rule the form asks through /validate. Never the POS. */
+    const fairProblem = (await isPosTabletCaller(c)) ? null : await fairRequiredProblem({
+      companyCode: c.get('companyCode'), body, db: c.env.DB as unknown as FairDb,
+      companySql: activeCompanySql(c, 'p.company_id'), keyerId: Number(c.get('houzsUser')?.id ?? NaN), orderDate: soDateForVenue,
+    });
+    if (fairProblem) confirmProblems.push(fairProblem);
     if (confirmProblems.length > 0) return c.json(validationFailedBody(confirmProblems), 422);
   }
 
@@ -2609,17 +2621,39 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      unit price from (product, fabric, variants). Drift > 0.5% rejects
      the request with HTTP 400. Manual override path (mfgSoPriceOverrides)
      stays intact at PATCH /:docNo/items/:itemId/override. */
-  const cachedConfig = await loadMaintenanceConfig(sb);
-  // Special Add-ons (migration 0134) — fetched once; each line's specials pool is
-  // built from these so POS add-ons price from special_addons, not the legacy pool.
-  const cachedSpecialAddons = await loadSpecialAddons(sb);
+  /* HC-0006 speed: these eight reads don't depend on each other, so they run
+     together (one round trip instead of eight in a row). None of them throws —
+     each returns its failure as data — so every refusal below still comes out
+     exactly as before. loadSellingSofaCombos CAN throw, so it stays awaited in its
+     old place, after the allowed-options refusal. */
+  const itemCodes = items.map((it) => String(it?.itemCode ?? ''));
+  const [
+    cachedConfig,
+    // Special Add-ons (migration 0134) — fetched once; each line's specials pool is
+    // built from these so POS add-ons price from special_addons, not the legacy pool.
+    cachedSpecialAddons,
+    { byCode: pmByCode, lookupError: pmErr },
+    cachedFabricAddonConfig,  // migration 0124 — fabric-tier Δ (SoCreateContext → local companyId)
+    cachedModelOverrides,  // migration 0175 — per-Model Δ
+    cachedCompartmentOverrides,  // migration 0025 — per-compartment Δ
+    dropdownErr,
+    productRowByCode,
+  ] = await Promise.all([
+    loadMaintenanceConfig(sb),
+    loadSpecialAddons(sb),
+    loadProductsAndModels(sb, itemCodes, companyId),
+    loadFabricTierAddonConfig(sb, companyId),
+    loadModelFabricTierOverrides(sb),
+    loadCompartmentFabricTierOverrides(sb),
+    validateSoDropdownFields(sb, body, companyId),
+    loadProductsByCodes(sb, itemCodes, companyId),
+  ]);
   /* PR #216 — allowed_options pre-flight. Run BEFORE the pricing recompute
      so a disallowed variant returns the precise field/value/allowed
      payload instead of getting silently re-priced. Batched (Loo 2026-06-06):
      2 `in()` queries for the whole order instead of 2 × lines — per-line
      loads helped a 6-item order blow the CF Workers subrequest cap.
      First violation across all lines short-circuits the request. */
-  const { byCode: pmByCode, lookupError: pmErr } = await loadProductsAndModels(sb, items.map((it) => String(it?.itemCode ?? '')), companyId);
   /* A code missing from the map because the READ FAILED is not a code the
      catalog has nothing to say about — the loop below would read the resulting
      nulls as "allowed" and create the order. Refuse instead. */
@@ -2640,19 +2674,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     }
   }
   const cachedCombos = await loadSellingSofaCombos(sb, c);  // Phase 4b — sofa selling recompute
-  const cachedFabricAddonConfig = await loadFabricTierAddonConfig(sb, companyId);  // migration 0124 — fabric-tier Δ (SoCreateContext → local companyId)
-  const cachedModelOverrides = await loadModelFabricTierOverrides(sb);  // migration 0175 — per-Model Δ
-  const cachedCompartmentOverrides = await loadCompartmentFabricTierOverrides(sb);  // migration 0025 — per-compartment Δ
 
   /* Loo 2026-06-05 — maintained-dropdown 409 gate. Runs BEFORE any side
      effect (customer upsert, PWP claims) so a rejected request leaves
      nothing behind. */
-  const dropdownErr = await validateSoDropdownFields(sb, body, companyId);
   if (dropdownErr) return c.json(dropdownErr, 409);
 
   // Subrequest diet (Loo 2026-06-06) — one `in()` query for every line's
   // product row instead of one query per line.
-  const productRowByCode = await loadProductsByCodes(sb, items.map((it) => String(it.itemCode ?? '')), companyId);
   const lineProducts = items.map((it) => productRowByCode.get(String(it.itemCode ?? '').trim()) ?? null);
   /* PWP Code Voucher (migration 0130) — code-driven grant + atomic claim. A
      reward line earns its per-SKU pwp_price_sen ONLY if it carries a valid
@@ -4540,40 +4569,26 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      venue and a date, and must still record WHY it has no fair link rather than
      leaving a blank that reads the same as "nobody has looked".
 
-     The automatic PMS binding above is a real link when it fired, so it stands
-     when the picker resolves nothing. Non-fatal throughout — no fair-link
-     problem may block a sale, and the nightly reconcile retries PENDING. */
+     Non-fatal throughout — no fair-link problem may block a sale, and the
+     nightly reconcile retries PENDING. The rule — No fair, a scan's slip place
+     and date then the KEYER's fair (owner 2026-10-19), a typed pick, the brand's
+     booth then the keyer's own — is fair-binding.ts::fairLinkOnCreate. */
   {
-    const fair = await resolveFairForSave({
-      db: c.env.DB as unknown as FairDb,
-      companySql: activeCompanySql(c, 'p.company_id'),
-      venue: resolvedVenueName,
-      organizer:
-        typeof body.fairOrganizer === 'string' && body.fairOrganizer.trim()
-          ? body.fairOrganizer.trim()
-          : null,
-      /* The PICKED row's period, straight off the dropdown the operator used.
-         Sent since 2026-09-19 because the server has no other way to know WHICH
-         occurrence they meant: the order date is the day it was keyed, which for
-         a fair written up afterwards is not a day that fair was on. With the
-         period the pick resolves exactly; without it the server falls back to
-         the venue window, which is a guess between the fairs that were there. */
-      picked: fairPickedPeriod(body),
-      soDate: soDateForVenue,
-      brand: effectiveBrand,
+    const fairLink = await fairLinkOnCreate({
+      db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'),
+      companyCode: c.get('companyCode'), scanned: c.auditSource === 'scan',
+      keyerId: Number(c.get('houzsUser')?.id ?? NaN), body, venue: resolvedVenueName,
+      soDate: soDateForVenue, brand: effectiveBrand, bindingProjectId: projectIdToStamp,
     });
-    // Owner 2026-09-26: an explicit No-fair / showroom sale is a DECIDED state,
-    // not an unresolved blank — record it as NO_FAIR with no project link so the
-    // Sales Report can tell "deliberately no fair" from "not yet attributed".
-    const linkedId = body.noFair === true ? null : (fair.projectId ?? projectIdToStamp);
-    const fairMatch = body.noFair === true ? 'NO_FAIR' : (linkedId != null ? 'PICKED' : fair.match);
-    await scopeToCompany(
-      sb
-        .from('mfg_sales_orders')
-        .update({ project_id: linkedId, fair_match: fairMatch })
-        .eq('doc_no', docNo),
-      c,
-    );
+    await scopeToCompany(sb.from('mfg_sales_orders').update(fairLink.columns).eq('doc_no', docNo), c);
+    /* A scan's fair was the system's call: History says which rule made it (fair-audit.ts). */
+    if (fairLink.step) {
+      await recordFairChange({
+        sb, db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), docNo,
+        before: { projectId: null, fairMatch: null }, after: fairStateOf(fairLink.columns), how: 'scan',
+        actorId: user.id, actorName: null, note: SCAN_STEP_NOTE[fairLink.step],
+      });
+    }
   }
 
   /* PWP Code Voucher (migration 0130) — carry forward the un-applied reserved
@@ -4696,9 +4711,15 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      to READY immediately and the header advances to READY_TO_SHIP. Runs a GLOBAL
      re-walk (not scoped to this doc) so that if this higher-priority order steals
      stock from a lower-priority one, the loser regresses from READY in the SAME
-     pass instead of lagging. Best-effort: a failure never sinks the SO create. */
-  try { await recomputeSoStockAllocation(sb); }
-  catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-create failed:', e); }
+     pass instead of lagging. Best-effort: a failure never sinks the SO create.
+     NOT for a DRAFT (HC-0006 speed): DRAFT is in SO_TERMINAL_STATES, so the walk
+     never loads the new order and the full re-walk only cost the scan job
+     seconds. DRAFT -> CONFIRMED re-walks on the status route, and the 5-minute
+     sweep repairs anything else. */
+  if ((body as { asDraft?: unknown }).asDraft !== true) {
+    try { await recomputeSoStockAllocation(sb); }
+    catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-create failed:', e); }
+  }
 
   /* ERP -> AutoCount write-back. Queued, never pushed inline: the AutoCount
      host must not be able to fail a salesperson's Save. No-op while the flag is
@@ -4807,6 +4828,7 @@ mfgSalesOrders.post('/validate', async (c) => {
     // pre-dates the rule.
     fairChosen: str(body.fairOrganizer).trim() !== '' || isEdit,
     noFair: body.noFair === true,
+    fairWhy: fairWhyOf(body.fairWhy), // why no fair was filled in (GET /fair-default)
     /* The surfaces send the fair keys only when this draft picks or changes an
        event (components/fairPick.ts), so an old order's untouched pick never
        asks for a day it was saved without. */
@@ -5050,6 +5072,12 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
   const isConfirm = fromNorm === 'DRAFT' && toStatus === 'CONFIRMED';
   if (isConfirm) {
     const confirmProblems = await soConfirmProblemsForDoc(sb, docNo);
+    /* ...and the fair (owner 2026-10-19): a fair or No fair; a scan's booth needs
+       the person who scanned it on Sales Attending — fair-binding.ts. */
+    confirmProblems.push(...await fairConfirmProblems({
+      sb, db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), companyCode: c.get('companyCode'),
+      scope: (q) => scopeToCompanyId(q, co.companyId), docNo, confirmerId: Number(c.get('houzsUser')?.id ?? NaN), todayMyt: todayMyt(),
+    }));
     if (confirmProblems.length > 0) return c.json(validationFailedBody(confirmProblems), 422);
   }
   /* WHERE A CONFIRM LANDS. The scan review screen and the desktop draft fill
@@ -5058,13 +5086,20 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      Submitted, past the header-save rule that would have moved it (it fires on
      null -> date, and the date was already there). 171 orders on 2026-10-13.
      The confirm gate above still judges the CONFIRM; only the landing differs. */
+  let confirmProcRoll: { from: string | null; to: string } | null = null;
   if (isConfirm) {
-    const { data: dated, error: datedErr } = await scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_PROCESSING_DATE_COLUMN), co.companyId)
+    const { data: dated, error: datedErr } = await scopeToCompanyId(sb.from('mfg_sales_orders').select(`${SO_PROCESSING_DATE_COLUMN}, customer_delivery_date`), co.companyId)
       .eq('doc_no', docNo).maybeSingle();
     /* A failed read is not "no date": confirming into Submitted on a blip would
        file a proceeded order under the wrong tab, which is the defect itself. */
     if (datedErr) return c.json({ error: 'load_failed', reason: datedErr.message }, 500);
-    toStatus = liveStatusForProcessingDate((dated as Record<string, string | null> | null)?.[SO_PROCESSING_DATE_COLUMN] ?? null);
+    const datedRow = dated as Record<string, string | null> | null;
+    const storedProc = datedRow?.[SO_PROCESSING_DATE_COLUMN] ?? null;
+    /* HC-0113 — see processingDateOnConfirm. */
+    const roll = processingDateOnConfirm({ processingDate: storedProc, deliveryDate: datedRow?.customer_delivery_date, todayMY: todayMyt() });
+    if (!roll.ok) return c.json(validationFailedBody([roll.problem]), 422);
+    if (roll.write) confirmProcRoll = { from: storedProc, to: roll.write };
+    toStatus = liveStatusForProcessingDate(roll.write ?? storedProc);
   }
   /* ── Stock-location gate on the DRAFT -> live transition (owner 2026-08-13,
      company 1 only) — the SAME invariant the create path enforces. This is the
@@ -5078,6 +5113,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
     if (locationProblem) return c.json(validationFailedBody([locationProblem]), 422);
   }
   const patch: Record<string, unknown> = { status: toStatus, version: currentVersion + 1, updated_at: new Date().toISOString() };
+  if (confirmProcRoll) patch[SO_PROCESSING_DATE_COLUMN] = confirmProcRoll.to;
   if (toStatus === 'IN_PRODUCTION') {
     /* Column bound to the constant — see "WHY A CONSTANT" in
        shared/so-processing-date.ts. */
@@ -5188,6 +5224,25 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
 
     if (voucherPlan) await applySoCancelVouchers(sbx, docNo, voucherPlan);
 
+    /* The allocation recompute only walks live SOs, so a cancelled order's
+       lines kept READY + their claimed sofa batch forever. Release them here.
+       SERVICE lines are READY from birth (nothing to allocate) and stay so. */
+    if (isCancel) {
+      const { data: liveLines, error: lineErr } = await scopeToCompanyId(sbx.from('mfg_sales_order_items')
+        .select('id, item_code, item_group'), co.companyId)
+        .eq('doc_no', docNo).eq('cancelled', false);
+      if (lineErr) throw new Error(`so-cancel line read failed: ${lineErr.message}`);
+      const goodsIds = ((liveLines ?? []) as Array<{ id: string; item_code: string | null; item_group: string | null }>)
+        .filter((l) => !isServiceLine({ itemGroup: l.item_group, itemCode: l.item_code }))
+        .map((l) => l.id);
+      if (goodsIds.length > 0) {
+        const { error: relErr } = await scopeToCompanyId(sbx.from('mfg_sales_order_items')
+          .update({ stock_status: 'PENDING', stock_qty_ready: 0, allocated_batch_no: null }), co.companyId)
+          .eq('doc_no', docNo).in('id', goodsIds);
+        if (relErr) throw new Error(`so-cancel allocation release failed: ${relErr.message}`);
+      }
+    }
+
     // Audit row — best-effort on the ordinary path. Inside the cancel's atomic
     // command recordSoAudit throws instead, so a cancel can never commit the
     // voiding without the trail that explains it.
@@ -5206,6 +5261,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
       actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
       fieldChanges: [
         { field: 'status', from: fromStatus, to: toStatus },
+        ...(confirmProcRoll ? [{ field: 'processingDate', from: confirmProcRoll.from, to: confirmProcRoll.to }] : []),
         ...(voucherPlan ? soCancelVoucherAuditChanges(voucherPlan) : []),
       ],
       statusSnapshot: toStatus,
@@ -5985,6 +6041,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     delete updates['fair_date'];
     delete body['fairDate'];
   }
+  /* No fair, ticked on an edit (owner 2026-10-19: a scan draft cannot be confirmed
+     without a fair or this). A decided state, as on create; written only when it
+     changes. Unticking alone changes nothing — picking a fair does. */
+  if (body.noFair === true && !fairLink && (beforeRecord.fair_match !== 'NO_FAIR' || beforeRecord.project_id != null)) {
+    Object.assign(updates, { project_id: null, fair_match: 'NO_FAIR', fair_date: null }); body['fairDate'] = null;
+  }
   for (const [from, to] of map) {
     if (!(to in updates) || norm(updates[to]) !== norm(beforeRecord[to])) continue;
     delete updates[to];
@@ -6100,7 +6162,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        venue + date + brand detection create does (HC-0094), and what it cannot
        settle stays PENDING / AMBIGUOUS / UNMATCHED for the reconcile and the
        pending screen. */
-    if (!fairLink) {
+    if (!fairLink && body.noFair !== true) {
       const fair = await resolveFairForSave({
         db: c.env?.DB as unknown as FairDb,
         companySql: activeCompanySql(c, 'p.company_id'),
@@ -6597,6 +6659,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
         statusSnapshot: (beforeRow as { status?: string }).status ?? null,
       });
     }
+    /* The fair, named, whenever this edit moved it (owner 2026-10-19) — fair-audit.ts. */
+    await recordFairChange({
+      sb, db: c.env?.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), docNo,
+      before: fairStateOf(beforeRow), after: fairStateOf({ ...beforeRow, ...updates }), how: 'edit',
+      actorId: user.id, actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+    });
   }
 
   /* SO header edit may have changed customer_delivery_date or
@@ -11279,7 +11347,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     const nextDeliv = 'customerDeliveryDate' in headerChanges ? ymd(headerChanges['customerDeliveryDate']) : curDeliv;
     const procMoves = 'processingDate' in headerChanges && curProc !== '' && nextProc !== curProc;
     const delivForward = 'customerDeliveryDate' in headerChanges && deliveryBroughtForward(curDeliv, nextDeliv);
-    const hasLivePo = (procMoves || delivForward) && await soHasLivePo(sb, docNo);
+    const hasLivePo = procMoves && await soHasLivePo(sb, docNo);
     if (processingDateFrozenByPo({ storedProc: curProc, nextProc, hasLivePo })) {
       if (!hasHouzsPerm(c, PROCESSING_DATE_PO_OVERRIDE_KEY)) return c.json(PROCESSING_DATE_PO_LOCKED, 409);
       usesPoDateOverride = true;
@@ -11287,7 +11355,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     needsPurchaserOk = deliveryNeedsPurchaserOk({
       storedDeliv: curDeliv,
       nextDeliv: 'customerDeliveryDate' in headerChanges ? nextDeliv : null,
-      hasLivePo,
+      hasUnreceivedPo: delivForward && await soHasUnreceivedPo(sb, docNo),
     });
     const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
     /* Same predicate as every other write path (shared/so-processing-date), with

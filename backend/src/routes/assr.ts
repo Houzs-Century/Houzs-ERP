@@ -26,6 +26,7 @@ import {
   setItemCartonQty,
 } from "../services/assr";
 import { normalizeSlaHours } from "../services/assrSla";
+import { assrWindow } from "./lib/assr-window";
 import { openSupplierReturnRoute, patchSupplierReturnRoute, archiveSupplierReturnRoute } from "../services/assrSupplierReturns";
 import { reopenCaseRoute } from "../services/assrReopen";
 import { runSlaEscalation } from "../services/assrEscalation";
@@ -58,6 +59,7 @@ import type { AuthUser } from "../services/auth";
 import type { Context, MiddlewareHandler } from "hono";
 import { normalizePhone } from "../scm/shared/phone";
 import { ASSR_SUB_STATUS_KEYS } from "../scm/shared/assr-sub-statuses";
+import { sendCompletionSurvey } from "../services/assrCompletionSurvey";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -268,7 +270,7 @@ function assrVisibilitySql(
 /** The row-level scope for the aggregate endpoints, resolved once per request.
  *  Returns a builder because the same scope has to be rendered against several
  *  table aliases within one handler. */
-async function assrVisibilityScope(c: {
+export async function assrVisibilityScope(c: {
   get(key: "user"): unknown;
   env: Env;
 }): Promise<(prefix?: string) => { sql: string; binds: string[] }> {
@@ -642,9 +644,10 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
   // to cases whose complaint / creation date falls inside the window —
   // previously they were always "real-time across all data" and so
   // looked frozen as the user switched periods.
-  const sinceDays = Math.min(730, Math.max(1, parseInt(c.req.query("since_days") || "90", 10) || 90));
+  const win = assrWindow({ from: c.req.query("from"), to: c.req.query("to"), since_days: c.req.query("since_days") });
+  const sinceDays = win.days;
   const periodAnd =
-    `AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`;
+    `AND ${win.sql("COALESCE(c.complained_date, c.created_at)")}`;
   // Allowed-companies predicates ("" when unresolved) — one per table alias
   // used below.
   const coC = assrCompanySql(c, "c.company_id");
@@ -798,7 +801,7 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
         AND closed_at IS NOT NULL
         AND julianday(closed_at) > julianday(created_at)
         AND (julianday(closed_at) - julianday(created_at)) < 365
-        AND closed_at >= date('now', '-${sinceDays} days')${coBare}${visBare.sql}`
+        AND ${win.sql("closed_at")}${coBare}${visBare.sql}`
     )
       .bind(...visBare.binds)
       .first<{ avg_days: number | null }>(),
@@ -2282,14 +2285,15 @@ app.post("/run-escalation", requirePermission("service_cases.manage"), async (c)
 // ── Quality metrics (for manager dashboard) ───────────────────
 
 app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
-  const sinceDays = Math.min(730, Math.max(1, parseInt(c.req.query("since_days") || "90", 10) || 90));
+  const win = assrWindow({ from: c.req.query("from"), to: c.req.query("to"), since_days: c.req.query("since_days") });
+  const sinceDays = win.days;
   // Period filter falls back to created_at when complained_date is
   // NULL — legacy rows + manual SQL inserts often skipped the intake
   // date, so a strict `complained_date >= …` was silently excluding
   // them from EVERY window (which makes 30d / 90d / 365d look identical
   // because the same too-small subset survives the filter).
   const sinceFor = (prefix = "") =>
-    `AND COALESCE(${prefix}complained_date, ${prefix}created_at) >= date('now', '-${sinceDays} days')`;
+    `AND ${win.sql(`COALESCE(${prefix}complained_date, ${prefix}created_at)`)}`;
   const sinceClause = sinceFor();
   // Allowed-companies predicates per table alias ("" when unresolved).
   const coBare = assrCompanySql(c);
@@ -2492,6 +2496,8 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
 
   return c.json({
     since_days: sinceDays,
+    from: win.from,
+    to: win.to,
     headline,
     ncr: ncr.results ?? [],
     issue_categories: issueCategories.results ?? [],
@@ -2542,7 +2548,8 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
   if (!DRILL_METRICS.has(metric as any)) {
     return c.json({ error: `Unknown metric: ${metric}` }, 400);
   }
-  const sinceDays = Math.min(730, Math.max(1, parseInt(c.req.query("since_days") || "90", 10) || 90));
+  const win = assrWindow({ from: c.req.query("from"), to: c.req.query("to"), since_days: c.req.query("since_days") });
+  const sinceDays = win.days;
   const limit = Math.min(parseInt(c.req.query("limit") || "100", 10), 500);
 
   // Collect WHERE fragments + their bind values together so user input
@@ -2580,19 +2587,19 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
       conds.push(assrOpenStageSql("c"));
       break;
     case "total_period":
-      conds.push(`COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
+      conds.push(`${win.sql("COALESCE(c.complained_date, c.created_at)")}`);
       break;
     case "closed_period":
-      conds.push(`c.stage = 'completed' AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
+      conds.push(`c.stage = 'completed' AND ${win.sql("COALESCE(c.complained_date, c.created_at)")}`);
       break;
     case "breach_period":
       conds.push(`${assrOpenStageSql("c")}
         AND c.deadline_at IS NOT NULL
         AND datetime('now') > c.deadline_at
-        AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
+        AND ${win.sql("COALESCE(c.complained_date, c.created_at)")}`);
       break;
     case "qa_passed":
-      conds.push(`c.quality_review_passed = 1 AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
+      conds.push(`c.quality_review_passed = 1 AND ${win.sql("COALESCE(c.complained_date, c.created_at)")}`);
       break;
     case "over_1_month":
       conds.push(`${assrOpenStageSql("c")}
@@ -2622,7 +2629,7 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
       if (!name) {
         return c.json({ error: "We couldn't load that customer's cases. Please try again." }, 400);
       }
-      conds.push(`c.customer_name = ? AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
+      conds.push(`c.customer_name = ? AND ${win.sql("COALESCE(c.complained_date, c.created_at)")}`);
       binds.push(name);
       if (phone) {
         conds.push("c.phone = ?");
@@ -2642,7 +2649,7 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
         return c.json({ error: "We couldn't load that item's cases. Please try again." }, 400);
       }
       joinItems = true;
-      conds.push(`i.item_code = ? AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
+      conds.push(`i.item_code = ? AND ${win.sql("COALESCE(c.complained_date, c.created_at)")}`);
       binds.push(code);
       break;
     }
@@ -2817,64 +2824,13 @@ app.post("/:id/transition", requirePermission("service_cases.write"), async (c) 
     // survey recipient, the email service silently skips (and still
     // logs the attempt). Prefer `email_for_survey` (proposal §14 —
     // separate from notify channel) and fall back to `customer_email`.
-    if (body.stage === "completed") {
-      const row = await c.env.DB.prepare(
-        `SELECT assr_no, customer_name, customer_email, email_for_survey, company_id
-           FROM assr_cases WHERE id = ?`
-      )
-        .bind(id)
-        .first<{
-          assr_no: string;
-          customer_name: string | null;
-          customer_email: string | null;
-          email_for_survey: string | null;
-          company_id: number | null;
-        }>();
-      const surveyTo = row?.email_for_survey || row?.customer_email;
-      if (surveyTo) {
-        // Customer-facing: carry the DOCUMENT's company identity (the case
-        // row's company_id), not the operator's active company.
-        const caseCompanyCode = await resolveCompanyCode(c.env, row!.company_id);
-        const token = await issueSurveyToken(c.env, id);
-        const link = publicUrl(c.env, `/survey/${token}`, caseCompanyCode);
-        const name = (row!.customer_name || "").split(" ")[0] || "there";
-        // Footer must carry the CASE's company (2990 cases must not sign off as
-        // Houzs) — derive it from the document's branding, not a hardcode.
-        const caseBranding = await getBrandingForCompany(c.env, caseCompanyCode);
-        await sendEmail(c.env, {
-          to: surveyTo,
-          subject: `How was your experience with case ${row!.assr_no}?`,
-          html: surveyEmailHtml(name, row!.assr_no, link, caseBranding.companyName),
-          purpose: "assr_survey",
-          refType: "assr",
-          refId: id,
-          companyCode: caseCompanyCode,
-        });
-      }
-    }
+    if (body.stage === "completed") await sendCompletionSurvey(c.env, id);
     return c.json({ ok: true });
   } catch (e: any) {
     return c.json({ error: e.message }, 400);
   }
 });
 
-function surveyEmailHtml(name: string, assrNo: string, link: string, companyName: string): string {
-  return `
-    <div style="font-family:system-ui,Segoe UI,Roboto,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#222">
-      <h2 style="margin:0 0 12px">Thanks for your patience, ${name}.</h2>
-      <p>We've wrapped up your service case <strong>${assrNo}</strong>. Your feedback helps us improve.</p>
-      <p style="margin:24px 0">
-        <a href="${link}"
-           style="display:inline-block;padding:12px 22px;background:#a16a2e;color:#fff;border-radius:6px;text-decoration:none;font-weight:600">
-          Rate your experience
-        </a>
-      </p>
-      <p style="color:#777;font-size:13px">Takes about 30 seconds — one rating + an optional note.</p>
-      <p style="color:#aaa;font-size:12px;border-top:1px solid #eee;padding-top:14px;margin-top:28px">
-        ${companyName}
-      </p>
-    </div>`;
-}
 app.post("/:id/supplier-returns", requirePermission("service_cases.write"), openSupplierReturnRoute);
 app.patch("/:id/supplier-returns/:roundId{[0-9]+}", requirePermission("service_cases.write"), patchSupplierReturnRoute);
 app.delete("/:id/supplier-returns/:roundId{[0-9]+}", requirePermission("service_cases.write"), archiveSupplierReturnRoute);

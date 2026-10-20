@@ -41,6 +41,8 @@ const ROUTE_CHUNKS: Record<string, () => Promise<unknown>> = {
   "/announcements": () => import("../pages/Announcements"),
   "/team": () => import("../pages/Team"),
   "/system-health": () => import("../pages/SystemHealth"),
+  "/ai-usage": () => import("../pages/AiUsage"),
+  "/ocr": () => import("../pages/OcrDashboard"),
   "/agents": () => import("../pages/Agents"),
   "/settings": () => import("../pages/Settings"),
   // Supply Chain hubs — the /scm landing grid and the six Level-2 sub-group

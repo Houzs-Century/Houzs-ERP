@@ -11,6 +11,7 @@
 // Mounted at '/delivery-orders-mfg' in apps/api/src/index.ts.
 
 import { Hono } from 'hono';
+import { propagateDoCrewToTrip } from '../lib/trip-crew-sync';
 import type { Context } from 'hono';
 import { normalizePhone } from '../shared/phone';
 import { firstUndeliverableSo, soNotDeliverableResponse } from '../lib/source-document-gates';
@@ -27,7 +28,9 @@ import { supabaseAuth } from '../middleware/auth';
 import { statusCapabilityRefusal, POD_STATES } from '../lib/do-status-capability';
 import { resolveDeliveryScope, scopeMatchesAssignment } from '../lib/deliveryScope';
 import { resolveCrewSeats } from '../lib/crew-seats';
-import { fetchDoCrewAssignment } from './delivery-planning';
+import { fetchDoCrewAssignment, doPodPhotoHandler } from './delivery-pod-context';
+import { startTripIfPlanned } from './delivery-job-progress';
+import { claimPodPhotos } from '../lib/pod-photo-claim';
 import { revertDeliveryOrderHandler } from './delivery-order-revert';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
@@ -320,7 +323,7 @@ const HEADER =
      the Delivery Planning board's /fields PATCH; the DO Detail GET / POST /
      PATCH must carry it too so the DO drawer can show + save it. */
   'arrives_em_warehouse_date, ' +
-  'pod_r2_key, signature_data, status, notes, created_at, created_by, updated_at, ' +
+  'pod_r2_key, pod_photo_keys, signature_data, departure_at, arrival_at, pod_lat, pod_lng, status, notes, created_at, created_by, updated_at, ' +
   /* Mig 0324 — the HOLD MARKER, the DO's first hold ever and the one that
      needed no enum change. docs/modules/delivery-order.md. */
   HOLD_COLUMNS;
@@ -4074,7 +4077,11 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
     }
   }
 
-  return c.json({ crew });
+  /* One crew per lorry run: the run this DO rides, and its other DOs, follow
+     (Last Mile and the drivers' phones read them). Reported, not swallowed. */
+  const tripSync = await propagateDoCrewToTrip(sb, id, { driver1Id, driver2Id, helper1Id, helper2Id, lorryId }, user.id)
+    .then(() => null, (e: Error) => String(e.message).slice(0, 160));
+  return c.json({ crew, ...(tripSync ? { tripSyncError: tripSync } : {}) });
 });
 
 // ── Header PATCH (editable SO-style fields) ───────────────────────────────
@@ -4933,7 +4940,7 @@ deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
 export const patchDeliveryOrderStatusHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
   let body: {
-    status?: string; signatureData?: string; podKey?: string;
+    status?: string; signatureData?: string; podKey?: string; podKeys?: unknown;
     podLat?: number; podLng?: number; podAccuracyM?: number; podLocatedAt?: string;
   }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
@@ -5047,6 +5054,11 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   // into the same update below.
   const tsNum: Record<string, number> = {};
   if (toStatus === 'DISPATCHED') ts.dispatched_at = now;
+  /* "On the way" is the IN_TRANSIT flip: it stamped nothing, so the board's
+     Departure and the phone's timeline never had a time. The first flip stamps
+     it and starts the DO's trip, so the phone's live location is accepted. */
+  const startsRun = toStatus === 'IN_TRANSIT' && (prevStatus ?? '').toUpperCase() !== 'IN_TRANSIT';
+  if (startsRun) ts.departure_at = now;
   if (toStatus === 'SIGNED')     ts.signed_at = now;
   if (toStatus === 'DELIVERED')  ts.delivered_at = now;
   /* POD capture — the mobile app posts the proof-of-delivery signature +
@@ -5055,7 +5067,18 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      photo. Only write when present so a plain status change never blanks
      an existing POD. */
   if (typeof body.signatureData === 'string' && body.signatureData) ts.signature_data = body.signatureData;
-  if (typeof body.podKey === 'string' && body.podKey) ts.pod_r2_key = body.podKey;
+  /* Every photo of the POD; the first also stays in pod_r2_key. Only the caller's
+     own uploads are accepted, and claiming them stops the slip reaper deleting
+     them an hour later (lib/pod-photo-claim.ts). */
+  const podRaw = [body.podKey, ...(Array.isArray(body.podKeys) ? body.podKeys : [])].filter((k) => typeof k === 'string' && k);
+  let podKeys: string[] = [];
+  if (podRaw.length) {
+    const claim = await claimPodPhotos(sb, c, user?.id ? String(user.id) : null, podRaw);
+    if (!claim.ok) return c.json({ error: 'photo_not_accepted', reason: claim.reason }, 400);
+    podKeys = claim.keys;
+  }
+  if (podKeys.length) ts.pod_r2_key = podKeys[0]!;
+  const tsJson: Record<string, string[]> = podKeys.length ? { pod_photo_keys: podKeys } : {};
 
   /* WHERE the delivery happened (mig 0249). The phone has been taking this
      reading and discarding it since the POD screen shipped — MobilePOD's own
@@ -5141,7 +5164,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   let data: { id: string; status: string } | null;
   if (toStatus === 'CANCELLED') {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
-      .update({ status: toStatus, ...ts, ...tsNum })
+      .update({ status: toStatus, ...ts, ...tsNum, ...tsJson })
       .eq('id', id), co.companyId).neq('status', 'CANCELLED')
       .select('id, status').maybeSingle();
     // HC-0004 T2: an SI line raced in after the doHasDownstream check above.
@@ -5156,7 +5179,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     data = updated as { id: string; status: string };
   } else {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
-      .update({ status: toStatus, ...ts, ...tsNum }).eq('id', id), co.companyId).select('id, status').single();
+      .update({ status: toStatus, ...ts, ...tsNum, ...tsJson }).eq('id', id), co.companyId).select('id, status').single();
     if (isSoLineOverDelivered(error)) return c.json({ error: 'over_delivery', message: 'This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.', reason: error?.message }, 409);
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     data = updated as { id: string; status: string };
@@ -5233,6 +5256,17 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     });
   }
 
+  /* The DO's first On the way starts its lorry run (so the phone's live location
+     is accepted) — only once the DO itself saved, and never failing the save. */
+  if (startsRun) {
+    try {
+      const { data: stop, error: stopErr } = await sb.from('trip_stops').select('trip_id').eq('do_id', id)
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (stopErr) throw new Error(stopErr.message);
+      await startTripIfPlanned(sb, (stop as { trip_id: string | null } | null)?.trip_id ?? null);
+    } catch (e) { console.error('[do-status] could not start the trip:', e); }
+  }
+
   return c.json({
     deliveryOrder: data,
     movementErrors: movementErrors.length ? movementErrors : undefined,
@@ -5240,6 +5274,46 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   });
 };
 deliveryOrdersMfg.patch('/:id/status', patchDeliveryOrderStatusHandler);
+
+/* PATCH .../arrival — the driver's "Arrived" tap. It used to go through the
+   general PATCH /:id, which a driver (no scm.sales.delivery edit) can never
+   reach, so the run-sheet's Mark arrived answered 403 for exactly the people it
+   exists for. This stamps arrival_at with SERVER time and nothing else, under
+   the same rules as the POD: dispatch capability, the caller's own job, and a
+   DO that is already on the road. A repeat tap keeps the first arrival. */
+export const patchDeliveryOrderArrivalHandler = async (c: any) => {
+  const sb = c.get('supabase'); const id = c.req.param('id');
+  if (c.get('scmWriteBypassed')) {
+    const capRefusal = statusCapabilityRefusal(c.get('houzsUser'), 'IN_TRANSIT');
+    if (capRefusal) return c.json(capRefusal, 403);
+  }
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const { data: cur, error: readErr } = await scopeToCompanyId(
+    sb.from('delivery_orders').select('status, arrival_at').eq('id', id), co.companyId,
+  ).maybeSingle();
+  if (readErr) return c.json({ error: 'load_failed', reason: readErr.message }, 500);
+  if (!cur) return c.json(NOT_THIS_COMPANY, 404);
+  const row = cur as { status: string | null; arrival_at: string | null };
+  const status = (row.status ?? '').toUpperCase();
+  if (status !== 'DISPATCHED' && status !== 'IN_TRANSIT')
+    return c.json({ error: 'illegal_status_transition', reason: 'Arrival can only be recorded for a delivery that is on the road.' }, 409);
+  if (c.get('scmWriteBypassed')) {
+    const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
+    if (scope.mode !== 'all' && !scopeMatchesAssignment(scope, await fetchDoCrewAssignment(sb, id)))
+      return c.json({ error: 'not_your_job', reason: 'You can only update a delivery assigned to you.' }, 403);
+  }
+  if (row.arrival_at) return c.json({ deliveryOrder: { id, arrival_at: row.arrival_at } });
+  const now = new Date().toISOString();
+  const { error } = await scopeToCompanyId(
+    sb.from('delivery_orders').update({ arrival_at: now, updated_at: now }).eq('id', id).is('arrival_at', null),
+    co.companyId,
+  );
+  if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+  return c.json({ deliveryOrder: { id, arrival_at: now } });
+};
+deliveryOrdersMfg.patch('/:id/arrival', patchDeliveryOrderArrivalHandler);
+deliveryOrdersMfg.get('/:id/pod-photo/:n', doPodPhotoHandler);
 deliveryOrdersMfg.post('/:id/revert', revertDeliveryOrderHandler); // Ops-lead exception power (scm.do.revert) — routes/delivery-order-revert.ts
 
 /* PATCH .../hold — the mig-0324 MARKER, never `status`. routes/document-hold-routes.ts. */

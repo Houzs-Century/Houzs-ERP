@@ -725,7 +725,7 @@ async function runSoStockAllocation(
          that could answer differently. Reading a superset and intersecting is
          exact — `dedicatedReady` is only ever consulted for bound line ids. */
       const boundIds = new Set([...boundNeeds.map((n) => n.id), ...sofaLineRecs.map((s) => s.id)]);
-      const { data: poLinkRows } = await paginateAll<{
+      const { data: poLinkRows, error: poLinkError } = await paginateAll<{
         id: string; po_items: Array<{ qty: number; received_qty: number | null }> | null;
       }>((from, to) => sb
         .from('mfg_sales_order_items')
@@ -735,6 +735,12 @@ async function runSoStockAllocation(
         .gt('po_items.received_qty', 0)
         .order('id')
         .range(from, to));
+      /* Unchecked until the READY audit (F3, 2026-10-16): a failed read looked
+         like "no PO has received anything", so every bound READY line was
+         written PENDING and READY_TO_SHIP orders regressed, under ok:true with
+         no retry. Throwing here, before step 8 writes anything, turns it into
+         the wrapper's queued retry like the other reads in this function. */
+      if (poLinkError) throw new Error(`allocation PO-receipt load failed: ${poLinkError.message}`);
       for (const r of poLinkRows ?? []) {
         if (!boundIds.has(r.id)) continue;
         for (const p of r.po_items ?? []) {

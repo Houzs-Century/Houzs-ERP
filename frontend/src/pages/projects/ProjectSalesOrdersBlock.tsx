@@ -11,6 +11,7 @@
  * separately so the section can put the order count in its title.
  */
 import { Link } from "react-router-dom";
+import { markWorkspaceOpenIntent } from "../../lib/workspaceTabs";
 import { api } from "../../api/client";
 import { useQuery, type QueryState } from "../../hooks/useQuery";
 import { cn, formatCurrency, formatDate } from "../../lib/utils";
@@ -157,6 +158,9 @@ export function ProjectSalesOrdersBlock({
                     <td className="px-2 py-1.5 font-mono text-[10.5px]">
                       <Link
                         to={`/scm/sales-orders/${encodeURIComponent(r.doc_no)}`}
+                        // Open the SO in its own workspace tab, keeping the
+                        // project open (owner 2026-10-15; see ProjectSalesBillsBlock).
+                        onClick={(e) => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) markWorkspaceOpenIntent(true); }}
                         className="font-semibold text-accent hover:underline"
                       >
                         {r.doc_no}
@@ -189,6 +193,11 @@ export function ProjectSalesOrdersBlock({
                       >
                         {soStatusLabel(r.status)}
                       </span>
+                      {r.venue_differs && (
+                        <span title={`Venue on the order: ${r.venue_differs}`} className="ml-1 inline-flex rounded-full bg-amber-100 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-amber-800">
+                          Venue differs
+                        </span>
+                      )}
                     </td>
                   </tr>
                 );

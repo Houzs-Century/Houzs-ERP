@@ -28,8 +28,9 @@ import {
 } from "./announcementRichText";
 import { bumpConfigVersion } from "../services/configCache";
 import type { ConfigCacheEnv } from "../services/configCache";
+import { recordAi, type AiUsageTag } from "../services/aiUsage";
 
-const CLAUDE_MODEL = "claude-sonnet-4-6";
+export const CLAUDE_MODEL = "claude-sonnet-4-6";
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
 // Anthropic returns transient 429 rate-limits and 529 "Overloaded" / 5xx spikes
@@ -197,6 +198,7 @@ export async function translateAnnouncement(args: {
    *  HTML is re-canonicalised and split back into body / bodyHtml per language. */
   bodyHtml?: string | null;
   apiKey: string | undefined;
+  usage: AiUsageTag | null;
 }): Promise<AnnouncementTranslations | null> {
   const { title, body, apiKey } = args;
   const bodyHtml = args.bodyHtml ? sanitizeAnnouncementHtml(args.bodyHtml) : "";
@@ -206,7 +208,7 @@ export async function translateAnnouncement(args: {
   const userPayload = JSON.stringify({ title, body: bodyHtml || body });
 
   try {
-    const resp = await anthropicFetchWithRetry({
+    const resp = await recordAi(args.usage, anthropicFetchWithRetry({
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -230,7 +232,7 @@ export async function translateAnnouncement(args: {
           },
         ],
       }),
-    });
+    }));
 
     if (!resp.ok) return null;
     const bodyText = await resp.text();
@@ -245,7 +247,7 @@ export async function translateAnnouncement(args: {
       parsedResp.content?.find((b) => b.type === "text")?.text ?? "";
     const parsed = parseTranslationsText(firstText);
     return parsed && bodyHtml ? splitRichTranslations(parsed) : parsed;
-  } catch {
+  } catch (e) {
     return null;
   }
 }
@@ -277,6 +279,7 @@ export async function translateAndStore(
   env: ConfigCacheEnv & { DB: D1Database; ANTHROPIC_API_KEY?: string },
   id: string,
   src: TranslationSource,
+  usage: AiUsageTag | null,
 ): Promise<TranslateAndStoreResult> {
   try {
     const translations = await translateAnnouncement({
@@ -284,6 +287,7 @@ export async function translateAndStore(
       body: src.body,
       bodyHtml: src.bodyHtml,
       apiKey: env.ANTHROPIC_API_KEY,
+      usage,
     });
     if (!translations) return "none";
     const r = await env.DB.prepare(

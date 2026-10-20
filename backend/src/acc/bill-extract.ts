@@ -24,6 +24,7 @@
 /* The image allowlist lives in vision-blocks.ts — ONE home for "what images
    can Claude read here", shared with the assistant and the scan routes. */
 import { ASSISTANT_IMAGE_MIMES as BILL_IMAGE_MIMES } from '../services/vision-blocks';
+import { recordAiError, recordAiResponse, type AiUsageTag } from '../services/aiUsage';
 
 export { BILL_IMAGE_MIMES };
 
@@ -247,6 +248,7 @@ export async function readPaperJson(
   apiKey: string,
   files: BillFile[],
   prompt: string,
+  usage: AiUsageTag | null,
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ ok: true; json: unknown } | { ok: false; reason: string }> {
   const blocks = files.map((f) => (
@@ -273,8 +275,10 @@ export async function readPaperJson(
       }),
     });
   } catch (e) {
+    await recordAiError(usage, e);
     return { ok: false, reason: `The reader could not be reached: ${e instanceof Error ? e.message : String(e)}` };
   }
+  await recordAiResponse(usage, res);
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     return { ok: false, reason: `The reader refused (${res.status}): ${body.slice(0, 200)}` };
@@ -295,9 +299,10 @@ export async function readPaperJson(
 export async function extractOneBill(
   apiKey: string,
   files: BillFile[],
+  usage: AiUsageTag | null,
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ ok: true; extraction: BillExtraction } | { ok: false; reason: string }> {
-  const read = await readPaperJson(apiKey, files, PROMPT, fetchImpl);
+  const read = await readPaperJson(apiKey, files, PROMPT, usage, fetchImpl);
   if (!read.ok) return read;
   if (!read.json) return { ok: false, reason: 'The reader answered, but not with a bill — try a clearer photo.' };
   return { ok: true, extraction: coerceBillJson(read.json) };

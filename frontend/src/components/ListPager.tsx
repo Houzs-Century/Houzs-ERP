@@ -33,6 +33,9 @@ interface Props {
    *  matches Pagination exactly, which shows no noun ("1–50 of 795", not
    *  "Showing 1–50 of 795 orders"). Kept so the ten call sites need no edit. */
   noun?: string;
+  /** A short honesty line beside the count, e.g. that a column filter narrows
+   *  only the loaded page. null renders nothing. */
+  note?: string | null;
 }
 
 export function ListPager({
@@ -42,6 +45,7 @@ export function ListPager({
   onPageChange,
   onPageSizeChange,
   perPageOptions = DEFAULT_PER_PAGE,
+  note = null,
 }: Props) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const start = total === 0 ? 0 : page * pageSize + 1;
@@ -59,6 +63,7 @@ export function ListPager({
           <span className="text-ink-muted">of</span>
           <span className="font-mono text-ink">{total.toLocaleString()}</span>
         </div>
+        {note && <span className="text-[11px] text-warning-text" role="note">{note}</span>}
         {onPageSizeChange && (
           <div className="flex items-center gap-1.5">
             <span className="hidden text-[10px] font-semibold uppercase tracking-wider text-ink-muted sm:inline">

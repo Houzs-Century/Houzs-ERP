@@ -33,7 +33,7 @@ lorries.use('*', supabaseAuth);
 // that same audience. Fleet money is visible to the fleet audience. If that
 // ruling ever changes it changes for both routes together, not just this one.
 const COLS = [
-  'id', 'plate', 'type', 'is_internal', 'warehouse_id', 'capacity_m3', 'capacity_kg',
+  'id', 'plate', 'type', 'is_internal', 'warehouse_id', 'warehouse_ids', 'capacity_m3', 'capacity_kg',
   'active', 'notes', 'created_at', 'updated_at',
   'model', 'purchase_date', 'purchase_price_sen',
   'purchase_invoice_key', 'purchase_invoice_name', 'purchase_invoice_mime', 'purchase_invoice_size',
@@ -93,6 +93,14 @@ function toNumericOrNull(v: unknown): number | null {
    not that exact shape is REJECTED rather than coerced: these are compliance
    dates, and a silently-mangled road-tax expiry is worse than a 400. Postgres
    would 22007 on garbage anyway; this turns that 500 into an honest 400. */
+/* A lorry serves one or more warehouses (owner, 2026-10-16). warehouse_ids is
+   the set; warehouse_id stays as its first entry for readers that know one. */
+function warehouseColumns(body: Record<string, unknown>): { warehouse_id: string | null; warehouse_ids: string[] } {
+  const raw = Array.isArray(body.warehouseIds) ? body.warehouseIds : body.warehouseId ? [body.warehouseId] : [];
+  const ids = [...new Set(raw.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()))];
+  return { warehouse_id: ids[0] ?? null, warehouse_ids: ids };
+}
+
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 function toDateOrNull(v: unknown): { ok: true; value: string | null } | { ok: false } {
   if (v === null || v === undefined || v === '') return { ok: true, value: null };
@@ -189,7 +197,7 @@ lorries.post('/', async (c) => {
     plate,
     type,
     is_internal: link.ownFlag,
-    warehouse_id: (body.warehouseId as string) || null,
+    ...warehouseColumns(body),
     threepl_company_id: link.carrierId,
     length_ft: lengthFt,
     width_ft: widthFt,
@@ -250,7 +258,7 @@ lorries.patch('/:id', async (c) => {
     if (!LORRY_TYPES.has(type)) return c.json({ error: 'invalid_type' }, 400);
     updates.type = type;
   }
-  if (body.warehouseId !== undefined) updates.warehouse_id = (body.warehouseId as string) || null;
+  if (body.warehouseIds !== undefined || body.warehouseId !== undefined) Object.assign(updates, warehouseColumns(body));
   if (body.capacityM3 !== undefined) updates.capacity_m3 = toNumericOrNull(body.capacityM3);
   if (body.capacityKg !== undefined) updates.capacity_kg = toNumericOrNull(body.capacityKg);
   // WS3: box dimensions (ft). When the edit carries all three, capacity_m3 is
@@ -393,6 +401,25 @@ lorries.get('/km-cost', async (c) => {
     return { lorry_id: l.id as string, plate: l.plate as string, km, cost_per_km_sen: rate, cost_sen: costSen(km, rate) };
   }).sort((a, b) => a.plate.localeCompare(b.plate));
   return c.json({ date, lorries: out });
+});
+
+// One lorry's driven track for a Malaysia day — its Velocity fixes in time order
+// (Fleet Health's lorry page draws them as the route it actually drove), plus the
+// km they add up to. Unified fleet like /positions/latest.
+lorries.get('/:id/track', async (c) => {
+  // company-scope: UNIFIED FLEET — one shared fleet across all companies (lorries.ts:132), same as /positions/latest and /km-cost.
+  const date = c.req.query('date') ?? new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+  const day = ISO_DATE.test(date) ? myDayWindow(date) : null;
+  if (!day) return c.json({ error: 'invalid_date', reason: 'date must be YYYY-MM-DD' }, 400);
+  const { data, error } = await paginateAll<Fix & { speed_kmh: number | null; street: string | null }>((f, t) => c.get('supabase').from('lorry_positions')
+    .select('lat, lng, recorded_at, speed_kmh, street')
+    .eq('lorry_id', c.req.param('id'))
+    .gte('recorded_at', day.from).lt('recorded_at', day.to)
+    .order('recorded_at').order('id')
+    .range(f, t));
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const fixes = data ?? [];
+  return c.json({ date, km: kmFromFixes(fixes), fixes });
 });
 
 export default lorries;

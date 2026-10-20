@@ -81,6 +81,7 @@ import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER,
   AMENDMENT_NOTHING_TO_SUBMIT } from '../../vendor/scm/lib/so-amendment-submit';
 import { useAmendmentSubmitDialog, RequestProcessingDateRemoval } from '../../vendor/scm/components/AmendmentSubmitDialog';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { soConfirmDateNote } from '../../lib/soConfirmDateNote';
 import { addressLineProps } from '../../lib/acColumnWidths';
 /* lib/utils formatDate (NOT the vendored fmtDate) for the amendment's header
    dates: these are bare YYYY-MM-DD strings, and fmtDate's `new Date(d)` parses
@@ -142,7 +143,7 @@ import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useAuth } from '../../vendor/scm/lib/auth';
 import { useVenues } from '../../vendor/scm/lib/venues-queries';
 import { FairDayPicker, FairPicker } from '../../components/FairPicker';
-import { fairDayCheck, fairEditPatch, fairEventOf, fairPickValue, linkedEvent, type LinkedFair } from '../../components/fairPick';
+import { fairDayCheck, fairEditPatch, fairElsewhereLine, fairEventOf, fairPickValue, linkedEvent, type LinkedFair } from '../../components/fairPick';
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { generateSalesOrderPdf } from '../../vendor/scm/lib/sales-order-pdf';
@@ -288,7 +289,7 @@ type SoHeader = {
      POST/PATCH when the row's salesperson belongs to a venue. */
   venue_id: string | null;
   fair?: LinkedFair | null; // the linked event (owner 2026-09-24); absent on an older server
-  fair_date?: string | null; // the day of that event the order was written on
+  fair_date?: string | null; fair_match?: string | null; // the day of that event; how it was linked
   branding: string | null;
   transfer_to: string | null;
   address1: string | null;
@@ -2063,9 +2064,10 @@ export const SalesOrderDetail = () => {
             </Button>
             <Button variant="primary"
               onClick={async () => {
+                const dateNote = soConfirmDateNote(header.processing_date, header.customer_delivery_date);
                 if (!(await askConfirm({
                   title: `Confirm ${header.doc_no}?`,
-                  body: 'This turns the draft into a live, confirmed sales order — it will appear in MRP / PO / DO flows and KPIs.',
+                  body: <>This turns the draft into a live, confirmed sales order — it will appear in MRP / PO / DO flows and KPIs.{dateNote && <><br /><br /><strong>{dateNote}</strong></>}</>,
                   confirmLabel: 'Confirm Order',
                 }))) return;
                 updateStatus.mutate({ docNo: header.doc_no, status: 'CONFIRMED', expectedStatus: header.status });
@@ -2881,7 +2883,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
        master link is durable. */
     venue: h.venue ?? '',
     venueId: h.venue_id ?? '',
-    fair: linkedEvent(h.venue, h.fair, h.fair_date ?? null),
+    fair: linkedEvent(h.venue, h.fair, h.fair_date ?? null), noFair: h.fair_match === 'NO_FAIR',
     phone: h.phone ?? '',
     address1: h.address1 ?? '',
     address2: h.address2 ?? '',
@@ -2925,7 +2927,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
        staff.venue_id. We persist both the FK + the resolved name. */
     venue: f.venue,
     venueId: f.venueId || null,
-    ...fairEditPatch(f.fair),
+    ...fairEditPatch(f.fair), ...(f.noFair ? { noFair: true } : {}),
     phone: f.phone,
     address1: f.address1,
     address2: f.address2,
@@ -3433,7 +3435,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 disabled={inputsDisabled}
                 onChange={(next) => setForm((s) => ({
                   ...s,
-                  fair: fairEventOf(next),
+                  fair: fairEventOf(next), noFair: fairEventOf(next) ? false : s.noFair,
                   venue: next.venue ?? '',
                   venueId: (venuesQ.data ?? []).find(
                     (v) => v.name.trim().toLowerCase() === (next.venue ?? '').trim().toLowerCase(),
@@ -3442,6 +3444,10 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 wrapClassName={styles.selectWrap}
                 selectClassName={styles.fieldSelect}
               />
+              {!form.fair && fairElsewhereLine(header.venue, header.fair) && <span style={{ fontSize: '11px', marginTop: '4px' }}>{fairElsewhereLine(header.venue, header.fair)}</span>}
+              {(header.status as string) === 'DRAFT' && !form.fair && (/* a draft says No fair here too (owner 2026-10-19) */
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', marginTop: '6px', cursor: 'pointer' }}><input type="checkbox" checked={form.noFair} disabled={inputsDisabled} onChange={(e) => setForm((s) => ({ ...s, noFair: e.target.checked }))} />
+                  <span>No fair (showroom / direct sale)</span></label>)}
             </label>
             {form.fair && (/* which DAY of the picked event (owner 2026-09-24) */
               <label className={styles.field}><span className={styles.fieldLabel}>Fair Day</span><FairDayPicker id="so-detail-fair-day" value={fairPickValue(form.venue || null, form.fair)} soDate={header.so_date} disabled={inputsDisabled}

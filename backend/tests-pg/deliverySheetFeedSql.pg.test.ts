@@ -89,7 +89,20 @@ async function resetFixture(s: Sql): Promise<void> {
     );
     CREATE TABLE scm.mfg_sales_order_items (
       id uuid PRIMARY KEY, doc_no text NOT NULL, item_group text, item_code text, stock_status text NOT NULL DEFAULT 'PENDING',
-      cancelled boolean DEFAULT false
+      cancelled boolean DEFAULT false,
+      line_delivery_date date, line_delivery_date_overridden boolean NOT NULL DEFAULT false
+    );
+    DROP TABLE IF EXISTS scm.delivery_order_items CASCADE;
+    DROP TABLE IF EXISTS scm.sales_invoice_items CASCADE;
+    DROP TABLE IF EXISTS scm.sales_invoices CASCADE;
+    CREATE TABLE scm.delivery_order_items (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), delivery_order_id uuid NOT NULL, so_item_id uuid
+    );
+    CREATE TABLE scm.sales_invoices (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), so_doc_no text, status text NOT NULL
+    );
+    CREATE TABLE scm.sales_invoice_items (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), sales_invoice_id uuid NOT NULL, so_item_id uuid, do_item_id uuid
     );
     DROP TABLE IF EXISTS scm.mfg_so_status_changes CASCADE;
     CREATE TABLE scm.mfg_so_status_changes (
@@ -347,6 +360,64 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
     // Other company, DRAFT, CANCELLED, unknown: nothing written.
     for (const key of ['2990-SO-2609-001', 'SO-000001', 'SO-000002', 'SO-999999']) {
       expect(await sql.unsafe(upd1, [key, 'x', null, 1] as never[])).toHaveLength(0);
+    }
+  });
+
+  test('HC-0118: a sheet date that moves the header moves the lines, except shipped / invoiced ones; an unchanged date moves none', async () => {
+    const L = (n: number) => `0118${String(n).padStart(4, '0')}-0000-4000-8000-000000000000`;
+    await sql.unsafe(`
+      INSERT INTO scm.mfg_sales_orders (doc_no, linked_ac_docno, company_id, debtor_name, status, updated_at, customer_delivery_date) VALUES
+        ('HC-SO-012526', 'HC-SO-012526', 1, 'Gloria', 'READY_TO_SHIP', '2026-06-01 00:00:00+00', '2026-09-15'),
+        ('HC-SO-012527', 'HC-SO-012527', 1, 'Unlinked', 'READY_TO_SHIP', '2026-06-01 00:00:00+00', '2026-09-15');
+      INSERT INTO scm.mfg_sales_order_items (id, doc_no, item_code, line_delivery_date, line_delivery_date_overridden) VALUES
+        ('${L(1)}', 'HC-SO-012526', 'SOFA', '2026-09-15', false),
+        ('${L(2)}', 'HC-SO-012526', 'PILLOW', '2026-09-20', true),
+        ('${L(3)}', 'HC-SO-012526', 'ON-DO', '2026-09-15', false),
+        ('${L(4)}', 'HC-SO-012526', 'ON-SI', '2026-09-15', false),
+        ('${L(5)}', 'HC-SO-012526', 'ON-DEAD-DO', '2026-09-15', false),
+        ('${L(6)}', 'HC-SO-012527', 'SOFA', '2026-09-15', false);
+      INSERT INTO scm.delivery_orders (id, do_number, so_doc_no, status) VALUES
+        ('${L(11)}', 'HC-DO-0118-1', 'HC-SO-012526', 'DRAFT'),
+        ('${L(12)}', 'HC-DO-0118-2', 'HC-SO-012526', 'CANCELLED'),
+        ('${L(13)}', 'HC-DO-0118-3', 'HC-SO-012527', 'LOADED');
+      INSERT INTO scm.delivery_order_items (delivery_order_id, so_item_id) VALUES
+        ('${L(11)}', '${L(3)}'), ('${L(12)}', '${L(5)}'), ('${L(13)}', NULL);
+      INSERT INTO scm.sales_invoices (id, so_doc_no, status) VALUES ('${L(21)}', 'HC-SO-012526', 'POSTED');
+      INSERT INTO scm.sales_invoice_items (sales_invoice_id, so_item_id) VALUES ('${L(21)}', '${L(4)}');
+    `);
+    const lines = async () => Object.fromEntries((await sql`
+      SELECT item_code || '@' || doc_no AS k, line_delivery_date::text AS d, line_delivery_date_overridden AS o
+        FROM scm.mfg_sales_order_items WHERE doc_no IN ('HC-SO-012526', 'HC-SO-012527')`).map((r) => [r.k, [r.d, r.o]]));
+    try {
+      const upd2 = toPgPlaceholders(updateFromSheetSql(2));
+      const hit = await sql.unsafe(upd2, ['HC-SO-012526', null, '2026-10-30', 'HC-SO-012527', null, '2026-10-30', 1] as never[]);
+      expect(hit.map((r) => r.doc_no).sort()).toEqual(['HC-SO-012526', 'HC-SO-012527']);
+      expect(await lines()).toEqual({
+        'SOFA@HC-SO-012526': ['2026-10-30', false],
+        'PILLOW@HC-SO-012526': ['2026-10-30', false],     // hand-set: header wins, flag resets
+        'ON-DO@HC-SO-012526': ['2026-09-15', false],      // on a live (DRAFT) delivery order
+        'ON-SI@HC-SO-012526': ['2026-09-15', false],      // on a live invoice
+        'ON-DEAD-DO@HC-SO-012526': ['2026-10-30', false], // its delivery order is cancelled
+        'SOFA@HC-SO-012527': ['2026-09-15', false],       // a live DO line names no SO line
+      });
+
+      // Same date again, a line hand-set in between: nothing moves.
+      await sql`UPDATE scm.mfg_sales_order_items SET line_delivery_date = '2026-11-02', line_delivery_date_overridden = true WHERE id = ${L(1)}`;
+      await sql.unsafe(toPgPlaceholders(updateFromSheetSql(1)), ['HC-SO-012526', 'Done Scheduling', '2026-10-30', 1] as never[]);
+      expect((await lines())['SOFA@HC-SO-012526']).toEqual(['2026-11-02', true]);
+
+      // Remark only: nothing moves either.
+      await sql.unsafe(toPgPlaceholders(updateFromSheetSql(1)), ['HC-SO-012526', 'x', null, 1] as never[]);
+      expect((await lines())['SOFA@HC-SO-012526']).toEqual(['2026-11-02', true]);
+    } finally {
+      await sql.unsafe(`
+        DELETE FROM scm.sales_invoice_items WHERE sales_invoice_id = '${L(21)}';
+        DELETE FROM scm.sales_invoices WHERE id = '${L(21)}';
+        DELETE FROM scm.delivery_order_items WHERE delivery_order_id IN ('${L(11)}', '${L(12)}', '${L(13)}');
+        DELETE FROM scm.delivery_orders WHERE id IN ('${L(11)}', '${L(12)}', '${L(13)}');
+        DELETE FROM scm.mfg_sales_order_items WHERE doc_no IN ('HC-SO-012526', 'HC-SO-012527');
+        DELETE FROM scm.mfg_sales_orders WHERE doc_no IN ('HC-SO-012526', 'HC-SO-012527');
+      `);
     }
   });
 

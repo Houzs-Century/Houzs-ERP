@@ -618,3 +618,12 @@
   background: var(--c-orange, #16695f);
   transition: width 0.3s ease;
 }
+
+/* Outstanding report doc-number link (was read but never defined). */
+.docLink {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: #16695f;
+  text-decoration: none;
+}
+.docLink:hover { text-decoration: underline; }

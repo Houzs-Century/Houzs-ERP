@@ -100,20 +100,49 @@ export function useFairOptions(soDate: string | null | undefined) {
   });
 }
 
+/** Why no fair was filled in for the person keying the order. Sent back to
+ *  POST /validate as `fairWhy`, which words the refusal from it. */
+export type FairWhy =
+  | { code: 'no_fair' }
+  | { code: 'too_old'; venue: string; startDate: string; endDate: string | null };
+
+/** GET /fair-default — the KEYER's fair a new order starts with (owner
+ *  2026-10-19): running today, else the latest one within the dropdown's window.
+ *  `event` is a row of /fair-options. With none, `whyMessage` is the sentence a
+ *  save without a fair is refused with. Houzs only; other companies get nulls. */
+export type FairDefaultResponse = {
+  date: string;
+  event: FairOption | null;
+  how: 'ongoing' | 'latest' | null;
+  why: FairWhy | null;
+  whyMessage: string | null;
+};
+
+export function useFairDefault(enabled: boolean) {
+  return useQuery({
+    queryKey: ['fair-default'],
+    queryFn: () => authedFetch<FairDefaultResponse>('/mfg-sales-orders/fair-default'),
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
 export type FairPendingRow = {
   doc_no: string;
   so_date: string | null;
   venue: string | null;
   branding: string | null;
   project_id: number | null;
-  fair_match: 'PENDING' | 'AMBIGUOUS' | 'UNMATCHED' | null;
+  /** NULL = an order keyed before the picker, listed from 1 September 2026. */
+  fair_match: 'PENDING' | 'AMBIGUOUS' | 'UNMATCHED' | 'NO_FAIR' | null;
   status: string | null;
   local_total_sen: number | null;
   salesperson_id: string | null;
 };
 
-/** Orders whose fair link still needs a person. Three different reasons share
- *  this list and the screen keeps them apart — see the `fair_match` column. */
+/** Orders with no fair link a person should see (backend scm/lib/fair-pending.ts).
+ *  The reasons share this list and the screen keeps them apart — see the
+ *  `fair_match` column. */
 export function useFairPending(limit = 200) {
   return useQuery({
     queryKey: ['fair-pending', limit],
@@ -121,6 +150,20 @@ export function useFairPending(limit = 200) {
       authedFetch<{ rows: FairPendingRow[] }>(
         `/mfg-sales-orders/fair-pending?limit=${limit}`,
       ).then((r) => r.rows),
+    staleTime: 30_000,
+  });
+}
+
+/** A LINKED order to look at (backend scm/lib/fair-checks.ts, owner 2026-10-19):
+ *  VENUE_DIFFERS — 要查, the venue on the order is not where it was placed;
+ *  NEEDS_ATTENDING — 等加人, a scan whose scanner is not on its booth's Sales
+ *  Attending. `note` is the server's sentence, shown as it comes. */
+export type FairCheckRow = Omit<FairPendingRow, 'fair_match'> & { fair_match: string | null; check: 'VENUE_DIFFERS' | 'NEEDS_ATTENDING'; note: string };
+
+export function useFairChecks() {
+  return useQuery({
+    queryKey: ['fair-pending', 'checks'],
+    queryFn: () => authedFetch<{ rows: FairCheckRow[] }>('/mfg-sales-orders/fair-checks').then((r) => r.rows),
     staleTime: 30_000,
   });
 }

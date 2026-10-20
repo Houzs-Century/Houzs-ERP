@@ -108,6 +108,8 @@ export type NewLorry = {
   type: LorryType;
   isInternal?: boolean;
   warehouseId?: string | null;
+  /** Every warehouse the lorry serves; the first is also written as warehouseId. */
+  warehouseIds?: string[];
   capacityM3?: number | null;
   capacityKg?: number | null;
   notes?: string;
@@ -346,5 +348,22 @@ export function useLorryPositions() {
     queryKey: ['lorries', 'positions', 'latest'],
     queryFn: () => authedFetch<{ positions: LorryPosition[] }>('/lorries/positions/latest').then((r) => r.positions),
     refetchInterval: 60_000,
+  });
+}
+
+/* One lorry's Velocity fixes for a Malaysia day (GET /lorries/:id/track) — the
+   route it actually drove, in time order. */
+export type LorryTrack = {
+  date: string;
+  km: number;
+  fixes: Array<{ lat: number; lng: number; recorded_at: string; speed_kmh: number | null; street: string | null }>;
+};
+
+export function useLorryTrack(lorryId: string, date: string) {
+  return useQuery({
+    queryKey: ['lorries', 'track', lorryId, date],
+    queryFn: () => authedFetch<LorryTrack>(`/lorries/${encodeURIComponent(lorryId)}/track?date=${date}`),
+    enabled: !!lorryId,
+    refetchInterval: 5 * 60_000,
   });
 }

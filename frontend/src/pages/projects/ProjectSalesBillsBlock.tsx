@@ -11,6 +11,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { markWorkspaceOpenIntent } from "../../lib/workspaceTabs";
 import type { QueryState } from "../../hooks/useQuery";
 import { cn, formatDate } from "../../lib/utils";
 import { billStatusLabel, billsNeedingAction, fmtRmSen, type ProjectSalesBillsResponse } from "../../lib/projectSalesBills";
@@ -171,6 +172,11 @@ export function ProjectSalesBillsBlock({
                       {b.match.so_doc_no && (
                         <Link
                           to={`/scm/sales-orders/${encodeURIComponent(b.match.so_doc_no)}`}
+                          // Peter 2026-10-15: open the SO in its OWN workspace tab
+                          // so the project it was clicked from stays open (owner's
+                          // openDocInTab convention). Plain left-click only —
+                          // ctrl/cmd/shift/middle still open a real browser tab.
+                          onClick={(e) => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) markWorkspaceOpenIntent(true); }}
                           className="ml-1.5 font-mono text-[10.5px] font-semibold text-accent underline underline-offset-2 hover:text-accent/80"
                           title="Open this sales order"
                         >

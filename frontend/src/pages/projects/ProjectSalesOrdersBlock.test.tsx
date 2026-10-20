@@ -105,4 +105,12 @@ describe("ProjectSalesOrdersBlock", () => {
     expect(screen.getByText("403: You don't have permission to view this page.")).toBeTruthy();
     expect(screen.queryByText(/were found/)).toBeNull();
   });
+
+  test('marks an order placed here from another place — "Venue differs" (owner 2026-10-19)', () => {
+    mount(query({ data: response([row({}), row({ doc_no: "HC-SO-2610-167", venue_differs: "IOIGECC" })]) }), null);
+    const pills = screen.getAllByText("Venue differs");
+    expect(pills).toHaveLength(1);
+    expect(pills[0]!.getAttribute("title")).toBe("Venue on the order: IOIGECC");
+    expect(pills[0]!.closest("tr")?.textContent).toContain("HC-SO-2610-167");
+  });
 });

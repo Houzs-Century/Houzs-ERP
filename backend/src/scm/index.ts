@@ -101,6 +101,8 @@ import { mrp } from "./routes/mrp";
 import { mrpLeadTimes } from "./routes/mrp-lead-times";
 import { mrpSupplierLeadTimes } from "./routes/mrp-supplier-lead-times";
 import { outstanding } from "./routes/outstanding";
+import { procurementOverview } from "./routes/procurement-overview";
+import { logisticOverview } from "./routes/logistic-overview";
 import { unbilledDeliveries } from "./routes/unbilled-deliveries";
 import { localities } from "./routes/localities";
 import { sgPostcode } from "./routes/sg-postcode";
@@ -121,6 +123,7 @@ import { scanLorryInvoice } from "./routes/scan-lorry-invoice";
 import { scanFilesSo, scanFilesPayment, scanFilesPv, scanFilesWorkshop } from "./routes/scan-files";
 import { slips } from "./routes/slips";
 import { deliveryPlanning } from "./routes/delivery-planning";
+import { deliveryJobProgress } from "./routes/delivery-job-progress";
 import { deliveryPlanningRegions } from "./routes/delivery-planning-regions";
 import { deliveryPlanningRowMarks } from "./routes/delivery-planning-row-marks";
 import { deliveryPlanningRowOrder } from "./routes/delivery-planning-row-order";
@@ -499,6 +502,11 @@ scm.use(
           hasPositionCapability(u, "scm.do.dispatch")
         );
       }
+      // Driver "Arrived" — PATCH .../arrival only; the handler re-checks the
+      // verb, the caller's own job and that the DO is on the road.
+      if (c.req.method === "PATCH" && c.req.path.endsWith("/arrival")) {
+        return hasPositionCapability(u, "scm.do.dispatch");
+      }
       // Ops-lead revert — POST .../revert only, on the editable scm.do.revert
       // capability. The handler re-checks the verb and reverses stock itself.
       if (c.req.method === "POST" && c.req.path.endsWith("/revert")) {
@@ -765,6 +773,12 @@ scm.route("/mrp-supplier-lead-times", mrpSupplierLeadTimes);
 // Ported 2026-06-20 — Outstanding dashboard (v_*_outstanding views), MY
 // State/City/Postcode reference (my_localities). /fabric-library already
 // mounted above — its GET list was added to the existing route, not remounted.
+// Procurement Overview (owner 2026-10-16): the PO side of procurement.
+scm.use("/procurement-overview/*", scmAreaGuard("scm.procurement.po"));
+scm.route("/procurement-overview", procurementOverview);
+// Logistic Overview (owner 2026-10-16): weekly DO / delivered / runs history.
+scm.use("/logistic-overview/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/logistic-overview", logisticOverview);
 scm.use("/outstanding/*", scmAreaGuard("scm.finance.outstanding"));
 scm.route("/outstanding", outstanding);
 // Delivered-but-not-invoiced, aged (read-only). The money answer to the same
@@ -820,6 +834,21 @@ scm.route("/drivers", drivers);
 // Mounted under the existing transportation area key; owner/* bypasses, no lockout.
 // Finer per-route L2 keys (planning / fleet / trips) can be added later.
 scm.use("/delivery-planning/*", scmAreaGuard("scm.transportation.drivers"));
+// The crew's On the way / Arrived / POD on a non-DO job. writeBypass — a driver
+// or helper holds view on transportation plus scm.do.dispatch, not edit; the
+// handlers admit only the caller's OWN job (delivery scope) unless scope is 'all'.
+scm.use(
+  "/delivery-jobs/*",
+  scmAreaGuard("scm.transportation.drivers", {
+    writeBypass: (c) =>
+      c.req.method === "POST" &&
+      hasPositionCapability(
+        c.get("user") as unknown as Parameters<typeof hasPositionCapability>[0],
+        "scm.do.dispatch",
+      ),
+  }),
+);
+scm.route("/delivery-jobs", deliveryJobProgress);
 scm.route("/delivery-planning", deliveryPlanning);
 // openRead (2026-07-19, fix/so-maintenance-403) — this router is pure REFERENCE
 // data: the region master (code / name / sortOrder / active) and the per-state →
@@ -1005,7 +1034,22 @@ scm.route("/scan-files/workshop", scanFilesWorkshop);
 // the SLIPS R2 binding, now bound in wrangler.toml (prod + staging).
 // writeLevel view: staging an upload only produces the caller's own pending
 // slip row — a view-level sales rep can attach slips to their own draft.
-scm.use("/slips/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
+// writeBypass — the driver's POD photo rides this same upload pipeline (MobilePOD
+// → uploadSlipFull), and a driver holds scm.do.dispatch, not scm.sales.orders.
+// An upload session only stores an image under the caller's own staff id; it
+// attaches to nothing until a route that checks its own access consumes the key.
+scm.use(
+  "/slips/*",
+  scmAreaGuard("scm.sales.orders", {
+    writeLevel: "view",
+    writeBypass: (c) =>
+      c.req.method === "POST" &&
+      hasPositionCapability(
+        c.get("user") as unknown as Parameters<typeof hasPositionCapability>[0],
+        "scm.do.dispatch",
+      ),
+  }),
+);
 scm.route("/slips", slips);
 
 export default scm;

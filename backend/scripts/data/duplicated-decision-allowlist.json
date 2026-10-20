@@ -137,7 +137,7 @@
     },
     {
       "check": "D1",
-      "key": "APAD,CROSS_BORDER,INSURANCE,PUSPAKOM,ROAD_TAX|backend/src/scm/lib/fleet-availability.ts backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx",
+      "key": "GERAN,INSURANCE,PUSPAKOM,ROAD_TAX|backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: COMPLIANCE_DOC_TYPES, COMPLIANCE_DOC_LABELS, DOC_TYPES, DOC_LABEL. Cost of divergence is a blank chip, not a wrong number."
     },
     {
@@ -1506,6 +1506,11 @@
       "why": "TWO QUESTIONS ABOUT THE MAINTENANCE POOLS, not one rule at N-1 places (BUG-60, 2026-10-06). INCH_POOLS (scm/shared/maintenance-pools.ts) is which pools hold inch-bearing values whose quotes are normalised on SAVE, and Total Height is one of them. PICKER_POOLS (vendor/scm/lib/picker-maint.ts) is which pools a purchasing document's variant DROPDOWNS read, so master's options can replace a supplier cost overlay's stale list. No PO / PI / Purchase Consignment editor has a Total Height dropdown: it is derived from divan + leg + gap and only priced, so adding it to the picker list would change nothing on screen and removing it from INCH_POOLS would stop normalising stored heights."
     },
     {
+      "check": "D2",
+      "key": "DELIVERY,INSPECTION,PICKUP,SERVICE ~ INSPECTION,PICKUP,SERVICE",
+      "why": "TWO DIFFERENT QUESTIONS keyed on trip-stop words: assrFormIntake SCHED_COL picks which assr_cases date column an intake form writes (no delivery leg on a form); delivery-pod-context ASSR_LEG_BY_STOP maps a lorry stop to the board leg it runs, where a DELIVERY stop is the delivery-back leg. Divergence costs a missing row on a driver run-sheet, never money or stock."
+    },
+    {
       "check": "D1",
       "key": "AMOUNT_SEN,BALANCE_SEN,COUNT,DRAFT_COUNT,PAID_SEN|backend/src/routes/project-sales-orders.ts frontend/src/pages/projects/projectSalesOrders.ts",
       "why": "ONE WIRE SHAPE seen from its two ends, not two answers to one question: routes/project-sales-orders.ts builds the totals object GET /api/project-sales-orders/:projectId sends, and the page-side ZERO_TOTALS in projectSalesOrders.ts is the empty value of that same object, used only when the read came back in another shape (normalizeProjectSalesOrders). The keys are the response contract; nothing is decided twice. Cost of divergence is a 0 in the Sales header, caught by the route test on one side and the normalize test on the other."
@@ -1584,6 +1589,36 @@
       "check": "D1",
       "key": "HIGH,LOW,MEDIUM,URGENT|backend/src/routes/itSupport.ts frontend/src/lib/itSupport.ts",
       "why": "The four urgency levels are the Houzs IT Hub's own vocabulary, not a Century rule: the relay (routes/itSupport.ts PRIORITIES) refuses any other value before the hub does, and the list (lib/itSupport.ts URGENCY_ORDER) only sorts and labels what the hub sends back, an unknown level sorting last. The hub owns the set; divergence costs a sort position, never a lost request."
+    },
+    {
+      "check": "D2",
+      "key": "GERAN,INSURANCE,PUSPAKOM,ROAD_TAX ~ INSURANCE,PUSPAKOM,ROAD_TAX",
+      "why": "Not the same question. The four are the kinds an in-house lorry keeps on file; the three are the kinds that EXPIRE (a flat expiry column each, and required for an in-house lorry). Geran has no expiry, so it is deliberately in the first and not the second."
+    },
+    {
+      "check": "D1",
+      "key": "AVAILABLE,BREAKDOWN,COMPLIANCE_BLOCKED,OUT_OF_SERVICE,PLANNED_MAINTENANCE,SERVICE_DUE,WAITING_PARTS|backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx frontend/src/pages/FleetHealthCharts.tsx",
+      "why": "ONE DECISION, ONE HOME: services/fleet-status.ts derives the vehicle status; FleetHealth.tsx and FleetHealthCharts.tsx only colour and label the value the API returns (a display map keyed by the enum). The browser cannot import the Worker module. A status the map lacks renders unlabelled, never decides dispatch."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,DEPOSIT_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,SERVICE_COST_SEN,SERVICE_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN|backend/src/scm/lib/finance-keys.ts frontend/src/pages/scm-v2/so-list-server-funnels.ts",
+      "why": "THE SERVER DECIDES: scm/lib/finance-keys.ts is the one list of finance columns the server hides from non-finance users and ignores in their filters; so-list-server-funnels.ts only names which grid columns to SEND as server filters. A key missing on the client means that column filters the page only; it can never expose a finance figure, because the server strips it regardless."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORY,BEDFRAME,DINING,MATTRESS,OTHERS,SOFA|backend/src/scm/lib/procurement-overview.ts frontend/src/pages/scm-v2/ProcurementOverview.tsx",
+      "why": "ONE DECISION, ONE HOME: scm/lib/procurement-overview.ts procurementCategory() decides each line's category and PROCUREMENT_CATEGORIES its order; ProcurementOverview.tsx CAT_LABEL only prints the category code the API returns (display labels; the browser cannot import the Worker lib). An unknown code prints as itself."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORY,BEDFRAME,MATTRESS,SOFA|frontend/src/pages/scm-v2/Mrp.tsx frontend/src/pages/scm-v2/ProcurementOverview.tsx",
+      "why": "TWO DIFFERENT QUESTIONS: Mrp.tsx lists the categories an MRP lead time can be SET for; ProcurementOverview.tsx MRP_CATEGORY maps the overview's upper-case category code to that setting's lower-case key so Apply writes the right row. DINING and OTHERS have no MRP setting, so the overview map stops at four on purpose."
+    },
+    {
+      "check": "D1",
+      "key": "AMBIGUOUS,NO_FAIR,PENDING,UNMATCHED|backend/src/scm/lib/fair-audit.ts backend/src/scm/lib/fair-pending.ts",
+      "why": "ONE vocabulary (scm.mfg_sales_orders.fair_match), two different jobs: fair-pending.ts LISTED_VERDICTS is WHICH unlinked verdicts the Fair Links to Settle page lists; fair-audit.ts UNLINKED is how an order's History NAMES an unlinked state (owner 2026-10-19, every fair move named). Presentation of the same vocabulary, not a second answer to what the verdicts are. A verdict added to one and not the other costs a History row reading \"Not linked\", never a wrong list."
     }
   ]
 }

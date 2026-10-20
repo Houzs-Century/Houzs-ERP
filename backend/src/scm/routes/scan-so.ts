@@ -37,6 +37,7 @@ import { getSupabaseService } from '../../db/supabase';
 import { paginateAll } from '../lib/paginate-all';
 import { getBranding } from '../../services/branding';
 import { postPersonalNotice } from '../../services/personalNotice';
+import { recordAi, requestAiTag, type AiUsageTag } from '../../services/aiUsage';
 // Background scan job — the DRAFT SO is created through mfg-sales-orders'
 // factored create core (PRICING-CRITICAL; never reimplemented here), and each
 // scanned payment RECEIPT becomes a payments-ledger row through the same
@@ -55,6 +56,7 @@ import {
 } from '../lib/scan-receipt-plan';
 import { safeScanDepositSen } from '../lib/scan-header-deposit';
 import { scanTimer } from '../lib/scan-timing';
+import { scanCatalogSkus, type CatalogSku, type ScanCatalogRow } from '../lib/scan-catalog-skus';
 import { readSlipWithAliases } from '../lib/scan-field-aliases';
 import { ttlCached } from '../lib/ttl-cache';
 import { keepScanFile, linkScanFiles } from '../lib/scan-files';
@@ -191,12 +193,6 @@ async function localityForPostcode(
 // ===========================================================================
 // Catalog — pulled live from Supabase on every /extract call.
 // ===========================================================================
-type CatalogSku = {
-  code: string;
-  name: string;
-  category: string;       // SOFA | BEDFRAME | MATTRESS | ACCESSORY | SERVICE
-  baseModel: string | null;
-};
 type CatalogFabric = { code: string; description: string | null };
 // SOFA Special Add-ons (scm.special_addons, migration 0134) — the configured
 // specials the SO line editor's accordion offers. ACTIVE rows only; injected
@@ -401,7 +397,7 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
     paginateAll((from, to) => {
       let q = sb
         .from('mfg_products')
-        .select('code, name, category, base_model')
+        .select('code, name, category, base_model, model:product_models(active)')
         .eq('status', 'ACTIVE');
       if (companyId != null) q = q.eq('company_id', companyId);
       return q.order('category').order('code').range(from, to);
@@ -471,14 +467,7 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
     loadVenueNames(db),
   ]);
 
-  const skus: CatalogSku[] = ((prodRes.data as Array<{
-    code: string; name: string; category: string; base_model: string | null;
-  }> | null) ?? []).map((p) => ({
-    code: p.code,
-    name: p.name,
-    category: p.category,
-    baseModel: p.base_model ?? null,
-  }));
+  const skus = scanCatalogSkus(prodRes.data as ScanCatalogRow[] | null);
 
   const fabrics: CatalogFabric[] = ((fabRes.data as Array<{
     fabric_code: string; fabric_description: string | null;
@@ -691,7 +680,8 @@ async function warmCatalogCache(
   db: D1Database,
   apiKey: string | undefined,
   companyName: string,
-  companyId?: number | null,
+  companyId: number | null | undefined,
+  usage: AiUsageTag,
 ): Promise<WarmResult> {
   if (!apiKey) return { ok: false, reason: 'no_key' };
   let catalog: Catalog;
@@ -702,7 +692,7 @@ async function warmCatalogCache(
   }
   const cachedPrefix = buildCachedPrefix(catalog, companyName);
   try {
-    const resp = await anthropicFetchWithRetry({
+    const resp = await recordAi(usage, anthropicFetchWithRetry({
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -728,7 +718,7 @@ async function warmCatalogCache(
           },
         ],
       }),
-    });
+    }));
     const bodyText = await resp.text();
     if (!resp.ok) {
       return { ok: false, reason: `Anthropic ${resp.status}: ${bodyText.slice(0, 300)}` };
@@ -768,7 +758,8 @@ export async function warmCatalogCacheForCron(env: Env): Promise<WarmResult> {
      and the job now send a company-scoped catalogue, so the warmed prefix stops
      matching once the two companies' catalogues diverge) — never a correctness
      one. Fixing it needs a per-company warm loop; flagged, not done here.  */
-  return warmCatalogCache(getSupabaseService(env), env.DB, env.ANTHROPIC_API_KEY, branding.companyName, null);
+  return warmCatalogCache(getSupabaseService(env), env.DB, env.ANTHROPIC_API_KEY, branding.companyName, null,
+    { env, feature: 'cache_warm', model: CLAUDE_MODEL, companyId: null, userId: null, waitUntil: null });
 }
 
 // ===========================================================================
@@ -1746,9 +1737,10 @@ async function claudeDistillCall(
   apiKey: string,
   system: string,
   userPayload: string,
+  usage: AiUsageTag,
 ): Promise<{ text: string; error: string | null }> {
   try {
-    const resp = await anthropicFetchWithRetry({
+    const resp = await recordAi(usage, anthropicFetchWithRetry({
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -1763,7 +1755,7 @@ async function claudeDistillCall(
         system,
         messages: [{ role: 'user', content: [{ type: 'text', text: userPayload }] }],
       }),
-    });
+    }));
     const bodyText = await resp.text();
     if (!resp.ok) {
       return { text: '', error: `Anthropic ${resp.status}: ${bodyText.slice(0, 500)}` };
@@ -1802,14 +1794,15 @@ async function distillSalespersonRules(
   apiKey: string | undefined,
   salesperson: string,
   companyName: string,
+  usage: AiUsageTag,
 ): Promise<DistillResult> {
   const rep = normalizeRepKey(salesperson);
   if (!rep) return { status: 'error', reason: 'Missing salesperson.' };
   // Reserved keys route to their own cross-rep distillers, never a per-rep
   // rules pass: '__GLOBAL__' → shared alias dictionary,
   // '__GLOBAL_RULES__' → shared cross-rep rules blob.
-  if (rep.toUpperCase() === GLOBAL_RULES_KEY) return distillGlobalRules(svc, apiKey, companyName);
-  if (isGlobalKey(rep)) return distillGlobalAliases(svc, apiKey, companyName);
+  if (rep.toUpperCase() === GLOBAL_RULES_KEY) return distillGlobalRules(svc, apiKey, companyName, usage);
+  if (isGlobalKey(rep)) return distillGlobalAliases(svc, apiKey, companyName, usage);
   if (!apiKey) {
     return {
       status: 'error',
@@ -1848,7 +1841,7 @@ async function distillSalespersonRules(
     `from the diffs and write the rule block:\n\n` +
     pairExamplesText(samples);
 
-  const call = await claudeDistillCall(apiKey, buildDistillMetaPrompt(companyName), userPayload);
+  const call = await claudeDistillCall(apiKey, buildDistillMetaPrompt(companyName), userPayload, usage);
   let distilledText = call.text;
   const errorMsg = call.error;
 
@@ -1933,6 +1926,7 @@ async function distillGlobalAliases(
   svc: SupabaseClient,
   apiKey: string | undefined,
   companyName: string,
+  usage: AiUsageTag,
 ): Promise<DistillResult> {
   if (!apiKey) {
     return {
@@ -1969,7 +1963,7 @@ async function distillGlobalAliases(
     `dictionary from the diffs:\n\n` +
     pairExamplesText(samples);
 
-  const call = await claudeDistillCall(apiKey, buildGlobalAliasMetaPrompt(companyName), userPayload);
+  const call = await claudeDistillCall(apiKey, buildGlobalAliasMetaPrompt(companyName), userPayload, usage);
   let distilledText = call.text;
   if (call.error || !distilledText) {
     return { status: 'error', reason: call.error ?? 'Claude returned empty aliases.' };
@@ -2044,6 +2038,7 @@ async function distillGlobalRules(
   svc: SupabaseClient,
   apiKey: string | undefined,
   companyName: string,
+  usage: AiUsageTag,
 ): Promise<DistillResult> {
   if (!apiKey) {
     return {
@@ -2079,7 +2074,7 @@ async function distillGlobalRules(
     `extraction rules from the recurring diffs:\n\n` +
     pairExamplesText(samples);
 
-  const call = await claudeDistillCall(apiKey, buildGlobalRulesMetaPrompt(companyName), userPayload);
+  const call = await claudeDistillCall(apiKey, buildGlobalRulesMetaPrompt(companyName), userPayload, usage);
   let distilledText = call.text;
   if (call.error || !distilledText) {
     return { status: 'error', reason: call.error ?? 'Claude returned empty shared rules.' };
@@ -2124,13 +2119,14 @@ export async function distillAllSalespersonRules(
   svc: SupabaseClient,
   apiKey: string | undefined,
   companyName: string,
+  usage: AiUsageTag,
 ): Promise<{ distilled: number; skipped: number; errors: number; reps: number }> {
   const summary = { distilled: 0, skipped: 0, errors: 0, reps: 0 };
 
   // Shared alias dictionary first — it benefits every rep's scans and its
   // sample pool (all corrected rows) is a superset of any rep's.
   try {
-    const g = await distillGlobalAliases(svc, apiKey, companyName);
+    const g = await distillGlobalAliases(svc, apiKey, companyName, usage);
     if (g.status === 'distilled') summary.distilled += 1;
     else if (g.status === 'skipped') summary.skipped += 1;
     else {
@@ -2146,7 +2142,7 @@ export async function distillAllSalespersonRules(
   // reps), distilled from the same all-reps corrected pool. Error-isolated
   // like the alias pass so it can never block the per-rep loop below.
   try {
-    const gr = await distillGlobalRules(svc, apiKey, companyName);
+    const gr = await distillGlobalRules(svc, apiKey, companyName, usage);
     if (gr.status === 'distilled') summary.distilled += 1;
     else if (gr.status === 'skipped') summary.skipped += 1;
     else {
@@ -2199,7 +2195,7 @@ export async function distillAllSalespersonRules(
 
   for (const rep of reps) {
     try {
-      const res = await distillSalespersonRules(svc, apiKey, rep, companyName);
+      const res = await distillSalespersonRules(svc, apiKey, rep, companyName, usage);
       if (res.status === 'distilled') summary.distilled += 1;
       else if (res.status === 'skipped') summary.skipped += 1;
       else {
@@ -2279,7 +2275,7 @@ scanSo.post('/rules/:salesperson/distill', async (c) => {
   const rep = normalizeRepKey(c.req.param('salesperson'));
   if (!rep) return c.json({ error: 'bad_request', reason: 'Missing salesperson.' }, 400);
   const branding = await getBranding(c.env);
-  const res = await distillSalespersonRules(serviceClient(c.env), c.env.ANTHROPIC_API_KEY, rep, branding.companyName);
+  const res = await distillSalespersonRules(serviceClient(c.env), c.env.ANTHROPIC_API_KEY, rep, branding.companyName, requestAiTag(c, 'scan_so_distill', CLAUDE_MODEL));
   if (res.status === 'error') {
     return c.json({ error: 'distill_failed', reason: res.reason }, 500);
   }
@@ -2329,7 +2325,7 @@ scanSo.get('/slip-image', async (c) => {
 scanSo.post('/warm', async (c) => {
   const sb = c.get('supabase');
   const branding = await getBranding(c.env);
-  const result = await warmCatalogCache(sb, c.env.DB, c.env.ANTHROPIC_API_KEY, branding.companyName, activeCompanyId(c));
+  const result = await warmCatalogCache(sb, c.env.DB, c.env.ANTHROPIC_API_KEY, branding.companyName, activeCompanyId(c), requestAiTag(c, 'cache_warm', CLAUDE_MODEL));
   return c.json(result);
 });
 
@@ -2576,6 +2572,7 @@ async function callClaudeSlipExtract(
   cachedPrefix: string,
   inj: PromptInjections,
   fileBlocks: ContentBlock[],
+  usage: AiUsageTag,
 ): Promise<SlipExtractCall> {
   let errorMsg: string | null = null;
   let timedOut = false;
@@ -2585,7 +2582,7 @@ async function callClaudeSlipExtract(
   let cacheCreated = false;
 
   try {
-    const resp = await anthropicFetchWithRetry({
+    const resp = await recordAi(usage, anthropicFetchWithRetry({
       method: 'POST',
       // Outbound timeout (110s, under the Worker's wall-clock budget) so a hung
       // Anthropic call fails fast into the graceful 503 below instead of the
@@ -2635,7 +2632,7 @@ async function callClaudeSlipExtract(
           },
         ],
       }),
-    });
+    }));
 
     const bodyText = await resp.text();
     if (!resp.ok) {
@@ -2934,7 +2931,7 @@ scanSo.post('/extract', async (c) => {
   // ONE Claude vision call + JSON coercion — callClaudeSlipExtract, shared
   // with the background job (timeout / retry / cache semantics inside).
   const { parsed, errorMsg, timedOut, claudeText, cacheHit, cacheCreated } =
-    await callClaudeSlipExtract(apiKey, cachedPrefix, inj, fileBlocks);
+    await callClaudeSlipExtract(apiKey, cachedPrefix, inj, fileBlocks, requestAiTag(c, 'scan_so', CLAUDE_MODEL));
 
   // Persist the sample row (learning pool) — insertScanSample, shared with
   // the background job. salesperson = operator's pick, else the AI's salesRep
@@ -3092,7 +3089,7 @@ const DUP_LOOKBACK_DAYS = 30;
 // scan_jobs.sample_id/so_doc_no, both indexed by migration 0068). THROWS on a
 // query error so each caller picks its own fail-open behaviour: the soft path
 // warns + skips the flag, the /enqueue path queues normally.
-async function findRecentSoForSlipSha(
+export async function findRecentSoForSlipSha(
   svc: SupabaseClient,
   imageSha256: string,
   // The sample the CURRENT scan just inserted — excluded or every scan would
@@ -3120,11 +3117,24 @@ async function findRecentSoForSlipSha(
     .in('sample_id', sampleIds)
     .not('so_doc_no', 'is', null)
     .order('created_at', { ascending: false })
-    .limit(1);
+    .limit(10);
   if (jobErr) throw new Error(jobErr.message);
-  const row = ((jobRows as Array<Record<string, unknown>> | null) ?? [])[0];
-  const doc = (row?.soDocNo ?? row?.so_doc_no) as string | undefined;
-  return typeof doc === 'string' && doc !== '' ? doc : null;
+  const jobDocs = (((jobRows as Array<Record<string, unknown>> | null) ?? [])
+    .map((r) => (r.soDocNo ?? r.so_doc_no) as unknown)
+    .filter((v): v is string => typeof v === 'string' && v !== ''));
+  if (jobDocs.length === 0) return null;
+  // HC-0117: "Discard draft" hard-deletes the SO but scan_jobs.so_doc_no keeps
+  // pointing at it, so a re-scan of the same photo was refused as "already
+  // created HC-SO-2610-210" for an order nobody could open. Only an SO that
+  // still exists counts as the original.
+  const { data: soRows, error: soErr } = await svc
+    .from('mfg_sales_orders')
+    .select('doc_no')
+    .in('doc_no', [...new Set(jobDocs)]);
+  if (soErr) throw new Error(soErr.message);
+  const alive = new Set(((soRows as Array<Record<string, unknown>> | null) ?? [])
+    .map((r) => (r.docNo ?? r.doc_no) as unknown));
+  return jobDocs.find((d) => alive.has(d)) ?? null;
 }
 
 async function findDuplicateSo(
@@ -3730,6 +3740,11 @@ function buildDraftSoBodyFromSlip(
        resolves it from the salesperson's current exhibition project — which is
        why a no-match must stay null rather than be coerced. */
     venue: parsed.locationMatch?.value ?? null,
+    /* The slip's own written date. With the venue above it is where the order's
+       FAIR is looked up first (owner 2026-10-19 — fair-binding.ts::
+       resolveScanFair), and a fair found that way takes it as the Fair Day. Read
+       only for a scan; checked there (a misread or future date counts as none). */
+    slipDate: parsed.slipDate ?? null,
     // Payment header fields (validated matches; the operator reviews the
     // draft before it becomes a real order). No payments[] in the create
     // body — the ledger rows are booked AFTER the create by
@@ -3835,26 +3850,32 @@ async function runScanJob(
     // HC-0006 T8: this company's confirmed corrections, read before the model and applied to its output.
     const call = await readSlipWithAliases(svc, job.companyId, (hint) => callClaudeSlipExtract(
       apiKey, cachedPrefix, hint ? { ...inj, globalAliasText: [inj.globalAliasText, hint].filter(Boolean).join('\n\n') } : inj, job.fileBlocks,
+      { env, feature: 'scan_so', model: CLAUDE_MODEL, companyId: job.companyId, userId: job.houzsUserId, waitUntil: null },
     ));
     timer.mark('model');
     const parsed = call.parsed;
 
     // Learning pool + slip/receipt provenance — identical to /extract.
-    const imageSha256 = job.firstBuffer ? await sha256Hex(job.firstBuffer) : null;
-    const sampleSalesperson = job.salesperson || normalizeRepKey(parsed?.salesRep) || null;
-    const { sampleId } = await insertScanSample(svc, {
-      imageSha256,
-      salesperson: sampleSalesperson,
-      parsed,
-      errorMsg: call.errorMsg,
-      claudeText: call.claudeText,
-      documentType: job.documentType,
-    });
-    if (sampleId) await touch({ sample_id: sampleId });
-    const { imageKey, receiptImageKey } = await storeScanImages(
-      env.SO_ITEM_PHOTOS, svc, sampleId, job.uploadedImages, parsed,
-    );
-    timer.mark('save');
+    // HC-0006 speed: this and postProcessSlip (geocode + catalogue check) don't need
+    // each other, so they run together. The sample keeps the model's raw read — a
+    // copy taken before postProcessSlip edits `parsed` in place — as when it ran first.
+    const rawParsed = parsed ? structuredClone(parsed) : null;
+    const [{ imageSha256, sampleId, imageKey, receiptImageKey }] = await Promise.all([(async () => {
+      const imageSha256 = job.firstBuffer ? await sha256Hex(job.firstBuffer) : null;
+      const sampleSalesperson = job.salesperson || normalizeRepKey(rawParsed?.salesRep) || null;
+      const { sampleId } = await insertScanSample(svc, {
+        imageSha256,
+        salesperson: sampleSalesperson,
+        parsed: rawParsed,
+        errorMsg: call.errorMsg,
+        claudeText: call.claudeText,
+        documentType: job.documentType,
+      });
+      if (sampleId) await touch({ sample_id: sampleId });
+      const keys = await storeScanImages(env.SO_ITEM_PHOTOS, svc, sampleId, job.uploadedImages, rawParsed);
+      return { imageSha256, sampleId, ...keys };
+    })(), parsed && postProcessSlip(parsed, svc, env.GOOGLE_MAPS_API_KEY, catalog).then(() => timer.mark('parse'))]);
+    timer.mark('save', 'sample'); // only the part of the sample save that outlasted postProcessSlip
 
     // Owner 2026-07-04: EVERY scan ends as a draft the rep can open — success,
     // duplicate, OR unreadable. A scan that could not be turned into a full
@@ -3872,9 +3893,6 @@ async function runScanJob(
       body = buildEmptyShellBody({ imageKey: slipKey, receiptImageKey });
       shellNote = 'The scan could not read this slip, so this draft is blank. Please open it and fill in the order from the photo.';
     } else {
-      await postProcessSlip(parsed, svc, env.GOOGLE_MAPS_API_KEY, catalog);
-      timer.mark('parse');
-
       // Multi-receipt manifest (migration 0141) — record WHICH uploads the OCR
       // classified as payment receipts (the durable audit trail of "the
       // receipts this scan turned into payments"). Keys are the enqueue-time R2
@@ -3891,6 +3909,7 @@ async function runScanJob(
       // surfaces it in the toast) and the SO note is prefixed below.
       const dup = await findDuplicateSo(svc, { imageSha256, excludeSampleId: sampleId, parsed }, job.companyId ?? undefined);
       if (dup) { dupDocNo = dup.docNo; await touch({ duplicate_of: dup.docNo }); }
+      timer.mark('save', 'dup');
 
       // allowShell → always returns a body; missing required fields become
       // placeholders and the body is tagged `_scanShell`.
@@ -3944,26 +3963,24 @@ async function runScanJob(
 
     // PRICING-CRITICAL create — the factored mfg-sales-orders core, replayed
     // with the identities captured at enqueue time. Never reimplemented here.
-    let outcome = await createDraftSalesOrder(env, {
-      salespersonId: job.salespersonId,
-      salespersonName: job.salespersonName,
-      houzsUserId: job.houzsUserId,
-      companyId: job.companyId,
-      body,
-    });
+    // Each call is counted on the timer, so the save split shows a retried create.
+    const replay = (b: Record<string, unknown>) => {
+      timer.createAttempt();
+      return createDraftSalesOrder(env, {
+        salespersonId: job.salespersonId,
+        salespersonName: job.salespersonName,
+        houzsUserId: job.houzsUserId,
+        companyId: job.companyId,
+        body: b,
+      });
+    };
+    let outcome = await replay(body);
     // Belt-and-suspenders TIER 1: if the create rejects AND we set slip dates,
     // the date/variant pairing rules are the likely cause (a Processing Date
     // needs complete line variants) — retry WITHOUT dates, KEEPING the full
     // category lines (itemGroup/fabric/specials). The operator sets dates on
     // review. This is what recovers a sofa with a delivery date but no seat
     // height while preserving desktop-parity lines.
-    const replay = (b: Record<string, unknown>) => createDraftSalesOrder(env, {
-      salespersonId: job.salespersonId,
-      salespersonName: job.salespersonName,
-      houzsUserId: job.houzsUserId,
-      companyId: job.companyId,
-      body: b,
-    });
     if (
       outcome.status !== 201 &&
       (body.processingDate != null || body.customerDeliveryDate != null)
@@ -3992,26 +4009,32 @@ async function runScanJob(
       }));
       outcome = await replay(body);
     }
+    timer.mark('save', 'create');
     const docNo = (outcome.body as { docNo?: unknown }).docNo;
     if (outcome.status === 201 && typeof docNo === 'string' && docNo !== '') {
-      await linkScanFiles(svc, { companyId: job.companyId, kind: 'so', documentId: docNo, keys: job.imageKeys, sha256: null }); // HC-0006 T7
+      // HC-0006 T7. Never throws; runs alongside the payment pass (it links the 'so' rows,
+      // the payment pass the 'payment' rows) and is awaited before the job reads done.
+      const linked = linkScanFiles(svc, { companyId: job.companyId, kind: 'so', documentId: docNo, keys: job.imageKeys, sha256: null });
       // Shell/blank draft — there is no reliable OCR payment to book. Record the
       // plain "please complete" note so the Orders-open toast tells the rep, and
       // stop here (no receipt-payment pass on a draft the model couldn't read).
       if (shellNote) {
         // Write both the SO-specific and generic link column (same doc_no for SO).
-        await touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo, error: shellNote });
-        await postScanNotice(env, {
-          houzsUserId: job.houzsUserId,
-          category: 'WARNING',
-          title: `Scan saved as a draft — ${docNo}`,
-          body: shellNote,
-        });
+        await linked;
+        await Promise.all([
+          touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo, error: shellNote }),
+          postScanNotice(env, {
+            houzsUserId: job.houzsUserId,
+            category: 'WARNING',
+            title: `Scan saved as a draft — ${docNo}`,
+            body: shellNote,
+          }),
+        ]);
         return;
       }
       // Past the shell paths, a null parse has already returned above — narrow
       // `parsed` to non-null for the receipt-payment pass (defensive fallback).
-      if (!parsed) { await touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo }); return; }
+      if (!parsed) { await linked; await touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo }); return; }
       // Payments from receipt OCR — one ledger row per classified payment
       // receipt, via the SAME recordSoPaymentRow core the interactive route
       // uses. GUARD: never fail the job — the DRAFT stands; a failure only
@@ -4039,24 +4062,27 @@ async function runScanJob(
         console.error('[scan-job] receipt payment recording threw:', job.id, (e as Error).message);
         paymentNote = 'Draft created; the payment could not be recorded — please add it on the order.';
       }
-      await touch({
-        status: 'done',
-        so_doc_no: docNo,
-        linked_doc_no: docNo,
-        ...(paymentNote ? { error: paymentNote } : {}),
-      });
+      await linked;
       // Private "your scan is a draft now" notice. Duplicate/payment caveats
       // ride in the body + bump it to WARNING so it stands out.
       const noticeExtras = [
         dupDocNo ? `This looks like a possible duplicate of ${dupDocNo}.` : null,
         paymentNote,
       ].filter(Boolean);
-      await postScanNotice(env, {
-        houzsUserId: job.houzsUserId,
-        category: dupDocNo || paymentNote ? 'WARNING' : 'GENERAL',
-        title: `Sales order saved — ${docNo}`,
-        body: [`Your scan was saved as a draft. Open it from your Orders to review.`, ...noticeExtras].join(' '),
-      });
+      await Promise.all([
+        touch({
+          status: 'done',
+          so_doc_no: docNo,
+          linked_doc_no: docNo,
+          ...(paymentNote ? { error: paymentNote } : {}),
+        }),
+        postScanNotice(env, {
+          houzsUserId: job.houzsUserId,
+          category: dupDocNo || paymentNote ? 'WARNING' : 'GENERAL',
+          title: `Sales order saved — ${docNo}`,
+          body: [`Your scan was saved as a draft. Open it from your Orders to review.`, ...noticeExtras].join(' '),
+        }),
+      ]);
       return;
     }
     console.error(
@@ -4074,7 +4100,7 @@ async function runScanJob(
     console.error('[scan-job] pipeline threw:', job.id, e);
     await fail(JOB_MSG.fallback);
   } finally {
-    timer.mark('save');
+    timer.mark('save', 'tail');
     timer.done(env, job.id, outcome);
   }
 }
@@ -4717,17 +4743,18 @@ scanSo.post('/samples/:id/confirm', async (c) => {
   // blocks/fails the confirm.
   const rep = repGiven || normalizeRepKey((updated[0] as { salesperson?: string | null }).salesperson);
   const distillCompanyName = (await getBranding(c.env)).companyName;
+  const distillUsage = { ...requestAiTag(c, 'scan_so_distill', CLAUDE_MODEL), waitUntil: null };
   const distillPromise = (async () => {
     if (rep && !isGlobalKey(rep)) {
       try {
-        const r = await distillSalespersonRules(svc, c.env.ANTHROPIC_API_KEY, rep, distillCompanyName);
+        const r = await distillSalespersonRules(svc, c.env.ANTHROPIC_API_KEY, rep, distillCompanyName, distillUsage);
         if (r.status === 'error') console.warn(`[scan-so distill] ${rep}: ${r.reason}`);
       } catch (e) {
         console.warn(`[scan-so distill] ${rep} threw:`, (e as Error).message);
       }
     }
     try {
-      const g = await distillGlobalAliases(svc, c.env.ANTHROPIC_API_KEY, distillCompanyName);
+      const g = await distillGlobalAliases(svc, c.env.ANTHROPIC_API_KEY, distillCompanyName, distillUsage);
       if (g.status === 'error') console.warn(`[scan-so distill] __GLOBAL__ aliases: ${g.reason}`);
     } catch (e) {
       console.warn('[scan-so distill] __GLOBAL__ aliases threw:', (e as Error).message);
@@ -4736,7 +4763,7 @@ scanSo.post('/samples/:id/confirm', async (c) => {
     // <3 samples without an API call) so each rep's correction lifts the
     // shared baseline for everyone. Sequential; never blocks the confirm.
     try {
-      const gr = await distillGlobalRules(svc, c.env.ANTHROPIC_API_KEY, distillCompanyName);
+      const gr = await distillGlobalRules(svc, c.env.ANTHROPIC_API_KEY, distillCompanyName, distillUsage);
       if (gr.status === 'error') console.warn(`[scan-so distill] __GLOBAL_RULES__: ${gr.reason}`);
     } catch (e) {
       console.warn('[scan-so distill] __GLOBAL_RULES__ threw:', (e as Error).message);

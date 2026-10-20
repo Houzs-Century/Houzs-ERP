@@ -36,6 +36,7 @@ import { nextPoLineNo } from './po-line-order';
 import { supplierSkuFor } from './po-line-supplier-sku';
 import { skuCategoryResolver, lineIdentityFields } from './sku-category';
 import { buildVariantSummary } from '../shared';
+import { retiredLineOf, type AcRetiredLine } from './autocount-outbox';
 
 /* The routable field atoms a PO amendment moves — lines + header. Mirrors the
    frontend poLineFieldKinds / poHeaderFieldKind so the audit routing note matches
@@ -90,6 +91,12 @@ export type ApplyPoAmendmentResult = {
      a removed line preserved because it was already received, or a PO left with
      no lines at all. */
   warnings: string[];
+  /* AutoCount keys of the removed lines, read before the delete: the edit the
+     route queues is composed from the PO as it is now, so a line it does not
+     name stays live and outstanding in AutoCount (HC-0121). */
+  retired: AcRetiredLine[];
+  /* SO lines whose PO line was removed, for the route's po_qty_picked recount. */
+  releasedSoItemIds: string[];
 };
 
 const centi = (v: unknown): number => Number(v ?? 0);
@@ -193,6 +200,8 @@ export async function applyPoAmendment(
   // (5) Line diffs.
   let linesUpdated = 0, linesAdded = 0, linesRemoved = 0;
   const warnings: string[] = [];
+  const retired: AcRetiredLine[] = [];
+  const releasedSoItemIds: string[] = [];
   const lineFieldChanges: Array<{ field: string; from: unknown; to: unknown }> = [];
   /* THE SKU DECIDES THE CATEGORY here too (docs/bugs/0514, 0813). An added line
      used to take `new_variants.itemGroup` or fall to `others`, and a code moved by
@@ -212,12 +221,12 @@ export async function applyPoAmendment(
       if (!diff.purchase_order_item_id) continue;
       const { data: existing, error: exErr } = await sb
         .from('purchase_order_items')
-        .select('id, received_qty, material_name, item_code')
+        .select('id, received_qty, material_name, item_code, so_item_id')
         .eq('id', diff.purchase_order_item_id)
         .maybeSingle();
       if (exErr) throw new Error(`applyPoAmendment: REMOVE load failed: ${exErr.message}`);
       if (!existing) continue; // already gone — nothing to remove
-      const row = existing as { received_qty?: number; material_name?: string; item_code?: string };
+      const row = existing as { received_qty?: number; material_name?: string; item_code?: string; so_item_id?: string | null };
       if (centi(row.received_qty) > 0) {
         // Already (partly) received — preserve it and surface for manual handling.
         warnings.push(
@@ -226,11 +235,16 @@ export async function applyPoAmendment(
         );
         continue;
       }
+      const retire = await retiredLineOf(
+        sb as unknown as Parameters<typeof retiredLineOf>[0], 'purchase_order_items', String(diff.purchase_order_item_id),
+      );
       const { error: delErr } = await sb
         .from('purchase_order_items')
         .delete()
         .eq('id', diff.purchase_order_item_id);
       if (delErr) throw new Error(`applyPoAmendment: REMOVE delete failed: ${delErr.message}`);
+      retired.push(...retire);
+      if (row.so_item_id) releasedSoItemIds.push(row.so_item_id);
       lineFieldChanges.push({
         field: `line_removed_${row.item_code ?? diff.purchase_order_item_id}`,
         from: `qty ${(diff.old_snapshot?.qty as number | undefined) ?? '?'}`, to: 'removed',
@@ -399,5 +413,5 @@ export async function applyPoAmendment(
       + (routingSummary ? ` Routing — ${routingSummary}.` : ''),
   });
 
-  return { poId, poNumber, revision: nextRevision, linesUpdated, linesAdded, linesRemoved, warnings };
+  return { poId, poNumber, revision: nextRevision, linesUpdated, linesAdded, linesRemoved, warnings, retired, releasedSoItemIds };
 }

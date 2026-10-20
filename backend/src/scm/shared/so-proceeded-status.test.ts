@@ -6,7 +6,12 @@
  * production, and that is worse than the gap it closes.
  */
 import { describe, expect, it } from 'vitest';
-import { liveStatusForProcessingDate, statusAfterProcessingDateSet } from './so-proceeded-status';
+import {
+  CONFIRM_DELIVERY_PAST_PROBLEM,
+  liveStatusForProcessingDate,
+  processingDateOnConfirm,
+  statusAfterProcessingDateSet,
+} from './so-proceeded-status';
 
 describe('liveStatusForProcessingDate — where a live order lands', () => {
   it('lands IN_PRODUCTION when the order already carries a Processing Date', () => {
@@ -62,5 +67,34 @@ describe('statusAfterProcessingDateSet', () => {
   it('reads the status case- and space-insensitively, and survives a missing one', () => {
     expect(call(' confirmed ', null, '2026-09-05')).toBe('IN_PRODUCTION');
     expect(call(null, null, '2026-09-05')).toBeNull();
+  });
+});
+
+describe('processingDateOnConfirm — HC-0113, a late confirm proceeds on the confirm day', () => {
+  const today = '2026-10-13';
+  const on = (processingDate: string | null, deliveryDate: string | null) =>
+    processingDateOnConfirm({ processingDate, deliveryDate, todayMY: today });
+
+  it('moves a past Processing Date to the confirm day (HC-SO-2609-077: 18/9 confirmed 13/10)', () => {
+    expect(on('2026-09-18', '2026-10-26')).toEqual({ ok: true, write: '2026-10-13' });
+    expect(on('2026-09-18T00:00:00+00:00', '2026-10-26')).toEqual({ ok: true, write: '2026-10-13' });
+  });
+
+  it('keeps today and future dates', () => {
+    expect(on('2026-10-13', '2026-10-26')).toEqual({ ok: true, write: null });
+    expect(on('2026-10-20', '2026-10-26')).toEqual({ ok: true, write: null });
+  });
+
+  it('does nothing for a draft with no Processing Date', () => {
+    expect(on(null, null)).toEqual({ ok: true, write: null });
+    expect(on('  ', '2026-09-01')).toEqual({ ok: true, write: null });
+  });
+
+  it('refuses when the Delivery Date has also passed, rather than leave Processing after Delivery', () => {
+    expect(on('2026-09-18', '2026-10-01')).toEqual({ ok: false, problem: CONFIRM_DELIVERY_PAST_PROBLEM });
+  });
+
+  it('allows a Delivery Date of today', () => {
+    expect(on('2026-09-18', '2026-10-13')).toEqual({ ok: true, write: '2026-10-13' });
   });
 });

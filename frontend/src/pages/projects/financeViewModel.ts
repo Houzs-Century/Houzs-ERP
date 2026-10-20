@@ -156,9 +156,9 @@ export const FINANCE_TAB_HEADER: Record<
       "Every income and cost line across every project. Filter by date, brand, kind, category — or search.",
   },
   analytics: {
-    title: "Profitability",
+    title: "Project Overview",
     description:
-      "Revenue, COGS, gross profit, cost and net profit per project — sliced by brand, venue, type, and month.",
+      "Sales, COGS, rental, gross and net profit for the period — then by brand, event type, organizer and venue.",
   },
   pnl: {
     title: "P&L Calendar",

@@ -7,6 +7,8 @@ import { canonicalizeVenue } from "../scm/lib/canonical-venue";
 import { deriveProjectCode, deriveProjectName, syncedNameForOrganizerChange } from "./project-naming";
 import { checklistRowDone } from "./checklistProgress";
 import { eventFinanceLines } from "./projectFinanceLines";
+import { loadEventPnl } from "./eventPnlInputs";
+import { pnlForProjects, withPnlColumns } from "./eventPnlBatch";
 export { deriveProjectCode, deriveProjectName };
 
 /** Disambiguate against existing codes by appending -2, -3, … */
@@ -828,6 +830,9 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
   const { financeLines, books } = await eventFinanceLines(
     env, id, project.company_id ?? companyId ?? null, await listLedgerLines(env, id), LEDGER_COST_CATEGORIES,
   );
+  /* The two P&Ls — by Total Sales and by the Sales Orders (owner 2026-10-16). */
+  const pnl = await loadEventPnl(env, { id, brand: project.brand, companyId: project.company_id ?? companyId ?? null },
+    financeLines, books.rows, (finance as { total_sales?: number | null } | null)?.total_sales ?? null);
 
   // Stock transfers — OUT + RETURN records, confirmation-tracked.
   const stockTransfers = await env.DB.prepare(
@@ -911,6 +916,7 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
     finance: finance ?? null,
     finance_lines: financeLines,
     finance_books: books,
+    finance_pnl: pnl,
     stock_transfers: stockTransfers.results ?? [],
     checklist: checklist.results ?? [],
     checklist_comments: comments,
@@ -1130,6 +1136,9 @@ export function stripSetupDismantle<
 // ── List ──────────────────────────────────────────────────────
 
 export interface ListProjectsFilters {
+  /** Fill the finance columns from the event page's P&L (services/eventPnlBatch.ts) —
+   *  set by the route for a caller who may see finance (owner 2026-10-19, ledger item 5). */
+  with_pnl?: boolean;
   stage?: string;
   /** Date-derived event phase for the field/sales slim filter bar (owner
    *  2026-07-21). The `stage` enum is unmaintained (never reaches
@@ -2000,7 +2009,9 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     .all();
 
   return {
-    data: rows.results ?? [],
+    data: f.with_pnl
+      ? withPnlColumns((rows.results ?? []) as any[], await pnlForProjects(env, (rows.results ?? []) as any[], f.company_id ?? null, LEDGER_COST_CATEGORIES))
+      : rows.results ?? [],
     page,
     per_page: perPage,
     total: total?.count ?? 0,

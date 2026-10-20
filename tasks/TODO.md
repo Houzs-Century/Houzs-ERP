@@ -3,6 +3,7 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
+- Lorry revenue / occupancy (Logistic Overview) reads the lorry from the DO crew, its lorry run, or the DO Vehicle field; on the local copy only 1 of 298 October DOs carries one. The owner says the team fills the plate on every DO: find WHERE (AutoCount, paper, another field) and read it from there — 2026-10-18
 - Houzs POS go-live: create the Cloudflare Pages project `houzs-pos` (direct upload) and attach `pos.houzscentury.com`, then merge PR #4635; `deploy-pos.yml` fails until the project exists — 2026-10-15
 - Houzs POS device QA (spec section 16, items 1 to 6, 9, 11): on a real tablet with the ESC/POS printer and the scanner after the deploy: install, Prepare, 3 days offline, hotspot sync, DATA LOST drill, 3-day pending drill, 58 / 80 mm prints, label scans — 2026-10-15
 - IT Support (`/it-support`, requests live in the Houzs IT Hub): each company files into its own hub system, keyed by the Worker secret `IT_HUB_API_KEY_<company code>` (`IT_HUB_API_KEY_HOUZS` = hub system HC, `IT_HUB_API_KEY_2990` = hub system 2990) plus `IT_HUB_URL`; issue a key in the hub repo with `node scripts/issue-api-key.mjs <HC|2990>`. The menu row shows only in a company whose key is set. The old single `IT_HUB_API_KEY` secret is no longer read: delete it once the two new ones are in. — 2026-10-13
@@ -30,6 +31,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - BUG-54 service case phone on the delivery sheet: paste `reference/ERPDeliverySync.gs` into the live "Delivery & Amend Updated" project and run `runErpAssrContactRefresh` once, then check Delivery Details R4124 col H — sheet trigger owner — 2026-10-05
 
 ## Dev
+- Sales Orders list: server-side funnels for the derived columns (PO No., DO No., stock status, payment method, line columns) are on branch `fix/so-list-col-filter` (fa28f14c0), NOT shipped: its first request makes about 740 database calls against the Worker limit of 1,000 — measure on staging and cut the reads before merging — 2026-10-18
 - Product request: after `scm.product_request_lines` is on production, re-run `probe-product-code-columns.mjs` so the hand-added `product_request_lines.item_code` line in `tests/fixtures/product-code-columns.snapshot.json` is read back from production (it was written from the migration; it replaced the `product_requests.item_code` line of 2026-10-07) — 2026-10-15
 - AutoCount PO Doc No. repair: verify batch 3, then the last 243 rows, out of office hours — 2026-09-15
 - AutoCount: an edit composed before a rebuild is refused "line not found"; recompose once — 2026-09-15

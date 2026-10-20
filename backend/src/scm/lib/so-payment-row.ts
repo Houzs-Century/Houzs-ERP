@@ -333,75 +333,82 @@ export async function recordSoPaymentRow(
     ...(p.isDeposit === true ? { is_deposit: true } : {}),
   }).select(PAYMENT_COLS).single();
   if (error) return { payment: null, errorMessage: error.message };
-  await linkPaymentScan(sb, { companyId, slipKey: p.slipKey, paymentId: String((data as { id?: unknown } | null)?.id ?? '') }); // HC-0006 T7
+  /* HC-0006 speed: the hooks below are independent best-effort steps, so they
+     run together instead of one after another. The one ordering that matters
+     is kept: the invoice re-roll waits for the booking, which issues the
+     deposit invoice it settles. None throws on the plain client every caller
+     passes (recordSoAudit throws only inside an atomic command). */
+  await Promise.all([
+    linkPaymentScan(sb, { companyId, slipKey: p.slipKey, paymentId: String((data as { id?: unknown } | null)?.id ?? '') }), // HC-0006 T7
 
-  /* The Official Receipt is born in bookSoPaymentBestEffort below, with the
-     booking and the deposit invoice — one hook for every path (docs/bugs/0935). */
+    /* The Official Receipt is born in bookSoPaymentBestEffort below, with the
+       booking and the deposit invoice — one hook for every path (docs/bugs/0935). */
 
-  /* Post-merge stitch — wire ADD_PAYMENT into the PR-D audit ledger.
-     Field-changes list mirrors what the user typed so the History panel
-     can render a readable diff. Best-effort inside recordSoAudit. */
-  await recordSoAudit(sb, {
-    docNo: p.docNo,
-    action: 'ADD_PAYMENT',
-    actorId: p.createdBy,
-    actorName: p.actorName ?? null,
-    /* The payment this row is about (docs/bugs/0888) — what lets a later
-       correction's report say who recorded it first. */
-    paymentId: String((data as { id?: unknown } | null)?.id ?? '') || null,
-    ...(p.auditSource ? { source: p.auditSource } : {}),
-    ...(p.auditNote ? { note: p.auditNote } : {}),
-    fieldChanges: [
-      { field: 'paidAt',             from: null, to: p.paidAt },
-      { field: 'method',             from: null, to: p.method },
-      { field: 'amountSen',        from: null, to: p.amountSen },
-      ...(merchantProvider  ? [{ field: 'merchantProvider',  from: null, to: merchantProvider  } satisfies FieldChange] : []),
-      ...(installmentMonths ? [{ field: 'installmentMonths', from: null, to: installmentMonths } satisfies FieldChange] : []),
-      ...(onlineType        ? [{ field: 'onlineType',        from: null, to: onlineType        } satisfies FieldChange] : []),
-      ...(p.approvalCode    ? [{ field: 'approvalCode',      from: null, to: p.approvalCode    } satisfies FieldChange] : []),
-      ...(p.accountSheet    ? [{ field: 'accountSheet',      from: null, to: p.accountSheet    } satisfies FieldChange] : []),
-    ],
-  });
+    /* Post-merge stitch — wire ADD_PAYMENT into the PR-D audit ledger.
+       Field-changes list mirrors what the user typed so the History panel
+       can render a readable diff. Best-effort inside recordSoAudit. */
+    recordSoAudit(sb, {
+      docNo: p.docNo,
+      action: 'ADD_PAYMENT',
+      actorId: p.createdBy,
+      actorName: p.actorName ?? null,
+      /* The payment this row is about (docs/bugs/0888) — what lets a later
+         correction's report say who recorded it first. */
+      paymentId: String((data as { id?: unknown } | null)?.id ?? '') || null,
+      ...(p.auditSource ? { source: p.auditSource } : {}),
+      ...(p.auditNote ? { note: p.auditNote } : {}),
+      fieldChanges: [
+        { field: 'paidAt',             from: null, to: p.paidAt },
+        { field: 'method',             from: null, to: p.method },
+        { field: 'amountSen',        from: null, to: p.amountSen },
+        ...(merchantProvider  ? [{ field: 'merchantProvider',  from: null, to: merchantProvider  } satisfies FieldChange] : []),
+        ...(installmentMonths ? [{ field: 'installmentMonths', from: null, to: installmentMonths } satisfies FieldChange] : []),
+        ...(onlineType        ? [{ field: 'onlineType',        from: null, to: onlineType        } satisfies FieldChange] : []),
+        ...(p.approvalCode    ? [{ field: 'approvalCode',      from: null, to: p.approvalCode    } satisfies FieldChange] : []),
+        ...(p.accountSheet    ? [{ field: 'accountSheet',      from: null, to: p.accountSheet    } satisfies FieldChange] : []),
+      ],
+    }),
 
-  /* AutoCount's BALANCE UDF is what the order still owes, so a payment CHANGES
-     a value the account book holds — and no other path re-sends it. Without
-     this the figure in the book stays whatever it was at the last line or
-     header save, which for a fully-settled order reads as still outstanding.
+    /* AutoCount's BALANCE UDF is what the order still owes, so a payment CHANGES
+       a value the account book holds — and no other path re-sends it. Without
+       this the figure in the book stays whatever it was at the last line or
+       header save, which for a fully-settled order reads as still outstanding.
 
-     Queued from the CORE and not from the HTTP route because scan-so.ts inserts
-     through here too, with no request context. A rule written into the route
-     would cover the payments a human typed and silently miss every receipt the
-     scan job books — this module's recurring shape.
+       Queued from the CORE and not from the HTTP route because scan-so.ts inserts
+       through here too, with no request context. A rule written into the route
+       would cover the payments a human typed and silently miss every receipt the
+       scan job books — this module's recurring shape.
 
-     HEADER-ONLY since 2026-09-14 (docs/bugs/0896): a payment moves BALANCE and
-     PAYEMENT and no line, and composing the lines is where an edit is refused.
-     It never throws and returns false when the write-back is off or the order
-     has no AutoCount counterpart, so the payment's own success does not depend
-     on it. */
-  await enqueueSoPaymentEdit(sb, {
-    companyId,
-    docNo: p.docNo,
-    /* p.createdBy is a Supabase auth uuid; the outbox's created_by is the
-       numeric houzs user id, and there is no mapping to hand here. Provenance
-       for this row lives in the ADD_PAYMENT audit entry above. */
-    createdBy: null,
-  });
+       HEADER-ONLY since 2026-09-14 (docs/bugs/0896): a payment moves BALANCE and
+       PAYEMENT and no line, and composing the lines is where an edit is refused.
+       It never throws and returns false when the write-back is off or the order
+       has no AutoCount counterpart, so the payment's own success does not depend
+       on it. */
+    enqueueSoPaymentEdit(sb, {
+      companyId,
+      docNo: p.docNo,
+      /* p.createdBy is a Supabase auth uuid; the outbox's created_by is the
+         numeric houzs user id, and there is no mapping to hand here. Provenance
+         for this row lives in the ADD_PAYMENT audit entry above. */
+      createdBy: null,
+    }),
 
-  /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): book the
-     payment through the one posting gate. Best-effort like the enqueue above —
-     a booking failure never fails the operator's save; the accounting
-     backfill endpoint is the self-heal. */
-  await bookSoPaymentBestEffort(sb, data as Record<string, unknown>, 'payment');
+    /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): book the
+       payment through the one posting gate. Best-effort like the enqueue above —
+       a booking failure never fails the operator's save; the accounting
+       backfill endpoint is the self-heal. */
+    bookSoPaymentBestEffort(sb, data as Record<string, unknown>, 'payment')
 
-  /* The invoices raised off this order settle partly out of THIS money
-     (lib/si-order-deposit), so their status has to be re-rolled here. Without
-     it the invoice DETAIL would read correctly the moment you opened it while
-     the invoice LIST — which reads the persisted status — kept telling the
-     office to chase a customer who had just paid. Queued from the CORE for the
-     same reason the AutoCount enqueue above is: scan-so.ts books receipts
-     through here with no request context. Best-effort; a failure leaves a stale
-     status the next roll self-heals. */
-  await recomputeSiPaidForOrder(sb, p.docNo, companyId);
+    /* The invoices raised off this order settle partly out of THIS money
+       (lib/si-order-deposit), so their status has to be re-rolled here. Without
+       it the invoice DETAIL would read correctly the moment you opened it while
+       the invoice LIST — which reads the persisted status — kept telling the
+       office to chase a customer who had just paid. Queued from the CORE for the
+       same reason the AutoCount enqueue above is: scan-so.ts books receipts
+       through here with no request context. Best-effort; a failure leaves a stale
+       status the next roll self-heals. */
+      .then(() => recomputeSiPaidForOrder(sb, p.docNo, companyId)),
+  ]);
 
   return { payment: data as Record<string, unknown>, errorMessage: null };
 }

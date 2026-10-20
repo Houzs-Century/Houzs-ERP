@@ -67,7 +67,7 @@ import {
   History,
   Wand2,
   CalendarOff,
-  type LucideIcon, Landmark, CreditCard, Banknote, Receipt } from "lucide-react";
+  type LucideIcon, Landmark, CreditCard, Banknote, Receipt, Server, Sparkles, ScanLine } from "lucide-react";
 import { cn } from "../lib/utils";
 import { booleanRecordPreference, useIdentityPreference } from "../hooks/useIdentityPreference";
 import { useAuth } from "../auth/AuthContext";
@@ -309,6 +309,15 @@ export const NAV_TABS: NavTab[] = [
     salesRepTo: "/my-cases",
     children: [
       {
+        // Owner 2026-10-16: each module opens with its overview, listed first.
+        to: "/assr?view=metrics",
+        label: "Quality Overview",
+        icon: ShieldCheck,
+        perm: "service_cases.read",
+        pageAccess: "service_cases.metrics",
+        hideForSalesRep: true,
+      },
+      {
         to: "/assr?view=cases",
         label: "Service Cases",
         icon: ClipboardList,
@@ -322,14 +331,6 @@ export const NAV_TABS: NavTab[] = [
         // director (assrVisibleUserIds unrestricted). hideForSalesRep still
         // wins for a NON-director rep (checked first), so reps keep My-Cases-only.
         showForDirector: true,
-      },
-      {
-        to: "/assr?view=metrics",
-        label: "Quality Metrics",
-        icon: ShieldCheck,
-        perm: "service_cases.read",
-        pageAccess: "service_cases.metrics",
-        hideForSalesRep: true,
       },
       {
         // Lead Time Portal merged into Service Maintenance as a tab.
@@ -369,6 +370,13 @@ export const NAV_TABS: NavTab[] = [
     pageAccess: "projects",
     children: [
       {
+        to: "/projects?view=finances",
+        label: "Project Overview",
+        icon: DollarSign,
+        pageAccess: "projects.finances",
+        requireFinanceViewer: true,
+      },
+      {
         to: "/projects?view=list",
         label: "Project List",
         icon: ClipboardList,
@@ -379,13 +387,6 @@ export const NAV_TABS: NavTab[] = [
         label: "Calendar",
         icon: Calendar,
         pageAccess: "projects.calendar",
-      },
-      {
-        to: "/projects?view=finances",
-        label: "Finances",
-        icon: DollarSign,
-        pageAccess: "projects.finances",
-        requireFinanceViewer: true,
       },
       {
         to: "/projects?view=maintenance",
@@ -521,6 +522,10 @@ export const NAV_TABS: NavTab[] = [
         anyAccess: ["scm.sales", "scm.sales.orders", "scm.sales.delivery", "scm.sales.invoices", "scm.sales.returns"],
         children: [
           { to: "/scm/sales-orders", label: "Sales Orders", icon: ShoppingCart, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.orders"] },
+          // Orders with no fair link, for the office to settle (owner 2026-10-19:
+          // 「先做 Fair links to settle 菜单」). The page existed only by URL; the
+          // red number is how many it lists, from the same server read.
+          { to: "/scm/fair-pending", label: "Fair Links to Settle", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.orders"], hideForSalesRep: true, badge: "fair-links-to-settle" },
           // The office / director path to Amendments. A rep reaches it via the
           // rep-only leaf above instead, so this carries hideForSalesRep like its
           // DO / SI siblings — belt-and-braces against the parent's flag being
@@ -562,6 +567,7 @@ export const NAV_TABS: NavTab[] = [
         anyPerm: ["*", "scm.access"],
         anyAccess: ["scm.procurement", "scm.procurement.products", "scm.procurement.suppliers", "scm.procurement.mrp", "scm.procurement.po", "scm.procurement.grn", "scm.procurement.pi", "scm.procurement.pr"],
         children: [
+          { to: "/scm/procurement-overview", label: "Procurement Overview", icon: LayoutDashboard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.po"], hideForSalesRep: true },
           { to: "/scm/products", label: "Products & Maintenance", icon: Sofa, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.products"], hideForSalesRep: true },
           { to: "/scm/suppliers", label: "Suppliers", icon: Truck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.suppliers"], hideForSalesRep: true },
           { to: "/scm/mrp", label: "MRP · Stock Status", icon: Calculator, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.mrp"], hideForSalesRep: true },
@@ -583,6 +589,7 @@ export const NAV_TABS: NavTab[] = [
         anyAccess: ["scm.transportation", "scm.transportation.drivers"],
         children: [
           // Daily dispatch flow — the pages used every day, in workflow order.
+          { to: "/scm/logistic-overview", label: "Logistic Overview", icon: LayoutDashboard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/delivery-planning", label: "Delivery Planning", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/dp-orders", label: "DP Orders", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
           { to: "/scm/auto-schedule", label: "Delivery Date Arrangement", icon: Wand2, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
@@ -946,12 +953,18 @@ export const NAV_TABS: NavTab[] = [
       { to: "/team?tab=permissions", label: "Roles & Permissions", icon: ShieldCheck, perm: "roles.read", pageAccess: "team" },
     ],
   },
+  // IT pages (DEV-35). The header and both leaves carry the same capability, so
+  // nobody outside IT sees an empty group.
   {
     section: "system",
-    to: "/system-health",
-    label: "System Health",
-    icon: Activity,
-    pageAccess: "system_health",
+    label: "IT",
+    icon: Server,
+    groupId: "it",
+    requireCapability: "it.pages.view",
+    children: [
+      { to: "/system-health", label: "System Health", icon: Activity, requireCapability: "it.pages.view" },
+      { to: "/ai-usage", label: "AI Usage", icon: Sparkles, requireCapability: "it.pages.view" },
+    ],
   },
   // Next to System Health because it answers the same shape of question — "is
   // the thing that runs in the background still working" — and because the
@@ -1022,6 +1035,14 @@ export const NAV_TABS: NavTab[] = [
     label: "IT Support",
     icon: LifeBuoy,
     badge: "it-support-replies",
+  },
+  // Under IT Support (owner's ask); IT pages only, like System Health and AI Usage.
+  {
+    section: "system",
+    to: "/ocr",
+    label: "OCR",
+    icon: ScanLine,
+    requireCapability: "it.pages.view",
   },
   {
     section: "system",

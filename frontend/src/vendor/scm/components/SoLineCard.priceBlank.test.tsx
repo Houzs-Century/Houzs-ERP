@@ -45,6 +45,8 @@ const base: Draft = {
 function Harness({ initial }: { initial: Draft }) {
   const [draft, setDraft] = useState(initial);
   return (
+    <>
+    <output data-testid="unit-price-sen">{draft.unitPriceSen}</output>
     <SoLineCard
       index={1}
       draft={draft}
@@ -57,10 +59,12 @@ function Harness({ initial }: { initial: Draft }) {
       lineDateLocked={false}
       attachOptions={null}
     />
+    </>
   );
 }
 
 const priceBox = () => screen.getByPlaceholderText('0.00') as HTMLInputElement;
+const linePriceSen = () => screen.getByTestId('unit-price-sen').textContent;
 
 describe('SO line card — an RM 0 Unit Price', () => {
   it('starts blank, with 0.00 as the placeholder', () => {
@@ -95,5 +99,33 @@ describe('SO line card — an RM 0 Unit Price', () => {
   it('shows a SKU sell price as before', () => {
     render(<Harness initial={{ ...base, unitPriceSen: 380000 }} />);
     expect(priceBox().value).toBe('3800.00');
+  });
+});
+
+/* HC-0095: an emptied box requests no new price (priceBoxAuthored), so the line
+ * must keep showing the price it had, not RM 0.00 it will never be charged. */
+describe('SO line card — an emptied price box', () => {
+  it('keeps the saved price on the line, and refills the box on blur', () => {
+    render(<Harness initial={{ ...base, unitPriceSen: 25000, priceAuthored: true }} />);
+    fireEvent.change(priceBox(), { target: { value: '' } });
+    expect(priceBox().value).toBe('');
+    expect(linePriceSen()).toBe('25000');
+    fireEvent.blur(priceBox());
+    expect(priceBox().value).toBe('250.00');
+  });
+
+  it('typed, then emptied, goes back to the price before the edit', () => {
+    render(<Harness initial={{ ...base, unitPriceSen: 25000, priceAuthored: true }} />);
+    fireEvent.change(priceBox(), { target: { value: '300' } });
+    expect(linePriceSen()).toBe('30000');
+    fireEvent.change(priceBox(), { target: { value: '' } });
+    expect(priceBox().value).toBe('');
+    expect(linePriceSen()).toBe('25000');
+  });
+
+  it('a typed 0 is still RM 0', () => {
+    render(<Harness initial={{ ...base, unitPriceSen: 25000, priceAuthored: true }} />);
+    fireEvent.change(priceBox(), { target: { value: '0' } });
+    expect(linePriceSen()).toBe('0');
   });
 });

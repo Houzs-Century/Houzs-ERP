@@ -69,8 +69,10 @@
 //     empties the day; nothing guesses it from today's date.
 // ----------------------------------------------------------------------------
 
-import { useState, type ReactNode } from 'react';
-import { useFairOptions, fairLabel, type FairOption } from '../vendor/scm/lib/fair-options-queries';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  useFairDefault, useFairOptions, fairLabel, type FairOption, type FairWhy,
+} from '../vendor/scm/lib/fair-options-queries';
 import { fmtDayMonth } from '../vendor/shared/format';
 import { fairDaysOf, soleFairDay } from './fairPick';
 
@@ -305,6 +307,60 @@ export function FairDayPicker(props: FairDayPickerProps) {
       </select>
     </span>
   );
+}
+
+export type AutoFair = {
+  /** Why no fair was filled in — the form sends it to POST /validate as
+   *  `fairWhy`, which words the refusal. Null when there is nothing to say. */
+  why: FairWhy | null;
+  /** The line under the picker: what was filled in, or why nothing was. */
+  hint: ReactNode;
+};
+
+const sameText = (a: string | null | undefined, b: string | null | undefined) =>
+  (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase();
+
+/**
+ * A NEW order starts with the KEYER's fair (owner 2026-10-19, the boss's rule):
+ * the fair they stand at today, else the latest one within a month. The rule is
+ * the server's (GET /fair-default); this fills the picker ONCE, through the
+ * form's own pick handler — so a filled-in fair clears No fair exactly as a
+ * picked one does — and words the line under it. Nothing is forced: the
+ * operator changes it like any pick, and it never fills in again.
+ *
+ * Only a form with no EVENT yet is filled: a place the form defaulted to
+ * (/active-venue) gives way, a fair someone already picked does not.
+ *
+ * @param enabled A new order whose operator has not ticked No fair. An edit keeps
+ *   its own fair, and a No fair tick is a decision this never undoes.
+ */
+export function useAutoFair(
+  enabled: boolean,
+  value: FairPickValue,
+  onChange: (next: FairPickValue) => void,
+): AutoFair {
+  const d = useFairDefault(enabled).data ?? null;
+  const filled = useRef(false);
+  useEffect(() => {
+    if (filled.current || !enabled || !d) return;
+    filled.current = true;
+    const e = d.event;
+    if (!e || value.organizer) return;
+    onChange({ venue: e.venue, organizer: e.organizer, startDate: e.startDate, endDate: e.endDate, day: soleFairDay(e, d.date) });
+  }, [d, enabled]); // fills ONCE, when the default arrives — not on every pick
+
+  if (!enabled || !d) return { why: null, hint: null };
+  const e = d.event;
+  const showing = e && sameText(e.venue, value.venue) && sameText(e.organizer, value.organizer) && e.startDate === value.startDate;
+  const line = { display: 'block', fontSize: '11px', marginTop: '4px' } as const;
+  const hint = showing
+    ? <span style={{ ...line, opacity: 0.75 }}>
+        {d.how === 'ongoing' ? 'Filled in: your fair today.' : 'Filled in: your latest fair.'} Change it if this order is for another fair.
+      </span>
+    : !e && d.whyMessage && !value.organizer
+      ? <span role="note" style={{ ...line, color: 'var(--c-festive-b, #B8331F)' }}>{d.whyMessage}</span>
+      : null;
+  return { why: d.why, hint };
 }
 
 export default FairPicker;

@@ -17,7 +17,7 @@
 // off an empty cost table.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { X, Paperclip, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Button } from '@2990s/design-system';
@@ -39,18 +39,6 @@ import { useThreePLCompanies } from '../../vendor/scm/lib/threepl-companies-quer
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtSen } from '../../vendor/shared/format';
-import {
-  COMPLIANCE_KINDS,
-  COMPLIANCE_LABEL,
-  COMPLIANCE_CADENCE,
-  expiryStatus,
-  expiryPhrase,
-  nextServiceView,
-  nextServiceKmPhrase,
-  odometerStalenessNote,
-  type ComplianceKind,
-  type ComplianceTone,
-} from '../../vendor/shared/lorry-compliance';
 import { formatDate } from '../../lib/utils';
 import styles from './Suppliers.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -69,21 +57,6 @@ const numOrNull = (v: number | string | null | undefined): number | null => {
 const boxM3 = (l: number | null, w: number | null, h: number | null): number | null =>
   l != null && w != null && h != null ? Math.round(l * w * h * FT3_TO_M3 * 100) / 100 : null;
 
-/* Tone → the design-system tokens. Kept as a map rather than inline ternaries
-   so the four tiles and the history rows can never drift apart on what "red"
-   means. 'none' (nothing recorded) is deliberately NOT green — an unrecorded
-   expiry is an open question, not a pass. */
-const TONE_STYLE: Record<ComplianceTone, { fg: string; bg: string; border: string }> = {
-  expired:  { fg: 'var(--c-error)',   bg: 'var(--c-error-bg)',   border: 'var(--c-error)' },
-  critical: { fg: 'var(--c-error)',   bg: 'var(--c-error-bg)',   border: 'var(--c-error)' },
-  warning:  { fg: 'var(--c-warn)',    bg: 'var(--c-warn-bg)',    border: 'var(--c-warn)' },
-  ok:       { fg: 'var(--c-success)', bg: 'var(--c-success-bg)', border: 'var(--line)' },
-  none:     { fg: 'var(--fg-muted)',  bg: 'transparent',         border: 'var(--line)' },
-};
-
-const lorryExpiry = (l: LorryRow, k: ComplianceKind): string | null =>
-  (k === 'roadTax' ? l.road_tax_expiry : k === 'insurance' ? l.insurance_expiry : l.puspakom_expiry) ?? null;
-
 // ─────────────────────────────────────────────────────────────────────────────
 
 export /** A date column the LorryRow type does not declare yet (mig 0245). */
@@ -95,8 +68,6 @@ const fmtDateField = (l: unknown, col: string): string => {
 export const LorryDetail = ({ lorry, onClose }: { lorry: LorryRow; onClose: () => void }) => {
   const records = useLorryServiceRecords(lorry.id);
   const internal = (lorry.isInternal ?? lorry.is_internal) !== false;
-
-  const next = useMemo(() => nextServiceView(records.data ?? []), [records.data]);
 
   return (
     <>
@@ -114,10 +85,22 @@ export const LorryDetail = ({ lorry, onClose }: { lorry: LorryRow; onClose: () =
         </header>
 
         <div className={styles.drawerBody}>
-          <ComplianceStrip lorry={lorry} next={next} />
+          {/* Delivery capacity is every lorry's. Owner, 2026-10-15: compliance,
+              vehicle details and purchase are an IN-HOUSE lorry's record and are
+              kept in Fleet Health only; an outsourced lorry needs none of them. */}
           <CapacitySection lorry={lorry} />
-          <PurchaseSection lorry={lorry} />
 
+          {internal && (
+          <section className={styles.section}>
+            <div className={styles.headerRow}>
+              <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Compliance, vehicle &amp; purchase</h3>
+              <Link to={`/fleet-health/${lorry.id}`} className={styles.eyebrow}>Open in Fleet Health</Link>
+            </div>
+            <p className={styles.eyebrow}>Road tax, insurance, PUSPAKOM, Geran, vehicle dates and purchase are recorded in Fleet Health.</p>
+          </section>
+          )}
+
+          {internal && (
           <section className={styles.section}>
             <div className={styles.headerRow}>
               <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Service &amp; repair history</h3>
@@ -143,6 +126,7 @@ export const LorryDetail = ({ lorry, onClose }: { lorry: LorryRow; onClose: () =
               </div>
             )}
           </section>
+          )}
         </div>
 
         <footer className={styles.drawerFooter}>
@@ -154,88 +138,26 @@ export const LorryDetail = ({ lorry, onClose }: { lorry: LorryRow; onClose: () =
   );
 };
 
-// ── the compliance strip ─────────────────────────────────────────────────────
-
-const ComplianceStrip = ({ lorry, next }: { lorry: LorryRow; next: ReturnType<typeof nextServiceView> }) => {
-  const kmLine = nextServiceKmPhrase(next);
-  const stale = odometerStalenessNote(next);
-
-  return (
-    <section className={styles.section}>
-      <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Compliance</h3>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-2)' }}>
-        {COMPLIANCE_KINDS.map((k) => {
-          const s = expiryStatus(lorryExpiry(lorry, k));
-          const t = TONE_STYLE[s.tone];
-          return (
-            <Tile
-              key={k}
-              title={COMPLIANCE_LABEL[k]}
-              cadence={COMPLIANCE_CADENCE[k]}
-              date={s.date ? formatDate(s.date) : '—'}
-              phrase={expiryPhrase(s)}
-              tone={t}
-            />
-          );
-        })}
-
-        {/* Next service. Colour comes from the DATE only — see the file header. */}
-        <Tile
-          title="Next service"
-          cadence="Set by the workshop"
-          date={next.dueDate ? formatDate(next.dueDate) : '—'}
-          phrase={
-            next.dueDate
-              ? expiryPhrase({ tone: next.tone, days: next.daysToDue, date: next.dueDate })
-              : kmLine
-                ? 'No date set'
-                : 'Not recorded'
-          }
-          tone={TONE_STYLE[next.tone]}
-          extra={kmLine}
-          caveat={stale}
-        />
-      </div>
-    </section>
-  );
-};
-
-const Tile = ({
-  title, cadence, date, phrase, tone, extra, caveat,
-}: {
-  title: string; cadence: string; date: string; phrase: string;
-  tone: { fg: string; bg: string; border: string };
-  extra?: string | null; caveat?: string | null;
-}) => (
-  <div style={{
-    border: `1px solid ${tone.border}`, background: tone.bg,
-    borderRadius: 'var(--radius-md)', padding: 'var(--space-3)',
-    display: 'flex', flexDirection: 'column', gap: 2,
-  }}>
-    <span style={{ fontSize: 'var(--fs-12)', fontWeight: 600, color: 'var(--c-ink)' }}>{title}</span>
-    {/* The cadence rides on the tile, not in a date formula — the renewal
-        interval is the thing the operator needs to know and the system
-        deliberately never computes the next date from it. */}
-    <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-soft)' }}>{cadence}</span>
-    <span style={{ fontSize: 'var(--fs-15)', fontWeight: 700, color: tone.fg, marginTop: 4 }}>{date}</span>
-    <span style={{ fontSize: 'var(--fs-12)', color: tone.fg }}>{phrase}</span>
-    {extra ? <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', marginTop: 4 }}>{extra}</span> : null}
-    {caveat ? <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-soft)', fontStyle: 'italic' }}>{caveat}</span> : null}
-  </div>
-);
-
 // ── purchase ─────────────────────────────────────────────────────────────────
 
 // Fleet A1 — the per-lorry delivery capacity ceilings the auto-propose packer
 // reads. Blank max_* => the packer uses its config default (10 sets / RM30k).
-const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
+/** The warehouses a lorry serves (owner, 2026-10-16: one lorry can cover several). */
+export const lorryWarehouseIds = (l: LorryRow): string[] => {
+  const many = (l as { warehouse_ids?: string[] | null }).warehouse_ids;
+  if (many && many.length) return many;
+  return l.warehouse_id ? [l.warehouse_id] : [];
+};
+
+/** ownFleet: shown inside Fleet Health, where every lorry is our own — no 3PL choice. */
+export const CapacitySection = ({ lorry, ownFleet = false }: { lorry: LorryRow; ownFleet?: boolean }) => {
   const update = useUpdateLorry();
   const warehouses = useWarehouses();
   const companies = useThreePLCompanies();
   const notify = useNotify();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
-    warehouseId: lorry.warehouse_id ?? '',
+    warehouseIds: lorryWarehouseIds(lorry),
     threeplCompanyId: lorry.threepl_company_id ?? '',
     maxSets: lorry.max_sets != null ? String(lorry.max_sets) : '',
     maxRevenueRm: lorry.max_revenue_sen != null ? String(lorry.max_revenue_sen / 100) : '',
@@ -245,6 +167,7 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
     heightFt: lorry.height_ft != null ? String(lorry.height_ft) : '',
   });
   const set = <K extends keyof typeof form>(k: K, v: typeof form[K]) => setForm((s) => ({ ...s, [k]: v }));
+  const toggleWh = (id: string) => setForm((s) => ({ ...s, warehouseIds: s.warehouseIds.includes(id) ? s.warehouseIds.filter((x) => x !== id) : [...s.warehouseIds, id] }));
 
   const whName = useMemo(() => {
     const m = new Map<string, string>();
@@ -271,8 +194,8 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
     }
     update.mutate({
       id: lorry.id,
-      warehouseId: form.warehouseId || null,
-      threeplCompanyId: form.threeplCompanyId || null,
+      warehouseIds: form.warehouseIds,
+      ...(ownFleet ? {} : { threeplCompanyId: form.threeplCompanyId || null }),
       maxSets: setsStr ? Math.round(Number(setsStr)) : null,
       maxRevenueSen: revStr ? Math.round(Number(revStr) * 100) : null,
       capacityLayer: form.layer,
@@ -297,8 +220,8 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
         <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--space-3)', margin: 0 }}>
           {/* WS3: region gates which trips can pick this lorry. "Any region" =
               warehouse_id NULL, i.e. selectable from any depot until pinned. */}
-          <Fact label="Region (home warehouse)" value={lorry.warehouse_id ? (whName.get(lorry.warehouse_id) ?? '—') : 'Any region'} />
-          <Fact label="3PL company" value={lorry.threepl_company_id ? (coName.get(lorry.threepl_company_id) ?? '—') : 'Own fleet'} />
+          <Fact label="Warehouses it serves" value={lorryWarehouseIds(lorry).length ? lorryWarehouseIds(lorry).map((id) => whName.get(id) ?? '—').join(', ') : 'Any warehouse'} />
+          {!ownFleet && <Fact label="3PL company" value={lorry.threepl_company_id ? (coName.get(lorry.threepl_company_id) ?? '—') : 'Own fleet'} />}
           <Fact label="Box (L x W x H)" value={box} />
           <Fact label="Capacity (m3)" value={viewM3 != null ? `${viewM3} m3` : '—'} />
           <Fact label="Max sets / trip" value={lorry.max_sets != null ? String(lorry.max_sets) : 'default (10)'} />
@@ -315,20 +238,24 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
         <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Delivery capacity</h3>
       </div>
       <div className={styles.formGrid}>
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>Region (home warehouse)</span>
-          <select className={styles.fieldInput} value={form.warehouseId} onChange={(e) => set('warehouseId', e.target.value)}>
-            <option value="">Any region (unpinned)</option>
-            {(warehouses.data ?? []).map((w) => (<option key={w.id} value={w.id}>{warehouseLabel(w)}</option>))}
-          </select>
-        </label>
-        <label className={styles.field}>
+        <div className={styles.field} style={{ gridColumn: '1 / -1' }}>
+          <span className={styles.fieldLabel}>Warehouses it serves (none ticked = any warehouse)</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2) var(--space-4)', paddingTop: 4 }}>
+            {(warehouses.data ?? []).map((w) => (
+              <label key={w.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)' }}>
+                <input type="checkbox" checked={form.warehouseIds.includes(w.id)} onChange={() => toggleWh(w.id)} />
+                {warehouseLabel(w)}
+              </label>
+            ))}
+          </div>
+        </div>
+        {!ownFleet && <label className={styles.field}>
           <span className={styles.fieldLabel}>3PL company</span>
           <select className={styles.fieldInput} value={form.threeplCompanyId} onChange={(e) => set('threeplCompanyId', e.target.value)}>
             <option value="">Own fleet (none)</option>
             {(companies.data ?? []).filter((co) => co.isActive || co.id === form.threeplCompanyId).map((co) => (<option key={co.id} value={co.id}>{co.name}</option>))}
           </select>
-        </label>
+        </label>}
         <Field label="Length (ft)" value={form.lengthFt} onChange={(v) => set('lengthFt', v)} placeholder="e.g. 17" />
         <Field label="Width (ft)" value={form.widthFt} onChange={(v) => set('widthFt', v)} placeholder="e.g. 7" />
         <Field label="Height (ft)" value={form.heightFt} onChange={(v) => set('heightFt', v)} placeholder="e.g. 6.7" />
@@ -356,7 +283,7 @@ const CapacitySection = ({ lorry }: { lorry: LorryRow }) => {
   );
 };
 
-const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
+export const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
   const update = useUpdateLorry();
   const notify = useNotify();
   const [editing, setEditing] = useState(false);
@@ -371,9 +298,6 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
     purchaseDate: lorry.purchase_date ?? '',
     price: lorry.purchase_price_sen != null ? String(lorry.purchase_price_sen / 100) : '',
     perKm: lorry.cost_per_km_sen != null ? String(lorry.cost_per_km_sen / 100) : '',
-    roadTaxExpiry: lorry.road_tax_expiry ?? '',
-    insuranceExpiry: lorry.insurance_expiry ?? '',
-    puspakomExpiry: lorry.puspakom_expiry ?? '',
   });
   const set = <K extends keyof typeof form>(k: K, v: string) => setForm((s) => ({ ...s, [k]: v }));
 
@@ -394,9 +318,6 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
       // floating point and a truncation would quietly lose a sen per lorry.
       purchasePriceSen: rm ? Math.round(Number(rm) * 100) : null,
       costPerKmSen: perKm ? Math.round(Number(perKm) * 100) : null,
-      roadTaxExpiry: form.roadTaxExpiry || null,
-      insuranceExpiry: form.insuranceExpiry || null,
-      puspakomExpiry: form.puspakomExpiry || null,
     }, {
       onSuccess: () => { setEditing(false); notify({ title: 'Lorry updated.' }); },
       onError: (e: unknown) => notify({ title: (e as Error)?.message ?? 'Save failed.', tone: 'error' }),
@@ -407,18 +328,22 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
     return (
       <section className={styles.section}>
         <div className={styles.headerRow}>
-          <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Purchase &amp; documents</h3>
+          <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Vehicle &amp; purchase</h3>
           <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>Edit</Button>
         </div>
-        <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--space-3)', margin: 0 }}>
+        {/* Two groups, owner 2026-10-16: the lorry's own facts, then what it cost.
+            Road tax / insurance / PUSPAKOM are renewals in Compliance, not here. */}
+        <Group title="Vehicle">
           <Fact label="Model" value={lorry.model || '—'} />
           <Fact label="Manufactured" value={fmtDateField(lorry, 'manufacture_date')} />
-          <Fact label="Registered" value={fmtDateField(lorry, 'registration_date')} />
-          <Fact label="In service" value={fmtDateField(lorry, 'in_service_date')} />
-          <Fact label="Purchased" value={lorry.purchase_date ? formatDate(lorry.purchase_date) : '—'} />
+          <Fact label="Registered (JPJ)" value={fmtDateField(lorry, 'registration_date')} />
+          <Fact label="First day in service" value={fmtDateField(lorry, 'in_service_date')} />
+        </Group>
+        <Group title="Purchase">
+          <Fact label="Purchase date" value={lorry.purchase_date ? formatDate(lorry.purchase_date) : '—'} />
           <Fact label="Purchase price" value={lorry.purchase_price_sen != null ? fmtSen(lorry.purchase_price_sen) : '—'} />
           <Fact label="Running cost / km" value={lorry.cost_per_km_sen != null ? fmtSen(lorry.cost_per_km_sen) : 'Not set'} />
-        </dl>
+        </Group>
       </section>
     );
   }
@@ -426,22 +351,21 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
   return (
     <section className={styles.section}>
       <div className={styles.headerRow}>
-        <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Purchase &amp; documents</h3>
+        <h3 className={styles.title} style={{ fontSize: 'var(--fs-15)' }}>Vehicle &amp; purchase</h3>
       </div>
+      <span className={styles.eyebrow}>Vehicle</span>
       <div className={styles.formGrid}>
         <Field label="Model" value={form.model} onChange={(v) => set('model', v)} placeholder="e.g. Isuzu NPR 3.0" />
         <Field label="Manufactured" type="date" value={form.manufactureDate} onChange={(v) => set('manufactureDate', v)} />
         <Field label="Registered (JPJ)" type="date" value={form.registrationDate} onChange={(v) => set('registrationDate', v)} />
         <Field label="First day in service" type="date" value={form.inServiceDate} onChange={(v) => set('inServiceDate', v)} />
+      </div>
+      <span className={styles.eyebrow} style={{ marginTop: 'var(--space-3)' }}>Purchase</span>
+      <div className={styles.formGrid}>
         <Field label="Purchase date" type="date" value={form.purchaseDate} onChange={(v) => set('purchaseDate', v)} />
         <Field label="Purchase price (RM)" value={form.price} onChange={(v) => set('price', v)} placeholder="e.g. 128000" />
         {/* Fuel, tyres, service, driver: whatever the company counts as running cost, per km. Times the Velocity km on the Live Map. */}
         <Field label="Running cost per km (RM)" value={form.perKm} onChange={(v) => set('perKm', v)} placeholder="e.g. 0.85" />
-        {/* The expiry dates are typed from the document, never computed from the
-            cadence — see vendor/shared/lorry-compliance.ts. */}
-        <Field label="Road tax expiry" type="date" value={form.roadTaxExpiry} onChange={(v) => set('roadTaxExpiry', v)} />
-        <Field label="Insurance expiry" type="date" value={form.insuranceExpiry} onChange={(v) => set('insuranceExpiry', v)} />
-        <Field label="Puspakom expiry" type="date" value={form.puspakomExpiry} onChange={(v) => set('puspakomExpiry', v)} />
       </div>
       <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-3)' }}>
         <Button variant="primary" size="sm" onClick={save} disabled={update.isPending}>
@@ -452,6 +376,13 @@ const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
     </section>
   );
 };
+
+const Group = ({ title, children }: { title: string; children: ReactNode }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', paddingTop: 'var(--space-2)' }}>
+    <span className={styles.eyebrow}>{title}</span>
+    <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--space-3)', margin: 0 }}>{children}</dl>
+  </div>
+);
 
 const Fact = ({ label, value }: { label: string; value: string }) => (
   <div>

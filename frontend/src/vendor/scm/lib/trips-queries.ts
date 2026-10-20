@@ -127,6 +127,7 @@ export function useUpdateTrip() {
       qc.invalidateQueries({ queryKey: ['scm-trip', v.id] });
       qc.invalidateQueries({ queryKey: ['scm-trips'] });
       qc.invalidateQueries({ queryKey: ['fleet-day'] });
+      void qc.invalidateQueries({ queryKey: ['delivery-planning'] });
     },
   });
 }

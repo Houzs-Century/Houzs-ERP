@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// mfg-so-fairs — the SO fair picker's three endpoints.
+// mfg-so-fairs — the SO fair picker's endpoints.
 //
 // Mounted at /mfg-sales-orders BEFORE the main router so `/fair-options` is not
 // swallowed by its `/:docNo`. It lives in its own file rather than in
@@ -16,7 +16,10 @@
 // pick others"*, and Others is a second PICK from the company's venue master.
 //
 //   GET  /fair-options          the dropdown, for one order date
-//   GET  /fair-pending          orders whose fair link still needs a person
+//   GET  /fair-default          the keyer's fair a new order starts with
+//   GET  /fair-pending          orders with no fair link a person should see
+//   GET  /fair-pending/count    how many — the sidebar badge
+//   GET  /fair-checks           linked orders to check: venue differs / Sales Attending
 //   POST /:docNo/fair           a person settles one of them
 //   GET  /active-venue          the rep's bound venue (moved here, unchanged)
 //
@@ -29,12 +32,17 @@ import { supabaseAuth } from '../middleware/auth';
 import { activeCompanySql, scopeToCompany, activeCompanyId } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import {
+  keyerFairDefaultFor,
   loadFairsInWindow,
   loadFairsAtVenue,
   loadVenueMaster,
   type FairDb,
 } from '../lib/fair-binding';
-import { buildFairOptions, isPickableFair } from '../lib/fair-options';
+import { buildFairOptions, companyUsesKeyerFair, fairMissingMessage, isPickableFair } from '../lib/fair-options';
+import { countFairPending, loadFairPending } from '../lib/fair-pending';
+import { loadFairChecks } from '../lib/fair-checks';
+import { fairStateOf, recordFairChange } from '../lib/fair-audit';
+import { canReassignFair, FAIR_REASSIGN_REFUSAL } from '../lib/fair-reassign';
 /* GET /active-venue moved here from mfg-sales-orders.ts on 2026-09-13. It is the
    same concern as the picker — which exhibition is this rep at — and that file
    is over its size ceiling, so the endpoint could not stay beside its new
@@ -89,49 +97,103 @@ mfgSoFairs.get('/fair-options', async (c) => {
   }
 });
 
-/* What the pending screen shows. Every value here is already on the order — this
-   endpoint joins nothing and computes nothing, so it cannot disagree with the
-   list view about an order's state. */
-const PENDING_COLUMNS =
-  'doc_no, so_date, venue, branding, project_id, fair_match, status, local_total_sen, salesperson_id';
-
-const NEEDS_A_PERSON = ['PENDING', 'AMBIGUOUS', 'UNMATCHED'];
+/**
+ * GET /mfg-sales-orders/fair-default?date=YYYY-MM-DD
+ *
+ * The fair a NEW typed order starts with: the fair of the person KEYING it —
+ * running today, else the latest one they stood at within the dropdown's window
+ * (owner 2026-10-19, the boss's rule; the rule is fair-options.ts::
+ * keyerFairDefault). `event` is a row of GET /fair-options, so the picker lights
+ * it up and the operator can change it like any pick.
+ *
+ * With no event, `why` says why and `whyMessage` is the sentence the save is
+ * refused with — the same `fairMissingMessage` /validate and the create use, so
+ * the hint and the refusal cannot word it differently.
+ *
+ * Only for companies on the keyer rule (Houzs); the others answer nothing and
+ * their forms keep the place default from /active-venue. Never an error status:
+ * a broken default is "nothing to fill in", and the operator still picks.
+ */
+mfgSoFairs.get('/fair-default', async (c) => {
+  const soDate = orderDate(c.req.query('date'));
+  const none = { date: soDate, event: null, how: null, why: null, whyMessage: null };
+  if (!companyUsesKeyerFair(c.get('companyCode'))) return c.json(none);
+  const hu = c.get('houzsUser');
+  const found = await keyerFairDefaultFor({
+    db: c.env.DB as unknown as FairDb,
+    companySql: activeCompanySql(c, 'p.company_id'),
+    userId: hu?.id != null ? Number(hu.id) : NaN,
+    orderDate: soDate,
+  });
+  return c.json({ date: soDate, ...found, whyMessage: found.why ? fairMissingMessage(found.why) : null });
+});
 
 /**
  * GET /mfg-sales-orders/fair-pending?limit=200
  *
- * The orders the reconcile job could not settle on its own. Three different
- * reasons live here and the screen must keep them apart — see the `fair_match`
+ * Every order with no fair link that a person should look at — the "Fair Links
+ * to Settle" page. The reasons stay apart on the screen — see the `fair_match`
  * column comment (mig 20260913T1900):
  *
  *   PENDING    the fair is not in PMS yet. Usually resolves itself when it is.
  *   AMBIGUOUS  two booths fit. Only a person knows which.
  *   UNMATCHED  the order's brand has no booth at that event. Usually a missing
  *              brand on the SKU rather than a wrong venue.
+ *   NO_FAIR    the salesperson ticked "No fair" (owner 2026-10-19: listed too).
+ *   NULL       no verdict — listed only from 1 September 2026, when Houzs
+ *              opened its books in the ERP; the AutoCount years stay out.
  *
- * NULL `fair_match` is deliberately NOT in this list: those are the 2,946 orders
- * that predate the picker, and dumping them here would bury the handful that
- * actually need attention under three years of history.
+ * Which orders, exactly, is scm/lib/fair-pending.ts — shared with the count the
+ * sidebar badge shows, so the two cannot disagree.
  */
 mfgSoFairs.get('/fair-pending', async (c) => {
   const sb = c.get('supabase');
   const limitRaw = Number(c.req.query('limit'));
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 500) : 200;
   try {
-    const { data, error } = await scopeToCompany(
-      sb
-        .from('mfg_sales_orders')
-        .select(PENDING_COLUMNS)
-        .in('fair_match', NEEDS_A_PERSON)
-        .order('so_date', { ascending: false })
-        .limit(limit),
-      c,
-    );
-    if (error) return c.json({ error: 'fair_pending_read_failed', rows: [] }, 500);
-    return c.json({ rows: data });
+    const res = await loadFairPending(sb, (q) => scopeToCompany(q, c), limit);
+    if (!res.ok) return c.json({ error: 'fair_pending_read_failed', rows: [] }, 500);
+    return c.json({ rows: res.rows });
   } catch {
     return c.json({ error: 'fair_pending_read_failed', rows: [] }, 500);
   }
+});
+
+/**
+ * GET /mfg-sales-orders/fair-pending/count
+ *
+ * How many orders the page above lists — the red number on its sidebar entry
+ * (owner 2026-10-19: 「先做 Fair links to settle 菜单」). A failed read answers
+ * an error, never 0: the badge then shows nothing rather than "all settled".
+ */
+mfgSoFairs.get('/fair-pending/count', async (c) => {
+  try {
+    const res = await countFairPending(c.get('supabase'), (q) => scopeToCompany(q, c));
+    if (!res.ok) return c.json({ error: 'fair_pending_count_failed' }, 500);
+    return c.json({ count: res.count });
+  } catch {
+    return c.json({ error: 'fair_pending_count_failed' }, 500);
+  }
+});
+
+/**
+ * GET /mfg-sales-orders/fair-checks
+ *
+ * The LINKED orders the same page lists in two groups of their own (owner
+ * 2026-10-19): 要查 — the venue on the order is not where it was placed — and
+ * 等加人 — a scan whose scanner is not on its booth's Sales Attending. Read as
+ * the order and PMS stand now; scm/lib/fair-checks.ts has the rules. A failed
+ * read is an error, never "nothing to check".
+ */
+mfgSoFairs.get('/fair-checks', async (c) => {
+  const res = await loadFairChecks({
+    sb: c.get('supabase'),
+    db: c.env.DB as unknown as FairDb,
+    companySql: activeCompanySql(c, 'p.company_id'),
+    scope: (q) => scopeToCompany(q, c),
+  });
+  if (!res.ok) return c.json({ error: 'fair_checks_read_failed', rows: [] }, 500);
+  return c.json({ rows: res.rows });
 });
 
 /**
@@ -147,6 +209,8 @@ mfgSoFairs.get('/fair-pending', async (c) => {
  * a stale screen and a sale attributed to the other company's exhibition.
  */
 mfgSoFairs.post('/:docNo/fair', async (c) => {
+  /* Finance or PMS only (owner 2026-10-16) — scm/lib/fair-reassign.ts. */
+  if (!canReassignFair(c)) return c.json({ error: 'forbidden', reason: FAIR_REASSIGN_REFUSAL }, 403);
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');
   let body: { projectId?: unknown };
@@ -166,7 +230,7 @@ mfgSoFairs.post('/:docNo/fair', async (c) => {
      against, and reading it under the company predicate also answers "is this
      order mine" before anything is written. */
   const { data: so, error: soErr } = await scopeToCompany(
-    sb.from('mfg_sales_orders').select('doc_no, so_date, venue').eq('doc_no', docNo),
+    sb.from('mfg_sales_orders').select('doc_no, so_date, venue, project_id, fair_match').eq('doc_no', docNo),
     c,
   ).maybeSingle();
   if (soErr) return c.json({ error: 'so_read_failed' }, 500);
@@ -223,6 +287,16 @@ mfgSoFairs.post('/:docNo/fair', async (c) => {
     c,
   );
   if (updErr) return c.json({ error: 'fair_update_failed' }, 500);
+
+  /* Who moved it, from what to what — in the order's History (fair-audit.ts). */
+  const user = c.get('user');
+  await recordFairChange({
+    sb, db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), docNo,
+    before: fairStateOf(so as Record<string, unknown>),
+    after: { projectId, fairMatch: projectId == null ? 'AMBIGUOUS' : 'PICKED' },
+    how: 'settle', actorId: user?.id ?? null,
+    actorName: (user?.user_metadata as { name?: string } | undefined)?.name ?? c.get('houzsUser')?.name ?? null,
+  });
 
   return c.json({ ok: true, docNo, projectId, companyId: activeCompanyId(c) ?? null });
 });

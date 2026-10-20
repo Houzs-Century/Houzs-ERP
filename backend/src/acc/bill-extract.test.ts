@@ -166,20 +166,20 @@ describe('extractOneBill', () => {
   }), { status: 200 })) as unknown as typeof fetch;
 
   it('a clean answer comes back coerced', async () => {
-    const r = await extractOneBill('key', FILES, modelSays('{"vendorName":"TNB","totalRm":10}'));
+    const r = await extractOneBill('key', FILES, null, modelSays('{"vendorName":"TNB","totalRm":10}'));
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.extraction.totalSen).toBe(1000);
   });
 
   it('API refusal is a sentence, not a throw', async () => {
     const failing: typeof fetch = (async () => new Response('overloaded', { status: 529 })) as unknown as typeof fetch;
-    const r = await extractOneBill('key', FILES, failing);
+    const r = await extractOneBill('key', FILES, null, failing);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/refused \(529\)/);
   });
 
   it('an answer with no JSON is refused with advice, not crashed on', async () => {
-    const r = await extractOneBill('key', FILES, modelSays('I see a cat.'));
+    const r = await extractOneBill('key', FILES, null, modelSays('I see a cat.'));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/clearer photo/);
   });

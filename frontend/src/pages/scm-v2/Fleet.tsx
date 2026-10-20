@@ -58,7 +58,7 @@ import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { DATA_GRID_LAYOUT_KEYS } from '../../vendor/scm/components/dataGridLayoutKeys';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
-import { LorryDetail } from './LorryDetail';
+import { LorryDetail, lorryWarehouseIds } from './LorryDetail';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { warehouseLabel } from '../../vendor/scm/lib/warehouse-label';
@@ -67,7 +67,6 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 /** Snake-case reads with a dead camel fallback — see the header note. */
 const isInternalOf = (l: LorryRow) => (l.isInternal ?? l.is_internal) !== false;
-const warehouseIdOf = (l: LorryRow) => l.warehouseId ?? l.warehouse_id ?? null;
 const capM3Of = (l: LorryRow) => l.capacityM3 ?? l.capacity_m3 ?? null;
 const capKgOf = (l: LorryRow) => l.capacityKg ?? l.capacity_kg ?? null;
 
@@ -548,11 +547,11 @@ const LorriesSection = () => {
     },
     {
       key: 'warehouse',
-      label: 'Home Warehouse',
-      width: 160,
+      label: 'Warehouses',
+      width: 180,
       accessor: (l) => {
-        const id = warehouseIdOf(l);
-        return id ? (whName.get(id) ?? '—') : '—';
+        const ids = lorryWarehouseIds(l);
+        return ids.length ? ids.map((id) => whName.get(id) ?? '—').join(', ') : 'Any';
       },
     },
     {

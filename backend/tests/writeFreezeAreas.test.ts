@@ -120,6 +120,7 @@ describe('the areas the owner named resolve to the routers he means', () => {
     expect(prefixesForArea('scm.procurement.po').sort()).toEqual([
       '/mfg-purchase-orders/*',
       '/po-amendments/*',
+      '/procurement-overview/*', // read-only overview (2026-10-16); freezing writes leaves it untouched
     ]);
   });
 });

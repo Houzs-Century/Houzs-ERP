@@ -57,7 +57,7 @@ All in schema `scm`, all carrying `company_id`.
 | Amendments | `so_amendment_lines.new_item_code`, `po_amendment_lines.new_item_code` — a pending amendment applies this code onto the line later |
 | Product requests | `product_request_lines.item_code` — the SKU each Purchase Consignment Order line is raised with; the order door refuses a code the catalogue no longer has. Snapshot line added by hand from the migration; the first re-probe after deploy confirms it |
 | Stock | `inventory_movements`, `inventory_lots`, `inventory_lot_consumptions`, `stock_transfer_lines`, `stock_take_lines`, `warehouse_rack_items`, `warehouse_rack_movements` (`item_code`) |
-| Masters and prices | `supplier_material_bindings.item_code` (`material_kind` scoped), `master_price_history.item_code`, `mfg_product_price_history.item_code` (dated selling price), `product_dept_configs.item_code`, `hr_item_kpi.ref`, `pwp_codes.trigger_item_code`, `pwp_codes.redeemed_item_code`, `addons.service_sku` (a service add-on's SVC-* SKU) |
+| Masters and prices | `supplier_material_bindings.item_code` (`material_kind` scoped), `master_price_history.item_code`, `mfg_product_price_history.item_code` (dated selling price), `product_dept_configs.item_code`, `hr_item_kpi.ref`, `pwp_codes.trigger_item_code`, `pwp_codes.redeemed_item_code`, `addons.service_sku` (a service add-on's SVC-* SKU), `supplier_scan_codes.item_code` (a supplier's printed code taught on the delivery-order scan card; snapshot line added by hand from the migration) |
 
 Ten of these were added 2026-09-15 — the two amendment columns, the six
 consignment tables, `mfg_product_price_history` and `addons.service_sku`:

@@ -379,6 +379,9 @@ const SoLineCardInner = ({
      product pick resets it to 0. */
   const [priceText, setPriceText] = useState((amountCellSen / 100).toFixed(2));
   const [priceTyping, setPriceTyping] = useState(false);
+  /* The price the line had when this edit of the box began: an emptied box
+     requests no new price, so the line shows (and keeps) this one. */
+  const priceBeforeEdit = useRef<Pick<SoLineDraft, 'unitPriceSen' | 'priceAuthored'>>({ unitPriceSen: 0 });
   /* Load the full catalog ONCE (cached 5 min) and filter it LOCALLY — the picker
      no longer fires a `/mfg-products?search=` request per keystroke, so typing
      stays instant even while the Worker is slow or dropping connections (owner
@@ -479,6 +482,7 @@ const SoLineCardInner = ({
   // operator's in-progress typing untouched. On a fee line the canonical value
   // is the NET, so a rebuilt discount lands here too.
   useEffect(() => {
+    if (!priceBoxAuthored(priceText)) return; // a box emptied mid-edit stays empty
     const parsed = Math.round(Number(priceText) * 100) || 0;
     if (parsed !== amountCellSen) setPriceText((amountCellSen / 100).toFixed(2));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1013,6 +1017,7 @@ const SoLineCardInner = ({
           }
           onChange={(e) => {
             const t = cleanNumericText(e.target.value, 'signed', true);
+            if (!priceTyping) priceBeforeEdit.current = { unitPriceSen: draft.unitPriceSen, priceAuthored: draft.priceAuthored };
             setPriceText(t);
             setPriceTyping(true);
             if (isFeeLine) {
@@ -1025,7 +1030,9 @@ const SoLineCardInner = ({
               onChange({ discountSen: feeDiscountForAmount(feeGrossSen, Math.round(n * 100)) });
               return;
             }
-            onChange({ unitPriceSen: Math.round(Number(t) * 100) || 0, priceAuthored: priceBoxAuthored(t) });
+            onChange(priceBoxAuthored(t)
+              ? { unitPriceSen: Math.round(Number(t) * 100), priceAuthored: true }
+              : priceBeforeEdit.current);
           }}
           onBlur={() => { setPriceTyping(false); setPriceText((amountCellSen / 100).toFixed(2)); }}
         />

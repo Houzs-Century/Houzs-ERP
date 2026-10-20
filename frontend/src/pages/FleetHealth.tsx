@@ -4,8 +4,10 @@ import { useSearchParams, Link, useNavigate } from "react-router-dom";
 import { Truck, RefreshCw, X, AlertTriangle, ChevronRight, FileUp } from "lucide-react";
 import { PageHeader } from "../components/Layout";
 import { DataTable, type Column } from "../components/DataTable";
+import { PodPhotoAlbum } from "../components/scm-v2/PodPhotoAlbum";
 import { Button } from "../components/Button";
 import { StatCard } from "../components/StatCard";
+import { FleetHealthCharts } from "./FleetHealthCharts";
 import { ResizableDetailDrawer } from "../components/ResizableDetailDrawer";
 import { ListSkeleton } from "../components/Skeleton";
 import { RepairDocumentImport } from "../components/RepairDocumentImport";
@@ -15,6 +17,8 @@ import { api } from "../api/client";
 import { cn } from "../lib/utils";
 import { fmtDate, fmtDateTime } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
+import { PlanServiceForm } from "./fleet/PlanServiceForm";
+import { NewInHouseLorry } from "./fleet/NewInHouseLorry";
 
 // ---------------------------------------------------------------------------
 // Fleet Health — the Phase-1 desktop ops screen for Fleet Maintenance &
@@ -29,15 +33,17 @@ import { DateField } from "../vendor/scm/components/DateField";
 // pills follow the app's tone vocabulary. No dark standalone theme.
 // ---------------------------------------------------------------------------
 
-export const DOC_TYPES = ["PUSPAKOM", "ROAD_TAX", "INSURANCE", "APAD", "CROSS_BORDER"] as const;
+/* Owner, 2026-10-15: APAD / cross-border are not needed; the Geran (registration
+   card) is. Geran has no expiry — kept on file, never reminds. */
+export const DOC_TYPES = ["PUSPAKOM", "ROAD_TAX", "INSURANCE", "GERAN"] as const;
 export type DocType = (typeof DOC_TYPES)[number];
 export const DOC_LABEL: Record<DocType, string> = {
   PUSPAKOM: "PUSPAKOM",
   ROAD_TAX: "Road Tax / LKM",
   INSURANCE: "Insurance",
-  APAD: "APAD permit",
-  CROSS_BORDER: "Cross-border",
+  GERAN: "Geran (registration card)",
 };
+const NO_EXPIRY: ReadonlySet<DocType> = new Set<DocType>(["GERAN"]);
 
 export type Tone = "crit" | "warn" | "ok" | "info" | "neutral";
 
@@ -510,6 +516,7 @@ export function FleetHealth() {
     },
   ];
 
+  const [addingLorry, setAddingLorry] = useState(false);
   const dash = useQuery<DashboardPayload>("/api/fleet-maintenance/dashboard", () => api.get("/api/fleet-maintenance/dashboard"));
 
   const setParam = (key: string, value: string) => {
@@ -520,6 +527,8 @@ export function FleetHealth() {
   };
 
   const all = dash.data?.vehicles ?? [];
+  // Lorries that cannot go out (fleet-status canDispatch: only AVAILABLE / SERVICE_DUE can).
+  const grounded = all.filter((v) => v.status !== "AVAILABLE" && v.status !== "SERVICE_DUE");
   const regionOptions = useMemo(() => {
     const present = [...new Set(all.map((v) => v.region).filter((r): r is string => !!r))].sort();
     return ["ALL", ...present];
@@ -559,15 +568,13 @@ export function FleetHealth() {
         title="Fleet Health"
         description="Lorry compliance, expiry reminders and dispatch readiness. Status is derived from compliance, service mileage and the out-of-service flag — not set by hand."
         actions={
-          <Button
-            variant="secondary"
-            icon={<RefreshCw size={14} className={dash.loading ? "animate-spin" : undefined} />}
-            onClick={() => dash.reload()}
-          >
-            Refresh
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="secondary" icon={<RefreshCw size={14} className={dash.loading ? "animate-spin" : undefined} />} onClick={() => dash.reload()}>Refresh</Button>
+            <Button variant="primary" onClick={() => setAddingLorry(true)}>New lorry</Button>
+          </div>
         }
       />
+      {addingLorry && <NewInHouseLorry onClose={() => setAddingLorry(false)} onCreated={() => dash.reload()} />}
 
       {/* Region toggle */}
       <div className="flex flex-wrap items-center gap-2">
@@ -593,24 +600,38 @@ export function FleetHealth() {
         </span>
       </div>
 
-      {/* KPI ribbon */}
+      {/* KPI ribbon — four cards (owner, 2026-10-16: the eight small tiles read as
+          clutter). The first names which lorry cannot go out and why. */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatCard label="Expired documents" value={kpis?.expiredDocs ?? 0} tone="error" rail="bg-err" pending={dash.loading} onClick={() => setParam("status", "COMPLIANCE_BLOCKED")} active={statusFilter === "COMPLIANCE_BLOCKED"} />
-        <StatCard label="Expiring ≤ 30 days" value={kpis?.expiring30 ?? 0} tone="warning" rail="bg-warning-text" pending={dash.loading} />
-        <StatCard label="Cannot dispatch" value={kpis?.cantDispatch ?? 0} subtitle={`of ${kpis?.fleetSize ?? 0} lorries`} tone="error" rail="bg-err" pending={dash.loading} />
-        <StatCard label="Service due" value={kpis?.serviceDue ?? 0} subtitle={kpis?.serviceOverdue ? `${kpis.serviceOverdue} overdue` : "on plan"} tone="warning" rail="bg-warning-text" pending={dash.loading} onClick={() => setParam("status", "SERVICE_DUE")} active={statusFilter === "SERVICE_DUE"} />
-      </div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatCard label="Expiring ≤ 60 days" value={kpis?.expiring60 ?? 0} pending={dash.loading} />
-        <StatCard label="Expiring ≤ 90 days" value={kpis?.expiring90 ?? 0} pending={dash.loading} />
-        <StatCard label="Active breakdowns" value={kpis?.activeBreakdowns ?? 0} subtitle={kpis?.openWorkOrders ? `${kpis.openWorkOrders} open work order${kpis.openWorkOrders === 1 ? "" : "s"}` : "no open work orders"} tone={kpis?.activeBreakdowns ? "error" : "default"} pending={dash.loading} onClick={() => setParam("status", "BREAKDOWN")} active={statusFilter === "BREAKDOWN"} />
         <StatCard
-          label="This-month repairs"
+          label="Cannot dispatch"
+          value={`${kpis?.cantDispatch ?? 0} of ${kpis?.fleetSize ?? 0}`}
+          subtitle={grounded.length ? grounded.slice(0, 3).map((v) => `${v.plate} · ${v.statusLabel}`).join(", ") + (grounded.length > 3 ? ` +${grounded.length - 3}` : "") : "Every lorry can go out"}
+          tone={kpis?.cantDispatch ? "error" : "default"} rail={kpis?.cantDispatch ? "bg-err" : undefined} pending={dash.loading}
+          onClick={() => setParam("status", "COMPLIANCE_BLOCKED")} active={statusFilter === "COMPLIANCE_BLOCKED"}
+        />
+        <StatCard
+          label="Documents"
+          value={kpis?.expiredDocs ? `${kpis.expiredDocs} expired` : "None expired"}
+          subtitle={`Due in 30 days ${kpis?.expiring30 ?? 0} · 60 days ${kpis?.expiring60 ?? 0} · 90 days ${kpis?.expiring90 ?? 0}`}
+          tone={kpis?.expiredDocs ? "error" : kpis?.expiring30 ? "warning" : "default"} pending={dash.loading}
+        />
+        <StatCard
+          label="Breakdowns & service"
+          value={`${kpis?.activeBreakdowns ?? 0} breakdown${kpis?.activeBreakdowns === 1 ? "" : "s"}`}
+          subtitle={`${kpis?.openWorkOrders ?? 0} open work order${kpis?.openWorkOrders === 1 ? "" : "s"} · service due ${kpis?.serviceDue ?? 0}${kpis?.serviceOverdue ? ` (${kpis.serviceOverdue} overdue)` : ""}`}
+          tone={kpis?.activeBreakdowns ? "error" : kpis?.serviceOverdue ? "warning" : "default"} pending={dash.loading}
+          onClick={() => setParam("status", "BREAKDOWN")} active={statusFilter === "BREAKDOWN"}
+        />
+        <StatCard
+          label="Repairs this month"
           value={kpis?.repairSpendThisMonthSen != null ? money(kpis.repairSpendThisMonthSen) : "—"}
           subtitle={kpis?.costliestVehicle ? `Costliest ${kpis.costliestVehicle} ${money(kpis.costliestVehicleSen ?? 0)}` : "No repairs logged"}
           pending={dash.loading}
         />
       </div>
+
+      <FleetHealthCharts vehicles={all} kpis={kpis ?? null} />
 
       {/* Reminders strip */}
       {reminders.length > 0 && (
@@ -857,7 +878,7 @@ export function PlansSection({ plans, currentKm, vehicleId, components, onChange
       )}
 
       {plans.map((p) => (
-        <PlanRow key={p.id} p={p} currentKm={currentKm} onEdit={canWrite ? () => { setEditing(p); setAdding(false); } : undefined} />
+        <PlanRow key={p.id} p={p} currentKm={currentKm} onEdit={canWrite ? () => { setEditing(p); setAdding(false); } : undefined} onServiced={canWrite ? onChanged : undefined} />
       ))}
 
       {canWrite && (adding || editing) && (
@@ -896,10 +917,6 @@ function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
   const [component, setComponent] = useState(plan?.component ?? free[0]?.value ?? components[0]?.value ?? "");
   const [intervalKm, setIntervalKm] = useState(plan?.intervalKm != null ? String(plan.intervalKm) : "");
   const [intervalMonths, setIntervalMonths] = useState(plan?.intervalMonths != null ? String(plan.intervalMonths) : "");
-  const [lastDoneKm, setLastDoneKm] = useState(plan?.lastDoneKm != null ? String(plan.lastDoneKm) : "");
-  const [lastDoneDate, setLastDoneDate] = useState(plan?.lastDoneDate ?? "");
-  const [workshop, setWorkshop] = useState(plan?.workshop ?? "");
-  const [estCost, setEstCost] = useState(plan?.estCostSen != null ? (plan.estCostSen / 100).toFixed(2) : "");
   const [active, setActive] = useState(plan?.active ?? true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -917,15 +934,10 @@ function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
     if (busy || !ok) return;
     setBusy(true); setErr(null);
     try {
-      const rm = estCost.trim() === "" ? null : Number(estCost);
       await api.post(`/api/fleet-maintenance/vehicles/${vehicleId}/plans`, {
         component,
         intervalKm: num(intervalKm),
         intervalMonths: num(intervalMonths),
-        lastDoneKm: num(lastDoneKm),
-        lastDoneDate: lastDoneDate || null,
-        workshop: workshop.trim() || null,
-        estCostSen: rm != null && Number.isFinite(rm) ? Math.round(rm * 100) : null,
         active,
       });
       onSaved();
@@ -954,27 +966,11 @@ function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
           <label className={FIELD_LABEL}>Every … months</label>
           <input className={FIELD_CLS} inputMode="numeric" value={intervalMonths} onChange={(e) => setIntervalMonths(e.target.value)} placeholder="6" />
         </div>
-        <div>
-          <label className={FIELD_LABEL}>Last done at (km)</label>
-          <input className={FIELD_CLS} inputMode="numeric" value={lastDoneKm} onChange={(e) => setLastDoneKm(e.target.value)} />
-        </div>
-        <div>
-          <label className={FIELD_LABEL}>Last done on</label>
-          <DateField fullWidth className={FIELD_CLS} value={lastDoneDate} onChange={(iso) => setLastDoneDate(iso)}/>
-        </div>
-        <div>
-          <label className={FIELD_LABEL}>Workshop</label>
-          <input className={FIELD_CLS} value={workshop} onChange={(e) => setWorkshop(e.target.value)} placeholder="Optional" />
-        </div>
-        <div>
-          <label className={FIELD_LABEL}>Estimated cost (RM)</label>
-          <input className={FIELD_CLS} inputMode="decimal" value={estCost} onChange={(e) => setEstCost(e.target.value)} placeholder="Optional" />
-        </div>
       </div>
 
       <p className="mt-2 text-[10.5px] leading-snug text-ink-muted">
-        Give at least one interval. With both, the plan falls due on whichever comes first. Leave
-        &ldquo;last done&rdquo; blank and it reads as never done.
+        The rule only: give at least one interval; with both, it falls due on whichever comes first.
+        When the service is done, use &ldquo;Record service&rdquo; on the plan.
       </p>
 
       <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-[12px] text-ink">
@@ -1007,7 +1003,8 @@ function planProgress(p: PlanView, currentKm: number | null): number {
   return Math.max(0, Math.min(1, Math.max(...fracs)));
 }
 
-function PlanRow({ p, currentKm, onEdit }: { p: PlanView; currentKm: number | null; onEdit?: () => void }) {
+function PlanRow({ p, currentKm, onEdit, onServiced }: { p: PlanView; currentKm: number | null; onEdit?: () => void; onServiced?: () => void }) {
+  const [servicing, setServicing] = useState(false);
   const pct = Math.round(planProgress(p, currentKm) * 100);
   const barColor = p.tone === "crit" ? "bg-err" : p.tone === "warn" ? "bg-warning-text" : "bg-synced";
   const interval = [p.intervalKm ? `${p.intervalKm.toLocaleString()} km` : null, p.intervalMonths ? `${p.intervalMonths} mo` : null].filter(Boolean).join(" / ");
@@ -1023,8 +1020,11 @@ function PlanRow({ p, currentKm, onEdit }: { p: PlanView; currentKm: number | nu
           {!p.active && <span className="ml-2 text-[10px] font-normal text-ink-muted">inactive</span>}
         </span>
         <span className="flex items-center gap-2">
+          {onServiced && !servicing && (
+            <button type="button" onClick={() => setServicing(true)} className="text-[10.5px] font-semibold text-primary hover:underline">Record service</button>
+          )}
           {onEdit && (
-            <button type="button" onClick={onEdit} className="text-[10.5px] text-primary hover:underline">Edit</button>
+            <button type="button" onClick={onEdit} className="text-[10.5px] text-primary hover:underline">Edit rule</button>
           )}
           <Pill tone={p.tone}>{p.overdue ? "Overdue" : p.dueSoon ? "Due soon" : "OK"}</Pill>
         </span>
@@ -1042,6 +1042,11 @@ function PlanRow({ p, currentKm, onEdit }: { p: PlanView; currentKm: number | nu
           {fmtPlanRemaining(p)}
         </span>
       </div>
+      {p.lastDoneDate && <div className="mt-1 text-[10.5px] text-ink-muted">Last serviced {p.lastDoneDate}{p.lastDoneKm != null ? ` at ${p.lastDoneKm.toLocaleString()} km` : ""}</div>}
+      {servicing && onServiced && (
+        <PlanServiceForm planId={p.id} componentLabel={p.componentLabel} currentKm={currentKm}
+          onCancel={() => setServicing(false)} onSaved={() => { setServicing(false); onServiced(); }} />
+      )}
     </div>
   );
 }
@@ -1715,6 +1720,11 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
         {wo.warrantyUntil && <span>Warranty to {wo.warrantyUntil}</span>}
       </div>
       {/* Parts table */}
+      {(wo.photoRefs?.length ?? 0) > 0 && (
+        <div className="mt-3">
+          <PodPhotoAlbum paths={(wo.photoRefs ?? []).map((_, n) => `/api/fleet-maintenance/work-orders/${wo.id}/photo/${n}`)} fileStem={`WO-${wo.woNo ?? wo.id}`} />
+        </div>
+      )}
       {wo.parts.length > 0 && (
         <table className="mt-2 w-full border-collapse text-[11px]">
           <thead>
@@ -2000,7 +2010,7 @@ export function AddRenewalForm({ lorryId, docType, onSaved }: {
   };
 
   const save = async () => {
-    if (!expiryDate) { setErr("An expiry date is what the reminders count down to - it is required."); return; }
+    if (!expiryDate && !NO_EXPIRY.has(docType)) { setErr("An expiry date is what the reminders count down to - it is required."); return; }
     setBusy(true);
     setErr(null);
     try {
@@ -2010,7 +2020,7 @@ export function AddRenewalForm({ lorryId, docType, onSaved }: {
         {
           docType,
           issueDate: issueDate || null,
-          expiryDate,
+          expiryDate: expiryDate || null,
           documentRef: documentRef || null,
           costSen: cost.trim() === "" ? null : Math.round(Number(cost) * 100),
           owner: owner || null,
@@ -2049,7 +2059,7 @@ export function AddRenewalForm({ lorryId, docType, onSaved }: {
     <div className="mt-2 space-y-2 rounded-md border border-border bg-surface p-2.5">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <RenewalField label="Issue date"><DateField fullWidth value={issueDate} onChange={(iso) => setIssueDate(iso)} className={RENEWAL_FIELD_CLS}/></RenewalField>
-        <RenewalField label="Expiry date *"><DateField fullWidth value={expiryDate} onChange={(iso) => setExpiryDate(iso)} className={RENEWAL_FIELD_CLS} /></RenewalField>
+        {!NO_EXPIRY.has(docType) && <RenewalField label="Expiry date *"><DateField fullWidth value={expiryDate} onChange={(iso) => setExpiryDate(iso)} className={RENEWAL_FIELD_CLS} /></RenewalField>}
         <RenewalField label="Document no"><input type="text" value={documentRef} onChange={(e) => setDocumentRef(e.target.value)} className={RENEWAL_FIELD_CLS} /></RenewalField>
         <RenewalField label="Cost (RM)"><input type="number" min="0" step="0.01" value={cost} onChange={(e) => setCost(e.target.value)} className={RENEWAL_FIELD_CLS} /></RenewalField>
         <RenewalField label="Owner"><input type="text" value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="Who renews it" className={RENEWAL_FIELD_CLS} /></RenewalField>

@@ -338,7 +338,7 @@ export function SnapshotRow({
         {books && (
           <span
             className="ml-1.5 rounded bg-accent-soft px-1 py-px text-[10px] font-semibold text-accent"
-            title="From the books — approved payment vouchers and posted AP invoices on this event replace the typed figure"
+            title="From the books — payment vouchers once checked, and posted AP invoices, on this event replace the typed figure"
           >
             入账
           </span>

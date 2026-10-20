@@ -1235,6 +1235,7 @@ export function PurchaseOrdersListV2() {
       getValue: (r) => r.po_date,
       filterCounts: facets?.po_date,
       filterLabel: (v) => (v === "—" ? v : fmtDate(v)),
+      newestFirst: true,
       exportFormat: "date",
       render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.po_date)}</span>,
     },

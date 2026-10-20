@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { Star, TrendingUp, AlertTriangle, Clock, CheckCircle2, Activity, Smile, Hourglass, ExternalLink, Gauge, LineChart, PieChart } from "lucide-react";
-import { FilterPills } from "../components/FilterPills";
-import { DataTable, type Column } from "../components/DataTable";
+import { TrendingUp, AlertTriangle, Activity, Smile, Hourglass, ExternalLink, Gauge, LineChart, PieChart } from "lucide-react";
 import { StatCard } from "../components/StatCard";
 import { DashboardGrid, DashboardPanels, DashboardBreakdown } from "../components/Dashboard";
 import { Panel } from "../components/Panel";
 import { ListSkeleton } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
 import { useQuery } from "../hooks/useQuery";
+import { QualitySummary } from "./QualitySummary";
+import { DashboardPeriodPicker, useDashboardPeriod } from "../components/scm-v2/DashboardPeriod";
+import { todayMY } from "../vendor/shared/format";
+import { Donut, type Slice } from "../components/scm-v2/Charts";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { cn, formatDate } from "../lib/utils";
@@ -86,25 +88,34 @@ const DRILL_LABELS: Record<string, string> = {
 type DrillState =
   | { metric: string; title?: string; extra?: Record<string, string> };
 
-// Period filter — calendar-style buckets. Values stay as `since_days`
-// (the API contract) so the labels are just the human framing of each
-// rolling window: 1 month / 1 quarter / half a year / a year.
-const PERIOD_OPTIONS: { value: "30" | "90" | "180" | "365"; label: string }[] = [
-  { value: "30", label: "Monthly" },
-  { value: "90", label: "Quarterly" },
-  { value: "180", label: "Half-year" },
-  { value: "365", label: "Yearly" },
-];
-const PERIOD_LABEL: Record<string, string> = {
-  "30": "Monthly",
-  "90": "Quarterly",
-  "180": "Half-year",
-  "365": "Yearly",
-};
 
 // Full-width section divider — bold uppercase title + trailing rule.
 // Groups the dashboard into scannable bands (Live / Period / Trends …)
 // instead of one long flat scroll.
+/** Categories typed in different case ("Product defect" / "Product Defect")
+ *  are one category. The first spelling seen names it. */
+export function mergeByLabel(rows: Slice[]): Slice[] {
+  const out = new Map<string, Slice>();
+  for (const r of rows) {
+    const k = r.label.trim().toLowerCase();
+    const cur = out.get(k);
+    out.set(k, cur ? { ...cur, value: cur.value + r.value } : { ...r, label: r.label.trim() });
+  }
+  return [...out.values()];
+}
+
+/** A breakdown as a donut, in the same frame as DashboardBreakdown. */
+function DonutPanel({ title, data }: { title: string; data: Slice[] }) {
+  const total = data.reduce((a, d) => a + d.value, 0);
+  return (
+    <div className="rounded-lg border border-border bg-surface px-5 py-5 shadow-stone">
+      <div className="mb-4 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">{title}</div>
+      <Donut size={112} format={(n) => n.toLocaleString()} center={{ value: total.toLocaleString(), label: "cases" }}
+        data={data.slice().sort((a, b) => b.value - a.value)} />
+    </div>
+  );
+}
+
 function SectionHeader({
   icon,
   title,
@@ -171,7 +182,9 @@ function MetricCard({
 
 export function ServiceMetrics() {
   const { can } = useAuth();
-  const [since, setSince] = useState<"30" | "90" | "180" | "365">("90");
+  const today = todayMY();
+  /* This month / quarter / year or a date range, as on every dashboard (owner 2026-10-17). */
+  const [period, setPeriod] = useDashboardPeriod(today, "from", "to", []);
   const [drill, setDrill] = useState<DrillState | null>(null);
 
   // OFF-NOT-HIDE: both /metrics and /summary are ORG aggregates gated behind
@@ -181,9 +194,9 @@ export function ServiceMetrics() {
   // fetches so they never fire without the permission; the dashboard renders
   // its empty state instead.
   const canReadMetrics = can("service_cases.read");
-  const metrics = useQuery<AssrMetrics>("/api/assr/metrics?since_days=:",
-    () => api.get(`/api/assr/metrics?since_days=${since}`),
-    [since],
+  const metrics = useQuery<AssrMetrics>("/api/assr/metrics?from=:&to=:",
+    () => api.get(`/api/assr/metrics?from=${period.from}&to=${period.to}`),
+    [period.from, period.to],
     { enabled: canReadMetrics }
   );
   // v3.1 — pull the enriched /summary alongside the legacy metrics
@@ -191,9 +204,17 @@ export function ServiceMetrics() {
   // and Stage Funnel narrow with the dropdown. CSAT trend on the
   // summary is still a fixed 13-week rolling window (it's a trend
   // chart, not a window-aware stat).
-  const summary = useQuery<AssrSummaryV31>("/api/assr/summary?since_days=:",
-    () => api.get(`/api/assr/summary?since_days=${since}`),
-    [since],
+  const summary = useQuery<AssrSummaryV31>("/api/assr/summary?from=:&to=:",
+    () => api.get(`/api/assr/summary?from=${period.from}&to=${period.to}`),
+    [period.from, period.to],
+    { enabled: canReadMetrics }
+  );
+  /* "Where the cases are" shows EVERY open case, whenever it was opened (owner
+     2026-10-17), so the open stages come from an unbounded read; Completed
+     stays the period's own count. */
+  const summaryAll = useQuery<AssrSummaryV31>("/api/assr/summary?from=:&to=:#all",
+    () => api.get(`/api/assr/summary?from=2000-01-01&to=${today}`),
+    [today],
     { enabled: canReadMetrics }
   );
 
@@ -209,362 +230,71 @@ export function ServiceMetrics() {
   return (
     <div>
       <div className="mb-5">
-        <FilterPills value={since} onChange={setSince} options={PERIOD_OPTIONS} />
+        <DashboardPeriodPicker period={period} today={today} onChange={setPeriod} />
       </div>
 
-      {/* ── Live Status — real-time pulse. "What's wrong NOW" sits above
-          the windowed period aggregates so dispatchers triage first. ── */}
-      <SectionHeader
-        icon={<Activity size={15} />}
-        title="Live Status"
-        hint="Now · all open cases"
-      />
-      <DashboardGrid cols={4}>
-        <StatCard
-          label="Review"
-          value={s?.pending_review_count != null ? s.pending_review_count.toLocaleString() : "—"}
-          subtitle="Cases awaiting triage"
-          tone={(s?.pending_review_count ?? 0) > 0 ? "warning" : "default"}
-          onClick={() => setDrill({ metric: "pending_review" })}
-        />
-        <StatCard
-          label="Aging > 3 days"
-          value={s?.aging_count != null ? s.aging_count.toLocaleString() : "—"}
-          subtitle="Open cases stuck in a stage"
-          tone={(s?.aging_count ?? 0) > 0 ? "warning" : "default"}
-          onClick={() => setDrill({ metric: "aging" })}
-        />
-        <StatCard
-          label="SLA Breached (now)"
-          value={s?.breach_count != null ? s.breach_count.toLocaleString() : "—"}
-          subtitle="Past deadline, not yet closed"
-          tone={(s?.breach_count ?? 0) > 0 ? "error" : "default"}
-          onClick={() => setDrill({ metric: "breach_now" })}
-        />
-        <StatCard
-          label="Open"
-          value={h?.open_count != null ? h.open_count.toLocaleString() : "—"}
-          subtitle="Still in progress"
-          onClick={() => setDrill({ metric: "open_now" })}
-        />
-      </DashboardGrid>
-
-      <MetricCard icon={<Activity size={13} />} title="Stage Funnel">
-        {s && s.stage_funnel.length > 0 ? (
-          <StageFunnel data={s.stage_funnel} />
-        ) : (
-          <div className="py-4 text-[12px] text-ink-muted">No open cases right now.</div>
-        )}
-      </MetricCard>
-
-      {/* ── This Period — windowed aggregates over the selected range. ── */}
-      <SectionHeader
-        icon={<Gauge size={15} />}
-        title="This Period"
-        hint={`${PERIOD_LABEL[since]} · ${since}d window`}
-      />
-      <DashboardGrid cols={4}>
-        <StatCard
-          label="Total Cases"
-          value={h?.total != null ? h.total.toLocaleString() : "—"}
-          subtitle={`Period: ${m?.since_days ?? since} days`}
-          onClick={() => setDrill({ metric: "total_period" })}
-        />
-        <StatCard
-          label="Completion Rate"
-          value={completionRate != null ? `${completionRate}%` : "—"}
-          subtitle={h && h.closed != null && h.total != null ? `${h.closed.toLocaleString()} of ${h.total.toLocaleString()} closed` : " "}
-          tone={completionRate != null && completionRate >= 80 ? "success" : "default"}
-          onClick={() => setDrill({ metric: "closed_period" })}
-        />
-        <StatCard
-          label="SLA Breached"
-          value={h?.breached != null ? h.breached.toLocaleString() : "—"}
-          subtitle="Open cases past deadline"
-          tone={(h?.breached ?? 0) > 0 ? "error" : "default"}
-          onClick={() => setDrill({ metric: "breach_period" })}
-        />
-        <StatCard
-          label="Avg Satisfaction"
-          value={h?.avg_satisfaction != null ? `${h.avg_satisfaction.toFixed(2)} / 5` : "—"}
-          subtitle="Customer rating on close"
-        />
-      </DashboardGrid>
-
-      <DashboardGrid cols={3}>
-        <StatCard
-          label="QA Passed"
-          value={h?.qa_passed != null ? h.qa_passed.toLocaleString() : "—"}
-          subtitle="Cases with manager sign-off"
-          onClick={() => setDrill({ metric: "qa_passed" })}
-        />
-        <StatCard
-          label="Avg Resolution"
-          value={
-            h?.avg_resolution_hours != null
-              ? h.avg_resolution_hours >= 24
-                ? `${(h.avg_resolution_hours / 24).toFixed(1)}d`
-                : `${Math.round(h.avg_resolution_hours)}h`
-              : "—"
-          }
-          subtitle="Created → closed"
-        />
-        <StatCard
-          label="Avg E2E Lead Time"
-          value={s?.avg_e2e_days != null ? `${s.avg_e2e_days.toFixed(1)}d` : "—"}
-          subtitle="Created → closed (all stages)"
-        />
-      </DashboardGrid>
-
-      {/* ── Case Duration — mirrors the legacy Excel "Case Duration" tile.
-          Bucketed by age of OPEN cases since complained_date. ── */}
-      <SectionHeader
-        icon={<Hourglass size={15} />}
-        title="Case Duration"
-        hint="Age of open cases"
-      />
-      <div className="mb-3">
-        <DashboardGrid cols={5}>
-          <StatCard
-            label="Opening Cases"
-            value={m?.case_duration?.opening_count != null
-              ? m.case_duration.opening_count.toLocaleString()
-              : "—"}
-            subtitle="Currently open"
-            onClick={() => setDrill({ metric: "opening_count" })}
-          />
-          <StatCard
-            label="Over 1 month"
-            value={m?.case_duration?.over_1_month != null
-              ? m.case_duration.over_1_month.toLocaleString()
-              : "—"}
-            subtitle="Aged ≥ 30 days"
-            tone={(m?.case_duration?.over_1_month ?? 0) > 0 ? "error" : "default"}
-            onClick={() => setDrill({ metric: "over_1_month" })}
-          />
-          <StatCard
-            label="Over 3 weeks"
-            value={m?.case_duration?.over_3_weeks != null
-              ? m.case_duration.over_3_weeks.toLocaleString()
-              : "—"}
-            subtitle="21–29 days old"
-            tone={(m?.case_duration?.over_3_weeks ?? 0) > 0 ? "warning" : "default"}
-            onClick={() => setDrill({ metric: "over_3_weeks" })}
-          />
-          <StatCard
-            label="Over 2 weeks"
-            value={m?.case_duration?.over_2_weeks != null
-              ? m.case_duration.over_2_weeks.toLocaleString()
-              : "—"}
-            subtitle="14–20 days old"
-            tone={(m?.case_duration?.over_2_weeks ?? 0) > 0 ? "warning" : "default"}
-            onClick={() => setDrill({ metric: "over_2_weeks" })}
-          />
-          <StatCard
-            label="Avg / month"
-            value={
-              m?.case_duration?.avg_per_month != null
-                ? m.case_duration.avg_per_month.toFixed(2)
-                : "—"
-            }
-            subtitle="Last 4 months"
-          />
-        </DashboardGrid>
-      </div>
-
-      {/* ── Trends ── */}
-      <SectionHeader icon={<LineChart size={15} />} title="Trends" />
-      <DashboardPanels cols={2}>
-        <MetricCard icon={<Smile size={13} />} title="CSAT — 13-week rolling" flat>
-          {s && s.csat_trend.length > 0 ? (
-            <CsatTrend data={s.csat_trend} />
-          ) : (
-            <div className="py-4 text-[12px] text-ink-muted">
-              No survey responses in the last 13 weeks.
-            </div>
+      <QualitySummary from={period.from} to={period.to} periodLabel={period.label} breachNow={s?.breach_count ?? null}
+        onDrill={(metric) => setDrill({ metric })}
+        funnel={summaryAll.data && summaryAll.data.stage_funnel.length > 0
+          ? <StageFunnel data={summaryAll.data.stage_funnel.map((r) => r.stage === "completed" ? (s?.stage_funnel.find((x) => x.stage === "completed") ?? { ...r, total: 0, breached: 0 }) : r)} />
+          : <div className="py-4 text-[12px] text-ink-muted">No open cases right now.</div>}
+        breakdowns={<>
+          <DashboardPanels cols={2}>
+            <DonutPanel
+              title="Service Issue Categories"
+              data={mergeByLabel(m?.issue_categories?.map((r) => ({ label: r.category || "Other", value: r.count, color: null })) ?? [])}
+            />
+            <DonutPanel
+              title="Resolution Method Mix"
+              data={m?.resolutions.map((r) => ({ label: r.method === "unset" ? "Not recorded" : resolutionLabel(r.method), value: r.count, color: r.method === "unset" ? "#c9cdc4" : null })) ?? []}
+            />
+          </DashboardPanels>
+          {s && s.csat_trend.length > 0 && (
+            <MetricCard icon={<Smile size={13} />} title="CSAT — 13-week rolling" flat>
+              <CsatTrend data={s.csat_trend} />
+            </MetricCard>
           )}
-        </MetricCard>
-        <MetricCard icon={<TrendingUp size={13} />} title="Monthly Trend" flat>
-          {m && m.monthly_trend.length > 0 ? (
-            <Trend data={m.monthly_trend} />
-          ) : (
-            <div className="py-4 text-[12px] text-ink-muted">Not enough data</div>
-          )}
-        </MetricCard>
-      </DashboardPanels>
-
-      {/* ── Breakdowns ── */}
-      <SectionHeader icon={<PieChart size={15} />} title="Breakdowns" />
-      <DashboardPanels cols={3}>
-        <DashboardBreakdown
-          title="Service Issue Categories"
-          items={
-            m?.issue_categories?.map((r) => ({
-              label: r.category || "Other",
-              count: r.count,
-            })) ?? []
-          }
-        />
-        <DashboardBreakdown
-          title="Resolution Method Mix"
-          items={m?.resolutions.map((r) => ({ label: resolutionLabel(r.method === "unset" ? null : r.method), count: r.count })) ?? []}
-        />
-        <DashboardBreakdown
-          title="NCR Categories (root-cause)"
-          items={m?.ncr.map((r) => ({ label: ncrLabel(r.category), count: r.count })) ?? []}
-        />
-      </DashboardPanels>
-
-      {/* ── Suppliers & Repeat Issues ── */}
-      <SectionHeader
-        icon={<AlertTriangle size={15} />}
-        title="Suppliers & Repeat Issues"
-      />
-
-      {/* Creditor performance */}
-      <div className="mb-3 overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
-        <div className="flex items-center gap-2 border-b border-border px-5 py-3">
-          <CheckCircle2 size={13} className="text-accent" />
-          <div className="text-[10.5px] font-bold uppercase tracking-wide text-ink-secondary">
-            Creditor Performance
-          </div>
-        </div>
-        {/* Batch 4: pure-display report table → DataTable (sort + column
-            show/hide + export on a read-only metrics table). */}
-        <DataTable<AssrMetrics["creditor_performance"][number]>
-          tableId="service-metrics-creditor"
-          layoutFamily="service-metrics-creditor"
-          exportName="creditor-performance"
-          rows={m ? m.creditor_performance : null}
-          loading={!m}
-          emptyLabel="No creditor assignments in this period"
-          getRowKey={(s) => s.creditor_code}
-          columns={[
-            {
-              key: "creditor", label: "Creditor", getValue: (s) => s.name || s.creditor_code,
-              render: (s) => (
-                <>
-                  <div className="font-semibold">{s.name || s.creditor_code}</div>
-                  <div className="font-mono text-[10px] text-ink-muted">{s.creditor_code}</div>
-                </>
-              ),
-            },
-            { key: "cases", label: "Cases", align: "right", width: "90px", getValue: (s) => s.total_cases, render: (s) => <span className="font-mono">{s.total_cases}</span> },
-            { key: "closed", label: "Closed", align: "right", width: "90px", getValue: (s) => s.closed_cases, render: (s) => <span className="font-mono text-synced">{s.closed_cases}</span> },
-            { key: "breached", label: "Breached", align: "right", width: "100px", getValue: (s) => s.breached, render: (s) => <span className={cn("font-mono", s.breached > 0 ? "font-bold text-err" : "text-ink-muted")}>{s.breached}</span> },
-            {
-              key: "avg", label: "Avg Resolution", align: "right", width: "130px",
-              getValue: (s) => s.avg_resolution_hours ?? -1,
-              render: (s) => (
-                <span className="font-mono">
-                  {s.avg_resolution_hours != null
-                    ? s.avg_resolution_hours >= 24
-                      ? `${(s.avg_resolution_hours / 24).toFixed(1)}d`
-                      : `${Math.round(s.avg_resolution_hours)}h`
-                    : "—"}
-                </span>
-              ),
-            },
-            {
-              key: "rating", label: "Rating", align: "right", width: "90px",
-              getValue: (s) => s.avg_rating ?? -1,
-              render: (s) => s.avg_rating != null ? (
-                <span className="inline-flex items-center gap-1">
-                  <Star size={10} className="fill-amber-400 text-amber-400" />
-                  <span className="font-mono">{s.avg_rating.toFixed(1)}</span>
-                </span>
-              ) : (
-                <span className="text-ink-muted">—</span>
-              ),
-            },
-          ] satisfies Column<AssrMetrics["creditor_performance"][number]>[]}
-        />
-      </div>
-
-      <DashboardPanels cols={2}>
-        {/* Repeat items */}
-        <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
-          <div className="flex items-center gap-2 border-b border-border px-5 py-3">
-            <AlertTriangle size={13} className="text-err" />
-            <div className="text-[10.5px] font-bold uppercase tracking-wide text-ink-secondary">
-              Repeat-Issue Items (≥ 2 cases)
-            </div>
-          </div>
-          {m && m.repeat_items.length > 0 ? (
-            <ul>
-              {m.repeat_items.map((r) => (
-                <li key={r.item_code} className="border-b border-border last:border-b-0">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setDrill({
-                        metric: "item_cases",
-                        title: `${r.item_code} — ${r.cases} cases in period`,
-                        extra: { item_code: r.item_code },
-                      })
-                    }
-                    className="flex w-full items-center gap-3 px-5 py-2 text-left text-[12px] transition-colors hover:bg-bg/60"
-                  >
-                    <span className="font-mono text-[11px] font-semibold">{r.item_code}</span>
-                    <span className="ml-auto text-ink-muted">last: {formatDate(r.latest)}</span>
-                    <span className="rounded-full bg-err/10 px-2 py-0.5 text-[11px] font-bold text-err">
-                      {r.cases}×
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="px-5 py-4 text-[12px] text-ink-muted">No repeat items in this period</div>
-          )}
-        </div>
-
-        {/* Repeat customers */}
-        <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
-          <div className="flex items-center gap-2 border-b border-border px-5 py-3">
-            <Clock size={13} className="text-err" />
-            <div className="text-[10.5px] font-bold uppercase tracking-wide text-ink-secondary">
-              Repeat Customers (≥ 2 cases)
-            </div>
-          </div>
-          {m && m.repeat_customers.length > 0 ? (
-            <ul>
-              {m.repeat_customers.map((r, i) => (
-                <li key={i} className="border-b border-border last:border-b-0">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const extra: Record<string, string> = { customer_name: r.customer_name };
-                      if (r.phone) extra.phone = r.phone;
-                      setDrill({
-                        metric: "customer_cases",
-                        title: `${r.customer_name} — ${r.cases} cases in period`,
-                        extra,
-                      });
-                    }}
-                    className="flex w-full items-center gap-3 px-5 py-2 text-left text-[12px] transition-colors hover:bg-bg/60"
-                  >
-                    <span className="flex-1 truncate font-semibold">{r.customer_name}</span>
-                    <span className="text-[11px] text-ink-muted">last: {formatDate(r.latest)}</span>
-                    <span className="rounded-full bg-err/10 px-2 py-0.5 text-[11px] font-bold text-err">
-                      {r.cases}×
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="px-5 py-4 text-[12px] text-ink-muted">No repeat customers in this period</div>
-          )}
-        </div>
-      </DashboardPanels>
+        </>}
+        repeats={<div className="grid gap-3 lg:grid-cols-2">
+          <RepeatList title="Items with 2 or more cases" empty="No item came back twice in this period."
+            rows={(m?.repeat_items ?? []).map((r) => ({ key: r.item_code, label: r.item_code, cases: r.cases, latest: r.latest, onClick: () => setDrill({ metric: "item_cases", title: `${r.item_code} — ${r.cases} cases in period`, extra: { item_code: r.item_code } }) }))} />
+          <RepeatList title="Customers with 2 or more cases" empty="No customer opened two cases in this period."
+            rows={(m?.repeat_customers ?? []).map((r, i) => ({ key: `${r.customer_name}-${i}`, label: r.customer_name, cases: r.cases, latest: r.latest, onClick: () => {
+              const extra: Record<string, string> = { customer_name: r.customer_name };
+              if (r.phone) extra.phone = r.phone;
+              setDrill({ metric: "customer_cases", title: `${r.customer_name} — ${r.cases} cases in period`, extra });
+            } }))} />
+        </div>} />
 
       {drill && (
         <DrillPanel
           drill={drill}
-          sinceDays={parseInt(since, 10)}
+          from={period.from}
+          to={period.to}
           onClose={() => setDrill(null)}
         />
+      )}
+    </div>
+  );
+}
+
+function RepeatList({ title, empty, rows }: { title: string; empty: string; rows: Array<{ key: string; label: string; cases: number; latest: string; onClick: () => void }> }) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
+      <div className="border-b border-border px-5 py-3 text-[12.5px] font-semibold text-ink">{title} <span className="font-normal text-ink-muted">· {rows.length} · click to list the cases</span></div>
+      {rows.length === 0 ? <div className="px-5 py-4 text-[12px] text-ink-muted">{empty}</div> : (
+        <div className="max-h-[320px] overflow-y-auto">
+          <table className="w-full border-collapse text-[12px]">
+            <thead className="sticky top-0 bg-surface text-[10.5px] uppercase tracking-wide text-ink-muted"><tr><th className="px-5 py-1.5 text-left font-semibold">Name</th><th className="px-3 py-1.5 text-right font-semibold">Cases</th><th className="px-5 py-1.5 text-right font-semibold">Last case</th></tr></thead>
+            <tbody>{rows.map((r) => (
+              <tr key={r.key} onClick={r.onClick} className="cursor-pointer border-t border-border hover:bg-bg/60">
+                <td className="max-w-[260px] truncate px-5 py-1.5 font-semibold">{r.label}</td>
+                <td className="px-3 py-1.5 text-right font-mono font-bold text-err">{r.cases}</td>
+                <td className="px-5 py-1.5 text-right text-ink-muted">{formatDate(r.latest)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -593,11 +323,13 @@ type DrillCase = {
 
 function DrillPanel({
   drill,
-  sinceDays,
+  from,
+  to,
   onClose,
 }: {
   drill: DrillState;
-  sinceDays: number;
+  from: string;
+  to: string;
   onClose: () => void;
 }) {
   const navigate = useNavigate();
@@ -619,7 +351,8 @@ function DrillPanel({
     setErr(null);
     const params = new URLSearchParams({
       metric: drill.metric,
-      since_days: String(sinceDays),
+      from,
+      to,
     });
     if (drill.extra) {
       for (const [k, v] of Object.entries(drill.extra)) params.set(k, v);
@@ -640,7 +373,7 @@ function DrillPanel({
     return () => {
       cancelled = true;
     };
-  }, [drill.metric, sinceDays, extraKey]);
+  }, [drill.metric, from, to, extraKey]);
 
   const title = drill.title ?? DRILL_LABELS[drill.metric] ?? drill.metric;
   const count = data?.cases.length ?? 0;
@@ -783,9 +516,12 @@ function StageFunnel({ data }: { data: AssrSummaryV31["stage_funnel"] }) {
       breached: row?.breached ?? 0,
     };
   });
-  const max = Math.max(...rows.map((r) => r.total), 1);
-  const totalOpen = rows.reduce((acc, r) => acc + r.total, 0);
-  const totalBreached = rows.reduce((acc, r) => acc + r.breached, 0);
+  /* Completed is the end of the pipe, not a place cases wait: it is drawn for
+     scale but counts in neither "open", the shares, nor the bottleneck. */
+  const openRows = rows.filter((r) => r.stage !== "completed");
+  const max = Math.max(...openRows.map((r) => r.total), 1);
+  const totalOpen = openRows.reduce((acc, r) => acc + r.total, 0);
+  const totalBreached = openRows.reduce((acc, r) => acc + r.breached, 0);
 
   return (
     <div>
@@ -803,10 +539,11 @@ function StageFunnel({ data }: { data: AssrSummaryV31["stage_funnel"] }) {
 
       <div className="space-y-1">
         {rows.map((r) => {
-          const widthPct = (r.total / max) * 100;
+          const done = r.stage === "completed";
+          const widthPct = Math.min(100, (r.total / max) * 100);
           const breachShare = r.total > 0 ? (r.breached / r.total) * 100 : 0;
           const sharePct = totalOpen > 0 ? Math.round((r.total / totalOpen) * 100) : 0;
-          const isPeak = r.total > 0 && r.total === max;
+          const isPeak = !done && r.total > 0 && r.total === max;
           return (
             <div
               key={r.stage}
@@ -862,7 +599,7 @@ function StageFunnel({ data }: { data: AssrSummaryV31["stage_funnel"] }) {
               </div>
 
               <div className="text-right font-mono text-[10px] text-ink-muted">
-                {r.total > 0 ? `${sharePct}%` : "—"}
+                {done ? "done" : r.total > 0 ? `${sharePct}%` : "—"}
               </div>
             </div>
           );
