@@ -59,7 +59,7 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
    join (mfg-sales-orders.ts, the "customers table" note by its list). */
 const SO_COLS =
   "doc_no, so_date, ref, customer_so_no, debtor_name, phone, status, salesperson_id, " +
-  "local_total_sen, total_revenue_sen, deposit_sen, fair_match, linked_ac_docno, created_at, venue";
+  "local_total_sen, total_revenue_sen, deposit_sen, service_sen, fair_match, linked_ac_docno, created_at, venue";
 
 type SoRow = {
   doc_no: string;
@@ -73,6 +73,7 @@ type SoRow = {
   status: string | null;
   salesperson_id: string | null;
   local_total_sen: number | null;
+  service_sen: number | null;
   total_revenue_sen: number | null;
   deposit_sen: number | null;
   fair_match: string | null;
@@ -92,6 +93,8 @@ export type ProjectSalesOrderRow = {
   amount_sen: number;
   paid_sen: number;
   balance_sen: number;
+  /** The order's service lines, inside amount_sen. */
+  service_sen: number;
   fair_match: string | null;
   linked_ac_docno: string | null;
   created_at: string | null;
@@ -107,19 +110,23 @@ export type ProjectSalesOrderTotals = {
   amount_sen: number;
   paid_sen: number;
   balance_sen: number;
+  /** The orders' service lines, inside amount_sen (owner 2026-10-20: the header
+   *  splits Sales from Service Revenue, as the Financial Snapshot does). */
+  service_sen: number;
 };
 
 /** The header tiles' numbers. DRAFT counts as opened — it is keyed in, which is
  *  the question the page asks — and is reported separately so the page can say
  *  so; CANCELLED never reaches here. */
 export function projectSalesOrderTotals(rows: readonly ProjectSalesOrderRow[]): ProjectSalesOrderTotals {
-  const t: ProjectSalesOrderTotals = { count: 0, draft_count: 0, amount_sen: 0, paid_sen: 0, balance_sen: 0 };
+  const t: ProjectSalesOrderTotals = { count: 0, draft_count: 0, amount_sen: 0, paid_sen: 0, balance_sen: 0, service_sen: 0 };
   for (const r of rows) {
     t.count += 1;
     if (r.status === "DRAFT") t.draft_count += 1;
     t.amount_sen += r.amount_sen;
     t.paid_sen += r.paid_sen;
     t.balance_sen += r.balance_sen;
+    t.service_sen += r.service_sen;
   }
   return t;
 }
@@ -211,6 +218,7 @@ export async function projectSalesOrdersHandler(c: Ctx): Promise<Response> {
       salesperson_name: h.salesperson_id ? staffNames.get(h.salesperson_id) ?? null : null,
       status: h.status ?? "",
       amount_sen: amountSen,
+      service_sen: Number(h.service_sen ?? 0),
       paid_sen: paidSen,
       balance_sen: signedBalanceSen(amountSen, paidSen),
       fair_match: h.fair_match,
