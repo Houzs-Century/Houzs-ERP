@@ -503,6 +503,21 @@ export function FleetDay() {
                 <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
                   {t.warehouse?.name ? `${t.warehouse.name} · ` : ''}{t.total_drops} drops · {fmtSen(t.total_revenue_sen)}
                 </span>
+                {t.total_drops > 0 && (
+                  <span
+                    title={`${t.total_delivered} of ${t.total_drops} drops delivered; ${t.total_with_pod} with real POD evidence`}
+                    style={{
+                      fontSize: 'var(--fs-11)', fontWeight: 600,
+                      color: t.total_with_pod === t.total_drops
+                        ? 'var(--c-success, #16a34a)'
+                        : t.total_delivered > t.total_with_pod
+                          ? 'var(--c-warning, #b45309)'
+                          : 'var(--fg-muted)',
+                    }}
+                  >
+                    {t.total_delivered}/{t.total_drops} delivered · {t.total_with_pod} POD
+                  </span>
+                )}
                 {suggestions && !suggestions.has(t.id) && crewAssign && (
                   <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>no engine suggestion — assign by hand</span>
                 )}
