@@ -23,6 +23,8 @@ import {
   type ParsedImport,
   type RoleImportResult,
   type MatrixSnapshot,
+  type SheetData,
+  type BlankMode,
 } from "../../lib/roleMatrixExcel";
 import { MATRIX_LEVEL_LABEL } from "../../lib/roleMatrixModel";
 
@@ -31,7 +33,17 @@ type Failure = { role: string; message: string };
 export type RoleMatrixImportState =
   | { step: "pick"; error: string | null }
   | { step: "reading"; fileName: string }
-  | { step: "preview"; fileName: string; parsed: ParsedImport; applying: boolean; error: string | null; progress: number }
+  | {
+      step: "preview";
+      fileName: string;
+      sheets: SheetData[];
+      snap: MatrixSnapshot;
+      blankMode: BlankMode;
+      parsed: ParsedImport;
+      applying: boolean;
+      error: string | null;
+      progress: number;
+    }
   | { step: "done"; fileName: string; applied: number; failures: Failure[] };
 
 const errorMessage = (e: unknown): string =>
@@ -45,23 +57,33 @@ export function useRoleMatrixImport(onApplied: () => void) {
 
   const chooseFile = useCallback(async (file: File, snap: MatrixSnapshot) => {
     setState({ step: "reading", fileName: file.name });
-    let sheets;
+    let sheets: SheetData[];
     try {
       sheets = await readMatrixSheets(file);
     } catch {
       setState({ step: "pick", error: UNREADABLE_MATRIX_FILE });
       return;
     }
-    const parsed = parseMatrixWorkbook(sheets, snap);
+    const blankMode: BlankMode = "none";
+    const parsed = parseMatrixWorkbook(sheets, snap, blankMode);
     if (parsed.empty) {
       setState({
         step: "pick",
         error:
-          "No role columns or permission/page keys were found in this file. Export the matrix first, edit that file, and import it back.",
+          "没找到角色列或功能/页面的 key。先用「导出 Excel」生成文件，编辑后再导入。",
       });
       return;
     }
-    setState({ step: "preview", fileName: file.name, parsed, applying: false, error: null, progress: 0 });
+    setState({ step: "preview", fileName: file.name, sheets, snap, blankMode, parsed, applying: false, error: null, progress: 0 });
+  }, []);
+
+  /** Re-parse the already-read file under a different blank convention. */
+  const setBlankMode = useCallback((mode: BlankMode) => {
+    setState((s) =>
+      s.step === "preview" && !s.applying
+        ? { ...s, blankMode: mode, parsed: parseMatrixWorkbook(s.sheets, s.snap, mode) }
+        : s,
+    );
   }, []);
 
   // `state` comes from the render scope (confirm is recreated each render), so it
@@ -93,7 +115,7 @@ export function useRoleMatrixImport(onApplied: () => void) {
     setState({ step: "done", fileName, applied, failures });
   }, [state, onApplied]);
 
-  return { state, chooseFile, confirm, reset };
+  return { state, chooseFile, confirm, reset, setBlankMode };
 }
 
 // ── Presentation ───────────────────────────────────────────────────────────
@@ -171,7 +193,7 @@ function Notices({ parsed }: { parsed: ParsedImport }) {
   if (parsed.lockedWithEdits.length > 0)
     notes.push({ tone: "warn", text: `锁定角色不会被修改 (System / 全权限): ${parsed.lockedWithEdits.join(", ")}.` });
   if (parsed.ambiguousColumns.length > 0)
-    notes.push({ tone: "warn", text: `重名角色列已跳过 (请用「ID · 名称」表头): ${parsed.ambiguousColumns.join(", ")}.` });
+    notes.push({ tone: "warn", text: `重名角色列已跳过 (表头请用唯一名称，或加「ID ·」前缀): ${parsed.ambiguousColumns.join(", ")}.` });
   if (parsed.ignoredColumns.length > 0)
     notes.push({ tone: "info", text: `无法对应的角色列已忽略: ${parsed.ignoredColumns.join(", ")}.` });
   if (parsed.unknownKeys.length > 0)
@@ -203,7 +225,15 @@ function Notices({ parsed }: { parsed: ParsedImport }) {
   );
 }
 
-export function RoleMatrixImportPreview({ parsed }: { parsed: ParsedImport }) {
+export function RoleMatrixImportPreview({
+  parsed,
+  blankMode,
+  onBlankMode,
+}: {
+  parsed: ParsedImport;
+  blankMode?: BlankMode;
+  onBlankMode?: (mode: BlankMode) => void;
+}) {
   const [showUnchanged, setShowUnchanged] = useState(false);
   const rows = showUnchanged
     ? parsed.roleResults
@@ -217,6 +247,21 @@ export function RoleMatrixImportPreview({ parsed }: { parsed: ParsedImport }) {
         <Count label="收回 Removed" value={parsed.totalRemoved} tone="remove" />
         <Count label="不变 Unchanged" value={unchanged} />
       </div>
+
+      {blankMode && onBlankMode && (
+        <label className="flex items-start gap-2 rounded-lg border border-border bg-surface-2/40 px-3 py-2 text-[12px] text-ink-secondary">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={blankMode === "unchanged"}
+            onChange={(e) => onBlankMode(e.target.checked ? "unchanged" : "none")}
+          />
+          <span>
+            <span className="font-semibold text-ink">只应用我填写的格子（空格 = 不改动）。</span>{" "}
+            默认情况下，这是一张完整权限表：空格 = 不给 / 不可见，会收回没填的权限。只改了几格就勾上这个。
+          </span>
+        </label>
+      )}
 
       <Notices parsed={parsed} />
 
@@ -255,7 +300,7 @@ export function RoleMatrixImportModal({
   snapshot: MatrixSnapshot;
   onApplied: () => void;
 }) {
-  const { state, chooseFile, confirm, reset } = useRoleMatrixImport(onApplied);
+  const { state, chooseFile, confirm, reset, setBlankMode } = useRoleMatrixImport(onApplied);
 
   const close = () => {
     if (state.step === "preview" && state.applying) return;
@@ -305,7 +350,7 @@ export function RoleMatrixImportModal({
               {state.error}
             </div>
           )}
-          <RoleMatrixImportPreview parsed={state.parsed} />
+          <RoleMatrixImportPreview parsed={state.parsed} blankMode={state.blankMode} onBlankMode={setBlankMode} />
         </div>
       )}
       {state.step === "done" && (
@@ -343,12 +388,13 @@ function PickStep({
   return (
     <div className="flex flex-col gap-4 text-[13px]">
       <p className="text-ink-secondary">
-        导入你编辑过的「角色权限矩阵」文件 (先用「导出 Excel」生成，改好再导入)。
-        <strong className="text-ink"> ✓ </strong> = 授予功能，<strong className="text-ink"> − </strong> = 收回；
-        页面格子填 <strong className="text-ink">无 / 看 / 改 / 批</strong>。留空 = 不改动。
+        导入你编辑过的「角色权限矩阵」文件 (先用「导出 Excel」生成，改好再导入)。功能格子{" "}
+        <strong className="text-ink">✓ = 给、空 = 不给</strong>；页面格子{" "}
+        <strong className="text-ink">看 / 改 / 批</strong>，<strong className="text-ink">空 = 不可见</strong>。
       </p>
       <p className="text-[12px] text-ink-muted">
-        应用前你会看到每个角色的「授予 / 收回 / 不变」，确认后才写入。系统角色与全权限角色不会被修改。
+        默认当作一张完整权限表（空格会收回没填的权限）。应用前你会看到每个角色的「授予 / 收回 / 不变」，
+        确认后才写入；系统角色与全权限角色不会被修改。只改了几格，就在预览里勾「只应用我填写的格子」。
       </p>
       <label className="w-max">
         <input
