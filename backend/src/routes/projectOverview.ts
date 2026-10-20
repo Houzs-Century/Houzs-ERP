@@ -38,6 +38,7 @@ type ProjectRow = {
   state: string | null; stage: string | null; start_date: string | null; end_date: string | null; event_type: string | null;
   income: number; cogs: number; rental: number; commission: number; setup: number; transport: number; merchandise: number; other_cost: number;
   cogs_matt_sofa: number; cogs_bedframe: number; cogs_accessories: number; transport_fee: number; transport_setup: number;
+  total_sales: number | null;
 };
 
 projectOverview.get("/", async (c) => {
@@ -48,6 +49,7 @@ projectOverview.get("/", async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT p.id, p.code, p.name, p.brand, p.organizer, p.venue, p.state, p.stage, p.start_date, p.end_date,
             et.name AS event_type,
+            (SELECT f.total_sales FROM project_finance f WHERE f.project_id = p.id LIMIT 1) AS total_sales,
             ${sum("l.kind = 'income'")} AS income,
             ${sum(`l.kind = 'cost' AND l.category IN ${COGS}`)} AS cogs,
             ${sum("l.kind = 'cost' AND l.category IN ('cogs_matt_sofa','cogs')")} AS cogs_matt_sofa,
@@ -179,20 +181,23 @@ projectOverview.get("/", async (c) => {
      orders' goods; Finance's figure when the books fill the row). An event with
      no order keeps its own costs (rental, setup, books) at zero sales. Empty on a
      failed read: the page then falls back to the keyed lines below. */
-  const pnls = await pnlForProjects(c.env as unknown as Parameters<typeof pnlForProjects>[0], projects.map((p) => ({ id: p.id, brand: p.brand })), activeCompanyId(c) ?? null, LEDGER_COST_CATEGORIES);
+  const pnls = await pnlForProjects(c.env as unknown as Parameters<typeof pnlForProjects>[0], projects.map((p) => ({ id: p.id, brand: p.brand, total_sales: p.total_sales })), activeCompanyId(c) ?? null, LEDGER_COST_CATEGORIES);
   const compact = (id: number) => {
     const e = pnls.get(id);
     if (!e) return null;
+    /* An event with an order opened reads By Sales Orders; one with none (most
+       events before August, whose orders were never linked to the fair) reads
+       its books - By Total Sales - so the history is not blank (owner
+       2026-10-20: "之前的数据全部都是空的吗？"). */
     const col: PnlColumn = e.by_so ?? e.by_sales;
     const fromOrders = !!e.by_so;
-    const kept = (r: { amount: number; from: string }) => (fromOrders || r.from === "books" || r.from === "typed" ? r.amount : 0);
     return {
       fromOrders,
-      sales: fromOrders ? col.sales : 0,
-      serviceRevenue: fromOrders ? col.serviceRevenue : 0,
-      cogs: fromOrders ? { mattSofa: col.cogs.mattSofa, bedframe: col.cogs.bedframe, accessories: col.cogs.accessories, other: col.cogs.other } : { mattSofa: 0, bedframe: 0, accessories: 0, other: 0 },
+      sales: col.sales,
+      serviceRevenue: col.serviceRevenue,
+      cogs: { mattSofa: col.cogs.mattSofa, bedframe: col.cogs.bedframe, accessories: col.cogs.accessories, other: col.cogs.other },
       rental: col.rental, setup: col.setup, transportSetup: col.transportSetupDismantle, others: col.others,
-      transportFee: kept(col.transportFee), commission: kept(col.commission), merchandise: kept(col.merchandise),
+      transportFee: col.transportFee.amount, commission: col.commission.amount, merchandise: col.merchandise.amount,
     };
   };
 
