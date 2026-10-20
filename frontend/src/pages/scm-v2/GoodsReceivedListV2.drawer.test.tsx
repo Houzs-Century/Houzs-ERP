@@ -57,6 +57,7 @@ vi.mock("../../hooks/useBranding", () => ({
 
 import { GoodsReceivedListV2 } from "./GoodsReceivedListV2";
 import { ToastProvider } from "../../hooks/useToast";
+import { convertToLink } from "../../lib/convertScope";
 
 const line = (id: string, over: Record<string, unknown> = {}) => ({
   id, item_code: "CODY-(K)", ac_item_code: "AK-CODY (K)", book_description: "AKEMI CODY MATTRESS (K)", book_item_group: "MATTRESS",
@@ -116,7 +117,7 @@ describe("Goods Received drawer: transfer actions (HC-0135)", () => {
     await openDrawer();
     expect(await screen.findByRole("button", { name: /Transfer to Purchase Invoice/i })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Transfer to Purchase Return/i }));
-    expect((await screen.findByTestId("return-page")).textContent).toBe("/scm/purchase-returns/new?grnId=g-1");
+    expect((await screen.findByTestId("return-page")).textContent).toBe(convertToLink("grnToPr", "g-1"));
   });
 
   it("hides the Return button when the row flags fully_returned, keeps the Invoice", async () => {
