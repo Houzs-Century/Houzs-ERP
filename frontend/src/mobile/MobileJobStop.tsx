@@ -88,7 +88,7 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
     <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
       <header className="hdr">
         <div className="hdr-row">
-          <button className="back" onClick={onBack}><span className="chev">‹</span> Delivery Planning</button>
+          <button className="back" onClick={onBack}><span className="chev">‹</span> Last Mile Delivery</button>
           <span className={`badge ${done ? "b-green" : "b-brand"}`}>{done ? "Completed" : step === "arrived" ? "Arrived" : step === "otw" ? "On the way" : "Scheduled"}</span>
         </div>
         <div style={{ fontSize: 11, fontWeight: 700, color: "var(--mut)", letterSpacing: ".04em" }}>

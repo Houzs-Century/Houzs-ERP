@@ -416,7 +416,7 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
   ]},
   { group: "Logistics", items: [
     { to: "/scm/logistic-overview", label: "Logistic Overview" },
-    { to: "/scm/delivery-planning", label: "Delivery Planning" },
+    { to: "/scm/delivery-planning", label: "Last Mile Delivery" },
     { to: "/scm/fleet", label: "Fleet", gateVia: "/scm/delivery-maintenance" },
     /* KEPT, unlike the retired DESKTOP /scm/drivers page — mobile is NOT the
        same shape and the owner's "fleet 里面也是有 driver" is not true here.
