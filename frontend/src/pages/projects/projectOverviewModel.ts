@@ -54,7 +54,7 @@ export function figuresOf(p: OvProject): Figures {
     return {
       sales: e.sales, cogs, rental: e.rental, commission: e.commission, setup: e.setup, transport, merchandise: e.merchandise, other: e.others,
       otherCost, gp: e.sales - cogs, np: e.sales + e.serviceRevenue - cogs - e.rental - otherCost,
-      salesSource: e.fromOrders ? "sales_orders" : "none", cogsFromSalesOrders: e.fromOrders,
+      salesSource: e.fromOrders ? "sales_orders" : e.sales > 0 ? "keyed" : "none", cogsFromSalesOrders: e.fromOrders,
       serviceRevenue: e.serviceRevenue, cogsLines: e.cogs, transportFee: e.transportFee, transportSetup: e.transportSetup,
     };
   }
