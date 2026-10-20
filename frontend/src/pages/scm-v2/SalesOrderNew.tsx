@@ -1048,6 +1048,16 @@ export const SalesOrderNew = () => {
   /* Fair is compulsory on submit (owner 2026-09-26): the operator must pick a
      fair OR tick No-fair (showroom). Picking a fair clears the No-fair mark. */
   const [noFair, setNoFair] = useState(false);
+  /* BACK-KEYING (the keyer backlog — 62 bil, 23 orang): the create form stamps
+     so_date = today, but an order written up after the fact belongs to the fair
+     that was running on its OWN date, which can be weeks back and so is absent
+     from today's 4-week dropdown window. This OPTIONAL date re-anchors the fair
+     list (GET /fair-options?date=) so the real past fair is offered and can be
+     picked — exactly what the mobile form's `orderDate` already does, and what
+     the backend's `?date=` and period-matched link (resolveFairForCreate) were
+     built for. It moves ONLY which fairs are offered, never the SO's own date
+     (the server still stamps today). null = today: the unchanged live default. */
+  const [fairDate, setFairDate] = useState<string | null>(null);
   const onFairChange = useCallback((next: FairPickValue) => {
     setFairPick(next);
     if (next.organizer) setNoFair(false);
@@ -1961,9 +1971,11 @@ export const SalesOrderNew = () => {
               <FairPicker
                 id="so-fair"
                 value={fairPick}
-                /* The create form has no SO-date field — the server stamps today in
-                   MYT — so null is the honest value here, not a browser date. */
-                soDate={null}
+                /* Anchored to `fairDate`: null (the default) is today in MYT, which
+                   the server decides — the browser's clock is not the Malaysian
+                   business date. Set to the order's real date when back-keying, so
+                   the fair that was running THEN is offered, not only today's. */
+                soDate={fairDate}
                 onChange={onFairChange}
                 wrapClassName={styles.selectWrap}
                 selectClassName={`${styles.fieldSelect} ${editedClass('venueId', effectiveVenueId ?? '')}`}
@@ -1978,6 +1990,25 @@ export const SalesOrderNew = () => {
                     ? `Auto-filled from ${autoVenue.source === 'PMS' ? (autoVenue.projectName ?? 'your fair') : `your showroom${autoVenue.showroomName ? ` (${autoVenue.showroomName})` : ''}`} — change it if you are somewhere else today`
                     : `${autoVenue.venueName} is not in the venue list yet — it still saves on the order; add it in Project Maintenance to show it here.`}
                 </span>
+              )}
+              {/* BACK-KEYING an order written at an earlier fair: the dropdown
+                  follows this date, so a fair that has since closed (outside
+                  today's 4-week window) is still offered and can be picked — the
+                  keyer attributes the real fair instead of being forced onto No
+                  fair. Shown only while no fair is picked; it re-anchors the list,
+                  never the SO's own date (the server still stamps today). */}
+              {!fairEventOf(fairPick) && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', marginTop: '6px' }}>
+                  <span style={{ opacity: 0.8 }}>Earlier fair? Order date</span>
+                  <input
+                    type="date"
+                    value={fairDate ?? ''}
+                    max={today}
+                    onChange={(e) => setFairDate(e.target.value || null)}
+                    aria-label="Order date, for picking an earlier fair"
+                    style={{ fontSize: '12px' }}
+                  />
+                </label>
               )}
               {/* Fair is compulsory (owner 2026-09-26): when no fair is picked
                   the operator must tick this to attribute the sale as No-fair
@@ -1995,7 +2026,7 @@ export const SalesOrderNew = () => {
             {fairEventOf(fairPick) && (
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Fair Day</span>
-                <FairDayPicker id="so-fair-day" value={fairPick} soDate={null} onChange={setFairPick}
+                <FairDayPicker id="so-fair-day" value={fairPick} soDate={fairDate} onChange={setFairPick}
                   wrapClassName={styles.selectWrap} selectClassName={styles.fieldSelect} />
               </label>
             )}
