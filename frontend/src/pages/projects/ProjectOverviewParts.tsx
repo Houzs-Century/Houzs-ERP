@@ -45,7 +45,8 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
   const bills = g.notDaily.flatMap((r) => r.bills.map((b) => ({ r, b })));
   const rentalRows = g.books.filter((r) => !(r.rental > 0) || !(r.soSen > 0));
   const noReport = g.books.filter((r) => !r.hasReport);
-  const eventCell = (r: { name: string; code: string }) => <Td left className="max-w-[300px] truncate"><span className="text-primary">{r.name}</span><span className="block text-[10.5px] text-ink-muted">{r.code}</span></Td>;
+  /* One line per row (owner 2026-10-20: "不需要两排"): the event's name, its code on hover. */
+  const eventCell = (r: { name: string; code: string }) => <Td left className="max-w-[320px] truncate"><span className="text-primary" title={r.code}>{r.name}</span></Td>;
   return (
     <Panel title="Books not complete" hint={`events that ended ${g.from} – ${g.to} (${g.books.length} events) · what still makes the P&L above read wrong`}>
       <StepTabs value={tab} onChange={(v) => setTab(v as BooksTab)}
@@ -54,14 +55,19 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
         {tab === "daily" && (
           <table className="w-full border-collapse">
             <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Dates</Th><Th left>Bill</Th><Th>Amount</Th><Th left>Salesperson</Th><Th left>Problem</Th></tr></thead>
-            <tbody>{bills.map(({ r, b }, i) => (
-              <tr key={`${r.id}-${b.ref}-${i}`} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
-                {eventCell(r)}<Td>{r.startDate.slice(5)}{r.endDate && r.endDate !== r.startDate ? ` – ${r.endDate.slice(5)}` : ""}</Td><Td left className="font-mono">{b.ref}</Td><Td>{sen(b.amountSen)}</Td><Td left>{b.salesperson ?? "—"}</Td>
+            <tbody>{bills.map(({ r, b }, i) => {
+              /* An event's name and dates once, on its first bill; its other bills under it. */
+              const first = i === 0 || bills[i - 1]!.r.id !== r.id;
+              return (
+              <tr key={`${r.id}-${b.ref}-${i}`} className={cn("cursor-pointer hover:bg-surface-2/50", first && i > 0 && "border-t-2 border-border")} onClick={() => onOpen(r.id)}>
+                {first ? eventCell(r) : <Td left> </Td>}
+                <Td>{first ? `${r.startDate.slice(5)}${r.endDate && r.endDate !== r.startDate ? ` – ${r.endDate.slice(5)}` : ""}` : ""}</Td><Td left className="font-mono">{b.ref}</Td><Td>{sen(b.amountSen)}</Td><Td left>{b.salesperson ?? "—"}</Td>
                 <Td left className={b.problem === "not_opened" ? "font-semibold text-err" : "text-warning-text"}>
                   {b.problem === "not_opened" ? "Not opened as a Sales Order" : <>Opened under another event · <span className="font-mono">{b.soDocNo}</span> under {b.otherEvent} — move it</>}
                 </Td>
               </tr>
-            ))}
+              );
+            })}
               {bills.length === 0 && <tr><Td left className="text-ink-muted">Every reported bill is opened under its event.</Td></tr>}
             </tbody>
           </table>
@@ -145,10 +151,13 @@ export function ProjectStuckPanel({ onOpen }: { onOpen: (id: number) => void }) 
                 <Td left className={!st.allDone && stageDue && stageDue < d.today ? "font-semibold text-err" : st.allDone ? "text-synced" : ""}>{PROJECT_STAGES[st.currentIdx]?.label}</Td>
                 <Td className={!st.allDone && stageDue && stageDue < d.today ? "text-err" : ""}>{st.allDone ? "—" : stageDue ?? "—"}</Td>
                 <Td>{st.allDone ? st.lastIdx : st.currentIdx} / {st.lastIdx}</Td>
-                <Td left className="max-w-[340px] text-[12px] text-ink-secondary">
-                  {e.late.slice(0, 3).map((t) => <span key={t.title + t.due} className="block truncate">{t.title} <span className="text-ink-muted">· {t.daysOver} d</span></span>)}
-                  {e.late.length > 3 && <span className="text-ink-muted">+{e.late.length - 3} more</span>}
-                  {e.late.length === 0 && <span className="text-ink-muted">—</span>}
+                <Td left className="max-w-[340px] truncate text-[12px] text-ink-secondary">
+                  {/* One line: the most overdue task, the rest on hover. */}
+                  {e.late.length === 0 ? <span className="text-ink-muted">—</span> : (
+                    <span title={e.late.map((t) => `${t.title} · ${t.daysOver} d`).join("\n")}>
+                      {e.late[0]!.title} <span className="text-ink-muted">· {e.late[0]!.daysOver} d{e.late.length > 1 ? ` · +${e.late.length - 1} more` : ""}</span>
+                    </span>
+                  )}
                 </Td>
                 <Td>{late === 0 ? <span className="text-[11.5px] text-synced">on time</span> : <span className="rounded-full bg-err/10 px-2 py-0.5 text-[11.5px] font-semibold text-err">{late} d</span>}</Td>
               </tr>
