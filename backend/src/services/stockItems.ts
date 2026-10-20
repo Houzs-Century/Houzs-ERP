@@ -1,6 +1,8 @@
 import type { Env } from "../types";
 import { AutoCountClient } from "./autocount";
 import { writeLog } from "./logger";
+import { orderPoSupplierCode } from "./assrOrderPos";
+import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 
 /**
  * Local cache layer over AutoCount /StockItem/getSingle.
@@ -155,8 +157,9 @@ export async function getStockItemCached(
  * Manual picks win: a case with creditor_source='manual' (staff chose
  * the supplier because AutoCount has no MainSupplier) is left alone —
  * the check runs before the AutoCount lookup so manual rows cost
- * nothing. The explicit "Resolve now" button passes force=true to hand
- * the link back to AutoCount.
+ * nothing. HC-0130: the supplier on the item's PO comes first (source
+ * 'po'), AutoCount the fallback. "Resolve now" passes force=true to hand
+ * the link back to the auto path.
  */
 export async function resolveCreditorForCase(
   env: Env,
@@ -167,37 +170,44 @@ export async function resolveCreditorForCase(
   if (!itemCode) return null;
 
   const existing = await env.DB.prepare(
-    `SELECT creditor_code, creditor_source FROM assr_cases WHERE id = ? LIMIT 1`
+    `SELECT * FROM assr_cases WHERE id = ? LIMIT 1` // company_id is absent from the D1 test schema
   )
     .bind(caseId)
-    .first<{ creditor_code: string | null; creditor_source: string | null }>();
+    .first<{ creditor_code: string | null; creditor_source: string | null; doc_no: string | null; company_id?: number | string | null }>();
   if (!existing) return null; // case was deleted
   if (existing.creditor_source === "manual" && !opts.force) {
     return existing.creditor_code;
   }
 
-  let creditorCode: string | null = null;
-  try {
-    const item = await getStockItemCached(env, itemCode);
-    creditorCode = item?.main_supplier ?? null;
-  } catch (e: any) {
-    console.warn(
-      `[resolveCreditorForCase] case=${caseId} item=${itemCode} lookup failed:`,
-      e?.message || e
-    );
-    return null;
+  // HC-0130: the supplier on the item's own PO wins; AutoCount's
+  // MainSupplier is the fallback when no PO was raised.
+  let creditorCode: string | null = isSupabaseConfigured(env)
+    ? await orderPoSupplierCode(getSupabaseService(env), existing.doc_no, itemCode, Number(existing.company_id))
+    : null;
+  const source = creditorCode ? "po" : "auto";
+  if (!creditorCode) {
+    try {
+      const item = await getStockItemCached(env, itemCode);
+      creditorCode = item?.main_supplier ?? null;
+    } catch (e: any) {
+      console.warn(
+        `[resolveCreditorForCase] case=${caseId} item=${itemCode} lookup failed:`,
+        e?.message || e
+      );
+      return null;
+    }
   }
 
   const same = (existing.creditor_code ?? null) === (creditorCode ?? null);
-  // Same value AND already auto-owned → nothing to do. When force
+  // Same value AND same owner (po/auto) → nothing to do. When force
   // re-resolves a manual row to the same code, still fall through so
-  // ownership flips back to 'auto'.
-  if (same && existing.creditor_source !== "manual") return creditorCode;
+  // ownership flips back to po/auto.
+  if (same && existing.creditor_source === source) return creditorCode;
 
   await env.DB.prepare(
-    `UPDATE assr_cases SET creditor_code = ?, creditor_source = 'auto', updated_at = datetime('now') WHERE id = ?`
+    `UPDATE assr_cases SET creditor_code = ?, creditor_source = ?, updated_at = datetime('now') WHERE id = ?`
   )
-    .bind(creditorCode, caseId)
+    .bind(creditorCode, source, caseId)
     .run();
 
   if (!same) {
@@ -210,7 +220,7 @@ export async function resolveCreditorForCase(
         caseId,
         existing.creditor_code ?? null,
         creditorCode,
-        `Auto-resolved from item ${itemCode}`
+        source === "po" ? `Auto-resolved from the PO of item ${itemCode}` : `Auto-resolved from item ${itemCode}`
       )
       .run()
       .catch(() => {
@@ -281,7 +291,7 @@ export async function runStockItemsRefresh(
               updated_at = datetime('now')
         WHERE item_code IS NOT NULL AND item_code != ''
           AND archived_at IS NULL
-          AND COALESCE(creditor_source, '') != 'manual'
+          AND COALESCE(creditor_source, '') NOT IN ('manual', 'po')
           AND (
             COALESCE(creditor_code, '') != COALESCE(
               (SELECT si.main_supplier FROM stock_items si
