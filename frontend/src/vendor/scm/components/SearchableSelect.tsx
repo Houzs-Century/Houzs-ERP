@@ -120,7 +120,12 @@ export function SearchableSelect({
           setSearch(selectedLabel ?? "");
           e.currentTarget.select();
         }}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onBlur={() => {
+          // Text deleted, then the operator moved on: that is a clear, not a
+          // cancel. (A pick closes the menu first, so it never lands here.)
+          if (open && !search.trim() && selectedLabel) onChange("");
+          setTimeout(() => setOpen(false), 150);
+        }}
         onChange={(e) => {
           setSearch(e.target.value);
           setOpen(true);

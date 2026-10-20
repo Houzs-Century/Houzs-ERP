@@ -208,3 +208,40 @@ describe('StatePicker behaviour survives the portal', () => {
     expect(screen.queryByRole('listbox')).toBeNull();
   });
 });
+
+describe('StatePicker clearing', () => {
+  test('deleting the text and leaving the field clears the state', () => {
+    stubInputRect(100);
+    const { picked } = renderPicker({ value: 'Penang' });
+    input().focus();
+    fireEvent.change(input(), { target: { value: '' } });
+    input().blur();
+    expect(picked).toEqual([['', null]]);
+  });
+
+  test('tapping in and out without editing keeps the state', () => {
+    stubInputRect(100);
+    const { picked } = renderPicker({ value: 'Penang' });
+    input().focus();
+    input().blur();
+    expect(picked).toEqual([]);
+  });
+
+  test('a pick after clearing the text is not undone by its own blur', () => {
+    stubInputRect(100);
+    const { picked } = renderPicker({ value: 'Penang' });
+    input().focus();
+    fireEvent.change(input(), { target: { value: '' } });
+    fireEvent.mouseDown(screen.getByRole('option', { name: 'Selangor' }));
+    expect(picked).toEqual([['Selangor', 'Malaysia']]);
+  });
+
+  test('Escape after clearing the text cancels, it does not clear', () => {
+    stubInputRect(100);
+    const { picked } = renderPicker({ value: 'Penang' });
+    input().focus();
+    fireEvent.change(input(), { target: { value: '' } });
+    fireEvent.keyDown(input(), { key: 'Escape' });
+    expect(picked).toEqual([]);
+  });
+});

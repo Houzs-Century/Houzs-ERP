@@ -156,10 +156,18 @@ export const StatePicker = ({
     setQuery('');
     setActive(0);
   };
+  /* pick() and Escape blur the input themselves; the flag stops that blur from
+     reading the stale (possibly empty) query as a clear. */
+  const quietBlurRef = useRef(false);
+  const quietBlur = () => {
+    quietBlurRef.current = true;
+    inputRef.current?.blur();
+    quietBlurRef.current = false;
+  };
   const pick = (s: string) => {
     handlePick(s);
     close();
-    inputRef.current?.blur();
+    quietBlur();
   };
 
   /* Loading / empty locality set: keep the control DISABLED rather than falling
@@ -179,7 +187,7 @@ export const StatePicker = ({
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
       close();
-      inputRef.current?.blur();
+      quietBlur();
       return;
     }
     if (!open && (e.key === 'ArrowDown' || e.key === 'Enter')) {
@@ -238,7 +246,12 @@ export const StatePicker = ({
             setActive(0);
           }}
           onKeyDown={onKeyDown}
-          onBlur={close}
+          /* Text deleted, then the operator moved on: that is a clear, not a
+             cancel. Typing still can never commit a value of its own. */
+          onBlur={() => {
+            if (!quietBlurRef.current && open && !query.trim() && value) handlePick('');
+            close();
+          }}
         />
         {open && !controlsDisabled && panelPos && createPortal(
           /* Portalled so no ancestor's overflow can clip the list. Events still
