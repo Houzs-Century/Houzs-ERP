@@ -39,6 +39,7 @@ import {
   pageRowsToSend,
   reconcileScmAccess,
   levelRank,
+  SCM_ACCESS_KEY,
 } from "./roleMatrixModel";
 
 export type CellValue = string | number | boolean | null;
@@ -71,19 +72,33 @@ export interface MatrixSnapshot {
   levelsByRole: Map<number, Readonly<Record<string, MatrixLevel>>>;
 }
 
-export const EXCEL_SHEET_FUNCTIONS = "功能 Functions";
-export const EXCEL_SHEET_PAGES = "页面 Pages";
-export const EXCEL_SHEET_ROLES = "角色 Roles";
+// Sheet names mirror the owner's own draft (他的 v3) so the exported file reads
+// like the one he already configures in.
+export const EXCEL_SHEET_FUNCTIONS = "功能清单 (能做什么)";
+export const EXCEL_SHEET_PAGES = "页面清单 (能看什么)";
+export const EXCEL_SHEET_ROLES = "现有角色";
 export const ROLE_MATRIX_IMPORT_ACCEPT = ".xlsx,.xls,.csv";
 
 const GRANT_MARK = "✓";
-const REVOKE_MARK = "−";
+// A not-granted function cell is left BLANK (the owner's convention: ✓ = give,
+// 空 = 不给), not dashed — see `blankMeans` below.
 
-/** The column header for a role: `247 · Sales Director`. The id prefix makes the
- *  column unambiguous on re-import even if two roles share a name or the owner
- *  renames one; the parser reads the leading integer first, the name second. */
+/**
+ * How a BLANK cell is read on import.
+ * - "none": the file is the COMPLETE desired matrix — blank = not granted /
+ *   not visible (the owner's v3 convention, "✓=给 空=不给 / 看改 空=不可见").
+ *   This is the default and what Export produces.
+ * - "unchanged": only the cells the file fills change; blank = leave as-is.
+ *   For a partial, hand-trimmed file.
+ * Either way a page/role absent as a ROW/COLUMN is always left untouched.
+ */
+export type BlankMode = "none" | "unchanged";
+
+/** The column header for a role, in the owner's style: `Sales Director\n(1人)`.
+ *  The member count is a human hint; the parser matches on the name (and an
+ *  `id ·` prefix if one is present). */
 export function roleColumnHeader(r: RoleLite): string {
-  return `${r.id} · ${r.name}`;
+  return `${r.name}\n(${r.memberCount}人)`;
 }
 
 // ── Building a snapshot from the three API payloads ────────────────────────
@@ -143,40 +158,43 @@ function exportablePermissions(permissions: PermissionDef[]): PermissionDef[] {
   return permissions.filter((p) => p.key !== "*");
 }
 
-function levelCell(level: MatrixLevel): string {
-  return MATRIX_LEVEL_LABEL[level];
+/** The page cell the owner reads: none is BLANK (他的「空=不可见」), the rest
+ *  their Chinese level. */
+function pageLevelCell(level: MatrixLevel): string {
+  return level === "none" ? "" : MATRIX_LEVEL_LABEL[level];
 }
 
-/** The whole live matrix as a three-sheet workbook (功能 / 页面 / 角色). */
+/** The whole live matrix as a three-sheet workbook (功能 / 页面 / 角色),
+ *  laid out like the owner's draft: functions ✓/空, pages 看/改/批/空. */
 export function buildWorkbook(snap: MatrixSnapshot): WorkbookData {
   const roleCols = snap.roles;
   const roleHeaders = roleCols.map(roleColumnHeader);
 
-  // 功能 — one row per permission key, ✓ / − per role.
-  const fnHeader: CellValue[] = ["模块 Module", "功能 Function", "Key", ...roleHeaders];
+  // 功能 — one row per permission key, ✓ (给) / 空 (不给) per role.
+  const fnHeader: CellValue[] = ["模块", "功能", "说明", "key", ...roleHeaders];
   const fnRows: CellValue[][] = exportablePermissions(snap.permissions).map((perm) => {
     const cells = roleCols.map((r) =>
-      (snap.permsByRole.get(r.id) ?? new Set()).has(perm.key) ? GRANT_MARK : REVOKE_MARK,
+      (snap.permsByRole.get(r.id) ?? new Set()).has(perm.key) ? GRANT_MARK : "",
     );
-    return [perm.resource, perm.label || perm.key, perm.key, ...cells];
+    return [perm.resource, perm.label || perm.key, perm.description, perm.key, ...cells];
   });
 
-  // 页面 — one row per editable page, 无/看/改/批 per role.
+  // 页面 — one row per editable page, 看/改/批 per role (空 = 不可见).
   const moduleLabels = pageModuleLabels(snap);
-  const pgHeader: CellValue[] = ["模块 Module", "页面 Page", "Key", "状态 Status", ...roleHeaders];
+  const pgHeader: CellValue[] = ["模块", "页面", "key", "状态", ...roleHeaders];
   const pgRows: CellValue[][] = editablePages(snap.pages).map((p) => {
-    const cells = roleCols.map((r) => levelCell((snap.levelsByRole.get(r.id) ?? {})[p.key] ?? "none"));
+    const cells = roleCols.map((r) => pageLevelCell((snap.levelsByRole.get(r.id) ?? {})[p.key] ?? "none"));
     return [moduleLabels.get(p.key) ?? "", p.label, p.key, p.dormant ? "停用 dormant" : "", ...cells];
   });
 
   // 角色 — the legend tying each column to a role id, and which are locked.
-  const roleHeaderRow: CellValue[] = ["ID", "角色 Role", "系统 System", "成员数 Members", "锁定 Locked"];
+  const roleHeaderRow: CellValue[] = ["ID", "角色名", "系统", "成员数", "锁定"];
   const roleRows: CellValue[][] = roleCols.map((r) => [
     r.id,
     r.name,
-    r.locked ? "是 yes" : "",
+    r.locked ? "是" : "",
     r.memberCount,
-    r.locked ? "是 yes" : "",
+    r.locked ? "是" : "",
   ]);
 
   return {
@@ -201,10 +219,11 @@ const GRANT_TOKENS = new Set(["✓", "✔", "√", "y", "yes", "true", "1", "有
 // owner's files. Revoke is an explicit dash or a clear negative.
 const REVOKE_TOKENS = new Set(["-", "–", "—", "−", "0", "n", "no", "false", "否", "无"]);
 
-type GrantParse = "grant" | "revoke" | "skip" | "bad";
+// Callers handle a blank cell (per blankMode) before calling these, so the
+// parsers only classify a NON-empty cell.
+type GrantParse = "grant" | "revoke" | "bad";
 function parseGrantCell(raw: string): GrantParse {
   const t = raw.trim().toLowerCase();
-  if (t === "") return "skip";
   if (GRANT_TOKENS.has(t)) return "grant";
   if (REVOKE_TOKENS.has(t)) return "revoke";
   return "bad";
@@ -221,11 +240,9 @@ const LEVEL_TOKENS = new Map<string, MatrixLevel>([
   ["批", "full"],
   ["full", "full"],
 ]);
-type LevelParse = { level: MatrixLevel } | "skip" | "bad";
+type LevelParse = { level: MatrixLevel } | "bad";
 function parseLevelCell(raw: string): LevelParse {
-  const t = raw.trim().toLowerCase();
-  if (t === "") return "skip";
-  const level = LEVEL_TOKENS.get(t);
+  const level = LEVEL_TOKENS.get(raw.trim().toLowerCase());
   return level ? { level } : "bad";
 }
 
@@ -242,14 +259,24 @@ function stripIdPrefix(header: string): string {
   return header.replace(/^\s*#?\s*\d+\s*[·.\-:：]?\s*/, "").trim();
 }
 
+/** The role name inside a header, stripped of the owner's decorations: the first
+ *  line only (his count rides a second line, `Sales Person\n(39人)`) and a
+ *  trailing member-count paren `(39人)` / `(39)` if it sits on that line. A
+ *  parenthetical WITHOUT digits (e.g. `New Member (no access)`) is part of the
+ *  name and kept. */
+function roleNameInHeader(header: string): string {
+  const firstLine = header.split(/\r?\n/)[0] ?? header;
+  return firstLine.replace(/\s*[(（]\s*\d+\s*人?\s*[)）]\s*$/, "").trim();
+}
+
 type ColumnMatch =
   | { kind: "role"; roleId: number }
   | { kind: "ambiguous" }
   | { kind: "none" };
 
-/** Decide whether a header names one of the snapshot's roles. Id prefix wins;
- *  then an exact (case-insensitive) name match, either on the whole header or on
- *  the header with an id prefix stripped. A name shared by two roles is
+/** Decide whether a header names one of the snapshot's roles. An `id ·` prefix
+ *  wins; then an exact (case-insensitive) name match on the decoration-stripped
+ *  header (or with an id prefix removed). A name shared by two roles is
  *  ambiguous and reported, never guessed. */
 function matchRoleColumn(header: string, roles: RoleLite[]): ColumnMatch {
   const id = leadingId(header);
@@ -257,7 +284,8 @@ function matchRoleColumn(header: string, roles: RoleLite[]): ColumnMatch {
     const byId = roles.find((r) => r.id === id);
     if (byId) return { kind: "role", roleId: byId.id };
   }
-  const candidates = [header.trim().toLowerCase(), stripIdPrefix(header).toLowerCase()].filter(
+  const name = roleNameInHeader(header);
+  const candidates = [name.toLowerCase(), stripIdPrefix(name).toLowerCase()].filter(
     (s) => s.length > 0,
   );
   const hits = roles.filter((r) => candidates.includes(r.name.trim().toLowerCase()));
@@ -341,12 +369,19 @@ interface WorkingRole {
 
 /**
  * Parse an edited workbook into per-role write payloads and a human diff, never
- * trusting layout. Starts every role from its CURRENT state and applies only the
- * cells the file actually fills, so a blank cell is "no change". scm.access is
- * reconciled from the resulting page levels (the UI's safety net) before diffing,
- * so the preview shows the umbrella exactly as it will be written.
+ * trusting layout. Starts every role from its CURRENT state, then applies the
+ * file's cells. `blankMode` decides a blank cell: "none" (default — the file is
+ * the complete desired matrix, blank = not granted / not visible, the owner's
+ * convention) or "unchanged" (blank = leave as-is, for a partial file). A page
+ * or role ABSENT as a row/column is always left untouched either way. scm.access
+ * is reconciled from the resulting page levels (the UI's safety net) before the
+ * diff, so the preview shows the umbrella exactly as it will be written.
  */
-export function parseMatrixWorkbook(sheets: SheetData[], snap: MatrixSnapshot): ParsedImport {
+export function parseMatrixWorkbook(
+  sheets: SheetData[],
+  snap: MatrixSnapshot,
+  blankMode: BlankMode = "none",
+): ParsedImport {
   const pageByKey = new Map(snap.pages.map((p) => [p.key, p]));
   const permKeys = new Set(snap.permissions.filter((p) => p.key !== "*").map((p) => p.key));
   const knownKeys = new Set<string>([...permKeys, ...snap.pages.map((p) => p.key)]);
@@ -403,8 +438,12 @@ export function parseMatrixWorkbook(sheets: SheetData[], snap: MatrixSnapshot): 
     }
 
     // The key column = the candidate whose data cells most often hit a known
-    // key. Needs a real signal (≥2 hits), else this sheet has no keys (e.g. the
-    // 角色 legend) and is skipped.
+    // key. It must carry keys in a MAJORITY of data rows, not just a couple:
+    // a sheet whose only key-ish column is an incidental one (e.g. v3's
+    // "现在由什么控制" gate notes, where a stray cell equals a real key, or the
+    // 角色 legend) has no key column and is skipped — not mis-parsed.
+    const dataRows = rows.length - 1;
+    const keyThreshold = Math.max(2, Math.floor(dataRows * 0.5));
     let keyCol = -1;
     let keyHits = -1;
     for (const c of otherCols) {
@@ -417,7 +456,7 @@ export function parseMatrixWorkbook(sheets: SheetData[], snap: MatrixSnapshot): 
         keyCol = c;
       }
     }
-    if (keyCol < 0 || keyHits < 2) continue;
+    if (keyCol < 0 || keyHits < keyThreshold) continue;
     sheetsWithKeys++;
 
     for (let r = 1; r < rows.length; r++) {
@@ -431,34 +470,48 @@ export function parseMatrixWorkbook(sheets: SheetData[], snap: MatrixSnapshot): 
       }
       for (const [roleId, col] of roleColOf) {
         const raw = cellText(rows[r]![col] ?? null);
-        if (raw === "") continue; // blank = no change
         const w = working.get(roleId);
         if (!w) continue;
+        // Locked roles (system / `*`) are never written. Flag the role only when
+        // the file actually puts a value in its column (not for a blank cell).
+        if (lockedById.get(roleId)) {
+          if (raw !== "") lockedTouched.add(roleId);
+          continue;
+        }
         if (isPerm) {
-          const g = parseGrantCell(raw);
-          if (g === "skip") continue;
-          if (g === "bad") {
-            addBad(sheet.name, r, col, raw);
-            continue;
+          // scm.access is DERIVED from the SCM page levels (reconcileScmAccess
+          // below), never set by a function cell — so a blank/ticked scm.access
+          // cell can't wrongly revoke or grant Supply-Chain access when the page
+          // half of the file isn't imported.
+          if (key === SCM_ACCESS_KEY) continue;
+          let grant: boolean;
+          if (raw === "") {
+            if (blankMode !== "none") continue; // blank = leave as-is
+            grant = false; // blank = not granted (complete-matrix)
+          } else {
+            const g = parseGrantCell(raw);
+            if (g === "bad") {
+              addBad(sheet.name, r, col, raw);
+              continue;
+            }
+            grant = g === "grant";
           }
-          if (lockedById.get(roleId)) {
-            lockedTouched.add(roleId);
-            continue;
-          }
-          if (g === "grant") w.perms.add(key);
+          if (grant) w.perms.add(key);
           else w.perms.delete(key);
         } else {
-          const lv = parseLevelCell(raw);
-          if (lv === "skip") continue;
-          if (lv === "bad") {
-            addBad(sheet.name, r, col, raw);
-            continue;
+          let level: MatrixLevel;
+          if (raw === "") {
+            if (blankMode !== "none") continue; // blank = leave as-is
+            level = "none"; // blank = not visible (complete-matrix)
+          } else {
+            const lv = parseLevelCell(raw);
+            if (lv === "bad") {
+              addBad(sheet.name, r, col, raw);
+              continue;
+            }
+            level = lv.level;
           }
-          if (lockedById.get(roleId)) {
-            lockedTouched.add(roleId);
-            continue;
-          }
-          w.levels[key] = lv.level;
+          w.levels[key] = level;
         }
       }
     }
