@@ -19,6 +19,8 @@ export interface OvProject {
   /** The event page's P&L (backend services/eventPnl.ts), By Sales Orders when an
    *  order was opened, in RM; null when the server could not build it. */
   pnl: OvPnl | null;
+  /** The orders' total (drafts in) and what the payment ledger says was paid, in sen. */
+  collection: { totalSen: number; paidSen: number };
 }
 
 export interface OvPnl {
