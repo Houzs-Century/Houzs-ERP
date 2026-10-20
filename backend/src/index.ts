@@ -491,11 +491,11 @@ app.route("/api/projects/data-gaps", projectDataGaps);
 // Same exact-path-first reason and gate as data-gaps. See routes/projectOverview.ts.
 /* Project Overview: the projects.finances page, or any finance viewer (the
    directors, owner 2026-10-20) - the router itself still refuses everyone else. */
-const projectOverviewAccess: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+const requirePageAccessOrDirector: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   if (isFinanceViewer(c.get("user") as unknown as AuthUser)) return next();
   return requirePageAccess("projects.finances")(c, next);
 };
-app.use("/api/projects/overview/*", projectOverviewAccess);
+app.use("/api/projects/overview/*", requirePageAccessOrDirector);
 app.route("/api/projects/overview", projectOverview);
 app.route("/api/projects", projects);
 // The office side of a brand's share link (generate / revoke). Own file because
