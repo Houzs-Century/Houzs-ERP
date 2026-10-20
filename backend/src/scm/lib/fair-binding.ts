@@ -491,6 +491,27 @@ export async function loadFairsByIds(
   return out;
 }
 
+/** Projects by id that an order may be moved TO: this company's, not archived
+ *  or cancelled, with a place and a start. Throws on a failed read. */
+export async function loadLiveFairsByIds(
+  db: FairDb,
+  companySql: string,
+  ids: readonly number[],
+): Promise<Map<number, FairProjectRow & { name: string | null }>> {
+  const unique = [...new Set(ids.filter(Number.isInteger))];
+  const out = new Map<number, FairProjectRow & { name: string | null }>();
+  if (unique.length === 0) return out;
+  const rows = await db
+    .prepare(`SELECT ${FAIR_COLUMNS}, p.name AS name FROM projects p WHERE p.id IN (${unique.map(() => '?').join(', ')}) AND ${LIVE_FAIR}${companySql}`)
+    .bind(...unique)
+    .all<Record<string, unknown>>();
+  for (const r of (rows.results ?? []) as Array<Record<string, unknown>>) {
+    const row = toFairRow(r);
+    if (Number.isFinite(row.projectId)) out.set(row.projectId, { ...row, name: typeof r.name === 'string' ? r.name : null });
+  }
+  return out;
+}
+
 /** Every live fair at one place whose period contains one day. */
 export async function loadFairsAtVenueOn(
   db: FairDb,

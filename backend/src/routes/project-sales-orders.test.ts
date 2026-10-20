@@ -150,9 +150,10 @@ describe('GET /project-sales-orders/:projectId', () => {
     };
     const calls: unknown[][] = [];
     const DB = {
-      prepare: () => ({
+      prepare: (sql: string) => ({
         bind: (...vals: unknown[]) => ({
           all: async () => {
+            if (/FROM project_activity/.test(sql)) return { results: [] };
             calls.push(vals);
             return { results: [{ id: 77, venue: 'MID VALLEY', organizer: 'REX', brand: 'AKEMI', startdate: '2026-09-18', enddate: '2026-09-20', status: 'confirmed' }] };
           },
@@ -167,6 +168,45 @@ describe('GET /project-sales-orders/:projectId', () => {
     expect(flag('HC-SO-000003')).toBeNull(); // no venue on the order: nothing to compare
     expect(calls).toEqual([[77]]);
   });
+
+  it('the evening reports decide (owner 2026-10-20): this fair\'s report proves the link, another fair\'s names where to move it', async () => {
+    const tables = {
+      ...TABLES,
+      mfg_sales_orders: TABLES.mfg_sales_orders!.map((r) =>
+        r.doc_no === 'HC-SO-000001' || r.doc_no === 'HC-SO-000002' ? { ...r, venue: 'KLCC' } : r),
+    };
+    const reporter = { author_email: 'ummuaimanlm@gmail.com', author_position: 'Operation Executive', start_date: '2026-09-18' };
+    const FAIRS: Record<number, Row> = {
+      77: { id: 77, venue: 'MID VALLEY', organizer: 'REX', brand: 'AKEMI', startdate: '2026-09-18', enddate: '2026-09-20', status: 'confirmed' },
+      80: { id: 80, venue: 'KLCC', organizer: 'MLE', brand: 'AKEMI', startdate: '2026-09-18', enddate: '2026-09-20', status: 'confirmed' },
+    };
+    const DB = {
+      prepare: (sql: string) => ({
+        bind: (...vals: unknown[]) => ({
+          all: async () => (/FROM project_activity/.test(sql)
+            ? { results: [
+                { id: 1, project_id: 77, note: '19/9\n1. HC13503 RM5000 Anthony', created_at: '2026-09-19 10:00:00', ...reporter },
+                { id: 2, project_id: 80, note: '19/9\n1. HC13504 RM3000 Adrian', created_at: '2026-09-19 11:00:00', ...reporter },
+              ] }
+            : { results: vals.map((v) => FAIRS[Number(v)]).filter(Boolean) }),
+        }),
+      }),
+    };
+    const FINANCE: Caller = { accessLevel: 'full', position: 'Finance Executive', perms: ['scm.finance.accounting'] };
+    const res = await harness(tables, FINANCE).request('/project-sales-orders/77', undefined, { DB } as unknown as Env);
+    const body = await res.json() as Body & { can_transfer: boolean };
+    const row = (doc: string) => body.data.find((r) => r.doc_no === doc)!;
+    /* KLCC on the slip, but MID VALLEY's own report lists HC 13503: right. */
+    expect(row('HC-SO-000001').venue_differs).toBeNull();
+    expect(row('HC-SO-000001').report_elsewhere).toBeNull();
+    /* HC13504 is in the KLCC fair's report: still flagged, and where to move it. */
+    expect(row('HC-SO-000002').venue_differs).toBe('KLCC');
+    expect(row('HC-SO-000002').report_elsewhere).toEqual({ project_id: 80, label: 'AKEMI — KLCC — MLE (09/18 - 09/20)', report_date: '2026-09-19' });
+    expect(body.can_transfer).toBe(true);
+
+    const director = await (await harness(tables, DIRECTOR).request('/project-sales-orders/77', undefined, { DB } as unknown as Env)).json() as { can_transfer: boolean };
+    expect(director.can_transfer).toBe(false);
+  });
 });
 
 describe('projectSalesOrderTotals', () => {
@@ -177,6 +217,7 @@ describe('projectSalesOrderTotals', () => {
     ].map((r) => ({
       ...r, so_date: null, ref: null, customer_name: null, customer_phone: null,
       salesperson_name: null, fair_match: null, linked_ac_docno: null, created_at: null, venue_differs: null,
+      venue: null, branding: null, report_elsewhere: null,
     })));
     expect(t).toEqual({ count: 2, draft_count: 1, amount_sen: 350, paid_sen: 50, balance_sen: 300, service_sen: 30 });
   });
