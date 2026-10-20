@@ -58,6 +58,20 @@ describe('buildFairOptions — one row is a place plus an organizer', () => {
     expect(running[0].projectIds).toEqual([340, 341, 342, 2250]);
   });
 
+  it('names each booth’s brand, so a person linking an order can tell them apart (owner 2026-10-20)', () => {
+    /* Fair Links offered three identical "MID VALLEY — BIGHOME (10/02 - 10/04)"
+       rows: 「我要 link fair 时无法知道 brand」. */
+    const rows = [...MID_VALLEY_REX, fair({ projectId: 343, brand: null })];
+    const { running } = buildFairOptions(rows, '2026-09-13');
+    expect(running[0].booths).toEqual([
+      { projectId: 340, brand: 'AKEMI' },
+      { projectId: 342, brand: 'ERGOTEX' },
+      { projectId: 2250, brand: 'ERGOTEX' },
+      { projectId: 341, brand: 'ZANOTTI' },
+      { projectId: 343, brand: null },
+    ]);
+  });
+
   it('labels EVERY row with its dates (owner 2026-09-19, reversing 2026-09-13)', () => {
     /* The list is now four weeks of mostly-CLOSED fairs, so picking a row means
        saying WHICH occurrence — the label has to show it or the operator is
@@ -482,6 +496,7 @@ describe("keyerFairDefault — a new order starts with the KEYER's fair (owner 2
     expect(buildFairOptions([IOI, ergotex], '2026-10-19').running.map((o) => o.key)).toContain(d.event?.key);
     /* Only the KEYER's booths ride on the default; the dropdown row lists the event's. */
     expect(d.event?.projectIds).toEqual([2320]);
+    expect(d.event?.booths).toEqual([{ projectId: 2320, brand: 'AKEMI' }]);
   });
 
   it('the last fair ended before the window: no event, and says which fair', () => {

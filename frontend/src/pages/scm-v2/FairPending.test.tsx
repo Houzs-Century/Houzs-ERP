@@ -11,6 +11,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   FairCheckRow,
+  FairOption,
   FairPendingRow,
   FairOptionsResponse,
 } from '../../vendor/scm/lib/fair-options-queries';
@@ -28,13 +29,21 @@ const ROWS: FairPendingRow[] = [
 const OPTIONS: FairOptionsResponse = {
   date: '2026-09-13',
   running: [
-    { key: 'mid valley|rex|2026-09-11|2026-09-13', venue: 'MID VALLEY', organizer: 'REX', startDate: '2026-09-11', endDate: '2026-09-13', projectIds: [340, 341] },
+    {
+      key: 'mid valley|rex|2026-09-11|2026-09-13', venue: 'MID VALLEY', organizer: 'REX', startDate: '2026-09-11', endDate: '2026-09-13', projectIds: [340, 341],
+      booths: [{ projectId: 340, brand: 'AKEMI' }, { projectId: 341, brand: 'ZANOTTI' }],
+    },
   ],
   earlier: [],
   venues: [],
 };
 
 const assign = vi.fn();
+const openIntent = vi.hoisted(() => vi.fn());
+vi.mock('../../lib/workspaceTabs', async (orig) => ({
+  ...(await orig<typeof import('../../lib/workspaceTabs')>()),
+  markWorkspaceOpenIntent: openIntent,
+}));
 const checks = vi.hoisted(() => ({ rows: [] as unknown[], error: false }));
 const who = vi.hoisted(() => ({ perms: new Set<string>(['scm.finance.accounting']), role: '' }));
 vi.mock('../../auth/AuthContext', () => ({
@@ -49,7 +58,7 @@ vi.mock('../../vendor/scm/lib/fair-options-queries', async (orig) => ({
   useFairChecks: () => ({ data: checks.rows, isLoading: false, isError: checks.error }),
 }));
 
-import { FairPending } from './FairPending';
+import { FairPending, boothChoices } from './FairPending';
 
 const show = () => render(<MemoryRouter><FairPending /></MemoryRouter>);
 
@@ -74,12 +83,33 @@ describe('FairPending', () => {
     expect(before.textContent).toContain('HC-SO-2609-009');
   });
 
-  it('offers each brand booth at the order’s own place', () => {
+  it('offers each brand booth at the order’s own place, named by its brand, with no id', () => {
+    /* Owner 2026-10-20: 「我要 link fair 时无法知道 brand」 — and 「地点照样要显示」. */
     show();
     const sel = screen.getByLabelText('Fair for HC-SO-2609-064') as HTMLSelectElement;
-    const labels = [...sel.options].map((o) => o.text);
-    expect(labels).toContain('MID VALLEY — REX (09/11 - 09/13) #340');
-    expect(labels).toContain('MID VALLEY — REX (09/11 - 09/13) #341');
+    expect([...sel.options].map((o) => o.text)).toEqual([
+      '— choose a fair —',
+      'AKEMI — MID VALLEY — REX (09/11 - 09/13)',
+      'ZANOTTI — MID VALLEY — REX (09/11 - 09/13)',
+    ]);
+  });
+
+  it('lines every group up in the same columns', () => {
+    show();
+    for (const title of ['Pick one (1)', 'Waiting for the fair (1)']) {
+      const group = screen.getByText(title).closest('section') as HTMLElement;
+      expect(within(group).getAllByRole('columnheader').map((h) => h.textContent))
+        .toEqual(['SO No.', 'SO date', 'Venue', 'Brand', 'Amount', 'Fair', '']);
+    }
+  });
+
+  it('the SO number opens the order in its own tab of the strip', () => {
+    /* Owner 2026-10-20: 「这里可以直接点开 so 看那张 so」. */
+    show();
+    const link = screen.getByRole('link', { name: 'HC-SO-2609-064' });
+    expect(link.getAttribute('href')).toBe('/scm/sales-orders/HC-SO-2609-064');
+    fireEvent.click(link);
+    expect(openIntent).toHaveBeenCalledWith(true);
   });
 
   it('offers NOTHING for an order whose place has no fair that day', () => {
@@ -120,7 +150,22 @@ describe('FairPending — linked orders to check (owner 2026-10-19)', () => {
     show();
     const group = screen.getByText('To check — venue differs (1)').closest('section') as HTMLElement;
     expect(group.textContent).toContain(VENUE_DIFFERS.note);
-    fireEvent.change(screen.getByLabelText('Fair for HC-SO-2610-167'), { target: { value: '340' } });
+    fireEvent.change(screen.getByLabelText('Fair for HC-SO-2610-167'), { target: { value: '341' } });
+    fireEvent.click(within(group).getByRole('button', { name: 'Link' }));
+    expect(assign).toHaveBeenCalledWith({ docNo: 'HC-SO-2610-167', projectId: 341 });
+  });
+
+  it('fills in the order’s own brand booth, first in the list — nothing is linked until Link is pressed', () => {
+    /* Owner 2026-10-20: preselect the same-brand booth nearest the order date
+       (「可以」); the person still presses Link. */
+    assign.mockClear();
+    checks.rows = [VENUE_DIFFERS];
+    show();
+    const sel = screen.getByLabelText('Fair for HC-SO-2610-167') as HTMLSelectElement;
+    expect(sel.value).toBe('340');
+    expect([...sel.options].map((o) => o.text)[1]).toBe('AKEMI — MID VALLEY — REX (09/11 - 09/13)');
+    expect(assign).not.toHaveBeenCalled();
+    const group = screen.getByText('To check — venue differs (1)').closest('section') as HTMLElement;
     fireEvent.click(within(group).getByRole('button', { name: 'Link' }));
     expect(assign).toHaveBeenCalledWith({ docNo: 'HC-SO-2610-167', projectId: 340 });
   });
@@ -157,5 +202,44 @@ describe('FairPending — who may re-assign (owner 2026-10-16: Finance and PMS)'
     show();
     expect((screen.getByLabelText('Fair for HC-SO-2609-064') as HTMLSelectElement).disabled).toBe(false);
     expect(screen.queryByText(/Only Finance or PMS/)).toBeNull();
+  });
+});
+
+describe('boothChoices — which booths a row offers, in what order, and which is filled in', () => {
+  const at = (o: Partial<FairOption> & Pick<FairOption, 'key' | 'startDate' | 'endDate' | 'booths'>): FairOption => ({
+    venue: 'MID VALLEY', organizer: 'REX', projectIds: (o.booths ?? []).map((b) => b.projectId), ...o,
+  });
+  const REX = at({ key: 'rex', startDate: '2026-09-11', endDate: '2026-09-13', booths: [{ projectId: 340, brand: 'AKEMI' }, { projectId: 342, brand: 'ERGOTEX' }, { projectId: 2250, brand: 'ERGOTEX' }] });
+  const BIGHOME = at({ key: 'bighome', organizer: 'BIGHOME', startDate: '2026-08-28', endDate: '2026-08-31', booths: [{ projectId: 300, brand: 'AKEMI' }, { projectId: 301, brand: 'ZANOTTI' }] });
+  const ELSEWHERE = at({ key: 'ioi', venue: 'IOIGECC', startDate: '2026-09-12', endDate: '2026-09-14', booths: [{ projectId: 900, brand: 'AKEMI' }] });
+
+  it('the order’s brand first, nearest its date first, and that booth filled in', () => {
+    const { choices, suggested } = boothChoices([BIGHOME, REX, ELSEWHERE], { venue: ' mid  valley', branding: 'akemi', so_date: '2026-09-14' });
+    expect(choices.map((c) => c.projectId)).toEqual([340, 300, 342, 301]);
+    expect(choices.map((c) => c.sameBrand)).toEqual([true, true, false, false]);
+    expect(suggested).toBe(340);
+  });
+
+  it('two records of one booth show once, as the lowest id; another venue is never offered', () => {
+    const { choices } = boothChoices([REX, ELSEWHERE], { venue: 'MID VALLEY', branding: null, so_date: '2026-09-13' });
+    expect(choices.map((c) => c.label)).toEqual([
+      'AKEMI — MID VALLEY — REX (09/11 - 09/13)',
+      'ERGOTEX — MID VALLEY — REX (09/11 - 09/13)',
+    ]);
+  });
+
+  it('no brand on the order, or its brand has no booth there: nothing is filled in', () => {
+    expect(boothChoices([REX], { venue: 'MID VALLEY', branding: null, so_date: '2026-09-13' }).suggested).toBeNull();
+    expect(boothChoices([REX], { venue: 'MID VALLEY', branding: 'DUNLOPILLO', so_date: '2026-09-13' }).suggested).toBeNull();
+  });
+
+  it('a response from before booths existed still offers every project, as No brand, unmerged', () => {
+    const old = { key: 'rex', venue: 'MID VALLEY', organizer: 'REX', startDate: '2026-09-11', endDate: '2026-09-13', projectIds: [340, 341] };
+    const { choices, suggested } = boothChoices([old], { venue: 'MID VALLEY', branding: 'AKEMI', so_date: '2026-09-13' });
+    expect(choices.map((c) => [c.projectId, c.label])).toEqual([
+      [340, 'No brand — MID VALLEY — REX (09/11 - 09/13)'],
+      [341, 'No brand — MID VALLEY — REX (09/11 - 09/13)'],
+    ]);
+    expect(suggested).toBeNull();
   });
 });
