@@ -119,7 +119,7 @@ describe("Goods Received drawer: transfer actions (HC-0135)", () => {
     expect((await screen.findByTestId("return-page")).textContent).toBe("/scm/purchase-returns/new?grnId=g-1");
   });
 
-  it("drops the Return once every line is returned, keeps the Invoice", async () => {
+  it("hides the Return button when the row flags fully_returned, keeps the Invoice", async () => {
     h.rows = [grn("g-1", "HC-GRN-000601", [line("l-1")], { fully_returned: true })];
     mount();
     await openDrawer();
@@ -127,7 +127,7 @@ describe("Goods Received drawer: transfer actions (HC-0135)", () => {
     expect(screen.queryByRole("button", { name: /Transfer to Purchase Return/i })).toBeNull();
   });
 
-  it("falls back to Cancel when the GRN is fully billed and fully returned", async () => {
+  it("shows Cancel and no transfer when the row flags fully_invoiced and fully_returned", async () => {
     h.rows = [grn("g-1", "HC-GRN-000601", [line("l-1")], { fully_invoiced: true, fully_returned: true })];
     mount();
     await openDrawer();
