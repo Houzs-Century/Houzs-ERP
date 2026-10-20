@@ -1,0 +1,10 @@
+-- Once-guard for the auto "Delivery Completed" WhatsApp (#5).
+--
+-- When a Delivery Order is marked DELIVERED with a REAL POD (signature / photo /
+-- GPS) and that completes its Sales Order, the ERP fires the 'Delivery Completed'
+-- Connect automation ONCE. This column is claimed atomically (UPDATE ... WHERE
+-- pod_completed_msg_sent_at IS NULL) so a concurrent double-DELIVERED, or a later
+-- re-delivery, cannot send the thank-you twice. It holds the ISO send time, or
+-- null when not yet sent — exactly like do_email_sent_at (mig 0122), and released
+-- back to null if the send does not actually go out.
+ALTER TABLE scm.delivery_orders ADD COLUMN IF NOT EXISTS pod_completed_msg_sent_at text;
