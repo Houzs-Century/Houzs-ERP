@@ -7,4 +7,6 @@
 -- re-delivery, cannot send the thank-you twice. It holds the ISO send time, or
 -- null when not yet sent — exactly like do_email_sent_at (mig 0122), and released
 -- back to null if the send does not actually go out.
+--
+-- REVERSAL: ALTER TABLE scm.delivery_orders DROP COLUMN IF EXISTS pod_completed_msg_sent_at;
 ALTER TABLE scm.delivery_orders ADD COLUMN IF NOT EXISTS pod_completed_msg_sent_at text;
