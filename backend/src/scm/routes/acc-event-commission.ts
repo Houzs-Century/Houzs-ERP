@@ -25,6 +25,16 @@ import { LEDGER_COST_CATEGORIES } from '../../services/projects';
 
 const MAX_RANGE_DAYS = 400;
 const n = (v: unknown): number => { const x = Number(v ?? 0); return Number.isFinite(x) ? x : 0; };
+/* A DATE as YYYY-MM-DD and a stamp as ISO, whichever shape the client hands
+   back: PostgREST sends text, a direct postgres.js read (the read-only dry runs)
+   sends Date objects — and "Fri Oct 02 2026".slice(0, 10) is not a day. */
+const dayOf = (v: unknown): string | null => {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) return Number.isFinite(v.getTime()) ? v.toISOString().slice(0, 10) : null;
+  const s = String(v);
+  return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null;
+};
+const stampOf = (v: unknown): string => (v instanceof Date ? v.toISOString() : String(v ?? ''));
 const monthStart = (ymd: string) => `${ymd.slice(0, 7)}-01`;
 const monthEnd = (ymd: string) => {
   const d = new Date(`${ymd.slice(0, 7)}-01T00:00:00Z`);
@@ -129,7 +139,7 @@ export const eventCommissionHandler = async (c: any): Promise<Response> => {
       const earlierSet = new Set(earlierFairs.map((f) => Number(f.id)));
       partTwo = partTwoRead.data.filter((s) => earlierSet.has(Number(s.project_id)));
     } else {
-      partTwo = partTwoRead.data.filter((s) => s.so_date != null && String(s.so_date).slice(0, 10) < from);
+      partTwo = partTwoRead.data.filter((s) => (dayOf(s.so_date) ?? '9999-12-31') < from);
       earlierFairs = await readFairs(fairIdsOf([...partOne.data, ...partTwo]), null);
     }
   } catch (e) {
@@ -171,8 +181,8 @@ export const eventCommissionHandler = async (c: any): Promise<Response> => {
     .map((f) => {
       const p = pnl.get(Number(f.id))?.by_sales;
       return {
-        id: Number(f.id), name: String(f.name ?? `#${f.id}`), brand: f.brand, startDate: String(f.start_date ?? '').slice(0, 10),
-        endDate: f.end_date ? String(f.end_date).slice(0, 10) : null,
+        id: Number(f.id), name: String(f.name ?? `#${f.id}`), brand: f.brand, startDate: dayOf(f.start_date) ?? '',
+        endDate: dayOf(f.end_date),
         totalSalesRm: p ? p.sales : (f.total_sales == null ? null : n(f.total_sales)),
         estimateRm: p ? p.commission.amount : null,
       };
@@ -185,17 +195,17 @@ export const eventCommissionHandler = async (c: any): Promise<Response> => {
       customer: s.debtor_name, status: String(s.status ?? '').toUpperCase(), onHold: s.on_hold === true,
       goodsSen: n(s.mattress_sofa_sen) + n(s.bedframe_sen) + n(s.accessories_sen) + n(s.others_sen),
       totalSen: n(s.total_revenue_sen) > 0 ? n(s.total_revenue_sen) : n(s.local_total_sen),
-      createdAt: s.created_at,
-      soDate: s.so_date ? String(s.so_date).slice(0, 10) : null,
+      createdAt: stampOf(s.created_at),
+      soDate: dayOf(s.so_date),
     })),
-    payments: pays.data.map((p): CommissionPayment => ({ docNo: p.so_doc_no, paidAt: String(p.paid_at), amountSen: n(p.amount_sen) })),
+    payments: pays.data.map((p): CommissionPayment => ({ docNo: p.so_doc_no, paidAt: dayOf(p.paid_at) ?? stampOf(p.paid_at), amountSen: n(p.amount_sen) })),
     changes: chs.data.map((r): CommissionChange => ({
-      docNo: String(r.so_doc_no), changedAt: String(r.changed_at),
+      docNo: String(r.so_doc_no), changedAt: stampOf(r.changed_at),
       beforeGoodsSen: n(r.before_goods_sen), afterGoodsSen: n(r.after_goods_sen),
       beforeTotalSen: n(r.before_total_sen), afterTotalSen: n(r.after_total_sen),
       source: String(r.source ?? 'edit'), changedBy: (r.changed_by as string | null) ?? null,
     })),
-    cancels: cancels.data.map((r): CommissionCancel => ({ docNo: r.doc_no, at: r.created_at })),
+    cancels: cancels.data.map((r): CommissionCancel => ({ docNo: r.doc_no, at: stampOf(r.created_at) })),
   });
   return c.json(report);
 };

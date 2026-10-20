@@ -49,3 +49,39 @@ export async function attachOrderPurchaseOrders(
     }),
   );
 }
+
+/* HC-0130 — the supplier on the PO raised from the case item's SO line
+   (SO line -> purchase_order_items.so_item_id -> purchase_orders.supplier),
+   so the Solution step's SUPPLIER fills itself. CANCELLED POs are skipped;
+   several suppliers -> the latest PO (po_date, then po_number). Scoped to the
+   case's company like attachOrderPurchaseOrders; any read error -> null. */
+export async function orderPoSupplierCode(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  docNo: string | null,
+  itemCode: string | null,
+  companyId: number | null,
+): Promise<string | null> {
+  if (!docNo || !itemCode || !Number.isInteger(companyId) || (companyId as number) <= 0) return null;
+  try {
+    const lines = await sb.from("mfg_sales_order_items").select("id")
+      .eq("company_id", companyId).eq("doc_no", docNo).eq("item_code", itemCode);
+    const lineIds = ((lines.data ?? []) as Array<{ id: string | null }>).map((r) => r.id).filter(Boolean);
+    if (lines.error || lineIds.length === 0) return null;
+    const links = await sb.from("purchase_order_items").select("purchase_order_id")
+      .eq("company_id", companyId).in("so_item_id", lineIds).not("purchase_order_id", "is", null);
+    const poIds = [...new Set(((links.data ?? []) as Array<{ purchase_order_id: string }>).map((r) => r.purchase_order_id))];
+    if (links.error || poIds.length === 0) return null;
+    const pos = await sb.from("purchase_orders").select("po_number, po_date, status, supplier:suppliers(code)")
+      .eq("company_id", companyId).in("id", poIds);
+    if (pos.error) return null;
+    type Po = { po_number: string | null; po_date: string | null; status: string | null; supplier: { code: string | null } | null };
+    const latest = ((pos.data ?? []) as Po[])
+      .filter((p) => (p.status ?? "").toUpperCase() !== "CANCELLED" && p.supplier?.code)
+      .sort((a, b) => (b.po_date ?? "").localeCompare(a.po_date ?? "")
+        || (b.po_number ?? "").localeCompare(a.po_number ?? "", undefined, { numeric: true })).at(0);
+    return latest?.supplier?.code ?? null;
+  } catch {
+    return null;
+  }
+}

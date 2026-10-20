@@ -82,25 +82,39 @@ projectDataGaps.get("/", async (c) => {
         event (to move). Per bill, read as the event page reads it.
      2. Rental not keyed - the P&L's rental (Finance's books or a typed line).
      3. No chat sales report. */
-  // company-scope: chat notes of this company's events in the window (activeCompanySql on p.company_id).
+  /* Bills not daily cover every event of the last 180 days with a report -
+     running and just ended too (owner 2026-10-20: the newest fairs carry most
+     of the unopened bills); rental and the report check stay on the finished
+     events above. */
+  const recent = todayMyt(-180);
+  // company-scope: this company's live events of the last 180 days (activeCompanySql on p.company_id).
+  const recentRows = await c.env.DB.prepare(
+    `SELECT p.id, p.code, p.name, p.start_date, p.end_date FROM projects p
+      WHERE p.archived_at IS NULL AND COALESCE(p.status, '') <> 'cancelled'
+        AND substr(COALESCE(p.start_date, p.end_date), 1, 10) >= ?${activeCompanySql(c, "p.company_id")}`,
+  ).bind(recent).all<{ id: number; code: string; name: string; start_date: string | null; end_date: string | null }>();
+  const eventsById = new Map<number, { id: number; code: string; name: string; start_date: string | null; end_date: string | null }>();
+  for (const p of projects) eventsById.set(p.id, { id: p.id, code: p.code, name: p.name, start_date: p.start_date, end_date: p.end_date ? String(p.end_date) : null });
+  for (const p of recentRows.results) eventsById.set(Number(p.id), { ...p, id: Number(p.id) });
+  // company-scope: chat notes of this company's events in the window or the last 180 days (activeCompanySql on p.company_id).
   const noteRows = await c.env.DB.prepare(
     `SELECT a.id, a.project_id, a.note, a.created_at, u.email AS author_email, ps.name AS author_position
        FROM project_activity a JOIN projects p ON p.id = a.project_id
        LEFT JOIN users u ON u.id = a.user_id LEFT JOIN positions ps ON ps.id = u.position_id
       WHERE a.action = 'note' AND a.archived_at IS NULL
-        AND substr(p.end_date, 1, 10) >= ? AND substr(p.end_date, 1, 10) <= ?${activeCompanySql(c, "p.company_id")}`,
-  ).bind(from, to).all<NoteRow & { project_id: number }>();
+        AND (substr(COALESCE(p.start_date, p.end_date), 1, 10) >= ? OR (substr(p.end_date, 1, 10) >= ? AND substr(p.end_date, 1, 10) <= ?))${activeCompanySql(c, "p.company_id")}`,
+  ).bind(recent, from, to).all<NoteRow & { project_id: number }>();
   const notesOf = new Map<number, NoteRow[]>();
   for (const n of noteRows.results) notesOf.set(Number(n.project_id), [...(notesOf.get(Number(n.project_id)) ?? []), { ...n, id: Number(n.id) }]);
   const billsOf = new Map<number, ReturnType<typeof collectReport>["bills"]>();
-  for (const p of projects) {
+  for (const p of eventsById.values()) {
     const bills = notesOf.has(p.id) ? collectReport(notesOf.get(p.id)!, p.start_date ? String(p.start_date) : null).bills : [];
     if (bills.length) billsOf.set(p.id, bills);
   }
   type ProblemBill = { ref: string; amountSen: number; salesperson: string | null; problem: "not_opened" | "other_event"; soDocNo: string | null; otherEvent: string | null };
   const problems = new Map<number, ProblemBill[]>();
   if (billsOf.size > 0) {
-    const starts = projects.filter((p) => billsOf.has(p.id)).map((p) => String(p.start_date ?? p.end_date ?? "").slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+    const starts = [...eventsById.values()].filter((p) => billsOf.has(p.id)).map((p) => String(p.start_date ?? p.end_date ?? "").slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
     const since = new Date(Date.parse(`${starts[0] ?? from}T00:00:00Z`) - 30 * 86400000).toISOString().slice(0, 10);
     const orders = await paginateAll<OrderRow>((f, t) => scopeToCompany(c.get("supabase").from("mfg_sales_orders")
       .select("doc_no, project_id, status, customer_so_no, ref, salesperson_id, local_total_sen, total_revenue_sen")
@@ -143,5 +157,9 @@ projectDataGaps.get("/", async (c) => {
       transportSetup: Number(p.transport_setup), commission: Number(p.commission), merchandise: Number(p.merchandise),
     },
   })).sort((a, b) => b.endDate.localeCompare(a.endDate));
-  return c.json({ from, to, books, ...classifyProjectGaps(projects.map((p) => ({ ...p, soSen: soSen.get(p.id) ?? 0 }))) });
+  const notDaily = [...problems.entries()].map(([id, bills]) => {
+    const e = eventsById.get(id)!;
+    return { id, code: e.code, name: e.name, startDate: String(e.start_date ?? "").slice(0, 10), endDate: String(e.end_date ?? "").slice(0, 10), reportBills: billsOf.get(id)?.length ?? 0, bills };
+  }).sort((a, b) => b.endDate.localeCompare(a.endDate));
+  return c.json({ from, to, books, notDaily, recentFrom: recent, ...classifyProjectGaps(projects.map((p) => ({ ...p, soSen: soSen.get(p.id) ?? 0 }))) });
 });
