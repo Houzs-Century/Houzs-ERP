@@ -707,7 +707,7 @@ export async function applySoAmendment(
        PO twin does (po-revision.ts). Keeping the old line's group left
        HC-SO-012243's free-gift pillow, swapped from SQUARE PILLOW, on the Sofa
        Accessory group: hard-bound, so MRP read it SHORT beside 78 in stock. */
-    const codeMoved = itemCode !== String(row.item_code ?? '');
+    const codeMoved = itemCode !== String(row.item_code ?? '').trim();
     const itemGroup = String(
       (codeMoved ? groupOf({ materialKind: 'mfg_product', itemCode }) : null) ?? row.item_group ?? 'others',
     ).toLowerCase();

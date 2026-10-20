@@ -19,6 +19,15 @@
    a decision per order. A fresh connection then re-reads every written line and
    asserts its stored group equals its SKU's category.
 
+   GROUP ONLY. description2 is not rebuilt: the printed summary is built from
+   the line's variants, and the lines this is for carry no attribute that the
+   old and new group summarise differently. Check the plan before naming a line
+   whose variants hold a fabric or a size.
+
+   AFTER AN APPLY. MRP reads the new group on its next live read or snapshot
+   (15 minutes, or Regenerate). The line's stored stock_status moves only when
+   the stock allocator next runs (its cron, or recompute-so-allocation).
+
    COMPANY (default 1). RE-RUN: inert, a restamped line no longer mismatches. */
 import postgres from 'postgres';
 
