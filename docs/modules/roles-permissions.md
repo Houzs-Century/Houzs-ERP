@@ -36,6 +36,7 @@ Two separate authorization systems live under Team > Roles. Flat permissions (`x
 - `pos.marketing` is read by the 2990 POS, not this frontend: a member whose Title is exactly "Sales Marketing" (sales cohort, not director) is the POS marketing account — the tablet adds its Marketing section and refuses it Complete order, and `GET /api/scm/sales-analysis/lines` admits it (`pmsAccess.isPosMarketingAccount`). A rename away from that exact name ends it.
 - `Outsource Transporter` is a restricted-cohort Title (Driver / Helper rows), not a fleet one: no member has a `scm.drivers.user_id` link, and an unlinked fleet position fails closed to an empty delivery board.
 - There is no per-grant audit trail — `audit_events` records once per `role.update`, not per permission key; don't expect to find who flipped one specific checkbox.
+- The Matrix tab's **导出/导入 Excel** round-trips the whole role matrix (sheets 功能 / 页面 / 角色; roles are columns, headed `id · name`). A cell: ✓ = grant / − = revoke a function, 无/看/改/批 = a page level, **blank = leave unchanged** (so a partial file only touches what it fills). Import previews added/removed per role, then Apply runs the same two writes as a manual save (`PATCH /api/roles/:id` + `/page-access`). Locked roles (system / `*`) are never written; `scm.access` is reconciled from the imported SCM page levels; the parser finds roles by header and keys by content, so it tolerates renamed sheets/columns. All meaning lives in `lib/roleMatrixModel.ts`; the Excel engine is pure in `lib/roleMatrixExcel.ts`.
 
 ## Where the code is
 
@@ -46,4 +47,5 @@ Two separate authorization systems live under Team > Roles. Flat permissions (`x
 - `backend/tests/permissionCatalogueDrift.test.ts` — the build-time ledger/catalogue drift gate.
 - `frontend/src/pages/Roles.tsx`, `frontend/src/mobile/MobileRoles.tsx` — desktop/mobile admin surfaces.
 - `frontend/src/lib/rolesPermissionModel.ts` — the shared matrix/staging model.
+- `frontend/src/lib/roleMatrixExcel.ts` — pure export/import engine (workbook ↔ write payloads, diff); `roleMatrixExcelFile.ts` — SheetJS/CSV I/O; `frontend/src/pages/team/RoleMatrixImportModal.tsx` — the shared preview/apply modal (desktop Matrix tab + mobile Roles list).
 - `frontend/src/pages/roles/RoleSettingsDrawer.tsx`, `RolesModals.tsx` — role name / description / PIC scope, create/apply/copy modals.
