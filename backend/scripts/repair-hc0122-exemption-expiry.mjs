@@ -24,7 +24,7 @@
 //
 // RE-RUN: idempotent. A frozen order is no longer NULL, so it is skipped.
 import postgres from 'postgres';
-import { readFreezeTargets, freezeExemptionExpiry } from './lib/hc0122-exemption-expiry-sql.mjs';
+import { readFreezeTargets, freezeExemptionExpiry, readFrozenValues } from './lib/hc0122-exemption-expiry-sql.mjs';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('DATABASE_URL required'); process.exit(2); }
@@ -87,11 +87,23 @@ async function main() {
   await sql.end();
 
   const check = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
+  const now = await readFrozenValues(check, targets);
   const left = await readFreezeTargets(check, COMPANY_IDS);
   await check.end();
-  log(`VERIFY (fresh connection): orders still unfrozen = ${left.length}`);
-  if (left.length > 0) {
-    log('VERIFY FAILED — some orders are still NULL; re-run plan and investigate.');
+  const want = new Map(targets.map((t) => [`${t.company_id}|${t.doc_no}`, t.freeze_to]));
+  const badShape = [];
+  const moved = [];
+  for (const r of now) {
+    const expected = want.get(`${r.company_id}|${r.doc_no}`);
+    const okShape = r.type === 'date' && typeof r.value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.value);
+    if (!okShape) badShape.push(`${r.doc_no}: ${r.type} ${r.value ?? 'NULL'}`);
+    else if (r.value !== expected) moved.push(`${r.doc_no}: ${r.value} (planned ${expected})`);
+  }
+  log(`VERIFY (fresh connection): ${now.length} orders read back, ${badShape.length} not a date, `
+    + `${moved.length} seeded by the app since the plan (kept), ${left.length} still unfrozen`);
+  for (const w of [...badShape, ...moved].slice(0, 20)) log(`  ${w}`);
+  if (badShape.length > 0 || left.length > 0) {
+    log('VERIFY FAILED — re-run plan and investigate.');
     process.exit(1);
   }
   log('OK — every processed order has a frozen Sales Exemption Expiry Date.');

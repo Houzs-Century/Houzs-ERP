@@ -7,7 +7,10 @@
    order is linked and the book has one (the date the bill was processed with),
    else the order's current delivery date. Only a well-formed YYYY-MM-DD from the
    mirror is trusted; its column is text. */
-const TARGETS = (db, companyIds) => db`
+/** Every processed order whose Sales Exemption Expiry Date was never frozen,
+ *  with the date it will freeze to and where that date comes from. */
+export function readFreezeTargets(db, companyIds) {
+  return db`
   SELECT so.company_id, so.doc_no, so.status::text AS status,
          so.customer_delivery_date::text AS customer_delivery_date,
          ac.expiry_date AS ac_expiry,
@@ -23,11 +26,18 @@ const TARGETS = (db, companyIds) => db`
      AND so.status::text NOT IN ('DRAFT', 'CANCELLED')
      AND (so.customer_delivery_date IS NOT NULL OR ac.expiry_date ~ '^\\d{4}-\\d{2}-\\d{2}$')
    ORDER BY so.company_id, so.doc_no`;
+}
 
-/** Every processed order whose Sales Exemption Expiry Date was never frozen,
- *  with the date it will freeze to and where that date comes from. */
-export function readFreezeTargets(db, companyIds) {
-  return TARGETS(db, companyIds);
+/** What the column now IS on the given orders, with its stored type, for the
+ *  fresh-connection check after apply. */
+export function readFrozenValues(db, rows) {
+  const keys = rows.map((r) => ({ company_id: Number(r.company_id), doc_no: r.doc_no }));
+  return db`
+    SELECT so.company_id, so.doc_no, so.sales_exemption_expiry::text AS value,
+           pg_typeof(so.sales_exemption_expiry)::text AS type
+      FROM scm.mfg_sales_orders so
+      JOIN jsonb_to_recordset(${db.json(keys)}) AS k(company_id bigint, doc_no text)
+        ON so.company_id = k.company_id AND so.doc_no = k.doc_no`;
 }
 
 /** Freeze one batch, guarded on the column still being empty so a value the

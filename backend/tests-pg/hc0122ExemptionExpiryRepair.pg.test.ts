@@ -1,7 +1,7 @@
 import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 // @ts-expect-error — plain .mjs helper, no types.
-import { readFreezeTargets, freezeExemptionExpiry } from '../scripts/lib/hc0122-exemption-expiry-sql.mjs';
+import { readFreezeTargets, freezeExemptionExpiry, readFrozenValues } from '../scripts/lib/hc0122-exemption-expiry-sql.mjs';
 
 /* HC-0122 — repair-hc0122-exemption-expiry.mjs's SQL on a real postgres with
  * the SO status as the scm.mfg_so_status enum it is in production, and the
@@ -122,5 +122,16 @@ describePg('HC-0122 — freeze the Sales Exemption Expiry Date, on real enum col
     expect(done).not.toContain('HC-SO-008230');
     expect((await db`SELECT sales_exemption_expiry::text AS e FROM scm.mfg_sales_orders WHERE doc_no = 'HC-SO-008230'`)[0]!.e).toBe('2026-10-21');
     expect(await readFreezeTargets(db, [1, 2])).toHaveLength(0);
+  });
+
+  test('the fresh read-back returns each frozen value as a date, keyed by company', async () => {
+    const targets = await readFreezeTargets(db, [1, 2]);
+    await db.begin((tx) => freezeExemptionExpiry(tx, targets, NOTE));
+    const back = await readFrozenValues(db, targets);
+    const by = Object.fromEntries(back.map((r: { doc_no: string; value: string; type: string }) => [r.doc_no, [r.type, r.value]]));
+    expect(back).toHaveLength(5);
+    expect(by['HC-SO-008230']).toEqual(['date', '2026-10-23']);
+    expect(by['2990-SO-2608-040']).toEqual(['date', '2026-10-30']);
+    expect(by['HC-SO-013100']).toEqual(['date', '2026-10-28']);
   });
 });
