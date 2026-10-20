@@ -405,7 +405,7 @@ function DetailDrawer({
               </div>
             </div>
 
-            <div className="flex shrink-0 items-center gap-2 border-t border-border bg-surface px-5 py-3">
+            <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border bg-surface px-5 py-3">
               <Button variant="ghost" icon={<Edit3 size={14} />} onClick={onEdit}>Edit</Button>
               <Button variant="ghost" icon={<Printer size={14} />} onClick={onPrint}>Print</Button>
               <div className="flex-1" />
@@ -418,21 +418,24 @@ function DetailDrawer({
                     </Button>
                   );
                 }
-                if (s === "POSTED") {
-                  if (!row.fully_invoiced) {
-                    return (
-                      <Button variant="primary" icon={<Receipt size={14} />} onClick={onConvertToPi}>
-                        {transferToLabel('pi')}
-                      </Button>
-                    );
-                  }
-                  if (!row.fully_returned) {
-                    return (
-                      <Button variant="secondary" icon={<RotateCcw size={14} />} onClick={onConvertToPr}>
-                        {transferToLabel('pr')}
-                      </Button>
-                    );
-                  }
+                /* HC-0135: an unbilled GRN used to show only the Invoice button, so
+                   "From Goods Receipt" on a new Purchase Return led to a drawer with
+                   no way back to the return. Both, like the full page. */
+                if (s === "POSTED" && (!row.fully_invoiced || !row.fully_returned)) {
+                  return (
+                    <div className="order-first flex w-full gap-2">
+                      {!row.fully_returned && (
+                        <Button variant="secondary" icon={<RotateCcw size={14} />} onClick={onConvertToPr} className="flex-1 justify-center whitespace-nowrap">
+                          {transferToLabel('pr')}
+                        </Button>
+                      )}
+                      {!row.fully_invoiced && (
+                        <Button variant="primary" icon={<Receipt size={14} />} onClick={onConvertToPi} className="flex-1 justify-center whitespace-nowrap">
+                          {transferToLabel('pi')}
+                        </Button>
+                      )}
+                    </div>
+                  );
                 }
                 if (s !== "CANCELLED") {
                   return (
