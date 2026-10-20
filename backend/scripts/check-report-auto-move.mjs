@@ -51,9 +51,9 @@ try {
   }
 
   const orders = (await sql`
-    SELECT doc_no, project_id, status::text AS status, customer_so_no, ref, salesperson_id, local_total_sen, total_revenue_sen, so_date, branding, created_at
-      FROM scm.mfg_sales_orders
-     WHERE company_id = ${CO} AND status::text <> 'CANCELLED' AND so_date >= '2026-06-01'`).map((o) => ({
+    SELECT so.doc_no, so.project_id, so.status::text AS status, so.customer_so_no, so.ref, so.salesperson_id, so.local_total_sen, so.total_revenue_sen, so.so_date, so.branding, so.created_at, so.debtor_name, so.venue, st.name AS sp_name
+      FROM scm.mfg_sales_orders so LEFT JOIN scm.staff st ON st.id = so.salesperson_id
+     WHERE so.company_id = ${CO} AND so.status::text <> 'CANCELLED' AND so.so_date >= '2026-06-01'`).map((o) => ({
     ...o,
     project_id: o.project_id == null ? null : Number(o.project_id),
     local_total_sen: o.local_total_sen == null ? null : Number(o.local_total_sen),
