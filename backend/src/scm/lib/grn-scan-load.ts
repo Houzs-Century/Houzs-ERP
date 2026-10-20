@@ -134,13 +134,16 @@ export async function loadPoStatuses(
   companyId: number | null,
 ): Promise<PoStatusRef[]> {
   const { data, error } = await paginateAll((from, to) => {
-    let q = svc.from('purchase_orders').select('po_number, status');
+    let q = svc.from('purchase_orders').select('po_number, status, on_hold, supplier_id, supplier:suppliers(name)');
     if (companyId != null) q = q.eq('company_id', companyId);
     return q.order('id').range(from, to);
   });
   if (error) throw new Error(`load PO statuses failed: ${error.message}`);
-  type Row = { po_number: string | null; status: string | null };
+  type Row = { po_number: string | null; status: string | null; on_hold: boolean | null; supplier_id: string | null; supplier: { name: string | null } | null };
   return ((data ?? []) as unknown as Row[])
     .filter((r) => r.po_number)
-    .map((r) => ({ poNumber: r.po_number as string, status: r.status ?? '' }));
+    .map((r) => ({
+      poNumber: r.po_number as string, status: r.status ?? '',
+      supplierId: r.supplier_id, supplierName: r.supplier?.name ?? null, onHold: r.on_hold === true,
+    }));
 }

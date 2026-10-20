@@ -13,10 +13,17 @@ import { normalizeCode } from './grn-scan-match';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the untyped service client every scm route uses (grn-scan-load.ts)
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
-/** "R7-2", "R:11-2", "L-19-2", "Rack L19.2", "r 7.2" -> "R7.2"; anything else null. */
+// After the L / R only digits follow, so a handwritten digit read as a
+// look-alike letter is that digit: 2990 DO-2610-077's "L16.2" came back "L1b-2".
+const DIGIT_LOOKALIKE: Record<string, string> = { b: '6', G: '6', S: '5', s: '5', O: '0', o: '0', I: '1', l: '1', '|': '1', Z: '2', z: '2' };
+
+/** "R7-2", "R:11-2", "L-19-2", "L1b-2", "R6·2", "Rack L19.2" -> "R7.2" style; anything else null. */
 export function rackKey(text: string | null | undefined): string | null {
-  const m = /^\s*(?:RACK\s*)?([LR])\s*[:.-]?\s*(\d{1,3})\s*[-./,_ ]\s*(\d{1,2})\s*$/i.exec(text ?? '');
-  return m ? `${m[1].toUpperCase()}${Number(m[2])}.${Number(m[3])}` : null;
+  const head = /^\s*(?:RACK\s*)?([LR])(.*)$/i.exec(text ?? '');
+  if (!head) return null;
+  const rest = head[2].replace(/[bGSsOoIl|Zz]/g, (ch) => DIGIT_LOOKALIKE[ch] ?? ch);
+  const m = /^\s*[:.-]?\s*(\d{1,3})\s*[-./,_·•: ]\s*(\d{1,2})\s*$/.exec(rest);
+  return m ? `${head[1].toUpperCase()}${Number(m[1])}.${Number(m[2])}` : null;
 }
 
 /**

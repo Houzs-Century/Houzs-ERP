@@ -21,7 +21,10 @@ lists only what differs for GR.
   line(s), **nothing is created** — the job lands *needs-review* (status `done`,
   `linked_doc_no` null, slip retained, a plain note) and the operator receives
   from the PO by hand. The note lists each scanned line and why, including a
-  refused PO's live status ("HC-PO-2609-223 is marked Received").
+  refused PO's live status ("HC-PO-2609-223 is marked Received"), on hold, another
+  supplier's PO ("HC-PO-010086 is OHANA STUDIO's PO"), or no open line found (`printedPoWhy`),
+  for a row's PO and the header's alike. Our number with the location inside
+  ("HC-SRW-PO-2610-091") resolves when that PO ships to that warehouse.
 - **Known PO, unknown codes.** A row whose PO is known but whose code matches
   nothing (DIGLANT prints its own `T1MAMWA0MK`) is matched by product name
   (`nameMatchItem`: every word only that item has on the PO must be printed);
@@ -63,6 +66,8 @@ lists only what differs for GR.
    `lines[].rack`) is put on that row's draft line when it names exactly one rack
    of the GRN's warehouse ("Rack R11.2", `lib/grn-scan-racks.ts`). Placement
    only on a DRAFT; an unknown rack is left blank and listed in the note.
+   After the L/R only digits follow, so look-alike letters read as digits
+   ("L1b-2" -> L16.2).
 
 **Queue routing:** the SO consumer (`processScanQueueMessage`) reads
 `document_type` and delegates `'GR'` to `processGrnScanQueueMessage` (one-way
