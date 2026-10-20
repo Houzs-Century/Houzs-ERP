@@ -149,3 +149,21 @@ describe('applyScanRacks', () => {
     expect(updates).toEqual([]);
   });
 });
+
+// 2990 DO-2610-077 (2026-10-20): "L16.2" handwritten with a 6 like a b came
+// back "L1b-2" and both sofa lines were left blank.
+describe('handwritten digits read as look-alike letters', () => {
+  test('after the L / R a look-alike letter is the digit', () => {
+    expect(rackKey('L1b-2')).toBe('L16.2');
+    expect(rackKey('R1S-1')).toBe('R15.1');
+    expect(rackKey('L1O.2')).toBe('L10.2');
+    expect(rackKey('R6·2')).toBe('R6.2');
+  });
+  test('resolves to the real shelf', () => {
+    expect(resolveRack('L1b-2', [{ id: 'a', rack: 'Rack L16.2' }, { id: 'b', rack: 'Rack L1.2' }])?.id).toBe('a');
+  });
+  test('words are still not racks', () => {
+    expect(rackKey('LOBBY')).toBeNull();
+    expect(rackKey('Repair')).toBeNull();
+  });
+});
