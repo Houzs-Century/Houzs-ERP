@@ -12,6 +12,7 @@ import { ResizableDetailDrawer } from "../components/ResizableDetailDrawer";
 import { ListSkeleton } from "../components/Skeleton";
 import { RepairDocumentImport } from "../components/RepairDocumentImport";
 import { WorkOrderFiles } from "./FleetHealthWorkOrderFiles";
+import { BreakdownFiles } from "./FleetHealthBreakdownFiles";
 import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
@@ -1306,6 +1307,7 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
           {b.driverDescription && (
             <p className="mt-2 rounded-md bg-surface px-2.5 py-1.5 text-[11px] text-ink-secondary">{b.driverDescription}</p>
           )}
+          <BreakdownFiles caseId={b.id} refs={b.mediaRefs} onChanged={onChanged} />
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
             <span className="text-[10.5px] uppercase tracking-brand text-ink-muted">Status</span>
             {b.status === "RESOLVED" ? (

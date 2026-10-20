@@ -73,6 +73,7 @@ import fleetMaintenance from "./scm/routes/fleet-maintenance";
 import { fleetWorkOrderPhotos } from "./scm/routes/fleet-work-order-photos";
 import { fleetPlanService } from "./scm/routes/fleet-plan-service";
 import fleetWorkOrderFiles from "./scm/routes/fleet-work-order-files";
+import fleetBreakdownFiles from "./scm/routes/fleet-breakdown-files";
 // `routes/lorries.ts` removed 2026-06-28 — old Houzs Fleet lorries CRUD retired
 // in favour of scm.lorries (mounted at /api/scm/lorries). public.lorries data
 // was migrated by mig 0055 then the dead table dropped. /api/fleet/staff stays
@@ -520,6 +521,7 @@ app.route("/api/fleet-maintenance", fleetWorkOrderPhotos);
 app.route("/api/fleet-maintenance", fleetPlanService);
 app.route("/api/fleet-maintenance", fleetMaintenance);
 app.route("/api/fleet-work-order-files", fleetWorkOrderFiles);
+app.route("/api/fleet-breakdown-files", fleetBreakdownFiles);
 app.route("/api/settings", settings);
 app.route("/api/branding", branding);
 app.route("/api/inbox", inbox);
