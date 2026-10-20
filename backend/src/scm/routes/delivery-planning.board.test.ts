@@ -263,3 +263,52 @@ describe('GET /delivery-planning — Sales Exemption Expiry Date column', () => 
     expect(byDoc['HC-SO-2608-003']).toBeNull();          // not in AutoCount
   });
 });
+
+/* OPEN-TIME parallel reads (owner 2026-10-20): the live-balance, line, deliverable
+   and DO reads were made concurrent (each kicked off together, awaited at its
+   original site) to cut the board's open latency. The one risk that refactor adds
+   is a read's result being wired to the wrong field. This pins that a distinctive
+   balance value and a distinctive DO number each still land on their OWN row
+   field — i.e. the balance read feeds balance_sen_live and the DO read feeds
+   delivery_orders, not swapped. Self-contained harness (seeds the payment-totals
+   view + a DO the shared harness above omits). */
+describe('GET /delivery-planning — concurrent per-SO reads wire to the right fields', () => {
+  const build = () => {
+    const sb = fakeSb({
+      warehouses: [],
+      mfg_sales_orders: [so('HC-SO-2608-001', 1)],
+      mfg_sales_order_items: [soLine('HC-SO-2608-001', 'li-1')],
+      // The live-balance read (a VIEW keyed by doc_no); 4242 is a value nothing
+      // else in the fixture could produce, so reading it back proves the wiring.
+      mfg_sales_orders_with_payment_totals: [{ doc_no: 'HC-SO-2608-001', balance_sen_live: 4242 }],
+      delivery_order_items: [],
+      // A committed DO with a distinctive number; status is non-DRAFT/CANCELLED so
+      // it is kept and surfaces on the row.
+      delivery_orders: [{ id: 'do-1', do_number: 'HC-DO-9999', so_doc_no: 'HC-SO-2608-001', status: 'ISSUED' }],
+      delivery_order_crew: [],
+    });
+    const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+    app.use('*', async (c, next) => {
+      c.set('supabase', sb as unknown as Variables['supabase']);
+      c.set('companyId', 1 as Variables['companyId']);
+      c.set('allowedCompanyIds', [1] as Variables['allowedCompanyIds']);
+      c.set('user', { id: 'u1' } as unknown as Variables['user']);
+      c.set('houzsUser', { id: 9, name: 'Tester', permissions_set: new Set(['*']) } as unknown as Variables['houzsUser']);
+      await next();
+    });
+    app.get('/delivery-planning', deliveryPlanningBoardHandler);
+    return app;
+  };
+
+  it('keeps the live balance and the DO on their own fields', async () => {
+    const res = await build().request('/delivery-planning');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      orders?: Array<{ so_doc_no: string; balance_sen_live: number | null; delivery_orders: Array<{ do_number: string }> }>;
+    };
+    const row = (body.orders ?? []).find((o) => o.so_doc_no === 'HC-SO-2608-001');
+    expect(row).toBeDefined();
+    expect(row?.balance_sen_live).toBe(4242);
+    expect((row?.delivery_orders ?? []).map((d) => d.do_number)).toEqual(['HC-DO-9999']);
+  });
+});
