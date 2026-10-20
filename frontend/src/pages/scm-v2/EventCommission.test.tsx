@@ -57,7 +57,7 @@ vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
   },
 }));
 
-import { EventCommissionTab, eventCommissionCsv } from './EventCommission';
+import { EventCommissionTab, basisOf, eventCommissionCsv } from './EventCommission';
 
 describe('the Event Commission tab', () => {
   test('each fair shows its rate, the event page estimate and what its orders earned; a fair with no rate card says so', () => {
@@ -110,5 +110,11 @@ describe('the Event Commission tab', () => {
     expect(screen.getByText('HC-SO-2610-010').closest('tr')!.textContent).toContain('2026/10/01');
     expect(screen.getByText(/Nothing on earlier orders in this range/)).toBeTruthy();
     expect(eventCommissionCsv(BY_SO_DATE)).toContain('"Earlier orders","Date"');
+  });
+  test('a report from a server older than the toggle (no basis) reads as by fair and its CSV still writes', () => {
+    const { basis: _drop, ...old } = REPORT;
+    void _drop;
+    expect(basisOf(old)).toBe('fair');
+    expect(eventCommissionCsv(old)).toContain('"Earlier fairs","Date"');
   });
 });

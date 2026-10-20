@@ -31,19 +31,21 @@ interface BookRow {
   rental: number;
 }
 type BooksTab = "daily" | "rental" | "report";
+/** An event of the last 180 days whose chat report holds bills not opened under it. */
+interface NotDailyEvent { id: number; code: string; name: string; startDate: string; endDate: string; reportBills: number; bills: ProblemBill[] }
 
 /** Finished events and what still makes their P&L wrong. */
 export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void }) {
-  const q = useQuery<DataGaps & { books: BookRow[] }>("/api/projects/data-gaps", () => api.get("/api/projects/data-gaps"));
+  const q = useQuery<DataGaps & { books: BookRow[]; notDaily: NotDailyEvent[]; recentFrom: string }>("/api/projects/data-gaps", () => api.get("/api/projects/data-gaps"));
   const [tab, setTab] = useState<BooksTab>("daily");
   const g = q.data;
   if (q.error) return <div className="mb-4 rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not check the event books: {q.error}</div>;
   if (!g) return null;
   const sen = (x: number) => money(x / 100);
-  const bills = g.books.flatMap((r) => r.problemBills.map((b) => ({ r, b })));
+  const bills = g.notDaily.flatMap((r) => r.bills.map((b) => ({ r, b })));
   const rentalRows = g.books.filter((r) => !(r.rental > 0) || !(r.soSen > 0));
   const noReport = g.books.filter((r) => !r.hasReport);
-  const eventCell = (r: BookRow) => <Td left className="max-w-[300px] truncate"><span className="text-primary">{r.name}</span><span className="block text-[10.5px] text-ink-muted">{r.code}</span></Td>;
+  const eventCell = (r: { name: string; code: string }) => <Td left className="max-w-[300px] truncate"><span className="text-primary">{r.name}</span><span className="block text-[10.5px] text-ink-muted">{r.code}</span></Td>;
   return (
     <Panel title="Books not complete" hint={`events that ended ${g.from} – ${g.to} (${g.books.length} events) · what still makes the P&L above read wrong`}>
       <StepTabs value={tab} onChange={(v) => setTab(v as BooksTab)}
@@ -51,10 +53,10 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
       <div className="max-h-[460px] overflow-auto">
         {tab === "daily" && (
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th left>Bill</Th><Th>Amount</Th><Th left>Salesperson</Th><Th left>Problem</Th></tr></thead>
+            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Dates</Th><Th left>Bill</Th><Th>Amount</Th><Th left>Salesperson</Th><Th left>Problem</Th></tr></thead>
             <tbody>{bills.map(({ r, b }, i) => (
               <tr key={`${r.id}-${b.ref}-${i}`} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
-                {eventCell(r)}<Td>{r.endDate}</Td><Td left className="font-mono">{b.ref}</Td><Td>{sen(b.amountSen)}</Td><Td left>{b.salesperson ?? "—"}</Td>
+                {eventCell(r)}<Td>{r.startDate.slice(5)}{r.endDate && r.endDate !== r.startDate ? ` – ${r.endDate.slice(5)}` : ""}</Td><Td left className="font-mono">{b.ref}</Td><Td>{sen(b.amountSen)}</Td><Td left>{b.salesperson ?? "—"}</Td>
                 <Td left className={b.problem === "not_opened" ? "font-semibold text-err" : "text-warning-text"}>
                   {b.problem === "not_opened" ? "Not opened as a Sales Order" : <>Opened under another event · <span className="font-mono">{b.soDocNo}</span> under {b.otherEvent} — move it</>}
                 </Td>
@@ -91,7 +93,7 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
           </table>
         )}
       </div>
-      <p className="mt-1 text-[11px] text-ink-muted">Not daily = a bill in the event chat&apos;s sales report that is not a Sales Order under this event, matched as the event page matches it. Sales = the Sales Orders opened at the event. Click a row to open the event.</p>
+      <p className="mt-1 text-[11px] text-ink-muted">Not daily = a bill in the event chat&apos;s sales report that is not a Sales Order under this event, matched as the event page matches it; every event since {g.recentFrom}, running ones included. Rental and chat report: the finished events above. Sales = the Sales Orders opened at the event. Click a row to open the event.</p>
     </Panel>
   );
 }
