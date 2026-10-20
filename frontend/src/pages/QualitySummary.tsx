@@ -46,6 +46,8 @@ const STAGES: Array<[string, string]> = [
 ];
 const stageLabel = (k: string) => STAGES.find(([s]) => s === k)?.[1] ?? k.replace(/_/g, " ");
 const dayTxt = (x: number | null | undefined) => (x == null ? "—" : `${x} days`);
+/* A rate on fewer items than this says nothing (owner 2026-10-20: "数据太少的都不需要说出来"). */
+const MIN_RECEIVED = 30;
 /* A rate over 100% means the receipts sit under another supplier code (e.g. a
    renamed company), not that every item came back. */
 const AGE_COLOR = ["#4f8a5b", "#7fa86a", "#c9a77c", "#d9b25c", TONE.warn, TONE.bad, "#8f2d2d"];
@@ -58,6 +60,8 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
 }) {
   const q = useQuery<Quality>("/api/assr/quality-overview?from=:&to=:", () => api.get(`/api/assr/quality-overview?from=${from}&to=${to}`), [from, to]);
   const d = q.data;
+  const enough = (d?.suppliers ?? []).filter((x) => x.receivedQty >= MIN_RECEIVED);
+  const thin = (d?.suppliers.length ?? 0) - enough.length;
   const [stageTab, setStageTab] = useState<string>("all");
   /* Time per stage over the last 30 or 90 days (owner 2026-10-18). */
   const [win, setWin] = useState<"30" | "90">("30");
@@ -165,7 +169,7 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead><tr><Th left>Supplier</Th><Th>Service case rate</Th><Th>Items in cases / received</Th><Th>Cases</Th><Th>Still open</Th><Th>Overdue</Th><Th>Average to close</Th></tr></thead>
-              <tbody>{d.suppliers.map((s) => (
+              <tbody>{enough.map((s) => (
                 <tr key={s.creditor} className="cursor-pointer hover:bg-surface-2/50" onClick={() => openCases(`${s.name} · cases opened`, (c) => c.openedInPeriod && !!c.creditor && s.codes.includes(c.creditor))}>
                   <Td left className="max-w-[260px] truncate text-primary">{s.name}</Td>
                   <Td className={s.ratePct == null ? "text-ink-muted" : s.ratePct > 100 ? "text-warning-text" : s.ratePct >= 5 ? "font-semibold text-err" : s.ratePct >= 2 ? "text-warning-text" : "text-synced"}>{s.ratePct == null ? "—" : s.ratePct > 100 ? "check code" : `${s.ratePct}%`}</Td>
@@ -173,22 +177,22 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
                   <Td>{s.cases}</Td><Td>{s.open}</Td><Td className={s.overdue ? "text-err" : ""}>{s.overdue}</Td><Td>{dayTxt(s.avgDaysToClose)}</Td>
                 </tr>
               ))}
-                {d.suppliers.length === 0 && <tr><Td left className="text-ink-muted">No case with a supplier opened in this period.</Td></tr>}
+                {enough.length === 0 && <tr><Td left className="text-ink-muted">No supplier with enough goods received in this period.</Td></tr>}
               </tbody>
             </table>
           </div>
-          {d.suppliers.length > 0 && (d.suppliers[0]?.months.length ?? 0) > 1 && (
+          {thin > 0 && <p className="mt-1 text-[11px] text-ink-muted">{thin} more supplier{thin === 1 ? "" : "s"} with fewer than {MIN_RECEIVED} items received not shown - too little to read a rate from.</p>}
+          {enough.length > 0 && (enough[0]?.months.length ?? 0) > 1 && (
             <div className="mt-4 overflow-x-auto">
-              <div className="mb-1 text-[12px] font-semibold text-ink">Month by month · service case rate (items in cases / items received)</div>
-              <table className="w-full border-collapse">
-                <thead><tr><Th left>Supplier</Th>{(d.suppliers[0]?.months ?? []).map((m) => <Th key={m.month}>{m.month}</Th>)}</tr></thead>
-                <tbody>{d.suppliers.map((s) => (
+              <div className="mb-1 text-[12px] font-semibold text-ink">Month by month · service case rate <span className="font-normal text-ink-muted">(hover a rate for items in cases / received)</span></div>
+              <table className="w-auto border-collapse">
+                <thead><tr><Th left>Supplier</Th>{(enough[0]?.months ?? []).map((m) => <Th key={m.month}>{m.month}</Th>)}</tr></thead>
+                <tbody>{enough.map((s) => (
                   <tr key={s.creditor}>
                     <Td left className="max-w-[220px] truncate">{s.name}</Td>
                     {s.months.map((m) => (
-                      <Td key={m.month} className={m.ratePct == null ? "text-ink-muted" : m.ratePct > 100 ? "text-warning-text" : m.ratePct >= 5 ? "font-semibold text-err" : ""}>
-                        {m.ratePct == null ? (m.items ? `${m.items} / 0` : "—") : m.ratePct > 100 ? "check code" : `${m.ratePct}%`}
-                        <span className="block text-[10.5px] text-ink-muted">{m.items} / {m.receivedQty.toLocaleString()}</span>
+                      <Td key={m.month} className={cn("w-[84px]", m.ratePct == null ? "text-ink-muted" : m.ratePct > 100 ? "text-warning-text" : m.ratePct >= 5 ? "font-semibold text-err" : "")}>
+                        <span title={`${m.items} items in cases / ${m.receivedQty.toLocaleString()} received`}>{m.ratePct == null ? "—" : m.ratePct > 100 ? "check code" : `${m.ratePct}%`}</span>
                       </Td>
                     ))}
                   </tr>
