@@ -2,7 +2,7 @@
 // 2026-10-02). The logic is the shared useGrnLineRackSplit — the phone's
 // MobileGrnLineRack renders the same hook — so only the look is desktop's.
 // Saves on Add / remove, like the one-rack picker's own endpoint, independent of
-// the line form's Save.
+// the line form's Save. The first rack of an unplaced line saves on the pick.
 import { useState } from 'react';
 import { X } from 'lucide-react';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
@@ -25,6 +25,7 @@ export function GrnRackSplitField({ grnId, itemId, lineRackId, qtyAccepted, rack
   const busy = split.saving || split.loading;
 
   const pick = (v: string) => {
+    if (split.placeWhole(v)) return;
     setRackId(v);
     setQty(split.remaining > 0 ? split.remaining : 1);
   };

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, test } from "vitest";
-import { SearchableSelect, nextOptionWindow } from "./SearchableSelect";
+import { describe, expect, test, vi } from "vitest";
+import { SearchableSelect, enterPick, nextOptionWindow } from "./SearchableSelect";
 
 // Unmount is handled by the global afterEach(cleanup) in src/test-setup.ts.
 // This file must NOT clear document.body by hand: the menu is portalled to
@@ -115,6 +115,44 @@ describe("SearchableSelect windowing", () => {
     openMenu();
     fireEvent.mouseDown(renderedOptions()[3]);
     expect(picked).toEqual(["P3"]);
+  });
+});
+
+// Sim, 2026-10-20 (HC-GRN-2610-155): racks typed and Enter'd on the GRN edit
+// page showed the text but were never picked, so Save stored 1 rack of 11.
+describe("Enter picks the typed option", () => {
+  const racks = ["Rack L1.9", "Rack L19.1", "Rack L19.2", "Rack R7.2", "Rack R17.2"].map((label, i) => ({ value: `r${i}`, label }));
+
+  test("a term naming one option exactly, or matching only one, is picked", () => {
+    expect(enterPick("L19.2", racks)?.label).toBe("Rack L19.2");
+    expect(enterPick("r7.2", racks)?.label).toBe("Rack R7.2");
+    expect(enterPick("17.2", racks.filter((r) => r.label.includes("17.2")))?.label).toBe("Rack R17.2");
+  });
+
+  test("several matches with none exact pick nothing", () => {
+    expect(enterPick("L19", racks.filter((r) => r.label.toLowerCase().includes("l19")))).toBeNull();
+    expect(enterPick("", racks)).toBeNull();
+  });
+
+  test("typing then Enter commits the value, like a click", () => {
+    const onChange = vi.fn();
+    render(<SearchableSelect value="" onChange={onChange} options={racks} ariaLabel="Rack" />);
+    const box = screen.getByRole("textbox");
+    fireEvent.focus(box);
+    fireEvent.change(box, { target: { value: "L19.2" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(onChange).toHaveBeenCalledWith("r2");
+  });
+
+  test("Enter on an unclear term leaves the list open and changes nothing", () => {
+    const onChange = vi.fn();
+    render(<SearchableSelect value="" onChange={onChange} options={racks} ariaLabel="Rack" />);
+    const box = screen.getByRole("textbox");
+    fireEvent.focus(box);
+    fireEvent.change(box, { target: { value: "L19" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(menu()).toBeTruthy();
   });
 });
 

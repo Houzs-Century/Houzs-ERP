@@ -61,6 +61,7 @@ function SplitRow({ grnId, header, line, onSaved }: { grnId: string; header: Hea
 
   const choose = (rackId: string) => {
     setScanOpen(false);
+    if (split.placeWhole(rackId, onSaved)) return;
     setPending(rackId);
     setQty(String(split.remaining > 0 ? split.remaining : 1));
   };

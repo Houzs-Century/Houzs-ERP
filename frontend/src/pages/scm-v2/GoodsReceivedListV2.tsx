@@ -71,6 +71,7 @@ import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel, transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
+import { GrnDrawerRack } from "./GrnDrawerRack";
 import { useHoldAction } from "./use-hold-action";
 import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
@@ -287,6 +288,7 @@ function DetailDrawer({
 }) {
   const detailQ = useGrnDetail(row?.id ?? null);
   const items: GrnItem[] = ((detailQ.data as { items?: GrnItem[] } | undefined)?.items ?? []);
+  const detailGrn = (detailQ.data as { grn?: { status?: string; warehouse_id?: string | null } } | undefined)?.grn;
   const open = !!row;
   const st = row ? statusFor(row.status) : null;
   const total = row ? totalOf(row) : 0;
@@ -374,6 +376,9 @@ function DetailDrawer({
                         <div className="mt-0.5 text-[11.5px] leading-snug text-ink-secondary">
                           {secondary}
                         </div>
+                      )}
+                      {!isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.item_code ?? "" }) && (
+                        <GrnDrawerRack grnId={row.id} status={detailGrn?.status ?? row.status} warehouseId={detailGrn?.warehouse_id ?? null} line={l} />
                       )}
                     </div>
                     <span className="text-right font-money text-[12.5px] text-ink-secondary">{l.qty_accepted ?? l.qty_received ?? 0}</span>
