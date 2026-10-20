@@ -21,6 +21,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState, useEffect, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { useUpdateTrip } from '../lib/trips-queries';
 import { buildVariantSummary, fmtSen, fmtDate, fmtDateOrDash, fmtDateTime } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
@@ -83,6 +84,36 @@ function SubstatusPill({ value }: { value: string | null }) {
 }
 /* A datetime-or-dash cell (TIMESTAMPTZ columns). */
 const dtOrDash = (iso: string | null): string => (iso ? fmtDateTime(iso) : '—');
+
+/* POD (proof of delivery) cell. SO rows only. A real driver POD left a photo or
+   a GPS fix (has_pod) → a green "POD" chip linking to the DO detail where the
+   signature/photo/GPS are shown. A DELIVERED order with no evidence (office
+   advance / QR scan) → an amber "No POD" chip (the thing dispatchers chase).
+   Not-yet-delivered rows render a muted dash. */
+function PodCell({ o }: { o: PlanningOrder }) {
+  if (o.row_type !== 'so') return <NotApplicable />;
+  if (o.has_pod) {
+    const doId = o.delivery_orders[o.delivery_orders.length - 1]?.id;
+    const chip = (
+      <span style={{
+        display: 'inline-block', padding: '1px 8px', borderRadius: 999,
+        border: '1px solid #2e7d32', color: '#2e7d32', fontSize: 'var(--fs-10)',
+        fontWeight: 600, whiteSpace: 'nowrap',
+      }}>✓ POD</span>
+    );
+    return doId ? <Link to={`/scm/delivery-orders/${doId}`} title="View proof of delivery">{chip}</Link> : chip;
+  }
+  if (o.delivery_state === 'DELIVERED') {
+    return (
+      <span style={{
+        display: 'inline-block', padding: '1px 8px', borderRadius: 999,
+        border: '1px solid #b26a00', color: '#b26a00', fontSize: 'var(--fs-10)',
+        fontWeight: 600, whiteSpace: 'nowrap',
+      }}>No POD</span>
+    );
+  }
+  return <NotApplicable />;
+}
 
 /* Company badge for the SHARED cross-company queue — a small code chip
    (HOUZS / 2990). null (e.g. ASSR rows / unresolved) renders a muted dash. */
@@ -855,11 +886,12 @@ export function DeliveryPlanningBoard({
       'bs_delivery_date', 'esb_remarks', 'bs_remarks', 'ctn',
       // Crew — assigned later, default-hidden
       'trip_no', 'lorry', 'driver', 'driver_ic', 'driver_contact', 'driver_2', 'helper_1', 'helper_2',
-      // Admin remark, document date
-      'dp_remark', 'do_date',
-      // Send status, then the message sub-status (delivery_state / arrangement_stage
-      // are no longer board columns — still derived server-side for the top tabs).
-      'wa_message', 'delivery_substatus',
+      // Admin remark, document date, real delivered time (default-hidden)
+      'dp_remark', 'do_date', 'delivered_at',
+      // Send status, POD evidence, then the message sub-status (delivery_state /
+      // arrangement_stage are no longer board columns — still derived server-side
+      // for the top tabs).
+      'wa_message', 'pod', 'delivery_substatus',
     ];
     const pos = new Map(DP_DEFAULT_ORDER.map((k, i) => [k, i] as const));
     const cols: GridColumn<PlanningOrder>[] = [
@@ -957,6 +989,25 @@ export function DeliveryPlanningBoard({
         const s = msgStatuses?.[o.so_doc_no];
         return s && !s.success ? 'Failed' : 'Done All';
       },
+    },
+    {
+      /* POD — did the driver leave proof (photo/GPS)? A DELIVERED order with no
+         evidence shows "No POD" so dispatch can chase it. Links to the DO. */
+      key: 'pod', label: 'POD', width: 110, groupable: true,
+      accessor: (o) => <PodCell o={o} />,
+      groupValue: (o) => (o.row_type !== 'so' ? '(n/a)' : o.has_pod ? 'POD' : o.delivery_state === 'DELIVERED' ? 'No POD' : '—'),
+      searchValue: (o) => (o.has_pod ? 'POD proof of delivery' : o.delivery_state === 'DELIVERED' ? 'No POD' : ''),
+      exportValue: (o) => (o.has_pod ? 'POD' : o.delivery_state === 'DELIVERED' ? 'No POD' : ''),
+    },
+    {
+      /* The real delivered instant (delivery_orders.delivered_at), stamped when
+         POD completes — distinct from the manually-typed customer delivered
+         date. Default-hidden; add via the Columns panel. */
+      key: 'delivered_at', label: 'Delivered At', width: 150, sortable: true, defaultHidden: true,
+      accessor: (o) => (o.row_type !== 'so' ? <NotApplicable /> : detail(dtOrDash(o.delivered_at ?? null))),
+      searchValue: (o) => o.delivered_at ?? '',
+      exportValue: (o) => (o.delivered_at ? fmtDateTime(o.delivered_at) : ''),
+      sortFn: (a, b) => String(a.delivered_at ?? '').localeCompare(String(b.delivered_at ?? '')),
     },
     {
       /* Default-SHOWN again per the owner's 2026-09-22 column pass (it had been

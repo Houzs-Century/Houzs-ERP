@@ -29,7 +29,7 @@ const BASE_ORDER: readonly string[] = [
   "processing_date", "customer_delivery_date", "delivery_substatus",
   "amended_delivery_date", "amend_date_from_customer", "amend_reason_from_customer", "amend_reason",
   "house_type", "replacement_disposal", "disposal_request", "po_nos",
-  "address", "postcode", "dp_remark", "do_date", "wa_message", "venue",
+  "address", "postcode", "dp_remark", "do_date", "delivered_at", "wa_message", "pod", "venue",
   "warehouse", "time_range", "time_confirmed", "departure_at", "arrival_at",
   "trip_no", "lorry", "driver", "driver_ic", "driver_contact", "driver_2",
   "helper_1", "helper_2", "shipout_date", "eta_arriving_port",
@@ -49,7 +49,7 @@ const EM_ORDER: readonly string[] = [
   "arrives_em_warehouse_date", "consignment_no", "vessel_voyage",
   "etd_port_klang", "eta_arriving_port", "bs_delivery_date", "esb_remarks",
   "bs_remarks", "ctn", "po_nos", "address", "postcode", "dp_remark", "do_date",
-  "wa_message", "amend_date_from_customer", "amend_reason_from_customer", "amend_reason", "house_type",
+  "delivered_at", "wa_message", "pod", "amend_date_from_customer", "amend_reason_from_customer", "amend_reason", "house_type",
   "replacement_disposal", "disposal_request", "venue", "warehouse",
   "time_range", "time_confirmed", "departure_at", "arrival_at", "trip_no",
   "lorry", "driver", "driver_ic", "driver_contact", "driver_2", "helper_1",
@@ -71,7 +71,7 @@ export const DELIVERY_PLANNING_LAYOUT_PRESETS: LayoutSeed[] = [
     id: "delivery-date",
     label: "Delivery Date",
     layout: layout(BASE_ORDER, [
-      "company_code", "do_date", "venue", "warehouse", "time_range",
+      "company_code", "do_date", "delivered_at", "venue", "warehouse", "time_range",
       "time_confirmed", "departure_at", "arrival_at", "trip_no", "lorry",
       "driver", "driver_ic", "driver_contact", "driver_2", "helper_1",
       "helper_2", "shipout_date", "eta_arriving_port",
@@ -84,7 +84,7 @@ export const DELIVERY_PLANNING_LAYOUT_PRESETS: LayoutSeed[] = [
     id: "delivery-details",
     label: "Delivery Details",
     layout: layout(BASE_ORDER, [
-      "company_code", "do_date", "venue", "shipout_date", "eta_arriving_port",
+      "company_code", "do_date", "delivered_at", "venue", "shipout_date", "eta_arriving_port",
       "arrives_em_warehouse_date", "em_delivery_status", "consignment_no",
       "vessel_voyage", "etd_port_klang", "bs_delivery_date", "esb_remarks",
       "bs_remarks", "ctn",
@@ -94,7 +94,7 @@ export const DELIVERY_PLANNING_LAYOUT_PRESETS: LayoutSeed[] = [
     id: "sg-order",
     label: "SG Order",
     layout: layout(BASE_ORDER, [
-      "company_code", "do_date", "venue", "warehouse", "time_range",
+      "company_code", "do_date", "delivered_at", "venue", "warehouse", "time_range",
       "time_confirmed", "departure_at", "arrival_at", "trip_no", "lorry",
       "driver", "driver_ic", "driver_contact", "driver_2", "helper_1",
       "helper_2", "eta_arriving_port", "arrives_em_warehouse_date",
@@ -106,7 +106,7 @@ export const DELIVERY_PLANNING_LAYOUT_PRESETS: LayoutSeed[] = [
     id: "em-order",
     label: "EM Order",
     layout: layout(EM_ORDER, [
-      "company_code", "do_date", "amend_date_from_customer", "amend_reason_from_customer", "amend_reason",
+      "company_code", "do_date", "delivered_at", "amend_date_from_customer", "amend_reason_from_customer", "amend_reason",
       "house_type", "replacement_disposal", "disposal_request", "venue",
       "warehouse", "time_range", "time_confirmed", "departure_at",
       "arrival_at", "trip_no", "lorry", "driver", "driver_ic",
