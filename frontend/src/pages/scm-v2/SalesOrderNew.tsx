@@ -93,6 +93,7 @@ import { useAuth } from '../../vendor/scm/lib/auth';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useVenues, type AutoVenue } from '../../vendor/scm/lib/venues-queries';
 import { FairDayPicker, FairPicker, useAutoFair, type FairPickValue } from '../../components/FairPicker';
+import { FairFallback } from '../../components/FairFallback';
 import { fairDayCheck, fairEditPatch, fairEventOf } from '../../components/fairPick';
 import {
   useLocalities, countryForState,
@@ -1048,15 +1049,8 @@ export const SalesOrderNew = () => {
   /* Fair is compulsory on submit (owner 2026-09-26): the operator must pick a
      fair OR tick No-fair (showroom). Picking a fair clears the No-fair mark. */
   const [noFair, setNoFair] = useState(false);
-  /* BACK-KEYING (the keyer backlog — 62 bil, 23 orang): the create form stamps
-     so_date = today, but an order written up after the fact belongs to the fair
-     that was running on its OWN date, which can be weeks back and so is absent
-     from today's 4-week dropdown window. This OPTIONAL date re-anchors the fair
-     list (GET /fair-options?date=) so the real past fair is offered and can be
-     picked — exactly what the mobile form's `orderDate` already does, and what
-     the backend's `?date=` and period-matched link (resolveFairForCreate) were
-     built for. It moves ONLY which fairs are offered, never the SO's own date
-     (the server still stamps today). null = today: the unchanged live default. */
+  /* Back-keying: the date that anchors the fair list (FairFallback.tsx has the
+     why). null = today's window — the unchanged live default. */
   const [fairDate, setFairDate] = useState<string | null>(null);
   const onFairChange = useCallback((next: FairPickValue) => {
     setFairPick(next);
@@ -1971,10 +1965,8 @@ export const SalesOrderNew = () => {
               <FairPicker
                 id="so-fair"
                 value={fairPick}
-                /* Anchored to `fairDate`: null (the default) is today in MYT, which
-                   the server decides — the browser's clock is not the Malaysian
-                   business date. Set to the order's real date when back-keying, so
-                   the fair that was running THEN is offered, not only today's. */
+                /* Anchored to `fairDate` (null = today) so back-keying can offer
+                   the fair that was running on the order's real date. */
                 soDate={fairDate}
                 onChange={onFairChange}
                 wrapClassName={styles.selectWrap}
@@ -1991,35 +1983,10 @@ export const SalesOrderNew = () => {
                     : `${autoVenue.venueName} is not in the venue list yet — it still saves on the order; add it in Project Maintenance to show it here.`}
                 </span>
               )}
-              {/* BACK-KEYING an order written at an earlier fair: the dropdown
-                  follows this date, so a fair that has since closed (outside
-                  today's 4-week window) is still offered and can be picked — the
-                  keyer attributes the real fair instead of being forced onto No
-                  fair. Shown only while no fair is picked; it re-anchors the list,
-                  never the SO's own date (the server still stamps today). */}
-              {!fairEventOf(fairPick) && (
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', marginTop: '6px' }}>
-                  <span style={{ opacity: 0.8 }}>Earlier fair? Order date</span>
-                  <input
-                    type="date"
-                    value={fairDate ?? ''}
-                    max={today}
-                    onChange={(e) => setFairDate(e.target.value || null)}
-                    aria-label="Order date, for picking an earlier fair"
-                    style={{ fontSize: '12px' }}
-                  />
-                </label>
-              )}
-              {/* Fair is compulsory (owner 2026-09-26): when no fair is picked
-                  the operator must tick this to attribute the sale as No-fair
-                  (showroom); otherwise the submit is blocked. Hidden once a fair
-                  is picked, since the two are mutually exclusive. */}
-              {!fairEventOf(fairPick) && (
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', marginTop: '6px', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={noFair} onChange={(e) => setNoFair(e.target.checked)} />
-                  <span>No fair (showroom / direct sale)</span>
-                </label>
-              )}
+              {/* When no fair is picked: the back-keying date + the No-fair escape
+                  (owner 2026-09-26). Shared with the mobile form. */}
+              <FairFallback enabled value={fairPick} orderDate={fairDate} onOrderDate={setFairDate}
+                maxDate={today} noFair={noFair} onNoFair={setNoFair} />
             </label>
             {/* Which DAY of the picked event (owner 2026-09-24) — shown once an
                 event is picked, in the slot the row keeps free for it. */}
