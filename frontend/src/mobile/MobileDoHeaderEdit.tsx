@@ -232,7 +232,7 @@ export function MobileDoHeaderEdit({ id, onBack, onSaved }: {
       {text("Address line 1", "address1", "address1", { placeholder: "Unit, street, area" })}
       {text("Address line 2", "address2", "address2", { placeholder: "Apt, floor, building (optional)" })}
       {field("State", (
-        <StatePicker compact value={form.state} disabled={addrLocked} placeholder="Pick state" selectClassName="cal-sel"
+        <StatePicker value={form.state} disabled={addrLocked} placeholder="Pick state" selectClassName="cal-sel"
           onChange={(next) => {
             const code = stateWarehousesQ.data?.mappings.find((m) => m.state === next)?.warehouse?.code;
             set({ ...pickState(next), ...(code ? { salesLocation: code } : {}) });

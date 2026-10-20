@@ -279,7 +279,8 @@
 .hz-m input[type="date"].fld-i { display: block; min-height: 30px; box-sizing: border-box; }
 .hz-m input[type="date"].fld-i::-webkit-date-and-time-value { min-height: 1.3em; width: 100%; text-align: left; margin: 0; }
 .hz-m input[type="date"].fld-i::-webkit-calendar-picker-indicator { margin-left: 0; opacity: .55; }
-.hz-m select.fld-i { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa093' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>"); background-repeat: no-repeat; background-position: right 8px center; padding-right: 26px; }
+/* .fld-pick: the searchable pickers (State / City / Postcode) wear the select chevron. */
+.hz-m select.fld-i, .hz-m input.fld-pick { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa093' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>"); background-repeat: no-repeat; background-position: right 8px center; padding-right: 26px; }
 /* The desktop app has a global @media(max-width:639px) rule forcing every form
    control to 16px !important (iOS focus-zoom guard). Inside the mobile app that
    makes selects + native date inputs render BIGGER than the 12.5px .fld-i text

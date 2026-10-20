@@ -84,6 +84,70 @@ export function useEventCosts(from: string, to: string) {
   });
 }
 
+/* Event Commission (owner 2026-10-20) — server: routes/acc-event-commission.ts,
+   rules: backend/src/scm/lib/event-commission.ts. Money in sen except the event
+   page's own Total Sales and Commission row, which are RM. */
+export type CommissionChange = {
+  date: string;
+  deltaGoodsSen: number;
+  kind: 'upsale' | 'drop';
+  notCounted: 'opening_day' | 'first_price' | null;
+  source: string;
+  changedBy: string | null;
+};
+export type CommissionSoRow = {
+  docNo: string;
+  salesperson: string | null;
+  customer: string | null;
+  goodsSen: number;
+  totalSen: number;
+  paidSen: number;
+  paidPct: number;
+  reachedOn: string | null;
+  commissionSen: number;
+  changes: CommissionChange[];
+};
+export type CommissionFairRow = {
+  id: number;
+  name: string;
+  brand: string | null;
+  startDate: string;
+  endDate: string | null;
+  ratePct: number | null;
+  totalSalesRm: number | null;
+  estimateRm: number | null;
+  payableSen: number;
+  sos: CommissionSoRow[];
+};
+export type CommissionAdjustment = {
+  date: string;
+  kind: 'reached' | 'upsale' | 'drop' | 'cancelled';
+  docNo: string;
+  fairId: number;
+  fairName: string;
+  salesperson: string | null;
+  goodsSen: number;
+  commissionSen: number;
+  beforeReach: boolean;
+};
+export type EventCommission = {
+  from: string;
+  to: string;
+  fairs: CommissionFairRow[];
+  adjustments: CommissionAdjustment[];
+  totals: { payableSen: number; adjustmentsSen: number; totalSen: number };
+};
+
+/** Event Commission for [from, to]: fairs starting in it (as at `to`) and what
+ *  happened in it to the orders of earlier fairs. */
+export function useEventCommission(from: string, to: string) {
+  return useQuery({
+    queryKey: ['acc-events', 'commission', from, to],
+    queryFn: () => authedFetch<EventCommission>(`/acc-events/commission?from=${from}&to=${to}`),
+    staleTime: 30_000,
+  });
+}
+
 /** Change the event on one voucher line — posted or not; the server moves the
  *  line and, once posted, its journal leg together. */
 export function useRetagPvLine() {
