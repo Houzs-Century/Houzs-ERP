@@ -809,6 +809,8 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/accounting?tab=products", label: "Product Profit", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
           // What each event cost, from the ledger — voucher and AP invoice lines tagged with it (owner 2026-09-30, 5a).
           { to: "/scm/accounting?tab=events", label: "Event costs", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          // Each fair's commission and each order's under it — goods × brand rate once 30% is paid (owner 2026-10-20).
+          { to: "/scm/accounting?tab=commission", label: "Event Commission", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
           { to: "/reports/fair-report", label: "Sales Report", icon: BarChart3, requireFairReport: true, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance", "scm.finance.accounting", "scm.finance.outstanding", "projects.finances"] },
         ],
       },
