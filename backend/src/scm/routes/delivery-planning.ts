@@ -1153,6 +1153,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           etd_port_klang: null, bs_delivery_date: null, esb_remarks: null,
           bs_remarks: null, ctn: null, em_delivered_date: null,
           do_date: leg.jobKind === 'delivery' ? leg.date : null,
+          delivered_at: null, pod_r2_key: null, pod_lat: null, has_pod: false,
           // Stock columns are not meaningful for a Service Case.
           ...NO_STOCK_ROW,
           /* The company chip, from the SAME codeMap the SO rows use. Was a hard
@@ -1323,6 +1324,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         etd_port_klang: null, bs_delivery_date: null, esb_remarks: null,
         bs_remarks: null, ctn: null, em_delivered_date: null,
         do_date: null,
+        delivered_at: null, pod_r2_key: null, pod_lat: null, has_pod: false,
         ...NO_STOCK_ROW,
         company_code: null,
         region: primaryRegion,
@@ -1466,6 +1468,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           etd_port_klang: null, bs_delivery_date: null, esb_remarks: null,
           bs_remarks: null, ctn: null, em_delivered_date: null,
           do_date: null,
+          delivered_at: null, pod_r2_key: null, pod_lat: null, has_pod: false,
           ...NO_STOCK_ROW,
           company_code: null,
           region: primaryRegion,
