@@ -474,6 +474,10 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
      its own site below. Extracted to keep this file from growing (see
      kickOffBoardReads for the why and the deliverable-wrap detail). */
   const { liveBalanceReadP, itemRowsReadP, deliverableReadP, doRowsReadP } = kickOffBoardReads(sb, docNos);
+  /* The "PO No." column walks POs per company from soRows. It was the LAST serial
+     read before the response; start it here too so it overlaps every read above
+     (wrapped, since it is awaited far below — a throw must not float unhandled). */
+  const poNosByDocP = planningPoNosByDoc(sb, soRows).then((r) => ({ ok: r } as const), (e) => ({ err: e } as const));
 
   /* 2b. LIVE balance per SO — same source-of-truth as the SO list Balance column
         (mfg_sales_orders_with_payment_totals.balance_sen_live = local_total −
@@ -1488,7 +1492,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     console.warn(`[delivery-planning] project union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
 
-  const poNosByDoc = await planningPoNosByDoc(sb, soRows); // "PO No." column: POs raised from the SO, walked per company (lib/planning-po-nos.ts)
+  const poNosRes = await poNosByDocP; // "PO No." column: POs raised from the SO, walked per company (lib/planning-po-nos.ts); kicked off right after soRows
+  if ('err' in poNosRes) throw poNosRes.err;
+  const poNosByDoc = poNosRes.ok;
   await attachBoardAcExemptionExpiry(sb, c, soRows, orders); // BUG-51 repoint: the board's exemption-expiry column (shared lib keeps the route under its size ceiling)
   const allOrders = [...orders.map((o) => ({ ...o, po_nos: poNosByDoc.get(o.so_doc_no) ?? [] })), ...assrOrders, ...dpBoardRows, ...projectOrders];
 
