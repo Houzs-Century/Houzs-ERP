@@ -17,6 +17,7 @@ import {
   type CommissionAdjustment, type CommissionChange, type CommissionFairRow, type EventCommission,
 } from '../../vendor/scm/lib/event-queries';
 import { fmtDateOrDash, fmtDayMonthRange } from '../../vendor/shared/format';
+import { DateField } from '../../vendor/scm/components/DateField';
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 const monthOf = (day: string, shift = 0): { from: string; to: string } => {
@@ -84,11 +85,9 @@ export const EventCommissionTab = () => {
     <div className="space-y-3">
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={soft}>From</span>
-        <input type="date" value={range.from} aria-label="From date" style={{ padding: '4px 6px', fontSize: 'var(--fs-12)' }}
-          onChange={(e) => { if (e.target.value) setRange((x) => ({ ...x, from: e.target.value })); }} />
+        <DateField value={range.from} aria-label="From date" onChange={(iso) => { if (iso) setRange((x) => ({ ...x, from: iso })); }} />
         <span style={soft}>to</span>
-        <input type="date" value={range.to} aria-label="To date" style={{ padding: '4px 6px', fontSize: 'var(--fs-12)' }}
-          onChange={(e) => { if (e.target.value) setRange((x) => ({ ...x, to: e.target.value })); }} />
+        <DateField value={range.to} aria-label="To date" onChange={(iso) => { if (iso) setRange((x) => ({ ...x, to: iso })); }} />
         <Button variant="ghost" size="sm" onClick={() => setRange(monthOf(myt()))}>This month</Button>
         <Button variant="ghost" size="sm" onClick={() => setRange(monthOf(myt(), -1))}>Last month</Button>
         <span style={{ flex: 1 }} />
