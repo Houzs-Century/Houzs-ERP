@@ -135,6 +135,33 @@ const DEFAULT_STAGE_TARGET_DAYS: Record<Stage, number> = {
  *   3. The hardcoded Normal defaults — last-resort safety net so a
  *      stage transition can never crash on missing config.
  */
+/** After a stage target is changed in Service Maintenance, re-read it for every
+ *  open case sitting in that stage, on the case and on its open stage-history
+ *  row (owner 2026-10-20: "当修改了，我的 dashboard 就不会看到那么多 breached").
+ *  The target is otherwise a snapshot taken when the case entered the stage, so
+ *  a new value would only reach cases that move later. Returns how many changed.
+ *  Service Cases are a cross-company queue, as the list is. */
+export async function reapplyStageTargets(env: Env, stage: Stage): Promise<number> {
+  const open = await env.DB.prepare(
+    `SELECT c.id, c.priority, c.stage_target_days FROM assr_cases c
+      WHERE c.stage = ? AND c.archived_at IS NULL AND ${assrOpenStageSql("c")}`
+  ).bind(stage).all<{ id: number; priority: string | null; stage_target_days: number | null }>();
+  const byPriority = new Map<string, number>();
+  let changed = 0;
+  for (const r of open.results ?? []) {
+    const key = r.priority ?? "";
+    if (!byPriority.has(key)) byPriority.set(key, await lookupStageTargetDays(env, stage, r.priority));
+    const days = byPriority.get(key)!;
+    if (r.stage_target_days === days) continue;
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE assr_cases SET stage_target_days = ? WHERE id = ?`).bind(days, r.id),
+      env.DB.prepare(`UPDATE assr_stage_history SET target_days = ? WHERE assr_id = ? AND stage = ? AND exited_at IS NULL`).bind(days, r.id, stage),
+    ]);
+    changed += 1;
+  }
+  return changed;
+}
+
 async function lookupStageTargetDays(
   env: Env,
   stage: Stage,
