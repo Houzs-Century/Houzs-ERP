@@ -97,6 +97,7 @@ export type CommissionChange = {
 };
 export type CommissionSoRow = {
   docNo: string;
+  soDate: string | null;
   salesperson: string | null;
   customer: string | null;
   goodsSen: number;
@@ -130,7 +131,10 @@ export type CommissionAdjustment = {
   commissionSen: number;
   beforeReach: boolean;
 };
+/** Which date puts an order in the range: its fair's start, or its own SO date. */
+export type CommissionBasis = 'fair' | 'so_date';
 export type EventCommission = {
+  basis: CommissionBasis;
   from: string;
   to: string;
   fairs: CommissionFairRow[];
@@ -138,12 +142,13 @@ export type EventCommission = {
   totals: { payableSen: number; adjustmentsSen: number; totalSen: number };
 };
 
-/** Event Commission for [from, to]: fairs starting in it (as at `to`) and what
- *  happened in it to the orders of earlier fairs. */
-export function useEventCommission(from: string, to: string) {
+/** Event Commission for [from, to]: by fair, the fairs starting in it (as at
+ *  `to`) and what happened in it to the orders of earlier fairs; by SO date,
+ *  the orders opened in it and what happened to orders opened earlier. */
+export function useEventCommission(from: string, to: string, basis: CommissionBasis = 'fair') {
   return useQuery({
-    queryKey: ['acc-events', 'commission', from, to],
-    queryFn: () => authedFetch<EventCommission>(`/acc-events/commission?from=${from}&to=${to}`),
+    queryKey: ['acc-events', 'commission', from, to, basis],
+    queryFn: () => authedFetch<EventCommission>(`/acc-events/commission?from=${from}&to=${to}${basis === 'so_date' ? '&basis=so_date' : ''}`),
     staleTime: 30_000,
   });
 }
