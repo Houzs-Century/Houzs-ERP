@@ -199,6 +199,55 @@ export function DocumentChoiceDialog({
   );
 }
 
+function ChipRow({
+  heading,
+  kind,
+  chips,
+  onChipClick,
+}: {
+  heading: string;
+  kind: string;
+  chips: AmendmentChip[];
+  onChipClick?: (c: AmendmentChip) => void;
+}) {
+  return (
+    <div className="mt-3 rounded-xl border border-border-subtle bg-surface-2 px-3 py-2.5">
+      <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
+        <Share2 size={11} />
+        {heading}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {chips.map((a) => (
+          <button
+            key={a.id}
+            type="button"
+            onClick={() => onChipClick?.(a)}
+            disabled={!onChipClick}
+            className={cn(
+              "rounded-lg border border-accent/30 bg-accent-soft px-3 py-2 text-left transition-all",
+              onChipClick
+                ? "cursor-pointer hover:-translate-y-px hover:shadow-slab"
+                : "cursor-default"
+            )}
+          >
+            <div className="font-mono text-[9px] font-bold uppercase tracking-brand text-accent-ink">
+              {kind}
+            </div>
+            <div className="mt-1 truncate font-mono text-[12.5px] font-bold text-accent-ink">
+              {a.label}
+            </div>
+            {a.status && (
+              <div className="mt-0.5 truncate text-[10.5px] text-accent-ink/80">
+                {humaniseAmendmentStatus(a.status)}
+              </div>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Relationship-map modal (5-node graph on a dotted canvas) ──────────────
 
 export function DocumentRelationshipMapModal({
@@ -210,6 +259,8 @@ export function DocumentRelationshipMapModal({
   onAmendmentClick,
   rowLabels,
   amendmentsLabel,
+  returns,
+  onReturnClick,
   pairing,
 }: {
   open: boolean;
@@ -227,6 +278,9 @@ export function DocumentRelationshipMapModal({
   // Optional heading for the amendments row (default keeps the SO map's
   // "Amendments off the Sales Order").
   amendmentsLabel?: string;
+  // Optional Delivery Returns (SO map), a second chip row beneath the graph.
+  returns?: AmendmentChip[];
+  onReturnClick?: (r: AmendmentChip) => void;
   // Optional SO↔PO pairing kind (see PairingKind). Passed by the maps that
   // carry a purchase leg (the PO map, the SO map): the pairing hop restyles
   // (muted solid = provenance, dashed pulsing = floating) and the execution
@@ -522,40 +576,23 @@ export function DocumentRelationshipMapModal({
           rather than being hidden. Rendered only when the caller supplies them
           (the SO map does; the DO / SI / DR maps do not). */}
       {amendments && amendments.length > 0 && (
-        <div className="mt-3 rounded-xl border border-border-subtle bg-surface-2 px-3 py-2.5">
-          <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
-            <Share2 size={11} />
-            {amendmentsLabel ?? "Amendments off the Sales Order"}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {amendments.map((a) => (
-              <button
-                key={a.id}
-                type="button"
-                onClick={() => onAmendmentClick?.(a)}
-                disabled={!onAmendmentClick}
-                className={cn(
-                  "rounded-lg border border-accent/30 bg-accent-soft px-3 py-2 text-left transition-all",
-                  onAmendmentClick
-                    ? "cursor-pointer hover:-translate-y-px hover:shadow-slab"
-                    : "cursor-default"
-                )}
-              >
-                <div className="font-mono text-[9px] font-bold uppercase tracking-brand text-accent-ink">
-                  Amendment
-                </div>
-                <div className="mt-1 truncate font-mono text-[12.5px] font-bold text-accent-ink">
-                  {a.label}
-                </div>
-                {a.status && (
-                  <div className="mt-0.5 truncate text-[10.5px] text-accent-ink/80">
-                    {humaniseAmendmentStatus(a.status)}
-                  </div>
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
+        <ChipRow
+          heading={amendmentsLabel ?? "Amendments off the Sales Order"}
+          kind="Amendment"
+          chips={amendments}
+          onChipClick={onAmendmentClick}
+        />
+      )}
+
+      {/* Goods the customer sent back (2990-0011): a return reopens the order
+          for MRP and delivery, so the SO map has to show it. */}
+      {returns && returns.length > 0 && (
+        <ChipRow
+          heading="Returned off the Delivery Order"
+          kind="Delivery Return"
+          chips={returns}
+          onChipClick={onReturnClick}
+        />
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-ink-muted">
