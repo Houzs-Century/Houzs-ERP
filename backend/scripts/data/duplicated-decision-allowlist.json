@@ -1,6 +1,11 @@
 {
   "reviewed": [
     {
+      "check": "D1",
+      "key": "EDIT,FULL,NONE,VIEW|backend/src/services/pageAccess.ts frontend/src/lib/roleMatrixModel.ts",
+      "why": "THE 4-LEVEL PAGE-ACCESS VOCABULARY (none/view/edit/full). Two homes by necessity: POSITION_ACCESS_LEVELS (pageAccess.ts) is the server's writable set that isValidPositionLevel validates every role_page_access write against (PATCH /api/roles/:id/page-access); MATRIX_LEVELS (roleMatrixModel.ts) is the RBAC-matrix UI's dropdown order + 无/看/改/批 labels in the browser. The two packages share no build graph, the set is closed to the code, and a divergence costs a dropdown option, never a wrong grant — the server is the referee. Recorded rather than collapsed because the frontend cannot import backend/src and the matrix needs the ordered list for its control."
+    },
+    {
       "check": "D2",
       "key": "APPROVED,REJECTED,REQUESTED ~ APPROVED,REJECTED,REQUESTED,WITHDRAWN",
       "why": "TWO DIFFERENT ENUMS that share three words: scm.so_payment_backdate_requests.status (mig 20260930T1500) has WITHDRAWN as its own fourth terminal state, and BackdateRequestQuickView STATUS_TONE draws each of the four in its own tone; the amendment bucket (status-pill.ts BUCKET_ENTRY / PO_AMENDMENT / AMENDMENT_BUCKET_ORDER) folds a withdrawal INTO Rejected on purpose, so it has three. Not one rule with two homes. Divergence costs a pill colour, never money or stock."

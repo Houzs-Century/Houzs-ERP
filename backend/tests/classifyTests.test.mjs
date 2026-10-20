@@ -284,6 +284,13 @@ const MUST_GATE_MERGE = [
      the next login, with the deploy perfectly healthy. That has to stop a
      MERGE. */
   "tests/rolePageAccessCutover.test.ts",
+  /* PR2's page-access WRITE contract. The matrix stores role_page_access rows
+     that decide who sees the GL / payment vouchers / stock. A regression that
+     loosened the validation (a retired key the resolver treats inertly, the
+     looser 5-level `partial`, or dropping the system-role / `*` protection)
+     would let an admin's save silently fail to mean what it says, deploy still
+     green — the exact "设了没用" class the rebuild exists to end. */
+  "tests/rolesPageAccessWrite.test.ts",
 ];
 
 test("every merge-gating suite is classified LIGHT, so a required job runs it", async () => {
