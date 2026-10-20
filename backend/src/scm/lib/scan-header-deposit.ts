@@ -47,3 +47,19 @@ export function safeScanDepositSen(
   if (!Number.isFinite(slipDepositSen) || slipDepositSen <= 0) return 0;
   return !ctx.isShell && ctx.hasClassifiedReceipt ? Math.round(slipDepositSen) : 0;
 }
+
+/**
+ * The header deposit to KEEP once the receipt pass has run (HC-0132).
+ *
+ * safeScanDepositSen judges before any row is written, so it can only predict
+ * that a classified receipt WILL book the is_deposit row. The pass can still
+ * book nothing (no readable receipt amount, the slip-date window, a missing slip
+ * key, a dedup skip, an insert error), and then the stamped figure counted as
+ * Paid with an empty Payments list. This settles it on what actually happened.
+ */
+export function depositSenAfterReceiptPass(
+  stampedSen: number,
+  pass: { depositRowBooked: boolean },
+): number {
+  return pass.depositRowBooked ? stampedSen : 0;
+}
