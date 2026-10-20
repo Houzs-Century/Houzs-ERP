@@ -200,7 +200,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       <h2 className="pt-1 text-[14px] font-semibold text-ink">1 · Delivered in the period</h2>
       <LogisticPeriodSection rows={allRows} period={period} today={today} totals={h?.period ?? null}
         overdue={{ count: overdueRows.length, sen: overdueSen }} onOverdue={() => openSos("Overdue · ready, no delivery date confirmed", overdueRows)} onDrill={openDos} />
-      {h?.period && <LogisticDailySection days={h.period.days} regions={h.period.byRegion} onDrill={openDos} />}
+      {h?.period && <LogisticDailySection days={h.period.days} regions={h.period.byRegion} doList={h.period.doList} onDrill={openDos} />}
       {h?.period && <LorrySection lorries={h.period.byLorry} days={h.period.lorryDayList} recorded={h.period.lorry.recordedOrders} total={h.period.doCount} onDrill={openDos} />}
 
       <h2 className="pt-2 text-[14px] font-semibold text-ink">2 · Still to deliver · as of today</h2>

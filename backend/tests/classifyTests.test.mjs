@@ -277,6 +277,13 @@ const MUST_GATE_MERGE = [
      apostrophe in a SQL comment left ?1 / ?2 unconverted and the ASSR feeds 502d
      (#4447); the pg suite that saw it is not a required check. */
   "tests/deliverySheetFeedPlaceholders.test.ts",
+  /* The RBAC rebuild moved page access to the role_page_access table. This pins
+     that resolving from the seeded rows is byte-identical to the login-time
+     derivation it replaced, money/stock pages included — a regression would
+     silently narrow or widen who can see the GL, payment vouchers or stock on
+     the next login, with the deploy perfectly healthy. That has to stop a
+     MERGE. */
+  "tests/rolePageAccessCutover.test.ts",
 ];
 
 test("every merge-gating suite is classified LIGHT, so a required job runs it", async () => {

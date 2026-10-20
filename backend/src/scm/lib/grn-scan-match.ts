@@ -45,6 +45,8 @@ export type OpenPoLine = {
   // The line's spec as the PO page prints it ("PC151-01 / DIVAN 8\" + LEG 2\" /
   // GAP 11\""), split on " / ". Breaks a tie between same-code lines (DEV-68).
   description2?: string | null;
+  // The sales order the line was raised for ("HC-SO-013339"), or null (stock).
+  soDocNo?: string | null;
 };
 
 // A supplier_material_bindings row, narrowed to the mapping this matcher needs:
@@ -64,12 +66,15 @@ export type ScannedGrnLine = {
   // A PO number printed on THIS row (a consolidated delivery order lists one of
   // our POs per line). Absent / null when the row shows none.
   poNo?: string | null;
+  // A rack handwritten beside the row ("R11-2"), when the scanner read one.
+  rack?: string | null;
 };
 
 export type MatchedPick = { poItemId: string; qty: number };
 
 // Any PO in the company, open or not, for saying why a printed PO was refused.
-export type PoStatusRef = { poNumber: string; status: string };
+// Any PO in the company, open or not, for saying why a printed PO was refused.
+export type PoStatusRef = { poNumber: string; status: string; supplierId?: string | null; supplierName?: string | null; onHold?: boolean };
 
 // A suppliers row, narrowed to what resolveScannedSupplier compares against.
 export type SupplierRef = { id: string; code: string | null; name: string | null };
@@ -126,6 +131,11 @@ export type GrnMatchResult = {
   // Rows matched to their PO's line by product name, not code (nameMatchItem),
   // with the item code each matched.
   nameMatches: Array<{ line: ScannedGrnLine; itemCode: string }>;
+  // Rows received as a whole set: every piece on their PO of the SO they print.
+  soMatches: Array<{ line: ScannedGrnLine; soDocNo: string }>;
+  // poItemId -> the rack handwritten on the row(s) that line was received from.
+  // A line that two rows with different racks fed is left out.
+  racks: Record<string, string>;
   // The open POs the delivery order named (header or rows), resolved.
   namedPos: string[];
 };
@@ -262,11 +272,17 @@ export function matchGrnScanToPoLines(
     // ("SRW-2610-021" for HC-PO-2610-021 into SRW WAREHOUSE). Trusted only when
     // that PO really ships to a warehouse whose code starts with the location.
     const m = /^([A-Z]+)[\s-]+(\d.*)$/.exec((printed ?? '').trim().toUpperCase());
-    if (!m) return null;
-    const po = resolvePrintedPo(m[2], openPos, true)?.poNumber ?? null;
-    const shipsThere = supplierLines.some((l) =>
-      l.poNumber === po && normalizeCode((l.locationCode ?? '').trim().split(/\s+/)[0]) === m[1]);
-    return shipsThere ? po : null;
+    const ships = (po: string | null, loc: string): boolean => po !== null && supplierLines.some((l) =>
+      l.poNumber === po && normalizeCode((l.locationCode ?? '').trim().split(/\s+/)[0]) === loc);
+    if (m) {
+      const po = resolvePrintedPo(m[2], openPos, true)?.poNumber ?? null;
+      return ships(po, m[1]) ? po : null;
+    }
+    // DIGLANT puts the location INSIDE our number: "HC-SRW-PO-2610-091".
+    const inner = splitInnerLocation(printed);
+    if (!inner) return null;
+    const po = resolvePrintedPo(inner.po, openPos, false)?.poNumber ?? null;
+    return ships(po, inner.location) ? po : null;
   };
 
   // PO-number scoping — does the scanned header P.O. No name one of our open POs?
@@ -304,8 +320,16 @@ export function matchGrnScanToPoLines(
   let scannedCount = 0;
   let itemOnlyMatchedCount = 0;
   const nameMatches: GrnMatchResult['nameMatches'] = [];
+  const soMatches: GrnMatchResult['soMatches'] = [];
   // Identical lines (one per customer order) take a row's qty in PO line order.
-  const spread = (qty: number, lines: OpenPoLine[], target: Map<string, number>): void => {
+  const rackOf = new Map<string, string | null>(); // null = rows disagreed
+  const noteRack = (poItemId: string, row: ScannedGrnLine): void => {
+    const r = (row.rack ?? '').trim();
+    if (!r) return;
+    const prev = rackOf.get(poItemId);
+    rackOf.set(poItemId, prev === undefined || prev === r ? r : null);
+  };
+  const spread = (qty: number, lines: OpenPoLine[], target: Map<string, number>, row: ScannedGrnLine): void => {
     let left = qty;
     for (const l of lines) {
       const room = (remainingById.get(l.poItemId) ?? 0) - (target.get(l.poItemId) ?? 0);
@@ -313,6 +337,7 @@ export function matchGrnScanToPoLines(
       const take = Math.min(left, room);
       target.set(l.poItemId, (target.get(l.poItemId) ?? 0) + take);
       poNumberOf.set(l.poItemId, l.poNumber);
+      noteRack(l.poItemId, row);
       left -= take;
     }
   };
@@ -363,6 +388,14 @@ export function matchGrnScanToPoLines(
       // The supplier's own code is unknown to us (DIGLANT prints T1MAMWA0MK for
       // our AKEMI BULWARK MATT (K)), but the PO is certain: try the product name.
       const poLines = supplierLines.filter((l) => l.poNumber === anchorPo);
+      // Dorsettloft prints one row per SET ("DSL8030(35") - 2 + L", qty 1) with
+      // our SO number, where our PO has one line per piece: take that SO's pieces.
+      const set = setLinesBySo(sl, poLines.filter((l) => (remainingById.get(l.poItemId) ?? 0) > 0));
+      if (set) {
+        for (const l of set.lines) spread(remainingById.get(l.poItemId) ?? 0, [l], anchoredQty, sl);
+        soMatches.push({ line: sl, soDocNo: set.soDocNo });
+        continue;
+      }
       const item = nameMatchItem(sl.description, poLines);
       const lines = item === null ? [] : poLines.filter((l) => l.itemCode === item && (remainingById.get(l.poItemId) ?? 0) > 0);
       const specs = new Set(lines.map((l) => (l.description2 ?? '').trim()));
@@ -372,7 +405,7 @@ export function matchGrnScanToPoLines(
       } else if (into.length === 0) {
         unmatched.push({ line: sl, reason: lines.length === 0 ? 'nothing_remaining' : 'ambiguous', candidatePoItemIds: lines.map((l) => l.poItemId) });
       } else {
-        spread(sl.qty, into, anchoredQty);
+        spread(sl.qty, into, anchoredQty, sl);
         nameMatches.push({ line: sl, itemCode: item });
       }
       continue;
@@ -390,7 +423,7 @@ export function matchGrnScanToPoLines(
         unmatched.push({ line: sl, reason: 'nothing_remaining', candidatePoItemIds: hitList.map((l) => l.poItemId) });
         continue;
       }
-      spread(sl.qty, open, anchorPo !== null ? anchoredQty : itemOnlyQty);
+      spread(sl.qty, open, anchorPo !== null ? anchoredQty : itemOnlyQty, sl);
       if (anchorPo === null) {
         itemOnlyLines.push({ line: sl, poItemId: open[0].poItemId });
         itemOnlyMatchedCount += 1;
@@ -413,6 +446,7 @@ export function matchGrnScanToPoLines(
     // on the draft if the physical delivery differs).
     const into = anchorPo !== null ? anchoredQty : itemOnlyQty;
     into.set(hit.poItemId, Math.min((into.get(hit.poItemId) ?? 0) + sl.qty, remaining));
+    noteRack(hit.poItemId, sl);
     poNumberOf.set(hit.poItemId, hit.poNumber);
     if (anchorPo === null) {
       itemOnlyLines.push({ line: sl, poItemId: hit.poItemId });
@@ -482,6 +516,8 @@ export function matchGrnScanToPoLines(
     poFallback,
     qtyMismatch,
     nameMatches,
+    soMatches,
+    racks: refused ? {} : Object.fromEntries([...rackOf].filter((e): e is [string, string] => e[1] !== null)),
     namedPos: [...anchoredPos],
   };
 }
@@ -514,6 +550,27 @@ export function nameMatchItem(printed: string | null | undefined, poLines: OpenP
   return hits.length === 1 ? hits[0] : null;
 }
 
+const soKey = (v: string | null | undefined): string | null => /SO-?0*(\d{4,})\b/i.exec(v ?? '')?.[1] ?? null;
+
+/**
+ * The PO lines a delivery-order row delivers as one set: the row prints one of
+ * our SO numbers ("*HC-SO-013339", or "*SO-011717" without the company prefix)
+ * and the PO holds lines raised for exactly that SO. When the row also prints a
+ * model number those lines start with (DSL8030 -> 8030-2A(LHF)), only those.
+ * Null when the row names no SO, or none of `poLines` belongs to it.
+ */
+export function setLinesBySo(row: ScannedGrnLine, poLines: OpenPoLine[]): { soDocNo: string; lines: OpenPoLine[] } | null {
+  const text = `${row.itemCode ?? ''} ${row.description ?? ''}`;
+  const keys = new Set([...text.matchAll(/SO-?0*(\d{4,})\b/gi)].map((m) => m[1]));
+  if (keys.size === 0) return null;
+  const ofSo = poLines.filter((l) => keys.has(soKey(l.soDocNo) ?? ''));
+  const docs = new Set(ofSo.map((l) => l.soDocNo));
+  if (ofSo.length === 0 || docs.size !== 1) return null;
+  const models = new Set([...(row.itemCode ?? '').matchAll(/(\d{4,})/g)].map((m) => m[1]));
+  const ofModel = ofSo.filter((l) => models.has(/^(\d{4,})/.exec(l.itemCode)?.[1] ?? ''));
+  return { soDocNo: [...docs][0] as string, lines: ofModel.length > 0 ? ofModel : ofSo };
+}
+
 const PO_STATUS_WHY: Record<string, string> = {
   RECEIVED: 'is marked Received',
   CANCELLED: 'is marked Cancelled',
@@ -540,13 +597,36 @@ export function pickBySpec(printed: string | null | undefined, hits: OpenPoLine[
   return hits[scores.indexOf(top)];
 }
 
-function poNotOpenWhy(l: ScannedGrnLine, allPos: PoStatusRef[]): string {
-  const po = resolvePrintedPo(l.poNo, allPos, true);
-  if (!po) return `PO ${l.poNo ?? '?'} is not one of our POs`;
-  return `PO ${po.poNumber} ${PO_STATUS_WHY[po.status] ?? `is marked ${po.status}, but is on hold or under another supplier`}`;
+/** "HC-SRW-PO-2610-091" -> { location: "SRW", po: "HC-PO-2610-091" }; else null. */
+export function splitInnerLocation(printed: string | null | undefined): { location: string; po: string } | null {
+  const m = /^([A-Z0-9]+)[\s-]+([A-Z]{2,4})[\s-]+(PO[\s-]*\d[\d\s-]*)$/.exec((printed ?? '').trim().toUpperCase());
+  return m ? { location: m[2], po: `${m[1]}-${m[3]}` } : null;
 }
 
-const UNMATCHED_WHY: Record<UnmatchedScanLine['reason'], (l: ScannedGrnLine, allPos: PoStatusRef[]) => string> = {
+/**
+ * Why a printed PO cannot take this delivery order, in words the operator can
+ * act on: its status, on hold, another supplier's PO (Hookka DO-2610-079 named
+ * OHANA STUDIO's HC-PO-010086), or no open line found for it. Null when the printed
+ * number is not a PO of ours at all.
+ */
+export function printedPoWhy(printed: string | null | undefined, allPos: PoStatusRef[], scanSupplierId: string | null): string | null {
+  const inner = splitInnerLocation(printed);
+  const po = resolvePrintedPo(printed, allPos, true) ?? (inner ? resolvePrintedPo(inner.po, allPos, false) : null);
+  if (!po) return null;
+  const known = PO_STATUS_WHY[po.status];
+  if (known) return `PO ${po.poNumber} ${known}`;
+  if (po.onHold) return `PO ${po.poNumber} is on hold`;
+  if (po.supplierName && scanSupplierId !== null && po.supplierId && po.supplierId !== scanSupplierId) {
+    return `PO ${po.poNumber} is ${po.supplierName}'s PO, not this supplier's`;
+  }
+  return `PO ${po.poNumber} shows no open line for this supplier in our search; open the PO to check its balance`;
+}
+
+function poNotOpenWhy(l: ScannedGrnLine, allPos: PoStatusRef[], scanSupplierId: string | null): string {
+  return printedPoWhy(l.poNo, allPos, scanSupplierId) ?? `PO ${l.poNo ?? '?'} is not one of our POs`;
+}
+
+const UNMATCHED_WHY: Record<UnmatchedScanLine['reason'], (l: ScannedGrnLine, allPos: PoStatusRef[], scanSupplierId: string | null) => string> = {
   no_open_po_line: () => 'no open PO line',
   ambiguous: () => 'more than one PO line fits',
   nothing_remaining: () => 'its PO line shows 0 qty remaining',
@@ -567,9 +647,9 @@ const capped = (parts: string[], max: number): string =>
  * when every line matched. Capped so a long delivery order cannot flood the
  * note. `allPos` (every company PO, any status) says why a printed PO was refused.
  */
-export function describeUnmatchedScanLines(unmatched: UnmatchedScanLine[], allPos: PoStatusRef[], max = 10): string | null {
+export function describeUnmatchedScanLines(unmatched: UnmatchedScanLine[], allPos: PoStatusRef[], scanSupplierId: string | null, max = 10): string | null {
   if (unmatched.length === 0) return null;
-  return capped(unmatched.map(({ line: l, reason }) => `${scanLineLabel(l)} x${l.qty} (${UNMATCHED_WHY[reason](l, allPos)})`), max);
+  return capped(unmatched.map(({ line: l, reason }) => `${scanLineLabel(l)} x${l.qty} (${UNMATCHED_WHY[reason](l, allPos, scanSupplierId)})`), max);
 }
 
 /** The scanned lines as read, for a draft built from the whole PO. */

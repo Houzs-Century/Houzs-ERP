@@ -14,7 +14,7 @@
    stock demand and is left out; a line already delivered before the receipt,
    or already given to an earlier receipt, is not open. */
 import { scopeToCompanyId } from './companyScope';
-import { chunkIn } from './paginate-all';
+import { chunkIn, inList, paginateAll } from './paginate-all';
 import { doCountsAsDelivered } from '../shared/do-shipped-states';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
 
@@ -73,18 +73,26 @@ export async function loadStockDemand(sb: any, companyId: number, itemCodes: str
   const terminal = new Set<string>(history ? ['CANCELLED', 'DRAFT'] : SO_TERMINAL_STATES);
   const lines = await chunkIn<Row>(itemCodes, (b, f, t) => scopeToCompanyId(sb.from('mfg_sales_order_items')
     .select('id, doc_no, item_code, qty, so:mfg_sales_orders!inner(status, so_date, customer_delivery_date, amended_delivery_date)')
-    .in('item_code', b).eq('cancelled', false), companyId).order('id').range(f, t));
+    .filter('item_code', 'in', inList(b)).eq('cancelled', false), companyId).order('id').range(f, t));
   if (lines.error) throw new Error(`order lines: ${lines.error.message}`);
   const soOf = (r: Row) => (Array.isArray(r.so) ? r.so[0] : r.so) as Row | null;
   const live = lines.data.filter((r) => { const so = soOf(r); return !!so && !terminal.has(String(so.status)) && (day(so.so_date) ?? '9999') <= asOf; });
   const ids = live.map((r) => String(r.id));
-  const bought = await chunkIn<Row>(ids, (b, f, t) => scopeToCompanyId(sb.from('purchase_order_items').select('so_item_id').in('so_item_id', b), companyId).order('id').range(f, t));
+  /* A few ids (one goods receipt): batch them into the filter. Thousands (the
+     overview's estimate over a year): read every line tied to an order and keep
+     the ones wanted - a few pages instead of hundreds of uuid batches. */
+  const idSet = new Set(ids);
+  const byIds = async (table: string, select: string) => {
+    if (ids.length <= 2000) return chunkIn<Row>(ids, (b, f, t) => scopeToCompanyId(sb.from(table).select(select).in('so_item_id', b), companyId).order('id').range(f, t));
+    const all = await paginateAll<Row>((f, t) => scopeToCompanyId(sb.from(table).select(select).not('so_item_id', 'is', null), companyId).order('id').range(f, t));
+    return { error: all.error, data: (all.data ?? []).filter((r) => idSet.has(String(r.so_item_id))) };
+  };
+  const bought = await byIds('purchase_order_items', 'so_item_id');
   if (bought.error) throw new Error(`PO lines for orders: ${bought.error.message}`);
   const boughtFor = new Set(bought.data.map((r) => String(r.so_item_id)));
-  const shipped = await chunkIn<Row>(ids, (b, f, t) => scopeToCompanyId(sb.from('delivery_order_items')
-    .select('so_item_id, qty, do:delivery_orders!inner(status, do_date)').in('so_item_id', b), companyId).order('id').range(f, t));
+  const shipped = await byIds('delivery_order_items', 'so_item_id, qty, do:delivery_orders!inner(status, do_date)');
   if (shipped.error) throw new Error(`shipped order lines: ${shipped.error.message}`);
-  const done = await chunkIn<Row>(ids, (b, f, t) => scopeToCompanyId(sb.from('po_receipt_so_assignments').select('so_item_id, qty').in('so_item_id', b), companyId).order('id').range(f, t));
+  const done = await byIds('po_receipt_so_assignments', 'so_item_id, qty');
   if (done.error) throw new Error(`stored assignments: ${done.error.message}`);
   const deliveredOf = new Map<string, Array<{ date: string; qty: number }>>();
   for (const l of shipped.data) {

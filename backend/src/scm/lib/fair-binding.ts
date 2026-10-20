@@ -11,16 +11,27 @@
 // ----------------------------------------------------------------------------
 
 import {
+  attendingMessage,
+  companyUsesKeyerFair,
   editFairPick,
+  fairEventKey,
   fairKeyPart,
+  fairMissingMessage,
+  fairPickedPeriod,
+  keyerFairDefault,
   linkedFairOf,
   lookbackWindow,
   resolveFair,
+  resolveFairWithKeyer,
+  sameVenue,
+  venueDiffersMessage,
   type FairMatch,
   type FairProjectRow,
   type FairResolution,
+  type KeyerFairDefault,
   type LinkedFair,
 } from './fair-options';
+import type { SaveProblem } from '../shared/so-save-problems';
 import {
   loadVenueBindingInputs,
   resolveVenueBinding,
@@ -260,7 +271,7 @@ export async function loadVenueMaster(
  * Best-effort by contract: a lookup failure returns PENDING with no project,
  * never an exception. No fair-link problem may ever block a sale.
  */
-export async function resolveFairForSave(args: {
+type FairSaveArgs = {
   db: FairDb;
   companySql: string;
   venue: string | null;
@@ -274,24 +285,29 @@ export async function resolveFairForSave(args: {
   picked: { startDate: string; endDate: string | null } | null;
   soDate: string;
   brand: string | null;
-}): Promise<FairResolution> {
+};
+
+/* An EVENT was picked: match it exactly. A PLACE only: fall back to the window
+   at that venue, where the date is all there is to go on. The caller has
+   already refused a blank venue. */
+function loadSaveCandidates(args: FairSaveArgs, venue: string): Promise<FairProjectRow[]> {
+  const organizer = (args.organizer ?? '').trim();
+  return args.picked && organizer
+    ? loadFairsForEvent(args.db, args.companySql, {
+        venue,
+        organizer,
+        startDate: args.picked.startDate,
+        endDate: args.picked.endDate,
+      })
+    : loadFairsAtVenue(args.db, args.companySql, venue, args.soDate);
+}
+
+export async function resolveFairForSave(args: FairSaveArgs): Promise<FairResolution> {
   const venue = (args.venue ?? '').trim();
   if (!venue) return { projectId: null, match: 'PENDING', candidateIds: [] };
-  const organizer = (args.organizer ?? '').trim();
   try {
-    /* An EVENT was picked: match it exactly. A PLACE only: fall back to the
-       window at that venue, where the date is all there is to go on. */
-    const candidates =
-      args.picked && organizer
-        ? await loadFairsForEvent(args.db, args.companySql, {
-            venue,
-            organizer,
-            startDate: args.picked.startDate,
-            endDate: args.picked.endDate,
-          })
-        : await loadFairsAtVenue(args.db, args.companySql, venue, args.soDate);
     return resolveFair({
-      candidates,
+      candidates: await loadSaveCandidates(args, venue),
       brand: args.brand,
       organizer: args.organizer,
     });
@@ -301,6 +317,452 @@ export async function resolveFairForSave(args: {
        silent UNMATCHED would be a verdict this never computed. */
     return { projectId: null, match: 'PENDING', candidateIds: [] };
   }
+}
+
+/* The keyer STANDS AT a project as its PIC or on its Sales Attending — the two
+   links venue-binding.ts reads. Binds the user id TWICE. */
+const KEYER_ON_PROJECT = `(p.pic_id = ? OR EXISTS (
+         SELECT 1 FROM project_sales_attendees psa
+           JOIN sales_reps sr ON sr.id = psa.sales_rep_id
+          WHERE psa.project_id = p.id AND sr.user_id = ?))`;
+
+/**
+ * `resolveFairForSave` for a NEW order: the same lookup, then the keyer's booth
+ * where the brand cannot decide (`resolveFairWithKeyer`). Create only — an edit,
+ * the nightly reconcile and a re-detect keep the plain rule, so an order already
+ * saved never moves because of who happens to open it.
+ *
+ * @param keyerId `public.users.id` of the person keying the order (the scan
+ *   uploader on a scan) — not the order's salesperson (owner: 「看打单的人」).
+ */
+export async function resolveFairForCreate(args: FairSaveArgs & { keyerId: number }): Promise<FairResolution> {
+  const venue = (args.venue ?? '').trim();
+  if (!venue) return { projectId: null, match: 'PENDING', candidateIds: [] };
+  let candidates: FairProjectRow[];
+  try {
+    candidates = await loadSaveCandidates(args, venue);
+  } catch {
+    return { projectId: null, match: 'PENDING', candidateIds: [] };
+  }
+  /* Not knowing where the keyer stands is not a reason to drop the brand's
+     answer: on a failed read the plain rule still runs, with no keyer step. */
+  const keyerProjectIds = await keyerProjectIdsAmong(args.db, args.companySql, args.keyerId, candidates).catch(() => new Set<number>());
+  return resolveFairWithKeyer({ candidates, brand: args.brand, organizer: args.organizer, keyerProjectIds });
+}
+
+/** The projects among `rows` the keyer stands at (PIC or Sales Attending).
+ *  Throws on a failed read — each caller decides what not knowing means. */
+export async function keyerProjectIdsAmong(
+  db: FairDb,
+  companySql: string,
+  keyerId: number,
+  rows: ReadonlyArray<Pick<FairProjectRow, 'projectId'>>,
+): Promise<Set<number>> {
+  const ids = [...new Set(rows.map((r) => r.projectId))];
+  if (!Number.isFinite(keyerId) || ids.length === 0) return new Set();
+  const found = await db
+    .prepare(
+      `SELECT p.id AS id FROM projects p
+        WHERE p.id IN (${ids.map(() => '?').join(', ')})
+          AND ${KEYER_ON_PROJECT}${companySql}`,
+    )
+    .bind(...ids, keyerId, keyerId)
+    .all<Record<string, unknown>>();
+  return new Set((found.results ?? []).map((r) => Number(r.id)).filter(Number.isInteger));
+}
+
+/**
+ * Every live fair the KEYER stands at that had started by the order date —
+ * the input to `keyerFairDefault`. No lower bound: the newest fair OUTSIDE the
+ * window is what the "ended over a month ago" sentence names. The row count is
+ * bounded by "fairs this one person was put on", which is small.
+ */
+export async function loadKeyerFairs(
+  db: FairDb,
+  companySql: string,
+  userId: number,
+  orderDate: string,
+): Promise<FairProjectRow[]> {
+  const rows = await db
+    .prepare(
+      `SELECT ${FAIR_COLUMNS}
+         FROM projects p
+        WHERE ${LIVE_FAIR}
+          AND p.start_date <= ?
+          AND ${KEYER_ON_PROJECT}${companySql}`,
+    )
+    .bind(orderDate.slice(0, 10), userId, userId)
+    .all<Record<string, unknown>>();
+  return ((rows.results ?? []) as Array<Record<string, unknown>>)
+    .map(toFairRow)
+    .filter((r) => Number.isFinite(r.projectId));
+}
+
+/** `keyerFairDefault` over the keyer's fairs. Best-effort: an unknown keyer or a
+ *  failed read is "nothing to fill in, no reason to give" — never a guess. */
+export async function keyerFairDefaultFor(args: {
+  db: FairDb;
+  companySql: string;
+  userId: number;
+  orderDate: string;
+}): Promise<KeyerFairDefault> {
+  if (!Number.isFinite(args.userId)) return { event: null, how: null, why: null };
+  try {
+    return keyerFairDefault(await loadKeyerFairs(args.db, args.companySql, args.userId, args.orderDate), args.orderDate);
+  } catch {
+    return { event: null, how: null, why: null };
+  }
+}
+
+/**
+ * The refusal a NEW confirmed order gets when it names neither a fair nor No
+ * fair (owner 2026-10-19: a typed order cannot save without one). The form asks
+ * the same through POST /validate; this is the copy a stale or hand-built
+ * client cannot skip. Null = no refusal. Only for companies on the keyer rule;
+ * the caller leaves drafts (scan, Save as draft) and the POS out.
+ */
+export async function fairRequiredProblem(args: {
+  companyCode: unknown;
+  body: Record<string, unknown>;
+  db: FairDb;
+  companySql: string;
+  keyerId: number;
+  orderDate: string;
+}): Promise<{ code: 'fair_required'; message: string; field: 'Fair' } | null> {
+  if (!companyUsesKeyerFair(args.companyCode)) return null;
+  if (args.body.noFair === true) return null;
+  if (typeof args.body.fairOrganizer === 'string' && args.body.fairOrganizer.trim() !== '') return null;
+  const { why } = await keyerFairDefaultFor({
+    db: args.db, companySql: args.companySql, userId: args.keyerId, orderDate: args.orderDate,
+  });
+  return { code: 'fair_required', message: fairMissingMessage(why), field: 'Fair' };
+}
+
+// ── SCANNED orders (owner 2026-10-19) ────────────────────────────────────────
+//
+// 「先优先匹配上地点和日期和他站的场。如果没有就地点和日期，没有就他今天站的场，
+// 再没有就他最近站的场」 — the slip's own PLACE and DATE first, the keyer's fair
+// after. Never creates a fair; a scan that matches nothing waits for a person.
+
+/** Which rule placed a scanned order. */
+export type ScanFairStep =
+  /** 1. A fair at the slip's place, running on the slip's date, that the keyer stands at. */
+  | 'slip_mine'
+  /** 2. A fair at the slip's place on the slip's date the keyer is NOT on —
+   *  linked, but the draft cannot be confirmed until PMS adds them. */
+  | 'slip_place'
+  /** 3. The keyer's fair running on the day the scan was keyed. */
+  | 'today'
+  /** 4. The keyer's latest fair within the dropdown window. */
+  | 'latest'
+  /** 5. Nothing: the keyer picks. */
+  | 'none';
+
+export type ScanFairResult = FairResolution & {
+  step: ScanFairStep;
+  /** The Fair Day the order takes: the slip's date on steps 1-2, which by
+   *  construction is a day of that fair. Null on 3-5 — a person picks it. */
+  fairDate: string | null;
+  /** The venue of the event it was placed at (steps 1-4), else null. */
+  venue: string | null;
+};
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Projects by id, in this company — whatever their state, since a link made
+ *  before a fair was cancelled or archived still names it. Throws on a failed
+ *  read. */
+export async function loadFairsByIds(
+  db: FairDb,
+  companySql: string,
+  ids: readonly number[],
+): Promise<Map<number, FairProjectRow>> {
+  const unique = [...new Set(ids.filter(Number.isInteger))];
+  const out = new Map<number, FairProjectRow>();
+  if (unique.length === 0) return out;
+  const rows = await db
+    .prepare(`SELECT ${FAIR_COLUMNS} FROM projects p WHERE p.id IN (${unique.map(() => '?').join(', ')})${companySql}`)
+    .bind(...unique)
+    .all<Record<string, unknown>>();
+  for (const r of (rows.results ?? []) as Array<Record<string, unknown>>) {
+    const row = toFairRow(r);
+    if (Number.isFinite(row.projectId)) out.set(row.projectId, row);
+  }
+  return out;
+}
+
+/** Every live fair at one place whose period contains one day. */
+export async function loadFairsAtVenueOn(
+  db: FairDb,
+  companySql: string,
+  venue: string,
+  day: string,
+): Promise<FairProjectRow[]> {
+  const rows = await db
+    .prepare(
+      `SELECT ${FAIR_COLUMNS}
+         FROM projects p
+        WHERE ${LIVE_FAIR}
+          AND lower(trim(p.venue)) = lower(trim(?))
+          AND p.start_date <= ?
+          AND coalesce(p.end_date, p.start_date) >= ?${companySql}`,
+    )
+    .bind(venue, day, day)
+    .all<Record<string, unknown>>();
+  return ((rows.results ?? []) as Array<Record<string, unknown>>)
+    .map(toFairRow)
+    .filter((r) => Number.isFinite(r.projectId));
+}
+
+/**
+ * Where a SCANNED order goes. The booth inside the event is always the brand's
+ * (then the keyer's own — `resolveFairWithKeyer`).
+ *
+ * @param slipVenue The venue-master name the scan read off the slip, or null.
+ * @param slipDate  The date written on the slip, or null. A date after the day
+ *   it was keyed is a misread (a slip is not written in the future) and is
+ *   treated as unread.
+ * @param keyedDate The day the scan was keyed, `YYYY-MM-DD` MYT.
+ *
+ * Best-effort: any failed read is "nothing found" (PENDING), never a guess and
+ * never a blocked scan — the draft still lands and a person settles it.
+ */
+export async function resolveScanFair(args: {
+  db: FairDb;
+  companySql: string;
+  keyerId: number;
+  slipVenue: string | null;
+  slipDate: string | null;
+  keyedDate: string;
+  brand: string | null;
+}): Promise<ScanFairResult> {
+  const nothing: ScanFairResult = { projectId: null, match: 'PENDING', candidateIds: [], step: 'none', fairDate: null, venue: null };
+  try {
+    const place = (args.slipVenue ?? '').trim();
+    const raw = (args.slipDate ?? '').trim().slice(0, 10);
+    const day = ISO_DAY.test(raw) && raw <= args.keyedDate.slice(0, 10) ? raw : null;
+    if (place && day) {
+      const atPlace = await loadFairsAtVenueOn(args.db, args.companySql, place, day);
+      if (atPlace.length > 0) {
+        const mine = await keyerProjectIdsAmong(args.db, args.companySql, args.keyerId, atPlace);
+        /* Step 1 keeps to the events the keyer stands at, so a brand booth at
+           ANOTHER organizer's event the same day does not pull the order away
+           from the event the keyer was at. */
+        const keyerEvents = new Set(atPlace.filter((r) => mine.has(r.projectId)).map(fairEventKey));
+        const candidates = keyerEvents.size > 0 ? atPlace.filter((r) => keyerEvents.has(fairEventKey(r))) : atPlace;
+        const fair = resolveFairWithKeyer({ candidates, brand: args.brand, organizer: null, keyerProjectIds: mine });
+        return { ...fair, step: keyerEvents.size > 0 ? 'slip_mine' : 'slip_place', fairDate: day, venue: place };
+      }
+    }
+    const keyerFairs = await loadKeyerFairs(args.db, args.companySql, args.keyerId, args.keyedDate);
+    const found = keyerFairDefault(keyerFairs, args.keyedDate);
+    if (!found.event) return nothing;
+    const booths = await loadFairsForEvent(args.db, args.companySql, found.event);
+    const fair = resolveFairWithKeyer({
+      candidates: booths, brand: args.brand, organizer: found.event.organizer,
+      keyerProjectIds: new Set(keyerFairs.map((r) => r.projectId)),
+    });
+    return { ...fair, step: found.how === 'ongoing' ? 'today' : 'latest', fairDate: null, venue: found.event.venue };
+  } catch {
+    return nothing;
+  }
+}
+
+/** The fair columns a new order is written with. */
+export type FairLinkColumns = {
+  project_id: number | null;
+  fair_match: FairMatch | 'NO_FAIR';
+  fair_date?: string;
+  venue?: string;
+  venue_source?: 'PMS';
+};
+
+/** Why a SCAN was placed where it was, for its History row (fair-audit.ts). */
+export const SCAN_STEP_NOTE: Record<ScanFairStep, string> = {
+  slip_mine: 'Placed by the slip’s place and date, at a fair the scanner stands at.',
+  slip_place: 'Placed by the slip’s place and date. The scanner is not on its Sales Attending yet.',
+  today: 'No fair at the slip’s place and date — placed at the scanner’s fair today.',
+  latest: 'No fair at the slip’s place and date — placed at the scanner’s latest fair.',
+  none: 'No fair found for the slip or the scanner — a person picks it.',
+};
+
+/**
+ * The fair columns a NEW order is written with, after its lines are in (the
+ * brand comes from them), and — for a scan — which rule placed it. One
+ * decision for every create path:
+ *
+ *   - No fair ticked: NO_FAIR, no project — a decided state (owner 2026-09-26).
+ *   - A SCAN, on the keyer rule: `resolveScanFair`; steps 1-2 also take the
+ *     slip's date as the Fair Day, and a slip with no place takes the place of
+ *     the fair it was put at, so the draft names one.
+ *   - Anything else: the picked event or place (`resolveFairForCreate`).
+ *
+ * Never a fair at ANOTHER place on the keyer rule. The PMS venue binding's
+ * project (`bindingProjectId` — the keyer's running fair, wherever it is) used
+ * to stand in when the pick resolved nothing, and linked KLCC orders to a
+ * Sunway Carnival booth; it is kept only for companies off the rule (2990).
+ */
+export async function fairLinkOnCreate(args: {
+  db: FairDb;
+  companySql: string;
+  companyCode: unknown;
+  /** Created by the background slip scan (the create core's auditSource). */
+  scanned: boolean;
+  keyerId: number;
+  body: Record<string, unknown>;
+  /** The venue the order was written with — a pick, the slip's, or the binding's. */
+  venue: string | null;
+  soDate: string;
+  brand: string | null;
+  bindingProjectId: number | null;
+}): Promise<{ columns: FairLinkColumns; step: ScanFairStep | null }> {
+  const { body } = args;
+  if (body.noFair === true) return { columns: { project_id: null, fair_match: 'NO_FAIR' }, step: null };
+  const keyerRule = companyUsesKeyerFair(args.companyCode);
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  if (keyerRule && args.scanned) {
+    const slipVenue = text(body.venue);
+    const scan = await resolveScanFair({
+      db: args.db, companySql: args.companySql, keyerId: args.keyerId,
+      slipVenue, slipDate: text(body.slipDate), keyedDate: args.soDate, brand: args.brand,
+    });
+    if (scan.projectId == null) return { columns: { project_id: null, fair_match: scan.match }, step: scan.step };
+    return {
+      step: scan.step,
+      columns: {
+        project_id: scan.projectId, fair_match: 'PICKED',
+        ...(scan.fairDate ? { fair_date: scan.fairDate } : {}),
+        ...(!slipVenue && scan.venue ? { venue: scan.venue, venue_source: 'PMS' as const } : {}),
+      },
+    };
+  }
+  const fair = await resolveFairForCreate({
+    keyerId: args.keyerId, db: args.db, companySql: args.companySql, venue: args.venue,
+    organizer: text(body.fairOrganizer),
+    /* The PICKED row's period — the only way to know WHICH occurrence was meant:
+       the order date is the day it was keyed, not a day the fair was on. */
+    picked: fairPickedPeriod(body),
+    soDate: args.soDate, brand: args.brand,
+  });
+  const linkedId = fair.projectId ?? (keyerRule ? null : args.bindingProjectId);
+  return { columns: { project_id: linkedId, fair_match: linkedId != null ? 'PICKED' : fair.match }, step: null };
+}
+
+/** The scan_jobs columns the confirm rules read. */
+type ScanJobRow = { houzs_user_id?: number | string | null };
+
+/** The supabase surface `fairConfirmProblems` needs (structural, so tests fake it). */
+export type FairConfirmSb = {
+  from(table: string): {
+    select(cols: string): {
+      eq(col: string, val: unknown): {
+        order(col: string, o: { ascending: boolean }): { limit(n: number): PromiseLike<{ data: unknown; error: { message: string } | null }> };
+        maybeSingle(): PromiseLike<{ data: unknown; error: { message: string } | null }>;
+      };
+    };
+  };
+};
+
+const CONFIRM_CHECK_FAILED = 'so_confirm_check_failed';
+const checkFailed = (what: string): SaveProblem => ({
+  code: CONFIRM_CHECK_FAILED,
+  message: `Could not check this order's fair, so it is left as a draft rather than confirmed on a check that never ran — try again (${what}).`,
+});
+
+/** so_settings key: when ON, "Venue differs" refuses Confirm instead of flagging. */
+export const VENUE_DIFFERS_BLOCKS_KEY = 'fair_venue_differs_blocks';
+
+/**
+ * The fair half of the DRAFT -> CONFIRMED gate (owner 2026-10-19), for
+ * companies on the keyer rule. [] = nothing to refuse.
+ *
+ *   - Every order: a fair, or No fair. Worded by why the keyer got none.
+ *   - A SCANNED order: the person who scanned it must be on the Sales Attending
+ *     (or PIC) of the booth it is placed at — PMS adds them; typed orders keep
+ *     their free choice.
+ *   - A SCANNED order whose venue is not the booth's venue: refused only while
+ *     the Fair rules switch (`VENUE_DIFFERS_BLOCKS_KEY`) is on.
+ *
+ * A failed read refuses with "could not check" — a gate that could not look
+ * must not say all clear (so-confirm-gate.ts).
+ *
+ * @param scope     Puts the company predicate on an scm query.
+ * @param confirmerId `public.users.id` of the person pressing Confirm — the
+ *   keyer of an order that was not scanned.
+ */
+export async function fairConfirmProblems(args: {
+  sb: FairConfirmSb;
+  db: FairDb;
+  companySql: string;
+  companyCode: unknown;
+  scope: <Q>(q: Q) => Q;
+  docNo: string;
+  confirmerId: number;
+  todayMyt: string;
+}): Promise<SaveProblem[]> {
+  if (!companyUsesKeyerFair(args.companyCode)) return [];
+  const head = await args.scope(
+    args.sb.from('mfg_sales_orders').select('project_id, fair_match, venue').eq('doc_no', args.docNo),
+  ).maybeSingle();
+  if (head.error) return [checkFailed(`order: ${head.error.message}`)];
+  const order = (head.data ?? {}) as { project_id?: number | string | null; fair_match?: string | null; venue?: string | null };
+  const jobs = await args.scope(
+    args.sb.from('scan_jobs').select('houzs_user_id').eq('so_doc_no', args.docNo),
+  ).order('created_at', { ascending: false }).limit(1);
+  if (jobs.error) return [checkFailed(`scan: ${jobs.error.message}`)];
+  const job = ((jobs.data ?? []) as ScanJobRow[])[0];
+  const scanned = job !== undefined;
+  const scannerId = job?.houzs_user_id != null ? Number(job.houzs_user_id) : NaN;
+  const keyerId = scanned && Number.isFinite(scannerId) ? scannerId : args.confirmerId;
+
+  const projectId = order.project_id != null ? Number(order.project_id) : null;
+  if (projectId == null || !Number.isInteger(projectId)) {
+    if (order.fair_match === 'NO_FAIR') return [];
+    /* A fair was found but the booth is a person's call: the standing sentence.
+       Nothing found: why, for the keyer. */
+    const why = order.fair_match === 'AMBIGUOUS' || order.fair_match === 'UNMATCHED'
+      ? null
+      : (await keyerFairDefaultFor({ db: args.db, companySql: args.companySql, userId: keyerId, orderDate: args.todayMyt })).why;
+    return [{ code: 'fair_required', message: fairMissingMessage(why), field: 'Fair' }];
+  }
+  if (!scanned) return [];
+
+  try {
+    const rows = await args.db
+      .prepare(`SELECT ${FAIR_COLUMNS} FROM projects p WHERE p.id = ?${args.companySql}`)
+      .bind(projectId)
+      .all<Record<string, unknown>>();
+    const raw = rows.results?.[0];
+    if (!raw) return [];
+    const booth = toFairRow(raw);
+    const out: SaveProblem[] = [];
+    const standing = await keyerProjectIdsAmong(args.db, args.companySql, keyerId, [booth]);
+    if (!standing.has(projectId)) {
+      const someoneElse = Number.isFinite(keyerId) && keyerId !== args.confirmerId;
+      out.push({ code: 'fair_attending_required', message: attendingMessage(booth, someoneElse ? await userName(args.db, keyerId) : null), field: 'Fair' });
+    }
+    const venue = (order.venue ?? '').trim();
+    if (venue && booth.venue && !sameVenue(venue, booth.venue) && await venueDiffersBlocks(args)) {
+      out.push({ code: 'fair_venue_differs', message: venueDiffersMessage(venue, booth), field: 'Fair' });
+    }
+    return out;
+  } catch (e) {
+    return [checkFailed(`fair: ${e instanceof Error ? e.message : 'read failed'}`)];
+  }
+}
+
+async function userName(db: FairDb, userId: number): Promise<string> {
+  const rows = await db.prepare(`SELECT u.name AS name FROM users u WHERE u.id = ?`).bind(userId).all<Record<string, unknown>>();
+  const name = rows.results?.[0]?.name;
+  return typeof name === 'string' && name.trim() ? name.trim() : 'The person who scanned this order';
+}
+
+/* The switch is OFF unless the row says ON — an absent row is the default
+   (flag only). A failed read refuses nothing extra: the switch can only ADD a
+   refusal, and the rest of the gate has already looked. */
+async function venueDiffersBlocks(args: { sb: FairConfirmSb; scope: <Q>(q: Q) => Q }): Promise<boolean> {
+  const res = await args.scope(args.sb.from('so_settings').select('enabled').eq('key', VENUE_DIFFERS_BLOCKS_KEY)).maybeSingle();
+  return !res.error && (res.data as { enabled?: boolean } | null)?.enabled === true;
 }
 
 /**

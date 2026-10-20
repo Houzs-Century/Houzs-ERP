@@ -29,7 +29,7 @@
 | 卡片 | 算法 |
 | --- | --- |
 | PO raised this month | 期间内开的 PO（不含 DRAFT、CANCELLED）。金额 = 每行的行总额（已扣折扣），加起来跟 PO 总额一致 |
-| Due this month | PO 行上第一次写的交货日期落在期间内的金额（选 This month / quarter / year 时算到月底 / 季末 / 年底；PO raised 和 Received 只算到今天）。下面一行 "has not arrived yet" = 其中到期末还没收到的部分 |
+| Due this month | PO 行上第一次写的交货日期落在期间内、**还没收到**的金额（选 This month / quarter / year 时算到月底 / 季末 / 年底；PO raised 和 Received 只算到今天）。已收到的不算；下面小字写已到了多少 |
 | Received this month | 期间内收货单（GRN）收到的数量 × PO 单价 |
 | Supplier billed this month | 期间内供应商发票（purchase invoice，不含 DRAFT、CANCELLED）的总额 |
 | Total outstanding | 所有还没收完的 PO 行，未收数量 × 单价。快照：到今天（或过去期间的最后一天） |
@@ -37,7 +37,7 @@
 - 没有收货单、但 PO 行被标记成已收的数量（导入时标的），当作在交货日期那天收到：不再算进 Total outstanding 和 "has not arrived yet"，但不算进 Received this month、lead time 和准时率（没有真实收货日期）。
 - 表格 "By category / By supplier" 的每一栏，跟上面同名的卡片是同一个算法，只是拆开。
 
-**Outstanding: how late** — 未收的货按 "今天 − PO 上第一次写的日期" 分四段：
+**Outstanding: how late**（上面一条总的彩条，下面每个类别 / 供应商一条，长度 = 金额） — 未收的货按 "今天 − PO 上第一次写的日期" 分四段：
 迟到 5 天以上；迟到 0–4 天、今天或明天到期；2–7 天后到期；8 天以后到期。
 迟到只跟第一次写的日期比，供应商后来改的日期不算（老板 2026-10-17 决定 A）。
 
@@ -45,8 +45,6 @@
 - Overdue = 未收、且已过 PO 上第一次写的日期。
 - Customer date = 这一行挂的销售单的交货日期（有改期用改期后的）。
 - 显示 "stock" = 这张 PO 是备库存开的，没有挂销售单。
-
-**What to act on** — 从页面上的数字自动写的提醒：未到货的比例、逾期行数、可以晚订几天的类别、准时率低于 60% 的供应商、dead stock 金额。
 
 ### 1.2 Lead time & stock tab — Lead time 表
 
@@ -70,13 +68,16 @@
 - 备库存的 PO（没挂销售单）没有客户日期，不算进跟客户日期有关的两栏，所以不会把天数拉长。
 - 后台另有估算（页面不显示）：备库存的货按先进先出配给后来送出的订单，算出这些 PO 比客户下单早或晚几天开（`/api/scm/procurement-overview/stock-ordering`）。
 
-### 1.3 Dead stock 和 Buffer stock（快照，今天）
+### 1.3 Excess stock：Dead + Buffer（快照，今天）
+
+- 放在 "Lead time & stock" 一个面板里：三个数字（Dead、Buffer、两个加起来），按类别、按仓库的表两者并排，每个都有 "% of all dead/buffer" 和 "% of its stock"，字眼相同。同一件货只会算在其中一边，所以两者可以相加。
 
 - 范围：现在有货的每个地点。右上角可选：全部（默认）、不含 Display、不含 Display 和 Service、只看 Warehouse / Display / Service / Others。地点类型来自仓库设定：Display = display + showroom。库存金额、dead stock、buffer、周转率都跟着这个选择。
 - 订单按 **品项 + 款式** 对货：沙发、床架要面料、尺寸都一样才算同一款。
-- **Dead stock** = 完全没有未完成的订单要这个款式，扣掉平时 14 天会卖出去的量后剩下的（不再要求 90 天没出货）。图表按 "多久没出货" 分段：90 天内、91–180、181–365、超过一年。
-- **Buffer stock（太早买的）** = 库存 − 有交货日期的订单 − 平时 14 天会卖出去的量。没有交货日期的订单要的货，可以等客户定了日期再买，所以也算 buffer。
-- 14 天出货量 = 这个款式最近每天平均出库量 × 14（没有记款式的库存用整个品项的出货量）。
+- 所有地点的货当成一个池子对订单，订单先用 Warehouse 的货，再用 Service（回来就能出），最后才用 Display（要先进 Service repack）。选单一地点时也照这个算，只是只显示那个地点的部分，所以各地点加起来 = 全部。
+- **Dead stock** = 没有任何未完成的订单需要的货（不再扣 14 天出货量）。例：订单要 10、仓库有 15 → 仓库多的 5 件和 Service、Display 的全部都算 Dead，因为出货一定先拿仓库的。图表按 "多久没出货" 分段：90 天内、91–180、181–365、超过一年。
+- **Buffer stock（太早买的）** = 留给还没有交货日期的订单的货。例：库存 30、有日期的订单 5、没日期的 25 → buffer 25，金额 = 25 × 成本。
+- 顺序：每款货先给有日期的订单，再给没日期的订单（Buffer），剩下的是 Dead；同一件货只算一边。
 - 最后入库日期 = 还在库存里的那批货的入库日（库存批次记录；AutoCount 转入的期初库存也有日期）。放了几天 = 今天 − 最后入库日期。
 - 金额 = 数量 × 成本（v_inventory_value）。
 - 注意：ERP 的出库记录从 2026-09 才开始。
@@ -148,6 +149,7 @@
 **Suppliers**
 - 只算期间内开的、有填供应商的案子。
 - Service case rate = 这个供应商案子里的件数 ÷ 期间内从他那里收到的件数。例：收了 1,000 件，50 件出问题 = 5%。5% 以上红色。
+- 同一家公司的几个代码合成一行算（`SUPPLIER_GROUPS`）：Hookka Manufacturing (400-H003) + Hookka Industries (400-H004) + Ohana (400-O002)。
 - 超过 100% 显示 "check code"：表示收货登记在另一个供应商代码下（例如公司改名后换了代码）。
 - Average to close、各阶段天数：算法同上，只看这个供应商的案子。
 - 选季度或年份时，下面多一张表：每个供应商每个月收了几件、出事几件、比例多少。选单月就只有那个月。
@@ -158,7 +160,8 @@
 ## 4. Project Overview（项目 / 展会）
 
 - 项目按开始日期归到期间。
-- Sales：有在项目里填账（keyed books）就用填的；没填就用这个项目的销售单金额，COGS 用销售单成本。每个项目标明数字来源（Books / Sales Orders · not settled / No sales yet）。
+- 每个活动的数字 = 活动页 Financial Snapshot 的 "By Sales Orders" 那一栏（同一个算法 services/eventPnl.ts）：Sales = 销售单的货（不含 service 行）；Service revenue 单独一行；Transport fee = 品牌费率 % × 货 + 销售单的 service 成本；Commission、Merchandise = 品牌费率（Project Maintenance）× 货；Finance 入账的行用 Finance 的数。没开单的活动 Sales = 0，只算它的 Rental 等成本。已取消（status = cancelled）的活动不出现。董事（finance viewer）不需要 projects.finances 权限也能打开。Projects 表每行拆开：Sales、Service、COGS、GP、GP %、Rental、Setup、Transport、Commission、Merchandise、Others、Net profit、NP %、Collected（付款记录里已收的钱，跟活动页 Sales Orders 的 PAID 一样，含 draft、不含取消）、Collected %（已收 ÷ 订单总额，低于 50% 红色）。最后一栏 "Sales Orders daily?"：活动聊天里的销售报告，每张单都已在这个活动下开了销售单 = Daily；有没开的 = Not daily（几张 / 几张）；没存报告 = No chat report。对单规则跟活动页一样（lib/sales-report-bills.ts）。
+- Books not complete（已结束的活动，看 P&L 准不准）只看三种问题：① Sales Orders not daily（跟着单）：聊天销售报告里每张没开在这个活动下的单，没开的列单号、金额、销售员，开在别的活动下的列销售单号和那个活动（要搬）；② Rental missing or no sales（跟着活动）：没填 Rental，或填了 Rental 但没有销售单；③ No chat sales report（跟着活动）。
 - Gross profit = Sales − COGS。Net profit = Gross profit − 租金 − 佣金 − 搭建 − 运输 − 宣传品 − 其他。
 - Trend：先看每一年，点一年看它的四个季度，点一个季度看它的三个月，点一个月看这个月每周（1–7、8–14、15–21、22 号到月底）。点某一周，整页就切到那一周。
 - Where each ringgit of sales goes：只显示有金额的成本。

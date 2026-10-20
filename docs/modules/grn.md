@@ -150,7 +150,7 @@ go through `/api/scm/grns`.
   (STOCK_OUT). If the placed row was already moved on the rack board it refuses
   (`rack_already_moved`) rather than placing the goods twice. Both surfaces:
   desktop Edit mode (`GoodsReceivedDetail`) and the phone receipt detail
-  (`MobileGrnLineRack`, saves on pick); who may change it and the option list
+  (`MobileGrnLineRack`, saves on pick), and the Goods Receipt list's side panel (`GrnDrawerRack`, saves on pick; a split line is shown only). On a DRAFT split editor the FIRST rack of an unplaced line takes the whole line on the pick (`placeWhole`); only a second rack asks for its qty + Add. Rack pickers commit on Enter when the typed term names one rack (`enterPick` in `SearchableSelect`); who may change it and the option list
   live in the shared `vendor/scm/lib/grn-line-rack.ts` (`useGrnRackOptions`:
   this company's racks of the receipt's warehouse, plain labels for reading a
   saved pick back, and picker labels carrying the OTHER companies' stock on the

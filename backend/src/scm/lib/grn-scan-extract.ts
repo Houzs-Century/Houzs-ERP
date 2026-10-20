@@ -32,6 +32,9 @@ export type GrnExtractedLine = {
   // (Hookka's DO-2609-097) carries one of our POs per line and no header P.O.,
   // so without this every line fell back to item matching.
   poNo: string | null;
+  // The rack the receiving warehouse HANDWROTE beside this row ("R11-2"), as
+  // written, else null. Matched to a rack of the GRN's warehouse later.
+  rack: string | null;
 };
 
 export type GrnExtracted = {
@@ -86,7 +89,8 @@ OUTPUT: valid JSON only, this exact shape:
       "barcode": string | null,    // a separate barcode/EAN number if the row shows one distinct from itemCode
       "description": string | null,
       "qty": number,               // the number of SETS / UNITS delivered for this line; a positive number
-      "poNo": string | null        // the purchase order number printed on THIS row (e.g. "HC-PO-2609-148"), else null
+      "poNo": string | null,       // the purchase order number printed on THIS row (e.g. "HC-PO-2609-148"), else null
+      "rack": string | null        // the rack HANDWRITTEN beside THIS row by our warehouse (e.g. "R11-2", "L5-1"), else null
     }
   ]
 }
@@ -97,6 +101,7 @@ RULES:
 - qty is the delivered quantity as a number (strip any unit like "PCS"/"UNIT"). If a row has no readable quantity, use 0.
 - qty counts SETS / UNITS, never component pieces or cartons. Furniture delivery orders often print a "Set" (or "Unit") column AND a piece breakdown such as "1 HB + 2 Divan" with a "Total Qty" of 3. That row delivered ONE set: use the Set column (1), never the piece total (3).
 - A row's poNo is ONLY a purchase order number printed on that row, labelled "PO" / "P.O.". Never put an SO / sales order / REF / Our SO number there, and never copy the header P.O. No into a row. Transcribe it exactly as printed. No PO on the row -> null.
+- A row's rack is ONLY a short location the receiving warehouse wrote BY HAND (pen) beside the row, usually in the left margin: a letter L or R followed by numbers, e.g. "R7-2", "L8-1", "R:11-2", "L-19-2". Transcribe it as written; after the L or R it is only digits and separators, so a mark that looks like a letter there is a digit (a handwritten 6 often looks like "b"). If a value is crossed out and another is written beside it, use the one NOT crossed out. If one rack is written with a bracket or line spanning several rows, give every row under that bracket the same rack. Never take a printed code, a SO / PO / REF number, a tick or a quantity mark as a rack. No handwritten rack beside the row -> null.
 - Ignore sub-total / total / remarks / signature rows — only real product lines go in "lines".
 - Never invent a P.O. No, D.O. No or code you cannot read; use null.`;
 
@@ -127,6 +132,7 @@ export function normalizeGrnExtract(raw: unknown): GrnExtracted {
       description: str(o.description),
       qty: Math.max(0, num(o.qty)),
       poNo: str(o.poNo),
+      rack: str(o.rack),
     };
   });
   const isoDate = ((): string | null => {

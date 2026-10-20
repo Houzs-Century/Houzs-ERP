@@ -97,6 +97,10 @@ export function ProjectSalesOrdersBlock({
         {summary && (
           <>
             <Tile label="Opened" value={`${summary.count} · ${formatCurrency(summary.openedRm)}`} accent />
+            {/* The same split as the Financial Snapshot's By Sales Orders column
+                (owner 2026-10-20), so the two tally. */}
+            <Tile label="Sales" value={formatCurrency(summary.salesRm)} />
+            <Tile label="Service revenue" value={formatCurrency(summary.serviceRm)} />
             {summary.draftCount > 0 && (
               <span className="rounded-full border border-amber-500/40 bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-800">
                 {summary.draftCount} draft
@@ -193,6 +197,11 @@ export function ProjectSalesOrdersBlock({
                       >
                         {soStatusLabel(r.status)}
                       </span>
+                      {r.venue_differs && (
+                        <span title={`Venue on the order: ${r.venue_differs}`} className="ml-1 inline-flex rounded-full bg-amber-100 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-amber-800">
+                          Venue differs
+                        </span>
+                      )}
                     </td>
                   </tr>
                 );

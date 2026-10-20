@@ -7,8 +7,28 @@
 export interface OvProject {
   id: number; code: string; name: string; brand: string | null; organizer: string | null; venue: string | null;
   state: string | null; stage: string | null; startDate: string | null; endDate: string | null; eventType: string | null;
-  keyed: { income: number; cogs: number; rental: number; commission: number; setup: number; transport: number; merchandise: number; other: number };
-  salesOrders: { sen: number; costSen: number; count: number };
+  keyed: {
+    income: number; cogs: number; rental: number; commission: number; setup: number; transport: number; merchandise: number; other: number;
+    /** The same lines as fine as the Financial Snapshot (owner 2026-10-19). */
+    cogsMattSofa: number; cogsBedframe: number; cogsAccessories: number; transportFee: number; transportSetup: number;
+  };
+  /** costSplit: the orders' line cost by product group, only for an event with no COGS keyed. */
+  salesOrders: { sen: number; costSen: number; count: number; costSplit: { mattSofa: number; bedframe: number; accessories: number } };
+  /** The event's chat sales report against its Sales Orders; null = no report saved. */
+  chatReport: { bills: number; billsSen: number; opened: number; openedSen: number; otherEvent: number } | null;
+  /** The event page's P&L (backend services/eventPnl.ts), By Sales Orders when an
+   *  order was opened, in RM; null when the server could not build it. */
+  pnl: OvPnl | null;
+  /** The orders' total (drafts in) and what the payment ledger says was paid, in sen. */
+  collection: { totalSen: number; paidSen: number };
+}
+
+export interface OvPnl {
+  fromOrders: boolean;
+  sales: number; serviceRevenue: number;
+  cogs: { mattSofa: number; bedframe: number; accessories: number; other: number };
+  rental: number; setup: number; transportSetup: number; others: number;
+  transportFee: number; commission: number; merchandise: number;
 }
 
 export type SalesSource = "keyed" | "sales_orders" | "none";
@@ -16,10 +36,28 @@ export type SalesSource = "keyed" | "sales_orders" | "none";
 export interface Figures {
   sales: number; cogs: number; rental: number; commission: number; setup: number; transport: number; merchandise: number; other: number;
   otherCost: number; gp: number; np: number; salesSource: SalesSource; cogsFromSalesOrders: boolean;
+  /** The orders' service charges, beside Sales. */
+  serviceRevenue: number;
+  cogsLines: { mattSofa: number; bedframe: number; accessories: number; other: number };
+  transportFee: number; transportSetup: number;
 }
 
-/** One project's figures, in ringgit. */
+/** One project's figures, in ringgit: the event page's P&L when the server sent
+ *  it (owner 2026-10-20: the costs follow the orders opened), else the keyed
+ *  lines and the orders' totals. */
 export function figuresOf(p: OvProject): Figures {
+  const e = p.pnl;
+  if (e) {
+    const cogs = e.cogs.mattSofa + e.cogs.bedframe + e.cogs.accessories + e.cogs.other;
+    const transport = e.transportFee + e.transportSetup;
+    const otherCost = e.setup + transport + e.commission + e.merchandise + e.others;
+    return {
+      sales: e.sales, cogs, rental: e.rental, commission: e.commission, setup: e.setup, transport, merchandise: e.merchandise, other: e.others,
+      otherCost, gp: e.sales - cogs, np: e.sales + e.serviceRevenue - cogs - e.rental - otherCost,
+      salesSource: e.fromOrders ? "sales_orders" : "none", cogsFromSalesOrders: e.fromOrders,
+      serviceRevenue: e.serviceRevenue, cogsLines: e.cogs, transportFee: e.transportFee, transportSetup: e.transportSetup,
+    };
+  }
   const k = p.keyed;
   const salesSource: SalesSource = k.income > 0 ? "keyed" : p.salesOrders.sen > 0 ? "sales_orders" : "none";
   const sales = salesSource === "keyed" ? k.income : p.salesOrders.sen / 100;
@@ -27,17 +65,31 @@ export function figuresOf(p: OvProject): Figures {
   const cogs = cogsFromSalesOrders ? p.salesOrders.costSen / 100 : k.cogs;
   const otherCost = k.commission + k.setup + k.transport + k.merchandise + k.other;
   const gp = sales - cogs;
-  return { sales, cogs, rental: k.rental, commission: k.commission, setup: k.setup, transport: k.transport, merchandise: k.merchandise, other: k.other, otherCost, gp, np: gp - k.rental - otherCost, salesSource, cogsFromSalesOrders };
+  const sp = p.salesOrders.costSplit;
+  const cogsLines = cogsFromSalesOrders
+    ? { mattSofa: sp.mattSofa / 100, bedframe: sp.bedframe / 100, accessories: sp.accessories / 100, other: cogs - (sp.mattSofa + sp.bedframe + sp.accessories) / 100 }
+    : { mattSofa: k.cogsMattSofa, bedframe: k.cogsBedframe, accessories: k.cogsAccessories, other: 0 };
+  return { sales, cogs, rental: k.rental, commission: k.commission, setup: k.setup, transport: k.transport, merchandise: k.merchandise, other: k.other, otherCost, gp, np: gp - k.rental - otherCost, salesSource, cogsFromSalesOrders,
+    serviceRevenue: 0, cogsLines, transportFee: k.transportFee, transportSetup: k.transportSetup };
 }
 
-export interface Totals { projects: number; sales: number; cogs: number; rental: number; commission: number; setup: number; transport: number; merchandise: number; other: number; otherCost: number; gp: number; np: number; fromSalesOrders: number; noSales: number }
+export interface Totals {
+  projects: number; sales: number; cogs: number; rental: number; commission: number; setup: number; transport: number; merchandise: number; other: number; otherCost: number; gp: number; np: number; fromSalesOrders: number; noSales: number;
+  /** COGS split as keyed, or for an event with none keyed, its Sales Orders' cost by product group;
+   *  cogsFromSo = the part of that cost no line accounts for (order total above its lines). */
+  cogsMattSofa: number; cogsBedframe: number; cogsAccessories: number; cogsFromSo: number; transportFee: number; transportSetup: number;
+  serviceRevenue: number;
+}
 
 export function totalsOf(ps: OvProject[]): Totals {
-  const t: Totals = { projects: ps.length, sales: 0, cogs: 0, rental: 0, commission: 0, setup: 0, transport: 0, merchandise: 0, other: 0, otherCost: 0, gp: 0, np: 0, fromSalesOrders: 0, noSales: 0 };
+  const t: Totals = { projects: ps.length, sales: 0, cogs: 0, rental: 0, commission: 0, setup: 0, transport: 0, merchandise: 0, other: 0, otherCost: 0, gp: 0, np: 0, fromSalesOrders: 0, noSales: 0,
+    cogsMattSofa: 0, cogsBedframe: 0, cogsAccessories: 0, cogsFromSo: 0, transportFee: 0, transportSetup: 0, serviceRevenue: 0 };
   for (const p of ps) {
     const f = figuresOf(p);
     t.sales += f.sales; t.cogs += f.cogs; t.rental += f.rental; t.commission += f.commission; t.setup += f.setup;
     t.transport += f.transport; t.merchandise += f.merchandise; t.other += f.other; t.otherCost += f.otherCost; t.gp += f.gp; t.np += f.np;
+    t.cogsMattSofa += f.cogsLines.mattSofa; t.cogsBedframe += f.cogsLines.bedframe; t.cogsAccessories += f.cogsLines.accessories; t.cogsFromSo += f.cogsLines.other;
+    t.transportFee += f.transportFee; t.transportSetup += f.transportSetup; t.serviceRevenue += f.serviceRevenue;
     if (f.salesSource === "sales_orders") t.fromSalesOrders += 1;
     if (f.salesSource === "none") t.noSales += 1;
   }

@@ -44,7 +44,7 @@ import { recordAi, requestAiTag, type AiUsageTag } from '../../services/aiUsage'
 // factored insert+audit core the interactive POST /:docNo/payments route uses.
 import { createDraftSalesOrder, recordSoPaymentRow } from './mfg-sales-orders';
 import { todayMyt } from '../lib/my-time';
-import { activeCompanyId } from '../lib/companyScope';
+import { activeCompanyId, scopeToCompanyIdOrOpen } from '../lib/companyScope';
 import { type ScanDocumentType, DEFAULT_SCAN_DOCUMENT_TYPE, coerceScanDocumentType } from '../lib/scan-document-type';
 import { jobToJson } from './scan-so-serialize';
 import { normalizePhone, fmtSen } from '../shared';
@@ -54,8 +54,9 @@ import {
   installmentPlanToMonths,
   type ExtractedPayment,
 } from '../lib/scan-receipt-plan';
-import { safeScanDepositSen } from '../lib/scan-header-deposit';
+import { depositSenAfterReceiptPass, safeScanDepositSen } from '../lib/scan-header-deposit';
 import { scanTimer } from '../lib/scan-timing';
+import { scanCatalogSkus, type CatalogSku, type ScanCatalogRow } from '../lib/scan-catalog-skus';
 import { readSlipWithAliases } from '../lib/scan-field-aliases';
 import { ttlCached } from '../lib/ttl-cache';
 import { keepScanFile, linkScanFiles } from '../lib/scan-files';
@@ -192,12 +193,6 @@ async function localityForPostcode(
 // ===========================================================================
 // Catalog — pulled live from Supabase on every /extract call.
 // ===========================================================================
-type CatalogSku = {
-  code: string;
-  name: string;
-  category: string;       // SOFA | BEDFRAME | MATTRESS | ACCESSORY | SERVICE
-  baseModel: string | null;
-};
 type CatalogFabric = { code: string; description: string | null };
 // SOFA Special Add-ons (scm.special_addons, migration 0134) — the configured
 // specials the SO line editor's accordion offers. ACTIVE rows only; injected
@@ -402,7 +397,7 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
     paginateAll((from, to) => {
       let q = sb
         .from('mfg_products')
-        .select('code, name, category, base_model')
+        .select('code, name, category, base_model, model:product_models(active)')
         .eq('status', 'ACTIVE');
       if (companyId != null) q = q.eq('company_id', companyId);
       return q.order('category').order('code').range(from, to);
@@ -472,14 +467,7 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
     loadVenueNames(db),
   ]);
 
-  const skus: CatalogSku[] = ((prodRes.data as Array<{
-    code: string; name: string; category: string; base_model: string | null;
-  }> | null) ?? []).map((p) => ({
-    code: p.code,
-    name: p.name,
-    category: p.category,
-    baseModel: p.base_model ?? null,
-  }));
+  const skus = scanCatalogSkus(prodRes.data as ScanCatalogRow[] | null);
 
   const fabrics: CatalogFabric[] = ((fabRes.data as Array<{
     fabric_code: string; fabric_description: string | null;
@@ -3273,10 +3261,10 @@ async function recordScanReceiptPayments(
     salespersonId: string;
     salespersonName: string | null;
   },
-): Promise<{ recorded: number; failed: number; skippedDuplicate: number }> {
+): Promise<{ recorded: number; failed: number; skippedDuplicate: number; depositBooked: boolean }> {
   const { parsed } = args;
   const receiptIdxs = classifiedReceiptIndices(parsed, args.uploadedImages);
-  if (receiptIdxs.length === 0) return { recorded: 0, failed: 0, skippedDuplicate: 0 };
+  if (receiptIdxs.length === 0) return { recorded: 0, failed: 0, skippedDuplicate: 0, depositBooked: false };
 
   // Double-book guard. The create core books its own is_deposit ledger row
   // for the POS vocabulary (lowercase methods) — the scan draft's header
@@ -3291,11 +3279,11 @@ async function recordScanReceiptPayments(
     .limit(1);
   if (existingErr) {
     console.error('[scan-job] payment pre-check failed:', args.docNo, existingErr.message);
-    return { recorded: 0, failed: receiptIdxs.length, skippedDuplicate: 0 };
+    return { recorded: 0, failed: receiptIdxs.length, skippedDuplicate: 0, depositBooked: false };
   }
   if (((existingRows as unknown[] | null) ?? []).length > 0) {
     console.warn('[scan-job] SO already has payment rows — skipping receipt payments:', args.docNo);
-    return { recorded: 0, failed: 0, skippedDuplicate: receiptIdxs.length };
+    return { recorded: 0, failed: 0, skippedDuplicate: receiptIdxs.length, depositBooked: false };
   }
 
   // MULTI-RECEIPT — the pure planner decides the rows to book (one per receipt
@@ -3320,7 +3308,7 @@ async function recordScanReceiptPayments(
     nowMs: Date.now(),
     todayStr: todayMyt(),
   });
-  if (planned.length === 0) return { recorded: 0, failed: 0, skippedDuplicate: 0 };
+  if (planned.length === 0) return { recorded: 0, failed: 0, skippedDuplicate: 0, depositBooked: false };
 
   // Receipt dedup ACROSS SOs (owner 2026-07-04: never book money off a receipt
   // that already backs a payment row on ANY order). Receipt sha256s are not
@@ -3383,6 +3371,7 @@ async function recordScanReceiptPayments(
   let recorded = 0;
   let failed = 0;
   let skippedDuplicate = 0;
+  let depositBooked = false;
   for (const row of planned) {
     // A receipt that already backs a payment row books NOTHING — the caller
     // appends the plain "matching payment already recorded" note instead.
@@ -3422,13 +3411,14 @@ async function recordScanReceiptPayments(
         console.error('[scan-job] receipt payment insert failed:', args.docNo, errorMessage);
       } else {
         recorded += 1;
+        if (row.isDeposit) depositBooked = true;
       }
     } catch (e) {
       failed += 1;
       console.error('[scan-job] receipt payment threw:', args.docNo, (e as Error).message);
     }
   }
-  return { recorded, failed, skippedDuplicate };
+  return { recorded, failed, skippedDuplicate, depositBooked };
 }
 
 // Extracted slip -> DRAFT SO create body. Mirrors the SHIPPED headless client
@@ -3752,6 +3742,11 @@ function buildDraftSoBodyFromSlip(
        resolves it from the salesperson's current exhibition project — which is
        why a no-match must stay null rather than be coerced. */
     venue: parsed.locationMatch?.value ?? null,
+    /* The slip's own written date. With the venue above it is where the order's
+       FAIR is looked up first (owner 2026-10-19 — fair-binding.ts::
+       resolveScanFair), and a fair found that way takes it as the Fair Day. Read
+       only for a scan; checked there (a misread or future date counts as none). */
+    slipDate: parsed.slipDate ?? null,
     // Payment header fields (validated matches; the operator reviews the
     // draft before it becomes a real order). No payments[] in the create
     // body — the ledger rows are booked AFTER the create by
@@ -4047,6 +4042,7 @@ async function runScanJob(
       // uses. GUARD: never fail the job — the DRAFT stands; a failure only
       // appends a plain note (job stays done with so_doc_no).
       let paymentNote: string | null = null;
+      let depositBooked = false;
       try {
         const pay = await recordScanReceiptPayments(svc, {
           docNo,
@@ -4058,6 +4054,7 @@ async function runScanJob(
           salespersonId: job.salespersonId,
           salespersonName: job.salespersonName,
         });
+        depositBooked = pay.depositBooked;
         if (pay.failed > 0) {
           paymentNote = 'Draft created; the payment could not be recorded — please add it on the order.';
         } else if (pay.skippedDuplicate > 0) {
@@ -4068,6 +4065,15 @@ async function runScanJob(
       } catch (e) {
         console.error('[scan-job] receipt payment recording threw:', job.id, (e as Error).message);
         paymentNote = 'Draft created; the payment could not be recorded — please add it on the order.';
+      }
+      // HC-0132: a header deposit with no is_deposit row behind it counts as Paid
+      // while the Payments list is empty. Clear it; the operator adds the payment.
+      const stampedDepositSen = typeof body.depositSen === 'number' ? body.depositSen : 0;
+      if (depositSenAfterReceiptPass(stampedDepositSen, { depositRowBooked: depositBooked }) !== stampedDepositSen) {
+        const { error: clearErr } = await scopeToCompanyIdOrOpen(
+          svc.from('mfg_sales_orders').update({ deposit_sen: 0 }).eq('doc_no', docNo), job.companyId);
+        if (clearErr) console.error('[scan-job] could not clear unbacked header deposit:', docNo, clearErr.message);
+        paymentNote ??= 'Draft created; the payment could not be recorded — please add it on the order.';
       }
       await linked;
       // Private "your scan is a draft now" notice. Duplicate/payment caveats

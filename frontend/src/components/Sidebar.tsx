@@ -374,6 +374,9 @@ export const NAV_TABS: NavTab[] = [
         label: "Project Overview",
         icon: DollarSign,
         pageAccess: "projects.finances",
+        // Directors open it without the page-access row (owner 2026-10-20: they
+        // check which orders were not opened); still finance viewers only.
+        showForDirector: true,
         requireFinanceViewer: true,
       },
       {
@@ -522,6 +525,10 @@ export const NAV_TABS: NavTab[] = [
         anyAccess: ["scm.sales", "scm.sales.orders", "scm.sales.delivery", "scm.sales.invoices", "scm.sales.returns"],
         children: [
           { to: "/scm/sales-orders", label: "Sales Orders", icon: ShoppingCart, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.orders"] },
+          // Orders with no fair link, for the office to settle (owner 2026-10-19:
+          // 「先做 Fair links to settle 菜单」). The page existed only by URL; the
+          // red number is how many it lists, from the same server read.
+          { to: "/scm/fair-pending", label: "Fair Links to Settle", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.orders"], hideForSalesRep: true, badge: "fair-links-to-settle" },
           // The office / director path to Amendments. A rep reaches it via the
           // rep-only leaf above instead, so this carries hideForSalesRep like its
           // DO / SI siblings — belt-and-braces against the parent's flag being
@@ -805,6 +812,8 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/accounting?tab=products", label: "Product Profit", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
           // What each event cost, from the ledger — voucher and AP invoice lines tagged with it (owner 2026-09-30, 5a).
           { to: "/scm/accounting?tab=events", label: "Event costs", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+          // Each fair's commission and each order's under it — goods × brand rate once 30% is paid (owner 2026-10-20).
+          { to: "/scm/accounting?tab=commission", label: "Event Commission", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
           { to: "/reports/fair-report", label: "Sales Report", icon: BarChart3, requireFairReport: true, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance", "scm.finance.accounting", "scm.finance.outstanding", "projects.finances"] },
         ],
       },

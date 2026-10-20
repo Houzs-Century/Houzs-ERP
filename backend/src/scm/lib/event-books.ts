@@ -53,20 +53,75 @@ export type BooksRead = { ok: true; legs: BooksLeg[] } | { ok: false; reason: st
 export async function readEventBooks(db: D1Database, projectId: number, companyId: number | null): Promise<BooksRead> {
   try {
     const res = await db.prepare(
-      `SELECT l.id::text AS leg_id, l.account_code, l.debit_sen, l.credit_sen, l.notes,
-              je.je_no, to_char(je.entry_date, 'YYYY-MM-DD') AS entry_date, je.source_type, je.source_doc_no,
-              je.posted, je.reversed, je.reversed_by_je::text AS reversed_by_je,
-              a.account_name, a.account_type, a.pms_row
-         FROM scm.journal_entry_lines l
-         JOIN scm.journal_entries je ON je.id = l.journal_entry_id
-         LEFT JOIN scm.accounts a ON a.company_id = l.company_id AND a.account_code = l.account_code
+      `${GL_LEGS}
         WHERE l.project_id = ?${companyId != null ? ' AND l.company_id = ?' : ''}
-        ORDER BY je.entry_date, je.je_no, l.line_no`
+        ${GL_ORDER}`
     ).bind(projectId, ...(companyId != null ? [companyId] : [])).all<BooksLeg>();
     return { ok: true, legs: res.results ?? [] };
   } catch (e) {
     return { ok: false, reason: e instanceof Error ? e.message : String(e) };
   }
+}
+
+/* The ONE read of an event's tagged legs, shared by the event page (one event)
+   and the Projects list (a page of events). */
+const GL_LEGS = `SELECT l.project_id, l.id::text AS leg_id, l.account_code, l.debit_sen, l.credit_sen, l.notes,
+              je.je_no, to_char(je.entry_date, 'YYYY-MM-DD') AS entry_date, je.source_type, je.source_doc_no,
+              je.posted, je.reversed, je.reversed_by_je::text AS reversed_by_je,
+              a.account_name, a.account_type, a.pms_row
+         FROM scm.journal_entry_lines l
+         JOIN scm.journal_entries je ON je.id = l.journal_entry_id
+         LEFT JOIN scm.accounts a ON a.company_id = l.company_id AND a.account_code = l.account_code`;
+const GL_ORDER = 'ORDER BY je.entry_date, je.je_no, l.line_no';
+
+/** Marks a leg read from a voucher that is CHECKED but not yet approved. */
+export const PV_CHECKED_SOURCE = 'PV_CHECKED';
+
+/**
+ * Payment vouchers CHECKED but not yet approved, as legs the books count
+ * (owner 2026-10-19: 「改成 pv checked」 — the event row takes Finance's figure
+ * once a voucher is checked, not only once it posts).
+ *
+ * A voucher only reaches the GL when it is APPROVED (approval posts it), so a
+ * checked one has no leg yet; this reads its tagged lines instead. Status stays
+ * DRAFT through the whole four-layer cycle (mig 0343), so "checked, not yet
+ * approved" is `checked_at` set and `approved_at` not. A reject clears every
+ * marker and the line drops out — the typed figure comes back; an approval
+ * posts the GL leg and the line drops out here, so a voucher is never counted
+ * twice. AP invoices have no Checked stage and still count from Post.
+ */
+export async function readCheckedVoucherLegs(db: D1Database, projectId: number, companyId: number | null): Promise<BooksRead> {
+  try {
+    const res = await db.prepare(
+      `${CHECKED_PV_LEGS}
+        WHERE l.project_id = ?${companyId != null ? ' AND l.company_id = ?' : ''}
+          AND ${CHECKED_NOT_APPROVED}
+        ${CHECKED_ORDER}`
+    ).bind(projectId, ...(companyId != null ? [companyId] : [])).all<BooksLeg>();
+    return { ok: true, legs: res.results ?? [] };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/* The ONE read of checked-not-approved voucher lines (event page and list). */
+const CHECKED_PV_LEGS = `SELECT l.project_id, l.id::text AS leg_id, l.debit_account_code AS account_code, l.amount_sen AS debit_sen, 0 AS credit_sen,
+              l.description AS notes, pv.pv_number AS je_no, to_char(pv.voucher_date, 'YYYY-MM-DD') AS entry_date,
+              '${PV_CHECKED_SOURCE}' AS source_type, pv.pv_number AS source_doc_no,
+              true AS posted, false AS reversed, NULL::text AS reversed_by_je,
+              a.account_name, a.account_type, a.pms_row
+         FROM scm.payment_voucher_lines l
+         JOIN scm.payment_vouchers pv ON pv.id = l.pv_id
+         LEFT JOIN scm.accounts a ON a.company_id = l.company_id AND a.account_code = l.debit_account_code`;
+const CHECKED_NOT_APPROVED = "pv.status = 'DRAFT' AND pv.checked_at IS NOT NULL AND pv.approved_at IS NULL";
+const CHECKED_ORDER = 'ORDER BY pv.voucher_date, pv.pv_number, l.line_no';
+
+/** The posted books and the checked vouchers as one read. Either failing is a
+    failed read — the page then keeps its typed figures and says so. */
+export function withCheckedVouchers(posted: BooksRead, checked: BooksRead): BooksRead {
+  if (!posted.ok) return posted;
+  if (!checked.ok) return checked;
+  return { ok: true, legs: [...posted.legs, ...checked.legs] };
 }
 
 /** The row a typed or auto category sits in on the event page. COGS and
@@ -147,7 +202,10 @@ export function booksLinesFor(projectId: number, legs: BooksLeg[]): BooksLine[] 
       archived_at: null,
       auto_source: null,
       source: 'books',
-      doc_no: leg.source_doc_no || leg.je_no,
+      /* A checked voucher says so: it is Finance's figure, not yet in the GL. */
+      doc_no: leg.source_type === PV_CHECKED_SOURCE
+        ? `${leg.source_doc_no || leg.je_no} (checked)`
+        : leg.source_doc_no || leg.je_no,
       account_code: leg.account_code,
       account_name: leg.account_name,
     });
@@ -202,4 +260,43 @@ export function applyEventBooks<L extends LedgerLine>(
       replaced,
     },
   };
+}
+
+/** Legs of several events at once, by event. An event with none is absent. */
+export type BooksManyRead = { ok: true; byProject: Map<number, BooksLeg[]> } | { ok: false; reason: string };
+
+async function readMany(db: D1Database, ids: readonly number[], companyId: number | null, select: string, extraWhere: string, order: string): Promise<BooksManyRead> {
+  const unique = [...new Set(ids)];
+  const byProject = new Map<number, BooksLeg[]>();
+  if (unique.length === 0) return { ok: true, byProject };
+  try {
+    const res = await db.prepare(
+      `${select}
+        WHERE l.project_id IN (${unique.map(() => '?').join(', ')})${companyId != null ? ' AND l.company_id = ?' : ''}${extraWhere ? ` AND ${extraWhere}` : ''}
+        ${order}`
+    ).bind(...unique, ...(companyId != null ? [companyId] : [])).all<BooksLeg & { project_id: number | string }>();
+    for (const leg of res.results ?? []) {
+      const id = Number(leg.project_id);
+      const list = byProject.get(id);
+      if (list) list.push(leg); else byProject.set(id, [leg]);
+    }
+    return { ok: true, byProject };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Several events' books at once — the posted legs AND the checked vouchers, the
+ *  same two reads the event page makes (projectFinanceLines.ts), for a page of
+ *  events (owner 2026-10-19: the Projects list shows the event page's P&L). Either
+ *  read failing is a failed read. */
+export async function readEventBooksMany(db: D1Database, projectIds: readonly number[], companyId: number | null): Promise<BooksManyRead> {
+  const [posted, checked] = await Promise.all([
+    readMany(db, projectIds, companyId, GL_LEGS, '', GL_ORDER),
+    readMany(db, projectIds, companyId, CHECKED_PV_LEGS, CHECKED_NOT_APPROVED, CHECKED_ORDER),
+  ]);
+  if (!posted.ok) return posted;
+  if (!checked.ok) return checked;
+  for (const [id, legs] of checked.byProject) posted.byProject.set(id, [...(posted.byProject.get(id) ?? []), ...legs]);
+  return posted;
 }

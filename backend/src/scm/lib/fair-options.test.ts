@@ -11,6 +11,11 @@ import {
   fairDayOnSave,
   fairDayMissing,
   linkedFairOf,
+  keyerFairDefault,
+  fairWhyOf,
+  fairMissingMessage,
+  companyUsesKeyerFair,
+  resolveFairWithKeyer,
   type FairProjectRow,
 } from './fair-options';
 
@@ -449,5 +454,134 @@ describe('linkedFairOf — a recorded pick reads back as the row that was picked
 
   it('a fair cancelled after the link still reads back — it is what the order is attributed to', () => {
     expect(linkedFairOf(fair({ projectId: 505, status: 'cancelled' }))?.organizer).toBe('REX');
+  });
+});
+
+describe("keyerFairDefault — a new order starts with the KEYER's fair (owner 2026-10-19)", () => {
+  /* The keyer's own fairs, as loadKeyerFairs reads them (PIC or Sales Attending). */
+  const SUNWAY = fair({ projectId: 2228, venue: 'SUNWAY CARNIVAL MALL', organizer: 'MALL MGT', brand: 'DUNLOPILLO', startDate: '2026-09-25', endDate: '2026-09-29' });
+  const MV_BIGHOME = fair({ projectId: 2301, organizer: 'BIGHOME', brand: 'AKEMI', startDate: '2026-10-02', endDate: '2026-10-04' });
+  const IOI = fair({ projectId: 2320, venue: 'IOIGECC', organizer: 'MLE', brand: 'AKEMI', startDate: '2026-10-17', endDate: '2026-10-20' });
+
+  it('a fair running on the order date wins', () => {
+    const d = keyerFairDefault([SUNWAY, MV_BIGHOME, IOI], '2026-10-19');
+    expect(d.how).toBe('ongoing');
+    expect(d.event).toMatchObject({ venue: 'IOIGECC', organizer: 'MLE', startDate: '2026-10-17', endDate: '2026-10-20', projectIds: [2320] });
+    expect(d.why).toBeNull();
+  });
+
+  it('none running: the latest one they stood at, inside the dropdown window', () => {
+    const d = keyerFairDefault([SUNWAY, MV_BIGHOME], '2026-10-19');
+    expect(d.how).toBe('latest');
+    expect(d.event?.key).toBe(buildFairOptions([MV_BIGHOME], '2026-10-19').earlier[0]?.key);
+  });
+
+  it('the event it fills in is the dropdown row for the same event, so the picker lights it up', () => {
+    const d = keyerFairDefault([IOI], '2026-10-19');
+    const ergotex = fair({ projectId: 2321, venue: 'IOIGECC', organizer: 'MLE', brand: 'ERGOTEX', startDate: '2026-10-17', endDate: '2026-10-20' });
+    expect(buildFairOptions([IOI, ergotex], '2026-10-19').running.map((o) => o.key)).toContain(d.event?.key);
+    /* Only the KEYER's booths ride on the default; the dropdown row lists the event's. */
+    expect(d.event?.projectIds).toEqual([2320]);
+  });
+
+  it('the last fair ended before the window: no event, and says which fair', () => {
+    const d = keyerFairDefault([SUNWAY], '2026-10-30');
+    expect(d.event).toBeNull();
+    expect(d.why).toEqual({ code: 'too_old', venue: 'SUNWAY CARNIVAL MALL', startDate: '2026-09-25', endDate: '2026-09-29' });
+  });
+
+  it('the window is the dropdown window: a fair that ended 28 days back still counts', () => {
+    expect(keyerFairDefault([SUNWAY], '2026-10-27').how).toBe('latest');
+    expect(keyerFairDefault([SUNWAY], '2026-10-28').why?.code).toBe('too_old');
+  });
+
+  it('on no fair at all: no_fair', () => {
+    expect(keyerFairDefault([], '2026-10-19')).toEqual({ event: null, how: null, why: { code: 'no_fair' } });
+  });
+
+  it('never a fair that has not started, a cancelled one, or one with no organizer', () => {
+    const later = fair({ projectId: 2400, startDate: '2026-10-25', endDate: '2026-10-27' });
+    const cancelled = fair({ projectId: 2401, startDate: '2026-10-18', endDate: '2026-10-20', status: 'cancelled' });
+    const noOrganizer = fair({ projectId: 2402, organizer: null, startDate: '2026-10-18', endDate: '2026-10-20' });
+    expect(keyerFairDefault([later, cancelled, noOrganizer], '2026-10-19').why).toEqual({ code: 'no_fair' });
+  });
+
+  it('two running at once: the one that started last, then the shorter, then the lower id', () => {
+    const long = fair({ projectId: 10, venue: 'A', startDate: '2026-10-15', endDate: '2026-10-30' });
+    const short = fair({ projectId: 11, venue: 'B', startDate: '2026-10-15', endDate: '2026-10-20' });
+    const older = fair({ projectId: 9, venue: 'C', startDate: '2026-10-10', endDate: '2026-10-20' });
+    expect(keyerFairDefault([long, short, older], '2026-10-19').event?.venue).toBe('B');
+    expect(keyerFairDefault([long, older], '2026-10-19').event?.venue).toBe('A');
+  });
+
+  it('an unreadable date answers nothing rather than a guess', () => {
+    expect(keyerFairDefault([SUNWAY], 'not a date')).toEqual({ event: null, how: null, why: null });
+  });
+});
+
+describe('fairWhyOf / fairMissingMessage — the reason travels back checked', () => {
+  it('keeps only the two codes, with real dates', () => {
+    expect(fairWhyOf({ code: 'no_fair' })).toEqual({ code: 'no_fair' });
+    expect(fairWhyOf({ code: 'too_old', venue: ' X ', startDate: '2026-09-25', endDate: 'junk' }))
+      .toEqual({ code: 'too_old', venue: 'X', startDate: '2026-09-25', endDate: null });
+    expect(fairWhyOf({ code: 'too_old', venue: 'X', startDate: 'junk' })).toBeNull();
+    expect(fairWhyOf({ code: 'not_in_team' })).toBeNull();
+    expect(fairWhyOf('no_fair')).toBeNull();
+    expect(fairWhyOf(null)).toBeNull();
+  });
+
+  it('a one-day last fair names one day', () => {
+    expect(fairMissingMessage({ code: 'too_old', venue: 'KLCC', startDate: '2026-07-04', endDate: null }))
+      .toBe('No fair found for you: your last fair (KLCC, 07/04) ended over a month ago. Pick a fair yourself, or ask the person in charge to add you.');
+  });
+
+  it('only Houzs is on the keyer rule; 2990 is unchanged', () => {
+    expect(companyUsesKeyerFair('HOUZS')).toBe(true);
+    expect(companyUsesKeyerFair(' houzs ')).toBe(true);
+    expect(companyUsesKeyerFair('2990')).toBe(false);
+    expect(companyUsesKeyerFair(undefined)).toBe(false);
+  });
+});
+
+describe("resolveFairWithKeyer — the brand's booth first, then the keyer's own (owner 2026-10-19)", () => {
+  const MV = (projectId: number, brand: string, organizer = 'REX', startDate = '2026-09-11', endDate = '2026-09-13') =>
+    fair({ projectId, brand, organizer, startDate, endDate });
+
+  it("the brand's booth stands even when the keyer stood at another booth", () => {
+    const r = resolveFairWithKeyer({ candidates: [MV(340, 'AKEMI'), MV(341, 'ZANOTTI')], brand: 'AKEMI', organizer: 'REX', keyerProjectIds: new Set([341]) });
+    expect(r).toMatchObject({ projectId: 340, match: 'PICKED' });
+  });
+
+  it("the brand has no booth there: the keyer's own booth", () => {
+    const r = resolveFairWithKeyer({ candidates: [MV(340, 'AKEMI'), MV(341, 'ZANOTTI')], brand: 'BEDFRAME', organizer: 'REX', keyerProjectIds: new Set([341]) });
+    expect(r).toEqual({ projectId: 341, match: 'PICKED', candidateIds: [340, 341] });
+  });
+
+  it("no brand and several booths: the keyer's own booth", () => {
+    const r = resolveFairWithKeyer({ candidates: [MV(340, 'AKEMI'), MV(341, 'ZANOTTI')], brand: null, organizer: 'REX', keyerProjectIds: new Set([340]) });
+    expect(r.projectId).toBe(340);
+  });
+
+  it('a place with two events: the one the keyer stood at, and the brand decides inside it', () => {
+    const r = resolveFairWithKeyer({
+      candidates: [MV(340, 'AKEMI'), MV(2301, 'AKEMI', 'BIGHOME', '2026-10-02', '2026-10-04'), MV(2302, 'DUNLOPILLO', 'BIGHOME', '2026-10-02', '2026-10-04')],
+      brand: 'AKEMI', organizer: null, keyerProjectIds: new Set([2302]),
+    });
+    expect(r.projectId).toBe(2301);
+  });
+
+  it('the keyer on no booth there, or on two: the plain answer stays for a person', () => {
+    const candidates = [MV(340, 'AKEMI'), MV(341, 'ZANOTTI'), MV(342, 'ERGOTEX')];
+    expect(resolveFairWithKeyer({ candidates, brand: 'BEDFRAME', organizer: 'REX', keyerProjectIds: new Set() }).match).toBe('UNMATCHED');
+    expect(resolveFairWithKeyer({ candidates, brand: 'BEDFRAME', organizer: 'REX', keyerProjectIds: new Set([341, 342]) }).match).toBe('UNMATCHED');
+  });
+
+  it('two records of one booth are still one booth', () => {
+    const r = resolveFairWithKeyer({ candidates: [MV(340, 'AKEMI'), MV(342, 'ERGOTEX'), MV(2250, 'ERGOTEX')], brand: 'BEDFRAME', organizer: 'REX', keyerProjectIds: new Set([342, 2250]) });
+    expect(r.projectId).toBe(342);
+  });
+
+  it('nothing there at all stays PENDING', () => {
+    expect(resolveFairWithKeyer({ candidates: [], brand: 'AKEMI', organizer: 'REX', keyerProjectIds: new Set([1]) }).match).toBe('PENDING');
   });
 });

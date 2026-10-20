@@ -113,6 +113,7 @@ import type {
   StockTransfer,
   FinanceLine,
   FinanceBooks,
+  EventPnl,
   ProjectAttachment,
   ProjectDefect,
   ProjectTrip,
@@ -142,6 +143,7 @@ import { SPEC_INPUT_CLASS, QuickRentalField, SpecTextField, SpecCell, SpecValue 
 import { LogisticsDateTimeField, GrabHelperBox, type CrewMember } from "./projects/logisticsParts";
 import { type PhasePhoto, PhasePhotosSection, PhotoGroup } from "./projects/phasePhotos";
 import { FinanceAttachmentsSection, SnapshotKpi, SnapshotRow } from "./projects/financeLedgerParts";
+import { EventPnlTable } from "./projects/EventPnlTable";
 import { ProjectOverviewPage } from "./projects/ProjectOverviewPage";
 
 interface ProjectDetail {
@@ -249,6 +251,8 @@ interface ProjectDetail {
   finance_lines: FinanceLine[];
   /** The books on the event (payment-request item 5); null when finance is hidden. */
   finance_books?: FinanceBooks | null;
+  /** The two P&Ls (owner 2026-10-16) — services/eventPnl.ts; null on an older server. */
+  finance_pnl?: EventPnl | null;
   stock_transfers: StockTransfer[];
   checklist: ChecklistItem[];
   checklist_comments: ChecklistComment[];
@@ -422,8 +426,10 @@ export function Projects() {
   const canProjectMaintenance = access.maintenance === "full";
   const allowed: ProjectsView[] = PROJECTS_VIEWS.filter(
     (v) =>
-      access[v as keyof typeof access] !== "none" &&
-      (v !== "finances" || canProjectFinance) &&
+      /* Project Overview: every finance viewer (directors, and the
+         projects.finance.view grant), with or without the page-access row
+         (owner 2026-10-20: open it to the directors). */
+      (v === "finances" ? canProjectFinance : access[v as keyof typeof access] !== "none") &&
       (v !== "maintenance" || canProjectMaintenance)
   );
   const firstAllowed: ProjectsView | null = allowed[0] ?? null;
@@ -2235,6 +2241,7 @@ function ProjectDetailContent({
                   durationDays={p.duration_days ?? null}
                   lines={detail.data?.finance_lines ?? []}
                   books={detail.data?.finance_books ?? null}
+                  pnl={detail.data?.finance_pnl ?? null}
                   lumpSales={detail.data?.finance?.total_sales ?? null}
                   onChange={() => detail.reload()}
                   toast={toast}
@@ -2291,6 +2298,13 @@ interface SalesRepBrief {
   brands_csv?: string | null;
 }
 
+/** An active staff member who is not on the Sales Team roster yet. */
+interface StaffBrief {
+  user_id: number;
+  name: string | null;
+  email: string;
+}
+
 function ProjectTeamSection({
   projectId,
   project: p,
@@ -2325,7 +2339,7 @@ function ProjectTeamSection({
   // Sales-attending picker — gated on projects.write, role-filtered to
   // sales_person. Brand-relaxed (owner: Option A): lists ALL active
   // Sales Persons regardless of brand. See GET /api/projects/sales-rep-options.
-  const repsQ = useQuery<{ data: SalesRepBrief[] }>("/api/projects/sales-rep-options",
+  const repsQ = useQuery<{ data: SalesRepBrief[]; others?: StaffBrief[] }>("/api/projects/sales-rep-options",
     () => api.get(`/api/projects/sales-rep-options`),
     []
   );
@@ -2334,19 +2348,22 @@ function ProjectTeamSection({
   const reps = [...(repsQ.data?.data ?? [])].sort((a, b) =>
     (a.name ?? "").localeCompare(b.name ?? ""),
   );
+  /* Staff NOT on the Sales Team roster (owner 2026-10-19: 「不需要改部门啊，就让
+     他们可以去 sales attending 不就好了？」). Adding one puts them on the roster;
+     their department stays as it is. */
+  const others = repsQ.data?.others ?? [];
   const takenRepIds = new Set(attendees.map((a) => a.sales_rep_id));
   const availableReps = reps.filter((r) => !takenRepIds.has(r.id));
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const filteredAvailable = availableReps.filter((r) => {
+  const [selectedStaff, setSelectedStaff] = useState<Set<number>>(new Set());
+  const matches = (...texts: Array<string | null | undefined>) => {
     const q = search.trim().toLowerCase();
-    if (!q) return true;
-    return (
-      (r.code ?? "").toLowerCase().includes(q) ||
-      (r.name ?? "").toLowerCase().includes(q)
-    );
-  });
+    return !q || texts.some((t) => (t ?? "").toLowerCase().includes(q));
+  };
+  const filteredAvailable = availableReps.filter((r) => matches(r.code, r.name));
+  const filteredOthers = others.filter((s) => matches(s.name, s.email));
 
   function toggleSelected(id: number) {
     setSelected((prev) => {
@@ -2356,12 +2373,22 @@ function ProjectTeamSection({
       return next;
     });
   }
+  function toggleStaff(userId: number) {
+    setSelectedStaff((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+  }
+  const pickedCount = selected.size + selectedStaff.size;
 
   // Owner 2026-06-25: multi-select — tick several reps + add them in one go
   // (was one-at-a-time). POSTs each selected id sequentially, then reloads once.
   async function addSelected() {
     const ids = [...selected].filter((id) => availableReps.some((r) => r.id === id));
-    if (ids.length === 0) return;
+    const staffIds = [...selectedStaff].filter((id) => others.some((s) => s.user_id === id));
+    if (ids.length === 0 && staffIds.length === 0) return;
     setBusy(true);
     try {
       for (const repId of ids) {
@@ -2369,7 +2396,11 @@ function ProjectTeamSection({
           sales_rep_id: repId,
         });
       }
+      for (const userId of staffIds) {
+        await api.post(`/api/projects/${projectId}/sales-attendees`, { user_id: userId });
+      }
       setSelected(new Set());
+      setSelectedStaff(new Set());
       setSearch("");
       onChanged();
     } catch (e: any) {
@@ -2504,7 +2535,7 @@ function ProjectTeamSection({
           <div className="mt-2">
             {/* Multi-select (owner 2026-06-25: "直接可以 multiselect 多选,不用
                 一个一个按") — filter + tick several + "Add N" in one go. */}
-            {reps.length === 0 ? (
+            {reps.length === 0 && others.length === 0 ? (
               !repsQ.loading && (
                 <div className="text-[9.5px] leading-snug text-warning-text">
                   No Sales Persons found. This picker reads the active Sales Reps
@@ -2513,7 +2544,7 @@ function ProjectTeamSection({
                   make sure that rep exists and is active (not archived).
                 </div>
               )
-            ) : availableReps.length === 0 ? (
+            ) : availableReps.length === 0 && others.length === 0 ? (
               <div className="text-[11px] italic text-ink-muted">
                 All sales reps added.
               </div>
@@ -2527,7 +2558,7 @@ function ProjectTeamSection({
                   className={SPEC_INPUT_CLASS}
                 />
                 <div className="mt-1 max-h-44 overflow-auto rounded-md border border-border">
-                  {filteredAvailable.length === 0 ? (
+                  {filteredAvailable.length === 0 && filteredOthers.length === 0 ? (
                     <div className="px-2 py-2 text-[10.5px] text-ink-muted">
                       No matches.
                     </div>
@@ -2554,13 +2585,36 @@ function ProjectTeamSection({
                       </label>
                     ))
                   )}
+                  {filteredOthers.length > 0 && (
+                    <>
+                      <div className="border-t border-border bg-bg/60 px-2 py-1 text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+                        Not in the Sales Team yet — adding puts them in it
+                      </div>
+                      {filteredOthers.map((s) => (
+                        <label
+                          key={`staff-${s.user_id}`}
+                          className="flex cursor-pointer items-center gap-2 border-t border-border px-2 py-1.5 text-[11px] hover:bg-bg/60"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedStaff.has(s.user_id)}
+                            onChange={() => toggleStaff(s.user_id)}
+                          />
+                          <span className="truncate text-ink">{s.name || s.email}</span>
+                          {s.name && (
+                            <span className="ml-auto shrink-0 truncate font-mono text-[9.5px] text-ink-muted">{s.email}</span>
+                          )}
+                        </label>
+                      ))}
+                    </>
+                  )}
                 </div>
                 <button
                   onClick={addSelected}
-                  disabled={busy || selected.size === 0}
+                  disabled={busy || pickedCount === 0}
                   className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-md border border-accent/40 bg-surface px-2 py-1.5 text-[11px] font-semibold text-accent hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <Plus size={11} /> Add{selected.size > 0 ? ` ${selected.size} selected` : ""}
+                  <Plus size={11} /> Add{pickedCount > 0 ? ` ${pickedCount} selected` : ""}
                 </button>
               </>
             )}
@@ -7032,6 +7086,7 @@ function FinanceLedgerSection({
   durationDays,
   lines,
   books,
+  pnl,
   lumpSales,
   onChange,
   toast,
@@ -7043,6 +7098,10 @@ function FinanceLedgerSection({
   /** The books on this event (payment-request item 5): the rows they fill are
    *  Finance's figures — read-only here. `lines` already carries them. */
   books: FinanceBooks | null;
+  /** The two P&Ls — by Total Sales and by the Sales Orders (owner 2026-10-16).
+   *  Null on an older server or when the orders could not be read: the single
+   *  snapshot below is then computed from the lines, as before. */
+  pnl: EventPnl | null;
   /** project_finance.total_sales — the quick lump-sum "Total Sales" box.
    *  Used as the snapshot's sales figure when no individual sales-entry
    *  lines exist, so the green box and the snapshot agree. */
@@ -7178,9 +7237,6 @@ function FinanceLedgerSection({
     .filter((l) => !NAMED_COSTS.has((l.category ?? "").trim()))
     .reduce((s, l) => s + (l.amount || 0), 0);
   const netProfit = sales - totalCost;
-  const gpPct = sales > 0 ? ((sales - cogs) / sales) * 100 : null;
-  const salesPerDay =
-    durationDays && durationDays > 0 ? sales / durationDays : null;
   const rentPerSqm = sizeSqm && sizeSqm > 0 ? rentalTotal / sizeSqm : null;
   const rentPerDay =
     durationDays && durationDays > 0 ? rentalTotal / durationDays : null;
@@ -7191,6 +7247,14 @@ function FinanceLedgerSection({
     rentalTotal > 0 && sizeSqm && sizeSqm > 0 && durationDays && durationDays > 0
       ? rentalTotal / sizeSqm / durationDays
       : 0;
+  /* The tiles read the Total Sales P&L when the server sent it (eventPnl.ts),
+     so tiles and table never disagree; else the lines, as before. */
+  const kpi = pnl
+    ? { sales: pnl.by_sales.sales, gp: pnl.by_sales.grossProfit, cost: pnl.by_sales.totalCost, net: pnl.by_sales.netProfit }
+    : { sales, gp: grossProfit, cost: totalCost, net: netProfit };
+  const kpiGpPct = kpi.sales > 0 ? (kpi.gp / kpi.sales) * 100 : null;
+  const kpiNetPct = kpi.sales > 0 ? (kpi.net / kpi.sales) * 100 : 0;
+  const kpiPerDay = durationDays && durationDays > 0 ? kpi.sales / durationDays : null;
 
   return (
     <PanelSection title={`Finance Ledger (${lines.length})`} muted>
@@ -7215,40 +7279,55 @@ function FinanceLedgerSection({
         <div className="grid grid-cols-2 divide-x divide-y divide-border-subtle border-b border-border sm:grid-cols-4 sm:divide-y-0">
           <SnapshotKpi
             label="Total Sales"
-            value={formatCurrency(sales)}
+            value={formatCurrency(kpi.sales)}
             subtitle={
-              salesPerDay != null
-                ? `${formatCurrency(salesPerDay)} / day`
+              kpiPerDay != null
+                ? `${formatCurrency(kpiPerDay)} / day`
                 : "—"
             }
           />
           <SnapshotKpi
             label="Gross Profit"
-            value={formatCurrency(grossProfit)}
-            tone={grossProfit >= 0 ? "synced" : "err"}
+            value={formatCurrency(kpi.gp)}
+            tone={kpi.gp >= 0 ? "synced" : "err"}
             subtitle={
-              gpPct != null ? `${gpPct.toFixed(1)}% after COGS` : "0.0% after COGS"
+              kpiGpPct != null ? `${kpiGpPct.toFixed(1)}% after COGS` : "0.0% after COGS"
             }
           />
           <SnapshotKpi
             label="Total Cost"
-            value={formatCurrency(totalCost)}
-            subtitle="All cost lines"
+            value={formatCurrency(kpi.cost)}
+            subtitle={pnl ? "By Total Sales" : "All cost lines"}
           />
           <SnapshotKpi
             label="Net Profit"
-            value={formatCurrency(netProfit)}
-            tone={netProfit >= 0 ? "synced" : "err"}
-            subtitle={`${netMarginPct.toFixed(1)}% bottom line`}
+            value={formatCurrency(kpi.net)}
+            tone={kpi.net >= 0 ? "synced" : "err"}
+            subtitle={`${kpiNetPct.toFixed(1)}% bottom line`}
           />
         </div>
+
+        {/* THE TWO P&Ls (owner 2026-10-16): by Total Sales and by the Sales
+            Orders, side by side — EventPnlTable. The single snapshot below is
+            the fallback when the server sent none. */}
+        {pnl && (
+          <div className="overflow-x-auto">
+            <EventPnlTable
+              pnl={pnl}
+              editable={(category, row) => typedRow(row, category)}
+              busyCategory={savingCat}
+              books={filled}
+              rentalNote={`${formatCurrency(rentPerSqmPerDay)}/sqm/day`}
+            />
+          </div>
+        )}
 
         {/* Itemized cost table — single editor surface (2026-05-08).
             Click any non-auto row to inline-edit the amount; saving
             consolidates that category's lines into one. Per-row
             expanders are gone (boss feedback) — receipts live in the
             single Attachments section below. */}
-        <div className="text-[12px]">
+        {!pnl && <div className="text-[12px]">
           <SnapshotRow
             label="COGS — Matt/Sofa"
             value={cogsMattSofa}
@@ -7326,7 +7405,7 @@ function FinanceLedgerSection({
             tone={netProfit >= 0 ? "synced" : "err"}
             annotation={`(${netMarginPct.toFixed(1)}%)`}
           />
-        </div>
+        </div>}
 
         {/* Cost lines — single section at the bottom of the snapshot
             card. Lists every non-auto cost line (with or without a
@@ -7346,7 +7425,8 @@ function FinanceLedgerSection({
       </div>
       <p className="mt-1 text-[10.5px] text-ink-muted">
         Tap a row to set its amount. Individual cost lines and their receipts live in the Cost lines section above. Sales live in the Sales section above; auto rows are computed from the rate card.
-        {filled.size > 0 && " Rows marked 入账 are Finance's figures — approved payment vouchers and posted AP invoices on this event — and replace the typed or auto amount."}
+        {pnl && " By Sales Orders is the orders opened at this fair at their own cost; By Total Sales prices COGS at the same cost ratio until a COGS is typed, and works its % rows from its own sales."}
+        {filled.size > 0 && " Rows marked 入账 are Finance's figures — payment vouchers once checked, and posted AP invoices, on this event — and replace the typed or auto amount."}
       </p>
       {books && !books.ok && (
         <p className="mt-1 text-[10.5px] text-warning-text" role="status">

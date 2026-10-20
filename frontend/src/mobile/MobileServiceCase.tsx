@@ -30,6 +30,7 @@ import {
 } from "../vendor/scm/lib/assr/stages";
 import { ANOTHER_RETURN_HINT, type SupplierReturn } from "../vendor/scm/lib/assr/returns";
 import { MobileFactoryTrips } from "./MobileFactoryTrips";
+import { ITEM_LOCATION_OPTIONS, PICKUP_STATUS_OPTIONS, pickupTrackingOptions } from "../vendor/scm/lib/assr-pickup-tracking";
 import { MobileReopenControl } from "./MobileReopenControl";
 import { splitCategories } from "../lib/assrProductCategories";
 import { MobileAssrCategoryChips } from "./MobileAssrCategoryChips";
@@ -1100,8 +1101,11 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
             <LegOwnerToggle label="Pickup by" current={get(c, "pickupBy", "pickup_by")} disabled={dis}
               options={[{ v: "customer", label: "Own team pickup" }, { v: "supplier", label: "Supplier direct" }]}
               onPick={(v) => patchCase({ pickup_by: v }, "Couldn't save pickup-by")} />
-            {/* Folded in from the retired Item Pickup stage (mig 0110). */}
-            <EditRow label="Customer pickup date" type="date" value={get(c, "customerPickupAt", "customer_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ customer_pickup_at: v }, "Couldn't save pickup date")} />
+            <EditRow label="Pickup status" type="select" options={pickupTrackingOptions(PICKUP_STATUS_OPTIONS)} value={get(c, "pickupStatus", "pickup_status")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_status: v }, "Couldn't save pickup status")} />
+            <EditRow label="Scheduled pickup date (ETA)" type="date" value={get(c, "customerPickupAt", "customer_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ customer_pickup_at: v }, "Couldn't save pickup date")} />
+            <EditRow label="Actual pickup date" type="date" value={get(c, "actualPickupAt", "actual_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ actual_pickup_at: v }, "Couldn't save actual pickup date")} />
+            <EditRow label="Pickup PIC" value={get(c, "pickupPic", "pickup_pic")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_pic: v }, "Couldn't save pickup PIC")} />
+            <EditRow label="Current item location" type="select" options={pickupTrackingOptions(ITEM_LOCATION_OPTIONS)} value={get(c, "itemLocation", "item_location")} busy={busy} disabled={dis} onSave={(v) => patchCase({ item_location: v }, "Couldn't save item location")} />
             {/* 返厂 (owner 2026-09-21) — every factory trip is a row, add as many
                 as needed. The latest row is the current trip; its dates mirror to
                 supplier_pickup_at / items_ready_at for the board + sheet. */}
@@ -3145,7 +3149,7 @@ function MobileSupplierPick({ c, onChanged, notify, disabled }: { c: Any; onChan
   const caseId = Number(get(c, "id"));
   const code = get(c, "creditorCode", "creditor_code");
   const name = get(c, "creditorName", "creditor_name");
-  const manual = String(get(c, "creditorSource", "creditor_source") ?? "") === "manual";
+  const source = String(get(c, "creditorSource", "creditor_source") ?? "");
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Any[]>([]);
@@ -3223,7 +3227,7 @@ function MobileSupplierPick({ c, onChanged, notify, disabled }: { c: Any; onChan
         <div style={{ display: "flex", alignItems: "center", gap: 9, border: `1px solid ${DIM}`, borderRadius: 10, padding: "10px 11px", marginTop: 5 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12.5, fontWeight: 700, color: INK }}>{String(name ?? code)}</div>
-            <div className="money" style={{ fontSize: 10, color: GREY }}>{String(code)}{manual ? " · manual" : ""}</div>
+            <div className="money" style={{ fontSize: 10, color: GREY }}>{String(code)}{source === "manual" ? " · manual" : source === "po" ? " · from PO" : ""}</div>
           </div>
         </div>
       ) : (

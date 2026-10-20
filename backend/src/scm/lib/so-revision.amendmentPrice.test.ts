@@ -781,3 +781,47 @@ describe('applySoAmendment — the two halves of a split SKU-swap-with-price (DE
     expect(lineOf(store)).toMatchObject({ item_code: 'ACC-1', qty: 1, unit_price_sen: 0, total_sen: 0 });
   });
 });
+
+/* ── The SKU decides the group (docs/bugs/0514) ─────────────────────────────
+   HC-SO-012243: a SPEC swapped SQUARE PILLOW (Sofa Accessory) for the free-gift
+   AMN-SOFA PILLOW (Accessory) and kept fabric_accessory. That group is
+   hard-bound for company 1, so MRP read the line SHORT beside 78 in stock. */
+describe('applySoAmendment — a changed code takes the new SKU\'s group', () => {
+  const pillowStore = () => {
+    const store = baseStore();
+    store.mfg_products.push(product({ code: 'PILLOW-SQ', category: 'FABRIC_ACCESSORY', name: 'Square Pillow' }));
+    store.mfg_sales_order_items = [soLine({ item_code: 'PILLOW-SQ', item_group: 'fabric_accessory', description: 'Square Pillow' })];
+    return store;
+  };
+
+  it('a SPEC code swap restamps item_group from the new SKU', async () => {
+    const store = pillowStore();
+    store.so_amendment_lines = [specLine({ new_item_code: 'ACC-1' })];
+
+    await apply(store);
+
+    expect(lineOf(store).item_code).toBe('ACC-1');
+    expect(lineOf(store).item_group).toBe('accessory');
+  });
+
+  it('a SPEC that keeps the code leaves the stored group alone', async () => {
+    const store = pillowStore();
+    store.so_amendment_lines = [specLine({ new_item_code: 'PILLOW-SQ', new_qty: 2 })];
+
+    await apply(store);
+
+    expect(lineOf(store).item_group).toBe('fabric_accessory');
+  });
+
+  it('an ADDED line takes the catalogue group over the requested one', async () => {
+    const store = baseStore();
+    store.so_amendment_lines = [specLine({
+      id: 'al-add', sales_order_item_id: null, change_type: 'ADD',
+      new_item_code: 'ACC-1', new_variants: { itemGroup: 'others' }, old_snapshot: null,
+    })];
+
+    await apply(store);
+
+    expect(store.mfg_sales_order_items.find((r) => r.id !== 'L1')!.item_group).toBe('accessory');
+  });
+});

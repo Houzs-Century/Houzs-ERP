@@ -115,7 +115,7 @@ describe('GET /project-sales-orders/:projectId', () => {
     expect(second.salesperson_name).toBe('Adrian');
 
     expect(body.totals).toEqual({
-      count: 3, draft_count: 1, amount_sen: 920000, paid_sen: 350000, balance_sen: 570000,
+      count: 3, draft_count: 1, amount_sen: 920000, paid_sen: 350000, balance_sen: 570000, service_sen: 0,
     });
   });
 
@@ -141,17 +141,43 @@ describe('GET /project-sales-orders/:projectId', () => {
     const res = await get(harness(TABLES, DIRECTOR), 'abc');
     expect(res.status).toBe(400);
   });
+
+  it('flags an order whose venue is not the fair\'s — "Venue differs" (owner 2026-10-19)', async () => {
+    const tables = {
+      ...TABLES,
+      mfg_sales_orders: TABLES.mfg_sales_orders!.map((r) =>
+        r.doc_no === 'HC-SO-000001' ? { ...r, venue: 'mid  valley' } : r.doc_no === 'HC-SO-000002' ? { ...r, venue: 'KLCC' } : r),
+    };
+    const calls: unknown[][] = [];
+    const DB = {
+      prepare: () => ({
+        bind: (...vals: unknown[]) => ({
+          all: async () => {
+            calls.push(vals);
+            return { results: [{ id: 77, venue: 'MID VALLEY', organizer: 'REX', brand: 'AKEMI', startdate: '2026-09-18', enddate: '2026-09-20', status: 'confirmed' }] };
+          },
+        }),
+      }),
+    };
+    const res = await harness(tables, DIRECTOR).request('/project-sales-orders/77', undefined, { DB } as unknown as Env);
+    const body = await res.json() as Body;
+    const flag = (doc: string) => body.data.find((r) => r.doc_no === doc)!.venue_differs;
+    expect(flag('HC-SO-000001')).toBeNull(); // same place, spelled differently
+    expect(flag('HC-SO-000002')).toBe('KLCC');
+    expect(flag('HC-SO-000003')).toBeNull(); // no venue on the order: nothing to compare
+    expect(calls).toEqual([[77]]);
+  });
 });
 
 describe('projectSalesOrderTotals', () => {
   it('counts drafts separately and sums the three money columns', () => {
     const t = projectSalesOrderTotals([
-      { doc_no: 'a', status: 'DRAFT', amount_sen: 100, paid_sen: 0, balance_sen: 100 },
-      { doc_no: 'b', status: 'CONFIRMED', amount_sen: 250, paid_sen: 50, balance_sen: 200 },
+      { doc_no: 'a', status: 'DRAFT', amount_sen: 100, paid_sen: 0, balance_sen: 100, service_sen: 0 },
+      { doc_no: 'b', status: 'CONFIRMED', amount_sen: 250, paid_sen: 50, balance_sen: 200, service_sen: 30 },
     ].map((r) => ({
       ...r, so_date: null, ref: null, customer_name: null, customer_phone: null,
-      salesperson_name: null, fair_match: null, linked_ac_docno: null, created_at: null,
+      salesperson_name: null, fair_match: null, linked_ac_docno: null, created_at: null, venue_differs: null,
     })));
-    expect(t).toEqual({ count: 2, draft_count: 1, amount_sen: 350, paid_sen: 50, balance_sen: 300 });
+    expect(t).toEqual({ count: 2, draft_count: 1, amount_sen: 350, paid_sen: 50, balance_sen: 300, service_sen: 30 });
   });
 });

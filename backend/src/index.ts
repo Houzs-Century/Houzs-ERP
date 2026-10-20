@@ -52,6 +52,8 @@ import projectsOutstanding from "./routes/projectsOutstanding";
 import { projectDataGaps } from "./routes/projectDataGaps";
 import { projectOverview } from "./routes/projectOverview";
 import assrQuality from "./routes/assrQuality";
+import { isFinanceViewer } from "./services/pmsAccess";
+import type { AuthUser } from "./services/auth";
 // Sales entries (/api/sales) is retained as a DEPENDENCY of Projects — the
 // Projects page embeds the sales-entry EntryPanel + submit/void/delete flow.
 // It has no standalone nav/route after the cutover.
@@ -73,6 +75,7 @@ import fleetMaintenance from "./scm/routes/fleet-maintenance";
 import { fleetWorkOrderPhotos } from "./scm/routes/fleet-work-order-photos";
 import { fleetPlanService } from "./scm/routes/fleet-plan-service";
 import fleetWorkOrderFiles from "./scm/routes/fleet-work-order-files";
+import fleetBreakdownFiles from "./scm/routes/fleet-breakdown-files";
 // `routes/lorries.ts` removed 2026-06-28 — old Houzs Fleet lorries CRUD retired
 // in favour of scm.lorries (mounted at /api/scm/lorries). public.lorries data
 // was migrated by mig 0055 then the dead table dropped. /api/fleet/staff stays
@@ -486,7 +489,13 @@ app.use("/api/projects/data-gaps/*", requirePageAccess("projects.finances"));
 app.route("/api/projects/data-gaps", projectDataGaps);
 // Every project with its keyed books and its Sales Orders, for Project Overview.
 // Same exact-path-first reason and gate as data-gaps. See routes/projectOverview.ts.
-app.use("/api/projects/overview/*", requirePageAccess("projects.finances"));
+/* Project Overview: the projects.finances page, or any finance viewer (the
+   directors, owner 2026-10-20) - the router itself still refuses everyone else. */
+const requirePageAccessOrDirector: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+  if (isFinanceViewer(c.get("user") as unknown as AuthUser)) return next();
+  return requirePageAccess("projects.finances")(c, next);
+};
+app.use("/api/projects/overview/*", requirePageAccessOrDirector);
 app.route("/api/projects/overview", projectOverview);
 app.route("/api/projects", projects);
 // The office side of a brand's share link (generate / revoke). Own file because
@@ -520,6 +529,7 @@ app.route("/api/fleet-maintenance", fleetWorkOrderPhotos);
 app.route("/api/fleet-maintenance", fleetPlanService);
 app.route("/api/fleet-maintenance", fleetMaintenance);
 app.route("/api/fleet-work-order-files", fleetWorkOrderFiles);
+app.route("/api/fleet-breakdown-files", fleetBreakdownFiles);
 app.route("/api/settings", settings);
 app.route("/api/branding", branding);
 app.route("/api/inbox", inbox);

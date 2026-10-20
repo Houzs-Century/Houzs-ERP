@@ -16,6 +16,7 @@ const OK: SoSubmitFacts = {
   hasSalesperson: true,
   fairChosen: true,
   noFair: false,
+  fairWhy: null,
   fairDayMissing: false,
   gateLocation: true,
   companyCode: 'HOUZS',
@@ -63,6 +64,17 @@ describe('collectSoSubmitProblems', () => {
     const ps = collectSoSubmitProblems({ ...OK, fairChosen: false, noFair: false });
     expect(ps.map((p) => p.code)).toContain('fair_required');
     expect(ps.find((p) => p.code === 'fair_required')?.message).toMatch(/No fair/);
+  });
+  it('says WHY no fair was filled in, in the owner\'s English (2026-10-19)', () => {
+    const msg = (fairWhy: SoSubmitFacts['fairWhy']) =>
+      collectSoSubmitProblems({ ...OK, fairChosen: false, fairWhy }).find((p) => p.code === 'fair_required')?.message;
+    expect(msg({ code: 'no_fair' })).toBe(
+      'No fair found for you: you are not on Sales Attending for any fair in PMS. Pick a fair yourself, or ask the person in charge to add you.',
+    );
+    expect(msg({ code: 'too_old', venue: 'SUNWAY CARNIVAL MALL', startDate: '2026-09-25', endDate: '2026-09-29' })).toBe(
+      'No fair found for you: your last fair (SUNWAY CARNIVAL MALL, 09/25 - 09/29) ended over a month ago. Pick a fair yourself, or ask the person in charge to add you.',
+    );
+    expect(msg(null)).toBe('Pick the Fair, or mark it No fair (showroom).');
   });
   it('fair rule satisfied by a picked fair OR by the No-fair mark', () => {
     expect(codes({ ...OK, fairChosen: true, noFair: false })).not.toContain('fair_required');

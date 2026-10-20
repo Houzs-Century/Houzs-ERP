@@ -19,6 +19,7 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { requirePermission } from "../middleware/auth";
+import { reapplyStageTargets, type Stage } from "../services/assr";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -356,7 +357,8 @@ app.patch("/priority-targets", requirePermission("service_cases.manage"), async 
     ).bind(priorityId, stage, newDays).run();
   }
 
-  return c.json({ ok: true, before_days: beforeDays, after_days: newDays });
+  const casesUpdated = await reapplyStageTargets(c.env, stage as Stage);
+  return c.json({ ok: true, before_days: beforeDays, after_days: newDays, cases_updated: casesUpdated });
 });
 
 app.patch("/targets/:id", requirePermission("service_cases.manage"), async (c) => {
@@ -394,7 +396,10 @@ app.patch("/targets/:id", requirePermission("service_cases.manage"), async (c) =
     ).bind(existing.profile_id),
   ]);
 
-  return c.json({ ok: true, before_days: existing.target_days, after_days: newDays });
+  /* Only the active profile is read at a stage change, so only it reaches open cases. */
+  const active = await c.env.DB.prepare(`SELECT is_active FROM assr_lead_time_profiles WHERE id = ?`).bind(existing.profile_id).first<{ is_active: number }>();
+  const casesUpdated = active?.is_active === 1 ? await reapplyStageTargets(c.env, existing.stage as Stage) : 0;
+  return c.json({ ok: true, before_days: existing.target_days, after_days: newDays, cases_updated: casesUpdated });
 });
 
 // ── Amendment history ───────────────────────────────────────────────

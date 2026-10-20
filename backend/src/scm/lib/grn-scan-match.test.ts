@@ -8,6 +8,9 @@ import {
   listScanLines,
   matchGrnScanToPoLines,
   nameMatchItem,
+  printedPoWhy,
+  splitInnerLocation,
+  setLinesBySo,
   normalizeCode,
   pickBySpec,
   normalizeSupplierName,
@@ -365,7 +368,7 @@ describe('resolveScannedSupplier', () => {
 
 describe('describeUnmatchedScanLines (BUG-61: the draft says what to add)', () => {
   test('null when every scanned line matched', () => {
-    expect(describeUnmatchedScanLines([], [])).toBeNull();
+    expect(describeUnmatchedScanLines([], [], 'sup-1')).toBeNull();
   });
 
   test('names each left-off line with its qty and why', () => {
@@ -373,7 +376,7 @@ describe('describeUnmatchedScanLines (BUG-61: the draft says what to add)', () =
       { line: scan({ itemCode: 'AMN-SF9050', description: 'SOFA 2B(RHF)', qty: 2 }), reason: 'no_open_po_line', candidatePoItemIds: [] },
       { line: scan({ itemCode: 'HB-01', qty: 1, poNo: 'ART-HOK-002' }), reason: 'po_not_open', candidatePoItemIds: [] },
       { line: scan({ barcode: '955000111', qty: 3 }), reason: 'ambiguous', candidatePoItemIds: ['a', 'b'] },
-    ], []);
+    ], [], 'sup-1');
     expect(note).toBe(
       'AMN-SF9050 SOFA 2B(RHF) x2 (no open PO line); '
       + 'HB-01 x1 (PO ART-HOK-002 is not one of our POs); 955000111 x3 (more than one PO line fits).',
@@ -384,7 +387,7 @@ describe('describeUnmatchedScanLines (BUG-61: the draft says what to add)', () =
     const many = Array.from({ length: 12 }, (_, i) => ({
       line: scan({ itemCode: `X${i}`, qty: 1 }), reason: 'no_open_po_line' as const, candidatePoItemIds: [],
     }));
-    expect(describeUnmatchedScanLines(many, [], 10)).toMatch(/X9 x1 \(no open PO line\); and 2 more\.$/);
+    expect(describeUnmatchedScanLines(many, [], 'sup-1', 10)).toMatch(/X9 x1 \(no open PO line\); and 2 more\.$/);
   });
 });
 
@@ -484,7 +487,7 @@ describe('a delivery order whose POs are marked Received says so', () => {
     const res = matchGrnScanToPoLines(null, lines, [line({ poNumber: 'HC-PO-2610-009' })], [], 'sup-1');
     expect(res.picks).toEqual([]);
     expect(res.poFallback).toBeNull();
-    expect(describeUnmatchedScanLines(res.unmatched, allPos)).toBe(
+    expect(describeUnmatchedScanLines(res.unmatched, allPos, 'sup-1')).toBe(
       'SB10-KHB(H)(9MM)(L-4")-LSD013 x2 (PO HC-PO-2609-223 is marked Received); '
       + 'SB10-KHB(H)(9MM)-LSD013 x2 (PO HC-PO-2609-251 is marked Received); '
       + 'SB10-B11EC x1 (PO KLPO10138-HC5324 is not one of our POs).',
@@ -575,7 +578,7 @@ describe('our whole PO number printed behind a label (DO-2610/034)', () => {
   test('a received PO says so instead of "not one of our POs"', () => {
     const res = matchGrnScanToPoLines(null, do034, [open[1]], [], 'sup-1');
     expect(res.picks).toEqual([]);
-    expect(describeUnmatchedScanLines(res.unmatched, [{ poNumber: 'HC-PO-2609-169', status: 'RECEIVED' }]))
+    expect(describeUnmatchedScanLines(res.unmatched, [{ poNumber: 'HC-PO-2609-169', status: 'RECEIVED' }], 'sup-1'))
       .toMatch(/\(PO HC-PO-2609-169 is marked Received\)\.$/);
   });
 });
@@ -708,7 +711,7 @@ describe('a single-item PO with a free gift on the delivery order (DGSN26002269)
   test('drafts the mattress and reports the pillow as not on the PO', () => {
     const res = matchGrnScanToPoLines('HC-PO-2610-162', do269, open, [], 'sup-1');
     expect(res.picks).toEqual([{ poItemId: 'pi-elev', qty: 1 }]);
-    expect(describeUnmatchedScanLines(res.unmatched, [])).toBe(
+    expect(describeUnmatchedScanLines(res.unmatched, [], 'sup-1')).toBe(
       'AFKPAK25A23J29W GWP Pillow Acc : Akemi Sleep Essentials 7 Holes Fibrefil Pil 48cm x 74cm x2 (not on the PO).',
     );
   });
@@ -731,5 +734,115 @@ describe('nameMatchItem', () => {
   });
   test('no printed text, no match', () => {
     expect(nameMatchItem(null, po)).toBeNull();
+  });
+});
+
+// HC-0123 follow-up (2026-10-20, Sim): Dorsettloft DO-2610-046 prints one row per
+// SET, "DSL8030(35") - 2 + L" x1 with our SO number, while HC-PO-2610-080 holds
+// the set as two pieces raised for that SO. 1 listed vs 2 owed refused the scan.
+describe('a set row naming our SO number (DO-2610-046)', () => {
+  // HC-PO-2610-080 as read from production on 2026-10-20.
+  const po080: OpenPoLine[] = [
+    line({ poItemId: 'pi-2a', poNumber: 'HC-PO-2610-080', itemCode: '8030-2A(LHF)', materialName: 'SOFA SOFFIO 2A(LHF)', remaining: 1, soDocNo: 'HC-SO-013339' }),
+    line({ poItemId: 'pi-l', poNumber: 'HC-PO-2610-080', itemCode: '8030-L(RHF)', materialName: 'SOFA SOFFIO L(RHF)', remaining: 1, soDocNo: 'HC-SO-013339' }),
+  ];
+  const do046 = [scan({
+    itemCode: 'DSL8030(35")',
+    description: 'DSL8030(35") - 2 + L COL; BO315-03-BEIGE *HC-SO-013339 *2R *L *CHANGE ARMREST 2X *BOTTOM COVER WITH NYLON FABRIC',
+    qty: 1,
+    poNo: 'HC-PO-2610-080',
+  })];
+
+  test('drafts every piece of that SO on the PO', () => {
+    const res = matchGrnScanToPoLines('S/O1893', do046, po080, [], 'sup-1');
+    expect(res.picks).toEqual([{ poItemId: 'pi-2a', qty: 1 }, { poItemId: 'pi-l', qty: 1 }]);
+    expect(res.soMatches).toEqual([{ line: do046[0], soDocNo: 'HC-SO-013339' }]);
+    expect(res.qtyMismatch).toBeNull();
+    expect(res.unmatched).toEqual([]);
+  });
+
+  test('an SO with no line on that PO is not a set; the row stays unmatched', () => {
+    const other = po080.map((l) => ({ ...l, soDocNo: 'HC-SO-099999' }));
+    const res = matchGrnScanToPoLines('S/O1893', do046, other, [], 'sup-1');
+    expect(res.soMatches).toEqual([]);
+    expect(res.picks).toEqual([]);
+  });
+});
+
+// The earlier Dorsettloft DO-2610-009: three set rows printing "*SO-011717"
+// (no company prefix) on HC-PO-010080, whose four pieces were raised for it.
+describe('set rows of one SO split by the model number they print (DO-2610-009)', () => {
+  const po: OpenPoLine[] = [
+    line({ poItemId: 'pi-2A', poNumber: 'HC-PO-010080', itemCode: '9058-2A(LHF)', remaining: 1, soDocNo: 'HC-SO-011717' }),
+    line({ poItemId: 'pi-1A', poNumber: 'HC-PO-010080', itemCode: '9058-1A(RHF)', remaining: 1, soDocNo: 'HC-SO-011717' }),
+    line({ poItemId: 'pi-2S', poNumber: 'HC-PO-010080', itemCode: '9058-2S', remaining: 1, soDocNo: 'HC-SO-011717' }),
+    line({ poItemId: 'pi-1S', poNumber: 'HC-PO-010080', itemCode: '8051-1S', remaining: 1, soDocNo: 'HC-SO-011717' }),
+  ];
+  const row = (code: string, desc: string) => scan({ itemCode: code, description: `${desc} COL: BO315-21-PEARL *ZNT6064 *SO-011717`, qty: 1, poNo: 'PO-010080' });
+
+  test('the 8051 row takes only the 8051 piece', () => {
+    expect(setLinesBySo(row('DSL8051(30")', '- 1 SEATER'), po)?.lines.map((l) => l.poItemId)).toEqual(['pi-1S']);
+  });
+
+  test('the whole delivery order drafts the four pieces once each', () => {
+    const res = matchGrnScanToPoLines('S/O1791', [
+      row('DSL9058(30")', '-3SEATER (2+1)'),
+      row('DSL9058(30")', '-1EFL+1B'),
+      row('DSL8051(30")', '- 1 SEATER'),
+    ], po, [], 'sup-1');
+    expect(res.picks).toEqual([
+      { poItemId: 'pi-2A', qty: 1 }, { poItemId: 'pi-1A', qty: 1 }, { poItemId: 'pi-2S', qty: 1 }, { poItemId: 'pi-1S', qty: 1 },
+    ]);
+    expect(res.poFallback).toBeNull();
+  });
+
+  test('a row naming no SO is not a set', () => {
+    expect(setLinesBySo(scan({ itemCode: 'DSL9058', description: 'no order number here', qty: 1 }), po)).toBeNull();
+  });
+});
+
+// Hookka DO-2610-079 (2026-10-20): four square pillows printed "PO: PO-010086",
+// which is OHANA STUDIO's PO (its 4 free-gift pillows still owed). The scan
+// rightly refused; the note only said "on hold or under another supplier".
+describe("a row naming another supplier's PO says whose it is (DO-2610-079)", () => {
+  const allPos = [{ poNumber: 'HC-PO-010086', status: 'PARTIALLY_RECEIVED', supplierId: 'ohana', supplierName: 'OHANA STUDIO MARKETING SDN. BHD.', onHold: false }];
+  const open = [
+    line({ poItemId: 'pi-pil', poNumber: 'HC-PO-010086', supplierId: 'ohana', itemCode: 'AMN-SOFA PILLOW', remaining: 4 }),
+    line({ poItemId: 'pi-hk', poNumber: 'HC-PO-2610-200', supplierId: 'hookka', itemCode: 'X', remaining: 1 }),
+  ];
+  const rows = Array.from({ length: 4 }, () => scan({ itemCode: 'SQUARE PILLOW', description: 'SOFA SQUARE PILLOW (16"X16")', qty: 1, poNo: 'PO-010086' }));
+
+  test('no draft onto the other supplier, and the note names that supplier', () => {
+    const res = matchGrnScanToPoLines(null, rows, open, [], 'hookka');
+    expect(res.picks).toEqual([]);
+    expect(describeUnmatchedScanLines(res.unmatched.slice(0, 1), allPos, 'hookka'))
+      .toBe('SQUARE PILLOW SOFA SQUARE PILLOW (16"X16") x1 (PO HC-PO-010086 is OHANA STUDIO MARKETING SDN. BHD.\'s PO, not this supplier\'s).');
+  });
+
+  test('on hold and nothing-left read as such', () => {
+    expect(printedPoWhy('PO-010086', [{ ...allPos[0], onHold: true }], 'hookka')).toBe('PO HC-PO-010086 is on hold');
+    expect(printedPoWhy('PO-010086', [{ ...allPos[0], supplierId: 'hookka' }], 'hookka')).toBe('PO HC-PO-010086 shows no open line for this supplier in our search; open the PO to check its balance');
+  });
+});
+
+// DIGLANT DGSN26002263 (2026-10-19) printed "HC-SRW-PO-2610-091": our number
+// with the ship-to location inside it. Not recognised, and the note did not
+// say that PO was already received.
+describe('our PO number with the location inside it (DGSN26002263)', () => {
+  test('splits out the location', () => {
+    expect(splitInnerLocation('HC-SRW-PO-2610-091')).toEqual({ location: 'SRW', po: 'HC-PO-2610-091' });
+    expect(splitInnerLocation('HC-PO-2610-091')).toBeNull();
+  });
+
+  test('resolves to that PO when it ships to that warehouse', () => {
+    const open = [line({ poItemId: 'pi-a', poNumber: 'HC-PO-2610-091', itemCode: 'AKEMI ARMOUR MATT (K)', locationCode: 'SRW WAREHOUSE', remaining: 1 })];
+    const res = matchGrnScanToPoLines('HC-SRW-PO-2610-091', [scan({ itemCode: 'AKEMI ARMOUR MATT (K)', qty: 1 })], open, [], 'sup-1');
+    expect(res.matchedPoNumberValue).toBe('HC-PO-2610-091');
+    const kl = [{ ...open[0], locationCode: 'KL WAREHOUSE' }];
+    expect(matchGrnScanToPoLines('HC-SRW-PO-2610-091', [scan({ itemCode: 'Z', qty: 1 })], kl, [], 'sup-1').matchedPoNumberValue).toBeNull();
+  });
+
+  test('a received one says so', () => {
+    expect(printedPoWhy('HC-SRW-PO-2610-091', [{ poNumber: 'HC-PO-2610-091', status: 'RECEIVED' }], 'sup-1')).toBe('PO HC-PO-2610-091 is marked Received');
   });
 });

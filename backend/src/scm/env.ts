@@ -45,6 +45,9 @@ export interface Variables {
      *  name contains "sales", so both org fields must be carried through.
      *  null when the user has no department assigned. */
     department_name?: string | null;
+    /** The ROLE's name (public.users → roles.name), for pmsAccess.canCreateEvent:
+     *  a BD role may open fairs and re-assign an order's fair. */
+    role_name?: string | null;
     permissions?: string[];
     permissions_set?: Set<string>;
     /** Operational-capability grants (position_capabilities, mig 0322) mirrored

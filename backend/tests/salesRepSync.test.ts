@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, test, beforeEach } from "vitest";
-import { syncSalesRepFromUser } from "../src/services/salesTeam";
+import { ensureSalesRepForUser, syncSalesRepFromUser } from "../src/services/salesTeam";
+import { attendeeRepId } from "../src/services/salesAttending";
 
 // Covers the CREATE-path guarantee the users invite handler now relies on:
 // creating a user straight into a Sales department must yield an active
@@ -97,5 +98,71 @@ describe("syncSalesRepFromUser (invite/create path)", () => {
     const res = await syncSalesRepFromUser(env, 204, null);
     expect(res.action).toBe("noop");
     expect(await repForUser(204)).toBeNull();
+  });
+});
+
+/* Owner 2026-10-19: 「不需要改部门啊，就让他们可以去 sales attending 不就好了？」
+   Picking a staff member who is not on the roster in PMS Sales Attending puts
+   them on it — without touching their department. */
+describe("ensureSalesRepForUser (picked in Sales Attending)", () => {
+  test("puts a non-Sales user on the roster and leaves their department alone", async () => {
+    await seedUser(211, OTHER_DEPT_ID);
+
+    const res = await ensureSalesRepForUser(env, 211, null, "Added from Sales Attending");
+    expect(res?.action).toBe("created");
+
+    const rep = await repForUser(211);
+    expect(rep?.status).toBe("active");
+    expect(rep?.archived_at).toBeNull();
+    const user = await env.DB.prepare(`SELECT department_id FROM users WHERE id = ?`).bind(211).first<{ department_id: number }>();
+    expect(user?.department_id).toBe(OTHER_DEPT_ID);
+  });
+
+  test("brings an archived row back instead of making a second one", async () => {
+    await seedUser(212, OTHER_DEPT_ID);
+    await env.DB.prepare(
+      `INSERT INTO sales_reps (code, name, email, user_id, status, archived_at) VALUES ('SR-912', 'Old', NULL, 212, 'active', '2026-09-01 00:00:00')`,
+    ).run();
+
+    const res = await ensureSalesRepForUser(env, 212, null, "Added from Sales Attending");
+    expect(res?.action).toBe("unarchived");
+    const count = await env.DB.prepare(`SELECT COUNT(*) AS n FROM sales_reps WHERE user_id = ?`).bind(212).first<{ n: number }>();
+    expect(count?.n).toBe(1);
+    expect((await repForUser(212))?.archived_at).toBeNull();
+  });
+
+  test("an active row is used as it is", async () => {
+    await seedUser(213, SALES_DEPT_ID);
+    const made = await syncSalesRepFromUser(env, 213, null);
+
+    const res = await ensureSalesRepForUser(env, 213, null, "Added from Sales Attending");
+    expect(res).toEqual({ action: "existing", repId: made.repId });
+  });
+
+  test("a login that is not active is refused", async () => {
+    await env.DB.prepare(
+      `INSERT INTO users (id, email, role_id, department_id, status) VALUES (?, ?, 1, ?, 'invited')`,
+    ).bind(214, "rep-sync-214@example.com", OTHER_DEPT_ID).run();
+
+    expect(await ensureSalesRepForUser(env, 214, null, "Added from Sales Attending")).toBeNull();
+    expect(await repForUser(214)).toBeNull();
+  });
+});
+
+describe("attendeeRepId (POST /projects/:id/sales-attendees body)", () => {
+  test("a roster id passes straight through", async () => {
+    expect(await attendeeRepId(env, null, { sales_rep_id: 77 }, null, 1)).toEqual({ ok: true, repId: 77 });
+  });
+
+  test("a login not on the roster is put on it and its roster id answered", async () => {
+    await seedUser(221, OTHER_DEPT_ID);
+    const res = await attendeeRepId(env, null, { user_id: 221 }, null, 1);
+    expect(res.ok).toBe(true);
+    const rep = await repForUser(221);
+    expect(res.ok && res.repId).toBe(rep?.id);
+  });
+
+  test("nothing chosen is refused with the picker's sentence", async () => {
+    expect(await attendeeRepId(env, null, {}, null, 1)).toEqual({ ok: false, error: "Please choose a sales attendee." });
   });
 });

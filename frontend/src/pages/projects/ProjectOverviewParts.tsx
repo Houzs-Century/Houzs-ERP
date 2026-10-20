@@ -19,38 +19,81 @@ interface DataGaps {
   byMonth: Array<{ month: string; ended: number; withSales: number }>;
 }
 
-type GapTab = "noSales" | "noCogs" | "noCommission";
-const GAP_TABS: Array<[GapTab, string, string]> = [
-  ["noSales", "No sales keyed", "Sales not keyed in the books, so the page falls back to its Sales Orders"],
-  ["noCogs", "Sales, no COGS", "Gross profit reads too high"],
-  ["noCommission", "Sales, no commission", "Net profit reads too high"],
-];
+/* What makes an event's P&L read wrong (owner 2026-10-20), three problems:
+   Sales Orders not daily (per bill of the chat sales report: not opened, or
+   opened under another event and to be moved), Rental (none keyed, or keyed
+   with no sales against it), and No chat sales report (per event). */
+interface ProblemBill { ref: string; amountSen: number; salesperson: string | null; problem: "not_opened" | "other_event"; soDocNo: string | null; otherEvent: string | null }
+interface BookRow {
+  id: number; code: string; name: string; brand: string | null; endDate: string; soSen: number; soDocs: string[];
+  hasReport: boolean; reportBills: number; problemBills: ProblemBill[];
+  /** The P&L's rental (Finance's books or a typed line), in RM. */
+  rental: number;
+}
+type BooksTab = "daily" | "rental" | "report";
+/** An event of the last 180 days whose chat report holds bills not opened under it. */
+interface NotDailyEvent { id: number; code: string; name: string; startDate: string; endDate: string; reportBills: number; bills: ProblemBill[] }
 
-/** Finished events whose books are incomplete, listed so it is clear which
- *  event still owes which line (owner 2026-10-17). */
+/** Finished events and what still makes their P&L wrong. */
 export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void }) {
-  const q = useQuery<DataGaps>("/api/projects/data-gaps", () => api.get("/api/projects/data-gaps"));
-  const [tab, setTab] = useState<GapTab>("noSales");
+  const q = useQuery<DataGaps & { books: BookRow[]; notDaily: NotDailyEvent[]; recentFrom: string }>("/api/projects/data-gaps", () => api.get("/api/projects/data-gaps"));
+  const [tab, setTab] = useState<BooksTab>("daily");
   const g = q.data;
   if (q.error) return <div className="mb-4 rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not check the event books: {q.error}</div>;
-  if (!g || (g.noSales.count === 0 && g.noCogs.count === 0 && g.noCommission.count === 0)) return null;
-  const sen = (s: number) => money(s / 100);
-  const rows = g[tab].rows;
+  if (!g) return null;
+  const sen = (x: number) => money(x / 100);
+  const bills = g.notDaily.flatMap((r) => r.bills.map((b) => ({ r, b })));
+  const rentalRows = g.books.filter((r) => !(r.rental > 0) || !(r.soSen > 0));
+  const noReport = g.books.filter((r) => !r.hasReport);
+  const eventCell = (r: { name: string; code: string }) => <Td left className="max-w-[300px] truncate"><span className="text-primary">{r.name}</span><span className="block text-[10.5px] text-ink-muted">{r.code}</span></Td>;
   return (
-    <Panel title="Books not complete" hint={`events that ended ${g.from} – ${g.to} (${g.ended} events) · each one listed here makes the figures above read wrong until its books are keyed`}>
-      <StepTabs tabs={GAP_TABS.map(([k, label]) => [k, label, g[k].count, 0])} value={tab} onChange={(k) => setTab(k as GapTab)} />
-      <p className="mb-2 text-[12px] text-ink-muted">{GAP_TABS.find(([k]) => k === tab)?.[2]}.</p>
-      <div className="max-h-[420px] overflow-y-auto">
-        <table className="w-full border-collapse">
-          <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th left>Brand</Th><Th>Ended</Th><Th>Sales keyed</Th><Th>Cost keyed</Th><Th>Sales Orders at the event</Th></tr></thead>
-          <tbody>{rows.map((r) => (
-            <tr key={r.id} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
-              <Td left className="max-w-[340px] truncate text-primary">{r.name}</Td><Td left className="text-ink-secondary">{r.brand ?? "—"}</Td>
-              <Td>{r.endDate}</Td><Td className={r.income > 0 ? "" : "text-err"}>{money(r.income)}</Td><Td>{money(r.cost)}</Td><Td>{sen(r.soSen)}</Td>
-            </tr>))}</tbody>
-        </table>
+    <Panel title="Books not complete" hint={`events that ended ${g.from} – ${g.to} (${g.books.length} events) · what still makes the P&L above read wrong`}>
+      <StepTabs value={tab} onChange={(v) => setTab(v as BooksTab)}
+        tabs={[["daily", "Sales Orders not daily", bills.length, 0], ["rental", "Rental missing or no sales", rentalRows.length, 0], ["report", "No chat sales report", noReport.length, 0]] as Array<[string, string, number, number]>} />
+      <div className="max-h-[460px] overflow-auto">
+        {tab === "daily" && (
+          <table className="w-full border-collapse">
+            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Dates</Th><Th left>Bill</Th><Th>Amount</Th><Th left>Salesperson</Th><Th left>Problem</Th></tr></thead>
+            <tbody>{bills.map(({ r, b }, i) => (
+              <tr key={`${r.id}-${b.ref}-${i}`} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
+                {eventCell(r)}<Td>{r.startDate.slice(5)}{r.endDate && r.endDate !== r.startDate ? ` – ${r.endDate.slice(5)}` : ""}</Td><Td left className="font-mono">{b.ref}</Td><Td>{sen(b.amountSen)}</Td><Td left>{b.salesperson ?? "—"}</Td>
+                <Td left className={b.problem === "not_opened" ? "font-semibold text-err" : "text-warning-text"}>
+                  {b.problem === "not_opened" ? "Not opened as a Sales Order" : <>Opened under another event · <span className="font-mono">{b.soDocNo}</span> under {b.otherEvent} — move it</>}
+                </Td>
+              </tr>
+            ))}
+              {bills.length === 0 && <tr><Td left className="text-ink-muted">Every reported bill is opened under its event.</Td></tr>}
+            </tbody>
+          </table>
+        )}
+        {tab === "rental" && (
+          <table className="w-full border-collapse">
+            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th>Rental</Th><Th>Sales Orders</Th><Th left>Problem</Th></tr></thead>
+            <tbody>{rentalRows.map((r) => (
+              <tr key={r.id} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
+                {eventCell(r)}<Td>{r.endDate}</Td><Td className={r.rental > 0 ? "" : "font-semibold text-err"}>{r.rental > 0 ? money(r.rental) : "missing"}</Td>
+                <Td className={r.soSen > 0 ? "" : "font-semibold text-err"}>{sen(r.soSen)}</Td>
+                <Td left className="text-err">{!(r.rental > 0) ? "No rental keyed" : "Rental keyed, no sales"}</Td>
+              </tr>
+            ))}
+              {rentalRows.length === 0 && <tr><Td left className="text-ink-muted">Every finished event has its rental and sales.</Td></tr>}
+            </tbody>
+          </table>
+        )}
+        {tab === "report" && (
+          <table className="w-full border-collapse">
+            <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th>Sales Orders</Th></tr></thead>
+            <tbody>{noReport.map((r) => (
+              <tr key={r.id} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
+                {eventCell(r)}<Td>{r.endDate}</Td><Td>{sen(r.soSen)}</Td>
+              </tr>
+            ))}
+              {noReport.length === 0 && <tr><Td left className="text-ink-muted">Every finished event has a chat sales report.</Td></tr>}
+            </tbody>
+          </table>
+        )}
       </div>
-      {g[tab].count > rows.length && <p className="mt-1 text-[11px] text-ink-muted">{rows.length} of {g[tab].count}.</p>}
+      <p className="mt-1 text-[11px] text-ink-muted">Not daily = a bill in the event chat&apos;s sales report that is not a Sales Order under this event, matched as the event page matches it; every event since {g.recentFrom}, running ones included. Rental and chat report: the finished events above. Sales = the Sales Orders opened at the event. Click a row to open the event.</p>
     </Panel>
   );
 }

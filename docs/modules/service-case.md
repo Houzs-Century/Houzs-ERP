@@ -38,6 +38,12 @@ enters on `pending_customer_pickup` (collect from customer), then
 terminal stage AND not archived — both terminal stages must be excluded, not
 just `completed`.
 
+Stage target days are snapshotted on the case (`stage_target_days`) and its open
+`assr_stage_history` row when it enters a stage. Saving a target in Service
+Maintenance (priority cell, or the active Lead Time profile) re-reads it for
+the open cases already in that stage (`reapplyStageTargets`), so "overdue"
+follows the new SLA at once.
+
 ## Permissions
 
 - `service_cases.read` / `.create` / `.write` / `.manage` / `.approve`.
@@ -106,6 +112,7 @@ just `completed`.
   sync. `GET /api/delivery-sheet/assr-legs` is the own-team-gated feed
   (`delivery-sheet-assr-feed.ts`); the Delivery Planning board is deliberately
   NOT gated (it shows every dated leg), so board and sheet differ on purpose.
+- **Pickup tracking** on Pickup / Return (HC-0129): `pickup_status` (pending / scheduled / completed), `actual_pickup_at`, `pickup_pic` (free text), `item_location` (customer / warehouse / supplier). The Scheduled Pickup Date (ETA) is `customer_pickup_at`, not a new column. Allowed values live in `scm/shared/assr-pickup-tracking.ts` (frontend copy byte-identical); the PATCH refuses anything else. Desktop `components/assr/PickupTrackingFields.tsx`, mobile rows in `MobileServiceCase.tsx`.
 - **Supplier returns (返厂)** are rows in `assr_supplier_returns` (`round_no`
   1..N, added freely; an archived trip keeps its number, never reused). The list
   is the source of truth for each trip's out/back dates; the case's
