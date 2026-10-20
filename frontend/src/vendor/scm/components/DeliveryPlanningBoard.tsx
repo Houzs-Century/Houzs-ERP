@@ -1118,7 +1118,7 @@ export function DeliveryPlanningBoard({
        to. "Amend (Cust)" (the customer's requested new date) default-HIDES. The
        ORIGINAL "Delivery Date" column above is unchanged. */
     {
-      key: 'amended_delivery_date', label: 'Delivery Date', width: 150, sortable: true,
+      key: 'amended_delivery_date', label: 'Delivery Date', width: 170, sortable: true,
       accessor: (o) => <DeliveryDateEditCell order={o} sched={sched} />,
       searchValue: (o) => o.amended_delivery_date ?? '',
       sortFn: (a, b) => String(a.amended_delivery_date ?? '').localeCompare(String(b.amended_delivery_date ?? '')),
