@@ -138,6 +138,18 @@ const COMBOS: Combo[] = [
     positionId: 16, positionName: "Driver", departmentName: "Operation Department",
     policyDb: { cohort: "restricted", profile: "driver_helper", can_move_money: 0, can_write_config: 0, is_fleet: 1, duty: "driver" },
   },
+  {
+    // No active member holds a title-less non-`*` role in prod today, so this is
+    // latent — but it is the one path where the seed could flip
+    // scm_l2_configured (the `scm.*=none` rows would mark the member
+    // scm-configured if scm_l2 were taken from resolvePositionAccessFromRows's
+    // meta). `scm.access` is a PERMISSION, not a page key, so the seed's scm*
+    // rows are all `none`; scm_l2 must stay false across the no-op seed.
+    label: "Title-less role with scm.access / no position",
+    perms: ["scm.access", "projects.read", "sales.read"],
+    positionId: null, positionName: null, departmentName: "Operation Department",
+    policyDb: null,
+  },
 ];
 
 const PAGE_KEYS = PAGES.map((p) => p.key);
@@ -213,6 +225,20 @@ describe("role_page_access cutover is a byte-for-byte no-op", () => {
         expect(fallback.scmL2Configured).toBe(policy.scmConfigured);
       }
     }
+  });
+
+  it("a title-less member's scm_l2_configured survives a no-op seed, and flips only on a real scm grant", () => {
+    const c = COMBOS.find((x) => x.label.startsWith("Title-less"))!;
+    const ctx = ctxFor(c);
+    // Unseeded (today) and after the no-op seed (scm.* all 'none') must agree —
+    // false — or scmAreaGuard would start enforcing on a member whose pageAccess
+    // map did not change.
+    expect(resolveMemberPageAccess({ ...ctx, roleRows: [] }).scmL2Configured).toBe(false);
+    expect(resolveMemberPageAccess({ ...ctx, roleRows: seedRowsFor(c) }).scmL2Configured).toBe(false);
+    // Only a real grant — an scm sub-area at a level other than none — flips it.
+    const granted = seedRowsFor(c).map((r) =>
+      r.page_key === "scm.warehouse.inventory" ? { ...r, level: "view" } : r);
+    expect(resolveMemberPageAccess({ ...ctx, roleRows: granted }).scmL2Configured).toBe(true);
   });
 });
 

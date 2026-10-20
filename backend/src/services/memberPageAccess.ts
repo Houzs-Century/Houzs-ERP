@@ -41,8 +41,9 @@ import {
   fullAccessMap,
   pageAccessFromPermissions,
   resolvePositionAccessFromRows,
+  isValidPageKey,
+  isValidAccessLevel,
   type AccessLevel,
-  type PageAccessMeta,
 } from "./pageAccess";
 import { resolvePositionPolicy } from "./positionPolicy";
 import type { PositionPolicyRow } from "./positionPolicyRows";
@@ -94,12 +95,27 @@ export function resolveMemberPageAccess(input: MemberPageAccessInput): MemberPag
   }
 
   // Title-less member: pages from the role's rows when present, else the
-  // permission backfill (today's behavior). scm_l2 only when the rows explicitly
-  // configure an scm* area.
+  // permission backfill (today's behavior).
   if (hasRows) {
-    const meta: PageAccessMeta = { explicitScm: false };
-    const pageAccess = resolvePositionAccessFromRows(input.roleRows, meta);
-    return { pageAccess, scmL2Configured: meta.explicitScm };
+    const pageAccess = resolvePositionAccessFromRows(input.roleRows);
+    // scm_l2 must NOT come from resolvePositionAccessFromRows's `meta` on THIS
+    // path. That flag turns TRUE for ANY scm* row with a valid level — including
+    // the `scm.*=none` rows the no-op seed writes for every page — which would
+    // flip a title-less member from the pre-seed `false` (pageAccessFromPermissions
+    // never set it) to `true`, making scmAreaGuard start enforcing per-area and
+    // 403 a member whose pageAccess map did not change. The honest signal here is
+    // "the role actually GRANTS an scm sub-area", i.e. an scm* row whose level is
+    // not `none`. (The positioned restricted cohort deliberately KEEPS the meta
+    // rule — there an explicit `scm.*=none` is a hand-authored DENY that must be
+    // enforced — so the fix is confined to this branch and the shared rule in
+    // resolvePositionAccessFromRows is untouched.)
+    const scmL2Configured = input.roleRows.some(
+      (r) => r.page_key.startsWith("scm")
+        && r.level !== "none"
+        && isValidPageKey(r.page_key)
+        && isValidAccessLevel(r.level),
+    );
+    return { pageAccess, scmL2Configured };
   }
   return { pageAccess: pageAccessFromPermissions(input.permissionsSet), scmL2Configured: false };
 }

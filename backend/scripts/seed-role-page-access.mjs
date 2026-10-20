@@ -122,6 +122,19 @@ const finalWithRows = (ctx, roleRows) =>
     position_policy: ctx.positionPolicy,
   });
 
+/** A member's resolved scm_l2_configured under the given rows — a NON-page
+ *  output that must also be a no-op across the seed (the title-less path could
+ *  otherwise flip it; see memberPageAccess.ts). */
+const scmL2WithRows = (ctx, roleRows) =>
+  resolveMemberPageAccess({
+    permissionsSet: ctx.permissions,
+    positionId: ctx.positionId,
+    positionName: ctx.positionName,
+    departmentName: ctx.departmentName,
+    positionPolicy: ctx.positionPolicy,
+    roleRows,
+  }).scmL2Configured;
+
 async function buildPlan(sql) {
   const roles = await sql`SELECT id, name, permissions, is_system FROM roles ORDER BY id`;
   if (roles.length === 0) throw new Error("no roles — a plan over nothing is not a verdict");
@@ -278,10 +291,19 @@ async function verify(p) {
     let checked = 0;
     for (const m of members) {
       const ctx = memberCtx(m);
+      const stored = storedByRole.get(m.role_id) ?? [];
       const oldFinal = finalWithRows(ctx, []);
-      const newFinal = finalWithRows(ctx, storedByRole.get(m.role_id) ?? []);
+      const newFinal = finalWithRows(ctx, stored);
       if (shapeOf(oldFinal) !== shapeOf(newFinal)) {
-        problems.push(`member #${m.id} (role ${m.role_id}): NEW resolution differs from OLD`);
+        problems.push(`member #${m.id} (role ${m.role_id}): NEW page access differs from OLD`);
+      }
+      // scm_l2_configured is a non-page output that must also not move — on the
+      // title-less path a seed of scm.*=none rows could otherwise flip it and
+      // make scmAreaGuard start enforcing.
+      const oldScmL2 = scmL2WithRows(ctx, []);
+      const newScmL2 = scmL2WithRows(ctx, stored);
+      if (oldScmL2 !== newScmL2) {
+        problems.push(`member #${m.id} (role ${m.role_id}): scm_l2_configured changed ${oldScmL2} -> ${newScmL2}`);
       }
       checked += 1;
     }
