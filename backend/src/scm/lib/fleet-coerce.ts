@@ -103,12 +103,31 @@ export function isWorkOrderFileKind(v: unknown): v is WorkOrderFileKind {
 
 /** fleet/work-orders/<woId>/<kind>/<ms>-<safe name>.<ext> */
 export function workOrderFileKey(woId: string, kind: WorkOrderFileKind, ext: string, name: string | null, nowMs: number): string {
+  return `fleet/work-orders/${woId}/${kind}/${fileTail(ext, name, nowMs)}`;
+}
+
+/** <ms>-<safe name>.<ext> - the file name rides inside the key. */
+function fileTail(ext: string, name: string | null, nowMs: number): string {
   const stem = (name ?? '').replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60);
-  return `fleet/work-orders/${woId}/${kind}/${nowMs}${stem ? `-${stem}` : ''}.${ext}`;
+  return `${nowMs}${stem ? `-${stem}` : ''}.${ext}`;
 }
 
 /** True only for a key minted for THIS work order - the delete route refuses
  *  anything else, so a crafted key cannot remove another object. */
 export function isWorkOrderFileKeyOf(key: string, woId: string): boolean {
   return key.startsWith(`fleet/work-orders/${woId}/`) && !key.includes('..');
+}
+
+/* -- Breakdown media -----------------------------------------------------------
+   lorry_breakdown_cases.media_refs (mig 0204) holds the scene photos/videos.
+   New files get a server-minted key under the case; older mobile reports put a
+   SLIPS-bucket key (slips/...) there, which the read route still serves. */
+
+/** fleet/breakdowns/<caseId>/<ms>-<safe name>.<ext> */
+export function breakdownFileKey(caseId: string, ext: string, name: string | null, nowMs: number): string {
+  return `fleet/breakdowns/${caseId}/${fileTail(ext, name, nowMs)}`;
+}
+
+export function isBreakdownFileKeyOf(key: string, caseId: string): boolean {
+  return key.startsWith(`fleet/breakdowns/${caseId}/`) && !key.includes('..');
 }

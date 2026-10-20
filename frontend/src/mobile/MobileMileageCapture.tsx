@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { uploadSlipFull, ALLOWED_SLIP_MIMES } from "../vendor/scm/lib/slip";
+import { uploadBreakdownFile } from "../pages/FleetHealthBreakdownFiles";
 import "./mobile.css";
 
 /* Mileage capture — the mobile DRIVER action for Fleet Maintenance Phase 2.
@@ -57,7 +58,9 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
   const [bdSeverity, setBdSeverity] = useState<"MINOR" | "MAJOR" | "CRITICAL">("MAJOR");
   const [bdDrivable, setBdDrivable] = useState(false);
   const [bdDesc, setBdDesc] = useState("");
-  const [bdDone, setBdDone] = useState<{ plate: string; grounded: boolean; trips: number } | null>(null);
+  // Scene photos AND videos: uploaded onto the case after it is created.
+  const [bdFiles, setBdFiles] = useState<File[]>([]);
+  const [bdDone, setBdDone] = useState<{ plate: string; grounded: boolean; trips: number; mediaFailed: string | null } | null>(null);
 
   const vehicles = dashQ.data?.vehicles ?? [];
   const filtered = useMemo(() => {
@@ -114,13 +117,8 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
     setActionError(null);
     setBusy(true);
     try {
-      let photoRef: string | null = null;
-      if (photoFile) {
-        const { r2Key } = await uploadSlipFull({ file: photoFile });
-        photoRef = r2Key;
-      }
       const gps = await getGps();
-      const res = await api.post<{ grounding: boolean; affectedTrips: unknown[] }>(
+      const res = await api.post<{ id: string; grounding: boolean; affectedTrips: unknown[] }>(
         `/api/fleet-maintenance/vehicles/${encodeURIComponent(selected.id)}/breakdowns`,
         {
           faultType: bdFault.trim() || undefined,
@@ -130,10 +128,16 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
           breakdownStart: new Date().toISOString(),
           gpsLat: gps?.lat,
           gpsLng: gps?.lng,
-          mediaRefs: photoRef ? [photoRef] : undefined,
         },
       );
-      setBdDone({ plate: selected.plate, grounded: !!res.grounding, trips: res.affectedTrips?.length ?? 0 });
+      /* The case is the urgent part, so it is saved first; a failed upload
+         is said on the done screen rather than losing the report. */
+      let mediaFailed: string | null = null;
+      for (const f of bdFiles) {
+        try { await uploadBreakdownFile(res.id, f); }
+        catch (e) { mediaFailed = e instanceof Error ? e.message : "A file did not upload."; break; }
+      }
+      setBdDone({ plate: selected.plate, grounded: !!res.grounding, trips: res.affectedTrips?.length ?? 0, mediaFailed });
     } catch {
       setActionError("Could not report the breakdown. Please try again.");
     } finally {
@@ -160,10 +164,15 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
                 {bdDone.trips > 0 ? ` ${bdDone.trips} trip(s) affected.` : ""}
               </div>
             )}
+            {bdDone.mediaFailed && (
+              <div style={{ marginTop: 10, fontSize: 11.5, color: "var(--red)" }}>
+                The breakdown is saved, but a photo or video did not upload ({bdDone.mediaFailed}). The office can add it on Fleet Health.
+              </div>
+            )}
           </div>
         </div>
         <footer className="actbar">
-          <button type="button" className="btn" onClick={() => { setBdDone(null); setSelectedId(null); setBdFault(""); setBdDesc(""); setBdSeverity("MAJOR"); setBdDrivable(false); setPhotoFile(null); setMode("mileage"); dashQ.refetch(); }}>
+          <button type="button" className="btn" onClick={() => { setBdDone(null); setSelectedId(null); setBdFault(""); setBdDesc(""); setBdSeverity("MAJOR"); setBdDrivable(false); setPhotoFile(null); setBdFiles([]); setMode("mileage"); dashQ.refetch(); }}>
             Done
           </button>
         </footer>
@@ -332,14 +341,24 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
             )}
 
             {/* Photo — dashboard odometer (mileage) or the scene (breakdown). */}
-            <div className="fld-l" style={{ margin: "18px 0 8px" }}>{mode === "breakdown" ? "Photo of the scene (optional)" : "Dashboard photo (optional)"}</div>
+            <div className="fld-l" style={{ margin: "18px 0 8px" }}>{mode === "breakdown" ? "Photos or videos of the scene (optional)" : "Dashboard photo (optional)"}</div>
             <div style={{ display: "flex", gap: 9 }}>
               <label style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "var(--brand)", border: "none", borderRadius: 13, padding: 14, color: "#fff", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" />
                   <circle cx="12" cy="13" r="3" />
                 </svg>
-                {photoFile ? "Retake photo" : "Take photo"}
+                {mode === "breakdown" ? (bdFiles.length ? "Add more" : "Add photo or video") : photoFile ? "Retake photo" : "Take photo"}
+                {mode === "breakdown" ? (
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/jpeg,image/png,image/webp,image/heic,video/mp4,video/quicktime"
+                    aria-label="Add photos or videos of the scene"
+                    style={{ display: "none" }}
+                    onChange={(e) => { const fs = Array.from(e.target.files ?? []); e.target.value = ""; setBdFiles((cur) => [...cur, ...fs]); }}
+                  />
+                ) : (
                 <input
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
@@ -357,10 +376,17 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
                     setPhotoFile(f);
                   }}
                 />
+                )}
               </label>
-              <div style={{ flex: 1, borderRadius: 13, minHeight: 70, background: photoFile ? "linear-gradient(135deg,#d7ded6,#c7d0c4)" : "linear-gradient(135deg,#eceee9,#e3e6e0)" }} />
+              <div style={{ flex: 1, borderRadius: 13, minHeight: 70, background: (mode === "breakdown" ? bdFiles.length : photoFile) ? "linear-gradient(135deg,#d7ded6,#c7d0c4)" : "linear-gradient(135deg,#eceee9,#e3e6e0)" }} />
             </div>
-            {photoFile && <div style={{ fontSize: 10.5, color: "var(--mut)", marginTop: 6 }} className="tnum">{photoFile.name}</div>}
+            {mode === "mileage" && photoFile && <div style={{ fontSize: 10.5, color: "var(--mut)", marginTop: 6 }} className="tnum">{photoFile.name}</div>}
+            {mode === "breakdown" && bdFiles.map((f, i) => (
+              <div key={`${f.name}-${i}`} style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--mut)", marginTop: 6 }} className="tnum">
+                <span>{f.name}</span>
+                <button type="button" onClick={() => setBdFiles((cur) => cur.filter((_, j) => j !== i))} style={{ background: "none", border: "none", color: "var(--red)", fontSize: 10.5 }}>Remove</button>
+              </div>
+            ))}
             {photoError && <div style={{ fontSize: 10.5, color: "var(--red)", marginTop: 6 }}>{photoError}</div>}
 
             {mode === "mileage" && (
