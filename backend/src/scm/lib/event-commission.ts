@@ -28,7 +28,16 @@
 //   Run month after month, nothing is counted twice: an order's commission sits
 //   in its fair's month as at month end; what happens after lands in a later
 //   month's Part 2.
+//
+// TWO BASES (owner 2026-10-20, 「我要两个都看，一个是by fair，一个是by sales
+// order 日期」): the same two parts keyed on the ORDER's SO date instead of the
+// fair's start — Part 1 the orders opened in the range (grouped by fair), Part 2
+// what happened in the range to orders opened before it. Orders with no fair are
+// in neither (「不算」).
 // ----------------------------------------------------------------------------
+
+/** Which date puts an order in the range: its fair's start, or its own SO date. */
+export type CommissionBasis = 'fair' | 'so_date';
 
 export type CommissionFair = {
   id: number;
@@ -51,6 +60,8 @@ export type CommissionSo = {
   goodsSen: number;
   totalSen: number;
   createdAt: string;
+  /** The order's SO date (YYYY-MM-DD) — the "by SO date" basis. */
+  soDate: string | null;
 };
 
 export type CommissionPayment = { docNo: string; paidAt: string; amountSen: number };
@@ -73,6 +84,7 @@ export type ChangeView = {
 
 export type SoRow = {
   docNo: string;
+  soDate: string | null;
   salesperson: string | null;
   customer: string | null;
   goodsSen: number;
@@ -113,6 +125,7 @@ export type AdjustmentRow = {
 };
 
 export type EventCommissionReport = {
+  basis: CommissionBasis;
   from: string;
   to: string;
   fairs: FairRow[];
@@ -177,8 +190,10 @@ export function buildEventCommission(input: {
   payments: readonly CommissionPayment[];
   changes: readonly CommissionChange[];
   cancels: readonly CommissionCancel[];
+  basis?: CommissionBasis;
 }): EventCommissionReport {
   const { from, to } = input;
+  const basis: CommissionBasis = input.basis ?? 'fair';
   const byDoc = <T extends { docNo: string }>(rows: readonly T[]) => {
     const m = new Map<string, T[]>();
     for (const r of rows) { const a = m.get(r.docNo); if (a) a.push(r); else m.set(r.docNo, [r]); }
@@ -195,47 +210,71 @@ export function buildEventCommission(input: {
   const rateOf = (f: CommissionFair): number | null => input.ratePctByBrand.get((f.brand ?? '').trim()) ?? null;
   const fairById = new Map(input.fairs.map((f) => [f.id, f]));
 
-  /* PART 1 — fairs starting in the range, as at `to`. */
-  const fairs: FairRow[] = [];
-  for (const f of input.fairs.filter((x) => x.startDate >= from && x.startDate <= to)) {
+  /* One order as at `to`: its goods that day, earned only if 30% was paid by then.
+     Null when it earns nothing at all (draft, held, cancelled by `to`). */
+  const soRowAsAt = (so: CommissionSo, rate: number | null): SoRow | null => {
+    if (so.onHold || so.status === 'DRAFT' || so.status === 'ON_HOLD') return null;
+    const cancelled = cancelOf.get(so.docNo);
+    if (so.status === 'CANCELLED' && (!cancelled || cancelled <= to)) return null;
+    const pays = paymentsOf.get(so.docNo) ?? [];
+    const chs = changesOf.get(so.docNo) ?? [];
+    const goods = goodsAt(so.goodsSen, chs, to);
+    const paid = pays.filter((p) => mytDay(p.paidAt) <= to).reduce((s, p) => s + (Number(p.amountSen) || 0), 0);
+    const reached = reachedOn(so.totalSen, pays, to);
+    return {
+      docNo: so.docNo,
+      soDate: so.soDate,
+      salesperson: so.salesperson,
+      customer: so.customer,
+      goodsSen: goods,
+      totalSen: so.totalSen,
+      paidSen: paid,
+      paidPct: so.totalSen > 0 ? Math.round((paid / so.totalSen) * 1000) / 10 : 0,
+      reachedOn: reached,
+      commissionSen: reached ? commissionOf(goods, rate) : 0,
+      changes: chs.filter((ch) => mytDay(ch.changedAt) <= to).map((ch) => changeView(ch, so)).filter((v): v is ChangeView => v != null),
+    };
+  };
+  const fairRowOf = (f: CommissionFair, members: readonly CommissionSo[]): FairRow => {
     const rate = rateOf(f);
-    const sos: SoRow[] = [];
-    for (const so of input.sos.filter((s) => s.projectId === f.id)) {
-      if (so.onHold || so.status === 'DRAFT' || so.status === 'ON_HOLD') continue;
-      const cancelled = cancelOf.get(so.docNo);
-      if (so.status === 'CANCELLED' && (!cancelled || cancelled <= to)) continue;
-      const pays = paymentsOf.get(so.docNo) ?? [];
-      const chs = changesOf.get(so.docNo) ?? [];
-      const goods = goodsAt(so.goodsSen, chs, to);
-      const paid = pays.filter((p) => mytDay(p.paidAt) <= to).reduce((s, p) => s + (Number(p.amountSen) || 0), 0);
-      const reached = reachedOn(so.totalSen, pays, to);
-      sos.push({
-        docNo: so.docNo,
-        salesperson: so.salesperson,
-        customer: so.customer,
-        goodsSen: goods,
-        totalSen: so.totalSen,
-        paidSen: paid,
-        paidPct: so.totalSen > 0 ? Math.round((paid / so.totalSen) * 1000) / 10 : 0,
-        reachedOn: reached,
-        commissionSen: reached ? commissionOf(goods, rate) : 0,
-        changes: chs.filter((ch) => mytDay(ch.changedAt) <= to).map((ch) => changeView(ch, so)).filter((v): v is ChangeView => v != null),
-      });
-    }
-    sos.sort((a, b) => (a.docNo < b.docNo ? -1 : 1));
-    fairs.push({
+    const sos = members.map((so) => soRowAsAt(so, rate)).filter((r): r is SoRow => r != null)
+      .sort((a, b) => (a.docNo < b.docNo ? -1 : 1));
+    return {
       id: f.id, name: f.name, brand: f.brand, startDate: f.startDate, endDate: f.endDate,
       ratePct: rate, totalSalesRm: f.totalSalesRm, estimateRm: f.estimateRm,
       payableSen: sos.reduce((s, r) => s + r.commissionSen, 0),
       sos,
-    });
+    };
+  };
+  const inRange = (day: string | null): boolean => day != null && day >= from && day <= to;
+
+  /* PART 1 — by fair: the fairs starting in the range, all their orders.
+     By SO date: the orders opened in the range, grouped under their fairs. */
+  const fairs: FairRow[] = [];
+  if (basis === 'fair') {
+    for (const f of input.fairs.filter((x) => inRange(x.startDate))) {
+      fairs.push(fairRowOf(f, input.sos.filter((s) => s.projectId === f.id)));
+    }
+  } else {
+    const opened = new Map<number, CommissionSo[]>();
+    for (const so of input.sos) {
+      if (!inRange(so.soDate) || !fairById.has(so.projectId)) continue;
+      const list = opened.get(so.projectId);
+      if (list) list.push(so); else opened.set(so.projectId, [so]);
+    }
+    const ordered = [...opened.keys()].map((id) => fairById.get(id)!)
+      .sort((a, b) => (a.startDate < b.startDate ? -1 : a.startDate > b.startDate ? 1 : a.name < b.name ? -1 : 1));
+    for (const f of ordered) fairs.push(fairRowOf(f, opened.get(f.id)!));
   }
 
-  /* PART 2 — in the range, on orders of fairs that started before it. */
+  /* PART 2 — in the range, on orders of fairs that started before it (by fair),
+     or on orders opened before it (by SO date). */
+  const earlier = (so: CommissionSo, f: CommissionFair): boolean =>
+    basis === 'fair' ? f.startDate < from : so.soDate != null && so.soDate < from;
   const adjustments: AdjustmentRow[] = [];
   for (const so of input.sos) {
     const f = fairById.get(so.projectId);
-    if (!f || !(f.startDate < from)) continue;
+    if (!f || !earlier(so, f)) continue;
     if (so.status === 'DRAFT' || so.onHold || so.status === 'ON_HOLD') continue;
     const rate = rateOf(f);
     const pays = paymentsOf.get(so.docNo) ?? [];
@@ -272,5 +311,5 @@ export function buildEventCommission(input: {
 
   const payableSen = fairs.reduce((s, f) => s + f.payableSen, 0);
   const adjustmentsSen = adjustments.reduce((s, a) => s + a.commissionSen, 0);
-  return { from, to, fairs, adjustments, totals: { payableSen, adjustmentsSen, totalSen: payableSen + adjustmentsSen } };
+  return { basis, from, to, fairs, adjustments, totals: { payableSen, adjustmentsSen, totalSen: payableSen + adjustmentsSen } };
 }

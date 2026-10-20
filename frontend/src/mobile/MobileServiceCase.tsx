@@ -3149,7 +3149,7 @@ function MobileSupplierPick({ c, onChanged, notify, disabled }: { c: Any; onChan
   const caseId = Number(get(c, "id"));
   const code = get(c, "creditorCode", "creditor_code");
   const name = get(c, "creditorName", "creditor_name");
-  const manual = String(get(c, "creditorSource", "creditor_source") ?? "") === "manual";
+  const source = String(get(c, "creditorSource", "creditor_source") ?? "");
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Any[]>([]);
@@ -3227,7 +3227,7 @@ function MobileSupplierPick({ c, onChanged, notify, disabled }: { c: Any; onChan
         <div style={{ display: "flex", alignItems: "center", gap: 9, border: `1px solid ${DIM}`, borderRadius: 10, padding: "10px 11px", marginTop: 5 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12.5, fontWeight: 700, color: INK }}>{String(name ?? code)}</div>
-            <div className="money" style={{ fontSize: 10, color: GREY }}>{String(code)}{manual ? " · manual" : ""}</div>
+            <div className="money" style={{ fontSize: 10, color: GREY }}>{String(code)}{source === "manual" ? " · manual" : source === "po" ? " · from PO" : ""}</div>
           </div>
         </div>
       ) : (

@@ -1,12 +1,15 @@
 // ----------------------------------------------------------------------------
-// EventCommission — the Event Commission tab (owner 2026-10-20). For any range:
-// the fairs that START in it, each with the event page's Total Sales and
-// Commission (the estimate) and what its orders have actually earned — goods ×
-// the fair's brand rate, once 30% of the order is paid — opening to each order
-// with its upsales / drop sales; then what happened in the range to orders of
-// EARLIER fairs (30% reached late, upsales / drops after it, cancellations).
-// The rules are the server's (backend/src/scm/lib/event-commission.ts). Export
-// writes both parts as CSV.
+// EventCommission — the Event Commission tab (owner 2026-10-20). For any range,
+// two ways to look (「我要两个都看，一个是by fair，一个是by sales order 日期」):
+//   · BY FAIR — the fairs that START in it, each with the event page's Total
+//     Sales and Commission (the estimate) and what its orders have actually
+//     earned; then what happened in the range to orders of EARLIER fairs;
+//   · BY SO DATE — the orders OPENED in it (their SO date), grouped under their
+//     fairs; then what happened in the range to orders opened EARLIER.
+// An order earns its goods × the fair's brand rate once 30% of it is paid; a
+// fair opens to each order with its upsales / drop sales. The rules are the
+// server's (backend/src/scm/lib/event-commission.ts). Export writes both parts
+// as CSV.
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
@@ -14,7 +17,7 @@ import { Download } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
   useEventCommission,
-  type CommissionAdjustment, type CommissionChange, type CommissionFairRow, type EventCommission,
+  type CommissionAdjustment, type CommissionBasis, type CommissionChange, type CommissionFairRow, type EventCommission,
 } from '../../vendor/scm/lib/event-queries';
 import { fmtDateOrDash, fmtDayMonthRange } from '../../vendor/shared/format';
 import { DateField } from '../../vendor/scm/components/DateField';
@@ -33,6 +36,11 @@ const th: React.CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-11)',
 const td: React.CSSProperties = { padding: '6px 10px', verticalAlign: 'top' };
 const num: React.CSSProperties = { textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
 const right: React.CSSProperties = { ...th, textAlign: 'right' };
+const chip = (on: boolean): React.CSSProperties => ({
+  padding: '4px 10px', borderRadius: 999, fontSize: 'var(--fs-12)', cursor: 'pointer',
+  border: '1px solid var(--c-line, rgba(34,31,32,0.2))',
+  background: on ? 'var(--c-ink)' : 'transparent', color: on ? 'var(--c-cream)' : 'var(--c-ink)',
+});
 
 const fmtRm = (sen: number): string => {
   const text = (Math.abs(sen) / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -47,16 +55,31 @@ const NOT_COUNTED: Record<NonNullable<CommissionChange['notCounted']>, string> =
   opening_day: 'opening-day fix, not counted', first_price: 'priced after opening, not counted',
 };
 
-/* Both parts as CSV: each fair, its orders beneath it; then the earlier fairs' lines. */
+/* The words each basis puts on the page. */
+export const BASIS_WORDS: Record<CommissionBasis, { toggle: string; part1: string; part1Empty: string; part2: string; part2Empty: string; inRange: string; earlier: string }> = {
+  fair: {
+    toggle: 'By fair', part1: 'Fairs starting in the range', part1Empty: 'No fair starts in this range.',
+    part2: 'Earlier fairs — what happened in the range', part2Empty: 'Nothing on earlier fairs in this range.',
+    inRange: 'Fairs in the range', earlier: 'Earlier fairs',
+  },
+  so_date: {
+    toggle: 'By SO date', part1: 'Orders opened in the range (SO date), by fair', part1Empty: 'No order with a fair was opened in this range.',
+    part2: 'Earlier orders — what happened in the range', part2Empty: 'Nothing on earlier orders in this range.',
+    inRange: 'Orders opened in the range', earlier: 'Earlier orders',
+  },
+};
+
+/* Both parts as CSV: each fair, its orders beneath it; then the earlier lines. */
 export const eventCommissionCsv = (r: EventCommission): string => {
   const esc = (v: string | number | null) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const row = (cells: Array<string | number | null>) => cells.map(esc).join(',');
-  const lines = [row(['Fair', 'Dates', 'Rate %', 'Total Sales', 'Estimate', 'Order', 'Salesperson', 'Goods', 'Paid %', '30% reached', 'Commission'])];
+  const byFair = r.basis === 'fair';
+  const lines = [row(['Fair', 'Dates', 'Rate %', 'Total Sales', 'Estimate', 'Order', 'SO date', 'Salesperson', 'Goods', 'Paid %', '30% reached', 'Commission'])];
   for (const f of r.fairs) {
-    lines.push(row([f.name, fmtDayMonthRange(f.startDate, f.endDate), f.ratePct, fmtRmWhole(f.totalSalesRm), fmtRmWhole(f.estimateRm), '', '', '', '', '', fmtRm(f.payableSen)]));
-    for (const s of f.sos) lines.push(row(['', '', '', '', '', s.docNo, s.salesperson, fmtRm(s.goodsSen), s.paidPct, s.reachedOn ?? 'not yet', fmtRm(s.commissionSen)]));
+    lines.push(row([f.name, fmtDayMonthRange(f.startDate, f.endDate), f.ratePct, byFair ? fmtRmWhole(f.totalSalesRm) : '', byFair ? fmtRmWhole(f.estimateRm) : '', '', '', '', '', '', '', fmtRm(f.payableSen)]));
+    for (const s of f.sos) lines.push(row(['', '', '', '', '', s.docNo, s.soDate ?? '', s.salesperson, fmtRm(s.goodsSen), s.paidPct, s.reachedOn ?? 'not yet', fmtRm(s.commissionSen)]));
   }
-  lines.push('', row(['Earlier fairs', 'Date', 'What', 'Order', 'Salesperson', 'Goods', 'Commission']));
+  lines.push('', row([BASIS_WORDS[r.basis].earlier, 'Date', 'What', 'Order', 'Salesperson', 'Goods', 'Commission']));
   for (const a of r.adjustments) lines.push(row([a.fairName, a.date, KIND_LABEL[a.kind], a.docNo, a.salesperson, fmtRm(a.goodsSen), fmtRm(a.commissionSen)]));
   lines.push('', row(['Total', '', '', '', '', '', fmtRm(r.totals.totalSen)]));
   return `${lines.join('\n')}\n`;
@@ -72,9 +95,12 @@ const downloadText = (name: string, text: string) => {
 
 export const EventCommissionTab = () => {
   const [range, setRange] = useState(() => monthOf(myt()));
+  const [basis, setBasis] = useState<CommissionBasis>('fair');
   const [open, setOpen] = useState<Set<number>>(new Set());
-  const q = useEventCommission(range.from, range.to);
+  const q = useEventCommission(range.from, range.to, basis);
   const r = q.data;
+  const words = BASIS_WORDS[basis];
+  const byFair = basis === 'fair';
   const toggle = (id: number) => setOpen((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -84,6 +110,9 @@ export const EventCommissionTab = () => {
   return (
     <div className="space-y-3">
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+        {(['fair', 'so_date'] as const).map((b) => (
+          <button key={b} type="button" style={chip(basis === b)} aria-pressed={basis === b} onClick={() => setBasis(b)}>{BASIS_WORDS[b].toggle}</button>
+        ))}
         <span style={soft}>From</span>
         <DateField value={range.from} aria-label="From date" onChange={(iso) => { if (iso) setRange((x) => ({ ...x, from: iso })); }} />
         <span style={soft}>to</span>
@@ -91,7 +120,7 @@ export const EventCommissionTab = () => {
         <Button variant="ghost" size="sm" onClick={() => setRange(monthOf(myt()))}>This month</Button>
         <Button variant="ghost" size="sm" onClick={() => setRange(monthOf(myt(), -1))}>Last month</Button>
         <span style={{ flex: 1 }} />
-        <Button variant="ghost" size="sm" disabled={!r} onClick={() => { if (r) downloadText(`event-commission-${range.from}-${range.to}.csv`, eventCommissionCsv(r)); }}>
+        <Button variant="ghost" size="sm" disabled={!r} onClick={() => { if (r) downloadText(`event-commission-${r.basis === 'fair' ? 'by-fair' : 'by-so-date'}-${range.from}-${range.to}.csv`, eventCommissionCsv(r)); }}>
           <Download size={16} strokeWidth={1.75} /> Export
         </Button>
       </div>
@@ -99,8 +128,8 @@ export const EventCommissionTab = () => {
       {r && (
         <div style={{ ...card, display: 'flex', gap: 'var(--space-5)', flexWrap: 'wrap', fontSize: 'var(--fs-13)' }}>
           <span>Fairs <b>{r.fairs.length}</b></span>
-          <span>Fairs in the range <b style={num}>RM {fmtRm(r.totals.payableSen)}</b></span>
-          <span>Earlier fairs <b style={num}>RM {fmtRm(r.totals.adjustmentsSen)}</b></span>
+          <span>{BASIS_WORDS[r.basis].inRange} <b style={num}>RM {fmtRm(r.totals.payableSen)}</b></span>
+          <span>{BASIS_WORDS[r.basis].earlier} <b style={num}>RM {fmtRm(r.totals.adjustmentsSen)}</b></span>
           <span>Total commission <b style={num}>RM {fmtRm(r.totals.totalSen)}</b></span>
         </div>
       )}
@@ -114,24 +143,24 @@ export const EventCommissionTab = () => {
 
       {r && (
         <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
-          <div style={{ padding: 'var(--space-2) var(--space-3)', fontWeight: 600 }}>Fairs starting in the range <span style={soft}>(as at {fmtDateOrDash(r.to)})</span></div>
-          {r.fairs.length === 0 ? <div style={{ ...soft, padding: 'var(--space-3)' }}>No fair starts in this range.</div> : (
+          <div style={{ padding: 'var(--space-2) var(--space-3)', fontWeight: 600 }}>{words.part1} <span style={soft}>(as at {fmtDateOrDash(r.to)})</span></div>
+          {r.fairs.length === 0 ? <div style={{ ...soft, padding: 'var(--space-3)' }}>{words.part1Empty}</div> : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
               <thead>
                 <tr>
                   <th style={th}>Fair</th>
                   <th style={th}>Dates</th>
                   <th style={right}>Rate</th>
-                  <th style={right}>Total Sales (RM)</th>
-                  <th style={right}>Estimate (RM)</th>
+                  {byFair && <th style={right}>Total Sales (RM)</th>}
+                  {byFair && <th style={right}>Estimate (RM)</th>}
                   <th style={right}>Orders</th>
                   <th style={right}>Commission (RM)</th>
                 </tr>
               </thead>
               <tbody>
-                {r.fairs.map((f) => <FairRows key={f.id} fair={f} open={open.has(f.id)} onToggle={() => toggle(f.id)} />)}
+                {r.fairs.map((f) => <FairRows key={f.id} fair={f} byFair={byFair} open={open.has(f.id)} onToggle={() => toggle(f.id)} />)}
                 <tr style={{ borderTop: '2px solid var(--border-weak, #e3e1da)', fontWeight: 700 }}>
-                  <td style={td} colSpan={6}>Total</td>
+                  <td style={td} colSpan={byFair ? 6 : 4}>Total</td>
                   <td style={{ ...td, ...num }}>{fmtRm(r.totals.payableSen)}</td>
                 </tr>
               </tbody>
@@ -142,8 +171,8 @@ export const EventCommissionTab = () => {
 
       {r && (
         <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
-          <div style={{ padding: 'var(--space-2) var(--space-3)', fontWeight: 600 }}>Earlier fairs — what happened in the range</div>
-          {r.adjustments.length === 0 ? <div style={{ ...soft, padding: 'var(--space-3)' }}>Nothing on earlier fairs in this range.</div> : (
+          <div style={{ padding: 'var(--space-2) var(--space-3)', fontWeight: 600 }}>{words.part2}</div>
+          {r.adjustments.length === 0 ? <div style={{ ...soft, padding: 'var(--space-3)' }}>{words.part2Empty}</div> : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
               <thead>
                 <tr>
@@ -181,7 +210,7 @@ export const EventCommissionTab = () => {
   );
 };
 
-function FairRows({ fair, open, onToggle }: { fair: CommissionFairRow; open: boolean; onToggle: () => void }) {
+function FairRows({ fair, byFair, open, onToggle }: { fair: CommissionFairRow; byFair: boolean; open: boolean; onToggle: () => void }) {
   const has = fair.sos.length > 0;
   return (
     <>
@@ -190,18 +219,19 @@ function FairRows({ fair, open, onToggle }: { fair: CommissionFairRow; open: boo
         <td style={td}>{has ? (open ? '▾ ' : '▸ ') : ''}{fair.name}</td>
         <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmtDayMonthRange(fair.startDate, fair.endDate)}</td>
         <td style={{ ...td, ...num }}>{fair.ratePct == null ? <span style={soft}>no rate card</span> : `${fair.ratePct}%`}</td>
-        <td style={{ ...td, ...num }}>{fmtRmWhole(fair.totalSalesRm)}</td>
-        <td style={{ ...td, ...num }}>{fmtRmWhole(fair.estimateRm)}</td>
+        {byFair && <td style={{ ...td, ...num }}>{fmtRmWhole(fair.totalSalesRm)}</td>}
+        {byFair && <td style={{ ...td, ...num }}>{fmtRmWhole(fair.estimateRm)}</td>}
         <td style={{ ...td, ...num }}>{fair.sos.length}</td>
         <td style={{ ...td, ...num }}>{fmtRm(fair.payableSen)}</td>
       </tr>
       {open && (
         <tr>
-          <td colSpan={7} style={{ ...td, background: 'var(--c-cream, #faf8f3)' }}>
+          <td colSpan={byFair ? 7 : 5} style={{ ...td, background: 'var(--c-cream, #faf8f3)' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-12)' }}>
               <thead>
                 <tr>
                   <th style={th}>Order</th>
+                  <th style={th}>SO date</th>
                   <th style={th}>Salesperson</th>
                   <th style={th}>Customer</th>
                   <th style={right}>Goods (RM)</th>
@@ -215,6 +245,7 @@ function FairRows({ fair, open, onToggle }: { fair: CommissionFairRow; open: boo
                 {fair.sos.map((s) => (
                   <tr key={s.docNo} style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
                     <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{s.docNo}</td>
+                    <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmtDateOrDash(s.soDate)}</td>
                     <td style={td}>{s.salesperson ?? '—'}</td>
                     <td style={td}>{s.customer ?? '—'}</td>
                     <td style={{ ...td, ...num }}>{fmtRm(s.goodsSen)}</td>

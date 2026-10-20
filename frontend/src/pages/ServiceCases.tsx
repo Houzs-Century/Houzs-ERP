@@ -8173,7 +8173,7 @@ function SupplierField({ c, id, detail, toast, onUpdated }: {
             </div>
             <div className="font-mono text-[10px] text-ink-muted">
               {c.creditor_code}
-              {c.creditor_source === "manual" ? " · manual" : ""}
+              {c.creditor_source === "manual" ? " · manual" : c.creditor_source === "po" ? " · from PO" : ""}
             </div>
           </>
         ) : c.item_code ? (

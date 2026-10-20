@@ -15,7 +15,7 @@ const fair = (o: Partial<CommissionFair> = {}): CommissionFair => ({
 });
 const so = (o: Partial<CommissionSo> = {}): CommissionSo => ({
   docNo: 'HC-SO-2610-001', projectId: 1, salesperson: 'Ethan', customer: 'Tan', status: 'CONFIRMED', onHold: false,
-  goodsSen: 1_000_00, totalSen: 1_100_00, createdAt: '2026-10-02T03:00:00Z', ...o,
+  goodsSen: 1_000_00, totalSen: 1_100_00, createdAt: '2026-10-02T03:00:00Z', soDate: '2026-10-02', ...o,
 });
 const change = (o: Partial<CommissionChange> = {}): CommissionChange => ({
   docNo: 'HC-SO-2610-001', changedAt: '2026-10-20T04:00:00Z', beforeGoodsSen: 1_000_00, afterGoodsSen: 1_200_00,
@@ -120,7 +120,7 @@ describe('Part 1 — fairs that start in the range, as at its last day', () => {
 
 describe('Part 2 — what happened in the range to orders of earlier fairs', () => {
   const SEP = fair({ id: 2, name: 'SELANGOR [ZANOTTI] BIGHOME @ SUNWAY PYRAMID', brand: 'ZANOTTI', startDate: '2026-09-04', endDate: '2026-09-07' });
-  const late = (o: Partial<CommissionSo> = {}) => so({ docNo: 'HC-SO-2609-050', projectId: 2, createdAt: '2026-09-05T03:00:00Z', ...o });
+  const late = (o: Partial<CommissionSo> = {}) => so({ docNo: 'HC-SO-2609-050', projectId: 2, createdAt: '2026-09-05T03:00:00Z', soDate: '2026-09-05', ...o });
 
   it('reaching 30% in the range earns the goods of that day; an upsale after it earns its change; a change before it waits', () => {
     const r = buildEventCommission({
@@ -171,5 +171,61 @@ describe('Part 2 — what happened in the range to orders of earlier fairs', () 
       cancels: [],
     });
     expect(r.adjustments.map((a) => [a.docNo, a.kind, a.goodsSen])).toEqual([['HC-SO-2609-050', 'reached', 1_100_00]]);
+  });
+});
+
+describe('by SO date — the same two parts keyed on the order\'s own SO date', () => {
+  const SEP = fair({ id: 2, name: 'SELANGOR [ZANOTTI] BIGHOME @ SUNWAY PYRAMID', brand: 'ZANOTTI', startDate: '2026-09-28', endDate: '2026-10-02' });
+
+  it('Part 1 is the orders OPENED in the range, under their fair — even a fair that started before it; an order opened before stays out', () => {
+    const r = buildEventCommission({
+      ...OCT, basis: 'so_date', fairs: [SEP, fair()], ratePctByBrand: RATES,
+      sos: [
+        so({ docNo: 'HC-SO-2610-010', projectId: 2, soDate: '2026-10-01' }),
+        so({ docNo: 'HC-SO-2609-099', projectId: 2, soDate: '2026-09-29' }),
+        so(),
+      ],
+      payments: [
+        { docNo: 'HC-SO-2610-010', paidAt: '2026-10-01', amountSen: 400_00 },
+        { docNo: 'HC-SO-2609-099', paidAt: '2026-09-29', amountSen: 400_00 },
+        { docNo: 'HC-SO-2610-001', paidAt: '2026-10-02', amountSen: 400_00 },
+      ],
+      changes: [], cancels: [],
+    });
+    expect(r.basis).toBe('so_date');
+    expect(r.fairs.map((f) => [f.id, f.sos.map((s) => s.docNo), f.payableSen])).toEqual([
+      [2, ['HC-SO-2610-010'], 130_00],
+      [1, ['HC-SO-2610-001'], 140_00],
+    ]);
+    expect(r.fairs[0]!.sos[0]!.soDate).toBe('2026-10-01');
+  });
+
+  it('Part 2 is what happened in the range to orders opened before it — by the order\'s date, not its fair\'s', () => {
+    const r = buildEventCommission({
+      ...OCT, basis: 'so_date', fairs: [SEP], ratePctByBrand: RATES,
+      sos: [so({ docNo: 'HC-SO-2609-099', projectId: 2, soDate: '2026-09-29' })],
+      payments: [{ docNo: 'HC-SO-2609-099', paidAt: '2026-10-06', amountSen: 400_00 }],
+      changes: [], cancels: [],
+    });
+    expect(r.fairs).toEqual([]);
+    expect(r.adjustments.map((a) => [a.docNo, a.kind, a.date, a.commissionSen])).toEqual([['HC-SO-2609-099', 'reached', '2026-10-06', 130_00]]);
+    /* The same order by fair: its fair started 09-28, before October — so the same line. */
+    const byFair = buildEventCommission({ ...OCT, fairs: [SEP], ratePctByBrand: RATES, sos: [so({ docNo: 'HC-SO-2609-099', projectId: 2, soDate: '2026-09-29' })],
+      payments: [{ docNo: 'HC-SO-2609-099', paidAt: '2026-10-06', amountSen: 400_00 }], changes: [], cancels: [] });
+    expect(byFair.basis).toBe('fair');
+    expect(byFair.adjustments).toHaveLength(1);
+  });
+
+  it('an October order of a fair that started in September is Part 1 by SO date but Part 2 by fair', () => {
+    const input = {
+      ...OCT, fairs: [SEP], ratePctByBrand: RATES,
+      sos: [so({ docNo: 'HC-SO-2610-010', projectId: 2, soDate: '2026-10-01' })],
+      payments: [{ docNo: 'HC-SO-2610-010', paidAt: '2026-10-01', amountSen: 400_00 }],
+      changes: [], cancels: [],
+    };
+    const bySo = buildEventCommission({ ...input, basis: 'so_date' });
+    const byFair = buildEventCommission(input);
+    expect(bySo.totals).toEqual({ payableSen: 130_00, adjustmentsSen: 0, totalSen: 130_00 });
+    expect(byFair.totals).toEqual({ payableSen: 0, adjustmentsSen: 130_00, totalSen: 130_00 });
   });
 });
