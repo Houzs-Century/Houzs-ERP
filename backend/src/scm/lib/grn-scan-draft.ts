@@ -12,6 +12,8 @@ import { createDraftGrnFromPoItems } from './grn-from-po-core';
 import type { GrnExtracted } from './grn-scan-extract';
 import { loadOpenPoLines, loadPoStatuses, loadSupplierBindings, loadSuppliers } from './grn-scan-load';
 import { loadScanCodes } from './grn-scan-codes';
+import { applyScanRacks, scanRackNote } from './grn-scan-racks';
+import { scopeToCompanyIdOrOpen } from './companyScope';
 import {
   describeUnmatchedScanLines, listScanLines, matchGrnScanToPoLines, resolveScannedSupplier,
   type GrnMatchResult, type OpenPoLine, type PoStatusRef, type ScannedGrnLine,
@@ -26,6 +28,7 @@ export const toScanned = (l: GrnExtracted['lines'][number]): ScannedGrnLine => (
   description: l.description,
   qty: l.qty,
   poNo: l.poNo,
+  rack: l.rack,
 });
 
 // A plain-language note for a NEEDS-REVIEW job (no GRN created): tell the
@@ -146,10 +149,24 @@ export async function draftFromScan(
     // Defensive — ok:true with nothing created (every bucket dropped).
     return { kind: 'needs_review', note: `We read ${doRef} but could not create the receipt automatically. Please create it from the PO.` };
   }
+  const rackNote = scanRackNote(await applyScanRacks(svc, job.companyId, res.created.map((g) => g.id), match.racks));
+  if (rackNote) await appendGrnNote(svc, job.companyId, res.created.map((g) => g.id), rackNote);
   return {
     kind: 'draft',
     grnNumbers: res.created.map((g) => g.grnNumber),
     poNumbers: [...new Set(res.created.flatMap((g) => g.poNumbers))],
-    jobNote: [weakNote, nameNote, soNote, unmatchedNote].filter(Boolean).join(' ') || null,
+    jobNote: [weakNote, nameNote, soNote, unmatchedNote, rackNote].filter(Boolean).join(' ') || null,
   };
+}
+
+// The rack outcome is known only once the drafts exist (their warehouse picks
+// the rack list), so it joins the note afterwards. Best-effort.
+async function appendGrnNote(svc: SupabaseClient, companyId: number | null, grnIds: string[], note: string): Promise<void> {
+  const { data, error } = await scopeToCompanyIdOrOpen(svc.from('grns').select('id, notes').in('id', grnIds), companyId);
+  if (error) { console.error('[scan-gr racks] note read failed:', error.message); return; }
+  for (const g of data as Array<{ id: string; notes: string | null }>) {
+    const { error: upErr } = await scopeToCompanyIdOrOpen(
+      svc.from('grns').update({ notes: g.notes ? `${g.notes} · ${note}` : note }).eq('id', g.id), companyId);
+    if (upErr) console.error('[scan-gr racks] note update failed:', g.id, upErr.message);
+  }
 }

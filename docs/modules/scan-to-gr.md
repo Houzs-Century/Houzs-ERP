@@ -59,6 +59,10 @@ lists only what differs for GR.
    one item on one PO take a row's qty in PO line order.
 4. Confident picks → `createDraftGrnFromPoItems` → stamp `scan_jobs.linked_doc_no`
    with the GRN number. No picks → needs-review (no doc).
+5. A rack the warehouse HANDWROTE beside a row ("R11-2", read as
+   `lines[].rack`) is put on that row's draft line when it names exactly one rack
+   of the GRN's warehouse ("Rack R11.2", `lib/grn-scan-racks.ts`). Placement
+   only on a DRAFT; an unknown rack is left blank and listed in the note.
 
 **Queue routing:** the SO consumer (`processScanQueueMessage`) reads
 `document_type` and delegates `'GR'` to `processGrnScanQueueMessage` (one-way
