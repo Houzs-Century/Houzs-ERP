@@ -1,8 +1,8 @@
 /* What Project Overview remembers in its URL, and how its project table reads
    (owner 2026-10-21). */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
-  VIEW_PARAMS, decodeDrill, encodeDrill, projectLines, readView, rememberScroll, tableAmount, takeScroll, writeView,
+  VIEW_PARAMS, decodeDrill, encodeDrill, projectLines, projectBackTo, readView, rememberOpenedFrom, tableAmount, takeScroll, writeView,
 } from "./projectOverviewView";
 
 const TODAY = "2026-10-21";
@@ -36,10 +36,32 @@ describe("the overview's choices in the URL", () => {
     }
   });
 
-  it("the place you were looking at is given back once", () => {
-    rememberScroll("k1", { page: 640, table: 120, tableLeft: 300 });
-    expect(takeScroll("k1")).toEqual({ page: 640, table: 120, tableLeft: 300 });
-    expect(takeScroll("k1")).toBeNull();
+  /* Owner 2026-10-21: 我点9月的project，按 back 后又跳回10月，然后会跑回最上面 —
+     the project's Back button went to the bare /projects. */
+  const SEPT = "/projects?view=finances&af_from=2026-09-01&af_to=2026-09-30&ao_sort=sales";
+
+  it("opening a project notes the address it came from — its Back goes there, period and sort included", () => {
+    rememberOpenedFrom(303, SEPT, { page: 640, table: 120, tableLeft: 300 });
+    expect(projectBackTo(303)).toBe(SEPT);
+    expect(projectBackTo(304)).toBe("/projects");   // a project opened some other way: the list
+  });
+
+  it("the place you were looking at is given back once, at that address", () => {
+    rememberOpenedFrom(303, SEPT, { page: 640, table: 120, tableLeft: 300 });
+    expect(takeScroll("/projects?view=finances")).toBeNull();
+    expect(takeScroll(SEPT)).toEqual({ page: 640, table: 120, tableLeft: 300 });
+    expect(takeScroll(SEPT)).toBeNull();
+  });
+
+  it("only a recent, same-site /projects address is trusted", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-21T06:00:00Z"));
+    rememberOpenedFrom(303, SEPT, { page: 0, table: 0, tableLeft: 0 });
+    vi.setSystemTime(new Date("2026-10-21T06:31:00Z"));
+    expect(projectBackTo(303)).toBe("/projects");
+    vi.useRealTimers();
+    rememberOpenedFrom(305, "//evil.example/projects", { page: 0, table: 0, tableLeft: 0 });
+    expect(projectBackTo(305)).toBe("/projects");
   });
 });
 
