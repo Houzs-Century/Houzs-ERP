@@ -109,6 +109,7 @@ const EVER_KNOWN_PAGE_KEYS: readonly string[] = [
   "system_health",
   "team",
   "team.departments",
+  "team.mailboxes",
   "team.members",
   "team.org_chart",
   "team.roles",
