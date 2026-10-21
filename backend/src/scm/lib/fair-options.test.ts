@@ -16,8 +16,7 @@ import {
   fairMissingMessage,
   companyUsesKeyerFair,
   resolveFairWithKeyer,
-  olderFairOptions,
-  FAIR_SETTLE_LOOKBACK_DAYS,
+  allFairOptions,
   type FairProjectRow,
 } from './fair-options';
 
@@ -130,19 +129,27 @@ describe('buildFairOptions — one row is a place plus an organizer', () => {
     expect(earlier.map((o) => o.venue)).toEqual(['SEPTEMBER HALL', 'EDGE OF WINDOW']);
   });
 
-  it('Fair Links reaches about three months for the people who settle links — only past the four weeks', () => {
-    /* Owner 2026-10-21: 「我希望我这里有权限可以cross over 回去超过一个月的」. The
-       four weeks stay the order form's; the older ones come as their own group. */
+  it('Fair Links offers EVERY fair — any place, any date, newest first, booths kept (owner 2026-10-21)', () => {
+    /* 「我这里link fair 要可以选完全部fair」: HC-SO-2610-002's slip says PISA SPICE ARENA,
+       PMS says SETIA SPICE CONVENTION CENTRE, so the order's own place never reached it. */
     const rows = [
-      fair({ projectId: 1, venue: 'SEPTEMBER HALL', startDate: '2026-09-18', endDate: '2026-09-20' }),
-      fair({ projectId: 3, venue: 'TOO OLD', startDate: '2026-09-02', endDate: '2026-09-03' }),
-      fair({ projectId: 4, venue: 'JULY HALL', startDate: '2026-07-03', endDate: '2026-07-05' }),
-      fair({ projectId: 5, venue: 'JUNE HALL', startDate: '2026-06-26', endDate: '2026-06-28' }),
+      fair({ projectId: 2235, venue: 'SETIA SPICE CONVENTION CENTRE', organizer: 'HOMEDEC', startDate: '2026-10-02', endDate: '2026-10-04' }),
+      fair({ projectId: 2246, venue: 'SETIA SPICE CONVENTION CENTRE', organizer: 'HOMEDEC', brand: 'ZANOTTI', startDate: '2026-10-02', endDate: '2026-10-04' }),
+      fair({ projectId: 68, venue: 'PISA SPICE ARENA CONVENTION CENTRE', organizer: 'MLE', startDate: '2026-07-03', endDate: '2026-07-05' }),
+      fair({ projectId: 61, venue: 'PISA SPICE ARENA CONVENTION CENTRE', organizer: 'MEGAHOME', startDate: '2026-11-06', endDate: '2026-11-08' }),
+      fair({ projectId: 9, venue: 'OLD HALL', startDate: '2024-03-01', endDate: '2024-03-03' }),
+      fair({ projectId: 10, venue: 'GONE HALL', status: 'cancelled' }),
     ];
-    expect(olderFairOptions(rows, '2026-10-02').map((o) => o.venue)).toEqual(['TOO OLD', 'JULY HALL']);
-    expect(FAIR_SETTLE_LOOKBACK_DAYS).toBe(92);
-    /* The order form's groups are unchanged by the wider read. */
-    expect(buildFairOptions(rows, '2026-10-02').earlier.map((o) => o.venue)).toEqual(['SEPTEMBER HALL']);
+    const all = allFairOptions(rows);
+    expect(all.map((o) => [o.venue, o.startDate])).toEqual([
+      ['PISA SPICE ARENA CONVENTION CENTRE', '2026-11-06'],
+      ['SETIA SPICE CONVENTION CENTRE', '2026-10-02'],
+      ['PISA SPICE ARENA CONVENTION CENTRE', '2026-07-03'],
+      ['OLD HALL', '2024-03-01'],
+    ]);
+    expect(all[1]!.booths).toEqual([{ projectId: 2235, brand: 'AKEMI' }, { projectId: 2246, brand: 'ZANOTTI' }]);
+    /* The order form's four weeks are untouched. */
+    expect(buildFairOptions(rows, '2026-10-02').running.map((o) => o.venue)).toEqual(['SETIA SPICE CONVENTION CENTRE']);
   });
 
   it('keeps two occurrences of ONE venue+organizer apart by their dates', () => {

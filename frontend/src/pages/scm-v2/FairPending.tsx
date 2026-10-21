@@ -59,6 +59,14 @@
  * two lines — "[AKEMI] HOMELOVE" over "IOIGECC · 10/09 - 10/11" — in place of
  * the sentence that used to sit under each row. Every group keeps the tick
  * column, empty where nothing is ticked, so the tables still line up.
+ *
+ * EVERY FAIR, FOR THE PEOPLE WHO SETTLE (owner 2026-10-21: 「我这里link fair 要可以
+ * 选完全部fair」). A row offers the order's own place first — the same four weeks
+ * the salesperson saw, its brand filled in — then, for Finance / PMS, every
+ * other fair: the same place on other dates, then everywhere else, nearest the
+ * order's date first, in one list that typing narrows. A slip saying PISA SPICE
+ * ARENA could not otherwise reach the fair PMS calls SETIA SPICE CONVENTION
+ * CENTRE. The order form keeps its four weeks at the order's place.
  */
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
@@ -77,12 +85,14 @@ import {
   usePutAside,
   useAssignFair,
   useFairOptions,
+  useAllFairOptions,
   useFairTransfer,
   transferSummary,
   type FairCheckRow,
   type FairPendingRow,
 } from '../../vendor/scm/lib/fair-options-queries';
-import { boothChoices } from '../../vendor/scm/lib/fair-booth-choices';
+import { allBoothChoices, boothChoices } from '../../vendor/scm/lib/fair-booth-choices';
+import { SearchableSelect, type SearchableSelectOption } from '../../vendor/scm/components/SearchableSelect';
 
 /** The group of an order with no verdict at all (fair_match NULL). */
 const NO_VERDICT = 'NO_VERDICT';
@@ -105,7 +115,6 @@ const CHECK_GROUPS = [
 
 const soft: CSSProperties = { color: 'var(--fg-muted)' };
 const mono: CSSProperties = { fontFamily: 'var(--font-mono)' };
-const select: CSSProperties = { width: '100%', fontSize: 'var(--fs-13)', padding: '4px 6px', borderRadius: 6, border: '1px solid var(--border-weak, #e3e1da)', background: 'var(--c-paper, #fff)' };
 /* The second line of a booth: where and when. */
 const detailLine: CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 
@@ -200,7 +209,7 @@ export function FairPending() {
         return (
           <Group key={g.key} title={`${g.title} (${list.length})`} hint={g.hint} last={g.key === 'VENUE_DIFFERS' ? 'Fair' : 'Status'}>
             {list.map((r) => (g.key === 'VENUE_DIFFERS'
-              ? <PendingRow key={r.doc_no} row={r} note={r.note} onAssign={assign.mutate} onPutAside={setAside} busy={busy} />
+              ? <PendingRow key={r.doc_no} row={r} note={r.note} onAssign={assign.mutate} onPutAside={setAside} busy={busy} reachAll={canReassign} />
               : <CheckRow key={r.doc_no} row={r} />))}
           </Group>
         );
@@ -212,7 +221,7 @@ export function FairPending() {
         return (
           <Group key={g.key} title={`${g.title} (${list.length})`} hint={g.hint} last="Fair">
             {list.map((r) => (
-              <PendingRow key={r.doc_no} row={r} onAssign={assign.mutate} onPutAside={setAside} busy={busy} />
+              <PendingRow key={r.doc_no} row={r} onAssign={assign.mutate} onPutAside={setAside} busy={busy} reachAll={canReassign} />
             ))}
           </Group>
         );
@@ -475,23 +484,36 @@ function PendingRow(props: {
   /** Put the order aside (owner 2026-10-21) — out of the list until brought back. */
   onPutAside: (docNo: string, aside: boolean) => void;
   busy: boolean;
+  /** Finance / PMS: every fair may be picked, not only the order's own place. */
+  reachAll: boolean;
 }) {
-  const { row, note, onAssign, onPutAside, busy } = props;
+  const { row, note, onAssign, onPutAside, busy, reachAll } = props;
   /* null = untouched, so the suggestion shows; '' = the person cleared it. */
   const [pick, setPick] = useState<string | null>(null);
   /* The SAME options the salesperson saw, resolved for THIS order's date — not
      today's. An order from last week must be settled against the fairs that were
      running last week, or the screen offers an attribution that is wrong by
-     construction. Below them, for Finance / PMS, the fairs at the same place
-     before those four weeks, back about three months (owner 2026-10-21: 「我希望
-     我这里有权限可以cross over 回去超过一个月的」) — never filled in, only picked. */
-  const optionsQ = useFairOptions(row.so_date, { older: true });
+     construction. They come first, the order's own brand filled in. */
+  const optionsQ = useFairOptions(row.so_date);
   const { choices, suggested } = boothChoices(
     [...(optionsQ.data?.running ?? []), ...(optionsQ.data?.earlier ?? [])],
     row,
   );
-  const offered = new Set(choices.map((ch) => ch.projectId));
-  const older = boothChoices(optionsQ.data?.older ?? [], row).choices.filter((ch) => !offered.has(ch.projectId));
+  /* Then, for Finance / PMS, EVERY other fair — the same place on other dates,
+     then everywhere else, nearest the order's date first (owner 2026-10-21: 「我
+     这里link fair 要可以选完全部fair」: a slip saying PISA SPICE ARENA could not
+     reach the fair PMS calls SETIA SPICE CONVENTION CENTRE). Never filled in;
+     typing narrows the list. */
+  const allQ = useAllFairOptions(reachAll);
+  const options = useMemo((): SearchableSelectOption[] => {
+    const offered = new Set(choices.map((ch) => ch.projectId));
+    const rest = allBoothChoices(allQ.data ?? [], row).filter((ch) => !offered.has(ch.projectId));
+    return [
+      ...choices.map((ch) => ({ value: String(ch.projectId), label: ch.label, group: 'At this place' })),
+      ...rest.filter((ch) => ch.samePlace).map((ch) => ({ value: String(ch.projectId), label: ch.label, group: 'At this place — other dates' })),
+      ...rest.filter((ch) => !ch.samePlace).map((ch) => ({ value: String(ch.projectId), label: ch.label, group: 'Other places' })),
+    ];
+  }, [choices, allQ.data, row]);
   const value = pick ?? (suggested != null ? String(suggested) : '');
 
   return (
@@ -499,27 +521,15 @@ function PendingRow(props: {
       <tr>
         <OrderCells row={row} />
         <td className={TD}>
-          <select
-            aria-label={`Fair for ${row.doc_no}`}
+          <SearchableSelect
+            ariaLabel={`Fair for ${row.doc_no}`}
             value={value}
-            disabled={busy || choices.length + older.length === 0}
-            onChange={(e) => setPick(e.target.value)}
-            style={select}
-          >
-            <option value="">
-              {choices.length + older.length === 0 ? 'No fair at that place on that date' : '— choose a fair —'}
-            </option>
-            {choices.map((ch) => (
-              <option key={ch.projectId} value={String(ch.projectId)}>{ch.label}</option>
-            ))}
-            {older.length > 0 && (
-              <optgroup label="More than 4 weeks before">
-                {older.map((ch) => (
-                  <option key={ch.projectId} value={String(ch.projectId)}>{ch.label}</option>
-                ))}
-              </optgroup>
-            )}
-          </select>
+            options={options}
+            disabled={busy || options.length === 0}
+            onChange={setPick}
+            placeholder={options.length === 0 ? 'No fair at that place on that date' : '— choose a fair — (type to search)'}
+            className="w-full rounded-md border border-border bg-surface px-2 py-1 text-[13px]"
+          />
         </td>
         <td className={cn(TD, 'text-right')}>
           <span className="inline-flex items-center gap-1.5">

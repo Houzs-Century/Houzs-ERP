@@ -35,19 +35,13 @@ import { activeCompanySql, scopeToCompany, activeCompanyId, requireActiveCompany
 import { todayMyt } from '../lib/my-time';
 import {
   keyerFairDefaultFor,
+  loadAllFairs,
   loadFairsInWindow,
   loadFairsAtVenue,
   loadVenueMaster,
   type FairDb,
 } from '../lib/fair-binding';
-import {
-  buildFairOptions,
-  companyUsesKeyerFair,
-  fairMissingMessage,
-  FAIR_SETTLE_LOOKBACK_DAYS,
-  isPickableFair,
-  olderFairOptions,
-} from '../lib/fair-options';
+import { allFairOptions, buildFairOptions, companyUsesKeyerFair, fairMissingMessage, isPickableFair } from '../lib/fair-options';
 import { countFairPending, loadFairPending } from '../lib/fair-pending';
 import { loadFairPutAside, NOT_PUT_ASIDE, setFairPutAside } from '../lib/fair-put-aside';
 import { loadFairChecks } from '../lib/fair-checks';
@@ -85,36 +79,45 @@ function orderDate(raw: string | undefined): string {
  * first one. `month` is the rest of the same calendar month. `venues` is the
  * Others list.
  *
- * `older=1` (Fair Links, owner 2026-10-21) adds `older`: the fairs closed
- * before the four weeks, back to FAIR_SETTLE_LOOKBACK_DAYS — for Finance and
- * PMS only, the people who may link there; anyone else gets none.
- *
  * Answers 200 with empty lists on any failure rather than an error status. A
  * broken picker must degrade to "nothing to offer" — which the operator can
  * still get past via Others — and never to a screen that cannot take an order.
  */
 mfgSoFairs.get('/fair-options', async (c) => {
   const soDate = orderDate(c.req.query('date'));
-  const reachOlder = c.req.query('older') === '1' && canReassignFair(c);
-  const empty = { date: soDate, running: [], earlier: [], venues: [], ...(reachOlder ? { older: [] } : {}) };
+  const empty = { date: soDate, running: [], earlier: [], venues: [] };
   try {
     const db = c.env.DB as unknown as FairDb;
     /* Company scope is the ENTIRE tenant boundary on both reads: the fair list
        names other companies' venues and organizers, and the venue master is the
        same list the 2026-08-20 sweep found leaking across companies. */
     const [fairs, venues] = await Promise.all([
-      loadFairsInWindow(db, activeCompanySql(c, 'p.company_id'), soDate, reachOlder ? FAIR_SETTLE_LOOKBACK_DAYS : undefined),
+      loadFairsInWindow(db, activeCompanySql(c, 'p.company_id'), soDate),
       loadVenueMaster(db, activeCompanySql(c)),
     ]);
-    /* The four weeks are cut from the wider read, so the groups are the same
-       ones the order form gets. */
     const groups = buildFairOptions(fairs, soDate);
-    return c.json({
-      date: soDate, running: groups.running, earlier: groups.earlier, venues,
-      ...(reachOlder ? { older: olderFairOptions(fairs, soDate) } : {}),
-    });
+    return c.json({ date: soDate, running: groups.running, earlier: groups.earlier, venues });
   } catch {
     return c.json(empty);
+  }
+});
+
+/**
+ * GET /mfg-sales-orders/fair-options/all
+ *
+ * Every pickable fair of the company, at any place and on any date, newest
+ * first — for the people who settle links on Fair Links (owner 2026-10-21: 「我
+ * 这里link fair 要可以选完全部fair」). Finance or PMS only, as linking; the
+ * order form never asks. One read for the whole page, not one per order date.
+ * A failed read is an error: the page then offers the order's own place only.
+ */
+mfgSoFairs.get('/fair-options/all', async (c) => {
+  if (!canReassignFair(c)) return c.json({ error: 'forbidden', reason: FAIR_REASSIGN_REFUSAL }, 403);
+  try {
+    const rows = await loadAllFairs(c.env.DB as unknown as FairDb, activeCompanySql(c, 'p.company_id'));
+    return c.json({ fairs: allFairOptions(rows) });
+  } catch {
+    return c.json({ error: 'fair_options_read_failed', fairs: [] }, 500);
   }
 });
 
