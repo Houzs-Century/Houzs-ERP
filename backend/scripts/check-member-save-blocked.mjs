@@ -157,6 +157,51 @@ try {
           OR lower(r.email) = (SELECT lower(email) FROM users WHERE id = ${probeId})`,
   );
 
+  // 4b) What the roster INSERT must satisfy beyond pg_constraint: NOT NULL
+  //     columns without a default, and an id counter behind the table (a data
+  //     load that copied ids without moving the sequence raises duplicate key
+  //     on the primary key, which pg_constraint shows as a plain PK).
+  for (const table of ["sales_reps", "sales_team_activity"]) {
+    show(
+      `${table} columns`,
+      await pg`
+        SELECT column_name, data_type, is_nullable, column_default, is_identity, identity_generation
+          FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = ${table}
+         ORDER BY ordinal_position`,
+    );
+    const seq = await pg`SELECT pg_get_serial_sequence(${"public." + table}, 'id') AS seq`;
+    const seqName = seq[0]?.seq ?? null;
+    const [{ max_id }] = await pg.unsafe(`SELECT max(id) AS max_id FROM public.${table}`);
+    if (seqName) {
+      const [state] = await pg.unsafe(`SELECT last_value, is_called FROM ${seqName}`);
+      const nextId = state.is_called ? Number(state.last_value) + 1 : Number(state.last_value);
+      notice(
+        `${table}: sequence ${seqName} next id ${nextId}, table max id ${max_id} -> ` +
+          (max_id != null && nextId <= Number(max_id) ? "BEHIND (insert raises duplicate key on the primary key)" : "ok"),
+      );
+    } else {
+      notice(`${table}: no sequence owns id (max id ${max_id}) -> an insert without an explicit id gets NULL`);
+    }
+  }
+  show(
+    "sales_reps newest rows",
+    await pg`SELECT id, code, user_id, created_at, archived_at FROM sales_reps ORDER BY id DESC LIMIT 5`,
+  );
+  show(
+    "sales_team_activity newest rows",
+    await pg`SELECT id, rep_id, action, to_value, note, user_id, created_at FROM sales_team_activity ORDER BY id DESC LIMIT 5`,
+  );
+  show(
+    "audit for this member's email (invite)",
+    await pg`
+      SELECT id, created_at, actor_email, action, entity_id, summary, meta
+        FROM audit_events
+       WHERE entity_id = (SELECT email FROM users WHERE id = ${probeId})
+          OR summary ILIKE ${"%" + "#" + String(probeId) + "%"}
+       ORDER BY id DESC LIMIT 10`,
+  );
+
   // 5) The roster statements themselves, parsed and planned only.
   const plans = [
     ["roster insert", `EXPLAIN INSERT INTO sales_reps (code, name, email, user_id, status) VALUES ('SR-PROBE', 'probe', NULL, ${probeId}, 'active') RETURNING *`],
@@ -206,50 +251,37 @@ const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID;
 if (!TOKEN || !ACCOUNT) {
   notice("Workers Logs: skipped (CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not set)");
 } else {
-  try {
-    const to = Date.now();
-    const res = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/workers/observability/telemetry/query`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          queryId: "member-save-blocked",
-          timeframe: { from: to - 3 * 24 * 3600 * 1000, to },
-          view: "events",
-          limit: 200,
-          parameters: {
-            datasets: [],
-            filters: [{ key: "$metadata.service", operation: "eq", type: "string", value: "autocount-sync-api" }],
-            needle: { value: "onError", isRegex: false, matchCase: false },
-          },
-        }),
-      },
-    );
-    const body = await res.json().catch(() => null);
-    line(`--- Workers Logs: HTTP ${res.status} ---`);
-    if (!res.ok || !body?.success) {
-      line(`  ${JSON.stringify(body?.errors ?? body).slice(0, 800)}`);
-    } else {
-      // Collect every object that carries $metadata, wherever the result nests it.
-      const events = [];
-      const walk = (v) => {
-        if (Array.isArray(v)) v.forEach(walk);
-        else if (v && typeof v === "object") {
-          if (v.$metadata) events.push(v);
-          else Object.values(v).forEach(walk);
-        }
-      };
-      walk(body.result);
-      line(`  ${events.length} onError events`);
+  // Two needles: the request itself (invocation log, carries the status and the
+  // request id), and the error line onError writes for it.
+  const memberPath = `/api/users/${probeId}`;
+  for (const needle of [memberPath, "[onError]"]) {
+    try {
+      const to = Date.now();
+      const res = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/workers/observability/telemetry/query`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            queryId: `member-save-blocked-${needle}`,
+            timeframe: { from: to - 2 * 24 * 3600 * 1000, to },
+            view: "events",
+            limit: 100,
+            parameters: { datasets: [], filters: [], needle: { value: needle, isRegex: false, matchCase: false } },
+          }),
+        },
+      );
+      const body = await res.json().catch(() => null);
+      const events = body?.result?.events?.events ?? [];
+      line(`--- Workers Logs "${needle}": HTTP ${res.status}, ${events.length} events ---`);
+      if (!res.ok || !body?.success) line(`  ${JSON.stringify(body?.errors ?? body).slice(0, 800)}`);
       for (const ev of events) {
         const text = JSON.stringify(ev);
-        if (!/users|violates|duplicate|does not exist|invalid input/i.test(text)) continue;
-        line(`  ${text.slice(0, 2500)}`);
+        if (needle === "[onError]" && !/users|violates|duplicate|does not exist|invalid input|null value/i.test(text)) continue;
+        line(`  ${text.slice(0, 3000)}`);
       }
-      if (events.length === 0) line(`  raw: ${JSON.stringify(body.result).slice(0, 2500)}`);
+    } catch (e) {
+      notice(`Workers Logs "${needle}": query failed -> ${String(e?.message ?? e).slice(0, 300)}`);
     }
-  } catch (e) {
-    notice(`Workers Logs: query failed -> ${String(e?.message ?? e).slice(0, 300)}`);
   }
 }
