@@ -1870,3 +1870,48 @@ describe('company 2: a sofa set is planned whole — one batch (= one PO) or not
     expect(mrpStockAssignment(res).get(stockAssignmentKey('W1', RHF, VKEY))).toBeUndefined();
   });
 });
+
+describe('computeMrp — HC-0128 Hydraulic / NB fabric lines pre-select NB FURNITURE', () => {
+  const bind = (supplierId: string, code: string, isMain: boolean): Row => ({
+    item_code: 'BF-100', material_kind: 'mfg_product', is_main_supplier: isMain,
+    supplier_id: supplierId, supplier: { code, name: code },
+  });
+  const line = (id: string, variants: Row): Row => ({ ...demandRed(1), id, doc_no: `SO-${id}`, variants });
+  const tables = (bindings: Row[]): Record<string, Row[]> => ({
+    ...BASE_TABLES,
+    mfg_sales_order_items: [
+      line('si-hyd', { fabricCode: 'RED', specials: ['Hydraulic'] }),
+      line('si-note', { fabricCode: 'RED', extraAddonNote: '12”divan no leg with hydraulic.' }),
+      line('si-nb', { fabricCode: 'NB-04' }),
+      line('si-plain', { fabricCode: 'RED' }),
+    ],
+    supplier_material_bindings: bindings,
+    fabric_trackings: [{ fabric_code: 'NB-04', series: 'NB' }, { fabric_code: 'RED', series: 'R' }],
+  });
+  const ruleOf = (res: Awaited<ReturnType<typeof computeMrp>>): Record<string, string | null> =>
+    Object.fromEntries(res.skus.flatMap((s) => s.lines).map((l) => [l.soItemId, l.ruleSupplierId]));
+
+  test('routes hydraulic (special or note) and NB-series fabric to the bound NB supplier', async () => {
+    const res = await computeMrp(asSb(fakeSb(tables([bind('hk', '400-H004', true), bind('nb', '400-N002', false)]))), opts);
+    expect(ruleOf(res)).toEqual({ 'si-hyd': 'nb', 'si-note': 'nb', 'si-nb': 'nb', 'si-plain': null });
+  });
+
+  test('one NB bedframe pulls the other bedframes of the SAME SO to NB, nothing else', async () => {
+    const sb = fakeSb({
+      ...tables([bind('hk', '400-H004', true), bind('nb', '400-N002', false)]),
+      mfg_sales_order_items: [
+        { ...line('si-hyd', { fabricCode: 'RED', specials: ['Hydraulic'] }), doc_no: 'SO-A' },
+        { ...line('si-sib', { fabricCode: 'RED' }), doc_no: 'SO-A' },
+        { ...line('si-matt', {}), doc_no: 'SO-A', item_group: 'mattress' },
+        { ...line('si-other', { fabricCode: 'RED' }), doc_no: 'SO-B' },
+      ],
+    });
+    const res = await computeMrp(asSb(sb), opts);
+    expect(ruleOf(res)).toEqual({ 'si-hyd': 'nb', 'si-sib': 'nb', 'si-matt': null, 'si-other': null });
+  });
+
+  test('no rule when NB FURNITURE is not bound to the SKU (the PO would fall back to main)', async () => {
+    const res = await computeMrp(asSb(fakeSb(tables([bind('hk', '400-H004', true)]))), opts);
+    expect(Object.values(ruleOf(res)).every((v) => v === null)).toBe(true);
+  });
+});
