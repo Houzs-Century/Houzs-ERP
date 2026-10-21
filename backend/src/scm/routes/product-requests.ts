@@ -7,6 +7,7 @@
 // one request and come out as one PC Order).
 //
 //   GET    /                                 requests: a requester's own; the Purchaser's all
+//   GET    /pending-count                    the Purchaser's REQUESTED count (sidebar badge)
 //   GET    /:id                              one request, its lines, its PC Order and where it stands
 //   POST   /                                 raise a request (REQUESTED) — header + lines
 //   PATCH  /:id                              the requester changes it (lines replaced as a set) — or sends a rejected one again
@@ -40,7 +41,7 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { companyDocPrefix, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
-import { hasHouzsPerm, isSalesCaller } from '../lib/houzs-perms';
+import { hasHouzsPerm, holdsHouzsPermLiterally, isSalesCaller } from '../lib/houzs-perms';
 import { docMonthTag, mintMonthlyDocNo } from '../lib/doc-no';
 import { dateOrNull } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
@@ -48,6 +49,7 @@ import { assertAuditWritable, auditUnavailableBody, compactChanges, fieldChange,
 import { ensureModelForSku } from '../lib/ensure-model-for-sku';
 import { makeDocFileHandlers, type DocFilesSpec } from '../lib/doc-files';
 import { callerUserId } from '../lib/payment-request';
+import { notifyProductRequest } from '../../services/productRequestNotify';
 import { MFG_PRODUCT_CATEGORIES } from '../shared/product-categories';
 import {
   PRODUCT_REQUEST_APPLICATIONS, PRODUCT_REQUEST_TYPES, canTransition, defaultSkuCode, linesRefusal, productRefusal, requesterMayChange,
@@ -203,6 +205,26 @@ export const productRequestSupplierOptionsHandler = async (c: any): Promise<Resp
   return c.json({ suppliers });
 };
 productRequests.get('/supplier-options', productRequestSupplierOptionsHandler);
+
+/* ── GET /pending-count — the red count on the Purchaser's sidebar entry ──────
+   HC-0136: same as the SO amendment badge. Literal holders only — the `*`
+   roles see every request inside the module, and a badge carrying every
+   desk's backlog is one its reader learns to ignore (so-amendments.ts).
+   Registered before /:id, which would read "pending-count" as an id. Fails
+   soft with 0: a badge must not turn the sidebar into an error. */
+export const productRequestPendingCountHandler = async (c: any): Promise<Response> => {
+  if (!holdsHouzsPermLiterally(c, PRODUCT_REQUEST_APPROVE_KEY)) return c.json({ count: 0 });
+  const { count, error } = await scopeToCompany(
+    c.get('supabase').from('product_requests').select('id', { count: 'exact', head: true }).eq('status', 'REQUESTED'),
+    c,
+  );
+  if (error) {
+    console.error('[product-requests] pending-count failed:', error.message);
+    return c.json({ count: 0 });
+  }
+  return c.json({ count: count ?? 0 });
+};
+productRequests.get('/pending-count', productRequestPendingCountHandler);
 
 /* ── GET /:id ──────────────────────────────────────────────────────────────── */
 export const getProductRequestHandler = async (c: any): Promise<Response> => {
@@ -411,6 +433,10 @@ export const createProductRequestHandler = async (c: any): Promise<Response> => 
       fieldChange('products', null, linesSummary(read.lines)),
     ]),
   });
+  await notifyProductRequest(c.env, 'raised', {
+    requestNo, companyId: co.companyId, requesterUserId: me, requesterName: actorName(c) || null,
+    products: linesSummary(read.lines), lineCount: read.lines.length,
+  });
   const linked = await withLinks(c, co.companyId, [row as Row]);
   if ('resp' in linked) return linked.resp;
   return c.json({ ok: true, request: linked.rows[0] }, 201);
@@ -479,6 +505,12 @@ export const updateProductRequestHandler = async (c: any): Promise<Response> => 
       fieldChange('products', linesSummary(beforeLines as LineFields[]), linesSummary(read.lines)),
     ]),
   });
+  if (resubmit) {
+    await notifyProductRequest(c.env, 'resubmitted', {
+      requestNo: String(before.request_no), companyId: co.companyId, requesterUserId: callerUserId(c), requesterName: actorName(c) || null,
+      products: linesSummary(read.lines), lineCount: read.lines.length,
+    });
+  }
   const linked = await withLinks(c, co.companyId, [row as Row]);
   if ('resp' in linked) return linked.resp;
   return c.json({ ok: true, request: linked.rows[0] });

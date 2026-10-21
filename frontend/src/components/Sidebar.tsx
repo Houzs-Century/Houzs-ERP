@@ -555,7 +555,7 @@ export const NAV_TABS: NavTab[] = [
           // Product request (owner 2026-10-06): what a Purchase Consignment Order
           // is raised from. The office / Purchaser path; a rep reaches it via the
           // rep-only leaf above. Either flat key shows it too, like PO Amendments.
-          { to: "/scm/product-requests", label: "Product Request", icon: Sofa, anyPerm: ["*", "scm.access", "scm.product_request.create", "scm.product_request.approve"], anyAccess: ["scm.consignment.po_orders", "scm.procurement.po", "scm.procurement.products"], hideForSales: true },
+          { to: "/scm/product-requests", label: "Product Request", icon: Sofa, anyPerm: ["*", "scm.access", "scm.product_request.create", "scm.product_request.approve"], anyAccess: ["scm.consignment.po_orders", "scm.procurement.po", "scm.procurement.products"], hideForSales: true, badge: "product-request-approvals" },
           { to: "/scm/purchase-consignment-receives", label: "Purchase Consignment Receive", icon: PackageOpen, anyPerm: ["*", "scm.access"], anyAccess: ["scm.consignment.po_receives"] },
           { to: "/scm/purchase-consignment-returns", label: "Purchase Consignment Return", icon: Reply, anyPerm: ["*", "scm.access"], anyAccess: ["scm.consignment.po_returns"] },
         ],
