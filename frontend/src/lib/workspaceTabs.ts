@@ -385,42 +385,6 @@ export function closeWorkspaceTab(id: string): { navigateTo: string | null } {
   return { navigateTo: neighbour ? neighbour.href : "/" };
 }
 
-/**
- * Where the ACTIVE tab's document was opened from — null unless the active tab
- * was opened as a document from another page. `tabOpen` says whether the
- * opener's tab is still in the strip.
- */
-export function workspaceOpener(): { id: string; href: string; tabOpen: boolean } | null {
-  const s = ensureLoaded();
-  const active = s.tabs.find((t) => t.id === s.activeId);
-  if (!active?.opener) return null;
-  const { id, href } = active.opener;
-  return { id, href, tabOpen: s.tabs.some((t) => t.id === id) };
-}
-
-/**
- * Back to the page the active document was opened from. When the opener's tab
- * is still in the strip it becomes the active tab and this document's tab
- * closes — the way closing a browser tab hands you back the one that opened
- * it, and without leaving a second copy of that page in the strip. Otherwise
- * this tab goes back there itself. Returns the address to navigate to (the
- * page as it was when the document was opened), or null when the active tab
- * was not opened as a document.
- */
-export function returnToWorkspaceOpener(): string | null {
-  const s = ensureLoaded();
-  const active = s.tabs.find((t) => t.id === s.activeId);
-  if (!active?.opener) return null;
-  const { id, href } = active.opener;
-  state = s.tabs.some((t) => t.id === id)
-    ? { ...s, tabs: s.tabs.filter((t) => t.id !== active.id), activeId: id }
-    : { ...s, tabs: s.tabs.map((t) => (t.id === active.id ? { id: t.id, href: t.href } : t)) };
-  persist();
-  refreshSnapshot();
-  emit();
-  return href;
-}
-
 /** Test seam — forget the in-memory state so the next read re-hydrates. */
 export function resetWorkspaceTabsForTests(): void {
   state = null;

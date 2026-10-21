@@ -22,8 +22,7 @@ import { coverageStateOf } from "../../components/coverage-state";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
-import { returnToWorkspaceOpener } from "../../lib/workspaceTabs";
-import { useWorkspaceOpener } from "../../lib/useWorkspaceOpener";
+import { returnToWorkspaceOpener, useWorkspaceOpener } from "../../lib/useWorkspaceOpener";
 import {
   ArrowLeft,
   History,

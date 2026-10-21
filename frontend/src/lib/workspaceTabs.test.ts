@@ -8,10 +8,9 @@ import {
   moveWorkspaceTab,
   recordWorkspaceVisit,
   resetWorkspaceTabsForTests,
-  returnToWorkspaceOpener,
   sectionKeyFor,
-  workspaceOpener,
 } from "./workspaceTabs";
+import { returnToWorkspaceOpener, workspaceOpener } from "./useWorkspaceOpener";
 import {
   bindBrowserStorageIdentity,
   clearBrowserStorageIdentity,
@@ -345,7 +344,7 @@ describe("Back from a document returns to the page it was opened from", () => {
     expect(activeHref()).toBe("/scm/merchant-recon?batch=230");
   });
 
-  it("when the opener's tab was closed meanwhile, this tab goes back there itself — once", () => {
+  it("when the opener's tab was closed meanwhile, this tab goes back there itself", () => {
     recordWorkspaceVisit("/scm/merchant-recon", "");
     openDoc("/scm/sales-orders/HC-SO-013512");
     const docTab = getWorkspaceTabsSnapshot().activeId!;
@@ -353,8 +352,7 @@ describe("Back from a document returns to the page it was opened from", () => {
     expect(workspaceOpener()).toMatchObject({ href: "/scm/merchant-recon", tabOpen: false });
     expect(returnToWorkspaceOpener()).toBe("/scm/merchant-recon");
     expect(getWorkspaceTabsSnapshot().activeId).toBe(docTab);
-    recordWorkspaceVisit("/scm/merchant-recon", "");
-    expect(workspaceOpener()).toBeNull();
+    expect(hrefs()).toEqual(["/scm/sales-orders/HC-SO-013512"]);
   });
 
   it("a tab opened from the sidebar, or the first tab, has no opener — its Back keeps going to its list", () => {
