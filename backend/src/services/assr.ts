@@ -1074,7 +1074,7 @@ const PATCH_FIELDS = [
   // Mig 074 — v3.1 fields
   "inspection_result", "email_for_survey",
   // Mig 081 — verification card (Under Verification → Pending Solution gate)
-  "verification_outcome", "verified_root_cause", "inspection_findings", "next_action", "pending_with", // HC-0133, pending_with checked in the route
+  "verification_outcome", "verified_root_cause",
   // Mig 105 — editable QC-on-receipt inspection date (distinct from
   // the auto-stamped verified_at audit timestamp).
   "qc_receipt_date",
@@ -1123,7 +1123,7 @@ const FIELD_LABELS: Record<string, string> = {
   customer_pickup_at: "Scheduled Pickup Date", inspection_visit_at: "Inspection Visit Date", actual_pickup_at: "Actual Pickup Date",
   pickup_status: "Pickup Status", pickup_pic: "Pickup PIC", item_location: "Item Location",
   inspection_result: "Inspection Result", email_for_survey: "Survey Email",
-  verification_outcome: "Verification Outcome", verified_root_cause: "Verified Root Cause", inspection_findings: "Inspection Findings / Action Taken", next_action: "Next Action", pending_with: "Pending With",
+  verification_outcome: "Verification Outcome", verified_root_cause: "Verified Root Cause",
   qc_receipt_date: "QC Receipt Date", goods_returned_note: "Goods Returned Note",
   supplier_service_note: "Supplier Service Note", inspection_by: "Inspection By", pickup_by: "Pickup By",
   delivery_by: "Delivery By",
@@ -1139,7 +1139,7 @@ const FIELD_LOG_ALLOW = new Set<string>([
   "customer_pickup_at", "actual_pickup_at", "supplier_pickup_at", "items_ready_at",
   "completion_date", "do_date", "qc_receipt_date",
   // remarks / free-text notes
-  "goods_returned_note", "supplier_service_note", "action_remark", "satisfaction_notes", "inspection_findings", "next_action",
+  "goods_returned_note", "supplier_service_note", "action_remark", "satisfaction_notes",
 ]);
 const fieldLabel = (k: string): string =>
   FIELD_LABELS[k] ?? k.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());

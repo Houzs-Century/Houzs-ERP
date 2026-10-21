@@ -61,6 +61,7 @@ import { normalizePhone } from "../scm/shared/phone";
 import { ASSR_SUB_STATUS_KEYS } from "../scm/shared/assr-sub-statuses";
 import { pickupTrackingError } from "../scm/shared/assr-pickup-tracking";
 import { verificationFieldsError } from "../scm/shared/assr-verification-fields";
+import { getVerificationNotes, saveVerificationNotes, takeVerificationNotes } from "../services/assrVerificationNotes";
 import { sendCompletionSurvey } from "../services/assrCompletionSurvey";
 
 /* The context the extracted handlers below receive. They are exported so the
@@ -1576,6 +1577,7 @@ app.get("/:id{[0-9]+}", requireServiceCaseAccess(), async (c) => {
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const detail = await getAssrDetail(c.env, id);
   if (!detail) return c.json({ error: "Not found" }, 404);
+  Object.assign((detail as { case: Record<string, unknown> }).case, await getVerificationNotes(c.env, id));
   /* Multi-company: a case must fall inside the caller's ASSR company scope
      (same rule as the list). Rank-and-file SALES are pinned to HOUZS; office /
      backend / directors get their allowed set. A case tagged with a company
@@ -1895,8 +1897,10 @@ app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) =>
     .bind(id)
     .first<{ assigned_to: number | null; assigned_to_2: number | null; sales_agent: string | null }>();
 
+  const notes = takeVerificationNotes(body);
   const ok = await patchAssrCase(c.env, id, body, userId);
-  if (!ok) return c.json({ error: "Not found or no changes" }, 404);
+  const notesOk = notes ? await saveVerificationNotes(c.env, id, notes, userId) : false;
+  if (!ok && !notesOk) return c.json({ error: "Not found or no changes" }, 404);
 
   // Notify newly-responsible people (+ their recursive upline) when an assignee
   // or the sales_agent changed. Best-effort: never fails the PATCH.
