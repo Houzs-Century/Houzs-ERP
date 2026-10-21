@@ -431,12 +431,16 @@ function PendingRow(props: {
   /* The SAME options the salesperson saw, resolved for THIS order's date — not
      today's. An order from last week must be settled against the fairs that were
      running last week, or the screen offers an attribution that is wrong by
-     construction. */
-  const optionsQ = useFairOptions(row.so_date);
+     construction. Below them, for Finance / PMS, the fairs at the same place
+     before those four weeks, back about three months (owner 2026-10-21: 「我希望
+     我这里有权限可以cross over 回去超过一个月的」) — never filled in, only picked. */
+  const optionsQ = useFairOptions(row.so_date, { older: true });
   const { choices, suggested } = boothChoices(
     [...(optionsQ.data?.running ?? []), ...(optionsQ.data?.earlier ?? [])],
     row,
   );
+  const offered = new Set(choices.map((ch) => ch.projectId));
+  const older = boothChoices(optionsQ.data?.older ?? [], row).choices.filter((ch) => !offered.has(ch.projectId));
   const value = pick ?? (suggested != null ? String(suggested) : '');
 
   return (
@@ -447,16 +451,23 @@ function PendingRow(props: {
           <select
             aria-label={`Fair for ${row.doc_no}`}
             value={value}
-            disabled={busy || choices.length === 0}
+            disabled={busy || choices.length + older.length === 0}
             onChange={(e) => setPick(e.target.value)}
             style={select}
           >
             <option value="">
-              {choices.length === 0 ? 'No fair at that place on that date' : '— choose a fair —'}
+              {choices.length + older.length === 0 ? 'No fair at that place on that date' : '— choose a fair —'}
             </option>
             {choices.map((ch) => (
               <option key={ch.projectId} value={String(ch.projectId)}>{ch.label}</option>
             ))}
+            {older.length > 0 && (
+              <optgroup label="More than 4 weeks before">
+                {older.map((ch) => (
+                  <option key={ch.projectId} value={String(ch.projectId)}>{ch.label}</option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </td>
         <td className={cn(TD, 'text-right')}>

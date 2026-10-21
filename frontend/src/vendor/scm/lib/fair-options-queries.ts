@@ -55,6 +55,10 @@ export type FairOptionsResponse = {
   earlier: FairOption[];
   /** The company's venue master — the list behind "Others". */
   venues: VenueMasterRow[];
+  /** Asked for with `older` (Fair Links, owner 2026-10-21): fairs closed
+   *  before the four weeks, back about three months, newest first. Finance and
+   *  PMS only — the server sends none to anyone else. */
+  older?: FairOption[];
 };
 
 /** Label for one row: the VENUE, with the ORGANIZER beside it. ONE label, shared
@@ -95,13 +99,15 @@ export function fairLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'solo' | '
  *   "today in MYT", which the server decides — the browser's clock is not the
  *   Malaysian business date and must not be used for this.
  */
-export function useFairOptions(soDate: string | null | undefined) {
+export function useFairOptions(soDate: string | null | undefined, opts?: { older?: boolean }) {
   const date = soDate && /^\d{4}-\d{2}-\d{2}/.test(soDate) ? soDate.slice(0, 10) : null;
+  const older = opts?.older === true;
+  const query = [date ? `date=${date}` : '', older ? 'older=1' : ''].filter(Boolean).join('&');
   return useQuery({
-    queryKey: ['fair-options', date ?? 'today'],
+    queryKey: ['fair-options', date ?? 'today', ...(older ? ['older'] : [])],
     queryFn: () =>
       authedFetch<FairOptionsResponse>(
-        `/mfg-sales-orders/fair-options${date ? `?date=${date}` : ''}`,
+        `/mfg-sales-orders/fair-options${query ? `?${query}` : ''}`,
       ),
     staleTime: 60_000,
   });

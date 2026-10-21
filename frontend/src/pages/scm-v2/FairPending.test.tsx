@@ -46,6 +46,8 @@ vi.mock('../../lib/workspaceTabs', async (orig) => ({
   markWorkspaceOpenIntent: openIntent,
 }));
 const checks = vi.hoisted(() => ({ rows: [] as unknown[], error: false }));
+/* The fairs past the four weeks the server adds for Finance / PMS. */
+const olderFairs = vi.hoisted(() => ({ list: [] as unknown[], askedOlder: [] as boolean[] }));
 const who = vi.hoisted(() => ({ perms: new Set<string>(['scm.finance.accounting']), role: '' }));
 vi.mock('../../auth/AuthContext', () => ({
   useAuth: () => ({ user: { id: 1, role_name: who.role, position_name: null, email: 'x@houzs.test' }, can: (p: string) => who.perms.has('*') || who.perms.has(p) }),
@@ -54,7 +56,10 @@ vi.mock('../../auth/AuthContext', () => ({
 vi.mock('../../vendor/scm/lib/fair-options-queries', async (orig) => ({
   ...(await orig<typeof import('../../vendor/scm/lib/fair-options-queries')>()),
   useFairPending: () => ({ data: ROWS, isLoading: false, isError: false }),
-  useFairOptions: () => ({ data: OPTIONS, isLoading: false, isError: false }),
+  useFairOptions: (_date: string, opts?: { older?: boolean }) => {
+    olderFairs.askedOlder.push(opts?.older === true);
+    return { data: { ...OPTIONS, older: olderFairs.list }, isLoading: false, isError: false };
+  },
   useAssignFair: () => ({ mutate: assign, isPending: false }),
   useFairChecks: () => ({ data: checks.rows, isLoading: false, isError: checks.error }),
   useFairTransfer: () => ({ mutate: transferMutate, isPending: false }),
@@ -158,6 +163,32 @@ describe('FairPending', () => {
     fireEvent.change(screen.getByLabelText('Fair for HC-SO-2609-064'), { target: { value: '341' } });
     fireEvent.click(screen.getAllByRole('button', { name: 'Link' })[0]);
     expect(assign).toHaveBeenCalledWith({ docNo: 'HC-SO-2609-064', projectId: 341 });
+  });
+
+  it('offers the fairs at the same place before the four weeks as their own group — never filled in', () => {
+    /* Owner 2026-10-21: 「我希望我这里有权限可以cross over 回去超过一个月的」. */
+    olderFairs.list = [
+      {
+        key: 'sunway pyramid|bighome|2026-08-07|2026-08-09', venue: 'SUNWAY PYRAMID CONVENTION CENTRE', organizer: 'BIGHOME', startDate: '2026-08-07', endDate: '2026-08-09',
+        projectIds: [290], booths: [{ projectId: 290, brand: 'AKEMI' }],
+      },
+    ];
+    try {
+      show();
+      expect(olderFairs.askedOlder.every(Boolean)).toBe(true);
+      const sel = screen.getByLabelText('Fair for HC-SO-2609-065') as HTMLSelectElement;
+      expect(sel.disabled).toBe(false);
+      expect(sel.value).toBe('');
+      const group = sel.querySelector('optgroup') as HTMLOptGroupElement;
+      expect(group.label).toBe('More than 4 weeks before');
+      expect([...group.querySelectorAll('option')].map((o) => o.text)).toEqual(['AKEMI — SUNWAY PYRAMID CONVENTION CENTRE — BIGHOME (08/07 - 08/09)']);
+      fireEvent.change(sel, { target: { value: '290' } });
+      const row = sel.closest('tr') as HTMLTableRowElement;
+      fireEvent.click(within(row).getByRole('button', { name: 'Link' }));
+      expect(assign).toHaveBeenCalledWith({ docNo: 'HC-SO-2609-065', projectId: 290 });
+    } finally {
+      olderFairs.list = [];
+    }
   });
 });
 

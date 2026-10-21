@@ -16,6 +16,8 @@ import {
   fairMissingMessage,
   companyUsesKeyerFair,
   resolveFairWithKeyer,
+  olderFairOptions,
+  FAIR_SETTLE_LOOKBACK_DAYS,
   type FairProjectRow,
 } from './fair-options';
 
@@ -126,6 +128,21 @@ describe('buildFairOptions — one row is a place plus an organizer', () => {
        written up. 2 Oct minus 28 days is 4 Sep, so EDGE OF WINDOW is the last
        row that qualifies and TOO OLD misses by a day. */
     expect(earlier.map((o) => o.venue)).toEqual(['SEPTEMBER HALL', 'EDGE OF WINDOW']);
+  });
+
+  it('Fair Links reaches about three months for the people who settle links — only past the four weeks', () => {
+    /* Owner 2026-10-21: 「我希望我这里有权限可以cross over 回去超过一个月的」. The
+       four weeks stay the order form's; the older ones come as their own group. */
+    const rows = [
+      fair({ projectId: 1, venue: 'SEPTEMBER HALL', startDate: '2026-09-18', endDate: '2026-09-20' }),
+      fair({ projectId: 3, venue: 'TOO OLD', startDate: '2026-09-02', endDate: '2026-09-03' }),
+      fair({ projectId: 4, venue: 'JULY HALL', startDate: '2026-07-03', endDate: '2026-07-05' }),
+      fair({ projectId: 5, venue: 'JUNE HALL', startDate: '2026-06-26', endDate: '2026-06-28' }),
+    ];
+    expect(olderFairOptions(rows, '2026-10-02').map((o) => o.venue)).toEqual(['TOO OLD', 'JULY HALL']);
+    expect(FAIR_SETTLE_LOOKBACK_DAYS).toBe(92);
+    /* The order form's groups are unchanged by the wider read. */
+    expect(buildFairOptions(rows, '2026-10-02').earlier.map((o) => o.venue)).toEqual(['SEPTEMBER HALL']);
   });
 
   it('keeps two occurrences of ONE venue+organizer apart by their dates', () => {
