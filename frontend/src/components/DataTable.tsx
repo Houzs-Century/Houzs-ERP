@@ -1,5 +1,6 @@
 import {
   Fragment,
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -7,6 +8,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -130,6 +132,116 @@ type Props<T, L = never> = DataTableProps<T, L>;
    renders nothing reads as a dash, not as a blank a user might think failed. */
 const showDash = (node: React.ReactNode): React.ReactNode =>
   node == null || node === "" || node === false ? <span className="text-ink-muted">—</span> : node;
+
+/* SCROLL PERF (owner 2026-10-21 "滚动变顺" step 2): the DATA cells of one row.
+   The <tr>, its selection checkbox, expand chevron, click/drag handlers and
+   selected/hover classes stay in the parent — those are cheap and depend on
+   per-row state (selected / expanded / drag) that changes often. The 35-odd data
+   cells (which include the crew pickers and every formatted value) are the
+   EXPENSIVE part, and they are a pure function of (row, columns, layout): calling
+   the same column render fns on the same row yields the same cells. So they go in
+   a memoised component whose props are exactly those inputs — all referentially
+   stable in the parent (row object stable until a refetch; columns / widths /
+   sticky arrays are useMemo'd; the rest are primitives). A scroll-window change,
+   a selection toggle or a search keystroke re-renders DataTable, but every row
+   whose data and the table's columns/layout are unchanged now SKIPS re-rendering
+   its cells — the Google-Sheet-smooth win. Output is byte-identical to rendering
+   inline: memoising on exactly the inputs the cells read introduces no staleness
+   (any pre-existing staleness from a caller's incomplete columns-memo deps is
+   preserved exactly, since an unchanged columns identity means the same closures). */
+function DataRowCellsInner<T>({
+  row, columns, widths, stickyLeft, stickyRight, stickyCount, stickyRightCount,
+  cellPad, wrapOn, fillerAt, fillerCount, stickyBg, firstColGutter,
+}: {
+  row: T;
+  columns: Column<T>[];
+  widths: Record<string, number>;
+  stickyLeft: Array<number | undefined>;
+  stickyRight: Array<number | undefined>;
+  stickyCount: number;
+  stickyRightCount: number;
+  cellPad: string;
+  wrapOn: boolean;
+  fillerAt: number;
+  fillerCount: number;
+  stickyBg: string;
+  /* The first data column gets the leading gutter only when no select / chevron
+     cell sits before it (that cell owns the gutter otherwise). */
+  firstColGutter: boolean;
+}) {
+  return (
+    <>
+      {columns.map((c, i) => {
+        const isSticky = i < stickyCount;
+        const isLastSticky = isSticky && i === stickyCount - 1;
+        const isStickyRight = stickyRight[i] !== undefined;
+        const isFirstStickyRight =
+          isStickyRight && i === columns.length - stickyRightCount;
+        const userW = widths[c.key];
+        const cellStyle: CSSProperties = {};
+        if (typeof userW === "number") {
+          cellStyle.width = userW;
+          cellStyle.minWidth = userW;
+          cellStyle.maxWidth = userW;
+        } else if (c.width) {
+          cellStyle.width = c.width;
+          // Same cap as the header cell: a px width means "clip here", never
+          // "stretch to the longest value".
+          const px = parsePxWidth(c.width);
+          if (px != null) cellStyle.maxWidth = px;
+        }
+        if (isSticky) {
+          cellStyle.position = "sticky";
+          cellStyle.left = stickyLeft[i];
+          cellStyle.zIndex = 20;
+          cellStyle.background = stickyBg;
+        } else if (isStickyRight) {
+          cellStyle.position = "sticky";
+          cellStyle.right = stickyRight[i];
+          cellStyle.zIndex = 20;
+          cellStyle.background = stickyBg;
+        }
+        // Full raw value as a native tooltip so a clipped cell stays readable on
+        // hover. Strings only: numeric getValues are raw centi/ISO shapes.
+        const rawVal = c.getValue?.(row);
+        const cellTitle =
+          typeof rawVal === "string" && rawVal !== "" ? rawVal : undefined;
+        return (
+          <Fragment key={c.key}>
+            {i === fillerAt && fillerCount > 0 && <td aria-hidden className="border-b border-border-subtle p-0 group-hover:bg-[#3f6b53]/25" />}
+            <td
+              data-col-key={c.key}
+              style={cellStyle}
+              title={cellTitle}
+              className={cn(
+                "border-b border-border-subtle text-[13px] text-ink transition-colors",
+                cellPad,
+                wrapOn
+                  ? "whitespace-normal break-words align-top"
+                  : "overflow-hidden text-ellipsis whitespace-nowrap",
+                "group-hover:bg-[#3f6b53]/25",
+                c.align === "right" && "text-right",
+                c.align === "center" && "text-center",
+                i === 0 && firstColGutter && "pl-5",
+                i === columns.length - 1 && "pr-5",
+                isLastSticky && "border-r border-border",
+                isFirstStickyRight && "border-l border-border",
+                c.className
+              )}
+            >
+              {showDash(c.render(row))}
+            </td>
+          </Fragment>
+        );
+      })}
+      {fillerAt === columns.length && fillerCount > 0 && (
+        <td aria-hidden className="border-b border-border-subtle p-0 group-hover:bg-[#3f6b53]/25" />
+      )}
+    </>
+  );
+}
+/* memo keeps the generic signature (React.memo erases it on its own). */
+const DataRowCells = memo(DataRowCellsInner) as typeof DataRowCellsInner;
 
 export function DataTable<T, L = never>(props: Props<T, L>) {
   const { epoch } = useSyncExternalStore(
@@ -2808,96 +2920,24 @@ function DataTableInner<T, L>({
                             )}
                           </td>
                         )}
-                        {displayColumns.map((c, i) => {
-                          const isSticky = i < stickyCount;
-                          const isLastSticky = isSticky && i === stickyCount - 1;
-                          const isStickyRight = stickyRight[i] !== undefined;
-                          const isFirstStickyRight =
-                            isStickyRight && i === displayColumns.length - stickyRightCount;
-                          const userW = widths[c.key];
-                          const cellStyle: React.CSSProperties = {};
-                          if (typeof userW === "number") {
-                            cellStyle.width = userW;
-                            cellStyle.minWidth = userW;
-                            cellStyle.maxWidth = userW;
-                          } else if (c.width) {
-                            cellStyle.width = c.width;
-                            // Same cap as the header cell: a px width means
-                            // "clip here", never "stretch to the longest value".
-                            const px = parsePxWidth(c.width);
-                            if (px != null) cellStyle.maxWidth = px;
-                          }
-                          if (isSticky) {
-                            cellStyle.position = "sticky";
-                            cellStyle.left = stickyLeft[i];
-                            cellStyle.zIndex = 20;
-                            cellStyle.background = stickyBg;
-                          } else if (isStickyRight) {
-                            cellStyle.position = "sticky";
-                            cellStyle.right = stickyRight[i];
-                            cellStyle.zIndex = 20;
-                            // Opaque for the same reason the left run is: the
-                            // scrolling middle passes UNDER these cells.
-                            cellStyle.background = stickyBg;
-                          }
-                          // Full raw value as a native tooltip so a clipped
-                          // cell is still readable on hover. Strings only:
-                          // numeric getValues are raw centi/ISO shapes that
-                          // would contradict the formatted cell text.
-                          const rawVal = c.getValue?.(row);
-                          const cellTitle =
-                            typeof rawVal === "string" && rawVal !== ""
-                              ? rawVal
-                              : undefined;
-                          return (
-                            <Fragment key={c.key}>
-                            {i === fillerAt && fillerCount > 0 && <td aria-hidden className="border-b border-border-subtle p-0 group-hover:bg-[#3f6b53]/25" />}
-                            <td
-                              data-col-key={c.key}
-                              style={cellStyle}
-                              title={cellTitle}
-                              className={cn(
-                                "border-b border-border-subtle text-[13px] text-ink transition-colors",
-                                cellPad,
-                                // Single-line rule (2026-05-08) + clip rule
-                                // (owner 2026-07-24). Cells stop wrapping AND
-                                // stop painting past their own column: a value
-                                // longer than the column is cropped with an
-                                // ellipsis (full text in the title tooltip)
-                                // instead of overlapping the neighbour cell.
-                                // Render functions that genuinely need
-                                // multi-line wrap via an inner block element
-                                // or `c.className` ("whitespace-normal") —
-                                // still overflow-hidden within the column.
-                                wrapOn
-                                  ? "whitespace-normal break-words align-top"
-                                  : "overflow-hidden text-ellipsis whitespace-nowrap",
-                                // Pine-green tint on hover (matches the
-                                // calendar's "on track" green). Reads clearly
-                                // on both zebra shades. (Was a pale brass
-                                // `accent-soft` wash that looked yellow.)
-                                "group-hover:bg-[#3f6b53]/25",
-                                c.align === "right" && "text-right",
-                                c.align === "center" && "text-center",
-                                // Leading gutter belongs to the select /
-                                // chevron cell when present; otherwise the
-                                // first column.
-                                i === 0 && !expandable && !selection && "pl-5",
-                                i === displayColumns.length - 1 && "pr-5",
-                                // Freeze line on the last sticky column.
-                                isLastSticky && "border-r border-border",
-                                isFirstStickyRight && "border-l border-border",
-                                c.className
-                              )}
-                            >
-                              {showDash(c.render(row))}
-                            </td>
-                            </Fragment>
-                          );
-                        })}
-                        {fillerAt === displayColumns.length && fillerCount > 0 && (
-                          <td aria-hidden className="border-b border-border-subtle p-0 group-hover:bg-[#3f6b53]/25" />
-                        )}
+                        {/* The data cells are memoised (see DataRowCells): a
+                            scroll / selection / search re-render skips every row
+                            whose data + columns + layout are unchanged. */}
+                        <DataRowCells
+                          row={row}
+                          columns={displayColumns}
+                          widths={widths}
+                          stickyLeft={stickyLeft}
+                          stickyRight={stickyRight}
+                          stickyCount={stickyCount}
+                          stickyRightCount={stickyRightCount}
+                          cellPad={cellPad}
+                          wrapOn={wrapOn}
+                          fillerAt={fillerAt}
+                          fillerCount={fillerCount}
+                          stickyBg={stickyBg}
+                          firstColGutter={!expandable && !selection}
+                        />
                       </tr>
                       {/* Inline expanded sub-row (opt-in `expandable`). Spans
                           the full width; renders the caller's drill-down.
