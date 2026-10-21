@@ -3,6 +3,7 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
+- HC-0125 Employees & Attendance: after phase 1 deploys, grant `hr.employees.manage` (or `hr.employees.read`) to Nico's role in Team > Roles & Permissions; until then only Owner / IT Admin (`*`) see HR > Employees & Attendance — 2026-10-21
 - Lorry revenue / occupancy (Logistic Overview) reads the lorry from the DO crew, its lorry run, or the DO Vehicle field; on the local copy only 1 of 298 October DOs carries one. The owner says the team fills the plate on every DO: find WHERE (AutoCount, paper, another field) and read it from there — 2026-10-18
 - Houzs POS go-live: create the Cloudflare Pages project `houzs-pos` (direct upload) and attach `pos.houzscentury.com`, then merge PR #4635; `deploy-pos.yml` fails until the project exists — 2026-10-15
 - Houzs POS device QA (spec section 16, items 1 to 6, 9, 11): on a real tablet with the ESC/POS printer and the scanner after the deploy: install, Prepare, 3 days offline, hotspot sync, DATA LOST drill, 3-day pending drill, 58 / 80 mm prints, label scans — 2026-10-15
@@ -49,6 +50,25 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Auto-derive product price from supplier (owner 2026-09-16, plan `PLAN-auto-derive-product-price-from-supplier.md`): Product Maintenance / sofa-combo / special cost prices stop being hand-typed and auto-derive = the MOST EXPENSIVE supplier taken as a WHOLE SET; supplier<->SKU link stays as the source. BACKEND-ONLY (zero frontend diff — recompute overwrites the stored column, no read-only field); effective-dating IS in scope (supplier price valid-from + as-of derivation). Only the SO-side budget cost changes; shipped DO FIFO history untouched. Staged: (1) binding-gap report DONE #4012, (2) pure derivation inert #4013, (1b) price-conflict report, (2b) reverse cost-anchor backend hook behind app_config flag + backfill, (3) supplier-price effective-dating, (4) production reprice behind owner go, (5) combo+specials.
 - MRP: one global PO-grouping toggle (per-SO or combine); PO date = customer date − supplier×category lead time; sofa/bedframe/accessory/(SP) mattress lines are covered only by a linked PO line; an SO without a processing date is not allocated; no MRP convert on the phone.
 - Six documents (SO/PO/GR/PI/SI/DO): effective status SUBMITTED (DO keeps DRAFT/LOADED/DISPATCHED); cancel approval on SO only; every document gets line delivery date, line remark, FOC, per-line warehouse and a change log; discount typed as amount or %.
+
+## HC-0125 — Employees & Attendance, ported from Hookka (Nico, owner OK 2026-10-20)
+
+Port Hookka's `/employees` page (Employees & Attendance) and its worker punch in/out for drivers and warehouse crew, desktop and phone. Owner: "fully migrate including Mobile version, after migrate then I will adjust". Source is `hookkadev/hookka-erp-testing` `origin/main` (about 35k lines: `src/pages/employees.tsx`, `src/api/routes/{worker,workers,attendance,working-hour-entries,payslips,payroll-hour-deductions,employee-advances,worker-penalties}.ts`, `src/pages/worker/*`).
+
+Decided (Nico 2026-10-20):
+- Phone login = the person's Houzs ERP account (option B), not Hookka's employee no. + PIN. Punch in/out is a screen in `mobile/MobileApp.tsx`, next to POD. Everyone who punches needs an ERP user; the employee row links to `public.users`, which already links to `scm.drivers` / `scm.helpers` (mig 0327).
+- Round 1 = the HR parts only: Employee Master, Attendance, Working Hours, Labor Cost, Department Labor, Payroll, Advances, Worker Penalty, Public Holidays, time adjustment requests.
+- Not ported until Nico says what she needs: Efficiency Overview, Employee Performance, Department Performance, "Extra production time" requests, phone job scan / QC / issue. They read Hookka's factory production orders, which Century does not have.
+
+Kept from Hookka: selfie + GPS on every punch (geofence flags, never blocks); forgotten punch-out auto-closed at shift end by cron; degenerate-window rule; pay reads Working Hours + hour deductions, not the punch row; shift rules effective-dated.
+Changed for Century: geofence per warehouse (`scm.warehouses` gets lat / lng / radius; no hard-coded Shah Alam point); punch photos in R2, not base64 in the row.
+
+Phases, one PR each, `staging` first for Nico, then main:
+1. Schema + Employee Master + Public Holidays + shift / pay rules: built on `feat/hc0125-hr-attendance` (`/hr/employees`, `/api/hr/*`, mig `20261021T0300_hr_employees`), not merged yet — 2026-10-21
+2. Phone punch screen + Attendance tab + warehouse geofence + auto clock-out cron + time adjustment requests.
+3. Working Hours + Labor Cost + Department Labor + hour deductions / settle period.
+4. Payroll / payslips + Advances + Worker Penalty + phone "My pay".
+5. Driver / helper monthly commission from delivered DOs (`scm.delivery_order_crew` driver_1/2, helper_1/2 + POD `delivered_at`) into payroll — waiting on Nico for the rate rules — 2026-10-20
 
 ## Purchase return, phase 2 — the receive-back leg (owner 2026-09-28)
 

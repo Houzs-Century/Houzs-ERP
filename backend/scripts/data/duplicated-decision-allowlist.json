@@ -1634,6 +1634,16 @@
       "check": "D1",
       "key": "CUSTOMER,SUPPLIER,WAREHOUSE|backend/src/scm/shared/assr-pickup-tracking.ts frontend/src/vendor/scm/lib/assr-pickup-tracking.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: ITEM_LOCATION_OPTIONS."
+    },
+    {
+      "check": "D1",
+      "key": "*,HR.EMPLOYEES.MANAGE,HR.EMPLOYEES.READ|frontend/src/App.tsx frontend/src/components/Sidebar.tsx",
+      "why": "THE PERMISSION KEYS ONE NAV ENTRY IS GATED ON, written once on the route Guard and once on the sidebar item so a hidden link is also an unreachable route (Employees & Attendance, HC-0125). The pair must agree; the server is the real gate and neither of these is it. unnamed inline literal(s)."
+    },
+    {
+      "check": "D1",
+      "key": "AFFIN BANK,AGROBANK,ALLIANCE BANK,AMBANK,BANK ISLAM,BANK RAKYAT,BANK SIMPANAN NASIONAL,CIMB BANK,CITIBANK,HONG LEONG BANK,HSBC BANK,MAYBANK,MBSB BANK,OCBC BANK,PUBLIC BANK,RHB BANK,STANDARD CHARTERED,UOB BANK|backend/src/scm/shared/hr-employee.ts frontend/src/vendor/shared/hr-employee.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: MALAYSIAN_BANKS."
     }
   ]
 }

@@ -47,6 +47,7 @@ import { projectSalesOrders } from "./routes/project-sales-orders";
 import { projectSalesBills } from "./routes/project-sales-bills";
 import { projectPosSales } from "./routes/project-pos-sales";
 import { posAdmin } from "./routes/pos-admin";
+import { hr as hrEmployees } from "./routes/hr";
 import { posDevice } from "./routes/pos-device";
 import projectsOutstanding from "./routes/projectsOutstanding";
 import { projectDataGaps } from "./routes/projectDataGaps";
@@ -520,6 +521,10 @@ app.route("/api/project-pos-sales", projectPosSales);
 // one key. NOT under /api/pos — that is the older 2990 tablet-POS auth.
 app.use("/api/pos-admin/*", requirePermission("pos.manage"));
 app.route("/api/pos-admin", posAdmin);
+// HR Employees & Attendance (HC-0125): reads on either key, every write checks
+// hr.employees.manage inside. Salaries, so not under the SCM umbrella.
+app.use("/api/hr/*", requireAnyPermission(["hr.employees.read", "hr.employees.manage"]));
+app.route("/api/hr", hrEmployees);
 app.route("/api/sales", sales);
 app.route("/api/finance", finance);
 app.route("/api/stockitems", stockItems);

@@ -865,8 +865,8 @@ export const NAV_TABS: NavTab[] = [
     label: "HR",
     icon: Users,
     groupId: "scm-hr",
-    // No /scm/hr hub page exists, so the group header lands on the report.
-    to: "/scm/hr/commission",
+    // Pure header (no `to`): Commission and Employees & Attendance are granted
+    // separately, so no single child is a landing page everyone can open.
     // FLAT keys only, deliberately no `scm.access` and no `anyAccess`: HR has
     // no L2 page-access area, and /commission returns every colleague's pay.
     // Riding the SCM umbrella here is exactly the mistake scm/index.ts warns
@@ -877,8 +877,11 @@ export const NAV_TABS: NavTab[] = [
     // Commission page itself (per-button), not here: they grant an action
     // inside the module, never admittance to it. Neither is usable without
     // scm.hr.read anyway, since the API refuses to show the period first.
-    anyPerm: ["*", "scm.hr.read", "scm.hr.manage"],
+    anyPerm: ["*", "scm.hr.read", "scm.hr.manage", "hr.employees.read", "hr.employees.manage"],
     children: [
+      // Employees & Attendance (HC-0125): its own flat keys, payroll is granted
+      // to different people than commission.
+      { to: "/hr/employees", label: "Employees & Attendance", icon: Users, anyPerm: ["*", "hr.employees.read", "hr.employees.manage"] },
       { to: "/scm/hr/commission", label: "Commission", icon: DollarSign, anyPerm: ["*", "scm.hr.read", "scm.hr.manage"] },
       // Settings is an EDITOR — read-only holders are not shown a page whose
       // every control the API would reject (2990 bounces them to the report).

@@ -950,6 +950,86 @@ export const pos_audit = pgTable(
   (t) => [index("idx_pos_audit_entity").on(t.entity, t.entity_id)],
 );
 
+// ── HR: Employees & Attendance, phase 1 (mig-pg 20261021T0300, HC-0125) ──
+export const hr_employees = pgTable("hr_employees", {
+  id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+  company_id: bigint("company_id", { mode: "number" }).notNull(),
+  emp_no: text("emp_no").notNull(),
+  name: text("name").notNull(),
+  user_id: integer("user_id"),
+  department_id: integer("department_id"),
+  position: text("position"),
+  phone: text("phone"),
+  status: text("status").notNull().default("ACTIVE"),
+  resigned_on: date("resigned_on", { mode: "string" }),
+  join_date: date("join_date", { mode: "string" }),
+  nationality: text("nationality"),
+  ic_number: text("ic_number"),
+  passport_number: text("passport_number"),
+  is_outsource: boolean("is_outsource").notNull().default(false),
+  pay_mode: text("pay_mode").notNull().default("MONTHLY"),
+  basic_salary_sen: bigint("basic_salary_sen", { mode: "number" }).notNull().default(0),
+  daily_rate_sen: bigint("daily_rate_sen", { mode: "number" }).notNull().default(0),
+  working_hours_per_day: numeric("working_hours_per_day", { precision: 4, scale: 1 }).notNull().default("9"),
+  working_days_per_month: integer("working_days_per_month").notNull().default(26),
+  ot_multiplier: numeric("ot_multiplier", { precision: 4, scale: 2 }).notNull().default("1.5"),
+  payment_method: text("payment_method").notNull().default("TRANSFER"),
+  bank_name: text("bank_name"),
+  bank_account: text("bank_account"),
+  epf_enabled: boolean("epf_enabled").notNull().default(false),
+  socso_enabled: boolean("socso_enabled").notNull().default(false),
+  eis_enabled: boolean("eis_enabled").notNull().default(false),
+  pcb_enabled: boolean("pcb_enabled").notNull().default(false),
+  tax_residency: text("tax_residency"),
+  tax_category: text("tax_category"),
+  tax_child_relief_sen: bigint("tax_child_relief_sen", { mode: "number" }),
+  created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  created_by: integer("created_by"),
+  updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  updated_by: integer("updated_by"),
+});
+
+export const hr_employee_salary_history = pgTable(
+  "hr_employee_salary_history",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    employee_id: bigint("employee_id", { mode: "number" }).notNull(),
+    basic_salary_sen: bigint("basic_salary_sen", { mode: "number" }).notNull(),
+    effective_from: date("effective_from", { mode: "string" }).notNull(),
+    note: text("note"),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    created_by: integer("created_by"),
+  },
+  (t) => [uniqueIndex("uq_hr_salary_history_date").on(t.employee_id, t.effective_from)],
+);
+
+export const hr_public_holidays = pgTable(
+  "hr_public_holidays",
+  {
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    holiday_date: date("holiday_date", { mode: "string" }).notNull(),
+    name: text("name"),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    created_by: integer("created_by"),
+  },
+  (t) => [primaryKey({ columns: [t.company_id, t.holiday_date] })],
+);
+
+export const hr_pay_rule_versions = pgTable(
+  "hr_pay_rule_versions",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    effective_from: date("effective_from", { mode: "string" }).notNull(),
+    rules: jsonb("rules").notNull(),
+    note: text("note"),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    created_by: integer("created_by"),
+  },
+  (t) => [uniqueIndex("uq_hr_pay_rule_versions_date").on(t.company_id, t.effective_from)],
+);
+
 // ── sales_entries (mig 041 / 051) ──────────────────────────
 export const sales_entries = pgTable("sales_entries", {
   company_id: bigint("company_id", { mode: "number" }),

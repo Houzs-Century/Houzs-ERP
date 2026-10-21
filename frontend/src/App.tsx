@@ -151,6 +151,8 @@ const ScmStockTakeDetailV2 = lazy(() => import("./pages/scm-v2/StockTakeDetail")
 // HR / Commission — the payroll surface over /api/scm/hr.
 const ScmHrCommission = lazy(() => import("./pages/scm-v2/HrCommission").then((m) => ({ default: m.HrCommission })));
 const ScmHrSettings = lazy(() => import("./pages/scm-v2/HrSettings").then((m) => ({ default: m.HrSettings })));
+// HR / Employees & Attendance (HC-0125), over /api/hr.
+const HrEmployees = lazy(() => import("./pages/HrEmployees").then((m) => ({ default: m.HrEmployees })));
 // TEMP — vendored 2990's PR / Inventory / Stock Card / Supplier Detail / Drivers
 // pages (this wave), parallel to the native /scm/* routes below.
 const ScmPurchaseReturnsV2 = lazy(() => import("./pages/scm-v2/PurchaseReturnsListV2").then((m) => ({ default: m.PurchaseReturnsListV2 })));
@@ -867,6 +869,7 @@ export default function App() {
             the API will not show them the period to approve. */}
         <Route path="/scm/hr/commission" element={<Guard anyPerm={["*", "scm.hr.read", "scm.hr.manage"]}><Scm2990Shell><ScmHrCommission /></Scm2990Shell></Guard>} />
         <Route path="/scm/hr/settings" element={<Guard anyPerm={["*", "scm.hr.manage"]}><Scm2990Shell><ScmHrSettings /></Scm2990Shell></Guard>} />
+        <Route path="/hr/employees" element={<Guard anyPerm={["*", "hr.employees.read", "hr.employees.manage"]}><HrEmployees /></Guard>} />
         {/* TEMP — vendored 2990's PR / Inventory / Stock Card / Supplier Detail /
             Drivers pages (this wave), parallel to the native /scm/* below. Each
             wrapped in <Scm2990Shell>. Literal segments (/new, /stock-card)

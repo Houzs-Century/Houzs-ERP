@@ -107,7 +107,8 @@ describe("executable route contract", () => {
     // 176: /ocr — IT-only OCR accuracy (DEV-35).
     // 178 since 2026-10-17: /scm/logistic-overview and /scm/procurement-overview,
     // the module dashboards, each first in its Sidebar group.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(178);
+    // 179 since 2026-10-21: /hr/employees, Employees & Attendance (HC-0125).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(179);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -161,7 +162,8 @@ describe("executable route contract", () => {
     // 184 — /ai-usage (DEV-35).
     // 185 — /ocr (DEV-35).
     // 187 since 2026-10-17 — the Logistic and Procurement Overviews.
-    expect(ROUTE_CONTRACT).toHaveLength(187);
+    // 188 since 2026-10-21 — /hr/employees; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(188);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
