@@ -934,13 +934,12 @@ function CasesView({
       key: "creditor_name",
       filterable: true,
       label: "Supplier",
-      defaultHidden: true,
       render: (r) => (
-        <span className="block max-w-[160px] truncate" title={r.creditor_name || undefined}>
-          {r.creditor_name || "—"}
+        <span className="block max-w-[160px] truncate" title={r.creditor_name || r.creditor_code || undefined}>
+          {r.creditor_name || r.creditor_code || "—"}
         </span>
       ),
-      getValue: (r) => r.creditor_name,
+      getValue: (r) => r.creditor_name || r.creditor_code,
     },
     ...STAGE_COLUMNS,
   ];
@@ -4183,9 +4182,9 @@ function DetailContent({
                 </div>
               );
             })()}
-            {/* Creditor — auto-derived from item_code via
-                StockItem.MainSupplier, or hand-picked / registered when
-                AutoCount has no MainSupplier. Manual picks are shielded
+            {/* Creditor — auto-derived from the item's PO, else its SO
+                supplier (HC-0130), or hand-picked / registered when
+                neither has one. Manual picks are shielded
                 from auto re-resolution (creditor_source='manual'). */}
             <SupplierField c={c} id={id} detail={detail} toast={toast} onUpdated={onUpdated} />
             <InlineEdit
@@ -8057,11 +8056,11 @@ function LogisticsForm({
 }
 
 // ── Supplier (creditor) field with manual assignment ──────────
-// Auto-resolve from AutoCount stays the default; when the item has no
-// MainSupplier (sync gaps), staff search the local creditors mirror or
-// register a new supplier on the spot. Manual picks set
-// creditor_source='manual' so the auto-resolver / bulk stock refresh
-// won't overwrite them; "Resolve now" hands the link back to AutoCount.
+// Auto-resolve (PO, else SO supplier — HC-0130) stays the default; when
+// neither has one, staff search the local creditors mirror or register a
+// new supplier on the spot. Manual picks set creditor_source='manual' so
+// the auto-resolver / bulk stock refresh won't overwrite them; "Resolve
+// now" hands the link back to the auto path.
 function SupplierField({ c, id, detail, toast, onUpdated }: {
   c: any;
   id: number;
@@ -8173,7 +8172,7 @@ function SupplierField({ c, id, detail, toast, onUpdated }: {
             </div>
             <div className="font-mono text-[10px] text-ink-muted">
               {c.creditor_code}
-              {c.creditor_source === "manual" ? " · manual" : c.creditor_source === "po" ? " · from PO" : ""}
+              {c.creditor_source === "manual" ? " · manual" : c.creditor_source === "po" ? " · from PO" : c.creditor_source === "so" ? " · from SO" : ""}
             </div>
           </>
         ) : c.item_code ? (
@@ -8193,7 +8192,7 @@ function SupplierField({ c, id, detail, toast, onUpdated }: {
                     toast.success(res.message || "Creditor resolved");
                   } else {
                     toast.error(
-                      res.message || "No MainSupplier set on this item in AutoCount"
+                      res.message || "No supplier on this item's PO or SO"
                     );
                   }
                   detail.reload();

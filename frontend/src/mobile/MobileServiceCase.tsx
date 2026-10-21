@@ -3141,7 +3141,7 @@ function MobileItemRemark({ c, it, busy, onChanged, notify, field, placeholder }
 }
 
 // Supplier (creditor) picker — search the local creditors mirror and
-// hand-link a supplier when AutoCount has no MainSupplier, or register
+// hand-link a supplier when the PO / SO gives none, or register
 // a new one. Manual picks set creditor_source='manual' so the
 // auto-resolver won't overwrite them.
 function MobileSupplierPick({ c, onChanged, notify, disabled }: { c: Any; onChanged: () => void; notify: ReturnType<typeof useNotify>; disabled?: boolean }) {
@@ -3227,7 +3227,7 @@ function MobileSupplierPick({ c, onChanged, notify, disabled }: { c: Any; onChan
         <div style={{ display: "flex", alignItems: "center", gap: 9, border: `1px solid ${DIM}`, borderRadius: 10, padding: "10px 11px", marginTop: 5 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12.5, fontWeight: 700, color: INK }}>{String(name ?? code)}</div>
-            <div className="money" style={{ fontSize: 10, color: GREY }}>{String(code)}{source === "manual" ? " · manual" : source === "po" ? " · from PO" : ""}</div>
+            <div className="money" style={{ fontSize: 10, color: GREY }}>{String(code)}{source === "manual" ? " · manual" : source === "po" ? " · from PO" : source === "so" ? " · from SO" : ""}</div>
           </div>
         </div>
       ) : (
