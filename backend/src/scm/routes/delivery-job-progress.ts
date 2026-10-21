@@ -26,7 +26,7 @@ import { ASSR_LEG_BY_STOP } from './delivery-pod-context';
 import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } from '../lib/deliveryScope';
 import { ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
 import { saveAttachment, logActivity, patchAssrCase, transitionStage } from '../../services/assr';
-import { setChecklistStatus } from '../../services/projects';
+import { setChecklistStatus, getUserPhasesOnProject } from '../../services/projects';
 import { sendCompletionSurvey } from '../../services/assrCompletionSurvey';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -99,11 +99,12 @@ async function loadJob(c: Ctx, sourceType: SourceType, sourceId: string, leg: st
     ).bind(Number(sourceId)).first<Record<string, unknown>>();
     if (!row) return { ok: false, status: 404, error: 'not_found', reason: 'This project could not be found.' };
     if (scope.mode !== 'all') {
+      // Same canonical crew rule as the board row scope (scalar user id OR a name
+      // in the setup/dismantle crew JSON) — id-only matching 403'd drivers crewed
+      // by name on their own job.
       const me = Number(c.get('houzsUser')?.id);
-      const crew = leg === 'SETUP'
-        ? [row.setup_driver_user_id, row.setup_helper_1_id, row.setup_helper_2_id]
-        : [row.dismantle_driver_user_id, row.dismantle_helper_1_id, row.dismantle_helper_2_id];
-      if (!crew.some((v) => v != null && Number(v) === me)) return notYours;
+      const phases = await getUserPhasesOnProject(c.env, Number(sourceId), me, c.get('houzsUser')?.name ?? null);
+      if (!phases.includes(leg === 'SETUP' ? 'setup' : 'dismantle')) return notYours;
     }
     return { ok: true, row, tripId: null, companyId: (row.company_id as number | null) ?? null };
   }
