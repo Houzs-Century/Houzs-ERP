@@ -329,7 +329,7 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
       all: async () => ({
         results: /\bprojects\b/i.test(sql)
           ? [{
-              id: 10, code: 'PRJ-1', name: 'Expo Build', venue: 'Hall 3', venue_address: 'Hall 3, KLCC',
+              id: 10, code: 'PRJ-1', name: 'Expo Build', brand: 'AKEMI', venue: 'Hall 3', venue_address: 'Hall 3, KLCC',
               state: 'Selangor', setup_start_at: '2026-09-10', dismantle_start_at: null,
               setup_driver_name: 'Driver A', setup_lorry_plate: 'WXX1', dismantle_driver_name: null, dismantle_lorry_plate: null,
             }]
@@ -373,11 +373,13 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
   it('shows one SO row plus an ASSR, a DP and a project row', async () => {
     const res = await build().request('/delivery-planning', undefined, { DB: fakeD1 } as never);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { orders?: Array<{ row_type: string; so_doc_no: string; ref: string | null; dp_no: string | null }> };
+    const body = (await res.json()) as { orders?: Array<{ row_type: string; so_doc_no: string; ref: string | null; dp_no: string | null; branding: string | null }> };
     const byType = (t: string) => (body.orders ?? []).filter((o) => o.row_type === t);
     expect(byType('so').map((o) => o.so_doc_no)).toEqual(['HC-SO-2608-001']);
     expect(byType('assr')).toHaveLength(1);       // the fake ASSR union row, delivery leg
     expect(byType('dp').map((o) => o.dp_no)).toEqual(['DP-1']);
     expect(byType('project').map((o) => o.so_doc_no)).toEqual(['PRJ:10#SETUP']);
+    // Branding column fills for a project leg from the PMS project's brand (read-only).
+    expect(byType('project').map((o) => o.branding)).toEqual(['AKEMI']);
   });
 });

@@ -69,7 +69,7 @@ export function kickOffBoardReads(
    The query text is moved verbatim from the handler; delivery-planning.board.test.ts
    now seeds all three sub-boards so a move that broke one would fail there. */
 const PROJECT_UNION_SQL =
-  `SELECT p.id AS id, p.code AS code, p.name AS name,
+  `SELECT p.id AS id, p.code AS code, p.name AS name, p.brand AS brand,
               p.venue AS venue, p.venue_address AS venue_address, p.state AS state,
               p.setup_start_at     AS setup_start_at,
               p.dismantle_start_at AS dismantle_start_at,
@@ -124,7 +124,7 @@ export function kickOffSubBoardReads(
   const projRowsP = (async () => {
     try {
       return { ok: await c.env.DB.prepare(PROJECT_UNION_SQL).all<{
-        id: number | null; code: string | null; name: string | null;
+        id: number | null; code: string | null; name: string | null; brand: string | null;
         venue: string | null; venue_address: string | null; state: string | null;
         setup_start_at: string | null; dismantle_start_at: string | null;
         setup_driver_name: string | null; setup_lorry_plate: string | null;
