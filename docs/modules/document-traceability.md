@@ -107,6 +107,9 @@ permission (e.g. `scm.procurement.po`).
   read "received with no GRN"). The PO export keeps the header FK only, on
   purpose — the per-line reads would blow the Worker subrequest budget over
   every PO a tab matches.
+- A GRN's PI and Purchase Return nodes are found the same way: line link
+  (`grn_item_id`) union header `grn_id`. A return raised from the PO page has
+  no header GRN, so a header-only read hides it.
 - Customer reference display has one resolver, `customerRefOf` (`ref ||
   customer_so_no || po_doc_no`) via `CustomerRefHeader` — a locally-typed
   header missing `ref` silently degrades to the wrong fallback and

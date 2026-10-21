@@ -701,12 +701,28 @@ documentFlow.get('/:type/:id', async (c) => {
           if (notes?.size) for (const gid of notes) addEdge(keyOf('grn', gid), k, 'full');
           else if (p.grn_id) addEdge(keyOf('grn', p.grn_id), k, 'full');
         }
-        const prs = await readIn('orphan purchase_returns', grnIds, (b, f, t) =>
+        // Returns: line link UNION header FK, same as the main builder's section 9.
+        const prLineLinks = await readIn('orphan purchase_return_items', myGrnItemIds, (b, f, t) =>
+          scopeToCompany(sb.from('purchase_return_items').select('id, purchase_return_id, grn_item_id').in('grn_item_id', b), c).order('id').range(f, t));
+        const notesByPr = new Map<string, Set<string>>();
+        for (const l of prLineLinks) {
+          const gid = l.grn_item_id ? grnIdByItem.get(l.grn_item_id) : undefined;
+          if (!gid) continue;
+          const set = notesByPr.get(l.purchase_return_id) ?? new Set<string>();
+          set.add(gid);
+          notesByPr.set(l.purchase_return_id, set);
+        }
+        const prsByHeader = await readIn('orphan purchase_returns', grnIds, (b, f, t) =>
           scopeToCompany(sb.from('purchase_returns').select('id, return_number, status, grn_id').in('grn_id', b), c).order('id').range(f, t));
-        for (const p of prs) {
+        const seenPr = new Set(prsByHeader.map((p: any) => p.id));
+        const prsByLine = await readIn('orphan purchase_returns(by line)', [...notesByPr.keys()].filter((pid) => !seenPr.has(pid)), (b, f, t) =>
+          scopeToCompany(sb.from('purchase_returns').select('id, return_number, status, grn_id').in('id', b), c).order('id').range(f, t));
+        for (const p of [...prsByHeader, ...prsByLine]) {
           const k = keyOf('pr', p.id);
           nodes.set(k, { key: k, type: 'pr', id: p.id, label: p.return_number ?? p.id, status: p.status ?? null, isAnchor: false });
-          if (p.grn_id) addEdge(keyOf('grn', p.grn_id), k, 'full');
+          const notes = notesByPr.get(p.id);
+          if (notes?.size) for (const gid of notes) addEdge(keyOf('grn', gid), k, 'full');
+          else if (p.grn_id) addEdge(keyOf('grn', p.grn_id), k, 'full');
         }
       }
       // PO amendments still branch off an orphan PO (same shape as section 11).
@@ -1090,10 +1106,19 @@ documentFlow.get('/:type/:id', async (c) => {
   // A Purchase Return reverses goods on a Goods Receipt. It hangs off the GRN,
   // mirroring how a Delivery Return hangs off its DO. Coverage compares returned
   // qty to the GRN line qty.
+  /* Discovered by the LINE link (grn_item_id in this family's GRN lines) UNION
+     the header FK, like the PIs above: a return raised from the PO page names
+     no header GRN at all (HC-0139, PO010114), so a header-only read hid it. */
   if (grnIds.length) {
+    const prLinesByGrnItem = await readIn('purchase_return_items(by grn line)', grnItemIds, (b, f, t) =>
+      sb.from('purchase_return_items').select('id, purchase_return_id, grn_item_id, qty_returned').in('grn_item_id', b).order('id').range(f, t));
     const prByHeader = await readIn('purchase_returns', grnIds, (b, f, t) =>
       sb.from('purchase_returns').select('id, return_number, status, grn_id').in('grn_id', b).order('id').range(f, t));
-    const prIds = uniq(prByHeader.map((p: any) => p.id));
+    const knownPrIds = new Set(prByHeader.map((p: any) => p.id));
+    const prByLine = await readIn('purchase_returns(by line)', uniq(prLinesByGrnItem.map((l: any) => l.purchase_return_id)).filter((pid) => !knownPrIds.has(pid)), (b, f, t) =>
+      sb.from('purchase_returns').select('id, return_number, status, grn_id').in('id', b).order('id').range(f, t));
+    const prs = [...prByHeader, ...prByLine];
+    const prIds = prs.map((p: any) => p.id);
     const prLineLinks = await readIn('purchase_return_items', prIds, (b, f, t) =>
       sb.from('purchase_return_items').select('id, purchase_return_id, grn_item_id, qty_returned').in('purchase_return_id', b).order('id').range(f, t));
     const grnToPr = new Map<string, { childQty: number; parentItems: Set<string> }>(); // `${grnId}|${prId}`
@@ -1106,13 +1131,20 @@ documentFlow.get('/:type/:id', async (c) => {
       agg.parentItems.add(l.grn_item_id);
       grnToPr.set(k, agg);
     }
-    for (const p of prByHeader) {
+    for (const p of prs) {
       const k = keyOf('pr', p.id);
       nodes.set(k, { key: k, type: 'pr', id: p.id, label: p.return_number ?? p.id, status: p.status ?? null, isAnchor: k === anchorKey });
-      if (p.grn_id) {
-        const agg = grnToPr.get(`${p.grn_id}|${p.id}`);
-        const parentQty = agg ? [...agg.parentItems].reduce((s, gi) => s + (grnItemMeta.get(gi)?.qty ?? 0), 0) : 0;
-        addEdge(keyOf('grn', p.grn_id), k, agg ? cover(agg.childQty, parentQty) : 'full');
+      // One edge per GRN the return's lines came from; the header FK is the
+      // fallback for a return with no line links.
+      const returned = [...grnToPr.entries()].filter(([key]) => key.endsWith(`|${p.id}`));
+      if (returned.length) {
+        for (const [key, agg] of returned) {
+          const grnId = key.slice(0, key.length - `|${p.id}`.length);
+          const parentQty = [...agg.parentItems].reduce((s, gi) => s + (grnItemMeta.get(gi)?.qty ?? 0), 0);
+          addEdge(keyOf('grn', grnId), k, cover(agg.childQty, parentQty));
+        }
+      } else if (p.grn_id) {
+        addEdge(keyOf('grn', p.grn_id), k, 'full');
       }
     }
   }
