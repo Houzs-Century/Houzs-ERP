@@ -254,7 +254,7 @@ if (!TOKEN || !ACCOUNT) {
   // Two needles: the request itself (invocation log, carries the status and the
   // request id), and the error line onError writes for it.
   const memberPath = `/api/users/${probeId}`;
-  for (const needle of [memberPath, "[onError]"]) {
+  for (const needle of [memberPath, "[onError]", "sales_reps", "duplicate key"]) {
     try {
       const to = Date.now();
       const res = await fetch(
@@ -275,11 +275,7 @@ if (!TOKEN || !ACCOUNT) {
       const events = body?.result?.events?.events ?? [];
       line(`--- Workers Logs "${needle}": HTTP ${res.status}, ${events.length} events ---`);
       if (!res.ok || !body?.success) line(`  ${JSON.stringify(body?.errors ?? body).slice(0, 800)}`);
-      for (const ev of events) {
-        const text = JSON.stringify(ev);
-        if (needle === "[onError]" && !/users|violates|duplicate|does not exist|invalid input|null value/i.test(text)) continue;
-        line(`  ${text.slice(0, 3000)}`);
-      }
+      for (const ev of events) line(`  ${JSON.stringify(ev).slice(0, 3000)}`);
     } catch (e) {
       notice(`Workers Logs "${needle}": query failed -> ${String(e?.message ?? e).slice(0, 300)}`);
     }
