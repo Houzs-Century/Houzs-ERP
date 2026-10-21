@@ -5972,11 +5972,11 @@ function PhaseCrewEditor({
     save({ ...pc, lorryCrew: lorries.map((l, i) => (i === li ? { ...l, ...p } : l)) });
   const addLorry = () => save({ ...pc, lorryCrew: [...lorries, { plate: "", drivers: [], helpers: [] }] });
   const removeLorry = (li: number) => save({ ...pc, lorryCrew: lorries.filter((_, i) => i !== li) });
-  // Owner 2026-07-22: the Driver 2 / Helper 2 rows stay HIDDEN until needed —
-  // most lorries run one driver + one helper, so the empty second slots were
-  // noise. A filled slot always shows; an empty one shows only after its
-  // "+ Add …" button (styled like "+ Add lorry") is clicked. UI-only state:
-  // collapsing back happens by clearing the name (row hides on next open).
+  // Owner 2026-07-22 / 2026-10-21: the Driver 2 row stays HIDDEN until needed
+  // (most lorries run one driver), revealed by its "+ Add driver" button. BOTH
+  // helper slots always show — setup/dismantle lorries usually ride two helpers,
+  // so Helper 1 and Helper 2 are directly fillable (leave blank if unused).
+  // UI-only state; a hidden Driver 2 re-collapses by clearing its name.
   const [openSlot2, setOpenSlot2] = useState<Set<string>>(new Set());
   const showSlot2 = (li: number, kind: "d" | "h") => setOpenSlot2((s) => new Set(s).add(`${li}${kind}`));
   return (
@@ -6015,27 +6015,18 @@ function PhaseCrewEditor({
               <CrewSlotRow label="Driver 2" color="text-synced" options={drivers} slot={lorry.drivers[1]} onChange={(s) => setLorrySlot(li, "drivers", 1, s)} readOnly={readOnly} />
             )}
             <CrewSlotRow label="Helper 1" color="text-warning-text" options={helpers} slot={lorry.helpers[0]} onChange={(s) => setLorrySlot(li, "helpers", 0, s)} readOnly={readOnly} />
-            {(!!lorry.helpers[1]?.name || openSlot2.has(`${li}h`)) && (
-              <CrewSlotRow label="Helper 2" color="text-warning-text" options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} readOnly={readOnly} />
-            )}
-            {!readOnly && (!(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) || !(lorry.helpers[1]?.name || openSlot2.has(`${li}h`))) && (
+            {/* Owner 2026-10-21: both helper slots show directly — setup/dismantle
+                lorries usually ride two helpers, so Helper 2 is always fillable
+                (leave blank if unused), no "+ Add" step. */}
+            <CrewSlotRow label="Helper 2" color="text-warning-text" options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} readOnly={readOnly} />
+            {!readOnly && !(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
               <div className="flex gap-1.5 pt-0.5">
-                {!(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
-                  <button
-                    onClick={() => showSlot2(li, "d")}
-                    className="rounded-md border border-dashed border-border bg-surface px-2.5 py-1 text-[10.5px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
-                  >
-                    + Add driver
-                  </button>
-                )}
-                {!(lorry.helpers[1]?.name || openSlot2.has(`${li}h`)) && (
-                  <button
-                    onClick={() => showSlot2(li, "h")}
-                    className="rounded-md border border-dashed border-border bg-surface px-2.5 py-1 text-[10.5px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
-                  >
-                    + Add helper
-                  </button>
-                )}
+                <button
+                  onClick={() => showSlot2(li, "d")}
+                  className="rounded-md border border-dashed border-border bg-surface px-2.5 py-1 text-[10.5px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
+                >
+                  + Add driver
+                </button>
               </div>
             )}
           </div>
