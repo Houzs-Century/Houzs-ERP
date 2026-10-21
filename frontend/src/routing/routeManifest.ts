@@ -106,6 +106,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/hr/settings",
   "/scm/purchase-returns",
   "/scm/purchase-returns/new",
+  "/scm/purchase-returns/from-grn",
   "/scm/purchase-returns/:id",
   "/scm/inventory",
   "/scm/inventory/stock-card/:itemCode",

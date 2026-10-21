@@ -87,7 +87,7 @@ const mount = () =>
         <ToastProvider>
           <Routes>
             <Route path="/scm/grns" element={<GoodsReceivedListV2 />} />
-            <Route path="/scm/purchase-returns/new" element={<ReturnPage />} />
+            <Route path="/scm/purchase-returns/from-grn" element={<ReturnPage />} />
           </Routes>
         </ToastProvider>
       </MemoryRouter>
