@@ -18,12 +18,17 @@
    Same fake-PostgREST harness as tests/paymentRequests.test.ts. */
 
 import { Hono } from 'hono';
-import { describe, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
 import { requireScmAccess } from '../src/middleware/auth';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import { productRequests } from '../src/scm/routes/product-requests';
 import { loadRequestForPco, markRequestPcoIssued } from '../src/scm/lib/product-request-link';
+
+const notified = vi.fn((_event: string, _opts: Record<string, unknown>) => undefined);
+vi.mock('../src/services/productRequestNotify', () => ({
+  notifyProductRequest: async (_env: unknown, event: string, opts: Record<string, unknown>) => { notified(event, opts); },
+}));
 
 const CO = 1;
 type Who = { id: number; name: string; perms: string[]; position?: string; department?: string };
@@ -405,5 +410,55 @@ describe('product request — the SCM umbrella', () => {
     expect((await guard(approver, '/api/scm/mfg-products')).status).toBe(403);
     const nobody: Who = { ...NOBODY, perms: [] };
     expect((await guard(nobody, '/api/scm/product-requests')).status).toBe(403);
+  });
+});
+
+/* HC-0136 (Sim): 「have notification alert when have new request order. same
+   like SO amendment」 — the Purchaser's bell on raise and resubmit, and the red
+   count on their sidebar entry. */
+describe('product request — the Purchaser is alerted', () => {
+  beforeEach(() => notified.mockClear());
+
+  test('raising one notifies, an edit while waiting does not, a rejected one sent again does', async () => {
+    const sb = world();
+    const amy = as(sb, AMY);
+    const raised = (await amy('/product-requests', 'POST', { ...NEW_SOFA, lines: [LINE_AURORA, LINE_5530] })).body.request as Row;
+    expect(notified).toHaveBeenCalledTimes(1);
+    expect(notified.mock.calls[0]).toEqual(['raised', {
+      requestNo: raised.request_no, companyId: CO, requesterUserId: AMY.id, requesterName: 'Amy Tan',
+      products: 'Aurora (new) ×2; 5530-3S ×1', lineCount: 2,
+    }]);
+    const id = String(raised.id);
+    notified.mockClear();
+    expect((await amy(`/product-requests/${id}`, 'PATCH', { specialRemarks: 'Corner by the door' })).status).toBe(200);
+    expect(notified).not.toHaveBeenCalled();
+    await as(sb, PURCHASER)(`/product-requests/${id}/reject`, 'POST', { note: 'Pick one fabric' });
+    expect(notified).not.toHaveBeenCalled();
+    expect((await amy(`/product-requests/${id}`, 'PATCH', { lines: [LINE_5530] })).status).toBe(200);
+    expect(notified).toHaveBeenCalledTimes(1);
+    expect(notified.mock.calls[0]![0]).toBe('resubmitted');
+    expect(notified.mock.calls[0]![1]).toMatchObject({ requestNo: raised.request_no, products: '5530-3S ×1', lineCount: 1 });
+  });
+
+  test('a refused request notifies nobody', async () => {
+    const sb = world();
+    expect((await as(sb, AMY)('/product-requests', 'POST', { ...NEW_SOFA, lines: [] })).status).toBe(400);
+    expect(notified).not.toHaveBeenCalled();
+  });
+
+  test('pending-count: the Purchaser counts the REQUESTED ones of this company; the requester and the wildcard roles get 0', async () => {
+    const sb = world();
+    const amy = as(sb, AMY);
+    const a = String(((await amy('/product-requests', 'POST', NEW_SOFA)).body.request as Row).id);
+    await amy('/product-requests', 'POST', NEW_SOFA);
+    const c = String(((await amy('/product-requests', 'POST', NEW_SOFA)).body.request as Row).id);
+    const purchaser = as(sb, PURCHASER);
+    await purchaser(`/product-requests/${a}/approve`, 'POST', {});
+    await amy(`/product-requests/${c}/withdraw`, 'POST', {});
+    sb.tables.product_requests.push({ id: 'other-co', company_id: 2, request_no: '2990-PDR-2610-001', status: 'REQUESTED', requested_by: 77 });
+    expect((await purchaser('/product-requests/pending-count')).body).toEqual({ count: 1 });
+    expect((await amy('/product-requests/pending-count')).body).toEqual({ count: 0 });
+    const owner: Who = { id: 1, name: 'Owner', perms: ['*'] };
+    expect((await as(sb, owner)('/product-requests/pending-count')).body).toEqual({ count: 0 });
   });
 });
