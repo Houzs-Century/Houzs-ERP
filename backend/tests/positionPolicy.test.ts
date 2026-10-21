@@ -58,6 +58,14 @@ const EXPECTED_WHITELIST: Record<string, Record<string, AccessLevel>> = {
   Driver: {
     "scm.transportation": "view",
     "scm.transportation.drivers": "view", // inherits the L1 parent
+    "scm.transportation.overview": "view", // the 8 sub-page keys inherit scm.transportation.drivers (view): zero-change on the split
+    "scm.transportation.planning": "view",
+    "scm.transportation.dp_orders": "view",
+    "scm.transportation.last_mile": "view",
+    "scm.transportation.lorry_map": "view",
+    "scm.transportation.lorry_capacity": "view",
+    "scm.transportation.crew_leave": "view",
+    "scm.transportation.coverage": "view",
     // Projects / PMS view (owner 2026-07-21): drivers open all events; edits
     // stay permission-gated to their own role-badged checklist tasks.
     // finances / maintenance carry explicit none rows (asserted by the
@@ -69,6 +77,14 @@ const EXPECTED_WHITELIST: Record<string, Record<string, AccessLevel>> = {
   Helper: {
     "scm.transportation": "view",
     "scm.transportation.drivers": "view",
+    "scm.transportation.overview": "view", // the 8 sub-page keys inherit scm.transportation.drivers (view): zero-change on the split
+    "scm.transportation.planning": "view",
+    "scm.transportation.dp_orders": "view",
+    "scm.transportation.last_mile": "view",
+    "scm.transportation.lorry_map": "view",
+    "scm.transportation.lorry_capacity": "view",
+    "scm.transportation.crew_leave": "view",
+    "scm.transportation.coverage": "view",
     projects: "view",
     "projects.list": "view",
     "projects.calendar": "view",
@@ -76,6 +92,14 @@ const EXPECTED_WHITELIST: Record<string, Record<string, AccessLevel>> = {
   Storekeeper: {
     "scm.transportation": "view",
     "scm.transportation.drivers": "view",
+    "scm.transportation.overview": "view", // the 8 sub-page keys inherit scm.transportation.drivers (view): zero-change on the split
+    "scm.transportation.planning": "view",
+    "scm.transportation.dp_orders": "view",
+    "scm.transportation.last_mile": "view",
+    "scm.transportation.lorry_map": "view",
+    "scm.transportation.lorry_capacity": "view",
+    "scm.transportation.crew_leave": "view",
+    "scm.transportation.coverage": "view",
     "scm.warehouse": "view",
     "scm.warehouse.inventory": "view",
     // Projects / PMS view (owner 2026-07-21, e20c4118): storekeepers work
@@ -94,6 +118,14 @@ const EXPECTED_WHITELIST: Record<string, Record<string, AccessLevel>> = {
   "Storekeeper Supervisor": {
     "scm.transportation": "view",
     "scm.transportation.drivers": "view",
+    "scm.transportation.overview": "view", // the 8 sub-page keys inherit scm.transportation.drivers (view): zero-change on the split
+    "scm.transportation.planning": "view",
+    "scm.transportation.dp_orders": "view",
+    "scm.transportation.last_mile": "view",
+    "scm.transportation.lorry_map": "view",
+    "scm.transportation.lorry_capacity": "view",
+    "scm.transportation.crew_leave": "view",
+    "scm.transportation.coverage": "view",
     "scm.warehouse": "view",
     "scm.warehouse.inventory": "view",
     "scm.procurement.grn": "edit",
