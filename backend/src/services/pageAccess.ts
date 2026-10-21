@@ -259,6 +259,21 @@ export const PAGES: PageDef[] = [
     backfill: (p) =>
       isOwner(p) || has(p, "users.manage") ? "full" : "none",
   },
+  {
+    // RBAC rebuild batch 3 (owner 2026-10-20 "全部拆开"): the Team Mailboxes tab
+    // (/team?tab=mail2) gets its own switch so a role can be given Directory but
+    // not the shared-mailbox admin. It is the ONE genuinely new Team key — the
+    // other four (members / roles / org_chart / departments) already existed as
+    // dormant catalogue rows; this batch only wires them. Parented on `team`, so
+    // it inherits the role's Team level at login (zero-change). The nav row still
+    // carries its own `mail_center.manage` perm gate, ANDed with this page key.
+    key: "team.mailboxes",
+    parent: "team",
+    label: "Mailboxes",
+    partialMeaning: "View shared mailboxes; cannot manage.",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) || has(p, "mail_center.manage") ? "full" : "none"),
+  },
 
   // ── Supply Chain (parent + area children) ───────────────────
   // ADDITIVE per-position gating for the ported 2990 SCM. These page
@@ -830,14 +845,22 @@ export function isRetiredPageKey(key: string): boolean {
 // snapshot row's stored `view` now means "may open the adjustment page, but the
 // write still needs edit" — identical to the fused inventory-era behaviour (view
 // could not POST).
+//
+// RBAC rebuild batch 3 (owner 2026-10-20 "全部拆开"): five more keys left this
+// list because the Team / Service nav now READS them. `team.members` /
+// `team.roles` / `team.org_chart` / `team.departments` each back a Team sub-page
+// (Directory / Roles & Permissions / Org Chart / Departments) whose nav row was
+// repointed off the parent `team` onto the per-item key; `service_cases.settings`
+// now gates the Service Maintenance tab. Proven zero-change on day one: prod
+// (anogrigyjbduyzclzjgn, 2026-10-21) stores every team.* child EQUAL to its
+// `team` parent for all 24 roles, and every role holding `service_cases.manage`
+// (the Service Maintenance perm gate, still ANDed) stores `service_cases.settings`
+// = full, so no login gains or loses a page (teamServiceSubpageSplit.test.ts).
+// Only the two below stay dormant — no sidebar entry reads them: `by_creditor`
+// has no nav row, and `pnl` is an in-page figure, not a tab.
 export const DORMANT_PAGE_KEYS: ReadonlySet<string> = new Set([
   "service_cases.by_creditor",
   "service_cases.pnl",
-  "service_cases.settings",
-  "team.members",
-  "team.roles",
-  "team.org_chart",
-  "team.departments",
 ]);
 
 export function isDormantPageKey(key: string): boolean {

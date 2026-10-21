@@ -340,6 +340,13 @@ export const NAV_TABS: NavTab[] = [
         label: "Service Maintenance",
         icon: Wrench,
         perm: "service_cases.manage",
+        // RBAC rebuild batch 3 (owner 2026-10-20 "全部拆开"): the dormant
+        // service_cases.settings key is wired onto this tab, ANDed with the
+        // existing service_cases.manage perm. Zero-change on day one: in prod
+        // every role holding service_cases.manage stores service_cases.settings =
+        // full (wildcards short-circuit to full), so no one who sees Service
+        // Maintenance today loses it (teamServiceSubpageSplit.test.ts).
+        pageAccess: "service_cases.settings",
         hideForSalesRep: true,
       },
       {
@@ -952,16 +959,23 @@ export const NAV_TABS: NavTab[] = [
       // Redesigned Team screens (2026-08 handoff). The classic tabs stay
       // URL-reachable (?tab=members / orgchart / departments / mail) during
       // review but are no longer surfaced in navigation.
-      { to: "/team?tab=directory", label: "Directory", icon: Users, perm: "users.read", pageAccess: "team", showForSalesDirector: true },
+      // RBAC rebuild batch 3 (owner 2026-10-20 "全部拆开"): each Team sub-page now
+      // gates on its OWN page key (was the parent `team`), so a role can be given
+      // Directory but not Roles & Permissions. The group HEADER keeps `pageAccess:
+      // "team"` + anyPerm as the master gate (unchanged), so visibility of the
+      // group is byte-identical; only which leaves show changes, and in prod every
+      // team.* child equals its `team` parent so day-1 is unchanged
+      // (teamServiceSubpageSplit.test.ts). perm gates unchanged.
+      { to: "/team?tab=directory", label: "Directory", icon: Users, perm: "users.read", pageAccess: "team.members", showForSalesDirector: true },
       // No Positions leaf (owner: "那個team的矩陣拆掉"), and none for Roles. The
       // Titles tab came back into the Team page's own strip on 2026-09-15
       // (docs/bugs/0931-a-new-title-could-not-be-created-anywhere-the-positions-tab.md)
       // and is reached from there; the phone menu is built from these rows and
       // keeps Positions out (mobileMenuGates.test.ts), so no leaf here.
-      { to: "/team?tab=orgchart2", label: "Org Chart", icon: Network, perm: "users.read", pageAccess: "team", showForSalesDirector: true },
-      { to: "/team?tab=departments2", label: "Departments", icon: Building2, perm: "users.read", pageAccess: "team" },
-      { to: "/team?tab=mail2", label: "Mailboxes", icon: Mail, perm: "mail_center.manage", pageAccess: "team" },
-      { to: "/team?tab=permissions", label: "Roles & Permissions", icon: ShieldCheck, perm: "roles.read", pageAccess: "team" },
+      { to: "/team?tab=orgchart2", label: "Org Chart", icon: Network, perm: "users.read", pageAccess: "team.org_chart", showForSalesDirector: true },
+      { to: "/team?tab=departments2", label: "Departments", icon: Building2, perm: "users.read", pageAccess: "team.departments" },
+      { to: "/team?tab=mail2", label: "Mailboxes", icon: Mail, perm: "mail_center.manage", pageAccess: "team.mailboxes" },
+      { to: "/team?tab=permissions", label: "Roles & Permissions", icon: ShieldCheck, perm: "roles.read", pageAccess: "team.roles" },
     ],
   },
   // IT pages (DEV-35). The header and both leaves carry the same capability, so
