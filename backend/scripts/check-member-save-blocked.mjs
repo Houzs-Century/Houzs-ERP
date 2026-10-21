@@ -202,6 +202,22 @@ try {
        ORDER BY id DESC LIMIT 10`,
   );
 
+  // 4c) Who else the roster add has missed: members of a Sales department (the
+  //     same name match syncSalesRepFromUser uses) with no roster row at all.
+  show(
+    "Sales-department members with no roster row",
+    await pg`
+      SELECT u.id, u.name, u.status, u.created_at, u.invited_at, u.joined_at, p.name AS pos, d.name AS dept,
+             (SELECT array_agg(company_id) FROM user_companies uc WHERE uc.user_id = u.id) AS companies
+        FROM users u
+        JOIN departments d ON d.id = u.department_id
+        LEFT JOIN positions p ON p.id = u.position_id
+       WHERE lower(d.name) LIKE '%sales%'
+         AND u.status <> 'disabled'
+         AND NOT EXISTS (SELECT 1 FROM sales_reps r WHERE r.user_id = u.id)
+       ORDER BY u.id`,
+  );
+
   // 5) The roster statements themselves, parsed and planned only.
   const plans = [
     ["roster insert", `EXPLAIN INSERT INTO sales_reps (code, name, email, user_id, status) VALUES ('SR-PROBE', 'probe', NULL, ${probeId}, 'active') RETURNING *`],
