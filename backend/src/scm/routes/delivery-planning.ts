@@ -1512,7 +1512,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     doByDoc, doDriverById, crewIdsByDo, dpTripIdByKey,
   }));
   const ownExtra = scope.mode === 'all' ? null
-    : await ownServiceAndProjectRowKeys(sb, c.env, scope, Number(c.get('houzsUser')?.id), allOrders);
+    : await ownServiceAndProjectRowKeys(sb, c.env, scope, Number(c.get('houzsUser')?.id), c.get('houzsUser')?.name ?? null, allOrders);
   const scopedOrders = allOrders.filter((o) => scopedBase.has(o) || !!ownExtra?.has(o.so_doc_no));
 
   /* 8. Counts per state — computed over the REGION-filtered set so the state
