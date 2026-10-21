@@ -5,6 +5,7 @@ import {
   __resetRateLimitForTest,
   buildEvent,
   captureError,
+  describeErrorForLog,
   isErrorTrackingEnabled,
   parseDsn,
   parseStackFrames,
@@ -300,5 +301,39 @@ describe("error tracking — mechanics", () => {
     // rejection every time the collector hiccups, which is the opposite of
     // what an error tracker is for.
     await expect(Promise.all(pending)).resolves.toBeDefined();
+  });
+});
+
+describe("error tracking — the Worker log line", () => {
+  // The shape postgres.js throws: its stack starts at the frames, so logging the
+  // error object alone wrote no message, no table and no constraint.
+  class PostgresError extends Error {
+    code = "23505";
+    table_name = "sales_reps";
+    constraint_name = "sales_reps_pkey";
+    constructor(message: string) {
+      super(message);
+      this.name = "PostgresError";
+      this.stack = "    at ErrorResponse (index.js:97495:30)\n    at handle (index.js:97244:7)";
+    }
+  }
+
+  test("a database error names its code, table and constraint, not just frames", () => {
+    const line = describeErrorForLog(
+      new PostgresError('duplicate key value violates unique constraint "sales_reps_pkey"'),
+    );
+    expect(line).toBe(
+      'PostgresError (code=23505 table=sales_reps constraint=sales_reps_pkey): duplicate key value violates unique constraint "sales_reps_pkey"',
+    );
+  });
+
+  test("a value the message quotes is redacted, as in the reported event", () => {
+    const line = describeErrorForLog(new Error("Key (email)=(someone@example.com) already exists."));
+    expect(line).toBe("Error: Key (email)=([redacted]) already exists.");
+  });
+
+  test("something thrown that is not an Error still reads", () => {
+    expect(describeErrorForLog("boom")).toBe("boom");
+    expect(describeErrorForLog(undefined)).toBe("undefined");
   });
 });
