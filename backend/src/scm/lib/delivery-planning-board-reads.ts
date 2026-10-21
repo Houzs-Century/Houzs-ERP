@@ -68,11 +68,54 @@ export function kickOffBoardReads(
    the err so that behaviour is byte-identical — only the waiting moves earlier.
    The query text is moved verbatim from the handler; delivery-planning.board.test.ts
    now seeds all three sub-boards so a move that broke one would fail there. */
+/* The PMS crew editor stores crew as free-form JSON on projects.setup_crew /
+   dismantle_crew — a per-lorry structure (`lorry_crew`) plus flattened top-level
+   arrays, each person a {name, phone} with NO user id (see services/projects.ts).
+   The board is a read-only mirror, so flatten the JSON to exactly what its crew
+   columns read: driver names (with phone), helper names, and lorry plates. Prefer
+   the per-lorry arm (authoritative); fall back to the flattened top-level arrays
+   an older save may carry. Any parse failure yields empty, and the caller then
+   falls back to the legacy scalar driver/lorry join. */
+type CrewPersonJson = { name?: unknown; phone?: unknown };
+export function flattenProjectCrew(json: string | null): {
+  drivers: Array<{ name: string; phone: string | null }>;
+  helpers: string[];
+  plates: string[];
+} {
+  const empty = { drivers: [] as Array<{ name: string; phone: string | null }>, helpers: [] as string[], plates: [] as string[] };
+  if (!json) return empty;
+  let parsed: unknown;
+  try { parsed = JSON.parse(json); } catch { return empty; }
+  if (!parsed || typeof parsed !== 'object') return empty;
+  const obj = parsed as Record<string, unknown>;
+  const nameOf = (p: CrewPersonJson): string => (typeof p.name === 'string' ? p.name.trim() : '');
+  const phoneOf = (p: CrewPersonJson): string | null => (typeof p.phone === 'string' && p.phone.trim() ? p.phone.trim() : null);
+  const drivers: Array<{ name: string; phone: string | null }> = [];
+  const helpers: string[] = [];
+  const plates: string[] = [];
+  const lorryCrew = Array.isArray(obj.lorry_crew) ? (obj.lorry_crew as Array<Record<string, unknown>>) : [];
+  if (lorryCrew.length) {
+    for (const l of lorryCrew) {
+      const plate = typeof l.plate === 'string' ? l.plate.trim() : '';
+      if (plate) plates.push(plate);
+      for (const d of (Array.isArray(l.drivers) ? (l.drivers as CrewPersonJson[]) : [])) { const n = nameOf(d); if (n) drivers.push({ name: n, phone: phoneOf(d) }); }
+      for (const h of (Array.isArray(l.helpers) ? (l.helpers as CrewPersonJson[]) : [])) { const n = nameOf(h); if (n) helpers.push(n); }
+    }
+  } else {
+    for (const d of (Array.isArray(obj.drivers) ? (obj.drivers as CrewPersonJson[]) : [])) { const n = nameOf(d); if (n) drivers.push({ name: n, phone: phoneOf(d) }); }
+    for (const h of (Array.isArray(obj.helpers) ? (obj.helpers as CrewPersonJson[]) : [])) { const n = nameOf(h); if (n) helpers.push(n); }
+    for (const pl of (Array.isArray(obj.lorries) ? (obj.lorries as unknown[]) : [])) { if (typeof pl === 'string' && pl.trim()) plates.push(pl.trim()); }
+  }
+  return { drivers, helpers, plates };
+}
+
 const PROJECT_UNION_SQL =
   `SELECT p.id AS id, p.code AS code, p.name AS name, p.brand AS brand,
               p.venue AS venue, p.venue_address AS venue_address, p.state AS state,
               p.setup_start_at     AS setup_start_at,
               p.dismantle_start_at AS dismantle_start_at,
+              p.setup_crew     AS setup_crew,
+              p.dismantle_crew AS dismantle_crew,
               sd.name  AS setup_driver_name,     sl.plate AS setup_lorry_plate,
               dd.name  AS dismantle_driver_name, dl.plate AS dismantle_lorry_plate
          FROM projects p
@@ -127,6 +170,7 @@ export function kickOffSubBoardReads(
         id: number | null; code: string | null; name: string | null; brand: string | null;
         venue: string | null; venue_address: string | null; state: string | null;
         setup_start_at: string | null; dismantle_start_at: string | null;
+        setup_crew: string | null; dismantle_crew: string | null;
         setup_driver_name: string | null; setup_lorry_plate: string | null;
         dismantle_driver_name: string | null; dismantle_lorry_plate: string | null;
       }>() } as const;
