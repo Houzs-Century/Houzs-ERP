@@ -31,6 +31,7 @@ import {
 import { ANOTHER_RETURN_HINT, type SupplierReturn } from "../vendor/scm/lib/assr/returns";
 import { MobileFactoryTrips } from "./MobileFactoryTrips";
 import { ITEM_LOCATION_OPTIONS, PICKUP_STATUS_OPTIONS, pickupTrackingOptions, pickupPicSelectOptions, usePickupPicDrivers } from "../components/assr/PickupTrackingFields";
+import { pendingWithOptions } from "../vendor/scm/lib/assr-verification-fields";
 import { MobileReopenControl } from "./MobileReopenControl";
 import { splitCategories } from "../lib/assrProductCategories";
 import { MobileAssrCategoryChips } from "./MobileAssrCategoryChips";
@@ -1042,11 +1043,10 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                 );
               })}
             </div>
-            <RootCauseField
-              value={get(c, "verifiedRootCause", "verified_root_cause")}
-              busy={busy}
-              onSave={(v) => patchCase({ verified_root_cause: v || null }, "Couldn't save verification")}
-            />
+            <RootCauseField value={get(c, "verifiedRootCause", "verified_root_cause")} busy={busy} onSave={(v) => patchCase({ verified_root_cause: v || null }, "Couldn't save verification")} />
+            <EditRow label="Inspection findings / action taken" type="textarea" value={get(c, "inspectionFindings", "inspection_findings")} busy={busy} disabled={dis} onSave={(v) => patchCase({ inspection_findings: v }, "Couldn't save inspection findings")} />
+            <EditRow label="Next action" type="textarea" value={get(c, "nextAction", "next_action")} busy={busy} disabled={dis} onSave={(v) => patchCase({ next_action: v }, "Couldn't save next action")} />
+            <EditRow label="Pending with" type="select" options={pendingWithOptions()} value={get(c, "pendingWith", "pending_with")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pending_with: v }, "Couldn't save pending with")} />
             {/* QC issue inspection — on receipt (mig 0105: folded in from
                 the retired Pending Inspection stage). The qc_issue_result
                 column exists but ships no UI — Nick 2026-07-14: date +

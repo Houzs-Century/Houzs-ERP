@@ -49,6 +49,7 @@ vi.mock("../../components/scm-v2/Charts", async (orig) => ({
 vi.mock("./ProjectOverviewParts", () => ({ ProjectStuckPanel: () => null, ProjectDataGapsPanel: () => null }));
 
 import { ProjectOverviewPage } from "./ProjectOverviewPage";
+import { projectBackTo } from "./projectOverviewView";
 
 function Where() {
   const l = useLocation();
@@ -117,5 +118,17 @@ describe("Project Overview — the project table", () => {
     fireEvent.change(screen.getByLabelText("Brand"), { target: { value: "" } });
     expect(screen.getByTestId("where").textContent).toBe(PERIOD);
     expect(screen.getByText("[AKEMI] MYHOME")).toBeTruthy();
+  });
+});
+
+/* Owner 2026-10-21: 我点9月的project，按 back 后又跳回10月，然后会跑回最上面 —
+   the project page's Back went to the bare /projects, which opens on this month. */
+describe("Project Overview — a project's Back comes back here", () => {
+  it("opening a project notes this address — the period and the sort with it — for that project's Back", () => {
+    const HERE = `${PERIOD}&ao_sort=sales`;
+    show(HERE);
+    fireEvent.click(within(projectsTable()).getByText("[AKEMI] MYHOME"));
+    expect(projectBackTo(361)).toBe(`/projects${HERE}`);
+    expect(projectBackTo(2260)).toBe("/projects");
   });
 });
