@@ -30,8 +30,7 @@ import {
 } from "../vendor/scm/lib/assr/stages";
 import { ANOTHER_RETURN_HINT, type SupplierReturn } from "../vendor/scm/lib/assr/returns";
 import { MobileFactoryTrips } from "./MobileFactoryTrips";
-import { ITEM_LOCATION_OPTIONS, PICKUP_STATUS_OPTIONS, pickupTrackingOptions } from "../vendor/scm/lib/assr-pickup-tracking";
-import { pickupPicChoices, pickupPicLabel, usePickupPicDrivers } from "../components/assr/PickupTrackingFields";
+import { ITEM_LOCATION_OPTIONS, PICKUP_STATUS_OPTIONS, pickupTrackingOptions, pickupPicSelectOptions, usePickupPicDrivers } from "../components/assr/PickupTrackingFields";
 import { MobileReopenControl } from "./MobileReopenControl";
 import { splitCategories } from "../lib/assrProductCategories";
 import { MobileAssrCategoryChips } from "./MobileAssrCategoryChips";
@@ -256,7 +255,6 @@ function useAssignableUsers(): PicUser[] {
   });
   return Array.isArray(data) ? data : [];
 }
-
 
 
 /** Mobile Service Case (ASSR) — Status Cards list + tabbed detail
@@ -1106,7 +1104,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
             <EditRow label="Pickup status" type="select" options={pickupTrackingOptions(PICKUP_STATUS_OPTIONS)} value={get(c, "pickupStatus", "pickup_status")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_status: v }, "Couldn't save pickup status")} />
             <EditRow label="Scheduled pickup date (ETA)" type="date" value={get(c, "customerPickupAt", "customer_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ customer_pickup_at: v }, "Couldn't save pickup date")} />
             <EditRow label="Actual pickup date" type="date" value={get(c, "actualPickupAt", "actual_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ actual_pickup_at: v }, "Couldn't save actual pickup date")} />
-            <EditRow label="Pickup PIC" type="select" options={mobilePickupPicOptions(pickupPicDrivers, get(c, "creditorName", "creditor_name") || get(c, "supplier", "supplier"), get(c, "pickupPic", "pickup_pic"))} value={get(c, "pickupPic", "pickup_pic")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_pic: v }, "Couldn't save pickup PIC")} />
+            <EditRow label="Pickup PIC" type="select" options={pickupPicSelectOptions(pickupPicDrivers, get(c, "creditorName", "creditor_name") || get(c, "supplier", "supplier"), get(c, "pickupPic", "pickup_pic"))} value={get(c, "pickupPic", "pickup_pic")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_pic: v }, "Couldn't save pickup PIC")} />
             <EditRow label="Current item location" type="select" options={pickupTrackingOptions(ITEM_LOCATION_OPTIONS)} value={get(c, "itemLocation", "item_location")} busy={busy} disabled={dis} onSave={(v) => patchCase({ item_location: v }, "Couldn't save item location")} />
             {/* 返厂 (owner 2026-09-21) — every factory trip is a row, add as many
                 as needed. The latest row is the current trip; its dates mirror to
@@ -2797,16 +2795,6 @@ function isoDateOnly(v: any): string {
 // ── Single-field inline edit row (Info stage panels) ──────────────
 // Read view is a KV row; tapping it swaps in the input + Save/Cancel.
 // Saves null for a cleared value (PATCH stores `?? null`).
-// HC-0129: same list as desktop; a PIC typed before the dropdown stays selectable.
-function mobilePickupPicOptions(drivers: string[], supplierRaw: unknown, currentRaw: unknown): { value: string; label: string }[] {
-  const supplier = supplierRaw ? String(supplierRaw) : null;
-  const current = currentRaw ? String(currentRaw) : "";
-  const choices = pickupPicChoices(drivers, supplier);
-  if (current && !choices.includes(current)) choices.unshift(current);
-  const label = pickupPicLabel(supplier);
-  return [{ value: "", label: "—" }, ...choices.map((v) => ({ value: v, label: label(v) }))];
-}
-
 function EditRow({
   label,
   value,

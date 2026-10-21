@@ -12,6 +12,9 @@ import {
   pickupTrackingLabel,
 } from "../../vendor/scm/lib/assr-pickup-tracking";
 
+// Re-exported so the mobile case page takes the whole Pickup / Return set from one import (it is at its size ceiling).
+export { ITEM_LOCATION_OPTIONS, PICKUP_STATUS_OPTIONS, pickupTrackingOptions } from "../../vendor/scm/lib/assr-pickup-tracking";
+
 type Row = {
   pickup_status?: string | null;
   customer_pickup_at?: string | null;
@@ -40,6 +43,17 @@ export function pickupPicChoices(drivers: string[], supplier: string | null): st
 
 export const pickupPicLabel = (supplier: string | null) => (v: string): string =>
   v === supplier ? `${v} (Supplier)` : v;
+
+/** Mobile <select> options: same list as desktop; a PIC typed before the
+ *  dropdown stays selectable. */
+export function pickupPicSelectOptions(drivers: string[], supplierRaw: unknown, currentRaw: unknown): { value: string; label: string }[] {
+  const supplier = supplierRaw ? String(supplierRaw) : null;
+  const current = currentRaw ? String(currentRaw) : "";
+  const choices = pickupPicChoices(drivers, supplier);
+  if (current && !choices.includes(current)) choices.unshift(current);
+  const label = pickupPicLabel(supplier);
+  return [{ value: "", label: "—" }, ...choices.map((v) => ({ value: v, label: label(v) }))];
+}
 
 export function PickupTrackingFields({ c, patch }: { c: Row; patch: (body: Record<string, string | null>) => Promise<void> }) {
   const drivers = usePickupPicDrivers();
