@@ -21,6 +21,8 @@ function systemTag(source: string | null | undefined): string {
     case "so_amendment":
     case "po_amendment":
       return "Amendment";
+    case "product_request":
+      return "Product request";
     case "ack_escalation":
       return "Team";
     default:

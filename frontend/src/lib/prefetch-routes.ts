@@ -78,6 +78,7 @@ const ROUTE_CHUNKS: Record<string, () => Promise<unknown>> = {
   "/scm/purchase-returns": () => import("../pages/scm-v2/PurchaseReturnsListV2"),
   // Transportation.
   "/scm/delivery-planning": () => import("../pages/scm-v2/DeliveryPlanning"),
+  "/scm/delivery-planning-driver": () => import("../pages/scm-v2/DeliveryPlanningDriver"),
   "/scm/dp-orders": () => import("../pages/scm-v2/DpOrders"),
   "/scm/fleet": () => import("../pages/scm-v2/Fleet"),
   "/scm/lorry-capacity": () => import("../pages/scm-v2/LorryCapacity"),

@@ -107,7 +107,7 @@ Packing lists and the run QR
 - A drop on another company's books is `BLOCKED` and named by stop number only; all writes are scoped to the trip's company.
 
 Desktop / mobile parity
-- Intentional asymmetry: phone = driver run-sheet (day buckets, read-only crew, full board fetched as `?region=ALL&state=ALL`); desktop = planning board.
+- Intentional asymmetry: phone = driver run-sheet (day buckets, read-only crew, full board fetched as `?region=ALL&state=ALL`); desktop = planning board. The driver run-sheet is ALSO reachable on desktop at `/scm/delivery-planning-driver` ("Last Mile Delivery (Driver)" menu row, gateVia the board), which hosts `MobileDeliveryPlanning`/`MobilePOD` in a phone-width column (`DeliveryPlanningDriver.tsx`); rows stay caller-scoped by `resolveDeliveryScope`, so a driver sees only their own jobs on either surface and admins keep the whole board.
 - Change together: state labels (`DeliveryPlanningBoard` `STATE_TABS` <-> `MobileDeliveryPlanning` `Bucket`; constants in `delivery-planning-queries.ts`); row fields (add to `PlanningOrder` first, then phone `BoardRow`); masters (`Fleet.tsx` <-> `MobileModuleList` configs); HC fields (`DeliveryFieldsDrawer.tsx` <-> `MobileDeliveryFieldsCard.tsx`); GPS (`LiveTripMap.tsx` <-> `MobileTrackingBanner.tsx`, shared `trip-locations-queries.ts` + backend `lib/tripLocation.ts`); status/POD (board <-> `MobileDeliveryPlanning` / `MobilePOD`).
 - The board component is shared by four pages; a new column changes all four.
 
@@ -144,7 +144,7 @@ Backend
 - Migrations: `backend/src/db/migrations-pg/0053_scm_delivery_planning_tms.sql` (base), `0159`, `0196`, `0197`, `0199`, `0205`, `0206`, `0208`, `0209`, `0210`, `0237`, `0253`, `0327_scm_fleet_user_link.sql`, `0329_scm_trip_public_scan_token.sql`.
 
 Frontend
-- Pages: `frontend/src/pages/scm-v2/DeliveryPlanning.tsx`, `AutoSchedule.tsx`, `Trips.tsx`, `FleetDay.tsx`, `FleetRunSheet.tsx`, `DpOrders.tsx`, `Fleet.tsx`, `DeliveryMaintenance.tsx`, `DeliveryPlanningRegions.tsx`, `DeliveryResidenceRules.tsx`, `DeliveryZones.tsx`, `DriverLeave.tsx`, `ThreePLCompanies.tsx`, `LorryCapacity.tsx`, `delivery-propose-ui.tsx`; `frontend/src/pages/PublicDoScan.tsx`.
+- Pages: `frontend/src/pages/scm-v2/DeliveryPlanning.tsx`, `DeliveryPlanningDriver.tsx`, `AutoSchedule.tsx`, `Trips.tsx`, `FleetDay.tsx`, `FleetRunSheet.tsx`, `DpOrders.tsx`, `Fleet.tsx`, `DeliveryMaintenance.tsx`, `DeliveryPlanningRegions.tsx`, `DeliveryResidenceRules.tsx`, `DeliveryZones.tsx`, `DriverLeave.tsx`, `ThreePLCompanies.tsx`, `LorryCapacity.tsx`, `delivery-propose-ui.tsx`; `frontend/src/pages/PublicDoScan.tsx`.
 - Components: `frontend/src/vendor/scm/components/DeliveryPlanningBoard.tsx`, `ScheduleTripDrawer.tsx`, `ScheduleRouteMap.tsx`, `DeliveryFieldsDrawer.tsx`, `NewDpOrderDrawer.tsx`, `ScheduleDpOrderDrawer.tsx`, `PackingListsSection.tsx`, `LiveTripMap.tsx`; `frontend/src/components/scm-v2/DeliveryMapPanel.tsx`.
 - Logic: `frontend/src/vendor/scm/lib/delivery-planning-queries.ts`, `trips-queries.ts`, `trip-locations-queries.ts`, `native-location.ts`, `propose-time.ts`, `propose-days.ts`, `anonymous-runs.ts`, `last-mile.ts`, `arrangement-sort.ts`, `delivery-map-model.ts`, `delivery-geo-queries.ts`, `packing-list-model.ts`, `packing-list-pdf.ts`, `packing-scan-token-arm.ts`, `so-detail-gates.ts`; `frontend/src/vendor/shared/crew-leave.ts`.
 - Mobile: `frontend/src/mobile/MobileDeliveryPlanning.tsx`, `MobileDeliveryFieldsCard.tsx`, `MobilePOD.tsx`, `MobileTrackingBanner.tsx`, `MobileModuleList.tsx`, `MobileApp.tsx`.
