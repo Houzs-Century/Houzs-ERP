@@ -9,8 +9,12 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 const order = vi.hoisted(() => ({ result: null as { code: string; source: 'po' | 'so' } | null }));
 vi.mock('../db/supabase', () => ({ isSupabaseConfigured: () => true, getSupabaseService: () => ({}) }));
 vi.mock('./assrOrderPos', () => ({ orderSupplierCode: async () => order.result }));
+vi.mock('./logger', () => ({ writeLog: async () => undefined }));
+vi.mock('./autocount', () => ({
+  AutoCountClient: class { async getStockItem(code: string) { return { ItemCode: code, MainSupplier: '400-D002' }; } },
+}));
 
-import { resolveCreditorForCase } from './stockItems';
+import { resolveCreditorForCase, runStockItemsRefresh } from './stockItems';
 import type { Env } from '../types';
 
 const ACTIVITY_COLS = new Set([
@@ -62,5 +66,28 @@ describe('resolveCreditorForCase', () => {
     expect(await resolveCreditorForCase(fakeEnv(inserted, sqls), 5, 'MAT-1')).toBeNull();
     expect(sqls.some((s) => s.includes('stock_items'))).toBe(false);
     expect(inserted).toEqual([]);
+  });
+});
+
+describe('runStockItemsRefresh', () => {
+  test('updates stock items only and never writes a case (HC-0130)', async () => {
+    const sqls: string[] = [];
+    const DB = {
+      prepare(sql: string) {
+        sqls.push(sql);
+        const stmt = {
+          bind() { return stmt; },
+          async all() { return { results: [{ item_code: 'MAT-1' }] }; },
+          async first() { return null; },
+          async run() { return { meta: { changes: 1 } }; },
+        };
+        return stmt;
+      },
+    };
+    const res = await runStockItemsRefresh({ DB } as unknown as Env);
+    expect(res.upserted).toBe(1);
+    expect(res.cases_updated).toBe(0);
+    expect(sqls.some((s) => s.includes('INSERT INTO stock_items'))).toBe(true);
+    expect(sqls.filter((s) => /UPDATE\s+assr_cases|INSERT INTO assr_activity/i.test(s))).toEqual([]);
   });
 });
