@@ -78,7 +78,7 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
 import { effectiveSoDelivery } from '../shared';
 import { readinessRowFields, NO_STOCK_ROW } from '../lib/so-readiness-row';
-import { kickOffBoardReads } from '../lib/delivery-planning-board-reads';
+import { kickOffBoardReads, kickOffSubBoardReads } from '../lib/delivery-planning-board-reads';
 import { readFailure, noteDegradedRead } from '../lib/read-failure';
 import { soProcessingLocked } from './mfg-sales-orders';
 import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
@@ -86,7 +86,7 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardUnionSql, assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
+import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
@@ -478,6 +478,10 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
      read before the response; start it here too so it overlaps every read above
      (wrapped, since it is awaited far below — a throw must not float unhandled). */
   const poNosByDocP = planningPoNosByDoc(sb, soRows).then((r) => ({ ok: r } as const), (e) => ({ err: e } as const));
+  /* The three non-SO sub-boards (ASSR / DP / project) are independent of the SO
+     reads and of each other; start them here too so they overlap everything above
+     instead of tailing the whole SO assembly (see kickOffSubBoardReads). */
+  const { assrRowsP, dpResP, projRowsP } = kickOffSubBoardReads(c, sb);
 
   /* 2b. LIVE balance per SO — same source-of-truth as the SO list Balance column
         (mfg_sales_orders_with_payment_totals.balance_sen_live = local_total −
@@ -1029,18 +1033,11 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   type BoardRow = (typeof orders)[number];
   const assrOrders: BoardRow[] = [];
   try {
-    // Explicit lowercase aliases → deterministic snake_case result keys
-    // (sidesteps any driver camelCasing). Only OPEN cases with a trigger date.
-    const assrRows = await c.env.DB.prepare(assrBoardUnionSql(c)).all<{
-      id: number | null; assr_no: string | null; company_id: number | null; status: string | null;
-      customer_name: string | null; phone: string | null; location: string | null;
-      customer_pickup_at: string | null; inspection_visit_at: string | null;
-      inspection_by: string | null; do_date: string | null;
-      addr1: string | null; addr2: string | null; addr3: string | null; addr4: string | null;
-      // The linked Sales Order's real customer state / postcode / country — the
-      // State and Postcode columns and the region bucket read these, not `location`.
-      so_state: string | null; so_postcode: string | null; so_country: string | null;
-    }>();
+    // Kicked off up top (kickOffSubBoardReads); a read error re-throws into this
+    // same try, which logs and leaves the SO rows untouched — unchanged behaviour.
+    const assrR = await assrRowsP;
+    if ('err' in assrR) throw assrR.err;
+    const assrRows = assrR.ok;
 
     for (const a of (assrRows.results ?? [])) {
       const assrNo = String(a.assr_no ?? '').trim();
@@ -1239,13 +1236,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
      Only consulted when self-scoped. */
   const dpTripIdByKey = new Map<string, string | null>();
   try {
-    let dpQuery = sb.from('dp_orders')
-      .select('id, dp_no, job_type, party_name, contact_phone, address1, address2, address3, address4, city, postcode, state, requested_date, status, trip_id')
-      .is('so_doc_no', null).is('assr_case_id', null).is('do_id', null)
-      .not('status', 'in', '("DELIVERED","CANCELLED")')
-      .limit(1000);
-    dpQuery = scopeToAllowedCompanies(dpQuery, c);
-    const dpRes = await dpQuery;
+    const dpR = await dpResP; // kicked off up top; a read error re-throws into this try (logs, leaves the rest)
+    if ('err' in dpR) throw dpR.err;
+    const dpRes = dpR.ok;
     for (const d of (dpRes.data ?? []) as Array<Record<string, unknown>>) {
       const dpState = (d.state as string | null) ?? null;
       const stateRegions = stateToRegionsFromConfig(regionCfg, dpState, null);
@@ -1362,27 +1355,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
      (same path as the ASSR union). Defensive: any failure logs + leaves the rest. */
   const projectOrders: BoardRow[] = [];
   try {
-    const projRows = await c.env.DB.prepare(
-      `SELECT p.id AS id, p.code AS code, p.name AS name,
-              p.venue AS venue, p.venue_address AS venue_address, p.state AS state,
-              p.setup_start_at     AS setup_start_at,
-              p.dismantle_start_at AS dismantle_start_at,
-              sd.name  AS setup_driver_name,     sl.plate AS setup_lorry_plate,
-              dd.name  AS dismantle_driver_name, dl.plate AS dismantle_lorry_plate
-         FROM projects p
-         LEFT JOIN users   sd ON sd.id = p.setup_driver_user_id
-         LEFT JOIN lorries sl ON sl.id = p.setup_lorry_id
-         LEFT JOIN users   dd ON dd.id = p.dismantle_driver_user_id
-         LEFT JOIN lorries dl ON dl.id = p.dismantle_lorry_id
-        WHERE p.archived_at IS NULL
-          AND (p.setup_start_at IS NOT NULL OR p.dismantle_start_at IS NOT NULL)`,
-    ).all<{
-      id: number | null; code: string | null; name: string | null;
-      venue: string | null; venue_address: string | null; state: string | null;
-      setup_start_at: string | null; dismantle_start_at: string | null;
-      setup_driver_name: string | null; setup_lorry_plate: string | null;
-      dismantle_driver_name: string | null; dismantle_lorry_plate: string | null;
-    }>();
+    const projR = await projRowsP; // kicked off up top; a read error re-throws into this try (logs, leaves the rest)
+    if ('err' in projR) throw projR.err;
+    const projRows = projR.ok;
 
     for (const p of (projRows.results ?? [])) {
       const stateRegions = stateToRegionsFromConfig(regionCfg, p.state, null);

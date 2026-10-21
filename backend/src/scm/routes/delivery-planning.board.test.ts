@@ -312,3 +312,72 @@ describe('GET /delivery-planning — concurrent per-SO reads wire to the right f
     expect((row?.delivery_orders ?? []).map((d) => d.do_number)).toEqual(['HC-DO-9999']);
   });
 });
+
+/* The THREE non-SO sub-boards — ASSR legs, manual DP jobs, PMS project windows —
+   are unioned onto the board after the SO rows. The shared harness above seeds no
+   ASSR/DP/project data and gives no c.env.DB, so those reads fail-silent and the
+   paths went UNTESTED. This fixture exercises all three so the board's open-time
+   read parallelisation (kickOffSubBoardReads) can be proven output-preserving: a
+   fake D1 feeds the ASSR union + project reads (branched by SQL), and dp_orders is
+   seeded on the scm client. Each row kind must surface with its key fields. */
+describe('GET /delivery-planning — the ASSR / DP / project sub-boards union onto the board', () => {
+  // A minimal D1-shim: the handler calls c.env.DB.prepare(sql).all<T>() for the
+  // ASSR union and the project union. Branch on the SQL so each read gets its own
+  // rows; everything the processing reads is present, the rest is null.
+  const fakeD1 = {
+    prepare: (sql: string) => ({
+      all: async () => ({
+        results: /\bprojects\b/i.test(sql)
+          ? [{
+              id: 10, code: 'PRJ-1', name: 'Expo Build', venue: 'Hall 3', venue_address: 'Hall 3, KLCC',
+              state: 'Selangor', setup_start_at: '2026-09-10', dismantle_start_at: null,
+              setup_driver_name: 'Driver A', setup_lorry_plate: 'WXX1', dismantle_driver_name: null, dismantle_lorry_plate: null,
+            }]
+          : [{
+              id: 1, assr_no: 'ASSR-001', company_id: 1, status: 'OPEN', customer_name: 'A Customer',
+              phone: '011', location: 'KL', customer_pickup_at: null, inspection_visit_at: null,
+              inspection_by: null, do_date: '2026-09-05', addr1: '1 Jln', addr2: null, addr3: null, addr4: null,
+              so_state: 'Selangor', so_postcode: '40000', so_country: 'Malaysia',
+            }],
+      }),
+    }),
+  };
+  const build = () => {
+    const sb = fakeSb({
+      warehouses: [],
+      mfg_sales_orders: [so('HC-SO-2608-001', 1)],
+      mfg_sales_order_items: [soLine('HC-SO-2608-001', 'li-1')],
+      delivery_order_items: [],
+      delivery_orders: [],
+      // A manual DP job (no source doc) — the only sub-board read on the scm client.
+      dp_orders: [{
+        id: 5, company_id: 1, dp_no: 'DP-1', job_type: 'SETUP', party_name: 'Setup Co', contact_phone: '012',
+        address1: 'Jln Setup', address2: null, address3: null, address4: null, city: 'KL', postcode: '50000',
+        state: 'Selangor', requested_date: '2026-09-08', status: 'PENDING', trip_id: null,
+        so_doc_no: null, assr_case_id: null, do_id: null,
+      }],
+    });
+    const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+    app.use('*', async (c, next) => {
+      c.set('supabase', sb as unknown as Variables['supabase']);
+      c.set('companyId', 1 as Variables['companyId']);
+      c.set('allowedCompanyIds', [1] as Variables['allowedCompanyIds']);
+      c.set('user', { id: 'u1' } as unknown as Variables['user']);
+      c.set('houzsUser', { id: 9, name: 'Tester', permissions_set: new Set(['*']) } as unknown as Variables['houzsUser']);
+      await next();
+    });
+    app.get('/delivery-planning', deliveryPlanningBoardHandler);
+    return app;
+  };
+
+  it('shows one SO row plus an ASSR, a DP and a project row', async () => {
+    const res = await build().request('/delivery-planning', undefined, { DB: fakeD1 } as never);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { orders?: Array<{ row_type: string; so_doc_no: string; ref: string | null; dp_no: string | null }> };
+    const byType = (t: string) => (body.orders ?? []).filter((o) => o.row_type === t);
+    expect(byType('so').map((o) => o.so_doc_no)).toEqual(['HC-SO-2608-001']);
+    expect(byType('assr')).toHaveLength(1);       // the fake ASSR union row, delivery leg
+    expect(byType('dp').map((o) => o.dp_no)).toEqual(['DP-1']);
+    expect(byType('project').map((o) => o.so_doc_no)).toEqual(['PRJ:10#SETUP']);
+  });
+});
