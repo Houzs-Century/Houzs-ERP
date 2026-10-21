@@ -588,25 +588,29 @@ export const NAV_TABS: NavTab[] = [
         groupId: "scm-transportation",
         to: "/scm/transportation",
         anyPerm: ["*", "scm.access"],
-        anyAccess: ["scm.transportation", "scm.transportation.drivers"],
+        anyAccess: ["scm.transportation", "scm.transportation.drivers", "scm.transportation.overview", "scm.transportation.planning", "scm.transportation.dp_orders", "scm.transportation.last_mile", "scm.transportation.lorry_map", "scm.transportation.lorry_capacity", "scm.transportation.crew_leave", "scm.transportation.coverage"],
         children: [
           // Daily dispatch flow — the pages used every day, in workflow order.
-          { to: "/scm/logistic-overview", label: "Logistic Overview", icon: LayoutDashboard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-          { to: "/scm/delivery-planning", label: "Delivery Planning", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-          { to: "/scm/delivery-planning-driver", label: "Last Mile Delivery (Driver)", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-          { to: "/scm/dp-orders", label: "DP Orders", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+          { to: "/scm/logistic-overview", label: "Logistic Overview", icon: LayoutDashboard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.overview"], hideForSalesRep: true },
+          { to: "/scm/delivery-planning", label: "Delivery Planning", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.planning"], hideForSalesRep: true },
+          // "Last Mile Delivery (Driver)" (added on main) is the driver-facing view of
+          // the same last-mile delivery, so it shares scm.transportation.last_mile with
+          // the office "Last Mile Delivery" (/scm/fleet-day) below. Zero-change on deploy
+          // (last_mile inherits drivers), and the two last-mile views toggle together.
+          { to: "/scm/delivery-planning-driver", label: "Last Mile Delivery (Driver)", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.last_mile"], hideForSalesRep: true },
+          { to: "/scm/dp-orders", label: "DP Orders", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.dp_orders"], hideForSalesRep: true },
           // Delivery Date / Time Arrangement menu entries removed (owner 2026-10-20):
           // all date/time/crew arranging now happens inline on Delivery Planning,
           // which schedules onto trips directly. The /scm/auto-schedule and
           // /scm/trips routes still resolve by direct URL (auto-propose optimiser).
-          { to: "/scm/fleet-day", label: "Last Mile Delivery", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+          { to: "/scm/fleet-day", label: "Last Mile Delivery", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.last_mile"], hideForSalesRep: true },
           // Fleet operations — capacity and leave. Fleet Health moved DOWN into
           // Maintenance (2026-08-02): it is reference-data upkeep on the in-house
           // lorries, not a daily dispatch view. The lorry/driver REGISTRY
           // (/scm/fleet) is in Maintenance too.
-          { to: "/scm/lorry-live-map", label: "Lorry Live Map", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-          { to: "/scm/lorry-capacity", label: "Lorry Capacity", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-          { to: "/scm/driver-leave", label: "Crew Leave", icon: CalendarOff, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+          { to: "/scm/lorry-live-map", label: "Lorry Live Map", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.lorry_map"], hideForSalesRep: true },
+          { to: "/scm/lorry-capacity", label: "Lorry Capacity", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.lorry_capacity"], hideForSalesRep: true },
+          { to: "/scm/driver-leave", label: "Crew Leave", icon: CalendarOff, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.crew_leave"], hideForSalesRep: true },
           /* "Drivers" (/scm/drivers) retired 2026-07-17 — it duplicated the Drivers
              section of Fleet above, and sat here with the SAME Truck icon and the
              SAME scm.transportation.drivers access key, which is what made the
@@ -637,11 +641,11 @@ export const NAV_TABS: NavTab[] = [
           {
             label: "Maintenance", icon: SlidersHorizontal, groupId: "scm-transportation-maintenance",
             to: "/scm/delivery-maintenance",
-            anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true,
+            anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers", "scm.transportation.coverage"], hideForSalesRep: true,
             children: [
-              { to: "/scm/delivery-maintenance", label: "Coverage & Fleet", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-              { to: "/scm/delivery-zones", label: "Delivery Zones", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
-              { to: "/scm/delivery-rate-cards", label: "Carriers & Rates", icon: Handshake, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.drivers"], hideForSalesRep: true },
+              { to: "/scm/delivery-maintenance", label: "Coverage & Fleet", icon: Map, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.coverage"], hideForSalesRep: true },
+              { to: "/scm/delivery-zones", label: "Delivery Zones", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.coverage"], hideForSalesRep: true },
+              { to: "/scm/delivery-rate-cards", label: "Carriers & Rates", icon: Handshake, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.coverage"], hideForSalesRep: true },
               /* Fleet Health joined Maintenance 2026-08-02 (owner: "你把 Fleet
                  Health 加进去 Maintenance 的地方"). It keeps its OWN gate —
                  `fleet.read`, not the scm.transportation.drivers area key the

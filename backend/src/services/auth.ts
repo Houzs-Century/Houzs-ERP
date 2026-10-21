@@ -155,7 +155,14 @@ export const REMEMBER_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year, rolling
  * page_access map gains those keys, so the bump rebuilds each cached v6 session
  * once to pick them up. The keys inherit their parent's resolved level, so the
  * rebuild changes no one's access (financeSubpageSplit.test.ts). */
-export const AUTHZ_ENVELOPE_VERSION = 7;
+/* v8 (2026-10-21): the Transportation area splits into per-page page keys
+ * (scm.transportation.overview / .planning / .dp_orders / .last_mile /
+ * .lorry_map / .lorry_capacity / .crew_leave / .coverage — children of
+ * scm.transportation.drivers). Each hydrated session's page_access map gains
+ * those keys, so the bump rebuilds each cached v7 session once to pick them up.
+ * The keys inherit their parent's resolved level, so the rebuild changes no
+ * one's access (transportSubpageSplit.test.ts). */
+export const AUTHZ_ENVELOPE_VERSION = 8;
 
 /* Session ORIGIN (mig 0120) — the DOOR a session was minted at. It is NOT a
    property of the person: the same salesperson simultaneously holds a 'pos'

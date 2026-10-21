@@ -461,6 +461,101 @@ export const PAGES: PageDef[] = [
     supportsPartial: true,
     backfill: (p) => (isOwner(p) ? "full" : "none"),
   },
+  // ── Transportation sub-pages (owner 2026-10-20: "全部拆开" — one switch per
+  //    sidebar page, so a role can be given Delivery Planning but not the Lorry
+  //    Map). Batch 2. The eight keys map 1:1 to the Transportation nav pages that
+  //    today all gate on scm.transportation.drivers (overview / planning /
+  //    dp_orders / last_mile / lorry_map / lorry_capacity / crew_leave, plus one
+  //    `coverage` key for the Maintenance sub-group — Coverage & Fleet + Delivery
+  //    Zones + Carriers & Rates). The retired Drivers nav row is gone, so
+  //    scm.transportation.drivers now serves as the parent "master" switch for the
+  //    whole area; it is kept in the catalogue.
+  //
+  //    PARENT IS scm.transportation.drivers, NOT scm.transportation — mirroring the
+  //    Finance batch-1 safety rule (parent on the leaf the pages used to gate on,
+  //    not the area parent). Prod (anogrigyjbduyzclzjgn, 2026-10-21) holds only
+  //    three transportation shapes across 24 roles: full/full/full (11),
+  //    none/none/none (9), and scm=none / transportation=view / drivers=view (4 —
+  //    they may SEE the pages, scm umbrella off). In every shape drivers resolves
+  //    EQUAL to its parent scm.transportation, so no role is upgraded either way;
+  //    parenting on the drivers leaf still follows the money/stock-safety analogue
+  //    (never inherit above the key the pages carry) and keeps the mapping faithful
+  //    ("these pages were gated by drivers"). Each new key therefore inherits the
+  //    role's EXACT drivers level, so the split is byte-identical on day one. A
+  //    one-shot backfill migration writes the same value as an explicit row per
+  //    role (so the role matrix / Excel replace-set does not re-persist a new key
+  //    as none on the owner's next save). backfill stays owner-only, matching the
+  //    other scm.* keys (the role matrix drives these, never the permission
+  //    backfill). transportSubpageSplit.test.ts pins the zero-change: every new key
+  //    resolves == scm.transportation.drivers for every prod cohort.
+  {
+    key: "scm.transportation.overview",
+    parent: "scm.transportation.drivers",
+    label: "Logistic Overview",
+    partialMeaning: "View only; write gating is per-route (later).",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.transportation.planning",
+    parent: "scm.transportation.drivers",
+    label: "Delivery Planning",
+    partialMeaning: "View only; write gating is per-route (later).",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.transportation.dp_orders",
+    parent: "scm.transportation.drivers",
+    label: "DP Orders",
+    partialMeaning: "View only; write gating is per-route (later).",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.transportation.last_mile",
+    parent: "scm.transportation.drivers",
+    label: "Last Mile Delivery",
+    partialMeaning: "View only; write gating is per-route (later).",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.transportation.lorry_map",
+    parent: "scm.transportation.drivers",
+    label: "Lorry Live Map",
+    partialMeaning: "View only; write gating is per-route (later).",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.transportation.lorry_capacity",
+    parent: "scm.transportation.drivers",
+    label: "Lorry Capacity",
+    partialMeaning: "View only; write gating is per-route (later).",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.transportation.crew_leave",
+    parent: "scm.transportation.drivers",
+    label: "Crew Leave",
+    partialMeaning: "View only; write gating is per-route (later).",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    // One key for the Maintenance sub-group: Coverage & Fleet
+    // (/scm/delivery-maintenance) + Delivery Zones + Carriers & Rates. Fleet
+    // Health sits in the same sub-group but keeps its OWN gate (fleet.read) —
+    // repointing it would NOT be zero-change, so it is left untouched.
+    key: "scm.transportation.coverage",
+    parent: "scm.transportation.drivers",
+    label: "Coverage, Zones & Carriers",
+    partialMeaning: "View only; write gating is per-route (later).",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
   {
     key: "scm.warehouse",
     parent: "scm",
