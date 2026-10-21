@@ -222,6 +222,39 @@ try {
     await pg`SELECT id, user_id, staff_code, name, active FROM scm.staff WHERE user_id = ${probeId} OR staff_code = ${"EMP-" + String(probeId).padStart(4, "0")}`,
   );
 
+  // 6b) Every id counter in the app's schemas against its table. A counter at
+  //     or below the table's max id makes the next insert raise duplicate key
+  //     on the primary key — the same failure, on whatever screen writes there.
+  const counters = await pg`
+    SELECT n.nspname AS schema, c.relname AS tbl, a.attname AS col,
+           pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname) AS seq
+      FROM pg_attribute a
+      JOIN pg_class c ON c.oid = a.attrelid AND c.relkind IN ('r', 'p')
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE a.attnum > 0 AND NOT a.attisdropped
+       AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'auth', 'storage', 'realtime',
+                             'supabase_functions', 'supabase_migrations', 'extensions', 'graphql',
+                             'graphql_public', 'pgsodium', 'vault', 'net', 'cron', 'pgbouncer')
+       AND n.nspname NOT LIKE 'pg\\_%'
+       AND pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname) IS NOT NULL
+     ORDER BY 1, 2`;
+  let behind = 0;
+  for (const k of counters) {
+    try {
+      const q = (ident) => `"${String(ident).replace(/"/g, '""')}"`;
+      const [{ mx }] = await pg.unsafe(`SELECT max(${q(k.col)}) AS mx FROM ${q(k.schema)}.${q(k.tbl)}`);
+      const [s] = await pg.unsafe(`SELECT last_value, is_called FROM ${k.seq}`);
+      const nextId = s.is_called ? Number(s.last_value) + 1 : Number(s.last_value);
+      if (mx != null && nextId <= Number(mx)) {
+        behind++;
+        notice(`COUNTER BEHIND ${k.schema}.${k.tbl}.${k.col}: next ${nextId}, max ${mx} (${Number(mx) - nextId + 1} inserts would fail)`);
+      }
+    } catch (e) {
+      line(`  could not read ${k.schema}.${k.tbl}.${k.col}: ${String(e?.message ?? e).slice(0, 160)}`);
+    }
+  }
+  notice(`id counters checked: ${counters.length}, behind: ${behind}`);
+
   // 7) What the audit trail says got through: this member, then every member
   //    edit in the last three days (a save that dies before audit() logs nothing).
   show(
@@ -275,7 +308,12 @@ if (!TOKEN || !ACCOUNT) {
       const events = body?.result?.events?.events ?? [];
       line(`--- Workers Logs "${needle}": HTTP ${res.status}, ${events.length} events ---`);
       if (!res.ok || !body?.success) line(`  ${JSON.stringify(body?.errors ?? body).slice(0, 800)}`);
-      for (const ev of events) line(`  ${JSON.stringify(ev).slice(0, 3000)}`);
+      for (const ev of events) {
+        const src = ev.source ?? {};
+        const msg = typeof src === "object" ? (src.message ?? JSON.stringify(src)) : String(src);
+        const err = typeof src === "object" && src.error ? ` error=${src.error}` : "";
+        line(`  ${new Date(ev.timestamp).toISOString()} ${src.level ?? ""} ${String(msg).slice(0, 400)}${err}`);
+      }
     } catch (e) {
       notice(`Workers Logs "${needle}": query failed -> ${String(e?.message ?? e).slice(0, 300)}`);
     }
