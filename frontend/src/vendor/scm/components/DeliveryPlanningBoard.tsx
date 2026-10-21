@@ -498,7 +498,10 @@ function HelperPickCell({ order, helpers, writeSeat, pending, slot }: {
   const chosen = useMemo(() => crewComboValue(items, currentName), [items, currentName]);
   const [val, setVal] = useState(chosen);
   useEffect(() => { setVal(chosen); }, [chosen]);
-  if (isAssr(order) || isDp(order) || isProject(order)) return <NotApplicable />;
+  // Project rows are a read-only PMS mirror — show the helper the project crewed
+  // (owner 2026-10-21), like the Driver / Lorry cells. ASSR / DP have no seat.
+  if (isProject(order)) return <span style={{ color: '#767b6e' }}>{currentName || '—'}</span>;
+  if (isAssr(order) || isDp(order)) return <NotApplicable />;
   return (
     <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
       <SearchCombo

@@ -78,7 +78,7 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
 import { effectiveSoDelivery } from '../shared';
 import { readinessRowFields, NO_STOCK_ROW } from '../lib/so-readiness-row';
-import { kickOffBoardReads, kickOffSubBoardReads } from '../lib/delivery-planning-board-reads';
+import { kickOffBoardReads, kickOffSubBoardReads, flattenProjectCrew } from '../lib/delivery-planning-board-reads';
 import { readFailure, noteDegradedRead } from '../lib/read-failure';
 import { soProcessingLocked } from './mfg-sales-orders';
 import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
@@ -1374,6 +1374,16 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
 
       for (const leg of legs) {
         const rowKey = `PRJ:${String(p.id)}#${leg.jobType}`;
+        /* Crew the PMS editor stored as JSON for THIS phase (setup_crew /
+           dismantle_crew); fall back to the legacy scalar driver/lorry join for
+           older projects. Read-only on the board — edit stays in Projects. */
+        const fc = flattenProjectCrew(leg.jobType === 'SETUP' ? p.setup_crew : p.dismantle_crew);
+        const d1 = fc.drivers[0] ?? null;
+        const crewDriver = d1?.name ?? leg.driver ?? null;
+        const crewLorry = fc.plates.length ? fc.plates.join(' / ') : (leg.lorry ?? null);
+        const crewDriver2 = fc.drivers[1]?.name ?? null;
+        const crewHelper1 = fc.helpers[0] ?? null;
+        const crewHelper2 = fc.helpers[1] ?? null;
         projectOrders.push({
           row_type: 'project',
           ref: p.code ?? null, so_ref: null,
@@ -1447,12 +1457,14 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           customer_state: p.state ?? null,
           delivered_qty: 0,
           remaining_qty: 0,
-          // Show the crew PMS already assigned to this window (read-only on the board).
-          crew: (leg.driver || leg.lorry) ? {
-            driver: leg.driver, helper: null, lorry: leg.lorry,
-            driver_1_name: leg.driver, driver_1_ic: null, driver_1_contact: null,
-            driver_2_name: null, helper_1_name: null, helper_2_name: null,
-            lorry_plate: leg.lorry,
+          // Show the crew PMS assigned to this window (read-only on the board) —
+          // driver (+phone), a 2nd driver, both helpers and the lorry plate(s),
+          // pulled from the project's per-phase crew JSON.
+          crew: (crewDriver || crewLorry || crewDriver2 || crewHelper1 || crewHelper2) ? {
+            driver: crewDriver, helper: crewHelper1, lorry: crewLorry,
+            driver_1_name: crewDriver, driver_1_ic: null, driver_1_contact: d1?.phone ?? null,
+            driver_2_name: crewDriver2, helper_1_name: crewHelper1, helper_2_name: crewHelper2,
+            lorry_plate: crewLorry,
           } : null,
           delivery_orders: [],
           /* PMS windows are scheduled and crewed in Projects — a read-only
