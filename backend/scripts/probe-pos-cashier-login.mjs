@@ -49,6 +49,10 @@ try {
       SELECT created_at, reason FROM auth_failed_logins
        WHERE user_id = ${u.id} OR lower(email) = lower(${u.email}) ORDER BY created_at DESC LIMIT 15`;
     console.log(`failed logins user ${u.id}`, fails);
+    const invs = await sql`
+      SELECT id, created_at, expires_at, accepted_at
+        FROM invitations WHERE lower(email) = lower(${u.email}) ORDER BY id DESC LIMIT 5`;
+    console.log(`invitations user ${u.id}`, invs);
   }
   const anon = await sql`
     SELECT created_at, reason, email FROM auth_failed_logins
