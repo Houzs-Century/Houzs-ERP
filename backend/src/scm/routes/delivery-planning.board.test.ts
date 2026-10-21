@@ -380,7 +380,7 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
     const res = await build().request('/delivery-planning', undefined, { DB: fakeD1 } as never);
     expect(res.status).toBe(200);
     type Crew = { driver_1_name: string | null; driver_1_contact: string | null; helper_1_name: string | null; helper_2_name: string | null; lorry_plate: string | null } | null;
-    const body = (await res.json()) as { orders?: Array<{ row_type: string; so_doc_no: string; ref: string | null; dp_no: string | null; branding: string | null; crew: Crew }> };
+    const body = (await res.json()) as { orders?: Array<{ row_type: string; so_doc_no: string; ref: string | null; dp_no: string | null; branding: string | null; delivery_state: string | null; crew: Crew }> };
     const byType = (t: string) => (body.orders ?? []).filter((o) => o.row_type === t);
     expect(byType('so').map((o) => o.so_doc_no)).toEqual(['HC-SO-2608-001']);
     expect(byType('assr')).toHaveLength(1);       // the fake ASSR union row, delivery leg
@@ -388,6 +388,11 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
     expect(byType('project').map((o) => o.so_doc_no)).toEqual(['PRJ:10#SETUP']);
     // Branding column fills for a project leg from the PMS project's brand (read-only).
     expect(byType('project').map((o) => o.branding)).toEqual(['AKEMI']);
+    // Owner 2026-10-21 — the Delivered tab shows every job type: a project window
+    // whose date has already passed is done, while an OPEN service case is still
+    // pending (and a dated DP job that is not yet delivered is pending too).
+    expect(byType('project')[0]?.delivery_state).toBe('DELIVERED'); // setup 2026-09-10 is in the past
+    expect(byType('assr')[0]?.delivery_state).toBe('PENDING_DELIVERY'); // OPEN case, no closed_at
     // Crew (driver + phone, both helpers, lorry) is pulled from the per-phase crew
     // JSON and OVERRIDES the stale scalar driver/lorry fallback (Driver A / WXX1).
     const projCrew = byType('project')[0]?.crew;
