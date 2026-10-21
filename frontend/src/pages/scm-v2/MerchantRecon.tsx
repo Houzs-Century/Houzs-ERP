@@ -32,6 +32,7 @@ import {
   useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
   useUploadStatement, useConfirmSettlementRow, useConfirmMatched, useIgnoreSettlementRow,
   useSettlementWatchlist, useUnconfirmSettlementRow, useFindPayments,
+  confirmMatchedBatch, useInvalidateAfterPosting,
   type AcquirerSetup, type SettlementRow, type SettlementBucket, type SettlementBatch, type BankAccount, type SettlementCandidate,
   type Watchlist,
 } from './settlement-queries';
@@ -215,6 +216,7 @@ const ReconcileTab = () => {
   /* Two different jobs, and the button may only claim the first: a line that
      matched by reference is a press, a line without one is a decision. */
   const readyToConfirm = open.reduce((s, b) => s + (b.to_confirm_count ?? 0), 0);
+  const toPost = open.filter(worthConfirming).length;
   const stillToDecide = open.reduce((s, b) => s + (b.to_choose_count ?? 0) + (b.no_record_count ?? 0), 0);
   /* Card money the sales team recorded that no statement has reported. Held
      back until the watchlist has answered, so an empty list never reads as
@@ -306,11 +308,12 @@ const ReconcileTab = () => {
         {readyToConfirm > 0 && (
           <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
             <button type="button" style={btn(true, bulk.busy)} disabled={bulk.busy}
-              onClick={() => bulk.run(open)}>
-              {/* Says its scope too: one press here covers every open report,
-                  and the button inside a report covers only that one. */}
+              onClick={() => { void bulk.run(open); }}>
+              {/* Says its scope too: one press here covers every report with
+                  something to post, and the button inside a report covers only
+                  that one. */}
               <CheckCheck {...ICON} /> {bulk.busy ? 'Posting…'
-                : `Confirm all ${readyToConfirm} matched, across ${open.length} report${open.length === 1 ? '' : 's'}`}
+                : `Confirm all ${readyToConfirm} matched, across ${toPost} report${toPost === 1 ? '' : 's'}`}
             </button>
             <span style={softText}>
               Books each line&rsquo;s fee;
@@ -418,26 +421,45 @@ const WAITING_COLUMNS: Column<WaitingCard>[] = [
    time, so a refusal names ITS OWN file instead of failing the pile, and what
    went through stays through. Sequential, not parallel, for the same reason
    the upload is — each confirmation must see the payments the previous one
-   already claimed. */
+   already claimed.
+
+   ONLY the reports with something to post, and ONE refresh at the end (owner
+   2026-10-21, on "Posted 0. 52 could not be — Network error"). Every open
+   report used to get a request — 79 of them for one matched line — and after
+   EACH one the whole screen was read again, every open report's lines with it,
+   so one press sent thousands of requests that the next refresh cut off. The
+   connection choked and the screen called "failed" what the server had done. */
+
+/** A report the press has work in: a line matched by reference, or a
+    statement charge not yet booked — which the press books too. */
+export const worthConfirming = (b: SettlementBatch): boolean =>
+  (b.to_confirm_count ?? 0) > 0 || (Number(b.adjustment_sen) !== 0 && !b.adjustment_je_no);
+
+type Posted = { lines: number; charges: number; failures: Array<{ file: string; reason: string }> };
 
 const useConfirmAcross = () => {
-  const confirmAll = useConfirmMatched();
+  const refresh = useInvalidateAfterPosting();
   const [busy, setBusy] = useState(false);
-  const [posted, setPosted] = useState<{ confirmed: number; failed: number } | null>(null);
+  const [posted, setPosted] = useState<Posted | null>(null);
 
-  const run = (batches: SettlementBatch[]) => {
+  const run = async (batches: SettlementBatch[]) => {
     setBusy(true);
     setPosted(null);
-    let confirmed = 0;
-    let failed = 0;
-    const next = (i: number) => {
-      if (i >= batches.length) { setBusy(false); setPosted({ confirmed, failed }); return; }
-      confirmAll.mutate(batches[i].id, {
-        onSuccess: (r) => { confirmed += r.confirmed; failed += r.failed.length; next(i + 1); },
-        onError: () => { failed += 1; next(i + 1); },
-      });
-    };
-    next(0);
+    const out: Posted = { lines: 0, charges: 0, failures: [] };
+    for (const b of batches.filter(worthConfirming)) {
+      try {
+        const r = await confirmMatchedBatch(b.id);
+        out.lines += r.confirmed;
+        if (r.statementCharge?.status === 'posted') out.charges += 1;
+        for (const f of r.failed) out.failures.push({ file: b.file_name, reason: f.reason });
+      } catch (e) {
+        /* One report's failure is that report's line on the note; the rest go on. */
+        out.failures.push({ file: b.file_name, reason: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    refresh();
+    setBusy(false);
+    setPosted(out);
   };
 
   return { run, busy, posted };
@@ -482,12 +504,22 @@ const UploadDone = ({ batches }: { batches: SettlementBatch[] }) => {
   );
 };
 
-const PostedNote = ({ posted }: { posted: { confirmed: number; failed: number } }) => (
-  <div style={{ fontSize: 'var(--fs-13)', color: posted.failed ? danger : good }}>
-    Posted {posted.confirmed}.
-    {posted.failed > 0 ? ` ${posted.failed} could not be — open the report to see why.` : ''}
-  </div>
-);
+/* Says what posted — lines AND the statement charges the press books with them
+   — and, for what did not, which report and why, in the server's own words. */
+const PostedNote = ({ posted }: { posted: Posted }) => {
+  const what = [
+    `${posted.lines} line${posted.lines === 1 ? '' : 's'}`,
+    ...(posted.charges > 0 ? [`${posted.charges} statement charge${posted.charges === 1 ? '' : 's'}`] : []),
+  ].join(' and ');
+  const n = posted.failures.length;
+  return (
+    <div style={{ fontSize: 'var(--fs-13)', color: n ? danger : good, display: 'grid', gap: 2 }}>
+      <span>Posted {what}.{n > 0 ? ` ${n} could not be:` : ''}</span>
+      {posted.failures.slice(0, 5).map((f, i) => <span key={i}><b>{f.file}</b> — {f.reason}</span>)}
+      {n > 5 && <span>…and {n - 5} more — open the report to see why.</span>}
+    </div>
+  );
+};
 
 const UploadSummary = ({ batchIds, refusals, leftOut, onOpen, onDone }: {
   batchIds: number[];
@@ -538,7 +570,7 @@ const UploadSummary = ({ batchIds, refusals, leftOut, onOpen, onDone }: {
 
           {toConfirm > 0 && (
             <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-              <button type="button" style={btn(true, busy)} disabled={busy} onClick={() => bulk.run(mine)}>
+              <button type="button" style={btn(true, busy)} disabled={busy} onClick={() => { void bulk.run(mine); }}>
                 <CheckCheck {...ICON} /> {busy ? 'Posting…' : `Confirm all ${toConfirm} matched`}
               </button>
               <span style={softText}>Books each line&rsquo;s fee. The money itself is the next screen.</span>
