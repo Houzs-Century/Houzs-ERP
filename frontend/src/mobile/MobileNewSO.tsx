@@ -68,7 +68,7 @@ import {
 } from "../vendor/scm/lib/address-cascade";
 import { StatePicker } from "../vendor/scm/components/StatePicker";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
-import { deferLineDateToHeader, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
+import { deferLineDateToHeader, lineDatePinned, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
@@ -415,7 +415,7 @@ function buildVariants(l: LineItem): Record<string, unknown> {
 /* Line-item body for POST /:docNo/items and the create body's items[]. Pure +
    module-level so BOTH the interactive save() and the headless
    createDraftFromPrefill() below shape a line identically (no copy-paste). */
-function buildItemBody(l: LineItem): Record<string, unknown> {
+function buildItemBody(l: LineItem, datePinned = false): Record<string, unknown> {
   const variants = buildVariants(l);
   return {
     itemCode: l.itemCode,
@@ -434,6 +434,7 @@ function buildItemBody(l: LineItem): Record<string, unknown> {
     /* Create items[] AND POST /:docNo/items: a TYPED 0 is free, an untouched 0 is unpriced. */
     ...zeroPriceClaim(toSen(l.price), l.priceAuthored === true),
     lineDeliveryDate: l.ddate || null,
+    lineDeliveryDateOverridden: datePinned,
     ...(Object.keys(variants).length ? { variants } : {}),
   };
 }
@@ -1744,7 +1745,8 @@ export function MobileNewSO({
   /* Line-item body for POST /:docNo/items and the create body's items[].
      Delegates to the module-level buildItemBody (shared with the headless
      createDraftFromPrefill). */
-  const itemBody = buildItemBody;
+  const datePinned = (l: LineItem) => lineDatePinned({ lineDate: l.ddate, headerDate: delivDate, handEdited: ddateOverrides.has(l.key) });
+  const itemBody = (l: LineItem) => buildItemBody(l, datePinned(l));
 
   const itemPatchBody = (l: LineItem): Record<string, unknown> => ({
     itemCode: l.itemCode,
@@ -1754,7 +1756,7 @@ export function MobileNewSO({
     unitPriceSen: toSen(l.price),
     /* A persisted or typed 0 is claimed; a re-pick's seeded 0 is not, so the server keeps the stored price (BUG-63). */
     ...zeroPriceClaim(toSen(l.price), l.priceAuthored === true),
-    ...(deferLineDateToHeader({ storedProcessingDate: origProcDate, overridden: ddateOverrides.has(l.key) }) ? {} : { lineDeliveryDate: l.ddate || null }),
+    ...(deferLineDateToHeader({ storedProcessingDate: origProcDate, overridden: ddateOverrides.has(l.key) }) ? {} : { lineDeliveryDate: l.ddate || null, lineDeliveryDateOverridden: datePinned(l) }),
     variants: buildVariants(l),
   });
 
