@@ -5,8 +5,8 @@
 // project, and the P&L by month / quarter / year is the trend here.
 // Figures: keyed books when an event has them, otherwise its Sales Orders
 // (projectOverviewModel.ts); every project row says which.
-import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef } from "react";
+import { useLocation, useNavigate, useNavigationType, useSearchParams } from "react-router-dom";
 import { useQuery } from "../../hooks/useQuery";
 import { api } from "../../api/client";
 import { formatCurrency, cn } from "../../lib/utils";
@@ -16,24 +16,58 @@ import { Columns, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
 import { ProjectDataGapsPanel, ProjectStuckPanel } from "./ProjectOverviewParts";
 import { figuresOf, totalsOf, groupBy, drillOf, pctOf, type OvProject, type Drill } from "./projectOverviewModel";
+import { VIEW_PARAMS, projectLines, readView, rememberScroll, tableAmount, takeScroll, writeView, type Dim, type OverviewView, type SortKey } from "./projectOverviewView";
 
-type Dim = "brand" | "eventType" | "organizer" | "venue" | "state";
 const DIMS: Array<[Dim, string]> = [["brand", "Brand"], ["eventType", "Event type"], ["organizer", "Organizer"], ["venue", "Venue"], ["state", "State"]];
 const money = formatCurrency;
 const pctTxt = (x: number | null) => (x == null ? "—" : `${x.toFixed(1)}%`);
-type SortKey = "start" | "sales" | "np" | "npPct";
+/* The project table's cells (owner 2026-10-21): a group header over the
+   columns, a rule between the groups. */
+const GROUP = "whitespace-nowrap border-b border-border px-2.5 pb-1 pt-2 text-center text-[10.5px] font-semibold uppercase tracking-wider text-ink-secondary";
+const TH = "whitespace-nowrap border-b border-border px-2.5 py-2 text-right text-[10.5px] font-semibold uppercase tracking-wider text-ink-muted";
+const TD = "whitespace-nowrap border-b border-border px-2.5 py-1.5 text-right text-[12.5px] tabular-nums";
+const SEP = "border-l border-border";
 
 export function ProjectOverviewPage() {
   const navigate = useNavigate();
   const today = todayMY();
-  const [period, setPeriod] = useDashboardPeriod(today, "af_from", "af_to", []);
+  /* A new period drops the breakdown pick in the same URL write. */
+  const [period, setPeriod] = useDashboardPeriod(today, "af_from", "af_to", [VIEW_PARAMS.pick]);
   const q = useQuery<{ projects: OvProject[] }>("/api/projects/overview", () => api.get("/api/projects/overview"));
-  const [brand, setBrand] = useState(""); const [type, setType] = useState(""); const [organizer, setOrganizer] = useState("");
-  /* Opens on this year by month (owner 2026-10-17). */
-  const [drill, setDrill] = useState<Drill>({ level: "yearMonths", year: Number(today.slice(0, 4)) });
-  const [dim, setDim] = useState<Dim>("brand");
-  const [pick, setPick] = useState<string | null>(null);
-  const [sort, setSort] = useState<SortKey>("start");
+  /* Every other choice lives in the URL too (owner 2026-10-21): Back keeps
+     them, the menu link (no parameters) starts on the defaults — this month,
+     Newest, no filter, the trend on this year by month (projectOverviewView.ts). */
+  const [params, setParams] = useSearchParams();
+  const { brand, type, organizer, drill, dim, pick, sort } = readView(params, today);
+  const setView = (patch: Partial<OverviewView>) => setParams((prev) => writeView(prev, patch, today), { replace: true });
+  const setDrill = (d: Drill) => setView({ drill: d });
+  const setSort = (s: SortKey) => setView({ sort: s });
+
+  /* And the place you were looking at: kept when a project is opened, given
+     back on Back (a POP onto this same history entry) once the figures are on
+     the page. The page scrolls inside the app's <main>; the project table in
+     its own box. */
+  const location = useLocation();
+  const navType = useNavigationType();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const tableRef = useRef<HTMLDivElement>(null);
+  const restored = useRef(false);
+  const pageScroller = () => rootRef.current?.closest("main") ?? null;
+  const openProject = (id: number) => {
+    rememberScroll(location.key, { page: pageScroller()?.scrollTop ?? 0, table: tableRef.current?.scrollTop ?? 0, tableLeft: tableRef.current?.scrollLeft ?? 0 });
+    navigate(`/projects/${id}`);
+  };
+  useEffect(() => {
+    if (restored.current || !q.data) return;
+    restored.current = true;
+    const pos = navType === "POP" ? takeScroll(location.key) : null;
+    if (!pos) return;
+    requestAnimationFrame(() => {
+      const page = pageScroller();
+      if (page) page.scrollTop = pos.page;
+      if (tableRef.current) { tableRef.current.scrollTop = pos.table; tableRef.current.scrollLeft = pos.tableLeft; }
+    });
+  }, [q.data, navType, location.key]);
 
   const all = useMemo(() => (q.data?.projects ?? []).filter((p) =>
     (!brand || p.brand === brand) && (!type || p.eventType === type) && (!organizer || p.organizer === organizer)), [q.data, brand, type, organizer]);
@@ -52,7 +86,7 @@ export function ProjectOverviewPage() {
   }
   const unit = drill.level === "years" ? "Year" : drill.level === "quarters" ? "Quarter" : drill.level === "months" || drill.level === "yearMonths" ? "Month" : "Week";
   const yearView = drill.level === "quarters" || drill.level === "yearMonths" ? drill.year : null;
-  const openBucket = (b: (typeof trend)[number]) => { if (b.next) setDrill(b.next); else { setPick(null); setPeriod(b.from, b.to > today ? today : b.to); } };
+  const openBucket = (b: (typeof trend)[number]) => { if (b.next) setDrill(b.next); else setPeriod(b.from, b.to > today ? today : b.to); };
   /* Running costs after COGS, only the ones that are not zero. */
   /* The lines of the Financial Snapshot, each against sales (owner 2026-10-19). */
   const cogsLines: Array<[string, number, string]> = [
@@ -71,12 +105,12 @@ export function ProjectOverviewPage() {
   const options = (key: "brand" | "eventType" | "organizer") => [...new Set((q.data?.projects ?? []).map((p) => p[key]).filter((x): x is string => !!x))].sort();
 
   return (
-    <div className="space-y-4">
+    <div ref={rootRef} className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <DashboardPeriodPicker period={period} today={today} onChange={(f, to) => { setPick(null); setPeriod(f, to); }} />
-        <select className={SELECT_CLS} value={brand} onChange={(e) => setBrand(e.target.value)} aria-label="Brand"><option value="">All brands</option>{options("brand").map((b) => <option key={b}>{b}</option>)}</select>
-        <select className={SELECT_CLS} value={type} onChange={(e) => setType(e.target.value)} aria-label="Event type"><option value="">All event types</option>{options("eventType").map((b) => <option key={b}>{b}</option>)}</select>
-        <select className={SELECT_CLS} value={organizer} onChange={(e) => setOrganizer(e.target.value)} aria-label="Organizer"><option value="">All organizers</option>{options("organizer").map((b) => <option key={b}>{b}</option>)}</select>
+        <DashboardPeriodPicker period={period} today={today} onChange={(f, to) => setPeriod(f, to)} />
+        <select className={SELECT_CLS} value={brand} onChange={(e) => setView({ brand: e.target.value })} aria-label="Brand"><option value="">All brands</option>{options("brand").map((b) => <option key={b}>{b}</option>)}</select>
+        <select className={SELECT_CLS} value={type} onChange={(e) => setView({ type: e.target.value })} aria-label="Event type"><option value="">All event types</option>{options("eventType").map((b) => <option key={b}>{b}</option>)}</select>
+        <select className={SELECT_CLS} value={organizer} onChange={(e) => setView({ organizer: e.target.value })} aria-label="Organizer"><option value="">All organizers</option>{options("organizer").map((b) => <option key={b}>{b}</option>)}</select>
         {q.loading && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
       </div>
       {q.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {q.error}</div>}
@@ -140,12 +174,12 @@ export function ProjectOverviewPage() {
         </Panel>
       </div>
 
-      <Panel title="Breakdown" hint="largest sales first · click a row to list its projects below" right={<Toggle value={dim} options={DIMS} onChange={(v) => { setDim(v); setPick(null); }} />}>
+      <Panel title="Breakdown" hint="largest sales first · click a row to list its projects below" right={<Toggle value={dim} options={DIMS} onChange={(v) => setView({ dim: v, pick: null })} />}>
         <div className="max-h-[420px] overflow-auto">
           <table className="w-full border-collapse">
             <thead className="sticky top-0 bg-surface"><tr><Th left>{DIMS.find(([d]) => d === dim)?.[1]}</Th><Th>Projects</Th><Th>Sales</Th><Th>GP %</Th><Th>Rental</Th><Th>Rental %</Th><Th>Event costs</Th><Th>Net profit</Th><Th left> </Th><Th>NP %</Th></tr></thead>
             <tbody>{groups.map((g) => (
-              <tr key={g.key} onClick={() => setPick(pick === g.key ? null : g.key)} className={cn("cursor-pointer hover:bg-surface-2/50", pick === g.key && "bg-primary-soft/50")}>
+              <tr key={g.key} onClick={() => setView({ pick: pick === g.key ? null : g.key })} className={cn("cursor-pointer hover:bg-surface-2/50", pick === g.key && "bg-primary-soft/50")}>
                 <Td left className="max-w-[220px] truncate">{g.key}</Td><Td>{g.projects}</Td><Td>{money(g.sales)}</Td><Td>{pctTxt(pctOf(g.gp, g.sales))}</Td><Td>{money(g.rental)}</Td><Td className="text-ink-secondary">{pctTxt(pctOf(g.rental, g.sales))}</Td><Td>{money(g.rental + g.otherCost)}</Td>
                 <Td className={g.np < 0 ? "font-semibold text-err" : "font-semibold text-synced"}>{money(g.np)}</Td>
                 <Td left className="w-[18%]"><div className="h-2 rounded-full bg-surface-2"><div className="h-2 rounded-full" style={{ width: `${(Math.abs(g.np) / npMax) * 100}%`, background: g.np < 0 ? TONE.bad : TONE.good }} /></div></Td>
@@ -157,35 +191,70 @@ export function ProjectOverviewPage() {
         </div>
       </Panel>
 
-      <Panel title={`Projects${pick ? ` · ${pick}` : ""}`} hint={`${listed.length} projects · click one to open it`}
+      <Panel title={`Projects${pick ? ` · ${pick}` : ""}`} hint={`${listed.length} projects · amounts in RM · click one to open it`}
         right={<span className="flex items-center gap-2">
-          {pick && <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setPick(null)}>Show all</button>}
+          {pick && <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setView({ pick: null })}>Show all</button>}
           <Toggle value={sort} options={[["start", "Newest"], ["sales", "Sales"], ["np", "Net profit"], ["npPct", "NP %"]]} onChange={setSort} />
         </span>}>
-        <div className="max-h-[560px] overflow-auto">
-          <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-surface"><tr><Th left>Project</Th><Th left>Dates</Th><Th>Sales</Th><Th>Service</Th><Th>COGS</Th><Th>GP</Th><Th>GP %</Th><Th>Rental</Th><Th>Setup</Th><Th>Transport</Th><Th>Commission</Th><Th>Merchandise</Th><Th>Others</Th><Th>Net profit</Th><Th>NP %</Th><Th>Collected</Th><Th>Collected %</Th><Th left>Sales Orders daily?</Th></tr></thead>
+        {/* Every cost kept (owner 2026-10-21: 「还是需要每个费用的明细」), made
+            readable: the name on two lines, the columns in groups, amounts
+            without "RM" and a dash for nothing, the header and the project
+            column fixed while the table scrolls. */}
+        <div ref={tableRef} className="max-h-[560px] overflow-auto">
+          <table className="w-full border-separate border-spacing-0">
+            <thead className="sticky top-0 z-20 bg-surface">
+              <tr>
+                <th className={cn(GROUP, "sticky left-0 z-30 bg-surface")} />
+                <th colSpan={2} className={cn(GROUP, SEP)}>Sales</th>
+                <th colSpan={3} className={cn(GROUP, SEP)}>Gross profit</th>
+                <th colSpan={6} className={cn(GROUP, SEP)}>Event costs</th>
+                <th colSpan={2} className={cn(GROUP, SEP)}>Result</th>
+                <th colSpan={2} className={cn(GROUP, SEP)}>Collected</th>
+                <th className={cn(GROUP, SEP)} />
+              </tr>
+              <tr>
+                <th className={cn(TH, "sticky left-0 z-30 bg-surface text-left")}>Project</th>
+                <th className={cn(TH, SEP)}>Sales</th><th className={TH}>Service</th>
+                <th className={cn(TH, SEP)}>COGS</th><th className={TH}>GP</th><th className={TH}>GP %</th>
+                <th className={cn(TH, SEP)}>Rental</th><th className={TH}>Setup</th><th className={TH}>Transport</th><th className={TH}>Commission</th><th className={TH}>Merchandise</th><th className={TH}>Others</th>
+                <th className={cn(TH, SEP)}>Net profit</th><th className={TH}>NP %</th>
+                <th className={cn(TH, SEP)}>Amount</th><th className={TH}>%</th>
+                <th className={cn(TH, SEP, "text-left")}>Sales Orders daily?</th>
+              </tr>
+            </thead>
             <tbody>
-              {listed.map(({ p, f }) => (
-                <tr key={p.id} onClick={() => navigate(`/projects/${p.id}`)} className="cursor-pointer hover:bg-surface-2/50">
-                  <Td left className="max-w-[320px] !whitespace-normal break-words align-top"><span className="text-primary" title={p.name}>{p.name}</span><span className="ml-1.5 text-[10.5px] text-ink-muted">{p.eventType ?? ""}</span></Td>
-                  <Td left className="text-ink-muted">{p.startDate?.slice(5) ?? "—"}{p.endDate && p.endDate !== p.startDate ? ` – ${p.endDate.slice(5)}` : ""}</Td>
-                  <Td>{money(f.sales)}</Td><Td className="text-ink-secondary">{money(f.serviceRevenue)}</Td><Td>{money(f.cogs)}</Td><Td>{money(f.gp)}</Td><Td className="text-ink-secondary">{pctTxt(pctOf(f.gp, f.sales))}</Td>
-                  <Td>{money(f.rental)}</Td><Td>{money(f.setup)}</Td><Td>{money(f.transport)}</Td><Td>{money(f.commission)}</Td><Td>{money(f.merchandise)}</Td><Td>{money(f.other)}</Td>
-                  <Td className={f.np < 0 ? "font-semibold text-err" : "font-semibold"}>{money(f.np)}</Td><Td>{pctTxt(pctOf(f.np, f.sales))}</Td>
-                  <Td><span title={`paid ${money(p.collection.paidSen / 100)} of ${money(p.collection.totalSen / 100)} ordered`}>{money(p.collection.paidSen / 100)}</span></Td>
-                  <Td className={p.collection.totalSen > 0 && p.collection.paidSen < p.collection.totalSen * 0.5 ? "text-err" : "text-ink-secondary"}>{pctTxt(pctOf(p.collection.paidSen, p.collection.totalSen))}</Td>
-                  <Td left><Daily r={p.chatReport} /></Td>
-                </tr>
-              ))}
-              {listed.length === 0 && <tr><Td left className="text-ink-muted">No projects in this period.</Td></tr>}
+              {listed.map(({ p, f }) => {
+                const { title, detail } = projectLines(p);
+                const amount = (v: number, extra?: string) => (
+                  <td className={cn(TD, Math.abs(v) < 0.005 && "text-ink-muted", extra)}>{tableAmount(v)}</td>
+                );
+                return (
+                  <tr key={p.id} onClick={() => openProject(p.id)} className="group cursor-pointer hover:bg-surface-2/50">
+                    <td className={cn(TD, "sticky left-0 z-10 min-w-[240px] max-w-[300px] whitespace-normal bg-surface text-left align-top group-hover:bg-surface-2")}>
+                      <div className="font-semibold text-primary" title={p.name}>
+                        {title}{p.eventType && <span className="ml-1.5 text-[10.5px] font-normal text-ink-muted">{p.eventType}</span>}
+                      </div>
+                      <div className="mt-0.5 text-[11px] leading-snug text-ink-muted">{detail}</div>
+                    </td>
+                    {amount(f.sales, SEP)}{amount(f.serviceRevenue)}
+                    {amount(f.cogs, SEP)}{amount(f.gp)}<td className={cn(TD, "text-ink-secondary")}>{pctTxt(pctOf(f.gp, f.sales))}</td>
+                    {amount(f.rental, SEP)}{amount(f.setup)}{amount(f.transport)}{amount(f.commission)}{amount(f.merchandise)}{amount(f.other)}
+                    <td className={cn(TD, SEP, "font-semibold", f.np < 0 && "text-err")}>{tableAmount(f.np)}</td>
+                    <td className={cn(TD, f.np < 0 ? "text-err" : "text-ink-secondary")}>{pctTxt(pctOf(f.np, f.sales))}</td>
+                    <td className={cn(TD, SEP)}><span title={`paid ${money(p.collection.paidSen / 100)} of ${money(p.collection.totalSen / 100)} ordered`}>{tableAmount(p.collection.paidSen / 100)}</span></td>
+                    <td className={cn(TD, p.collection.totalSen > 0 && p.collection.paidSen < p.collection.totalSen * 0.5 ? "text-err" : "text-ink-secondary")}>{pctTxt(pctOf(p.collection.paidSen, p.collection.totalSen))}</td>
+                    <td className={cn(TD, SEP, "text-left")}><Daily r={p.chatReport} /></td>
+                  </tr>
+                );
+              })}
+              {listed.length === 0 && <tr><td colSpan={17} className={cn(TD, "text-left text-ink-muted")}>No projects in this period.</td></tr>}
             </tbody>
           </table>
         </div>
       </Panel>
 
-      <ProjectStuckPanel onOpen={(id) => navigate(`/projects/${id}`)} />
-      <ProjectDataGapsPanel onOpen={(id) => navigate(`/projects/${id}`)} />
+      <ProjectStuckPanel onOpen={openProject} />
+      <ProjectDataGapsPanel onOpen={openProject} />
     </div>
   );
 }
