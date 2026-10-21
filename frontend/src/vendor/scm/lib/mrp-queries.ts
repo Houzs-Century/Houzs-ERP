@@ -39,6 +39,10 @@ export type MrpLine = {
      NULL on stock / shortage lines. */
   poSupplierId: string | null;
   poSupplierName: string | null;
+  /* HC-0128 — supplier the line's content routes to (Hydraulic / NB fabric ->
+     NB FURNITURE), pre-selected over the SKU's main. Absent on a snapshot
+     stored before the field existed. */
+  ruleSupplierId?: string | null;
   /* Sofa only — the batch (= PO number) the whole set is planned from. */
   batchNo?: string | null;
 };

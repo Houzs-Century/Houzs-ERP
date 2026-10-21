@@ -1512,7 +1512,11 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     // clean-able ones himself with 'done' (they never reach here); the purchaser
     // then closes a replace with 'done'. Timeline-gated to events that ended
     // within the last 30 days so the historical backlog does not flood the lane.
-    // One bind (defectSince).
+    // The defect ITEM must still be open: once it is ticked done/na the
+    // purchaser is finished, so the project leaves this lane even though the
+    // attachment's last action stays 'replace' on record (owner 2026-10-21 —
+    // Sim saw two done HOMEDEC events linger here, chip falling back to a
+    // BD/owner section). One bind (defectSince).
     const defectSince = (() => {
       const d = new Date(`${dueToday}T00:00:00Z`);
       d.setUTCDate(d.getUTCDate() - 30);
@@ -1524,6 +1528,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                 JOIN project_checklist_attachments da
                   ON da.item_id = dl.id AND da.archived_at IS NULL
                 WHERE dl.project_id = p.id
+                  AND dl.status NOT IN ('done', 'na')
                   AND (dl.title LIKE 'Defect List%' OR dl.title LIKE 'Defect Item%')
                   AND COALESCE((SELECT act.status
                                   FROM project_checklist_attachment_actions act

@@ -555,7 +555,7 @@ export const NAV_TABS: NavTab[] = [
           // Product request (owner 2026-10-06): what a Purchase Consignment Order
           // is raised from. The office / Purchaser path; a rep reaches it via the
           // rep-only leaf above. Either flat key shows it too, like PO Amendments.
-          { to: "/scm/product-requests", label: "Product Request", icon: Sofa, anyPerm: ["*", "scm.access", "scm.product_request.create", "scm.product_request.approve"], anyAccess: ["scm.consignment.po_orders", "scm.procurement.po", "scm.procurement.products"], hideForSales: true },
+          { to: "/scm/product-requests", label: "Product Request", icon: Sofa, anyPerm: ["*", "scm.access", "scm.product_request.create", "scm.product_request.approve"], anyAccess: ["scm.consignment.po_orders", "scm.procurement.po", "scm.procurement.products"], hideForSales: true, badge: "product-request-approvals" },
           { to: "/scm/purchase-consignment-receives", label: "Purchase Consignment Receive", icon: PackageOpen, anyPerm: ["*", "scm.access"], anyAccess: ["scm.consignment.po_receives"] },
           { to: "/scm/purchase-consignment-returns", label: "Purchase Consignment Return", icon: Reply, anyPerm: ["*", "scm.access"], anyAccess: ["scm.consignment.po_returns"] },
         ],
@@ -593,6 +593,11 @@ export const NAV_TABS: NavTab[] = [
           // Daily dispatch flow — the pages used every day, in workflow order.
           { to: "/scm/logistic-overview", label: "Logistic Overview", icon: LayoutDashboard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.overview"], hideForSalesRep: true },
           { to: "/scm/delivery-planning", label: "Delivery Planning", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.planning"], hideForSalesRep: true },
+          // "Last Mile Delivery (Driver)" (added on main) is the driver-facing view of
+          // the same last-mile delivery, so it shares scm.transportation.last_mile with
+          // the office "Last Mile Delivery" (/scm/fleet-day) below. Zero-change on deploy
+          // (last_mile inherits drivers), and the two last-mile views toggle together.
+          { to: "/scm/delivery-planning-driver", label: "Last Mile Delivery (Driver)", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.last_mile"], hideForSalesRep: true },
           { to: "/scm/dp-orders", label: "DP Orders", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.dp_orders"], hideForSalesRep: true },
           // Delivery Date / Time Arrangement menu entries removed (owner 2026-10-20):
           // all date/time/crew arranging now happens inline on Delivery Planning,

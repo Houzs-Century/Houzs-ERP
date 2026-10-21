@@ -293,8 +293,9 @@ describe('resolvePoSoCoveragePerSkuForPos — the answer, the cost and the overl
       delivery_order_items: 3,
       delivery_orders: 2,                 // DO-lock headers + MRP committed shipments
       delivery_return_items: 1,
+      fabric_trackings: 1,                // HC-0128 NB-series fabric codes (NB FURNITURE routing), issued in the MRP read wave so it adds no wait
     });
-    expect(db.totalReads()).toBe(30); // +1: the per-supplier lead override, loaded beside the base
+    expect(db.totalReads()).toBe(31); // +1: the per-supplier lead override, loaded beside the base; +1: HC-0128 NB fabric codes
   });
 
   it('has the delivered ledger and the MRP engine in flight before the stored-origin chain validates its SOs', async () => {
