@@ -164,24 +164,27 @@ export async function resolveCreditorForCase(
   caseId: number,
   itemCode: string | null | undefined,
   opts: { force?: boolean } = {}
-): Promise<string | null> {
-  if (!itemCode) return null;
+): Promise<{ code: string | null; soMissing: boolean }> {
+  if (!itemCode) return { code: null, soMissing: false };
 
   const existing = await env.DB.prepare(
     `SELECT * FROM assr_cases WHERE id = ? LIMIT 1` // company_id is absent from the D1 test schema
   )
     .bind(caseId)
     .first<{ creditor_code: string | null; creditor_source: string | null; doc_no: string | null; company_id?: number | string | null }>();
-  if (!existing) return null; // case was deleted
+  if (!existing) return { code: null, soMissing: false }; // case was deleted
   if (existing.creditor_source === "manual" && !opts.force) {
-    return existing.creditor_code;
+    return { code: existing.creditor_code, soMissing: false };
   }
 
   // HC-0130 (Farra's rule): the item's PO supplier, else the SO item's bound
   // supplier, else blank for Service Team. AutoCount's MainSupplier is not used.
+  // An SO that is not in the ERP (old AutoCount-only orders) keeps whatever the
+  // case has: there is nothing to resolve from, so blanking it would lose data.
   const fromOrder = isSupabaseConfigured(env)
     ? await orderSupplierCode(getSupabaseService(env), existing.doc_no, itemCode, Number(existing.company_id))
     : null;
+  if (fromOrder === "so-missing") return { code: existing.creditor_code, soMissing: true };
   const creditorCode: string | null = fromOrder?.code ?? null;
   const source: string | null = fromOrder?.source ?? null;
 
@@ -189,7 +192,7 @@ export async function resolveCreditorForCase(
   // Same value AND same owner (po/so/blank) → nothing to do. When force
   // re-resolves a manual row to the same code, still fall through so
   // ownership flips back to po/so.
-  if (same && existing.creditor_source === source) return creditorCode;
+  if (same && existing.creditor_source === source) return { code: creditorCode, soMissing: false };
 
   await env.DB.prepare(
     `UPDATE assr_cases SET creditor_code = ?, creditor_source = ?, updated_at = datetime('now') WHERE id = ?`
@@ -218,7 +221,7 @@ export async function resolveCreditorForCase(
       });
   }
 
-  return creditorCode;
+  return { code: creditorCode, soMissing: false };
 }
 
 export interface RefreshResult {
