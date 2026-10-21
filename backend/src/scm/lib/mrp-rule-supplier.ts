@@ -29,10 +29,11 @@ const specialText = (s: unknown): string => {
 
 /* Hydraulic is matched in the picked specials AND the free-text add-on note:
    Sim's own example (HC-SO-2610-161) only says "with hydraulic" in
-   extraAddonNote. `special` / `specialsRecorded` are the legacy and AutoCount
-   forms of the same pick. */
+   extraAddonNote. `special` is the legacy key. The AutoCount-recorded specials
+   key is left out on purpose: a guard test keeps it to display surfaces, and a
+   supplier pick decides the PO's price. */
 const hasHydraulic = (v: Record<string, unknown>): boolean => {
-  for (const key of ['specials', 'special', 'specialsRecorded']) {
+  for (const key of ['specials', 'special']) {
     const arr = v[key];
     if (Array.isArray(arr) && arr.some((s) => HYDRAULIC.test(specialText(s)))) return true;
     if (typeof arr === 'string' && HYDRAULIC.test(arr)) return true;

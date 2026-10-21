@@ -579,6 +579,13 @@ export async function computeMrp(
   /* The category walk (section 2), the two warehouse masters (section 2) and the
      stock + PO-supply reads (sections 3 and 4). Each is byte-identical to the
      query that stood at its own site; only the moment it is ISSUED moved. */
+  /* HC-0128 — the NB-series fabric codes (NB FURNITURE routing). Keyed off
+     nothing but the company, so it rides this wave instead of adding a round
+     trip after the bindings. */
+  const nbFabricsProm = eager(Promise.resolve(scoped(sb
+    .from('fabric_trackings')
+    .select('fabric_code')
+    .eq('series', NB_FABRIC_SERIES))));
   const catRowsProm = eager(paginateAll<{ category: string | null }>((from, to) =>
     scoped(sb.from('mfg_products').select('category')).order('id').range(from, to)));
   const balancesProm = eager(paginateAll<BalanceRow>((from, to) => {
@@ -1141,10 +1148,7 @@ export async function computeMrp(
      silently send NB lines to the main supplier. */
   const nbFabricCodes = new Set<string>();
   {
-    const { data: nbFabrics, error: nbErr } = await scoped(sb
-      .from('fabric_trackings')
-      .select('fabric_code')
-      .eq('series', NB_FABRIC_SERIES));
+    const { data: nbFabrics, error: nbErr } = (await nbFabricsProm)();
     if (nbErr) throw new Error(`mrp_load_failed: ${nbErr.message}`);
     for (const f of (nbFabrics ?? []) as Array<{ fabric_code: string | null }>) {
       if (f.fabric_code) nbFabricCodes.add(f.fabric_code.trim().toUpperCase());
