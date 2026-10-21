@@ -926,11 +926,11 @@ app.post("/:id/resolve-creditor", requirePermission("service_cases.manage"), asy
       creditor_code: creditorCode,
       message: creditorCode
         ? `Resolved ${row.item_code} → ${creditorCode}`
-        : `${row.item_code} has no supplier on its PO or in AutoCount`,
+        : `${row.item_code} has no supplier on its PO or SO — pick one by hand`,
     });
   } catch {
     // Plain-language rule: never surface raw exception text to the user.
-    return c.json({ error: "Couldn't reach AutoCount to resolve the supplier. Try again shortly." }, 502);
+    return c.json({ error: "Couldn't look up the supplier. Try again shortly." }, 502);
   }
 });
 

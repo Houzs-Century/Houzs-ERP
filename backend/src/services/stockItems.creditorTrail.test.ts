@@ -2,7 +2,14 @@
 // created_by column that assr_activity does not have, so every insert failed
 // and was swallowed: no case showed when or from where its supplier came. The
 // fake DB refuses an assr_activity column the real table lacks.
-import { describe, expect, test } from 'vitest';
+// Farra's rule: PO, else SO supplier, else blank — AutoCount's MainSupplier is
+// never used, even when the stock_items cache has one.
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+
+const order = vi.hoisted(() => ({ result: null as { code: string; source: 'po' | 'so' } | null }));
+vi.mock('../db/supabase', () => ({ isSupabaseConfigured: () => true, getSupabaseService: () => ({}) }));
+vi.mock('./assrOrderPos', () => ({ orderSupplierCode: async () => order.result }));
+
 import { resolveCreditorForCase } from './stockItems';
 import type { Env } from '../types';
 
@@ -11,9 +18,10 @@ const ACTIVITY_COLS = new Set([
   'stage_elapsed_days', 'stage_target_days', 'source_channel', 'references_entry_id', 'is_correction',
 ]);
 
-function fakeEnv(inserted: Array<unknown[]>) {
+function fakeEnv(inserted: Array<unknown[]>, sqls: string[]) {
   const DB = {
     prepare(sql: string) {
+      sqls.push(sql);
       let args: unknown[] = [];
       const stmt = {
         bind(...a: unknown[]) { args = a; return stmt; },
@@ -38,10 +46,21 @@ function fakeEnv(inserted: Array<unknown[]>) {
   return { DB } as unknown as Env;
 }
 
-describe('resolveCreditorForCase activity trail', () => {
+describe('resolveCreditorForCase', () => {
+  beforeEach(() => { order.result = null; });
+
   test('writes a creditor_resolved row the real assr_activity table accepts', async () => {
+    order.result = { code: '400-H003', source: 'so' };
     const inserted: Array<unknown[]> = [];
-    expect(await resolveCreditorForCase(fakeEnv(inserted), 5, 'MAT-1')).toBe('400-D002');
-    expect(inserted).toEqual([[5, null, '400-D002', 'Auto-resolved from item MAT-1']]);
+    expect(await resolveCreditorForCase(fakeEnv(inserted, []), 5, 'MAT-1')).toBe('400-H003');
+    expect(inserted).toEqual([[5, null, '400-H003', 'Auto-resolved from the SO supplier of item MAT-1']]);
+  });
+
+  test('no PO or SO supplier leaves it blank and never reads AutoCount', async () => {
+    const inserted: Array<unknown[]> = [];
+    const sqls: string[] = [];
+    expect(await resolveCreditorForCase(fakeEnv(inserted, sqls), 5, 'MAT-1')).toBeNull();
+    expect(sqls.some((s) => s.includes('stock_items'))).toBe(false);
+    expect(inserted).toEqual([]);
   });
 });

@@ -13,8 +13,8 @@ import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
  * and rely on the refresh endpoint (or the nightly cron if we add one)
  * to keep it fresh.
  *
- * `resolveCreditorForCase` is the glue that writes `creditor_code` onto
- * a case row using the cached item's `main_supplier`.
+ * `resolveCreditorForCase` writes `creditor_code` onto a case from its
+ * PO / SO supplier (HC-0130); it no longer reads `main_supplier`.
  */
 
 export interface StockItemRow {
@@ -154,13 +154,10 @@ export async function getStockItemCached(
  * must not block case creation) and from `patchAssrCase` when the
  * item_code changes.
  *
- * Manual picks win: a case with creditor_source='manual' (staff chose
- * the supplier because AutoCount has no MainSupplier) is left alone —
- * the check runs before the AutoCount lookup so manual rows cost
- * nothing. HC-0130: the supplier on the item's PO comes first (source
- * 'po'), then the SO item's bound supplier ('so'), AutoCount the
- * fallback. "Resolve now" passes force=true to hand
- * the link back to the auto path.
+ * Manual picks win: a case with creditor_source='manual' is left alone.
+ * HC-0130: PO supplier ('po'), else the SO item's bound supplier ('so'),
+ * else blank. "Resolve now" passes force=true to hand the link back to
+ * the auto path.
  */
 export async function resolveCreditorForCase(
   env: Env,
@@ -180,30 +177,18 @@ export async function resolveCreditorForCase(
     return existing.creditor_code;
   }
 
-  // HC-0130: the supplier on the item's own PO wins, then the supplier the
-  // SO item is bound to; AutoCount's MainSupplier is the last fallback.
+  // HC-0130 (Farra's rule): the item's PO supplier, else the SO item's bound
+  // supplier, else blank for Service Team. AutoCount's MainSupplier is not used.
   const fromOrder = isSupabaseConfigured(env)
     ? await orderSupplierCode(getSupabaseService(env), existing.doc_no, itemCode, Number(existing.company_id))
     : null;
-  let creditorCode: string | null = fromOrder?.code ?? null;
-  const source = fromOrder?.source ?? "auto";
-  if (!creditorCode) {
-    try {
-      const item = await getStockItemCached(env, itemCode);
-      creditorCode = item?.main_supplier ?? null;
-    } catch (e: any) {
-      console.warn(
-        `[resolveCreditorForCase] case=${caseId} item=${itemCode} lookup failed:`,
-        e?.message || e
-      );
-      return null;
-    }
-  }
+  const creditorCode: string | null = fromOrder?.code ?? null;
+  const source: string | null = fromOrder?.source ?? null;
 
   const same = (existing.creditor_code ?? null) === (creditorCode ?? null);
-  // Same value AND same owner (po/auto) → nothing to do. When force
+  // Same value AND same owner (po/so/blank) → nothing to do. When force
   // re-resolves a manual row to the same code, still fall through so
-  // ownership flips back to po/auto.
+  // ownership flips back to po/so.
   if (same && existing.creditor_source === source) return creditorCode;
 
   await env.DB.prepare(
@@ -224,7 +209,7 @@ export async function resolveCreditorForCase(
         creditorCode,
         source === "po" ? `Auto-resolved from the PO of item ${itemCode}`
           : source === "so" ? `Auto-resolved from the SO supplier of item ${itemCode}`
-          : `Auto-resolved from item ${itemCode}`
+          : `No PO or SO supplier found for item ${itemCode}`
       )
       .run()
       .catch((e: any) => {

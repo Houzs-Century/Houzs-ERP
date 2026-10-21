@@ -3141,7 +3141,7 @@ function MobileItemRemark({ c, it, busy, onChanged, notify, field, placeholder }
 }
 
 // Supplier (creditor) picker — search the local creditors mirror and
-// hand-link a supplier when AutoCount has no MainSupplier, or register
+// hand-link a supplier when the PO / SO gives none, or register
 // a new one. Manual picks set creditor_source='manual' so the
 // auto-resolver won't overwrite them.
 function MobileSupplierPick({ c, onChanged, notify, disabled }: { c: Any; onChanged: () => void; notify: ReturnType<typeof useNotify>; disabled?: boolean }) {
