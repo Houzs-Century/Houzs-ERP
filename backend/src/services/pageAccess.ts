@@ -530,6 +530,83 @@ export const PAGES: PageDef[] = [
     supportsPartial: true,
     backfill: (p) => (isOwner(p) ? "full" : "none"),
   },
+  // ── Finance sub-pages (owner 2026-10-20: "全部拆开" — one switch per finance
+  //    group, so a role can be given 收款 but not 付款). The owner's seven groups
+  //    map to the Finance nav groups: Money in / Money out / Bank & cards / Books /
+  //    Reports / Forecasting / Setup.
+  //
+  //    PARENT IS scm.finance.accounting, NOT scm.finance — ON PURPOSE. Prod
+  //    (anogrigyjbduyzclzjgn, 2026-10-20) holds only three finance shapes across
+  //    24 roles: finance=full/accounting=full (4 roles), finance=full/accounting=
+  //    VIEW (7 roles: Logistic/BD/Ops/Purchaser/IT Admin/HR/Logistic Admin — they
+  //    may SEE the books but not post), and all-none (13). Parenting these on
+  //    scm.finance would make the 7 view-roles inherit full and silently gain
+  //    money-write — the exact over-grant the money-safety rule forbids. Parenting
+  //    on scm.finance.accounting makes each new key inherit the role's EXACT
+  //    accounting level (view stays view), so the split is byte-identical on day
+  //    one. A one-shot backfill migration writes the same value as an explicit row
+  //    per role (so the role matrix, which replace-sets every row, does not
+  //    re-persist a new key as none on the owner's next save). backfill stays
+  //    owner-only, matching the other scm.* keys (the role matrix drives these,
+  //    never the permission backfill). financeSubpageSplit.test.ts pins the
+  //    zero-change: every new key resolves == scm.finance.accounting for every
+  //    prod cohort, view-roles included.
+  {
+    key: "scm.finance.money_in",
+    parent: "scm.finance.accounting",
+    label: "Money in (receipts, debtors, CN/DN)",
+    partialMeaning: "View money-in documents; edit to post them.",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.finance.money_out",
+    parent: "scm.finance.accounting",
+    label: "Money out (vouchers, AP, suppliers)",
+    partialMeaning: "View money-out documents; edit to post them.",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.finance.bank",
+    parent: "scm.finance.accounting",
+    label: "Bank & cards",
+    partialMeaning: "View daily bank + reconciliations; edit to reconcile.",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.finance.books",
+    parent: "scm.finance.accounting",
+    label: "Books (JE / GL / trial balance / month-end)",
+    partialMeaning: "View the ledger; edit to post entries.",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.finance.reports",
+    parent: "scm.finance.accounting",
+    label: "Reports (P&L / aging / collection / …)",
+    partialMeaning: "(not used; full or none)",
+    supportsPartial: false,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.finance.forecast",
+    parent: "scm.finance.accounting",
+    label: "Forecasting (Forecast P&L + Dashboard)",
+    partialMeaning: "View the forecast; edit to set targets.",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.finance.setup",
+    parent: "scm.finance.accounting",
+    label: "Setup (chart of accounts / item groups / recon)",
+    partialMeaning: "View the finance setup; edit to change it.",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
 
   // ── System Health (infra health + org-wide audit trail) ─────
   // High-privilege admin page (was Owner-only). Now configurable per position

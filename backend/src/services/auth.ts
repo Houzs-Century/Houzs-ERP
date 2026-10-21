@@ -149,7 +149,13 @@ export const REMEMBER_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year, rolling
  * every member on deploy; a role with no rows still resolves to its previous
  * page access (memberPageAccess.ts fallback), so the rebuild changes nothing
  * until the seed runs. */
-export const AUTHZ_ENVELOPE_VERSION = 6;
+/* v7 (2026-10-20): the Finance area splits into per-group page keys
+ * (scm.finance.money_in / .money_out / .bank / .books / .reports / .forecast /
+ * .setup — children of scm.finance.accounting). Each hydrated session's
+ * page_access map gains those keys, so the bump rebuilds each cached v6 session
+ * once to pick them up. The keys inherit their parent's resolved level, so the
+ * rebuild changes no one's access (financeSubpageSplit.test.ts). */
+export const AUTHZ_ENVELOPE_VERSION = 7;
 
 /* Session ORIGIN (mig 0120) — the DOOR a session was minted at. It is NOT a
    property of the person: the same salesperson simultaneously holds a 'pos'
