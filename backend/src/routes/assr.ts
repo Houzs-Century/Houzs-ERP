@@ -2544,6 +2544,8 @@ const DRILL_METRICS = new Set([
   "opening_count",
   "customer_cases",
   "item_cases",
+  "category_cases",
+  "resolution_cases",
 ] as const);
 
 app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => {
@@ -2658,6 +2660,24 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
     }
   }
 
+  /* The cases behind one slice of the Issue Categories / Resolution Method
+     donuts (owner 2026-10-20: click a category, the cases show below). Same
+     window and grouping as the donut queries: a blank category reads "Other"
+     (matched case-insensitively, as the page merges labels), a blank method
+     is "unset". */
+  if (metric === "category_cases") {
+    const cat = (c.req.query("category") || "").trim();
+    if (!cat) return c.json({ error: "Please choose a category." }, 400);
+    conds.push(`LOWER(TRIM(COALESCE(c.issue_category, 'Other'))) = LOWER(?) AND ${win.sql("COALESCE(c.complained_date, c.created_at)")}`);
+    binds.push(cat);
+  }
+  if (metric === "resolution_cases") {
+    const method = (c.req.query("method") || "").trim();
+    if (!method) return c.json({ error: "Please choose a resolution method." }, 400);
+    conds.push(`COALESCE(c.resolution_method, 'unset') = ? AND ${win.sql("COALESCE(c.complained_date, c.created_at)")}`);
+    binds.push(method);
+  }
+
   const fromClause = joinItems
     ? "FROM assr_cases c LEFT JOIN creditors cr ON cr.creditor_code = c.creditor_code JOIN assr_items i ON i.assr_id = c.id"
     : "FROM assr_cases c LEFT JOIN creditors cr ON cr.creditor_code = c.creditor_code";
@@ -2673,7 +2693,7 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
 
   const rows = await c.env.DB.prepare(
     `SELECT ${distinct} c.id, c.assr_no, c.customer_name, c.stage, c.priority,
-            c.complained_date, c.deadline_at, c.issue_category,
+            c.complained_date, c.deadline_at, c.issue_category, c.complaint_issue, c.resolution_method,
             c.creditor_code,
             cr.company_name AS creditor_name,
             (julianday('now') - julianday(c.complained_date)) AS age_days,

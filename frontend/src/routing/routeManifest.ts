@@ -113,6 +113,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/logistic-overview",
   "/scm/procurement-overview",
   "/scm/delivery-planning",
+  "/scm/delivery-planning-driver",
   "/scm/dp-orders",
   "/scm/trips",
   "/scm/delivery-planning-regions",

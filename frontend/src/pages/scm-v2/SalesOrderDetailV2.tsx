@@ -860,6 +860,8 @@ function SalesOrderDetailV2ReadOnly() {
     onNodeClick: onChainNodeClick,
     amendments: chainAmendments,
     onAmendmentClick: onChainAmendmentClick,
+    returns: chainReturns,
+    onReturnClick: onChainReturnClick,
     pairing: chainPairing,
     choice: chainChoice,
     closeChoice: closeChainChoice,
@@ -1772,6 +1774,10 @@ function SalesOrderDetailV2ReadOnly() {
         amendments={chainAmendments}
         onAmendmentClick={(a) => {
           if (onChainAmendmentClick(a)) setRelMapOpen(false);
+        }}
+        returns={chainReturns}
+        onReturnClick={(r) => {
+          if (onChainReturnClick(r)) setRelMapOpen(false);
         }}
         pairing={chainPairing}
       />
