@@ -589,9 +589,12 @@ async function runSoStockAllocation(
         itemCode: l.item_code,
         category: serviceCodes.has(l.item_code) ? 'SERVICE' : null,
       })) continue;
-      const delivered = deliveredBySoItem.get(l.id) ?? 0;
-      const returned = returnedBySoItem.get(l.id) ?? 0;
-      const remaining = Number(l.qty ?? 0) - delivered + returned;
+      /* Returned units are NOT owed again (Sim, 2026-10-20, 2990-0011): a
+         customer-rejected return goes back to stock for the next matching
+         order, and a customer who still wants the item gets a new SO. Netting
+         the return back in handed 2990-DR-2610-001's set straight back to
+         2990-SO-2606-001. */
+      const remaining = Number(l.qty ?? 0) - (deliveredBySoItem.get(l.id) ?? 0);
       if (remaining <= 0) continue;
       const variant_key = computeVariantKey(l.item_group ?? null, l.variants ?? null);
       const whId = l.warehouse_id ?? null;

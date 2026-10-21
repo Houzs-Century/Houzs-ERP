@@ -765,6 +765,7 @@ export const SalesOrderDetail = () => {
     onNodeClick: onChainNodeClick,
     amendments: chainAmendments,
     onAmendmentClick: onChainAmendmentClick,
+    returns: chainReturns, onReturnClick: onChainReturnClick,
     pairing: chainPairing,
     choice: chainChoice,
     closeChoice: closeChainChoice,
@@ -2678,6 +2679,7 @@ export const SalesOrderDetail = () => {
         onAmendmentClick={(a) => {
           if (onChainAmendmentClick(a)) setRelMapOpen(false);
         }}
+        returns={chainReturns} onReturnClick={(r) => { if (onChainReturnClick(r)) setRelMapOpen(false); }}
         pairing={chainPairing}
       />
       {/* A chain slot standing for several documents opens this chooser instead

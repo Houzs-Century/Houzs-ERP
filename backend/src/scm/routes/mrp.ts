@@ -685,9 +685,9 @@ export async function computeMrp(
   // A partially-delivered SO keeps its header status active (the header only
   // flips to DELIVERED once EVERY line is fully covered), so already-delivered
   // lines would otherwise phantom back in as demand and over-order. Subtract
-  // delivered-net-of-returns per line and drop any line with nothing left to
-  // fulfil. Single source of truth: soDeliverableRemaining (same query the DO
-  // convert flow uses), so MRP can never disagree with the SO's remaining.
+  // delivered per line and drop any line with nothing left to fulfil. The
+  // delivered count comes from soDeliverableRemaining (same query the DO
+  // convert flow uses); its returned count is deliberately not added back.
   //
   /* BATCHED BY THE CALLER, and the caller is the reason. Paging the demand read
      above changed this call's scale by more than an order of magnitude: MRP used
@@ -733,12 +733,13 @@ export async function computeMrp(
   for (const part of parts) {
     for (const [soItemId, d] of part) deliverable.set(soItemId, d);
   }
-  const deliveredNetOf = (soItemId: string): number => {
-    const d = deliverable.get(soItemId);
-    if (!d) return 0;
-    return Math.max(0, (d.delivered ?? 0) - (d.returned ?? 0));
-  };
-  const effQtyOf = (r: DemandRow): number => Math.max(0, r.qty - deliveredNetOf(r.id));
+  /* Delivered GROSS of returns (Sim, 2026-10-20, 2990-0011): a returned unit
+     is not demand again. The rejected goods go back to stock for the next
+     matching order; a customer who still wants the item gets a new SO, and
+     that SO is what purchasing orders against. The stock allocator applies
+     the same rule. */
+  const deliveredOf = (soItemId: string): number => Math.max(0, deliverable.get(soItemId)?.delivered ?? 0);
+  const effQtyOf = (r: DemandRow): number => Math.max(0, r.qty - deliveredOf(r.id));
   const demand = demandActive.filter((r) => effQtyOf(r) > 0);
 
   // Stamp variants.fabricSupplierCode on the demand lines (ONE batched read,
@@ -1251,7 +1252,7 @@ export async function computeMrp(
     const lines: MrpLine[] = [];
     let qtyNeeded = 0;
     for (const r of rows) {
-      const eff = effQtyOf(r);                              // qty still to fulfil (ordered − delivered + returned)
+      const eff = effQtyOf(r);                              // qty still to fulfil (ordered − delivered)
       let need = eff;
       /* BOUND LINE (company 1, bedframe / `(SP)` mattress / custom pillow). Drawn at
          STOCK, and only at stock, and the distinction is the whole design:
@@ -1535,7 +1536,7 @@ export async function computeMrp(
         ? cells.map((c) => sstr(c.moduleId)).filter(Boolean)
         : [sstr(splitSofaCode(d.item_code).sizeCode)].filter(Boolean);
       const colour = [sstr(v.fabricCode), sstr(v.colorCode) || sstr(v.colourCode)].filter(Boolean).join(' ');
-      const eff = effQtyOf(d);                        // set qty still to fulfil (ordered − delivered + returned)
+      const eff = effQtyOf(d);                        // set qty still to fulfil (ordered − delivered)
       const prod = prodByCode.get(d.item_code);
       const setDelivery = deliveryOf(d);
       const plan = sofaPlanByLine.get(d.id)
