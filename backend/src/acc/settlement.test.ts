@@ -161,6 +161,54 @@ describe('loadPaymentCandidates', () => {
   });
 });
 
+/* Owner 2026-10-21: the till keys AEON's swipes as "Pinelabs" and Public
+   Bank's as "Public"; 48 of 77 AEON lines and 74 of 110 PBB lines carried
+   their sale's code and amount and never matched. */
+describe("a merchant's other names", () => {
+  it('any of them counts as its own — and only its own', () => {
+    expect(couldBeAcquirers('merchant', 'Pinelabs', ['AEON', 'Pinelabs'])).toBe(true);
+    expect(couldBeAcquirers('installment', ' pinelabs ', ['AEON', 'Pinelabs'])).toBe(true);
+    expect(couldBeAcquirers('merchant', 'Pinelabs', ['PBB', 'Public'])).toBe(false);
+    expect(couldBeAcquirers('merchant', 'Public', 'PBB')).toBe(false); // without the other name: someone else's
+  });
+
+  it("loadPaymentCandidates finds the payment keyed under the other name, and nobody else's", async () => {
+    const sb = fakeSb({
+      mfg_sales_order_payments: [
+        { id: 'p1', so_doc_no: 'SO-1', company_id: 1, paid_at: '2026-09-05T10:00:00', amount_sen: 700000, approval_code: '090666', method: 'merchant', merchant_provider: 'Pinelabs' },
+        { id: 'p2', so_doc_no: 'SO-2', company_id: 1, paid_at: '2026-09-05T10:00:00', amount_sen: 700000, approval_code: '090667', method: 'merchant', merchant_provider: 'Public' },
+      ],
+      sales_invoice_payments: [], mfg_sales_orders: [],
+    });
+    const aeon = { display_name: 'AEON', date_tolerance_days: 7, so_names: ['Pinelabs'] };
+    const r = await loadPaymentCandidates(sb, 1, aeon, '2026-09-05', '2026-09-05', ['090666']);
+    expect(r.ok && r.payments.map((p) => [p.id, p.merchantProvider])).toEqual([['p1', 'Pinelabs']]);
+  });
+});
+
+/* PostgREST answers a read with at most 1000 rows and no error. Houzs keys
+   ~1,700 Sales Order payments in the watch list's three months, so a single read
+   stopped in late September (owner 2026-10-21: 为什么看没有10月的payment). */
+describe("past PostgREST's 1000-row ceiling", () => {
+  const many = (n: number) => Array.from({ length: n }, (_, i) => ({
+    id: `p${String(i).padStart(5, '0')}`, so_doc_no: `SO-${i}`, company_id: 1, paid_at: '2026-10-02T10:00:00',
+    amount_sen: 1000 + i, approval_code: null, method: 'merchant', merchant_provider: 'MBB',
+  }));
+
+  it('loadPaymentCandidates reads the whole window', async () => {
+    const sb = fakeSb({ mfg_sales_order_payments: many(1005), sales_invoice_payments: [], mfg_sales_orders: [] }, {}, [], [], 1000);
+    const r = await loadPaymentCandidates(sb, 1, { display_name: 'MBB', date_tolerance_days: 3 }, '2026-10-01', '2026-10-03');
+    expect(r.ok && r.payments.length).toBe(1005);
+  });
+
+  it('loadSettledKeys reads every settled payment', async () => {
+    const links = Array.from({ length: 1002 }, (_, i) => ({ id: i + 1, company_id: 1, payment_source: 'SOPAY', payment_id: `p${i}`, settlement_row_id: i + 1 }));
+    const sb = fakeSb({ acc_settlement_matches: links }, {}, [], [], 1000);
+    const r = await loadSettledKeys(sb, 1);
+    expect(r.ok && r.keys.size).toBe(1002);
+  });
+});
+
 describe('couldBeAcquirers — which recorded payment may belong to this statement', () => {
   it('answers per method and tag', () => {
     expect(couldBeAcquirers('merchant', 'MBB', 'MBB')).toBe(true);
@@ -309,6 +357,26 @@ describe('confirmSettlementRow — stamping the merchant tag on', () => {
     expect(audit).toHaveLength(1);
     expect(audit[0]).toMatchObject({ so_doc_no: 'SO-2', payment_id: 'p2', source: 'automation', note: 'Bank corrected by the MBB settlement match: PBB → MBB' });
     expect(audit[0]!.field_changes).toEqual([{ field: 'merchantProvider', from: 'PBB', to: 'MBB' }, { field: 'accountSheet', from: 'PBB', to: 'MBB' }]);
+  });
+
+  /* Owner 2026-10-21: 「Pinelabs=AEON，Public=PBB」 — a payment keyed under
+     one of the merchant's OTHER names is not the wrong bank, so nothing is
+     "corrected" and the order's history says nothing happened, because nothing
+     did. */
+  it("a payment keyed under one of the merchant's other names keeps what the till typed", async () => {
+    const sb = world({
+      acc_acquirers: [{ ...ACQUIRER, so_names: ['Maybank'] }],
+      mfg_sales_order_payments: [
+        { id: 'p1', so_doc_no: 'SO-1', company_id: 1, method: 'merchant', merchant_provider: 'Maybank', account_sheet: 'Maybank', amount_sen: 100000 },
+      ],
+    });
+    const r = await confirmSettlementRow(sb, {
+      companyId: 1, rowId: 7, matchReason: 'ref', userName: 'Ah Chew',
+      payments: [{ source: 'SOPAY', id: 'p1', docNo: 'SO-1', amountSen: 100000 }],
+    });
+    expect(r).toMatchObject({ ok: true, status: 'confirmed' });
+    expect(sb.tables.mfg_sales_order_payments[0]).toMatchObject({ merchant_provider: 'Maybank', account_sheet: 'Maybank' });
+    expect(sb.tables.mfg_so_audit_log).toHaveLength(0);
   });
 
   it('a hand-typed account sheet is kept when the bank is corrected; a right tag writes nothing', async () => {

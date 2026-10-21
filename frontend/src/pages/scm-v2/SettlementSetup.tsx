@@ -27,9 +27,9 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft } from 'lucide-react';
 import {
   useSettlementMaintenance, useSaveMaintenanceMerchant, useSaveMaintenanceBank,
-  useSaveAcquirerSetup,
+  useSaveAcquirerSetup, useRematch,
   type MaintenanceMerchant, type MaintenanceBank, type MaintenanceCompany, type MaintenanceData } from './settlement-queries';
-import { ICON, btn, softText, danger, refusalText } from './settlement-ui';
+import { ICON, btn, softText, danger, good, refusalText } from './settlement-ui';
 import { useAccounts, useAccountRoles, useSaveBankDefault } from '../../vendor/scm/lib/accounting-queries';
 import { useBankRules, useSaveBankRule, useCreateBankRule, useBankConfigs, useSaveBankConfig, type BankRule, type BankConfig } from './bank-queries';
 import { useVoucherNumbering, useSaveVoucherNumbering } from './accounting-phase1-queries';
@@ -39,6 +39,8 @@ import { PageHeader } from '../../components/Layout';
 
 export const SettlementSetup = () => {
   const [editing, setEditing] = useState<string | null>(null);
+  /* What the last merchant save did to the reports already uploaded. */
+  const [notice, setNotice] = useState<string | null>(null);
   const q = useSettlementMaintenance();
   const data = q.data;
 
@@ -47,11 +49,14 @@ export const SettlementSetup = () => {
   const banks = data?.banks ?? [];
   const open = merchants.find((m) => m.code === editing) ?? null;
 
-  if (open) return <MerchantForm merchant={open} onDone={() => setEditing(null)} />;
+  if (open) {
+    return <MerchantForm merchant={open} companies={companies} onDone={(said) => { setEditing(null); setNotice(said ?? null); }} />;
+  }
 
   return (
     <div className="space-y-4">
       <PageHeader eyebrow="Finance" title="Reconciliation setup" />
+      {notice && <div style={{ fontSize: 'var(--fs-13)', color: good }}>{notice}</div>}
 
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={softText}>
@@ -557,6 +562,7 @@ const MerchantMatrix = ({ companies, merchants, banks, clearings, feeAccounts, o
                 <td className={css.label}>
                   <div className={css.name}>{m.display_name}</div>
                   {m.code !== m.display_name && <div className={css.sub}>{m.code}</div>}
+                  {(m.so_names ?? []).length > 0 && <div className={css.sub}>also keyed as {(m.so_names ?? []).join(', ')}</div>}
                 </td>
                 {/* OUTSIDE the company columns, because it belongs to no company. */}
                 <td className={css.shared}>
@@ -736,13 +742,26 @@ const HEADING_FIELDS = [
   { key: 'net', label: 'Net heading', hint: 'e.g. Net Credited' },
 ] as const;
 
-const MerchantForm = ({ merchant, onDone }: { merchant: MaintenanceMerchant; onDone: () => void }) => {
+/** "Pinelabs, pine labs ,," → ["Pinelabs", "pine labs"] — the names as typed,
+    blanks dropped. The server trims, de-duplicates and refuses a name another
+    merchant already answers to. */
+const namesOf = (text: string): string[] => text.split(',').map((s) => s.trim()).filter(Boolean);
+
+const MerchantForm = ({ merchant, companies, onDone }: {
+  merchant: MaintenanceMerchant;
+  companies: MaintenanceCompany[];
+  /** Back to the matrix, with what the save did to the reports already uploaded. */
+  onDone: (said?: string) => void;
+}) => {
   const save = useSaveAcquirerSetup();
+  const rematch = useRematch();
+  const [matching, setMatching] = useState(false);
   const [form, setForm] = useState({
     statementFormat: merchant.statement_format ?? '',
     hasUniqueRef: merchant.has_unique_ref == null ? '' : String(merchant.has_unique_ref),
     feeMethod: merchant.fee_method ?? '',
     dateToleranceDays: String(merchant.date_tolerance_days),
+    soNames: (merchant.so_names ?? []).join(', '),
   });
   const [headings, setHeadings] = useState<Record<string, string>>(() => {
     const m = merchant.column_map ?? {};
@@ -756,6 +775,26 @@ const MerchantForm = ({ merchant, onDone }: { merchant: MaintenanceMerchant; onD
     ...(form.hasUniqueRef === 'true' ? ['ref'] : []),
   ];
 
+  /* Each company that uses this merchant, one after another — the rule is
+     shared, the reports are each company's own. */
+  const matchAgain = async () => {
+    setMatching(true);
+    const said: string[] = [];
+    for (const co of companies.filter((c) => merchant.byCompany[String(c.id)]?.enabled)) {
+      try {
+        const r = await rematch.mutateAsync({ companyId: co.id, acquirerCode: merchant.code });
+        said.push(r.lines === 0
+          ? `${co.name}: no open lines`
+          : `${co.name}: ${r.matched} line${r.matched === 1 ? '' : 's'} matched by reference, ready to confirm`
+            + (r.newlyMatched > 0 ? ` (${r.newlyMatched} new)` : ''));
+      } catch (e) {
+        said.push(`${co.name}: not matched again — ${refusalText(e, 'try saving again')}`);
+      }
+    }
+    setMatching(false);
+    onDone(`${merchant.display_name} saved.${said.length > 0 ? ` Reports matched again — ${said.join('; ')}.` : ''}`);
+  };
+
   const submit = () => {
     const missing = requiredHeadings.filter((k) => !String(headings[k] ?? '').trim());
     if (missing.length > 0) {
@@ -763,16 +802,26 @@ const MerchantForm = ({ merchant, onDone }: { merchant: MaintenanceMerchant; onD
       return;
     }
     setMapError('');
+    const soNames = namesOf(form.soNames);
+    const hasUniqueRef = form.hasUniqueRef === '' ? null : form.hasUniqueRef === 'true';
+    const dateToleranceDays = Number(form.dateToleranceDays) || 0;
+    /* What decides a match: the names, the drift, the unique reference. When
+       one of them changes, the reports already uploaded are matched again
+       under the new rule (owner 2026-10-21: 已经上传的报告也重新对一次). */
+    const ruleChanged = soNames.join('\n').toUpperCase() !== (merchant.so_names ?? []).join('\n').toUpperCase()
+      || dateToleranceDays !== merchant.date_tolerance_days
+      || hasUniqueRef !== merchant.has_unique_ref;
     save.mutate({
       code: merchant.code,
       statementFormat: form.statementFormat || null,
-      hasUniqueRef: form.hasUniqueRef === '' ? null : form.hasUniqueRef === 'true',
+      hasUniqueRef,
       feeMethod: form.feeMethod || null,
-      dateToleranceDays: Number(form.dateToleranceDays) || 0,
+      dateToleranceDays,
+      soNames,
       columnMap: Object.fromEntries(
         Object.entries(headings).map(([k, v]) => [k, String(v).trim()]).filter(([, v]) => v !== ''),
       ),
-    }, { onSuccess: onDone });
+    }, { onSuccess: () => { if (ruleChanged) void matchAgain(); else onDone(); } });
   };
 
   /* `key` matters for the heading fields below, which are rendered from a list —
@@ -795,7 +844,7 @@ const MerchantForm = ({ merchant, onDone }: { merchant: MaintenanceMerchant; onD
       <PageHeader eyebrow="Finance" title="Reconciliation setup" />
 
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <button type="button" style={btn()} onClick={onDone}><ArrowLeft {...ICON} /> All merchants</button>
+        <button type="button" style={btn()} onClick={() => onDone()}><ArrowLeft {...ICON} /> All merchants</button>
         <b>{merchant.display_name} — report layout</b>
         <span style={softText}>Taught once. Every company reads {merchant.display_name}&rsquo;s file this way.</span>
       </div>
@@ -838,6 +887,22 @@ const MerchantForm = ({ merchant, onDone }: { merchant: MaintenanceMerchant; onD
         )}
       </div>
 
+      {/* Owner 2026-10-21: 「Pinelabs=AEON，Public=PBB」 — the sales team picks
+          the terminal's or the bank's everyday name on a payment, and a sale
+          keyed that way must still be this merchant's. */}
+      <div className={css.formCard}>
+        <div style={legend}>On Sales Orders</div>
+        {field('Also keyed on Sales Orders as', (
+          <input style={input} value={form.soNames} placeholder="e.g. Pinelabs"
+            aria-label={`${merchant.code} also keyed as`}
+            onChange={(e) => setForm({ ...form, soNames: e.target.value })} />
+        ))}
+        <span style={softText}>
+          The names the sales team picks for {merchant.display_name} on a payment, separated by commas. A payment keyed
+          under one of them counts as {merchant.display_name}&rsquo;s. Saving matches the reports already uploaded again.
+        </span>
+      </div>
+
       <div className={css.formCard}>
         <div style={legend}>Column headings, exactly as they appear in the file</div>
         <div className={css.formRow5}>
@@ -858,10 +923,10 @@ const MerchantForm = ({ merchant, onDone }: { merchant: MaintenanceMerchant; onD
       {mapError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{mapError}</div>}
 
       <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-        <button type="button" style={btn(true, save.isPending)} disabled={save.isPending} onClick={submit}>
-          {save.isPending ? 'Saving…' : 'Save'}
+        <button type="button" style={btn(true, save.isPending || matching)} disabled={save.isPending || matching} onClick={submit}>
+          {save.isPending ? 'Saving…' : matching ? 'Matching the reports again…' : 'Save'}
         </button>
-        <button type="button" style={btn()} onClick={onDone}>Cancel</button>
+        <button type="button" style={btn()} disabled={matching} onClick={() => onDone()}>Cancel</button>
       </div>
     </div>
   );

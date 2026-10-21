@@ -66,6 +66,7 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   // row opens and restores it on detail Back — same detail-Back shape as
   // scm-list-return above. Written then consumed; no identity/company data.
   { id: "projects-list-scroll", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "projects:listScroll (desktop list scroll position, for detail Back)", matches: exact("projects:listScroll") },
+  { id: "project-overview-scroll", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.projectOverview.scroll (Project Overview page + project table scroll per history entry, for detail Back; last 20 entries)", matches: exact("houzs.projectOverview.scroll") },
   { id: "assr-list-filter", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.assrListFilter.v1 (per-tab Service Cases search + stage, for detail Back)", matches: exact("houzs.assrListFilter.v1") },
   // Owner 2026-08-24: "i want make it my filter didnt close until i manually
   // clear filter or close erp then filter will auto clear". Session-scoped for
@@ -214,6 +215,10 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "pages/MailCenter/mail-prefs.ts",
   // Projects list scroll memory for detail Back (projects-list-scroll family).
   "pages/Projects.tsx",
+  // Project Overview: where the page and its project table were scrolled when a
+  // project was opened, given back on Back (project-overview-scroll, owner
+  // 2026-10-21). Scroll offsets only; the choices themselves live in the URL.
+  "pages/projects/projectOverviewView.ts",
   // Composer draft autosave (2026-09-05): "announcements:draft:u<user>",
   // written debounced while a notice is being written, cleared on post. A
   // half-written notice surviving a closed modal / reload is the point; the
