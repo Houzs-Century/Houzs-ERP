@@ -3227,7 +3227,7 @@ function MobileSupplierPick({ c, onChanged, notify, disabled }: { c: Any; onChan
         <div style={{ display: "flex", alignItems: "center", gap: 9, border: `1px solid ${DIM}`, borderRadius: 10, padding: "10px 11px", marginTop: 5 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12.5, fontWeight: 700, color: INK }}>{String(name ?? code)}</div>
-            <div className="money" style={{ fontSize: 10, color: GREY }}>{String(code)}{source === "manual" ? " · manual" : source === "po" ? " · from PO" : ""}</div>
+            <div className="money" style={{ fontSize: 10, color: GREY }}>{String(code)}{source === "manual" ? " · manual" : source === "po" ? " · from PO" : source === "so" ? " · from SO" : ""}</div>
           </div>
         </div>
       ) : (

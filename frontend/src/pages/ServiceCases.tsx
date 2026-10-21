@@ -933,13 +933,12 @@ function CasesView({
       key: "creditor_name",
       filterable: true,
       label: "Supplier",
-      defaultHidden: true,
       render: (r) => (
-        <span className="block max-w-[160px] truncate" title={r.creditor_name || undefined}>
-          {r.creditor_name || "—"}
+        <span className="block max-w-[160px] truncate" title={r.creditor_name || r.creditor_code || undefined}>
+          {r.creditor_name || r.creditor_code || "—"}
         </span>
       ),
-      getValue: (r) => r.creditor_name,
+      getValue: (r) => r.creditor_name || r.creditor_code,
     },
     ...STAGE_COLUMNS,
   ];
@@ -8173,7 +8172,7 @@ function SupplierField({ c, id, detail, toast, onUpdated }: {
             </div>
             <div className="font-mono text-[10px] text-ink-muted">
               {c.creditor_code}
-              {c.creditor_source === "manual" ? " · manual" : c.creditor_source === "po" ? " · from PO" : ""}
+              {c.creditor_source === "manual" ? " · manual" : c.creditor_source === "po" ? " · from PO" : c.creditor_source === "so" ? " · from SO" : ""}
             </div>
           </>
         ) : c.item_code ? (

@@ -1,7 +1,7 @@
 import type { Env } from "../types";
 import { AutoCountClient } from "./autocount";
 import { writeLog } from "./logger";
-import { orderPoSupplierCode } from "./assrOrderPos";
+import { orderSupplierCode } from "./assrOrderPos";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 
 /**
@@ -158,7 +158,8 @@ export async function getStockItemCached(
  * the supplier because AutoCount has no MainSupplier) is left alone —
  * the check runs before the AutoCount lookup so manual rows cost
  * nothing. HC-0130: the supplier on the item's PO comes first (source
- * 'po'), AutoCount the fallback. "Resolve now" passes force=true to hand
+ * 'po'), then the SO item's bound supplier ('so'), AutoCount the
+ * fallback. "Resolve now" passes force=true to hand
  * the link back to the auto path.
  */
 export async function resolveCreditorForCase(
@@ -179,12 +180,13 @@ export async function resolveCreditorForCase(
     return existing.creditor_code;
   }
 
-  // HC-0130: the supplier on the item's own PO wins; AutoCount's
-  // MainSupplier is the fallback when no PO was raised.
-  let creditorCode: string | null = isSupabaseConfigured(env)
-    ? await orderPoSupplierCode(getSupabaseService(env), existing.doc_no, itemCode, Number(existing.company_id))
+  // HC-0130: the supplier on the item's own PO wins, then the supplier the
+  // SO item is bound to; AutoCount's MainSupplier is the last fallback.
+  const fromOrder = isSupabaseConfigured(env)
+    ? await orderSupplierCode(getSupabaseService(env), existing.doc_no, itemCode, Number(existing.company_id))
     : null;
-  const source = creditorCode ? "po" : "auto";
+  let creditorCode: string | null = fromOrder?.code ?? null;
+  const source = fromOrder?.source ?? "auto";
   if (!creditorCode) {
     try {
       const item = await getStockItemCached(env, itemCode);
@@ -220,7 +222,9 @@ export async function resolveCreditorForCase(
         caseId,
         existing.creditor_code ?? null,
         creditorCode,
-        source === "po" ? `Auto-resolved from the PO of item ${itemCode}` : `Auto-resolved from item ${itemCode}`
+        source === "po" ? `Auto-resolved from the PO of item ${itemCode}`
+          : source === "so" ? `Auto-resolved from the SO supplier of item ${itemCode}`
+          : `Auto-resolved from item ${itemCode}`
       )
       .run()
       .catch(() => {
@@ -291,7 +295,7 @@ export async function runStockItemsRefresh(
               updated_at = datetime('now')
         WHERE item_code IS NOT NULL AND item_code != ''
           AND archived_at IS NULL
-          AND COALESCE(creditor_source, '') NOT IN ('manual', 'po')
+          AND COALESCE(creditor_source, '') NOT IN ('manual', 'po', 'so')
           AND (
             COALESCE(creditor_code, '') != COALESCE(
               (SELECT si.main_supplier FROM stock_items si

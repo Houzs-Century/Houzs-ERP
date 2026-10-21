@@ -113,6 +113,7 @@ follows the new SLA at once.
   (`delivery-sheet-assr-feed.ts`); the Delivery Planning board is deliberately
   NOT gated (it shows every dated leg), so board and sheet differ on purpose.
 - **Pickup tracking** on Pickup / Return (HC-0129): `pickup_status` (pending / scheduled / completed), `actual_pickup_at`, `pickup_pic` (free text), `item_location` (customer / warehouse / supplier). The Scheduled Pickup Date (ETA) is `customer_pickup_at`, not a new column. Allowed values live in `scm/shared/assr-pickup-tracking.ts` (frontend copy byte-identical); the PATCH refuses anything else. Desktop `components/assr/PickupTrackingFields.tsx`, mobile rows in `MobileServiceCase.tsx`.
+- **Supplier (creditor) auto-fill** (HC-0130): resolved when the case is created (awaited, so it is set at Review) and when `item_code` changes: the PO raised from the case item's SO line (`creditor_source='po'`), else the SO item's main bound supplier in `supplier_material_bindings` (`'so'`; several suppliers and no main = left blank), else AutoCount MainSupplier (`'auto'`). A manual pick (`'manual'`) is never overwritten; "Resolve now" forces a re-resolve. `services/assrOrderPos.ts`, `services/stockItems.ts`.
 - **Supplier returns (返厂)** are rows in `assr_supplier_returns` (`round_no`
   1..N, added freely; an archived trip keeps its number, never reused). The list
   is the source of truth for each trip's out/back dates; the case's
