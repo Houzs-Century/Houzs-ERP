@@ -55,10 +55,6 @@ export type FairOptionsResponse = {
   earlier: FairOption[];
   /** The company's venue master — the list behind "Others". */
   venues: VenueMasterRow[];
-  /** Asked for with `older` (Fair Links, owner 2026-10-21): fairs closed
-   *  before the four weeks, back about three months, newest first. Finance and
-   *  PMS only — the server sends none to anyone else. */
-  older?: FairOption[];
 };
 
 /** Label for one row: the VENUE, with the ORGANIZER beside it. ONE label, shared
@@ -99,17 +95,28 @@ export function fairLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'solo' | '
  *   "today in MYT", which the server decides — the browser's clock is not the
  *   Malaysian business date and must not be used for this.
  */
-export function useFairOptions(soDate: string | null | undefined, opts?: { older?: boolean }) {
+export function useFairOptions(soDate: string | null | undefined) {
   const date = soDate && /^\d{4}-\d{2}-\d{2}/.test(soDate) ? soDate.slice(0, 10) : null;
-  const older = opts?.older === true;
-  const query = [date ? `date=${date}` : '', older ? 'older=1' : ''].filter(Boolean).join('&');
   return useQuery({
-    queryKey: ['fair-options', date ?? 'today', ...(older ? ['older'] : [])],
+    queryKey: ['fair-options', date ?? 'today'],
     queryFn: () =>
       authedFetch<FairOptionsResponse>(
-        `/mfg-sales-orders/fair-options${query ? `?${query}` : ''}`,
+        `/mfg-sales-orders/fair-options${date ? `?date=${date}` : ''}`,
       ),
     staleTime: 60_000,
+  });
+}
+
+/** EVERY fair of the company, any place, any date, newest first (backend GET
+ *  /fair-options/all, owner 2026-10-21: 「我这里link fair 要可以选完全部fair」).
+ *  For Fair Links, and only for Finance / PMS — the server refuses anyone else,
+ *  so ask only when `enabled`. One read for the whole page. */
+export function useAllFairOptions(enabled: boolean) {
+  return useQuery({
+    queryKey: ['fair-options', 'all'],
+    queryFn: () => authedFetch<{ fairs: FairOption[] }>('/mfg-sales-orders/fair-options/all').then((r) => r.fairs),
+    enabled,
+    staleTime: 5 * 60_000,
   });
 }
 
