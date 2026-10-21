@@ -57,24 +57,28 @@ vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
   },
 }));
 
-import { EventCommissionTab, basisOf, eventCommissionCsv } from './EventCommission';
+import { EventCommissionTab, basisOf, brandsOf, eventCommissionCsv, fairLines, forBrand } from './EventCommission';
 
 describe('the Event Commission tab', () => {
   test('each fair shows its rate, the event page estimate and what its orders earned; a fair with no rate card says so', () => {
     render(<EventCommissionTab />);
     const fairs = screen.getAllByRole('table')[0]!;
-    const akemi = within(fairs).getByText(/BIGHOME @ MID VALLEY/).closest('tr')!;
+    const akemi = within(fairs).getByText('[AKEMI] BIGHOME').closest('tr')!;
+    expect(akemi.textContent).toContain('MID VALLEY · Kuala Lumpur');
     expect(akemi.textContent).toContain('14%');
     expect(akemi.textContent).toContain('484,746.00');
     expect(akemi.textContent).toContain('67,864.44');
     expect(akemi.textContent).toContain('140.00');
+    /* A fair with no orders yet is folded away at the bottom — open it to see it. */
+    expect(within(fairs).queryByText('no rate card')).toBeNull();
+    fireEvent.click(within(fairs).getByText('1 fair with no orders yet'));
     expect(within(fairs).getByText('no rate card')).toBeTruthy();
-    expect(screen.getByText(/Total commission/).textContent).toContain('153.00');
+    expect(screen.getByText('Total commission').parentElement!.textContent).toContain('RM 153.00');
   });
 
   test('a fair opens to its orders: paid share, the day 30% was reached, and the upsales / drops — an opening-day fix marked not counted', () => {
     render(<EventCommissionTab />);
-    fireEvent.click(screen.getByText(/BIGHOME @ MID VALLEY/));
+    fireEvent.click(screen.getByText('[AKEMI] BIGHOME'));
     const first = screen.getByText('HC-SO-2610-001').closest('tr')!;
     expect(first.textContent).toContain('(36.4%)');
     expect(first.textContent).toContain('+RM 150.00');
@@ -104,9 +108,9 @@ describe('the Event Commission tab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'By SO date' }));
     expect(asked.at(-1)).toBe('so_date');
     expect(screen.getByText('Orders opened in the range (SO date), by fair', { exact: false })).toBeTruthy();
-    expect(screen.queryByText('Total Sales (RM)')).toBeNull();
+    expect(screen.queryByText('Total sales')).toBeNull();
     const fairs = screen.getAllByRole('table')[0]!;
-    fireEvent.click(within(fairs).getByText(/BIGHOME @ SUNWAY PYRAMID/));
+    fireEvent.click(within(fairs).getByText('[ZANOTTI] BIGHOME'));
     expect(screen.getByText('HC-SO-2610-010').closest('tr')!.textContent).toContain('2026/10/01');
     expect(screen.getByText(/Nothing on earlier orders in this range/)).toBeTruthy();
     expect(eventCommissionCsv(BY_SO_DATE)).toContain('"Earlier orders","Date"');
@@ -116,5 +120,41 @@ describe('the Event Commission tab', () => {
     void _drop;
     expect(basisOf(old)).toBe('fair');
     expect(eventCommissionCsv(old)).toContain('"Earlier fairs","Date"');
+  });
+});
+
+/* Owner 2026-10-21: 这个页面优化，很乱 → 1 可以，2 不要，3 要，做，要有header. */
+describe('the Event Commission layout', () => {
+  test('a fair is named on two lines with the state capitals evened out; any other name is kept whole', () => {
+    expect(fairLines('Kuala Lumpur [AKEMI] BIGHOME @ MID VALLEY')).toEqual({ title: '[AKEMI] BIGHOME', detail: 'MID VALLEY · Kuala Lumpur', brand: 'AKEMI' });
+    expect(fairLines('PULAU PINANG [ZANOTTI] HOMEDEC @ SETIA SPICE CONVENTION CENTRE').detail).toBe('SETIA SPICE CONVENTION CENTRE · Pulau Pinang');
+    expect(fairLines('Kuala Lumpur [AKEMI] KAI HAO (KL, CHEN) @ SUNWAY KLUANG MALL').title).toBe('[AKEMI] KAI HAO (KL, CHEN)');
+    expect(fairLines('Warehouse clearance')).toEqual({ title: 'Warehouse clearance', detail: '', brand: null });
+  });
+
+  test('four cards, Total commission first; the column headings stay put while the list scrolls', () => {
+    render(<EventCommissionTab />);
+    const labels = ['Total commission', 'Fairs in the range', 'Earlier fairs', 'Fairs'];
+    for (const l of labels) expect(screen.getAllByText(l).length).toBeGreaterThan(0);
+    expect(screen.getByText('Fairs').parentElement!.textContent).toContain('1 with no orders yet');
+    const head = screen.getAllByRole('table')[0]!.querySelector('thead')!;
+    expect(head.className.split(/\s+/)).toContain('sticky');
+  });
+
+  test('the brand filter narrows the cards, both tables and the export to one brand', () => {
+    expect(brandsOf(REPORT)).toEqual(['AKEMI', 'NOCARD', 'ZANOTTI']);
+    const z = forBrand(REPORT, 'ZANOTTI');
+    expect(z.fairs).toHaveLength(0);
+    expect(z.adjustments).toHaveLength(3);
+    expect(z.totals).toEqual({ payableSen: 0, adjustmentsSen: 13_00, totalSen: 13_00 });
+    expect(forBrand(REPORT, '')).toBe(REPORT);
+
+    render(<EventCommissionTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'ZANOTTI' }));
+    expect(screen.getByText('Total commission').parentElement!.textContent).toContain('RM 13.00');
+    expect(screen.getByText('No fair starts in this range.')).toBeTruthy();
+    expect(screen.queryByText('[AKEMI] BIGHOME')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'All brands' }));
+    expect(screen.getByText('[AKEMI] BIGHOME')).toBeTruthy();
   });
 });
