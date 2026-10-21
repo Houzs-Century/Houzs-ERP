@@ -66,6 +66,7 @@ import { Button } from '@2990s/design-system';
 import { useAuth } from '../../auth/AuthContext';
 import { canCreateEvent } from '../../auth/salesAccess';
 import { customerRefOf } from '../../lib/customer-ref';
+import { cn } from '../../lib/utils';
 import { markWorkspaceOpenIntent } from '../../lib/workspaceTabs';
 import { fmtDateOrDash, fmtDayMonth } from '../../vendor/shared/format';
 import {
@@ -100,22 +101,27 @@ const CHECK_GROUPS = [
 ] as const;
 
 const soft: CSSProperties = { color: 'var(--fg-muted)' };
-const card: CSSProperties = { background: 'var(--c-paper, #fff)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, overflowX: 'auto' };
-const th: CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap', textAlign: 'left' };
-const td: CSSProperties = { padding: '8px 10px', verticalAlign: 'middle', borderTop: '1px solid var(--border-weak, #e3e1da)', overflowWrap: 'anywhere' };
-const num: CSSProperties = { ...td, textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
-const noteCell: CSSProperties = { padding: '0 10px 8px', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
+const mono: CSSProperties = { fontFamily: 'var(--font-mono)' };
 const select: CSSProperties = { width: '100%', fontSize: 'var(--fs-13)', padding: '4px 6px', borderRadius: 6, border: '1px solid var(--border-weak, #e3e1da)', background: 'var(--c-paper, #fff)' };
-/* The tick column: a box in the report group, empty in the others. */
-const leadTh: CSSProperties = { ...th, padding: '6px 0 6px 10px', textAlign: 'center' };
-const leadTd: CSSProperties = { ...td, padding: '8px 0 8px 10px', textAlign: 'center' };
-const refTd: CSSProperties = { ...td, fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' };
 /* The second line of a booth: where and when. */
 const detailLine: CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 
-/* The same column widths in every group, so the tables line up: tick, SO No.,
-   Ref No., SO date, Venue (Now under), Brand, Amount, Fair, Link. */
-const COLUMNS: Array<number | string | undefined> = [34, 150, 100, 100, '18%', 110, 124, undefined, 84];
+/* A boxed table, its heading drawn as the system's lists draw theirs
+   (components/DataTable.tsx: surface-dim, bold ink, Title Case, a 2px rule
+   under it) — owner 2026-10-21: 「做成好看的table 有线条的那种」, 「header
+   颜色…可以refer 其他的table」. Every cell is ruled; the sentence under an order
+   sits in that order's box, on a grey ground, with no line between them. */
+const TABLE_BOX = 'overflow-x-auto rounded-lg border border-border bg-surface';
+const TH = 'whitespace-nowrap border-b-2 border-r border-border bg-surface-dim px-3 py-2 text-left text-[11.5px] font-semibold text-ink last:border-r-0';
+const TD = 'border-r border-t border-border px-3 py-2 align-middle text-[13px] text-ink [overflow-wrap:anywhere] last:border-r-0';
+const TD_NOWRAP = cn(TD, 'whitespace-nowrap');
+const TD_AMOUNT = cn(TD, 'whitespace-nowrap text-right tabular-nums');
+const NOTE = 'bg-surface-2 px-3 pb-2 pt-1.5 text-[12px] text-ink-muted';
+
+/* The same column widths in every group, so the tables line up: SO No. (with
+   the report group's tick), Ref No., SO date, Venue (Now under), Brand, Amount,
+   Fair, Link. */
+const COLUMNS: Array<number | string | undefined> = [172, 104, 100, '18%', 110, 124, undefined, 84];
 const COLS = COLUMNS.length;
 
 function money(sen: number | null): string {
@@ -266,7 +272,7 @@ function ReportGroup({ rows, canTransfer }: { rows: FairCheckRow[]; canTransfer:
             )}
             place={<NowUnder row={r} />}
           />
-          <td style={td} colSpan={2}><ReportSays row={r} /></td>
+          <td className={TD} colSpan={2}><ReportSays row={r} /></td>
         </tr>
       ))}
     </Group>
@@ -320,7 +326,7 @@ function Group({ title, hint, place = 'Venue', last, lead, actions, children }: 
   place?: 'Venue' | 'Now under';
   /** The report group's last column also takes the Link column — it has no button. */
   last: 'Fair' | 'Status' | 'Report says';
-  /** The tick column's header (a tick-all box). */
+  /** The report group's tick-all box, ahead of "SO No.". */
   lead?: ReactNode;
   /** Buttons above the table. */
   actions?: ReactNode;
@@ -332,22 +338,21 @@ function Group({ title, hint, place = 'Venue', last, lead, actions, children }: 
       <h2 style={{ margin: '0 0 2px', fontSize: 15 }}>{title}</h2>
       <p style={{ margin: '0 0 8px', opacity: 0.7, fontSize: 12 }}>{hint}</p>
       {actions}
-      <div style={card}>
-        <table style={{ width: '100%', minWidth: 1060, tableLayout: 'fixed', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+      <div className={TABLE_BOX}>
+        <table style={{ width: '100%', minWidth: 1040, tableLayout: 'fixed', borderCollapse: 'collapse' }}>
           <colgroup>
             {COLUMNS.map((w, i) => <col key={i} style={w == null ? undefined : { width: w }} />)}
           </colgroup>
           <thead>
             <tr>
-              <th style={leadTh}>{lead}</th>
-              <th style={th}>SO No.</th>
-              <th style={th}>Ref No.</th>
-              <th style={th}>SO date</th>
-              <th style={th}>{place}</th>
-              <th style={th}>Brand</th>
-              <th style={{ ...th, textAlign: 'right' }}>Amount</th>
-              <th style={th} colSpan={wide ? 2 : 1}>{last}</th>
-              {!wide && <th style={th} />}
+              <th className={TH}>{lead ? <span className="inline-flex items-center gap-2">{lead}SO No.</span> : 'SO No.'}</th>
+              <th className={TH}>Ref No.</th>
+              <th className={TH}>SO date</th>
+              <th className={TH}>{place}</th>
+              <th className={TH}>Brand</th>
+              <th className={cn(TH, 'text-right')}>Amount</th>
+              <th className={TH} colSpan={wide ? 2 : 1}>{last}</th>
+              {!wide && <th className={TH} />}
             </tr>
           </thead>
           <tbody>{children}</tbody>
@@ -375,26 +380,28 @@ function SoLink({ docNo }: { docNo: string }) {
 
 type OrderRow = Pick<FairPendingRow, 'doc_no' | 'so_date' | 'venue' | 'branding' | 'local_total_sen' | 'ref' | 'customer_so_no'>;
 
-/** The cells every group shares: tick, number, Ref No., date, venue, brand,
- *  amount. The report group puts where the order is now in the venue's place. */
+/** The cells every group shares: number (the report group's tick ahead of it),
+ *  Ref No., date, venue, brand, amount. The report group puts where the order
+ *  is now in the venue's place. */
 function OrderCells({ row, lead, place }: { row: OrderRow; lead?: ReactNode; place?: ReactNode }) {
   const ref = customerRefOf(row);
   return (
     <>
-      <td style={leadTd}>{lead}</td>
-      <td style={td}><SoLink docNo={row.doc_no} /></td>
-      <td style={refTd}>{ref || <span style={soft}>—</span>}</td>
-      <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmtDateOrDash(row.so_date)}</td>
-      <td style={td}>{place ?? (row.venue || <span style={soft}>(no place)</span>)}</td>
-      <td style={td}>{row.branding || <span style={soft}>no brand</span>}</td>
-      <td style={num}>{money(row.local_total_sen)}</td>
+      <td className={TD_NOWRAP}>
+        {lead ? <span className="inline-flex items-center gap-2">{lead}<SoLink docNo={row.doc_no} /></span> : <SoLink docNo={row.doc_no} />}
+      </td>
+      <td className={TD_NOWRAP} style={mono}>{ref || <span style={soft}>—</span>}</td>
+      <td className={TD_NOWRAP}>{fmtDateOrDash(row.so_date)}</td>
+      <td className={TD}>{place ?? (row.venue || <span style={soft}>(no place)</span>)}</td>
+      <td className={TD}>{row.branding || <span style={soft}>no brand</span>}</td>
+      <td className={TD_AMOUNT} style={mono}>{money(row.local_total_sen)}</td>
     </>
   );
 }
 
-/** The server's sentence under a row, from the SO No. column on. */
+/** The server's sentence under an order, inside that order's box. */
 function NoteRow({ note }: { note: string }) {
-  return <tr><td /><td colSpan={COLS - 1} style={noteCell}>{note}</td></tr>;
+  return <tr><td colSpan={COLS} className={NOTE}>{note}</td></tr>;
 }
 
 /** A 等加人 row: nothing to pick here — PMS adds the person in the project. */
@@ -403,8 +410,8 @@ function CheckRow({ row }: { row: FairCheckRow }) {
     <>
       <tr>
         <OrderCells row={row} />
-        <td style={td}>{row.status === 'DRAFT' ? 'Draft' : 'Confirmed'}</td>
-        <td style={td} />
+        <td className={TD}>{row.status === 'DRAFT' ? 'Draft' : 'Confirmed'}</td>
+        <td className={TD} />
       </tr>
       <NoteRow note={row.note} />
     </>
@@ -436,7 +443,7 @@ function PendingRow(props: {
     <>
       <tr>
         <OrderCells row={row} />
-        <td style={td}>
+        <td className={TD}>
           <select
             aria-label={`Fair for ${row.doc_no}`}
             value={value}
@@ -452,7 +459,7 @@ function PendingRow(props: {
             ))}
           </select>
         </td>
-        <td style={{ ...td, textAlign: 'right' }}>
+        <td className={cn(TD, 'text-right')}>
           <Button
             variant="secondary"
             size="sm"

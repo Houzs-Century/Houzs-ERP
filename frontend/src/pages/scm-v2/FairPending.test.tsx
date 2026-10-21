@@ -102,8 +102,24 @@ describe('FairPending', () => {
     for (const title of ['Pick one (1)', 'Waiting for the fair (1)', 'Marked No fair (1)']) {
       const group = screen.getByText(title).closest('section') as HTMLElement;
       expect(within(group).getAllByRole('columnheader').map((h) => h.textContent))
-        .toEqual(['', 'SO No.', 'Ref No.', 'SO date', 'Venue', 'Brand', 'Amount', 'Fair', '']);
+        .toEqual(['SO No.', 'Ref No.', 'SO date', 'Venue', 'Brand', 'Amount', 'Fair', '']);
     }
+  });
+
+  /* Owner 2026-10-21: 「做成好看的table 有线条的那种」, 「header 颜色…可以refer
+     其他的table」 — the heading as the system's lists draw it, every cell ruled,
+     the sentence in its order's box. */
+  it('a boxed table: the system lists’ heading, ruled cells, the sentence inside its order’s box', () => {
+    show();
+    const group = screen.getByText('Pick one (1)').closest('section') as HTMLElement;
+    const classes = (el: Element) => el.className.split(/\s+/);
+    for (const h of within(group).getAllByRole('columnheader')) {
+      expect(classes(h)).toEqual(expect.arrayContaining(['bg-surface-dim', 'font-semibold', 'text-ink', 'border-b-2']));
+      expect(classes(h)).not.toContain('uppercase');
+      expect((h as HTMLElement).style.textTransform).toBe('');
+    }
+    const row = screen.getByText('HC-SO-2609-064').closest('tr') as HTMLTableRowElement;
+    for (const c of row.cells) expect(classes(c)).toEqual(expect.arrayContaining(['border-t', 'border-r', 'border-border']));
   });
 
   it('every group shows the order’s Ref No. beside its SO number, a dash when it has none', () => {
@@ -111,9 +127,9 @@ describe('FairPending', () => {
        evening report lists, as the SO page shows it. */
     show();
     const pick = screen.getByText('HC-SO-2609-064').closest('tr') as HTMLTableRowElement;
-    expect([...pick.cells].map((c) => c.textContent).slice(1, 3)).toEqual(['HC-SO-2609-064', 'HC12064']);
+    expect([...pick.cells].map((c) => c.textContent).slice(0, 2)).toEqual(['HC-SO-2609-064', 'HC12064']);
     const waiting = screen.getByText('HC-SO-2609-065').closest('tr') as HTMLTableRowElement;
-    expect(waiting.cells[2]!.textContent).toBe('—');
+    expect(waiting.cells[1]!.textContent).toBe('—');
   });
 
   it('the SO number opens the order in its own tab of the strip', () => {
@@ -311,7 +327,8 @@ describe('FairPending — report says another fair (owner 2026-10-20)', () => {
     show();
     const group = screen.getByText('Report says another fair (2)').closest('section') as HTMLElement;
     const heads = within(group).getAllByRole('columnheader');
-    expect(heads.map((h) => h.textContent)).toEqual(['', 'SO No.', 'Ref No.', 'SO date', 'Now under', 'Brand', 'Amount', 'Report says']);
+    expect(heads.map((h) => h.textContent)).toEqual(['SO No.', 'Ref No.', 'SO date', 'Now under', 'Brand', 'Amount', 'Report says']);
+    /* The tick sits first in the SO No. cell, ahead of the number. */
     expect(heads[0]!.querySelector('input[type="checkbox"]')).toBeTruthy();
     const body = group.querySelector('tbody') as HTMLTableSectionElement;
     expect(body.rows).toHaveLength(2);
@@ -319,10 +336,10 @@ describe('FairPending — report says another fair (owner 2026-10-20)', () => {
     const linked = body.rows[0]!;
     expect(linked.cells[0]!.querySelector('input[aria-label="Tick HC-SO-2610-167"]')).toBeTruthy();
     expect([...linked.cells].map((c) => c.textContent)).toEqual([
-      '', 'HC-SO-2610-167', 'HC13316', '2026/10/12', '[AKEMI] MALL MGTIOI MALL PUTRAJAYA · 09/16 - 09/20', 'AKEMI', 'RM 3,388.00',
+      'HC-SO-2610-167', 'HC13316', '2026/10/12', '[AKEMI] MALL MGTIOI MALL PUTRAJAYA · 09/16 - 09/20', 'AKEMI', 'RM 3,388.00',
       '[AKEMI] HOMELOVEIOIGECC · 10/09 - 10/11 · reported 10/10',
     ]);
-    expect(body.rows[1]!.cells[4]!.textContent).toBe('Not linkedSUNWAY PYRAMID CONVENTION CENTRE');
+    expect(body.rows[1]!.cells[3]!.textContent).toBe('Not linkedSUNWAY PYRAMID CONVENTION CENTRE');
   });
 
   it('a server from before the two lines still names the fair on one line', () => {
