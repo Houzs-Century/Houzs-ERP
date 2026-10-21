@@ -62,15 +62,19 @@
  */
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useAuth } from '../../auth/AuthContext';
 import { canCreateEvent } from '../../auth/salesAccess';
 import { customerRefOf } from '../../lib/customer-ref';
+import { cn } from '../../lib/utils';
 import { markWorkspaceOpenIntent } from '../../lib/workspaceTabs';
 import { fmtDateOrDash, fmtDayMonth } from '../../vendor/shared/format';
 import {
   useFairChecks,
   useFairPending,
+  useFairPutAside,
+  usePutAside,
   useAssignFair,
   useFairOptions,
   useFairTransfer,
@@ -100,22 +104,27 @@ const CHECK_GROUPS = [
 ] as const;
 
 const soft: CSSProperties = { color: 'var(--fg-muted)' };
-const card: CSSProperties = { background: 'var(--c-paper, #fff)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, overflowX: 'auto' };
-const th: CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap', textAlign: 'left' };
-const td: CSSProperties = { padding: '8px 10px', verticalAlign: 'middle', borderTop: '1px solid var(--border-weak, #e3e1da)', overflowWrap: 'anywhere' };
-const num: CSSProperties = { ...td, textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
-const noteCell: CSSProperties = { padding: '0 10px 8px', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
+const mono: CSSProperties = { fontFamily: 'var(--font-mono)' };
 const select: CSSProperties = { width: '100%', fontSize: 'var(--fs-13)', padding: '4px 6px', borderRadius: 6, border: '1px solid var(--border-weak, #e3e1da)', background: 'var(--c-paper, #fff)' };
-/* The tick column: a box in the report group, empty in the others. */
-const leadTh: CSSProperties = { ...th, padding: '6px 0 6px 10px', textAlign: 'center' };
-const leadTd: CSSProperties = { ...td, padding: '8px 0 8px 10px', textAlign: 'center' };
-const refTd: CSSProperties = { ...td, fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' };
 /* The second line of a booth: where and when. */
 const detailLine: CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 
-/* The same column widths in every group, so the tables line up: tick, SO No.,
-   Ref No., SO date, Venue (Now under), Brand, Amount, Fair, Link. */
-const COLUMNS: Array<number | string | undefined> = [34, 150, 100, 100, '18%', 110, 124, undefined, 84];
+/* A boxed table, its heading drawn as the system's lists draw theirs
+   (components/DataTable.tsx: surface-dim, bold ink, Title Case, a 2px rule
+   under it) — owner 2026-10-21: 「做成好看的table 有线条的那种」, 「header
+   颜色…可以refer 其他的table」. Every cell is ruled; the sentence under an order
+   sits in that order's box, on a grey ground, with no line between them. */
+const TABLE_BOX = 'overflow-x-auto rounded-lg border border-border bg-surface';
+const TH = 'whitespace-nowrap border-b-2 border-r border-border bg-surface-dim px-3 py-2 text-left text-[11.5px] font-semibold text-ink last:border-r-0';
+const TD = 'border-r border-t border-border px-3 py-2 align-middle text-[13px] text-ink [overflow-wrap:anywhere] last:border-r-0';
+const TD_NOWRAP = cn(TD, 'whitespace-nowrap');
+const TD_AMOUNT = cn(TD, 'whitespace-nowrap text-right tabular-nums');
+const NOTE = 'bg-surface-2 px-3 pb-2 pt-1.5 text-[12px] text-ink-muted';
+
+/* The same column widths in every group, so the tables line up: SO No. (with
+   the report group's tick), Ref No., SO date, Venue (Now under), Brand, Amount,
+   Fair, Link. */
+const COLUMNS: Array<number | string | undefined> = [172, 104, 100, '18%', 110, 124, undefined, 184];
 const COLS = COLUMNS.length;
 
 function money(sen: number | null): string {
@@ -126,12 +135,16 @@ function money(sen: number | null): string {
 export function FairPending() {
   const rowsQ = useFairPending(LIST_LIMIT);
   const checksQ = useFairChecks();
+  const asideQ = useFairPutAside(LIST_LIMIT);
   const assign = useAssignFair();
+  const putAside = usePutAside();
   /* Finance or PMS re-assign here (owner 2026-10-16); the API enforces the same
      (scm/lib/fair-reassign.ts), this only stops a button that would be refused. */
   const { can, user } = useAuth();
   const canReassign = can('scm.finance.accounting') || canCreateEvent(user);
-  const busy = assign.isPending || !canReassign;
+  const busy = assign.isPending || putAside.isPending || !canReassign;
+  /* Owner 2026-10-21: 「还有一些我看了是 service 要 put aside 的」. */
+  const setAside = (docNo: string, aside: boolean) => putAside.mutate({ docNo, aside });
   const rows = rowsQ.data ?? [];
   const checks = checksQ.data ?? [];
   const reported = useMemo(() => checks.filter((r) => r.check === 'REPORT_ELSEWHERE'), [checks]);
@@ -187,7 +200,7 @@ export function FairPending() {
         return (
           <Group key={g.key} title={`${g.title} (${list.length})`} hint={g.hint} last={g.key === 'VENUE_DIFFERS' ? 'Fair' : 'Status'}>
             {list.map((r) => (g.key === 'VENUE_DIFFERS'
-              ? <PendingRow key={r.doc_no} row={r} note={r.note} onAssign={assign.mutate} busy={busy} />
+              ? <PendingRow key={r.doc_no} row={r} note={r.note} onAssign={assign.mutate} onPutAside={setAside} busy={busy} />
               : <CheckRow key={r.doc_no} row={r} />))}
           </Group>
         );
@@ -199,12 +212,54 @@ export function FairPending() {
         return (
           <Group key={g.key} title={`${g.title} (${list.length})`} hint={g.hint} last="Fair">
             {list.map((r) => (
-              <PendingRow key={r.doc_no} row={r} onAssign={assign.mutate} busy={busy} />
+              <PendingRow key={r.doc_no} row={r} onAssign={assign.mutate} onPutAside={setAside} busy={busy} />
             ))}
           </Group>
         );
       })}
+
+      <PutAsideGroup rows={asideQ.data ?? []} busy={busy} onBringBack={(docNo) => setAside(docNo, false)} />
     </div>
+  );
+}
+
+/** The orders a person put aside (owner 2026-10-21), folded at the bottom: they
+ *  are out of every group above and the menu's count until brought back. */
+function PutAsideGroup({ rows, busy, onBringBack }: { rows: FairPendingRow[]; busy: boolean; onBringBack: (docNo: string) => void }) {
+  const [open, setOpen] = useState(false);
+  if (rows.length === 0) return null;
+  const Chevron = open ? ChevronDown : ChevronRight;
+  const heading = (
+    <button
+      type="button"
+      aria-expanded={open}
+      onClick={() => setOpen(!open)}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: 0, border: 0, background: 'none', font: 'inherit', cursor: 'pointer' }}
+    >
+      <Chevron size={15} aria-hidden />Put aside ({rows.length})
+    </button>
+  );
+  const hint = 'Orders put aside here: not in the groups above or the menu’s count. Bring one back to list it again.';
+  if (!open) {
+    return (
+      <section>
+        <h2 style={{ margin: '0 0 2px', fontSize: 15 }}>{heading}</h2>
+        <p style={{ margin: 0, opacity: 0.7, fontSize: 12 }}>{hint}</p>
+      </section>
+    );
+  }
+  return (
+    <Group title={heading} hint={hint} last="Put aside">
+      {rows.map((r) => (
+        <tr key={r.doc_no}>
+          <OrderCells row={r} />
+          <td className={TD}>{[r.fair_put_aside_by, r.fair_put_aside_at ? fmtDateOrDash(r.fair_put_aside_at) : ''].filter(Boolean).join(' · ') || '—'}</td>
+          <td className={cn(TD, 'text-right')}>
+            <Button variant="secondary" size="sm" disabled={busy} onClick={() => onBringBack(r.doc_no)}>Bring back</Button>
+          </td>
+        </tr>
+      ))}
+    </Group>
   );
 }
 
@@ -266,7 +321,7 @@ function ReportGroup({ rows, canTransfer }: { rows: FairCheckRow[]; canTransfer:
             )}
             place={<NowUnder row={r} />}
           />
-          <td style={td} colSpan={2}><ReportSays row={r} /></td>
+          <td className={TD} colSpan={2}><ReportSays row={r} /></td>
         </tr>
       ))}
     </Group>
@@ -314,13 +369,13 @@ function ReportSays({ row }: { row: FairCheckRow }) {
 
 /** One group: its title, what to do, and its orders in the shared columns. */
 function Group({ title, hint, place = 'Venue', last, lead, actions, children }: {
-  title: string;
+  title: ReactNode;
   hint: string;
   /** The fifth column: the order's venue, or (report group) where it is now. */
   place?: 'Venue' | 'Now under';
   /** The report group's last column also takes the Link column — it has no button. */
-  last: 'Fair' | 'Status' | 'Report says';
-  /** The tick column's header (a tick-all box). */
+  last: 'Fair' | 'Status' | 'Report says' | 'Put aside';
+  /** The report group's tick-all box, ahead of "SO No.". */
   lead?: ReactNode;
   /** Buttons above the table. */
   actions?: ReactNode;
@@ -332,22 +387,21 @@ function Group({ title, hint, place = 'Venue', last, lead, actions, children }: 
       <h2 style={{ margin: '0 0 2px', fontSize: 15 }}>{title}</h2>
       <p style={{ margin: '0 0 8px', opacity: 0.7, fontSize: 12 }}>{hint}</p>
       {actions}
-      <div style={card}>
-        <table style={{ width: '100%', minWidth: 1060, tableLayout: 'fixed', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+      <div className={TABLE_BOX}>
+        <table style={{ width: '100%', minWidth: 1040, tableLayout: 'fixed', borderCollapse: 'collapse' }}>
           <colgroup>
             {COLUMNS.map((w, i) => <col key={i} style={w == null ? undefined : { width: w }} />)}
           </colgroup>
           <thead>
             <tr>
-              <th style={leadTh}>{lead}</th>
-              <th style={th}>SO No.</th>
-              <th style={th}>Ref No.</th>
-              <th style={th}>SO date</th>
-              <th style={th}>{place}</th>
-              <th style={th}>Brand</th>
-              <th style={{ ...th, textAlign: 'right' }}>Amount</th>
-              <th style={th} colSpan={wide ? 2 : 1}>{last}</th>
-              {!wide && <th style={th} />}
+              <th className={TH}>{lead ? <span className="inline-flex items-center gap-2">{lead}SO No.</span> : 'SO No.'}</th>
+              <th className={TH}>Ref No.</th>
+              <th className={TH}>SO date</th>
+              <th className={TH}>{place}</th>
+              <th className={TH}>Brand</th>
+              <th className={cn(TH, 'text-right')}>Amount</th>
+              <th className={TH} colSpan={wide ? 2 : 1}>{last}</th>
+              {!wide && <th className={TH} />}
             </tr>
           </thead>
           <tbody>{children}</tbody>
@@ -375,26 +429,28 @@ function SoLink({ docNo }: { docNo: string }) {
 
 type OrderRow = Pick<FairPendingRow, 'doc_no' | 'so_date' | 'venue' | 'branding' | 'local_total_sen' | 'ref' | 'customer_so_no'>;
 
-/** The cells every group shares: tick, number, Ref No., date, venue, brand,
- *  amount. The report group puts where the order is now in the venue's place. */
+/** The cells every group shares: number (the report group's tick ahead of it),
+ *  Ref No., date, venue, brand, amount. The report group puts where the order
+ *  is now in the venue's place. */
 function OrderCells({ row, lead, place }: { row: OrderRow; lead?: ReactNode; place?: ReactNode }) {
   const ref = customerRefOf(row);
   return (
     <>
-      <td style={leadTd}>{lead}</td>
-      <td style={td}><SoLink docNo={row.doc_no} /></td>
-      <td style={refTd}>{ref || <span style={soft}>—</span>}</td>
-      <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmtDateOrDash(row.so_date)}</td>
-      <td style={td}>{place ?? (row.venue || <span style={soft}>(no place)</span>)}</td>
-      <td style={td}>{row.branding || <span style={soft}>no brand</span>}</td>
-      <td style={num}>{money(row.local_total_sen)}</td>
+      <td className={TD_NOWRAP}>
+        {lead ? <span className="inline-flex items-center gap-2">{lead}<SoLink docNo={row.doc_no} /></span> : <SoLink docNo={row.doc_no} />}
+      </td>
+      <td className={TD_NOWRAP} style={mono}>{ref || <span style={soft}>—</span>}</td>
+      <td className={TD_NOWRAP}>{fmtDateOrDash(row.so_date)}</td>
+      <td className={TD}>{place ?? (row.venue || <span style={soft}>(no place)</span>)}</td>
+      <td className={TD}>{row.branding || <span style={soft}>no brand</span>}</td>
+      <td className={TD_AMOUNT} style={mono}>{money(row.local_total_sen)}</td>
     </>
   );
 }
 
-/** The server's sentence under a row, from the SO No. column on. */
+/** The server's sentence under an order, inside that order's box. */
 function NoteRow({ note }: { note: string }) {
-  return <tr><td /><td colSpan={COLS - 1} style={noteCell}>{note}</td></tr>;
+  return <tr><td colSpan={COLS} className={NOTE}>{note}</td></tr>;
 }
 
 /** A 等加人 row: nothing to pick here — PMS adds the person in the project. */
@@ -403,8 +459,8 @@ function CheckRow({ row }: { row: FairCheckRow }) {
     <>
       <tr>
         <OrderCells row={row} />
-        <td style={td}>{row.status === 'DRAFT' ? 'Draft' : 'Confirmed'}</td>
-        <td style={td} />
+        <td className={TD}>{row.status === 'DRAFT' ? 'Draft' : 'Confirmed'}</td>
+        <td className={TD} />
       </tr>
       <NoteRow note={row.note} />
     </>
@@ -416,51 +472,69 @@ function PendingRow(props: {
   /** The server's 要查 sentence, shown under the row. */
   note?: string;
   onAssign: (v: { docNo: string; projectId: number | null }) => void;
+  /** Put the order aside (owner 2026-10-21) — out of the list until brought back. */
+  onPutAside: (docNo: string, aside: boolean) => void;
   busy: boolean;
 }) {
-  const { row, note, onAssign, busy } = props;
+  const { row, note, onAssign, onPutAside, busy } = props;
   /* null = untouched, so the suggestion shows; '' = the person cleared it. */
   const [pick, setPick] = useState<string | null>(null);
   /* The SAME options the salesperson saw, resolved for THIS order's date — not
      today's. An order from last week must be settled against the fairs that were
      running last week, or the screen offers an attribution that is wrong by
-     construction. */
-  const optionsQ = useFairOptions(row.so_date);
+     construction. Below them, for Finance / PMS, the fairs at the same place
+     before those four weeks, back about three months (owner 2026-10-21: 「我希望
+     我这里有权限可以cross over 回去超过一个月的」) — never filled in, only picked. */
+  const optionsQ = useFairOptions(row.so_date, { older: true });
   const { choices, suggested } = boothChoices(
     [...(optionsQ.data?.running ?? []), ...(optionsQ.data?.earlier ?? [])],
     row,
   );
+  const offered = new Set(choices.map((ch) => ch.projectId));
+  const older = boothChoices(optionsQ.data?.older ?? [], row).choices.filter((ch) => !offered.has(ch.projectId));
   const value = pick ?? (suggested != null ? String(suggested) : '');
 
   return (
     <>
       <tr>
         <OrderCells row={row} />
-        <td style={td}>
+        <td className={TD}>
           <select
             aria-label={`Fair for ${row.doc_no}`}
             value={value}
-            disabled={busy || choices.length === 0}
+            disabled={busy || choices.length + older.length === 0}
             onChange={(e) => setPick(e.target.value)}
             style={select}
           >
             <option value="">
-              {choices.length === 0 ? 'No fair at that place on that date' : '— choose a fair —'}
+              {choices.length + older.length === 0 ? 'No fair at that place on that date' : '— choose a fair —'}
             </option>
             {choices.map((ch) => (
               <option key={ch.projectId} value={String(ch.projectId)}>{ch.label}</option>
             ))}
+            {older.length > 0 && (
+              <optgroup label="More than 4 weeks before">
+                {older.map((ch) => (
+                  <option key={ch.projectId} value={String(ch.projectId)}>{ch.label}</option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </td>
-        <td style={{ ...td, textAlign: 'right' }}>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={busy || !value}
-            onClick={() => onAssign({ docNo: row.doc_no, projectId: Number(value) })}
-          >
-            Link
-          </Button>
+        <td className={cn(TD, 'text-right')}>
+          <span className="inline-flex items-center gap-1.5">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={busy || !value}
+              onClick={() => onAssign({ docNo: row.doc_no, projectId: Number(value) })}
+            >
+              Link
+            </Button>
+            <Button variant="secondary" size="sm" disabled={busy} onClick={() => onPutAside(row.doc_no, true)}>
+              Put aside
+            </Button>
+          </span>
         </td>
       </tr>
       {note && <NoteRow note={note} />}

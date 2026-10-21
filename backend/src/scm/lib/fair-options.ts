@@ -138,6 +138,12 @@ export function fairKeyPart(v: string | null | undefined): string {
  *  星期… 跟着 week 来算"*. */
 export const FAIR_LOOKBACK_DAYS = 28;
 
+/** How far back a person SETTLING a link on Fair Links may reach — about three
+ *  months (owner 2026-10-21: 「我希望我这里有权限可以cross over 回去超过一个月
+ *  的」). Finance and PMS only (the route checks); the order form keeps
+ *  FAIR_LOOKBACK_DAYS, and so does every resolver. */
+export const FAIR_SETTLE_LOOKBACK_DAYS = 92;
+
 /**
  * The picker's window: `days` back from the ORDER DATE, inclusive, and never
  * forward.
@@ -354,10 +360,10 @@ function boothsOf(rows: readonly FairProjectRow[]): FairBooth[] {
  *                back from THIS date, and it is also the line between the two
  *                groups: a fair still running on it, or one already closed.
  */
-export function buildFairOptions(rows: FairProjectRow[], soDate: string): FairOptionGroups {
+export function buildFairOptions(rows: FairProjectRow[], soDate: string, days: number = FAIR_LOOKBACK_DAYS): FairOptionGroups {
   const date = clean(soDate).slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { running: [], earlier: [] };
-  const { start: windowStart } = lookbackWindow(date);
+  const { start: windowStart } = lookbackWindow(date, days);
 
   const byKey = new Map<string, FairOption>();
   const rowsOf = new Map<string, FairProjectRow[]>();
@@ -407,6 +413,15 @@ export function buildFairOptions(rows: FairProjectRow[], soDate: string): FairOp
   );
 
   return { running, earlier };
+}
+
+/** The fairs a person settling a link may reach BEYOND the order form's four
+ *  weeks: closed inside FAIR_SETTLE_LOOKBACK_DAYS, not inside the four weeks.
+ *  Newest first. `rows` must cover the wider window. */
+export function olderFairOptions(rows: FairProjectRow[], soDate: string): FairOption[] {
+  const near = buildFairOptions(rows, soDate);
+  const seen = new Set([...near.running, ...near.earlier].map((o) => o.key));
+  return buildFairOptions(rows, soDate, FAIR_SETTLE_LOOKBACK_DAYS).earlier.filter((o) => !seen.has(o.key));
 }
 
 // ── Resolution: from a PICKED row back to one project ────────────────────────

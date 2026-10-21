@@ -14,7 +14,8 @@
 //     linked. Older NULL orders (the AutoCount years) stay out — they would
 //     bury the ones that matter under years of history.
 // A cancelled order is not a sale and is never listed; an order that HAS a link
-// is never listed either, whatever its verdict column says.
+// is never listed either, whatever its verdict column says; nor is one a person
+// PUT ASIDE (owner 2026-10-21, fair-put-aside.ts) until it is brought back.
 //
 // The sidebar badge counts exactly this list (countFairPending), so the number
 // on the menu and the rows on the page cannot disagree.
@@ -59,10 +60,10 @@ export type FairPendingRow = {
    reader has to decode; two plain reads with the same shared filters say it
    once each, and the merge below is the whole of the OR. */
 function withVerdicts(q: any): any {
-  return q.in('fair_match', [...LISTED_VERDICTS]).is('project_id', null).neq('status', 'CANCELLED');
+  return q.in('fair_match', [...LISTED_VERDICTS]).is('project_id', null).neq('status', 'CANCELLED').is('fair_put_aside_at', null);
 }
 function withoutVerdict(q: any): any {
-  return q.is('fair_match', null).is('project_id', null).neq('status', 'CANCELLED').gte('so_date', NO_VERDICT_LISTED_FROM);
+  return q.is('fair_match', null).is('project_id', null).neq('status', 'CANCELLED').gte('so_date', NO_VERDICT_LISTED_FROM).is('fair_put_aside_at', null);
 }
 
 /** Newest first; a day's orders by document number, newest number first. */

@@ -184,6 +184,14 @@ describe('what is never listed, and a read that fails', () => {
     expect(res).toEqual({ ok: true, rows: [] });
   });
 
+  it('an order a person put aside is in no group (owner 2026-10-21)', async () => {
+    const res = await run(
+      { mfg_sales_orders: [order({ doc_no: 'HC-SO-2610-066', venue: 'KLCC', branding: 'SERVICE', fair_put_aside_at: '2026-10-21T09:00:00Z' })], scan_jobs: [] },
+      fakeDb([[BY_IDS, BOOTHS], [AT_VENUE, []]]),
+    );
+    expect(res).toEqual({ ok: true, rows: [] });
+  });
+
   it('PMS unreadable is a failure, never "nothing to check"', async () => {
     const res = await run({ mfg_sales_orders: [order({ venue: 'KLCC' })], scan_jobs: [] }, fakeDb([[BY_IDS, new Error('down')]]));
     expect(res).toEqual({ ok: false });

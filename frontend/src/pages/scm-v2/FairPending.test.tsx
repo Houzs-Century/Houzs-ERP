@@ -46,6 +46,10 @@ vi.mock('../../lib/workspaceTabs', async (orig) => ({
   markWorkspaceOpenIntent: openIntent,
 }));
 const checks = vi.hoisted(() => ({ rows: [] as unknown[], error: false }));
+/* The fairs past the four weeks the server adds for Finance / PMS. */
+const olderFairs = vi.hoisted(() => ({ list: [] as unknown[], askedOlder: [] as boolean[] }));
+/* The orders put aside (owner 2026-10-21), and the put-aside write. */
+const aside = vi.hoisted(() => ({ list: [] as unknown[], mutate: vi.fn() }));
 const who = vi.hoisted(() => ({ perms: new Set<string>(['scm.finance.accounting']), role: '' }));
 vi.mock('../../auth/AuthContext', () => ({
   useAuth: () => ({ user: { id: 1, role_name: who.role, position_name: null, email: 'x@houzs.test' }, can: (p: string) => who.perms.has('*') || who.perms.has(p) }),
@@ -54,10 +58,15 @@ vi.mock('../../auth/AuthContext', () => ({
 vi.mock('../../vendor/scm/lib/fair-options-queries', async (orig) => ({
   ...(await orig<typeof import('../../vendor/scm/lib/fair-options-queries')>()),
   useFairPending: () => ({ data: ROWS, isLoading: false, isError: false }),
-  useFairOptions: () => ({ data: OPTIONS, isLoading: false, isError: false }),
+  useFairOptions: (_date: string, opts?: { older?: boolean }) => {
+    olderFairs.askedOlder.push(opts?.older === true);
+    return { data: { ...OPTIONS, older: olderFairs.list }, isLoading: false, isError: false };
+  },
   useAssignFair: () => ({ mutate: assign, isPending: false }),
   useFairChecks: () => ({ data: checks.rows, isLoading: false, isError: checks.error }),
   useFairTransfer: () => ({ mutate: transferMutate, isPending: false }),
+  useFairPutAside: () => ({ data: aside.list, isLoading: false, isError: false }),
+  usePutAside: () => ({ mutate: aside.mutate, isPending: false }),
 }));
 
 import { FairPending } from './FairPending';
@@ -102,8 +111,24 @@ describe('FairPending', () => {
     for (const title of ['Pick one (1)', 'Waiting for the fair (1)', 'Marked No fair (1)']) {
       const group = screen.getByText(title).closest('section') as HTMLElement;
       expect(within(group).getAllByRole('columnheader').map((h) => h.textContent))
-        .toEqual(['', 'SO No.', 'Ref No.', 'SO date', 'Venue', 'Brand', 'Amount', 'Fair', '']);
+        .toEqual(['SO No.', 'Ref No.', 'SO date', 'Venue', 'Brand', 'Amount', 'Fair', '']);
     }
+  });
+
+  /* Owner 2026-10-21: 「做成好看的table 有线条的那种」, 「header 颜色…可以refer
+     其他的table」 — the heading as the system's lists draw it, every cell ruled,
+     the sentence in its order's box. */
+  it('a boxed table: the system lists’ heading, ruled cells, the sentence inside its order’s box', () => {
+    show();
+    const group = screen.getByText('Pick one (1)').closest('section') as HTMLElement;
+    const classes = (el: Element) => el.className.split(/\s+/);
+    for (const h of within(group).getAllByRole('columnheader')) {
+      expect(classes(h)).toEqual(expect.arrayContaining(['bg-surface-dim', 'font-semibold', 'text-ink', 'border-b-2']));
+      expect(classes(h)).not.toContain('uppercase');
+      expect((h as HTMLElement).style.textTransform).toBe('');
+    }
+    const row = screen.getByText('HC-SO-2609-064').closest('tr') as HTMLTableRowElement;
+    for (const c of row.cells) expect(classes(c)).toEqual(expect.arrayContaining(['border-t', 'border-r', 'border-border']));
   });
 
   it('every group shows the order’s Ref No. beside its SO number, a dash when it has none', () => {
@@ -111,9 +136,9 @@ describe('FairPending', () => {
        evening report lists, as the SO page shows it. */
     show();
     const pick = screen.getByText('HC-SO-2609-064').closest('tr') as HTMLTableRowElement;
-    expect([...pick.cells].map((c) => c.textContent).slice(1, 3)).toEqual(['HC-SO-2609-064', 'HC12064']);
+    expect([...pick.cells].map((c) => c.textContent).slice(0, 2)).toEqual(['HC-SO-2609-064', 'HC12064']);
     const waiting = screen.getByText('HC-SO-2609-065').closest('tr') as HTMLTableRowElement;
-    expect(waiting.cells[2]!.textContent).toBe('—');
+    expect(waiting.cells[1]!.textContent).toBe('—');
   });
 
   it('the SO number opens the order in its own tab of the strip', () => {
@@ -142,6 +167,32 @@ describe('FairPending', () => {
     fireEvent.change(screen.getByLabelText('Fair for HC-SO-2609-064'), { target: { value: '341' } });
     fireEvent.click(screen.getAllByRole('button', { name: 'Link' })[0]);
     expect(assign).toHaveBeenCalledWith({ docNo: 'HC-SO-2609-064', projectId: 341 });
+  });
+
+  it('offers the fairs at the same place before the four weeks as their own group — never filled in', () => {
+    /* Owner 2026-10-21: 「我希望我这里有权限可以cross over 回去超过一个月的」. */
+    olderFairs.list = [
+      {
+        key: 'sunway pyramid|bighome|2026-08-07|2026-08-09', venue: 'SUNWAY PYRAMID CONVENTION CENTRE', organizer: 'BIGHOME', startDate: '2026-08-07', endDate: '2026-08-09',
+        projectIds: [290], booths: [{ projectId: 290, brand: 'AKEMI' }],
+      },
+    ];
+    try {
+      show();
+      expect(olderFairs.askedOlder.every(Boolean)).toBe(true);
+      const sel = screen.getByLabelText('Fair for HC-SO-2609-065') as HTMLSelectElement;
+      expect(sel.disabled).toBe(false);
+      expect(sel.value).toBe('');
+      const group = sel.querySelector('optgroup') as HTMLOptGroupElement;
+      expect(group.label).toBe('More than 4 weeks before');
+      expect([...group.querySelectorAll('option')].map((o) => o.text)).toEqual(['AKEMI — SUNWAY PYRAMID CONVENTION CENTRE — BIGHOME (08/07 - 08/09)']);
+      fireEvent.change(sel, { target: { value: '290' } });
+      const row = sel.closest('tr') as HTMLTableRowElement;
+      fireEvent.click(within(row).getByRole('button', { name: 'Link' }));
+      expect(assign).toHaveBeenCalledWith({ docNo: 'HC-SO-2609-065', projectId: 290 });
+    } finally {
+      olderFairs.list = [];
+    }
   });
 });
 
@@ -196,6 +247,36 @@ describe('FairPending — linked orders to check (owner 2026-10-19)', () => {
     checks.error = true;
     show();
     expect(screen.getByText('Couldn’t load the linked orders to check — try again.')).toBeTruthy();
+  });
+});
+
+/* Owner 2026-10-21: 「还有一些我看了是 service 要 put aside 的」. */
+describe('FairPending — put aside', () => {
+  afterEach(() => { aside.list = []; aside.mutate.mockReset(); });
+
+  it('each order to pick for can be put aside', () => {
+    show();
+    const row = screen.getByText('HC-SO-2609-064').closest('tr') as HTMLTableRowElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'Put aside' }));
+    expect(aside.mutate).toHaveBeenCalledWith({ docNo: 'HC-SO-2609-064', aside: true });
+  });
+
+  it('the put-aside orders wait folded at the bottom, each with who and when, and can be brought back', () => {
+    aside.list = [{ ...ROWS[2]!, doc_no: 'HC-SO-2610-066', branding: 'SERVICE', fair_put_aside_at: '2026-10-21T09:00:00Z', fair_put_aside_by: 'Chew' }];
+    show();
+    const toggle = screen.getByRole('button', { name: 'Put aside (1)' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('HC-SO-2610-066')).toBeNull();
+    fireEvent.click(toggle);
+    const row = screen.getByText('HC-SO-2610-066').closest('tr') as HTMLTableRowElement;
+    expect(row.textContent).toContain('Chew · 2026/10/21');
+    fireEvent.click(within(row).getByRole('button', { name: 'Bring back' }));
+    expect(aside.mutate).toHaveBeenCalledWith({ docNo: 'HC-SO-2610-066', aside: false });
+  });
+
+  it('nothing put aside: no group at all', () => {
+    show();
+    expect(screen.queryByRole('button', { name: /Put aside \(/ })).toBeNull();
   });
 });
 
@@ -311,7 +392,8 @@ describe('FairPending — report says another fair (owner 2026-10-20)', () => {
     show();
     const group = screen.getByText('Report says another fair (2)').closest('section') as HTMLElement;
     const heads = within(group).getAllByRole('columnheader');
-    expect(heads.map((h) => h.textContent)).toEqual(['', 'SO No.', 'Ref No.', 'SO date', 'Now under', 'Brand', 'Amount', 'Report says']);
+    expect(heads.map((h) => h.textContent)).toEqual(['SO No.', 'Ref No.', 'SO date', 'Now under', 'Brand', 'Amount', 'Report says']);
+    /* The tick sits first in the SO No. cell, ahead of the number. */
     expect(heads[0]!.querySelector('input[type="checkbox"]')).toBeTruthy();
     const body = group.querySelector('tbody') as HTMLTableSectionElement;
     expect(body.rows).toHaveLength(2);
@@ -319,10 +401,10 @@ describe('FairPending — report says another fair (owner 2026-10-20)', () => {
     const linked = body.rows[0]!;
     expect(linked.cells[0]!.querySelector('input[aria-label="Tick HC-SO-2610-167"]')).toBeTruthy();
     expect([...linked.cells].map((c) => c.textContent)).toEqual([
-      '', 'HC-SO-2610-167', 'HC13316', '2026/10/12', '[AKEMI] MALL MGTIOI MALL PUTRAJAYA · 09/16 - 09/20', 'AKEMI', 'RM 3,388.00',
+      'HC-SO-2610-167', 'HC13316', '2026/10/12', '[AKEMI] MALL MGTIOI MALL PUTRAJAYA · 09/16 - 09/20', 'AKEMI', 'RM 3,388.00',
       '[AKEMI] HOMELOVEIOIGECC · 10/09 - 10/11 · reported 10/10',
     ]);
-    expect(body.rows[1]!.cells[4]!.textContent).toBe('Not linkedSUNWAY PYRAMID CONVENTION CENTRE');
+    expect(body.rows[1]!.cells[3]!.textContent).toBe('Not linkedSUNWAY PYRAMID CONVENTION CENTRE');
   });
 
   it('a server from before the two lines still names the fair on one line', () => {

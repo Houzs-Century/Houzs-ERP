@@ -55,6 +55,10 @@ export type FairOptionsResponse = {
   earlier: FairOption[];
   /** The company's venue master — the list behind "Others". */
   venues: VenueMasterRow[];
+  /** Asked for with `older` (Fair Links, owner 2026-10-21): fairs closed
+   *  before the four weeks, back about three months, newest first. Finance and
+   *  PMS only — the server sends none to anyone else. */
+  older?: FairOption[];
 };
 
 /** Label for one row: the VENUE, with the ORGANIZER beside it. ONE label, shared
@@ -95,13 +99,15 @@ export function fairLabel(o: Pick<FairOption, 'venue' | 'organizer' | 'solo' | '
  *   "today in MYT", which the server decides — the browser's clock is not the
  *   Malaysian business date and must not be used for this.
  */
-export function useFairOptions(soDate: string | null | undefined) {
+export function useFairOptions(soDate: string | null | undefined, opts?: { older?: boolean }) {
   const date = soDate && /^\d{4}-\d{2}-\d{2}/.test(soDate) ? soDate.slice(0, 10) : null;
+  const older = opts?.older === true;
+  const query = [date ? `date=${date}` : '', older ? 'older=1' : ''].filter(Boolean).join('&');
   return useQuery({
-    queryKey: ['fair-options', date ?? 'today'],
+    queryKey: ['fair-options', date ?? 'today', ...(older ? ['older'] : [])],
     queryFn: () =>
       authedFetch<FairOptionsResponse>(
-        `/mfg-sales-orders/fair-options${date ? `?date=${date}` : ''}`,
+        `/mfg-sales-orders/fair-options${query ? `?${query}` : ''}`,
       ),
     staleTime: 60_000,
   });
@@ -149,19 +155,50 @@ export type FairPendingRow = {
    *  SO page's rule (lib/customer-ref.ts). Absent from an older server. */
   ref?: string | null;
   customer_so_no?: string | null;
+  /** Put aside on Fair Links (owner 2026-10-21): when, and by whom. Only the
+   *  folded "Put aside" group's rows carry them. */
+  fair_put_aside_at?: string | null;
+  fair_put_aside_by?: string | null;
 };
 
 /** Orders with no fair link a person should see (backend scm/lib/fair-pending.ts).
  *  The reasons share this list and the screen keeps them apart — see the
  *  `fair_match` column. */
+type FairPendingResponse = { rows: FairPendingRow[]; putAside?: FairPendingRow[] };
+
+/** One read, two views of it: the list, and the orders put aside. */
+const fairPendingQuery = (limit: number) => ({
+  queryKey: ['fair-pending', 'list', limit],
+  queryFn: () => authedFetch<FairPendingResponse>(`/mfg-sales-orders/fair-pending?limit=${limit}`),
+  staleTime: 30_000,
+});
+
 export function useFairPending(limit = 200) {
-  return useQuery({
-    queryKey: ['fair-pending', limit],
-    queryFn: () =>
-      authedFetch<{ rows: FairPendingRow[] }>(
-        `/mfg-sales-orders/fair-pending?limit=${limit}`,
-      ).then((r) => r.rows),
-    staleTime: 30_000,
+  return useQuery({ ...fairPendingQuery(limit), select: (r: FairPendingResponse) => r.rows });
+}
+
+/** The orders a person put aside on Fair Links (owner 2026-10-21), most
+ *  recently put aside first — from the same read as the list. */
+export function useFairPutAside(limit = 200) {
+  return useQuery({ ...fairPendingQuery(limit), select: (r: FairPendingResponse) => r.putAside ?? [] });
+}
+
+/** Put an order aside on Fair Links, or bring it back (backend scm/lib/fair-
+ *  put-aside.ts). Finance or PMS; the list, the checks and the menu's count
+ *  all sit under ['fair-pending'], so they all refresh. */
+export function usePutAside() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ docNo, aside }: { docNo: string; aside: boolean }) =>
+      authedFetch<{ ok: true; changed: boolean }>(`/mfg-sales-orders/${encodeURIComponent(docNo)}/fair-put-aside`, {
+        method: 'POST',
+        body: JSON.stringify({ aside }),
+      }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['fair-pending'] });
+      await qc.invalidateQueries({ queryKey: ['mfg-sales-orders'] });
+    },
+    onError: writeFailedAs('Put aside not saved'),
   });
 }
 

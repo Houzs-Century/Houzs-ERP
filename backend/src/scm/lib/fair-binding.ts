@@ -135,8 +135,10 @@ export async function loadFairsInWindow(
   db: FairDb,
   companySql: string,
   soDate: string,
+  /** Fair Links reaches further for Finance / PMS (FAIR_SETTLE_LOOKBACK_DAYS). */
+  days?: number,
 ): Promise<FairProjectRow[]> {
-  const { start, end } = lookbackWindow(soDate);
+  const { start, end } = lookbackWindow(soDate, days);
   const rows = await db
     .prepare(
       `SELECT ${FAIR_COLUMNS}
