@@ -30,6 +30,7 @@
 import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
 import { PAYMENT_METHOD_CODES, type PaymentMethodCode } from '../scm/shared/payment-methods';
 import { jeNosOf } from './bank';
+import { keyedAs, merchantNamesOf } from './merchant-names';
 
 export type PaymentSource = 'SOPAY' | 'SIPAY';
 
@@ -89,7 +90,8 @@ export type PaymentFact = {
 export type MatchFacts = {
   /** The merchant report line claiming a card payment, and whether it is confirmed. */
   cardClaims: Map<string, { confirmed: boolean }>;
-  /** The display names of this company's ACTIVE merchants — the names a card payment is tagged with. */
+  /** Every name this company's ACTIVE merchants answer to — display names and
+      their other names (Pinelabs, Public) — compared without case. */
   activeMerchants: Set<string>;
   /** A payment's live journal entry: its number and the money account it debits. */
   entries: Map<string, { jeNo: string; accountCode: string | null }>;
@@ -139,7 +141,7 @@ export function classifyUnmatched(payments: readonly PaymentFact[], facts: Match
          untagged payment is every merchant's candidate (couldBeAcquirers), so
          only a tag NO active merchant carries means no report can ever take it. */
       const state: UnmatchedState = claim ? 'CARD_TO_CONFIRM'
-        : tag !== null && !facts.activeMerchants.has(tag) ? 'CARD_NO_MERCHANT'
+        : tag !== null && !keyedAs(tag, [...facts.activeMerchants]) ? 'CARD_NO_MERCHANT'
         : 'CARD_NOT_REPORTED';
       out.push({ ...base, kind: 'card', channel: tag, state, bankAccountCode: null, statementUpTo: null });
       continue;
@@ -234,9 +236,14 @@ async function readCardFacts(sb: any, companyId: number, cardIds: string[]): Pro
   ok: true; cardClaims: MatchFacts['cardClaims']; activeMerchants: MatchFacts['activeMerchants'];
 } | Fail> {
   const { data: acq, error: acqErr } = await sb.from('acc_acquirers')
-    .select('display_name').eq('company_id', companyId).eq('is_active', true);
+    .select('display_name, so_names').eq('company_id', companyId).eq('is_active', true);
   if (acqErr) return { ok: false, reason: `merchants: ${acqErr.message}` };
-  const activeMerchants = new Set(((acq ?? []) as Rows).map((a) => String(a.display_name ?? '').trim()).filter(Boolean));
+  /* Every name an active merchant answers to — a payment keyed "Pinelabs" is
+     AEON's, not "a merchant nobody set up" (owner 2026-10-21). */
+  const activeMerchants = new Set(((acq ?? []) as Rows).flatMap((a) => merchantNamesOf({
+    display_name: String(a.display_name ?? ''),
+    so_names: Array.isArray(a.so_names) ? (a.so_names as string[]) : [],
+  })));
 
   const links = await chunkIn<Record<string, any>>(cardIds, (batch, lo, hi) => sb.from('acc_settlement_matches')
     .select('payment_source, payment_id, settlement_row_id')

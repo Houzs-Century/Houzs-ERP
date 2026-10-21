@@ -210,6 +210,35 @@ export function matchStatement(
     if (trustsRef && row.ref) {
       const hits = (byRef.get(normRef(row.ref)) ?? []).filter((p) => !claimed.has(key(p)));
       if (hits.length === 1) {
+        /* SAME REFERENCE, DIFFERENT AMOUNT — never taken by itself (owner
+           2026-10-21: 同一个 approval code 但金额不一样时，不自动配，改成让你自己
+           选). PBB's 16/09 RM 4,000 line, ref 213017, was auto-matched to
+           HC-SO-2609-097's RM 3,500 — the only payment the screen could see with
+           that code — and confirm refuses any selection that does not make the
+           line to the sen, so "Confirm all 1 matched" failed on it at every
+           press. The code on a different amount is a mis-keyed code, or one
+           order of a swipe that paid two; either way a person picks. It is
+           offered with the window's payments that could make the line, exact
+           amounts first, nothing ticked. */
+        const hit = hits[0]!;
+        if (hit.amountSen !== row.grossSen) {
+          const near = available()
+            .filter((p) => key(p) !== key(hit) && dayGap(p.paidOn, row.txnDate) <= tolerance && Math.abs(p.amountSen) <= Math.abs(row.grossSen))
+            .sort((a, b) => Number(b.amountSen === row.grossSen) - Number(a.amountSen === row.grossSen) || b.amountSen - a.amountSen);
+          const offered = [hit, ...near];
+          decisions.push({
+            row,
+            bucket: 'NEEDS_CONFIRM',
+            matchReason: 'ref',
+            matched: [],
+            candidates: offered,
+            comboHints: exactPairs(offered, row.grossSen),
+            suggested: [],
+            clue: `Reference ${row.ref} is on ${hit.docNo}, but for ${fmtSen(hit.amountSen)} — this line is `
+              + `${fmtSen(row.grossSen)}. Pick the payment(s) that make it.`,
+          });
+          continue;
+        }
         /* FAR FROM THE DAY IS STILL THE SAME SWIPE, but it is not something to
            take without asking. Owner, 2026-09-09: four PBB lines read "No
            payment recorded near …" while the payment sat in the ERP with the

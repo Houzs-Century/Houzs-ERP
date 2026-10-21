@@ -37,6 +37,8 @@ import {
   loadAcquirer, loadPaymentCandidates, loadSettledKeys, linesAlreadyOnFile, confirmSettlementRow, postStatementCharge,
   postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow, clearOrphanBatch, findPaymentsForRow,
 } from '../../acc/settlement';
+import { rematchOpenLines } from '../../acc/settlement-rematch';
+import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { resolveRoles } from '../../acc/rules';
 import { loadLineMonth, loadLiveMonthLock } from '../../acc/bank';
 import { lockedRefusal } from '../../acc/bank-lock';
@@ -99,7 +101,7 @@ export const settlementSetup = guard(async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
   const { data, error } = await sb.from('acc_acquirers')
-    .select('code, display_name, statement_format, has_unique_ref, fee_method, date_tolerance_days, column_map, total_net_label, dates_have_no_year, transit_account_code, fee_account_code, bank_account_code, is_active')
+    .select('code, display_name, statement_format, has_unique_ref, fee_method, date_tolerance_days, column_map, total_net_label, dates_have_no_year, transit_account_code, fee_account_code, bank_account_code, is_active, so_names')
     .eq('company_id', co.companyId).order('code');
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const acquirers = ((data ?? []) as Array<Record<string, any>>).map((a) => ({
@@ -150,6 +152,38 @@ export const settlementSetupSave = guard(async (c) => {
     global.date_tolerance_days = d;
   }
   if (body.columnMap !== undefined) global.column_map = body.columnMap ?? null;
+  /* The OTHER names the sales team keys this merchant as on a payment (owner
+     2026-10-21: 「Pinelabs=AEON，Public=PBB」). One name, one merchant: a name
+     two merchants both answered to would put the same sale in two statements'
+     pools, so it is refused, naming the merchant that already has it. */
+  if (body.soNames !== undefined) {
+    const raw: unknown[] = Array.isArray(body.soNames) ? body.soNames : String(body.soNames ?? '').split(',');
+    const names: string[] = [];
+    const seen = new Set<string>();
+    for (const v of raw) {
+      const t = String(v ?? '').trim();
+      if (t === '' || seen.has(t.toUpperCase())) continue;
+      if (t.length > 40) return c.json({ error: 'bad_so_name', message: `"${t.slice(0, 40)}…" is too long for a merchant name.` }, 400);
+      seen.add(t.toUpperCase());
+      names.push(t);
+    }
+    if (names.length > 10) return c.json({ error: 'bad_so_name', message: 'Give at most 10 other names.' }, 400);
+    const { data: allRaw, error: aErr } = await sb.from('acc_acquirer_config').select('code, display_name, so_names');
+    if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
+    const all = (allRaw ?? []) as Array<{ code: string; display_name: string; so_names: string[] | null }>;
+    const self = all.find((a) => a.code === code);
+    if (!self) return c.json({ error: 'not_found', message: `${code} is not a merchant.` }, 404);
+    const kept = names.filter((n) => n.toUpperCase() !== String(self.display_name).trim().toUpperCase());
+    for (const other of all) {
+      if (other.code === code) continue;
+      const theirs = [other.display_name, ...(other.so_names ?? [])].map((n) => String(n ?? '').trim().toUpperCase());
+      const clash = kept.find((n) => theirs.includes(n.toUpperCase()));
+      if (clash) {
+        return c.json({ error: 'so_name_taken', message: `"${clash}" is already ${other.display_name}'s name — one name can belong to one merchant only.` }, 409);
+      }
+    }
+    global.so_names = kept;
+  }
   if (Object.keys(global).length > 0) {
     global.updated_at = new Date().toISOString();
     const { error } = await sb.from('acc_acquirer_config').update(global).eq('code', code);
@@ -242,7 +276,7 @@ export const settlementMaintenance = guard(async (c) => {
      with them. A merchant no company uses is still a row: that is how a company
      starts using it. */
   const { data: cfgRaw, error: cErr } = await sb.from('acc_acquirer_config')
-    .select('code, display_name, statement_format, has_unique_ref, fee_method, date_tolerance_days, column_map, is_active')
+    .select('code, display_name, statement_format, has_unique_ref, fee_method, date_tolerance_days, column_map, is_active, so_names')
     .order('code');
   if (cErr) return c.json({ error: 'load_failed', reason: cErr.message }, 500);
 
@@ -328,6 +362,7 @@ export const settlementMaintenance = guard(async (c) => {
       fee_method: g.fee_method,
       date_tolerance_days: g.date_tolerance_days,
       column_map: g.column_map,
+      so_names: Array.isArray(g.so_names) ? g.so_names : [],
       ready: Boolean(g.statement_format && g.fee_method && g.column_map?.date && g.column_map?.gross),
       autoMatchable: g.has_unique_ref === true,
       byCompany,
@@ -359,6 +394,24 @@ export const settlementMaintenance = guard(async (c) => {
   });
 
   return c.json({ companies, merchants, banks, clearings, feeAccounts });
+});
+
+/* POST /rematch — decide one merchant's OPEN report lines again, for one
+   company (acc/settlement-rematch). Setup calls it after a merchant's matching
+   rule changes — its other names, its drift days, its unique reference — once
+   per company that uses the merchant: the rule is shared, the reports are each
+   company's own (owner 2026-10-21: 已经上传的报告也重新对一次). The company is
+   named like the maintenance writes name it, and the grant is re-checked. */
+export const settlementRematch = guard(async (c) => {
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const target = maintenanceCompany(c, body.companyId);
+  if (!target.ok) return c.json(target.refusal, 409);
+  const code = String(body.acquirerCode ?? '').trim();
+  if (!code) return c.json({ error: 'no_merchant', message: 'Which merchant?' }, 400);
+  const r = await rematchOpenLines(c.get('supabase'), target.companyId, code);
+  if (!r.ok) return c.json({ error: 'rematch_failed', message: `${code} was not matched again: ${r.reason}`.slice(0, 190) }, 500);
+  return c.json(r);
 });
 
 
@@ -707,10 +760,11 @@ async function chargedByBatchOf(
   const byBatch = new Map<number, number>();
   const add = (id: number, sen: number) => { if (sen !== 0) byBatch.set(id, (byBatch.get(id) ?? 0) + sen); };
   for (const r of receipts) add(Number(r.batch_id), Number(r.charge_sen ?? 0));
-  const { data, error } = await sb.from('acc_settlement_payout_batches')
-    .select('batch_id, charge_sen').eq('company_id', companyId);
+  const { data, error } = await paginateAll<{ batch_id: number | null; charge_sen: number | null }>((f, t) => sb
+    .from('acc_settlement_payout_batches').select('batch_id, charge_sen')
+    .eq('company_id', companyId).order('id').range(f, t));
   if (error) return { ok: false, reason: error.message };
-  for (const d of (data ?? []) as Array<{ batch_id: number | null; charge_sen: number | null }>) {
+  for (const d of data ?? []) {
     if (d.batch_id != null) add(Number(d.batch_id), Number(d.charge_sen ?? 0));
   }
   return { ok: true, byBatch };
@@ -724,15 +778,19 @@ export const settlementBatches = guard(async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
-  const { data, error } = await sb.from('acc_settlement_batches')
-    .select(`${BATCH_COLUMNS}, uploaded_by`)
+  /* EVERY report, paged. This was the newest 100: by 2026-10-21 Houzs had 119
+     reports and 2990 140, so the oldest ones — and any line still open on them
+     — were off the screen with nothing saying so. Each read below pages the
+     same way, because each grows with every upload. */
+  const { data, error } = await paginateAll<Record<string, any>>((f, t) => sb
+    .from('acc_settlement_batches').select(`${BATCH_COLUMNS}, uploaded_by`)
     .eq('company_id', co.companyId)
-    .order('created_at', { ascending: false })
-    .limit(100);
+    .order('created_at', { ascending: false }).order('id', { ascending: false }).range(f, t));
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
-  const { data: recRaw, error: rcErr } = await sb.from('acc_settlement_receipts')
-    .select('batch_id, received_on, amount_sen, charge_sen').eq('company_id', co.companyId);
+  const { data: recRaw, error: rcErr } = await paginateAll<{ batch_id: number; received_on: string; amount_sen: number; charge_sen?: number | null }>((f, t) => sb
+    .from('acc_settlement_receipts').select('batch_id, received_on, amount_sen, charge_sen')
+    .eq('company_id', co.companyId).order('id').range(f, t));
   if (rcErr) return c.json({ error: 'load_failed', reason: rcErr.message }, 500);
   /* What the bank or acquirer KEPT — booked on an advice day, or off a credit
      (owner 2026-09-30) — settles the statement the way a credit does. */
@@ -742,8 +800,9 @@ export const settlementBatches = guard(async (c) => {
   /* How far the CARD MACHINE side has got. The two steps are two screens, so
      each list has to say where the other one stands: the payouts screen must
      not invite money against a statement nobody has reconciled. */
-  const { data: rowTally, error: rtErr } = await sb.from('acc_settlement_rows')
-    .select('batch_id, bucket, confirmed_at').eq('company_id', co.companyId);
+  const { data: rowTally, error: rtErr } = await paginateAll<{ batch_id: number; bucket: string; confirmed_at: string | null }>((f, t) => sb
+    .from('acc_settlement_rows').select('batch_id, bucket, confirmed_at')
+    .eq('company_id', co.companyId).order('id').range(f, t));
   if (rtErr) return c.json({ error: 'load_failed', reason: rtErr.message }, 500);
   const reconciled = new Map<number, { confirmed: number; open: number; toConfirm: number; toChoose: number; noRecord: number }>();
   for (const r of (rowTally ?? []) as Array<{ batch_id: number; bucket: string; confirmed_at: string | null }>) {
@@ -844,13 +903,16 @@ export const settlementBatchDetail = guard(async (c) => {
 
   /* The payments already linked to each line — what the matched pile shows,
      and what a re-opened line starts from. Read BEFORE the recompute, because
-     it decides which lines the recompute is even for. */
-  const { data: linkRaw, error: lErr } = await sb.from('acc_settlement_matches')
-    .select('settlement_row_id, payment_source, payment_id, doc_no, amount_sen')
-    .eq('company_id', co.companyId);
+     it decides which lines the recompute is even for. THIS report's lines
+     only: the whole company's links were read here, one call, and past
+     PostgREST's 1000-row ceiling a line's own link could be among the ones
+     silently dropped. */
+  const { data: linkRaw, error: lErr } = await chunkIn<Record<string, any>, number>(stored.map((r) => Number(r.id)), (batch, f, t) => sb
+    .from('acc_settlement_matches').select('settlement_row_id, payment_source, payment_id, doc_no, amount_sen')
+    .eq('company_id', co.companyId).in('settlement_row_id', batch).order('id').range(f, t));
   if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
   const linksByRow = new Map<number, Array<Record<string, unknown>>>();
-  for (const l of (linkRaw ?? []) as Array<Record<string, any>>) {
+  for (const l of linkRaw) {
     const list = linksByRow.get(Number(l.settlement_row_id));
     if (list) list.push(l);
     else linksByRow.set(Number(l.settlement_row_id), [l]);
@@ -1037,11 +1099,14 @@ export const settlementConfirmMatched = guard(async (c) => {
   const stored = (rowsRaw ?? []) as StoredRow[];
   const pending = stored.filter((r) => r.bucket === 'MATCHED' && !r.confirmed_at);
 
-  const { data: linkRaw, error: lErr } = await sb.from('acc_settlement_matches')
-    .select('settlement_row_id, payment_source, payment_id, doc_no, amount_sen').eq('company_id', co.companyId);
+  /* This report's pending lines' links — not the company's whole table, which a
+     single read would cut at PostgREST's 1000 rows without a word. */
+  const { data: linkRaw, error: lErr } = await chunkIn<Record<string, any>, number>(pending.map((r) => Number(r.id)), (batch, f, t) => sb
+    .from('acc_settlement_matches').select('settlement_row_id, payment_source, payment_id, doc_no, amount_sen')
+    .eq('company_id', co.companyId).in('settlement_row_id', batch).order('id').range(f, t));
   if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
   const linksByRow = new Map<number, Array<Record<string, any>>>();
-  for (const l of (linkRaw ?? []) as Array<Record<string, any>>) {
+  for (const l of linkRaw) {
     const list = linksByRow.get(Number(l.settlement_row_id));
     if (list) list.push(l);
     else linksByRow.set(Number(l.settlement_row_id), [l]);
@@ -1315,11 +1380,13 @@ export const settlementWatchlist = guard(async (c) => {
     : new Date(Date.parse(`${to}T00:00:00Z`) - 90 * 86_400_000).toISOString().slice(0, 10);
   const only = (c.req.query('acquirer') ?? '').trim();
 
+  /* so_names rides along: a payment keyed "Pinelabs" is AEON's, and is listed
+     under AEON rather than nowhere (owner 2026-10-21). */
   const { data: acqRaw, error: aErr } = await sb.from('acc_acquirers')
-    .select('code, display_name, date_tolerance_days')
+    .select('code, display_name, date_tolerance_days, so_names')
     .eq('company_id', co.companyId).eq('is_active', true).order('code');
   if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
-  const acquirers = ((acqRaw ?? []) as Array<{ code: string; display_name: string; date_tolerance_days: number }>)
+  const acquirers = ((acqRaw ?? []) as Array<{ code: string; display_name: string; date_tolerance_days: number; so_names?: string[] | null }>)
     .filter((a) => !only || a.code === only);
 
   const settled = await loadSettledKeys(sb, co.companyId);
@@ -1337,10 +1404,10 @@ export const settlementWatchlist = guard(async (c) => {
     recorded.push(...listOnce(recordedNotArrived(got.payments, settled.keys, to), a.code, listedUntagged));
   }
 
-  const { data: strandedRaw, error: sErr } = await sb.from('acc_settlement_rows')
-    .select('id, batch_id, acquirer_code, txn_date, ref, gross_sen, fee_sen, net_sen, notes')
+  const { data: strandedRaw, error: sErr } = await paginateAll<Record<string, any>>((f, t) => sb
+    .from('acc_settlement_rows').select('id, batch_id, acquirer_code, txn_date, ref, gross_sen, fee_sen, net_sen, notes')
     .eq('company_id', co.companyId).eq('bucket', 'UNMATCHED')
-    .gte('txn_date', from).lte('txn_date', to).order('txn_date');
+    .gte('txn_date', from).lte('txn_date', to).order('txn_date').order('id').range(f, t));
   if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);
   const stranded = ((strandedRaw ?? []) as Array<Record<string, any>>).filter((r) => !only || r.acquirer_code === only);
 
@@ -1400,23 +1467,29 @@ export const settlementInTransit = guard(async (c) => {
     : new Date(Date.parse(`${to}T00:00:00Z`) - 180 * 86_400_000).toISOString().slice(0, 10);
 
   const { data: acqRaw, error: aErr } = await sb.from('acc_acquirers')
-    .select('code, display_name, date_tolerance_days')
+    .select('code, display_name, date_tolerance_days, so_names')
     .eq('company_id', co.companyId).eq('is_active', true).order('code');
   if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
 
   /* Which payments a settlement line has claimed, whether that line has been
-     confirmed, and whether its batch's money has actually arrived. */
-  const { data: matchRaw, error: mErr } = await sb.from('acc_settlement_matches')
-    .select('payment_source, payment_id, settlement_row_id, amount_sen').eq('company_id', co.companyId);
+     confirmed, and whether its batch's money has actually arrived. Every one of
+     these four reads grows with every upload, so each is PAGED — a single read
+     stops at PostgREST's 1000 rows without saying so. */
+  const { data: matchRaw, error: mErr } = await paginateAll<Record<string, any>>((f, t) => sb
+    .from('acc_settlement_matches').select('payment_source, payment_id, settlement_row_id, amount_sen')
+    .eq('company_id', co.companyId).order('id').range(f, t));
   if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
-  const { data: rowRaw, error: rErr } = await sb.from('acc_settlement_rows')
-    .select('id, batch_id, confirmed_at, fee_sen').eq('company_id', co.companyId);
+  const { data: rowRaw, error: rErr } = await paginateAll<Record<string, any>>((f, t) => sb
+    .from('acc_settlement_rows').select('id, batch_id, confirmed_at, fee_sen')
+    .eq('company_id', co.companyId).order('id').range(f, t));
   if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
-  const { data: batchRaw, error: bErr } = await sb.from('acc_settlement_batches')
-    .select('id, net_sen, stated_net_sen, adjustment_sen, adjustment_je_no').eq('company_id', co.companyId);
+  const { data: batchRaw, error: bErr } = await paginateAll<Record<string, any>>((f, t) => sb
+    .from('acc_settlement_batches').select('id, net_sen, stated_net_sen, adjustment_sen, adjustment_je_no')
+    .eq('company_id', co.companyId).order('id').range(f, t));
   if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
-  const { data: recRaw, error: rcErr } = await sb.from('acc_settlement_receipts')
-    .select('batch_id, amount_sen, charge_sen').eq('company_id', co.companyId);
+  const { data: recRaw, error: rcErr } = await paginateAll<Record<string, any>>((f, t) => sb
+    .from('acc_settlement_receipts').select('batch_id, amount_sen, charge_sen')
+    .eq('company_id', co.companyId).order('id').range(f, t));
   if (rcErr) return c.json({ error: 'load_failed', reason: rcErr.message }, 500);
   /* A charge the bank kept (an advice day's, or one kept off a credit — owner
      2026-09-30) is booked Dr expense / Cr transit: it has left transit exactly
@@ -1514,7 +1587,7 @@ export const settlementInTransit = guard(async (c) => {
   /* Same rule as the watchlist (docs/bugs/0688): money keyed in without a
      bank is every acquirer's candidate but ONE line here, under no acquirer. */
   const listedUntagged = new Set<string>();
-  for (const a of (acqRaw ?? []) as Array<{ code: string; display_name: string; date_tolerance_days: number }>) {
+  for (const a of (acqRaw ?? []) as Array<{ code: string; display_name: string; date_tolerance_days: number; so_names?: string[] | null }>) {
     const got = await loadPaymentCandidates(sb, co.companyId, a, from, to);
     if (!got.ok) return c.json({ error: 'load_failed', reason: got.reason }, 500);
     for (const p of listOnce(got.payments, a.code, listedUntagged)) {
