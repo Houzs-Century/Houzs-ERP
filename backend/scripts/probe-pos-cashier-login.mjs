@@ -54,6 +54,32 @@ try {
         FROM invitations WHERE lower(email) = lower(${u.email}) ORDER BY id DESC LIMIT 5`;
     console.log(`invitations user ${u.id}`, invs);
   }
+  // 2990 POS (pos.2990shome.com) = name picker + 6-digit PIN, routes/pos.ts.
+  for (const u of users) {
+    const st = await sql`
+      SELECT s.id, s.staff_code, s.name, s.active, s.user_id, pn.slug AS position_slug,
+             (p.staff_id IS NOT NULL) AS has_pin, p.updated_at AS pin_updated
+        FROM scm.staff s
+        LEFT JOIN public.users u ON u.id = s.user_id
+        LEFT JOIN public.positions pn ON pn.id = u.position_id
+        LEFT JOIN scm.pos_pins p ON p.staff_id = s.id
+       WHERE s.user_id = ${u.id} OR s.name ILIKE ${like}`;
+    console.log(`staff/pin for user ${u.id}`, st);
+    for (const s2 of st) {
+      const att = await sql`SELECT * FROM scm.pos_pin_attempts WHERE staff_id = ${s2.id}`.catch((e) => e.message);
+      console.log(`pin attempts staff ${s2.id}`, att);
+    }
+  }
+  const picker = await sql`
+    SELECT s.name, (p.staff_id IS NOT NULL) AS has_pin
+      FROM scm.staff s
+      JOIN public.user_companies uc ON uc.user_id = s.user_id AND uc.company_id = ${cid}
+      LEFT JOIN public.users u ON u.id = s.user_id
+      LEFT JOIN public.positions pn ON pn.id = u.position_id
+      LEFT JOIN scm.pos_pins p ON p.staff_id = s.id
+     WHERE s.active = true AND s.user_id IS NOT NULL AND pn.slug LIKE 'sales%'
+     ORDER BY s.name`;
+  console.log("2990 POS picker", picker.length, picker.map((r) => `${r.name}${r.has_pin ? "" : "(NO PIN)"}`).join(", "));
   const anon = await sql`
     SELECT created_at, reason, email FROM auth_failed_logins
      WHERE email ILIKE ${like} AND created_at > now() - interval '14 days' ORDER BY created_at DESC LIMIT 15`;
