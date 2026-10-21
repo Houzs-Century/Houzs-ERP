@@ -74,6 +74,7 @@ import {
   lastMileListSideOf,
   proposeCrewDocNos,
   matchCrewSuggestions,
+  LAST_MILE_LIST_SIDES,
   LAST_MILE_LIST_SIDE_LABEL,
   type LastMileListSide,
   type CrewSuggestion,
@@ -157,7 +158,7 @@ export function FleetDay() {
 
   const [side, setSide] = useState<'ALL' | LastMileListSide>('ALL');
   const sideCounts = useMemo(() => {
-    const c: Record<LastMileListSide, number> = { TO_ARRANGE: 0, TIME_ARRANGED: 0, DELIVERED: 0 };
+    const c = Object.fromEntries(LAST_MILE_LIST_SIDES.map((s) => [s.side, 0])) as Record<LastMileListSide, number>;
     for (const o of boardOrders) {
       const s = lastMileListSideOf(o, date);
       if (s) c[s] += 1;
@@ -605,7 +606,7 @@ export function FleetDay() {
 
       {/* Split chips — the execution split for the picked day. */}
       <div className="flex flex-wrap gap-1.5">
-        {(['ALL', 'TO_ARRANGE', 'TIME_ARRANGED', 'DELIVERED'] as const).map((s) => (
+        {(['ALL', ...LAST_MILE_LIST_SIDES.map((s) => s.side)] as Array<'ALL' | LastMileListSide>).map((s) => (
           <button
             key={s}
             type="button"
@@ -616,7 +617,7 @@ export function FleetDay() {
             )}
           >
             {s === 'ALL'
-              ? `All (${sideCounts.TO_ARRANGE + sideCounts.TIME_ARRANGED + sideCounts.DELIVERED})`
+              ? `All (${LAST_MILE_LIST_SIDES.reduce((n, k) => n + sideCounts[k.side], 0)})`
               : `${LAST_MILE_LIST_SIDE_LABEL[s]} (${sideCounts[s]})`}
           </button>
         ))}

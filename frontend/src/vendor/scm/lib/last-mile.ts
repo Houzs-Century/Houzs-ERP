@@ -55,11 +55,18 @@ export function lastMileSideOf(o: LastMileRow, date: string): LastMileSide | nul
 //    place the two merge (lastMileListSideOf).
 export type LastMileListSide = LastMileSide | 'TO_ARRANGE';
 
-export const LAST_MILE_LIST_SIDE_LABEL: Record<LastMileListSide, string> = {
-  TO_ARRANGE: 'To arrange',
-  TIME_ARRANGED: 'Time arranged',
-  DELIVERED: 'Delivered',
-};
+/* The list sides in rail order, each with its chip label. ONE home for the
+   vocabulary: FleetDay's chips, its per-side counts and its labels all derive
+   from this array, so a fourth side is added here and nowhere else. */
+export const LAST_MILE_LIST_SIDES: ReadonlyArray<{ side: LastMileListSide; label: string }> = [
+  { side: 'TO_ARRANGE', label: 'To arrange' },
+  { side: 'TIME_ARRANGED', label: 'Time arranged' },
+  { side: 'DELIVERED', label: 'Delivered' },
+];
+
+export const LAST_MILE_LIST_SIDE_LABEL = Object.fromEntries(
+  LAST_MILE_LIST_SIDES.map((s) => [s.side, s.label]),
+) as Record<LastMileListSide, string>;
 
 type ToArrangeRow = Pick<
   PlanningOrder,
