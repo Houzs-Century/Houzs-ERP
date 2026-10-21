@@ -38,6 +38,11 @@ export interface WorkspaceTab {
   id: string;
   /** Where this tab currently is: pathname + search (no hash). */
   href: string;
+  /** The tab, and the page in it, a DOCUMENT tab was opened from (a document
+      link — Merchant Recon's order numbers, Fair Links, a relationship map).
+      The document's own Back returns there (owner 2026-10-21: 我从 merchant
+      recon 点开 SO，返回也要返回 merchant recon). Absent on every other tab. */
+  opener?: { id: string; href: string };
 }
 
 export interface WorkspaceTabsSnapshot {
@@ -162,7 +167,14 @@ function readStored(): StoredBlob | null {
     const user = typeof blob.user === "number" && Number.isFinite(blob.user) ? blob.user : null;
     const company =
       typeof blob.company === "number" && Number.isFinite(blob.company) ? blob.company : null;
-    const tabs = Array.isArray(blob.tabs) ? blob.tabs.filter(validTab) : [];
+    /* An opener survives a reload only when it is a well-formed tab reference
+       to a same-origin page; anything else is dropped, never fed to navigate(). */
+    const tabs = (Array.isArray(blob.tabs) ? blob.tabs.filter(validTab) : []).map((t): WorkspaceTab => {
+      const o = t.opener;
+      const ok = !!o && typeof o === "object" && typeof o.id === "string" && /^t\d+$/.test(o.id)
+        && typeof o.href === "string" && /^\/(?!\/)/.test(o.href);
+      return ok ? { id: t.id, href: t.href, opener: { id: o.id, href: o.href } } : { id: t.id, href: t.href };
+    });
     // De-dup on id (corrupt writes must not yield two tabs one identity).
     const seen = new Set<string>();
     const deduped = tabs.filter((t) => (seen.has(t.id) ? false : (seen.add(t.id), true)));
@@ -273,16 +285,20 @@ export function recordWorkspaceVisit(pathname: string, search: string): void {
     const existing = intent.doc
       ? s.tabs.find((t) => t.href === href)
       : s.tabs.find((t) => sectionKeyFor(t.href) === section);
+    /* A document remembers where it was opened from, so its Back can go there. */
+    const from = s.tabs.find((t) => t.id === s.activeId) ?? null;
+    const openerFor = (tabId: string) =>
+      intent.doc && from && from.id !== tabId ? { opener: { id: from.id, href: from.href } } : {};
     if (existing) {
       if (existing.href === href && s.activeId === existing.id) return;
       state = {
         ...s,
-        tabs: s.tabs.map((t) => (t.id === existing.id ? { ...t, href } : t)),
+        tabs: s.tabs.map((t) => (t.id === existing.id ? { ...t, href, ...openerFor(t.id) } : t)),
         activeId: existing.id,
       };
     } else {
       const id = `t${s.nextId}`;
-      state = { ...s, tabs: [...s.tabs, { id, href }], activeId: id, nextId: s.nextId + 1 };
+      state = { ...s, tabs: [...s.tabs, { id, href, ...openerFor(id) }], activeId: id, nextId: s.nextId + 1 };
     }
   } else {
     // The active tab follows in-content navigation. A missing active pointer
@@ -367,6 +383,42 @@ export function closeWorkspaceTab(id: string): { navigateTo: string | null } {
   emit();
   if (!wasActive) return { navigateTo: null };
   return { navigateTo: neighbour ? neighbour.href : "/" };
+}
+
+/**
+ * Where the ACTIVE tab's document was opened from — null unless the active tab
+ * was opened as a document from another page. `tabOpen` says whether the
+ * opener's tab is still in the strip.
+ */
+export function workspaceOpener(): { id: string; href: string; tabOpen: boolean } | null {
+  const s = ensureLoaded();
+  const active = s.tabs.find((t) => t.id === s.activeId);
+  if (!active?.opener) return null;
+  const { id, href } = active.opener;
+  return { id, href, tabOpen: s.tabs.some((t) => t.id === id) };
+}
+
+/**
+ * Back to the page the active document was opened from. When the opener's tab
+ * is still in the strip it becomes the active tab and this document's tab
+ * closes — the way closing a browser tab hands you back the one that opened
+ * it, and without leaving a second copy of that page in the strip. Otherwise
+ * this tab goes back there itself. Returns the address to navigate to (the
+ * page as it was when the document was opened), or null when the active tab
+ * was not opened as a document.
+ */
+export function returnToWorkspaceOpener(): string | null {
+  const s = ensureLoaded();
+  const active = s.tabs.find((t) => t.id === s.activeId);
+  if (!active?.opener) return null;
+  const { id, href } = active.opener;
+  state = s.tabs.some((t) => t.id === id)
+    ? { ...s, tabs: s.tabs.filter((t) => t.id !== active.id), activeId: id }
+    : { ...s, tabs: s.tabs.map((t) => (t.id === active.id ? { id: t.id, href: t.href } : t)) };
+  persist();
+  refreshSnapshot();
+  emit();
+  return href;
 }
 
 /** Test seam — forget the in-memory state so the next read re-hydrates. */

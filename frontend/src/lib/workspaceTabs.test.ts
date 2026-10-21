@@ -8,7 +8,9 @@ import {
   moveWorkspaceTab,
   recordWorkspaceVisit,
   resetWorkspaceTabsForTests,
+  returnToWorkspaceOpener,
   sectionKeyFor,
+  workspaceOpener,
 } from "./workspaceTabs";
 import {
   bindBrowserStorageIdentity,
@@ -322,5 +324,58 @@ describe("document intent (relationship map)", () => {
     openDoc("/scm/delivery-orders/do-1");
     expect(hrefs()).toEqual(["/scm/sales-orders/HC-SO-001", "/scm/delivery-orders/do-1"]);
     expect(activeHref()).toBe("/scm/delivery-orders/do-1");
+  });
+});
+
+/* Owner 2026-10-21: 我从 merchant recon 点开 SO，返回也要返回 merchant recon. A
+   document opened in its own tab remembers the page it was opened from, and its
+   Back goes there — to that tab, with the document's tab closed. */
+describe("Back from a document returns to the page it was opened from", () => {
+  const openDoc = (pathname: string) => {
+    markWorkspaceOpenIntent(true);
+    recordWorkspaceVisit(pathname, "");
+  };
+
+  it("names the opener, and Back closes the document's tab and activates the opener's — at the page it was left on", () => {
+    recordWorkspaceVisit("/scm/merchant-recon", "?batch=230");
+    openDoc("/scm/sales-orders/HC-SO-013512");
+    expect(workspaceOpener()).toEqual({ id: "t1", href: "/scm/merchant-recon?batch=230", tabOpen: true });
+    expect(returnToWorkspaceOpener()).toBe("/scm/merchant-recon?batch=230");
+    expect(hrefs()).toEqual(["/scm/merchant-recon?batch=230"]);
+    expect(activeHref()).toBe("/scm/merchant-recon?batch=230");
+  });
+
+  it("when the opener's tab was closed meanwhile, this tab goes back there itself — once", () => {
+    recordWorkspaceVisit("/scm/merchant-recon", "");
+    openDoc("/scm/sales-orders/HC-SO-013512");
+    const docTab = getWorkspaceTabsSnapshot().activeId!;
+    closeWorkspaceTab("t1");
+    expect(workspaceOpener()).toMatchObject({ href: "/scm/merchant-recon", tabOpen: false });
+    expect(returnToWorkspaceOpener()).toBe("/scm/merchant-recon");
+    expect(getWorkspaceTabsSnapshot().activeId).toBe(docTab);
+    recordWorkspaceVisit("/scm/merchant-recon", "");
+    expect(workspaceOpener()).toBeNull();
+  });
+
+  it("a tab opened from the sidebar, or the first tab, has no opener — its Back keeps going to its list", () => {
+    recordWorkspaceVisit("/scm/sales-orders/HC-SO-001", "");
+    expect(workspaceOpener()).toBeNull();
+    openVia("/scm/delivery-orders");
+    expect(workspaceOpener()).toBeNull();
+    expect(returnToWorkspaceOpener()).toBeNull();
+  });
+
+  it("the opener survives a reload; a hostile one is dropped", () => {
+    recordWorkspaceVisit("/scm/merchant-recon", "");
+    openDoc("/scm/sales-orders/HC-SO-013512");
+    resetWorkspaceTabsForTests();
+    expect(workspaceOpener()).toMatchObject({ href: "/scm/merchant-recon", tabOpen: true });
+
+    sessionStorage.setItem(WORKSPACE_TABS_KEY, JSON.stringify({
+      user: null, company: null, activeId: "t2", nextId: 3,
+      tabs: [{ id: "t1", href: "/x" }, { id: "t2", href: "/scm/sales-orders/A", opener: { id: "t1", href: "//evil.example" } }],
+    }));
+    resetWorkspaceTabsForTests();
+    expect(workspaceOpener()).toBeNull();
   });
 });

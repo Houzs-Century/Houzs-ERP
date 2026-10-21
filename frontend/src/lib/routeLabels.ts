@@ -87,6 +87,11 @@ const SCM_SEGMENT_LABELS: Record<string, [string, string]> = {
   "unbilled-deliveries": ["Not Billed", "Delivered, Not Yet Billed"],
   "payment-vouchers": ["Payment Vouchers", "Payment Voucher"],
   "currencies": ["Currencies", "Currency"],
+  /* Named so a document opened from these pages can say where Back goes
+     ("← Merchant Recon"), and so their tabs read as more than "Scm". */
+  "merchant-recon": ["Merchant Recon", "Merchant Recon"],
+  "bank-recon": ["Bank Recon", "Bank Recon"],
+  "settlement-setup": ["Recon Setup", "Recon Setup"],
   // Transportation
   "drivers": ["Drivers", "Driver"],
   "delivery-planning": ["Delivery Planning", "Delivery Planning"],
