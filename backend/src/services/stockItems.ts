@@ -231,8 +231,7 @@ export interface RefreshResult {
 /**
  * Bulk refresh: pull stock_items for every distinct item_code
  * referenced by non-archived cases (optionally constrained to a
- * caller-provided list), then recompute `assr_cases.creditor_code`
- * for any case whose item_code's main_supplier changed.
+ * caller-provided list). Cases are not touched (HC-0130).
  */
 export async function runStockItemsRefresh(
   env: Env,
@@ -270,26 +269,9 @@ export async function runStockItemsRefresh(
       }
     }
 
-    // Re-point creditor_code for every case whose item is now in the
-    // cache. Single UPDATE — cheap compared to N round-trips.
-    const update = await env.DB.prepare(
-      `UPDATE assr_cases
-          SET creditor_code = (
-            SELECT si.main_supplier FROM stock_items si
-             WHERE si.item_code = assr_cases.item_code
-          ),
-              updated_at = datetime('now')
-        WHERE item_code IS NOT NULL AND item_code != ''
-          AND archived_at IS NULL
-          AND COALESCE(creditor_source, '') NOT IN ('manual', 'po', 'so')
-          AND (
-            COALESCE(creditor_code, '') != COALESCE(
-              (SELECT si.main_supplier FROM stock_items si
-                WHERE si.item_code = assr_cases.item_code), ''
-            )
-          )`
-    ).run();
-    const casesUpdated = update.meta.changes ?? 0;
+    // HC-0130 (Farra's rule): a case's supplier comes from its PO / SO, never
+    // from AutoCount MainSupplier, so the refresh no longer writes to cases.
+    const casesUpdated = 0;
 
     const message = `Refreshed ${fetched}/${itemCodes.length} items (${upserted} upserted); updated ${casesUpdated} cases.`;
     await writeLog(env, {
