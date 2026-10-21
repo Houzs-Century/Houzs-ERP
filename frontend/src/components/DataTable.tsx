@@ -2317,7 +2317,14 @@ function DataTableInner<T, L>({
             // sum (it scrolls) and at least the container (the filler takes it).
             style={layoutFixed ? { tableLayout: "fixed", minWidth: fixedTableWidth } : undefined}
           >
-            <thead className="sticky top-0 z-10">
+            {/* z-30, ABOVE the body sticky cells (z-20): the thead's own z-index
+                opens a stacking context, so a frozen header <th>'s inline z-30 is
+                scoped to it and cannot out-stack a body sticky cell at the ROOT
+                level. At z-10 the frozen-left/right BODY cells (z-20) painted OVER
+                the frozen header on scroll-down — the header's own corner showed
+                a data row where its heading should be. Lifting the whole thead
+                above z-20 keeps the frozen header on top on both axes. */}
+            <thead className="sticky top-0 z-30">
               <tr>
                 {selection && (
                   <th
@@ -2397,9 +2404,11 @@ function DataTableInner<T, L>({
                   if (isSticky) {
                     cellStyle.position = "sticky";
                     cellStyle.left = stickyLeft[i];
-                    // Above body sticky cells (z-20) and the sticky header
-                    // baseline (the thead is z-10); 30 keeps frozen headers
-                    // on top of everything during a two-axis scroll.
+                    // Above the scrollable header cells WITHIN the thead's own
+                    // stacking context (thead is z-30), so a frozen corner header
+                    // stays on top of the scrolling header during a two-axis
+                    // scroll. The thead being z-30 (> body sticky z-20) is what
+                    // keeps the whole header above the body — see the thead above.
                     cellStyle.zIndex = 30;
                   } else if (isStickyRight) {
                     cellStyle.position = "sticky";
@@ -2863,7 +2872,7 @@ function DataTableInner<T, L>({
               )}
             </tbody>
             {footerTotals && (
-              <tfoot className="sticky bottom-0 z-10">
+              <tfoot className="sticky bottom-0 z-30">
                 <tr title={footerTotals.picked ? "Total of the ticked rows" : "Total of the rows shown"}>
                   {selectColCount + expandColCount > 0 && (
                     <td colSpan={selectColCount + expandColCount} className="border-t-2 border-border bg-surface-dim" />
