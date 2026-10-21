@@ -3638,7 +3638,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         builtCompartments: built,
       });
     }
-    const specialModels = await specialDeliveryFeesForLines(sb, deliveryRuleLines, comboModulesById);
+    const specialModels = await specialDeliveryFeesForLines(sb, deliveryRuleLines, comboModulesById, companyId);
 
     /* Phase 2 — cross-order link. Sales typed the earlier SO's doc_no at
        handover. Validate it (exists, not cancelled, same customer by phone
@@ -5732,7 +5732,7 @@ async function recomputeDeliveryFeeAttempt(
       }),
     );
     const comboModulesById = await loadComboModulesById(sb, c);
-    specialModels = await specialDeliveryFeesForLines(sb, deliveryRuleLines, comboModulesById);
+    specialModels = await specialDeliveryFeesForLines(sb, deliveryRuleLines, comboModulesById, activeCompanyId(c));
   }
 
   // Key by company_id (2990's row is id=100001); id=1 fallback when unresolved

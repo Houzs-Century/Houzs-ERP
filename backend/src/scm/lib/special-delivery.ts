@@ -12,6 +12,7 @@
 import {
   deliveryTargetMatchesAnyLine, parseRuleTargets, splitSofaCode, type RuleLineInput,
 } from '../shared';
+import { scopeToCompanyIdOrOpen } from './companyScope';
 
 /** A persisted SO goods row, as the customer-change redetect path reads it back
  *  from mfg_sales_order_items (joined to its product). */
@@ -79,10 +80,13 @@ export async function specialDeliveryFeesForLines(
   sb: any,
   lines: RuleLineInput[],
   comboModulesById: Map<string, string[][]>,
+  companyId: number | null | undefined,
 ): Promise<{ standaloneFee: number; crossCategoryFollowupFee: number }[]> {
-  const { data, error } = await sb
-    .from('special_delivery_fee_rules')
-    .select('target, standalone_fee, cross_cat_followup_fee');
+  // Each company keeps its own rules: unscoped, a 2990 rule priced Houzs SOs.
+  const { data, error } = await scopeToCompanyIdOrOpen(
+    sb.from('special_delivery_fee_rules').select('target, standalone_fee, cross_cat_followup_fee'),
+    companyId,
+  );
   if (error) throw error;
   const out: { standaloneFee: number; crossCategoryFollowupFee: number }[] = [];
   for (const r of (data ?? []) as Array<Record<string, unknown>>) {
