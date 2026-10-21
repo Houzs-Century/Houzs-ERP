@@ -17,7 +17,7 @@ import type {
 } from '../../vendor/scm/lib/fair-options-queries';
 
 const ROWS: FairPendingRow[] = [
-  { doc_no: 'HC-SO-2609-064', so_date: '2026-09-13', venue: 'MID VALLEY', branding: null, project_id: null, fair_match: 'AMBIGUOUS', status: 'CONFIRMED', local_total_sen: 355860, salesperson_id: 's1' },
+  { doc_no: 'HC-SO-2609-064', so_date: '2026-09-13', venue: 'MID VALLEY', branding: null, project_id: null, fair_match: 'AMBIGUOUS', status: 'CONFIRMED', local_total_sen: 355860, salesperson_id: 's1', ref: null, customer_so_no: 'HC12064' },
   { doc_no: 'HC-SO-2609-065', so_date: '2026-09-13', venue: 'SUNWAY PYRAMID CONVENTION CENTRE', branding: null, project_id: null, fair_match: 'PENDING', status: 'CONFIRMED', local_total_sen: 658800, salesperson_id: 's2' },
   { doc_no: 'HC-SO-2609-063', so_date: '2026-09-12', venue: 'MID VALLEY', branding: 'DUNLOPILLO', project_id: null, fair_match: 'UNMATCHED', status: 'CONFIRMED', local_total_sen: 544000, salesperson_id: 's3' },
   /* Listed since 2026-10-19 (「没有 assign 到 fair 的就列出来」): an explicit No
@@ -99,11 +99,21 @@ describe('FairPending', () => {
 
   it('lines every group up in the same columns', () => {
     show();
-    for (const title of ['Pick one (1)', 'Waiting for the fair (1)']) {
+    for (const title of ['Pick one (1)', 'Waiting for the fair (1)', 'Marked No fair (1)']) {
       const group = screen.getByText(title).closest('section') as HTMLElement;
       expect(within(group).getAllByRole('columnheader').map((h) => h.textContent))
-        .toEqual(['SO No.', 'SO date', 'Venue', 'Brand', 'Amount', 'Fair', '']);
+        .toEqual(['', 'SO No.', 'Ref No.', 'SO date', 'Venue', 'Brand', 'Amount', 'Fair', '']);
     }
+  });
+
+  it('every group shows the order’s Ref No. beside its SO number, a dash when it has none', () => {
+    /* Owner 2026-10-21: 「我这里也需要这个reference」 — the slip number the
+       evening report lists, as the SO page shows it. */
+    show();
+    const pick = screen.getByText('HC-SO-2609-064').closest('tr') as HTMLTableRowElement;
+    expect([...pick.cells].map((c) => c.textContent).slice(1, 3)).toEqual(['HC-SO-2609-064', 'HC12064']);
+    const waiting = screen.getByText('HC-SO-2609-065').closest('tr') as HTMLTableRowElement;
+    expect(waiting.cells[2]!.textContent).toBe('—');
   });
 
   it('the SO number opens the order in its own tab of the strip', () => {
@@ -248,23 +258,31 @@ describe('boothChoices — which booths a row offers, in what order, and which i
 });
 
 describe('FairPending — report says another fair (owner 2026-10-20)', () => {
-  const toIoigecc = { projectId: 307, label: 'AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11)', reportDate: '2026-10-10' };
+  const toIoigecc = {
+    projectId: 307, title: '[AKEMI] HOMELOVE', detail: 'IOIGECC · 10/09 - 10/11',
+    label: 'AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11)', reportDate: '2026-10-10',
+  };
+  const mallMgt = { projectId: 343, title: '[AKEMI] MALL MGT', detail: 'IOI MALL PUTRAJAYA · 09/16 - 09/20' };
   const LINKED_ELSEWHERE: FairCheckRow = {
     doc_no: 'HC-SO-2610-167', so_date: '2026-10-12', venue: 'IOI MALL PUTRAJAYA', branding: 'AKEMI', project_id: 343, fair_match: 'PICKED',
-    status: 'CONFIRMED', local_total_sen: 338800, salesperson_id: 's1', check: 'REPORT_ELSEWHERE', target: toIoigecc,
+    status: 'CONFIRMED', local_total_sen: 338800, salesperson_id: 's1', customer_so_no: 'HC13316', check: 'REPORT_ELSEWHERE', target: toIoigecc, current: mallMgt,
     note: 'The evening report of AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11) lists it on 10/10; the order is under AKEMI — IOI MALL PUTRAJAYA — MALL MGT (09/16 - 09/20).',
   };
   /* The unlinked HC-SO-2609-065 (waiting for the fair) is in a report: it moves up. */
-  const UNLINKED: FairCheckRow = { ...ROWS[1]!, check: 'REPORT_ELSEWHERE', target: toIoigecc, note: 'The evening report … lists it; the order has no event.' };
-  const TWO_REPORTS: FairCheckRow = { ...LINKED_ELSEWHERE, doc_no: 'HC-SO-2610-200', target: null, note: 'The evening reports of A and B both list it.' };
+  const UNLINKED: FairCheckRow = { ...ROWS[1]!, check: 'REPORT_ELSEWHERE', target: toIoigecc, current: null, note: 'The evening report … lists it; the order has no event.' };
+  const TWO_REPORTS: FairCheckRow = {
+    ...LINKED_ELSEWHERE, doc_no: 'HC-SO-2610-200', target: null, note: 'The evening reports of A and B both list it.',
+    candidates: [{ projectId: 307, title: '[AKEMI] HOMELOVE', detail: 'IOIGECC · 10/09 - 10/11' }, { projectId: 2228, title: '[AKEMI] MLE', detail: 'MVEC SOUTHKEY · 09/18 - 09/20' }],
+  };
   afterEach(() => { checks.rows = []; transferMutate.mockReset(); });
 
   it('lists them first, once, with where the report puts each', () => {
     checks.rows = [LINKED_ELSEWHERE, UNLINKED, TWO_REPORTS];
     show();
     const group = screen.getByText('Report says another fair (3)').closest('section') as HTMLElement;
-    expect(group.textContent).toContain('AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11) · 2026/10/10');
+    expect(group.textContent).toContain('[AKEMI] HOMELOVEIOIGECC · 10/09 - 10/11 · reported 10/10');
     expect(group.textContent).toContain('Two reports list it — pick on the order');
+    expect(group.textContent).toContain('[AKEMI] HOMELOVE (IOIGECC · 10/09 - 10/11) / [AKEMI] MLE (MVEC SOUTHKEY · 09/18 - 09/20)');
     /* Moved up out of "Waiting for the fair", not listed twice. */
     expect(screen.queryByText('Waiting for the fair (1)')).toBeNull();
     /* Still unattributed until it moves: the count is unchanged. */
@@ -284,5 +302,35 @@ describe('FairPending — report says another fair (owner 2026-10-20)', () => {
     fireEvent.click(within(group).getByLabelText('Tick HC-SO-2610-167'));
     fireEvent.click(within(group).getByRole('button', { name: 'Transfer ticked (1)' }));
     expect(transferMutate.mock.calls[1]![0]).toEqual([{ docNo: 'HC-SO-2610-167', projectId: 307 }]);
+  });
+
+  /* Owner 2026-10-21: 这个表很乱 — one row per order, the tick on the left, where
+     it is now beside where the report puts it, no sentence under each row. */
+  it('one row per order: tick, SO No., Ref No., where it is now and where the report puts it', () => {
+    checks.rows = [LINKED_ELSEWHERE, UNLINKED];
+    show();
+    const group = screen.getByText('Report says another fair (2)').closest('section') as HTMLElement;
+    const heads = within(group).getAllByRole('columnheader');
+    expect(heads.map((h) => h.textContent)).toEqual(['', 'SO No.', 'Ref No.', 'SO date', 'Now under', 'Brand', 'Amount', 'Report says']);
+    expect(heads[0]!.querySelector('input[type="checkbox"]')).toBeTruthy();
+    const body = group.querySelector('tbody') as HTMLTableSectionElement;
+    expect(body.rows).toHaveLength(2);
+    expect(group.textContent).not.toContain('The evening report');
+    const linked = body.rows[0]!;
+    expect(linked.cells[0]!.querySelector('input[aria-label="Tick HC-SO-2610-167"]')).toBeTruthy();
+    expect([...linked.cells].map((c) => c.textContent)).toEqual([
+      '', 'HC-SO-2610-167', 'HC13316', '2026/10/12', '[AKEMI] MALL MGTIOI MALL PUTRAJAYA · 09/16 - 09/20', 'AKEMI', 'RM 3,388.00',
+      '[AKEMI] HOMELOVEIOIGECC · 10/09 - 10/11 · reported 10/10',
+    ]);
+    expect(body.rows[1]!.cells[4]!.textContent).toBe('Not linkedSUNWAY PYRAMID CONVENTION CENTRE');
+  });
+
+  it('a server from before the two lines still names the fair on one line', () => {
+    const { title: _t, detail: _d, ...oneLine } = toIoigecc;
+    void _t; void _d;
+    checks.rows = [{ ...LINKED_ELSEWHERE, target: oneLine, current: undefined }];
+    show();
+    const group = screen.getByText('Report says another fair (1)').closest('section') as HTMLElement;
+    expect(group.textContent).toContain('AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11) · reported 10/10');
   });
 });

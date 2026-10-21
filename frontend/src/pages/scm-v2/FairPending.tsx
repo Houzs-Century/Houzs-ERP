@@ -50,14 +50,24 @@
  * every button here writes an attribution into exhibition P&L and somebody's
  * commission, and a bulk action over rows nobody read is how a wrong one gets
  * in. A transfer moves the Fair, the Venue and the Fair Day together.
+ *
+ * REF NO. AND ONE ROW PER ORDER (owner 2026-10-21: 「我这里也需要这个reference，
+ * 然后这个表很乱」). Every group shows the order's Ref No. beside its SO number —
+ * the slip number the evening report lists, by the SO page's own rule
+ * (lib/customer-ref.ts). The report group is one row per order: the tick on the
+ * left, then where the order is NOW and where the REPORT puts it, each booth on
+ * two lines — "[AKEMI] HOMELOVE" over "IOIGECC · 10/09 - 10/11" — in place of
+ * the sentence that used to sit under each row. Every group keeps the tick
+ * column, empty where nothing is ticked, so the tables still line up.
  */
-import { Fragment, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@2990s/design-system';
 import { useAuth } from '../../auth/AuthContext';
 import { canCreateEvent } from '../../auth/salesAccess';
+import { customerRefOf } from '../../lib/customer-ref';
 import { markWorkspaceOpenIntent } from '../../lib/workspaceTabs';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtDayMonth } from '../../vendor/shared/format';
 import {
   useFairChecks,
   useFairPending,
@@ -96,9 +106,16 @@ const td: CSSProperties = { padding: '8px 10px', verticalAlign: 'middle', border
 const num: CSSProperties = { ...td, textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
 const noteCell: CSSProperties = { padding: '0 10px 8px', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const select: CSSProperties = { width: '100%', fontSize: 'var(--fs-13)', padding: '4px 6px', borderRadius: 6, border: '1px solid var(--border-weak, #e3e1da)', background: 'var(--c-paper, #fff)' };
+/* The tick column: a box in the report group, empty in the others. */
+const leadTh: CSSProperties = { ...th, padding: '6px 0 6px 10px', textAlign: 'center' };
+const leadTd: CSSProperties = { ...td, padding: '8px 0 8px 10px', textAlign: 'center' };
+const refTd: CSSProperties = { ...td, fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' };
+/* The second line of a booth: where and when. */
+const detailLine: CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 
-/* The same column widths in every group, so the tables line up. */
-const COLUMNS: Array<number | string | undefined> = [150, 100, '20%', 120, 130, undefined, 84];
+/* The same column widths in every group, so the tables line up: tick, SO No.,
+   Ref No., SO date, Venue (Now under), Brand, Amount, Fair, Link. */
+const COLUMNS: Array<number | string | undefined> = [34, 150, 100, 100, '18%', 110, 124, undefined, 84];
 const COLS = COLUMNS.length;
 
 function money(sen: number | null): string {
@@ -217,8 +234,9 @@ function ReportGroup({ rows, canTransfer }: { rows: FairCheckRow[]; canTransfer:
     <Group
       title={`Report says another fair (${rows.length})`}
       hint="The evening sales report of another fair lists these orders. Transfer moves the Fair, the Venue and the Fair Day to that fair, and History records it."
+      place="Now under"
       last="Report says"
-      tail={(
+      lead={(
         <input
           type="checkbox"
           aria-label="Tick every order"
@@ -240,57 +258,96 @@ function ReportGroup({ rows, canTransfer }: { rows: FairCheckRow[]; canTransfer:
       )}
     >
       {rows.map((r) => (
-        <Fragment key={r.doc_no}>
-          <tr>
-            <OrderCells row={r} />
-            <td style={td}>
-              {r.target
-                ? <>{r.target.label}{r.target.reportDate && <span style={soft}> · {fmtDateOrDash(r.target.reportDate)}</span>}</>
-                : <span style={soft}>Two reports list it — pick on the order</span>}
-            </td>
-            <td style={{ ...td, textAlign: 'center' }}>
-              {r.target && (
-                <input type="checkbox" aria-label={`Tick ${r.doc_no}`} checked={ticked.has(r.doc_no)} disabled={off} onChange={() => toggle(r.doc_no)} />
-              )}
-            </td>
-          </tr>
-          <tr><td colSpan={COLS} style={noteCell}>{r.note}</td></tr>
-        </Fragment>
+        <tr key={r.doc_no}>
+          <OrderCells
+            row={r}
+            lead={r.target && (
+              <input type="checkbox" aria-label={`Tick ${r.doc_no}`} checked={ticked.has(r.doc_no)} disabled={off} onChange={() => toggle(r.doc_no)} />
+            )}
+            place={<NowUnder row={r} />}
+          />
+          <td style={td} colSpan={2}><ReportSays row={r} /></td>
+        </tr>
       ))}
     </Group>
   );
 }
 
+/** A booth on two lines: "[AKEMI] HOMELOVE" over "IOIGECC · 10/09 - 10/11". */
+function BoothLines({ title, detail }: { title: string; detail: string }) {
+  return (
+    <>
+      <div style={{ fontWeight: 600 }}>{title}</div>
+      {detail && <div style={detailLine}>{detail}</div>}
+    </>
+  );
+}
+
+/** Where the order is now: its booth, or "Not linked" over the venue it records. */
+function NowUnder({ row }: { row: FairCheckRow }) {
+  if (row.current) return <BoothLines title={row.current.title} detail={row.current.detail} />;
+  if (row.project_id == null) {
+    return <><div style={soft}>Not linked</div>{row.venue && <div style={detailLine}>{row.venue}</div>}</>;
+  }
+  return <span style={soft}>—</span>;
+}
+
+/** Where the evening report puts it, and the day of that report. Two fairs'
+ *  reports both listing it: both named, for a person to pick on the order. */
+function ReportSays({ row }: { row: FairCheckRow }) {
+  const t = row.target;
+  if (t) {
+    const on = t.reportDate ? `reported ${fmtDayMonth(t.reportDate)}` : '';
+    /* An older server sends one line only. */
+    if (!t.title) return <>{t.label}{on && <span style={soft}> · {on}</span>}</>;
+    return <BoothLines title={t.title} detail={[t.detail, on].filter(Boolean).join(' · ')} />;
+  }
+  return (
+    <>
+      <div style={soft}>Two reports list it — pick on the order</div>
+      {!!row.candidates?.length && (
+        <div style={detailLine}>{row.candidates.map((c) => (c.detail ? `${c.title} (${c.detail})` : c.title)).join(' / ')}</div>
+      )}
+    </>
+  );
+}
+
 /** One group: its title, what to do, and its orders in the shared columns. */
-function Group({ title, hint, last, tail, actions, children }: {
+function Group({ title, hint, place = 'Venue', last, lead, actions, children }: {
   title: string;
   hint: string;
+  /** The fifth column: the order's venue, or (report group) where it is now. */
+  place?: 'Venue' | 'Now under';
+  /** The report group's last column also takes the Link column — it has no button. */
   last: 'Fair' | 'Status' | 'Report says';
-  /** The last column's header (a tick-all box). */
-  tail?: ReactNode;
+  /** The tick column's header (a tick-all box). */
+  lead?: ReactNode;
   /** Buttons above the table. */
   actions?: ReactNode;
   children: ReactNode;
 }) {
+  const wide = last === 'Report says';
   return (
     <section>
       <h2 style={{ margin: '0 0 2px', fontSize: 15 }}>{title}</h2>
       <p style={{ margin: '0 0 8px', opacity: 0.7, fontSize: 12 }}>{hint}</p>
       {actions}
       <div style={card}>
-        <table style={{ width: '100%', minWidth: 960, tableLayout: 'fixed', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
+        <table style={{ width: '100%', minWidth: 1060, tableLayout: 'fixed', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
           <colgroup>
             {COLUMNS.map((w, i) => <col key={i} style={w == null ? undefined : { width: w }} />)}
           </colgroup>
           <thead>
             <tr>
+              <th style={leadTh}>{lead}</th>
               <th style={th}>SO No.</th>
+              <th style={th}>Ref No.</th>
               <th style={th}>SO date</th>
-              <th style={th}>Venue</th>
+              <th style={th}>{place}</th>
               <th style={th}>Brand</th>
               <th style={{ ...th, textAlign: 'right' }}>Amount</th>
-              <th style={th}>{last}</th>
-              <th style={{ ...th, textAlign: tail ? 'center' : 'left' }}>{tail}</th>
+              <th style={th} colSpan={wide ? 2 : 1}>{last}</th>
+              {!wide && <th style={th} />}
             </tr>
           </thead>
           <tbody>{children}</tbody>
@@ -316,17 +373,28 @@ function SoLink({ docNo }: { docNo: string }) {
   );
 }
 
-/** The cells every group shares: number, date, venue, brand, amount. */
-function OrderCells({ row }: { row: Pick<FairPendingRow, 'doc_no' | 'so_date' | 'venue' | 'branding' | 'local_total_sen'> }) {
+type OrderRow = Pick<FairPendingRow, 'doc_no' | 'so_date' | 'venue' | 'branding' | 'local_total_sen' | 'ref' | 'customer_so_no'>;
+
+/** The cells every group shares: tick, number, Ref No., date, venue, brand,
+ *  amount. The report group puts where the order is now in the venue's place. */
+function OrderCells({ row, lead, place }: { row: OrderRow; lead?: ReactNode; place?: ReactNode }) {
+  const ref = customerRefOf(row);
   return (
     <>
+      <td style={leadTd}>{lead}</td>
       <td style={td}><SoLink docNo={row.doc_no} /></td>
+      <td style={refTd}>{ref || <span style={soft}>—</span>}</td>
       <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmtDateOrDash(row.so_date)}</td>
-      <td style={td}>{row.venue || <span style={soft}>(no place)</span>}</td>
+      <td style={td}>{place ?? (row.venue || <span style={soft}>(no place)</span>)}</td>
       <td style={td}>{row.branding || <span style={soft}>no brand</span>}</td>
       <td style={num}>{money(row.local_total_sen)}</td>
     </>
   );
+}
+
+/** The server's sentence under a row, from the SO No. column on. */
+function NoteRow({ note }: { note: string }) {
+  return <tr><td /><td colSpan={COLS - 1} style={noteCell}>{note}</td></tr>;
 }
 
 /** A 等加人 row: nothing to pick here — PMS adds the person in the project. */
@@ -338,13 +406,13 @@ function CheckRow({ row }: { row: FairCheckRow }) {
         <td style={td}>{row.status === 'DRAFT' ? 'Draft' : 'Confirmed'}</td>
         <td style={td} />
       </tr>
-      <tr><td colSpan={COLS} style={noteCell}>{row.note}</td></tr>
+      <NoteRow note={row.note} />
     </>
   );
 }
 
 function PendingRow(props: {
-  row: Pick<FairPendingRow, 'doc_no' | 'so_date' | 'venue' | 'branding' | 'local_total_sen'>;
+  row: OrderRow;
   /** The server's 要查 sentence, shown under the row. */
   note?: string;
   onAssign: (v: { docNo: string; projectId: number | null }) => void;
@@ -395,7 +463,7 @@ function PendingRow(props: {
           </Button>
         </td>
       </tr>
-      {note && <tr><td colSpan={COLS} style={noteCell}>{note}</td></tr>}
+      {note && <NoteRow note={note} />}
     </>
   );
 }
