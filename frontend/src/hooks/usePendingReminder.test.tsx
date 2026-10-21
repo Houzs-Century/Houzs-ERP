@@ -13,9 +13,20 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const { apiGet } = vi.hoisted(() => ({ apiGet: vi.fn() }));
+const { apiGet, authUser } = vi.hoisted(() => ({
+  apiGet: vi.fn(),
+  // Mutable so a test can swap the signed-in position; defaults to an ALLOWED
+  // one (see beforeEach) so the pre-existing cases keep exercising the happy path.
+  authUser: {
+    current: { id: 7, position_name: "Sales Executive", permissions: [] as string[] } as {
+      id: number;
+      position_name: string | null;
+      permissions: string[];
+    },
+  },
+}));
 vi.mock("../api/client", () => ({ api: { get: apiGet } }));
-vi.mock("../auth/AuthContext", () => ({ useAuth: () => ({ user: { id: 7 } }) }));
+vi.mock("../auth/AuthContext", () => ({ useAuth: () => ({ user: authUser.current }) }));
 vi.mock("../lib/storageIdentity", () => ({
   identityStorageKey: (base: string) => `${base}:u7:c1`,
   subscribeBrowserStorageIdentity: () => () => {},
@@ -42,6 +53,7 @@ beforeEach(() => {
   apiGet.mockReset();
   localStorage.clear();
   apiGet.mockResolvedValue({ data: [], total: 0 });
+  authUser.current = { id: 7, position_name: "Sales Executive", permissions: [] };
 });
 
 describe("usePendingReminder", () => {
@@ -111,5 +123,21 @@ describe("usePendingReminder", () => {
     act(() => result.current.postpone());
     expect(result.current.open).toBe(false);
     expect(Object.keys(localStorage).some((k) => k.startsWith("pending-reminder:"))).toBe(false);
+  });
+
+  it("a denied position (Driver) never opens, and never even asks", async () => {
+    authUser.current = { id: 8, position_name: "Driver", permissions: [] };
+    apiGet.mockResolvedValue({ data: [row(1, "2020-01-01", "2020-01-02")], total: 1 });
+    const { result } = renderHook(() => usePendingReminder(), { wrapper });
+    // enabled:false, so the query is never issued and the modal stays shut.
+    expect(result.current.open).toBe(false);
+    expect(apiGet).not.toHaveBeenCalled();
+  });
+
+  it("owner `*` is reminded even with no position set", async () => {
+    authUser.current = { id: 9, position_name: null, permissions: ["*"] };
+    apiGet.mockResolvedValue({ data: [row(1, "2020-01-01", "2020-01-02")], total: 1 });
+    const { result } = renderHook(() => usePendingReminder(), { wrapper });
+    await waitFor(() => expect(result.current.open).toBe(true));
   });
 });
