@@ -98,17 +98,32 @@ export function writeView(prev: URLSearchParams, patch: Partial<OverviewView>, t
   return next;
 }
 
-/* ── Where you were looking ──────────────────────────────────────────────── */
+/* ── Where you were looking, and where a project's Back goes ─────────────────
+   The project page's Back button used to go to the bare /projects, which opens
+   on this month and the top of the page (owner 2026-10-21: 我点9月的project，按
+   back 后又跳回10月，然后会跑回最上面). So opening a project notes TWO things:
+   the address it was opened from — the project's Back goes there, period,
+   sort and filters included — and where that page was scrolled, given back
+   once when the page is shown again at that address. Both live in one
+   per-tab store, the newest 20 kept, each for thirty minutes. */
 
 export type OverviewScroll = { page: number; table: number; tableLeft: number };
 
 const SCROLL_STORE = "houzs.projectOverview.scroll";
+const FRESH_MS = 30 * 60 * 1000;
+type Stored = Record<string, (Partial<OverviewScroll> & { href?: string; at?: number }) | undefined>;
 
-/** Remember the scroll of one visit of the page (one history entry), for Back. */
-export function rememberScroll(entryKey: string, pos: OverviewScroll): void {
+function readStore(): Stored {
   try {
-    const all = JSON.parse(sessionStorage.getItem(SCROLL_STORE) ?? "{}") as Record<string, OverviewScroll>;
-    all[entryKey] = pos;
+    const parsed: unknown = JSON.parse(sessionStorage.getItem(SCROLL_STORE) ?? "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Stored) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeStore(all: Stored): void {
+  try {
     const keys = Object.keys(all);
     for (const k of keys.slice(0, Math.max(0, keys.length - 20))) delete all[k];
     sessionStorage.setItem(SCROLL_STORE, JSON.stringify(all));
@@ -117,16 +132,43 @@ export function rememberScroll(entryKey: string, pos: OverviewScroll): void {
   }
 }
 
-/** The scroll remembered for this history entry, once. */
-export function takeScroll(entryKey: string): OverviewScroll | null {
-  try {
-    const all = JSON.parse(sessionStorage.getItem(SCROLL_STORE) ?? "{}") as Record<string, OverviewScroll | undefined>;
-    const pos = all[entryKey] ?? null;
-    if (pos) { delete all[entryKey]; sessionStorage.setItem(SCROLL_STORE, JSON.stringify(all)); }
-    return pos;
-  } catch {
-    return null;
-  }
+const fresh = (at: unknown) => typeof at === "number" && Date.now() - at <= FRESH_MS;
+
+/** A project is being opened from the page at `href`, scrolled to `pos`. */
+export function rememberOpenedFrom(projectId: number, href: string, pos: OverviewScroll): void {
+  const all = readStore();
+  delete all[`scroll:${href}`];
+  delete all[`back:${projectId}`];
+  all[`scroll:${href}`] = { ...pos, at: Date.now() };
+  all[`back:${projectId}`] = { href, at: Date.now() };
+  writeStore(all);
+}
+
+/** A project is being opened from the Projects page at `href` (the list view,
+    which keeps its own scroll) — only where its Back goes is noted. */
+export function rememberBackTo(projectId: number, href: string): void {
+  const all = readStore();
+  delete all[`back:${projectId}`];
+  all[`back:${projectId}`] = { href, at: Date.now() };
+  writeStore(all);
+}
+
+/** Where this project's Back goes: the Projects address it was opened from,
+    when that was recent; else the bare list. Same-origin /projects only. */
+export function projectBackTo(projectId: number): string {
+  const hit = readStore()[`back:${projectId}`];
+  const href = hit?.href;
+  return typeof href === "string" && /^\/projects(?:[/?]|$)/.test(href) && fresh(hit?.at) ? href : "/projects";
+}
+
+/** The scroll remembered for this address, once, while fresh. */
+export function takeScroll(href: string): OverviewScroll | null {
+  const all = readStore();
+  const hit = all[`scroll:${href}`];
+  if (!hit) return null;
+  delete all[`scroll:${href}`];
+  writeStore(all);
+  return fresh(hit.at) ? { page: Number(hit.page) || 0, table: Number(hit.table) || 0, tableLeft: Number(hit.tableLeft) || 0 } : null;
 }
 
 /* ── The project table ───────────────────────────────────────────────────── */

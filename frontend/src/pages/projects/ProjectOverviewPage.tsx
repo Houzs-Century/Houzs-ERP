@@ -6,7 +6,7 @@
 // Figures: keyed books when an event has them, otherwise its Sales Orders
 // (projectOverviewModel.ts); every project row says which.
 import { useEffect, useMemo, useRef } from "react";
-import { useLocation, useNavigate, useNavigationType, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "../../hooks/useQuery";
 import { api } from "../../api/client";
 import { formatCurrency, cn } from "../../lib/utils";
@@ -16,7 +16,7 @@ import { Columns, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
 import { ProjectDataGapsPanel, ProjectStuckPanel } from "./ProjectOverviewParts";
 import { figuresOf, totalsOf, groupBy, drillOf, pctOf, type OvProject, type Drill } from "./projectOverviewModel";
-import { VIEW_PARAMS, projectLines, readView, rememberScroll, tableAmount, takeScroll, writeView, type Dim, type OverviewView, type SortKey } from "./projectOverviewView";
+import { VIEW_PARAMS, projectLines, readView, rememberOpenedFrom, tableAmount, takeScroll, writeView, type Dim, type OverviewView, type SortKey } from "./projectOverviewView";
 
 const DIMS: Array<[Dim, string]> = [["brand", "Brand"], ["eventType", "Event type"], ["organizer", "Organizer"], ["venue", "Venue"], ["state", "State"]];
 const money = formatCurrency;
@@ -53,31 +53,33 @@ export function ProjectOverviewPage() {
   const setDrill = (d: Drill) => setView({ drill: d });
   const setSort = (s: SortKey) => setView({ sort: s });
 
-  /* And the place you were looking at: kept when a project is opened, given
-     back on Back (a POP onto this same history entry) once the figures are on
-     the page. The page scrolls inside the app's <main>; the project table in
-     its own box. */
+  /* And the place you were looking at: kept, with this page's address, when a
+     project is opened; the project's Back button returns to that address
+     (projectBackTo) — browser Back does too — and the place is given back once
+     the figures are on the page (owner 2026-10-21: 我点9月的project，按 back
+     后又跳回10月，然后会跑回最上面). The page scrolls inside the app's <main>;
+     the project table in its own box. */
   const location = useLocation();
-  const navType = useNavigationType();
   const rootRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLDivElement>(null);
   const restored = useRef(false);
   const pageScroller = () => rootRef.current?.closest("main") ?? null;
+  const here = `${location.pathname}${location.search}`;
   const openProject = (id: number) => {
-    rememberScroll(location.key, { page: pageScroller()?.scrollTop ?? 0, table: tableRef.current?.scrollTop ?? 0, tableLeft: tableRef.current?.scrollLeft ?? 0 });
+    rememberOpenedFrom(id, here, { page: pageScroller()?.scrollTop ?? 0, table: tableRef.current?.scrollTop ?? 0, tableLeft: tableRef.current?.scrollLeft ?? 0 });
     navigate(`/projects/${id}`);
   };
   useEffect(() => {
     if (restored.current || !q.data) return;
     restored.current = true;
-    const pos = navType === "POP" ? takeScroll(location.key) : null;
+    const pos = takeScroll(here);
     if (!pos) return;
     requestAnimationFrame(() => {
       const page = pageScroller();
       if (page) page.scrollTop = pos.page;
       if (tableRef.current) { tableRef.current.scrollTop = pos.table; tableRef.current.scrollLeft = pos.tableLeft; }
     });
-  }, [q.data, navType, location.key]);
+  }, [q.data, here]);
 
   const all = useMemo(() => (q.data?.projects ?? []).filter((p) =>
     (!brand || p.brand === brand) && (!type || p.eventType === type) && (!organizer || p.organizer === organizer)), [q.data, brand, type, organizer]);
