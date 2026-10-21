@@ -254,7 +254,7 @@ export const Mrp = () => {
      lines of the same SKU may pick different suppliers). { soItemId: supplierId };
      defaults to the SKU's main supplier when no entry. Covered / already-PO'd
      lines never appear here — they show the PO's supplier read-only. */
-  const [lineSupplier, setLineSupplier] = useState<Record<string, string>>({});
+  const [lineSupplier, setLineSupplier] = useState<Partial<Record<string, string>>>({});
   const setLineSupplierId = (soItemId: string, supplierId: string) =>
     setLineSupplier((prev) => ({ ...prev, [soItemId]: supplierId }));
   /* In-app result dialog (Commander 2026-05-29: confirm INSIDE the page, not a
@@ -1255,7 +1255,7 @@ const ModelDrilldown = ({
   selected: Set<string>;
   onToggleLine: (soItemId: string) => void;
   onSetLinesSelected: (ids: string[], on: boolean) => void;
-  lineSupplier: Record<string, string>;
+  lineSupplier: Partial<Record<string, string>>;
   onLineSupplierChange: (soItemId: string, supplierId: string) => void;
   flatModules?: boolean;
   /* BF-FLAT — bedframe groups are single-variant (one colour each); its colour
@@ -1374,7 +1374,7 @@ const OrderLines = ({ sku, selected, onToggleLine, lineSupplier, onLineSupplierC
   sku: MrpSku;
   selected: Set<string>;
   onToggleLine: (soItemId: string) => void;
-  lineSupplier: Record<string, string>;
+  lineSupplier: Partial<Record<string, string>>;
   onLineSupplierChange: (soItemId: string, supplierId: string) => void;
 }) => (
   <table className={styles.childTable}>
@@ -1487,7 +1487,7 @@ const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSuppli
   group: ModelGroup;
   selected: Set<string>;
   onToggleLine: (soItemId: string) => void;
-  lineSupplier: Record<string, string>;
+  lineSupplier: Partial<Record<string, string>>;
   onLineSupplierChange: (soItemId: string, supplierId: string) => void;
   /* The cover / pillow shortage lines on THIS SO (owner 2026-09-11). Shown as
      read-along rows under the sofa modules: they ride onto the order whenever

@@ -1136,15 +1136,16 @@ export async function computeMrp(
     }
   }
 
-  /* HC-0128 — NB-series fabrics (Fabric Converter) route to NB FURNITURE. The
-     rule only pre-selects a dropdown, so a failed read leaves every line on its
-     main supplier rather than failing the page. */
+  /* HC-0128 — NB-series fabrics (Fabric Converter) route to NB FURNITURE. A
+     failed read fails the plan like every other read here: an empty set would
+     silently send NB lines to the main supplier. */
   const nbFabricCodes = new Set<string>();
   {
-    const { data: nbFabrics } = await scoped(sb
+    const { data: nbFabrics, error: nbErr } = await scoped(sb
       .from('fabric_trackings')
       .select('fabric_code')
       .eq('series', NB_FABRIC_SERIES));
+    if (nbErr) throw new Error(`mrp_load_failed: ${nbErr.message}`);
     for (const f of (nbFabrics ?? []) as Array<{ fabric_code: string | null }>) {
       if (f.fabric_code) nbFabricCodes.add(f.fabric_code.trim().toUpperCase());
     }
