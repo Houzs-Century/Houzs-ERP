@@ -34,6 +34,8 @@ try {
      GROUP BY 1, 2 ORDER BY 1, 2`;
   console.log('\nAEON payments on Sales Orders (merchant AEON) by month:');
   for (const p of pays) console.log(`  co ${p.company_id} ${p.month}: ${p.n} payments RM ${rm(p.sen)} (no approval code ${p.no_code})`);
+  const blank = await sql`SELECT so_doc_no, paid_at, amount_sen, method FROM scm.mfg_sales_order_payments WHERE upper(coalesce(merchant_provider, '')) LIKE '%AEON%' AND paid_at >= '2026-01-01' AND coalesce(approval_code, '') = '' ORDER BY paid_at`;
+  for (const b of blank) console.log(`  no approval code: ${b.so_doc_no} ${day(b.paid_at)} RM ${rm(b.amount_sen)} ${b.method ?? ''}`);
 } finally {
   await sql.end();
 }
