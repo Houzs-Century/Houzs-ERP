@@ -660,10 +660,9 @@ export async function createAssrCase(
     );
   }
 
-  // Creditor resolution from the primary item. Awaited (HC-0130): the Worker
-  // may cancel a floating promise once it has answered, and the Supplier must
-  // be there while the case is still at Review. A failed lookup must still not
-  // fail the create — the case is already committed above.
+  // Creditor resolution from the primary item. Awaited (HC-0130): the Worker may
+  // cancel a floating promise, and the Supplier must be there at Review. A failed
+  // lookup must still not fail the create — the case is already committed above.
   if (firstItem) {
     await resolveCreditorForCase(env, assrId, firstItem).catch((e) =>
       console.warn(`[assr.create] creditor resolve failed for ${assrNo}:`, e?.message || e)
