@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { canSeePendingReminder } from "../auth/pendingReminderAccess";
 import { identityStorageKey } from "../lib/storageIdentity";
 import { booleanPreference, useIdentityPreference } from "./useIdentityPreference";
 import { buildDigest, localToday, seenKey, type PendingDigest, type PendingRow } from "./pendingDigest";
@@ -43,12 +44,19 @@ export function usePendingReminder(): PendingReminder {
   });
   const [postponed, setPostponed] = useState(false);
 
+  // Owner 2026-10-21: the popup auto-shows only to positions whose job is to act
+  // on project pending work (see auth/pendingReminderAccess.ts). Gating here, on
+  // the shared hook, covers both desktop and mobile and keeps the query from
+  // firing at all for an excluded position. It is a UX gate: the endpoint below
+  // still enforces its own per-caller scope, and Projects stays reachable.
+  const allowed = canSeePendingReminder(user);
+
   // Only ask once the user is known — an anonymous call would 401 and, worse,
   // could not be scoped to anyone. `enabled` also keeps it off the login screen.
   const q = useQuery<{ data: PendingRow[]; total: number }>({
     queryKey: ["pending-reminder", user?.id ?? 0, today],
     queryFn: () => api.get(`/api/projects?my_pending=1&per_page=${PAGE}&page=1`),
-    enabled: !!user?.id && !acked,
+    enabled: !!user?.id && !acked && allowed,
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
@@ -78,7 +86,7 @@ export function usePendingReminder(): PendingReminder {
 
   return {
     digest,
-    open: !acked && !postponed && !!digest && digest.total > 0,
+    open: allowed && !acked && !postponed && !!digest && digest.total > 0,
     acknowledge,
     postpone,
     armMyPendingFilter,
