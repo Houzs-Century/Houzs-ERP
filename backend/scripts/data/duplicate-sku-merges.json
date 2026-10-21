@@ -7,5 +7,46 @@
       { "drop": "AKEMI SOLITUDE MATT (SK)", "keep": "HAPPI SLEEP SOLITUDE MATT (SK)" },
       { "drop": "AKEMI SOLITUDE MATT (SP)", "keep": "HAPPI SLEEP SOLITUDE MATT (SP)" }
     ]
+  },
+  "HC-0141": {
+    "ruling": "YH 2026-10-21 (HC-0141, Sim): keep the plain codes. They carry the prices (30/36), supplier costs (30/36), the main-supplier binding and the stock (26 units); the MYLATEX twins carry none. Both sides already send the same AutoCount item (MYLATEX <M> (size)), so AutoCount is unchanged. BACKSHIRE (Q) and VELVETON (K) are refused until their MYLATEX code stops showing -1 stock.",
+    "pairs": [
+      { "drop": "MYLATEX AURORA MATT (K)",        "keep": "AURORA MATT (K)" },
+      { "drop": "MYLATEX AURORA MATT (Q)",        "keep": "AURORA MATT (Q)" },
+      { "drop": "MYLATEX AURORA MATT (S)",        "keep": "AURORA MATT (S)" },
+      { "drop": "MYLATEX AURORA MATT (SK)",       "keep": "AURORA MATT (SK)" },
+      { "drop": "MYLATEX AURORA MATT (SP)",       "keep": "AURORA MATT (SP)" },
+      { "drop": "MYLATEX AURORA MATT (SS)",       "keep": "AURORA MATT (SS)" },
+      { "drop": "MYLATEX BACKSHIRE MATT (K)",     "keep": "BACKSHIRE MATT (K)" },
+      { "drop": "MYLATEX BACKSHIRE MATT (Q)",     "keep": "BACKSHIRE MATT (Q)" },
+      { "drop": "MYLATEX BACKSHIRE MATT (S)",     "keep": "BACKSHIRE MATT (S)" },
+      { "drop": "MYLATEX BACKSHIRE MATT (SK)",    "keep": "BACKSHIRE MATT (SK)" },
+      { "drop": "MYLATEX BACKSHIRE MATT (SS)",    "keep": "BACKSHIRE MATT (SS)" },
+      { "drop": "MYLATEX BACKTON MATT (K)",       "keep": "BACKTON MATT (K)" },
+      { "drop": "MYLATEX BACKTON MATT (Q)",       "keep": "BACKTON MATT (Q)" },
+      { "drop": "MYLATEX BACKTON MATT (S)",       "keep": "BACKTON MATT (S)" },
+      { "drop": "MYLATEX BACKTON MATT (SK)",      "keep": "BACKTON MATT (SK)" },
+      { "drop": "MYLATEX BACKTON MATT (SS)",      "keep": "BACKTON MATT (SS)" },
+      { "drop": "MYLATEX CELESTIA MATT (K)",      "keep": "CELESTIA MATT (K)" },
+      { "drop": "MYLATEX CELESTIA MATT (Q)",      "keep": "CELESTIA MATT (Q)" },
+      { "drop": "MYLATEX CELESTIA MATT (S)",      "keep": "CELESTIA MATT (S)" },
+      { "drop": "MYLATEX CELESTIA MATT (SK)",     "keep": "CELESTIA MATT (SK)" },
+      { "drop": "MYLATEX CELESTIA MATT (SS)",     "keep": "CELESTIA MATT (SS)" },
+      { "drop": "MYLATEX CRESTLAKE MATT (K)",     "keep": "CRESTLAKE MATT (K)" },
+      { "drop": "MYLATEX CRESTLAKE MATT (Q)",     "keep": "CRESTLAKE MATT (Q)" },
+      { "drop": "MYLATEX CRESTLAKE MATT (S)",     "keep": "CRESTLAKE MATT (S)" },
+      { "drop": "MYLATEX CRESTLAKE MATT (SK)",    "keep": "CRESTLAKE MATT (SK)" },
+      { "drop": "MYLATEX CRESTLAKE MATT (SS)",    "keep": "CRESTLAKE MATT (SS)" },
+      { "drop": "MYLATEX LUMBARIA MATT (K)",      "keep": "LUMBARIA MATT (K)" },
+      { "drop": "MYLATEX LUMBARIA MATT (Q)",      "keep": "LUMBARIA MATT (Q)" },
+      { "drop": "MYLATEX LUMBARIA MATT (S)",      "keep": "LUMBARIA MATT (S)" },
+      { "drop": "MYLATEX LUMBARIA MATT (SK)",     "keep": "LUMBARIA MATT (SK)" },
+      { "drop": "MYLATEX LUMBARIA MATT (SS)",     "keep": "LUMBARIA MATT (SS)" },
+      { "drop": "MYLATEX VELVETON MATT (K)",      "keep": "VELVETON MATT (K)" },
+      { "drop": "MYLATEX VELVETON MATT (Q)",      "keep": "VELVETON MATT (Q)" },
+      { "drop": "MYLATEX VELVETON MATT (S)",      "keep": "VELVETON MATT (S)" },
+      { "drop": "MYLATEX VELVETON MATT (SK)",     "keep": "VELVETON MATT (SK)" },
+      { "drop": "MYLATEX VELVETON MATT (SS)",     "keep": "VELVETON MATT (SS)" }
+    ]
   }
 }
