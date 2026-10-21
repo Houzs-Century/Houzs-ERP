@@ -433,8 +433,7 @@ function buildItemBody(l: LineItem, datePinned = false): Record<string, unknown>
     unitPriceSen: toSen(l.price),
     /* Create items[] AND POST /:docNo/items: a TYPED 0 is free, an untouched 0 is unpriced. */
     ...zeroPriceClaim(toSen(l.price), l.priceAuthored === true),
-    lineDeliveryDate: l.ddate || null,
-    lineDeliveryDateOverridden: datePinned,
+    lineDeliveryDate: l.ddate || null, lineDeliveryDateOverridden: datePinned,
     ...(Object.keys(variants).length ? { variants } : {}),
   };
 }
