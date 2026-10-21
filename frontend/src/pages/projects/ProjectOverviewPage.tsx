@@ -168,7 +168,7 @@ export function ProjectOverviewPage() {
             <tbody>
               {listed.map(({ p, f }) => (
                 <tr key={p.id} onClick={() => navigate(`/projects/${p.id}`)} className="cursor-pointer hover:bg-surface-2/50">
-                  <Td left className="max-w-[320px] truncate"><span className="text-primary">{p.name}</span><span className="ml-1.5 text-[10.5px] text-ink-muted">{p.eventType ?? ""}</span></Td>
+                  <Td left className="max-w-[320px] !whitespace-normal break-words align-top"><span className="text-primary" title={p.name}>{p.name}</span><span className="ml-1.5 text-[10.5px] text-ink-muted">{p.eventType ?? ""}</span></Td>
                   <Td left className="text-ink-muted">{p.startDate?.slice(5) ?? "—"}{p.endDate && p.endDate !== p.startDate ? ` – ${p.endDate.slice(5)}` : ""}</Td>
                   <Td>{money(f.sales)}</Td><Td className="text-ink-secondary">{money(f.serviceRevenue)}</Td><Td>{money(f.cogs)}</Td><Td>{money(f.gp)}</Td><Td className="text-ink-secondary">{pctTxt(pctOf(f.gp, f.sales))}</Td>
                   <Td>{money(f.rental)}</Td><Td>{money(f.setup)}</Td><Td>{money(f.transport)}</Td><Td>{money(f.commission)}</Td><Td>{money(f.merchandise)}</Td><Td>{money(f.other)}</Td>

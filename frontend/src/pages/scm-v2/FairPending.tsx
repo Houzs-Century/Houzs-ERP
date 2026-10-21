@@ -42,11 +42,16 @@
  * person presses Link. The SO number opens the order in its own tab (「这里可以
  * 直接点开 so 看那张 so」).
  *
- * There is no bulk "link them all" action, deliberately: every button here
- * writes an attribution into exhibition P&L and somebody's commission, and a
- * bulk action over rows nobody read is how a wrong one gets in.
+ * REPORT SAYS ANOTHER FAIR (owner 2026-10-20) sits first: another fair's
+ * evening sales report lists the order — linked elsewhere or to nothing — so
+ * the report names where it belongs. Only there may orders move in bulk
+ * (ticked, or all at one click: 「也要支持一键按钮转」): the floor's own report
+ * is the evidence. Everywhere else a person picks per order, deliberately —
+ * every button here writes an attribution into exhibition P&L and somebody's
+ * commission, and a bulk action over rows nobody read is how a wrong one gets
+ * in. A transfer moves the Fair, the Venue and the Fair Day together.
  */
-import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@2990s/design-system';
 import { useAuth } from '../../auth/AuthContext';
@@ -58,11 +63,12 @@ import {
   useFairPending,
   useAssignFair,
   useFairOptions,
-  fairLabel,
+  useFairTransfer,
+  transferSummary,
   type FairCheckRow,
-  type FairOption,
   type FairPendingRow,
 } from '../../vendor/scm/lib/fair-options-queries';
+import { boothChoices } from '../../vendor/scm/lib/fair-booth-choices';
 
 /** The group of an order with no verdict at all (fair_match NULL). */
 const NO_VERDICT = 'NO_VERDICT';
@@ -100,75 +106,6 @@ function money(sen: number | null): string {
   return `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-/** Case/space-insensitive, as every venue and brand compare on the server. */
-const norm = (v: string | null | undefined): string => (v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
-
-const ISO = /^\d{4}-\d{2}-\d{2}$/;
-const dayNo = (iso: string): number => Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10))) / 86_400_000;
-
-/** Days between the order's date and the fair's period: 0 inside it. */
-function daysFrom(o: Pick<FairOption, 'startDate' | 'endDate'>, soDate: string | null): number {
-  if (!soDate || !ISO.test(soDate) || !ISO.test(o.startDate)) return 0;
-  const d = dayNo(soDate);
-  const start = dayNo(o.startDate);
-  const end = dayNo(o.endDate && ISO.test(o.endDate) ? o.endDate : o.startDate);
-  if (d < start) return start - d;
-  if (d > end) return d - end;
-  return 0;
-}
-
-/** One choice in a row's Fair dropdown: ONE booth — a brand at one event. */
-export type BoothChoice = { projectId: number; label: string; sameBrand: boolean };
-
-/**
- * The booths an order can be linked to here, and the one to fill in.
- *
- * Only fairs at the venue the order already records — the place is evidence
- * from the floor; this screen decides WHICH BOOTH, never where the sale
- * happened. Each reads BRAND — VENUE — ORGANIZER (dates). The order's own brand
- * comes first, then the rest; in each, the fair nearest the order's date first.
- * Two records of one booth (same brand at one event) show once, as the lowest
- * id — the arbiter the server's resolver uses (fair-options.ts
- * oneBoothOrNothing); booths with no brand cannot be told apart, so they are
- * never merged.
- *
- * `suggested` is the order's-brand booth nearest its date, or null when the
- * order has no brand or its brand has no booth there.
- */
-export function boothChoices(
-  options: readonly FairOption[],
-  order: Pick<FairPendingRow, 'venue' | 'branding' | 'so_date'>,
-): { choices: BoothChoice[]; suggested: number | null } {
-  const brand = norm(order.branding);
-  const soDate = order.so_date ? order.so_date.slice(0, 10) : null;
-  const byBooth = new Map<string, { choice: BoothChoice; days: number; start: string; brand: string }>();
-  for (const o of options) {
-    if (norm(o.venue) !== norm(order.venue)) continue;
-    const booths = o.booths ?? o.projectIds.map((projectId) => ({ projectId, brand: null }));
-    for (const b of booths) {
-      const key = b.brand ? `${o.key}|${norm(b.brand)}` : `${o.key}|#${b.projectId}`;
-      const seen = byBooth.get(key);
-      if (seen && seen.choice.projectId <= b.projectId) continue;
-      byBooth.set(key, {
-        choice: { projectId: b.projectId, label: `${b.brand || 'No brand'} — ${fairLabel(o)}`, sameBrand: brand !== '' && norm(b.brand) === brand },
-        days: daysFrom(o, soDate),
-        start: o.startDate,
-        brand: norm(b.brand),
-      });
-    }
-  }
-  const choices = [...byBooth.values()]
-    .sort((a, b) =>
-      Number(b.choice.sameBrand) - Number(a.choice.sameBrand) ||
-      a.days - b.days ||
-      b.start.localeCompare(a.start) ||
-      (a.brand === '' ? 1 : 0) - (b.brand === '' ? 1 : 0) ||
-      a.brand.localeCompare(b.brand) ||
-      a.choice.projectId - b.choice.projectId)
-    .map((x) => x.choice);
-  return { choices, suggested: choices[0]?.sameBrand ? choices[0].projectId : null };
-}
-
 export function FairPending() {
   const rowsQ = useFairPending(LIST_LIMIT);
   const checksQ = useFairChecks();
@@ -180,16 +117,20 @@ export function FairPending() {
   const busy = assign.isPending || !canReassign;
   const rows = rowsQ.data ?? [];
   const checks = checksQ.data ?? [];
+  const reported = useMemo(() => checks.filter((r) => r.check === 'REPORT_ELSEWHERE'), [checks]);
 
+  /* An unlinked order a report names is listed once — under the report. */
   const byGroup = useMemo(() => {
+    const inReport = new Set(reported.map((r) => r.doc_no));
     const m = new Map<string, FairPendingRow[]>();
     for (const r of rows) {
+      if (inReport.has(r.doc_no)) continue;
       const k = r.fair_match ?? NO_VERDICT;
       const list = m.get(k);
       if (list) list.push(r); else m.set(k, [r]);
     }
     return m;
-  }, [rows]);
+  }, [rows, reported]);
 
   if (rowsQ.isLoading) return <div style={{ padding: 16 }}>Loading…</div>;
 
@@ -221,6 +162,8 @@ export function FairPending() {
         )}
       </div>
 
+      {reported.length > 0 && <ReportGroup rows={reported} canTransfer={canReassign} />}
+
       {CHECK_GROUPS.map((g) => {
         const list = checks.filter((r) => r.check === g.key);
         if (list.length === 0) return null;
@@ -248,12 +191,92 @@ export function FairPending() {
   );
 }
 
+/** REPORT SAYS ANOTHER FAIR — move the ticked orders, or all of them at one
+ *  click, to the booth the report puts each at (owner 2026-10-20). */
+function ReportGroup({ rows, canTransfer }: { rows: FairCheckRow[]; canTransfer: boolean }) {
+  const transfer = useFairTransfer();
+  const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
+  const [said, setSaid] = useState<string | null>(null);
+  const movable = rows.filter((r) => r.target);
+  const tickedRows = movable.filter((r) => ticked.has(r.doc_no));
+  const off = transfer.isPending || !canTransfer;
+  const allTicked = movable.length > 0 && tickedRows.length === movable.length;
+  const toggle = (doc: string) => setTicked((s) => {
+    const next = new Set(s);
+    if (next.has(doc)) next.delete(doc); else next.add(doc);
+    return next;
+  });
+  const move = (list: FairCheckRow[]) => {
+    setSaid(null);
+    transfer.mutate(
+      list.map((r) => ({ docNo: r.doc_no, projectId: r.target!.projectId })),
+      { onSuccess: (res) => { setSaid(transferSummary(res.results)); setTicked(new Set()); } },
+    );
+  };
+  return (
+    <Group
+      title={`Report says another fair (${rows.length})`}
+      hint="The evening sales report of another fair lists these orders. Transfer moves the Fair, the Venue and the Fair Day to that fair, and History records it."
+      last="Report says"
+      tail={(
+        <input
+          type="checkbox"
+          aria-label="Tick every order"
+          checked={allTicked}
+          disabled={off || movable.length === 0}
+          onChange={() => setTicked(allTicked ? new Set() : new Set(movable.map((r) => r.doc_no)))}
+        />
+      )}
+      actions={(
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', margin: '0 0 8px' }}>
+          <Button variant="secondary" size="sm" disabled={off || tickedRows.length === 0} onClick={() => move(tickedRows)}>
+            Transfer ticked ({tickedRows.length})
+          </Button>
+          <Button variant="primary" size="sm" disabled={off || movable.length === 0} onClick={() => move(movable)}>
+            Transfer all ({movable.length})
+          </Button>
+          {said && <span role="status" style={{ fontSize: 'var(--fs-12)' }}>{said}</span>}
+        </div>
+      )}
+    >
+      {rows.map((r) => (
+        <Fragment key={r.doc_no}>
+          <tr>
+            <OrderCells row={r} />
+            <td style={td}>
+              {r.target
+                ? <>{r.target.label}{r.target.reportDate && <span style={soft}> · {fmtDateOrDash(r.target.reportDate)}</span>}</>
+                : <span style={soft}>Two reports list it — pick on the order</span>}
+            </td>
+            <td style={{ ...td, textAlign: 'center' }}>
+              {r.target && (
+                <input type="checkbox" aria-label={`Tick ${r.doc_no}`} checked={ticked.has(r.doc_no)} disabled={off} onChange={() => toggle(r.doc_no)} />
+              )}
+            </td>
+          </tr>
+          <tr><td colSpan={COLS} style={noteCell}>{r.note}</td></tr>
+        </Fragment>
+      ))}
+    </Group>
+  );
+}
+
 /** One group: its title, what to do, and its orders in the shared columns. */
-function Group({ title, hint, last, children }: { title: string; hint: string; last: 'Fair' | 'Status'; children: ReactNode }) {
+function Group({ title, hint, last, tail, actions, children }: {
+  title: string;
+  hint: string;
+  last: 'Fair' | 'Status' | 'Report says';
+  /** The last column's header (a tick-all box). */
+  tail?: ReactNode;
+  /** Buttons above the table. */
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <section>
       <h2 style={{ margin: '0 0 2px', fontSize: 15 }}>{title}</h2>
       <p style={{ margin: '0 0 8px', opacity: 0.7, fontSize: 12 }}>{hint}</p>
+      {actions}
       <div style={card}>
         <table style={{ width: '100%', minWidth: 960, tableLayout: 'fixed', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
           <colgroup>
@@ -267,7 +290,7 @@ function Group({ title, hint, last, children }: { title: string; hint: string; l
               <th style={th}>Brand</th>
               <th style={{ ...th, textAlign: 'right' }}>Amount</th>
               <th style={th}>{last}</th>
-              <th style={th} />
+              <th style={{ ...th, textAlign: tail ? 'center' : 'left' }}>{tail}</th>
             </tr>
           </thead>
           <tbody>{children}</tbody>

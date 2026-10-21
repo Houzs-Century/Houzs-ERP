@@ -42,6 +42,8 @@ const FIELDS: Record<string, string> = {
   emergencyContactRelationship: 'Emergency relationship',
   targetDate: 'Target date', branding: 'Branding', venue: 'Venue', venueId: 'Venue (master)',
   fair: 'Fair',
+  /* A transfer moves the Fair Day with the fair (owner 2026-10-20). */
+  fairDate: 'Fair Day',
   salesLocation: 'Sales location', ref: 'Ref No.', poDocNo: 'PO doc no',
   /* Coverage-audit additions (2026-07) — keys emitted by the DO amend mirror,
      Delivery Planning /fields + /schedule and payment/automation entries. */

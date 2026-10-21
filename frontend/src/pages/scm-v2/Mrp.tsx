@@ -254,7 +254,7 @@ export const Mrp = () => {
      lines of the same SKU may pick different suppliers). { soItemId: supplierId };
      defaults to the SKU's main supplier when no entry. Covered / already-PO'd
      lines never appear here — they show the PO's supplier read-only. */
-  const [lineSupplier, setLineSupplier] = useState<Record<string, string>>({});
+  const [lineSupplier, setLineSupplier] = useState<Partial<Record<string, string>>>({});
   const setLineSupplierId = (soItemId: string, supplierId: string) =>
     setLineSupplier((prev) => ({ ...prev, [soItemId]: supplierId }));
   /* In-app result dialog (Commander 2026-05-29: confirm INSIDE the page, not a
@@ -506,7 +506,8 @@ export const Mrp = () => {
   /* General — picks (+ codes + unit count) from SHORTAGE order-lines. When a
      line-level selection exists, only the selected soItemIds are gathered;
      otherwise every visible shortage line. Each pick carries its per-line
-     chosen supplier (defaulting to the SKU's main supplier). */
+     chosen supplier (defaulting to the line's rule supplier, else the SKU's
+   main supplier). */
   const gatherShortages = (skus: MrpResponse['skus'], onlySelected: boolean) => {
     const picks: Array<{ soItemId: string; qty: number; supplierId: string | null }> = [];
     const orderedCodes = new Set<string>();
@@ -515,7 +516,7 @@ export const Mrp = () => {
       const def = skuDefaultSupplierId(s);
       for (const l of shortageLinesOf(s)) {
         if (onlySelected && !selected.has(l.soItemId)) continue;
-        picks.push({ soItemId: l.soItemId, qty: l.shortageQty, supplierId: lineSupplier[l.soItemId] ?? def });
+        picks.push({ soItemId: l.soItemId, qty: l.shortageQty, supplierId: lineSupplier[l.soItemId] ?? l.ruleSupplierId ?? def });
         orderedCodes.add(s.itemCode);
         units += l.shortageQty;
       }
@@ -594,7 +595,7 @@ export const Mrp = () => {
     const already = new Set(picks.map((p) => p.soItemId));
     const accessoryLines = (data?.skus ?? [])
       .filter((s) => (s.category ?? '').toUpperCase() === 'ACCESSORY')
-      .flatMap((s) => s.lines.map((l) => ({ line: l, itemCode: s.itemCode, supplierId: lineSupplier[l.soItemId] ?? skuDefaultSupplierId(s) })))
+      .flatMap((s) => s.lines.map((l) => ({ line: l, itemCode: s.itemCode, supplierId: lineSupplier[l.soItemId] ?? l.ruleSupplierId ?? skuDefaultSupplierId(s) })))
       .filter(({ line }) =>
         line.source === 'shortage' && line.shortageQty > 0 && line.soItemId
         && setDocs.has(line.soDocNo) && (!hasWindow || lineInWindow(line, filters)));
@@ -1215,7 +1216,7 @@ const LineSupplierCell = ({ suppliers, chosenSupplierId, onSupplierChange }: {
       value={chosenSupplierId ?? defaultSupplierId}
       onChange={(e) => onSupplierChange(e.target.value)}
       onClick={(e) => e.stopPropagation()}
-      title="Supplier for this SO line — defaults to the SKU's main supplier"
+      title="Supplier for this SO line — defaults to the SKU's main supplier (NB FURNITURE for Hydraulic / NB fabric, and for the other bedframes of that SO)"
     >
       {sortByText(suppliers).map((s) => (
         <option key={s.supplierId} value={s.supplierId}>
@@ -1254,7 +1255,7 @@ const ModelDrilldown = ({
   selected: Set<string>;
   onToggleLine: (soItemId: string) => void;
   onSetLinesSelected: (ids: string[], on: boolean) => void;
-  lineSupplier: Record<string, string>;
+  lineSupplier: Partial<Record<string, string>>;
   onLineSupplierChange: (soItemId: string, supplierId: string) => void;
   flatModules?: boolean;
   /* BF-FLAT — bedframe groups are single-variant (one colour each); its colour
@@ -1373,7 +1374,7 @@ const OrderLines = ({ sku, selected, onToggleLine, lineSupplier, onLineSupplierC
   sku: MrpSku;
   selected: Set<string>;
   onToggleLine: (soItemId: string) => void;
-  lineSupplier: Record<string, string>;
+  lineSupplier: Partial<Record<string, string>>;
   onLineSupplierChange: (soItemId: string, supplierId: string) => void;
 }) => (
   <table className={styles.childTable}>
@@ -1401,7 +1402,7 @@ const OrderLines = ({ sku, selected, onToggleLine, lineSupplier, onLineSupplierC
           whName={sku.warehouseName}
           selected={selected.has(ln.soItemId)}
           onToggleLine={() => onToggleLine(ln.soItemId)}
-          chosenSupplierId={lineSupplier[ln.soItemId] ?? null}
+          chosenSupplierId={lineSupplier[ln.soItemId] ?? ln.ruleSupplierId ?? null}
           onSupplierChange={(sid) => onLineSupplierChange(ln.soItemId, sid)}
         />
       ))}
@@ -1486,7 +1487,7 @@ const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSuppli
   group: ModelGroup;
   selected: Set<string>;
   onToggleLine: (soItemId: string) => void;
-  lineSupplier: Record<string, string>;
+  lineSupplier: Partial<Record<string, string>>;
   onLineSupplierChange: (soItemId: string, supplierId: string) => void;
   /* The cover / pillow shortage lines on THIS SO (owner 2026-09-11). Shown as
      read-along rows under the sofa modules: they ride onto the order whenever
@@ -1556,7 +1557,7 @@ const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSuppli
             </td>
             <td className={styles.supplierCell}>
               {short
-                ? <LineSupplierCell suppliers={v.suppliers} chosenSupplierId={lineSupplier[ln.soItemId] ?? null} onSupplierChange={(sid) => onLineSupplierChange(ln.soItemId, sid)} />
+                ? <LineSupplierCell suppliers={v.suppliers} chosenSupplierId={lineSupplier[ln.soItemId] ?? ln.ruleSupplierId ?? null} onSupplierChange={(sid) => onLineSupplierChange(ln.soItemId, sid)} />
                 : ln.source === 'po'
                   ? <span className={styles.poSupplierRO} title="This PO covers the line in the current allocation. Supplier is read-only because the PO is already raised."><Truck {...ICON} /> {ln.poSupplierName ?? '—'}</span>
                   : <span className={styles.whNone}>—</span>}

@@ -90,6 +90,7 @@ import { WH_NONE, composite, loadCommittedShipments } from '../lib/committed-shi
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { pgrestInList } from '../lib/pgrest-in-list';
 import { readMfgProductBindings } from '../lib/supplier-bindings';
+import { NB_FABRIC_SERIES, NB_SUPPLIER_CODE, needsNbSupplier } from '../lib/mrp-rule-supplier';
 import { mapBounded, eager } from '../lib/concurrency';
 import type { Env, Variables } from '../env';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
@@ -296,6 +297,10 @@ export type MrpLine = {
      supplier can't change). NULL for stock / shortage lines. */
   poSupplierId: string | null;
   poSupplierName: string | null;
+  /* HC-0128 — the supplier this line's content routes to (Hydraulic / NB
+     fabric -> NB FURNITURE), when that supplier is bound to the SKU; the UI
+     pre-selects it instead of the SKU's main supplier. NULL = no rule fired. */
+  ruleSupplierId: string | null;
 };
 
 export type MrpSku = {
@@ -574,6 +579,13 @@ export async function computeMrp(
   /* The category walk (section 2), the two warehouse masters (section 2) and the
      stock + PO-supply reads (sections 3 and 4). Each is byte-identical to the
      query that stood at its own site; only the moment it is ISSUED moved. */
+  /* HC-0128 — the NB-series fabric codes (NB FURNITURE routing). Keyed off
+     nothing but the company, so it rides this wave instead of adding a round
+     trip after the bindings. */
+  const nbFabricsProm = eager(Promise.resolve(scoped(sb
+    .from('fabric_trackings')
+    .select('fabric_code')
+    .eq('series', NB_FABRIC_SERIES))));
   const catRowsProm = eager(paginateAll<{ category: string | null }>((from, to) =>
     scoped(sb.from('mfg_products').select('category')).order('id').range(from, to)));
   const balancesProm = eager(paginateAll<BalanceRow>((from, to) => {
@@ -685,9 +697,9 @@ export async function computeMrp(
   // A partially-delivered SO keeps its header status active (the header only
   // flips to DELIVERED once EVERY line is fully covered), so already-delivered
   // lines would otherwise phantom back in as demand and over-order. Subtract
-  // delivered-net-of-returns per line and drop any line with nothing left to
-  // fulfil. Single source of truth: soDeliverableRemaining (same query the DO
-  // convert flow uses), so MRP can never disagree with the SO's remaining.
+  // delivered per line and drop any line with nothing left to fulfil. The
+  // delivered count comes from soDeliverableRemaining (same query the DO
+  // convert flow uses); its returned count is deliberately not added back.
   //
   /* BATCHED BY THE CALLER, and the caller is the reason. Paging the demand read
      above changed this call's scale by more than an order of magnitude: MRP used
@@ -733,12 +745,13 @@ export async function computeMrp(
   for (const part of parts) {
     for (const [soItemId, d] of part) deliverable.set(soItemId, d);
   }
-  const deliveredNetOf = (soItemId: string): number => {
-    const d = deliverable.get(soItemId);
-    if (!d) return 0;
-    return Math.max(0, (d.delivered ?? 0) - (d.returned ?? 0));
-  };
-  const effQtyOf = (r: DemandRow): number => Math.max(0, r.qty - deliveredNetOf(r.id));
+  /* Delivered GROSS of returns (Sim, 2026-10-20, 2990-0011): a returned unit
+     is not demand again. The rejected goods go back to stock for the next
+     matching order; a customer who still wants the item gets a new SO, and
+     that SO is what purchasing orders against. The stock allocator applies
+     the same rule. */
+  const deliveredOf = (soItemId: string): number => Math.max(0, deliverable.get(soItemId)?.delivered ?? 0);
+  const effQtyOf = (r: DemandRow): number => Math.max(0, r.qty - deliveredOf(r.id));
   const demand = demandActive.filter((r) => effQtyOf(r) > 0);
 
   // Stamp variants.fabricSupplierCode on the demand lines (ONE batched read,
@@ -1131,6 +1144,20 @@ export async function computeMrp(
     }
   }
 
+  /* HC-0128 — NB-series fabrics (Fabric Converter) route to NB FURNITURE. A
+     failed read fails the plan like every other read here: an empty set would
+     silently send NB lines to the main supplier. */
+  const nbFabricCodes = new Set<string>();
+  {
+    const { data: nbFabrics, error: nbErr } = (await nbFabricsProm)();
+    if (nbErr) throw new Error(`mrp_load_failed: ${nbErr.message}`);
+    for (const f of (nbFabrics ?? []) as Array<{ fabric_code: string | null }>) {
+      if (f.fabric_code) nbFabricCodes.add(f.fabric_code.trim().toUpperCase());
+    }
+  }
+  const nbSupplierIdOf = (code: string): string | null =>
+    suppliersByCode.get(code)?.find((s) => s.code === NB_SUPPLIER_CODE)?.supplierId ?? null;
+
   // ── 6. Group demand by (warehouse + SKU + variant), apply category filter ─
   // Commander 2026-05-31 — warehouse is part of the bucket: the same SKU+variant
   // in two warehouses is two rows (no cross-WH pooling). When whFilter is set,
@@ -1151,6 +1178,24 @@ export async function computeMrp(
     if (s.includes('ACCESSOR')) return 'ACCESSORY';
     if (s.includes('SERVICE')) return 'SERVICE';
     return null;
+  };
+
+  /* HC-0128 — once one bedframe of an SO goes to NB, every bedframe of that SO
+     does too: two makers' bedframes side by side get compared by the customer
+     (Sim 2026-10-20). Decided over ALL of the SO's open lines, so a line already
+     on an NB PO still pulls its shortage siblings along. */
+  const isBedframeLine = (r: DemandRow): boolean =>
+    (prodByCode.get(r.item_code)?.category ?? catFromGroup(r.item_group)) === 'BEDFRAME';
+  const nbBedframeDocs = new Set(
+    demand
+      .filter((r) => isBedframeLine(r) && nbSupplierIdOf(r.item_code) && needsNbSupplier(r.variants, nbFabricCodes))
+      .map((r) => r.doc_no),
+  );
+  const ruleSupplierIdOf = (r: DemandRow): string | null => {
+    const nb = nbSupplierIdOf(r.item_code);
+    if (!nb) return null;
+    if (needsNbSupplier(r.variants, nbFabricCodes)) return nb;
+    return isBedframeLine(r) && nbBedframeDocs.has(r.doc_no) ? nb : null;
   };
   const demandByKey = new Map<string, Bucket>();
   for (const d of demand) {
@@ -1251,7 +1296,7 @@ export async function computeMrp(
     const lines: MrpLine[] = [];
     let qtyNeeded = 0;
     for (const r of rows) {
-      const eff = effQtyOf(r);                              // qty still to fulfil (ordered − delivered + returned)
+      const eff = effQtyOf(r);                              // qty still to fulfil (ordered − delivered)
       let need = eff;
       /* BOUND LINE (company 1, bedframe / `(SP)` mattress / custom pillow). Drawn at
          STOCK, and only at stock, and the distinction is the whole design:
@@ -1364,6 +1409,7 @@ export async function computeMrp(
         // Only covered-by-PO lines carry a read-only supplier; stock/shortage = null.
         poSupplierId: source === 'po' ? poSupplierId : null,
         poSupplierName: source === 'po' && poSupplierId ? (supplierNameById.get(poSupplierId) ?? null) : null,
+        ruleSupplierId: ruleSupplierIdOf(r),
       });
     }
 
@@ -1535,7 +1581,7 @@ export async function computeMrp(
         ? cells.map((c) => sstr(c.moduleId)).filter(Boolean)
         : [sstr(splitSofaCode(d.item_code).sizeCode)].filter(Boolean);
       const colour = [sstr(v.fabricCode), sstr(v.colorCode) || sstr(v.colourCode)].filter(Boolean).join(' ');
-      const eff = effQtyOf(d);                        // set qty still to fulfil (ordered − delivered + returned)
+      const eff = effQtyOf(d);                        // set qty still to fulfil (ordered − delivered)
       const prod = prodByCode.get(d.item_code);
       const setDelivery = deliveryOf(d);
       const plan = sofaPlanByLine.get(d.id)

@@ -15,7 +15,7 @@
  *   2. it computes exactly the SAME allocation (the constraint). The fixture
  *      carries every case the inverted reads could have broken: a line already
  *      fully delivered, a DRAFT delivery order that must not count, a returned
- *      delivery that re-opens a line, a bound PO with stock received, a bound PO
+ *      delivery that does NOT re-open a line (2990-0011), a bound PO with stock received, a bound PO
  *      with nothing received, a cancelled SO line, and a DO line hanging off a
  *      CANCELLED sales order that must never be read at all.
  *
@@ -106,7 +106,7 @@ function fixture() {
       { id: 'DOI-1', so_item_id: 'SO-0000-mat', qty: 1, delivery_order_id: 'DO-LIVE' },
       // A DRAFT DO has not shipped. It must not shrink SO-0001's remaining.
       { id: 'DOI-2', so_item_id: 'SO-0001-mat', qty: 1, delivery_order_id: 'DO-DRAFT' },
-      // Delivered then returned -> remaining goes back to 1 and it allocates.
+      // Delivered then returned -> not owed again (2990-0011), takes no stock.
       { id: 'DOI-3', so_item_id: 'SO-0002-mat', qty: 1, delivery_order_id: 'DO-LIVE' },
       // Hangs off a CANCELLED sales order: must never be read.
       { id: 'DOI-DEAD', so_item_id: 'SO-DEAD-mat', qty: 1, delivery_order_id: 'DO-LIVE' },
@@ -153,8 +153,8 @@ describe('SO stock-allocation sweep — read shape', () => {
     // a DRAFT DO delivered nothing -> the line still needs stock, and gets it
     expect(status('SO-0001-mat')).toBe('READY');
     expect(ready('SO-0001-mat')).toBe(1);
-    // delivered then returned -> re-opened and allocated
-    expect(status('SO-0002-mat')).toBe('READY');
+    // delivered then returned -> not re-opened, never allocated
+    expect(status('SO-0002-mat')).toBe('PENDING');
     // bound mode: received against its own PO, with an empty pooled bucket
     expect(status('SO-0003-bed')).toBe('READY');
     // a PO with nothing received changes nothing
@@ -167,8 +167,8 @@ describe('SO stock-allocation sweep — read shape', () => {
     // service lines never carry stock
     expect(status('SO-0005-svc')).toBe('PENDING');
 
-    // 299 mattress lines (SO-0000's is delivered) + one bound bedframe
-    expect(result.linesFlipped).toBe(SO_COUNT - 1 + 1);
+    // 298 mattress lines (SO-0000's is delivered, SO-0002's came back) + one bound bedframe
+    expect(result.linesFlipped).toBe(SO_COUNT - 2 + 1);
     // no order becomes ship-ready while its sofa line is PENDING
     expect(result.ordersAdvanced).toBe(0);
     expect(result.ordersRegressed).toBe(0);

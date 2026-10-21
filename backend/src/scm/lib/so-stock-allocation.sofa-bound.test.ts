@@ -200,3 +200,51 @@ describe('sofa lines under hard binding', () => {
     expect(lineOf(sb).allocated_batch_no).toBe('PO-777');
   });
 });
+
+/* 2990-0011 (Sim, 2026-10-20): a customer-rejected return is not owed again.
+   2990-DR-2610-001 brought 2990-SO-2606-001's set back; with the return netted
+   back in, the earlier-dated order took the returned batch straight back. */
+describe('a returned sofa set is stock for the next matching order', () => {
+  const VK = { fabricCode: 'EZ-003', seatHeight: '28', legHeight: '6"' };
+  const line = (id: string, docNo: string, extra: Row = {}): Row => ({
+    id, doc_no: docNo, item_code: PIECE, item_group: 'sofa', variants: VK, qty: 1,
+    warehouse_id: WH, stock_status: 'PENDING', stock_qty_ready: 0, cancelled: false,
+    allocated_batch_no: null, ...extra,
+  });
+  const order = (docNo: string, delivery: string): Row => ({
+    doc_no: docNo, status: 'READY_TO_SHIP', created_at: '2026-06-11T00:00:00Z',
+    customer_delivery_date: delivery, company_id: 2, processing_date: '2026-06-17', proceeded_at: null,
+  });
+
+  test('the returned order does not claim it back; the next order does', async () => {
+    const sb = fakeSb({
+      stock_allocation_recompute_lock: [{ lock_key: 'GLOBAL', locked_by: null, locked_until: null }],
+      mfg_sales_orders: [order('2990-SO-2606-001', '2026-07-19'), order('2990-SO-2611-001', '2026-12-01')],
+      mfg_sales_order_items: [
+        line('returned', '2990-SO-2606-001', { do_items: [{ id: 'doi-1', qty: 1, delivery_order_id: 'do-1' }] }),
+        line('next', '2990-SO-2611-001'),
+      ],
+      mfg_products: [{ code: PIECE, category: 'SOFA' }],
+      inventory_balances: [],
+      v_inventory_lots_open: [{
+        warehouse_id: WH, item_code: PIECE, variant_key: 'fabriccode=ez-003|seatheight=28|legheight=6"',
+        batch_no: '2990-PO-2606-010', qty_remaining: 1, received_at: '2026-10-19T08:50:58Z',
+      }],
+      delivery_orders: [{ id: 'do-1', status: 'DELIVERED' }],
+      delivery_order_items: [],
+      delivery_returns: [{ id: 'dr-1', status: 'RECEIVED' }],
+      delivery_return_items: [{ do_item_id: 'doi-1', qty_returned: 1, delivery_return_id: 'dr-1' }],
+      purchase_order_items: [],
+      mfg_so_audit_log: [],
+      mfg_so_status_changes: [],
+    });
+
+    const res = await recomputeSoStockAllocation(sb);
+
+    expect(res.ok).toBe(true);
+    const byId = (id: string) => sb.tables['mfg_sales_order_items'].find((r: Row) => r.id === id);
+    expect(byId('returned').allocated_batch_no).toBe(null);
+    expect(byId('next').stock_status).toBe('READY');
+    expect(byId('next').allocated_batch_no).toBe('2990-PO-2606-010');
+  });
+});

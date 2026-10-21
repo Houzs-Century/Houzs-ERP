@@ -43,7 +43,7 @@ type LineWithVariants = Record<string, unknown>;
 const trimStr = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
 
 /* The line's internal fabric code, read through the alias chain above. */
-const fabricCodeOf = (v: Record<string, unknown>): string => {
+export const fabricCodeOf = (v: Record<string, unknown>): string => {
   for (const k of FABRIC_CODE_KEYS) {
     const fc = trimStr(v[k]);
     if (fc) return fc;

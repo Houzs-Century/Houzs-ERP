@@ -26,8 +26,15 @@ export type ProjectSalesOrderRow = {
   linked_ac_docno: string | null;
   created_at: string | null;
   /** "Venue differs" (owner 2026-10-19): the venue on the order when it is not
-   *  this fair's — absent from an older server. */
+   *  this fair's — absent from an older server. Since 2026-10-20 also absent
+   *  when this fair's evening report lists the order (the report proves it). */
   venue_differs?: string | null;
+  /** The order's own venue and brand — the pick of where to transfer it. */
+  venue?: string | null;
+  branding?: string | null;
+  /** Another fair's evening report lists the order: the booth to move it to
+   *  (owner 2026-10-20). */
+  report_elsewhere?: { project_id: number; label: string; report_date: string | null } | null;
 };
 
 export type ProjectSalesOrderTotals = {
@@ -47,6 +54,9 @@ export type ProjectSalesOrdersResponse = {
    *  totals are a partial view of the fair and the gap must not be read as
    *  the fair's. */
   scoped: boolean;
+  /** The caller may transfer an order to another fair from here (Finance or
+   *  PMS) — false from an older server. */
+  can_transfer?: boolean;
 };
 
 const ZERO_TOTALS: ProjectSalesOrderTotals = { count: 0, draft_count: 0, amount_sen: 0, paid_sen: 0, balance_sen: 0, service_sen: 0 };
@@ -72,6 +82,7 @@ export function normalizeProjectSalesOrders(raw: unknown): ProjectSalesOrdersRes
       service_sen: num(t.service_sen),
     },
     scoped: r.scoped === true,
+    can_transfer: r.can_transfer === true,
   };
 }
 
