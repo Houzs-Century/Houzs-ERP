@@ -99,6 +99,7 @@ import { reorderKeys } from "../lib/reorder";
 import { useDragAutoScroll } from "./useDragAutoScroll";
 
 import type { Column, DataTableProps, SortDir, SortState } from "./dataTableTypes";
+import { DataRowCells } from "./DataTableRowCells";
 import {
   DEFAULT_COL_WIDTH,
   DebouncedSearchInput,
@@ -126,11 +127,6 @@ type Props<T, L = never> = DataTableProps<T, L>;
  * epoch bumps at most once per session, and only when hydration actually moved
  * something, so this is a no-op on every warm load.
  */
-/* One mark for "nothing here" in every table (owner 2026-09-25): a cell that
-   renders nothing reads as a dash, not as a blank a user might think failed. */
-const showDash = (node: React.ReactNode): React.ReactNode =>
-  node == null || node === "" || node === false ? <span className="text-ink-muted">—</span> : node;
-
 export function DataTable<T, L = never>(props: Props<T, L>) {
   const { epoch } = useSyncExternalStore(
     subscribeTableLayouts,
@@ -2321,7 +2317,14 @@ function DataTableInner<T, L>({
             // sum (it scrolls) and at least the container (the filler takes it).
             style={layoutFixed ? { tableLayout: "fixed", minWidth: fixedTableWidth } : undefined}
           >
-            <thead className="sticky top-0 z-10">
+            {/* z-30, ABOVE the body sticky cells (z-20): the thead's own z-index
+                opens a stacking context, so a frozen header <th>'s inline z-30 is
+                scoped to it and cannot out-stack a body sticky cell at the ROOT
+                level. At z-10 the frozen-left/right BODY cells (z-20) painted OVER
+                the frozen header on scroll-down — the header's own corner showed
+                a data row where its heading should be. Lifting the whole thead
+                above z-20 keeps the frozen header on top on both axes. */}
+            <thead className="sticky top-0 z-30">
               <tr>
                 {selection && (
                   <th
@@ -2401,9 +2404,11 @@ function DataTableInner<T, L>({
                   if (isSticky) {
                     cellStyle.position = "sticky";
                     cellStyle.left = stickyLeft[i];
-                    // Above body sticky cells (z-20) and the sticky header
-                    // baseline (the thead is z-10); 30 keeps frozen headers
-                    // on top of everything during a two-axis scroll.
+                    // Above the scrollable header cells WITHIN the thead's own
+                    // stacking context (thead is z-30), so a frozen corner header
+                    // stays on top of the scrolling header during a two-axis
+                    // scroll. The thead being z-30 (> body sticky z-20) is what
+                    // keeps the whole header above the body — see the thead above.
                     cellStyle.zIndex = 30;
                   } else if (isStickyRight) {
                     cellStyle.position = "sticky";
@@ -2808,96 +2813,24 @@ function DataTableInner<T, L>({
                             )}
                           </td>
                         )}
-                        {displayColumns.map((c, i) => {
-                          const isSticky = i < stickyCount;
-                          const isLastSticky = isSticky && i === stickyCount - 1;
-                          const isStickyRight = stickyRight[i] !== undefined;
-                          const isFirstStickyRight =
-                            isStickyRight && i === displayColumns.length - stickyRightCount;
-                          const userW = widths[c.key];
-                          const cellStyle: React.CSSProperties = {};
-                          if (typeof userW === "number") {
-                            cellStyle.width = userW;
-                            cellStyle.minWidth = userW;
-                            cellStyle.maxWidth = userW;
-                          } else if (c.width) {
-                            cellStyle.width = c.width;
-                            // Same cap as the header cell: a px width means
-                            // "clip here", never "stretch to the longest value".
-                            const px = parsePxWidth(c.width);
-                            if (px != null) cellStyle.maxWidth = px;
-                          }
-                          if (isSticky) {
-                            cellStyle.position = "sticky";
-                            cellStyle.left = stickyLeft[i];
-                            cellStyle.zIndex = 20;
-                            cellStyle.background = stickyBg;
-                          } else if (isStickyRight) {
-                            cellStyle.position = "sticky";
-                            cellStyle.right = stickyRight[i];
-                            cellStyle.zIndex = 20;
-                            // Opaque for the same reason the left run is: the
-                            // scrolling middle passes UNDER these cells.
-                            cellStyle.background = stickyBg;
-                          }
-                          // Full raw value as a native tooltip so a clipped
-                          // cell is still readable on hover. Strings only:
-                          // numeric getValues are raw centi/ISO shapes that
-                          // would contradict the formatted cell text.
-                          const rawVal = c.getValue?.(row);
-                          const cellTitle =
-                            typeof rawVal === "string" && rawVal !== ""
-                              ? rawVal
-                              : undefined;
-                          return (
-                            <Fragment key={c.key}>
-                            {i === fillerAt && fillerCount > 0 && <td aria-hidden className="border-b border-border-subtle p-0 group-hover:bg-[#3f6b53]/25" />}
-                            <td
-                              data-col-key={c.key}
-                              style={cellStyle}
-                              title={cellTitle}
-                              className={cn(
-                                "border-b border-border-subtle text-[13px] text-ink transition-colors",
-                                cellPad,
-                                // Single-line rule (2026-05-08) + clip rule
-                                // (owner 2026-07-24). Cells stop wrapping AND
-                                // stop painting past their own column: a value
-                                // longer than the column is cropped with an
-                                // ellipsis (full text in the title tooltip)
-                                // instead of overlapping the neighbour cell.
-                                // Render functions that genuinely need
-                                // multi-line wrap via an inner block element
-                                // or `c.className` ("whitespace-normal") —
-                                // still overflow-hidden within the column.
-                                wrapOn
-                                  ? "whitespace-normal break-words align-top"
-                                  : "overflow-hidden text-ellipsis whitespace-nowrap",
-                                // Pine-green tint on hover (matches the
-                                // calendar's "on track" green). Reads clearly
-                                // on both zebra shades. (Was a pale brass
-                                // `accent-soft` wash that looked yellow.)
-                                "group-hover:bg-[#3f6b53]/25",
-                                c.align === "right" && "text-right",
-                                c.align === "center" && "text-center",
-                                // Leading gutter belongs to the select /
-                                // chevron cell when present; otherwise the
-                                // first column.
-                                i === 0 && !expandable && !selection && "pl-5",
-                                i === displayColumns.length - 1 && "pr-5",
-                                // Freeze line on the last sticky column.
-                                isLastSticky && "border-r border-border",
-                                isFirstStickyRight && "border-l border-border",
-                                c.className
-                              )}
-                            >
-                              {showDash(c.render(row))}
-                            </td>
-                            </Fragment>
-                          );
-                        })}
-                        {fillerAt === displayColumns.length && fillerCount > 0 && (
-                          <td aria-hidden className="border-b border-border-subtle p-0 group-hover:bg-[#3f6b53]/25" />
-                        )}
+                        {/* The data cells are memoised (see DataRowCells): a
+                            scroll / selection / search re-render skips every row
+                            whose data + columns + layout are unchanged. */}
+                        <DataRowCells
+                          row={row}
+                          columns={displayColumns}
+                          widths={widths}
+                          stickyLeft={stickyLeft}
+                          stickyRight={stickyRight}
+                          stickyCount={stickyCount}
+                          stickyRightCount={stickyRightCount}
+                          cellPad={cellPad}
+                          wrapOn={wrapOn}
+                          fillerAt={fillerAt}
+                          fillerCount={fillerCount}
+                          stickyBg={stickyBg}
+                          firstColGutter={!expandable && !selection}
+                        />
                       </tr>
                       {/* Inline expanded sub-row (opt-in `expandable`). Spans
                           the full width; renders the caller's drill-down.
@@ -2939,7 +2872,7 @@ function DataTableInner<T, L>({
               )}
             </tbody>
             {footerTotals && (
-              <tfoot className="sticky bottom-0 z-10">
+              <tfoot className="sticky bottom-0 z-30">
                 <tr title={footerTotals.picked ? "Total of the ticked rows" : "Total of the rows shown"}>
                   {selectColCount + expandColCount > 0 && (
                     <td colSpan={selectColCount + expandColCount} className="border-t-2 border-border bg-surface-dim" />

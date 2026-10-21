@@ -9,7 +9,7 @@
 //     SettlementSetup.test.tsx: three jobs, three screens, as the owner asked.
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import type { AcquirerSetup, SettlementRow } from './settlement-queries';
 
@@ -387,6 +387,29 @@ describe('the reconcile tab', () => {
   });
 });
 
+/* Owner 2026-10-21: 我从 merchant recon 点开 SO，返回也要返回 merchant recon —
+   the order's Back returns to this page's address, so the open report has to
+   live in it. */
+describe('the open report lives in the address', () => {
+  function Where() {
+    const l = useLocation();
+    return <output data-testid="where">{l.search}</output>;
+  }
+
+  test('opening a report puts it in the address; the address opens it again; All reports takes it out', () => {
+    render(<MemoryRouter initialEntries={['/scm/merchant-recon']}><MerchantRecon /><Where /></MemoryRouter>);
+    fireEvent.click(screen.getByText('Reconcile'));
+    expect(screen.getByTestId('where').textContent).toBe('?batch=1');
+    expect(screen.getByText(/still to decide/)).toBeTruthy();
+  });
+
+  test('coming back to ?batch=1 lands on that report, not on the list', () => {
+    render(<MemoryRouter initialEntries={['/scm/merchant-recon?batch=1']}><MerchantRecon /><Where /></MemoryRouter>);
+    expect(screen.getByText(/still to decide/)).toBeTruthy();
+    expect(screen.queryByText('Reconcile')).toBeNull();
+  });
+});
+
 /* Owner 2026-10-21: 点开那个 HC-SO-013512 这些 sales order 直接打开整张 sales
    order — on the work list, inside a report, and on the watch list. */
 describe('an order number opens the whole order', () => {
@@ -399,16 +422,16 @@ describe('an order number opens the whole order', () => {
     expect(hrefOf('SO-2607-088')).toBe('/scm/sales-orders/SO-2607-088');   // not on a report yet
   });
 
-  test('inside a report, the candidates and the matched order are links too — and a link is not a tick', () => {
+  test('inside a report, the candidates and the matched order are links too — in their own cell, apart from the tick', () => {
     draw();
     fireEvent.click(screen.getByText('Reconcile'));
     expect(hrefOf('SO-2608-001')).toBe('/scm/sales-orders/SO-2608-001');
     expect(hrefOf('SO-2608-002')).toBe('/scm/sales-orders/SO-2608-002');
     expect(hrefOf('SO-2608-043')).toBe('/scm/sales-orders/SO-2608-043');
-    const box = screen.getByLabelText('Select SO-2608-001') as HTMLInputElement;
-    const before = box.checked;
-    fireEvent.click(screen.getAllByRole('link', { name: 'SO-2608-001' })[0]!);
-    expect((screen.getByLabelText('Select SO-2608-001') as HTMLInputElement).checked).toBe(before);
+    /* The tick and the number are separate cells, so opening the order never ticks it. */
+    const link = screen.getAllByRole('link', { name: 'SO-2608-001' })[0]!;
+    expect(link.closest('label')).toBeNull();
+    expect(link.closest('td')?.querySelector('input[type="checkbox"]')).toBeNull();
   });
 });
 

@@ -145,6 +145,7 @@ import { type PhasePhoto, PhasePhotosSection, PhotoGroup } from "./projects/phas
 import { FinanceAttachmentsSection, SnapshotKpi, SnapshotRow } from "./projects/financeLedgerParts";
 import { EventPnlTable } from "./projects/EventPnlTable";
 import { ProjectOverviewPage } from "./projects/ProjectOverviewPage";
+import { projectBackTo, rememberBackTo } from "./projects/projectOverviewView";
 
 interface ProjectDetail {
   project: ProjectRow & {
@@ -733,6 +734,8 @@ function ProjectsListView() {
     try {
       sessionStorage.setItem("projects:listScroll", String(document.querySelector("main")?.scrollTop ?? 0));
     } catch {}
+    /* And where this project's Back goes: this list, its filters and page with it. */
+    rememberBackTo(id, `${window.location.pathname}${window.location.search}`);
     navigate(`/projects/${id}`);
   };
   const hasRows = !!list.data;
@@ -1999,7 +2002,7 @@ function ProjectDetailContent({
   return (
     <DetailLayout
       breadcrumbs={[
-        { label: "Projects", to: "/projects" },
+        { label: "Projects", to: projectBackTo(id) },
         { label: detailName || "Loading…" },
       ]}
       eyebrow="Project"
@@ -2008,7 +2011,10 @@ function ProjectDetailContent({
       // Owner 2026-07-29: keep the event title (+ actions) pinned while
       // scrolling the project detail — same sticky chrome ASSR detail uses.
       stickyTitle
-      backTo="/projects"
+      /* Back to the Projects page this project was opened from — its period,
+         sort and filters (owner 2026-10-21: 我点9月的project，按 back 后又跳回
+         10月，然后会跑回最上面); the bare list when it was opened some other way. */
+      backTo={projectBackTo(id)}
       loading={detail.loading && !p}
       error={detail.error}
       actions={

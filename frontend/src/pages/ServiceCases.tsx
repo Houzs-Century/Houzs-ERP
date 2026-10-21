@@ -70,6 +70,7 @@ import { SupplierReturnsList } from "../components/assr/SupplierReturnsList";
 import { ReopenCaseControl } from "../components/assr/ReopenCaseControl";
 import { InlineEdit } from "../components/InlineEdit";
 import { PickupTrackingFields } from "../components/assr/PickupTrackingFields";
+import { VerificationFindingsFields } from "../components/assr/VerificationFindingsFields";
 import { DeliveryByCard } from "./ServiceCaseDeliveryBy";
 import { ExpandableText } from "../components/ExpandableText";
 import { StatCard } from "../components/StatCard";
@@ -6357,36 +6358,35 @@ function VerificationCard({
         </div>
       </div>
 
-      {outcome && (
-        <div>
-          <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-            Root cause
-          </label>
-          <input
-            type="text"
-            value={rootDraft}
-            onChange={(e) => setRootDraft(e.target.value)}
-            onBlur={saveRootCause}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-            disabled={saving}
-            placeholder={
-              outcome === "accepted"
-                ? "Material defect, transit damage, installation, etc."
-                : outcome === "rejected"
-                ? "Why this isn't our issue"
-                : "What's missing from the customer"
-            }
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20"
-          />
-          {outcome === "accepted" && !rootCause && isUnderVerification && (
-            <div className="mt-1.5 text-[11px] text-ink-muted">
-              Fill the root cause to advance to Pending Solution.
-            </div>
-          )}
-        </div>
-      )}
+      <div>
+        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
+          Root cause
+        </label>
+        <input
+          type="text"
+          value={rootDraft}
+          onChange={(e) => setRootDraft(e.target.value)}
+          onBlur={saveRootCause}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+          disabled={saving}
+          placeholder={
+            outcome === "rejected"
+              ? "Why this isn't our issue"
+              : outcome === "needs_more_info"
+              ? "What's missing from the customer"
+              : "Material defect, transit damage, installation, etc."
+          }
+          className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20"
+        />
+        {outcome === "accepted" && !rootCause && isUnderVerification && (
+          <div className="mt-1.5 text-[11px] text-ink-muted">
+            Fill the root cause to advance to Pending Solution.
+          </div>
+        )}
+      </div>
+      <VerificationFindingsFields c={c} patch={patch} />
 
       {c.verified_at && (
         <div className="rounded-md border border-border bg-bg/40 px-3 py-2 text-[11.5px] text-ink-secondary">
