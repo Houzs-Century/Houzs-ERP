@@ -1385,7 +1385,10 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           debtor_code: null,
           debtor_name: partyName,
           phone: null, agent: null, salesperson_id: null, venue: p.venue ?? null, // a project's venue is real
-          branding: null,
+          // Brand lives on the PMS project (name is "STATE [BRAND] ORG @ VENUE");
+          // surface it read-only so the board's Branding column fills for project
+          // SETUP/DISMANTLE legs instead of showing a dash. Edit stays in Projects.
+          branding: (p.brand && p.brand.trim()) ? p.brand.trim() : null,
           status: 'PROJECT',
           // Read-only mirror: a project window is already crewed in PMS → it's a
           // committed fleet job, so it surfaces under Pending Delivery.
