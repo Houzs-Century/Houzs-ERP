@@ -130,6 +130,7 @@ export function kickOffSubBoardReads(
   c: Context<{ Bindings: Env; Variables: Variables }>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- sb is the scm service client, as in kickOffBoardReads
   sb: any,
+  recentClosedSince: string,
 ) {
   /* Each read is built AND awaited inside an async try/catch so a SYNCHRONOUS throw
      (e.g. c.env.DB absent — the handler used to call these inside the sub-board
@@ -138,14 +139,16 @@ export function kickOffSubBoardReads(
      already guards each sub-board, so a failed read still just logs + leaves the
      other rows — byte-identical to before, only started earlier. */
   // Explicit lowercase aliases → deterministic snake_case result keys
-  // (sidesteps any driver camelCasing). Only OPEN cases with a trigger date.
+  // (sidesteps any driver camelCasing). OPEN cases, plus recently-closed ones
+  // (leg on/after recentClosedSince) so done legs can reach the Delivered tab.
   const assrRowsP = (async () => {
     try {
-      return { ok: await c.env.DB.prepare(assrBoardUnionSql(c)).all<{
+      return { ok: await c.env.DB.prepare(assrBoardUnionSql(c, recentClosedSince)).all<{
         id: number | null; assr_no: string | null; company_id: number | null; status: string | null;
         customer_name: string | null; phone: string | null; location: string | null;
         customer_pickup_at: string | null; inspection_visit_at: string | null;
         inspection_by: string | null; do_date: string | null;
+        closed_at: string | null; archived_at: string | null;
         addr1: string | null; addr2: string | null; addr3: string | null; addr4: string | null;
         so_state: string | null; so_postcode: string | null; so_country: string | null;
       }>() } as const;
@@ -157,7 +160,9 @@ export function kickOffSubBoardReads(
       let dpQuery = sb.from('dp_orders')
         .select('id, dp_no, job_type, party_name, contact_phone, address1, address2, address3, address4, city, postcode, state, requested_date, status, trip_id')
         .is('so_doc_no', null).is('assr_case_id', null).is('do_id', null)
-        .not('status', 'in', '("DELIVERED","CANCELLED")')
+        // Keep CANCELLED off the board, but KEEP DELIVERED (owner 2026-10-21: a
+        // finished DP job belongs on the Delivered tab, not hidden).
+        .neq('status', 'CANCELLED')
         .limit(1000);
       dpQuery = scopeToAllowedCompanies(dpQuery, c);
       return { ok: await dpQuery } as const;

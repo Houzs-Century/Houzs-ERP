@@ -38,9 +38,16 @@ import { assrCompanySql } from '../../routes/assr';
 import type { CompanyScopeCtx } from './companyScope';
 import { canonicalizeMyState, isCanonicalMyState } from './canonical-state';
 
-/** The board's Service-Case (ASSR) union — OPEN cases carrying a driving date
+/** The board's Service-Case (ASSR) union — cases carrying a driving date
  *  (customer pickup, own-team inspection visit, or delivery-back), restricted to
- *  the caller's granted companies. */
+ *  the caller's granted companies. Two arms (owner 2026-10-21: the Delivered tab
+ *  shows every job type, not only SO deliveries): every OPEN case, plus any case
+ *  whose newest leg date is on/after `recentClosedSince`, so recently-done
+ *  (closed) legs can land on Delivered without the whole closed history flooding
+ *  the board. The date columns are TEXT ISO strings, so a lexicographic `>=` is a
+ *  date comparison; `recentClosedSince` is a caller-computed YYYY-MM-DD, never
+ *  user input. closed_at / archived_at are selected so the row builder can tell a
+ *  done leg from a pending one. */
 /** The legs a Service Case runs on the delivery board — one row each, keyed
  *  `<assr_no>#<leg>` — and the leg a crew completes through /delivery-jobs. */
 export const ASSR_BOARD_LEGS = ['customer_pickup', 'delivery', 'inspection'] as const;
@@ -50,7 +57,7 @@ export const ASSR_LEG_BY_STOP: Record<string, string> = {
   PICKUP: 'customer_pickup', INSPECTION: 'inspection', DELIVERY: 'delivery', SERVICE: 'delivery',
 };
 
-export function assrBoardUnionSql(c: CompanyScopeCtx): string {
+export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string): string {
   // The State / Postcode columns (and the region bucket) come from the LINKED
   // Sales Order's real customer address, NOT from `location` (the branch/
   // warehouse the case was raised at) — same source the delivery-sheet ASSR feed
@@ -69,6 +76,8 @@ export function assrBoardUnionSql(c: CompanyScopeCtx): string {
               assr_cases.inspection_visit_at AS inspection_visit_at,
               assr_cases.inspection_by AS inspection_by,
               assr_cases.do_date       AS do_date,
+              assr_cases.closed_at     AS closed_at,
+              assr_cases.archived_at   AS archived_at,
               assr_cases.addr1 AS addr1, assr_cases.addr2 AS addr2, assr_cases.addr3 AS addr3, assr_cases.addr4 AS addr4,
               so.customer_state AS so_state, so.postcode AS so_postcode, so.customer_country AS so_country
          FROM assr_cases
@@ -78,10 +87,11 @@ export function assrBoardUnionSql(c: CompanyScopeCtx): string {
                WHERE o.doc_no = assr_cases.doc_no OR o.linked_ac_docno = assr_cases.doc_no
                ORDER BY (o.doc_no = assr_cases.doc_no) DESC
                LIMIT 1) so ON TRUE
-        WHERE assr_cases.closed_at IS NULL
-          AND assr_cases.archived_at IS NULL
-          AND (assr_cases.customer_pickup_at IS NOT NULL OR assr_cases.do_date IS NOT NULL
-               OR (assr_cases.inspection_visit_at IS NOT NULL AND assr_cases.inspection_by = 'own'))${assrCompanySql(c)}`;
+        WHERE (assr_cases.customer_pickup_at IS NOT NULL OR assr_cases.do_date IS NOT NULL
+               OR (assr_cases.inspection_visit_at IS NOT NULL AND assr_cases.inspection_by = 'own'))
+          AND ((assr_cases.closed_at IS NULL AND assr_cases.archived_at IS NULL)
+               OR GREATEST(COALESCE(assr_cases.customer_pickup_at, ''), COALESCE(assr_cases.do_date, ''),
+                           COALESCE(CASE WHEN assr_cases.inspection_by = 'own' THEN assr_cases.inspection_visit_at END, '')) >= '${recentClosedSince}')${assrCompanySql(c)}`;
 }
 
 /** The State + Postcode a Service-Case board row shows, and the value its region

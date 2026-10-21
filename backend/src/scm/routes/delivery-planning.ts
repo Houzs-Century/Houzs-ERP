@@ -481,7 +481,11 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   /* The three non-SO sub-boards (ASSR / DP / project) are independent of the SO
      reads and of each other; start them here too so they overlap everything above
      instead of tailing the whole SO assembly (see kickOffSubBoardReads). */
-  const { assrRowsP, dpResP, projRowsP } = kickOffSubBoardReads(c, sb);
+  // A CLOSED service case whose leg date is within the last 90 days surfaces on
+  // the Delivered tab; older done work stays off the board (owner 2026-10-21).
+  // today is YYYY-MM-DD, so the cutoff is too.
+  const recentClosedSince = new Date(new Date(`${today}T00:00:00Z`).getTime() - 90 * 86400000).toISOString().slice(0, 10);
+  const { assrRowsP, dpResP, projRowsP } = kickOffSubBoardReads(c, sb, recentClosedSince);
 
   /* 2b. LIVE balance per SO — same source-of-truth as the SO list Balance column
         (mfg_sales_orders_with_payment_totals.balance_sen_live = local_total −
@@ -1053,6 +1057,8 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       const primaryRegion = stateRegions[0] ?? FALLBACK_DEFAULT_REGION;
       const regionSet = new Set<Region>(stateRegions);
       const address = [a.addr1, a.addr2, a.addr3, a.addr4].filter(Boolean).join(', ') || null;
+      // A closed / archived case's legs are DONE → they belong on Delivered.
+      const caseClosed = Boolean(a.closed_at) || Boolean(a.archived_at);
 
       // One row per SET trigger date. job_kind = which date drives THIS row; the
       // effective/board date is that trigger date so it lands in the schedule
@@ -1067,6 +1073,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       if (a.do_date)            legs.push({ jobKind: 'delivery',        date: a.do_date });
 
       for (const leg of legs) {
+        // A CLOSED case's leg only shows when it is recent (owner 2026-10-21: last
+        // 90 days); older done service work stays off the board.
+        if (caseClosed && leg.date.slice(0, 10) < recentClosedSince) continue;
         // so_doc_no is the React rowKey on the board — a case with two legs must
         // yield two DISTINCT keys, so suffix with the job_kind.
         const rowKey = `${assrNo}#${leg.jobKind}`;
@@ -1083,9 +1092,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           phone: a.phone ?? null, agent: null, salesperson_id: null, venue: null,
           branding: null,
           status: a.status ?? '',
-          // A set date but not yet delivered → Pending Delivery (owner: a dated
-          // service case surfaces under Pending Delivery until it's scheduled out).
-          delivery_state: 'PENDING_DELIVERY',
+          // Closed case's dated leg = done → Delivered; an open dated leg surfaces
+          // under Pending Delivery until it's scheduled out (owner 2026-10-21).
+          delivery_state: caseClosed ? 'DELIVERED' : 'PENDING_DELIVERY',
           delivery_state_override: null,
           balance_sen: 0,
           balance_sen_live: null,
@@ -1248,6 +1257,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       const address = [d.address1, d.address2, d.address3, d.address4, d.city, d.postcode, d.state]
         .filter(Boolean).join(', ') || null;
       const scheduled = String(d.status ?? '') === 'SCHEDULED';
+      const dpDelivered = String(d.status ?? '') === 'DELIVERED';
       dpTripIdByKey.set(`DP:${String(d.id)}`, ((d.trip_id ?? (d as { tripId?: string | null }).tripId) as string | null) ?? null);
       dpBoardRows.push({
         row_type: 'dp',
@@ -1263,7 +1273,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         phone: (d.contact_phone as string | null) ?? null, agent: null, salesperson_id: null, venue: null,
         branding: null,
         status: String(d.status ?? ''),
-        delivery_state: scheduled ? 'PENDING_DELIVERY' : 'PENDING_SCHEDULE',
+        delivery_state: dpDelivered ? 'DELIVERED' : (scheduled ? 'PENDING_DELIVERY' : 'PENDING_SCHEDULE'),
         delivery_state_override: null,
         balance_sen: 0,
         balance_sen_live: null,
@@ -1400,9 +1410,11 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           // SETUP/DISMANTLE legs instead of showing a dash. Edit stays in Projects.
           branding: (p.brand && p.brand.trim()) ? p.brand.trim() : null,
           status: 'PROJECT',
-          // Read-only mirror: a project window is already crewed in PMS → it's a
-          // committed fleet job, so it surfaces under Pending Delivery.
-          delivery_state: 'PENDING_DELIVERY',
+          // Read-only mirror of a PMS-crewed window. A window whose date has
+          // already passed is done → Delivered; an upcoming one is a committed
+          // fleet job → Pending Delivery (owner 2026-10-21: the Delivered tab
+          // shows every job type, not only SO deliveries).
+          delivery_state: leg.date < today ? 'DELIVERED' : 'PENDING_DELIVERY',
           delivery_state_override: null,
           balance_sen: 0,
           balance_sen_live: null,
