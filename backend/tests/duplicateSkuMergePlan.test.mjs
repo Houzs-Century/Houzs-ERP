@@ -47,6 +47,28 @@ describe('BUG-38 pairs file', () => {
   });
 });
 
+describe('HC-0141 pairs file', () => {
+  const book = JSON.parse(fs.readFileSync(path.join(DATA, 'duplicate-sku-merges.json'), 'utf8'));
+  const pairs = book['HC-0141'].pairs;
+
+  it('drops each MYLATEX-prefixed twin into its plain code: 7 models, 36 sizes', () => {
+    expect(pairs).toHaveLength(36);
+    for (const p of pairs) expect(p.drop).toBe(`MYLATEX ${p.keep}`);
+    expect(new Set(pairs.map((p) => p.keep.replace(/ MATT \(.*\)$/, '')))).toEqual(
+      new Set(['AURORA', 'BACKSHIRE', 'BACKTON', 'CELESTIA', 'CRESTLAKE', 'LUMBARIA', 'VELVETON']),
+    );
+  });
+
+  it('keeps the code AutoCount already maps to', () => {
+    const mapping = readMappingCsv(fs.readFileSync(path.join(DATA, 'autocount-erp-mapping-1561.csv'), 'utf8'));
+    const erpCodes = new Set([...mapping.values()].map((m) => m.erp));
+    for (const p of pairs) {
+      expect(erpCodes.has(p.keep)).toBe(true);
+      expect(erpCodes.has(p.drop)).toBe(false);
+    }
+  });
+});
+
 describe('planDuplicateSkuMerge', () => {
   it('re-keys documents and stock, leaves catalogue-side rows, and retires the dropped row', () => {
     const r = plan({
