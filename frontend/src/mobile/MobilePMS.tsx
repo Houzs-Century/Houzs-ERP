@@ -1672,6 +1672,17 @@ function SalesAttending({
   const present = new Set(attendees.map((a) => a.sales_rep_id));
   const available = options.filter((o) => !present.has(o.id));
   const pickedCount = picks.size + staffPicks.size;
+  // Peter 2026-10-21: merge reps + the 2026-10-19 "not in Sales Team" staff into
+  // ONE continuous A→Z list (they were two separate A→Z sections, so the picker
+  // restarted the alphabet at the divider and read as un-sorted). Non-roster
+  // staff keep a small inline tag.
+  type PickItem =
+    | { kind: "rep"; id: number; name: string; code: string | null }
+    | { kind: "staff"; id: number; name: string };
+  const pickItems: PickItem[] = [
+    ...available.map((o): PickItem => ({ kind: "rep", id: o.id, name: o.name ?? `#${o.id}`, code: o.code })),
+    ...others.map((s): PickItem => ({ kind: "staff", id: s.user_id, name: s.name || s.email })),
+  ].sort((a, b) => a.name.localeCompare(b.name));
 
   const toggle = (id: number) =>
     setPicks((prev) => {
@@ -1734,31 +1745,25 @@ function SalesAttending({
       {adding && (
         <div style={{ marginBottom: 8 }}>
           <div style={{ maxHeight: 240, overflowY: "auto", border: "1px solid #e3e6e0", borderRadius: 10 }}>
-            {available.length === 0 && others.length === 0 && (
+            {pickItems.length === 0 && (
               <div style={{ fontSize: 12, color: "#9aa093", padding: "9px 11px" }}>Everyone is already attending.</div>
             )}
-            {available.map((o, i) => (
+            {pickItems.map((it, i) => (
               <label
-                key={o.id}
+                key={it.kind === "rep" ? `rep-${it.id}` : `staff-${it.id}`}
                 style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderTop: i === 0 ? "none" : "1px solid #eceee9", cursor: busy ? "default" : "pointer" }}
               >
-                <input type="checkbox" checked={picks.has(o.id)} disabled={busy} onChange={() => toggle(o.id)} />
-                <span className="money" style={{ fontSize: 10, color: "#9aa093" }}>{o.code || "—"}</span>
-                <span style={{ fontSize: 13 }}>{o.name || `#${o.id}`}</span>
-              </label>
-            ))}
-            {others.length > 0 && (
-              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "#9aa093", padding: "8px 11px 4px", borderTop: available.length ? "1px solid #eceee9" : "none", background: "#f6f7f4" }}>
-                Not in the Sales Team yet — adding puts them in it
-              </div>
-            )}
-            {others.map((s) => (
-              <label
-                key={`staff-${s.user_id}`}
-                style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderTop: "1px solid #eceee9", cursor: busy ? "default" : "pointer" }}
-              >
-                <input type="checkbox" checked={staffPicks.has(s.user_id)} disabled={busy} onChange={() => toggleStaff(s.user_id)} />
-                <span style={{ fontSize: 13 }}>{s.name || s.email}</span>
+                <input
+                  type="checkbox"
+                  checked={it.kind === "rep" ? picks.has(it.id) : staffPicks.has(it.id)}
+                  disabled={busy}
+                  onChange={() => (it.kind === "rep" ? toggle(it.id) : toggleStaff(it.id))}
+                />
+                {it.kind === "rep" && <span className="money" style={{ fontSize: 10, color: "#9aa093" }}>{it.code || "—"}</span>}
+                <span style={{ fontSize: 13, flex: 1, minWidth: 0 }}>{it.name}</span>
+                {it.kind === "staff" && (
+                  <span style={{ fontSize: 8.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "#b4791a", background: "#fdf1dc", borderRadius: 10, padding: "1px 6px" }} title="Not in the Sales Team yet — adding puts them in it">+ team</span>
+                )}
               </label>
             ))}
           </div>
