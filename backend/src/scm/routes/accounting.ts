@@ -42,7 +42,7 @@ import {
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched, settlementRowUnconfirm,
   settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit, settlementFindPayments,
   settlementBatchReceived, settlementReceiptUndo,
-  settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
+  settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank, settlementRematch,
 } from './accounting-settlement';
 import {
   bankSetup, bankUpload, bankStatements, bankStatementDetail,
@@ -122,6 +122,7 @@ accounting.patch('/settlement/setup/:code', settlementSetupSave);
 accounting.get('/settlement/maintenance', settlementMaintenance);
 accounting.patch('/settlement/maintenance/merchant', settlementMaintenanceMerchant);
 accounting.patch('/settlement/maintenance/bank', settlementMaintenanceBank);
+accounting.post('/settlement/rematch', settlementRematch);
 accounting.post('/settlement/batches', settlementUpload);
 accounting.get('/settlement/batches', settlementBatches);
 accounting.get('/settlement/batches/:id', settlementBatchDetail);

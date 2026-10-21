@@ -65,7 +65,7 @@
 
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
-import { HC_SUBSTATUS_VALUES, HC_MESSAGE_STATUS_VALUES, fieldsSchema, SO_FIELD_COLS, DO_FIELD_COLS, type DeliveryOrderExecRow, type DoExecOut } from './delivery-planning-fields';
+import { HC_SUBSTATUS_VALUES, HC_MESSAGE_STATUS_VALUES, fieldsSchema, SO_FIELD_COLS, DO_FIELD_COLS, type DoExecOut } from './delivery-planning-fields';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { todayMyt } from '../lib/my-time';
@@ -78,7 +78,7 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
 import { effectiveSoDelivery } from '../shared';
 import { readinessRowFields, NO_STOCK_ROW } from '../lib/so-readiness-row';
-import { boardDeliverableByDoc } from '../lib/board-deliverable';
+import { kickOffBoardReads, kickOffSubBoardReads } from '../lib/delivery-planning-board-reads';
 import { readFailure, noteDegradedRead } from '../lib/read-failure';
 import { soProcessingLocked } from './mfg-sales-orders';
 import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
@@ -86,7 +86,7 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardUnionSql, assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
+import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
@@ -468,6 +468,21 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     return c.json({ orders: [], counts: emptyCounts(), regions: regionCfg.regions });
   }
 
+  /* OPEN-TIME (owner 2026-10-20 "开得慢"): kick off the four independent per-SO
+     reads (live balance, line readiness, deliverable sums, DOs) together so they
+     run concurrently instead of serially; each is still awaited and processed at
+     its own site below. Extracted to keep this file from growing (see
+     kickOffBoardReads for the why and the deliverable-wrap detail). */
+  const { liveBalanceReadP, itemRowsReadP, deliverableReadP, doRowsReadP } = kickOffBoardReads(sb, docNos);
+  /* The "PO No." column walks POs per company from soRows. It was the LAST serial
+     read before the response; start it here too so it overlaps every read above
+     (wrapped, since it is awaited far below — a throw must not float unhandled). */
+  const poNosByDocP = planningPoNosByDoc(sb, soRows).then((r) => ({ ok: r } as const), (e) => ({ err: e } as const));
+  /* The three non-SO sub-boards (ASSR / DP / project) are independent of the SO
+     reads and of each other; start them here too so they overlap everything above
+     instead of tailing the whole SO assembly (see kickOffSubBoardReads). */
+  const { assrRowsP, dpResP, projRowsP } = kickOffSubBoardReads(c, sb);
+
   /* 2b. LIVE balance per SO — same source-of-truth as the SO list Balance column
         (mfg_sales_orders_with_payment_totals.balance_sen_live = local_total −
         Σpayments). Looked up by doc_no; the base-table balance_sen above stays
@@ -483,11 +498,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
      view). Adding any of those here will 500 the Delivery Planning board. */
   const liveBalanceByDoc = new Map<string, number>();
   {
-    const { data: balRows, error: balErr } = await chunkIn<{ doc_no: string | null; balance_sen_live: number | null }>(docNos, (batch, from, to) =>
-      sb.from('mfg_sales_orders_with_payment_totals')
-        .select('doc_no, balance_sen_live')
-        .in('doc_no', batch).order('doc_no').range(from, to),
-    );
+    const { data: balRows, error: balErr } = await liveBalanceReadP;
     noteDegradedRead('live_balance', balErr);
     for (const b of (balRows ?? [])) {
       if (b.doc_no != null && b.balance_sen_live != null) {
@@ -503,20 +514,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         Ordered (doc_no, line_no, created_at ASC) — IDENTICAL to the SO list's
         item fetch so the FIRST line we see per doc_no is its earliest-created
         one; that drives the SO-list-matching Branding derivation below. */
-  const { data: itemRowsRaw, error: itemErr } = await chunkIn<{
-    doc_no: string; item_group: string | null; item_code: string | null;
-    stock_status: string | null; cancelled: boolean | null; warehouse_id: string | null;
-    branding: string | null; created_at: string | null;
-  }>(docNos, (batch, from, to) =>
-    sb.from('mfg_sales_order_items')
-      .select('doc_no, item_group, item_code, stock_status, cancelled, warehouse_id, branding, created_at')
-      .in('doc_no', batch)
-      .eq('cancelled', false)
-      .order('doc_no')
-      .order('line_no', { ascending: true, nullsFirst: false })
-      .order('created_at', { ascending: true })
-      .range(from, to),
-  );
+  const { data: itemRowsRaw, error: itemErr } = await itemRowsReadP;
   noteDegradedRead('so_lines', itemErr);
   const linesByDoc = new Map<string, ReadinessLine[]>();
   const warehousesByDoc = new Map<string, Set<string>>();
@@ -595,10 +593,10 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   /* Loud is right; anonymous is not — this reached the client as a bare 500. readFailure names the stage. */
   let deliveredByDoc: Map<string, number>;
   let remainingByDoc: Map<string, number>;
-  try {
-    ({ deliveredByDoc, remainingByDoc } = await boardDeliverableByDoc(sb, docNos));
-  } catch (e) {
-    return c.json(readFailure('delivered_sum', e), 500);
+  {
+    const dRes = await deliverableReadP;
+    if ('err' in dRes) return c.json(readFailure('delivered_sum', dRes.err), 500);
+    ({ deliveredByDoc, remainingByDoc } = dRes.ok);
   }
 
   /* 5. DOs for these SOs — the cut DO doc_no + status + per-DO crew (driver /
@@ -606,11 +604,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   /* HC DO-execution raw-data fields surface alongside the DO (DoExecOut lives in
      ./delivery-planning-fields for the file-size ceiling). dual-read camelCase
      (the pg driver camelCases result columns). */
-  const { data: doRowsRaw, error: doErr } = await chunkIn<DeliveryOrderExecRow>(docNos, (batch, from, to) =>
-    sb.from('delivery_orders')
-      .select('id, do_number, so_doc_no, status, driver_id, delivery_state, customer_delivery_date, do_date, delivered_at, pod_r2_key, pod_lat, time_range, time_confirmed, arrival_at, departure_at, shipout_date, customer_delivered_date, eta_arriving_port, delivery_substatus, arrives_em_warehouse_date, em_delivery_status, consignment_no, vessel_voyage, etd_port_klang, bs_delivery_date, esb_remarks, bs_remarks, ctn, em_delivered_date')
-      .in('so_doc_no', batch).order('id').range(from, to),
-  );
+  const { data: doRowsRaw, error: doErr } = await doRowsReadP;
   noteDegradedRead('do_headers', doErr);
   const doByDoc = new Map<string, Array<{ id: string; doNumber: string; status: string }>>();
   /* DO header driver_id by DO id — half the row-scope assignment (crew ids are
@@ -1039,18 +1033,11 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   type BoardRow = (typeof orders)[number];
   const assrOrders: BoardRow[] = [];
   try {
-    // Explicit lowercase aliases → deterministic snake_case result keys
-    // (sidesteps any driver camelCasing). Only OPEN cases with a trigger date.
-    const assrRows = await c.env.DB.prepare(assrBoardUnionSql(c)).all<{
-      id: number | null; assr_no: string | null; company_id: number | null; status: string | null;
-      customer_name: string | null; phone: string | null; location: string | null;
-      customer_pickup_at: string | null; inspection_visit_at: string | null;
-      inspection_by: string | null; do_date: string | null;
-      addr1: string | null; addr2: string | null; addr3: string | null; addr4: string | null;
-      // The linked Sales Order's real customer state / postcode / country — the
-      // State and Postcode columns and the region bucket read these, not `location`.
-      so_state: string | null; so_postcode: string | null; so_country: string | null;
-    }>();
+    // Kicked off up top (kickOffSubBoardReads); a read error re-throws into this
+    // same try, which logs and leaves the SO rows untouched — unchanged behaviour.
+    const assrR = await assrRowsP;
+    if ('err' in assrR) throw assrR.err;
+    const assrRows = assrR.ok;
 
     for (const a of (assrRows.results ?? [])) {
       const assrNo = String(a.assr_no ?? '').trim();
@@ -1249,13 +1236,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
      Only consulted when self-scoped. */
   const dpTripIdByKey = new Map<string, string | null>();
   try {
-    let dpQuery = sb.from('dp_orders')
-      .select('id, dp_no, job_type, party_name, contact_phone, address1, address2, address3, address4, city, postcode, state, requested_date, status, trip_id')
-      .is('so_doc_no', null).is('assr_case_id', null).is('do_id', null)
-      .not('status', 'in', '("DELIVERED","CANCELLED")')
-      .limit(1000);
-    dpQuery = scopeToAllowedCompanies(dpQuery, c);
-    const dpRes = await dpQuery;
+    const dpR = await dpResP; // kicked off up top; a read error re-throws into this try (logs, leaves the rest)
+    if ('err' in dpR) throw dpR.err;
+    const dpRes = dpR.ok;
     for (const d of (dpRes.data ?? []) as Array<Record<string, unknown>>) {
       const dpState = (d.state as string | null) ?? null;
       const stateRegions = stateToRegionsFromConfig(regionCfg, dpState, null);
@@ -1372,27 +1355,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
      (same path as the ASSR union). Defensive: any failure logs + leaves the rest. */
   const projectOrders: BoardRow[] = [];
   try {
-    const projRows = await c.env.DB.prepare(
-      `SELECT p.id AS id, p.code AS code, p.name AS name,
-              p.venue AS venue, p.venue_address AS venue_address, p.state AS state,
-              p.setup_start_at     AS setup_start_at,
-              p.dismantle_start_at AS dismantle_start_at,
-              sd.name  AS setup_driver_name,     sl.plate AS setup_lorry_plate,
-              dd.name  AS dismantle_driver_name, dl.plate AS dismantle_lorry_plate
-         FROM projects p
-         LEFT JOIN users   sd ON sd.id = p.setup_driver_user_id
-         LEFT JOIN lorries sl ON sl.id = p.setup_lorry_id
-         LEFT JOIN users   dd ON dd.id = p.dismantle_driver_user_id
-         LEFT JOIN lorries dl ON dl.id = p.dismantle_lorry_id
-        WHERE p.archived_at IS NULL
-          AND (p.setup_start_at IS NOT NULL OR p.dismantle_start_at IS NOT NULL)`,
-    ).all<{
-      id: number | null; code: string | null; name: string | null;
-      venue: string | null; venue_address: string | null; state: string | null;
-      setup_start_at: string | null; dismantle_start_at: string | null;
-      setup_driver_name: string | null; setup_lorry_plate: string | null;
-      dismantle_driver_name: string | null; dismantle_lorry_plate: string | null;
-    }>();
+    const projR = await projRowsP; // kicked off up top; a read error re-throws into this try (logs, leaves the rest)
+    if ('err' in projR) throw projR.err;
+    const projRows = projR.ok;
 
     for (const p of (projRows.results ?? [])) {
       const stateRegions = stateToRegionsFromConfig(regionCfg, p.state, null);
@@ -1502,7 +1467,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     console.warn(`[delivery-planning] project union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
 
-  const poNosByDoc = await planningPoNosByDoc(sb, soRows); // "PO No." column: POs raised from the SO, walked per company (lib/planning-po-nos.ts)
+  const poNosRes = await poNosByDocP; // "PO No." column: POs raised from the SO, walked per company (lib/planning-po-nos.ts); kicked off right after soRows
+  if ('err' in poNosRes) throw poNosRes.err;
+  const poNosByDoc = poNosRes.ok;
   await attachBoardAcExemptionExpiry(sb, c, soRows, orders); // BUG-51 repoint: the board's exemption-expiry column (shared lib keeps the route under its size ceiling)
   const allOrders = [...orders.map((o) => ({ ...o, po_nos: poNosByDoc.get(o.so_doc_no) ?? [] })), ...assrOrders, ...dpBoardRows, ...projectOrders];
 
