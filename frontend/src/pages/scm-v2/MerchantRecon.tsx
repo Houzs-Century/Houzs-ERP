@@ -47,6 +47,39 @@ import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtDate } from '../../vendor/shared/format';
+import { markWorkspaceOpenIntent } from '../../lib/workspaceTabs';
+
+/* ── The order behind a line, one click away ──────────────────────────────────
+   Owner 2026-10-21: 点开那个 HC-SO-013512 这些 sales order 直接打开整张 sales
+   order. An order number opens the whole order in its OWN tab of the in-app
+   strip — the convention of Fair Links and the project page's order list
+   (lib/openDocInTab) — so the report stays one click away; Ctrl/Cmd-click opens
+   a browser window. An invoice payment's number stays text: the invoice page
+   is reached by an id this screen does not carry. */
+const DocLink = ({ source, docNo, bold }: { source: string | null | undefined; docNo: string; bold?: boolean }) => {
+  if (source !== 'SOPAY' || !docNo) return bold ? <b>{docNo}</b> : <>{docNo}</>;
+  return (
+    <Link
+      to={`/scm/sales-orders/${encodeURIComponent(docNo)}`}
+      onClick={(e) => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) markWorkspaceOpenIntent(true); }}
+      style={{ fontWeight: bold ? 700 : undefined, whiteSpace: 'nowrap' }}
+    >
+      {docNo}
+    </Link>
+  );
+};
+
+/** The orders a matched line claimed, each one a door to its order. */
+const LinkedDocs = ({ links }: { links: SettlementRow['linked'] }) => (
+  <>
+    {links.map((l, i) => (
+      <span key={l.payment_id}>
+        {i > 0 && ', '}
+        {l.doc_no ? <DocLink source={l.payment_source} docNo={l.doc_no} bold /> : <b>{l.payment_id}</b>}
+      </span>
+    ))}
+  </>
+);
 
 /* The server sends the four piles as a plain tally; a bucket with nothing in it
    is simply absent, so read it as a lookup rather than a guaranteed key. */
@@ -385,7 +418,7 @@ const ReconcileTab = () => {
 type WaitingCard = Watchlist['recordedNotArrived'][number];
 const WAITING_COLUMNS: Column<WaitingCard>[] = [
   { key: 'merchant', label: 'Merchant', render: (p) => <span className={styles.codeChip}>{p.acquirerCode ?? '未标'}</span>, getValue: (p) => p.acquirerCode ?? '未标' },
-  { key: 'document', label: 'Document', render: (p) => p.docNo, getValue: (p) => p.docNo },
+  { key: 'document', label: 'Document', render: (p) => <DocLink source={p.source} docNo={p.docNo} />, getValue: (p) => p.docNo },
   { key: 'salesperson', label: 'Salesperson', render: (p) => p.salespersonName ?? '—', getValue: (p) => p.salespersonName ?? '' },
   { key: 'paidOn', label: 'Customer paid on', render: (p) => fmtDate(p.paidOn), getValue: (p) => p.paidOn, exportFormat: 'date' },
   {
@@ -725,13 +758,15 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
           ? sale.map((l) => ({
             key: l.payment_id,
             docNo: l.doc_no ?? l.payment_id,
+            /* No document number: the payment id is shown, and it opens nothing. */
+            source: l.doc_no ? l.payment_source : null,
             customer: l.customer_name ?? null,
             paidOn: l.paid_on ?? null,
             code: l.approval_code ?? null,
             amountSen: l.amount_sen,
           }))
           : guess.map((p) => ({
-            key: p.id, docNo: p.docNo, customer: p.customerName ?? null,
+            key: p.id, docNo: p.docNo, source: p.source, customer: p.customerName ?? null,
             paidOn: p.paidOn, code: p.approvalCode ?? null, amountSen: p.amountSen,
           }));
         /* One line settling several orders stacks INSIDE its cell — the rare
@@ -757,7 +792,7 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
             <td className={grid.seam}>
               {orders.length === 0
                 ? <span className={grid.sub}>{r.candidates.length > 0 ? `${r.candidates.length} possible` : '—'}</span>
-                : stack((o) => <b>{o.docNo}</b>)}
+                : stack((o) => <DocLink source={o.source} docNo={o.docNo} bold />)}
             </td>
             <td>{stack((o) => o.customer)}</td>
             <td>{stack((o) => o.paidOn)}</td>
@@ -971,7 +1006,7 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
                 <td className={grid.seam}>
                   {r.linked.map((l) => (
                     <div key={l.payment_id}>
-                      <b>{l.doc_no ?? l.payment_id}</b>
+                      {l.doc_no ? <DocLink source={l.payment_source} docNo={l.doc_no} bold /> : <b>{l.payment_id}</b>}
                       {l.customer_name ? <span className={grid.sub}> · {l.customer_name}</span> : null}
                     </div>
                   ))}
@@ -1095,7 +1130,7 @@ const FindTheSale = ({ rowId, grossSen, picked, shown, onToggle }: {
                   <input type="checkbox" checked={picked.has(key(p))} onChange={() => onToggle(p)} aria-label={`Select ${p.docNo}`} />
                 </td>
                 <td style={cell}>
-                  {p.docNo}
+                  <DocLink source={p.source} docNo={p.docNo} />
                   {p.possible && <span className={styles.codeChip} style={{ marginLeft: 6 }}>possible</span>}
                   {p.merchantProvider === null && (
                     <span style={{ marginLeft: 6, fontSize: 'var(--fs-12)', color: 'var(--text-soft, #8a8578)' }}>未标 merchant</span>
@@ -1180,13 +1215,13 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
       {row.posted_je_no && (
         <div style={{ fontSize: 'var(--fs-13)', color: good }}>
           Posted as <span className={styles.codeChip}>{row.posted_je_no}</span>
-          {row.linked.length > 0 && ` — ${row.linked.map((l) => l.doc_no ?? l.payment_id).join(', ')}`}
+          {row.linked.length > 0 && <> — <LinkedDocs links={row.linked} /></>}
         </div>
       )}
 
       {!row.confirmed_at && row.linked.length > 0 && (
         <div style={{ fontSize: 'var(--fs-13)' }}>
-          Matched to <b>{row.linked.map((l) => l.doc_no ?? l.payment_id).join(', ')}</b>
+          Matched to <LinkedDocs links={row.linked} />
           {row.ref ? ' by its reference' : ''} — press <b>Confirm</b> to book its fee.
         </div>
       )}
@@ -1209,7 +1244,7 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
                       aria-label={`Select ${p.docNo}`} />
                   </td>
                   <td style={cell}>
-                    {p.docNo}
+                    <DocLink source={p.source} docNo={p.docNo} />
                     {/* A migration-era payment carries no merchant tag; say so
                         where it is being claimed. Confirming writes the tag.
                         Strictly null: a candidate WITHOUT the field (an older
