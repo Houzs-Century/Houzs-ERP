@@ -145,6 +145,10 @@ export type FairPendingRow = {
   status: string | null;
   local_total_sen: number | null;
   salesperson_id: string | null;
+  /** The Ref No. — the slip number the evening report lists. Shown with the
+   *  SO page's rule (lib/customer-ref.ts). Absent from an older server. */
+  ref?: string | null;
+  customer_so_no?: string | null;
 };
 
 /** Orders with no fair link a person should see (backend scm/lib/fair-pending.ts).
@@ -172,9 +176,17 @@ export type FairCheckRow = Omit<FairPendingRow, 'fair_match'> & {
   check: 'VENUE_DIFFERS' | 'NEEDS_ATTENDING' | 'REPORT_ELSEWHERE';
   note: string;
   /** REPORT_ELSEWHERE: the booth the report puts it at; null when two fairs'
-   *  reports both list it. */
-  target?: { projectId: number; label: string; reportDate: string | null } | null;
+   *  reports both list it. `title` / `detail` are its two lines (owner
+   *  2026-10-21); an older server sends `label` only. */
+  target?: ({ projectId: number; label: string; reportDate: string | null } & Partial<FairCheckBooth>) | null;
+  /** REPORT_ELSEWHERE: the booth the order is under now; null with none. */
+  current?: FairCheckBooth | null;
+  /** REPORT_ELSEWHERE with no target: the booths whose reports both list it. */
+  candidates?: FairCheckBooth[];
 };
+
+/** A booth on two lines: "[AKEMI] HOMELOVE" over "IOIGECC · 10/09 - 10/11". */
+export type FairCheckBooth = { projectId: number; title: string; detail: string };
 
 export type FairTransferResult =
   | { docNo: string; ok: true; projectId: number; venue: string; fairDate: string | null }

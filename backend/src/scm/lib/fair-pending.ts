@@ -21,9 +21,11 @@
 // ----------------------------------------------------------------------------
 
 /** What the page shows. Every value is already on the order — nothing is joined
- *  or computed, so the page cannot disagree with the order list. */
+ *  or computed, so the page cannot disagree with the order list. `ref` and
+ *  `customer_so_no` are the order's Ref No. — the slip number the evening
+ *  sales report lists (owner 2026-10-21: 「我这里也需要这个reference」). */
 export const FAIR_PENDING_COLUMNS =
-  'doc_no, so_date, venue, branding, project_id, fair_match, status, local_total_sen, salesperson_id';
+  'doc_no, so_date, venue, branding, project_id, fair_match, status, local_total_sen, salesperson_id, ref, customer_so_no';
 
 /** Verdicts listed whatever the order's date. */
 export const LISTED_VERDICTS = ['PENDING', 'AMBIGUOUS', 'UNMATCHED', 'NO_FAIR'] as const;
@@ -45,6 +47,10 @@ export type FairPendingRow = {
   status: string | null;
   local_total_sen: number | null;
   salesperson_id: string | null;
+  /** The Ref No., `ref` first (frontend lib/customer-ref.ts). Optional so a
+   *  row built without them still types. */
+  ref?: string | null;
+  customer_so_no?: string | null;
 };
 
 /* TWO READS, ONE LIST. The listed set is "a verdict in LISTED_VERDICTS" OR "no

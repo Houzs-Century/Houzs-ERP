@@ -305,7 +305,7 @@ function isSoloRow(row: FairProjectRow): boolean {
 
 /** The organizer half of the label. An EXHIBITION names its organizer — that is
  *  what tells two fairs at one venue apart. A SOLO roadshow reads "SOLO". */
-function labelOrganizer(o: Pick<FairOption, 'organizer' | 'solo'>): string {
+export function labelOrganizer(o: Pick<FairOption, 'organizer' | 'solo'>): string {
   return o.solo ? 'SOLO' : o.organizer;
 }
 
