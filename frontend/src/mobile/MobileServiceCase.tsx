@@ -30,7 +30,7 @@ import {
 } from "../vendor/scm/lib/assr/stages";
 import { ANOTHER_RETURN_HINT, type SupplierReturn } from "../vendor/scm/lib/assr/returns";
 import { MobileFactoryTrips } from "./MobileFactoryTrips";
-import { ITEM_LOCATION_OPTIONS, PICKUP_STATUS_OPTIONS, pickupTrackingOptions } from "../vendor/scm/lib/assr-pickup-tracking";
+import { ITEM_LOCATION_OPTIONS, PICKUP_STATUS_OPTIONS, pickupTrackingOptions, pickupPicSelectOptions, usePickupPicDrivers } from "../components/assr/PickupTrackingFields";
 import { pendingWithOptions } from "../vendor/scm/lib/assr-verification-fields";
 import { MobileReopenControl } from "./MobileReopenControl";
 import { splitCategories } from "../lib/assrProductCategories";
@@ -256,7 +256,6 @@ function useAssignableUsers(): PicUser[] {
   });
   return Array.isArray(data) ? data : [];
 }
-
 
 
 /** Mobile Service Case (ASSR) — Status Cards list + tabbed detail
@@ -728,6 +727,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
      yet", never as a hardcoded taxonomy the admin cannot change. */
   const productCategoryOptions = useLookupNames("product-categories", []);
   const assignableUsers = useAssignableUsers();
+  const pickupPicDrivers = usePickupPicDrivers();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["mobile-assr-detail", id],
@@ -1104,7 +1104,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
             <EditRow label="Pickup status" type="select" options={pickupTrackingOptions(PICKUP_STATUS_OPTIONS)} value={get(c, "pickupStatus", "pickup_status")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_status: v }, "Couldn't save pickup status")} />
             <EditRow label="Scheduled pickup date (ETA)" type="date" value={get(c, "customerPickupAt", "customer_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ customer_pickup_at: v }, "Couldn't save pickup date")} />
             <EditRow label="Actual pickup date" type="date" value={get(c, "actualPickupAt", "actual_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ actual_pickup_at: v }, "Couldn't save actual pickup date")} />
-            <EditRow label="Pickup PIC" value={get(c, "pickupPic", "pickup_pic")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_pic: v }, "Couldn't save pickup PIC")} />
+            <EditRow label="Pickup PIC" type="select" options={pickupPicSelectOptions(pickupPicDrivers, get(c, "creditorName", "creditor_name") || get(c, "supplier", "supplier"), get(c, "pickupPic", "pickup_pic"))} value={get(c, "pickupPic", "pickup_pic")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_pic: v }, "Couldn't save pickup PIC")} />
             <EditRow label="Current item location" type="select" options={pickupTrackingOptions(ITEM_LOCATION_OPTIONS)} value={get(c, "itemLocation", "item_location")} busy={busy} disabled={dis} onSave={(v) => patchCase({ item_location: v }, "Couldn't save item location")} />
             {/* 返厂 (owner 2026-09-21) — every factory trip is a row, add as many
                 as needed. The latest row is the current trip; its dates mirror to

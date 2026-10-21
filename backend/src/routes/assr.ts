@@ -433,6 +433,16 @@ app.get("/lookups/:kind", requireServiceCaseAccess(), async (c) => {
   return c.json({ data: rows.results ?? [] });
 });
 
+// HC-0129 Pickup PIC picker. Names only: /api/scm/drivers needs Transportation
+// access and returns phone + IC. The roster is one list across companies
+// (scm/routes/drivers.ts), so no company predicate.
+app.get("/pickup-pic-drivers", requireServiceCaseAccess(), async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT name, in_house FROM scm."drivers" WHERE active = true ORDER BY name ASC`,
+  ).all();
+  return c.json({ data: rows.results ?? [] });
+});
+
 app.post("/lookups/:kind", requirePermission("service_cases.manage"), async (c) => {
   const kind = c.req.param("kind");
   const table = lookupTable(kind);
