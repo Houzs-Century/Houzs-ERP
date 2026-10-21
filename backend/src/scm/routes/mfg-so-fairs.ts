@@ -49,6 +49,7 @@ import {
   olderFairOptions,
 } from '../lib/fair-options';
 import { countFairPending, loadFairPending } from '../lib/fair-pending';
+import { loadFairPutAside, NOT_PUT_ASIDE, setFairPutAside } from '../lib/fair-put-aside';
 import { loadFairChecks } from '../lib/fair-checks';
 import { fairStateOf, recordFairChange } from '../lib/fair-audit';
 import { canReassignFair, FAIR_REASSIGN_REFUSAL } from '../lib/fair-reassign';
@@ -171,11 +172,50 @@ mfgSoFairs.get('/fair-pending', async (c) => {
   const limitRaw = Number(c.req.query('limit'));
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 500) : 200;
   try {
-    const res = await loadFairPending(sb, (q) => scopeToCompany(q, c), limit);
-    if (!res.ok) return c.json({ error: 'fair_pending_read_failed', rows: [] }, 500);
-    return c.json({ rows: res.rows });
+    const scope = <Q>(q: Q): Q => scopeToCompany(q, c);
+    /* With the orders a person PUT ASIDE (owner 2026-10-21), for the page's
+       folded group at the bottom. */
+    const [res, aside] = await Promise.all([loadFairPending(sb, scope, limit), loadFairPutAside(sb, scope, limit)]);
+    if (!res.ok || !aside.ok) return c.json({ error: 'fair_pending_read_failed', rows: [] }, 500);
+    return c.json({ rows: res.rows, putAside: aside.rows });
   } catch {
     return c.json({ error: 'fair_pending_read_failed', rows: [] }, 500);
+  }
+});
+
+/**
+ * POST /mfg-sales-orders/:docNo/fair-put-aside   { aside: boolean }
+ *
+ * Put an order aside on Fair Links, or bring it back (owner 2026-10-21: 「还有
+ * 一些我看了是 service 要 put aside 的」). Put aside, it leaves every group and
+ * the menu's count; the order's History records who and when. Finance or PMS
+ * only, as linking (scm/lib/fair-put-aside.ts).
+ */
+mfgSoFairs.post('/:docNo/fair-put-aside', async (c) => {
+  if (!canReassignFair(c)) return c.json({ error: 'forbidden', reason: FAIR_REASSIGN_REFUSAL }, 403);
+  let body: { aside?: unknown };
+  try {
+    body = (await c.req.json()) as { aside?: unknown };
+  } catch {
+    return c.json({ error: 'bad_json' }, 400);
+  }
+  if (typeof body.aside !== 'boolean') return c.json({ error: 'bad_aside', reason: 'Send aside: true to put the order aside, false to bring it back.' }, 400);
+  const company = requireActiveCompanyId(c);
+  if (!company.ok) return c.json(company.refusal, 409);
+  const user = c.get('user');
+  try {
+    const res = await setFairPutAside({
+      sb: c.get('supabase'),
+      companyId: company.companyId,
+      docNo: c.req.param('docNo'),
+      aside: body.aside,
+      actorId: user.id,
+      actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? c.get('houzsUser')?.name ?? null,
+    });
+    if (!res.ok) return c.json({ error: res.reason }, res.reason === 'not_found' ? 404 : 500);
+    return c.json({ ok: true, changed: res.changed });
+  } catch {
+    return c.json({ error: 'fair_put_aside_failed' }, 500);
   }
 });
 
@@ -343,6 +383,8 @@ mfgSoFairs.post('/:docNo/fair', async (c) => {
       .update({
         project_id: projectId,
         fair_match: projectId == null ? 'AMBIGUOUS' : 'PICKED',
+        /* A link made by hand brings a put-aside order back (fair-put-aside.ts). */
+        ...(projectId == null ? {} : NOT_PUT_ASIDE),
       })
       .eq('doc_no', docNo),
     c,

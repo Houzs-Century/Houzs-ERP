@@ -20,6 +20,7 @@
 import { loadLiveFairsByIds, type FairDb } from './fair-binding';
 import { periodContains, type FairProjectRow } from './fair-options';
 import { fairStateOf, recordFairChange } from './fair-audit';
+import { NOT_PUT_ASIDE } from './fair-put-aside';
 import { chunkIn } from './paginate-all';
 import { loadReportEvidence, sightingsOf } from '../../routes/lib/sales-report-evidence';
 
@@ -128,7 +129,8 @@ export async function transferOrdersToFairs(args: {
     const fairDate = transferFairDay(fair, reported?.reportDate ?? null, before.fairDay);
     const venue = (fair.venue ?? '').trim();
     const { error } = await sb.from('mfg_sales_orders')
-      .update({ project_id: it.projectId, fair_match: 'PICKED', venue, venue_source: 'PMS', fair_date: fairDate })
+      /* A move by hand also brings a put-aside order back (fair-put-aside.ts). */
+      .update({ project_id: it.projectId, fair_match: 'PICKED', venue, venue_source: 'PMS', fair_date: fairDate, ...NOT_PUT_ASIDE })
       .eq('doc_no', it.docNo)
       .eq('company_id', companyId);
     if (error) { out.push({ docNo: it.docNo, ok: false, reason: 'update_failed' }); continue; }

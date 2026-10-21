@@ -48,6 +48,8 @@ vi.mock('../../lib/workspaceTabs', async (orig) => ({
 const checks = vi.hoisted(() => ({ rows: [] as unknown[], error: false }));
 /* The fairs past the four weeks the server adds for Finance / PMS. */
 const olderFairs = vi.hoisted(() => ({ list: [] as unknown[], askedOlder: [] as boolean[] }));
+/* The orders put aside (owner 2026-10-21), and the put-aside write. */
+const aside = vi.hoisted(() => ({ list: [] as unknown[], mutate: vi.fn() }));
 const who = vi.hoisted(() => ({ perms: new Set<string>(['scm.finance.accounting']), role: '' }));
 vi.mock('../../auth/AuthContext', () => ({
   useAuth: () => ({ user: { id: 1, role_name: who.role, position_name: null, email: 'x@houzs.test' }, can: (p: string) => who.perms.has('*') || who.perms.has(p) }),
@@ -63,6 +65,8 @@ vi.mock('../../vendor/scm/lib/fair-options-queries', async (orig) => ({
   useAssignFair: () => ({ mutate: assign, isPending: false }),
   useFairChecks: () => ({ data: checks.rows, isLoading: false, isError: checks.error }),
   useFairTransfer: () => ({ mutate: transferMutate, isPending: false }),
+  useFairPutAside: () => ({ data: aside.list, isLoading: false, isError: false }),
+  usePutAside: () => ({ mutate: aside.mutate, isPending: false }),
 }));
 
 import { FairPending } from './FairPending';
@@ -243,6 +247,36 @@ describe('FairPending — linked orders to check (owner 2026-10-19)', () => {
     checks.error = true;
     show();
     expect(screen.getByText('Couldn’t load the linked orders to check — try again.')).toBeTruthy();
+  });
+});
+
+/* Owner 2026-10-21: 「还有一些我看了是 service 要 put aside 的」. */
+describe('FairPending — put aside', () => {
+  afterEach(() => { aside.list = []; aside.mutate.mockReset(); });
+
+  it('each order to pick for can be put aside', () => {
+    show();
+    const row = screen.getByText('HC-SO-2609-064').closest('tr') as HTMLTableRowElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'Put aside' }));
+    expect(aside.mutate).toHaveBeenCalledWith({ docNo: 'HC-SO-2609-064', aside: true });
+  });
+
+  it('the put-aside orders wait folded at the bottom, each with who and when, and can be brought back', () => {
+    aside.list = [{ ...ROWS[2]!, doc_no: 'HC-SO-2610-066', branding: 'SERVICE', fair_put_aside_at: '2026-10-21T09:00:00Z', fair_put_aside_by: 'Chew' }];
+    show();
+    const toggle = screen.getByRole('button', { name: 'Put aside (1)' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('HC-SO-2610-066')).toBeNull();
+    fireEvent.click(toggle);
+    const row = screen.getByText('HC-SO-2610-066').closest('tr') as HTMLTableRowElement;
+    expect(row.textContent).toContain('Chew · 2026/10/21');
+    fireEvent.click(within(row).getByRole('button', { name: 'Bring back' }));
+    expect(aside.mutate).toHaveBeenCalledWith({ docNo: 'HC-SO-2610-066', aside: false });
+  });
+
+  it('nothing put aside: no group at all', () => {
+    show();
+    expect(screen.queryByRole('button', { name: /Put aside \(/ })).toBeNull();
   });
 });
 

@@ -62,6 +62,7 @@
  */
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useAuth } from '../../auth/AuthContext';
 import { canCreateEvent } from '../../auth/salesAccess';
@@ -72,6 +73,8 @@ import { fmtDateOrDash, fmtDayMonth } from '../../vendor/shared/format';
 import {
   useFairChecks,
   useFairPending,
+  useFairPutAside,
+  usePutAside,
   useAssignFair,
   useFairOptions,
   useFairTransfer,
@@ -121,7 +124,7 @@ const NOTE = 'bg-surface-2 px-3 pb-2 pt-1.5 text-[12px] text-ink-muted';
 /* The same column widths in every group, so the tables line up: SO No. (with
    the report group's tick), Ref No., SO date, Venue (Now under), Brand, Amount,
    Fair, Link. */
-const COLUMNS: Array<number | string | undefined> = [172, 104, 100, '18%', 110, 124, undefined, 84];
+const COLUMNS: Array<number | string | undefined> = [172, 104, 100, '18%', 110, 124, undefined, 184];
 const COLS = COLUMNS.length;
 
 function money(sen: number | null): string {
@@ -132,12 +135,16 @@ function money(sen: number | null): string {
 export function FairPending() {
   const rowsQ = useFairPending(LIST_LIMIT);
   const checksQ = useFairChecks();
+  const asideQ = useFairPutAside(LIST_LIMIT);
   const assign = useAssignFair();
+  const putAside = usePutAside();
   /* Finance or PMS re-assign here (owner 2026-10-16); the API enforces the same
      (scm/lib/fair-reassign.ts), this only stops a button that would be refused. */
   const { can, user } = useAuth();
   const canReassign = can('scm.finance.accounting') || canCreateEvent(user);
-  const busy = assign.isPending || !canReassign;
+  const busy = assign.isPending || putAside.isPending || !canReassign;
+  /* Owner 2026-10-21: 「还有一些我看了是 service 要 put aside 的」. */
+  const setAside = (docNo: string, aside: boolean) => putAside.mutate({ docNo, aside });
   const rows = rowsQ.data ?? [];
   const checks = checksQ.data ?? [];
   const reported = useMemo(() => checks.filter((r) => r.check === 'REPORT_ELSEWHERE'), [checks]);
@@ -193,7 +200,7 @@ export function FairPending() {
         return (
           <Group key={g.key} title={`${g.title} (${list.length})`} hint={g.hint} last={g.key === 'VENUE_DIFFERS' ? 'Fair' : 'Status'}>
             {list.map((r) => (g.key === 'VENUE_DIFFERS'
-              ? <PendingRow key={r.doc_no} row={r} note={r.note} onAssign={assign.mutate} busy={busy} />
+              ? <PendingRow key={r.doc_no} row={r} note={r.note} onAssign={assign.mutate} onPutAside={setAside} busy={busy} />
               : <CheckRow key={r.doc_no} row={r} />))}
           </Group>
         );
@@ -205,12 +212,54 @@ export function FairPending() {
         return (
           <Group key={g.key} title={`${g.title} (${list.length})`} hint={g.hint} last="Fair">
             {list.map((r) => (
-              <PendingRow key={r.doc_no} row={r} onAssign={assign.mutate} busy={busy} />
+              <PendingRow key={r.doc_no} row={r} onAssign={assign.mutate} onPutAside={setAside} busy={busy} />
             ))}
           </Group>
         );
       })}
+
+      <PutAsideGroup rows={asideQ.data ?? []} busy={busy} onBringBack={(docNo) => setAside(docNo, false)} />
     </div>
+  );
+}
+
+/** The orders a person put aside (owner 2026-10-21), folded at the bottom: they
+ *  are out of every group above and the menu's count until brought back. */
+function PutAsideGroup({ rows, busy, onBringBack }: { rows: FairPendingRow[]; busy: boolean; onBringBack: (docNo: string) => void }) {
+  const [open, setOpen] = useState(false);
+  if (rows.length === 0) return null;
+  const Chevron = open ? ChevronDown : ChevronRight;
+  const heading = (
+    <button
+      type="button"
+      aria-expanded={open}
+      onClick={() => setOpen(!open)}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: 0, border: 0, background: 'none', font: 'inherit', cursor: 'pointer' }}
+    >
+      <Chevron size={15} aria-hidden />Put aside ({rows.length})
+    </button>
+  );
+  const hint = 'Orders put aside here: not in the groups above or the menu’s count. Bring one back to list it again.';
+  if (!open) {
+    return (
+      <section>
+        <h2 style={{ margin: '0 0 2px', fontSize: 15 }}>{heading}</h2>
+        <p style={{ margin: 0, opacity: 0.7, fontSize: 12 }}>{hint}</p>
+      </section>
+    );
+  }
+  return (
+    <Group title={heading} hint={hint} last="Put aside">
+      {rows.map((r) => (
+        <tr key={r.doc_no}>
+          <OrderCells row={r} />
+          <td className={TD}>{[r.fair_put_aside_by, r.fair_put_aside_at ? fmtDateOrDash(r.fair_put_aside_at) : ''].filter(Boolean).join(' · ') || '—'}</td>
+          <td className={cn(TD, 'text-right')}>
+            <Button variant="secondary" size="sm" disabled={busy} onClick={() => onBringBack(r.doc_no)}>Bring back</Button>
+          </td>
+        </tr>
+      ))}
+    </Group>
   );
 }
 
@@ -320,12 +369,12 @@ function ReportSays({ row }: { row: FairCheckRow }) {
 
 /** One group: its title, what to do, and its orders in the shared columns. */
 function Group({ title, hint, place = 'Venue', last, lead, actions, children }: {
-  title: string;
+  title: ReactNode;
   hint: string;
   /** The fifth column: the order's venue, or (report group) where it is now. */
   place?: 'Venue' | 'Now under';
   /** The report group's last column also takes the Link column — it has no button. */
-  last: 'Fair' | 'Status' | 'Report says';
+  last: 'Fair' | 'Status' | 'Report says' | 'Put aside';
   /** The report group's tick-all box, ahead of "SO No.". */
   lead?: ReactNode;
   /** Buttons above the table. */
@@ -423,9 +472,11 @@ function PendingRow(props: {
   /** The server's 要查 sentence, shown under the row. */
   note?: string;
   onAssign: (v: { docNo: string; projectId: number | null }) => void;
+  /** Put the order aside (owner 2026-10-21) — out of the list until brought back. */
+  onPutAside: (docNo: string, aside: boolean) => void;
   busy: boolean;
 }) {
-  const { row, note, onAssign, busy } = props;
+  const { row, note, onAssign, onPutAside, busy } = props;
   /* null = untouched, so the suggestion shows; '' = the person cleared it. */
   const [pick, setPick] = useState<string | null>(null);
   /* The SAME options the salesperson saw, resolved for THIS order's date — not
@@ -471,14 +522,19 @@ function PendingRow(props: {
           </select>
         </td>
         <td className={cn(TD, 'text-right')}>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={busy || !value}
-            onClick={() => onAssign({ docNo: row.doc_no, projectId: Number(value) })}
-          >
-            Link
-          </Button>
+          <span className="inline-flex items-center gap-1.5">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={busy || !value}
+              onClick={() => onAssign({ docNo: row.doc_no, projectId: Number(value) })}
+            >
+              Link
+            </Button>
+            <Button variant="secondary" size="sm" disabled={busy} onClick={() => onPutAside(row.doc_no, true)}>
+              Put aside
+            </Button>
+          </span>
         </td>
       </tr>
       {note && <NoteRow note={note} />}

@@ -27,6 +27,8 @@
 // is now (`current`) and where the report puts it (`target`) — so the page
 // shows one row per order (owner 2026-10-21: 这个表很乱).
 //
+// An order a person PUT ASIDE (fair-put-aside.ts) is in none of them.
+//
 // All are read from the order, PMS and the chat as they are NOW. Nothing is
 // stored, so re-linking, correcting the venue or PMS adding the person clears
 // the row at once — there is no flag to forget to reset.
@@ -148,6 +150,7 @@ export async function loadFairChecks(args: {
       return scope(
         (linkedOnes ? q.not('project_id', 'is', null) : q.is('project_id', null))
           .neq('status', 'CANCELLED')
+          .is('fair_put_aside_at', null)
           .gte('so_date', FAIR_CHECKS_FROM)
           .order('so_date', { ascending: false }),
       ).range(from, to) as PromiseLike<PageResult<CheckedOrder>>;

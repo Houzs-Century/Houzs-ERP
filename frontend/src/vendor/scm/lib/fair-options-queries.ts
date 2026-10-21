@@ -155,19 +155,50 @@ export type FairPendingRow = {
    *  SO page's rule (lib/customer-ref.ts). Absent from an older server. */
   ref?: string | null;
   customer_so_no?: string | null;
+  /** Put aside on Fair Links (owner 2026-10-21): when, and by whom. Only the
+   *  folded "Put aside" group's rows carry them. */
+  fair_put_aside_at?: string | null;
+  fair_put_aside_by?: string | null;
 };
 
 /** Orders with no fair link a person should see (backend scm/lib/fair-pending.ts).
  *  The reasons share this list and the screen keeps them apart — see the
  *  `fair_match` column. */
+type FairPendingResponse = { rows: FairPendingRow[]; putAside?: FairPendingRow[] };
+
+/** One read, two views of it: the list, and the orders put aside. */
+const fairPendingQuery = (limit: number) => ({
+  queryKey: ['fair-pending', 'list', limit],
+  queryFn: () => authedFetch<FairPendingResponse>(`/mfg-sales-orders/fair-pending?limit=${limit}`),
+  staleTime: 30_000,
+});
+
 export function useFairPending(limit = 200) {
-  return useQuery({
-    queryKey: ['fair-pending', limit],
-    queryFn: () =>
-      authedFetch<{ rows: FairPendingRow[] }>(
-        `/mfg-sales-orders/fair-pending?limit=${limit}`,
-      ).then((r) => r.rows),
-    staleTime: 30_000,
+  return useQuery({ ...fairPendingQuery(limit), select: (r: FairPendingResponse) => r.rows });
+}
+
+/** The orders a person put aside on Fair Links (owner 2026-10-21), most
+ *  recently put aside first — from the same read as the list. */
+export function useFairPutAside(limit = 200) {
+  return useQuery({ ...fairPendingQuery(limit), select: (r: FairPendingResponse) => r.putAside ?? [] });
+}
+
+/** Put an order aside on Fair Links, or bring it back (backend scm/lib/fair-
+ *  put-aside.ts). Finance or PMS; the list, the checks and the menu's count
+ *  all sit under ['fair-pending'], so they all refresh. */
+export function usePutAside() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ docNo, aside }: { docNo: string; aside: boolean }) =>
+      authedFetch<{ ok: true; changed: boolean }>(`/mfg-sales-orders/${encodeURIComponent(docNo)}/fair-put-aside`, {
+        method: 'POST',
+        body: JSON.stringify({ aside }),
+      }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['fair-pending'] });
+      await qc.invalidateQueries({ queryKey: ['mfg-sales-orders'] });
+    },
+    onError: writeFailedAs('Put aside not saved'),
   });
 }
 
