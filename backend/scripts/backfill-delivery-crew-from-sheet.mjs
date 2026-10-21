@@ -108,12 +108,12 @@ async function main() {
   const keys = [...new Set(ROWS.map((r) => r.k))];
 
   // key -> SO. A key matching more than one SO is ambiguous and refused.
-  const soRows = await sql`SELECT doc_no, company_id, coalesce(linked_ac_docno, doc_no) AS k
+  const soRows = await sql`SELECT doc_no, company_id, amended_delivery_date, coalesce(linked_ac_docno, doc_no) AS k
                              FROM scm.mfg_sales_orders WHERE coalesce(linked_ac_docno, doc_no) = ANY(${keys})`;
   const soByKey = new Map();
   for (const r of soRows) {
     const list = soByKey.get(r.k) ?? [];
-    list.push({ doc_no: r.doc_no, company_id: Number(r.company_id) });
+    list.push({ doc_no: r.doc_no, company_id: Number(r.company_id), amd_null: r.amended_delivery_date === null });
     soByKey.set(r.k, list);
   }
 
@@ -137,7 +137,8 @@ async function main() {
   const existingCrew = new Map(crewRows.map((r) => [r.do_id, Boolean(r.driver_1_name || r.lorry_plate || r.driver_1_id)]));
 
   const crewWrites = [];          // { do_id, company_id, crew, key }
-  const dateWrites = new Map();   // doc_no -> { iso, key }
+  const dateWrites = new Map();   // doc_no -> { iso, key }  (only SOs whose amended_delivery_date is null)
+  const dateSkipSet = new Set();  // doc_no already carrying a delivery date — left as-is
   const noSo = []; const ambiguous = []; const noDo = []; const skippedExisting = []; const badDates = []; const emptyCrew = [];
 
   for (const r of ROWS) {
@@ -160,12 +161,16 @@ async function main() {
 
     const parsed = parseDate(r.dd);
     if (parsed && parsed.bad) badDates.push(`${r.k}: "${parsed.bad}"`);
-    else if (parsed && parsed.iso && !dateWrites.has(so.doc_no)) dateWrites.set(so.doc_no, { iso: parsed.iso, key: r.k });
+    else if (parsed && parsed.iso) {
+      if (!so.amd_null) dateSkipSet.add(so.doc_no);
+      else if (!dateWrites.has(so.doc_no)) dateWrites.set(so.doc_no, { iso: parsed.iso, key: r.k });
+    }
   }
 
   note(`\n=== PLAN ===`);
   note(`  crew upserts (delivery orders to fill): ${crewWrites.length}`);
   note(`  delivery-date updates (amended_delivery_date, only where null): ${dateWrites.size}`);
+  note(`  skipped — delivery date already set (left as-is): ${dateSkipSet.size}`);
   note(`  skipped — DO already has crew (left untouched): ${skippedExisting.length}`);
   note(`  skipped — key not an ERP order: ${noSo.length}`);
   note(`  skipped — key matches >1 SO (ambiguous): ${ambiguous.length}`);
