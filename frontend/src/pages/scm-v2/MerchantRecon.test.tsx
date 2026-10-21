@@ -387,6 +387,31 @@ describe('the reconcile tab', () => {
   });
 });
 
+/* Owner 2026-10-21: 点开那个 HC-SO-013512 这些 sales order 直接打开整张 sales
+   order — on the work list, inside a report, and on the watch list. */
+describe('an order number opens the whole order', () => {
+  const hrefOf = (name: string) => screen.getAllByRole('link', { name })[0]!.getAttribute('href');
+
+  test('on the work list and the watch list, each order number links to that order', () => {
+    draw();
+    expect(hrefOf('SO-2608-043')).toBe('/scm/sales-orders/SO-2608-043');   // matched by reference
+    expect(hrefOf('SO-2608-050')).toBe('/scm/sales-orders/SO-2608-050');   // the system's guess
+    expect(hrefOf('SO-2607-088')).toBe('/scm/sales-orders/SO-2607-088');   // not on a report yet
+  });
+
+  test('inside a report, the candidates and the matched order are links too — and a link is not a tick', () => {
+    draw();
+    fireEvent.click(screen.getByText('Reconcile'));
+    expect(hrefOf('SO-2608-001')).toBe('/scm/sales-orders/SO-2608-001');
+    expect(hrefOf('SO-2608-002')).toBe('/scm/sales-orders/SO-2608-002');
+    expect(hrefOf('SO-2608-043')).toBe('/scm/sales-orders/SO-2608-043');
+    const box = screen.getByLabelText('Select SO-2608-001') as HTMLInputElement;
+    const before = box.checked;
+    fireEvent.click(screen.getAllByRole('link', { name: 'SO-2608-001' })[0]!);
+    expect((screen.getByLabelText('Select SO-2608-001') as HTMLInputElement).checked).toBe(before);
+  });
+});
+
 /* 但是当我upload 很多时我要一个一个按confirm? — no. The reports waiting on the
    work list take ONE press for every line that matched by its approval code,
    and that press must not touch the lines that need a person. */
