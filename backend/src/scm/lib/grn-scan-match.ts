@@ -47,6 +47,9 @@ export type OpenPoLine = {
   description2?: string | null;
   // The sales order the line was raised for ("HC-SO-013339"), or null (stock).
   soDocNo?: string | null;
+  // The line's item group ("MATTRESS"). Its words name the product type, not
+  // the model, so a row need not print them to match by name.
+  itemGroup?: string | null;
 };
 
 // A supplier_material_bindings row, narrowed to the mapping this matcher needs:
@@ -522,8 +525,15 @@ export function matchGrnScanToPoLines(
   };
 }
 
-const nameWords = (s: string | null | undefined): string[] =>
-  (s ?? '').toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+// Words, plus each model with its short suffix joined ("FLEXICARE-C" also
+// gives FLEXICAREC), so FLEXICARE-C and FLEXICARE-S on one PO tell apart (HC-0137).
+const nameWords = (s: string | null | undefined): string[] => {
+  const up = (s ?? '').toUpperCase();
+  return [
+    ...up.split(/[^A-Z0-9]+/).filter(Boolean),
+    ...[...up.matchAll(/([A-Z]{4,})-([A-Z0-9]{1,2})\b/g)].map((m) => `${m[1]}${m[2]}`),
+  ];
+};
 
 /**
  * The one item code on a known PO that a delivery-order row names by product,
@@ -531,7 +541,8 @@ const nameWords = (s: string | null | undefined): string[] =>
  * code and name that no other item on the PO has ("BULWARK"; "HAPPI SLEEP
  * SOLITUDE" when only one Happi Sleep item is ordered). The row must print
  * every one of them, a printed word counting when it starts with the model
- * word (MATT / MATTRESS). Exactly one item must qualify; an item with no model
+ * word (MATT / MATTRESS); words of the line's item group are not model words.
+ * A hyphen suffix counts ("FLEXICARE-C" is not "FLEXICARE-S"). Exactly one item must qualify; an item with no model
  * word of its own (three MAYBATCH sofa pieces) never does. "Happi Sleep Easy
  * Sleep Pillow" lacks SOLITUDE, so it is not the Solitude mattress.
  */
@@ -540,8 +551,12 @@ export function nameMatchItem(printed: string | null | undefined, poLines: OpenP
   if (row.length === 0) return null;
   const items = [...new Set(poLines.map((l) => l.itemCode))];
   const wordsOf = new Map(items.map((ic) => {
-    const names = poLines.filter((l) => l.itemCode === ic).map((l) => `${ic} ${l.materialName ?? ''}`).join(' ');
-    return [ic, new Set(nameWords(names).filter((w) => /^[A-Z]{4,}$/.test(w)))];
+    const lines = poLines.filter((l) => l.itemCode === ic);
+    const names = lines.map((l) => `${ic} ${l.materialName ?? ''}`).join(' ');
+    // MATT / MATTRESS under group MATTRESS: NICE FUTURE prints "ERGOTEX ECOZONE-C - W183 X L190" with no MATT.
+    const group = lines.flatMap((l) => nameWords(l.itemGroup)).filter((g) => g.length >= 4);
+    const generic = (w: string): boolean => group.some((g) => g.startsWith(w) || w.startsWith(g));
+    return [ic, new Set(nameWords(names).filter((w) => /^[A-Z]{4,}$/.test(w) && !generic(w)))];
   }));
   const hits = items.filter((ic) => {
     const model = [...wordsOf.get(ic)!].filter((w) => items.every((o) => o === ic || !wordsOf.get(o)!.has(w)));

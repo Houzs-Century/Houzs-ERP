@@ -154,12 +154,22 @@ export async function draftFromScan(
   }
   const rackNote = scanRackNote(await applyScanRacks(svc, job.companyId, res.created.map((g) => g.id), match.racks));
   if (rackNote) await appendGrnNote(svc, job.companyId, res.created.map((g) => g.id), rackNote);
+  const grnNumbers = res.created.map((g) => g.grnNumber);
   return {
     kind: 'draft',
-    grnNumbers: res.created.map((g) => g.grnNumber),
+    grnNumbers,
     poNumbers: [...new Set(res.created.flatMap((g) => g.poNumbers))],
-    jobNote: [weakNote, nameNote, soNote, unmatchedNote, rackNote].filter(Boolean).join(' ') || null,
+    jobNote: [splitNote(grnNumbers), weakNote, nameNote, soNote, unmatchedNote, rackNote].filter(Boolean).join(' ') || null,
   };
+}
+
+// The scan card links only the first draft (scan_jobs.linked_doc_no), so a
+// delivery order split across warehouses names every draft (HC-0137: the
+// operator saw HC-GRN-2610-169 and missed 2610-170).
+export function splitNote(grnNumbers: string[]): string | null {
+  return grnNumbers.length > 1
+    ? `This delivery order made ${grnNumbers.length} draft goods receipts, one per warehouse: ${grnNumbers.join(', ')}.`
+    : null;
 }
 
 // The rack outcome is known only once the drafts exist (their warehouse picks
