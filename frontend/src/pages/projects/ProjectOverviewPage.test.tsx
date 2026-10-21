@@ -77,6 +77,28 @@ describe("Project Overview — the project table", () => {
     expect(loss.className).toContain("text-err");
   });
 
+  /* `cn` only joins classes, so a cell that ADDS text-left to one holding
+     text-right carries both and the stylesheet picks text-right — the Project
+     column sat right-aligned on one line and ran over the Sales figures (owner
+     2026-10-21: 这个project靠左，然后字超过格子了; sales order daily 也靠左). */
+  it("the project and the daily-report columns read left, and the project wraps inside its cell", () => {
+    show(PERIOD);
+    const table = projectsTable();
+    const projectCell = within(table).getByText("[AKEMI] MYHOME").closest("td") as HTMLTableCellElement;
+    const classes = (el: Element) => el.className.split(/\s+/);
+    for (const el of [
+      projectCell,
+      within(table).getByText("Project"),
+      within(table).getByText("Sales Orders daily?"),
+      (projectCell.closest("tr") as HTMLTableRowElement).lastElementChild as Element,
+    ]) {
+      expect(classes(el)).toContain("text-left");
+      expect(classes(el)).not.toContain("text-right");
+    }
+    expect(classes(projectCell)).toContain("whitespace-normal");
+    expect(classes(projectCell)).not.toContain("whitespace-nowrap");
+  });
+
   it("the sort is read from the URL and written back to it — Back keeps it", () => {
     show(`${PERIOD}&ao_sort=sales`);
     expect(titles()).toEqual(["[AKEMI] HOMELOVE", "[AKEMI] MYHOME", "[ZANOTTI] HOMELOVE"]);

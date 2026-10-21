@@ -24,8 +24,18 @@ const pctTxt = (x: number | null) => (x == null ? "—" : `${x.toFixed(1)}%`);
 /* The project table's cells (owner 2026-10-21): a group header over the
    columns, a rule between the groups. */
 const GROUP = "whitespace-nowrap border-b border-border px-2.5 pb-1 pt-2 text-center text-[10.5px] font-semibold uppercase tracking-wider text-ink-secondary";
-const TH = "whitespace-nowrap border-b border-border px-2.5 py-2 text-right text-[10.5px] font-semibold uppercase tracking-wider text-ink-muted";
-const TD = "whitespace-nowrap border-b border-border px-2.5 py-1.5 text-right text-[12.5px] tabular-nums";
+/* Alignment and wrapping are NOT part of the shared strings. `cn` only joins,
+   so a cell adding `text-left` to a string that already says `text-right` gets
+   both — and the stylesheet's order, not the later class, decides which wins.
+   That right-aligned the Project column and kept its venue line on one line,
+   running over the Sales figures (owner 2026-10-21: 这个project靠左，然后字超过
+   格子了; sales order daily 也靠左). Numbers: right, one line. Text: left. */
+const TH_BASE = "border-b border-border px-2.5 py-2 text-[10.5px] font-semibold uppercase tracking-wider text-ink-muted";
+const TD_BASE = "border-b border-border px-2.5 py-1.5 text-[12.5px] tabular-nums";
+const TH = cn(TH_BASE, "whitespace-nowrap text-right");
+const TD = cn(TD_BASE, "whitespace-nowrap text-right");
+const TH_LEFT = cn(TH_BASE, "whitespace-nowrap text-left");
+const TD_LEFT = cn(TD_BASE, "text-left");
 const SEP = "border-l border-border";
 
 export function ProjectOverviewPage() {
@@ -213,13 +223,13 @@ export function ProjectOverviewPage() {
                 <th className={cn(GROUP, SEP)} />
               </tr>
               <tr>
-                <th className={cn(TH, "sticky left-0 z-30 bg-surface text-left")}>Project</th>
+                <th className={cn(TH_LEFT, "sticky left-0 z-30 bg-surface")}>Project</th>
                 <th className={cn(TH, SEP)}>Sales</th><th className={TH}>Service</th>
                 <th className={cn(TH, SEP)}>COGS</th><th className={TH}>GP</th><th className={TH}>GP %</th>
                 <th className={cn(TH, SEP)}>Rental</th><th className={TH}>Setup</th><th className={TH}>Transport</th><th className={TH}>Commission</th><th className={TH}>Merchandise</th><th className={TH}>Others</th>
                 <th className={cn(TH, SEP)}>Net profit</th><th className={TH}>NP %</th>
                 <th className={cn(TH, SEP)}>Amount</th><th className={TH}>%</th>
-                <th className={cn(TH, SEP, "text-left")}>Sales Orders daily?</th>
+                <th className={cn(TH_LEFT, SEP)}>Sales Orders daily?</th>
               </tr>
             </thead>
             <tbody>
@@ -230,11 +240,11 @@ export function ProjectOverviewPage() {
                 );
                 return (
                   <tr key={p.id} onClick={() => openProject(p.id)} className="group cursor-pointer hover:bg-surface-2/50">
-                    <td className={cn(TD, "sticky left-0 z-10 min-w-[240px] max-w-[300px] whitespace-normal bg-surface text-left align-top group-hover:bg-surface-2")}>
-                      <div className="font-semibold text-primary" title={p.name}>
+                    <td className={cn(TD_LEFT, "sticky left-0 z-10 min-w-[240px] max-w-[300px] whitespace-normal bg-surface align-top group-hover:bg-surface-2")}>
+                      <div className="break-words font-semibold text-primary" title={p.name}>
                         {title}{p.eventType && <span className="ml-1.5 text-[10.5px] font-normal text-ink-muted">{p.eventType}</span>}
                       </div>
-                      <div className="mt-0.5 text-[11px] leading-snug text-ink-muted">{detail}</div>
+                      <div className="mt-0.5 break-words text-[11px] leading-snug text-ink-muted">{detail}</div>
                     </td>
                     {amount(f.sales, SEP)}{amount(f.serviceRevenue)}
                     {amount(f.cogs, SEP)}{amount(f.gp)}<td className={cn(TD, "text-ink-secondary")}>{pctTxt(pctOf(f.gp, f.sales))}</td>
@@ -243,11 +253,11 @@ export function ProjectOverviewPage() {
                     <td className={cn(TD, f.np < 0 ? "text-err" : "text-ink-secondary")}>{pctTxt(pctOf(f.np, f.sales))}</td>
                     <td className={cn(TD, SEP)}><span title={`paid ${money(p.collection.paidSen / 100)} of ${money(p.collection.totalSen / 100)} ordered`}>{tableAmount(p.collection.paidSen / 100)}</span></td>
                     <td className={cn(TD, p.collection.totalSen > 0 && p.collection.paidSen < p.collection.totalSen * 0.5 ? "text-err" : "text-ink-secondary")}>{pctTxt(pctOf(p.collection.paidSen, p.collection.totalSen))}</td>
-                    <td className={cn(TD, SEP, "text-left")}><Daily r={p.chatReport} /></td>
+                    <td className={cn(TD_LEFT, SEP, "whitespace-nowrap")}><Daily r={p.chatReport} /></td>
                   </tr>
                 );
               })}
-              {listed.length === 0 && <tr><td colSpan={17} className={cn(TD, "text-left text-ink-muted")}>No projects in this period.</td></tr>}
+              {listed.length === 0 && <tr><td colSpan={17} className={cn(TD_LEFT, "text-ink-muted")}>No projects in this period.</td></tr>}
             </tbody>
           </table>
         </div>

@@ -21,6 +21,7 @@
 import { postJournal, reverseJournal, validateJournal, type ReverseJournalResult } from './engine';
 import { resolveRoles, customerPaymentLines, orderMoneyTransferLines, type RuleLine } from './rules';
 import { accMastersCompanyId } from './masters-company';
+import { merchantKeyedAs } from './merchant-names';
 import { paymentEntryDrift, type EntryFact, type PaymentDrift, type PaymentFact } from './payment-drift';
 import { mytDateOf } from '../scm/lib/my-time';
 
@@ -59,23 +60,26 @@ async function transitFor(
   merchantProvider: string | null,
 ): Promise<string | null> {
   if (!merchantProvider) return null;
+  /* By ANY of a merchant's names, not its display name alone: the till keys
+     AEON's swipes as Pinelabs and Public Bank's as Public (owner 2026-10-21),
+     and a payment keyed under a merchant's other name belongs on that
+     merchant's clearing account like any other (acc/merchant-names). */
   const { data, error } = await sb
     .from('acc_acquirers')
-    .select('transit_account_code, is_active')
-    .eq('company_id', accMastersCompanyId(companyId, 'transitFor'))
-    .eq('display_name', merchantProvider.trim())
-    .maybeSingle();
+    .select('display_name, so_names, transit_account_code, is_active')
+    .eq('company_id', accMastersCompanyId(companyId, 'transitFor'));
   if (error) {
     /* eslint-disable-next-line no-console */
     console.error('[acc/payments] acquirer lookup failed — using generic EDC transit:', merchantProvider, error.message);
     return null;
   }
-  if (!data) {
+  const hit = merchantKeyedAs(merchantProvider, (data ?? []) as Array<{ display_name: string; so_names?: string[] | null; transit_account_code: string }>);
+  if (!hit) {
     /* eslint-disable-next-line no-console */
     console.error(`[acc/payments] UNMAPPED ACQUIRER "${merchantProvider}" — booked to generic EDC transit; add it to scm.acc_acquirers`);
     return null;
   }
-  return (data as { transit_account_code: string }).transit_account_code;
+  return hit.transit_account_code;
 }
 
 /** The customer's party CODE on an AR line: the debtor code when the business
