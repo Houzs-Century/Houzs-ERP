@@ -215,8 +215,8 @@ export async function resolveCreditorForCase(
   if (!same) {
     // Activity trail — mirrors other auto-resolved transitions.
     await env.DB.prepare(
-      `INSERT INTO assr_activity (assr_id, action, from_value, to_value, note, created_by)
-       VALUES (?, 'creditor_resolved', ?, ?, ?, NULL)`
+      `INSERT INTO assr_activity (assr_id, action, from_value, to_value, note, user_id, category)
+       VALUES (?, 'creditor_resolved', ?, ?, ?, NULL, 'supplier')`
     )
       .bind(
         caseId,
@@ -227,8 +227,9 @@ export async function resolveCreditorForCase(
           : `Auto-resolved from item ${itemCode}`
       )
       .run()
-      .catch(() => {
-        // assr_activity may not exist in older deployments; don't break.
+      .catch((e: any) => {
+        // A failed trail row must not undo the link; log it so it is seen.
+        console.warn(`[resolveCreditorForCase] case=${caseId} activity insert failed:`, e?.message || e);
       });
   }
 
