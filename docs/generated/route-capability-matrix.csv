@@ -146,6 +146,7 @@ PUT,/api/assr/lookups/:kind/reorder,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,aut
 GET,/api/assr/metrics,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.read"")",,NO,DECLARED_GATE,backend/src/routes/assr.ts
 GET,/api/assr/metrics/drill,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.read"")",,NO,DECLARED_GATE,backend/src/routes/assr.ts
 GET,/api/assr/my-cases,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireServiceCaseAccess(),,NO,INHERITED_ONLY,backend/src/routes/assr.ts
+GET,/api/assr/pickup-pic-drivers,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireServiceCaseAccess(),,NO,INHERITED_ONLY,backend/src/routes/assr.ts
 GET,/api/assr/portal/activations,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.read"")",,NO,DECLARED_GATE,backend/src/routes/assrPortal.ts
 POST,/api/assr/portal/alerts/ack,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.read"")",,YES,DECLARED_GATE,backend/src/routes/assrPortal.ts
 POST,/api/assr/portal/alerts/override,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.manage"")",,YES,DECLARED_GATE,backend/src/routes/assrPortal.ts

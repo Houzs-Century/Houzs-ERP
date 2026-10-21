@@ -3,6 +3,8 @@
 // IS customer_pickup_at (the date the board / HC sheet already plan on), so it
 // is relabelled here rather than duplicated. Kept out of ServiceCases.tsx,
 // which is at its size ceiling.
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../../api/client";
 import { InlineEdit } from "../InlineEdit";
 import {
   ITEM_LOCATION_OPTIONS,
@@ -16,9 +18,32 @@ type Row = {
   actual_pickup_at?: string | null;
   pickup_pic?: string | null;
   item_location?: string | null;
+  creditor_name?: string | null;
+  supplier?: string | null;
 };
 
+/** Active Fleet drivers' names, for the Pickup PIC dropdown (HC-0129). */
+export function usePickupPicDrivers(): string[] {
+  const { data } = useQuery({
+    queryKey: ["assr-pickup-pic-drivers"],
+    queryFn: () => api.get<{ data?: { name: string }[] }>("/api/assr/pickup-pic-drivers"),
+    staleTime: 5 * 60_000,
+  });
+  return (data?.data ?? []).map((d) => d.name);
+}
+
+/** The case's supplier first, then the drivers. A PIC typed before the
+ *  dropdown is not in here; the callers keep showing it. */
+export function pickupPicChoices(drivers: string[], supplier: string | null): string[] {
+  return [...new Set([...(supplier ? [supplier] : []), ...drivers])];
+}
+
+export const pickupPicLabel = (supplier: string | null) => (v: string): string =>
+  v === supplier ? `${v} (Supplier)` : v;
+
 export function PickupTrackingFields({ c, patch }: { c: Row; patch: (body: Record<string, string | null>) => Promise<void> }) {
+  const drivers = usePickupPicDrivers();
+  const supplier = c.creditor_name || c.supplier || null;
   return (
     <>
       <InlineEdit
@@ -45,7 +70,8 @@ export function PickupTrackingFields({ c, patch }: { c: Row; patch: (body: Recor
       <InlineEdit
         label="Pickup PIC"
         value={c.pickup_pic}
-        placeholder="Driver / Supplier / Logistics"
+        options={pickupPicChoices(drivers, supplier)}
+        optionLabel={pickupPicLabel(supplier)}
         onSave={(v) => patch({ pickup_pic: v })}
       />
       <InlineEdit
