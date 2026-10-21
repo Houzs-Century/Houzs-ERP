@@ -1812,3 +1812,49 @@ describe("DataTable onRowReorder — drag to reorder (owner 2026-09-26)", () => 
     expect(first?.getAttribute("draggable")).not.toBe("true");
   });
 });
+
+describe("DataTable row-cell memoisation", () => {
+  // The scroll-smoothness win (owner 2026-10-21 step 2): a row's data cells are
+  // memoised on (row, columns, layout). When the table re-renders but none of
+  // those inputs changed — which is exactly what a scroll-window update is, a
+  // DataTable-internal state change that leaves rows / columns / layout alone —
+  // the cells must NOT re-run their render. This is the memory for that
+  // optimisation: if a future change hands the cells an unstable prop, the memo
+  // stops skipping and the scroll lag returns, and this test fails.
+  //
+  // (A parent-driven re-render such as a selection toggle is NOT skipped — the
+  // board re-creates its `selection` object, which ripples through DataTable's
+  // layout memos; that path is kept cheap by the per-cell memoisation in step 1.
+  // The scroll path, where the parent does not re-render, is the one this guards.)
+  it("skips re-rendering row cells when the table re-renders with unchanged inputs", () => {
+    setViewport(1280);
+    const renderSpy = vi.fn((row: Row) => row.name);
+    // Stable identities (defined once), like a real board's memoised columns and
+    // react-query rows — so a re-render hands the cells the very same props.
+    const memoCols: Column<Row>[] = [
+      { key: "name", label: "Order", render: renderSpy, getValue: (row) => row.name },
+      { key: "status", label: "Status", render: (row) => row.status, getValue: (row) => row.status },
+    ];
+    const smallRows = rows.slice(0, 5);
+    // Stable getRowKey: an inline one would change identity each wrapper render
+    // and ripple through DataTable's column memos (udfColumns depends on it), the
+    // way any unstable prop would. A scroll never re-renders the parent, so its
+    // props stay put; this stable key models that path.
+    const getRowKey = (row: Row) => row.id;
+    let bump: () => void = () => {};
+    function Wrapper() {
+      const [, setTick] = useState(0);
+      bump = () => setTick((t) => t + 1);
+      return (
+        <DataTable tableId="dt-cell-memo" rows={smallRows} columns={memoCols} getRowKey={getRowKey} />
+      );
+    }
+    render(<Wrapper />);
+    // Cells rendered on mount; start from a clean slate.
+    renderSpy.mockClear();
+    // Force a re-render whose DataTable props are all unchanged references — the
+    // memo must skip every row's cells.
+    act(() => { bump(); });
+    expect(renderSpy).not.toHaveBeenCalled();
+  });
+});
