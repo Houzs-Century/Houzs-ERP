@@ -670,7 +670,7 @@ consignmentOrders.post('/', async (c) => {
   const headerDeliveryDate = dateOrNull(body.customerDeliveryDate);
 
   const cachedConfig = await loadMaintenanceConfig(sb, activeCompanyId(c));
-  const cachedSpecialAddons = await loadSpecialAddons(sb);
+  const cachedSpecialAddons = await loadSpecialAddons(sb, activeCompanyId(c));
   /* allowed_options pre-flight — run BEFORE the pricing recompute so a
      disallowed variant returns the precise field/value/allowed payload. */
   for (let i = 0; i < items.length; i++) {
@@ -1532,7 +1532,7 @@ consignmentOrders.post('/:docNo/items', async (c) => {
     loadActiveSofaCombos(sb),
     loadFabricSellingTiers(sb, (variantsObj as { fabricId?: string } | null)?.fabricId ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-    loadSpecialAddons(sb),
+    loadSpecialAddons(sb, activeCompanyId(c)),
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
   ]);
@@ -1704,7 +1704,7 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
       loadActiveSofaCombos(sb),
       loadFabricSellingTiers(sb, (variantsAfter as { fabricId?: string } | null)?.fabricId ?? null),
       loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-      loadSpecialAddons(sb),
+      loadSpecialAddons(sb, activeCompanyId(c)),
       loadModelFabricTierOverrides(sb),
       loadCompartmentFabricTierOverrides(sb),
     ]);

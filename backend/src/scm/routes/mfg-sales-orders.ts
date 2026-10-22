@@ -2641,7 +2641,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     productRowByCode,
   ] = await Promise.all([
     loadMaintenanceConfig(sb, companyId),
-    loadSpecialAddons(sb),
+    loadSpecialAddons(sb, companyId),
     loadProductsAndModels(sb, itemCodes, companyId),
     loadFabricTierAddonConfig(sb, companyId),
     loadModelFabricTierOverrides(sb),
@@ -7245,7 +7245,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     loadSellingSofaCombos(sb, c),
     loadFabricSellingTiers(sb, (variantsObj as { fabricId?: string } | null)?.fabricId ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-    loadSpecialAddons(sb),
+    loadSpecialAddons(sb, activeCompanyId(c)),
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
   ]);
@@ -7954,7 +7954,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       loadSellingSofaCombos(sb, c),
       loadFabricSellingTiers(sb, (variantsAfter as { fabricId?: string } | null)?.fabricId ?? null),
       loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-      loadSpecialAddons(sb),
+      loadSpecialAddons(sb, activeCompanyId(c)),
       loadModelFabricTierOverrides(sb),
       loadCompartmentFabricTierOverrides(sb),
     ]);
@@ -8446,7 +8446,7 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
     loadFabricSellingTiers(sb, (prevVariants.fabricId as string | undefined) ?? null),
     loadFabricSellingTiers(sb, (nextVariants.fabricId as string | undefined) ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-    loadSpecialAddons(sb),
+    loadSpecialAddons(sb, activeCompanyId(c)),
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
   ]);
@@ -8936,7 +8936,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     const [cfgX, addonCfgX, specialDefsX, modelOverridesX, compartmentOverridesX] = await Promise.all([
       loadMaintenanceConfig(sb, activeCompanyId(c)),
       loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-      loadSpecialAddons(sb),
+      loadSpecialAddons(sb, activeCompanyId(c)),
       loadModelFabricTierOverrides(sb),
       loadCompartmentFabricTierOverrides(sb),
     ]);
@@ -9157,7 +9157,7 @@ async function planSofaRewardRevert(
     loadSellingSofaCombos(sb, c),
     loadFabricSellingTiers(sb, (leadV.fabricId as string | undefined) ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-    loadSpecialAddons(sb),
+    loadSpecialAddons(sb, activeCompanyId(c)),
     loadModelSofaModulePrices(sb, splitSofaCode(lead.item_code).baseModel, depth, activeCompanyId(c)),
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
@@ -9341,7 +9341,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     loadSellingSofaCombos(sb, c),
     loadFabricSellingTiers(sb, (newVariants.fabricId as string | undefined) ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-    loadSpecialAddons(sb),
+    loadSpecialAddons(sb, activeCompanyId(c)),
     loadModelSofaModulePrices(sb, prodLite.base_model, depth, activeCompanyId(c)),
     loadModelSofaModuleCostRows(sb, prodLite.base_model, activeCompanyId(c)),
     loadModelFabricTierOverrides(sb),

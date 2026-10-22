@@ -37,7 +37,7 @@ describe('SO create: the eight independent reads run together', () => {
   const core = between(soSrc, 'async function createSalesOrderCore', 'const lineProducts');
   const group = between(core, 'await Promise.all([', ']);');
   const loaders = [
-    'loadMaintenanceConfig(sb, companyId)', 'loadSpecialAddons(sb)', 'loadProductsAndModels(', 'loadFabricTierAddonConfig(',
+    'loadMaintenanceConfig(sb, companyId)', 'loadSpecialAddons(sb, companyId)', 'loadProductsAndModels(', 'loadFabricTierAddonConfig(',
     'loadModelFabricTierOverrides(sb)', 'loadCompartmentFabricTierOverrides(sb)', 'validateSoDropdownFields(', 'loadProductsByCodes(',
   ];
 

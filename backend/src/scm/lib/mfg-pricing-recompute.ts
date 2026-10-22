@@ -865,10 +865,15 @@ export async function loadProductsByCodes(sb: any, codes: Array<string | null | 
  *  option-group extraSen) instead of the legacy maintenance_config.specials pool.
  *  Returns [] on empty/error (recompute then prices any picked codes at 0 — no
  *  crash, no reject). */
-export async function loadSpecialAddons(sb: any): Promise<SpecialAddonDef[]> {
-  const { data } = await sb
-    .from('special_addons')
-    .select('code, selling_price_sen, cost_price_sen, option_groups')
+export async function loadSpecialAddons(
+  sb: any,
+  companyId: number | null | undefined,
+): Promise<SpecialAddonDef[]> {
+  // Codes repeat across companies and the pool is keyed by code (HC-0134).
+  const { data } = await scopeToCompanyIdOrOpen(
+    sb.from('special_addons').select('code, selling_price_sen, cost_price_sen, option_groups'),
+    companyId,
+  )
     .eq('active', true);
   return ((data as any[]) ?? []).map((r) => ({
     code:            r.code,
