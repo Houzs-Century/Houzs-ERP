@@ -24,6 +24,7 @@
 
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { DoDetailWarmup } from "./DetailWarmup";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
@@ -1023,6 +1024,7 @@ export function DeliveryOrderDetailV2() {
   if (detail.isPending) {
     return (
       <div className="animate-fade-in p-8 text-center text-ink-muted">
+        <DoDetailWarmup id={id} />
         Loading delivery order…
       </div>
     );

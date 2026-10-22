@@ -20,6 +20,7 @@
 import { lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { coverageStateOf } from "../../components/coverage-state";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { SoDetailWarmup } from "./DetailWarmup";
 import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import { returnToWorkspaceOpener, useWorkspaceOpener } from "../../lib/useWorkspaceOpener";
@@ -1071,6 +1072,7 @@ function SalesOrderDetailV2ReadOnly() {
   if (detail.isPending) {
     return (
       <div className="animate-fade-in p-8 text-center text-ink-muted">
+        <SoDetailWarmup docNo={docNo} />
         Loading {docNo}…
       </div>
     );
