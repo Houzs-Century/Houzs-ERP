@@ -1079,6 +1079,40 @@ export const hr_attendance = pgTable(
   (t) => [uniqueIndex("uq_hr_attendance_day").on(t.employee_id, t.work_date), index("idx_hr_attendance_company_date").on(t.company_id, t.work_date)],
 );
 
+// ── HR: working hours + short-hour docks, phase 3 (mig-pg 20261022T0600, HC-0125) ──
+export const hr_working_hours = pgTable("hr_working_hours", {
+  id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+  company_id: bigint("company_id", { mode: "number" }).notNull(),
+  attendance_id: bigint("attendance_id", { mode: "number" }).notNull(),
+  employee_id: bigint("employee_id", { mode: "number" }).notNull(),
+  work_date: date("work_date", { mode: "string" }).notNull(),
+  department_id: integer("department_id"),
+  hours: numeric("hours", { precision: 5, scale: 2 }).notNull(),
+  source: text("source").notNull().default("MANUAL"),
+  notes: text("notes"),
+  created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  created_by: integer("created_by"),
+  updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  updated_by: integer("updated_by"),
+});
+
+export const hr_hour_deductions = pgTable(
+  "hr_hour_deductions",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    employee_id: bigint("employee_id", { mode: "number" }).notNull(),
+    work_date: date("work_date", { mode: "string" }).notNull(),
+    hours: numeric("hours", { precision: 5, scale: 2 }).notNull(),
+    source: text("source").notNull().default("MANUAL"),
+    note: text("note"),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    created_by: integer("created_by"),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("uq_hr_hour_deductions_day").on(t.employee_id, t.work_date)],
+);
+
 // ── sales_entries (mig 041 / 051) ──────────────────────────
 export const sales_entries = pgTable("sales_entries", {
   company_id: bigint("company_id", { mode: "number" }),

@@ -67,7 +67,8 @@ Not ported: Hookka's "time adjustment requests" are production-time claims (NONP
 Phases, one PR each, `staging` first for Nico, then main:
 1. Schema + Employee Master + Public Holidays + shift / pay rules: built on `feat/hc0125-hr-attendance` (`/hr/employees`, `/api/hr/*`, mig `20261021T0300_hr_employees`), not merged yet — 2026-10-21
 2. Phone punch (Punch In / Out, `/api/attendance`) + Attendance tab + Punch Sites + auto clock-out (`*/30` cron, hr-auto-clockout): same branch, mig `20261022T0300_hr_attendance`, not merged yet — 2026-10-22
-3. Working Hours + Labor Cost + Department Labor + hour deductions / settle period.
+3. Working Hours + Labor Cost (Department Labor folded in) + short-hour docks / Settle month: branch `feat/hc0125-phase3` on top of phase 1-2, mig `20261022T0600_hr_working_hours`, not merged yet. Production pieces (SOFA / BEDFRAME categories, production revenue, line-scan split, non-production requests) not ported; docks skip Sundays and public holidays (Hookka's punch dock did not) — 2026-10-22
+- Ask Nico: drivers on long runs are judged against the one company shift (08:00 to 18:00), so a late start or a late return reads as late / OT. Per-department shifts, or no auto dock for drivers? — 2026-10-22
 4. Payroll / payslips + Advances + Worker Penalty + phone "My pay".
 5. Driver / helper monthly commission from delivered DOs (`scm.delivery_order_crew` driver_1/2, helper_1/2 + POD `delivered_at`) into payroll — waiting on Nico for the rate rules — 2026-10-20
 

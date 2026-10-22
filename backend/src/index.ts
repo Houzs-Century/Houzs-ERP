@@ -49,8 +49,9 @@ import { projectPosSales } from "./routes/project-pos-sales";
 import { posAdmin } from "./routes/pos-admin";
 import { hr as hrEmployees } from "./routes/hr";
 import { hrAttendance } from "./routes/hr-attendance";
+import { hrLabor } from "./routes/hr-labor";
 import { attendance } from "./routes/attendance";
-import { runAutoClockOut } from "./routes/lib/hr-attendance-store";
+import { runAutoClockOut } from "./routes/lib/hr-labor-store";
 import { posDevice } from "./routes/pos-device";
 import projectsOutstanding from "./routes/projectsOutstanding";
 import { projectDataGaps } from "./routes/projectDataGaps";
@@ -529,6 +530,7 @@ app.route("/api/pos-admin", posAdmin);
 app.use("/api/hr/*", requireAnyPermission(["hr.employees.read", "hr.employees.manage"]));
 app.route("/api/hr", hrEmployees);
 app.route("/api/hr", hrAttendance);
+app.route("/api/hr", hrLabor);
 // The phone punch clock (HC-0125): any signed-in account, answered only for
 // the employee linked to it, so NOT behind the hr.employees.* gate above.
 app.route("/api/attendance", attendance);

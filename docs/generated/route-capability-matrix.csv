@@ -266,12 +266,20 @@ GET,/api/hr/employees/options,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + r
 GET,/api/hr/holidays,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr.ts
 POST,/api/hr/holidays,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr.ts
 DELETE,/api/hr/holidays/:date,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr.ts
+GET,/api/hr/hour-deductions,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr-labor.ts
+DELETE,/api/hr/hour-deductions/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-labor.ts
+POST,/api/hr/hour-deductions/settle,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-labor.ts
+GET,/api/hr/labor-cost,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr-labor.ts
 GET,/api/hr/pay-rules,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr.ts
 POST,/api/hr/pay-rules,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr.ts
 DELETE,/api/hr/pay-rules/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr.ts
 GET,/api/hr/punch-sites,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr-attendance.ts
 POST,/api/hr/punch-sites,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-attendance.ts
 PATCH,/api/hr/punch-sites/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-attendance.ts
+GET,/api/hr/working-hours,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr-labor.ts
+POST,/api/hr/working-hours,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-labor.ts
+DELETE,/api/hr/working-hours/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-labor.ts
+PATCH,/api/hr/working-hours/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-labor.ts
 GET,/api/inbox,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/inbox.ts
 GET,/api/it-support/attachments/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/itSupport.ts
 GET,/api/it-support/status,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/itSupport.ts

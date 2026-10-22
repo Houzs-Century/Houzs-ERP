@@ -22,7 +22,8 @@ import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 import { checkPunchLocation } from "../scm/shared/hr-attendance";
 import { attendanceView, planPunch, type AttendanceRow } from "./lib/hr-attendance-view";
-import { closeForgottenPunches, loadSites, rulesResolver } from "./lib/hr-attendance-store";
+import { loadSites, rulesResolver } from "./lib/hr-attendance-store";
+import { closeForgottenAndSync, syncDayFromPunch } from "./lib/hr-labor-store";
 
 type Ctx = Context<{ Bindings: Env }>;
 type Db = ReturnType<typeof getDb>;
@@ -68,7 +69,7 @@ attendance.get("/me", async (c) => {
   const emp = await myEmployee(db, co.companyId, c.get("user").id);
   if (!emp || emp.status !== "ACTIVE") return c.json({ linked: false });
   const now = new Date();
-  await closeForgottenPunches(db, co.companyId, emp.id, now);
+  await closeForgottenAndSync(db, co.companyId, emp.id, now);
   const since = todayMyt(-13);
   const [rows, rulesFor, sites] = await Promise.all([
     db
@@ -118,7 +119,7 @@ attendance.post("/punch", async (c) => {
 
   const now = new Date();
   const today = todayMyt();
-  await closeForgottenPunches(db, co.companyId, emp.id, now);
+  await closeForgottenAndSync(db, co.companyId, emp.id, now);
   const [todayRow, open] = await Promise.all([
     db
       .select()
@@ -176,6 +177,7 @@ attendance.post("/punch", async (c) => {
       .update(hr_attendance)
       .set({ clock_out_at: at, out_source: "PHONE", ...evidence, updated_at: at, updated_by: userId })
       .where(and(eq(hr_attendance.id, plan.rowId), isNull(hr_attendance.clock_out_at)));
+    await syncDayFromPunch(db, co.companyId, plan.rowId);
   }
 
   return c.json({

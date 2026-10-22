@@ -106,3 +106,43 @@ export const useAttendance = (date: string): QueryState<AttendanceResponse> =>
 
 export const usePunchSites = (): QueryState<{ sites: PunchSiteOut[]; canManage: boolean }> =>
   useQuery(`${HR}/punch-sites`, () => api.get<{ sites: PunchSiteOut[]; canManage: boolean }>(`${HR}/punch-sites`));
+
+export type WorkDay = {
+  attendanceId: number;
+  employeeId: number;
+  workDate: string;
+  status: AttendanceStatus;
+  clockIn: string | null;
+  clockOut: string | null;
+  outSource: "PHONE" | "MANUAL" | "AUTO" | null;
+  punchHours: number | null;
+};
+export type HoursEntry = { id: number; attendanceId: number; employeeId: number; workDate: string; departmentId: number | null; hours: number; source: "AUTO" | "MANUAL"; notes: string | null };
+export type WorkingHoursResponse = {
+  from: string;
+  to: string;
+  employees: { id: number; empNo: string; name: string; departmentId: number | null; status: string; hoursPerDay: number }[];
+  departments: { id: number; name: string }[];
+  days: WorkDay[];
+  entries: HoursEntry[];
+  canManage: boolean;
+};
+export type LaborLine = { hours: number; otHours: number; costSen: number; otCostSen: number };
+export type LaborCostResponse = {
+  from: string;
+  to: string;
+  totals: LaborLine & { employees: number };
+  byDepartment: (LaborLine & { departmentId: number | null; name: string; headcount: number })[];
+  byEmployee: (LaborLine & { employeeId: number; empNo: string; name: string; departmentName: string; days: number; payMode: "MONTHLY" | "DAILY"; salaryMissing: boolean })[];
+  canManage: boolean;
+};
+export type HourDeduction = { id: number; employeeId: number; empNo: string; name: string; workDate: string; hours: number; source: "AUTO" | "MANUAL"; note: string | null };
+
+export const useWorkingHours = (from: string, to: string): QueryState<WorkingHoursResponse> =>
+  useQuery(`${HR}/working-hours`, () => api.get<WorkingHoursResponse>(`${HR}/working-hours?from=${from}&to=${to}`), [from, to]);
+
+export const useLaborCost = (from: string, to: string): QueryState<LaborCostResponse> =>
+  useQuery(`${HR}/labor-cost`, () => api.get<LaborCostResponse>(`${HR}/labor-cost?from=${from}&to=${to}`), [from, to]);
+
+export const useHourDeductions = (period: string): QueryState<{ period: string; deductions: HourDeduction[]; totalHours: number; canManage: boolean }> =>
+  useQuery(`${HR}/hour-deductions`, () => api.get<{ period: string; deductions: HourDeduction[]; totalHours: number; canManage: boolean }>(`${HR}/hour-deductions?period=${period}`), [period]);
