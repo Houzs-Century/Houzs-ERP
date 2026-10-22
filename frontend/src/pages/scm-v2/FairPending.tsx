@@ -31,7 +31,7 @@
  *                              placed. Re-link it to the fair at its venue here.
  *   WAITING FOR SALES ATTENDING 等加人: the person who scanned it is not on that
  *                              booth's Sales Attending. PMS adds them in the
- *                              project; a draft cannot be confirmed until then.
+ *                              project (it no longer stops Confirm, 2026-10-22).
  *
  * ONE TABLE SHAPE FOR EVERY GROUP (owner 2026-10-20: 「很乱不整齐，然我要 link
  * fair 时无法知道 brand」): SO No. | SO date | Venue | Brand | Amount | Fair |
@@ -110,7 +110,7 @@ const GROUPS = [
 /* The LINKED orders to look at, above the unlinked ones (owner 2026-10-19). */
 const CHECK_GROUPS = [
   { key: 'VENUE_DIFFERS', title: 'To check — venue differs', hint: 'The venue on the order is not where it was placed. Re-link it to the fair at its venue, or leave it if the link is right.' },
-  { key: 'NEEDS_ATTENDING', title: 'Waiting for Sales Attending', hint: 'The person who scanned the order is not on that booth’s Sales Attending. PMS adds them in the project; a draft cannot be confirmed until then.' },
+  { key: 'NEEDS_ATTENDING', title: 'Waiting for Sales Attending', hint: 'The person who scanned the order is not on that booth’s Sales Attending. PMS adds them in the project.' },
 ] as const;
 
 const soft: CSSProperties = { color: 'var(--fg-muted)' };

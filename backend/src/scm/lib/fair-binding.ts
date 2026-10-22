@@ -11,7 +11,6 @@
 // ----------------------------------------------------------------------------
 
 import {
-  attendingMessage,
   companyUsesKeyerFair,
   editFairPick,
   fairEventKey,
@@ -714,11 +713,15 @@ export const VENUE_DIFFERS_BLOCKS_KEY = 'fair_venue_differs_blocks';
  * companies on the keyer rule. [] = nothing to refuse.
  *
  *   - Every order: a fair, or No fair. Worded by why the keyer got none.
- *   - A SCANNED order: the person who scanned it must be on the Sales Attending
- *     (or PIC) of the booth it is placed at — PMS adds them; typed orders keep
- *     their free choice.
  *   - A SCANNED order whose venue is not the booth's venue: refused only while
  *     the Fair rules switch (`VENUE_DIFFERS_BLOCKS_KEY`) is on.
+ *
+ * NOT ON SALES ATTENDING NO LONGER STOPS CONFIRM (owner 2026-10-22: 「之前的如果
+ * 那个sales attending他不在那场就不能开单的帮我remove 掉这个rule先。但扫描单还是
+ * 能认」). A scan is still placed at its fair as before (the scan chain reads
+ * Sales Attending to find the scanner's fair), and Fair Links still lists the
+ * scanner PMS has not added ("Waiting for Sales Attending") — only the refusal
+ * at Confirm is gone.
  *
  * A failed read refuses with "could not check" — a gate that could not look
  * must not say all clear (so-confirm-gate.ts).
@@ -773,11 +776,6 @@ export async function fairConfirmProblems(args: {
     if (!raw) return [];
     const booth = toFairRow(raw);
     const out: SaveProblem[] = [];
-    const standing = await keyerProjectIdsAmong(args.db, args.companySql, keyerId, [booth]);
-    if (!standing.has(projectId)) {
-      const someoneElse = Number.isFinite(keyerId) && keyerId !== args.confirmerId;
-      out.push({ code: 'fair_attending_required', message: attendingMessage(booth, someoneElse ? await userName(args.db, keyerId) : null), field: 'Fair' });
-    }
     const venue = (order.venue ?? '').trim();
     if (venue && booth.venue && !sameVenue(venue, booth.venue) && await venueDiffersBlocks(args)) {
       out.push({ code: 'fair_venue_differs', message: venueDiffersMessage(venue, booth), field: 'Fair' });
@@ -786,12 +784,6 @@ export async function fairConfirmProblems(args: {
   } catch (e) {
     return [checkFailed(`fair: ${e instanceof Error ? e.message : 'read failed'}`)];
   }
-}
-
-async function userName(db: FairDb, userId: number): Promise<string> {
-  const rows = await db.prepare(`SELECT u.name AS name FROM users u WHERE u.id = ?`).bind(userId).all<Record<string, unknown>>();
-  const name = rows.results?.[0]?.name;
-  return typeof name === 'string' && name.trim() ? name.trim() : 'The person who scanned this order';
 }
 
 /* The switch is OFF unless the row says ON — an absent row is the default

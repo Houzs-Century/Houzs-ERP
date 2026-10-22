@@ -279,20 +279,14 @@ describe('fairConfirmProblems — what a DRAFT needs before Confirm (owner 2026-
     expect(await run(fakeSb({ ...linked(), scan_jobs: [] }), fakeDb([[BOOTH_BY_ID, [BOOTH]], [KEYER_AMONG, []]]))).toEqual([]);
   });
 
-  it('a scan waits until its scanner is on the booth\'s Sales Attending — the approved sentence', async () => {
-    const sb = fakeSb({ ...linked(), scan_jobs: [{ houzs_user_id: 57 }] });
-    expect(await run(sb, fakeDb([[BOOTH_BY_ID, [BOOTH]], [KEYER_AMONG, [{ id: 340 }]]]))).toEqual([]);
-    const ps = await run(sb, fakeDb([[BOOTH_BY_ID, [BOOTH]], [KEYER_AMONG, []]]));
-    expect(ps).toEqual([{
-      code: 'fair_attending_required', field: 'Fair',
-      message: 'You are not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18). Ask the person in charge to add you, then confirm again.',
-    }]);
-  });
-
-  it('someone else confirming a rep\'s scan is told whom to add', async () => {
-    const sb = fakeSb({ ...linked(), scan_jobs: [{ houzs_user_id: 92 }] });
-    const ps = await run(sb, fakeDb([[USER_NAME, [{ name: 'Jason' }]], [BOOTH_BY_ID, [BOOTH]], [KEYER_AMONG, []]]));
-    expect(ps[0]?.message).toBe('Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18). Ask the person in charge to add Jason, then confirm again.');
+  it('a scan confirms whether or not its scanner is on the booth\'s Sales Attending (owner 2026-10-22)', async () => {
+    /* 「之前的如果那个sales attending他不在那场就不能开单的帮我remove 掉这个rule先。
+       但扫描单还是能认」 — Fair Links still lists who is missing. */
+    const own = fakeSb({ ...linked(), scan_jobs: [{ houzs_user_id: 57 }] });
+    expect(await run(own, fakeDb([[BOOTH_BY_ID, [BOOTH]], [KEYER_AMONG, [{ id: 340 }]]]))).toEqual([]);
+    expect(await run(own, fakeDb([[BOOTH_BY_ID, [BOOTH]], [KEYER_AMONG, []]]))).toEqual([]);
+    const someoneElse = fakeSb({ ...linked(), scan_jobs: [{ houzs_user_id: 92 }] });
+    expect(await run(someoneElse, fakeDb([[USER_NAME, [{ name: 'Jason' }]], [BOOTH_BY_ID, [BOOTH]], [KEYER_AMONG, []]]))).toEqual([]);
   });
 
   it('"Venue differs" refuses only while the Fair rules switch is on', async () => {

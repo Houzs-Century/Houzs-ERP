@@ -251,7 +251,7 @@ describe('FairPending — linked orders to check (owner 2026-10-19)', () => {
   const NEEDS_ATTENDING: FairCheckRow = {
     doc_no: 'HC-SO-2610-300', so_date: '2026-10-19', venue: 'MID VALLEY', branding: 'AKEMI', project_id: 340, fair_match: 'PICKED',
     status: 'DRAFT', local_total_sen: 250000, salesperson_id: 's2', check: 'NEEDS_ATTENDING',
-    note: 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18). The draft cannot be confirmed until PMS adds them.',
+    note: 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18). PMS adds them in the project.',
   };
   afterEach(() => { checks.rows = []; checks.error = false; });
 
