@@ -35,7 +35,8 @@ import {
   MAIL_ATTACH_MAX_COUNT,
   MAIL_ATTACH_MAX_TOTAL_BYTES,
 } from "../pages/MailCenter/mail-attachments";
-import { parseRecipients, firstInvalid } from "../pages/MailCenter/mail-recipients";
+import { parseRecipients, firstInvalid, addRecipients } from "../pages/MailCenter/mail-recipients";
+import { RecipientPicker } from "../pages/MailCenter/RecipientPicker";
 import { MobileMessageAcks, MobileNeedsAck, MobilePendingAcks, MobileReadBy } from "./MobileMailAcks";
 import type { AckState, ThreadReaders } from "../pages/MailCenter/mail-acks";
 import { MobileVisibility } from "./MobileMailPersonal";
@@ -1397,6 +1398,7 @@ function MailCompose({
   const [text, setText] = useState(seed?.body ?? "");
   const [sending, setSending] = useState(false);
   const [needsAck, setNeedsAck] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   // Same shared parser desktop uses: comma/semicolon separated, trimmed,
   // de-duplicated case-insensitively — and the same shape check on each entry.
@@ -1450,22 +1452,23 @@ function MailCompose({
   };
 
   return (
+    <>
     <ComposeShell title={mode === "forward" ? "Forward" : "New email"} onClose={onClose} onSend={send} sending={sending}>
       <FromPicker addresses={addresses} value={from} onChange={setFromOverride} />
       <label className="fld">
         <span className="fld-l">To</span>
         <input className="fld-i" value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@example.com" />
       </label>
-      {!showCopies && (
-        <button
-          type="button"
-          onClick={() => setShowCopies(true)}
-          className="tinybtn"
-          style={{ alignSelf: "flex-start", borderStyle: "dashed" }}
-        >
-          Cc / Bcc
+      <div style={{ display: "flex", gap: 8 }}>
+        <button type="button" onClick={() => setPickerOpen(true)} className="tinybtn" style={{ borderStyle: "dashed" }}>
+          Org chart
         </button>
-      )}
+        {!showCopies && (
+          <button type="button" onClick={() => setShowCopies(true)} className="tinybtn" style={{ borderStyle: "dashed" }}>
+            Cc / Bcc
+          </button>
+        )}
+      </div>
       {/* One send carrying everyone, never one send each. */}
       {showCopies && (
         <>
@@ -1496,6 +1499,20 @@ function MailCompose({
       />
       <MobileNeedsAck checked={needsAck} onChange={setNeedsAck} disabled={sending} />
     </ComposeShell>
+    <RecipientPicker
+      open={pickerOpen}
+      onClose={() => setPickerOpen(false)}
+      already={[to, cc, bcc]}
+      onPick={(picked, field) => {
+        if (field === "cc") {
+          setCc((prev) => addRecipients(prev, picked));
+          setShowCopies(true);
+        } else {
+          setTo((prev) => addRecipients(prev, picked));
+        }
+      }}
+    />
+    </>
   );
 }
 

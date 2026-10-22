@@ -3,14 +3,125 @@
 //   GET  /visibility              what the caller may read and send from (R12)
 //   GET  /mail-host/pending       personal addresses not yet added in Google (R2)
 //   POST /mail-host/:id/confirm   an admin marks one as added
+//   GET  /directory               the org-chart recipient picker (P4, A5)
 import { Hono } from "hono";
 import type { Env } from "../types";
-import { activeCompanySql } from "../scm/lib/companyScope";
+import { activeCompanyId, activeCompanySql } from "../scm/lib/companyScope";
+import { loadRoster, type RosterUser } from "../lib/announcementAudience";
+import { subtreeUserIds, uplineChainSteps } from "../services/orgScope";
+import { hasPermission } from "../services/permissions";
 import { getMailScope, isMailAdmin, ownAliasFor } from "./mail-center";
 
 const app = new Hono<{ Bindings: Env }>();
 
 type Reach = "own" | "granted" | "department" | "company";
+
+type DirectoryEntry = {
+  key: string;
+  userId: number | null;
+  name: string;
+  email: string;
+  position: string;
+  department: string;
+};
+
+// Same roster and reporting line as the org chart and announcements, so the
+// picker never disagrees with them about who reports to whom.
+app.get("/directory", async (c) => {
+  const user = c.get("user");
+  if (!hasPermission(user.permissions_set, "mail_center.read")) {
+    return c.json({ error: "You do not have access to Mail Center." }, 403);
+  }
+  const me = Number(c.get("userId") ?? NaN);
+  const company = Number(activeCompanyId(c));
+  const roster = await loadRoster(c.env, Number.isInteger(company) && company > 0 ? [company] : []);
+  const byId = new Map(roster.map((u) => [u.id, u]));
+
+  const boxes = await c.env.DB.prepare(
+    `SELECT address, label, assigned_user_id, assigned_dept FROM email_addresses
+      WHERE active = 1${activeCompanySql(c)}
+      ORDER BY lower(address)`,
+  ).all<{
+    address: string;
+    label?: string | null;
+    assigned_user_id?: number | null;
+    assignedUserId?: number | null;
+    assigned_dept?: string | null;
+    assignedDept?: string | null;
+  }>();
+  const mailboxOf = new Map<number, string>();
+  const sharedByDept = new Map<string, Array<{ address: string; label: string }>>();
+  for (const b of boxes.results) {
+    const uid = b.assignedUserId ?? b.assigned_user_id ?? null;
+    if (uid != null) {
+      if (!mailboxOf.has(Number(uid))) mailboxOf.set(Number(uid), b.address.toLowerCase());
+      continue;
+    }
+    const dept = (b.assignedDept ?? b.assigned_dept ?? "").trim().toLowerCase();
+    if (!dept) continue;
+    const list = sharedByDept.get(dept) ?? [];
+    list.push({ address: b.address.toLowerCase(), label: (b.label ?? "").trim() });
+    sharedByDept.set(dept, list);
+  }
+
+  const entry = (u: RosterUser): DirectoryEntry | null => {
+    const email = mailboxOf.get(u.id) ?? u.email.trim().toLowerCase();
+    if (!email) return null;
+    return {
+      key: `user:${u.id}`,
+      userId: u.id,
+      name: u.name || email,
+      email,
+      position: u.positionName ?? "",
+      department: u.departmentName ?? "",
+    };
+  };
+  const entries = (ids: Iterable<number>): DirectoryEntry[] => {
+    const out: DirectoryEntry[] = [];
+    for (const id of ids) {
+      const u = id === me ? undefined : byId.get(id);
+      const e = u ? entry(u) : null;
+      if (e) out.push(e);
+    }
+    return out;
+  };
+  const byName = (a: DirectoryEntry, b: DirectoryEntry) => a.name.localeCompare(b.name);
+
+  const self = byId.get(me) ?? null;
+  const department: DirectoryEntry[] = [];
+  const team: DirectoryEntry[] = [];
+  let managers: DirectoryEntry[] = [];
+  if (self) {
+    const deptId = self.departmentId;
+    if (deptId != null) {
+      department.push(...entries(roster.filter((u) => u.departmentId === deptId).map((u) => u.id)));
+      for (const box of sharedByDept.get((self.departmentName ?? "").trim().toLowerCase()) ?? []) {
+        department.push({
+          key: `mailbox:${box.address}`,
+          userId: null,
+          name: box.label || box.address,
+          email: box.address,
+          position: "Shared mailbox",
+          department: self.departmentName ?? "",
+        });
+      }
+    }
+    // My team: everyone under me, plus the people who share my manager.
+    const teamIds = new Set(await subtreeUserIds(c.env, me));
+    if (self.managerId != null) {
+      for (const u of roster) if (u.managerId === self.managerId) teamIds.add(u.id);
+    }
+    team.push(...entries(teamIds));
+    managers = entries((await uplineChainSteps(c.env, me)).map((s) => s.userId));
+  }
+  const everyone = entries(roster.map((u) => u.id));
+  department.sort(byName);
+  team.sort(byName);
+  everyone.sort(byName);
+
+  c.header("Cache-Control", "no-store");
+  return c.json({ me: self ? entry(self) : null, department, team, managers, everyone });
+});
 
 app.get("/visibility", async (c) => {
   const scope = await getMailScope(c);
