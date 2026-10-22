@@ -70,6 +70,7 @@ const MobileConvertWizard = lazy(() => import("./MobileConvertWizard").then((m) 
 const MobilePOD = lazy(() => import("./MobilePOD").then((m) => ({ default: m.MobilePOD })));
 const MobileOverview = lazy(() => import("./MobileOverview").then((m) => ({ default: m.MobileOverview })));
 const MobileMileageCapture = lazy(() => import("./MobileMileageCapture").then((m) => ({ default: m.MobileMileageCapture })));
+const MobilePunch = lazy(() => import("./MobilePunch").then((m) => ({ default: m.MobilePunch })));
 const MobileProfile = lazy(() => import("./MobileProfile").then((m) => ({ default: m.MobileProfile })));
 const MobileStockCard = lazy(() => import("./MobileStockCard").then((m) => ({ default: m.MobileStockCard })));
 const MobileStockTransferNew = lazy(() => import("./MobileStockTransferNew").then((m) => ({ default: m.MobileStockTransferNew })));
@@ -145,6 +146,8 @@ type Screen =
      Mobile mounts this for /fleet-health; desktop mounts the full Fleet Health
      admin dashboard at the same URL (one product, two presentations). */
   | { t: "mileage-capture" }
+  /* Punch In / Out (HC-0125) — the employee's own clock; phone-only path. */
+  | { t: "punch" }
   /* Warehouse rack LOOKUP — /scm/warehouses/racks. Read-only finder; the
      desktop Racks & Bins page at the same URL is the edit surface. Rack
      CREATE stays on MobileModuleList's FORM_RACK, unchanged. */
@@ -210,6 +213,7 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   // Fleet Health on a phone IS the driver's mileage capture; the desktop Fleet
   // Health dashboard (plans admin + board) is the same URL's desktop surface.
   if (path === "/fleet-health") return { t: "mileage-capture" };
+  if (path === "/hr/punch") return { t: "punch" };
   if (path === "/team") {
     const tab = new URLSearchParams((to.split("?")[1] || "")).get("tab");
     // Positions is owner-managed through backend/tooling only. Keep it out of
@@ -342,6 +346,11 @@ export type MobileMenuItem = {
 };
 
 export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = [
+  /* Punch In / Out (HC-0125): every account may open it; the server answers
+     only for the employee linked to that account and says so when none is. */
+  { group: "Attendance", items: [
+    { to: "/hr/punch", label: "Punch In / Out", alwaysShow: true },
+  ]},
   { group: "Sales & Finance", items: [
     { to: "/scm/sales-orders", label: "Sales Orders" },
     { to: "/scm/amendments", label: "Sales Order Amendment" },
@@ -1066,6 +1075,7 @@ function MobileAppInner() {
     overlay = <MobilePOD docNo={screen.docNo} onBack={leavePod} onDone={donePod} />;
   }
   else if (screen.t === "mileage-capture") overlay = <MobileMileageCapture onBack={back} />;
+  else if (screen.t === "punch") overlay = <MobilePunch onBack={back} />;
   else if (screen.t === "overview") overlay = <MobileOverview kind={screen.kind} onBack={back} />;
   else if (screen.t === "service") overlay = <MobileServiceCase onBack={back} startNew={screen.startNew} />;
   else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} completedDoNumber={screen.completedDoNumber ?? null} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber) => setScreen({ t: "pod", docNo: doNumber, from: "delivery-planning" })} />;

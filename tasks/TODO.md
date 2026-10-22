@@ -61,11 +61,12 @@ Decided (Nico 2026-10-20):
 - Not ported until Nico says what she needs: Efficiency Overview, Employee Performance, Department Performance, "Extra production time" requests, phone job scan / QC / issue. They read Hookka's factory production orders, which Century does not have.
 
 Kept from Hookka: selfie + GPS on every punch (geofence flags, never blocks); forgotten punch-out auto-closed at shift end by cron; degenerate-window rule; pay reads Working Hours + hour deductions, not the punch row; shift rules effective-dated.
-Changed for Century: geofence per warehouse (`scm.warehouses` gets lat / lng / radius; no hard-coded Shah Alam point); punch photos in R2, not base64 in the row.
+Changed for Century: punch sites per company (`hr_punch_sites`, a point + radius each, not columns on `scm.warehouses`; no hard-coded Shah Alam point); punch photos in R2 (`hr-punch/`), not base64 in the row; a clock-out after midnight closes the open punch (drivers back from outstation), and a punch open 16 h is the forgotten one; late / OT computed from the times, never stored; HR keys or corrects a day on the Attendance tab (Hookka had no edit).
+Not ported: Hookka's "time adjustment requests" are production-time claims (NONPROD / ADD_PROD against production departments), not punch corrections.
 
 Phases, one PR each, `staging` first for Nico, then main:
 1. Schema + Employee Master + Public Holidays + shift / pay rules: built on `feat/hc0125-hr-attendance` (`/hr/employees`, `/api/hr/*`, mig `20261021T0300_hr_employees`), not merged yet — 2026-10-21
-2. Phone punch screen + Attendance tab + warehouse geofence + auto clock-out cron + time adjustment requests.
+2. Phone punch (Punch In / Out, `/api/attendance`) + Attendance tab + Punch Sites + auto clock-out (`*/30` cron, hr-auto-clockout): same branch, mig `20261022T0300_hr_attendance`, not merged yet — 2026-10-22
 3. Working Hours + Labor Cost + Department Labor + hour deductions / settle period.
 4. Payroll / payslips + Advances + Worker Penalty + phone "My pay".
 5. Driver / helper monthly commission from delivered DOs (`scm.delivery_order_crew` driver_1/2, helper_1/2 + POD `delivered_at`) into payroll — waiting on Nico for the rate rules — 2026-10-20

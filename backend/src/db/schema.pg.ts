@@ -1030,6 +1030,55 @@ export const hr_pay_rule_versions = pgTable(
   (t) => [uniqueIndex("uq_hr_pay_rule_versions_date").on(t.company_id, t.effective_from)],
 );
 
+// ── HR: punch sites + attendance, phase 2 (mig-pg 20261022T0300, HC-0125) ──
+export const hr_punch_sites = pgTable("hr_punch_sites", {
+  id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+  company_id: bigint("company_id", { mode: "number" }).notNull(),
+  name: text("name").notNull(),
+  lat: doublePrecision("lat").notNull(),
+  lng: doublePrecision("lng").notNull(),
+  radius_m: integer("radius_m").notNull().default(200),
+  active: boolean("active").notNull().default(true),
+  created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  created_by: integer("created_by"),
+  updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  updated_by: integer("updated_by"),
+});
+
+export const hr_attendance = pgTable(
+  "hr_attendance",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    employee_id: bigint("employee_id", { mode: "number" }).notNull(),
+    work_date: date("work_date", { mode: "string" }).notNull(),
+    status: text("status").notNull().default("PRESENT"),
+    clock_in_at: timestamp("clock_in_at", { withTimezone: true, mode: "string" }),
+    clock_out_at: timestamp("clock_out_at", { withTimezone: true, mode: "string" }),
+    in_source: text("in_source"),
+    out_source: text("out_source"),
+    in_lat: doublePrecision("in_lat"),
+    in_lng: doublePrecision("in_lng"),
+    in_accuracy_m: integer("in_accuracy_m"),
+    in_geo: text("in_geo"),
+    in_site_id: bigint("in_site_id", { mode: "number" }),
+    in_distance_m: integer("in_distance_m"),
+    in_photo_key: text("in_photo_key"),
+    out_lat: doublePrecision("out_lat"),
+    out_lng: doublePrecision("out_lng"),
+    out_accuracy_m: integer("out_accuracy_m"),
+    out_geo: text("out_geo"),
+    out_site_id: bigint("out_site_id", { mode: "number" }),
+    out_distance_m: integer("out_distance_m"),
+    out_photo_key: text("out_photo_key"),
+    notes: text("notes"),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    updated_by: integer("updated_by"),
+  },
+  (t) => [uniqueIndex("uq_hr_attendance_day").on(t.employee_id, t.work_date), index("idx_hr_attendance_company_date").on(t.company_id, t.work_date)],
+);
+
 // ── sales_entries (mig 041 / 051) ──────────────────────────
 export const sales_entries = pgTable("sales_entries", {
   company_id: bigint("company_id", { mode: "number" }),

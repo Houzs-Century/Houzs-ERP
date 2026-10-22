@@ -73,6 +73,13 @@ const hasNavDestination = (to: string): boolean =>
  */
 const UNGATED_BY_DESIGN = new Map<string, string>([
   [
+    "/hr/punch",
+    "Mobile-only path (no App.tsx route, no NAV_TABS entry). Punch In / Out is " +
+      "the employee's OWN clock (HC-0125, Nico: punch with your ERP account), so " +
+      "there is no page permission to apply: /api/attendance answers only for " +
+      "the hr_employees row linked to the caller and refuses an unlinked account.",
+  ],
+  [
     "/activity-inbox",
     "Mobile-only path (no App.tsx route, no NAV_TABS entry, so no desktop gate " +
       "to borrow). The project-activity feed is the phone's equivalent of the " +
@@ -200,7 +207,7 @@ describe("mobile menu permission gates", () => {
        a future change that ungates a second screen fails here, so the owner is
        told before it ships — not after someone notices a page they should not
        be able to see. Sorted so the assertion does not depend on list order. */
-    expect([...UNGATED_BY_DESIGN.keys()].sort()).toEqual(["/activity-inbox", "/announcements"]);
+    expect([...UNGATED_BY_DESIGN.keys()].sort()).toEqual(["/activity-inbox", "/announcements", "/hr/punch"]);
   });
 
   it("keeps Positions out of every mobile entry and route gate", () => {

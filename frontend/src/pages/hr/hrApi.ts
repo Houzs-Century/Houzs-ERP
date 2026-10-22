@@ -4,6 +4,7 @@ import { api } from "../../api/client";
 import { useQuery, type QueryState } from "../../hooks/useQuery";
 import type { EmployeeInput } from "../../vendor/shared/hr-employee";
 import type { PayRuleVersion, PayRulesConfig } from "../../vendor/shared/hr-pay-rules";
+import type { AttendanceStatus } from "../../vendor/shared/hr-attendance";
 
 export const HR = "/api/hr";
 
@@ -58,3 +59,50 @@ export const senFromRm = (rm: string): number => {
   const v = Number(rm.replace(/,/g, "").trim());
   return rm.trim() === "" ? 0 : Number.isFinite(v) ? Math.round(v * 100) : Number.NaN;
 };
+
+export type PunchSide = {
+  at: string;
+  clock: string;
+  source: "PHONE" | "MANUAL" | "AUTO" | null;
+  geo: "IN" | "OUT" | "NONE" | null;
+  siteName: string | null;
+  distanceM: number | null;
+  lat: number | null;
+  lng: number | null;
+  accuracyM: number | null;
+  hasPhoto: boolean;
+};
+export type AttendanceDay = {
+  id: number;
+  employeeId: number;
+  workDate: string;
+  status: AttendanceStatus;
+  in: PunchSide | null;
+  out: PunchSide | null;
+  open: boolean;
+  lateMin: number;
+  regularMin: number;
+  otMin: number;
+  shortfallMin: number;
+  spanMin: number | null;
+  notes: string | null;
+};
+export type AttendanceRowOut = {
+  employee: { id: number; empNo: string; name: string; position: string; department: string | null; linked: boolean; status: string };
+  day: AttendanceDay | null;
+};
+export type AttendanceResponse = {
+  date: string;
+  today: string;
+  shift: { startMin: number; endMin: number; lateGraceMin: number };
+  rows: AttendanceRowOut[];
+  sitesConfigured: number;
+  canManage: boolean;
+};
+export type PunchSiteOut = { id: number; name: string; lat: number; lng: number; radiusM: number; active: boolean };
+
+export const useAttendance = (date: string): QueryState<AttendanceResponse> =>
+  useQuery(`${HR}/attendance`, () => api.get<AttendanceResponse>(`${HR}/attendance?date=${encodeURIComponent(date)}`), [date]);
+
+export const usePunchSites = (): QueryState<{ sites: PunchSiteOut[]; canManage: boolean }> =>
+  useQuery(`${HR}/punch-sites`, () => api.get<{ sites: PunchSiteOut[]; canManage: boolean }>(`${HR}/punch-sites`));
