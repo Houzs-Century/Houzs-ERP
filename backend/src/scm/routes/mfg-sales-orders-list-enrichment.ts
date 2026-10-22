@@ -34,8 +34,9 @@ import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { resolveSalesScopeIds, applySoScope, soDocOutOfScope } from '../lib/salesScope';
 import { canViewAllSales } from '../lib/houzs-perms';
-import { loadLeadBuffers } from '../../services/agents/procurement-learning';
-import { computeMrp, mrpLineCoverage, type MrpResult } from './mrp';
+import { mrpLineCoverage, type MrpResult } from './mrp';
+import { sharedLiveMrp } from '../lib/live-mrp-memo';
+import { eager } from '../lib/concurrency';
 import { soLineReadySourcePos } from '../lib/source-po-trace';
 import { soCoverage } from './mfg-sales-orders';
 import { effectiveLineStockStatus, type LiveStockState } from '../lib/so-line-effective-stock';
@@ -73,6 +74,11 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
   if (docNos.length === 0) return c.json({ enrichment: {} });
 
   const companyId = activeCompanyId(c) ?? null;
+  /* HC-0002: the global MRP run needs nothing read below, so it starts first and
+     overlaps them, and it is the run /:docNo/coverage shares (lib/live-mrp-memo.ts).
+     Same fail-soft as before: a failed run is null here. */
+  const mrpProm: Promise<MrpResult | null> = sharedLiveMrp(sb, c.env.DB, companyId).result.catch(() => null);
+  const nonSellingProm = eager(loadNonSellingWarehouses(sb));
   // Same row-level visibility the list applies (self + downline, or all for a
   // view-all caller). The docs come from a page the client already received, so
   // this is defence in depth, not the only gate — the company predicate below
@@ -143,16 +149,8 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
     }
   }
 
-  /* 3. The global MRP allocation — the SAME call the list used to make on its
-     critical path, now off it. Best-effort: a failure drops to stored-status
-     readiness + no READY chips, identical to the list's fail-soft. */
-  let mrp: MrpResult | null = null;
-  try {
-    mrp = await computeMrp(sb, {
-      catFilter: null, whFilter: null, includeUndated: true,
-      companyId, leadBuffers: await loadLeadBuffers(c.env.DB),
-    });
-  } catch { mrp = null; }
+  /* 3. Delivered/remaining per line, issued now so it overlaps steps 4-5. */
+  const deliverableProm = eager(soDeliverableRemaining(sb, visibleDocNos));
 
   /* 4. Catalog category per code (normalised, the list's exact build) — feeds
      readiness's SERVICE classification. Bound error → best-effort empty. */
@@ -173,7 +171,8 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
     }
   }
 
-  // 5. READY-arm source-PO chips (fail-soft internally).
+  // 5. READY-arm source-PO chips (fail-soft internally), once the MRP run lands.
+  const mrp = await mrpProm;
   const readyByItem = await soLineReadySourcePos(sb, companyId, mrp, readyItems);
 
   /* 6. Delivered/remaining per line → fully-shipped ids (suppress READY chips
@@ -183,7 +182,7 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
   const delivered = new Map<string, number>();
   const remaining = new Map<string, number>();
   {
-    const deliverable = await soDeliverableRemaining(sb, visibleDocNos);
+    const deliverable = (await deliverableProm)();
     for (const [itemId, line] of deliverable.entries()) {
       if (line.remaining <= 0 && line.delivered > 0) fullyShippedItemIds.add(itemId);
       delivered.set(line.docNo, (delivered.get(line.docNo) ?? 0) + line.delivered);
@@ -196,7 +195,7 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
      the list's first paint deliberately passes null and leans on the stored
      status the allocator already gated. */
   const nonSellingWarehouseIds = new Set(
-    (await loadNonSellingWarehouses(sb)).keys(),
+    (await nonSellingProm)().keys(),
   ) as ReadonlySet<string>;
 
   const enrichment = assembleSoListMrpEnrichment({
@@ -236,7 +235,7 @@ mfgSalesOrdersListEnrichment.get('/:docNo/coverage', async (c) => {
   const [h, i, nonSellingWh] = await Promise.all([
     // Header read is company-scoped + minimal — exist check, salesperson_id for
     // the same self-scoped-sales gate, and processing_date for the promotion gate.
-    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id, access_staff_ids, processing_date, open_to_all').eq('doc_no', docNo), c).maybeSingle(),
+    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id, access_staff_ids, processing_date, open_to_all, updated_at').eq('doc_no', docNo), c).maybeSingle(),
     // Only the columns the MRP per-line rule needs, in line_no order (nulls last
     // → pre-0165 fallback to created_at). `warehouse_id` joined the list on
     // 2026-09-08: the non-selling-warehouse rule decides per line, so the line
@@ -270,7 +269,8 @@ mfgSalesOrdersListEnrichment.get('/:docNo/coverage', async (c) => {
      the PO(s) it WILL draw from — sofa via its stored allocated_batch_no, non-sofa
      by projecting the engine's own FIFO consumption order over the bucket's open
      lots. Read-time derivation, no writes. */
-  const cov = await soCoverage(c, sb);
+  // An order saved after the shared run started is never answered from it.
+  const cov = await soCoverage(c, sb, (h.data as { updated_at?: string | null }).updated_at ?? null);
   const coverageMap = cov.coverage;
   const readyPosMap = await soLineReadySourcePos(sb, activeCompanyId(c) ?? null, cov.mrp, lineRows);
   const orderProcessed = !!(h.data as { processing_date?: string | null }).processing_date;
