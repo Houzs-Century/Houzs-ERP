@@ -30,6 +30,7 @@ import { MobileTrackingBanner } from "./MobileTrackingBanner";
 import "./mobile.css";
 import { MobileJobStop, jobRefOf, jobKey, jobLabelOf, useJobProgressMap } from "./MobileJobStop";
 import { LEG_LABEL } from "../vendor/scm/lib/delivery-job";
+import { isDispatched } from "./runSheetDispatch";
 
 /* ------------------------------------------------------------------ *
  * Mobile Delivery Planning — driver run-sheet screen (v2 job card).
@@ -344,6 +345,10 @@ export function MobileDeliveryPlanning({
       return dayKey(d.toISOString());
     })();
     for (const o of allOrders) {
+      // Only stops actually on a run — a cut DO or an assigned driver. An order
+      // that merely carries today's customer date (no DO, no driver) is not yet
+      // dispatched and stays on the desktop board. See runSheetDispatch.ts.
+      if (!isDispatched(o)) continue;
       const k = dayKey(runDateOf(o));
       /* A finished stop STAYS on its day, so Today reads "3 / 8 delivered"
          instead of always 0 / n — it used to be moved to History on completion. */
