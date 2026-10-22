@@ -146,3 +146,83 @@ export const useLaborCost = (from: string, to: string): QueryState<LaborCostResp
 
 export const useHourDeductions = (period: string): QueryState<{ period: string; deductions: HourDeduction[]; totalHours: number; canManage: boolean }> =>
   useQuery(`${HR}/hour-deductions`, () => api.get<{ period: string; deductions: HourDeduction[]; totalHours: number; canManage: boolean }>(`${HR}/hour-deductions?period=${period}`), [period]);
+
+export type Payslip = {
+  id: number | null;
+  employeeId: number;
+  period: string;
+  status: "DRAFT" | "APPROVED" | "PAID";
+  empNo: string;
+  employeeName: string;
+  departmentName: string | null;
+  payMode: "MONTHLY" | "DAILY";
+  fullSalarySen: number;
+  dayRateSen: number;
+  hourRateSen: number;
+  daysWorked: number;
+  absentDays: number;
+  absenceDeductionSen: number;
+  shortHours: number;
+  shortHourDeductionSen: number;
+  basicEarnedSen: number;
+  otWeekdayHours: number;
+  otSundayHours: number;
+  otHolidayHours: number;
+  otWeekdayPaySen: number;
+  otSundayPaySen: number;
+  otHolidayPaySen: number;
+  otPaySen: number;
+  allowancesSen: number;
+  grossSen: number;
+  epfEmployeeSen: number;
+  epfEmployerSen: number;
+  socsoEmployeeSen: number;
+  socsoEmployerSen: number;
+  eisEmployeeSen: number;
+  eisEmployerSen: number;
+  pcbSen: number;
+  pcbStatus: "DISABLED" | "COMPUTED" | "ZERO_PROVEN" | "UNKNOWN";
+  statutoryEmployeeSen: number;
+  advanceSen: number;
+  penaltySen: number;
+  netSen: number;
+  paymentMethod: "TRANSFER" | "CASH";
+  bankName: string | null;
+  bankAccount: string | null;
+  detail: { absentDates: string[]; otDays: { date: string; hours: number; kind: string }[]; advanceDates: string[]; pcbNote: string };
+  approvedAt: string | null;
+  paidAt: string | null;
+};
+export type PayrollResponse = {
+  period: string;
+  stored: boolean;
+  projected: boolean;
+  locked: boolean;
+  status: "DRAFT" | "APPROVED" | "PAID" | "MIXED" | null;
+  monthFinished: boolean;
+  slips: Payslip[];
+  canManage: boolean;
+  canApprove: boolean;
+};
+export type Advance = { id: number; employeeId: number; empNo: string; name: string; date: string; amountSen: number; note: string | null; status: "UNSETTLED" | "SETTLED" };
+export type Penalty = {
+  id: number;
+  penaltyNo: string;
+  date: string;
+  reference: string | null;
+  reason: string;
+  remarks: string | null;
+  status: "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "POSTED";
+  createdBy: number | null;
+  createdByName: string | null;
+  approvedByName: string | null;
+  approvedAt: string | null;
+  rejectedReason: string | null;
+  lines: { id: number; employeeId: number; empNo: string; name: string; amountSen: number; payrollPeriod: string | null; posted: boolean }[];
+};
+
+export const usePayroll = (period: string): QueryState<PayrollResponse> => useQuery(`${HR}/payroll`, () => api.get<PayrollResponse>(`${HR}/payroll?period=${period}`), [period]);
+export const useAdvances = (period: string): QueryState<{ period: string; advances: Advance[]; totalSen: number; canManage: boolean }> =>
+  useQuery(`${HR}/advances`, () => api.get<{ period: string; advances: Advance[]; totalSen: number; canManage: boolean }>(`${HR}/advances?period=${period}`), [period]);
+export const usePenalties = (): QueryState<{ penalties: Penalty[]; me: number; canManage: boolean; canApprove: boolean }> =>
+  useQuery(`${HR}/penalties`, () => api.get<{ penalties: Penalty[]; me: number; canManage: boolean; canApprove: boolean }>(`${HR}/penalties`));

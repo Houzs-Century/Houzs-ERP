@@ -2,8 +2,9 @@
  * Phase 1 carries the master data (Employee Master, Public Holidays, Pay
  * Rules), phase 2 the punch clock (Attendance, Punch Sites; the phone half is
  * mobile/MobilePunch.tsx), phase 3 the hours pay reads (Working Hours, Labor
- * Cost with the short-hour docks). Payroll joins in phase 4. The URL carries
- * the tab. */
+ * Cost with the short-hour docks), phase 4 the pay (Payroll, Advances,
+ * Penalty; the phone half is My pay in mobile/MobilePunch.tsx). The URL
+ * carries the tab. */
 import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "../components/Layout";
 import { TabStrip, type TabOption } from "../components/TabStrip";
@@ -14,13 +15,19 @@ import { AttendanceTab } from "./hr/AttendanceTab";
 import { PunchSitesTab } from "./hr/PunchSitesTab";
 import { WorkingHoursTab } from "./hr/WorkingHoursTab";
 import { LaborCostTab } from "./hr/LaborCostTab";
+import { PayrollTab } from "./hr/PayrollTab";
+import { AdvancesTab } from "./hr/AdvancesTab";
+import { PenaltiesTab } from "./hr/PenaltiesTab";
 
-type Tab = "employees" | "attendance" | "hours" | "labor" | "sites" | "holidays" | "pay-rules";
+type Tab = "employees" | "attendance" | "hours" | "labor" | "payroll" | "advances" | "penalties" | "sites" | "holidays" | "pay-rules";
 const TABS: TabOption<Tab>[] = [
   { value: "employees", label: "Employee Master" },
   { value: "attendance", label: "Attendance" },
   { value: "hours", label: "Working Hours" },
   { value: "labor", label: "Labor Cost" },
+  { value: "payroll", label: "Payroll" },
+  { value: "advances", label: "Advances" },
+  { value: "penalties", label: "Penalty" },
   { value: "sites", label: "Punch Sites" },
   { value: "holidays", label: "Public Holidays" },
   { value: "pay-rules", label: "Pay Rules" },
@@ -43,6 +50,12 @@ const HEADER: Record<Tab, { title: string; description: string }> = {
     title: "Labor Cost",
     description: "A month's logged hours priced the way payroll prices them, by department and by person, and the short-hour docks with Settle month.",
   },
+  payroll: {
+    title: "Payroll",
+    description: "The month's payslips from the logged hours and docks: absences, late and short hours, OT by day type, EPF / SOCSO / EIS / PCB, advances and penalties. Generate, approve (locks the month), mark paid.",
+  },
+  advances: { title: "Advances", description: "Cash given ahead of payday, taken back in full from the payslip of the month it was given." },
+  penalties: { title: "Penalty", description: "A penalty for an incident, approved by someone other than who raised it, then deducted in the payroll month it lands in." },
   sites: {
     title: "Punch Sites",
     description: "Where a phone punch counts as on site: each warehouse or showroom as a point and a radius. An off-site punch still records; HR sees how far away it was.",
@@ -72,6 +85,9 @@ export function HrEmployees() {
       {active === "attendance" && <AttendanceTab />}
       {active === "hours" && <WorkingHoursTab />}
       {active === "labor" && <LaborCostTab />}
+      {active === "payroll" && <PayrollTab />}
+      {active === "advances" && <AdvancesTab />}
+      {active === "penalties" && <PenaltiesTab />}
       {active === "sites" && <PunchSitesTab />}
       {active === "holidays" && <PublicHolidaysTab />}
       {active === "pay-rules" && <PayRulesTab />}

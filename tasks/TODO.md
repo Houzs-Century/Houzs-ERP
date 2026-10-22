@@ -4,6 +4,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
 
 ## Waiting on owner
 - HC-0125 Employees & Attendance: after phase 1 deploys, grant `hr.employees.manage` (or `hr.employees.read`) to Nico's role in Team > Roles & Permissions; until then only Owner / IT Admin (`*`) see HR > Employees & Attendance — 2026-10-21
+- HC-0125 payroll: grant `hr.payroll.approve` (approve / reopen / mark paid a payroll month, approve penalties) to whoever signs payroll off - not the person who keys the hours - 2026-10-22
 - Lorry revenue / occupancy (Logistic Overview) reads the lorry from the DO crew, its lorry run, or the DO Vehicle field; on the local copy only 1 of 298 October DOs carries one. The owner says the team fills the plate on every DO: find WHERE (AutoCount, paper, another field) and read it from there — 2026-10-18
 - Houzs POS go-live: create the Cloudflare Pages project `houzs-pos` (direct upload) and attach `pos.houzscentury.com`, then merge PR #4635; `deploy-pos.yml` fails until the project exists — 2026-10-15
 - Houzs POS device QA (spec section 16, items 1 to 6, 9, 11): on a real tablet with the ESC/POS printer and the scanner after the deploy: install, Prepare, 3 days offline, hotspot sync, DATA LOST drill, 3-day pending drill, 58 / 80 mm prints, label scans — 2026-10-15
@@ -69,7 +70,8 @@ Phases, one PR each, `staging` first for Nico, then main:
 2. Phone punch (Punch In / Out, `/api/attendance`) + Attendance tab + Punch Sites + auto clock-out (`*/30` cron, hr-auto-clockout): same branch, mig `20261022T0300_hr_attendance`, not merged yet — 2026-10-22
 3. Working Hours + Labor Cost (Department Labor folded in) + short-hour docks / Settle month: branch `feat/hc0125-phase3` on top of phase 1-2, mig `20261022T0600_hr_working_hours`, not merged yet. Production pieces (SOFA / BEDFRAME categories, production revenue, line-scan split, non-production requests) not ported; docks skip Sundays and public holidays (Hookka's punch dock did not) — 2026-10-22
 - Ask Nico: drivers on long runs are judged against the one company shift (08:00 to 18:00), so a late start or a late return reads as late / OT. Per-department shifts, or no auto dock for drivers? — 2026-10-22
-4. Payroll / payslips + Advances + Worker Penalty + phone "My pay".
+4. Payroll / payslips + Advances + Penalty + phone My pay: branch `feat/hc0125-phase4` on top of phase 3, mig `20261022T0900_hr_payroll`, not merged yet. Statutory kept as Hookka (flat EPF % on salary, flat SOCSO / EIS from Pay Rules; Samuel 2026-10-22) - NOT the KWSP / PERKESO wage tables; PCB = LHDN computerised method; penalty reference is free text; no allowance (Hookka's efficiency allowance is production) - 2026-10-22
+- Owner to decide before the first real payroll: statutory by KWSP / PERKESO wage tables instead of the flat Hookka rates? Who fills each employee's PCB tax profile? Proration on joining (Hookka counts days before joining as absent)? - 2026-10-22
 5. Driver / helper monthly commission from delivered DOs (`scm.delivery_order_crew` driver_1/2, helper_1/2 + POD `delivered_at`) into payroll — waiting on Nico for the rate rules — 2026-10-20
 
 ## Purchase return, phase 2 — the receive-back leg (owner 2026-09-28)
