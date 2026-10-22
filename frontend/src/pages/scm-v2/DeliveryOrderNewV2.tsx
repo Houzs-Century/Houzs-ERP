@@ -852,7 +852,11 @@ export function DeliveryOrderNewV2() {
     for (const l of lines) if (l.soItemId) taken.add(l.soItemId);
     const fresh = soLines.data.filter((it) => !taken.has(it.soItemId));
     if (fresh.length === 0) {
-      void notify({ title: `Nothing left to deliver on ${editPullDoc}.`, tone: "error" });
+      void notify({
+        title: `No lines added from ${editPullDoc}.`,
+        body: `The undelivered lines found on ${editPullDoc} (${soLines.data.length}) are all on this delivery order. A wrong SO number, or lines on another draft delivery order, would also show this. Open the sales order to check its deliveries.`,
+        tone: "error",
+      });
     } else {
       setLines((prev) => [...prev.filter((l) => l.itemId || l.itemCode.trim()), ...fresh.map(soRowToLine)]);
       setFlash(`Added ${fresh.length} line${fresh.length === 1 ? "" : "s"} from ${editPullDoc}`);
