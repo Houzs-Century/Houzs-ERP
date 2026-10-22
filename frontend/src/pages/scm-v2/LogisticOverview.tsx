@@ -44,11 +44,11 @@ const n = (v: number) => v.toLocaleString();
 /* The customer follow-up an open order is waiting on, from its message status
    on Delivery Planning. */
 const FOLLOW_UP: Array<[string, RegExp]> = [
-  ["Waiting for the customer to reply", /Pending Customer Reply|To Remind Customer Reply/i],
+  ["Waiting for the customer to reply", /Done Send|Done Amend|To Remind Customer Reply/i],
   ["To reschedule", /Pending Reschedule|Postpone/i],
   ["Delivery date not sent yet", /To Send Delivery Date|Not Sent/i],
   ["Balance to collect", /Collect Balance|Balance Reminder/i],
-  ["Date agreed", /Done Scheduling|Delivery Time|Driver|Reminder Sent|Done Remind/i],
+  ["Date agreed", /Done Scheduling|Driver|Done Remind|Done Postage|Done Delivered/i],
   ["Address or contact wrong", /Invalid/i],
 ];
 const followUpOf = (s: string | null) => (s ? FOLLOW_UP.find(([, rx]) => rx.test(s))?.[0] ?? "Other" : "No follow-up yet");

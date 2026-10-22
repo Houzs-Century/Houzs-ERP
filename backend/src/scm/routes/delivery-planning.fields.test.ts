@@ -16,11 +16,16 @@ describe('delivery_message_status whitelist', () => {
 
   it('carries the workflow endpoints the board offers', () => {
     expect(HC_MESSAGE_STATUS_VALUES).toContain('To Send Delivery Date');
-    expect(HC_MESSAGE_STATUS_VALUES).toContain('Pending Customer Reply (D)');
-    expect(HC_MESSAGE_STATUS_VALUES).toContain('Done Remind');
+    expect(HC_MESSAGE_STATUS_VALUES).toContain('Done Send');
+    expect(HC_MESSAGE_STATUS_VALUES).toContain('Done Remind (3)');
+    // inbound customer taps (chat-request-patch) write these onto the column
+    expect(HC_MESSAGE_STATUS_VALUES).toContain('Done Scheduling');
+    expect(HC_MESSAGE_STATUS_VALUES).toContain('Pending Reschedule (D)');
   });
 
-  it('excludes "Done All" — that is the SEND status, not a message status', () => {
+  it('drops the retired states and never carries the SEND status', () => {
     expect(HC_MESSAGE_STATUS_VALUES).not.toContain('Done All');
+    expect(HC_MESSAGE_STATUS_VALUES).not.toContain('Pending Customer Reply (D)');
+    expect(HC_MESSAGE_STATUS_VALUES).not.toContain('To Send Delivery Time');
   });
 });

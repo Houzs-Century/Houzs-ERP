@@ -36,14 +36,16 @@ export const DELIVERY_STATE_LABEL: Record<DeliveryState, string> = {
    The coarse DELIVERY_STATES above (the top state tabs) is a SEPARATE, derived
    field — the tabs get their own rework later. */
 export const MESSAGE_STATUSES = [
-  'To Send Delivery Date', 'Pending Customer Reply (D)', 'Pending Reschedule (D)',
-  'Done Scheduling', 'Not Sent (D)', 'Pending Reschedule (A)', 'Not Sent (A)',
-  'Invalid Data', '3 Days Reminder Sent (Time)', '1 Day Reminder Sent (Driver)',
-  '7 Days Balance Reminder Sent', 'To Send Delivery Time', 'Done Delivery Time',
-  'To Send Driver Info', 'Done Driver Information', 'To Send Collect Balance',
-  'Done Balance Collection', 'To Send Postpone Reason', 'Done Postpone Reason',
-  'To Remind Customer Reply (1)', 'To Remind Customer Reply (2)',
-  'To Remind Customer Reply (3)', 'Done Remind',
+  'To Send Delivery Date', 'Done Send',
+  'To Send Driver Info', 'Done Driver Information',
+  'To Send Collect Balance', 'Done Balance Collection',
+  'To Send Postpone Reason', 'Done Postpone Reason',
+  'To Send Postage', 'Done Postage',
+  'Done Amend', 'Done Delivered',
+  'To Remind Customer Reply (1)', 'To Remind Customer Reply (2)', 'To Remind Customer Reply (3)',
+  'Done Remind (1)', 'Done Remind (2)', 'Done Remind (3)',
+  'Done Scheduling', 'Pending Reschedule (D)',
+  'Not Sent (D)', 'Not Sent (A)', 'Invalid Data',
 ] as const;
 export type MessageStatus = (typeof MESSAGE_STATUSES)[number];
 
