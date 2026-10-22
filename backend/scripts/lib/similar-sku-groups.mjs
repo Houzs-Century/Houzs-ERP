@@ -15,8 +15,9 @@
 
 import { normCode } from "./ac-mapping-csv.mjs";
 
-const compact = (code) => normCode(code).replace(/[^A-Z0-9]/g, "");
-const sizeSuffix = (code) => normCode(code).match(/\(([^()]*)\)\s*$/)?.[1].replace(/\s+/g, "") ?? "";
+const SIZE = /\(([^()]*)\)\s*$/;
+const sizeSuffix = (code) => normCode(code).match(SIZE)?.[1].replace(/\s+/g, "") ?? "";
+const compact = (code) => normCode(code).replace(SIZE, "").replace(/[^A-Z0-9]/g, "");
 
 function lettersAdded(short, long, max) {
   const extra = long.length - short.length;
@@ -81,7 +82,7 @@ export function groupSimilarSkus(w) {
   for (const [k, acs] of acOf) for (const ac of acs) byAc.set(ac, [...(byAc.get(ac) ?? []), k]);
   for (const members of byAc.values()) if (members.length > 1) linkAll(members, REASONS.ac);
 
-  for (const members of bucket((k) => compact(k))) linkAll(members, REASONS.spacing);
+  for (const members of bucket((k) => `${compact(k)}|${sizeSuffix(k)}`)) linkAll(members, REASONS.spacing);
 
   const nearBuckets = bucket((k) => `${String(byKey.get(k).category ?? "").toUpperCase()}|${sizeSuffix(k)}`);
   for (const members of nearBuckets) {

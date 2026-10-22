@@ -50,6 +50,8 @@ describe('groupSimilarSkus', () => {
         sku('AF RM PE PNK 4KFIT', 'ACCESSORY'),
         sku('AF RM PE PNK 4QFIT', 'ACCESSORY'),
         sku('AF RM PE BLU 4QFIT', 'ACCESSORY'),
+        sku('CODY-(SS)', 'BEDFRAME'),
+        sku('CODYS-(S)', 'BEDFRAME'),
         sku('HAPPI SLEEP SOLITUDE MATT (S)'),
         sku('HAPPI SLEEP SOLITUDE BEDF (S)', 'BEDFRAME'),
         sku('HAPPI SLEEP SOLITUDES MATT (S)', 'MATTRESS', 'INACTIVE'),

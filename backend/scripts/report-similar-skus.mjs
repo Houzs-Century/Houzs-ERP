@@ -64,7 +64,15 @@ async function main() {
 
   const ruled = (g) => g.codes.some((c) => RULED.has(c));
   log(`company ${CO}: ${products.filter((p) => p.status === "ACTIVE").length} active SKU(s), ${groups.length} group(s) that look alike, ${groups.filter(ruled).length} of them already ruled in data/duplicate-sku-merges.json`);
-  for (const g of [...groups.filter((x) => !ruled(x)), ...groups.filter(ruled)]) {
+  /* A code bound to several AutoCount items (sofa models sold under each other's
+     codes) is a binding to check before it is a duplicate, so those go last. */
+  const several = (g) => g.acCodes.length > 1;
+  const order = [
+    ...groups.filter((x) => !ruled(x) && !several(x)),
+    ...groups.filter((x) => !ruled(x) && several(x)),
+    ...groups.filter(ruled),
+  ];
+  for (const g of order) {
     log("");
     log(`GROUP  ${g.reasons.join("; ")}${g.acCodes.length ? `  [AutoCount ${g.acCodes.join(" / ")}]` : ""}`);
     for (const c of g.codes) {
