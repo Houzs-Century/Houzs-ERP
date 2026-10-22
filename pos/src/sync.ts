@@ -69,7 +69,7 @@ export function syncNow(reason: string): Promise<void> {
   if (running) return running;
   running = (async () => {
     const state = await loadDeviceState();
-    if (!state) return;
+    if (!state || state.demo) return;
     set({ phase: "syncing", last_attempt_at: new Date().toISOString() });
     try {
       if (!(await erpReachable())) { set({ online: false, last_error: "ERP not reachable" }); return; }
@@ -111,7 +111,7 @@ export function syncNow(reason: string): Promise<void> {
 /** The heartbeat (vitals only); a newer catalog version refreshes the bundle. */
 export async function heartbeat(): Promise<void> {
   const state = await loadDeviceState();
-  if (!state) return;
+  if (!state || state.demo) return;
   if (!(await erpReachable())) { set({ online: false }); return; }
   set({ online: true });
   try {
@@ -145,7 +145,7 @@ export async function afterSale(): Promise<void> {
 
 export async function buildBackup(): Promise<BackupFile | null> {
   const state = await loadDeviceState();
-  if (!state) return null;
+  if (!state || state.demo) return null;
   const sales = await listSales();
   return encryptBackup(sales, { terminal: state.bundle.terminal.code, project_id: state.bundle.event.project_id, receipt_counter: await currentCounter(state.bundle.terminal.receipt_counter) }, await tokenHash(state.token));
 }
