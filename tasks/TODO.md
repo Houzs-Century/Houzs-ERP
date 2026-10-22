@@ -3,7 +3,7 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
-- DEV-03 Mail Center: verify 2990shome.com in Resend (composing from it fails until then), and in Google Admin add each new personal address as an alias of one already-synced account; the ERP lists what is pending at the mail host once P3 ships — 2026-10-09
+- DEV-03 Mail Center: verify 2990shome.com in Resend (composing from it fails until then), and in Google Admin add each new personal address as an alias of one already-synced account; Team, Mailboxes lists the addresses still waiting (P3) — 2026-10-09
 - Lorry revenue / occupancy (Logistic Overview) reads the lorry from the DO crew, its lorry run, or the DO Vehicle field; on the local copy only 1 of 298 October DOs carries one. The owner says the team fills the plate on every DO: find WHERE (AutoCount, paper, another field) and read it from there — 2026-10-18
 - Houzs POS go-live: create the Cloudflare Pages project `houzs-pos` (direct upload) and attach `pos.houzscentury.com`, then merge PR #4635; `deploy-pos.yml` fails until the project exists — 2026-10-15
 - Houzs POS device QA (spec section 16, items 1 to 6, 9, 11): on a real tablet with the ESC/POS printer and the scanner after the deploy: install, Prepare, 3 days offline, hotspot sync, DATA LOST drill, 3-day pending drill, 58 / 80 mm prints, label scans — 2026-10-15

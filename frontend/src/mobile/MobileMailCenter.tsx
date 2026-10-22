@@ -35,9 +35,12 @@ import {
   MAIL_ATTACH_MAX_COUNT,
   MAIL_ATTACH_MAX_TOTAL_BYTES,
 } from "../pages/MailCenter/mail-attachments";
-import { parseRecipients, firstInvalid } from "../pages/MailCenter/mail-recipients";
+import { parseRecipients, firstInvalid, addRecipients } from "../pages/MailCenter/mail-recipients";
+import { RecipientPicker } from "../pages/MailCenter/RecipientPicker";
 import { MobileMessageAcks, MobileNeedsAck, MobilePendingAcks, MobileReadBy } from "./MobileMailAcks";
 import type { AckState, ThreadReaders } from "../pages/MailCenter/mail-acks";
+import { MobileVisibility } from "./MobileMailPersonal";
+import { useMailVisibility } from "../pages/MailCenter/mail-sidebar";
 import "./mobile.css";
 import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../vendor/shared/format";
 
@@ -147,6 +150,7 @@ type Folder =
   | "inbox"
   | "starred"
   | "sent"
+  | "sentbyme"
   | "autosent"
   | "drafts"
   | "archive"
@@ -160,6 +164,7 @@ const FOLDERS: [Folder, string][] = [
   ["inbox", "Inbox"],
   ["starred", "Starred"],
   ["sent", "Sent"],
+  ["sentbyme", "Sent by me"],
   ["autosent", "Auto-sent"],
   ["drafts", "Drafts"],
   ["archive", "Archive"],
@@ -224,6 +229,7 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
   const { user } = useAuth();
   const [folder, setFolder] = useState<Folder>("inbox");
   const [mailbox, setMailbox] = useState<string>("all"); // "all" or an address
+  const myAddress = useMailVisibility()?.myAddress ?? null;
   const [q, setQ] = useState("");
   /* The label the list is narrowed to, or null for all. Applying a label was
      already possible from the phone and LISTING by one was not, so "Urgent"
@@ -289,6 +295,7 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
     else if (folder === "archive") params.set("status", "closed");
     else if (folder === "starred") params.set("starred", "1");
     else if (folder === "sent") params.set("sent", "1");
+    else if (folder === "sentbyme") params.set("sentBy", "me");
     else if (folder === "trash") params.set("status", "trashed");
     if (mailbox !== "all") params.set("mailbox", mailbox);
     if (labelFilter) params.set("label", labelFilter);
@@ -476,13 +483,15 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
           className="cal-sel"
           style={{ marginBottom: 9 }}
         >
+          {myAddress && <option value={myAddress}>My mailbox · {myAddress}</option>}
           <option value="all">All mailboxes</option>
-          {activeAddresses.map((a) => (
+          {activeAddresses.filter((a) => a.address.toLowerCase() !== myAddress).map((a) => (
             <option key={a.id} value={a.address}>
               {a.address}
             </option>
           ))}
         </select>
+        <MobileVisibility />
 
         <div className="searchbar" style={{ marginBottom: 9 }}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--mut2)" strokeWidth="2" strokeLinecap="round">
@@ -1389,6 +1398,7 @@ function MailCompose({
   const [text, setText] = useState(seed?.body ?? "");
   const [sending, setSending] = useState(false);
   const [needsAck, setNeedsAck] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   // Same shared parser desktop uses: comma/semicolon separated, trimmed,
   // de-duplicated case-insensitively — and the same shape check on each entry.
@@ -1442,22 +1452,23 @@ function MailCompose({
   };
 
   return (
+    <>
     <ComposeShell title={mode === "forward" ? "Forward" : "New email"} onClose={onClose} onSend={send} sending={sending}>
       <FromPicker addresses={addresses} value={from} onChange={setFromOverride} />
       <label className="fld">
         <span className="fld-l">To</span>
         <input className="fld-i" value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@example.com" />
       </label>
-      {!showCopies && (
-        <button
-          type="button"
-          onClick={() => setShowCopies(true)}
-          className="tinybtn"
-          style={{ alignSelf: "flex-start", borderStyle: "dashed" }}
-        >
-          Cc / Bcc
+      <div style={{ display: "flex", gap: 8 }}>
+        <button type="button" onClick={() => setPickerOpen(true)} className="tinybtn" style={{ borderStyle: "dashed" }}>
+          Org chart
         </button>
-      )}
+        {!showCopies && (
+          <button type="button" onClick={() => setShowCopies(true)} className="tinybtn" style={{ borderStyle: "dashed" }}>
+            Cc / Bcc
+          </button>
+        )}
+      </div>
       {/* One send carrying everyone, never one send each. */}
       {showCopies && (
         <>
@@ -1488,6 +1499,20 @@ function MailCompose({
       />
       <MobileNeedsAck checked={needsAck} onChange={setNeedsAck} disabled={sending} />
     </ComposeShell>
+    <RecipientPicker
+      open={pickerOpen}
+      onClose={() => setPickerOpen(false)}
+      already={[to, cc, bcc]}
+      onPick={(picked, field) => {
+        if (field === "cc") {
+          setCc((prev) => addRecipients(prev, picked));
+          setShowCopies(true);
+        } else {
+          setTo((prev) => addRecipients(prev, picked));
+        }
+      }}
+    />
+    </>
   );
 }
 
