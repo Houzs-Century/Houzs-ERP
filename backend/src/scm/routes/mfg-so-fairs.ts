@@ -47,7 +47,7 @@ import { loadFairPutAside, NOT_PUT_ASIDE, setFairPutAside } from '../lib/fair-pu
 import { loadFairChecks } from '../lib/fair-checks';
 import { fairStateOf, recordFairChange } from '../lib/fair-audit';
 import { canReassignFair, FAIR_REASSIGN_REFUSAL } from '../lib/fair-reassign';
-import { FAIR_TRANSFER_MAX, fairTransferItemsOf, transferOrdersToFairs } from '../lib/fair-transfer';
+import { FAIR_TRANSFER_MAX, fairTransferItemsOf, transferFairDay, transferOrdersToFairs } from '../lib/fair-transfer';
 /* GET /active-venue moved here from mfg-sales-orders.ts on 2026-09-13. It is the
    same concern as the picker — which exhibition is this rep at — and that file
    is over its size ceiling, so the endpoint could not stay beside its new
@@ -334,13 +334,20 @@ mfgSoFairs.post('/:docNo/fair', async (c) => {
      against, and reading it under the company predicate also answers "is this
      order mine" before anything is written. */
   const { data: so, error: soErr } = await scopeToCompany(
-    sb.from('mfg_sales_orders').select('doc_no, so_date, venue, project_id, fair_match').eq('doc_no', docNo),
+    sb.from('mfg_sales_orders').select('doc_no, so_date, venue, fair_date, project_id, fair_match').eq('doc_no', docNo),
     c,
   ).maybeSingle();
   if (soErr) return c.json({ error: 'so_read_failed' }, 500);
   if (!so) return c.json({ error: 'not_found' }, 404);
 
   const soDate = String((so as Record<string, unknown>).so_date ?? '').slice(0, 10) || todayMyt();
+  const venueBefore = ((so as Record<string, unknown>).venue as string | null) ?? null;
+  const fairDayBefore = String((so as Record<string, unknown>).fair_date ?? '').slice(0, 10) || null;
+  /* LINKING MOVES THE VENUE AND THE FAIR DAY WITH THE FAIR, as a transfer does
+     (owner 2026-10-22: 「我link 不到」 — HC-SO-2609-388 was linked to the MLE fair
+     at PENANG WATERFRONT but kept AEON BUKIT MERTAJAM, so "venue differs" listed
+     it again and the link looked lost). The old place stays in History. */
+  let moved: { venue: string; fairDate: string | null } | null = null;
 
   if (projectId != null) {
     const rows = await c.env.DB.prepare(
@@ -378,6 +385,8 @@ mfgSoFairs.post('/:docNo/fair', async (c) => {
        recorded against it. Such an order stays visible — `so_date` against the
        project's own start/end says so at any time, with no flag to keep in
        step — so a report can find them without this route having to guess. */
+    const period = { startDate: String(fair.startDate ?? '').slice(0, 10), endDate: fair.endDate ? String(fair.endDate).slice(0, 10) : null };
+    moved = { venue: (fair.venue ?? '').trim(), fairDate: transferFairDay(period, null, fairDayBefore) };
   }
 
   const { error: updErr } = await scopeToCompany(
@@ -386,8 +395,9 @@ mfgSoFairs.post('/:docNo/fair', async (c) => {
       .update({
         project_id: projectId,
         fair_match: projectId == null ? 'AMBIGUOUS' : 'PICKED',
-        /* A link made by hand brings a put-aside order back (fair-put-aside.ts). */
-        ...(projectId == null ? {} : NOT_PUT_ASIDE),
+        /* A link made by hand brings a put-aside order back (fair-put-aside.ts),
+           and takes the fair's place and a day of it (above). */
+        ...(moved ? { venue: moved.venue, venue_source: 'PMS', fair_date: moved.fairDate, ...NOT_PUT_ASIDE } : {}),
       })
       .eq('doc_no', docNo),
     c,
@@ -402,6 +412,12 @@ mfgSoFairs.post('/:docNo/fair', async (c) => {
     after: { projectId, fairMatch: projectId == null ? 'AMBIGUOUS' : 'PICKED' },
     how: 'settle', actorId: user?.id ?? null,
     actorName: (user?.user_metadata as { name?: string } | undefined)?.name ?? c.get('houzsUser')?.name ?? null,
+    ...(moved ? {
+      also: [
+        { field: 'venue', from: venueBefore, to: moved.venue },
+        { field: 'fairDate', from: fairDayBefore, to: moved.fairDate },
+      ],
+    } : {}),
   });
 
   return c.json({ ok: true, docNo, projectId, companyId: activeCompanyId(c) ?? null });

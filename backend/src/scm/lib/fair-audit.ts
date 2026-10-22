@@ -53,8 +53,9 @@ export function fairStateLabel(state: FairState, booth: FairProjectRow | undefin
 }
 
 /**
- * Append the History row for one fair change. Nothing is written when the
- * state did not change.
+ * Append the History row for one fair change. Nothing is written when neither
+ * the fair nor any of `also` changed — a re-link to the same fair that moves
+ * only the Venue / Fair Day (owner 2026-10-22) still gets its row.
  *
  * @param actorId   scm.staff id of the person (the bridge's `user.id`), or null
  *                  for the nightly reconcile.
@@ -77,20 +78,24 @@ export async function recordFairChange(args: {
   also?: Array<{ field: string; from: string | null; to: string | null }>;
 }): Promise<void> {
   const { before, after } = args;
-  if (before.projectId === after.projectId && before.fairMatch === after.fairMatch) return;
+  const fairChanged = before.projectId !== after.projectId || before.fairMatch !== after.fairMatch;
+  const alsoChanged = (args.also ?? []).filter((c) => (c.from ?? '') !== (c.to ?? ''));
+  if (!fairChanged && alsoChanged.length === 0) return;
   try {
     const ids = [before.projectId, after.projectId].filter((v): v is number => v != null);
-    const booths = await loadFairsByIds(args.db, args.companySql, ids).catch(() => new Map<number, FairProjectRow>());
+    const booths = fairChanged
+      ? await loadFairsByIds(args.db, args.companySql, ids).catch(() => new Map<number, FairProjectRow>())
+      : new Map<number, FairProjectRow>();
     await recordSoAudit(args.sb, {
       docNo: args.docNo,
       action: 'UPDATE_FAIR',
       actorId: args.actorId,
       actorName: args.actorName,
-      fieldChanges: [{
+      fieldChanges: [...(fairChanged ? [{
         field: 'fair',
         from: fairStateLabel(before, before.projectId != null ? booths.get(before.projectId) : undefined),
         to: fairStateLabel(after, after.projectId != null ? booths.get(after.projectId) : undefined),
-      }, ...(args.also ?? []).filter((c) => (c.from ?? '') !== (c.to ?? ''))],
+      }] : []), ...alsoChanged],
       source: args.how,
       ...(args.note ? { note: args.note } : {}),
     });

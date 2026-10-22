@@ -74,6 +74,10 @@ const GL_LEGS = `SELECT l.project_id, l.id::text AS leg_id, l.account_code, l.de
          LEFT JOIN scm.accounts a ON a.company_id = l.company_id AND a.account_code = l.account_code`;
 const GL_ORDER = 'ORDER BY je.entry_date, je.je_no, l.line_no';
 
+/** The rows the event P&L sums the books straight into; the others
+ *  (transport fee, commission) are % rows (services/eventPnl.ts pctRow). */
+const SUMMED_ROWS: ReadonlySet<PmsRow> = new Set<PmsRow>(['rental', 'setup', 'transport_setup_dismantle', 'others']);
+
 /** Marks a leg read from a voucher that is CHECKED but not yet approved. */
 export const PV_CHECKED_SOURCE = 'PV_CHECKED';
 
@@ -239,7 +243,14 @@ export function applyEventBooks<L extends LedgerLine>(
     return { lines: ledger, books: { ok: false, reason: read.reason, rows: [], closed_categories: [], replaced: [] } };
   }
   const booksLines = booksLinesFor(projectId, read.legs);
-  const filled = new Set<PmsRow>(booksLines.map((l) => l.category));
+  /* A row the books FILL is one Finance has paid on (a debit). On a row whose
+     books are summed straight in, money only coming BACK — a partner's share
+     billed on an Other Debtor bill, a refund — does not replace the typed
+     figure; it is taken off it (owner 2026-10-22: rental 45,900 typed and
+     HC-ODB-2609-004 billing 22,950 back read -22,950, 「下面写missing，但是上面
+     是有amount的」). A % row keeps the old rule — any leg fills it — so a credit
+     there is never lost under the rate card. */
+  const filled = new Set<PmsRow>(booksLines.filter((l) => l.amount > 0 || !SUMMED_ROWS.has(l.category)).map((l) => l.category));
   const isFilled = (category: string | null | undefined) => {
     const row = rowOfCategory(category);
     return row != null && filled.has(row);
