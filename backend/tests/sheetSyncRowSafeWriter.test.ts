@@ -12,7 +12,7 @@ import { describe, expect, test } from 'vitest';
    The script runs here in a vm against an in-memory sheet. */
 
 type Cell = string | number;
-const COLS = 46;
+const COLS = 59;
 
 function fakeSheet(rows: Cell[][], onIndexRead?: (rows: Cell[][]) => void) {
   // rows[0] is sheet row 4 (startRow); each row is COLS cells, col A at [0].
@@ -24,11 +24,15 @@ function fakeSheet(rows: Cell[][], onIndexRead?: (rows: Cell[][]) => void) {
   };
   return {
     rows,
+    header: [] as Cell[],
     getLastRow: lastRow,
+    getLastColumn: () => COLS,
     getRange(r: number, c: number, nr = 1, nc = 1) {
+      const self = this as { header: Cell[] };
       return {
         getValue: () => (r >= 4 && r <= lastRow() ? rows[r - 4]![c - 1] : ''),
         getValues: () => {
+          if (r === 3) return [Array.from({ length: nc }, (_, i) => self.header[c - 1 + i] ?? '')];
           const out = [];
           for (let i = 0; i < nr; i++) out.push(rows[r - 4 + i]!.slice(c - 1, c - 1 + nc));
           if (c === 2 && nc === 1 && colBReads++ === 0 && onIndexRead) onIndexRead(rows);
@@ -46,7 +50,10 @@ function loadScript() {
   const src = readFileSync(resolve(__dirname, '../../reference/ERPDeliverySync.gs'), 'utf8');
   const sandbox: Record<string, unknown> = {
     Log: { info() {}, warn() {}, error() {} },
-    getSheetConfig: () => ({ startRow: 4, block2StartCol: 25, includeRemark3: true, attentionCol: 45, statusCol: 46 }),
+    getSheetConfig: (name: string) => name === 'EM Order'
+      ? { startRow: 4, block2StartCol: 25, includeRemark3: true, attentionCol: 43, statusCol: 44 }
+      : { startRow: 4, block2StartCol: 25, includeRemark3: true, attentionCol: 45, statusCol: 46 },
+    CONFIG: { WEST_SHEET: 'Delivery Details', EAST_SHEET: 'EM Order', SG_SHEET: 'SG Order' },
     PropertiesService: { getScriptProperties: () => ({ getProperty: () => null }) },
     console,
   };
@@ -87,5 +94,26 @@ describe('erpWriteRecords_ — a row is found by DocNo at write time', () => {
     const sheet = fakeSheet([row('Done Driver Information', 'HC-SO-2609-084')]);
     write({ getSheetByName: () => sheet }, 'Delivery Details', [{ DocNo: 'HC-SO-2609-084', Remark4: 'To Send Delivery Date' }], 'rid');
     expect(sheet.rows[0]![0]).toBe('Done Driver Information');
+  });
+
+  test('EM Order is written by header NAME: Attention / Sync Status land in AS / AT, AQ / AR and ESB columns untouched', () => {
+    const write = loadScript();
+    const sheet = fakeSheet([row('Done Scheduling', 'SO-007847')]);
+    const hdr: Cell[] = Array(COLS).fill('');
+    hdr[1] = 'Doc. No.'; hdr[6] = 'Debtor Name'; hdr[16] = 'SHIPOUT DATE = DO date'; hdr[18] = 'Consignment No';
+    hdr[30] = 'Address 4'; hdr[44] = 'Attention'; hdr[45] = 'Sync Status';
+    sheet.header = hdr;
+    sheet.rows[0]![18] = 'MI3008003-25';
+    sheet.rows[0]![43] = 'PENDING';
+    write({ getSheetByName: () => sheet }, 'EM Order', [{ DocNo: 'SO-007847', DebtorName: 'Nazhatul', InvAddr4: 'Sarawak', Attention: 'SEAMPIFY' }], 'rid');
+    const r = sheet.rows[0]!;
+    expect(r[6]).toBe('Nazhatul');
+    expect(r[30]).toBe('Sarawak');
+    expect(r[44]).toBe('SEAMPIFY');
+    expect(r[45]).toBe('SYNCED');
+    expect(r[42]).toBe('');
+    expect(r[43]).toBe('PENDING');
+    expect(r[18]).toBe('MI3008003-25');
+    expect(r[0]).toBe('Done Scheduling');
   });
 });
