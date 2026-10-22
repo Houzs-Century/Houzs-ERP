@@ -81,6 +81,32 @@ describe("RoleMatrixTab", () => {
     expect(screen.getByText("项目")).toBeTruthy();
   });
 
+  it("search narrows the list to the matching module", async () => {
+    mockApi();
+    render(<RoleMatrixTab />);
+    await waitFor(() => expect(screen.getByText("供应链·仓库")).toBeTruthy());
+
+    fireEvent.change(screen.getByPlaceholderText("搜索模块或页面…"), { target: { value: "仓库" } });
+
+    expect(screen.getByText("供应链·仓库")).toBeTruthy();
+    expect(screen.queryByText("供应链·销售")).toBeNull();
+    expect(screen.queryByText("项目")).toBeNull();
+  });
+
+  it("a sub-page match forces its module open and hides the rest", async () => {
+    mockApi();
+    render(<RoleMatrixTab />);
+    await waitFor(() => expect(screen.getByText("供应链·仓库")).toBeTruthy());
+
+    // "Inventory" is a sub-page of 供应链·仓库 only — the module shows (no manual
+    // expand) with just that row, and the other modules drop out.
+    fireEvent.change(screen.getByPlaceholderText("搜索模块或页面…"), { target: { value: "Inventory" } });
+
+    expect(screen.getByText("供应链·仓库")).toBeTruthy();
+    expect(screen.getByText("Inventory")).toBeTruthy();
+    expect(screen.queryByText("供应链·销售")).toBeNull();
+  });
+
   it("set 供应链·销售=看 and 供应链·仓库=无, save → page-access + scm.access payloads", async () => {
     mockApi();
     render(<RoleMatrixTab />);

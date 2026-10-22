@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { ChevronRight, FileDown, FileUp } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { ChevronRight, FileDown, FileUp, Search } from "lucide-react";
 import { api } from "../../api/client";
 import { useQuery } from "../../hooks/useQuery";
 import { useToast } from "../../hooks/useToast";
@@ -39,7 +39,11 @@ import { RoleMatrixImportModal } from "./RoleMatrixImportModal";
  * PATCH /api/roles/:id/page-access; the function keys a level touches ride the
  * existing PATCH /api/roles/:id {permissions}. Approval / money / fine SCM keys
  * are never flipped here (roleMatrixModel.isNeverByLevel) — those stay on the
- * Roles tab with their explicit-grant semantics. */
+ * Roles tab with their explicit-grant semantics.
+ *
+ * Table affordances (owner 2026-10-22): a search box narrows the module/page
+ * list, rows highlight on hover, and the Module column is drag-resizable. The
+ * column width is a personal preference kept in localStorage. */
 
 type PageAccessPayload = {
   pages: PageLite[];
@@ -52,6 +56,32 @@ function seedPageLevels(pages: PageLite[], stored: Record<string, string> | unde
   const out: PageLevels = {};
   for (const p of pages) out[p.key] = normalizeStoredLevel(stored?.[p.key]);
   return out;
+}
+
+// Module-column width (px): personal preference, read/written straight to
+// localStorage and clamped so a drag can never collapse the column or push the
+// level picker off-screen. Persisted on drag-release, not on every mousemove.
+const COL_KEY = "roleMatrix:moduleColPx";
+const MIN_COL = 200;
+const MAX_COL = 640;
+const DEFAULT_COL = 360;
+const clampCol = (n: number) => Math.max(MIN_COL, Math.min(MAX_COL, Math.round(n)));
+function readStoredCol(): number {
+  try {
+    const raw = localStorage.getItem(COL_KEY);
+    if (raw == null) return DEFAULT_COL;
+    const n = Number(raw);
+    return Number.isFinite(n) ? clampCol(n) : DEFAULT_COL;
+  } catch {
+    return DEFAULT_COL;
+  }
+}
+function writeStoredCol(n: number) {
+  try {
+    localStorage.setItem(COL_KEY, String(n));
+  } catch {
+    // quota / privacy mode — the width just resets next visit
+  }
 }
 
 export function RoleMatrixTab() {
@@ -87,6 +117,9 @@ export function RoleMatrixTab() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [query, setQuery] = useState("");
+  const [moduleCol, setModuleCol] = useState<number>(readStoredCol);
+  const resizeFrom = useRef<{ x: number; w: number } | null>(null);
 
   // The whole-matrix snapshot for Excel export/import (all roles, current state).
   const snapshot = useMemo(
@@ -167,6 +200,35 @@ export function RoleMatrixTab() {
     updateRole(selectedId, nextPages, nextPerms);
   }
 
+  // Drag to resize the Module column. Listeners live on window so the pointer
+  // can leave the handle mid-drag; the start width is captured in a ref so the
+  // move handler never reads a stale `moduleCol`. The width is persisted once,
+  // on release.
+  function onResizeMove(e: MouseEvent) {
+    const from = resizeFrom.current;
+    if (!from) return;
+    setModuleCol(clampCol(from.w + (e.clientX - from.x)));
+  }
+  function endResize() {
+    resizeFrom.current = null;
+    window.removeEventListener("mousemove", onResizeMove);
+    window.removeEventListener("mouseup", endResize);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    setModuleCol((w) => {
+      writeStoredCol(w);
+      return w;
+    });
+  }
+  function startResize(e: React.MouseEvent) {
+    e.preventDefault();
+    resizeFrom.current = { x: e.clientX, w: moduleCol };
+    window.addEventListener("mousemove", onResizeMove);
+    window.addEventListener("mouseup", endResize);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }
+
   function discard() {
     if (selectedId == null) return;
     setPageStaged((m) => {
@@ -211,6 +273,28 @@ export function RoleMatrixTab() {
     }
   }
 
+  // Search narrows the list. A module stays when its own name/key matches (then
+  // all its sub-pages are available on expand), or, failing that, when one of
+  // its sub-pages matches (then only the matching sub-pages show, module forced
+  // open). CJK is unaffected by toLowerCase, so one lowercased compare covers
+  // both the Chinese and English labels.
+  const q = query.trim().toLowerCase();
+  const visibleModules = useMemo(() => {
+    if (!q) return modules.map((m) => ({ m, subset: null as PageLite[] | null }));
+    const hit = (s: string) => s.toLowerCase().includes(q);
+    const out: Array<{ m: MatrixModule; subset: PageLite[] | null }> = [];
+    for (const m of modules) {
+      const top = m.pages.find((p) => p.key === m.topPageKey) ?? null;
+      const selfMatch =
+        hit(m.labelZh) || hit(m.labelEn) || hit(m.id) || (top ? hit(top.label) || hit(top.key) : false);
+      const subs = m.pages.filter((p) => p.key !== m.topPageKey);
+      const matched = subs.filter((p) => hit(p.label) || hit(p.key));
+      if (selfMatch) out.push({ m, subset: null });
+      else if (matched.length > 0) out.push({ m, subset: matched });
+    }
+    return out;
+  }, [modules, q]);
+
   if (rolesQ.loading || permsQ.loading || pageQ.loading) return <ListSkeleton rows={6} />;
   if (pageQ.error || !pageQ.data?.pages)
     return (
@@ -227,6 +311,10 @@ export function RoleMatrixTab() {
 
   const systemRoles = roleList.filter((r) => r.is_system);
   const customRoles = roleList.filter((r) => !r.is_system);
+
+  // One template string drives the header and every row, so the column boundary
+  // stays aligned as the width is dragged.
+  const gridTemplate = `${moduleCol}px minmax(140px, 1fr)`;
 
   return (
     <div className={cn("relative", dirtyIds.length > 0 && "pb-20")}>
@@ -255,6 +343,21 @@ export function RoleMatrixTab() {
           </select>
         </label>
         {role && <Badge tone={role.is_system ? "accent" : "neutral"}>{role.member_count} members</Badge>}
+
+        {!locked && (
+          <div className="relative">
+            <Search
+              size={13}
+              className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-ink-muted"
+            />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜索模块或页面…"
+              className="h-8 w-56 rounded-md border border-border bg-surface pl-7 pr-2 text-[12.5px] text-ink outline-none placeholder:text-ink-muted hover:border-accent/50 focus:border-primary focus:ring-2 focus:ring-primary/20"
+            />
+          </div>
+        )}
 
         <div className="ml-auto flex items-center gap-2">
           <Button variant="ghost" icon={<FileDown size={14} />} onClick={onExport}>
@@ -305,18 +408,43 @@ export function RoleMatrixTab() {
           )}
 
           <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
-            <div className="grid grid-cols-[1fr_auto] items-center gap-2 border-b border-border bg-surface-2 px-4 py-2">
-              <span className="font-mono text-[10px] uppercase tracking-wider text-ink-muted">Module</span>
-              <span className="font-mono text-[10px] uppercase tracking-wider text-ink-muted">无 / 看 / 改 / 批</span>
+            <div
+              className="grid items-center gap-2 border-b border-border bg-surface-2 px-4 py-2"
+              style={{ gridTemplateColumns: gridTemplate }}
+            >
+              <div className="relative flex items-center">
+                <span className="font-mono text-[10px] uppercase tracking-wider text-ink-muted">Module</span>
+                <span
+                  role="separator"
+                  aria-orientation="vertical"
+                  title="拖动调整列宽"
+                  onMouseDown={startResize}
+                  className="absolute right-0 top-1/2 h-5 w-1.5 -translate-y-1/2 translate-x-1/2 cursor-col-resize rounded-full bg-border transition-colors hover:bg-primary"
+                />
+              </div>
+              <span className="justify-self-end font-mono text-[10px] uppercase tracking-wider text-ink-muted">
+                无 / 看 / 改 / 批
+              </span>
             </div>
 
-            {modules.map((m) => {
+            {visibleModules.length === 0 && (
+              <div className="px-4 py-6 text-center text-[12.5px] text-ink-muted">
+                没有匹配「{query.trim()}」的模块或页面
+              </div>
+            )}
+
+            {visibleModules.map(({ m, subset }) => {
               const lv = moduleLevel(m, curPages, curPerms);
-              const open = expanded.has(m.id);
+              const forcedOpen = subset != null;
+              const open = forcedOpen || expanded.has(m.id);
               const expandable = m.pages.length > 1;
+              const subPages = subset ?? m.pages.filter((p) => p.key !== m.topPageKey);
               return (
                 <div key={m.id} className="border-b border-border-subtle last:border-b-0">
-                  <div className="grid grid-cols-[1fr_auto] items-center gap-2 px-4 py-2.5">
+                  <div
+                    className="grid items-center gap-2 px-4 py-2.5 transition-colors hover:bg-surface-dim"
+                    style={{ gridTemplateColumns: gridTemplate }}
+                  >
                     <button
                       type="button"
                       disabled={!expandable}
@@ -327,7 +455,10 @@ export function RoleMatrixTab() {
                           return n;
                         })
                       }
-                      className={cn("flex items-center gap-1.5 text-left", expandable && "hover:text-primary")}
+                      className={cn(
+                        "flex min-w-0 items-center gap-1.5 text-left",
+                        expandable && "hover:text-primary",
+                      )}
                     >
                       {expandable ? (
                         <ChevronRight
@@ -337,52 +468,51 @@ export function RoleMatrixTab() {
                       ) : (
                         <span className="w-[14px] flex-none" />
                       )}
-                      <span>
+                      <span className="min-w-0 truncate">
                         <span className="text-[13px] font-semibold text-ink">{m.labelZh}</span>
                         <span className="ml-2 font-mono text-[10px] uppercase tracking-wider text-ink-muted">
                           {m.labelEn}
                         </span>
                       </span>
                     </button>
-                    <LevelPicker
-                      value={lv}
-                      disabled={readOnly}
-                      onChange={(next) => setModule(m, next)}
-                    />
+                    <div className="justify-self-end">
+                      <LevelPicker value={lv} disabled={readOnly} onChange={(next) => setModule(m, next)} />
+                    </div>
                   </div>
 
                   {open && expandable && (
                     <div className="border-t border-border-subtle bg-surface-2/40">
-                      {m.pages
-                        .filter((p) => p.key !== m.topPageKey)
-                        .map((p) => (
-                          <div
-                            key={p.key}
-                            className="grid grid-cols-[1fr_auto] items-center gap-2 px-4 py-2 pl-10"
-                          >
-                            <span>
-                              <span
-                                className={cn(
-                                  "text-[12.5px]",
-                                  p.dormant ? "text-ink-muted line-through" : "text-ink-secondary",
-                                )}
-                              >
-                                {p.label}
-                              </span>
-                              {p.dormant && (
-                                <span className="ml-2 font-mono text-[9px] uppercase tracking-wider text-ink-muted">
-                                  dormant · not wired
-                                </span>
+                      {subPages.map((p) => (
+                        <div
+                          key={p.key}
+                          className="grid items-center gap-2 px-4 py-2 pl-10 transition-colors hover:bg-surface-dim"
+                          style={{ gridTemplateColumns: gridTemplate }}
+                        >
+                          <span className="min-w-0 truncate">
+                            <span
+                              className={cn(
+                                "text-[12.5px]",
+                                p.dormant ? "text-ink-muted line-through" : "text-ink-secondary",
                               )}
-                              <span className="ml-2 font-mono text-[9.5px] text-ink-muted">{p.key}</span>
+                            >
+                              {p.label}
                             </span>
+                            {p.dormant && (
+                              <span className="ml-2 font-mono text-[9px] uppercase tracking-wider text-ink-muted">
+                                dormant · not wired
+                              </span>
+                            )}
+                            <span className="ml-2 font-mono text-[9.5px] text-ink-muted">{p.key}</span>
+                          </span>
+                          <div className="justify-self-end">
                             <LevelPicker
                               value={curPages[p.key] ?? "none"}
                               disabled={readOnly || !!p.dormant}
                               onChange={(next) => setSubPage(p.key, next)}
                             />
                           </div>
-                        ))}
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
