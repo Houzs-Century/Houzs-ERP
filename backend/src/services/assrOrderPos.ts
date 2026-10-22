@@ -85,3 +85,57 @@ export async function orderPoSupplierCode(
     return null;
   }
 }
+
+/* HC-0130 (Farra, 21 Oct): no PO (a mattress is often never PO'd from the SO)
+   -> the supplier the SO line's item is bound to in the ERP
+   (supplier_material_bindings, mfg_product). The main supplier wins; with no
+   main, only a single binding is taken — several suppliers and no main is a
+   real choice, so it stays blank for Service Team to pick. The SO line must
+   exist in the case's company, so this is the SO's item and not any item. */
+export async function soItemSupplierCode(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  docNo: string | null,
+  itemCode: string | null,
+  companyId: number | null,
+): Promise<string | null> {
+  if (!docNo || !itemCode || !Number.isInteger(companyId) || (companyId as number) <= 0) return null;
+  try {
+    const lines = await sb.from("mfg_sales_order_items").select("id")
+      .eq("company_id", companyId).eq("doc_no", docNo).eq("item_code", itemCode);
+    if (lines.error || (lines.data ?? []).length === 0) return null;
+    const binds = await sb.from("supplier_material_bindings").select("is_main_supplier, supplier:suppliers(code)")
+      .eq("company_id", companyId).eq("material_kind", "mfg_product").eq("item_code", itemCode);
+    if (binds.error) return null;
+    type B = { is_main_supplier: boolean | null; supplier: { code: string | null } | null };
+    const coded = ((binds.data ?? []) as B[]).filter((b) => b.supplier?.code);
+    const main = coded.find((b) => b.is_main_supplier);
+    return main?.supplier?.code ?? (new Set(coded.map((b) => b.supplier?.code)).size === 1 ? coded[0].supplier?.code ?? null : null);
+  } catch {
+    return null;
+  }
+}
+
+/** PO first, then the SO item's bound supplier. "so-missing" when the case's
+    SO line is not in the ERP (old AutoCount-only orders, or the read failed):
+    the caller then keeps the case's current supplier (HC-0130, YH 21 Oct). */
+export async function orderSupplierCode(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  docNo: string | null,
+  itemCode: string | null,
+  companyId: number | null,
+): Promise<{ code: string; source: "po" | "so" } | "so-missing" | null> {
+  if (!docNo || !itemCode || !Number.isInteger(companyId) || (companyId as number) <= 0) return "so-missing";
+  try {
+    const lines = await sb.from("mfg_sales_order_items").select("id")
+      .eq("company_id", companyId).eq("doc_no", docNo).eq("item_code", itemCode);
+    if (lines.error || (lines.data ?? []).length === 0) return "so-missing";
+  } catch {
+    return "so-missing";
+  }
+  const po = await orderPoSupplierCode(sb, docNo, itemCode, companyId);
+  if (po) return { code: po, source: "po" };
+  const so = await soItemSupplierCode(sb, docNo, itemCode, companyId);
+  return so ? { code: so, source: "so" } : null;
+}

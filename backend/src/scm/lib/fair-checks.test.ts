@@ -87,7 +87,7 @@ describe('等加人 — a scan whose scanner is not on the booth', () => {
     );
     expect(res.ok && res.rows).toEqual([expect.objectContaining({
       check: 'NEEDS_ATTENDING',
-      note: 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18). The draft cannot be confirmed until PMS adds them.',
+      note: 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18). PMS adds them in the project.',
     })]);
   });
 
@@ -99,7 +99,7 @@ describe('等加人 — a scan whose scanner is not on the booth', () => {
       fakeDb([[KEYER, []], [BY_IDS, BOOTHS], [USERS, [{ id: 92, name: 'Jason' }]]]),
     );
     expect(res.ok && res.rows.map((r) => [r.doc_no, r.note])).toEqual([
-      ['HC-SO-2610-003', 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18).'],
+      ['HC-SO-2610-003', 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18). PMS adds them in the project.'],
     ]);
   });
 
@@ -138,11 +138,21 @@ describe('the evening report outranks the slip (owner 2026-10-20)', () => {
       },
       fakeDb([[REPORTS, [chat(307, '10/10\n1. HC13316 RM3388 Shawn\n2. HC13548 RM4300 Shawn', '2026-10-09')]], [KEYER, []], [BY_IDS, byIds], [AT_VENUE, []], [USERS, [{ id: 32, name: 'Shawn' }]]]),
     );
+    const toIoigecc = {
+      projectId: 307, title: '[AKEMI] HOMELOVE', detail: 'IOIGECC · 10/09 - 10/11',
+      label: 'AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11)', reportDate: '2026-10-10',
+    };
     expect(res.ok && res.rows.map((r) => [r.doc_no, r.check, r.target, r.note])).toEqual([
-      ['HC-SO-2610-167', 'REPORT_ELSEWHERE', { projectId: 307, label: 'AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11)', reportDate: '2026-10-10' },
+      ['HC-SO-2610-167', 'REPORT_ELSEWHERE', toIoigecc,
         'The evening report of AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11) lists it on 10/10; the order is under AKEMI — MID VALLEY — REX (10/15 - 10/18).'],
-      ['HC-SO-2610-166', 'REPORT_ELSEWHERE', { projectId: 307, label: 'AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11)', reportDate: '2026-10-10' },
+      ['HC-SO-2610-166', 'REPORT_ELSEWHERE', toIoigecc,
         'The evening report of AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11) lists it on 10/10; the order has no event.'],
+    ]);
+    /* Where each is now, on two lines too (owner 2026-10-21: one row per order),
+       and the Ref No. the report listed it by. */
+    expect(res.ok && res.rows.map((r) => [r.current, r.customer_so_no])).toEqual([
+      [{ projectId: 340, title: '[AKEMI] REX', detail: 'MID VALLEY · 10/15 - 10/18' }, 'HC13316'],
+      [null, 'HC13548'],
     ]);
   });
 
@@ -152,6 +162,11 @@ describe('the evening report outranks the slip (owner 2026-10-20)', () => {
       fakeDb([[REPORTS, [chat(307, '10/10\n1. HC20000 RM100 A', '2026-10-09'), chat(2228, '26/9\n1. HC20000 RM100 A', '2026-09-25')]], [BY_IDS, byIds]]),
     );
     expect(res.ok && res.rows.map((r) => [r.check, r.target])).toEqual([['REPORT_ELSEWHERE', null]]);
+    /* Both booths are named for the person who picks. */
+    expect(res.ok && res.rows[0]!.candidates).toEqual([
+      { projectId: 307, title: '[AKEMI] HOMELOVE', detail: 'IOIGECC · 10/09 - 10/11' },
+      { projectId: 2228, title: '[DUNLOPILLO] MALL MGT', detail: 'SUNWAY CARNIVAL MALL · 09/25 - 09/29' },
+    ]);
   });
 });
 
@@ -166,6 +181,14 @@ describe('what is never listed, and a read that fails', () => {
       ],
       scan_jobs: [],
     }, fakeDb([[BY_IDS, BOOTHS], [AT_VENUE, []]]));
+    expect(res).toEqual({ ok: true, rows: [] });
+  });
+
+  it('an order a person put aside is in no group (owner 2026-10-21)', async () => {
+    const res = await run(
+      { mfg_sales_orders: [order({ doc_no: 'HC-SO-2610-066', venue: 'KLCC', branding: 'SERVICE', fair_put_aside_at: '2026-10-21T09:00:00Z' })], scan_jobs: [] },
+      fakeDb([[BY_IDS, BOOTHS], [AT_VENUE, []]]),
+    );
     expect(res).toEqual({ ok: true, rows: [] });
   });
 

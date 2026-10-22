@@ -107,6 +107,19 @@ export function useFairOptions(soDate: string | null | undefined) {
   });
 }
 
+/** EVERY fair of the company, any place, any date, newest first (backend GET
+ *  /fair-options/all, owner 2026-10-21: 「我这里link fair 要可以选完全部fair」).
+ *  For Fair Links, and only for Finance / PMS — the server refuses anyone else,
+ *  so ask only when `enabled`. One read for the whole page. */
+export function useAllFairOptions(enabled: boolean) {
+  return useQuery({
+    queryKey: ['fair-options', 'all'],
+    queryFn: () => authedFetch<{ fairs: FairOption[] }>('/mfg-sales-orders/fair-options/all').then((r) => r.fairs),
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
 /** Why no fair was filled in for the person keying the order. Sent back to
  *  POST /validate as `fairWhy`, which words the refusal from it. */
 export type FairWhy =
@@ -145,19 +158,54 @@ export type FairPendingRow = {
   status: string | null;
   local_total_sen: number | null;
   salesperson_id: string | null;
+  /** The Ref No. — the slip number the evening report lists. Shown with the
+   *  SO page's rule (lib/customer-ref.ts). Absent from an older server. */
+  ref?: string | null;
+  customer_so_no?: string | null;
+  /** Put aside on Fair Links (owner 2026-10-21): when, and by whom. Only the
+   *  folded "Put aside" group's rows carry them. */
+  fair_put_aside_at?: string | null;
+  fair_put_aside_by?: string | null;
 };
 
 /** Orders with no fair link a person should see (backend scm/lib/fair-pending.ts).
  *  The reasons share this list and the screen keeps them apart — see the
  *  `fair_match` column. */
+type FairPendingResponse = { rows: FairPendingRow[]; putAside?: FairPendingRow[] };
+
+/** One read, two views of it: the list, and the orders put aside. */
+const fairPendingQuery = (limit: number) => ({
+  queryKey: ['fair-pending', 'list', limit],
+  queryFn: () => authedFetch<FairPendingResponse>(`/mfg-sales-orders/fair-pending?limit=${limit}`),
+  staleTime: 30_000,
+});
+
 export function useFairPending(limit = 200) {
-  return useQuery({
-    queryKey: ['fair-pending', limit],
-    queryFn: () =>
-      authedFetch<{ rows: FairPendingRow[] }>(
-        `/mfg-sales-orders/fair-pending?limit=${limit}`,
-      ).then((r) => r.rows),
-    staleTime: 30_000,
+  return useQuery({ ...fairPendingQuery(limit), select: (r: FairPendingResponse) => r.rows });
+}
+
+/** The orders a person put aside on Fair Links (owner 2026-10-21), most
+ *  recently put aside first — from the same read as the list. */
+export function useFairPutAside(limit = 200) {
+  return useQuery({ ...fairPendingQuery(limit), select: (r: FairPendingResponse) => r.putAside ?? [] });
+}
+
+/** Put an order aside on Fair Links, or bring it back (backend scm/lib/fair-
+ *  put-aside.ts). Finance or PMS; the list, the checks and the menu's count
+ *  all sit under ['fair-pending'], so they all refresh. */
+export function usePutAside() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ docNo, aside }: { docNo: string; aside: boolean }) =>
+      authedFetch<{ ok: true; changed: boolean }>(`/mfg-sales-orders/${encodeURIComponent(docNo)}/fair-put-aside`, {
+        method: 'POST',
+        body: JSON.stringify({ aside }),
+      }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['fair-pending'] });
+      await qc.invalidateQueries({ queryKey: ['mfg-sales-orders'] });
+    },
+    onError: writeFailedAs('Put aside not saved'),
   });
 }
 
@@ -172,9 +220,17 @@ export type FairCheckRow = Omit<FairPendingRow, 'fair_match'> & {
   check: 'VENUE_DIFFERS' | 'NEEDS_ATTENDING' | 'REPORT_ELSEWHERE';
   note: string;
   /** REPORT_ELSEWHERE: the booth the report puts it at; null when two fairs'
-   *  reports both list it. */
-  target?: { projectId: number; label: string; reportDate: string | null } | null;
+   *  reports both list it. `title` / `detail` are its two lines (owner
+   *  2026-10-21); an older server sends `label` only. */
+  target?: ({ projectId: number; label: string; reportDate: string | null } & Partial<FairCheckBooth>) | null;
+  /** REPORT_ELSEWHERE: the booth the order is under now; null with none. */
+  current?: FairCheckBooth | null;
+  /** REPORT_ELSEWHERE with no target: the booths whose reports both list it. */
+  candidates?: FairCheckBooth[];
 };
+
+/** A booth on two lines: "[AKEMI] HOMELOVE" over "IOIGECC · 10/09 - 10/11". */
+export type FairCheckBooth = { projectId: number; title: string; detail: string };
 
 export type FairTransferResult =
   | { docNo: string; ok: true; projectId: number; venue: string; fairDate: string | null }

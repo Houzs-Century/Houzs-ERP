@@ -3638,7 +3638,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         builtCompartments: built,
       });
     }
-    const specialModels = await specialDeliveryFeesForLines(sb, deliveryRuleLines, comboModulesById);
+    const specialModels = await specialDeliveryFeesForLines(sb, deliveryRuleLines, comboModulesById, companyId);
 
     /* Phase 2 — cross-order link. Sales typed the earlier SO's doc_no at
        handover. Validate it (exists, not cancelled, same customer by phone
@@ -5073,8 +5073,8 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
   const isConfirm = fromNorm === 'DRAFT' && toStatus === 'CONFIRMED';
   if (isConfirm) {
     const confirmProblems = await soConfirmProblemsForDoc(sb, docNo);
-    /* ...and the fair (owner 2026-10-19): a fair or No fair; a scan's booth needs
-       the person who scanned it on Sales Attending — fair-binding.ts. */
+    /* ...and the fair (owner 2026-10-19): a fair or No fair — fair-binding.ts
+       (Sales Attending no longer stops it, owner 2026-10-22). */
     confirmProblems.push(...await fairConfirmProblems({
       sb, db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), companyCode: c.get('companyCode'),
       scope: (q) => scopeToCompanyId(q, co.companyId), docNo, confirmerId: Number(c.get('houzsUser')?.id ?? NaN), todayMyt: todayMyt(),
@@ -5732,7 +5732,7 @@ async function recomputeDeliveryFeeAttempt(
       }),
     );
     const comboModulesById = await loadComboModulesById(sb, c);
-    specialModels = await specialDeliveryFeesForLines(sb, deliveryRuleLines, comboModulesById);
+    specialModels = await specialDeliveryFeesForLines(sb, deliveryRuleLines, comboModulesById, activeCompanyId(c));
   }
 
   // Key by company_id (2990's row is id=100001); id=1 fallback when unresolved

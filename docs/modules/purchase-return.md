@@ -56,6 +56,7 @@ The code is stored in the EXISTING `reason` column — no migration, no rewrite.
 ## Rules that must not break
 
 - The PO-sourced pool must never fall back to matching receipts by `grns.purchase_order_id` alone — that is the read that hid a fully received PO's units. Only an UNLINKED line may be claimed by the header.
+- A return raised from the PO saves `grn_id` NULL (its lines can span several receipts), so anything that finds returns must read the LINE link (`purchase_return_items.grn_item_id`) as well as the header. The relationship map read the header only and HC-PO-010114's map showed no return for HC-PRT-2610-001 (HC-0139).
 - A REPAIR return must never chase a credit note, and its stock must land somewhere: the OUT/IN pair is written together in `writePurchaseReturnMovements`, and a failed IN is REPORTED (goods left the warehouse and landed nowhere is the one outcome a repair must not hide).
 - The reason must stay a code from the shared catalogue, validated on the server. A second list — in the route, in the form, in a test fixture — is the drift this pattern exists to prevent (same shape as the stock-adjustment reasons).
 - `PATCH /:id/post` must stay idempotent — re-running it on an already-POSTED/COMPLETED row must never re-write movements (double-debits inventory).

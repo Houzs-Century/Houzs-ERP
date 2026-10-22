@@ -16,7 +16,12 @@ const assrSvc = vi.hoisted(() => ({
 const projectsSvc = vi.hoisted(() => ({ setChecklistStatus: vi.fn(async () => true) }));
 const surveySvc = vi.hoisted(() => ({ sendCompletionSurvey: vi.fn(async () => undefined) }));
 vi.mock('../src/services/assr', () => assrSvc);
-vi.mock('../src/services/projects', () => projectsSvc);
+// Keep the REAL getUserPhasesOnProject (the project row-scope gate now uses it,
+// reading the project off env.DB = fakeDb); only setChecklistStatus is stubbed.
+vi.mock('../src/services/projects', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/services/projects')>()),
+  setChecklistStatus: projectsSvc.setChecklistStatus,
+}));
 vi.mock('../src/services/assrCompletionSurvey', () => surveySvc);
 vi.mock('../src/scm/middleware/auth', () => ({ supabaseAuth: async (_c: unknown, next: () => Promise<void>) => next() }));
 

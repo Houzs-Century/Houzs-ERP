@@ -752,6 +752,18 @@ export function useAddStockTakeLine() {
   });
 }
 
+/* HC-0140: remove a line added during the count (the server refuses a sheet line). */
+export function useDeleteStockTakeLine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, lineId }: { id: string; lineId: string }) =>
+      authedFetch<{ ok: true }>(`/stock-takes/${id}/lines/${lineId}`, { method: 'DELETE' }),
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: ['stock-takes', vars.id] });
+    },
+  });
+}
+
 /* Round 2: the racks the Rack column can name (this company's racks of the take's warehouse). */
 export function useStockTakeRacks(takeId: string | null) {
   return useQuery({

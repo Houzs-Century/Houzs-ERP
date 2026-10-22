@@ -329,8 +329,14 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
       all: async () => ({
         results: /\bprojects\b/i.test(sql)
           ? [{
-              id: 10, code: 'PRJ-1', name: 'Expo Build', venue: 'Hall 3', venue_address: 'Hall 3, KLCC',
+              id: 10, code: 'PRJ-1', name: 'Expo Build', brand: 'AKEMI', venue: 'Hall 3', venue_address: 'Hall 3, KLCC',
               state: 'Selangor', setup_start_at: '2026-09-10', dismantle_start_at: null,
+              // Crew lives in the per-phase JSON (the editor path); the scalar
+              // driver/lorry are stale fallbacks that the JSON must override.
+              setup_crew: JSON.stringify({
+                lorry_crew: [{ plate: 'VRH1', drivers: [{ name: 'JSON Driver', phone: '+60111' }], helpers: [{ name: 'Helper One', phone: '+60122' }, { name: 'Helper Two', phone: '+60133' }] }],
+              }),
+              dismantle_crew: null,
               setup_driver_name: 'Driver A', setup_lorry_plate: 'WXX1', dismantle_driver_name: null, dismantle_lorry_plate: null,
             }]
           : [{
@@ -373,11 +379,27 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
   it('shows one SO row plus an ASSR, a DP and a project row', async () => {
     const res = await build().request('/delivery-planning', undefined, { DB: fakeD1 } as never);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { orders?: Array<{ row_type: string; so_doc_no: string; ref: string | null; dp_no: string | null }> };
+    type Crew = { driver_1_name: string | null; driver_1_contact: string | null; helper_1_name: string | null; helper_2_name: string | null; lorry_plate: string | null } | null;
+    const body = (await res.json()) as { orders?: Array<{ row_type: string; so_doc_no: string; ref: string | null; dp_no: string | null; branding: string | null; delivery_state: string | null; crew: Crew }> };
     const byType = (t: string) => (body.orders ?? []).filter((o) => o.row_type === t);
     expect(byType('so').map((o) => o.so_doc_no)).toEqual(['HC-SO-2608-001']);
     expect(byType('assr')).toHaveLength(1);       // the fake ASSR union row, delivery leg
     expect(byType('dp').map((o) => o.dp_no)).toEqual(['DP-1']);
     expect(byType('project').map((o) => o.so_doc_no)).toEqual(['PRJ:10#SETUP']);
+    // Branding column fills for a project leg from the PMS project's brand (read-only).
+    expect(byType('project').map((o) => o.branding)).toEqual(['AKEMI']);
+    // Owner 2026-10-21 — the Delivered tab shows every job type: a project window
+    // whose date has already passed is done, while an OPEN service case is still
+    // pending (and a dated DP job that is not yet delivered is pending too).
+    expect(byType('project')[0]?.delivery_state).toBe('DELIVERED'); // setup 2026-09-10 is in the past
+    expect(byType('assr')[0]?.delivery_state).toBe('PENDING_DELIVERY'); // OPEN case, no closed_at
+    // Crew (driver + phone, both helpers, lorry) is pulled from the per-phase crew
+    // JSON and OVERRIDES the stale scalar driver/lorry fallback (Driver A / WXX1).
+    const projCrew = byType('project')[0]?.crew;
+    expect(projCrew?.driver_1_name).toBe('JSON Driver');
+    expect(projCrew?.driver_1_contact).toBe('+60111');
+    expect(projCrew?.helper_1_name).toBe('Helper One');
+    expect(projCrew?.helper_2_name).toBe('Helper Two');
+    expect(projCrew?.lorry_plate).toBe('VRH1');
   });
 });

@@ -4,7 +4,7 @@
 // ORDER lines. Pinned through a minimal fake PostgREST client, the same shape
 // as scm/lib/so-converted-po.test.ts, because the D1 test harness has no scm.
 import { describe, expect, test } from 'vitest';
-import { attachOrderPurchaseOrders, orderPoSupplierCode } from './assrOrderPos';
+import { attachOrderPurchaseOrders, orderPoSupplierCode, orderSupplierCode } from './assrOrderPos';
 
 type Row = Record<string, unknown>;
 
@@ -152,5 +152,52 @@ describe('orderPoSupplierCode', () => {
     expect(await orderPoSupplierCode(fakeSb(po), 'HC-SO-1', 'CHAIR-1', HOUZS)).toBeNull();
     expect(await orderPoSupplierCode(fakeSb(po), null, 'BED-1', HOUZS)).toBeNull();
     expect(await orderPoSupplierCode(fakeSb(po), 'HC-SO-1', 'BED-1', null)).toBeNull();
+  });
+});
+
+// HC-0130 reopen (Farra, 21 Oct): no PO -> the supplier the SO item is bound
+// to (a mattress is often never PO'd); neither -> null, Service Team picks.
+describe('orderSupplierCode', () => {
+  const t = {
+    mfg_sales_order_items: [
+      { id: 'l-bed', doc_no: 'HC-SO-2', item_code: 'BED-1', company_id: HOUZS },
+      { id: 'l-mat', doc_no: 'HC-SO-2', item_code: 'MAT-1', company_id: HOUZS },
+      { id: 'l-two', doc_no: 'HC-SO-2', item_code: 'MAT-2', company_id: HOUZS },
+      { id: 'l-nob', doc_no: 'HC-SO-2', item_code: 'MAT-3', company_id: HOUZS },
+    ],
+    purchase_order_items: [{ so_item_id: 'l-bed', purchase_order_id: 'po-bed', company_id: HOUZS }],
+    purchase_orders: [
+      { id: 'po-bed', po_number: 'HC-PO-9', po_date: '2026-10-01', status: 'SUBMITTED', company_id: HOUZS, supplier: { code: '400-PO01' } },
+    ],
+    supplier_material_bindings: [
+      { item_code: 'BED-1', material_kind: 'mfg_product', company_id: HOUZS, is_main_supplier: true, supplier: { code: '400-BIND' } },
+      { item_code: 'MAT-1', material_kind: 'mfg_product', company_id: HOUZS, is_main_supplier: false, supplier: { code: '400-ALT' } },
+      { item_code: 'MAT-1', material_kind: 'mfg_product', company_id: HOUZS, is_main_supplier: true, supplier: { code: '400-MAT' } },
+      { item_code: 'MAT-1', material_kind: 'mfg_product', company_id: CO_2990, is_main_supplier: true, supplier: { code: '400-OTHER' } },
+      { item_code: 'MAT-2', material_kind: 'mfg_product', company_id: HOUZS, is_main_supplier: false, supplier: { code: '400-A' } },
+      { item_code: 'MAT-2', material_kind: 'mfg_product', company_id: HOUZS, is_main_supplier: false, supplier: { code: '400-B' } },
+      { item_code: 'MAT-9', material_kind: 'mfg_product', company_id: HOUZS, is_main_supplier: true, supplier: { code: '400-NOSO' } },
+    ],
+  };
+
+  test('a PO supplier beats the SO binding', async () => {
+    expect(await orderSupplierCode(fakeSb(t), 'HC-SO-2', 'BED-1', HOUZS)).toEqual({ code: '400-PO01', source: 'po' });
+  });
+
+  test("no PO -> the SO item's main bound supplier, in the case's own company", async () => {
+    const seen: string[] = [];
+    expect(await orderSupplierCode(fakeSb(t, seen), 'HC-SO-2', 'MAT-1', HOUZS)).toEqual({ code: '400-MAT', source: 'so' });
+    expect(seen).toContain('supplier_material_bindings.company_id=1');
+  });
+
+  test('SO line in the ERP but several suppliers and no main, or no binding -> null (blank)', async () => {
+    expect(await orderSupplierCode(fakeSb(t), 'HC-SO-2', 'MAT-2', HOUZS)).toBeNull();
+    expect(await orderSupplierCode(fakeSb(t), 'HC-SO-2', 'MAT-3', HOUZS)).toBeNull();
+  });
+
+  test('SO or SO line not in the ERP -> so-missing (the caller keeps the supplier)', async () => {
+    expect(await orderSupplierCode(fakeSb(t), 'HC-SO-2', 'MAT-9', HOUZS)).toBe('so-missing');
+    expect(await orderSupplierCode(fakeSb(t), 'SO-001911', 'MAT-1', HOUZS)).toBe('so-missing');
+    expect(await orderSupplierCode(fakeSb(t), 'HC-SO-2', 'MAT-1', null)).toBe('so-missing');
   });
 });

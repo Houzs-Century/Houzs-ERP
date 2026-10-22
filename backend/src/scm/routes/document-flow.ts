@@ -714,7 +714,7 @@ documentFlow.get('/:type/:id', async (c) => {
         }
         const prsByHeader = await readIn('orphan purchase_returns', grnIds, (b, f, t) =>
           scopeToCompany(sb.from('purchase_returns').select('id, return_number, status, grn_id').in('grn_id', b), c).order('id').range(f, t));
-        const seenPr = new Set(prsByHeader.map((p: any) => p.id));
+        const seenPr = new Set(prsByHeader.map((p) => p.id));
         const prsByLine = await readIn('orphan purchase_returns(by line)', [...notesByPr.keys()].filter((pid) => !seenPr.has(pid)), (b, f, t) =>
           scopeToCompany(sb.from('purchase_returns').select('id, return_number, status, grn_id').in('id', b), c).order('id').range(f, t));
         for (const p of [...prsByHeader, ...prsByLine]) {
@@ -1106,19 +1106,21 @@ documentFlow.get('/:type/:id', async (c) => {
   // A Purchase Return reverses goods on a Goods Receipt. It hangs off the GRN,
   // mirroring how a Delivery Return hangs off its DO. Coverage compares returned
   // qty to the GRN line qty.
-  /* Discovered by the LINE link (grn_item_id in this family's GRN lines) UNION
-     the header FK, like the PIs above: a return raised from the PO page names
-     no header GRN at all (HC-0139, PO010114), so a header-only read hid it. */
   if (grnIds.length) {
+    /* A return raised from the PO (Raise Return, ?poId=) draws lines from
+       several receipts and leaves the header grn_id NULL, so the header FK
+       alone hid it from the PO's map (HC-0139, HC-PRT-2610-001). Discover by
+       the LINE link UNION the header, same as the Purchase Invoices above. */
     const prLinesByGrnItem = await readIn('purchase_return_items(by grn line)', grnItemIds, (b, f, t) =>
-      sb.from('purchase_return_items').select('id, purchase_return_id, grn_item_id, qty_returned').in('grn_item_id', b).order('id').range(f, t));
+      sb.from('purchase_return_items').select('purchase_return_id').in('grn_item_id', b).order('id').range(f, t));
     const prByHeader = await readIn('purchase_returns', grnIds, (b, f, t) =>
       sb.from('purchase_returns').select('id, return_number, status, grn_id').in('grn_id', b).order('id').range(f, t));
     const knownPrIds = new Set(prByHeader.map((p: any) => p.id));
-    const prByLine = await readIn('purchase_returns(by line)', uniq(prLinesByGrnItem.map((l: any) => l.purchase_return_id)).filter((pid) => !knownPrIds.has(pid)), (b, f, t) =>
+    const missingPrIds = uniq(prLinesByGrnItem.map((l: any) => l.purchase_return_id)).filter((pid) => !knownPrIds.has(pid));
+    const prByLine = await readIn('purchase_returns(by line)', missingPrIds, (b, f, t) =>
       sb.from('purchase_returns').select('id, return_number, status, grn_id').in('id', b).order('id').range(f, t));
     const prs = [...prByHeader, ...prByLine];
-    const prIds = prs.map((p: any) => p.id);
+    const prIds = uniq(prs.map((p: any) => p.id));
     const prLineLinks = await readIn('purchase_return_items', prIds, (b, f, t) =>
       sb.from('purchase_return_items').select('id, purchase_return_id, grn_item_id, qty_returned').in('purchase_return_id', b).order('id').range(f, t));
     const grnToPr = new Map<string, { childQty: number; parentItems: Set<string> }>(); // `${grnId}|${prId}`
@@ -1134,8 +1136,6 @@ documentFlow.get('/:type/:id', async (c) => {
     for (const p of prs) {
       const k = keyOf('pr', p.id);
       nodes.set(k, { key: k, type: 'pr', id: p.id, label: p.return_number ?? p.id, status: p.status ?? null, isAnchor: k === anchorKey });
-      // One edge per GRN the return's lines came from; the header FK is the
-      // fallback for a return with no line links.
       const returned = [...grnToPr.entries()].filter(([key]) => key.endsWith(`|${p.id}`));
       if (returned.length) {
         for (const [key, agg] of returned) {

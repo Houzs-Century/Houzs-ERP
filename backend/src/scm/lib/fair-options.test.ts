@@ -16,6 +16,7 @@ import {
   fairMissingMessage,
   companyUsesKeyerFair,
   resolveFairWithKeyer,
+  allFairOptions,
   type FairProjectRow,
 } from './fair-options';
 
@@ -126,6 +127,29 @@ describe('buildFairOptions — one row is a place plus an organizer', () => {
        written up. 2 Oct minus 28 days is 4 Sep, so EDGE OF WINDOW is the last
        row that qualifies and TOO OLD misses by a day. */
     expect(earlier.map((o) => o.venue)).toEqual(['SEPTEMBER HALL', 'EDGE OF WINDOW']);
+  });
+
+  it('Fair Links offers EVERY fair — any place, any date, newest first, booths kept (owner 2026-10-21)', () => {
+    /* 「我这里link fair 要可以选完全部fair」: HC-SO-2610-002's slip says PISA SPICE ARENA,
+       PMS says SETIA SPICE CONVENTION CENTRE, so the order's own place never reached it. */
+    const rows = [
+      fair({ projectId: 2235, venue: 'SETIA SPICE CONVENTION CENTRE', organizer: 'HOMEDEC', startDate: '2026-10-02', endDate: '2026-10-04' }),
+      fair({ projectId: 2246, venue: 'SETIA SPICE CONVENTION CENTRE', organizer: 'HOMEDEC', brand: 'ZANOTTI', startDate: '2026-10-02', endDate: '2026-10-04' }),
+      fair({ projectId: 68, venue: 'PISA SPICE ARENA CONVENTION CENTRE', organizer: 'MLE', startDate: '2026-07-03', endDate: '2026-07-05' }),
+      fair({ projectId: 61, venue: 'PISA SPICE ARENA CONVENTION CENTRE', organizer: 'MEGAHOME', startDate: '2026-11-06', endDate: '2026-11-08' }),
+      fair({ projectId: 9, venue: 'OLD HALL', startDate: '2024-03-01', endDate: '2024-03-03' }),
+      fair({ projectId: 10, venue: 'GONE HALL', status: 'cancelled' }),
+    ];
+    const all = allFairOptions(rows);
+    expect(all.map((o) => [o.venue, o.startDate])).toEqual([
+      ['PISA SPICE ARENA CONVENTION CENTRE', '2026-11-06'],
+      ['SETIA SPICE CONVENTION CENTRE', '2026-10-02'],
+      ['PISA SPICE ARENA CONVENTION CENTRE', '2026-07-03'],
+      ['OLD HALL', '2024-03-01'],
+    ]);
+    expect(all[1]!.booths).toEqual([{ projectId: 2235, brand: 'AKEMI' }, { projectId: 2246, brand: 'ZANOTTI' }]);
+    /* The order form's four weeks are untouched. */
+    expect(buildFairOptions(rows, '2026-10-02').running.map((o) => o.venue)).toEqual(['SETIA SPICE CONVENTION CENTRE']);
   });
 
   it('keeps two occurrences of ONE venue+organizer apart by their dates', () => {

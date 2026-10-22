@@ -889,6 +889,58 @@ export const addStockTakeLineHandler = async (c: any) => {
 };
 stockTakes.post('/:id/lines', addStockTakeLineHandler);
 
+// ── Delete a line added during the count ─────────────────────────────
+/* HC-0140: an added line typed by mistake can be removed while OPEN. Only an
+   added line: a sheet line is what the system expected on the shelf, and
+   leaving it blank already makes Post skip it. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client / Hono context without generated types; same as every handler in this file
+export const deleteStockTakeLineHandler = async (c: any) => {
+  const sb = c.get('supabase');
+  const id = c.req.param('id');
+  const lineId = c.req.param('lineId');
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
+  const { data: prev, error: prevErr } = await scopeToCompanyId(
+    sb.from('stock_takes').select('status, take_no, company_id').eq('id', id),
+    co.companyId,
+  ).maybeSingle();
+  if (prevErr) return c.json({ error: 'load_failed', reason: prevErr.message }, 500);
+  if (!prev) return c.json(NOT_THIS_COMPANY, 404);
+  const head = prev as { status: string; take_no: string; company_id: number | null };
+  if (head.status !== 'OPEN') return c.json({ error: 'not_open' }, 409);
+
+  const { data: ln, error: lnErr } = await scopeToCompanyId(
+    sb.from('stock_take_lines').select('id, item_code, counted_qty, added_on_count')
+      .eq('id', lineId).eq('stock_take_id', id),
+    co.companyId,
+  ).maybeSingle();
+  if (lnErr) return c.json({ error: 'load_failed', reason: lnErr.message }, 500);
+  if (!ln) return c.json({ error: 'line_not_found' }, 404);
+  const line = ln as { id: string; item_code: string; counted_qty: number | null; added_on_count: boolean | null };
+  if (line.added_on_count !== true) {
+    return c.json({ error: 'sheet_line', message: 'Only a line added during the count can be deleted. Leave a sheet line blank instead.' }, 409);
+  }
+
+  const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TAKE', entityId: id, action: 'UPDATE', companyId: head.company_id });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+
+  const { error: dErr } = await scopeToCompanyId(
+    sb.from('stock_take_lines').delete().eq('id', lineId).eq('stock_take_id', id).eq('added_on_count', true),
+    co.companyId,
+  );
+  if (dErr) return c.json({ error: 'delete_failed', reason: dErr.message }, 500);
+
+  await recordEntityAudit(sb, {
+    entityType: 'STOCK_TAKE', entityId: id, entityDocNo: head.take_no, action: 'UPDATE',
+    actor: c.get('houzsUser'), companyId: head.company_id, statusSnapshot: 'OPEN',
+    note: 'Added line deleted',
+    fieldChanges: compactChanges([fieldChange(line.item_code, line.counted_qty, null)]),
+  });
+  return c.json({ ok: true });
+};
+stockTakes.delete('/:id/lines/:lineId', deleteStockTakeLineHandler);
+
 // ── Racks of the take's warehouse (round 2) ──────────────────────────
 /* What the Rack column can name: this company's racks of the take's own
    warehouse (a shared building is one record per company — warehouses.md). */

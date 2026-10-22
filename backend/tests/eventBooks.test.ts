@@ -134,6 +134,35 @@ describe('a row the books fill', () => {
     expect(sumOf(lines, 'rental')).toBe(6500);
   });
 
+  test('money only coming back does not replace the typed figure — it is taken off it (owner 2026-10-22)', () => {
+    /* #343 [AKEMI] MALL MGT @ IOI CITY MALL PUTRAJAYA: rental typed 45,900; the
+       books hold only HC-ODB-2609-004 billing the partner's half back. It read
+       -22,950 and the Books-not-complete list said "missing". */
+    const { lines, books } = applyEventBooks(7, [typed(1, 'rental', 45900)], {
+      ok: true,
+      legs: [leg({ leg_id: 'odb', debit_sen: 0, credit_sen: 2295000, source_type: 'ODB', source_doc_no: 'HC-ODB-2609-004' })],
+    }, LEDGER_COST_CATEGORIES);
+    expect(books.rows).toEqual([]);
+    expect(books.replaced).toEqual([]);
+    expect(books.closed_categories).toEqual([]);
+    expect(sumOf(lines, 'rental')).toBe(22950);
+    /* Once the mall's own rental is booked, the books fill the row as before. */
+    const paid = applyEventBooks(7, [typed(1, 'rental', 45900)], {
+      ok: true,
+      legs: [leg({ leg_id: 'pv', debit_sen: 4590000 }), leg({ leg_id: 'odb', debit_sen: 0, credit_sen: 2295000, source_type: 'ODB' })],
+    }, LEDGER_COST_CATEGORIES);
+    expect(paid.books.rows).toEqual(['rental']);
+    expect(sumOf(paid.lines, 'rental')).toBe(22950);
+  });
+
+  test('on a % row any leg still fills it, so a credit is never lost under the rate card', () => {
+    const { books } = applyEventBooks(7, [], {
+      ok: true,
+      legs: [leg({ leg_id: 'c', account_code: '900-C003', account_name: 'COMMISSION', pms_row: 'commission', debit_sen: 0, credit_sen: 50000 })],
+    }, LEDGER_COST_CATEGORIES);
+    expect(books.rows).toEqual(['commission']);
+  });
+
   test('no money on the event changes nothing', () => {
     const ledger = [typed(1, 'rental', 7000)];
     const out = applyEventBooks(7, ledger, { ok: true, legs: [] }, LEDGER_COST_CATEGORIES);

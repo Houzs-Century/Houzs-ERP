@@ -584,13 +584,11 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     key: 'desc',
     label: 'Description',
     width: '240px',
-    getValue: (r) => `${r.product_name} ${r.branding ?? ''}`,
-    render: (r) => (
-      <>
-        {r.product_name}
-        {r.branding && <span className={styles.numCellZero}> · {r.branding}</span>}
-      </>
-    ),
+    /* Name only (HC-0142, Sim): the export fed stock-check sheets as
+       "AKEMI ARISTOI MATTRESS (...) AKEMI" / "... BEDFRAME (6FT) BEDFRAME" —
+       the name already carries the brand, the suffix only polluted it. */
+    getValue: (r) => r.product_name,
+    render: (r) => r.product_name,
   },
   {
     key: 'category',

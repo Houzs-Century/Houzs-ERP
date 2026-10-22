@@ -68,11 +68,54 @@ export function kickOffBoardReads(
    the err so that behaviour is byte-identical — only the waiting moves earlier.
    The query text is moved verbatim from the handler; delivery-planning.board.test.ts
    now seeds all three sub-boards so a move that broke one would fail there. */
+/* The PMS crew editor stores crew as free-form JSON on projects.setup_crew /
+   dismantle_crew — a per-lorry structure (`lorry_crew`) plus flattened top-level
+   arrays, each person a {name, phone} with NO user id (see services/projects.ts).
+   The board is a read-only mirror, so flatten the JSON to exactly what its crew
+   columns read: driver names (with phone), helper names, and lorry plates. Prefer
+   the per-lorry arm (authoritative); fall back to the flattened top-level arrays
+   an older save may carry. Any parse failure yields empty, and the caller then
+   falls back to the legacy scalar driver/lorry join. */
+type CrewPersonJson = { name?: unknown; phone?: unknown };
+export function flattenProjectCrew(json: string | null): {
+  drivers: Array<{ name: string; phone: string | null }>;
+  helpers: string[];
+  plates: string[];
+} {
+  const empty = { drivers: [] as Array<{ name: string; phone: string | null }>, helpers: [] as string[], plates: [] as string[] };
+  if (!json) return empty;
+  let parsed: unknown;
+  try { parsed = JSON.parse(json); } catch { return empty; }
+  if (!parsed || typeof parsed !== 'object') return empty;
+  const obj = parsed as Record<string, unknown>;
+  const nameOf = (p: CrewPersonJson): string => (typeof p.name === 'string' ? p.name.trim() : '');
+  const phoneOf = (p: CrewPersonJson): string | null => (typeof p.phone === 'string' && p.phone.trim() ? p.phone.trim() : null);
+  const drivers: Array<{ name: string; phone: string | null }> = [];
+  const helpers: string[] = [];
+  const plates: string[] = [];
+  const lorryCrew = Array.isArray(obj.lorry_crew) ? (obj.lorry_crew as Array<Record<string, unknown>>) : [];
+  if (lorryCrew.length) {
+    for (const l of lorryCrew) {
+      const plate = typeof l.plate === 'string' ? l.plate.trim() : '';
+      if (plate) plates.push(plate);
+      for (const d of (Array.isArray(l.drivers) ? (l.drivers as CrewPersonJson[]) : [])) { const n = nameOf(d); if (n) drivers.push({ name: n, phone: phoneOf(d) }); }
+      for (const h of (Array.isArray(l.helpers) ? (l.helpers as CrewPersonJson[]) : [])) { const n = nameOf(h); if (n) helpers.push(n); }
+    }
+  } else {
+    for (const d of (Array.isArray(obj.drivers) ? (obj.drivers as CrewPersonJson[]) : [])) { const n = nameOf(d); if (n) drivers.push({ name: n, phone: phoneOf(d) }); }
+    for (const h of (Array.isArray(obj.helpers) ? (obj.helpers as CrewPersonJson[]) : [])) { const n = nameOf(h); if (n) helpers.push(n); }
+    for (const pl of (Array.isArray(obj.lorries) ? (obj.lorries as unknown[]) : [])) { if (typeof pl === 'string' && pl.trim()) plates.push(pl.trim()); }
+  }
+  return { drivers, helpers, plates };
+}
+
 const PROJECT_UNION_SQL =
-  `SELECT p.id AS id, p.code AS code, p.name AS name,
+  `SELECT p.id AS id, p.code AS code, p.name AS name, p.brand AS brand,
               p.venue AS venue, p.venue_address AS venue_address, p.state AS state,
               p.setup_start_at     AS setup_start_at,
               p.dismantle_start_at AS dismantle_start_at,
+              p.setup_crew     AS setup_crew,
+              p.dismantle_crew AS dismantle_crew,
               sd.name  AS setup_driver_name,     sl.plate AS setup_lorry_plate,
               dd.name  AS dismantle_driver_name, dl.plate AS dismantle_lorry_plate
          FROM projects p
@@ -87,6 +130,7 @@ export function kickOffSubBoardReads(
   c: Context<{ Bindings: Env; Variables: Variables }>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- sb is the scm service client, as in kickOffBoardReads
   sb: any,
+  recentClosedSince: string,
 ) {
   /* Each read is built AND awaited inside an async try/catch so a SYNCHRONOUS throw
      (e.g. c.env.DB absent — the handler used to call these inside the sub-board
@@ -95,14 +139,16 @@ export function kickOffSubBoardReads(
      already guards each sub-board, so a failed read still just logs + leaves the
      other rows — byte-identical to before, only started earlier. */
   // Explicit lowercase aliases → deterministic snake_case result keys
-  // (sidesteps any driver camelCasing). Only OPEN cases with a trigger date.
+  // (sidesteps any driver camelCasing). OPEN cases, plus recently-closed ones
+  // (leg on/after recentClosedSince) so done legs can reach the Delivered tab.
   const assrRowsP = (async () => {
     try {
-      return { ok: await c.env.DB.prepare(assrBoardUnionSql(c)).all<{
+      return { ok: await c.env.DB.prepare(assrBoardUnionSql(c, recentClosedSince)).all<{
         id: number | null; assr_no: string | null; company_id: number | null; status: string | null;
         customer_name: string | null; phone: string | null; location: string | null;
         customer_pickup_at: string | null; inspection_visit_at: string | null;
         inspection_by: string | null; do_date: string | null;
+        closed_at: string | null; archived_at: string | null;
         addr1: string | null; addr2: string | null; addr3: string | null; addr4: string | null;
         so_state: string | null; so_postcode: string | null; so_country: string | null;
       }>() } as const;
@@ -114,7 +160,9 @@ export function kickOffSubBoardReads(
       let dpQuery = sb.from('dp_orders')
         .select('id, dp_no, job_type, party_name, contact_phone, address1, address2, address3, address4, city, postcode, state, requested_date, status, trip_id')
         .is('so_doc_no', null).is('assr_case_id', null).is('do_id', null)
-        .not('status', 'in', '("DELIVERED","CANCELLED")')
+        // Keep CANCELLED off the board, but KEEP DELIVERED (owner 2026-10-21: a
+        // finished DP job belongs on the Delivered tab, not hidden).
+        .neq('status', 'CANCELLED')
         .limit(1000);
       dpQuery = scopeToAllowedCompanies(dpQuery, c);
       return { ok: await dpQuery } as const;
@@ -124,9 +172,10 @@ export function kickOffSubBoardReads(
   const projRowsP = (async () => {
     try {
       return { ok: await c.env.DB.prepare(PROJECT_UNION_SQL).all<{
-        id: number | null; code: string | null; name: string | null;
+        id: number | null; code: string | null; name: string | null; brand: string | null;
         venue: string | null; venue_address: string | null; state: string | null;
         setup_start_at: string | null; dismantle_start_at: string | null;
+        setup_crew: string | null; dismantle_crew: string | null;
         setup_driver_name: string | null; setup_lorry_plate: string | null;
         dismantle_driver_name: string | null; dismantle_lorry_plate: string | null;
       }>() } as const;

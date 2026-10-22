@@ -26,7 +26,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, ArrowRight, CheckCheck, Download, Undo2, Upload } from 'lucide-react';
 import {
   useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
@@ -48,20 +48,24 @@ import grid from './MerchantRecon.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtDate } from '../../vendor/shared/format';
 import { markWorkspaceOpenIntent } from '../../lib/workspaceTabs';
+import { rememberReturnScroll, useReturnScroll } from '../../lib/returnScroll';
 
 /* ── The order behind a line, one click away ──────────────────────────────────
    Owner 2026-10-21: 点开那个 HC-SO-013512 这些 sales order 直接打开整张 sales
    order. An order number opens the whole order in its OWN tab of the in-app
    strip — the convention of Fair Links and the project page's order list
    (lib/openDocInTab) — so the report stays one click away; Ctrl/Cmd-click opens
-   a browser window. An invoice payment's number stays text: the invoice page
-   is reached by an id this screen does not carry. */
+   a browser window. The order's Back closes that tab and returns here, to the
+   same report at the same spot (owner 2026-10-21: 返回也要返回 merchant recon)
+   — so the spot is noted as the link is clicked. An invoice payment's number
+   stays text: the invoice page is reached by an id this screen does not
+   carry. */
 const DocLink = ({ source, docNo, bold }: { source: string | null | undefined; docNo: string; bold?: boolean }) => {
   if (source !== 'SOPAY' || !docNo) return bold ? <b>{docNo}</b> : <>{docNo}</>;
   return (
     <Link
       to={`/scm/sales-orders/${encodeURIComponent(docNo)}`}
-      onClick={(e) => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) markWorkspaceOpenIntent(true); }}
+      onClick={(e) => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) { rememberReturnScroll(); markWorkspaceOpenIntent(true); } }}
       style={{ fontWeight: bold ? 700 : undefined, whiteSpace: 'nowrap' }}
     >
       {docNo}
@@ -134,7 +138,20 @@ const ReconcileTab = () => {
   const watchlist = useSettlementWatchlist();
   const upload = useUploadStatement();
   const bulk = useConfirmAcross();
-  const [batchId, setBatchId] = useState<number | null>(null);
+  /* The open report lives in the ADDRESS (?batch=), not in memory: a Sales
+     Order opened from a report and closed again comes back to the same report
+     (owner 2026-10-21: 我从 merchant recon 点开 SO，返回也要返回 merchant
+     recon), and so does a reload. */
+  const [params, setParams] = useSearchParams();
+  const batchParam = Number(params.get('batch'));
+  const batchId = Number.isInteger(batchParam) && batchParam > 0 ? batchParam : null;
+  const setBatchId = (id: number | null) => setParams((prev) => {
+    const next = new URLSearchParams(prev);
+    if (id == null) next.delete('batch'); else next.set('batch', String(id));
+    return next;
+  });
+  /* Back from an order lands where the list was scrolled. */
+  useReturnScroll(batchId == null && batches.data != null);
   /* The batches the last upload created — the summary screen it lands on. */
   const [justUploaded, setJustUploaded] = useState<number[] | null>(null);
   const [showDone, setShowDone] = useState(false);
@@ -863,6 +880,8 @@ const Tally = ({ n, label, note, tone }: {
 
 const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void }) => {
   const q = useSettlementBatch(batchId);
+  /* Back from an order opened on one of these lines lands on that line. */
+  useReturnScroll(q.data != null);
   const confirmAll = useConfirmMatched();
   const [showDone, setShowDone] = useState(false);
 

@@ -11,11 +11,14 @@
 // shows when closed (a saved value never blanks); an empty search shows every
 // option, so a short list still just opens-and-picks.
 
-import { useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAnchoredPanel, anchoredPanelStyle } from "../../../lib/anchoredPanel";
 
-export type SearchableSelectOption = { value: string; label: string };
+/** `group` (optional) heads a run of options with a small title — the list is
+ *  shown in the order given, so options of one group must sit together. A
+ *  search keeps the headings of the groups that still have a match. */
+export type SearchableSelectOption = { value: string; label: string; group?: string };
 
 /**
  * How many options reach the DOM at once. The menu is 280px tall — about ten
@@ -163,6 +166,7 @@ export function SearchableSelect({
       {open && !disabled && menuPos &&
         createPortal(
           <ul
+            role="listbox"
             style={{
               ...anchoredPanelStyle(menuPos),
               overflowY: "auto",
@@ -185,11 +189,30 @@ export function SearchableSelect({
             }}
           >
             {filtered.length > 0 ? (
-              visible.map((o) => {
+              visible.map((o, i) => {
                 const isSel = o.value === value;
+                const heading = o.group && o.group !== visible[i - 1]?.group ? o.group : null;
                 return (
+                  <Fragment key={o.value}>
+                  {heading && (
+                    <li
+                      role="presentation"
+                      // Not a pick: keep the input focused.
+                      onMouseDown={(e) => e.preventDefault()}
+                      style={{
+                        padding: "8px 10px 2px",
+                        fontSize: "var(--fs-11, 11px)",
+                        fontWeight: 600,
+                        color: "var(--fg-muted, #888)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {heading}
+                    </li>
+                  )}
                   <li
-                    key={o.value}
+                    role="option"
+                    aria-selected={isSel}
                     // onMouseDown + preventDefault so the input doesn't blur-close
                     // before the pick lands.
                     onMouseDown={(e) => {
@@ -220,6 +243,7 @@ export function SearchableSelect({
                   >
                     {o.label}
                   </li>
+                  </Fragment>
                 );
               })
             ) : (
