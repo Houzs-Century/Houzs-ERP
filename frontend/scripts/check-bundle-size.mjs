@@ -250,7 +250,12 @@ const CEILINGS = {
   // Logistic Overview), their manifest lines and four Sidebar entries renamed
   // or added (each module opens with its overview; icons the shell already
   // loads). Measured +0.2 KB on the entry. Same shell-growth mechanism.
-  INITIAL_JS_GZIP: 173 * KB,
+  // 173 -> 174 on 2026-10-22: main sat at 172.9 and DEV-03 P3 (PR #4698,
+  // personal mailbox) added NO eager module: the entry's lazy-chunk map gained
+  // the names of two new shared lazy chunks, mail-personal (Team invite + Mail
+  // Center) and mail-sidebar (desktop Inbox + phone Mail Center). Measured
+  // +83 B raw / +8 B gzip on initial-app. Same shared-lazy-chunk mechanism.
+  INITIAL_JS_GZIP: 174 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT
