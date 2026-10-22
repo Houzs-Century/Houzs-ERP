@@ -1113,11 +1113,15 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
             };
           })(),
           so_date: null,
-          // The trigger date maps into the board date fields so it lands in the
-          // schedule / Days-Left column exactly like an SO's effective date.
+          // The trigger date is the SERVICE date: it drives the schedule /
+          // Days-Left column like an SO's effective date AND shows in the "Sales
+          // Exemption Expiry Date" column (via customer_delivery_date, the
+          // frontend's ASSR arm). "Delivery Date" (amended_delivery_date) is LEFT
+          // BLANK — it is the date admin proposes to the customer when scheduling
+          // (owner 2026-10-22: ASSR follows the SO-sync date convention).
           customer_delivery_date: leg.date,
           amend_date_from_customer: null,
-          amended_delivery_date: leg.date,
+          amended_delivery_date: null,
           amend_reason: null, amend_reason_from_customer: null,
           effective_delivery_date: leg.date,
           processing_date: leg.date,

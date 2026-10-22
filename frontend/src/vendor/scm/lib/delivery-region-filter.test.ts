@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { filterOrdersByRegion, planningCountsFrom } from './delivery-planning-queries';
-import type { DeliveryState } from './delivery-planning-queries';
+import { filterOrdersByRegion, planningCountsFrom, sxeDateOf } from './delivery-planning-queries';
+import type { DeliveryState, PlanningOrder } from './delivery-planning-queries';
 
 /* The region chip now filters in the browser (region=ALL fetch, local filter) —
    the regression guard that it behaves like the backend's matchesRegion:
@@ -35,6 +35,22 @@ describe('filterOrdersByRegion', () => {
   it('does not mutate or alias the input array', () => {
     const out = filterOrdersByRegion(orders, 'ALL', KNOWN);
     expect(out).not.toBe(orders);
+  });
+});
+
+/* The "Sales Exemption Expiry Date" column value — ASSR rows show their own
+   service date (customer_delivery_date), everyone else the AutoCount book value
+   (owner 2026-10-22). sxeDateOf reads only these three fields. */
+const order = (p: Partial<PlanningOrder>): PlanningOrder => (p as PlanningOrder);
+describe('sxeDateOf', () => {
+  it('an ASSR row shows its own service date, not the (null) book value', () => {
+    expect(sxeDateOf(order({ row_type: 'assr', customer_delivery_date: '2026-09-05', ac_sales_exemption_expiry: null }))).toBe('2026-09-05');
+  });
+  it('an SO row shows the AutoCount book exemption date, never its delivery date', () => {
+    expect(sxeDateOf(order({ row_type: 'so', customer_delivery_date: '2026-09-01', ac_sales_exemption_expiry: '2026-12-31' }))).toBe('2026-12-31');
+  });
+  it('a project / DP row with no book value stays blank', () => {
+    expect(sxeDateOf(order({ row_type: 'project', customer_delivery_date: '2026-09-10', ac_sales_exemption_expiry: null }))).toBeNull();
   });
 });
 
