@@ -22,7 +22,8 @@ import { pickDefaultFromAddress } from "./mail-from-default";
 import { sentToast } from "./mail-delivery";
 import { NEEDS_ACK_HINT } from "./mail-acks";
 // To / Cc / Bcc parsing + validation, shared with the phone's composer.
-import { parseRecipients, firstInvalid } from "./mail-recipients";
+import { parseRecipients, firstInvalid, addRecipients } from "./mail-recipients";
+import { RecipientPicker } from "./RecipientPicker";
 import {
   MAIL_ATTACH_MAX_COUNT,
   MAIL_ATTACH_MAX_TOTAL_BYTES,
@@ -36,7 +37,7 @@ import {
   humanSize,
   type OutboundAttachment as ComposeAttachment,
 } from "./mail-attach-files";
-import { Mail, Send, Loader2, X, Save, Paperclip } from "lucide-react";
+import { Mail, Send, Loader2, X, Save, Paperclip, Users } from "lucide-react";
 
 type MailAddress = {
   id: string;
@@ -126,6 +127,7 @@ export function ComposeDialog({
   const [cc, setCc] = useState("");
   const [bcc, setBcc] = useState("");
   const [showCopies, setShowCopies] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [needsAck, setNeedsAck] = useState(false);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
@@ -347,15 +349,26 @@ export function ComposeDialog({
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-medium text-ink-muted">To</label>
-                  {!showCopies && (
+                  <div className="flex items-center gap-3">
                     <button
                       type="button"
-                      onClick={() => setShowCopies(true)}
-                      className="text-[11px] font-medium text-primary hover:underline"
+                      onClick={() => setPickerOpen(true)}
+                      disabled={sending}
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline disabled:opacity-50"
                     >
-                      Cc / Bcc
+                      <Users className="h-3 w-3" />
+                      Org chart
                     </button>
-                  )}
+                    {!showCopies && (
+                      <button
+                        type="button"
+                        onClick={() => setShowCopies(true)}
+                        className="text-[11px] font-medium text-primary hover:underline"
+                      >
+                        Cc / Bcc
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <input
                   type="text"
@@ -558,6 +571,19 @@ export function ComposeDialog({
           </div>
         </div>
       </div>
+      <RecipientPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        already={[to, cc, bcc]}
+        onPick={(picked, field) => {
+          if (field === "cc") {
+            setCc((prev) => addRecipients(prev, picked));
+            setShowCopies(true);
+          } else {
+            setTo((prev) => addRecipients(prev, picked));
+          }
+        }}
+      />
     </div>
   );
 }
